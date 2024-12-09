@@ -1,0 +1,36 @@
+{
+    "cli": {
+        "root": "/tmp/bitvmx",
+        "program_home": "programs"
+    },
+    "bitcoin": {
+        "network": "regtest",
+        "url": "http://127.0.0.1:18443",
+        "username": "foo",
+        "password": "rpcpassword",
+        "wallet": "test_wallet"
+    },
+    "builder": {
+        "protocol_amount": 2450000,
+        "speedup_amount": 2450000,
+        "locked_amount": 95000000,
+        "locked_blocks": 200,
+        "ecdsa_sighash_type": "SIGHASH_ALL",
+        "taproot_sighash_type": "SIGHASH_ALL"
+    },
+    "key_manager": {
+        "network": "regtest",
+        "key_derivation_path": "m/101/1/0/0/",
+        "key_derivation_seed": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        "winternitz_seed": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef" 
+    },
+    "storage": {
+        "db": "/tmp/storage.db",
+        "password": "secret_password"
+    }, 
+    "p2p": {
+        "address": "/ip4/127.0.0.1/tcp/61180",
+        "peer_id_file": "peer_id",
+        "timeout": 5
+    }
+}
