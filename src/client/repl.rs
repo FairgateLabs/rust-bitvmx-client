@@ -114,20 +114,27 @@ impl Repl {
         self.input.run();
 
         loop {
-            let quit =  self.process_input();
+            let quit =  self.read_from_terminal();
             if quit { break }
 
-            let quit = self.process_messages();
+            let quit = self.read_p2p_messages();
+            if quit { break }
+
+            let quit = self.read_bitcoin_updates();
             if quit { break }
         }
         Ok(())
     }
 
-    fn process_messages(&self) -> bool {
-        false
+    fn read_bitcoin_updates(&self) -> bool {
+        self.bitvmx.read_bitcoin_updates()
     }
 
-    fn process_input(&mut self) -> bool {
+    fn read_p2p_messages(&self) -> bool {
+        self.bitvmx.read_p2p_messages()
+    }
+
+    fn read_from_terminal(&mut self) -> bool {
         if let Some(args) = self.input.read() {
             match self.execute(args) {
                 Result::Ok(quit) => {
@@ -138,6 +145,29 @@ impl Repl {
                 }
             }
         }
+            
+        false
+    }
+
+    fn read_bitcoin_updates(&mut self) -> bool {
+        // Pseudo code, this code needs to be in Bitvmx in the method read_bitcoin_updates()
+        // self.blockchain.tick();
+        // let news = self.blockchain.get_news();
+
+        // // process news
+
+        // self.blockchain.acknowledge(ProcessedNews {
+        //     txs_by_id: vec![],
+        //     txs_by_address: vec![],
+        //     funds_requests: vec![],
+        // });
+
+        // we will use the Orchestrator struct
+        // to check if monitor is ready: is_ready(&mut self) -> Result<bool>;
+        // to trigger an step in the monitor: tick(&mut self) -> Result<()>;
+        // to monitor transactions: monitor_instance(&self, instance: &BitvmxInstance<TransactionPartialInfo>)
+        // to monitor transactions to a particular address: monitor_address(&self, address: Address) -> Result<()>
+        // to send transactions: send_tx_instance(&self, instance_id: InstanceId, tx: &Transaction) -> Result<()>
             
         false
     }

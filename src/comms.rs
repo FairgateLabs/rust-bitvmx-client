@@ -47,13 +47,13 @@ impl P2PMessage {
     }
 }
 
-pub struct Comms {
+pub struct P2PComms {
     sender: P2pSender,
     receiver: P2pReceiver,
     address: P2PAddress,
 }
 
-impl Comms {
+impl P2PComms {
     pub fn new(config: &Config, communications_key: Keypair) -> Result<Self, BitVMXError> {
         let address = config.p2p_address();
         let peer_id = communications_key.public().to_peer_id();

@@ -2,12 +2,12 @@ use std::collections::HashMap;
 use bitcoin::{Amount, OutPoint, Transaction, Txid};
 use key_manager::winternitz;
 use uuid::Uuid;
-use crate::{bitcoin::rpc::BitcoinClient, comms::{Comms, P2PMessage, P2PMessageKind}, config::Config, errors::BitVMXError, keys::keychain::KeyChain, program::{dispute::{Funding, SearchParams}, participant::{P2PAddress, Participant, ParticipantKeys, ParticipantRole}, program::Program, witness}};
+use crate::{bitcoin::rpc::BitcoinClient, comms::{P2PComms, P2PMessage, P2PMessageKind}, config::Config, errors::BitVMXError, keys::keychain::KeyChain, program::{dispute::{Funding, SearchParams}, participant::{P2PAddress, Participant, ParticipantKeys, ParticipantRole}, program::Program, witness}};
 
 pub struct BitVMX {
     config: Config,
     bitcoin: BitcoinClient,
-    comms: Comms,
+    comms: P2PComms,
     key_chain: KeyChain,
     programs: HashMap<Uuid, Program>,
 }
@@ -17,7 +17,7 @@ impl BitVMX {
         let bitcoin = Self::new_bitcoin_client(config)?;
         let keys = KeyChain::new(&config)?;
         let communications_key = keys.communications_key();
-        let comms = Comms::new(&config, communications_key)?;
+        let comms = P2PComms::new(&config, communications_key)?;
 
         Ok(Self {
             config: (*config).clone(),
