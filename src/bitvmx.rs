@@ -1,7 +1,8 @@
 use std::collections::HashMap;
-use bitcoin::{Amount, OutPoint, Transaction, Txid};
+use bitcoin::{block, Amount, OutPoint, Transaction, Txid};
 use key_manager::winternitz;
 use uuid::Uuid;
+use bitvmx_unstable::new_orchestrator;
 use crate::{bitcoin::rpc::BitcoinClient, comms::{P2PComms, P2PMessage, P2PMessageKind}, config::Config, errors::BitVMXError, keys::keychain::KeyChain, program::{dispute::{Funding, SearchParams}, participant::{P2PAddress, Participant, ParticipantKeys, ParticipantRole}, program::Program, witness}};
 
 pub struct BitVMX {
@@ -10,6 +11,7 @@ pub struct BitVMX {
     comms: P2PComms,
     key_chain: KeyChain,
     programs: HashMap<Uuid, Program>,
+    blockchain: Orchestrator<>
 }
 
 impl BitVMX {
@@ -18,6 +20,7 @@ impl BitVMX {
         let keys = KeyChain::new(&config)?;
         let communications_key = keys.communications_key();
         let comms = P2PComms::new(&config, communications_key)?;
+        let blockchain = new_orchestrator()?;
 
         Ok(Self {
             config: (*config).clone(),
@@ -25,6 +28,7 @@ impl BitVMX {
             comms,
             key_chain: keys,
             programs: HashMap::new(),
+            blockchain,
         })
     }
 
@@ -107,6 +111,26 @@ impl BitVMX {
         }
 
         Ok(())
+    }
+
+    pub fn process_p2p_message() -> bool {
+        false
+    }
+
+    pub fn read_bitcoin_updates() -> bool {
+        // Pseudo code, this code needs to be in Bitvmx in the method read_bitcoin_updates()
+        // self.blockchain.tick();
+        // let news = self.blockchain.get_news();
+
+        // // process news
+
+        // self.blockchain.acknowledge(ProcessedNews {
+        //     txs_by_id: vec![],
+        //     txs_by_address: vec![],
+        //     funds_requests: vec![],
+        // });
+
+        false
     }
 
     fn aggregate_keys(&mut self, program_id: Uuid) -> Result<(), BitVMXError> {
