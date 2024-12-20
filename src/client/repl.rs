@@ -1,7 +1,7 @@
 use anyhow::{Ok, Result};
 use bitcoin::{OutPoint, PublicKey, XOnlyPublicKey};
 use comfy_table::Table;
-use p2p_protocol::PeerId;
+use p2p_handler::PeerId;
 use uuid::Uuid;
 use std::str::FromStr;
 use clap::{command, Parser, Subcommand, ValueEnum};
@@ -122,16 +122,20 @@ impl Repl {
 
             let quit = self.read_bitcoin_updates();
             if quit { break }
+
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
         Ok(())
     }
 
     fn read_bitcoin_updates(&self) -> bool {
-        self.bitvmx.read_bitcoin_updates()
+        // self.bitvmx.read_bitcoin_updates()
+        false
     }
 
     fn read_p2p_messages(&self) -> bool {
-        self.bitvmx.read_p2p_messages()
+        // self.bitvmx.read_p2p_messages()
+        false
     }
 
     fn read_from_terminal(&mut self) -> bool {
@@ -149,17 +153,17 @@ impl Repl {
         false
     }
 
-    fn read_bitcoin_updates(&mut self) -> bool {
-        self.bitvmx.read_bitcoin_updates()
+    // fn read_bitcoin_updates(&mut self) -> bool {
+    //     self.bitvmx.read_bitcoin_updates()
         
 
-        // we will use the Orchestrator struct
-        // to check if monitor is ready: is_ready(&mut self) -> Result<bool>;
-        // to trigger an step in the monitor: tick(&mut self) -> Result<()>;
-        // to monitor transactions: monitor_instance(&self, instance: &BitvmxInstance<TransactionPartialInfo>)
-        // to monitor transactions to a particular address: monitor_address(&self, address: Address) -> Result<()>
-        // to send transactions: send_tx_instance(&self, instance_id: InstanceId, tx: &Transaction) -> Result<()>
-    }
+    //     // we will use the Orchestrator struct
+    //     // to check if monitor is ready: is_ready(&mut self) -> Result<bool>;
+    //     // to trigger an step in the monitor: tick(&mut self) -> Result<()>;
+    //     // to monitor transactions: monitor_instance(&self, instance: &BitvmxInstance<TransactionPartialInfo>)
+    //     // to monitor transactions to a particular address: monitor_address(&self, address: Address) -> Result<()>
+    //     // to send transactions: send_tx_instance(&self, instance_id: InstanceId, tx: &Transaction) -> Result<()>
+    // }
 
     fn execute(&mut self, args: Vec<String>) -> Result<bool> {
         let menu = Menu::try_parse_from(args);
@@ -210,7 +214,7 @@ impl Repl {
             &peer_address
         )?;
 
-        self.program_details(&program_id.to_string())?;
+        // self.program_details(&program_id.to_string())?;
         Ok(())
     }
 

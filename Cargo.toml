@@ -29,8 +29,8 @@ bitcoin-scriptexec = { git = "https://github.com/FairgateLabs/rust-bitcoin-scrip
 
 bitvmx-key-manager = { path = "../rust-bitvmx-key-manager" }
 bitvmx-protocol-builder = { path = "../rust-bitvmx-protocol-builder" }
-bitvmx-unstable ={ path = "../bitvmx-unstable"}
-p2p_protocol = { path = "../rust-p2p-protocol" }
+#bitvmx-unstable ={ path = "../bitvmx-unstable"}
+p2p_handler = { path = "../rust-p2p-handler" }
 
 [[bin]]
 name = "bitvmx"

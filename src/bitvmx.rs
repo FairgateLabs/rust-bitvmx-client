@@ -1,17 +1,19 @@
 use std::collections::HashMap;
 use bitcoin::{block, Amount, OutPoint, Transaction, Txid};
 use key_manager::winternitz;
+use p2p_handler::{LocalAllowList, P2pHandler, PeerId};
 use uuid::Uuid;
-use bitvmx_unstable::new_orchestrator;
-use crate::{bitcoin::rpc::BitcoinClient, comms::{P2PComms, P2PMessage, P2PMessageKind}, config::Config, errors::BitVMXError, keys::keychain::KeyChain, program::{dispute::{Funding, SearchParams}, participant::{P2PAddress, Participant, ParticipantKeys, ParticipantRole}, program::Program, witness}};
+//use bitvmx_unstable::new_orchestrator;
+use crate::{bitcoin::rpc::BitcoinClient, config::Config, errors::BitVMXError, keys::keychain::KeyChain, program::{dispute::{Funding, SearchParams}, participant::{P2PAddress, Participant, ParticipantKeys, ParticipantRole}, program::Program, witness}};
+
 
 pub struct BitVMX {
     config: Config,
     bitcoin: BitcoinClient,
-    comms: P2PComms,
+    comms: P2pHandler,
     key_chain: KeyChain,
     programs: HashMap<Uuid, Program>,
-    blockchain: Orchestrator<>
+   // blockchain: Orchestrator<>
 }
 
 impl BitVMX {
@@ -19,8 +21,9 @@ impl BitVMX {
         let bitcoin = Self::new_bitcoin_client(config)?;
         let keys = KeyChain::new(&config)?;
         let communications_key = keys.communications_key();
-        let comms = P2PComms::new(&config, communications_key)?;
-        let blockchain = new_orchestrator()?;
+        //let comms = P2PComms::new(&config, communications_key)?;
+        let comms = P2pHandler::new::<LocalAllowList>(config.p2p_address().to_string(), communications_key)?;
+        //let blockchain = new_orchestrator()?;
 
         Ok(Self {
             config: (*config).clone(),
@@ -28,7 +31,7 @@ impl BitVMX {
             comms,
             key_chain: keys,
             programs: HashMap::new(),
-            blockchain,
+          //  blockchain,
         })
     }
 
@@ -43,7 +46,7 @@ impl BitVMX {
     }
 
     pub fn setup_program(&mut self, role: ParticipantRole, outpoint: OutPoint, peer_address: &P2PAddress) -> Result<Uuid, BitVMXError> {        
-        self.comms.connect(peer_address)?;
+        self.comms.dial(*peer_address.peer_id(), peer_address.address().to_string())?;
         // self.comms.send_message(peer_address, "Hello".as_bytes().to_vec())?;
         // let message = self.comms.receive_message();
 
@@ -55,7 +58,8 @@ impl BitVMX {
         // Create a participant that represents me with the specified role (Prover or Verifier).
         let me = Participant::new(
             &role,
-            &self.comms.address(),
+            //&self.comms.address(),
+            &P2PAddress::new(&self.comms.get_address(), self.comms.get_peer_id()),
             Some(keys.clone()),
         );
 
@@ -73,7 +77,7 @@ impl BitVMX {
         };
 
         // Create a program with the funding information, and the dispute resolution search parameters.
-        let program = Program::new(&self.comms.address(), &self.config, prover, verifier, self.funding(outpoint))?;
+        let program = Program::new(&P2PAddress::new(&self.comms.get_address(), self.comms.get_peer_id()), &self.config, prover, verifier, self.funding(outpoint))?;
         
         // Contacts the counterparty to setup the same program, exchange public keys to allow us (and the counterparty) 
         // generate the program aggregated signatures.
@@ -85,30 +89,30 @@ impl BitVMX {
     }
 
     pub fn process_message(&mut self) -> Result<(), BitVMXError> {
-        match self.comms.receive_message() {
-            None => return Ok(()),
-            Some(data) => {
-                let message = P2PMessage::from_bytes(data);
+        // match self.comms.receive_message() {
+        //     None => return Ok(()),
+        //     Some(data) => {
+        //         let message = P2PMessage::from_bytes(data);
 
-                match message.kind() {
-                    P2PMessageKind::Status => {
+        //         match message.kind() {
+        //             P2PMessageKind::Status => {
         
-                    },
-                    P2PMessageKind::Keys => {
+        //             },
+        //             P2PMessageKind::Keys => {
                         
-                    },
-                    P2PMessageKind::Nonces => {
+        //             },
+        //             P2PMessageKind::Nonces => {
         
-                    },
-                    P2PMessageKind::Signatures => {
+        //             },
+        //             P2PMessageKind::Signatures => {
         
-                    },
-                    P2PMessageKind::Setup => {
+        //             },
+        //             P2PMessageKind::Setup => {
         
-                    }
-                }
-            }
-        }
+        //             }
+        //         }
+        //     }
+        // }
 
         Ok(())
     }
@@ -233,7 +237,7 @@ impl BitVMX {
     }
 
     pub fn peer_id(&self) -> String {
-        self.comms.peer_id_bs58()
+        self.comms.get_peer_id().to_string()
     }
 
     fn program_mut(&mut self, program_id: Uuid) -> Result<&mut Program, BitVMXError> {

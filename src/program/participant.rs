@@ -1,7 +1,7 @@
 use std::fmt;
 use bitcoin::{PublicKey, XOnlyPublicKey};
 use key_manager::winternitz::WinternitzPublicKey;
-use p2p_protocol::PeerId;
+use p2p_handler::PeerId;
 
 #[derive(Clone)]
 pub struct Participant {
