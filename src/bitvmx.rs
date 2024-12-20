@@ -357,4 +357,33 @@ impl BitVMX {
 
         Ok(true)
     }
+    
+    pub fn process_p2p_messages(&self) -> bool {
+        //let message = self.comms.read_message();
+        //process the message
+        false
+    }
+
+    pub fn process_bitcoin_updates(&self) -> bool {
+        // Pseudo code, this code needs to be in Bitvmx in the method read_bitcoin_updates()
+        // self.blockchain.tick();
+        // let news = self.blockchain.get_news();
+
+        // // process news
+
+        // self.blockchain.acknowledge(ProcessedNews {
+        //     txs_by_id: vec![],
+        //     txs_by_address: vec![],
+        //     funds_requests: vec![],
+        // });
+
+        // we will use the Orchestrator struct
+        // to check if monitor is ready: is_ready(&mut self) -> Result<bool>;
+        // to trigger an step in the monitor: tick(&mut self) -> Result<()>;
+        // to monitor transactions: monitor_instance(&self, instance: &BitvmxInstance<TransactionPartialInfo>)
+        // to monitor transactions to a particular address: monitor_address(&self, address: Address) -> Result<()>
+        // to send transactions: send_tx_instance(&self, instance_id: InstanceId, tx: &Transaction) -> Result<()>
+
+        false
+    }
 }
