@@ -114,27 +114,19 @@ impl Repl {
         self.input.run();
 
         loop {
-            let quit =  self.read_from_terminal();
+            let quit =  self.process_input();
             if quit { break }
 
-            let quit = self.read_p2p_messages();
+            let quit = self.process_p2p_messages();
             if quit { break }
 
-            let quit = self.read_bitcoin_updates();
+            let quit = self.process_bitcoin_updates();
             if quit { break }
         }
         Ok(())
     }
 
-    fn read_bitcoin_updates(&self) -> bool {
-        self.bitvmx.read_bitcoin_updates()
-    }
-
-    fn read_p2p_messages(&self) -> bool {
-        self.bitvmx.read_p2p_messages()
-    }
-
-    fn read_from_terminal(&mut self) -> bool {
+    fn process_input(&mut self) -> bool {
         if let Some(args) = self.input.read() {
             match self.execute(args) {
                 Result::Ok(quit) => {
@@ -149,16 +141,12 @@ impl Repl {
         false
     }
 
-    fn read_bitcoin_updates(&mut self) -> bool {
-        self.bitvmx.read_bitcoin_updates()
-        
+    fn process_p2p_messages(&self) -> bool {
+        self.bitvmx.process_p2p_messages()
+    }
 
-        // we will use the Orchestrator struct
-        // to check if monitor is ready: is_ready(&mut self) -> Result<bool>;
-        // to trigger an step in the monitor: tick(&mut self) -> Result<()>;
-        // to monitor transactions: monitor_instance(&self, instance: &BitvmxInstance<TransactionPartialInfo>)
-        // to monitor transactions to a particular address: monitor_address(&self, address: Address) -> Result<()>
-        // to send transactions: send_tx_instance(&self, instance_id: InstanceId, tx: &Transaction) -> Result<()>
+    fn process_bitcoin_updates(&mut self) -> bool {
+        self.bitvmx.process_bitcoin_updates() 
     }
 
     fn execute(&mut self, args: Vec<String>) -> Result<bool> {
