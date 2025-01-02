@@ -1,6 +1,6 @@
 use bitcoin::{secp256k1, PublicKey, XOnlyPublicKey};
 use key_manager::{key_manager::KeyManager, keystorage::database::DatabaseKeyStore, winternitz::{WinternitzPublicKey, WinternitzType}};
-use p2p_protocol::Keypair;
+use p2p_handler::Keypair;
 use protocol_builder::{graph::input::{SighashType, Signature}, unspendable::unspendable_key};
 
 use crate::{config::Config, errors::BitVMXError, program::program::Program};

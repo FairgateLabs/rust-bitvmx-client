@@ -2,7 +2,7 @@ use bitcoin::{consensus::encode::FromHexError, network::ParseNetworkError};
 use bitcoincore_rpc::bitcoin::{key::ParsePublicKeyError, sighash::SighashTypeParseError};
 use config as settings;
 use key_manager::errors::{KeyManagerError, KeyStoreError, WinternitzError};
-use p2p_protocol::P2PError;
+use p2p_handler::P2pHandlerError;
 use protocol_builder::errors::{ProtocolBuilderError, UnspendableKeyError};
 use thiserror::Error;
 use uuid::Uuid;
@@ -43,7 +43,7 @@ pub enum BitVMXError {
     // CommunicationsKeyGenerationError(#[from] DecodingError),
 
     #[error("Failed to encode P2P data")]
-    P2PEncodingError(#[from] P2PError),
+    P2PEncodingError(#[from] P2pHandlerError),
 
     #[error("Failed to use P2P layer")]
     P2PCommunicationError,

@@ -1,7 +1,7 @@
 use anyhow::{Ok, Result};
 use bitcoin::{OutPoint, PublicKey, XOnlyPublicKey};
 use comfy_table::Table;
-use p2p_protocol::PeerId;
+use p2p_handler::PeerId;
 use uuid::Uuid;
 use std::str::FromStr;
 use clap::{command, Parser, Subcommand, ValueEnum};
@@ -122,6 +122,8 @@ impl Repl {
 
             let quit = self.process_bitcoin_updates();
             if quit { break }
+
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
         Ok(())
     }
@@ -198,7 +200,7 @@ impl Repl {
             &peer_address
         )?;
 
-        self.program_details(&program_id.to_string())?;
+        // self.program_details(&program_id.to_string())?;
         Ok(())
     }
 
