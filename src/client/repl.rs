@@ -201,6 +201,8 @@ impl Repl {
         )?;
 
         // self.program_details(&program_id.to_string())?;
+        self.input.write(&format!("Setup program with id: {}", program_id)); //TODO: this is necessary to flush terminal
+
         Ok(())
     }
 
