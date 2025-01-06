@@ -144,6 +144,31 @@ Example:
 bitvmx » new-program --role prover --funding ea25e87f729018511538b453fe7e4aabc0f1ea8687b254d39c4196d112681c9b:0 --peer_address /ip4/127.0.0.1/tcp/61181 --peer_id 12D3KooWNiCPAyuQhLoqsbaSqvUCgAChN4wqNEhBfr5Nz6a77E3K
 ```
 
+Output will be like
+
+```
+INFO Connected to 12D3KooWCL2CbGe2uHPo5CSPy7SuWSji9RjP18hRwVdvdMFK8uuC
+INFO Peer 12D3KooWCL2CbGe2uHPo5CSPy7SuWSji9RjP18hRwVdvdMFK8uuC connected
+Setup program with id: 6a3367ec-5341-447e-abd7-29e9d8dc5b67
+```
+
+
+### Program
+
+Gets the details of a program. Usage: 
+
+```bash
+bitvmx » input program -i <program_id>
+```
+
+The program is obtained from the [new program output](#new-program)
+
+Example:
+
+```bash
+bitvmx » program -i 6a3367ec-5341-447e-abd7-29e9d8dc5b67
+```
+
   
 ## User journey
 
@@ -151,4 +176,4 @@ bitvmx » new-program --role prover --funding ea25e87f729018511538b453fe7e4aabc0
 2- [Run a verifier](#run-a-client)
 3- Use the prover client to [add funds](#add-funds)
 4- Use the prover client to create a [new program](#new-program)
-
+5- Use the prover to deploy a program
