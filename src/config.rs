@@ -33,6 +33,7 @@ pub struct BitcoinConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct P2PConfig {
     pub address: String,
+    pub key: String,
     pub peer_id_file: String,
     pub timeout: u64,
 }
@@ -145,6 +146,10 @@ impl Config {
     pub fn peer_id_file_path(&self) -> PathBuf {
         let root = Path::new(self.cli.root.as_str());
         root.join(self.p2p.peer_id_file.as_str())
+    }
+
+    pub fn p2p_key(&self) -> &str {
+        self.p2p.key.as_str()
     }
 
     pub fn p2p_timeout(&self) -> u64 {
