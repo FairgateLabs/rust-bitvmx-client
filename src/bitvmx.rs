@@ -1,11 +1,20 @@
-use std::collections::HashMap;
+use crate::{
+    bitcoin::rpc::BitcoinClient,
+    config::Config,
+    errors::BitVMXError,
+    keys::keychain::KeyChain,
+    program::{
+        dispute::{Funding, SearchParams},
+        participant::{P2PAddress, Participant, ParticipantKeys, ParticipantRole},
+        program::Program,
+        witness,
+    },
+};
 use bitcoin::{block, Amount, OutPoint, Transaction, Txid};
 use key_manager::winternitz;
 use p2p_handler::{LocalAllowList, P2pHandler, PeerId};
+use std::collections::HashMap;
 use uuid::Uuid;
-//use bitvmx_unstable::new_orchestrator;
-use crate::{bitcoin::rpc::BitcoinClient, config::Config, errors::BitVMXError, keys::keychain::KeyChain, program::{dispute::{Funding, SearchParams}, participant::{P2PAddress, Participant, ParticipantKeys, ParticipantRole}, program::Program, witness}};
-
 
 pub struct BitVMX {
     config: Config,
@@ -13,7 +22,7 @@ pub struct BitVMX {
     comms: P2pHandler,
     key_chain: KeyChain,
     programs: HashMap<Uuid, Program>,
-   // blockchain: Orchestrator<>
+    // blockchain: Orchestrator<>
 }
 
 impl BitVMX {
@@ -22,7 +31,10 @@ impl BitVMX {
         let keys = KeyChain::new(&config)?;
         let communications_key = keys.communications_key();
         //let comms = P2PComms::new(&config, communications_key)?;
-        let comms = P2pHandler::new::<LocalAllowList>(config.p2p_address().to_string(), communications_key)?;
+        let comms = P2pHandler::new::<LocalAllowList>(
+            config.p2p_address().to_string(),
+            communications_key,
+        )?;
         //let blockchain = new_orchestrator()?;
 
         Ok(Self {
@@ -31,7 +43,7 @@ impl BitVMX {
             comms,
             key_chain: keys,
             programs: HashMap::new(),
-          //  blockchain,
+            //  blockchain,
         })
     }
 
@@ -41,12 +53,20 @@ impl BitVMX {
         let funding_key = self.key_chain.derive_keypair_with_index(current_index)?;
         let funding_address = self.bitcoin.get_new_address(funding_key);
 
-        let (tx, vout) = self.bitcoin.fund_address(&funding_address, Amount::from_sat(one_btc))?;
+        let (tx, vout) = self
+            .bitcoin
+            .fund_address(&funding_address, Amount::from_sat(one_btc))?;
         Ok((tx.compute_txid(), vout))
     }
 
-    pub fn setup_program(&mut self, role: ParticipantRole, outpoint: OutPoint, peer_address: &P2PAddress) -> Result<Uuid, BitVMXError> {        
-        self.comms.dial(*peer_address.peer_id(), peer_address.address().to_string())?;
+    pub fn setup_program(
+        &mut self,
+        role: ParticipantRole,
+        outpoint: OutPoint,
+        peer_address: &P2PAddress,
+    ) -> Result<Uuid, BitVMXError> {
+        self.comms
+            .dial(*peer_address.peer_id(), peer_address.address().to_string())?;
         // self.comms.send_message(peer_address, "Hello".as_bytes().to_vec())?;
         // let message = self.comms.receive_message();
 
@@ -64,11 +84,7 @@ impl BitVMX {
         );
 
         // Create a participant that represents the counterparty with the opposite role.
-        let other = Participant::new(
-            &role.counterparty_role(),
-            peer_address, 
-            None,
-        );
+        let other = Participant::new(&role.counterparty_role(), peer_address, None);
 
         // Rename the variables to the correct roles
         let (prover, verifier) = match me.role() {
@@ -77,9 +93,15 @@ impl BitVMX {
         };
 
         // Create a program with the funding information, and the dispute resolution search parameters.
-        let program = Program::new(&P2PAddress::new(&self.comms.get_address(), self.comms.get_peer_id()), &self.config, prover, verifier, self.funding(outpoint))?;
-        
-        // Contacts the counterparty to setup the same program, exchange public keys to allow us (and the counterparty) 
+        let program = Program::new(
+            &P2PAddress::new(&self.comms.get_address(), self.comms.get_peer_id()),
+            &self.config,
+            prover,
+            verifier,
+            self.funding(outpoint),
+        )?;
+
+        // Contacts the counterparty to setup the same program, exchange public keys to allow us (and the counterparty)
         // generate the program aggregated signatures.
         self.setup_counterparty_program(&program, other.role(), keys)?;
 
@@ -96,19 +118,19 @@ impl BitVMX {
 
         //         match message.kind() {
         //             P2PMessageKind::Status => {
-        
+
         //             },
         //             P2PMessageKind::Keys => {
-                        
+
         //             },
         //             P2PMessageKind::Nonces => {
-        
+
         //             },
         //             P2PMessageKind::Signatures => {
-        
+
         //             },
         //             P2PMessageKind::Setup => {
-        
+
         //             }
         //         }
         //     }
@@ -202,7 +224,7 @@ impl BitVMX {
         Ok(program.is_ready())
     }
 
-    /// Executes the program offchain using the BitVMX CPU to generate the program trace, ending state and 
+    /// Executes the program offchain using the BitVMX CPU to generate the program trace, ending state and
     /// ending step number.
     pub fn run_program(&mut self, program_id: Uuid) -> Result<(), BitVMXError> {
         let program = self.program_mut(program_id)?;
@@ -233,7 +255,9 @@ impl BitVMX {
     }
 
     pub fn program(&self, program_id: Uuid) -> Result<&Program, BitVMXError> {
-        self.programs.get(&program_id).ok_or(BitVMXError::ProgramNotFound(program_id))
+        self.programs
+            .get(&program_id)
+            .ok_or(BitVMXError::ProgramNotFound(program_id))
     }
 
     pub fn peer_id(&self) -> String {
@@ -241,7 +265,9 @@ impl BitVMX {
     }
 
     fn program_mut(&mut self, program_id: Uuid) -> Result<&mut Program, BitVMXError> {
-        self.programs.get_mut(&program_id).ok_or(BitVMXError::ProgramNotFound(program_id))
+        self.programs
+            .get_mut(&program_id)
+            .ok_or(BitVMXError::ProgramNotFound(program_id))
     }
 
     fn save_program(&mut self, program: Program) -> Uuid {
@@ -256,13 +282,13 @@ impl BitVMX {
         let user = config.bitcoin_rpc_username();
         let pass = config.bitcoin_rpc_password();
         let wallet = config.bitcoin_rpc_wallet();
-    
+
         let bitcoin = BitcoinClient::new(network, url, user, pass, wallet)?;
         Ok(bitcoin)
     }
 
     fn generate_keys(&mut self) -> Result<ParticipantKeys, BitVMXError> {
-        let message_size = 2; 
+        let message_size = 2;
         let one_time_keys_count = 10;
 
         let pre_kickoff = self.key_chain.derive_keypair()?;
@@ -272,22 +298,24 @@ impl BitVMX {
         let internal = self.key_chain.unspendable_key()?;
         let program_ending_state = self.key_chain.derive_winternitz_hash160(message_size)?;
         let program_ending_step_number = self.key_chain.derive_winternitz_hash160(message_size)?;
-        let dispute_resolution = self.key_chain.derive_winternitz_hash160_keys(message_size, one_time_keys_count)?;
-        
+        let dispute_resolution = self
+            .key_chain
+            .derive_winternitz_hash160_keys(message_size, one_time_keys_count)?;
+
         let keys = ParticipantKeys::new(
-            pre_kickoff, 
-            internal, 
-            protocol, 
-            speedup, 
-            timelock, 
-            program_ending_state, 
-            program_ending_step_number, 
-            dispute_resolution, 
+            pre_kickoff,
+            internal,
+            protocol,
+            speedup,
+            timelock,
+            program_ending_state,
+            program_ending_step_number,
+            dispute_resolution,
         );
 
         Ok(keys)
     }
-    
+
     fn funding(&self, funding_outpoint: OutPoint) -> Funding {
         Funding::new(
             funding_outpoint.txid,
@@ -315,7 +343,12 @@ impl BitVMX {
     //     ))
     // }
 
-    fn setup_counterparty_program(&self, program: &Program, counterparty_role: ParticipantRole, keys: ParticipantKeys) -> Result<(), BitVMXError> {
+    fn setup_counterparty_program(
+        &self,
+        program: &Program,
+        counterparty_role: ParticipantRole,
+        keys: ParticipantKeys,
+    ) -> Result<(), BitVMXError> {
         // 1. Send keys and program data (id and config) to counterparty
         // 2. Receive keys from counterparty
         Ok(())
@@ -331,17 +364,26 @@ impl BitVMX {
         Ok(())
     }
 
-    fn decode_witness_data(&self, winternitz_message_sizes: Vec<usize>, winternitz_type: winternitz::WinternitzType, witness: bitcoin::Witness) -> Result<Vec<winternitz::WinternitzSignature>, BitVMXError> {
+    fn decode_witness_data(
+        &self,
+        winternitz_message_sizes: Vec<usize>,
+        winternitz_type: winternitz::WinternitzType,
+        witness: bitcoin::Witness,
+    ) -> Result<Vec<winternitz::WinternitzSignature>, BitVMXError> {
         witness::decode_witness(winternitz_message_sizes, winternitz_type, witness)
     }
 
-    fn wait_deployment(&mut self, deployment_transaction: &Transaction) -> Result<bool, BitVMXError> {
+    fn wait_deployment(
+        &mut self,
+        deployment_transaction: &Transaction,
+    ) -> Result<bool, BitVMXError> {
         // 1. Wait for the prekickoff transaction to be confirmed
         // 2. Return true if the transaction is confirmed, false otherwise
 
-        let mut txid = self.bitcoin.send_transaction(deployment_transaction.clone())?;
-        while self.bitcoin.get_transaction(&txid)?.is_none() {
-        }
+        let mut txid = self
+            .bitcoin
+            .send_transaction(deployment_transaction.clone())?;
+        while self.bitcoin.get_transaction(&txid)?.is_none() {}
 
         Ok(true)
     }
@@ -357,7 +399,7 @@ impl BitVMX {
 
         Ok(true)
     }
-    
+
     pub fn process_p2p_messages(&self) -> bool {
         //let message = self.comms.read_message();
         //process the message
