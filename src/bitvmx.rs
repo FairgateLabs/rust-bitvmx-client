@@ -10,9 +10,9 @@ use crate::{
         witness,
     },
 };
-use bitcoin::{block, Amount, OutPoint, Transaction, Txid};
+use bitcoin::{Amount, OutPoint, Transaction, Txid};
 use key_manager::winternitz;
-use p2p_handler::{LocalAllowList, P2pHandler, PeerId};
+use p2p_handler::{LocalAllowList, P2pHandler};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -160,7 +160,7 @@ impl BitVMX {
     }
 
     fn aggregate_keys(&mut self, program_id: Uuid) -> Result<(), BitVMXError> {
-        let mut program = self.program(program_id)?.clone();
+        let program = self.program(program_id)?.clone();
 
         // Generate the program aggregated keys.
         // self.aggregate_keys(&prover, &verifier)?;
@@ -191,7 +191,7 @@ impl BitVMX {
     }
 
     fn exchange_partial_signatures(&mut self, program_id: Uuid) -> Result<(), BitVMXError> {
-        let program = self.program_mut(program_id)?;
+        let _program = self.program_mut(program_id)?;
 
         // Contacts the counterparty to exchange signatures.
         // self.send_signatures(&prover, &verifier)?;
@@ -199,7 +199,7 @@ impl BitVMX {
         Ok(())
     }
 
-    fn aggregate_partial_signatures(&self, program_id: Uuid) -> Result<(), BitVMXError> {
+    fn aggregate_partial_signatures(&self, _program_id: Uuid) -> Result<(), BitVMXError> {
         // Generate the program aggregated signatures.
         // self.aggregate_signatures(&prover, &verifier)?;
 
@@ -345,9 +345,9 @@ impl BitVMX {
 
     fn setup_counterparty_program(
         &self,
-        program: &Program,
-        counterparty_role: ParticipantRole,
-        keys: ParticipantKeys,
+        _program: &Program,
+        _counterparty_role: ParticipantRole,
+        _keys: ParticipantKeys,
     ) -> Result<(), BitVMXError> {
         // 1. Send keys and program data (id and config) to counterparty
         // 2. Receive keys from counterparty
@@ -380,7 +380,7 @@ impl BitVMX {
         // 1. Wait for the prekickoff transaction to be confirmed
         // 2. Return true if the transaction is confirmed, false otherwise
 
-        let mut txid = self
+        let txid = self
             .bitcoin
             .send_transaction(deployment_transaction.clone())?;
         while self.bitcoin.get_transaction(&txid)?.is_none() {}
