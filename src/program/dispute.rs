@@ -81,7 +81,6 @@ impl DisputeResolutionProtocol {
         protocol_storage: PathBuf,
         funding: Funding,
         prover: &ParticipantKeys,
-        verifier: &ParticipantKeys,
         search: SearchParams,
     ) -> Result<DisputeResolutionProtocol, ProtocolBuilderError> {
         let ecdsa_sighash_type = SighashType::ecdsa_all();

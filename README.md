@@ -166,9 +166,55 @@ The program is obtained from the [new program output](#new-program)
 Example:
 
 ```bash
-bitvmx » program -i 6a3367ec-5341-447e-abd7-29e9d8dc5b67
+bitvmx » program -i 7899be78-dcfb-4b2b-9f34-2bb48aa75048
 ```
 
+Output will be like
+
+```
++--------------------------------------+--------------------------------------------------------------------+
+| Program (Inactive)                   | Funding tx                                                         |
+| 7899be78-dcfb-4b2b-9f34-2bb48aa75048 | 0db4359e24b446acc0bdeb78a210ecb07eeb708fdfdb4c088a6655c1d8abc4cf:1 |
+|--------------------------------------+--------------------------------------------------------------------|
+| Amounts                              | Funding 100000000                                                  |
+|                                      | Protocol 2450000                                                   |
+|                                      | Timelock 95000000                                                  |
+|                                      | Speedup 2450000                                                    |
+|--------------------------------------+--------------------------------------------------------------------|
+| Prover p2p information               | Address /ip4/127.0.0.1/tcp/61180                                   |
+|                                      | Peer Id 12D3KooWSYPZx6XNGMTqmjVftriFopc5orpEDmVAZQUcVzSUPcux       |
+|--------------------------------------+--------------------------------------------------------------------|
+| Verifier p2p information             | Address /ip4/127.0.0.1/tcp/61181                                   |
+|                                      | Peer Id 12D3KooWCL2CbGe2uHPo5CSPy7SuWSji9RjP18hRwVdvdMFK8uuC       |
+|--------------------------------------+--------------------------------------------------------------------|
+| Common ECDSA keys                    | Internal (Taproot)                                                 |
+|                                      | aa701c613ac50d5aab1f0bdce1e4cef931bd758eb0f5c6e29966497e36f76e25   |
+|                                      |                                                                    |
+|                                      | Protocol                                                           |
+|                                      | 02a4885ddf0910e0208bee0363db51b514f800fe893b9bb4c52aac56a7d71af047 |
+|--------------------------------------+--------------------------------------------------------------------|
+| Prover ECDSA keys                    | Pre-kickoff                                                        |
+|                                      | 021e250b649c3396589a337c2c8a384ca7477264950cd7bd277fe1c5941f3178ee |
+|                                      |                                                                    |
+|                                      | Timelock                                                           |
+|                                      | 0356272fc7b091676973e32a49bea98f49951e389331c04bd866676c0ec78bdb88 |
+|                                      |                                                                    |
+|                                      | Speedup                                                            |
+|                                      | 0235ef3b11b06e91fadd15d9f01ab04d2e751b6f3043273bdff145cdab3a171aba |
+|--------------------------------------+--------------------------------------------------------------------|
+| Prover dispute resolution keys       | Count 10                                                           |
+|                                      | Type HASH160                                                       |
+|--------------------------------------+--------------------------------------------------------------------|
+| Verifier ECDSA keys                  | Timelock                                                           |
+|                                      | None                                                               |
+|                                      |                                                                    |
+|                                      | Speedup                                                            |
+|                                      | None                                                               |
+|--------------------------------------+--------------------------------------------------------------------|
+| Verifier dispute resolution keys     | Count 0                                                            |
+|                                      | Type None                                                          |
++--------------------------------------+--------------------------------------------------------------------+
+```
   
 ## User journey
 

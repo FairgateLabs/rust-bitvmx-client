@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::{config::Config, errors::{BitVMXError, ProgramError}};
 
-use super::{dispute::{DisputeResolutionProtocol, Funding, SearchParams}, participant::{P2PAddress, Participant}};
+use super::{dispute::{DisputeResolutionProtocol, Funding, SearchParams}, participant::{P2PAddress, Participant, ParticipantKeys}};
 
 #[derive(PartialEq, Clone)]
 pub enum ProgramState {
@@ -69,22 +69,24 @@ impl Program {
         let protocol_name = "drp";
         let program_path = config.program_storage_path(id);
         let protocol_storage = program_path.join(protocol_name);
+        let search_params = SearchParams::new(8,32);
 
-        // let drp = DisputeResolutionProtocol::new(
-        //     &protocol_name,
-        //     protocol_storage,
-        //     funding,
-        //     &prover.keys(),
-        //     &verifier.keys(),
-        //     search_params
-        // )?;
+
+
+        let drp = Some(DisputeResolutionProtocol::new(
+            &protocol_name,
+            protocol_storage,
+            funding.clone(),
+            &prover.keys().unwrap(),
+            search_params
+        )?);
 
         Ok(Program {
             id,
             creator: creator.clone(),
             prover,
             verifier,
-            drp: None,
+            drp,
             funding,
             state: ProgramState::Inactive,
             trace: Trace {},
