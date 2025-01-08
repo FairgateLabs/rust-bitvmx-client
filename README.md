@@ -73,6 +73,7 @@ fallbackfee=0.00001
 The client will use default test_wallet, you can add it and check it's information by running
 
 ```bash
+bitcoin-cli create test_wallet
 bitcoin-cli loadwallet test_wallet 
 bitcoin-cli listwallets
 bitcoin-cli getwalletinfo
