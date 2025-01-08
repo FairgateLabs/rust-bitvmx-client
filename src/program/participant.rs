@@ -1,7 +1,7 @@
-use std::fmt;
 use bitcoin::{PublicKey, XOnlyPublicKey};
 use key_manager::winternitz::WinternitzPublicKey;
 use p2p_handler::PeerId;
+use std::fmt;
 
 #[derive(Clone)]
 pub struct Participant {
@@ -11,7 +11,11 @@ pub struct Participant {
 }
 
 impl Participant {
-    pub fn new(role: &ParticipantRole, address: &P2PAddress, keys: Option<ParticipantKeys>) -> Self {
+    pub fn new(
+        role: &ParticipantRole,
+        address: &P2PAddress,
+        keys: Option<ParticipantKeys>,
+    ) -> Self {
         Participant {
             role: role.clone(),
             address: address.clone(),
@@ -37,21 +41,21 @@ impl Participant {
         }
     }
 
-    pub fn speedup_key(&self) -> Option<PublicKey> { 
+    pub fn speedup_key(&self) -> Option<PublicKey> {
         match &self.keys {
             Some(keys) => Some(keys.speedup_key().clone()),
             None => None,
         }
     }
 
-    pub fn protocol_key(&self) -> Option<PublicKey> { 
+    pub fn protocol_key(&self) -> Option<PublicKey> {
         match &self.keys {
             Some(keys) => Some(keys.protocol_key().clone()),
             None => None,
         }
     }
 
-    pub fn internal_key(&self) -> Option<XOnlyPublicKey> { 
+    pub fn internal_key(&self) -> Option<XOnlyPublicKey> {
         match &self.keys {
             Some(keys) => Some(keys.internal_key().clone()),
             None => None,
@@ -135,35 +139,35 @@ impl ParticipantKeys {
             dispute_resolution,
         }
     }
-    
+
     pub fn protocol_key(&self) -> &PublicKey {
         &self.protocol
     }
-    
+
     pub fn internal_key(&self) -> &XOnlyPublicKey {
         &self.internal
     }
-    
+
     pub fn speedup_key(&self) -> &PublicKey {
         &self.speedup
     }
-    
+
     pub fn timelock_key(&self) -> &PublicKey {
         &self.timelock
     }
-    
+
     pub fn prekickoff_key(&self) -> &PublicKey {
         &self.pre_kickoff
     }
-    
+
     pub fn program_ending_state_key(&self) -> &WinternitzPublicKey {
         &self.program_ending_state
     }
-    
+
     pub fn program_ending_step_number_key(&self) -> &WinternitzPublicKey {
         &self.program_ending_step_number
     }
-    
+
     pub fn dispute_resolution_keys(&self) -> &Vec<WinternitzPublicKey> {
         &self.dispute_resolution
     }
@@ -190,12 +194,12 @@ impl P2PAddress {
     pub fn peer_id(&self) -> &PeerId {
         &self.peer_id
     }
-    
+
     pub fn address_bytes(&self) -> Vec<u8> {
         self.address.as_bytes().to_vec().clone()
     }
 
-    pub fn peer_id_bytes(&self)-> Vec<u8>{
+    pub fn peer_id_bytes(&self) -> Vec<u8> {
         self.peer_id.to_string().as_bytes().to_vec().clone()
     }
 

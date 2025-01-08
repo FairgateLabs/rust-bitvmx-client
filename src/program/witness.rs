@@ -3,7 +3,11 @@ use key_manager::winternitz::{self, WinternitzSignature, WinternitzType};
 
 use crate::errors::BitVMXError;
 
-pub fn decode_witness(winternitz_message_sizes: Vec<usize>, winternitz_type: WinternitzType, witness: Witness) -> Result<Vec<WinternitzSignature>, BitVMXError> {
+pub fn decode_witness(
+    winternitz_message_sizes: Vec<usize>,
+    winternitz_type: WinternitzType,
+    witness: Witness,
+) -> Result<Vec<WinternitzSignature>, BitVMXError> {
     let mut signatures = vec![];
 
     for message_size in winternitz_message_sizes.iter() {
@@ -33,10 +37,10 @@ pub fn decode_witness(winternitz_message_sizes: Vec<usize>, winternitz_type: Win
         }
 
         let signature = WinternitzSignature::from_hashes_and_digits(
-            hashes.as_slice(), 
-            digits.as_slice(), 
-            message_digits_len, 
-            winternitz_type
+            hashes.as_slice(),
+            digits.as_slice(),
+            message_digits_len,
+            winternitz_type,
         )?;
 
         signatures.push(signature);

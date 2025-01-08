@@ -4,10 +4,10 @@ use rust_bitvmx_client::client::repl::Repl;
 use tracing::error;
 use tracing_subscriber::EnvFilter;
 
-fn main() -> Result<()>{
+fn main() -> Result<()> {
     let filter = EnvFilter::builder()
-    .parse("info,libp2p=off") // Include everything at "info" except `libp2p`
-    .expect("Invalid filter");
+        .parse("info,libp2p=off") // Include everything at "info" except `libp2p`
+        .expect("Invalid filter");
 
     tracing_subscriber::fmt()
         .without_time()
@@ -20,9 +20,9 @@ fn main() -> Result<()>{
         Err(e) => {
             error!("{:?}", e);
             std::process::exit(1);
-        },
+        }
     };
-    
+
     if let Err(e) = repl.run() {
         error!("{:?}", e);
         std::process::exit(1);
@@ -33,10 +33,12 @@ fn main() -> Result<()>{
 
 fn get_config() -> Option<String> {
     let matches = Command::new("BitVMX client")
-        .arg(Arg::new("configuration")
-            .help("Optional configuration")
-            .index(1)
-        ).get_matches();
+        .arg(
+            Arg::new("configuration")
+                .help("Optional configuration")
+                .index(1),
+        )
+        .get_matches();
 
     let config = if let Some(config) = matches.get_one::<String>("configuration") {
         Some(config.clone())

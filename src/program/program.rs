@@ -4,9 +4,15 @@ use bitcoin::{Transaction, Txid};
 use key_manager::winternitz::WinternitzSignature;
 use uuid::Uuid;
 
-use crate::{config::Config, errors::{BitVMXError, ProgramError}};
+use crate::{
+    config::Config,
+    errors::{BitVMXError, ProgramError},
+};
 
-use super::{dispute::{DisputeResolutionProtocol, Funding, SearchParams}, participant::{P2PAddress, Participant, ParticipantKeys}};
+use super::{
+    dispute::{DisputeResolutionProtocol, Funding, SearchParams},
+    participant::{P2PAddress, Participant, ParticipantKeys},
+};
 
 #[derive(PartialEq, Clone)]
 pub enum ProgramState {
@@ -60,25 +66,29 @@ pub struct Program {
     trace: Trace,
     ending_state: u8,
     ending_step_number: u32,
-    witness_data: HashMap<Txid, WitnessData>
+    witness_data: HashMap<Txid, WitnessData>,
 }
 
 impl Program {
-    pub fn new(creator: &P2PAddress, config: &Config, prover: Participant, verifier: Participant, funding: Funding) -> Result<Self, ProgramError> {
+    pub fn new(
+        creator: &P2PAddress,
+        config: &Config,
+        prover: Participant,
+        verifier: Participant,
+        funding: Funding,
+    ) -> Result<Self, ProgramError> {
         let id = Uuid::new_v4();
         let protocol_name = "drp";
         let program_path = config.program_storage_path(id);
         let protocol_storage = program_path.join(protocol_name);
-        let search_params = SearchParams::new(8,32);
-
-
+        let search_params = SearchParams::new(8, 32);
 
         let drp = Some(DisputeResolutionProtocol::new(
             &protocol_name,
             protocol_storage,
             funding.clone(),
             &prover.keys().unwrap(),
-            search_params
+            search_params,
         )?);
 
         Ok(Program {
@@ -97,11 +107,15 @@ impl Program {
     }
 
     pub fn prekickoff_transaction(&self) -> Result<Transaction, BitVMXError> {
-        self.dispute_resolution_protocol().prekickoff_transaction().map_err(BitVMXError::from)
+        self.dispute_resolution_protocol()
+            .prekickoff_transaction()
+            .map_err(BitVMXError::from)
     }
 
     pub fn kickoff_transaction(&self) -> Result<Transaction, BitVMXError> {
-        self.dispute_resolution_protocol().kickoff_transaction().map_err(BitVMXError::from)
+        self.dispute_resolution_protocol()
+            .kickoff_transaction()
+            .map_err(BitVMXError::from)
     }
 
     pub fn id(&self) -> Uuid {
@@ -151,7 +165,7 @@ impl Program {
             &self.prover()
         } else {
             &self.verifier()
-        }   
+        }
     }
 
     pub fn funding_txid(&self) -> Txid {
@@ -163,7 +177,10 @@ impl Program {
     }
 
     pub fn funding_amount(&self) -> u64 {
-        self.dispute_resolution_protocol().funding().amount().to_sat()
+        self.dispute_resolution_protocol()
+            .funding()
+            .amount()
+            .to_sat()
     }
 
     pub fn protocol_amount(&self) -> u64 {
@@ -187,7 +204,10 @@ impl Program {
     }
 
     pub fn push_witness_value(&mut self, txid: Txid, name: &str, value: WinternitzSignature) {
-        self.witness_data.entry(txid).or_insert(WitnessData::new()).insert(name.to_string(), value);
+        self.witness_data
+            .entry(txid)
+            .or_insert(WitnessData::new())
+            .insert(name.to_string(), value);
     }
 
     pub fn witness(&self, txid: Txid) -> Option<&WitnessData> {
@@ -196,5 +216,4 @@ impl Program {
 }
 
 #[derive(Clone)]
-pub struct Trace {
-}
+pub struct Trace {}

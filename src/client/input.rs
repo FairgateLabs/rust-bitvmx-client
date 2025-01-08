@@ -1,12 +1,12 @@
 use clap::{CommandFactory, Parser, Subcommand};
 use reedline::{DefaultCompleter, Prompt, PromptEditMode, PromptHistorySearch};
 use reedline::{Reedline, Signal};
-use tokio::sync::mpsc::{self, Receiver, Sender};
 use std::borrow::Cow;
-use std::thread;
 use std::process;
+use std::thread;
+use tokio::sync::mpsc::{self, Receiver, Sender};
 
-struct InputPrompt{
+struct InputPrompt {
     prompt: String,
 }
 
@@ -35,7 +35,10 @@ impl Prompt for InputPrompt {
         "::: ".into()
     }
 
-    fn render_prompt_history_search_indicator(&self, _history_search: PromptHistorySearch) -> Cow<str> {
+    fn render_prompt_history_search_indicator(
+        &self,
+        _history_search: PromptHistorySearch,
+    ) -> Cow<str> {
         "(search) ». ".into()
     }
 }
@@ -66,17 +69,17 @@ impl InputLoop {
 
         let commands = self.commands.clone();
         let prompt = self.prompt.to_string();
-    
+
         // Start input thread
         thread::spawn(move || {
             let completer = Box::new(DefaultCompleter::new(commands));
-    
+
             // Create the Reedline editor with the completer
             let mut editor = Reedline::create()
                 .with_completer(completer)
                 .with_quick_completions(true)
                 .with_partial_completions(true);
-    
+
             let prompt = InputPrompt::new(prompt.as_str());
             loop {
                 match editor.read_line(&prompt) {
@@ -87,7 +90,9 @@ impl InputLoop {
 
                         if line.trim().to_lowercase() == "exit" {
                             println!("Exiting...");
-                            input_sender.try_send("exit".to_string()).expect("Unable to send quit command");
+                            input_sender
+                                .try_send("exit".to_string())
+                                .expect("Unable to send quit command");
                             break;
                         }
 
@@ -97,15 +102,19 @@ impl InputLoop {
                     }
                     Ok(Signal::CtrlC) | Ok(Signal::CtrlD) => {
                         println!("Exiting...");
-                        input_sender.try_send("quit".to_string()).expect("Unable to send quit command");
+                        input_sender
+                            .try_send("quit".to_string())
+                            .expect("Unable to send quit command");
                         break;
                     }
                     Err(err) => {
                         println!("Error reading line: {}", err);
                     }
                 }
-    
-                let command_result = input_receiver.blocking_recv().expect("Failed to receive input");
+
+                let command_result = input_receiver
+                    .blocking_recv()
+                    .expect("Failed to receive input");
                 println!("{}", command_result);
             }
         });
@@ -132,7 +141,9 @@ impl InputLoop {
     pub fn write(&self, data: &str) {
         match self.sender {
             Some(ref sender) => {
-                sender.try_send(data.to_string()).expect("Failed to send message");
+                sender
+                    .try_send(data.to_string())
+                    .expect("Failed to send message");
             }
             None => {}
         }

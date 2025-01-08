@@ -41,7 +41,6 @@ pub enum BitVMXError {
 
     // #[error("Failed to create communications key")]
     // CommunicationsKeyGenerationError(#[from] DecodingError),
-
     #[error("Failed to encode P2P data")]
     P2PEncodingError(#[from] P2pHandlerError),
 
@@ -56,12 +55,12 @@ pub enum ConfigError {
 
     #[error("Public key in config is invalid")]
     InvalidPublicKey(#[from] ParsePublicKeyError),
-  
+
     #[error("SighashType in config is invalid")]
     InvalidSighashType(#[from] SighashTypeParseError),
 
     #[error("Winternitz seed is invalid")]
-    InvalidWinternitzSeed,  
+    InvalidWinternitzSeed,
 
     #[error("Key derivation seed is invalid")]
     InvalidKeyDerivationSeed,
@@ -91,49 +90,31 @@ pub enum ProgramError {
 #[derive(Error, Debug)]
 pub enum BitcoinClientError {
     #[error("Failed to fund address")]
-    FailedToFundAddress{
-        error: String
-    },
+    FailedToFundAddress { error: String },
 
     #[error("Failed to send transaction")]
-    FailedToSendTransaction{
-        error: String
-    },
+    FailedToSendTransaction { error: String },
 
     #[error("Failed to create new wallet")]
-    FailedToCreateWallet{
-        error: String
-    },
+    FailedToCreateWallet { error: String },
 
     #[error("Failed to get new address")]
-    FailedToGetNewAddress{
-        error: String
-    },
+    FailedToGetNewAddress { error: String },
 
     #[error("Failed to mine blocks")]
-    FailedToMineBlocks{
-        error: String
-    },
+    FailedToMineBlocks { error: String },
 
     #[error("Failed to get transaction details")]
-    FailedToGetTransactionDetails{
-        error: String
-    },
+    FailedToGetTransactionDetails { error: String },
 
     #[error("Failed to create client")]
-    FailedToCreateClient { 
-        error: String 
-    },
+    FailedToCreateClient { error: String },
 
     #[error("Failed to load wallet")]
-    FailedToLoadWallet{ 
-        error: String 
-    },
+    FailedToLoadWallet { error: String },
 
     #[error("Failed to list wallets")]
-    FailedToListWallets{ 
-        error: String 
-    },
+    FailedToListWallets { error: String },
 }
 
 #[derive(Error, Debug)]

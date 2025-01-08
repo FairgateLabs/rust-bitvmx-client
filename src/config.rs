@@ -2,9 +2,12 @@ use bitcoin::Network;
 use config as settings;
 use key_manager::config::KeyManagerConfig;
 use serde::Deserialize;
+use std::{
+    env,
+    path::{Path, PathBuf},
+};
 use tracing::{info, warn};
 use uuid::Uuid;
-use std::{env, path::{Path, PathBuf}};
 
 use crate::errors::ConfigError;
 
@@ -68,20 +71,21 @@ impl Config {
                 info!("Using config: {}", c);
                 c
             }
-            None => Config::get_env()
+            None => Config::get_env(),
         };
 
         Config::parse_config(env)
     }
 
     fn get_env() -> String {
-        env::var("BITVMX_ENV")
-            .unwrap_or_else(|_| {
-                let default_env = DEFAULT_ENV.to_string();
-                warn!("BITVMX_ENV not set. Using default environment: {}", default_env);
+        env::var("BITVMX_ENV").unwrap_or_else(|_| {
+            let default_env = DEFAULT_ENV.to_string();
+            warn!(
+                "BITVMX_ENV not set. Using default environment: {}",
                 default_env
-            }
-        )
+            );
+            default_env
+        })
     }
 
     fn parse_config(env: String) -> Result<Config, ConfigError> {
@@ -92,12 +96,16 @@ impl Config {
             .build()
             .map_err(ConfigError::ConfigFileError)?;
 
-        settings.try_deserialize::<Config>()
+        settings
+            .try_deserialize::<Config>()
             .map_err(ConfigError::ConfigFileError)
     }
 
     pub fn network(&self) -> Result<Network, ConfigError> {
-        self.bitcoin.network.parse::<Network>().map_err(ConfigError::InvalidNetwork)
+        self.bitcoin
+            .network
+            .parse::<Network>()
+            .map_err(ConfigError::InvalidNetwork)
     }
 
     pub fn key_derivation_path(&self) -> &str {
@@ -114,13 +122,19 @@ impl Config {
     }
 
     pub fn key_derivation_seed(&self) -> Result<[u8; 32], ConfigError> {
-        let bytes = hex::decode(self.key_manager.key_derivation_seed.clone()).map_err(| _ | ConfigError::InvalidKeyDerivationSeed)?;
-        bytes.try_into().map_err(| _ | ConfigError::InvalidKeyDerivationSeed)
+        let bytes = hex::decode(self.key_manager.key_derivation_seed.clone())
+            .map_err(|_| ConfigError::InvalidKeyDerivationSeed)?;
+        bytes
+            .try_into()
+            .map_err(|_| ConfigError::InvalidKeyDerivationSeed)
     }
 
     pub fn winternitz_seed(&self) -> Result<[u8; 32], ConfigError> {
-        let bytes = hex::decode(self.key_manager.winternitz_seed.clone()).map_err(| _ | ConfigError::InvalidWinternitzSeed)?;
-        bytes.try_into().map_err(| _ | ConfigError::InvalidWinternitzSeed)
+        let bytes = hex::decode(self.key_manager.winternitz_seed.clone())
+            .map_err(|_| ConfigError::InvalidWinternitzSeed)?;
+        bytes
+            .try_into()
+            .map_err(|_| ConfigError::InvalidWinternitzSeed)
     }
 
     pub fn bitcoin_rpc_url(&self) -> &str {
