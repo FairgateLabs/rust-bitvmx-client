@@ -5,19 +5,13 @@ use std::fmt;
 
 #[derive(Clone)]
 pub struct Participant {
-    role: ParticipantRole,
     address: P2PAddress,
     keys: Option<ParticipantKeys>,
 }
 
 impl Participant {
-    pub fn new(
-        role: &ParticipantRole,
-        address: &P2PAddress,
-        keys: Option<ParticipantKeys>,
-    ) -> Self {
+    pub fn new(address: &P2PAddress, keys: Option<ParticipantKeys>) -> Self {
         Participant {
-            role: role.clone(),
             address: address.clone(),
             keys,
         }
@@ -76,13 +70,9 @@ impl Participant {
     pub fn set_keys(&mut self, keys: ParticipantKeys) {
         self.keys = Some(keys);
     }
-
-    pub fn role(&self) -> ParticipantRole {
-        self.role.clone()
-    }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum ParticipantRole {
     Prover,
     Verifier,

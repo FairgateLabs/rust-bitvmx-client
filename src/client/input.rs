@@ -1,8 +1,6 @@
-use clap::{CommandFactory, Parser, Subcommand};
 use reedline::{DefaultCompleter, Prompt, PromptEditMode, PromptHistorySearch};
 use reedline::{Reedline, Signal};
 use std::borrow::Cow;
-use std::process;
 use std::thread;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 

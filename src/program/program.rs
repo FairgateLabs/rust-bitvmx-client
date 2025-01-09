@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt};
+use std::{collections::HashMap, fmt, path::PathBuf};
 
 use bitcoin::{Transaction, Txid};
 use key_manager::winternitz::WinternitzSignature;
@@ -11,7 +11,7 @@ use crate::{
 
 use super::{
     dispute::{DisputeResolutionProtocol, Funding, SearchParams},
-    participant::{P2PAddress, Participant, ParticipantKeys},
+    participant::{Participant, ParticipantKeys, ParticipantRole},
 };
 
 #[derive(PartialEq, Clone)]
@@ -57,53 +57,67 @@ impl WitnessData {
 #[derive(Clone)]
 pub struct Program {
     id: Uuid,
-    creator: P2PAddress,
+    my_role: ParticipantRole,
     prover: Participant,
     verifier: Participant,
     drp: Option<DisputeResolutionProtocol>,
     funding: Funding,
     state: ProgramState,
-    trace: Trace,
-    ending_state: u8,
-    ending_step_number: u32,
+    _trace: Trace,
+    _ending_state: u8,
+    _ending_step_number: u32,
     witness_data: HashMap<Txid, WitnessData>,
+    protocol_storage: PathBuf,
 }
 
 impl Program {
     pub fn new(
-        creator: &P2PAddress,
         config: &Config,
+        id: Uuid,
+        my_role: ParticipantRole,
         prover: Participant,
         verifier: Participant,
         funding: Funding,
     ) -> Result<Self, ProgramError> {
-        let id = Uuid::new_v4();
         let protocol_name = "drp";
         let program_path = config.program_storage_path(id);
         let protocol_storage = program_path.join(protocol_name);
-        let search_params = SearchParams::new(8, 32);
-
-        let drp = Some(DisputeResolutionProtocol::new(
-            &protocol_name,
-            protocol_storage,
-            funding.clone(),
-            &prover.keys().unwrap(),
-            search_params,
-        )?);
 
         Ok(Program {
             id,
-            creator: creator.clone(),
+            my_role,
             prover,
             verifier,
-            drp,
+            drp: None,
             funding,
             state: ProgramState::Inactive,
-            trace: Trace {},
-            ending_state: 0,
-            ending_step_number: 0,
+            _trace: Trace {},
+            _ending_state: 0,
+            _ending_step_number: 0,
             witness_data: HashMap::new(),
+            protocol_storage,
         })
+    }
+
+    pub fn setup_counterparty_keys(&mut self, keys: ParticipantKeys) -> Result<(), BitVMXError> {
+        match self.my_role {
+            ParticipantRole::Prover => self.verifier.set_keys(keys),
+            ParticipantRole::Verifier => self.prover.set_keys(keys),
+        }
+
+        let search_params = SearchParams::new(8, 32);
+
+        let drp = DisputeResolutionProtocol::new(
+            "drp",
+            self.protocol_storage.clone(),
+            self.funding.clone(),
+            &self.prover.keys().unwrap(),
+            &self.verifier.keys().unwrap(),
+            search_params,
+        )?;
+
+        self.drp = Some(drp);
+        Ok(())
     }
 
     pub fn prekickoff_transaction(&self) -> Result<Transaction, BitVMXError> {
@@ -158,14 +172,6 @@ impl Program {
 
     pub fn state(&self) -> &ProgramState {
         &self.state
-    }
-
-    pub fn creator(&self) -> &Participant {
-        if *self.prover().address() == self.creator {
-            &self.prover()
-        } else {
-            &self.verifier()
-        }
     }
 
     pub fn funding_txid(&self) -> Txid {

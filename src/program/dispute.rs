@@ -13,15 +13,15 @@ use protocol_builder::{
 
 use super::participant::ParticipantKeys;
 pub struct SearchParams {
-    search_intervals: u8,
-    max_steps: u32,
+    _search_intervals: u8,
+    _max_steps: u32,
 }
 
 impl SearchParams {
     pub fn new(search_intervals: u8, max_steps: u32) -> Self {
         Self {
-            search_intervals,
-            max_steps,
+            _search_intervals: search_intervals,
+            _max_steps: max_steps,
         }
     }
 }
@@ -96,7 +96,8 @@ impl DisputeResolutionProtocol {
         protocol_storage: PathBuf,
         funding: Funding,
         prover: &ParticipantKeys,
-        search: SearchParams,
+        _verifier: &ParticipantKeys,
+        _search: SearchParams,
     ) -> Result<DisputeResolutionProtocol, ProtocolBuilderError> {
         let ecdsa_sighash_type = SighashType::ecdsa_all();
         let tr_sighash_type = SighashType::taproot_all();

@@ -26,6 +26,9 @@ pub struct Menu {
 enum Commands {
     AddFunds,
     NewProgram {
+        #[arg(value_name = "id", short = 'i', value_parser=clap::value_parser!(Uuid), long = "id")]
+        id: Uuid,
+
         #[arg(value_name = "role", short = 'r', value_parser=clap::value_parser!(Role), long = "role")]
         role: Role,
 
@@ -160,18 +163,21 @@ impl Repl {
                     self.add_funds()?;
                 }
                 Commands::NewProgram {
+                    id,
                     role,
                     funding_tx,
                     peer_address,
                     peer_id,
                 } => {
-                    self.setup_program(role, funding_tx, peer_address, peer_id)?;
+                    self.setup_program(id, role, funding_tx, peer_address, peer_id)?;
                 }
                 Commands::Deploy { program_id } => {
-                    self.deploy_program(program_id)?;
+                    let program_id = Uuid::parse_str(program_id)?;
+                    self.deploy_program(&program_id)?;
                 }
                 Commands::Program { program_id } => {
-                    self.program_details(program_id)?;
+                    let program_id = Uuid::parse_str(program_id)?;
+                    self.program_details(&program_id)?;
                 }
                 Commands::PeerId => {
                     self.input
@@ -201,6 +207,7 @@ impl Repl {
 
     fn setup_program(
         &mut self,
+        id: &Uuid,
         role: &Role,
         funding: &String,
         peer_address: &String,
@@ -208,29 +215,27 @@ impl Repl {
     ) -> Result<()> {
         let peer_address = P2PAddress::new(peer_address, PeerId::from_str(peer_id)?);
 
-        let program_id = self.bitvmx.setup_program(
+        self.bitvmx.setup_program(
+            id,
             role.clone().into(),
             OutPoint::from_str(funding)?,
             &peer_address,
         )?;
 
         // self.program_details(&program_id.to_string())?;
-        self.input
-            .write(&format!("Setup program with id: {}", program_id)); //TODO: this is necessary to flush terminal
+        self.input.write(&format!("Setup program with id: {}", id)); //TODO: this is necessary to flush terminal
 
         Ok(())
     }
 
-    fn deploy_program(&mut self, program_id: &str) -> Result<()> {
-        let program_id = Uuid::parse_str(program_id)?;
+    fn deploy_program(&mut self, program_id: &Uuid) -> Result<()> {
         self.bitvmx.deploy_program(program_id)?;
 
-        self.program_details(&program_id.to_string())?;
+        self.program_details(program_id)?;
         Ok(())
     }
 
-    fn program_details(&self, program_id: &str) -> Result<()> {
-        let program_id = Uuid::parse_str(program_id)?;
+    fn program_details(&self, program_id: &Uuid) -> Result<()> {
         let program = self.bitvmx.program(program_id)?;
         let prover = program.prover();
         let verifier = program.verifier();
