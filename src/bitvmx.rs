@@ -68,10 +68,10 @@ impl BitVMX {
         peer_address: &P2PAddress,
     ) -> Result<ParticipantKeys, BitVMXError> {
         //TOOD: Make prover dial the verifier (really this should go away and only send_message remain)
-        if role == ParticipantRole::Prover {
-            self.comms
-                .dial(*peer_address.peer_id(), peer_address.address().to_string())?;
-        }
+        // if role == ParticipantRole::Prover {
+        //     self.comms
+        //         .dial(*peer_address.peer_id(), peer_address.address().to_string())?;
+        // }
 
         // Generate my keys.
         let keys = self.generate_keys(&role)?;
