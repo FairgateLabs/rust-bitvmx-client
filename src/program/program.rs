@@ -111,8 +111,8 @@ impl Program {
             "drp",
             self.protocol_storage.clone(),
             self.funding.clone(),
-            &self.prover.keys().unwrap(),
-            &self.verifier.keys().unwrap(),
+            &self.prover.keys().as_ref().unwrap(),
+            &self.verifier.keys().as_ref().unwrap(),
             search_params,
         )?;
 

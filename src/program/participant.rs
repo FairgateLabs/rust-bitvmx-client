@@ -21,6 +21,11 @@ impl Participant {
         &self.address
     }
 
+    pub fn keys(&self) -> &Option<ParticipantKeys> {
+        &self.keys
+    }
+
+    /* CHECK: Is this function necessary ?
     pub fn prekickoff_key(&self) -> Option<PublicKey> {
         match &self.keys {
             Some(keys) => Some(keys.prekickoff_key().clone()),
@@ -65,7 +70,7 @@ impl Participant {
 
     pub fn keys(&self) -> Option<ParticipantKeys> {
         self.keys.clone()
-    }
+    }*/
 
     pub fn set_keys(&mut self, keys: ParticipantKeys) {
         self.keys = Some(keys);

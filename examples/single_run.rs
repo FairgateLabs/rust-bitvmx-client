@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use anyhow::Result;
-use bitcoin::OutPoint;
+use bitcoin::{OutPoint, PublicKey};
 use bitvmx_client::{
     bitvmx::BitVMX,
     config::Config,
@@ -25,19 +25,22 @@ fn config_trace() {
 
 type FundingAddress = String;
 
-fn init_bitvmx(role: &str) -> Result<(BitVMX, FundingAddress, P2PAddress)> {
+fn init_bitvmx(role: &str) -> Result<(BitVMX, FundingAddress, PublicKey, P2PAddress)> {
     let config = Config::new(Some(role.to_string()))?;
     let mut bitvmx = BitVMX::new(&config)?;
+    //TODO: Pre-kickoff only prover ?? make independent ??
     let funds = bitvmx.add_funds()?;
     let address = P2PAddress::new(&bitvmx.address(), PeerId::from_str(&bitvmx.peer_id())?);
-    Ok((bitvmx, format!("{}:{}", funds.0, funds.1), address))
+    Ok((bitvmx, format!("{}:{}", funds.0, funds.1), funds.2, address))
 }
 
 pub fn main() -> Result<()> {
     config_trace();
 
-    let (mut prover_bitvmx, prover_funds, prover_address) = init_bitvmx("prover")?;
-    let (mut verifier_bitvmx, verifier_funds, verifier_address) = init_bitvmx("verifier")?;
+    let (mut prover_bitvmx, prover_funds, prover_pre_pub_key, prover_address) =
+        init_bitvmx("prover")?;
+    let (mut verifier_bitvmx, verifier_funds, verifier_pre_pub_key, verifier_address) =
+        init_bitvmx("verifier")?;
 
     let id = Uuid::new_v4();
 
@@ -45,6 +48,7 @@ pub fn main() -> Result<()> {
         &id,
         ParticipantRole::Prover,
         OutPoint::from_str(&prover_funds)?,
+        &prover_pre_pub_key,
         &verifier_address,
     )?;
 
@@ -52,6 +56,7 @@ pub fn main() -> Result<()> {
         &id,
         ParticipantRole::Verifier,
         OutPoint::from_str(&verifier_funds)?,
+        &verifier_pre_pub_key,
         &prover_address,
     )?;
 
