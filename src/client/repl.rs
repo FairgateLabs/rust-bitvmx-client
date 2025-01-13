@@ -152,7 +152,8 @@ impl Repl {
     }
 
     fn process_bitcoin_updates(&mut self) -> bool {
-        self.bitvmx.process_bitcoin_updates()
+        // TODO: handle error?
+        self.bitvmx.process_bitcoin_updates().unwrap()
     }
 
     fn execute(&mut self, args: Vec<String>) -> Result<bool> {

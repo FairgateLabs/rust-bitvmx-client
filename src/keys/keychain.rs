@@ -13,7 +13,7 @@ use protocol_builder::{
 use crate::{config::Config, errors::BitVMXError, program::program::Program};
 
 pub struct KeyChain {
-    key_manager: KeyManager<DatabaseKeyStore>,
+    pub key_manager: KeyManager<DatabaseKeyStore>,
     communications_key: Keypair,
     ecdsa_index: KeyIndex,
     winternitz_index: KeyIndex,

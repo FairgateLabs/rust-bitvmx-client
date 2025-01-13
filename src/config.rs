@@ -1,4 +1,5 @@
 use bitcoin::Network;
+use bitvmx_orchestrator::config::MonitorConfig;
 use config as settings;
 use key_manager::config::KeyManagerConfig;
 use serde::Deserialize;
@@ -62,6 +63,7 @@ pub struct Config {
     pub storage: StorageConfig,
     pub p2p: P2PConfig,
     pub cli: CliConfig,
+    pub monitor: MonitorConfig,
 }
 
 impl Config {
