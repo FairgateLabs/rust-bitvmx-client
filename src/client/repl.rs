@@ -35,6 +35,9 @@ enum Commands {
         #[arg(value_name = "funding", short = 'f', long = "funding")]
         funding_tx: String,
 
+        #[arg(value_name = "prekickoff", short = 'k', long = "prekickoff")]
+        pre_kickoff: String,
+
         #[arg(value_name = "peer_address", short = 'a', long = "peer_address")]
         peer_address: String,
 
@@ -166,10 +169,11 @@ impl Repl {
                     id,
                     role,
                     funding_tx,
+                    pre_kickoff,
                     peer_address,
                     peer_id,
                 } => {
-                    self.setup_program(id, role, funding_tx, peer_address, peer_id)?;
+                    self.setup_program(id, role, funding_tx, pre_kickoff, peer_address, peer_id)?;
                 }
                 Commands::Deploy { program_id } => {
                     let program_id = Uuid::parse_str(program_id)?;
@@ -197,10 +201,10 @@ impl Repl {
     }
 
     fn add_funds(&mut self) -> Result<()> {
-        let (txid, vout) = self.bitvmx.add_funds()?;
+        let (txid, vout, pk) = self.bitvmx.add_funds()?;
         self.input.write(&format!(
-            "Funds added, funding outpoint is: {}:{}",
-            txid, vout
+            "Funds added, funding outpoint is: {}:{} with pk: {}",
+            txid, vout, pk
         ));
         Ok(())
     }
@@ -210,6 +214,7 @@ impl Repl {
         id: &Uuid,
         role: &Role,
         funding: &String,
+        pre_kickoff: &String,
         peer_address: &String,
         peer_id: &String,
     ) -> Result<()> {
@@ -219,6 +224,7 @@ impl Repl {
             id,
             role.clone().into(),
             OutPoint::from_str(funding)?,
+            &PublicKey::from_str(&pre_kickoff)?,
             &peer_address,
         )?;
 
@@ -241,9 +247,13 @@ impl Repl {
         let verifier = program.verifier();
 
         let (prover_drp_size, prover_drp_type) =
-            fmt_option_winternitz_pks(prover.dispute_resolution_keys());
-        let (verifier_drp_size, verifier_drp_type) =
-            fmt_option_winternitz_pks(verifier.dispute_resolution_keys());
+            fmt_option_winternitz_pks(prover.keys().as_ref().map(|k| k.dispute_resolution_keys()));
+        let (verifier_drp_size, verifier_drp_type) = fmt_option_winternitz_pks(
+            verifier
+                .keys()
+                .as_ref()
+                .map(|k| k.dispute_resolution_keys()),
+        );
 
         let mut table = Table::new();
         table
@@ -289,8 +299,8 @@ impl Repl {
                 "Common ECDSA keys",
                 format!(
                     "Internal (Taproot)\n{}\n\nProtocol\n{}",
-                    fmt_option_xonly_pk(prover.internal_key()),
-                    fmt_option_pk(prover.protocol_key()),
+                    fmt_option_xonly_pk(prover.keys().as_ref().map(|k| k.internal_key())),
+                    fmt_option_pk(prover.keys().as_ref().map(|k| k.protocol_key())),
                 )
                 .as_str(),
             ])
@@ -298,9 +308,9 @@ impl Repl {
                 "Prover ECDSA keys",
                 format!(
                     "Pre-kickoff\n{}\n\nTimelock\n{}\n\nSpeedup\n{}",
-                    fmt_option_pk(prover.prekickoff_key()),
-                    fmt_option_pk(prover.timelock_key()),
-                    fmt_option_pk(prover.speedup_key()),
+                    fmt_option_pk(prover.keys().as_ref().map(|k| k.prekickoff_key())),
+                    fmt_option_pk(prover.keys().as_ref().map(|k| k.timelock_key())),
+                    fmt_option_pk(prover.keys().as_ref().map(|k| k.speedup_key())),
                 )
                 .as_str(),
             ])
@@ -312,8 +322,8 @@ impl Repl {
                 "Verifier ECDSA keys",
                 format!(
                     "Timelock\n{}\n\nSpeedup\n{}",
-                    fmt_option_pk(verifier.timelock_key()),
-                    fmt_option_pk(verifier.speedup_key()),
+                    fmt_option_pk(verifier.keys().as_ref().map(|k| k.timelock_key())),
+                    fmt_option_pk(verifier.keys().as_ref().map(|k| k.speedup_key())),
                 )
                 .as_str(),
             ])
@@ -327,21 +337,21 @@ impl Repl {
     }
 }
 
-fn fmt_option_pk(key: Option<PublicKey>) -> String {
+fn fmt_option_pk(key: Option<&PublicKey>) -> String {
     match key {
         Some(key) => key.to_string(),
         None => "None".to_string(),
     }
 }
 
-fn fmt_option_xonly_pk(key: Option<XOnlyPublicKey>) -> String {
+fn fmt_option_xonly_pk(key: Option<&XOnlyPublicKey>) -> String {
     match key {
         Some(key) => key.to_string(),
         None => "None".to_string(),
     }
 }
 
-fn fmt_option_winternitz_pks(keys: Option<Vec<WinternitzPublicKey>>) -> (usize, String) {
+fn fmt_option_winternitz_pks(keys: Option<&Vec<WinternitzPublicKey>>) -> (usize, String) {
     match keys {
         Some(keys) => {
             if keys.len() == 0 {

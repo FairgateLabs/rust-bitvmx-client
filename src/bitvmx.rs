@@ -10,6 +10,7 @@ use crate::{
         witness,
     },
 };
+use bitcoin::PublicKey;
 use bitcoin::{Amount, OutPoint, Transaction, Txid};
 use key_manager::winternitz;
 use p2p_handler::{LocalAllowList, P2pHandler};
@@ -48,16 +49,15 @@ impl BitVMX {
         })
     }
 
-    pub fn add_funds(&mut self) -> Result<(Txid, u32), BitVMXError> {
+    pub fn add_funds(&mut self) -> Result<(Txid, u32, PublicKey), BitVMXError> {
         let one_btc = 100_000_000;
-        let current_index = self.key_chain.ecdsa_index();
-        let funding_key = self.key_chain.derive_keypair_with_index(current_index)?;
+        let funding_key = self.key_chain.derive_keypair()?;
         let funding_address = self.bitcoin.get_new_address(funding_key);
 
         let (tx, vout) = self
             .bitcoin
             .fund_address(&funding_address, Amount::from_sat(one_btc))?;
-        Ok((tx.compute_txid(), vout))
+        Ok((tx.compute_txid(), vout, funding_key))
     }
 
     pub fn setup_program(
@@ -65,6 +65,7 @@ impl BitVMX {
         id: &Uuid,
         role: ParticipantRole,
         outpoint: OutPoint,
+        pre_kickoff: &PublicKey,
         peer_address: &P2PAddress,
     ) -> Result<ParticipantKeys, BitVMXError> {
         //TOOD: Make prover dial the verifier (really this should go away and only send_message remain)
@@ -74,7 +75,7 @@ impl BitVMX {
         // }
 
         // Generate my keys.
-        let keys = self.generate_keys(&role)?;
+        let keys = self.generate_keys(pre_kickoff, &role)?;
 
         // Create a participant that represents me with the specified role (Prover or Verifier).
         let me = Participant::new(
@@ -313,12 +314,15 @@ impl BitVMX {
         Ok(bitcoin)
     }
 
-    fn generate_keys(&mut self, _role: &ParticipantRole) -> Result<ParticipantKeys, BitVMXError> {
+    fn generate_keys(
+        &mut self,
+        pre_kickoff: &PublicKey,
+        _role: &ParticipantRole,
+    ) -> Result<ParticipantKeys, BitVMXError> {
         //TODO: define which keys are generated for each role
         let message_size = 2;
         let one_time_keys_count = 10;
 
-        let pre_kickoff = self.key_chain.derive_keypair()?;
         let protocol = self.key_chain.derive_keypair()?;
         let speedup = self.key_chain.derive_keypair()?;
         let timelock = self.key_chain.derive_keypair()?;
@@ -330,7 +334,7 @@ impl BitVMX {
             .derive_winternitz_hash160_keys(message_size, one_time_keys_count)?;
 
         let keys = ParticipantKeys::new(
-            pre_kickoff,
+            *pre_kickoff,
             internal,
             protocol,
             speedup,

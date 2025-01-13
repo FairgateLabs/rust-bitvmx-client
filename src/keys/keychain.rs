@@ -58,11 +58,12 @@ impl KeyChain {
             .map_err(BitVMXError::from)
     }
 
+    /* //CHECK: Is this function necessary ?
     pub fn derive_keypair_with_index(&mut self, index: u32) -> Result<PublicKey, BitVMXError> {
         self.key_manager
             .derive_keypair(index)
             .map_err(BitVMXError::from)
-    }
+    }*/
 
     pub fn derive_winternitz_hash160(
         &mut self,
@@ -154,13 +155,14 @@ impl KeyChain {
         Ok(())
     }
 
-    pub fn ecdsa_index(&self) -> u32 {
+    //CHECK: Commenting to avoid miss use of internal state
+    /*pub fn ecdsa_index(&self) -> u32 {
         self.ecdsa_index.index
     }
 
     pub fn winternitz_index(&self) -> u32 {
         self.winternitz_index.index
-    }
+    }*/
 
     fn derive_winternitz_keys(
         &mut self,
