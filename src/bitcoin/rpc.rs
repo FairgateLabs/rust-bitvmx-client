@@ -6,8 +6,8 @@ use bitcoincore_rpc::{Auth, Client, RpcApi};
 use crate::errors::BitcoinClientError;
 
 pub struct BitcoinClient {
-    network: Network,
-    client: Client,
+    pub network: Network,
+    pub client: Client,
     wallet_address: Address,
 }
 

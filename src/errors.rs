@@ -46,6 +46,9 @@ pub enum BitVMXError {
 
     #[error("Failed to use P2P layer")]
     P2PCommunicationError,
+
+    #[error("Failed to use Orchestrator")]
+    OrchestratorError(String),
 }
 
 #[derive(Error, Debug)]

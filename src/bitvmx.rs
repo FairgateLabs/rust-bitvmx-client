@@ -12,9 +12,11 @@ use crate::{
 };
 use bitcoin::PublicKey;
 use bitcoin::{Amount, OutPoint, Transaction, Txid};
+use bitvmx_orchestrator::{orchestrator::{Orchestrator, OrchestratorApi}, types::OrchestratorType};
 use key_manager::winternitz;
 use p2p_handler::{LocalAllowList, P2pHandler};
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf, rc::Rc};
+use storage_backend::storage::Storage;
 use tracing::info;
 use uuid::Uuid;
 
@@ -24,20 +26,34 @@ pub struct BitVMX {
     comms: P2pHandler,
     key_chain: KeyChain,
     programs: HashMap<Uuid, Program>,
-    // blockchain: Orchestrator<>
+    orchestrator: OrchestratorType,
 }
 
 impl BitVMX {
     pub fn new(config: &Config) -> Result<Self, BitVMXError> {
         let bitcoin = Self::new_bitcoin_client(config)?;
         let keys = KeyChain::new(&config)?;
+        let keys_copy = KeyChain::new(&config)?;
         let communications_key = keys.communications_key();
         //let comms = P2PComms::new(&config, communications_key)?;
         let comms = P2pHandler::new::<LocalAllowList>(
             config.p2p_address().to_string(),
             communications_key,
         )?;
-        //let blockchain = new_orchestrator()?;
+
+        let storage = Rc::new(Storage::new_with_path(&PathBuf::from(config.storage.db.clone())).unwrap());
+        let orchestrator = Orchestrator::new_with_paths(
+            config.bitcoin_rpc_url(),
+            bitcoin.client,
+            storage,
+            config.monitor.checkpoint_height,
+            config.monitor.confirmation_threshold,
+            keys_copy.key_manager,
+            bitcoin.network,
+        ).unwrap();
+
+
+        let bitcoin = Self::new_bitcoin_client(config)?;
 
         Ok(Self {
             config: (*config).clone(),
@@ -45,7 +61,7 @@ impl BitVMX {
             comms,
             key_chain: keys,
             programs: HashMap::new(),
-            //  blockchain,
+            orchestrator,
         })
     }
 
@@ -426,26 +442,16 @@ impl BitVMX {
         false
     }
 
-    pub fn process_bitcoin_updates(&self) -> bool {
-        // Pseudo code, this code needs to be in Bitvmx in the method read_bitcoin_updates()
-        // self.blockchain.tick();
-        // let news = self.blockchain.get_news();
+    pub fn process_bitcoin_updates(&mut self) -> Result<bool, BitVMXError> {
 
-        // // process news
+        let is_ready = self.orchestrator.is_ready().map_err(|e| BitVMXError::OrchestratorError(e.to_string()))?;
+        
+        if !is_ready {
+            self.orchestrator.tick().map_err(|e| BitVMXError::OrchestratorError(e.to_string()))?;
+        }
 
-        // self.blockchain.acknowledge(ProcessedNews {
-        //     txs_by_id: vec![],
-        //     txs_by_address: vec![],
-        //     funds_requests: vec![],
-        // });
-
-        // we will use the Orchestrator struct
-        // to check if monitor is ready: is_ready(&mut self) -> Result<bool>;
-        // to trigger an step in the monitor: tick(&mut self) -> Result<()>;
-        // to monitor transactions: monitor_instance(&self, instance: &BitvmxInstance<TransactionPartialInfo>)
-        // to monitor transactions to a particular address: monitor_address(&self, address: Address) -> Result<()>
-        // to send transactions: send_tx_instance(&self, instance_id: InstanceId, tx: &Transaction) -> Result<()>
-
-        false
+        let _news = self.orchestrator.get_news().map_err(|e| BitVMXError::OrchestratorError(e.to_string()))?;
+        
+        Ok(true)
     }
 }
