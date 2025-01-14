@@ -1,0 +1,177 @@
+name: 'Test action'
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'
+  cancel-in-progress: true
+
+jobs:
+  test:
+    if: ${{ !contains(github.event.pull_request.title, '[cov]') }}
+    runs-on: ubuntu-latest
+    steps:    
+    - name: Set up Git credentials
+      run: |
+        git config --global url."https://${{ secrets.REPO_ACCESS_TOKEN }}:x-oauth-basic@github.com/FairgateLabs/".insteadOf "https://github.com/FairgateLabs/"
+
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Clone bitcoin script
+      run: |        
+        git clone --branch bitvmx https://github.com/FairgateLabs/rust-bitcoin-script/
+    
+    - name: Clone bitcoin scriptexec
+      run: |        
+        git clone --branch bitvmx https://github.com/FairgateLabs/rust-bitcoin-scriptexec/
+    
+    - name: Clone rust-bitvmx-key-manager
+      run: |
+        cd ..
+        git clone https://github.com/FairgateLabs/rust-bitvmx-key-manager.git
+
+    - name: Clone rust-bitvmx-protocol-builder
+      run: |
+        cd ..
+        git clone https://github.com/FairgateLabs/rust-bitvmx-protocol-builder.git
+    
+    - name: Clone rust-bitvmx-orchestrator
+      run: |
+        cd ..
+        git clone https://github.com/FairgateLabs/rust-bitvmx-orchestrator.git
+
+    - name: Clone rust-p2p-handler
+      run: |
+        cd ..
+        git clone https://github.com/FairgateLabs/rust-p2p-handler.git
+    
+    - name: Clone rust-bitvmx-storage-backend
+      run: |
+        cd ..
+        git clone https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git
+
+    - name: Clone rust-bitvmx-transaction-dispatcher
+      run: |
+        cd ..
+        git clone https://github.com/FairgateLabs/rust-bitvmx-transaction-dispatcher.git
+    
+    - name: Clone rust-bitvmx-transaction-monitor
+      run: |
+        cd ..
+        git clone https://github.com/FairgateLabs/rust-bitvmx-transaction-monitor.git
+    
+    - name: Clone rust-p2p-protocol
+      run: |
+        cd ..
+        git clone https://github.com/FairgateLabs/rust-p2p-protocol.git
+
+    - name: Clone rust-bitcoin-indexer
+      run: |
+        cd ..
+        git clone https://github.com/FairgateLabs/rust-bitcoin-indexer.git
+
+    - name: Build project
+      run: cargo build --verbose
+
+    - name: Run tests
+      run: cargo test --verbose
+
+  test-with-coverage:
+    if: ${{ contains(github.event.pull_request.title, '[cov]') }}
+    runs-on: ubuntu-latest
+
+    permissions:
+        contents: write
+        pull-requests: write
+        repository-projects: write
+
+    steps:
+    - name: Set up Git credentials for key manager
+      run: |
+        git config --global url."https://${{ secrets.REPO_ACCESS_TOKEN }}:x-oauth-basic@github.com/FairgateLabs/".insteadOf "https://github.com/FairgateLabs/"
+
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Clone bitcoin script
+      run: |        
+        git clone --branch bitvmx https://github.com/FairgateLabs/rust-bitcoin-script/
+    
+    - name: Clone bitcoin scriptexec
+      run: |        
+        git clone --branch bitvmx https://github.com/FairgateLabs/rust-bitcoin-scriptexec/
+    
+    - name: Clone rust-bitvmx-key-manager
+      run: |
+        cd ..
+        git clone https://github.com/FairgateLabs/rust-bitvmx-key-manager.git
+
+    - name: Clone rust-bitvmx-protocol-builder
+      run: |
+        cd ..
+        git clone https://github.com/FairgateLabs/rust-bitvmx-protocol-builder.git
+    
+    - name: Clone rust-bitvmx-orchestrator
+      run: |
+        cd ..
+        git clone https://github.com/FairgateLabs/rust-bitvmx-orchestrator.git
+
+    - name: Clone rust-p2p-handler
+      run: |
+        cd ..
+        git clone https://github.com/FairgateLabs/rust-p2p-handler.git
+    
+    - name: Clone rust-bitvmx-storage-backend
+      run: |
+        cd ..
+        git clone https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git
+
+    - name: Clone rust-bitvmx-transaction-dispatcher
+      run: |
+        cd ..
+        git clone https://github.com/FairgateLabs/rust-bitvmx-transaction-dispatcher.git
+    
+    - name: Clone rust-bitvmx-transaction-monitor
+      run: |
+        cd ..
+        git clone https://github.com/FairgateLabs/rust-bitvmx-transaction-monitor.git
+    
+    - name: Clone rust-p2p-protocol
+      run: |
+        cd ..
+        git clone https://github.com/FairgateLabs/rust-p2p-protocol.git
+
+    - name: Clone rust-bitcoin-indexer
+      run: |
+        cd ..
+        git clone https://github.com/FairgateLabs/rust-bitcoin-indexer.git
+
+    - name: Run cargo-tarpaulin
+      uses: actions-rs/tarpaulin@v0.1
+      with:
+        version: '0.15.0'
+        args: '--out Xml --output-dir resources --exclude-files rust-bitvmx-storage-backend/* rust-bitcoin-indexer/* tests/* src/main.rs src/lib.rs --no-fail-fast'
+
+    - name: Code Coverage Summary Report
+      uses: irongut/CodeCoverageSummary@v1.3.0
+      with:
+        filename: resources/cobertura.xml
+        badge: true
+        format: markdown
+        output: both
+      
+    - name: Add Coverage PR Comment
+      uses: marocchino/sticky-pull-request-comment@v2
+      if: github.event_name == 'pull_request'
+      with:
+        ignore_empty: true
+        recreate: true        
+        path: code-coverage-results.md  
