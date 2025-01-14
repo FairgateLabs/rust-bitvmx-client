@@ -12,7 +12,10 @@ use crate::{
 };
 use bitcoin::PublicKey;
 use bitcoin::{Amount, OutPoint, Transaction, Txid};
-use bitvmx_orchestrator::{orchestrator::{Orchestrator, OrchestratorApi}, types::OrchestratorType};
+/*use bitvmx_orchestrator::{
+    orchestrator::{Orchestrator, OrchestratorApi},
+    types::OrchestratorType,
+};*/
 use key_manager::winternitz;
 use p2p_handler::{LocalAllowList, P2pHandler};
 use std::{collections::HashMap, path::PathBuf, rc::Rc};
@@ -26,14 +29,13 @@ pub struct BitVMX {
     comms: P2pHandler,
     key_chain: KeyChain,
     programs: HashMap<Uuid, Program>,
-    orchestrator: OrchestratorType,
+    //orchestrator: OrchestratorType,
 }
 
 impl BitVMX {
     pub fn new(config: &Config) -> Result<Self, BitVMXError> {
         let bitcoin = Self::new_bitcoin_client(config)?;
         let keys = KeyChain::new(&config)?;
-        let keys_copy = KeyChain::new(&config)?;
         let communications_key = keys.communications_key();
         //let comms = P2PComms::new(&config, communications_key)?;
         let comms = P2pHandler::new::<LocalAllowList>(
@@ -41,8 +43,10 @@ impl BitVMX {
             communications_key,
         )?;
 
-        let storage = Rc::new(Storage::new_with_path(&PathBuf::from(config.storage.db.clone())).unwrap());
-        let orchestrator = Orchestrator::new_with_paths(
+        //let db_path = format!("orchestrator_{}", config.storage.db.clone());
+        //let storage = Rc::new(Storage::new_with_path(&PathBuf::from(db_path)).unwrap());
+
+        /*let orchestrator = Orchestrator::new_with_paths(
             config.bitcoin_rpc_url(),
             bitcoin.client,
             storage,
@@ -50,8 +54,8 @@ impl BitVMX {
             config.monitor.confirmation_threshold,
             keys_copy.key_manager,
             bitcoin.network,
-        ).unwrap();
-
+        )
+        .unwrap();*/
 
         let bitcoin = Self::new_bitcoin_client(config)?;
 
@@ -61,7 +65,7 @@ impl BitVMX {
             comms,
             key_chain: keys,
             programs: HashMap::new(),
-            orchestrator,
+            //orchestrator,
         })
     }
 
@@ -443,15 +447,24 @@ impl BitVMX {
     }
 
     pub fn process_bitcoin_updates(&mut self) -> Result<bool, BitVMXError> {
+        /*
+            let is_ready = self
+                .orchestrator
+                .is_ready()
+                .map_err(|e| BitVMXError::OrchestratorError(e.to_string()))?;
 
-        let is_ready = self.orchestrator.is_ready().map_err(|e| BitVMXError::OrchestratorError(e.to_string()))?;
-        
-        if !is_ready {
-            self.orchestrator.tick().map_err(|e| BitVMXError::OrchestratorError(e.to_string()))?;
-        }
+            if !is_ready {
+                self.orchestrator
+                    .tick()
+                    .map_err(|e| BitVMXError::OrchestratorError(e.to_string()))?;
+            }
 
-        let _news = self.orchestrator.get_news().map_err(|e| BitVMXError::OrchestratorError(e.to_string()))?;
-        
+            let _news = self
+                .orchestrator
+                .get_news()
+                .map_err(|e| BitVMXError::OrchestratorError(e.to_string()))?;
+
+        */
         Ok(true)
     }
 }

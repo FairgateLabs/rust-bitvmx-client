@@ -22,7 +22,7 @@
         "network": "regtest",
         "key_derivation_path": "m/101/1/0/0/",
         "key_derivation_seed": "beefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdead",
-        "winternitz_seed": "beefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdead" 
+        "winternitz_seed": "beefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdead"
     },
     "storage": {
         "password": "secret_password",
@@ -33,5 +33,9 @@
         "key": "080112406e52d71640c7c226a09da3d4f4299eadd636cb375037e34fcbbe2c8e93577ea82550385621b3f807ba79dc93725f50bca4dc2eee215e95dc9ef863dcfcf4bc1b",
         "peer_id_file": "peer_id",
         "timeout": 5
+    },
+    "monitor": {
+        "checkpoint_height": 764,
+        "confirmation_threshold": 6
     }
 }

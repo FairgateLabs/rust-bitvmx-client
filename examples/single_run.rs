@@ -8,6 +8,7 @@ use bitvmx_client::{
     program::participant::{P2PAddress, ParticipantRole},
 };
 use p2p_handler::PeerId;
+use tracing::info;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
@@ -37,8 +38,10 @@ fn init_bitvmx(role: &str) -> Result<(BitVMX, FundingAddress, PublicKey, P2PAddr
 pub fn main() -> Result<()> {
     config_trace();
 
+    info!("start prover");
     let (mut prover_bitvmx, prover_funds, prover_pre_pub_key, prover_address) =
         init_bitvmx("prover")?;
+    info!("start verifier");
     let (mut verifier_bitvmx, verifier_funds, verifier_pre_pub_key, verifier_address) =
         init_bitvmx("verifier")?;
 
