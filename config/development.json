@@ -1,7 +1,6 @@
 {
     "cli": {
-        "root": "/tmp/bitvmx",
-        "program_home": "programs"
+        "root": "/tmp/bitvmx"
     },
     "bitcoin": {
         "network": "regtest",

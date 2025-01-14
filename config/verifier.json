@@ -1,7 +1,6 @@
 {
     "cli": {
-        "root": "/tmp/verifier",
-        "program_home": "programs"
+        "root": "/tmp/verifier"
     },
     "bitcoin": {
         "network": "regtest",

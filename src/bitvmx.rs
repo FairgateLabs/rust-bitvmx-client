@@ -33,11 +33,10 @@ pub struct BitVMX {
 }
 
 impl BitVMX {
-    pub fn new(config: &Config) -> Result<Self, BitVMXError> {
-        let bitcoin = Self::new_bitcoin_client(config)?;
+    pub fn new(config: Config) -> Result<Self, BitVMXError> {
+        let bitcoin = Self::new_bitcoin_client(&config)?;
         let keys = KeyChain::new(&config)?;
         let communications_key = keys.communications_key();
-        //let comms = P2PComms::new(&config, communications_key)?;
         let comms = P2pHandler::new::<LocalAllowList>(
             config.p2p_address().to_string(),
             communications_key,
@@ -57,10 +56,8 @@ impl BitVMX {
         )
         .unwrap();*/
 
-        let bitcoin = Self::new_bitcoin_client(config)?;
-
         Ok(Self {
-            config: (*config).clone(),
+            config,
             bitcoin,
             comms,
             key_chain: keys,

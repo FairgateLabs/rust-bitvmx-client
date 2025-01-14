@@ -45,7 +45,6 @@ pub struct P2PConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct CliConfig {
     pub root: String,
-    pub program_home: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -172,17 +171,8 @@ impl Config {
         self.p2p.timeout
     }
 
-    pub fn program_home(&self) -> PathBuf {
-        let root = Path::new(self.cli.root.as_str());
-        root.join(self.cli.program_home.as_str())
-    }
-
     pub fn program_storage_path(&self, program_id: Uuid) -> PathBuf {
-        // let dir = env::temp_dir();
-        // let path = dir.join(program_id.to_string());
-        // std::fs::create_dir_all(&path).map_err(|_| ConfigError::ProtocolStoragePathError(path.to_string_lossy().into_owned()))?;
         let root = Path::new(self.cli.root.as_str());
-        let programs = root.join(self.cli.program_home.as_str());
-        programs.join(program_id.to_string())
+        root.join(program_id.to_string())
     }
 }

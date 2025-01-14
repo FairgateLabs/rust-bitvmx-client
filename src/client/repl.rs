@@ -91,7 +91,7 @@ pub struct Repl {
 impl Repl {
     pub fn new(config: Option<String>) -> Result<Self> {
         let config = Config::new(config)?;
-        let bitvmx = BitVMX::new(&config)?;
+        let bitvmx = BitVMX::new(config)?;
         let input = InputLoop::new(
             "bitvmx ".to_string(),
             vec![
@@ -104,11 +104,6 @@ impl Repl {
             ],
             100,
         );
-
-        let program_home = config.program_home();
-        std::fs::create_dir_all(&program_home).map_err(|_| {
-            ConfigError::ProgramPathError(program_home.to_string_lossy().into_owned())
-        })?;
 
         Ok(Self { bitvmx, input })
     }

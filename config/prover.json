@@ -1,7 +1,6 @@
 {
     "cli": {
-        "root": "/tmp/prover",
-        "program_home": "programs"
+        "root": "/tmp/prover"
     },
     "bitcoin": {
         "network": "regtest",
