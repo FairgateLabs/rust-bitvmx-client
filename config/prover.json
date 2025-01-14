@@ -1,7 +1,4 @@
 {
-    "cli": {
-        "root": "/tmp/prover"
-    },
     "bitcoin": {
         "network": "regtest",
         "url": "http://127.0.0.1:18443",
@@ -25,7 +22,9 @@
     },
     "storage": {
         "password": "secret_password",
-        "db": "keys.db"
+        "key_store_db": "/tmp/prover/keys.db",
+        "db": "/tmp/prover/storage.db",
+        "program": "/tmp/prover/"
     },
     "p2p": {
         "address": "/ip4/127.0.0.1/tcp/61180",

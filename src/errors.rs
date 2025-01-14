@@ -4,6 +4,7 @@ use config as settings;
 use key_manager::errors::{KeyManagerError, KeyStoreError, WinternitzError};
 use p2p_handler::P2pHandlerError;
 use protocol_builder::errors::{ProtocolBuilderError, UnspendableKeyError};
+use storage_backend::error::StorageError;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -26,6 +27,9 @@ pub enum BitVMXError {
 
     #[error("Error when creating protocol")]
     ProtocolBuilderError(#[from] ProtocolBuilderError),
+
+    #[error("Error when creating the storagge")]
+    StorageError(#[from] StorageError),
 
     #[error("Cannot find program with id {0}")]
     ProgramNotFound(Uuid),

@@ -29,6 +29,7 @@ pub struct BitVMX {
     comms: P2pHandler,
     key_chain: KeyChain,
     programs: HashMap<Uuid, Program>,
+    storage: Rc<Storage>,
     //orchestrator: OrchestratorType,
 }
 
@@ -42,9 +43,7 @@ impl BitVMX {
             communications_key,
         )?;
 
-        //let db_path = format!("orchestrator_{}", config.storage.db.clone());
-        //let storage = Rc::new(Storage::new_with_path(&PathBuf::from(db_path)).unwrap());
-
+        let storage = Rc::new(Storage::new_with_path(&PathBuf::from(&config.storage.db))?);
         /*let orchestrator = Orchestrator::new_with_paths(
             config.bitcoin_rpc_url(),
             bitcoin.client,
@@ -62,6 +61,7 @@ impl BitVMX {
             comms,
             key_chain: keys,
             programs: HashMap::new(),
+            storage,
             //orchestrator,
         })
     }

@@ -43,14 +43,11 @@ pub struct P2PConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct CliConfig {
-    pub root: String,
-}
-
-#[derive(Debug, Deserialize, Clone)]
 pub struct StorageConfig {
     pub password: String,
+    pub key_store_db: String,
     pub db: String,
+    pub program: String, //TODO: Unifiy stroage
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -61,7 +58,6 @@ pub struct Config {
     pub key_manager: KeyManagerConfig,
     pub storage: StorageConfig,
     pub p2p: P2PConfig,
-    pub cli: CliConfig,
     pub monitor: MonitorConfig,
 }
 
@@ -114,8 +110,7 @@ impl Config {
     }
 
     pub fn keystore_path(&self) -> PathBuf {
-        let root = Path::new(self.cli.root.as_str());
-        root.join(self.storage.db.as_str())
+        Path::new(self.storage.key_store_db.as_str()).to_path_buf()
     }
 
     pub fn keystore_password(&self) -> Vec<u8> {
@@ -158,11 +153,6 @@ impl Config {
         self.p2p.address.as_str()
     }
 
-    pub fn peer_id_file_path(&self) -> PathBuf {
-        let root = Path::new(self.cli.root.as_str());
-        root.join(self.p2p.peer_id_file.as_str())
-    }
-
     pub fn p2p_key(&self) -> &str {
         self.p2p.key.as_str()
     }
@@ -172,7 +162,7 @@ impl Config {
     }
 
     pub fn program_storage_path(&self, program_id: Uuid) -> PathBuf {
-        let root = Path::new(self.cli.root.as_str());
+        let root = Path::new(self.storage.program.as_str());
         root.join(program_id.to_string())
     }
 }
