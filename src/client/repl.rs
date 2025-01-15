@@ -9,7 +9,6 @@ use uuid::Uuid;
 
 use crate::bitvmx::BitVMX;
 use crate::config::Config;
-use crate::errors::ConfigError;
 use crate::program::participant::{P2PAddress, ParticipantRole};
 
 use super::input::InputLoop;

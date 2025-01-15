@@ -1,5 +1,8 @@
+use std::rc::Rc;
+
 use bitcoin::{secp256k1, PublicKey, XOnlyPublicKey};
 use key_manager::{
+    create_database_key_store_from_config, create_key_manager_from_config,
     key_manager::KeyManager,
     keystorage::database::DatabaseKeyStore,
     winternitz::{WinternitzPublicKey, WinternitzType},
@@ -13,7 +16,7 @@ use protocol_builder::{
 use crate::{config::Config, errors::BitVMXError, program::program::Program};
 
 pub struct KeyChain {
-    pub key_manager: KeyManager<DatabaseKeyStore>,
+    key_manager: Rc<KeyManager<DatabaseKeyStore>>,
     communications_key: Keypair,
     ecdsa_index: KeyIndex,
     winternitz_index: KeyIndex,
@@ -21,21 +24,11 @@ pub struct KeyChain {
 
 impl KeyChain {
     pub fn new(config: &Config) -> Result<KeyChain, BitVMXError> {
-        let network = config.network()?;
-        let key_derivation_path = config.key_derivation_path();
-        let keystore_path = config.keystore_path();
-        let keystore_password = config.keystore_password();
-        let key_derivation_seed: [u8; 32] = config.key_derivation_seed()?;
-        let winternitz_seed: [u8; 32] = config.winternitz_seed()?;
-
-        let database_keystore = DatabaseKeyStore::new(keystore_path, keystore_password, network)?;
-        let key_manager = KeyManager::new(
-            network,
-            key_derivation_path,
-            key_derivation_seed,
-            winternitz_seed,
-            database_keystore,
+        let keystore = create_database_key_store_from_config(
+            &config.key_storage,
+            &config.key_manager.network,
         )?;
+        let key_manager = create_key_manager_from_config(&config.key_manager, keystore)?;
 
         // TODO: hardcoded communications key to be on allowed list
         let privk = config.p2p_key();
@@ -45,11 +38,15 @@ impl KeyChain {
         //let communications_key = Keypair::generate_ed25519();
 
         Ok(Self {
-            key_manager,
+            key_manager: Rc::new(key_manager),
             ecdsa_index: KeyIndex::new(),
             winternitz_index: KeyIndex::new(),
             communications_key,
         })
+    }
+
+    pub fn get_key_manager(&self) -> Rc<KeyManager<DatabaseKeyStore>> {
+        self.key_manager.clone()
     }
 
     pub fn derive_keypair(&mut self) -> Result<PublicKey, BitVMXError> {

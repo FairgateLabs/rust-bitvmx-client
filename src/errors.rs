@@ -1,5 +1,6 @@
 use bitcoin::{consensus::encode::FromHexError, network::ParseNetworkError};
 use bitcoincore_rpc::bitcoin::{key::ParsePublicKeyError, sighash::SighashTypeParseError};
+use bitvmx_orchestrator::errors::OrchestratorError;
 use config as settings;
 use key_manager::errors::{KeyManagerError, KeyStoreError, WinternitzError};
 use p2p_handler::P2pHandlerError;
@@ -52,7 +53,7 @@ pub enum BitVMXError {
     P2PCommunicationError,
 
     #[error("Failed to use Orchestrator")]
-    OrchestratorError(String),
+    OrchestratorError(#[from] OrchestratorError),
 }
 
 #[derive(Error, Debug)]

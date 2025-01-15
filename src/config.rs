@@ -1,7 +1,7 @@
 use bitcoin::Network;
 use bitvmx_orchestrator::config::MonitorConfig;
 use config as settings;
-use key_manager::config::KeyManagerConfig;
+use key_manager::config::{KeyManagerConfig, KeyStorageConfig};
 use serde::Deserialize;
 use std::{
     env,
@@ -45,7 +45,6 @@ pub struct P2PConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct StorageConfig {
     pub password: String,
-    pub key_store_db: String,
     pub db: String,
     pub program: String, //TODO: Unifiy stroage
 }
@@ -56,6 +55,7 @@ pub struct Config {
     pub bitcoin: BitcoinConfig,
     pub builder: ProtocolBuilderConfig,
     pub key_manager: KeyManagerConfig,
+    pub key_storage: KeyStorageConfig,
     pub storage: StorageConfig,
     pub p2p: P2PConfig,
     pub monitor: MonitorConfig,
@@ -103,34 +103,6 @@ impl Config {
             .network
             .parse::<Network>()
             .map_err(ConfigError::InvalidNetwork)
-    }
-
-    pub fn key_derivation_path(&self) -> &str {
-        self.key_manager.key_derivation_path.as_str()
-    }
-
-    pub fn keystore_path(&self) -> PathBuf {
-        Path::new(self.storage.key_store_db.as_str()).to_path_buf()
-    }
-
-    pub fn keystore_password(&self) -> Vec<u8> {
-        self.storage.password.as_bytes().to_vec()
-    }
-
-    pub fn key_derivation_seed(&self) -> Result<[u8; 32], ConfigError> {
-        let bytes = hex::decode(self.key_manager.key_derivation_seed.clone())
-            .map_err(|_| ConfigError::InvalidKeyDerivationSeed)?;
-        bytes
-            .try_into()
-            .map_err(|_| ConfigError::InvalidKeyDerivationSeed)
-    }
-
-    pub fn winternitz_seed(&self) -> Result<[u8; 32], ConfigError> {
-        let bytes = hex::decode(self.key_manager.winternitz_seed.clone())
-            .map_err(|_| ConfigError::InvalidWinternitzSeed)?;
-        bytes
-            .try_into()
-            .map_err(|_| ConfigError::InvalidWinternitzSeed)
     }
 
     pub fn bitcoin_rpc_url(&self) -> &str {

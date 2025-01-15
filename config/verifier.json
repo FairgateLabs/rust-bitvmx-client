@@ -20,9 +20,12 @@
         "key_derivation_seed": "beefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdead",
         "winternitz_seed": "beefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdead"
     },
+    "key_storage": {
+        "password": "secret_password",
+        "path": "/tmp/verifier/keys.db"
+    },
     "storage": {
         "password": "secret_password",
-        "key_store_db": "/tmp/verifier/keys.db",
         "db": "/tmp/verifier/storage.db",
         "program": "/tmp/verifier/"
     },
@@ -33,7 +36,7 @@
         "timeout": 5
     },
     "monitor": {
-        "checkpoint_height": 764,
+        "checkpoint_height": 1,
         "confirmation_threshold": 6
     }
 }

@@ -1,7 +1,7 @@
 use crate::{
     bitcoin::rpc::BitcoinClient,
     config::Config,
-    errors::BitVMXError,
+    errors::{BitVMXError, BitcoinClientError},
     keys::keychain::KeyChain,
     program::{
         dispute::{Funding, SearchParams},
@@ -12,10 +12,8 @@ use crate::{
 };
 use bitcoin::PublicKey;
 use bitcoin::{Amount, OutPoint, Transaction, Txid};
-/*use bitvmx_orchestrator::{
-    orchestrator::{Orchestrator, OrchestratorApi},
-    types::OrchestratorType,
-};*/
+use bitcoincore_rpc::{Auth, Client};
+use bitvmx_orchestrator::{orchestrator::Orchestrator, types::OrchestratorType};
 use key_manager::winternitz;
 use p2p_handler::{LocalAllowList, P2pHandler};
 use std::{collections::HashMap, path::PathBuf, rc::Rc};
@@ -29,8 +27,8 @@ pub struct BitVMX {
     comms: P2pHandler,
     key_chain: KeyChain,
     programs: HashMap<Uuid, Program>,
-    storage: Rc<Storage>,
-    //orchestrator: OrchestratorType,
+    _storage: Rc<Storage>,
+    _orchestrator: OrchestratorType,
 }
 
 impl BitVMX {
@@ -44,16 +42,17 @@ impl BitVMX {
         )?;
 
         let storage = Rc::new(Storage::new_with_path(&PathBuf::from(&config.storage.db))?);
-        /*let orchestrator = Orchestrator::new_with_paths(
+        let orchestrator = Orchestrator::new_with_paths(
             config.bitcoin_rpc_url(),
-            bitcoin.client,
-            storage,
+            config.bitcoin_rpc_username(),
+            config.bitcoin_rpc_password(),
+            Self::new_rpc_bitcoin_client(&config)?,
+            storage.clone(),
+            keys.get_key_manager(),
             config.monitor.checkpoint_height,
             config.monitor.confirmation_threshold,
-            keys_copy.key_manager,
             bitcoin.network,
-        )
-        .unwrap();*/
+        )?;
 
         Ok(Self {
             config,
@@ -61,8 +60,8 @@ impl BitVMX {
             comms,
             key_chain: keys,
             programs: HashMap::new(),
-            storage,
-            //orchestrator,
+            _storage: storage,
+            _orchestrator: orchestrator,
         })
     }
 
@@ -318,6 +317,21 @@ impl BitVMX {
         let id = program.id();
         self.programs.insert(id, program);
         id
+    }
+
+    fn new_rpc_bitcoin_client(config: &Config) -> Result<Client, BitVMXError> {
+        let url = config.bitcoin_rpc_url();
+        let user = config.bitcoin_rpc_username();
+        let pass = config.bitcoin_rpc_password();
+
+        let client =
+            Client::new(url, Auth::UserPass(user.to_string(), pass.to_string())).map_err(|e| {
+                BitcoinClientError::FailedToCreateClient {
+                    error: e.to_string(),
+                }
+            })?;
+
+        Ok(client)
     }
 
     fn new_bitcoin_client(config: &Config) -> Result<BitcoinClient, BitVMXError> {
