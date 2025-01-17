@@ -7,19 +7,37 @@ x-logging:
   
 services:
   prover:
-    container_name: ${BITCOIND_CONTAINER_NAME}
+    container_name: ${BITCOIND_PROVER_CONTAINER_NAME}
     build:
       context: ./
       dockerfile: src/docker/Dockerfile
       args:
-        BITCOIND_RPC_PORT: ${BITCOIND_RPC_PORT}
+        BITCOIND_RPC_PORT: ${BITCOIND_PROVER_RPC_PORT}
         BITCOIND_RPC_USERNAME: ${BITCOIND_RPC_USERNAME}
         BITCOIND_RPC_PASSWORD: ${BITCOIND_RPC_PASSWORD}
         BITCOIND_RPC_NETWORK: ${BITCOIND_RPC_NETWORK}
     logging: *default-logging
     ports:
-      - "127.0.0.1:${BITCOIND_RPC_PORT}:${BITCOIND_RPC_PORT}"    
+      - "127.0.0.1:${BITCOIND_PROVER_RPC_PORT}:${BITCOIND_PROVER_RPC_PORT}"    
     restart: unless-stopped
     entrypoint: ["./prover.sh"]
+    volumes:
+      - ./data/bitcoind:/app/data
+  
+  verifier:
+    container_name: ${BITCOIND_VERIFIER_CONTAINER_NAME}
+    build:
+      context: ./
+      dockerfile: src/docker/Dockerfile
+      args:
+        BITCOIND_RPC_PORT: ${BITCOIND_VERIFIER_RPC_PORT}
+        BITCOIND_RPC_USERNAME: ${BITCOIND_RPC_USERNAME}
+        BITCOIND_RPC_PASSWORD: ${BITCOIND_RPC_PASSWORD}
+        BITCOIND_RPC_NETWORK: ${BITCOIND_RPC_NETWORK}
+    logging: *default-logging
+    ports:
+      - "127.0.0.1:${BITCOIND_VERIFIER_RPC_PORT}:${BITCOIND_VERIFIER_RPC_PORT}"    
+    restart: unless-stopped
+    entrypoint: ["./verifier.sh"]
     volumes:
       - ./data/bitcoind:/app/data

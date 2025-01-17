@@ -49,12 +49,12 @@ COPY ./ ./app
 
 COPY ./Cargo.toml ./Cargo.lock ./app/
 
-COPY src/docker/regtest.conf src/docker/entrypoint.sh src/docker/prover.sh src/docker/cleanup.sh /app/
+COPY src/docker/regtest.conf src/docker/entrypoint.sh src/docker/prover.sh src/docker/verifier.sh src/docker/cleanup.sh /app/
 
 RUN chmod 400 ./*.conf
-RUN chmod +x /app/prover.sh
+RUN chmod +x /app/prover.sh /app/verifier.sh
 
-RUN cd app && cargo build
+#RUN cd app && cargo build
 
 EXPOSE ${BITCOIND_RPC_PORT}
 
