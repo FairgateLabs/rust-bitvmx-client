@@ -1,0 +1,25 @@
+x-logging:
+  &default-logging
+  options:
+    max-size: '12m'
+    max-file: '5'
+  driver: json-file
+  
+services:
+  prover:
+    container_name: ${BITCOIND_CONTAINER_NAME}
+    build:
+      context: ./
+      dockerfile: src/docker/Dockerfile
+      args:
+        BITCOIND_RPC_PORT: ${BITCOIND_RPC_PORT}
+        BITCOIND_RPC_USERNAME: ${BITCOIND_RPC_USERNAME}
+        BITCOIND_RPC_PASSWORD: ${BITCOIND_RPC_PASSWORD}
+        BITCOIND_RPC_NETWORK: ${BITCOIND_RPC_NETWORK}
+    logging: *default-logging
+    ports:
+      - "127.0.0.1:${BITCOIND_RPC_PORT}:${BITCOIND_RPC_PORT}"    
+    restart: unless-stopped
+    entrypoint: ["./prover.sh"]
+    volumes:
+      - ./data/bitcoind:/app/data
