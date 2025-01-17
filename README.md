@@ -25,13 +25,13 @@ There are 3 configurations develoment, prover and verifier. They can be found at
 You can run it using 
 
 ```bash
-cargo run --release --bin bitvmx -- prover
+cargo run --release -- --configuration config/prover.yaml
 ```
 
 or 
 
 ```bash
-cargo run --release --bin bitvmx -- verifier
+cargo run --release -- --configuration config/verifier.yaml
 ```
 
 If no bitvmx flag is added it will default to prover

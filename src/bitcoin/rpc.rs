@@ -1,36 +1,30 @@
 use bitcoin::{
     consensus, Address, Amount, CompressedPublicKey, Network, PublicKey, Transaction, Txid,
 };
-use bitcoincore_rpc::{Auth, Client, RpcApi};
+use bitcoincore_rpc::{Client, RpcApi};
+use bitvmx_bitcoin_rpc::rpc_config::RpcConfig;
 
 use crate::errors::BitcoinClientError;
 
 pub struct BitcoinClient {
-    pub network: Network,
-    pub client: Client,
+    network: Network,
+    rpc: bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient,
     wallet_address: Address,
 }
 
 impl BitcoinClient {
     pub fn new(
         network: Network,
-        url: &str,
-        user: &str,
-        pass: &str,
+        rpc_config: &RpcConfig,
         wallet_name: &str,
     ) -> Result<Self, BitcoinClientError> {
-        let client =
-            Client::new(url, Auth::UserPass(user.to_string(), pass.to_string())).map_err(|e| {
-                BitcoinClientError::FailedToCreateClient {
-                    error: e.to_string(),
-                }
-            })?;
+        let rpc = bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient::new_from_config(rpc_config)?;
 
-        let wallet_address = Self::init_wallet(network, wallet_name, &client)?;
+        let wallet_address = Self::init_wallet(network, wallet_name, &rpc.client)?;
 
         Ok(Self {
             network,
-            client,
+            rpc,
             wallet_address,
         })
     }
@@ -42,6 +36,7 @@ impl BitcoinClient {
     ) -> Result<(Transaction, u32), BitcoinClientError> {
         // send BTC to address
         let txid = self
+            .rpc
             .client
             .send_to_address(address, amount, None, None, None, None, None, None)
             .map_err(|e| BitcoinClientError::FailedToFundAddress {
@@ -53,6 +48,7 @@ impl BitcoinClient {
 
         // get transaction details
         let tx_info = self
+            .rpc
             .client
             .get_transaction(&txid, Some(true))
             .map_err(|e| BitcoinClientError::FailedToGetTransactionDetails {
@@ -77,7 +73,7 @@ impl BitcoinClient {
     pub fn send_transaction(&self, tx: Transaction) -> Result<Txid, BitcoinClientError> {
         let serialized_tx = consensus::encode::serialize_hex(&tx);
 
-        let result = self.client.send_raw_transaction(serialized_tx);
+        let result = self.rpc.client.send_raw_transaction(serialized_tx);
         if let Err(e) = result {
             println!("Error: {:?}", e);
             return Err(BitcoinClientError::FailedToSendTransaction {
@@ -94,13 +90,14 @@ impl BitcoinClient {
     }
 
     pub fn get_transaction(&self, txid: &Txid) -> Result<Option<Transaction>, BitcoinClientError> {
-        let tx = self.client.get_raw_transaction(txid, None).ok();
+        let tx = self.rpc.client.get_raw_transaction(txid, None).ok();
         Ok(tx)
     }
 
     pub fn mine_blocks(&self, blocks: u64) -> Result<(), BitcoinClientError> {
         // mine a block to confirm transaction
-        self.client
+        self.rpc
+            .client
             .generate_to_address(blocks, &self.wallet_address)
             .map_err(|e| BitcoinClientError::FailedToMineBlocks {
                 error: e.to_string(),
@@ -120,7 +117,7 @@ impl BitcoinClient {
     pub fn get_blockchain_info(
         &self,
     ) -> Result<bitcoincore_rpc::json::GetBlockchainInfoResult, BitcoinClientError> {
-        self.client.get_blockchain_info().map_err(|e| {
+        self.rpc.client.get_blockchain_info().map_err(|e| {
             BitcoinClientError::FailedToGetTransactionDetails {
                 error: e.to_string(),
             }

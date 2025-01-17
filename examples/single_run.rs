@@ -27,7 +27,7 @@ fn config_trace() {
 type FundingAddress = String;
 
 fn init_bitvmx(role: &str) -> Result<(BitVMX, FundingAddress, PublicKey, P2PAddress)> {
-    let config = Config::new(Some(role.to_string()))?;
+    let config = Config::new(Some(format!("config/{}.yaml", role.to_string())))?;
     let mut bitvmx = BitVMX::new(config)?;
     //TODO: Pre-kickoff only prover ?? make independent ??
     let funds = bitvmx.add_funds()?;

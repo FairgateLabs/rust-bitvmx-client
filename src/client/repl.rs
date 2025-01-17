@@ -88,8 +88,8 @@ pub struct Repl {
 }
 
 impl Repl {
-    pub fn new(config: Option<String>) -> Result<Self> {
-        let config = Config::new(config)?;
+    pub fn new() -> Result<Self> {
+        let config = Config::new(None)?;
         let bitvmx = BitVMX::new(config)?;
         let input = InputLoop::new(
             "bitvmx ".to_string(),

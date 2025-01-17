@@ -84,6 +84,9 @@ pub enum ConfigError {
 
     #[error("Invalid configuation path {0}")]
     InvalidConfigPath(String),
+
+    #[error("Invalid configuration from file")]
+    ConfigurationError(#[from] bitvmx_settings::errors::ConfigError),
 }
 
 #[derive(Error, Debug)]
@@ -123,6 +126,9 @@ pub enum BitcoinClientError {
 
     #[error("Failed to list wallets")]
     FailedToListWallets { error: String },
+
+    #[error("Rpc error")]
+    RpcError(#[from] bitvmx_bitcoin_rpc::errors::BitcoinClientError),
 }
 
 #[derive(Error, Debug)]

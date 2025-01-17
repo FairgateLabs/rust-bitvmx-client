@@ -1,7 +1,7 @@
 use crate::{
     bitcoin::rpc::BitcoinClient,
     config::Config,
-    errors::{BitVMXError, BitcoinClientError},
+    errors::BitVMXError,
     keys::keychain::KeyChain,
     program::{
         dispute::{Funding, SearchParams},
@@ -12,7 +12,6 @@ use crate::{
 };
 use bitcoin::PublicKey;
 use bitcoin::{Amount, OutPoint, Transaction, Txid};
-use bitcoincore_rpc::{Auth, Client};
 use bitvmx_orchestrator::{orchestrator::Orchestrator, types::OrchestratorType};
 use key_manager::winternitz;
 use p2p_handler::{LocalAllowList, P2pHandler};
@@ -43,15 +42,14 @@ impl BitVMX {
 
         let storage = Rc::new(Storage::new_with_path(&PathBuf::from(&config.storage.db))?);
         let orchestrator = Orchestrator::new_with_paths(
-            config.bitcoin_rpc_url(),
-            config.bitcoin_rpc_username(),
-            config.bitcoin_rpc_password(),
-            Self::new_rpc_bitcoin_client(&config)?,
+            &config.bitcoin.url,
+            &config.bitcoin.username,
+            &config.bitcoin.password,
             storage.clone(),
             keys.get_key_manager(),
             config.monitor.checkpoint_height,
             config.monitor.confirmation_threshold,
-            bitcoin.network,
+            config.bitcoin.network,
         )?;
 
         Ok(Self {
@@ -319,29 +317,12 @@ impl BitVMX {
         id
     }
 
-    fn new_rpc_bitcoin_client(config: &Config) -> Result<Client, BitVMXError> {
-        let url = config.bitcoin_rpc_url();
-        let user = config.bitcoin_rpc_username();
-        let pass = config.bitcoin_rpc_password();
-
-        let client =
-            Client::new(url, Auth::UserPass(user.to_string(), pass.to_string())).map_err(|e| {
-                BitcoinClientError::FailedToCreateClient {
-                    error: e.to_string(),
-                }
-            })?;
-
-        Ok(client)
-    }
-
     fn new_bitcoin_client(config: &Config) -> Result<BitcoinClient, BitVMXError> {
-        let network = config.network()?;
-        let url = config.bitcoin_rpc_url();
-        let user = config.bitcoin_rpc_username();
-        let pass = config.bitcoin_rpc_password();
-        let wallet = config.bitcoin_rpc_wallet();
-
-        let bitcoin = BitcoinClient::new(network, url, user, pass, wallet)?;
+        let bitcoin = BitcoinClient::new(
+            config.bitcoin.network,
+            &config.bitcoin,
+            &config.bitcoin.wallet,
+        )?;
         Ok(bitcoin)
     }
 

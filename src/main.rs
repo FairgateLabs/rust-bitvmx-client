@@ -15,7 +15,7 @@ fn main() -> Result<()> {
         .with_env_filter(filter)
         .init();
 
-    let mut repl = match Repl::new(get_config()) {
+    let mut repl = match Repl::new() {
         Ok(r) => r,
         Err(e) => {
             error!("{:?}", e);
@@ -29,22 +29,4 @@ fn main() -> Result<()> {
     }
 
     Ok(())
-}
-
-fn get_config() -> Option<String> {
-    let matches = Command::new("BitVMX client")
-        .arg(
-            Arg::new("configuration")
-                .help("Optional configuration")
-                .index(1),
-        )
-        .get_matches();
-
-    let config = if let Some(config) = matches.get_one::<String>("configuration") {
-        Some(config.clone())
-    } else {
-        None
-    };
-
-    config
 }

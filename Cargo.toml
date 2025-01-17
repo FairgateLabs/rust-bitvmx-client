@@ -32,6 +32,8 @@ bitvmx-protocol-builder = { path = "../rust-bitvmx-protocol-builder" }
 bitvmx-orchestrator = { path = "../rust-bitvmx-orchestrator" }
 p2p_handler = { path = "../rust-p2p-handler" }
 rust-bitvmx-storage-backend = { path = "../rust-bitvmx-storage-backend" }
+bitvmx-settings = { path = "../rust-bitvmx-settings" }
+bitvmx-bitcoin-rpc = { path = "../rust-bitvmx-bitcoin-rpc" }
 
 [[bin]]
 name = "bitvmx"
