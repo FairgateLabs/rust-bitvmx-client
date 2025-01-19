@@ -111,8 +111,8 @@ impl Program {
             "drp",
             self.protocol_storage.clone(),
             self.funding.clone(),
-            &self.prover.keys().as_ref().unwrap(),
-            &self.verifier.keys().as_ref().unwrap(),
+            self.prover.keys().as_ref().unwrap(),
+            self.verifier.keys().as_ref().unwrap(),
             search_params,
         )?;
 
@@ -206,7 +206,7 @@ impl Program {
     }
 
     pub fn dispute_resolution_protocol(&self) -> &DisputeResolutionProtocol {
-        &self.drp.as_ref().unwrap()
+        self.drp.as_ref().unwrap()
     }
 
     pub fn push_witness_value(&mut self, txid: Txid, name: &str, value: WinternitzSignature) {

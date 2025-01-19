@@ -33,7 +33,7 @@ impl KeyChain {
         // TODO: hardcoded communications key to be on allowed list
         let privk = config.p2p_key();
         let communications_key =
-            Keypair::from_protobuf_encoding(&hex::decode(privk.as_bytes().to_vec()).unwrap())
+            Keypair::from_protobuf_encoding(&hex::decode(privk.as_bytes()).unwrap())
                 .unwrap();
         //let communications_key = Keypair::generate_ed25519();
 

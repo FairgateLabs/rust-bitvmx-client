@@ -104,7 +104,7 @@ impl DisputeResolutionProtocol {
 
         let mut builder = ProtocolBuilder::new(protocol_name, protocol_storage)?;
         let output_spending_type =
-            OutputSpendingType::new_segwit_key_spend(&prover.prekickoff_key(), funding.amount);
+            OutputSpendingType::new_segwit_key_spend(prover.prekickoff_key(), funding.amount);
         builder.connect_with_external_transaction(
             funding.txid(),
             funding.vout(),
@@ -114,21 +114,21 @@ impl DisputeResolutionProtocol {
         )?;
 
         let kickoff_spending = scripts::kickoff(
-            &prover.protocol_key(),
-            &prover.program_ending_state_key(),
-            &prover.program_ending_step_number_key(),
+            prover.protocol_key(),
+            prover.program_ending_state_key(),
+            prover.program_ending_step_number_key(),
         )?;
 
         builder.add_taproot_script_spend_connection(
             PROTOCOL,
             PREKICKOFF,
             funding.protocol + funding.timelock,
-            &prover.internal_key(),
+            prover.internal_key(),
             &[kickoff_spending],
             "kickoff",
             &tr_sighash_type,
         )?;
-        builder.add_speedup_output(PREKICKOFF, funding.speedup, &prover.speedup_key())?;
+        builder.add_speedup_output(PREKICKOFF, funding.speedup, prover.speedup_key())?;
 
         let protocol = builder.build()?;
         Ok(Self { protocol, funding })

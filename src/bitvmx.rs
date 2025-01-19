@@ -262,7 +262,7 @@ impl BitVMX {
     pub fn run_program(&mut self, program_id: &Uuid) -> Result<(), BitVMXError> {
         let program = self.program_mut(program_id)?;
         if !program.is_ready() {
-            return Err(BitVMXError::ProgramNotReady(program_id.clone()));
+            return Err(BitVMXError::ProgramNotReady(*program_id));
         }
 
         // Run program on the CPU and store the execution result (end step, end state and trace) in the program instance
@@ -292,7 +292,7 @@ impl BitVMX {
     pub fn program(&self, program_id: &Uuid) -> Result<&Program, BitVMXError> {
         self.programs
             .get(program_id)
-            .ok_or(BitVMXError::ProgramNotFound(program_id.clone()))
+            .ok_or(BitVMXError::ProgramNotFound(*program_id))
     }
 
     pub fn address(&self) -> String {
@@ -307,7 +307,7 @@ impl BitVMX {
         //TODO: Serialize program to db
         self.programs
             .get_mut(program_id)
-            .ok_or(BitVMXError::ProgramNotFound(program_id.clone()))
+            .ok_or(BitVMXError::ProgramNotFound(*program_id))
     }
 
     fn save_program(&mut self, program: Program) -> Uuid {

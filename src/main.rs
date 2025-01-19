@@ -1,6 +1,5 @@
 use anyhow::Result;
 use bitvmx_client::client::repl::Repl;
-use clap::{Arg, Command};
 use tracing::error;
 use tracing_subscriber::EnvFilter;
 

@@ -208,10 +208,10 @@ impl Repl {
         &mut self,
         id: &Uuid,
         role: &Role,
-        funding: &String,
-        pre_kickoff: &String,
-        peer_address: &String,
-        peer_id: &String,
+        funding: &str,
+        pre_kickoff: &str,
+        peer_address: &str,
+        peer_id: &str,
     ) -> Result<()> {
         let peer_address = P2PAddress::new(peer_address, PeerId::from_str(peer_id)?);
 
@@ -219,7 +219,7 @@ impl Repl {
             id,
             role.clone().into(),
             OutPoint::from_str(funding)?,
-            &PublicKey::from_str(&pre_kickoff)?,
+            &PublicKey::from_str(pre_kickoff)?,
             &peer_address,
         )?;
 
@@ -349,7 +349,7 @@ fn fmt_option_xonly_pk(key: Option<&XOnlyPublicKey>) -> String {
 fn fmt_option_winternitz_pks(keys: Option<&Vec<WinternitzPublicKey>>) -> (usize, String) {
     match keys {
         Some(keys) => {
-            if keys.len() == 0 {
+            if keys.is_empty() {
                 return (0, "None".to_string());
             }
 
