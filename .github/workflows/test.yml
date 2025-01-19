@@ -77,6 +77,16 @@ jobs:
       run: |
         cd ..
         git clone https://github.com/FairgateLabs/rust-bitcoin-indexer.git
+    
+    - name: Clone rust-bitvmx-settings
+      run: |   
+        cd ..     
+        git clone https://github.com/FairgateLabs/rust-bitvmx-settings.git
+    
+    - name: Clone rust-bitvmx-bitcoin-rpc
+      run: |  
+        cd ..      
+        git clone https://github.com/FairgateLabs/rust-bitvmx-bitcoin-rpc.git
 
     - name: Build project
       run: cargo build --verbose
@@ -153,6 +163,16 @@ jobs:
       run: |
         cd ..
         git clone https://github.com/FairgateLabs/rust-bitcoin-indexer.git
+    
+    - name: Clone rust-bitvmx-settings
+      run: |   
+        cd ..     
+        git clone https://github.com/FairgateLabs/rust-bitvmx-settings.git
+    
+    - name: Clone rust-bitvmx-bitcoin-rpc
+      run: |  
+        cd ..      
+        git clone https://github.com/FairgateLabs/rust-bitvmx-bitcoin-rpc.git
 
     - name: Run cargo-tarpaulin
       uses: actions-rs/tarpaulin@v0.1
