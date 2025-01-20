@@ -137,13 +137,10 @@ impl InputLoop {
     }
 
     pub fn write(&self, data: &str) {
-        match self.sender {
-            Some(ref sender) => {
-                sender
-                    .try_send(data.to_string())
-                    .expect("Failed to send message");
-            }
-            None => {}
+        if let Some(ref sender) = self.sender {
+            sender
+                .try_send(data.to_string())
+                .expect("Failed to send message");
         }
     }
 }

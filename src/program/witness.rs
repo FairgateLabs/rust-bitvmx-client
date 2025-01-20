@@ -24,7 +24,7 @@ pub fn decode_witness(
         while processed < winternitz_signature_size * 2 {
             // Retrieve hash and digit at a time and ensure not to exceed the chunk size
             if let (Some(hash), Some(mut digit)) = (iter.next(), iter.next()) {
-                if digit.len() == 0 {
+                if digit.is_empty() {
                     digit = &[0];
                 }
 
