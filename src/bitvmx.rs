@@ -42,9 +42,7 @@ impl BitVMX {
 
         let storage = Rc::new(Storage::new_with_path(&PathBuf::from(&config.storage.db))?);
         let orchestrator = Orchestrator::new_with_paths(
-            &config.bitcoin.url,
-            &config.bitcoin.username,
-            &config.bitcoin.password,
+            &config.bitcoin,
             storage.clone(),
             keys.get_key_manager(),
             config.monitor.checkpoint_height,
