@@ -71,6 +71,14 @@ pub fn main() -> Result<()> {
     //TODO: Partial signs by counterparty
     prover_bitvmx.deploy_program(&id)?;
 
+    //TODO: main loop
+    for i in 0..1000 {
+        if i % 20 == 0 {
+            prover_bitvmx.mine_blocks(1)?;
+        }
+        prover_bitvmx.tick()?;
+    }
+
     //TODO: Push witness and then claim
     //prover_bitvmx.claim_program(&id)?;
 

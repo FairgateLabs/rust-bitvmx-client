@@ -12,7 +12,10 @@ use crate::{
 };
 use bitcoin::PublicKey;
 use bitcoin::{Amount, OutPoint, Transaction, Txid};
-use bitvmx_orchestrator::{orchestrator::Orchestrator, types::OrchestratorType};
+use bitvmx_orchestrator::{
+    orchestrator::{Orchestrator, OrchestratorApi},
+    types::{BitvmxInstance, FundingTx, OrchestratorType, ProcessedNews, TransactionPartialInfo},
+};
 use key_manager::winternitz;
 use p2p_handler::{LocalAllowList, P2pHandler};
 use std::{collections::HashMap, path::PathBuf, rc::Rc};
@@ -27,7 +30,7 @@ pub struct BitVMX {
     key_chain: KeyChain,
     programs: HashMap<Uuid, Program>,
     _storage: Rc<Storage>,
-    _orchestrator: OrchestratorType,
+    orchestrator: OrchestratorType,
 }
 
 impl BitVMX {
@@ -57,7 +60,7 @@ impl BitVMX {
             key_chain: keys,
             programs: HashMap::new(),
             _storage: storage,
-            _orchestrator: orchestrator,
+            orchestrator,
         })
     }
 
@@ -243,7 +246,21 @@ impl BitVMX {
             program.prekickoff_transaction()?
         };
 
-        let deployed = self.wait_deployment(&transaction)?;
+        let instance: BitvmxInstance<TransactionPartialInfo> =
+            bitvmx_orchestrator::types::BitvmxInstance::new(
+                *program_id,
+                vec![transaction.compute_txid().into()],
+                FundingTx::empty(),
+            );
+
+        self.orchestrator.monitor_instance(&instance)?;
+
+        self.orchestrator
+            .send_tx_instance(*program_id, &transaction)?;
+
+        info!("Attempt to deploy program: {}", program_id);
+
+        /*let deployed = self.wait_deployment(&transaction)?;
         let program = self.program_mut(program_id)?;
 
         if deployed {
@@ -252,7 +269,13 @@ impl BitVMX {
 
         info!("Program deployed: {}", program_id);
 
-        Ok(program.is_ready())
+        Ok(program.is_ready())*/
+        Ok(true)
+    }
+
+    pub fn mine_blocks(&self, blocks: u64) -> Result<(), BitVMXError> {
+        self.bitcoin.mine(blocks)?;
+        Ok(())
     }
 
     /// Executes the program offchain using the BitVMX CPU to generate the program trace, ending state and
@@ -437,6 +460,42 @@ impl BitVMX {
     }
 
     pub fn process_bitcoin_updates(&mut self) -> Result<bool, BitVMXError> {
+        self.orchestrator.tick()?;
+
+        if !self.orchestrator.is_ready()? {
+            info!("Orchestrator is not ready, synchronizing with the Bitcoin network");
+            return Ok(false);
+        }
+
+        let news = self.orchestrator.get_news()?;
+        if !news.txs_by_id.is_empty() {
+            info!("Processing news: {:?}", news);
+        } else {
+            info!("No news to process");
+            return Ok(true);
+        }
+
+        let mut ret = vec![];
+        for (program_id, txs) in news.txs_by_id {
+            let mut ret_tx = vec![];
+            for tx in txs {
+                ret_tx.push(tx.tx.compute_txid());
+            }
+            ret.push((program_id, ret_tx));
+        }
+
+        //let txids = news.txs_by_id.iter().map(|tx| (tx.0, tx.1)).collect::<Vec<Txid>>();
+        let processed_news = ProcessedNews {
+            txs_by_id: ret,
+            txs_by_address: vec![],
+            funds_requests: vec![],
+        };
+
+        info!("Acknowledging news: {:?}", &processed_news);
+        self.orchestrator.acknowledge_news(processed_news)?;
+
+        //self.orchestrator.
+
         /*
             let is_ready = self
                 .orchestrator
@@ -455,6 +514,12 @@ impl BitVMX {
                 .map_err(|e| BitVMXError::OrchestratorError(e.to_string()))?;
 
         */
-        Ok(true)
+        Ok(false)
+    }
+
+    pub fn tick(&mut self) -> Result<(), BitVMXError> {
+        self.process_p2p_messages();
+        self.process_bitcoin_updates()?;
+        Ok(())
     }
 }
