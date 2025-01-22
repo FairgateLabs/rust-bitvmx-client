@@ -46,14 +46,7 @@ pub fn main() -> Result<()> {
         init_bitvmx("verifier")?;
 
     let id = Uuid::new_v4();
-
-    let prover_pub_keys = prover_bitvmx.setup_program(
-        &id,
-        ParticipantRole::Prover,
-        OutPoint::from_str(&prover_funds)?,
-        &prover_pre_pub_key,
-        &verifier_address,
-    )?;
+    info!("id: {}", id);
 
     let verifier_pub_keys = verifier_bitvmx.setup_program(
         &id,
@@ -61,6 +54,14 @@ pub fn main() -> Result<()> {
         OutPoint::from_str(&verifier_funds)?,
         &verifier_pre_pub_key,
         &prover_address,
+    )?;
+
+    let prover_pub_keys = prover_bitvmx.setup_program(
+        &id,
+        ParticipantRole::Prover,
+        OutPoint::from_str(&prover_funds)?,
+        &prover_pre_pub_key,
+        &verifier_address,
     )?;
 
     //TODO: Serializer / Deserialize keys

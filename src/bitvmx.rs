@@ -14,11 +14,18 @@ use bitcoin::PublicKey;
 use bitcoin::{Amount, OutPoint, Transaction, Txid};
 use bitvmx_orchestrator::{orchestrator::Orchestrator, types::OrchestratorType};
 use key_manager::winternitz;
-use p2p_handler::{LocalAllowList, P2pHandler};
-use std::{collections::HashMap, path::PathBuf, rc::Rc};
+use p2p_handler::{LocalAllowList, P2pHandler, PeerId, ReceiveHandlerChannel};
+use std::{collections::HashMap, path::PathBuf, rc::Rc, str::FromStr};
 use storage_backend::storage::Storage;
 use tracing::info;
 use uuid::Uuid;
+
+#[derive(Debug)]
+enum P2PMessageKind {
+    Key,
+    Nonce,
+    Signature,
+}
 
 pub struct BitVMX {
     config: Config,
@@ -27,7 +34,7 @@ pub struct BitVMX {
     key_chain: KeyChain,
     programs: HashMap<Uuid, Program>,
     _storage: Rc<Storage>,
-    _orchestrator: OrchestratorType,
+    //_orchestrator: OrchestratorType,
 }
 
 impl BitVMX {
@@ -41,14 +48,14 @@ impl BitVMX {
         )?;
 
         let storage = Rc::new(Storage::new_with_path(&PathBuf::from(&config.storage.db))?);
-        let orchestrator = Orchestrator::new_with_paths(
-            &config.bitcoin,
-            storage.clone(),
-            keys.get_key_manager(),
-            config.monitor.checkpoint_height,
-            config.monitor.confirmation_threshold,
-            config.bitcoin.network,
-        )?;
+        // let orchestrator = Orchestrator::new_with_paths(
+        //     &config.bitcoin,
+        //     storage.clone(),
+        //     keys.get_key_manager(),
+        //     config.monitor.checkpoint_height,
+        //     config.monitor.confirmation_threshold,
+        //     config.bitcoin.network,
+        // )?;
 
         Ok(Self {
             config,
@@ -57,7 +64,7 @@ impl BitVMX {
             key_chain: keys,
             programs: HashMap::new(),
             _storage: storage,
-            _orchestrator: orchestrator,
+            //_orchestrator: orchestrator,
         })
     }
 
@@ -80,12 +87,6 @@ impl BitVMX {
         pre_kickoff: &PublicKey,
         peer_address: &P2PAddress,
     ) -> Result<ParticipantKeys, BitVMXError> {
-        //TOOD: Make prover dial the verifier (really this should go away and only send_message remain)
-        // if role == ParticipantRole::Prover {
-        //     self.comms
-        //         .dial(*peer_address.peer_id(), peer_address.address().to_string())?;
-        // }
-
         // Generate my keys.
         let keys = self.generate_keys(pre_kickoff, &role)?;
 
@@ -115,10 +116,81 @@ impl BitVMX {
             self.funding(outpoint),
         )?;
 
+        // Only prover can start dialing
+        if role == ParticipantRole::Prover {
+            self.exchange_keys(
+                id,
+                *peer_address.peer_id(),
+                Some(peer_address.address().to_string()),
+            )?;
+        }
+
         // Save the program and return the keys to be shared
         self.save_program(program);
 
         Ok(keys)
+    }
+
+    fn exchange_keys(
+        &mut self,
+        program_id: &Uuid,
+        peer_id: PeerId,
+        addr: Option<String>,
+    ) -> Result<(), BitVMXError> {
+        let program = self.program(program_id)?.clone();
+        let me = match program.my_role() {
+            ParticipantRole::Prover => program.prover(),
+            ParticipantRole::Verifier => program.verifier(),
+        };
+        let keys = me.keys();
+        let keys = match keys {
+            Some(keys) => keys.get_keys(),
+            None => return Err(BitVMXError::KeysNotFound(*program_id)),
+        };
+
+        match addr {
+            Some(addr) => {
+                self.comms
+                    .dial_and_send(peer_id, addr, program_id.to_string(), keys)?;
+            }
+            None => {
+                self.comms.send_msg(program_id.to_string(), peer_id, keys)?;
+            }
+        }
+
+        //self.save_program(program.clone());
+        Ok(())
+    }
+
+    fn exchange_nonces(
+        &mut self,
+        program_id: Uuid,
+        peer_id: PeerId,
+        addr: Option<String>,
+    ) -> Result<(), BitVMXError> {
+        //TODO: implement
+        //let program = self.program_mut(program_id)?;
+        match addr {
+            Some(addr) => {
+                self.comms.dial_and_send(
+                    peer_id,
+                    addr,
+                    program_id.to_string(),
+                    "Hello".as_bytes().to_vec(),
+                )?;
+            }
+            None => {
+                self.comms.send_msg(
+                    program_id.to_string(),
+                    peer_id,
+                    "World".as_bytes().to_vec(),
+                )?;
+            }
+        }
+
+        // let program_clone = program.clone();
+        // self.save_program(program_clone);
+        Ok(())
     }
 
     // After contaction  the counterparty to setup the same program, exchange public keys to allow us (and the counterparty)
@@ -135,39 +207,6 @@ impl BitVMX {
         self.program_mut(id)?.setup_counterparty_keys(keys)?;
 
         Ok(())
-    }
-
-    pub fn process_message(&mut self) -> Result<(), BitVMXError> {
-        // match self.comms.receive_message() {
-        //     None => return Ok(()),
-        //     Some(data) => {
-        //         let message = P2PMessage::from_bytes(data);
-
-        //         match message.kind() {
-        //             P2PMessageKind::Status => {
-
-        //             },
-        //             P2PMessageKind::Keys => {
-
-        //             },
-        //             P2PMessageKind::Nonces => {
-
-        //             },
-        //             P2PMessageKind::Signatures => {
-
-        //             },
-        //             P2PMessageKind::Setup => {
-
-        //             }
-        //         }
-        //     }
-        // }
-
-        Ok(())
-    }
-
-    pub fn process_p2p_message() -> bool {
-        false
     }
 
     pub fn read_bitcoin_updates() -> bool {
@@ -430,10 +469,113 @@ impl BitVMX {
         Ok(true)
     }
 
-    pub fn process_p2p_messages(&self) -> bool {
-        //let message = self.comms.read_message();
-        //process the message
+    pub fn process_p2p_messages(&mut self) -> bool {
+        let message = self.comms.check_receive();
+        let priotity = self.comms.check_priority(); //TODO:
+
+        match message {
+            Ok(ReceiveHandlerChannel::Msg(program_id, peer_id, msg)) => {
+                let program_id = Uuid::from_str(&program_id).unwrap(); //TODO: how to propagate?
+
+                // If program not found, create and save a new program
+                if let Err(BitVMXError::ProgramNotFound(_)) = self.program_mut(&program_id) {
+                    // TODO: Take out funding here
+                    let funding = self.add_funds().unwrap(); //TODO: how to propagate?
+                    let funds = funding.0.to_string() + ":" + &funding.1.to_string();
+                    let prekickoff = funding.2;
+
+                    //TODO: dont have the others address. Is it necessary? Using my own address as placeholder
+                    let peer_address = &P2PAddress::new(&self.comms.get_address(), peer_id);
+
+                    self.setup_program(
+                        &program_id,               // TODO: use predefined uuid
+                        ParticipantRole::Verifier, // If program was not found, I must be the verifier!
+                        OutPoint::from_str(&funds).unwrap(),
+                        &prekickoff,
+                        peer_address,
+                    )
+                    .unwrap(); //TODO: how to propagate?
+                }
+
+                //process the message
+                self.process_message(program_id, peer_id, msg).unwrap(); //TODO: how to propagate?
+            }
+            Ok(ReceiveHandlerChannel::Error(_)) => {} //TODO: implement
+            Err(_) => {}
+        }
         false
+    }
+
+    fn process_message(
+        &mut self,
+        program_id: Uuid,
+        peer_id: PeerId,
+        msg: Vec<u8>,
+    ) -> Result<(), BitVMXError> {
+        let utf_msg = match String::from_utf8(msg.clone()) {
+            Ok(valid_string) => valid_string,
+            Err(_) => "long message".to_string(),
+        };
+        info!("Processing message: {:?}", utf_msg);
+
+        match self.identify_message(program_id, msg)? {
+            P2PMessageKind::Key => {
+                let program = self.program_mut(&program_id)?;
+                program.exchange_keys();
+                if program.my_role() == &ParticipantRole::Verifier {
+                    // Verifier
+                    self.exchange_keys(&program_id, peer_id, None)?;
+                } else {
+                    // Prover
+                    program.send_nonces();
+                    let addr = program.verifier().address().address().to_string();
+                    self.exchange_nonces(program_id, peer_id, Some(addr))?;
+                }
+            }
+            P2PMessageKind::Nonce => {
+                let program = self.program_mut(&program_id)?;
+                program.exchange_nonces();
+                if program.my_role() == &ParticipantRole::Verifier {
+                    // Verifier
+                    self.exchange_nonces(program_id, peer_id, None)?;
+                } else {
+                    // Prover
+                }
+            }
+            P2PMessageKind::Signature => {} //TODO: implement
+        }
+
+        Ok(())
+    }
+
+    fn identify_message(
+        &self,
+        program_id: Uuid,
+        msg: Vec<u8>,
+    ) -> Result<P2PMessageKind, BitVMXError> {
+        //TODO: re-do function
+        let program = self.program(&program_id)?.clone();
+        let me = match program.my_role() {
+            ParticipantRole::Prover => program.prover(),
+            ParticipantRole::Verifier => program.verifier(),
+        }; //TODO: Keys should be saved on the other participant
+
+        // Check keys
+        let keys = me.keys();
+        let keys = match keys {
+            Some(keys) => keys,
+            None => return Err(BitVMXError::KeysNotFound(program_id)),
+        };
+        if keys.check_if_keys(msg) == true {
+            info!("Received keys!");
+            return Ok(P2PMessageKind::Key);
+        // TODO: Check nonces
+        } else {
+            info!("Received nonces!");
+            return Ok(P2PMessageKind::Nonce);
+        }
+        // TODO: Check sig
+        // Ok(P2PMessageKind::Signature)
     }
 
     pub fn process_bitcoin_updates(&mut self) -> Result<bool, BitVMXError> {
@@ -455,6 +597,6 @@ impl BitVMX {
                 .map_err(|e| BitVMXError::OrchestratorError(e.to_string()))?;
 
         */
-        Ok(true)
+        Ok(false)
     }
 }
