@@ -20,6 +20,13 @@ pub enum ProgramState {
     Ready,
     Claimed,
     Challenged,
+    KeySent,
+    ExchangedKeys,
+    NonceSent,
+    ExchangedNonces,
+    SignSent,
+    ExchangedSignatures,
+    Error, //TODO: check somewhere
 }
 
 impl fmt::Display for ProgramState {
@@ -29,6 +36,13 @@ impl fmt::Display for ProgramState {
             ProgramState::Ready => write!(f, "Ready"),
             ProgramState::Claimed => write!(f, "Claimed"),
             ProgramState::Challenged => write!(f, "Challenged"),
+            ProgramState::ExchangedKeys => write!(f, "ExchangdeKeys"),
+            ProgramState::ExchangedSignatures => write!(f, "ExchangedSignatures"),
+            ProgramState::ExchangedNonces => write!(f, "ExchangedNonces"),
+            ProgramState::KeySent => write!(f, "KeySent"),
+            ProgramState::NonceSent => write!(f, "NonceSent"),
+            ProgramState::SignSent => write!(f, "SignSent"),
+            ProgramState::Error => write!(f, "Error"),
         }
     }
 }
@@ -164,6 +178,48 @@ impl Program {
         if self.state == ProgramState::Claimed {
             self.state = ProgramState::Challenged;
         }
+    }
+
+    pub fn send_keys(&mut self) {
+        //TODO: Ready = IDLE?
+        if self.state == ProgramState::Ready && self.my_role == ParticipantRole::Prover {
+            self.state = ProgramState::KeySent;
+        } else {
+            self.state = ProgramState::Error;
+        }
+    }
+    pub fn exchange_keys(&mut self) {
+        //TODO: Ready = IDLE?
+        if (self.state == ProgramState::Ready && self.my_role == ParticipantRole::Verifier)
+            || (self.state == ProgramState::KeySent && self.my_role == ParticipantRole::Prover)
+        {
+            self.state = ProgramState::ExchangedKeys;
+        } else {
+            self.state = ProgramState::Error;
+        }
+    }
+
+    pub fn send_nonces(&mut self) {
+        if self.state == ProgramState::ExchangedKeys && self.my_role == ParticipantRole::Prover {
+            self.state = ProgramState::NonceSent;
+        } else {
+            self.state = ProgramState::Error;
+        }
+    }
+    pub fn exchange_nonces(&mut self) {
+        if (self.state == ProgramState::ExchangedKeys && self.my_role == ParticipantRole::Verifier)
+            || (self.state == ProgramState::NonceSent && self.my_role == ParticipantRole::Prover)
+        {
+            self.state = ProgramState::ExchangedNonces;
+        } else {
+            self.state = ProgramState::Error;
+        }
+    }
+
+    //TODO: sign program, send sign, ....
+
+    pub fn my_role(&self) -> &ParticipantRole {
+        &self.my_role
     }
 
     pub fn is_claimed(&self) -> bool {

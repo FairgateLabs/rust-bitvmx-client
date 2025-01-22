@@ -82,6 +82,14 @@ pub fn main() -> Result<()> {
         .unwrap()
         .clone();
 
+    let prover_pub_keys = prover_bitvmx.setup_program(
+        &id,
+        ParticipantRole::Prover,
+        OutPoint::from_str(&prover_funds)?,
+        &prover_pre_pub_key,
+        &verifier_address,
+    )?;
+
     //TODO: Serializer / Deserialize keys
     prover_bitvmx.setup_counterparty_keys(&id, verifier_pub_keys)?;
     verifier_bitvmx.setup_counterparty_keys(&id, prover_pub_keys)?;
