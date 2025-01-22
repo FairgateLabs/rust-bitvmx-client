@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use anyhow::Result;
 use bitcoin::{OutPoint, PublicKey};
+use bitvmx_client::program::program::ProgramState;
 use bitvmx_client::{
     bitvmx::BitVMX,
     config::Config,
@@ -46,22 +47,40 @@ pub fn main() -> Result<()> {
         init_bitvmx("verifier")?;
 
     let id = Uuid::new_v4();
-
-    let prover_pub_keys = prover_bitvmx.setup_program(
-        &id,
+    prover_bitvmx.api_call(bitvmx_client::bitvmx::BitVMXApiMessages::SetupProgram(
+        id.clone(),
         ParticipantRole::Prover,
-        OutPoint::from_str(&prover_funds)?,
-        &prover_pre_pub_key,
-        &verifier_address,
-    )?;
+        verifier_address.clone(),
+    ));
 
-    let verifier_pub_keys = verifier_bitvmx.setup_program(
-        &id,
+    verifier_bitvmx.api_call(bitvmx_client::bitvmx::BitVMXApiMessages::SetupProgram(
+        id.clone(),
         ParticipantRole::Verifier,
-        OutPoint::from_str(&verifier_funds)?,
-        &verifier_pre_pub_key,
-        &prover_address,
-    )?;
+        prover_address.clone(),
+    ));
+
+    prover_bitvmx.tick();
+    verifier_bitvmx.tick();
+
+    //TODO: Serializer / Deserialize keys this exachange should happen with p2p
+    let verifier_pub_keys = verifier_bitvmx
+        .program(&id)
+        .as_ref()
+        .unwrap()
+        .verifier()
+        .keys()
+        .as_ref()
+        .unwrap()
+        .clone();
+    let prover_pub_keys = prover_bitvmx
+        .program(&id)
+        .as_ref()
+        .unwrap()
+        .prover()
+        .keys()
+        .as_ref()
+        .unwrap()
+        .clone();
 
     //TODO: Serializer / Deserialize keys
     prover_bitvmx.setup_counterparty_keys(&id, verifier_pub_keys)?;
@@ -77,6 +96,10 @@ pub fn main() -> Result<()> {
             prover_bitvmx.mine_blocks(1)?;
         }
         prover_bitvmx.tick()?;
+
+        if prover_bitvmx.program(&id).unwrap().state() == &ProgramState::Ready {
+            break;
+        }
     }
 
     //TODO: Push witness and then claim

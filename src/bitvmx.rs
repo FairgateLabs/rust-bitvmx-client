@@ -23,6 +23,11 @@ use storage_backend::storage::Storage;
 use tracing::info;
 use uuid::Uuid;
 
+#[derive(Clone)]
+pub enum BitVMXApiMessages {
+    SetupProgram(Uuid, ParticipantRole, P2PAddress),
+}
+
 pub struct BitVMX {
     config: Config,
     bitcoin: BitcoinClient,
@@ -31,6 +36,7 @@ pub struct BitVMX {
     programs: HashMap<Uuid, Program>,
     _storage: Rc<Storage>,
     orchestrator: OrchestratorType,
+    api_messages: Vec<BitVMXApiMessages>,
 }
 
 impl BitVMX {
@@ -61,6 +67,7 @@ impl BitVMX {
             programs: HashMap::new(),
             _storage: storage,
             orchestrator,
+            api_messages: vec![],
         })
     }
 
@@ -482,6 +489,11 @@ impl BitVMX {
                 ret_tx.push(tx.tx.compute_txid());
             }
             ret.push((program_id, ret_tx));
+
+            if let Some(p) = self.programs.get_mut(&program_id) {
+                //TODO: Chekc that the transaction
+                p.deploy();
+            }
         }
 
         //let txids = news.txs_by_id.iter().map(|tx| (tx.0, tx.1)).collect::<Vec<Txid>>();
@@ -494,30 +506,35 @@ impl BitVMX {
         info!("Acknowledging news: {:?}", &processed_news);
         self.orchestrator.acknowledge_news(processed_news)?;
 
-        //self.orchestrator.
-
-        /*
-            let is_ready = self
-                .orchestrator
-                .is_ready()
-                .map_err(|e| BitVMXError::OrchestratorError(e.to_string()))?;
-
-            if !is_ready {
-                self.orchestrator
-                    .tick()
-                    .map_err(|e| BitVMXError::OrchestratorError(e.to_string()))?;
-            }
-
-            let _news = self
-                .orchestrator
-                .get_news()
-                .map_err(|e| BitVMXError::OrchestratorError(e.to_string()))?;
-
-        */
         Ok(false)
     }
 
+    pub fn process_api_messages(&mut self) -> Result<(), BitVMXError> {
+        let api_messages = self.api_messages.clone();
+        self.api_messages.clear();
+        for message in api_messages {
+            match message {
+                BitVMXApiMessages::SetupProgram(id, role, peer_address) => {
+                    let (txid, vout, key) = self.add_funds()?;
+                    let prover_pub_keys = self.setup_program(
+                        &id,
+                        role,
+                        OutPoint { txid, vout },
+                        &key,
+                        &peer_address,
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn api_call(&mut self, message: BitVMXApiMessages) {
+        self.api_messages.push(message);
+    }
+
     pub fn tick(&mut self) -> Result<(), BitVMXError> {
+        self.process_api_messages();
         self.process_p2p_messages();
         self.process_bitcoin_updates()?;
         Ok(())
