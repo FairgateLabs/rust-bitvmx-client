@@ -107,7 +107,7 @@ impl BitVMX {
         };
 
         // Create a program with the funding information, and the dispute resolution search parameters.
-        let program = Program::new(
+        let mut program = Program::new(
             &self.config,
             *id,
             role.clone(),
@@ -116,6 +116,9 @@ impl BitVMX {
             self.funding(outpoint),
         )?;
 
+        // Save the program and return the keys to be shared
+        self.save_program(program);
+
         // Only prover can start dialing
         if role == ParticipantRole::Prover {
             self.exchange_keys(
@@ -123,10 +126,10 @@ impl BitVMX {
                 *peer_address.peer_id(),
                 Some(peer_address.address().to_string()),
             )?;
-        }
 
-        // Save the program and return the keys to be shared
-        self.save_program(program);
+            let program = self.program_mut(id)?;
+            program.send_keys();
+        }
 
         Ok(keys)
     }
