@@ -106,14 +106,7 @@ impl BitVMX {
         };
 
         // Create a program with the funding information, and the dispute resolution search parameters.
-        let program = Program::new(
-            &self.config,
-            *id,
-            role.clone(),
-            prover,
-            verifier,
-            self.funding(outpoint),
-        )?;
+        let program = Program::new(&self.config, *id, prover, verifier, self.funding(outpoint))?;
 
         // Save the program and return the keys to be shared
         self.save_program(program);
@@ -126,13 +119,15 @@ impl BitVMX {
     pub fn setup_counterparty_keys(
         &mut self,
         id: &Uuid,
+        counterparty_role: ParticipantRole,
         keys: ParticipantKeys,
     ) -> Result<(), BitVMXError> {
         // 1. Send keys and program data (id and config) to counterparty
         // 2. Receive keys from counterparty
 
         //TODO: Save after modification
-        self.program_mut(id)?.setup_counterparty_keys(keys)?;
+        self.program_mut(id)?
+            .setup_counterparty_keys(counterparty_role, keys)?;
 
         Ok(())
     }

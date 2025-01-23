@@ -82,7 +82,7 @@ impl Funding {
 
 #[derive(Clone)]
 pub struct DisputeResolutionProtocol {
-    protocol: Protocol,
+    protocol: Option<Protocol>,
     funding: Funding,
 }
 
@@ -91,23 +91,30 @@ const KICKOFF: &str = "kickoff";
 const PROTOCOL: &str = "protocol";
 
 impl DisputeResolutionProtocol {
-    pub fn new(
+    pub fn new(funding: Funding) -> Result<DisputeResolutionProtocol, ProtocolBuilderError> {
+        Ok(Self {
+            protocol: None,
+            funding,
+        })
+    }
+
+    pub fn build_protocol(
+        &mut self,
         protocol_name: &str,
         protocol_storage: PathBuf,
-        funding: Funding,
         prover: &ParticipantKeys,
         _verifier: &ParticipantKeys,
         _search: SearchParams,
-    ) -> Result<DisputeResolutionProtocol, ProtocolBuilderError> {
+    ) -> Result<(), ProtocolBuilderError> {
         let ecdsa_sighash_type = SighashType::ecdsa_all();
         let tr_sighash_type = SighashType::taproot_all();
 
         let mut builder = ProtocolBuilder::new(protocol_name, protocol_storage)?;
         let output_spending_type =
-            OutputSpendingType::new_segwit_key_spend(prover.prekickoff_key(), funding.amount);
+            OutputSpendingType::new_segwit_key_spend(prover.prekickoff_key(), self.funding.amount);
         builder.connect_with_external_transaction(
-            funding.txid(),
-            funding.vout(),
+            self.funding.txid(),
+            self.funding.vout(),
             output_spending_type,
             PREKICKOFF,
             &ecdsa_sighash_type,
@@ -122,34 +129,37 @@ impl DisputeResolutionProtocol {
         builder.add_taproot_script_spend_connection(
             PROTOCOL,
             PREKICKOFF,
-            funding.protocol + funding.timelock,
+            self.funding.protocol + self.funding.timelock,
             prover.internal_key(),
             &[kickoff_spending],
             "kickoff",
             &tr_sighash_type,
         )?;
-        builder.add_speedup_output(PREKICKOFF, funding.speedup, prover.speedup_key())?;
+        builder.add_speedup_output(PREKICKOFF, self.funding.speedup, prover.speedup_key())?;
 
         let protocol = builder.build()?;
-        Ok(Self { protocol, funding })
+        self.protocol = Some(protocol);
+
+        Ok(())
     }
 
     pub fn prekickoff_transaction(&self) -> Result<Transaction, ProtocolBuilderError> {
-        let signature = self.protocol.input_ecdsa_signature(PREKICKOFF, 0)?;
+        let signature = self.protocol()?.input_ecdsa_signature(PREKICKOFF, 0)?;
         let mut ecdsa_arg = SpendingArgs::new_args();
         ecdsa_arg.push_ecdsa_signature(signature);
 
-        self.protocol.transaction_to_send(PREKICKOFF, &[ecdsa_arg])
+        self.protocol()?
+            .transaction_to_send(PREKICKOFF, &[ecdsa_arg])
     }
 
     pub fn kickoff_transaction(&self) -> Result<Transaction, ProtocolBuilderError> {
-        self.protocol.transaction_to_send(KICKOFF, &[])
+        self.protocol()?.transaction_to_send(KICKOFF, &[])
     }
 
     pub fn spending_infos(
         &self,
     ) -> Result<HashMap<String, Vec<InputSpendingInfo>>, ProtocolBuilderError> {
-        self.protocol.spending_infos()
+        self.protocol()?.spending_infos()
     }
 
     pub fn update_input_signatures(
@@ -158,12 +168,30 @@ impl DisputeResolutionProtocol {
         input_index: u32,
         signatures: Vec<Signature>,
     ) -> Result<(), ProtocolBuilderError> {
-        self.protocol
+        self.protocol_mut()?
             .update_input_signatures(transaction_name, input_index, signatures)?;
         Ok(())
     }
 
     pub fn funding(&self) -> &Funding {
         &self.funding
+    }
+
+    fn protocol(&self) -> Result<&Protocol, ProtocolBuilderError> {
+        let protocol = match self.protocol {
+            Some(ref p) => p,
+            None => return Err(ProtocolBuilderError::MissingProtocol),
+        };
+
+        Ok(protocol)
+    }
+
+    fn protocol_mut(&mut self) -> Result<&mut Protocol, ProtocolBuilderError> {
+        let protocol = match self.protocol {
+            Some(ref mut p) => p,
+            None => return Err(ProtocolBuilderError::MissingProtocol),
+        };
+
+        Ok(protocol)
     }
 }

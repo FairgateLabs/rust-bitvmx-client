@@ -38,6 +38,12 @@ pub struct WitnessData {
     values: HashMap<String, WinternitzSignature>,
 }
 
+impl Default for WitnessData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WitnessData {
     pub fn new() -> Self {
         Self {
@@ -57,11 +63,9 @@ impl WitnessData {
 #[derive(Clone)]
 pub struct Program {
     id: Uuid,
-    my_role: ParticipantRole,
     prover: Participant,
     verifier: Participant,
-    drp: Option<DisputeResolutionProtocol>,
-    funding: Funding,
+    drp: DisputeResolutionProtocol,
     state: ProgramState,
     _trace: Trace,
     _ending_state: u8,
@@ -74,7 +78,6 @@ impl Program {
     pub fn new(
         config: &Config,
         id: Uuid,
-        my_role: ParticipantRole,
         prover: Participant,
         verifier: Participant,
         funding: Funding,
@@ -83,13 +86,13 @@ impl Program {
         let program_path = config.program_storage_path(id);
         let protocol_storage = program_path.join(protocol_name);
 
+        let drp = DisputeResolutionProtocol::new(funding)?;
+
         Ok(Program {
             id,
-            my_role,
             prover,
             verifier,
-            drp: None,
-            funding,
+            drp,
             state: ProgramState::Inactive,
             _trace: Trace {},
             _ending_state: 0,
@@ -99,24 +102,26 @@ impl Program {
         })
     }
 
-    pub fn setup_counterparty_keys(&mut self, keys: ParticipantKeys) -> Result<(), BitVMXError> {
-        match self.my_role {
+    pub fn setup_counterparty_keys(
+        &mut self,
+        counterparty_role: ParticipantRole,
+        keys: ParticipantKeys,
+    ) -> Result<(), BitVMXError> {
+        match counterparty_role {
             ParticipantRole::Prover => self.verifier.set_keys(keys),
             ParticipantRole::Verifier => self.prover.set_keys(keys),
         }
 
         let search_params = SearchParams::new(8, 32);
 
-        let drp = DisputeResolutionProtocol::new(
+        self.drp.build_protocol(
             "drp",
             self.protocol_storage.clone(),
-            self.funding.clone(),
             self.prover.keys().as_ref().unwrap(),
             self.verifier.keys().as_ref().unwrap(),
             search_params,
         )?;
 
-        self.drp = Some(drp);
         Ok(())
     }
 
@@ -202,17 +207,17 @@ impl Program {
     }
 
     pub fn dispute_resolution_protocol_mut(&mut self) -> &mut DisputeResolutionProtocol {
-        self.drp.as_mut().expect("DRP is not set")
+        &mut self.drp
     }
 
     pub fn dispute_resolution_protocol(&self) -> &DisputeResolutionProtocol {
-        self.drp.as_ref().unwrap()
+        &self.drp
     }
 
     pub fn push_witness_value(&mut self, txid: Txid, name: &str, value: WinternitzSignature) {
         self.witness_data
             .entry(txid)
-            .or_insert(WitnessData::new())
+            .or_default()
             .insert(name.to_string(), value);
     }
 

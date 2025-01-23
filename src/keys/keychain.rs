@@ -33,8 +33,7 @@ impl KeyChain {
         // TODO: hardcoded communications key to be on allowed list
         let privk = config.p2p_key();
         let communications_key =
-            Keypair::from_protobuf_encoding(&hex::decode(privk.as_bytes()).unwrap())
-                .unwrap();
+            Keypair::from_protobuf_encoding(&hex::decode(privk.as_bytes()).unwrap()).unwrap();
         //let communications_key = Keypair::generate_ed25519();
 
         Ok(Self {
@@ -182,6 +181,12 @@ impl KeyChain {
 
 pub struct KeyIndex {
     index: u32,
+}
+
+impl Default for KeyIndex {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl KeyIndex {

@@ -113,6 +113,7 @@ pub struct ParticipantKeys {
 }
 
 impl ParticipantKeys {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         pre_kickoff: PublicKey,
         internal: XOnlyPublicKey,

@@ -4,6 +4,7 @@ use clap::{command, Parser, Subcommand, ValueEnum};
 use comfy_table::Table;
 use key_manager::winternitz::WinternitzPublicKey;
 use p2p_handler::PeerId;
+use std::fmt::Display;
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -65,18 +66,18 @@ enum Role {
     Verifier,
 }
 
-impl ToString for Role {
-    fn to_string(&self) -> String {
+impl Display for Role {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Role::Prover => "Prover".to_string(),
-            Role::Verifier => "Verifier".to_string(),
+            Role::Prover => write!(f, "Prover"),
+            Role::Verifier => write!(f, "Verifier"),
         }
     }
 }
 
-impl Into<ParticipantRole> for Role {
-    fn into(self) -> ParticipantRole {
-        match self {
+impl From<Role> for ParticipantRole {
+    fn from(role: Role) -> Self {
+        match role {
             Role::Prover => ParticipantRole::Prover,
             Role::Verifier => ParticipantRole::Verifier,
         }

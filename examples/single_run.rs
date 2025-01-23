@@ -27,7 +27,7 @@ fn config_trace() {
 type FundingAddress = String;
 
 fn init_bitvmx(role: &str) -> Result<(BitVMX, FundingAddress, PublicKey, P2PAddress)> {
-    let config = Config::new(Some(format!("config/{}.yaml", role.to_string())))?;
+    let config = Config::new(Some(format!("config/{}.yaml", role)))?;
     let mut bitvmx = BitVMX::new(config)?;
     //TODO: Pre-kickoff only prover ?? make independent ??
     let funds = bitvmx.add_funds()?;
@@ -64,8 +64,8 @@ pub fn main() -> Result<()> {
     )?;
 
     //TODO: Serializer / Deserialize keys
-    prover_bitvmx.setup_counterparty_keys(&id, verifier_pub_keys)?;
-    verifier_bitvmx.setup_counterparty_keys(&id, prover_pub_keys)?;
+    prover_bitvmx.setup_counterparty_keys(&id, ParticipantRole::Verifier, verifier_pub_keys)?;
+    verifier_bitvmx.setup_counterparty_keys(&id, ParticipantRole::Prover, prover_pub_keys)?;
 
     prover_bitvmx.partial_sign(&id)?;
     //TODO: Partial signs by counterparty
