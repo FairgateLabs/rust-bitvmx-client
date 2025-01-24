@@ -29,7 +29,7 @@ pub enum BitVMXApiMessages {
 }
 
 #[derive(Debug)]
-enum P2PMessageKind {
+pub enum P2PMessageKind {
     Key,
     Nonce,
     Signature,
@@ -127,13 +127,13 @@ impl BitVMX {
         )?;
 
         // Only prover can start dialing
-        if role == ParticipantRole::Prover {
+        /*if role == ParticipantRole::Prover {
             self.exchange_keys(
                 id,
                 *peer_address.peer_id(),
                 Some(peer_address.address().to_string()),
             )?;
-        }
+        }*/
 
         // Save the program and return the keys to be shared
         self.save_program(program);
@@ -141,7 +141,7 @@ impl BitVMX {
         Ok(keys)
     }
 
-    fn exchange_keys(
+    pub fn exchange_keys(
         &mut self,
         program_id: &Uuid,
         peer_id: PeerId,
@@ -297,7 +297,7 @@ impl BitVMX {
             bitvmx_orchestrator::types::BitvmxInstance::new(
                 *program_id,
                 vec![TransactionPartialInfo::from(transaction.compute_txid())],
-                    None,
+                None,
             );
 
         self.orchestrator.monitor_instance(&instance)?;
@@ -473,7 +473,7 @@ impl BitVMX {
         witness::decode_witness(winternitz_message_sizes, winternitz_type, witness)
     }
 
-    fn wait_deployment(
+    fn _wait_deployment(
         &mut self,
         deployment_transaction: &Transaction,
     ) -> Result<bool, BitVMXError> {
@@ -538,9 +538,8 @@ impl BitVMX {
                 //process the message
                 self.process_message(program_id, peer_id, msg).unwrap(); //TODO: how to propagate?
             }
-            ReceiveHandlerChannel::Connected(_, _) => {}
             ReceiveHandlerChannel::Error(_) => {}
-         }
+        }
 
         false
     }
@@ -594,7 +593,7 @@ impl BitVMX {
     ) -> Result<P2PMessageKind, BitVMXError> {
         //TODO: re-do function
         let program = self.program(&program_id)?.clone();
-       
+
         let me = match program.my_role {
             ParticipantRole::Prover => program.prover(),
             ParticipantRole::Verifier => program.verifier(),
@@ -620,10 +619,13 @@ impl BitVMX {
     }
 
     pub fn process_bitcoin_updates(&mut self) -> Result<bool, BitVMXError> {
-        self.orchestrator.tick()?;
+        let ret = self.orchestrator.tick();
+        if ret.is_err() {
+            //TODO: Fix why orchestrator is failing
+            return Ok(false);
+        }
 
         if !self.orchestrator.is_ready()? {
-            info!("Orchestrator is not ready, synchronizing with the Bitcoin network");
             return Ok(false);
         }
 
@@ -631,7 +633,6 @@ impl BitVMX {
         if !news.txs_by_id.is_empty() {
             info!("Processing news: {:?}", news);
         } else {
-            info!("No news to process");
             return Ok(true);
         }
 

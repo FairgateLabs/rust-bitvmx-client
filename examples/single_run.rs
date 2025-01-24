@@ -15,12 +15,12 @@ use uuid::Uuid;
 
 fn config_trace() {
     let filter = EnvFilter::builder()
-        .parse("info,libp2p=off") // Include everything at "info" except `libp2p`
+        .parse("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitvmx_orchestrator=off") // Include everything at "info" except `libp2p`
         .expect("Invalid filter");
 
     tracing_subscriber::fmt()
         .without_time()
-        .with_target(false)
+        .with_target(true)
         .with_env_filter(filter)
         .init();
 }
@@ -43,7 +43,7 @@ pub fn main() -> Result<()> {
     let (mut prover_bitvmx, prover_funds, prover_pre_pub_key, prover_address) =
         init_bitvmx("prover")?;
     info!("start verifier");
-    let (mut verifier_bitvmx, verifier_funds, verifier_pre_pub_key, verifier_address) =
+    let (mut verifier_bitvmx, _verifier_funds, _verifier_pre_pub_key, verifier_address) =
         init_bitvmx("verifier")?;
 
     let id = Uuid::new_v4();
@@ -59,8 +59,8 @@ pub fn main() -> Result<()> {
         prover_address.clone(),
     ));
 
-    prover_bitvmx.tick();
-    verifier_bitvmx.tick();
+    prover_bitvmx.tick()?;
+    verifier_bitvmx.tick()?;
 
     //TODO: Serializer / Deserialize keys this exachange should happen with p2p
     let verifier_pub_keys = verifier_bitvmx
@@ -72,7 +72,7 @@ pub fn main() -> Result<()> {
         .as_ref()
         .unwrap()
         .clone();
-    let prover_pub_keys = prover_bitvmx
+    let _prover_pub_keys = prover_bitvmx
         .program(&id)
         .as_ref()
         .unwrap()
@@ -88,6 +88,12 @@ pub fn main() -> Result<()> {
         OutPoint::from_str(&prover_funds)?,
         &prover_pre_pub_key,
         &verifier_address,
+    )?;
+
+    prover_bitvmx.exchange_keys(
+        &id,
+        *verifier_address.peer_id(),
+        Some(verifier_address.address().to_string()),
     )?;
 
     //TODO: Serializer / Deserialize keys
