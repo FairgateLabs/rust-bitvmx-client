@@ -14,7 +14,7 @@ use bitcoin::PublicKey;
 use bitcoin::{Amount, OutPoint, Transaction, Txid};
 use bitvmx_orchestrator::{
     orchestrator::{Orchestrator, OrchestratorApi},
-    types::{BitvmxInstance, FundingTx, OrchestratorType, ProcessedNews, TransactionPartialInfo},
+    types::{BitvmxInstance, OrchestratorType, ProcessedNews, TransactionPartialInfo},
 };
 use key_manager::winternitz;
 use p2p_handler::{LocalAllowList, P2pHandler, PeerId, ReceiveHandlerChannel};
@@ -57,14 +57,14 @@ impl BitVMX {
         )?;
 
         let storage = Rc::new(Storage::new_with_path(&PathBuf::from(&config.storage.db))?);
-        // let orchestrator = Orchestrator::new_with_paths(
-        //     &config.bitcoin,
-        //     storage.clone(),
-        //     keys.get_key_manager(),
-        //     config.monitor.checkpoint_height,
-        //     config.monitor.confirmation_threshold,
-        //     config.bitcoin.network,
-        // )?;
+        let orchestrator = Orchestrator::new_with_paths(
+            &config.bitcoin,
+            storage.clone(),
+            keys.get_key_manager(),
+            config.monitor.checkpoint_height,
+            config.monitor.confirmation_threshold,
+            config.bitcoin.network,
+        )?;
 
         Ok(Self {
             config,
@@ -111,7 +111,7 @@ impl BitVMX {
         let other = Participant::new(peer_address, None);
 
         // Rename the variables to the correct roles
-        let (prover, verifier) = match role {
+        let (prover, verifier) = match role.clone() {
             ParticipantRole::Prover => (me, other.clone()),
             ParticipantRole::Verifier => (other.clone(), me),
         };
@@ -120,7 +120,7 @@ impl BitVMX {
         let program = Program::new(
             &self.config,
             *id,
-            role,
+            role.clone(),
             prover,
             verifier,
             self.funding(outpoint),
@@ -295,8 +295,8 @@ impl BitVMX {
         let instance: BitvmxInstance<TransactionPartialInfo> =
             bitvmx_orchestrator::types::BitvmxInstance::new(
                 *program_id,
-                vec![transaction.compute_txid().into()],
-                FundingTx::empty(),
+                vec![TransactionPartialInfo::from(transaction.compute_txid())],
+                    None,
             );
 
         self.orchestrator.monitor_instance(&instance)?;
@@ -501,10 +501,17 @@ impl BitVMX {
 
     pub fn process_p2p_messages(&mut self) -> bool {
         let message = self.comms.check_receive();
-        let priotity = self.comms.check_priority(); //TODO:
+
+        if let Err(_) = message {
+            //TODO: handle error
+            return false;
+        }
+
+        let message = message.unwrap();
+        // let priotity = self.comms.check_priority(); //TODO:
 
         match message {
-            Ok(ReceiveHandlerChannel::Msg(program_id, peer_id, msg)) => {
+            ReceiveHandlerChannel::Msg(program_id, peer_id, msg) => {
                 let program_id = Uuid::from_str(&program_id).unwrap(); //TODO: how to propagate?
 
                 // If program not found, create and save a new program
@@ -530,9 +537,10 @@ impl BitVMX {
                 //process the message
                 self.process_message(program_id, peer_id, msg).unwrap(); //TODO: how to propagate?
             }
-            Ok(ReceiveHandlerChannel::Error(_)) => {} //TODO: implement
-            Err(_) => {}
-        }
+            ReceiveHandlerChannel::Connected(_, _) => {}
+            ReceiveHandlerChannel::Error(_) => {}
+         }
+
         false
     }
 
@@ -638,7 +646,6 @@ impl BitVMX {
             }
         }
 
-<<<<<<< HEAD
         //let txids = news.txs_by_id.iter().map(|tx| (tx.0, tx.1)).collect::<Vec<Txid>>();
         let processed_news = ProcessedNews {
             txs_by_id: ret,
@@ -646,7 +653,6 @@ impl BitVMX {
             funds_requests: vec![],
         };
 
-        info!("Acknowledging news: {:?}", &processed_news);
         self.orchestrator.acknowledge_news(processed_news)?;
 
         Ok(false)
@@ -659,7 +665,7 @@ impl BitVMX {
             match message {
                 BitVMXApiMessages::SetupProgram(id, role, peer_address) => {
                     let (txid, vout, key) = self.add_funds()?;
-                    let prover_pub_keys = self.setup_program(
+                    let _prover_pub_keys = self.setup_program(
                         &id,
                         role,
                         OutPoint { txid, vout },
@@ -677,7 +683,7 @@ impl BitVMX {
     }
 
     pub fn tick(&mut self) -> Result<(), BitVMXError> {
-        self.process_api_messages();
+        self.process_api_messages()?;
         self.process_p2p_messages();
         self.process_bitcoin_updates()?;
         Ok(())
