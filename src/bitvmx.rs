@@ -148,14 +148,11 @@ impl BitVMX {
         addr: Option<String>,
     ) -> Result<(), BitVMXError> {
         let program = self.program(program_id)?.clone();
-        // let me = match program {
-        //     ParticipantRole::Prover => program.prover(),
-        //     ParticipantRole::Verifier => program.verifier(),
-        // };
+        let me = match program.my_role {
+            ParticipantRole::Prover => program.prover(),
+            ParticipantRole::Verifier => program.verifier(),
+        };
 
-        // TODO : we need to check where to get my_role that is not in the program
-        let me = program.prover();
-        
         let keys = me.keys();
         let keys = match keys {
             Some(keys) => keys.get_keys(),
@@ -560,32 +557,32 @@ impl BitVMX {
         };
         info!("Processing message: {:?}", utf_msg);
 
-        // match self.identify_message(program_id, msg)? {
-        //     P2PMessageKind::Key => {
-        //         let program = self.program_mut(&program_id)?;
-        //         program.exchange_keys();
-        //         if program.my_role() == &ParticipantRole::Verifier {
-        //             // Verifier
-        //             self.exchange_keys(&program_id, peer_id, None)?;
-        //         } else {
-        //             // Prover
-        //             program.send_nonces();
-        //             let addr = program.verifier().address().address().to_string();
-        //             self.exchange_nonces(program_id, peer_id, Some(addr))?;
-        //         }
-        //     }
-        //     P2PMessageKind::Nonce => {
-        //         let program = self.program_mut(&program_id)?;
-        //         program.exchange_nonces();
-        //         if program.my_role() == &ParticipantRole::Verifier {
-        //             // Verifier
-        //             self.exchange_nonces(program_id, peer_id, None)?;
-        //         } else {
-        //             // Prover
-        //         }
-        //     }
-        //     P2PMessageKind::Signature => {} //TODO: implement
-        // }
+        match self.identify_message(program_id, msg)? {
+            P2PMessageKind::Key => {
+                let program = self.program_mut(&program_id)?;
+                program.exchange_keys();
+                if program.my_role == ParticipantRole::Verifier {
+                    // Verifier
+                    self.exchange_keys(&program_id, peer_id, None)?;
+                } else {
+                    // Prover
+                    program.send_nonces();
+                    let addr = program.verifier().address().address().to_string();
+                    self.exchange_nonces(program_id, peer_id, Some(addr))?;
+                }
+            }
+            P2PMessageKind::Nonce => {
+                let program = self.program_mut(&program_id)?;
+                program.exchange_nonces();
+                if program.my_role == ParticipantRole::Verifier {
+                    // Verifier
+                    self.exchange_nonces(program_id, peer_id, None)?;
+                } else {
+                    // Prover
+                }
+            }
+            P2PMessageKind::Signature => {} //TODO: implement
+        }
 
         Ok(())
     }
@@ -597,13 +594,12 @@ impl BitVMX {
     ) -> Result<P2PMessageKind, BitVMXError> {
         //TODO: re-do function
         let program = self.program(&program_id)?.clone();
-        // let me = match program.my_role() {
-        //     ParticipantRole::Prover => program.prover(),
-        //     ParticipantRole::Verifier => program.verifier(),
+       
+        let me = match program.my_role {
+            ParticipantRole::Prover => program.prover(),
+            ParticipantRole::Verifier => program.verifier(),
+        };
         // }; //TODO: Keys should be saved on the other participant
-
-        // TODO : we need to check where to get my_role that is not in the program
-        let me = program.prover();
 
         // Check keys
         let keys = me.keys();
