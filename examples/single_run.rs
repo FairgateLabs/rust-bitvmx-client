@@ -64,8 +64,8 @@ pub fn main() -> Result<()> {
     )?;
 
     //TODO: Serializer / Deserialize keys
-    prover_bitvmx.setup_counterparty_keys(&id, ParticipantRole::Verifier, verifier_pub_keys)?;
-    verifier_bitvmx.setup_counterparty_keys(&id, ParticipantRole::Prover, prover_pub_keys)?;
+    prover_bitvmx.setup_counterparty_keys(&id, verifier_pub_keys)?;
+    verifier_bitvmx.setup_counterparty_keys(&id, prover_pub_keys)?;
 
     prover_bitvmx.partial_sign(&id)?;
     //TODO: Partial signs by counterparty

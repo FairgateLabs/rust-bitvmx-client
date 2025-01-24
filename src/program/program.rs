@@ -63,6 +63,7 @@ impl WitnessData {
 #[derive(Clone)]
 pub struct Program {
     id: Uuid,
+    my_role: ParticipantRole,
     prover: Participant,
     verifier: Participant,
     drp: DisputeResolutionProtocol,
@@ -78,6 +79,7 @@ impl Program {
     pub fn new(
         config: &Config,
         id: Uuid,
+        my_role: ParticipantRole,
         prover: Participant,
         verifier: Participant,
         funding: Funding,
@@ -90,6 +92,7 @@ impl Program {
 
         Ok(Program {
             id,
+            my_role,
             prover,
             verifier,
             drp,
@@ -102,12 +105,8 @@ impl Program {
         })
     }
 
-    pub fn setup_counterparty_keys(
-        &mut self,
-        counterparty_role: ParticipantRole,
-        keys: ParticipantKeys,
-    ) -> Result<(), BitVMXError> {
-        match counterparty_role {
+    pub fn setup_counterparty_keys(&mut self, keys: ParticipantKeys) -> Result<(), BitVMXError> {
+        match self.my_role {
             ParticipantRole::Prover => self.verifier.set_keys(keys),
             ParticipantRole::Verifier => self.prover.set_keys(keys),
         }
