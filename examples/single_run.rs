@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use anyhow::Result;
 use bitcoin::{OutPoint, PublicKey};
+use bitvmx_client::program::program::ProgramState;
 use bitvmx_client::{
     bitvmx::BitVMX,
     config::Config,
@@ -14,12 +15,12 @@ use uuid::Uuid;
 
 fn config_trace() {
     let filter = EnvFilter::builder()
-        .parse("info,libp2p=off") // Include everything at "info" except `libp2p`
+        .parse("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitvmx_orchestrator=off") // Include everything at "info" except `libp2p`
         .expect("Invalid filter");
 
     tracing_subscriber::fmt()
         .without_time()
-        .with_target(false)
+        .with_target(true)
         .with_env_filter(filter)
         .init();
 }
@@ -42,10 +43,44 @@ pub fn main() -> Result<()> {
     let (mut prover_bitvmx, prover_funds, prover_pre_pub_key, prover_address) =
         init_bitvmx("prover")?;
     info!("start verifier");
-    let (mut verifier_bitvmx, verifier_funds, verifier_pre_pub_key, verifier_address) =
+    let (mut verifier_bitvmx, _verifier_funds, _verifier_pre_pub_key, verifier_address) =
         init_bitvmx("verifier")?;
 
     let id = Uuid::new_v4();
+    prover_bitvmx.api_call(bitvmx_client::bitvmx::BitVMXApiMessages::SetupProgram(
+        id.clone(),
+        ParticipantRole::Prover,
+        verifier_address.clone(),
+    ));
+
+    verifier_bitvmx.api_call(bitvmx_client::bitvmx::BitVMXApiMessages::SetupProgram(
+        id.clone(),
+        ParticipantRole::Verifier,
+        prover_address.clone(),
+    ));
+
+    prover_bitvmx.tick()?;
+    verifier_bitvmx.tick()?;
+
+    //TODO: Serializer / Deserialize keys this exachange should happen with p2p
+    let verifier_pub_keys = verifier_bitvmx
+        .program(&id)
+        .as_ref()
+        .unwrap()
+        .verifier()
+        .keys()
+        .as_ref()
+        .unwrap()
+        .clone();
+    let _prover_pub_keys = prover_bitvmx
+        .program(&id)
+        .as_ref()
+        .unwrap()
+        .prover()
+        .keys()
+        .as_ref()
+        .unwrap()
+        .clone();
 
     let prover_pub_keys = prover_bitvmx.setup_program(
         &id,
@@ -55,12 +90,10 @@ pub fn main() -> Result<()> {
         &verifier_address,
     )?;
 
-    let verifier_pub_keys = verifier_bitvmx.setup_program(
+    prover_bitvmx.exchange_keys(
         &id,
-        ParticipantRole::Verifier,
-        OutPoint::from_str(&verifier_funds)?,
-        &verifier_pre_pub_key,
-        &prover_address,
+        *verifier_address.peer_id(),
+        Some(verifier_address.address().to_string()),
     )?;
 
     //TODO: Serializer / Deserialize keys
@@ -70,6 +103,18 @@ pub fn main() -> Result<()> {
     prover_bitvmx.partial_sign(&id)?;
     //TODO: Partial signs by counterparty
     prover_bitvmx.deploy_program(&id)?;
+
+    //TODO: main loop
+    for i in 0..1000 {
+        if i % 20 == 0 {
+            prover_bitvmx.mine_blocks(1)?;
+        }
+        prover_bitvmx.tick()?;
+
+        if prover_bitvmx.program(&id).unwrap().state() == &ProgramState::Ready {
+            break;
+        }
+    }
 
     //TODO: Push witness and then claim
     //prover_bitvmx.claim_program(&id)?;

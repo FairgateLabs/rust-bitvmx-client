@@ -127,7 +127,7 @@ impl Repl {
                 break;
             }
 
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
         Ok(())
     }
@@ -145,7 +145,7 @@ impl Repl {
         false
     }
 
-    fn process_p2p_messages(&self) -> bool {
+    fn process_p2p_messages(&mut self) -> bool {
         self.bitvmx.process_p2p_messages()
     }
 
