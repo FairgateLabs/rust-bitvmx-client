@@ -57,7 +57,11 @@ pub fn test_single_run() -> Result<()> {
 
     let config = Config::new(Some(format!("config/prover.yaml")))?;
 
-    let bitcoind = Bitcoind::new("regtest-image", "ruimarinho/bitcoin-core", &config.bitcoin);
+    let bitcoind = Bitcoind::new(
+        "bitocoin-regtest",
+        "ruimarinho/bitcoin-core",
+        &config.bitcoin,
+    );
     bitcoind.start()?;
 
     info!("start prover");
