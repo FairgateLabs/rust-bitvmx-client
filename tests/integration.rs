@@ -58,7 +58,7 @@ pub fn test_single_run() -> Result<()> {
     let config = Config::new(Some(format!("config/prover.yaml")))?;
 
     let bitcoind = Bitcoind::new(
-        "bitocoin-regtest",
+        "bitcoin-regtest",
         "ruimarinho/bitcoin-core",
         &config.bitcoin,
     );
