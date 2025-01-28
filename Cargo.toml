@@ -35,6 +35,11 @@ rust-bitvmx-storage-backend = { path = "../rust-bitvmx-storage-backend" }
 bitvmx-settings = { path = "../rust-bitvmx-settings" }
 bitvmx-bitcoin-rpc = { path = "../rust-bitvmx-bitcoin-rpc" }
 
+
+[dev-dependencies]
+bollard = "0.11.0"
+futures-util = "0.3"
+
 [[bin]]
 name = "bitvmx"
 path = "src/main.rs"
