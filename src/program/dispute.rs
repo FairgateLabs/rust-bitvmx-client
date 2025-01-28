@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, rc::Rc};
 
 use bitcoin::{Amount, Transaction, Txid};
 use protocol_builder::{
@@ -10,6 +10,8 @@ use protocol_builder::{
     },
     scripts,
 };
+use serde::{Deserialize, Serialize};
+use storage_backend::storage::Storage;
 
 use super::participant::ParticipantKeys;
 pub struct SearchParams {
@@ -26,7 +28,7 @@ impl SearchParams {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Funding {
     txid: Txid,
     vout: u32,
@@ -80,8 +82,9 @@ impl Funding {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DisputeResolutionProtocol {
+    #[serde(skip)]
     protocol: Option<Protocol>,
     funding: Funding,
 }
@@ -101,7 +104,7 @@ impl DisputeResolutionProtocol {
     pub fn build_protocol(
         &mut self,
         protocol_name: &str,
-        protocol_storage: PathBuf,
+        storage: Rc<Storage>,
         prover: &ParticipantKeys,
         _verifier: &ParticipantKeys,
         _search: SearchParams,
@@ -109,7 +112,7 @@ impl DisputeResolutionProtocol {
         let ecdsa_sighash_type = SighashType::ecdsa_all();
         let tr_sighash_type = SighashType::taproot_all();
 
-        let mut builder = ProtocolBuilder::new(protocol_name, protocol_storage)?;
+        let mut builder = ProtocolBuilder::new(protocol_name, storage)?;
         let output_spending_type =
             OutputSpendingType::new_segwit_key_spend(prover.prekickoff_key(), self.funding.amount);
         builder.connect_with_external_transaction(
@@ -175,6 +178,23 @@ impl DisputeResolutionProtocol {
 
     pub fn funding(&self) -> &Funding {
         &self.funding
+    }
+
+    pub fn load_protocol(&mut self, protocol_name: &str, storage: Rc<Storage>) -> Result<(), ProtocolBuilderError> {
+        match self.protocol {
+            Some(_) => {},
+            None => {
+                let protocol = match storage.read(protocol_name)? {
+                    Some(protocol) => {
+                        serde_json::from_str(&protocol)?
+                    },
+                    None => return Err(ProtocolBuilderError::MissingProtocol)
+                };
+                self.protocol = Some(protocol);
+            },
+        }
+
+        Ok(())
     }
 
     fn protocol(&self) -> Result<&Protocol, ProtocolBuilderError> {

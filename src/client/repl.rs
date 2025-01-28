@@ -238,7 +238,7 @@ impl Repl {
     }
 
     fn program_details(&self, program_id: &Uuid) -> Result<()> {
-        let program = self.bitvmx.program(program_id)?;
+        let program = self.bitvmx.load_program(program_id)?;
         let prover = program.prover();
         let verifier = program.verifier();
 

@@ -1,20 +1,19 @@
-use std::{collections::HashMap, fmt, path::PathBuf};
+use std::{collections::HashMap, fmt, rc::Rc};
 
 use bitcoin::{Transaction, Txid};
 use key_manager::winternitz::WinternitzSignature;
+use serde::{Deserialize, Serialize};
+use storage_backend::storage::{Storage, KeyValueStore};
 use uuid::Uuid;
 
-use crate::{
-    config::Config,
-    errors::{BitVMXError, ProgramError},
-};
+use crate::errors::{BitVMXError, ProgramError};
 
 use super::{
     dispute::{DisputeResolutionProtocol, Funding, SearchParams},
     participant::{Participant, ParticipantKeys, ParticipantRole},
 };
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Serialize, Deserialize)]
 pub enum ProgramState {
     Inactive,
     Ready,
@@ -33,7 +32,7 @@ impl fmt::Display for ProgramState {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct WitnessData {
     values: HashMap<String, WinternitzSignature>,
 }
@@ -60,7 +59,7 @@ impl WitnessData {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Program {
     id: Uuid,
     my_role: ParticipantRole,
@@ -72,22 +71,19 @@ pub struct Program {
     _ending_state: u8,
     _ending_step_number: u32,
     witness_data: HashMap<Txid, WitnessData>,
-    protocol_storage: PathBuf,
+    #[serde(skip)]
+    storage: Option<Rc<Storage>>,
 }
 
 impl Program {
     pub fn new(
-        config: &Config,
         id: Uuid,
         my_role: ParticipantRole,
         prover: Participant,
         verifier: Participant,
         funding: Funding,
+        storage: Rc<Storage>
     ) -> Result<Self, ProgramError> {
-        let protocol_name = "drp";
-        let program_path = config.program_storage_path(id);
-        let protocol_storage = program_path.join(protocol_name);
-
         let drp = DisputeResolutionProtocol::new(funding)?;
 
         Ok(Program {
@@ -101,11 +97,22 @@ impl Program {
             _ending_state: 0,
             _ending_step_number: 0,
             witness_data: HashMap::new(),
-            protocol_storage,
+            storage: Some(storage),
         })
     }
 
-    pub fn setup_counterparty_keys(&mut self, keys: ParticipantKeys) -> Result<(), BitVMXError> {
+    pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Self, ProgramError> {
+        let mut program: Program = match storage.get(&format!("program_{}", program_id))? {
+            Some(program) => program,
+            None => return Err(ProgramError::ProgramNotFound(*program_id))
+        };
+
+        program.storage = Some(storage);
+
+        Ok(program)
+    }
+
+    pub fn setup_counterparty_keys(&mut self, keys: ParticipantKeys, storage: Rc<Storage>) -> Result<(), BitVMXError> {
         match self.my_role {
             ParticipantRole::Prover => self.verifier.set_keys(keys),
             ParticipantRole::Verifier => self.prover.set_keys(keys),
@@ -114,8 +121,8 @@ impl Program {
         let search_params = SearchParams::new(8, 32);
 
         self.drp.build_protocol(
-            "drp",
-            self.protocol_storage.clone(),
+            &format!("drp_{}", self.id),
+            storage,
             self.prover.keys().as_ref().unwrap(),
             self.verifier.keys().as_ref().unwrap(),
             search_params,
@@ -210,6 +217,7 @@ impl Program {
     }
 
     pub fn dispute_resolution_protocol(&self) -> &DisputeResolutionProtocol {
+        self.drp.load_protocol(&format!("drp_{}", self.id) ,self.storage.clone().unwrap());
         &self.drp
     }
 
@@ -225,5 +233,5 @@ impl Program {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Trace {}
