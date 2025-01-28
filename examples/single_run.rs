@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use anyhow::Result;
 use bitcoin::{OutPoint, PublicKey};
+use bitvmx_client::bitcoin::bitcoind;
 use bitvmx_client::program::program::ProgramState;
 use bitvmx_client::{
     bitvmx::BitVMX,
@@ -38,6 +39,9 @@ fn init_bitvmx(role: &str) -> Result<(BitVMX, FundingAddress, PublicKey, P2PAddr
 
 pub fn main() -> Result<()> {
     config_trace();
+
+    let bitcoind = bitcoind::Bitcoind::new("regtest-image", "ruimarinho/bitcoin-coreb");
+    bitcoind.start();
 
     info!("start prover");
     let (mut prover_bitvmx, prover_funds, prover_pre_pub_key, prover_address) =
