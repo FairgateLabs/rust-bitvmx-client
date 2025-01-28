@@ -1,8 +1,10 @@
 use bitvmx_bitcoin_rpc::rpc_config::RpcConfig;
 use bollard::container::{Config, CreateContainerOptions, RemoveContainerOptions};
 use bollard::errors::Error;
+use bollard::image::CreateImageOptions;
 use bollard::models::{ContainerCreateResponse, HostConfig};
 use bollard::Docker;
+use futures_util::stream::StreamExt;
 use std::default::Default;
 use tokio::runtime::Runtime;
 use tracing::{self, info};
@@ -26,9 +28,32 @@ impl Bitcoind {
     }
 
     pub fn start(&self) -> Result<(), Error> {
+        info!("Checking if Docker daemon is active");
+        let ping_result = self.runtime.block_on(async { self.docker.ping().await });
+
+        if ping_result.is_err() {
+            return Err(Error::DockerResponseNotFoundError {
+                message:
+                    "Docker deamon is not running. Make sure to start it before running this test"
+                        .to_string(),
+            });
+        }
+
+        info!("Starting bitcoind container");
         self.runtime.block_on(async {
             self.internal_stop().await?;
-            self.create_and_start_container().await?;
+
+            let err = self.create_and_start_container().await;
+            if let Err(err) = err {
+                //FIX: For some reason checking the list of images is not working, so I handle the error here and retry.
+                if err.to_string().contains("No such image") {
+                    self.pull_image_if_not_present().await?;
+                    self.create_and_start_container().await?;
+                } else {
+                    return Err(err);
+                }
+            }
+
             Ok(())
         })
     }
@@ -79,8 +104,32 @@ impl Bitcoind {
         Ok(false)
     }
 
+    async fn pull_image_if_not_present(&self) -> Result<(), Error> {
+        info!("Image not found locally. Pulling image: {}", self.image);
+        let options = Some(CreateImageOptions {
+            from_image: self.image.clone(),
+            tag: "latest".to_string(),
+            ..Default::default()
+        });
+
+        let mut stream = self.docker.create_image(options, None, None);
+        while let Some(result) = stream.next().await {
+            match result {
+                Ok(progress) => {
+                    info!("Progress: {:?}", progress.progress);
+                }
+                Err(error) => {
+                    return Err(error);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     async fn create_and_start_container(&self) -> Result<(), Error> {
         info!("Creating and starting bitcoind container");
+        //self.pull_image_if_not_present().await?;
         let config = Config {
             image: Some(self.image.clone()),
             env: Some(vec!["BITCOIN_DATA=/data".to_string()]),
