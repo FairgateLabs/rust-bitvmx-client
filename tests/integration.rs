@@ -2,7 +2,6 @@ use std::str::FromStr;
 
 use anyhow::Result;
 use bitcoin::{OutPoint, PublicKey};
-use bitvmx_client::bitcoin::bitcoind;
 use bitvmx_client::program::program::ProgramState;
 use bitvmx_client::{
     bitvmx::BitVMX,
@@ -14,9 +13,12 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
+mod utils;
+use utils::bitcoind::Bitcoind;
+
 fn config_trace() {
     let filter = EnvFilter::builder()
-        .parse("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitvmx_orchestrator=off") // Include everything at "info" except `libp2p`
+        .parse("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitvmx_orchestrator=off") 
         .expect("Invalid filter");
 
     tracing_subscriber::fmt()
@@ -28,8 +30,18 @@ fn config_trace() {
 
 type FundingAddress = String;
 
+fn clear_db(path: &str) {
+    let _ = std::fs::remove_dir_all(path);
+}
+
 fn init_bitvmx(role: &str) -> Result<(BitVMX, FundingAddress, PublicKey, P2PAddress)> {
     let config = Config::new(Some(format!("config/{}.yaml", role)))?;
+
+    clear_db(&config.storage.db);
+    clear_db(&config.key_storage.path);
+
+    info!("config: {:?}", config.storage.db);
+
     let mut bitvmx = BitVMX::new(config)?;
     //TODO: Pre-kickoff only prover ?? make independent ??
     let funds = bitvmx.add_funds()?;
@@ -37,11 +49,16 @@ fn init_bitvmx(role: &str) -> Result<(BitVMX, FundingAddress, PublicKey, P2PAddr
     Ok((bitvmx, format!("{}:{}", funds.0, funds.1), funds.2, address))
 }
 
-pub fn main() -> Result<()> {
+//cargo test --release  -- --ignored
+#[ignore]
+#[test]
+pub fn test_single_run() -> Result<()> {
     config_trace();
 
-    let bitcoind = bitcoind::Bitcoind::new("regtest-image", "ruimarinho/bitcoin-coreb");
-    bitcoind.start();
+    let config = Config::new(Some(format!("config/prover.yaml")))?;
+
+    let bitcoind = Bitcoind::new("regtest-image", "ruimarinho/bitcoin-core", &config.bitcoin);
+    bitcoind.start()?;
 
     info!("start prover");
     let (mut prover_bitvmx, prover_funds, prover_pre_pub_key, prover_address) =
@@ -119,6 +136,8 @@ pub fn main() -> Result<()> {
             break;
         }
     }
+
+    bitcoind.stop()?;
 
     //TODO: Push witness and then claim
     //prover_bitvmx.claim_program(&id)?;
