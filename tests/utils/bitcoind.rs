@@ -129,7 +129,6 @@ impl Bitcoind {
 
     async fn create_and_start_container(&self) -> Result<(), Error> {
         info!("Creating and starting bitcoind container");
-        //self.pull_image_if_not_present().await?;
         let config = Config {
             image: Some(self.image.clone()),
             env: Some(vec!["BITCOIN_DATA=/data".to_string()]),
@@ -173,6 +172,7 @@ impl Bitcoind {
             )
             .await?;
         self.docker.start_container::<String>(&id, None).await?;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         Ok(())
     }
 }
