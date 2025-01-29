@@ -137,6 +137,20 @@ impl ParticipantKeys {
         }
     }
 
+    pub fn get_keys(&self) -> Vec<u8> {
+        // TODO: Implement
+        vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    }
+
+    pub fn check_if_keys(&self, keys: Vec<u8>) -> bool {
+        // TODO: Implement
+        if keys == vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9] {
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn protocol_key(&self) -> &PublicKey {
         &self.protocol
     }

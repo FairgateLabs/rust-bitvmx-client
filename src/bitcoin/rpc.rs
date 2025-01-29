@@ -89,6 +89,10 @@ impl BitcoinClient {
         Ok(txid)
     }
 
+    pub fn mine(&self, blocks: u64) -> Result<(), BitcoinClientError> {
+        self.mine_blocks(blocks)
+    }
+
     pub fn get_transaction(&self, txid: &Txid) -> Result<Option<Transaction>, BitcoinClientError> {
         let tx = self.rpc.client.get_raw_transaction(txid, None).ok();
         Ok(tx)

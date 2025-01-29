@@ -52,6 +52,9 @@ pub enum BitVMXError {
     #[error("Failed to use P2P layer")]
     P2PCommunicationError,
 
+    #[error("Keys not found in program {0}")]
+    KeysNotFound(Uuid),
+
     #[error("Failed to use Orchestrator")]
     OrchestratorError(#[from] OrchestratorError),
 }
