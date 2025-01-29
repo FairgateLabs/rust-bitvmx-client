@@ -84,7 +84,7 @@ impl Program {
         funding: Funding,
         storage: Rc<Storage>
     ) -> Result<Self, ProgramError> {
-        let drp = DisputeResolutionProtocol::new(funding)?;
+        let drp = DisputeResolutionProtocol::new(funding, id, storage.clone())?;
 
         Ok(Program {
             id,
@@ -107,7 +107,8 @@ impl Program {
             None => return Err(ProgramError::ProgramNotFound(*program_id))
         };
 
-        program.storage = Some(storage);
+        program.storage = Some(storage.clone());
+        program.drp.load_storage(storage);
 
         Ok(program)
     }
@@ -121,7 +122,6 @@ impl Program {
         let search_params = SearchParams::new(8, 32);
 
         self.drp.build_protocol(
-            &format!("drp_{}", self.id),
             storage,
             self.prover.keys().as_ref().unwrap(),
             self.verifier.keys().as_ref().unwrap(),
@@ -212,12 +212,7 @@ impl Program {
         self.dispute_resolution_protocol().funding().speedup()
     }
 
-    pub fn dispute_resolution_protocol_mut(&mut self) -> &mut DisputeResolutionProtocol {
-        &mut self.drp
-    }
-
     pub fn dispute_resolution_protocol(&self) -> &DisputeResolutionProtocol {
-        self.drp.load_protocol(&format!("drp_{}", self.id) ,self.storage.clone().unwrap());
         &self.drp
     }
 

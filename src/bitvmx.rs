@@ -21,7 +21,7 @@ use tracing::info;
 use uuid::Uuid;
 
 pub struct BitVMX {
-    config: Config,
+    _config: Config,
     bitcoin: BitcoinClient,
     comms: P2pHandler,
     key_chain: KeyChain,
@@ -50,7 +50,7 @@ impl BitVMX {
         )?;
 
         Ok(Self {
-            config,
+            _config: config,
             bitcoin,
             comms,
             key_chain: keys,

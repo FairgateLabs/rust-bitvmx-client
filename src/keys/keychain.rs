@@ -113,7 +113,7 @@ impl KeyChain {
     }
 
     pub fn sign_program(&self, program: &mut Program) -> Result<(), BitVMXError> {
-        let protocol = program.dispute_resolution_protocol_mut();
+        let protocol= program.dispute_resolution_protocol();
 
         for (txname, infos) in protocol.spending_infos()?.iter() {
             for (input_index, spending_info) in infos.iter().enumerate() {

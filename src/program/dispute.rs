@@ -12,6 +12,7 @@ use protocol_builder::{
 };
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::Storage;
+use uuid::Uuid;
 
 use super::participant::ParticipantKeys;
 pub struct SearchParams {
@@ -84,9 +85,10 @@ impl Funding {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DisputeResolutionProtocol {
-    #[serde(skip)]
-    protocol: Option<Protocol>,
+    protocol_name: String,
     funding: Funding,
+    #[serde(skip)]
+    storage: Option<Rc<Storage>>,
 }
 
 const PREKICKOFF: &str = "pre_kickoff";
@@ -94,16 +96,22 @@ const KICKOFF: &str = "kickoff";
 const PROTOCOL: &str = "protocol";
 
 impl DisputeResolutionProtocol {
-    pub fn new(funding: Funding) -> Result<DisputeResolutionProtocol, ProtocolBuilderError> {
+    pub fn new(funding: Funding, program_id: Uuid, storage: Rc<Storage>) -> Result<DisputeResolutionProtocol, ProtocolBuilderError> {
+        let protocol_name = format!("drp_{}", program_id);
+
         Ok(Self {
-            protocol: None,
+            protocol_name,
             funding,
+            storage: Some(storage),
         })
+    }
+
+    pub(crate) fn load_storage(&mut self, storage: Rc<Storage>) {
+        self.storage = Some(storage);
     }
 
     pub fn build_protocol(
         &mut self,
-        protocol_name: &str,
         storage: Rc<Storage>,
         prover: &ParticipantKeys,
         _verifier: &ParticipantKeys,
@@ -112,7 +120,7 @@ impl DisputeResolutionProtocol {
         let ecdsa_sighash_type = SighashType::ecdsa_all();
         let tr_sighash_type = SighashType::taproot_all();
 
-        let mut builder = ProtocolBuilder::new(protocol_name, storage)?;
+        let mut builder = ProtocolBuilder::new(&self.protocol_name, storage)?;
         let output_spending_type =
             OutputSpendingType::new_segwit_key_spend(prover.prekickoff_key(), self.funding.amount);
         builder.connect_with_external_transaction(
@@ -141,38 +149,39 @@ impl DisputeResolutionProtocol {
         builder.add_speedup_output(PREKICKOFF, self.funding.speedup, prover.speedup_key())?;
 
         let protocol = builder.build()?;
-        self.protocol = Some(protocol);
+        self.save_protocol(protocol)?;
 
         Ok(())
     }
 
     pub fn prekickoff_transaction(&self) -> Result<Transaction, ProtocolBuilderError> {
-        let signature = self.protocol()?.input_ecdsa_signature(PREKICKOFF, 0)?;
+        let signature = self.load_protocol()?.input_ecdsa_signature(PREKICKOFF, 0)?;
         let mut ecdsa_arg = SpendingArgs::new_args();
         ecdsa_arg.push_ecdsa_signature(signature);
 
-        self.protocol()?
+        self.load_protocol()?
             .transaction_to_send(PREKICKOFF, &[ecdsa_arg])
     }
 
     pub fn kickoff_transaction(&self) -> Result<Transaction, ProtocolBuilderError> {
-        self.protocol()?.transaction_to_send(KICKOFF, &[])
+        self.load_protocol()?.transaction_to_send(KICKOFF, &[])
     }
 
     pub fn spending_infos(
         &self,
     ) -> Result<HashMap<String, Vec<InputSpendingInfo>>, ProtocolBuilderError> {
-        self.protocol()?.spending_infos()
+        self.load_protocol()?.spending_infos()
     }
 
     pub fn update_input_signatures(
-        &mut self,
+        &self,
         transaction_name: &str,
         input_index: u32,
         signatures: Vec<Signature>,
     ) -> Result<(), ProtocolBuilderError> {
-        self.protocol_mut()?
-            .update_input_signatures(transaction_name, input_index, signatures)?;
+        let mut protocol = self.load_protocol()?; 
+        protocol.update_input_signatures(transaction_name, input_index, signatures)?;
+        self.save_protocol(protocol)?;
         Ok(())
     }
 
@@ -180,38 +189,18 @@ impl DisputeResolutionProtocol {
         &self.funding
     }
 
-    pub fn load_protocol(&mut self, protocol_name: &str, storage: Rc<Storage>) -> Result<(), ProtocolBuilderError> {
-        match self.protocol {
-            Some(_) => {},
-            None => {
-                let protocol = match storage.read(protocol_name)? {
-                    Some(protocol) => {
-                        serde_json::from_str(&protocol)?
-                    },
-                    None => return Err(ProtocolBuilderError::MissingProtocol)
-                };
-                self.protocol = Some(protocol);
-            },
-        }
+    fn load_protocol(&self) -> Result<Protocol, ProtocolBuilderError> {
+        let protocol = self.storage.clone().unwrap().read(&self.protocol_name)?
+            .map_or(Err(ProtocolBuilderError::MissingProtocol), |protocol| {
+                Ok(serde_json::from_str(&protocol)?)
+            }
+        )?;
 
+        Ok(protocol)
+    }
+
+    fn save_protocol(&self, protocol: Protocol) -> Result<(), ProtocolBuilderError> {
+        self.storage.clone().unwrap().write(&self.protocol_name, &serde_json::to_string(&protocol)?)?;
         Ok(())
-    }
-
-    fn protocol(&self) -> Result<&Protocol, ProtocolBuilderError> {
-        let protocol = match self.protocol {
-            Some(ref p) => p,
-            None => return Err(ProtocolBuilderError::MissingProtocol),
-        };
-
-        Ok(protocol)
-    }
-
-    fn protocol_mut(&mut self) -> Result<&mut Protocol, ProtocolBuilderError> {
-        let protocol = match self.protocol {
-            Some(ref mut p) => p,
-            None => return Err(ProtocolBuilderError::MissingProtocol),
-        };
-
-        Ok(protocol)
     }
 }
