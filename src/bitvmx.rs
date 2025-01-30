@@ -42,8 +42,6 @@ pub struct BitVMX {
     comms: P2pHandler,
     key_chain: KeyChain,
     storage: Rc<Storage>,
-    _orchestrator: OrchestratorType,
-    _storage: Rc<Storage>,
     orchestrator: OrchestratorType,
     api_messages: Vec<BitVMXApiMessages>,
 }
@@ -74,7 +72,6 @@ impl BitVMX {
             comms,
             key_chain: keys,
             storage,
-            orchestrator: orchestrator,
             orchestrator,
             api_messages: vec![],
         })
@@ -149,7 +146,7 @@ impl BitVMX {
         peer_id: PeerId,
         addr: Option<String>,
     ) -> Result<(), BitVMXError> {
-        let program = self.program(program_id)?.clone();
+        let program = self.load_program(program_id)?;
         let me = match program.my_role {
             ParticipantRole::Prover => program.prover(),
             ParticipantRole::Verifier => program.verifier(),
@@ -218,7 +215,7 @@ impl BitVMX {
 
         //TODO: Save after modification
         let mut program = self.load_program(id)?;
-        program.setup_counterparty_keys(keys, self.storage.clone())?;
+        program.setup_counterparty_keys(keys)?;
         self.save_program(program)?;
 
         Ok(())
@@ -518,7 +515,7 @@ impl BitVMX {
                 let program_id = Uuid::from_str(&program_id).unwrap(); //TODO: how to propagate?
 
                 // If program not found, create and save a new program
-                if let Err(BitVMXError::ProgramNotFound(_)) = self.program_mut(&program_id) {
+                if let Err(BitVMXError::ProgramNotFound(_)) = self.load_program(&program_id) {
                     // TODO: Take out funding here
                     let funding = self.add_funds().unwrap(); //TODO: how to propagate?
                     let funds = funding.0.to_string() + ":" + &funding.1.to_string();
@@ -560,7 +557,7 @@ impl BitVMX {
 
         match self.identify_message(program_id, msg)? {
             P2PMessageKind::Key => {
-                let program = self.program_mut(&program_id)?;
+                let mut program = self.load_program(&program_id)?;
                 program.exchange_keys();
                 if program.my_role == ParticipantRole::Verifier {
                     // Verifier
@@ -571,9 +568,11 @@ impl BitVMX {
                     let addr = program.verifier().address().address().to_string();
                     self.exchange_nonces(program_id, peer_id, Some(addr))?;
                 }
+
+                self.save_program(program)?;
             }
             P2PMessageKind::Nonce => {
-                let program = self.program_mut(&program_id)?;
+                let mut program = self.load_program(&program_id)?;
                 program.exchange_nonces();
                 if program.my_role == ParticipantRole::Verifier {
                     // Verifier
@@ -581,6 +580,8 @@ impl BitVMX {
                 } else {
                     // Prover
                 }
+
+                self.save_program(program)?;
             }
             P2PMessageKind::Signature => {} //TODO: implement
         }
@@ -594,7 +595,7 @@ impl BitVMX {
         msg: Vec<u8>,
     ) -> Result<P2PMessageKind, BitVMXError> {
         //TODO: re-do function
-        let program = self.program(&program_id)?.clone();
+        let program = self.load_program(&program_id)?;
 
         let me = match program.my_role {
             ParticipantRole::Prover => program.prover(),
@@ -646,10 +647,11 @@ impl BitVMX {
             }
             ret.push((program_id, ret_tx));
 
-            if let Some(p) = self.programs.get_mut(&program_id) {
-                //TODO: Chekc that the transaction
-                p.deploy();
-            }
+            let mut p = self.load_program(&program_id)?;
+            //TODO: Check that the transaction
+            p.deploy();
+            self.save_program(p)?;
+            
         }
 
         //let txids = news.txs_by_id.iter().map(|tx| (tx.0, tx.1)).collect::<Vec<Txid>>();

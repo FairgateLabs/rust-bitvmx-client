@@ -122,12 +122,12 @@ impl Program {
         };
 
         program.storage = Some(storage.clone());
-        program.drp.load_storage(storage);
+        program.drp.set_storage(storage);
 
         Ok(program)
     }
 
-    pub fn setup_counterparty_keys(&mut self, keys: ParticipantKeys, storage: Rc<Storage>) -> Result<(), BitVMXError> {
+    pub fn setup_counterparty_keys(&mut self, keys: ParticipantKeys) -> Result<(), BitVMXError> {
         match self.my_role {
             ParticipantRole::Prover => self.verifier.set_keys(keys),
             ParticipantRole::Verifier => self.prover.set_keys(keys),
@@ -136,7 +136,6 @@ impl Program {
         let search_params = SearchParams::new(8, 32);
 
         self.drp.build_protocol(
-            storage,
             self.prover.keys().as_ref().unwrap(),
             self.verifier.keys().as_ref().unwrap(),
             search_params,

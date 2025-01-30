@@ -106,13 +106,12 @@ impl DisputeResolutionProtocol {
         })
     }
 
-    pub(crate) fn load_storage(&mut self, storage: Rc<Storage>) {
+    pub(crate) fn set_storage(&mut self, storage: Rc<Storage>) {
         self.storage = Some(storage);
     }
 
     pub fn build_protocol(
         &mut self,
-        storage: Rc<Storage>,
         prover: &ParticipantKeys,
         _verifier: &ParticipantKeys,
         _search: SearchParams,
@@ -120,7 +119,7 @@ impl DisputeResolutionProtocol {
         let ecdsa_sighash_type = SighashType::ecdsa_all();
         let tr_sighash_type = SighashType::taproot_all();
 
-        let mut builder = ProtocolBuilder::new(&self.protocol_name, storage)?;
+        let mut builder = ProtocolBuilder::new(&self.protocol_name, self.storage.clone().unwrap())?;
         let output_spending_type =
             OutputSpendingType::new_segwit_key_spend(prover.prekickoff_key(), self.funding.amount);
         builder.connect_with_external_transaction(
