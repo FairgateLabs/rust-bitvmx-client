@@ -60,7 +60,7 @@ pub fn test_single_run() -> Result<()> {
     let bitcoind = Bitcoind::new(
         "bitcoin-regtest",
         "ruimarinho/bitcoin-core",
-        &config.bitcoin,
+        config.bitcoin,
     );
     bitcoind.start()?;
 

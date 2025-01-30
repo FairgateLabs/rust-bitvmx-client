@@ -17,13 +17,13 @@ pub struct Bitcoind {
 }
 
 impl Bitcoind {
-    pub fn new(container_name: &str, image: &str, rpc_config: &RpcConfig) -> Self {
+    pub fn new(container_name: &str, image: &str, rpc_config: RpcConfig) -> Self {
         Bitcoind {
             docker: Docker::connect_with_local_defaults().unwrap(),
             container_name: container_name.to_string(),
             image: image.to_string(),
             runtime: Runtime::new().unwrap(),
-            rpc_config: rpc_config.clone(),
+            rpc_config: rpc_config,
         }
     }
 

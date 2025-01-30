@@ -127,6 +127,12 @@ impl Program {
         Ok(program)
     }
 
+    pub fn save(&self) -> Result<Uuid, ProgramError> {
+        let key = format!("program_{}", self.id);
+        self.storage.clone().unwrap().set(key, self, None)?;
+        Ok(self.id)
+    }
+
     pub fn setup_counterparty_keys(&mut self, keys: ParticipantKeys) -> Result<(), BitVMXError> {
         match self.my_role {
             ParticipantRole::Prover => self.verifier.set_keys(keys),

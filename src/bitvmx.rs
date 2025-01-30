@@ -19,7 +19,7 @@ use bitvmx_orchestrator::{
 use key_manager::winternitz;
 use p2p_handler::{LocalAllowList, P2pHandler, PeerId, ReceiveHandlerChannel};
 use std::{path::PathBuf, rc::Rc, str::FromStr};
-use storage_backend::storage::{KeyValueStore, Storage};
+use storage_backend::storage::Storage;
 
 use tracing::info;
 use uuid::Uuid;
@@ -378,9 +378,7 @@ impl BitVMX {
     }
 
     fn save_program(&mut self, program: Program) -> Result<Uuid, BitVMXError> {
-        let id = program.id();
-        let key = format!("program_{}", id);
-        self.storage.set(key, program.clone(), None)?;
+        let id = program.save()?;
         Ok(id)
     }
 

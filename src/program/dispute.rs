@@ -189,17 +189,14 @@ impl DisputeResolutionProtocol {
     }
 
     fn load_protocol(&self) -> Result<Protocol, ProtocolBuilderError> {
-        let protocol = self.storage.clone().unwrap().read(&self.protocol_name)?
-            .map_or(Err(ProtocolBuilderError::MissingProtocol), |protocol| {
-                Ok(serde_json::from_str(&protocol)?)
-            }
-        )?;
-
-        Ok(protocol)
+        match Protocol::load(&self.protocol_name, self.storage.clone().unwrap())?{
+            Some(protocol) => Ok(protocol),
+            None => Err(ProtocolBuilderError::MissingProtocol),
+        }
     }
 
     fn save_protocol(&self, protocol: Protocol) -> Result<(), ProtocolBuilderError> {
-        self.storage.clone().unwrap().write(&self.protocol_name, &serde_json::to_string(&protocol)?)?;
+        protocol.save(self.storage.clone().unwrap())?;
         Ok(())
     }
 }
