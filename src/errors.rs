@@ -57,6 +57,18 @@ pub enum BitVMXError {
 
     #[error("Failed to use Orchestrator")]
     OrchestratorError(#[from] OrchestratorError),
+
+    #[error("Invalid parser version")]
+    InvalidMsgVersion,
+
+    #[error("Invalid message type")]
+    InvalidMessageType,
+
+    #[error("Failed to serialize or deserialize message")]
+    SerializationError,
+
+    #[error("Invalid receive message format")]
+    InvalidMessageFormat,
 }
 
 #[derive(Error, Debug)]

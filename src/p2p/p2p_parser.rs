@@ -1,0 +1,324 @@
+// use serde_json::json;
+// use uuid::Uuid;
+
+// use crate::errors::BitVMXError;
+
+// #[derive(Debug)]
+// enum P2PMessageKind {
+//     Key,
+//     Nonce,
+//     Signature,
+// }
+
+// impl P2PMessageKind {
+//     // Convert message type to 2-byte representation
+//     fn to_bytes(&self) -> [u8; 2] {
+//         match self {
+//             P2PMessageKind::Key => [0x00, 0x01],
+//             P2PMessageKind::Nonce => [0x00, 0x02],
+//             P2PMessageKind::Signature => [0x00, 0x03],
+//         }
+//     }
+
+//     // Convert message type from 2-byte representation
+//     fn from_bytes(bytes: [u8; 2]) -> Result<Self, BitVMXError> {
+//         match bytes {
+//             [0x00, 0x01] => Ok(P2PMessageKind::Key),
+//             [0x00, 0x02] => Ok(P2PMessageKind::Nonce),
+//             [0x00, 0x03] => Ok(P2PMessageKind::Signature),
+//             _ => Err(BitVMXError::InvalidMessageType),
+//         }
+//     }
+// }
+
+// // Convert version to 2-byte representation
+// fn version_to_bytes(version: &str) -> Result<[u8; 2], BitVMXError> {
+//     match version {
+//         "1.0" => Ok([0x01, 0x00]),
+//         _ => Err(BitVMXError::InvalidMsgVersion),
+//     }
+// }
+
+// // Convert 2-byte representation back to version string
+// fn bytes_to_version(bytes: [u8; 2]) -> Result<String, BitVMXError> {
+//     match bytes {
+//         [0x01, 0x00] => Ok("1.0".to_string()),
+//         _ => Err(BitVMXError::InvalidMsgVersion),
+//     }
+// }
+
+// // Serialize the message into the required format
+// pub fn parse_msg(
+//     version: &str,
+//     msg_type: P2PMessageKind,
+//     program_id: Uuid,
+//     msg: Vec<u8>,
+// ) -> Result<Vec<u8>, BitVMXError> {
+//     // Convert version and message type to bytes
+//     let version_bytes = version_to_bytes(version)?;
+//     let msg_type_bytes = msg_type.to_bytes();
+
+//     // Serialize the payload as JSON
+//     let payload = json!({
+//         "msg_type": msg_type_bytes,
+//         "program_id": program_id.to_string(),
+//         "msg": msg,
+//     });
+//     let json_payload = serde_json::to_vec(&payload).map_err(|_| BitVMXError::SerializationError)?;
+
+//     // Combine all parts into a single Vec<u8>
+//     let mut result = Vec::new();
+//     result.extend_from_slice(&version_bytes); // Add version
+//     result.extend_from_slice(&json_payload); // Add JSON payload
+
+//     Ok(result)
+// }
+
+use serde_json::{json, Value};
+use uuid::Uuid;
+
+use crate::errors::BitVMXError;
+
+const MIN_EXPECTED_MSG_LEN: usize = 4; // 2 bytes for version + 2 bytes for message type
+const MAX_EXPECTED_MSG_LEN: usize = 1024; // Maximum length for a message //TODO: Change this value
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+pub enum P2PMessageKind {
+    Key,
+    Nonce,
+    Signature,
+}
+
+impl P2PMessageKind {
+    // Define a mapping between message kinds and their byte representations
+    const KIND_MAP: &'static [(&'static P2PMessageKind, [u8; 2])] = &[
+        (&P2PMessageKind::Key, [0x00, 0x01]),
+        (&P2PMessageKind::Nonce, [0x00, 0x02]),
+        (&P2PMessageKind::Signature, [0x00, 0x03]),
+    ];
+
+    // Convert message type to 2-byte representation
+    fn to_bytes(&self) -> Result<[u8; 2], BitVMXError> {
+        Self::KIND_MAP
+            .iter()
+            .find(|(kind, _)| kind == &self)
+            .map(|(_, bytes)| *bytes)
+            .ok_or(BitVMXError::InvalidMessageType)
+    }
+
+    // Convert 2-byte representation to message type
+    fn from_bytes(bytes: [u8; 2]) -> Result<Self, BitVMXError> {
+        Self::KIND_MAP
+            .iter()
+            .find(|(_, kind_bytes)| kind_bytes == &bytes)
+            .map(|(kind, _)| *kind)
+            .cloned()
+            .ok_or(BitVMXError::InvalidMessageType)
+    }
+}
+
+struct Version;
+
+impl Version {
+    // Define a mapping between version strings and their byte representations
+    const VERSION_MAP: &'static [(&'static str, [u8; 2])] = &[
+        ("1.0", [0x01, 0x00]),
+        // Add more versions here
+    ];
+
+    // Convert version string to 2-byte representation
+    fn to_bytes(version: &str) -> Result<[u8; 2], BitVMXError> {
+        Self::VERSION_MAP
+            .iter()
+            .find(|(v, _)| *v == version)
+            .map(|(_, bytes)| *bytes)
+            .ok_or(BitVMXError::InvalidMsgVersion)
+    }
+
+    // Convert 2-byte representation to version string
+    fn from_bytes(bytes: [u8; 2]) -> Result<String, BitVMXError> {
+        Self::VERSION_MAP
+            .iter()
+            .find(|(_, version_bytes)| version_bytes == &bytes)
+            .map(|(version, _)| version.to_string())
+            .ok_or(BitVMXError::InvalidMsgVersion)
+    }
+}
+
+// Serialize the message into the required format
+pub fn parse_msg(
+    version: &str,
+    msg_type: P2PMessageKind,
+    program_id: &Uuid,
+    msg: Vec<u8>,
+) -> Result<Vec<u8>, BitVMXError> {
+    // Convert version and message type to bytes
+    let version_bytes = Version::to_bytes(version)?;
+    let msg_type_bytes = msg_type.to_bytes()?;
+
+    // Serialize the payload as JSON
+    let payload = json!({
+        "msg_type": msg_type_bytes,
+        "program_id": program_id.to_string(),
+        "msg": msg,
+    });
+    let json_payload = serde_json::to_vec(&payload).map_err(|_| BitVMXError::SerializationError)?;
+
+    // Combine all parts into a single Vec<u8>
+    let mut result = Vec::new();
+    result.extend_from_slice(&version_bytes); // Add version
+    result.extend_from_slice(&json_payload); // Add JSON payload
+
+    Ok(result)
+}
+
+pub fn deserialize_msg(
+    data: Vec<u8>,
+) -> Result<(String, P2PMessageKind, Uuid, Vec<u8>), BitVMXError> {
+    // Minimum length check: 4 bytes (2 for version + 2 for message type) + payload
+    if data.len() < MIN_EXPECTED_MSG_LEN || data.len() > MAX_EXPECTED_MSG_LEN {
+        return Err(BitVMXError::InvalidMessageFormat);
+    }
+
+    // Extract the version (first 2 bytes) and message type (next 2 bytes)
+    let version_bytes = [data[0], data[1]];
+    let json_payload = &data[2..]; // Remaining bytes are the JSON payload
+
+    // Validate and convert version
+    let version = Version::from_bytes(version_bytes)?;
+
+    // Validate and parse JSON payload
+    let payload: Value =
+        serde_json::from_slice(json_payload).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+
+    // Extract fields from the JSON payload
+    let msg_type_bytes = payload
+        .get("msg_type")
+        .and_then(|t| t.as_array())
+        .ok_or(BitVMXError::InvalidMessageFormat)?;
+
+    // Ensure it has exactly 2 elements and convert them to a `[u8; 2]`
+    let msg_type_bytes: [u8; 2] = msg_type_bytes
+        .iter()
+        .filter_map(|v| {
+            v.as_u64()
+                .and_then(|b| if b <= 255 { Some(b as u8) } else { None })
+        })
+        .collect::<Vec<u8>>()
+        .try_into()
+        .map_err(|_| BitVMXError::InvalidMessageFormat)?;
+
+    // Convert message type from bytes
+    let msg_type = P2PMessageKind::from_bytes(msg_type_bytes)?;
+    let program_id = payload
+        .get("program_id")
+        .and_then(|id| id.as_str())
+        .ok_or(BitVMXError::InvalidMessageFormat)?;
+    let program_id = Uuid::parse_str(program_id).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+
+    let msg = payload
+        .get("msg")
+        .and_then(|m| m.as_array())
+        .ok_or(BitVMXError::InvalidMessageFormat)?;
+
+    // Validate that "msg" is a byte array by filtering out invalid values
+    let msg: Vec<u8> = msg
+        .iter()
+        .filter_map(|v| {
+            v.as_u64()
+                .and_then(|b| if b <= 255 { Some(b as u8) } else { None })
+        })
+        .collect();
+
+    if msg.len() != msg.iter().count() {
+        return Err(BitVMXError::InvalidMessageFormat); // Ensure no invalid bytes after filtering previously
+    }
+
+    Ok((version, msg_type, program_id, msg))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_p2p_message_kind_to_bytes() {
+        assert_eq!(P2PMessageKind::Key.to_bytes().unwrap(), [0x00, 0x01]);
+        assert_eq!(P2PMessageKind::Nonce.to_bytes().unwrap(), [0x00, 0x02]);
+        assert_eq!(P2PMessageKind::Signature.to_bytes().unwrap(), [0x00, 0x03]);
+    }
+
+    #[test]
+    fn test_p2p_message_kind_from_bytes() {
+        assert_eq!(
+            P2PMessageKind::from_bytes([0x00, 0x01]).unwrap(),
+            P2PMessageKind::Key
+        );
+        assert_eq!(
+            P2PMessageKind::from_bytes([0x00, 0x02]).unwrap(),
+            P2PMessageKind::Nonce
+        );
+        assert_eq!(
+            P2PMessageKind::from_bytes([0x00, 0x03]).unwrap(),
+            P2PMessageKind::Signature
+        );
+    }
+
+    #[test]
+    fn test_version_to_bytes() {
+        assert_eq!(Version::to_bytes("1.0").unwrap(), [0x01, 0x00]);
+    }
+
+    #[test]
+    fn test_version_from_bytes() {
+        assert_eq!(Version::from_bytes([0x01, 0x00]).unwrap(), "1.0");
+    }
+
+    #[test]
+    fn test_parse_msg() {
+        let version = "1.0";
+        let msg_type = P2PMessageKind::Key;
+        let program_id = Uuid::new_v4();
+        let msg = vec![0x01, 0x02, 0x03];
+
+        let result = parse_msg(version, msg_type.clone(), &program_id, msg.clone()).unwrap();
+
+        let expected_version = Version::to_bytes(version).unwrap();
+        let expected_msg_type = msg_type.to_bytes().unwrap();
+        let expected_payload = json!({
+            "msg_type": expected_msg_type,
+            "program_id": program_id.to_string(),
+            "msg": msg,
+        });
+        let expected_json_payload =
+            serde_json::to_vec(&expected_payload).expect("Failed to serialize JSON payload");
+
+        let mut expected_result = Vec::new();
+        expected_result.extend_from_slice(&expected_version);
+        expected_result.extend_from_slice(&expected_json_payload);
+
+        assert_eq!(result, expected_result);
+    }
+
+    #[test]
+    fn test_deserialize_msg() {
+        let version = "1.0";
+        let msg_type = P2PMessageKind::Key;
+        let program_id = Uuid::new_v4();
+        let msg = vec![0x01, 0x02, 0x03];
+
+        let serialized_msg =
+            parse_msg(version, msg_type.clone(), &program_id, msg.clone()).unwrap();
+        let (
+            deserialized_version,
+            deserialized_msg_type,
+            deserialized_program_id,
+            deserialized_msg,
+        ) = deserialize_msg(serialized_msg).unwrap();
+
+        assert_eq!(deserialized_version, version);
+        assert_eq!(deserialized_msg_type, msg_type);
+        assert_eq!(deserialized_program_id, program_id);
+        assert_eq!(deserialized_msg, msg);
+    }
+}

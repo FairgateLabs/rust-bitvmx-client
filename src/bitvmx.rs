@@ -3,6 +3,7 @@ use crate::{
     config::Config,
     errors::BitVMXError,
     keys::keychain::KeyChain,
+    p2p::p2p_parser::{deserialize_msg, P2PMessageKind},
     program::{
         dispute::{Funding, SearchParams},
         participant::{P2PAddress, Participant, ParticipantKeys, ParticipantRole},
@@ -17,8 +18,8 @@ use bitvmx_orchestrator::{
     types::{BitvmxInstance, OrchestratorType, ProcessedNews, TransactionPartialInfo},
 };
 use key_manager::winternitz;
-use p2p_handler::{LocalAllowList, P2pHandler, PeerId, ReceiveHandlerChannel};
-use std::{collections::HashMap, path::PathBuf, rc::Rc, str::FromStr};
+use p2p_handler::{LocalAllowList, P2pHandler, ReceiveHandlerChannel};
+use std::{collections::HashMap, path::PathBuf, rc::Rc};
 use storage_backend::storage::Storage;
 use tracing::info;
 use uuid::Uuid;
@@ -26,13 +27,6 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub enum BitVMXApiMessages {
     SetupProgram(Uuid, ParticipantRole, P2PAddress),
-}
-
-#[derive(Debug)]
-pub enum P2PMessageKind {
-    Key,
-    Nonce,
-    Signature,
 }
 
 pub struct BitVMX {
@@ -126,82 +120,15 @@ impl BitVMX {
             self.funding(outpoint),
         )?;
 
-        // Only prover can start dialing
-        /*if role == ParticipantRole::Prover {
-            self.exchange_keys(
-                id,
-                *peer_address.peer_id(),
-                Some(peer_address.address().to_string()),
-            )?;
-        }*/
+        //TODO: remove
+        // if role == ParticipantRole::Prover {
+        //     program.tick(&mut self.comms);
+        // }
 
         // Save the program and return the keys to be shared
         self.save_program(program);
 
         Ok(keys)
-    }
-
-    pub fn exchange_keys(
-        &mut self,
-        program_id: &Uuid,
-        peer_id: PeerId,
-        addr: Option<String>,
-    ) -> Result<(), BitVMXError> {
-        let program = self.program(program_id)?.clone();
-        let me = match program.my_role {
-            ParticipantRole::Prover => program.prover(),
-            ParticipantRole::Verifier => program.verifier(),
-        };
-
-        let keys = me.keys();
-        let keys = match keys {
-            Some(keys) => keys.get_keys(),
-            None => return Err(BitVMXError::KeysNotFound(*program_id)),
-        };
-
-        match addr {
-            Some(addr) => {
-                self.comms
-                    .dial_and_send(peer_id, addr, program_id.to_string(), keys)?;
-            }
-            None => {
-                self.comms.send_msg(program_id.to_string(), peer_id, keys)?;
-            }
-        }
-
-        //self.save_program(program.clone());
-        Ok(())
-    }
-
-    fn exchange_nonces(
-        &mut self,
-        program_id: Uuid,
-        peer_id: PeerId,
-        addr: Option<String>,
-    ) -> Result<(), BitVMXError> {
-        //TODO: implement
-        //let program = self.program_mut(program_id)?;
-        match addr {
-            Some(addr) => {
-                self.comms.dial_and_send(
-                    peer_id,
-                    addr,
-                    program_id.to_string(),
-                    "Hello".as_bytes().to_vec(),
-                )?;
-            }
-            None => {
-                self.comms.send_msg(
-                    program_id.to_string(),
-                    peer_id,
-                    "World".as_bytes().to_vec(),
-                )?;
-            }
-        }
-
-        // let program_clone = program.clone();
-        // self.save_program(program_clone);
-        Ok(())
     }
 
     // After contaction  the counterparty to setup the same program, exchange public keys to allow us (and the counterparty)
@@ -502,120 +429,46 @@ impl BitVMX {
 
     pub fn process_p2p_messages(&mut self) -> bool {
         let message = self.comms.check_receive();
+        let _priority = self.comms.check_priority(); //TODO: handle priority
 
-        if let Err(_) = message {
-            //TODO: handle error
+        if message.is_none() {
             return false;
         }
 
         let message = message.unwrap();
-        // let priotity = self.comms.check_priority(); //TODO:
-
         match message {
-            ReceiveHandlerChannel::Msg(program_id, peer_id, msg) => {
-                let program_id = Uuid::from_str(&program_id).unwrap(); //TODO: how to propagate?
+            ReceiveHandlerChannel::Msg(peer_id, msg) => {
+                let (_version, msg_type, program_id, msg) = deserialize_msg(msg).unwrap(); //TODO: handle error
 
-                // If program not found, create and save a new program
-                if let Err(BitVMXError::ProgramNotFound(_)) = self.program_mut(&program_id) {
-                    // TODO: Take out funding here
-                    let funding = self.add_funds().unwrap(); //TODO: how to propagate?
-                    let funds = funding.0.to_string() + ":" + &funding.1.to_string();
-                    let prekickoff = funding.2;
-
-                    //TODO: dont have the others address. Is it necessary? Using my own address as placeholder
-                    let peer_address = &P2PAddress::new(&self.comms.get_address(), peer_id);
-
-                    self.setup_program(
-                        &program_id,               // TODO: use predefined uuid
-                        ParticipantRole::Verifier, // If program was not found, I must be the verifier!
-                        OutPoint::from_str(&funds).unwrap(),
-                        &prekickoff,
-                        peer_address,
-                    )
-                    .unwrap(); //TODO: how to propagate?
+                //Process the message
+                match msg_type {
+                    P2PMessageKind::Key => {
+                        // Verify keys TODO: else restart fsm?
+                        info!("Received key {:?} from {:?}", msg, peer_id);
+                    }
+                    P2PMessageKind::Nonce => {
+                        // Verify nonces TODO: else restart fsm?
+                        info!("Received nonce {:?} from {:?}", msg, peer_id);
+                    }
+                    P2PMessageKind::Signature => {
+                        // Verify signatures TODO: else restart fsm?
+                        info!("Received signature {:?} from {:?}", msg, peer_id);
+                    }
                 }
+                let program = self.programs.get_mut(&program_id); // Borrow the program
 
-                //process the message
-                self.process_message(program_id, peer_id, msg).unwrap(); //TODO: how to propagate?
+                if let Some(program) = program {
+                    program.tick(&mut self.comms);
+                } else {
+                    //TODO: handle error
+                }
             }
-            ReceiveHandlerChannel::Error(_) => {}
+            ReceiveHandlerChannel::Error(e) => {
+                info!("Error receiving message {}", e);
+            } //TODO: handle error
         }
 
         false
-    }
-
-    fn process_message(
-        &mut self,
-        program_id: Uuid,
-        peer_id: PeerId,
-        msg: Vec<u8>,
-    ) -> Result<(), BitVMXError> {
-        let utf_msg = match String::from_utf8(msg.clone()) {
-            Ok(valid_string) => valid_string,
-            Err(_) => "long message".to_string(),
-        };
-        info!("Processing message: {:?}", utf_msg);
-
-        match self.identify_message(program_id, msg)? {
-            P2PMessageKind::Key => {
-                let program = self.program_mut(&program_id)?;
-                program.exchange_keys();
-                if program.my_role == ParticipantRole::Verifier {
-                    // Verifier
-                    self.exchange_keys(&program_id, peer_id, None)?;
-                } else {
-                    // Prover
-                    program.send_nonces();
-                    let addr = program.verifier().address().address().to_string();
-                    self.exchange_nonces(program_id, peer_id, Some(addr))?;
-                }
-            }
-            P2PMessageKind::Nonce => {
-                let program = self.program_mut(&program_id)?;
-                program.exchange_nonces();
-                if program.my_role == ParticipantRole::Verifier {
-                    // Verifier
-                    self.exchange_nonces(program_id, peer_id, None)?;
-                } else {
-                    // Prover
-                }
-            }
-            P2PMessageKind::Signature => {} //TODO: implement
-        }
-
-        Ok(())
-    }
-
-    fn identify_message(
-        &self,
-        program_id: Uuid,
-        msg: Vec<u8>,
-    ) -> Result<P2PMessageKind, BitVMXError> {
-        //TODO: re-do function
-        let program = self.program(&program_id)?.clone();
-
-        let me = match program.my_role {
-            ParticipantRole::Prover => program.prover(),
-            ParticipantRole::Verifier => program.verifier(),
-        };
-        // }; //TODO: Keys should be saved on the other participant
-
-        // Check keys
-        let keys = me.keys();
-        let keys = match keys {
-            Some(keys) => keys,
-            None => return Err(BitVMXError::KeysNotFound(program_id)),
-        };
-        if keys.check_if_keys(msg) == true {
-            info!("Received keys!");
-            return Ok(P2PMessageKind::Key);
-        // TODO: Check nonces
-        } else {
-            info!("Received nonces!");
-            return Ok(P2PMessageKind::Nonce);
-        }
-        // TODO: Check sig
-        // Ok(P2PMessageKind::Signature)
     }
 
     pub fn process_bitcoin_updates(&mut self) -> Result<bool, BitVMXError> {
@@ -690,6 +543,16 @@ impl BitVMX {
         self.process_api_messages()?;
         self.process_p2p_messages();
         self.process_bitcoin_updates()?;
+        Ok(())
+    }
+
+    pub fn start_sending(&mut self, program_id: Uuid) -> Result<(), BitVMXError> {
+        let program = self.programs.get_mut(&program_id); // Borrow the program
+        if let Some(program) = program {
+            program.tick(&mut self.comms);
+        } else {
+            return Err(BitVMXError::ProgramNotFound(program_id));
+        }
         Ok(())
     }
 }

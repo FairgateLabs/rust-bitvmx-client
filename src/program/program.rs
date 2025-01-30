@@ -2,11 +2,14 @@ use std::{collections::HashMap, fmt, path::PathBuf};
 
 use bitcoin::{Transaction, Txid};
 use key_manager::winternitz::WinternitzSignature;
+use p2p_handler::P2pHandler;
+use tracing::info;
 use uuid::Uuid;
 
 use crate::{
     config::Config,
     errors::{BitVMXError, ProgramError},
+    p2p::p2p_manager::{exchange_keys, exchange_nonces, exchange_signatures},
 };
 
 use super::{
@@ -14,7 +17,7 @@ use super::{
     participant::{Participant, ParticipantKeys, ParticipantRole},
 };
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum ProgramState {
     Inactive,
     Ready,
@@ -26,6 +29,7 @@ pub enum ProgramState {
     ExchangedNonces,
     SignSent,
     ExchangedSignatures,
+    DeployProgram,
     Error, //TODO: check somewhere
 }
 
@@ -42,6 +46,7 @@ impl fmt::Display for ProgramState {
             ProgramState::KeySent => write!(f, "KeySent"),
             ProgramState::NonceSent => write!(f, "NonceSent"),
             ProgramState::SignSent => write!(f, "SignSent"),
+            ProgramState::DeployProgram => write!(f, "DeployProgram"),
             ProgramState::Error => write!(f, "Error"),
         }
     }
@@ -238,44 +243,154 @@ impl Program {
         self.witness_data.get(&txid)
     }
 
-    pub fn send_keys(&mut self) {
+    pub fn send_keys(&mut self, comms: &mut P2pHandler) {
         //TODO: Ready = IDLE?
         if self.state == ProgramState::Ready && self.my_role == ParticipantRole::Prover {
+            exchange_keys(
+                comms,
+                &self.prover,
+                &self.id,
+                *self.verifier.address().peer_id(),
+                Some(self.verifier.address().address().to_string()),
+            )
+            .unwrap();
             self.state = ProgramState::KeySent;
         } else {
             self.state = ProgramState::Error;
         }
     }
-    pub fn exchange_keys(&mut self) {
+    pub fn exchange_keys(&mut self, comms: &mut P2pHandler) {
         //TODO: Ready = IDLE?
-        if (self.state == ProgramState::Ready && self.my_role == ParticipantRole::Verifier)
-            || (self.state == ProgramState::KeySent && self.my_role == ParticipantRole::Prover)
-        {
+        if self.state == ProgramState::Ready && self.my_role == ParticipantRole::Verifier {
+            exchange_keys(
+                comms,
+                &self.verifier,
+                &self.id,
+                *self.prover.address().peer_id(),
+                None,
+            )
+            .unwrap();
             self.state = ProgramState::ExchangedKeys;
+        } else if self.state == ProgramState::KeySent && self.my_role == ParticipantRole::Prover {
+            self.state = ProgramState::ExchangedKeys;
+            self.tick(comms);
         } else {
             self.state = ProgramState::Error;
         }
     }
 
-    
-    pub fn exchange_nonces(&mut self) {
-        if (self.state == ProgramState::ExchangedKeys && self.my_role == ParticipantRole::Verifier)
-            || (self.state == ProgramState::NonceSent && self.my_role == ParticipantRole::Prover)
-        {
-            self.state = ProgramState::ExchangedNonces;
-        } else {
-            self.state = ProgramState::Error;
-        }
-    }
-
-    pub fn send_nonces(&mut self) {
+    pub fn send_nonces(&mut self, comms: &mut P2pHandler) {
         if self.state == ProgramState::ExchangedKeys && self.my_role == ParticipantRole::Prover {
+            exchange_nonces(
+                comms,
+                &self.prover,
+                &self.id,
+                *self.verifier.address().peer_id(),
+                Some(self.verifier.address().address().to_string()),
+            )
+            .unwrap();
             self.state = ProgramState::NonceSent;
         } else {
             self.state = ProgramState::Error;
         }
     }
 
+    pub fn exchange_nonces(&mut self, comms: &mut P2pHandler) {
+        if self.state == ProgramState::ExchangedKeys && self.my_role == ParticipantRole::Verifier {
+            exchange_nonces(
+                comms,
+                &self.verifier,
+                &self.id,
+                *self.prover.address().peer_id(),
+                None,
+            )
+            .unwrap();
+            self.state = ProgramState::ExchangedNonces;
+        } else if self.state == ProgramState::NonceSent && self.my_role == ParticipantRole::Prover {
+            self.state = ProgramState::ExchangedNonces;
+            self.tick(comms);
+        } else {
+            self.state = ProgramState::Error;
+        }
+    }
+
+    pub fn send_signatures(&mut self, comms: &mut P2pHandler) {
+        if self.state == ProgramState::ExchangedNonces && self.my_role == ParticipantRole::Prover {
+            info!("Prover is signing program");
+            //sign_program(); //TODO: add function to sign program
+            exchange_signatures(
+                comms,
+                &self.prover,
+                &self.id,
+                *self.verifier.address().peer_id(),
+                Some(self.verifier.address().address().to_string()),
+            )
+            .unwrap();
+            self.state = ProgramState::SignSent;
+        } else {
+            self.state = ProgramState::Error;
+        }
+    }
+
+    pub fn exchange_signatures(&mut self, comms: &mut P2pHandler) {
+        if self.state == ProgramState::ExchangedNonces && self.my_role == ParticipantRole::Verifier
+        {
+            info!("Verifier is signing program");
+            //sign_program(); //TODO: add function to sign program
+            exchange_signatures(
+                comms,
+                &self.verifier,
+                &self.id,
+                *self.prover.address().peer_id(),
+                None,
+            )
+            .unwrap();
+            self.state = ProgramState::ExchangedSignatures;
+            self.tick(comms);
+        } else if self.state == ProgramState::SignSent && self.my_role == ParticipantRole::Prover {
+            self.state = ProgramState::ExchangedSignatures;
+            self.tick(comms);
+        } else {
+            self.state = ProgramState::Error;
+        }
+    }
+
+    pub fn deploy_program(&mut self) {
+        info!("Deploying program");
+        self.state = ProgramState::DeployProgram;
+        //deploy_program //TODO: add function to deploy program
+    }
+
+    pub fn tick(&mut self, comms: &mut P2pHandler) {
+        match (&self.state, &self.my_role) {
+            (ProgramState::Inactive, _) => {
+                //TODO: take out, only for testing
+                self.state = ProgramState::Ready;
+                self.tick(comms);
+            }
+
+            //Prover
+            (ProgramState::Ready, ParticipantRole::Prover) => self.send_keys(comms),
+            (ProgramState::KeySent, ParticipantRole::Prover) => self.exchange_keys(comms),
+            (ProgramState::ExchangedKeys, ParticipantRole::Prover) => self.send_nonces(comms),
+            (ProgramState::NonceSent, ParticipantRole::Prover) => self.exchange_nonces(comms),
+            (ProgramState::ExchangedNonces, ParticipantRole::Prover) => self.send_signatures(comms), // Sign program and send signature
+            (ProgramState::SignSent, ParticipantRole::Prover) => self.exchange_signatures(comms), // Exchange signatures and deploy program
+            (ProgramState::ExchangedSignatures, ParticipantRole::Prover) => self.deploy_program(),
+
+            //Verifier
+            (ProgramState::Ready, ParticipantRole::Verifier) => self.exchange_keys(comms),
+            (ProgramState::ExchangedKeys, ParticipantRole::Verifier) => self.exchange_nonces(comms),
+            (ProgramState::ExchangedNonces, ParticipantRole::Verifier) => {
+                self.exchange_signatures(comms)
+            }
+            (ProgramState::ExchangedSignatures, ParticipantRole::Verifier) => self.deploy_program(),
+
+            _ => {
+                self.state = ProgramState::Error;
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
