@@ -60,7 +60,7 @@ pub fn test_single_run() -> Result<()> {
     let bitcoind = Bitcoind::new(
         "bitcoin-regtest",
         "ruimarinho/bitcoin-core",
-        &config.bitcoin,
+        config.bitcoin,
     );
     bitcoind.start()?;
 
@@ -89,7 +89,7 @@ pub fn test_single_run() -> Result<()> {
 
     //TODO: Serializer / Deserialize keys this exachange should happen with p2p
     let verifier_pub_keys = verifier_bitvmx
-        .program(&id)
+        .load_program(&id)
         .as_ref()
         .unwrap()
         .verifier()
@@ -98,7 +98,7 @@ pub fn test_single_run() -> Result<()> {
         .unwrap()
         .clone();
     let _prover_pub_keys = prover_bitvmx
-        .program(&id)
+        .load_program(&id)
         .as_ref()
         .unwrap()
         .prover()
@@ -136,7 +136,7 @@ pub fn test_single_run() -> Result<()> {
         }
         prover_bitvmx.tick()?;
 
-        if prover_bitvmx.program(&id).unwrap().state() == &ProgramState::Ready {
+        if prover_bitvmx.load_program(&id).unwrap().state() == &ProgramState::Ready {
             break;
         }
     }

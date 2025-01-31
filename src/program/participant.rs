@@ -1,9 +1,10 @@
 use bitcoin::{PublicKey, XOnlyPublicKey};
 use key_manager::winternitz::WinternitzPublicKey;
 use p2p_handler::PeerId;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Participant {
     address: P2PAddress,
     keys: Option<ParticipantKeys>,
@@ -77,7 +78,7 @@ impl Participant {
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub enum ParticipantRole {
     Prover,
     Verifier,
@@ -100,7 +101,7 @@ impl ParticipantRole {
         }
     }
 }
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ParticipantKeys {
     pre_kickoff: PublicKey,
     internal: XOnlyPublicKey,
@@ -183,7 +184,7 @@ impl ParticipantKeys {
     }
 }
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Serialize, Deserialize)]
 pub struct P2PAddress {
     address: String,
     peer_id: PeerId,

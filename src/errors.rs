@@ -99,6 +99,12 @@ pub enum ProgramError {
 
     #[error("Error while building dispute resolution protocol")]
     FailedToBuildDisputeResolutionProtocol(#[from] ProtocolBuilderError),
+
+    #[error("Error loading Program")]
+    LoadError(#[from] StorageError),
+
+    #[error("Program not found in storage. Program id: {0}")]
+    ProgramNotFound(Uuid)
 }
 
 #[derive(Error, Debug)]
