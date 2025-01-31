@@ -1,4 +1,4 @@
-use crate::p2p::p2p_parser::{parse_msg, P2PMessageKind};
+use crate::p2p::p2p_parser::{serialize_msg, P2PMessageType};
 use p2p_handler::{P2pHandler, PeerId};
 use tracing::info;
 use uuid::Uuid;
@@ -19,7 +19,7 @@ pub fn exchange_keys(
     };
 
     info!("Sending keys: {:?}", keys.clone());
-    let msg = parse_msg("1.0", P2PMessageKind::Key, program_id, keys)?;
+    let msg = serialize_msg("1.0", P2PMessageType::Key, program_id, keys)?;
     match addr {
         Some(addr) => {
             // Prover
@@ -43,7 +43,7 @@ pub fn exchange_nonces(
     let nonces = vec![0, 1, 2, 3]; //TODO:
 
     info!("Sending nonces: {:?}", nonces.clone());
-    let msg = parse_msg("1.0", P2PMessageKind::Nonce, program_id, nonces)?;
+    let msg = serialize_msg("1.0", P2PMessageType::Nonce, program_id, nonces)?;
 
     match addr {
         Some(addr) => {
@@ -68,7 +68,7 @@ pub fn exchange_signatures(
     let sigs = vec![10, 9, 8, 7]; //TODO:
 
     info!("Sending signature: {:?}", sigs.clone());
-    let msg = parse_msg("1.0", P2PMessageKind::Signature, program_id, sigs)?;
+    let msg = serialize_msg("1.0", P2PMessageType::Signature, program_id, sigs)?;
 
     match addr {
         Some(addr) => {

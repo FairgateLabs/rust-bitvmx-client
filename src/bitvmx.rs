@@ -3,7 +3,7 @@ use crate::{
     config::Config,
     errors::BitVMXError,
     keys::keychain::KeyChain,
-    p2p::p2p_parser::{deserialize_msg, P2PMessageKind},
+    p2p::p2p_parser::{deserialize_msg, P2PMessageType},
     program::{
         dispute::{Funding, SearchParams},
         participant::{P2PAddress, Participant, ParticipantKeys, ParticipantRole},
@@ -442,15 +442,15 @@ impl BitVMX {
 
                 //Process the message
                 match msg_type {
-                    P2PMessageKind::Key => {
+                    P2PMessageType::Key => {
                         // Verify keys TODO: else restart fsm?
                         info!("Received key {:?} from {:?}", msg, peer_id);
                     }
-                    P2PMessageKind::Nonce => {
+                    P2PMessageType::Nonce => {
                         // Verify nonces TODO: else restart fsm?
                         info!("Received nonce {:?} from {:?}", msg, peer_id);
                     }
-                    P2PMessageKind::Signature => {
+                    P2PMessageType::Signature => {
                         // Verify signatures TODO: else restart fsm?
                         info!("Received signature {:?} from {:?}", msg, peer_id);
                     }
