@@ -458,7 +458,7 @@ impl BitVMX {
                 let program = self.programs.get_mut(&program_id); // Borrow the program
 
                 if let Some(program) = program {
-                    program.tick(&mut self.comms);
+                    program.tick(&mut self.comms).unwrap();
                 } else {
                     //TODO: handle error
                 }
@@ -549,7 +549,7 @@ impl BitVMX {
     pub fn start_sending(&mut self, program_id: Uuid) -> Result<(), BitVMXError> {
         let program = self.programs.get_mut(&program_id); // Borrow the program
         if let Some(program) = program {
-            program.tick(&mut self.comms);
+            program.tick(&mut self.comms)?;
         } else {
             return Err(BitVMXError::ProgramNotFound(program_id));
         }
