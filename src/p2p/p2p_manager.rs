@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::{errors::BitVMXError, program::participant};
 
-pub fn exchange_keys(
+pub fn send_keys(
     comms: &mut P2pHandler,
     participant: &participant::Participant,
     program_id: &Uuid,
@@ -33,7 +33,7 @@ pub fn exchange_keys(
     Ok(())
 }
 
-pub fn exchange_nonces(
+pub fn send_nonces(
     comms: &mut P2pHandler,
     _participant: &participant::Participant,
     program_id: &Uuid,
@@ -58,7 +58,7 @@ pub fn exchange_nonces(
     Ok(())
 }
 
-pub fn exchange_signatures(
+pub fn send_signatures(
     comms: &mut P2pHandler,
     _participant: &participant::Participant,
     program_id: &Uuid,

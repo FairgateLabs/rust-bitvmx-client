@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::{
     errors::{BitVMXError, ProgramError},
-    p2p::p2p_manager::{exchange_keys, exchange_nonces, exchange_signatures},
+    p2p::p2p_manager::{send_keys, send_nonces, send_signatures},
 };
 
 use super::{
@@ -25,11 +25,8 @@ pub enum ProgramState {
     Claimed,
     Challenged,
     KeySent,
-    ExchangedKeys,
     NonceSent,
-    ExchangedNonces,
     SignSent,
-    ExchangedSignatures,
     DeployProgram,
     Error, //TODO: check somewhere
 }
@@ -41,9 +38,6 @@ impl fmt::Display for ProgramState {
             ProgramState::Ready => write!(f, "Ready"),
             ProgramState::Claimed => write!(f, "Claimed"),
             ProgramState::Challenged => write!(f, "Challenged"),
-            ProgramState::ExchangedKeys => write!(f, "ExchangdeKeys"),
-            ProgramState::ExchangedSignatures => write!(f, "ExchangedSignatures"),
-            ProgramState::ExchangedNonces => write!(f, "ExchangedNonces"),
             ProgramState::KeySent => write!(f, "KeySent"),
             ProgramState::NonceSent => write!(f, "NonceSent"),
             ProgramState::SignSent => write!(f, "SignSent"),
@@ -253,15 +247,15 @@ impl Program {
         self.witness_data.get(&txid)
     }
 
-    pub fn send_keys(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
+    fn send_keys(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
         //TODO: Ready = IDLE?
-        if self.state == ProgramState::Ready && self.my_role == ParticipantRole::Prover {
-            exchange_keys(
+        if self.state == ProgramState::Ready {
+            send_keys(
                 comms,
-                &self.prover,
+                self.get_participant_me(),
                 &self.id,
-                *self.verifier.address().peer_id(),
-                Some(self.verifier.address().address().to_string()),
+                *self.get_participant_other().address().peer_id(),
+                self.get_address_if_prover(),
             )?;
             self.state = ProgramState::KeySent;
         } else {
@@ -269,34 +263,15 @@ impl Program {
         }
         Ok(())
     }
-    pub fn exchange_keys(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
-        //TODO: Ready = IDLE?
-        if self.state == ProgramState::Ready && self.my_role == ParticipantRole::Verifier {
-            exchange_keys(
-                comms,
-                &self.verifier,
-                &self.id,
-                *self.prover.address().peer_id(),
-                None,
-            )?;
-            self.state = ProgramState::ExchangedKeys;
-        } else if self.state == ProgramState::KeySent && self.my_role == ParticipantRole::Prover {
-            self.state = ProgramState::ExchangedKeys;
-            self.tick(comms)?;
-        } else {
-            self.state = ProgramState::Error;
-        }
-        Ok(())
-    }
 
-    pub fn send_nonces(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
-        if self.state == ProgramState::ExchangedKeys && self.my_role == ParticipantRole::Prover {
-            exchange_nonces(
+    fn send_nonces(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
+        if self.state == ProgramState::KeySent {
+            send_nonces(
                 comms,
-                &self.prover,
+                self.get_participant_me(),
                 &self.id,
-                *self.verifier.address().peer_id(),
-                Some(self.verifier.address().address().to_string()),
+                *self.get_participant_other().address().peer_id(),
+                self.get_address_if_prover(),
             )?;
             self.state = ProgramState::NonceSent;
         } else {
@@ -305,70 +280,60 @@ impl Program {
         Ok(())
     }
 
-    pub fn exchange_nonces(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
-        if self.state == ProgramState::ExchangedKeys && self.my_role == ParticipantRole::Verifier {
-            exchange_nonces(
-                comms,
-                &self.verifier,
-                &self.id,
-                *self.prover.address().peer_id(),
-                None,
-            )?;
-            self.state = ProgramState::ExchangedNonces;
-        } else if self.state == ProgramState::NonceSent && self.my_role == ParticipantRole::Prover {
-            self.state = ProgramState::ExchangedNonces;
-            self.tick(comms)?;
-        } else {
-            self.state = ProgramState::Error;
-        }
-        Ok(())
-    }
-
-    pub fn send_signatures(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
-        if self.state == ProgramState::ExchangedNonces && self.my_role == ParticipantRole::Prover {
-            info!("Prover is signing program");
+    fn send_signatures(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
+        if self.state == ProgramState::NonceSent {
+            match self.my_role {
+                ParticipantRole::Prover => info!("Prover is signing program"),
+                ParticipantRole::Verifier => info!("Verifier is signing program"),
+            }
             //sign_program(); //TODO: add function to sign program
-            exchange_signatures(
+            send_signatures(
                 comms,
-                &self.prover,
+                self.get_participant_me(),
                 &self.id,
-                *self.verifier.address().peer_id(),
-                Some(self.verifier.address().address().to_string()),
+                *self.get_participant_other().address().peer_id(),
+                self.get_address_if_prover(),
             )?;
-            self.state = ProgramState::SignSent;
+            match self.my_role {
+                ParticipantRole::Prover => self.state = ProgramState::SignSent,
+                ParticipantRole::Verifier => {
+                    self.state = ProgramState::DeployProgram;
+                    self.deploy_program();
+                }
+            }
         } else {
             self.state = ProgramState::Error;
         }
         Ok(())
     }
 
-    pub fn exchange_signatures(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
-        if self.state == ProgramState::ExchangedNonces && self.my_role == ParticipantRole::Verifier
-        {
-            info!("Verifier is signing program");
-            //sign_program(); //TODO: add function to sign program
-            exchange_signatures(
-                comms,
-                &self.verifier,
-                &self.id,
-                *self.prover.address().peer_id(),
-                None,
-            )?;
-            self.state = ProgramState::ExchangedSignatures;
-            self.tick(comms)?;
-        } else if self.state == ProgramState::SignSent && self.my_role == ParticipantRole::Prover {
-            self.state = ProgramState::ExchangedSignatures;
-            self.tick(comms)?;
-        } else {
-            self.state = ProgramState::Error;
+    fn deploy_program(&mut self) {
+        match self.my_role {
+            ParticipantRole::Prover => info!("Deploying the prover program"),
+            ParticipantRole::Verifier => info!("Deploying the verifier program"),
         }
-        Ok(())
-    }
-
-    pub fn deploy_program(&mut self) {
-        info!("Deploying program");
-        self.state = ProgramState::DeployProgram;
         //deploy_program //TODO: add function to deploy program
+    }
+
+    fn get_participant_me(&self) -> &Participant {
+        match self.my_role {
+            ParticipantRole::Prover => &self.prover,
+            ParticipantRole::Verifier => &self.verifier,
+        }
+    }
+
+    fn get_participant_other(&self) -> &Participant {
+        match self.my_role {
+            ParticipantRole::Verifier => &self.prover,
+            ParticipantRole::Prover => &self.verifier,
+        }
+    }
+
+    fn get_address_if_prover(&self) -> Option<String> {
+        match self.my_role {
+            ParticipantRole::Prover => Some(self.verifier.address().address().to_string()),
+            ParticipantRole::Verifier => None,
+        }
     }
 
     pub fn tick(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
@@ -379,26 +344,10 @@ impl Program {
                 self.tick(comms)?;
             }
 
-            //Prover
-            (ProgramState::Ready, ParticipantRole::Prover) => self.send_keys(comms)?,
-            (ProgramState::KeySent, ParticipantRole::Prover) => self.exchange_keys(comms)?,
-            (ProgramState::ExchangedKeys, ParticipantRole::Prover) => self.send_nonces(comms)?,
-            (ProgramState::NonceSent, ParticipantRole::Prover) => self.exchange_nonces(comms)?,
-            (ProgramState::ExchangedNonces, ParticipantRole::Prover) => {
-                self.send_signatures(comms)?
-            } // Sign program and send signature
-            (ProgramState::SignSent, ParticipantRole::Prover) => self.exchange_signatures(comms)?, // Exchange signatures and deploy program
-            (ProgramState::ExchangedSignatures, ParticipantRole::Prover) => self.deploy_program(),
-
-            //Verifier
-            (ProgramState::Ready, ParticipantRole::Verifier) => self.exchange_keys(comms)?,
-            (ProgramState::ExchangedKeys, ParticipantRole::Verifier) => {
-                self.exchange_nonces(comms)?
-            }
-            (ProgramState::ExchangedNonces, ParticipantRole::Verifier) => {
-                self.exchange_signatures(comms)?
-            }
-            (ProgramState::ExchangedSignatures, ParticipantRole::Verifier) => self.deploy_program(),
+            (ProgramState::Ready, _) => self.send_keys(comms)?,
+            (ProgramState::KeySent, _) => self.send_nonces(comms)?,
+            (ProgramState::NonceSent, _) => self.send_signatures(comms)?, // Sign program and send signature
+            (ProgramState::SignSent, ParticipantRole::Prover) => self.deploy_program(),
 
             _ => {
                 self.state = ProgramState::Error;

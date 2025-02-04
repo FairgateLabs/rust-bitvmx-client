@@ -2,7 +2,6 @@ use std::str::FromStr;
 
 use anyhow::Result;
 use bitcoin::{OutPoint, PublicKey};
-use bitvmx_client::program::program::ProgramState;
 use bitvmx_client::{
     bitvmx::BitVMX,
     config::Config,
