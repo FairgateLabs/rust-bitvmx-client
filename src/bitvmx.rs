@@ -19,8 +19,9 @@ use bitvmx_orchestrator::{
 };
 use key_manager::winternitz;
 use p2p_handler::{LocalAllowList, P2pHandler, ReceiveHandlerChannel};
-use std::{collections::HashMap, path::PathBuf, rc::Rc};
+use std::{path::PathBuf, rc::Rc};
 use storage_backend::storage::Storage;
+
 use tracing::info;
 use uuid::Uuid;
 
@@ -30,12 +31,11 @@ pub enum BitVMXApiMessages {
 }
 
 pub struct BitVMX {
-    config: Config,
+    _config: Config,
     bitcoin: BitcoinClient,
     comms: P2pHandler,
     key_chain: KeyChain,
-    programs: HashMap<Uuid, Program>,
-    _storage: Rc<Storage>,
+    storage: Rc<Storage>,
     orchestrator: OrchestratorType,
     api_messages: Vec<BitVMXApiMessages>,
 }
@@ -61,12 +61,11 @@ impl BitVMX {
         )?;
 
         Ok(Self {
-            config,
+            _config: config,
             bitcoin,
             comms,
             key_chain: keys,
-            programs: HashMap::new(),
-            _storage: storage,
+            storage,
             orchestrator,
             api_messages: vec![],
         })
@@ -112,21 +111,16 @@ impl BitVMX {
 
         // Create a program with the funding information, and the dispute resolution search parameters.
         let program = Program::new(
-            &self.config,
             *id,
             role.clone(),
             prover,
             verifier,
             self.funding(outpoint),
+            self.storage.clone(),
         )?;
 
-        //TODO: remove
-        // if role == ParticipantRole::Prover {
-        //     program.tick(&mut self.comms);
-        // }
-
         // Save the program and return the keys to be shared
-        self.save_program(program);
+        self.save_program(program)?;
 
         Ok(keys)
     }
@@ -142,7 +136,9 @@ impl BitVMX {
         // 2. Receive keys from counterparty
 
         //TODO: Save after modification
-        self.program_mut(id)?.setup_counterparty_keys(keys)?;
+        let mut program = self.load_program(id)?;
+        program.setup_counterparty_keys(keys)?;
+        self.save_program(program)?;
 
         Ok(())
     }
@@ -186,12 +182,12 @@ impl BitVMX {
     */
 
     pub fn partial_sign(&mut self, program_id: &Uuid) -> Result<(), BitVMXError> {
-        let mut program = self.program(program_id)?.clone();
+        let mut program = self.load_program(program_id)?.clone();
 
         // Generate the program partial signatures.
 
         self.sign_program(&mut program)?;
-        self.save_program(program);
+        self.save_program(program)?;
         Ok(())
     }
 
@@ -216,7 +212,7 @@ impl BitVMX {
     /// claim its funds using the kickoff transaction.
     pub fn deploy_program(&mut self, program_id: &Uuid) -> Result<bool, BitVMXError> {
         let transaction = {
-            let program = self.program_mut(program_id)?;
+            let program = self.load_program(program_id)?;
             program.prekickoff_transaction()?
         };
 
@@ -235,11 +231,13 @@ impl BitVMX {
         info!("Attempt to deploy program: {}", program_id);
 
         /*let deployed = self.wait_deployment(&transaction)?;
-        let program = self.program_mut(program_id)?;
+        let mut program = self.load_program(program_id)?;
 
         if deployed {
             program.deploy();
         }
+
+
 
         info!("Program deployed: {}", program_id);
 
@@ -255,12 +253,13 @@ impl BitVMX {
     /// Executes the program offchain using the BitVMX CPU to generate the program trace, ending state and
     /// ending step number.
     pub fn run_program(&mut self, program_id: &Uuid) -> Result<(), BitVMXError> {
-        let program = self.program_mut(program_id)?;
+        let program = self.load_program(program_id)?;
         if !program.is_ready() {
             return Err(BitVMXError::ProgramNotReady(*program_id));
         }
 
         // Run program on the CPU and store the execution result (end step, end state and trace) in the program instance
+        self.save_program(program)?;
         Ok(())
     }
 
@@ -268,12 +267,14 @@ impl BitVMX {
     /// challenge its execution.
     pub fn claim_program(&mut self, program_id: &Uuid) -> Result<bool, BitVMXError> {
         let transaction = {
-            let program = self.program_mut(program_id)?;
-            program.kickoff_transaction()?
+            let program = self.load_program(program_id)?;
+            let transaction = program.kickoff_transaction()?;
+            self.save_program(program)?;
+            transaction
         };
 
         let claimed = self.wait_claim(&transaction)?;
-        let program = self.program_mut(program_id)?;
+        let mut program = self.load_program(program_id)?; //mut
 
         if claimed {
             program.claim();
@@ -284,12 +285,6 @@ impl BitVMX {
         Ok(program.is_claimed())
     }
 
-    pub fn program(&self, program_id: &Uuid) -> Result<&Program, BitVMXError> {
-        self.programs
-            .get(program_id)
-            .ok_or(BitVMXError::ProgramNotFound(*program_id))
-    }
-
     pub fn address(&self) -> String {
         self.comms.get_address()
     }
@@ -298,18 +293,15 @@ impl BitVMX {
         self.comms.get_peer_id().to_string()
     }
 
-    fn program_mut(&mut self, program_id: &Uuid) -> Result<&mut Program, BitVMXError> {
-        //TODO: Serialize program to db
-        self.programs
-            .get_mut(program_id)
-            .ok_or(BitVMXError::ProgramNotFound(*program_id))
+    pub fn load_program(&self, program_id: &Uuid) -> Result<Program, BitVMXError> {
+        let program = Program::load(self.storage.clone(), program_id)?;
+
+        Ok(program)
     }
 
-    fn save_program(&mut self, program: Program) -> Uuid {
-        //TODO: Serialize program to db
-        let id = program.id();
-        self.programs.insert(id, program);
-        id
+    fn save_program(&mut self, program: Program) -> Result<Uuid, BitVMXError> {
+        let id = program.save()?;
+        Ok(id)
     }
 
     fn new_bitcoin_client(config: &Config) -> Result<BitcoinClient, BitVMXError> {
@@ -428,6 +420,7 @@ impl BitVMX {
     }
 
     pub fn process_p2p_messages(&mut self) -> bool {
+        //TODO: handle error
         let message = self.comms.check_receive();
         let _priority = self.comms.check_priority(); //TODO: handle priority
 
@@ -438,7 +431,7 @@ impl BitVMX {
         let message = message.unwrap();
         match message {
             ReceiveHandlerChannel::Msg(peer_id, msg) => {
-                let (_version, msg_type, program_id, msg) = deserialize_msg(msg).unwrap(); //TODO: handle error
+                let (_version, msg_type, program_id, msg) = deserialize_msg(msg).unwrap();
 
                 //Process the message
                 match msg_type {
@@ -455,13 +448,10 @@ impl BitVMX {
                         info!("Received signature {:?} from {:?}", msg, peer_id);
                     }
                 }
-                let program = self.programs.get_mut(&program_id); // Borrow the program
 
-                if let Some(program) = program {
-                    program.tick(&mut self.comms).unwrap();
-                } else {
-                    //TODO: handle error
-                }
+                let mut program = self.load_program(&program_id).unwrap();
+                program.tick(&mut self.comms).unwrap();
+                self.save_program(program).unwrap();
             }
             ReceiveHandlerChannel::Error(e) => {
                 info!("Error receiving message {}", e);
@@ -497,10 +487,10 @@ impl BitVMX {
             }
             ret.push((program_id, ret_tx));
 
-            if let Some(p) = self.programs.get_mut(&program_id) {
-                //TODO: Chekc that the transaction
-                p.deploy();
-            }
+            let mut p = self.load_program(&program_id)?;
+            //TODO: Check that the transaction
+            p.deploy();
+            self.save_program(p)?;
         }
 
         //let txids = news.txs_by_id.iter().map(|tx| (tx.0, tx.1)).collect::<Vec<Txid>>();
@@ -547,12 +537,9 @@ impl BitVMX {
     }
 
     pub fn start_sending(&mut self, program_id: Uuid) -> Result<(), BitVMXError> {
-        let program = self.programs.get_mut(&program_id); // Borrow the program
-        if let Some(program) = program {
-            program.tick(&mut self.comms)?;
-        } else {
-            return Err(BitVMXError::ProgramNotFound(program_id));
-        }
+        let mut program = self.load_program(&program_id).unwrap();
+        program.tick(&mut self.comms).unwrap();
+        self.save_program(program).unwrap();
         Ok(())
     }
 }

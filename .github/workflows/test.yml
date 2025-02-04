@@ -27,6 +27,16 @@ jobs:
           path: rust-bitvmx-workspace # Store in $GITHUB_WORKSPACE/other-repo
           submodules: true
       
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            rust-bitvmx-workspace/rust-bitvmx-client/target
+            rust-bitvmx-workspace/rust-bitvmx-client/Cargo.lock
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust-bitvmx-workspace/rust-bitvmx-client/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      
       - name: Build project
         run: |
           cd rust-bitvmx-workspace/rust-bitvmx-client

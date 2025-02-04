@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use anyhow::Result;
 use bitcoin::{OutPoint, PublicKey};
+use bitvmx_client::program::program::ProgramState;
 use bitvmx_client::{
     bitvmx::BitVMX,
     config::Config,
@@ -12,9 +13,12 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
+mod utils;
+use utils::bitcoind::Bitcoind;
+
 fn config_trace() {
     let filter = EnvFilter::builder()
-        .parse("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitvmx_orchestrator=off,p2p_protocol=off,p2p_handler=off") // Include everything at "info" except `libp2p`
+        .parse("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitvmx_orchestrator=off,p2p_protocol=off,p2p_handler=off") 
         .expect("Invalid filter");
 
     tracing_subscriber::fmt()
@@ -26,8 +30,18 @@ fn config_trace() {
 
 type FundingAddress = String;
 
+fn clear_db(path: &str) {
+    let _ = std::fs::remove_dir_all(path);
+}
+
 fn init_bitvmx(role: &str) -> Result<(BitVMX, FundingAddress, PublicKey, P2PAddress)> {
     let config = Config::new(Some(format!("config/{}.yaml", role)))?;
+
+    clear_db(&config.storage.db);
+    clear_db(&config.key_storage.path);
+
+    info!("config: {:?}", config.storage.db);
+
     let mut bitvmx = BitVMX::new(config)?;
     //TODO: Pre-kickoff only prover ?? make independent ??
     let funds = bitvmx.add_funds()?;
@@ -35,50 +49,59 @@ fn init_bitvmx(role: &str) -> Result<(BitVMX, FundingAddress, PublicKey, P2PAddr
     Ok((bitvmx, format!("{}:{}", funds.0, funds.1), funds.2, address))
 }
 
-pub fn main() -> Result<()> {
+//cargo test --release  -- --ignored
+#[ignore]
+#[test]
+pub fn test_single_run() -> Result<()> {
     config_trace();
+
+    let config = Config::new(Some(format!("config/prover.yaml")))?;
+
+    let bitcoind = Bitcoind::new("bitcoin-regtest", "ruimarinho/bitcoin-core", config.bitcoin);
+    bitcoind.start()?;
 
     info!("start prover");
     let (mut prover_bitvmx, prover_funds, prover_pre_pub_key, prover_address) =
         init_bitvmx("prover")?;
     info!("start verifier");
-    let (mut verifier_bitvmx, verifier_funds, verifier_pre_pub_key, verifier_address) =
+    let (mut verifier_bitvmx, _verifier_funds, _verifier_pre_pub_key, verifier_address) =
         init_bitvmx("verifier")?;
+
     let id = Uuid::new_v4();
-    // prover_bitvmx.api_call(bitvmx_client::bitvmx::BitVMXApiMessages::SetupProgram(
-    //     id.clone(),
-    //     ParticipantRole::Prover,
-    //     verifier_address.clone(),
-    // ));
+    prover_bitvmx.api_call(bitvmx_client::bitvmx::BitVMXApiMessages::SetupProgram(
+        id.clone(),
+        ParticipantRole::Prover,
+        verifier_address.clone(),
+    ));
 
-    // verifier_bitvmx.api_call(bitvmx_client::bitvmx::BitVMXApiMessages::SetupProgram(
-    //     id.clone(),
-    //     ParticipantRole::Verifier,
-    //     prover_address.clone(),
-    // ));
+    verifier_bitvmx.api_call(bitvmx_client::bitvmx::BitVMXApiMessages::SetupProgram(
+        id.clone(),
+        ParticipantRole::Verifier,
+        prover_address.clone(),
+    ));
 
-    // prover_bitvmx.tick()?;
-    // verifier_bitvmx.tick()?;
+    prover_bitvmx.tick()?;
+    verifier_bitvmx.tick()?;
 
     //TODO: Serializer / Deserialize keys this exachange should happen with p2p
-    // let verifier_pub_keys = verifier_bitvmx
-    //     .program(&id)
-    //     .as_ref()
-    //     .unwrap()
-    //     .verifier()
-    //     .keys()
-    //     .as_ref()
-    //     .unwrap()
-    //     .clone();
-    // let _prover_pub_keys = prover_bitvmx
-    //     .program(&id)
-    //     .as_ref()
-    //     .unwrap()
-    //     .prover()
-    //     .keys()
-    //     .as_ref()
-    //     .unwrap()
-    //     .clone();
+    let verifier_pub_keys = verifier_bitvmx
+        .load_program(&id)
+        .as_ref()
+        .unwrap()
+        .verifier()
+        .keys()
+        .as_ref()
+        .unwrap()
+        .clone();
+    let _prover_pub_keys = prover_bitvmx
+        .load_program(&id)
+        .as_ref()
+        .unwrap()
+        .prover()
+        .keys()
+        .as_ref()
+        .unwrap()
+        .clone();
 
     let prover_pub_keys = prover_bitvmx.setup_program(
         &id,
@@ -88,16 +111,9 @@ pub fn main() -> Result<()> {
         &verifier_address,
     )?;
 
-    let verifier_pub_keys = verifier_bitvmx.setup_program(
-        &id,
-        ParticipantRole::Verifier,
-        OutPoint::from_str(&verifier_funds)?,
-        &verifier_pre_pub_key,
-        &prover_address,
-    )?;
-
     info!("Start sending");
-    prover_bitvmx.start_sending(id.clone())?;
+    prover_bitvmx.start_sending(id)?;
+
     //TODO: Serializer / Deserialize keys
     prover_bitvmx.setup_counterparty_keys(&id, verifier_pub_keys)?;
     verifier_bitvmx.setup_counterparty_keys(&id, prover_pub_keys)?;
@@ -113,11 +129,9 @@ pub fn main() -> Result<()> {
         }
         prover_bitvmx.tick()?;
         verifier_bitvmx.tick()?;
-
-        // if prover_bitvmx.program(&id).unwrap().state() == &ProgramState::Ready {
-        //     break;
-        // }
     }
+
+    bitcoind.stop()?;
 
     //TODO: Push witness and then claim
     //prover_bitvmx.claim_program(&id)?;
