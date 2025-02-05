@@ -2,7 +2,6 @@ use std::str::FromStr;
 
 use anyhow::Result;
 use bitcoin::{OutPoint, PublicKey};
-use bitvmx_client::program::program::ProgramState;
 use bitvmx_client::{
     bitvmx::BitVMX,
     config::Config,
@@ -18,7 +17,7 @@ use utils::bitcoind::Bitcoind;
 
 fn config_trace() {
     let filter = EnvFilter::builder()
-        .parse("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitvmx_orchestrator=off") 
+        .parse("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitvmx_orchestrator=off,p2p_protocol=off,p2p_handler=off") 
         .expect("Invalid filter");
 
     tracing_subscriber::fmt()
@@ -57,11 +56,7 @@ pub fn test_single_run() -> Result<()> {
 
     let config = Config::new(Some(format!("config/prover.yaml")))?;
 
-    let bitcoind = Bitcoind::new(
-        "bitcoin-regtest",
-        "ruimarinho/bitcoin-core",
-        config.bitcoin,
-    );
+    let bitcoind = Bitcoind::new("bitcoin-regtest", "ruimarinho/bitcoin-core", config.bitcoin);
     bitcoind.start()?;
 
     info!("start prover");
@@ -115,11 +110,8 @@ pub fn test_single_run() -> Result<()> {
         &verifier_address,
     )?;
 
-    prover_bitvmx.exchange_keys(
-        &id,
-        *verifier_address.peer_id(),
-        Some(verifier_address.address().to_string()),
-    )?;
+    info!("Start sending");
+    prover_bitvmx.start_sending(id)?;
 
     //TODO: Serializer / Deserialize keys
     prover_bitvmx.setup_counterparty_keys(&id, verifier_pub_keys)?;
@@ -135,10 +127,7 @@ pub fn test_single_run() -> Result<()> {
             prover_bitvmx.mine_blocks(1)?;
         }
         prover_bitvmx.tick()?;
-
-        if prover_bitvmx.load_program(&id).unwrap().state() == &ProgramState::Ready {
-            break;
-        }
+        verifier_bitvmx.tick()?;
     }
 
     bitcoind.stop()?;

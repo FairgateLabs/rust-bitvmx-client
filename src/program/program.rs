@@ -2,29 +2,32 @@ use std::{collections::HashMap, fmt, rc::Rc};
 
 use bitcoin::{Transaction, Txid};
 use key_manager::winternitz::WinternitzSignature;
+use p2p_handler::P2pHandler;
 use serde::{Deserialize, Serialize};
-use storage_backend::storage::{Storage, KeyValueStore};
+use storage_backend::storage::{KeyValueStore, Storage};
+use tracing::info;
 use uuid::Uuid;
 
-use crate::errors::{BitVMXError, ProgramError};
+use crate::{
+    errors::{BitVMXError, ProgramError},
+    p2p::p2p_manager::{send_keys, send_nonces, send_signatures},
+};
 
 use super::{
     dispute::{DisputeResolutionProtocol, Funding, SearchParams},
     participant::{Participant, ParticipantKeys, ParticipantRole},
 };
 
-#[derive(PartialEq, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Clone, Serialize, Deserialize, Debug)]
 pub enum ProgramState {
     Inactive,
     Ready,
     Claimed,
     Challenged,
     KeySent,
-    ExchangedKeys,
     NonceSent,
-    ExchangedNonces,
     SignSent,
-    ExchangedSignatures,
+    DeployProgram,
     Error, //TODO: check somewhere
 }
 
@@ -35,12 +38,10 @@ impl fmt::Display for ProgramState {
             ProgramState::Ready => write!(f, "Ready"),
             ProgramState::Claimed => write!(f, "Claimed"),
             ProgramState::Challenged => write!(f, "Challenged"),
-            ProgramState::ExchangedKeys => write!(f, "ExchangdeKeys"),
-            ProgramState::ExchangedSignatures => write!(f, "ExchangedSignatures"),
-            ProgramState::ExchangedNonces => write!(f, "ExchangedNonces"),
             ProgramState::KeySent => write!(f, "KeySent"),
             ProgramState::NonceSent => write!(f, "NonceSent"),
             ProgramState::SignSent => write!(f, "SignSent"),
+            ProgramState::DeployProgram => write!(f, "DeployProgram"),
             ProgramState::Error => write!(f, "Error"),
         }
     }
@@ -96,7 +97,7 @@ impl Program {
         prover: Participant,
         verifier: Participant,
         funding: Funding,
-        storage: Rc<Storage>
+        storage: Rc<Storage>,
     ) -> Result<Self, ProgramError> {
         let drp = DisputeResolutionProtocol::new(funding, id, storage.clone())?;
 
@@ -118,7 +119,7 @@ impl Program {
     pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Self, ProgramError> {
         let mut program: Program = match storage.get(&format!("program_{}", program_id))? {
             Some(program) => program,
-            None => return Err(ProgramError::ProgramNotFound(*program_id))
+            None => return Err(ProgramError::ProgramNotFound(*program_id)),
         };
 
         program.storage = Some(storage.clone());
@@ -246,44 +247,114 @@ impl Program {
         self.witness_data.get(&txid)
     }
 
-    pub fn send_keys(&mut self) {
+    fn send_keys(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
         //TODO: Ready = IDLE?
-        if self.state == ProgramState::Ready && self.my_role == ParticipantRole::Prover {
+        if self.state == ProgramState::Ready {
+            send_keys(
+                comms,
+                self.get_participant_me(),
+                &self.id,
+                *self.get_participant_other().address().peer_id(),
+                self.get_address_if_prover(),
+            )?;
             self.state = ProgramState::KeySent;
         } else {
             self.state = ProgramState::Error;
         }
-    }
-    pub fn exchange_keys(&mut self) {
-        //TODO: Ready = IDLE?
-        if (self.state == ProgramState::Ready && self.my_role == ParticipantRole::Verifier)
-            || (self.state == ProgramState::KeySent && self.my_role == ParticipantRole::Prover)
-        {
-            self.state = ProgramState::ExchangedKeys;
-        } else {
-            self.state = ProgramState::Error;
-        }
+        Ok(())
     }
 
-    
-    pub fn exchange_nonces(&mut self) {
-        if (self.state == ProgramState::ExchangedKeys && self.my_role == ParticipantRole::Verifier)
-            || (self.state == ProgramState::NonceSent && self.my_role == ParticipantRole::Prover)
-        {
-            self.state = ProgramState::ExchangedNonces;
-        } else {
-            self.state = ProgramState::Error;
-        }
-    }
-
-    pub fn send_nonces(&mut self) {
-        if self.state == ProgramState::ExchangedKeys && self.my_role == ParticipantRole::Prover {
+    fn send_nonces(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
+        if self.state == ProgramState::KeySent {
+            send_nonces(
+                comms,
+                self.get_participant_me(),
+                &self.id,
+                *self.get_participant_other().address().peer_id(),
+                self.get_address_if_prover(),
+            )?;
             self.state = ProgramState::NonceSent;
         } else {
             self.state = ProgramState::Error;
         }
+        Ok(())
     }
 
+    fn send_signatures(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
+        if self.state == ProgramState::NonceSent {
+            match self.my_role {
+                ParticipantRole::Prover => info!("Prover is signing program"),
+                ParticipantRole::Verifier => info!("Verifier is signing program"),
+            }
+            //sign_program(); //TODO: add function to sign program
+            send_signatures(
+                comms,
+                self.get_participant_me(),
+                &self.id,
+                *self.get_participant_other().address().peer_id(),
+                self.get_address_if_prover(),
+            )?;
+            match self.my_role {
+                ParticipantRole::Prover => self.state = ProgramState::SignSent,
+                ParticipantRole::Verifier => {
+                    self.state = ProgramState::DeployProgram;
+                    self.deploy_program();
+                }
+            }
+        } else {
+            self.state = ProgramState::Error;
+        }
+        Ok(())
+    }
+
+    fn deploy_program(&mut self) {
+        match self.my_role {
+            ParticipantRole::Prover => info!("Deploying the prover program"),
+            ParticipantRole::Verifier => info!("Deploying the verifier program"),
+        }
+        //deploy_program //TODO: add function to deploy program
+    }
+
+    fn get_participant_me(&self) -> &Participant {
+        match self.my_role {
+            ParticipantRole::Prover => &self.prover,
+            ParticipantRole::Verifier => &self.verifier,
+        }
+    }
+
+    fn get_participant_other(&self) -> &Participant {
+        match self.my_role {
+            ParticipantRole::Verifier => &self.prover,
+            ParticipantRole::Prover => &self.verifier,
+        }
+    }
+
+    fn get_address_if_prover(&self) -> Option<String> {
+        match self.my_role {
+            ParticipantRole::Prover => Some(self.verifier.address().address().to_string()),
+            ParticipantRole::Verifier => None,
+        }
+    }
+
+    pub fn tick(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
+        match (&self.state, &self.my_role) {
+            (ProgramState::Inactive, _) => {
+                //TODO: take out, only for testing
+                self.state = ProgramState::Ready;
+                self.tick(comms)?;
+            }
+
+            (ProgramState::Ready, _) => self.send_keys(comms)?,
+            (ProgramState::KeySent, _) => self.send_nonces(comms)?,
+            (ProgramState::NonceSent, _) => self.send_signatures(comms)?, // Sign program and send signature
+            (ProgramState::SignSent, ParticipantRole::Prover) => self.deploy_program(),
+
+            _ => {
+                self.state = ProgramState::Error;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]

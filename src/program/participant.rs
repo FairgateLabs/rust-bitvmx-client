@@ -78,7 +78,7 @@ impl Participant {
     }
 }
 
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ParticipantRole {
     Prover,
     Verifier,

@@ -46,9 +46,7 @@ bitvmx »  INFO Listening on /ip4/127.0.0.1/tcp/61180
 ```
 
 Prover is currently run at 61180 while the Verifier is run at 61181
-
-**NOTE**
-PEER ID IS GENERATED RANDOMLY, AFTER KEVING PUSH IT SHOULD TAKE THE ONE IN THE [config](./config/) .json FILE. IN THE MEANWHILE WE ARE MODIFYING THE P2P LIST AT [p2p-protocol/src/allow_list.rs](../rust-p2p-protocol/src/allow_list.rs)
+Peer ID is generated using the key on the config file
 
 ### Development
 
