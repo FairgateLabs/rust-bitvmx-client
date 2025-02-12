@@ -126,12 +126,11 @@ pub fn deserialize_msg(
         .get("msg")
         .and_then(|m| m.as_array())
         .ok_or(BitVMXError::InvalidMessageFormat)?;
-
     // Convert program ID to Uuid
     let program_id = Uuid::parse_str(program_id).map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
     // Validate that "msg" is a byte array by filtering out invalid values
-    let msg: Vec<u8> = msg
+    let message: Vec<u8> = msg
         .iter()
         .filter_map(|v| {
             v.as_u64()
@@ -139,11 +138,11 @@ pub fn deserialize_msg(
         })
         .collect();
 
-    if msg.len() != msg.iter().count() {
+    if message.len() != msg.iter().count() {
         return Err(BitVMXError::InvalidMessageFormat); // Ensure no invalid bytes after filtering previously
     }
 
-    Ok((version, msg_type, program_id, msg))
+    Ok((version, msg_type, program_id, message))
 }
 
 #[cfg(test)]
@@ -229,5 +228,26 @@ mod tests {
         assert_eq!(deserialized_msg_type, msg_type);
         assert_eq!(deserialized_program_id, program_id);
         assert_eq!(deserialized_msg, msg);
+    }
+
+    #[test]
+    fn test_message_contains_invalid_byte_value() {
+        let version = "1.0";
+        let msg_type = P2PMessageType::Key;
+        let program_id = Uuid::new_v4();
+
+        // Create a JSON payload with an invalid value (>255)
+        let payload = json!({
+            "program_id": program_id.to_string(),
+            "msg": [0, 255, 256] // 256 is invalid
+        });
+        let mut serialized_msg = Vec::new();
+        serialized_msg.extend_from_slice(&Version::to_bytes(version).unwrap());
+        serialized_msg.extend_from_slice(&msg_type.to_bytes().unwrap());
+        serialized_msg.extend_from_slice(&serde_json::to_vec(&payload).unwrap());
+
+        // Expect deserialization to fail due to an invalid byte (>255)
+        let result = deserialize_msg(serialized_msg);
+        assert!(matches!(result, Err(BitVMXError::InvalidMessageFormat)));
     }
 }
