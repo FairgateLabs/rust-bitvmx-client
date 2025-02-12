@@ -43,6 +43,8 @@ pub struct Config {
     pub storage: StorageConfig,
     pub p2p: P2PConfig,
     pub monitor: MonitorConfig,
+    pub broker_storage: String,
+    pub broker_port: u16,
 }
 
 impl Config {

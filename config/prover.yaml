@@ -37,3 +37,6 @@ p2p:
 monitor:
   checkpoint_height: 1
   confirmation_threshold: 6
+
+broker_storage: /tmp/prover/broker.db
+broker_port: 22222

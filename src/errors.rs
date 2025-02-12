@@ -1,5 +1,6 @@
 use bitcoin::{consensus::encode::FromHexError, network::ParseNetworkError};
 use bitcoincore_rpc::bitcoin::{key::ParsePublicKeyError, sighash::SighashTypeParseError};
+use bitvmx_broker::rpc::errors::BrokerError;
 use bitvmx_orchestrator::errors::OrchestratorError;
 use config as settings;
 use key_manager::errors::{KeyManagerError, KeyStoreError, WinternitzError};
@@ -57,6 +58,12 @@ pub enum BitVMXError {
 
     #[error("Failed to use Orchestrator")]
     OrchestratorError(#[from] OrchestratorError),
+
+    #[error("Broker channel error")]
+    BrokerError(#[from] BrokerError),
+
+    #[error("Serialization error {0}")]
+    SerdeSerializationError(#[from] serde_json::Error),
 
     #[error("Invalid parser version")]
     InvalidMsgVersion,
@@ -116,7 +123,7 @@ pub enum ProgramError {
     LoadError(#[from] StorageError),
 
     #[error("Program not found in storage. Program id: {0}")]
-    ProgramNotFound(Uuid)
+    ProgramNotFound(Uuid),
 }
 
 #[derive(Error, Debug)]

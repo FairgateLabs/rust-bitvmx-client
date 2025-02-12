@@ -34,6 +34,9 @@ p2p_handler = { path = "../rust-p2p-handler" }
 rust-bitvmx-storage-backend = { path = "../rust-bitvmx-storage-backend" }
 bitvmx-settings = { path = "../rust-bitvmx-settings" }
 bitvmx-bitcoin-rpc = { path = "../rust-bitvmx-bitcoin-rpc" }
+bitvmx-broker = { path = "../rust-bitvmx-broker", features = [
+    "storagebackend",
+] }
 
 
 [dev-dependencies]

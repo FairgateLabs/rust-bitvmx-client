@@ -5,7 +5,7 @@ use tracing_subscriber::EnvFilter;
 
 fn main() -> Result<()> {
     let filter = EnvFilter::builder()
-    .parse("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitvmx_orchestrator=off") // Include everything at "info" except `libp2p`
+    .parse("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitvmx_orchestrator=off,tarpc=off") // Include everything at "info" except `libp2p`
         .expect("Invalid filter");
 
     tracing_subscriber::fmt()

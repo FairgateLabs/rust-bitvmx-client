@@ -13,19 +13,30 @@ use crate::{
 };
 use bitcoin::PublicKey;
 use bitcoin::{Amount, OutPoint, Transaction, Txid};
+use bitvmx_broker::{
+    channel::channel::DualChannel,
+    rpc::{sync_server::BrokerSync, BrokerConfig},
+};
 use bitvmx_orchestrator::{
     orchestrator::{Orchestrator, OrchestratorApi},
     types::{BitvmxInstance, OrchestratorType, ProcessedNews, TransactionPartialInfo},
 };
 use key_manager::winternitz;
 use p2p_handler::{LocalAllowList, P2pHandler, ReceiveHandlerChannel};
-use std::{path::PathBuf, rc::Rc};
+use serde::{Deserialize, Serialize};
+use std::{
+    path::PathBuf,
+    rc::Rc,
+    sync::{Arc, Mutex},
+    thread::sleep,
+    time::Duration,
+};
 use storage_backend::storage::Storage;
 
 use tracing::info;
 use uuid::Uuid;
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum BitVMXApiMessages {
     SetupProgram(Uuid, ParticipantRole, P2PAddress),
 }
@@ -37,7 +48,15 @@ pub struct BitVMX {
     key_chain: KeyChain,
     storage: Rc<Storage>,
     orchestrator: OrchestratorType,
-    api_messages: Vec<BitVMXApiMessages>,
+    broker: BrokerSync,
+    broker_channel: DualChannel,
+}
+
+impl Drop for BitVMX {
+    fn drop(&mut self) {
+        self.broker.close();
+        sleep(Duration::from_millis(100));
+    }
 }
 
 impl BitVMX {
@@ -60,6 +79,18 @@ impl BitVMX {
             config.bitcoin.network,
         )?;
 
+        //TOOD: This could be moved to a simplified helper inside brokerstorage new
+        //Also the broker could be run independently if needed
+        let broker_backend = Storage::new_with_path(&PathBuf::from(&config.broker_storage))?;
+        let broker_storage = Arc::new(Mutex::new(
+            bitvmx_broker::broker_storage::BrokerStorage::new(Arc::new(Mutex::new(broker_backend))),
+        ));
+        let broker_config = BrokerConfig::new(config.broker_port, None);
+        let broker = BrokerSync::new(&broker_config, broker_storage);
+
+        //TODO: A channel that talks directly with the broker without going through localhost loopback could be implemented
+        let broker_channel = DualChannel::new(&broker_config, 1);
+
         Ok(Self {
             _config: config,
             bitcoin,
@@ -67,7 +98,8 @@ impl BitVMX {
             key_chain: keys,
             storage,
             orchestrator,
-            api_messages: vec![],
+            broker,
+            broker_channel,
         })
     }
 
@@ -506,10 +538,10 @@ impl BitVMX {
     }
 
     pub fn process_api_messages(&mut self) -> Result<(), BitVMXError> {
-        let api_messages = self.api_messages.clone();
-        self.api_messages.clear();
-        for message in api_messages {
-            match message {
+        //TODO: Dedice if we want to process all message in a while or just one per tick
+        if let Some((msg, _from)) = self.broker_channel.recv()? {
+            let decoded: BitVMXApiMessages = serde_json::from_str(&msg)?;
+            match decoded {
                 BitVMXApiMessages::SetupProgram(id, role, peer_address) => {
                     let (txid, vout, key) = self.add_funds()?;
                     let _prover_pub_keys = self.setup_program(
@@ -522,11 +554,8 @@ impl BitVMX {
                 }
             }
         }
-        Ok(())
-    }
 
-    pub fn api_call(&mut self, message: BitVMXApiMessages) {
-        self.api_messages.push(message);
+        Ok(())
     }
 
     pub fn tick(&mut self) -> Result<(), BitVMXError> {

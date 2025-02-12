@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use anyhow::Result;
 use bitcoin::{OutPoint, PublicKey};
+use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use bitvmx_client::{
     bitvmx::BitVMX,
     config::Config,
@@ -17,7 +18,7 @@ use utils::bitcoind::Bitcoind;
 
 fn config_trace() {
     let filter = EnvFilter::builder()
-        .parse("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitvmx_orchestrator=off,p2p_protocol=off,p2p_handler=off") 
+        .parse("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitvmx_orchestrator=off,p2p_protocol=off,p2p_handler=off,tarpc=off") 
         .expect("Invalid filter");
 
     tracing_subscriber::fmt()
@@ -33,8 +34,11 @@ fn clear_db(path: &str) {
     let _ = std::fs::remove_dir_all(path);
 }
 
-fn init_bitvmx(role: &str) -> Result<(BitVMX, FundingAddress, PublicKey, P2PAddress)> {
+fn init_bitvmx(role: &str) -> Result<(BitVMX, FundingAddress, PublicKey, P2PAddress, DualChannel)> {
     let config = Config::new(Some(format!("config/{}.yaml", role)))?;
+
+    let broker_config = BrokerConfig::new(config.broker_port, None);
+    let bridge_client = DualChannel::new(&broker_config, 2);
 
     clear_db(&config.storage.db);
     clear_db(&config.key_storage.path);
@@ -45,7 +49,16 @@ fn init_bitvmx(role: &str) -> Result<(BitVMX, FundingAddress, PublicKey, P2PAddr
     //TODO: Pre-kickoff only prover ?? make independent ??
     let funds = bitvmx.add_funds()?;
     let address = P2PAddress::new(&bitvmx.address(), PeerId::from_str(&bitvmx.peer_id())?);
-    Ok((bitvmx, format!("{}:{}", funds.0, funds.1), funds.2, address))
+
+    //This messagas will come from the bridge client.
+
+    Ok((
+        bitvmx,
+        format!("{}:{}", funds.0, funds.1),
+        funds.2,
+        address,
+        bridge_client,
+    ))
 }
 
 //cargo test --release  -- --ignored
@@ -60,24 +73,39 @@ pub fn test_single_run() -> Result<()> {
     bitcoind.start()?;
 
     info!("start prover");
-    let (mut prover_bitvmx, prover_funds, prover_pre_pub_key, prover_address) =
-        init_bitvmx("prover")?;
+    let (
+        mut prover_bitvmx,
+        prover_funds,
+        prover_pre_pub_key,
+        prover_address,
+        prover_bridge_channel,
+    ) = init_bitvmx("prover")?;
     info!("start verifier");
-    let (mut verifier_bitvmx, _verifier_funds, _verifier_pre_pub_key, verifier_address) =
-        init_bitvmx("verifier")?;
+    let (
+        mut verifier_bitvmx,
+        _verifier_funds,
+        _verifier_pre_pub_key,
+        verifier_address,
+        verifier_bridge_channel,
+    ) = init_bitvmx("verifier")?;
 
     let id = Uuid::new_v4();
-    prover_bitvmx.api_call(bitvmx_client::bitvmx::BitVMXApiMessages::SetupProgram(
+
+    let setup_msg = serde_json::to_string(&bitvmx_client::bitvmx::BitVMXApiMessages::SetupProgram(
         id.clone(),
         ParticipantRole::Prover,
         verifier_address.clone(),
-    ));
+    ))
+    .unwrap();
+    prover_bridge_channel.send(1, setup_msg)?;
 
-    verifier_bitvmx.api_call(bitvmx_client::bitvmx::BitVMXApiMessages::SetupProgram(
+    let setup_msg = serde_json::to_string(&bitvmx_client::bitvmx::BitVMXApiMessages::SetupProgram(
         id.clone(),
         ParticipantRole::Verifier,
         prover_address.clone(),
-    ));
+    ))
+    .unwrap();
+    verifier_bridge_channel.send(1, setup_msg)?;
 
     prover_bitvmx.tick()?;
     verifier_bitvmx.tick()?;
