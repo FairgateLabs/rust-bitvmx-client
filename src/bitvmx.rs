@@ -36,6 +36,7 @@ use storage_backend::storage::Storage;
 use tracing::info;
 use uuid::Uuid;
 
+//TODO: This should be moved to a common place that could be used to share the messages api
 #[derive(Clone, Serialize, Deserialize)]
 pub enum BitVMXApiMessages {
     SetupProgram(Uuid, ParticipantRole, P2PAddress),
