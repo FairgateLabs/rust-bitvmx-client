@@ -112,24 +112,14 @@ impl Repl {
         self.input.run();
 
         loop {
-            let quit = self.process_input();
-            if quit {
-                break;
-            }
+            self.process_input();
 
-            let quit = self.process_p2p_messages();
-            if quit {
-                break;
-            }
+            self.process_p2p_messages()?;
 
-            let quit = self.process_bitcoin_updates();
-            if quit {
-                break;
-            }
+            self.process_bitcoin_updates()?;
 
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        Ok(())
     }
 
     fn process_input(&mut self) -> bool {
@@ -145,13 +135,14 @@ impl Repl {
         false
     }
 
-    fn process_p2p_messages(&mut self) -> bool {
-        self.bitvmx.process_p2p_messages()
+    fn process_p2p_messages(&mut self) -> Result<()> {
+        self.bitvmx.process_p2p_messages()?;
+        Ok(())
     }
 
-    fn process_bitcoin_updates(&mut self) -> bool {
-        // TODO: handle error?
-        self.bitvmx.process_bitcoin_updates().unwrap()
+    fn process_bitcoin_updates(&mut self) -> Result<()> {
+        self.bitvmx.process_bitcoin_updates()?;
+        Ok(())
     }
 
     fn execute(&mut self, args: Vec<String>) -> Result<bool> {

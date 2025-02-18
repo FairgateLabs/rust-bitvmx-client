@@ -101,7 +101,7 @@ impl ParticipantRole {
         }
     }
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ParticipantKeys {
     pre_kickoff: PublicKey,
     internal: XOnlyPublicKey,

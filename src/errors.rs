@@ -76,6 +76,9 @@ pub enum BitVMXError {
 
     #[error("Invalid receive message format")]
     InvalidMessageFormat,
+
+    #[error("Failed to process message")]
+    MessageProcessingError,
 }
 
 #[derive(Error, Debug)]
@@ -163,4 +166,16 @@ pub enum BitcoinClientError {
 pub enum ClientError {
     #[error("Invalid command line arguments {0}")]
     InvalidArguments(String),
+}
+
+#[derive(Error, Debug, PartialEq)]
+pub enum ParseError {
+    #[error("Invalid nonce")]
+    InvalidNonce,
+
+    #[error("Invalid public key")]
+    InvalidPublicKey,
+
+    #[error("Invalid signature")]
+    InvalidSignature,
 }

@@ -8,17 +8,17 @@ const MAX_EXPECTED_MSG_LEN: usize = 1024; // Maximum length for a message //TODO
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum P2PMessageType {
-    Key,
-    Nonce,
-    Signature,
+    Keys,
+    PublicNonces,
+    PartialSignatures,
 }
 
 impl P2PMessageType {
     // Define a mapping between message kinds and their byte representations
     const KIND_MAP: &'static [(&'static P2PMessageType, [u8; 2])] = &[
-        (&P2PMessageType::Key, [0x00, 0x01]),
-        (&P2PMessageType::Nonce, [0x00, 0x02]),
-        (&P2PMessageType::Signature, [0x00, 0x03]),
+        (&P2PMessageType::Keys, [0x00, 0x01]),
+        (&P2PMessageType::PublicNonces, [0x00, 0x02]),
+        (&P2PMessageType::PartialSignatures, [0x00, 0x03]),
     ];
 
     // Convert message type to 2-byte representation
@@ -122,6 +122,7 @@ pub fn deserialize_msg(
         .get("program_id")
         .and_then(|id| id.as_str())
         .ok_or(BitVMXError::InvalidMessageFormat)?;
+
     let msg = payload
         .get("msg")
         .and_then(|m| m.as_array())
@@ -151,24 +152,30 @@ mod tests {
 
     #[test]
     fn test_p2p_message_kind_to_bytes() {
-        assert_eq!(P2PMessageType::Key.to_bytes().unwrap(), [0x00, 0x01]);
-        assert_eq!(P2PMessageType::Nonce.to_bytes().unwrap(), [0x00, 0x02]);
-        assert_eq!(P2PMessageType::Signature.to_bytes().unwrap(), [0x00, 0x03]);
+        assert_eq!(P2PMessageType::Keys.to_bytes().unwrap(), [0x00, 0x01]);
+        assert_eq!(
+            P2PMessageType::PublicNonces.to_bytes().unwrap(),
+            [0x00, 0x02]
+        );
+        assert_eq!(
+            P2PMessageType::PartialSignatures.to_bytes().unwrap(),
+            [0x00, 0x03]
+        );
     }
 
     #[test]
     fn test_p2p_message_kind_from_bytes() {
         assert_eq!(
             P2PMessageType::from_bytes([0x00, 0x01]).unwrap(),
-            P2PMessageType::Key
+            P2PMessageType::Keys
         );
         assert_eq!(
             P2PMessageType::from_bytes([0x00, 0x02]).unwrap(),
-            P2PMessageType::Nonce
+            P2PMessageType::PublicNonces
         );
         assert_eq!(
             P2PMessageType::from_bytes([0x00, 0x03]).unwrap(),
-            P2PMessageType::Signature
+            P2PMessageType::PartialSignatures
         );
     }
 
@@ -185,7 +192,7 @@ mod tests {
     #[test]
     fn test_parse_msg() {
         let version = "1.0";
-        let msg_type = P2PMessageType::Key;
+        let msg_type = P2PMessageType::Keys;
         let program_id = Uuid::new_v4();
         let msg = vec![0x01, 0x02, 0x03];
 
@@ -211,7 +218,7 @@ mod tests {
     #[test]
     fn test_deserialize_msg() {
         let version = "1.0";
-        let msg_type = P2PMessageType::Key;
+        let msg_type = P2PMessageType::Keys;
         let program_id = Uuid::new_v4();
         let msg = vec![0x01, 0x02, 0x03];
 

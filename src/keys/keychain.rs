@@ -1,6 +1,10 @@
-use std::rc::Rc;
+use std::{collections::HashMap, rc::Rc};
 
 use bitcoin::{secp256k1, PublicKey, XOnlyPublicKey};
+use bitvmx_musig2::{
+    musig::{MuSig2Signer, MuSig2SignerApi},
+    PartialSignature, PubNonce,
+};
 use key_manager::{
     create_database_key_store_from_config, create_key_manager_from_config,
     key_manager::KeyManager,
@@ -12,6 +16,8 @@ use protocol_builder::{
     graph::input::{SighashType, Signature},
     unspendable::unspendable_key,
 };
+use storage_backend::storage::Storage;
+use uuid::Uuid;
 
 use crate::{config::Config, errors::BitVMXError, program::program::Program};
 
@@ -20,10 +26,12 @@ pub struct KeyChain {
     communications_key: Keypair,
     ecdsa_index: KeyIndex,
     winternitz_index: KeyIndex,
+    musig2_signer: MuSig2Signer,
+    store: Rc<Storage>,
 }
 
 impl KeyChain {
-    pub fn new(config: &Config) -> Result<KeyChain, BitVMXError> {
+    pub fn new(config: &Config, store: Rc<Storage>) -> Result<KeyChain, BitVMXError> {
         let keystore = create_database_key_store_from_config(
             &config.key_storage,
             &config.key_manager.network,
@@ -34,13 +42,17 @@ impl KeyChain {
         let privk = config.p2p_key();
         let communications_key =
             Keypair::from_protobuf_encoding(&hex::decode(privk.as_bytes()).unwrap()).unwrap();
-        //let communications_key = Keypair::generate_ed25519();
+
+        let key_manager = Rc::new(key_manager);
+        let musig2_signer = MuSig2Signer::new(store.clone(), key_manager.clone());
 
         Ok(Self {
-            key_manager: Rc::new(key_manager),
+            key_manager,
             ecdsa_index: KeyIndex::new(),
             winternitz_index: KeyIndex::new(),
             communications_key,
+            musig2_signer,
+            store,
         })
     }
 
@@ -112,10 +124,12 @@ impl KeyChain {
         self.communications_key.clone()
     }
 
-    pub fn sign_program(&self, program: &mut Program) -> Result<(), BitVMXError> {
-        let protocol= program.dispute_resolution_protocol();
-
-        for (txname, infos) in protocol.spending_infos()?.iter() {
+    pub fn sign_program(&self, program: &Program) -> Result<(), BitVMXError> {
+        for (txname, infos) in program
+            .dispute_resolution_protocol()
+            .spending_infos()?
+            .iter()
+        {
             for (input_index, spending_info) in infos.iter().enumerate() {
                 let mut signatures = vec![];
                 for (message, input_key) in spending_info
@@ -144,7 +158,9 @@ impl KeyChain {
                     signatures.push(signature);
                 }
 
-                protocol.update_input_signatures(txname, input_index as u32, signatures)?;
+                program
+                    .dispute_resolution_protocol()
+                    .update_input_signatures(txname, input_index as u32, signatures)?;
             }
         }
 
@@ -176,6 +192,57 @@ impl KeyChain {
         }
 
         Ok(keys)
+    }
+
+    pub fn add_nonce(
+        &mut self,
+        program_id: Uuid,
+        pubkey: PublicKey,
+        nonce: PubNonce,
+    ) -> Result<(), BitVMXError> {
+        let mut nonces = HashMap::new();
+        nonces.insert(pubkey, nonce);
+        self.musig2_signer
+            .aggregate_nonces(&program_id.to_string(), nonces);
+        Ok(())
+    }
+
+    pub fn add_pubkey(
+        &self,
+        program_id: uuid::Uuid,
+        participant_pubkey: PublicKey,
+        my_pubkey: PublicKey,
+    ) {
+        let program_id = program_id.to_string();
+        let participant_pubkeys = vec![participant_pubkey, my_pubkey];
+
+        self.musig2_signer
+            .init_musig2(&program_id, participant_pubkeys, my_pubkey);
+    }
+
+    pub fn add_nonces(&self, program_id: uuid::Uuid, nonces: Vec<PubNonce>, my_pub_key: PublicKey) {
+        for (index, nonce) in nonces.iter().enumerate() {
+            let mut pubkey_nonce_map = HashMap::new();
+            pubkey_nonce_map.insert(my_pub_key, nonce.clone());
+            let program_id_with_index = format!("{program_id}_{index}");
+            self.musig2_signer
+                .aggregate_nonces(&program_id_with_index, pubkey_nonce_map);
+        }
+    }
+
+    pub fn add_signatures(
+        &self,
+        program_id: uuid::Uuid,
+        partial_signatures: Vec<PartialSignature>,
+        participant_pub_key: PublicKey,
+    ) {
+        for (index, signature) in partial_signatures.iter().enumerate() {
+            let mut pubkey_signature_map = HashMap::new();
+            pubkey_signature_map.insert(participant_pub_key, signature.clone());
+            let program_id_with_index = format!("{program_id}_{index}");
+            self.musig2_signer
+                .aggregate_partial_signatures(&program_id_with_index, pubkey_signature_map);
+        }
     }
 }
 
