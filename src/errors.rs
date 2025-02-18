@@ -79,6 +79,15 @@ pub enum BitVMXError {
 
     #[error("Failed to process message")]
     MessageProcessingError,
+
+    #[error("Failed to aggregate nonces")]
+    AggregateNoncesError,
+
+    #[error("Failed to initialize MuSig2")]
+    InitMusig2Error,
+
+    #[error("Failed to aggregate partial signatures")]
+    AggregatePartialSignaturesError,
 }
 
 #[derive(Error, Debug)]
@@ -178,4 +187,7 @@ pub enum ParseError {
 
     #[error("Invalid signature")]
     InvalidSignature,
+
+    #[error("Invalid participant keys")]
+    InvalidParticipantKeys,
 }

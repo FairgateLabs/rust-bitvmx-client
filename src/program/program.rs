@@ -318,7 +318,7 @@ impl Program {
         //deploy_program //TODO: add function to deploy program
     }
 
-    fn get_participant_me(&self) -> &Participant {
+    pub fn get_participant_me(&self) -> &Participant {
         match self.my_role {
             ParticipantRole::Prover => &self.prover,
             ParticipantRole::Verifier => &self.verifier,

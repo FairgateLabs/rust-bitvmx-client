@@ -459,32 +459,30 @@ impl BitVMX {
                         let participant_keys = bytes_to_participant_keys(data)
                             .map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
-                        // program.setup_counterparty_keys(participant_keys.clone())?;
-
-                        let my_pubkey = program
-                            .get_participant_other()
-                            .keys()
-                            .as_ref()
-                            .unwrap()
-                            .protocol_key();
-
-                        // self.key_chain.add_pubkey(
-                        //     program_id,
-                        //     participant_keys.protocol_key().clone(),
-                        //     my_pubkey.clone(),
-                        // );
+                        program.setup_counterparty_keys(participant_keys.clone())?;
                     }
                     P2PMessageType::PublicNonces => {
                         let nonces = bytes_to_nonces(data).unwrap();
-                        let my_pubkey = program
+                        let participant_key = program
                             .get_participant_other()
                             .keys()
                             .as_ref()
                             .unwrap()
                             .protocol_key();
 
-                        self.key_chain
-                            .add_nonces(program_id, nonces, my_pubkey.clone());
+                        let my_pubkey = program
+                            .get_participant_me()
+                            .keys()
+                            .as_ref()
+                            .unwrap()
+                            .protocol_key();
+
+                        self.key_chain.add_nonces(
+                            program_id,
+                            nonces,
+                            participant_key.clone(),
+                            my_pubkey.clone(),
+                        )?;
                     }
                     P2PMessageType::PartialSignatures => {
                         let signatures = bytes_to_signatures(data).unwrap();
@@ -496,7 +494,7 @@ impl BitVMX {
                             .protocol_key();
 
                         self.key_chain
-                            .add_signatures(program_id, signatures, my_pubkey.clone());
+                            .add_signatures(program_id, signatures, my_pubkey.clone())?;
                     }
                 }
             }

@@ -194,40 +194,33 @@ impl KeyChain {
         Ok(keys)
     }
 
-    pub fn add_nonce(
-        &mut self,
-        program_id: Uuid,
-        pubkey: PublicKey,
-        nonce: PubNonce,
-    ) -> Result<(), BitVMXError> {
-        let mut nonces = HashMap::new();
-        nonces.insert(pubkey, nonce);
-        self.musig2_signer
-            .aggregate_nonces(&program_id.to_string(), nonces);
-        Ok(())
-    }
-
-    pub fn add_pubkey(
+    pub fn add_nonces(
         &self,
         program_id: uuid::Uuid,
+        nonces: Vec<PubNonce>,
         participant_pubkey: PublicKey,
         my_pubkey: PublicKey,
-    ) {
-        let program_id = program_id.to_string();
-        let participant_pubkeys = vec![participant_pubkey, my_pubkey];
-
-        self.musig2_signer
-            .init_musig2(&program_id, participant_pubkeys, my_pubkey);
-    }
-
-    pub fn add_nonces(&self, program_id: uuid::Uuid, nonces: Vec<PubNonce>, my_pub_key: PublicKey) {
+    ) -> Result<(), BitVMXError> {
         for (index, nonce) in nonces.iter().enumerate() {
             let mut pubkey_nonce_map = HashMap::new();
-            pubkey_nonce_map.insert(my_pub_key, nonce.clone());
+            pubkey_nonce_map.insert(participant_pubkey, nonce.clone());
+
             let program_id_with_index = format!("{program_id}_{index}");
+
+            let participant_pubkeys = vec![participant_pubkey, my_pubkey];
+
+            // Initialize MuSig2 session
             self.musig2_signer
-                .aggregate_nonces(&program_id_with_index, pubkey_nonce_map);
+                .init_musig2(&program_id_with_index, participant_pubkeys, my_pubkey)
+                .map_err(|_| BitVMXError::InitMusig2Error)?;
+
+            // Aggregate nonces
+            self.musig2_signer
+                .aggregate_nonces(&program_id_with_index, pubkey_nonce_map)
+                .map_err(|_| BitVMXError::AggregateNoncesError)?;
         }
+
+        Ok(())
     }
 
     pub fn add_signatures(
@@ -235,14 +228,17 @@ impl KeyChain {
         program_id: uuid::Uuid,
         partial_signatures: Vec<PartialSignature>,
         participant_pub_key: PublicKey,
-    ) {
+    ) -> Result<(), BitVMXError> {
         for (index, signature) in partial_signatures.iter().enumerate() {
             let mut pubkey_signature_map = HashMap::new();
             pubkey_signature_map.insert(participant_pub_key, signature.clone());
             let program_id_with_index = format!("{program_id}_{index}");
             self.musig2_signer
-                .aggregate_partial_signatures(&program_id_with_index, pubkey_signature_map);
+                .aggregate_partial_signatures(&program_id_with_index, pubkey_signature_map)
+                .map_err(|_| BitVMXError::AggregatePartialSignaturesError)?;
         }
+
+        Ok(())
     }
 }
 
