@@ -139,7 +139,7 @@ pub fn deserialize_msg(
         })
         .collect();
 
-    if message.len() != msg.iter().count() {
+    if message.len() != msg.len() {
         return Err(BitVMXError::InvalidMessageFormat); // Ensure no invalid bytes after filtering previously
     }
 

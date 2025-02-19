@@ -5,76 +5,17 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct Participant {
-    address: P2PAddress,
-    keys: Option<ParticipantKeys>,
+pub struct ParticipantData {
+    pub p2p_address: P2PAddress,
+    pub keys: Option<ParticipantKeys>,
 }
 
-impl Participant {
+impl ParticipantData {
     pub fn new(address: &P2PAddress, keys: Option<ParticipantKeys>) -> Self {
-        Participant {
-            address: address.clone(),
+        ParticipantData {
+            p2p_address: address.clone(),
             keys,
         }
-    }
-
-    pub fn address(&self) -> &P2PAddress {
-        &self.address
-    }
-
-    pub fn keys(&self) -> &Option<ParticipantKeys> {
-        &self.keys
-    }
-
-    /* CHECK: Is this function necessary ?
-    pub fn prekickoff_key(&self) -> Option<PublicKey> {
-        match &self.keys {
-            Some(keys) => Some(keys.prekickoff_key().clone()),
-            None => None,
-        }
-    }
-
-    pub fn timelock_key(&self) -> Option<PublicKey> {
-        match &self.keys {
-            Some(keys) => Some(keys.timelock_key().clone()),
-            None => None,
-        }
-    }
-
-    pub fn speedup_key(&self) -> Option<PublicKey> {
-        match &self.keys {
-            Some(keys) => Some(keys.speedup_key().clone()),
-            None => None,
-        }
-    }
-
-    pub fn protocol_key(&self) -> Option<PublicKey> {
-        match &self.keys {
-            Some(keys) => Some(keys.protocol_key().clone()),
-            None => None,
-        }
-    }
-
-    pub fn internal_key(&self) -> Option<XOnlyPublicKey> {
-        match &self.keys {
-            Some(keys) => Some(keys.internal_key().clone()),
-            None => None,
-        }
-    }
-
-    pub fn dispute_resolution_keys(&self) -> Option<Vec<WinternitzPublicKey>> {
-        match &self.keys {
-            Some(keys) => Some(keys.dispute_resolution_keys().clone()),
-            None => None,
-        }
-    }
-
-    pub fn keys(&self) -> Option<ParticipantKeys> {
-        self.keys.clone()
-    }*/
-
-    pub fn set_keys(&mut self, keys: ParticipantKeys) {
-        self.keys = Some(keys);
     }
 }
 
@@ -103,15 +44,15 @@ impl ParticipantRole {
 }
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct ParticipantKeys {
-    pre_kickoff: PublicKey,
-    internal: XOnlyPublicKey,
-    protocol: PublicKey,
-    speedup: PublicKey,
-    timelock: PublicKey,
-    program_input_key: WinternitzPublicKey,
-    program_ending_state: WinternitzPublicKey,
-    program_ending_step_number: WinternitzPublicKey,
-    dispute_resolution: Vec<WinternitzPublicKey>,
+    pub pre_kickoff: PublicKey,
+    pub internal: XOnlyPublicKey,
+    pub protocol: PublicKey,
+    pub speedup: PublicKey,
+    pub timelock: PublicKey,
+    pub program_input_key: WinternitzPublicKey,
+    pub program_ending_state: WinternitzPublicKey,
+    pub program_ending_step_number: WinternitzPublicKey,
+    pub dispute_resolution: Vec<WinternitzPublicKey>,
 }
 
 impl ParticipantKeys {
@@ -144,57 +85,12 @@ impl ParticipantKeys {
         // TODO: Implement
         vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     }
-
-    pub fn check_if_keys(&self, keys: Vec<u8>) -> bool {
-        // TODO: Implement
-        if keys == vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9] {
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn protocol_key(&self) -> &PublicKey {
-        &self.protocol
-    }
-
-    pub fn internal_key(&self) -> &XOnlyPublicKey {
-        &self.internal
-    }
-
-    pub fn speedup_key(&self) -> &PublicKey {
-        &self.speedup
-    }
-
-    pub fn timelock_key(&self) -> &PublicKey {
-        &self.timelock
-    }
-
-    pub fn prekickoff_key(&self) -> &PublicKey {
-        &self.pre_kickoff
-    }
-
-    pub fn program_input_key(&self) -> &WinternitzPublicKey {
-        &self.program_input_key
-    }
-
-    pub fn program_ending_state_key(&self) -> &WinternitzPublicKey {
-        &self.program_ending_state
-    }
-
-    pub fn program_ending_step_number_key(&self) -> &WinternitzPublicKey {
-        &self.program_ending_step_number
-    }
-
-    pub fn dispute_resolution_keys(&self) -> &Vec<WinternitzPublicKey> {
-        &self.dispute_resolution
-    }
 }
 
 #[derive(PartialEq, Clone, Serialize, Deserialize)]
 pub struct P2PAddress {
-    address: String,
-    peer_id: PeerId,
+    pub address: String,
+    pub peer_id: PeerId,
 }
 
 impl P2PAddress {
@@ -203,14 +99,6 @@ impl P2PAddress {
             address: address.to_string(),
             peer_id,
         }
-    }
-
-    pub fn address(&self) -> &str {
-        &self.address
-    }
-
-    pub fn peer_id(&self) -> &PeerId {
-        &self.peer_id
     }
 
     pub fn address_bytes(&self) -> Vec<u8> {

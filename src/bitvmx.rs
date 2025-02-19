@@ -7,7 +7,7 @@ use crate::{
     p2p::p2p_parser::{deserialize_msg, P2PMessageType},
     program::{
         dispute::{Funding, SearchParams},
-        participant::{P2PAddress, Participant, ParticipantKeys, ParticipantRole},
+        participant::{P2PAddress, ParticipantData, ParticipantKeys, ParticipantRole},
         program::Program,
         witness,
     },
@@ -65,8 +65,8 @@ impl BitVMX {
     pub fn new(config: Config) -> Result<Self, BitVMXError> {
         let bitcoin = Self::new_bitcoin_client(&config)?;
         let storage = Rc::new(Storage::new_with_path(&PathBuf::from(&config.storage.db))?);
-        let keys = KeyChain::new(&config, storage.clone())?;
-        let communications_key = keys.communications_key();
+        let key_chain = KeyChain::new(&config, storage.clone())?;
+        let communications_key = key_chain.communications_key.clone();
         let comms = P2pHandler::new::<LocalAllowList>(
             config.p2p_address().to_string(),
             communications_key,
@@ -75,7 +75,7 @@ impl BitVMX {
         let orchestrator = Orchestrator::new_with_paths(
             &config.bitcoin,
             storage.clone(),
-            keys.get_key_manager(),
+            key_chain.key_manager.clone(),
             config.monitor.checkpoint_height,
             config.monitor.confirmation_threshold,
             config.bitcoin.network,
@@ -97,7 +97,7 @@ impl BitVMX {
             _config: config,
             bitcoin,
             comms,
-            key_chain: keys,
+            key_chain,
             storage,
             orchestrator,
             broker,
@@ -127,15 +127,12 @@ impl BitVMX {
         // Generate my keys.
         let keys = self.generate_keys(pre_kickoff, &my_role)?;
 
+        let p2p_address = P2PAddress::new(&self.comms.get_address(), self.comms.get_peer_id());
         // Create a participant that represents me with the specified role (Prover or Verifier).
-        let me = Participant::new(
-            //&self.comms.address(),
-            &P2PAddress::new(&self.comms.get_address(), self.comms.get_peer_id()),
-            Some(keys.clone()),
-        );
+        let me = ParticipantData::new(&p2p_address, Some(keys.clone()));
 
         // Create a participant that represents the counterparty with the opposite role.
-        let other = Participant::new(peer_address, None);
+        let other = ParticipantData::new(peer_address, None);
 
         // Rename the variables to the correct roles
         let (prover, verifier) = match my_role {
@@ -166,7 +163,6 @@ impl BitVMX {
         // 1. Send keys and program data (id and config) to counterparty
         // 2. Receive keys from counterparty
 
-        //TODO: Save after modification
         let mut program = self.load_program(id)?;
         program.setup_counterparty_keys(keys)?;
 
@@ -240,10 +236,8 @@ impl BitVMX {
     /// Sends the pre-kickoff transaction to the Bitcoin network, the program is now ready for the prover to
     /// claim its funds using the kickoff transaction.
     pub fn deploy_program(&mut self, program_id: &Uuid) -> Result<bool, BitVMXError> {
-        let transaction = {
-            let program = self.load_program(program_id)?;
-            program.prekickoff_transaction()?
-        };
+        let program = self.load_program(program_id)?;
+        let transaction = program.prekickoff_transaction()?;
 
         let instance: BitvmxInstance<TransactionPartialInfo> =
             bitvmx_orchestrator::types::BitvmxInstance::new(
@@ -465,35 +459,20 @@ impl BitVMX {
                     }
                     P2PMessageType::PublicNonces => {
                         let nonces = bytes_to_nonces(data).unwrap();
-                        let participant_key = program
-                            .get_participant_other()
-                            .keys()
-                            .as_ref()
-                            .unwrap()
-                            .protocol_key();
+                        let participant_key = program.other.keys.as_ref().unwrap().protocol;
 
-                        let my_pubkey = program
-                            .get_participant_me()
-                            .keys()
-                            .as_ref()
-                            .unwrap()
-                            .protocol_key();
+                        let my_pubkey = program.me.keys.as_ref().unwrap().protocol;
 
                         self.key_chain.add_nonces(
                             program_id,
                             nonces,
-                            participant_key.clone(),
-                            my_pubkey.clone(),
+                            participant_key,
+                            my_pubkey,
                         )?;
                     }
                     P2PMessageType::PartialSignatures => {
                         let signatures = bytes_to_signatures(data).unwrap();
-                        let my_pubkey = program
-                            .get_participant_other()
-                            .keys()
-                            .as_ref()
-                            .unwrap()
-                            .protocol_key();
+                        let my_pubkey = program.other.keys.as_ref().unwrap().protocol;
 
                         self.key_chain
                             .add_signatures(program_id, signatures, my_pubkey.clone())?;

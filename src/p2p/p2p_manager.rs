@@ -7,12 +7,12 @@ use crate::{errors::BitVMXError, program::participant};
 
 pub fn send_keys(
     comms: &mut P2pHandler,
-    participant: &participant::Participant,
+    participant: &participant::ParticipantData,
     program_id: &Uuid,
     peer_id: PeerId,
     addr: Option<String>,
 ) -> Result<(), BitVMXError> {
-    let keys = participant.keys().clone();
+    let keys = participant.keys.clone();
     let keys = match keys {
         Some(keys) => keys.get_keys(),
         None => return Err(BitVMXError::KeysNotFound(*program_id)),
@@ -35,7 +35,7 @@ pub fn send_keys(
 
 pub fn send_nonces(
     comms: &mut P2pHandler,
-    _participant: &participant::Participant,
+    _participant: &participant::ParticipantData,
     program_id: &Uuid,
     peer_id: PeerId,
     addr: Option<String>,
@@ -60,7 +60,7 @@ pub fn send_nonces(
 
 pub fn send_signatures(
     comms: &mut P2pHandler,
-    _participant: &participant::Participant,
+    _participant: &participant::ParticipantData,
     program_id: &Uuid,
     peer_id: PeerId,
     addr: Option<String>,
