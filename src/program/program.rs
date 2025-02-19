@@ -1,9 +1,8 @@
-use std::{collections::HashMap, fmt, rc::Rc};
-
 use bitcoin::{Transaction, Txid};
 use key_manager::winternitz::WinternitzSignature;
 use p2p_handler::P2pHandler;
 use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, fmt, rc::Rc};
 use storage_backend::storage::{KeyValueStore, Storage};
 use tracing::info;
 use uuid::Uuid;
@@ -77,7 +76,7 @@ impl WitnessData {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Program {
     id: Uuid,
-    pub my_role: ParticipantRole,
+    my_role: ParticipantRole,
     prover: Participant,
     verifier: Participant,
     drp: DisputeResolutionProtocol,
@@ -101,7 +100,7 @@ impl Program {
     ) -> Result<Self, ProgramError> {
         let drp = DisputeResolutionProtocol::new(funding, id, storage.clone())?;
 
-        Ok(Program {
+        let program = Program {
             id,
             my_role,
             prover,
@@ -113,7 +112,11 @@ impl Program {
             _ending_step_number: 0,
             witness_data: HashMap::new(),
             storage: Some(storage),
-        })
+        };
+
+        program.save()?;
+
+        Ok(program)
     }
 
     pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Self, ProgramError> {
@@ -315,14 +318,14 @@ impl Program {
         //deploy_program //TODO: add function to deploy program
     }
 
-    fn get_participant_me(&self) -> &Participant {
+    pub fn get_participant_me(&self) -> &Participant {
         match self.my_role {
             ParticipantRole::Prover => &self.prover,
             ParticipantRole::Verifier => &self.verifier,
         }
     }
 
-    fn get_participant_other(&self) -> &Participant {
+    pub fn get_participant_other(&self) -> &Participant {
         match self.my_role {
             ParticipantRole::Verifier => &self.prover,
             ParticipantRole::Prover => &self.verifier,
@@ -353,6 +356,9 @@ impl Program {
                 self.state = ProgramState::Error;
             }
         }
+
+        self.save()?;
+
         Ok(())
     }
 }

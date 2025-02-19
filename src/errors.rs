@@ -76,6 +76,18 @@ pub enum BitVMXError {
 
     #[error("Invalid receive message format")]
     InvalidMessageFormat,
+
+    #[error("Failed to process message")]
+    MessageProcessingError,
+
+    #[error("Failed to aggregate nonces")]
+    AggregateNoncesError,
+
+    #[error("Failed to initialize MuSig2")]
+    InitMusig2Error,
+
+    #[error("Failed to aggregate partial signatures")]
+    AggregatePartialSignaturesError,
 }
 
 #[derive(Error, Debug)]
@@ -163,4 +175,19 @@ pub enum BitcoinClientError {
 pub enum ClientError {
     #[error("Invalid command line arguments {0}")]
     InvalidArguments(String),
+}
+
+#[derive(Error, Debug, PartialEq)]
+pub enum ParseError {
+    #[error("Invalid nonce")]
+    InvalidNonce,
+
+    #[error("Invalid public key")]
+    InvalidPublicKey,
+
+    #[error("Invalid signature")]
+    InvalidSignature,
+
+    #[error("Invalid participant keys")]
+    InvalidParticipantKeys,
 }

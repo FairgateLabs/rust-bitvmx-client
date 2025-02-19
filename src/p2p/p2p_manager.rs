@@ -12,14 +12,14 @@ pub fn send_keys(
     peer_id: PeerId,
     addr: Option<String>,
 ) -> Result<(), BitVMXError> {
-    let keys = participant.keys();
+    let keys = participant.keys().clone();
     let keys = match keys {
         Some(keys) => keys.get_keys(),
         None => return Err(BitVMXError::KeysNotFound(*program_id)),
     };
 
     info!("Sending keys: {:?}", keys.clone());
-    let msg = serialize_msg("1.0", P2PMessageType::Key, program_id, keys)?;
+    let msg = serialize_msg("1.0", P2PMessageType::Keys, program_id, keys)?;
     match addr {
         Some(addr) => {
             // Prover
@@ -43,7 +43,7 @@ pub fn send_nonces(
     let nonces = vec![0, 1, 2, 3]; //TODO:
 
     info!("Sending nonces: {:?}", nonces.clone());
-    let msg = serialize_msg("1.0", P2PMessageType::Nonce, program_id, nonces)?;
+    let msg = serialize_msg("1.0", P2PMessageType::PublicNonces, program_id, nonces)?;
 
     match addr {
         Some(addr) => {
@@ -68,7 +68,7 @@ pub fn send_signatures(
     let sigs = vec![10, 9, 8, 7]; //TODO:
 
     info!("Sending signature: {:?}", sigs.clone());
-    let msg = serialize_msg("1.0", P2PMessageType::Signature, program_id, sigs)?;
+    let msg = serialize_msg("1.0", P2PMessageType::PartialSignatures, program_id, sigs)?;
 
     match addr {
         Some(addr) => {

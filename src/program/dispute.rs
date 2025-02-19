@@ -96,7 +96,11 @@ const KICKOFF: &str = "kickoff";
 const PROTOCOL: &str = "protocol";
 
 impl DisputeResolutionProtocol {
-    pub fn new(funding: Funding, program_id: Uuid, storage: Rc<Storage>) -> Result<DisputeResolutionProtocol, ProtocolBuilderError> {
+    pub fn new(
+        funding: Funding,
+        program_id: Uuid,
+        storage: Rc<Storage>,
+    ) -> Result<DisputeResolutionProtocol, ProtocolBuilderError> {
         let protocol_name = format!("drp_{}", program_id);
 
         Ok(Self {
@@ -121,7 +125,7 @@ impl DisputeResolutionProtocol {
 
         let mut builder = ProtocolBuilder::new(&self.protocol_name, self.storage.clone().unwrap())?;
         let output_spending_type =
-            OutputSpendingType::new_segwit_key_spend(prover.prekickoff_key(), self.funding.amount);
+            OutputSpendingType::new_segwit_key_spend(&prover.prekickoff_key(), self.funding.amount);
         builder.connect_with_external_transaction(
             self.funding.txid(),
             self.funding.vout(),
@@ -131,21 +135,21 @@ impl DisputeResolutionProtocol {
         )?;
 
         let kickoff_spending = scripts::kickoff(
-            prover.protocol_key(),
-            prover.program_ending_state_key(),
-            prover.program_ending_step_number_key(),
+            &prover.protocol_key(),
+            &prover.program_ending_state_key(),
+            &prover.program_ending_step_number_key(),
         )?;
 
         builder.add_taproot_script_spend_connection(
             PROTOCOL,
             PREKICKOFF,
             self.funding.protocol + self.funding.timelock,
-            prover.internal_key(),
+            &prover.internal_key(),
             &[kickoff_spending],
             "kickoff",
             &tr_sighash_type,
         )?;
-        builder.add_speedup_output(PREKICKOFF, self.funding.speedup, prover.speedup_key())?;
+        builder.add_speedup_output(PREKICKOFF, self.funding.speedup, &prover.speedup_key())?;
 
         let protocol = builder.build()?;
         self.save_protocol(protocol)?;
@@ -178,7 +182,7 @@ impl DisputeResolutionProtocol {
         input_index: u32,
         signatures: Vec<Signature>,
     ) -> Result<(), ProtocolBuilderError> {
-        let mut protocol = self.load_protocol()?; 
+        let mut protocol = self.load_protocol()?;
         protocol.update_input_signatures(transaction_name, input_index, signatures)?;
         self.save_protocol(protocol)?;
         Ok(())
@@ -189,7 +193,7 @@ impl DisputeResolutionProtocol {
     }
 
     fn load_protocol(&self) -> Result<Protocol, ProtocolBuilderError> {
-        match Protocol::load(&self.protocol_name, self.storage.clone().unwrap())?{
+        match Protocol::load(&self.protocol_name, self.storage.clone().unwrap())? {
             Some(protocol) => Ok(protocol),
             None => Err(ProtocolBuilderError::MissingProtocol),
         }
