@@ -234,13 +234,9 @@ impl Repl {
         let verifier = program.verifier();
 
         let (prover_drp_size, prover_drp_type) =
-            fmt_option_winternitz_pks(prover.keys().as_ref().map(|k| k.dispute_resolution_keys()));
-        let (verifier_drp_size, verifier_drp_type) = fmt_option_winternitz_pks(
-            verifier
-                .keys()
-                .as_ref()
-                .map(|k| k.dispute_resolution_keys()),
-        );
+            fmt_option_winternitz_pks(prover.keys.as_ref().map(|k| &k.dispute_resolution));
+        let (verifier_drp_size, verifier_drp_type) =
+            fmt_option_winternitz_pks(verifier.keys.as_ref().map(|k| &k.dispute_resolution));
 
         let mut table = Table::new();
         table
@@ -268,8 +264,8 @@ impl Repl {
                 "Prover p2p information",
                 format!(
                     "Address {}\nPeer Id {}",
-                    prover.address().address(),
-                    prover.address().peer_id_bs58(),
+                    prover.address.address,
+                    prover.address.peer_id_bs58(),
                 )
                 .as_str(),
             ])
@@ -277,8 +273,8 @@ impl Repl {
                 "Verifier p2p information",
                 format!(
                     "Address {}\nPeer Id {}",
-                    verifier.address().address(),
-                    verifier.address().peer_id_bs58(),
+                    verifier.address.address,
+                    verifier.address.peer_id_bs58(),
                 )
                 .as_str(),
             ])
@@ -286,8 +282,8 @@ impl Repl {
                 "Common ECDSA keys",
                 format!(
                     "Internal (Taproot)\n{}\n\nProtocol\n{}",
-                    fmt_option_xonly_pk(prover.keys().as_ref().map(|k| k.internal_key())),
-                    fmt_option_pk(prover.keys().as_ref().map(|k| k.protocol_key())),
+                    fmt_option_xonly_pk(prover.keys.as_ref().map(|k| &k.internal)),
+                    fmt_option_pk(prover.keys.as_ref().map(|k| &k.protocol)),
                 )
                 .as_str(),
             ])
@@ -295,9 +291,9 @@ impl Repl {
                 "Prover ECDSA keys",
                 format!(
                     "Pre-kickoff\n{}\n\nTimelock\n{}\n\nSpeedup\n{}",
-                    fmt_option_pk(prover.keys().as_ref().map(|k| k.prekickoff_key())),
-                    fmt_option_pk(prover.keys().as_ref().map(|k| k.timelock_key())),
-                    fmt_option_pk(prover.keys().as_ref().map(|k| k.speedup_key())),
+                    fmt_option_pk(prover.keys.as_ref().map(|k| &k.pre_kickoff)),
+                    fmt_option_pk(prover.keys.as_ref().map(|k| &k.timelock)),
+                    fmt_option_pk(prover.keys.as_ref().map(|k| &k.speedup)),
                 )
                 .as_str(),
             ])
@@ -309,8 +305,8 @@ impl Repl {
                 "Verifier ECDSA keys",
                 format!(
                     "Timelock\n{}\n\nSpeedup\n{}",
-                    fmt_option_pk(verifier.keys().as_ref().map(|k| k.timelock_key())),
-                    fmt_option_pk(verifier.keys().as_ref().map(|k| k.speedup_key())),
+                    fmt_option_pk(verifier.keys.as_ref().map(|k| &k.timelock)),
+                    fmt_option_pk(verifier.keys.as_ref().map(|k| &k.speedup)),
                 )
                 .as_str(),
             ])

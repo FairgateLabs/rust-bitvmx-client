@@ -12,7 +12,7 @@ pub fn send_keys(
     peer_id: PeerId,
     addr: Option<String>,
 ) -> Result<(), BitVMXError> {
-    let keys = participant.keys().clone();
+    let keys = participant.keys.clone();
     let keys = match keys {
         Some(keys) => keys.get_keys(),
         None => return Err(BitVMXError::KeysNotFound(*program_id)),

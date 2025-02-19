@@ -139,15 +139,15 @@ impl Program {
 
     pub fn setup_counterparty_keys(&mut self, keys: ParticipantKeys) -> Result<(), BitVMXError> {
         match self.my_role {
-            ParticipantRole::Prover => self.verifier.set_keys(keys),
-            ParticipantRole::Verifier => self.prover.set_keys(keys),
+            ParticipantRole::Prover => self.verifier.keys = Some(keys),
+            ParticipantRole::Verifier => self.prover.keys = Some(keys),
         }
 
         let search_params = SearchParams::new(8, 32);
 
         self.drp.build_protocol(
-            self.prover.keys().as_ref().unwrap(),
-            self.verifier.keys().as_ref().unwrap(),
+            self.prover.keys.as_ref().unwrap(),
+            self.verifier.keys.as_ref().unwrap(),
             search_params,
         )?;
 
@@ -257,7 +257,7 @@ impl Program {
                 comms,
                 self.get_participant_me(),
                 &self.id,
-                *self.get_participant_other().address().peer_id(),
+                self.get_participant_other().address.peer_id,
                 self.get_address_if_prover(),
             )?;
             self.state = ProgramState::KeySent;
@@ -273,7 +273,7 @@ impl Program {
                 comms,
                 self.get_participant_me(),
                 &self.id,
-                *self.get_participant_other().address().peer_id(),
+                self.get_participant_other().address.peer_id,
                 self.get_address_if_prover(),
             )?;
             self.state = ProgramState::NonceSent;
@@ -294,7 +294,7 @@ impl Program {
                 comms,
                 self.get_participant_me(),
                 &self.id,
-                *self.get_participant_other().address().peer_id(),
+                self.get_participant_other().address.peer_id,
                 self.get_address_if_prover(),
             )?;
             match self.my_role {
@@ -334,7 +334,7 @@ impl Program {
 
     fn get_address_if_prover(&self) -> Option<String> {
         match self.my_role {
-            ParticipantRole::Prover => Some(self.verifier.address().address().to_string()),
+            ParticipantRole::Prover => Some(self.verifier.address.address.clone()),
             ParticipantRole::Verifier => None,
         }
     }

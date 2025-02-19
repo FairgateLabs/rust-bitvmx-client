@@ -116,7 +116,7 @@ pub fn test_single_run() -> Result<()> {
         .as_ref()
         .unwrap()
         .verifier()
-        .keys()
+        .keys
         .as_ref()
         .unwrap()
         .clone();
@@ -125,7 +125,7 @@ pub fn test_single_run() -> Result<()> {
         .as_ref()
         .unwrap()
         .prover()
-        .keys()
+        .keys
         .as_ref()
         .unwrap()
         .clone();

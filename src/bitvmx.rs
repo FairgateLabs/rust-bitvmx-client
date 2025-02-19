@@ -467,17 +467,13 @@ impl BitVMX {
                         let nonces = bytes_to_nonces(data).unwrap();
                         let participant_key = program
                             .get_participant_other()
-                            .keys()
+                            .keys
                             .as_ref()
                             .unwrap()
-                            .protocol_key();
+                            .protocol;
 
-                        let my_pubkey = program
-                            .get_participant_me()
-                            .keys()
-                            .as_ref()
-                            .unwrap()
-                            .protocol_key();
+                        let my_pubkey =
+                            program.get_participant_me().keys.as_ref().unwrap().protocol;
 
                         self.key_chain.add_nonces(
                             program_id,
@@ -490,10 +486,10 @@ impl BitVMX {
                         let signatures = bytes_to_signatures(data).unwrap();
                         let my_pubkey = program
                             .get_participant_other()
-                            .keys()
+                            .keys
                             .as_ref()
                             .unwrap()
-                            .protocol_key();
+                            .protocol;
 
                         self.key_chain
                             .add_signatures(program_id, signatures, my_pubkey.clone())?;
