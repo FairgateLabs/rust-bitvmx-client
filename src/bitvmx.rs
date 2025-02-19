@@ -127,12 +127,9 @@ impl BitVMX {
         // Generate my keys.
         let keys = self.generate_keys(pre_kickoff, &my_role)?;
 
+        let p2p_address = P2PAddress::new(&self.comms.get_address(), self.comms.get_peer_id());
         // Create a participant that represents me with the specified role (Prover or Verifier).
-        let me = ParticipantData::new(
-            //&self.comms.address(),
-            &P2PAddress::new(&self.comms.get_address(), self.comms.get_peer_id()),
-            Some(keys.clone()),
-        );
+        let me = ParticipantData::new(&p2p_address, Some(keys.clone()));
 
         // Create a participant that represents the counterparty with the opposite role.
         let other = ParticipantData::new(peer_address, None);
@@ -166,7 +163,6 @@ impl BitVMX {
         // 1. Send keys and program data (id and config) to counterparty
         // 2. Receive keys from counterparty
 
-        //TODO: Save after modification
         let mut program = self.load_program(id)?;
         program.setup_counterparty_keys(keys)?;
 
@@ -240,10 +236,8 @@ impl BitVMX {
     /// Sends the pre-kickoff transaction to the Bitcoin network, the program is now ready for the prover to
     /// claim its funds using the kickoff transaction.
     pub fn deploy_program(&mut self, program_id: &Uuid) -> Result<bool, BitVMXError> {
-        let transaction = {
-            let program = self.load_program(program_id)?;
-            program.prekickoff_transaction()?
-        };
+        let program = self.load_program(program_id)?;
+        let transaction = program.prekickoff_transaction()?;
 
         let instance: BitvmxInstance<TransactionPartialInfo> =
             bitvmx_orchestrator::types::BitvmxInstance::new(

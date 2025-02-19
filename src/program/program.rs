@@ -149,6 +149,8 @@ impl Program {
             search_params,
         )?;
 
+        self.save()?;
+
         Ok(())
     }
 
@@ -251,6 +253,9 @@ impl Program {
         } else {
             self.state = ProgramState::Error;
         }
+
+        self.save()?;
+
         Ok(())
     }
 
@@ -278,6 +283,8 @@ impl Program {
         } else {
             self.state = ProgramState::Error;
         }
+
+        self.save()?;
         Ok(())
     }
 
