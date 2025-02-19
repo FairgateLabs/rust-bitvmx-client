@@ -264,8 +264,8 @@ impl Repl {
                 "Prover p2p information",
                 format!(
                     "Address {}\nPeer Id {}",
-                    prover.address.address,
-                    prover.address.peer_id_bs58(),
+                    prover.p2p_address.address,
+                    prover.p2p_address.peer_id_bs58(),
                 )
                 .as_str(),
             ])
@@ -273,8 +273,8 @@ impl Repl {
                 "Verifier p2p information",
                 format!(
                     "Address {}\nPeer Id {}",
-                    verifier.address.address,
-                    verifier.address.peer_id_bs58(),
+                    verifier.p2p_address.address,
+                    verifier.p2p_address.peer_id_bs58(),
                 )
                 .as_str(),
             ])

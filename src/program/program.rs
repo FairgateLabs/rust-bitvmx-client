@@ -228,7 +228,7 @@ impl Program {
                 comms,
                 &self.party_data,
                 &self.id,
-                self.counterparty_data.address.peer_id,
+                self.counterparty_data.p2p_address.peer_id,
                 self.get_address_if_prover(),
             )?;
             self.state = ProgramState::KeySent;
@@ -244,7 +244,7 @@ impl Program {
                 comms,
                 &self.party_data,
                 &self.id,
-                self.counterparty_data.address.peer_id,
+                self.counterparty_data.p2p_address.peer_id,
                 self.get_address_if_prover(),
             )?;
             self.state = ProgramState::NonceSent;
@@ -265,7 +265,7 @@ impl Program {
                 comms,
                 &self.party_data,
                 &self.id,
-                self.counterparty_data.address.peer_id,
+                self.counterparty_data.p2p_address.peer_id,
                 self.get_address_if_prover(),
             )?;
             match self.my_role {
@@ -291,7 +291,7 @@ impl Program {
 
     fn get_address_if_prover(&self) -> Option<String> {
         match self.my_role {
-            ParticipantRole::Prover => Some(self.counterparty_data.address.address.clone()),
+            ParticipantRole::Prover => Some(self.counterparty_data.p2p_address.address.clone()),
             ParticipantRole::Verifier => None,
         }
     }

@@ -6,14 +6,14 @@ use std::fmt;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ParticipantData {
-    pub address: P2PAddress,
+    pub p2p_address: P2PAddress,
     pub keys: Option<ParticipantKeys>,
 }
 
 impl ParticipantData {
     pub fn new(address: &P2PAddress, keys: Option<ParticipantKeys>) -> Self {
         ParticipantData {
-            address: address.clone(),
+            p2p_address: address.clone(),
             keys,
         }
     }
