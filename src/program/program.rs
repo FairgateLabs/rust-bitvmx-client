@@ -77,9 +77,8 @@ impl WitnessData {
 pub struct Program {
     pub program_id: Uuid,
     pub my_role: ParticipantRole,
-    // TODO:  We need to find a better name for my_info (party_data) and the other participant (counterparty_data)
-    pub party_data: ParticipantData,
-    pub counterparty_data: ParticipantData,
+    pub me: ParticipantData,
+    pub other: ParticipantData,
     pub drp: DisputeResolutionProtocol,
     pub state: ProgramState,
     _trace: Trace,
@@ -104,8 +103,8 @@ impl Program {
         let program = Program {
             program_id,
             my_role,
-            party_data: prover,
-            counterparty_data: verifier,
+            me: prover,
+            other: verifier,
             drp,
             state: ProgramState::Inactive,
             _trace: Trace {},
@@ -139,13 +138,13 @@ impl Program {
     }
 
     pub fn setup_counterparty_keys(&mut self, keys: ParticipantKeys) -> Result<(), BitVMXError> {
-        self.counterparty_data.keys = Some(keys);
+        self.other.keys = Some(keys);
 
         let search_params = SearchParams::new(8, 32);
 
         self.drp.build_protocol(
-            self.party_data.keys.as_ref().unwrap(),
-            self.counterparty_data.keys.as_ref().unwrap(),
+            self.me.keys.as_ref().unwrap(),
+            self.other.keys.as_ref().unwrap(),
             search_params,
         )?;
 
@@ -228,9 +227,9 @@ impl Program {
         if self.state == ProgramState::Ready {
             send_keys(
                 comms,
-                &self.party_data,
+                &self.me,
                 &self.program_id,
-                self.counterparty_data.p2p_address.peer_id,
+                self.other.p2p_address.peer_id,
                 self.get_address_if_prover(),
             )?;
             self.state = ProgramState::KeySent;
@@ -244,9 +243,9 @@ impl Program {
         if self.state == ProgramState::KeySent {
             send_nonces(
                 comms,
-                &self.party_data,
+                &self.me,
                 &self.program_id,
-                self.counterparty_data.p2p_address.peer_id,
+                self.other.p2p_address.peer_id,
                 self.get_address_if_prover(),
             )?;
             self.state = ProgramState::NonceSent;
@@ -268,9 +267,9 @@ impl Program {
             //sign_program(); //TODO: add function to sign program
             send_signatures(
                 comms,
-                &self.party_data,
+                &self.me,
                 &self.program_id,
-                self.counterparty_data.p2p_address.peer_id,
+                self.other.p2p_address.peer_id,
                 self.get_address_if_prover(),
             )?;
             match self.my_role {
@@ -298,7 +297,7 @@ impl Program {
 
     fn get_address_if_prover(&self) -> Option<String> {
         match self.my_role {
-            ParticipantRole::Prover => Some(self.counterparty_data.p2p_address.address.clone()),
+            ParticipantRole::Prover => Some(self.other.p2p_address.address.clone()),
             ParticipantRole::Verifier => None,
         }
     }
@@ -326,17 +325,17 @@ impl Program {
         Ok(())
     }
 
-    pub fn get_prover_participant(&self) -> &ParticipantData {
+    pub fn get_prover(&self) -> &ParticipantData {
         match self.my_role {
-            ParticipantRole::Prover => &self.party_data,
-            ParticipantRole::Verifier => &self.counterparty_data,
+            ParticipantRole::Prover => &self.me,
+            ParticipantRole::Verifier => &self.other,
         }
     }
 
-    pub fn get_verifier_participant(&self) -> &ParticipantData {
+    pub fn get_verifier(&self) -> &ParticipantData {
         match self.my_role {
-            ParticipantRole::Prover => &self.counterparty_data,
-            ParticipantRole::Verifier => &self.party_data,
+            ParticipantRole::Prover => &self.other,
+            ParticipantRole::Verifier => &self.me,
         }
     }
 }

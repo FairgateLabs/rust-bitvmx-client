@@ -230,8 +230,8 @@ impl Repl {
 
     fn program_details(&self, program_id: &Uuid) -> Result<()> {
         let program = self.bitvmx.load_program(program_id)?;
-        let prover = program.get_prover_participant();
-        let verifier = program.get_verifier_participant();
+        let prover = program.get_prover();
+        let verifier = program.get_verifier();
 
         let (prover_drp_size, prover_drp_type) =
             fmt_option_winternitz_pks(prover.keys.as_ref().map(|k| &k.dispute_resolution));

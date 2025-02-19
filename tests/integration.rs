@@ -116,7 +116,7 @@ pub fn test_single_run() -> Result<()> {
         .load_program(&id)
         .as_ref()
         .unwrap()
-        .get_verifier_participant()
+        .get_verifier()
         .keys
         .as_ref()
         .unwrap()
@@ -126,7 +126,7 @@ pub fn test_single_run() -> Result<()> {
         .load_program(&id)
         .as_ref()
         .unwrap()
-        .get_prover_participant()
+        .get_prover()
         .keys
         .as_ref()
         .unwrap()

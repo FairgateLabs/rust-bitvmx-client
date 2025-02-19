@@ -459,10 +459,9 @@ impl BitVMX {
                     }
                     P2PMessageType::PublicNonces => {
                         let nonces = bytes_to_nonces(data).unwrap();
-                        let participant_key =
-                            program.counterparty_data.keys.as_ref().unwrap().protocol;
+                        let participant_key = program.other.keys.as_ref().unwrap().protocol;
 
-                        let my_pubkey = program.party_data.keys.as_ref().unwrap().protocol;
+                        let my_pubkey = program.me.keys.as_ref().unwrap().protocol;
 
                         self.key_chain.add_nonces(
                             program_id,
@@ -473,7 +472,7 @@ impl BitVMX {
                     }
                     P2PMessageType::PartialSignatures => {
                         let signatures = bytes_to_signatures(data).unwrap();
-                        let my_pubkey = program.counterparty_data.keys.as_ref().unwrap().protocol;
+                        let my_pubkey = program.other.keys.as_ref().unwrap().protocol;
 
                         self.key_chain
                             .add_signatures(program_id, signatures, my_pubkey.clone())?;
