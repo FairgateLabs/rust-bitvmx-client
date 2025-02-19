@@ -86,7 +86,7 @@ impl DisputeResolutionProtocol {
         })
     }
 
-    pub(crate) fn set_storage(&mut self, storage: Rc<Storage>) {
+    pub fn set_storage(&mut self, storage: Rc<Storage>) {
         self.storage = Some(storage);
     }
 
@@ -111,10 +111,10 @@ impl DisputeResolutionProtocol {
         )?;
 
         let kickoff_spending = scripts::kickoff(
-            prover.protocol,
-            prover.program_input_key,
-            prover.program_ending_state,
-            prover.program_ending_step_number,
+            &prover.protocol,
+            &prover.program_input_key,
+            &prover.program_ending_state,
+            &prover.program_ending_step_number,
         )?;
 
         builder.add_taproot_script_spend_connection(

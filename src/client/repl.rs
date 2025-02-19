@@ -241,7 +241,7 @@ impl Repl {
         let mut table = Table::new();
         table
             .add_row(vec![
-                format!("Program ({})\n{}", program.state, program.id).as_str(),
+                format!("Program ({})\n{}", program.state, program.program_id).as_str(),
                 format!(
                     "Funding tx\n{}:{}",
                     program.funding_txid(),

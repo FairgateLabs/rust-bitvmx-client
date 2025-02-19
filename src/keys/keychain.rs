@@ -16,17 +16,34 @@ use protocol_builder::{
     graph::input::{SighashType, Signature},
     unspendable::unspendable_key,
 };
-use storage_backend::storage::Storage;
+use storage_backend::storage::{KeyValueStore, Storage};
 
 use crate::{config::Config, errors::BitVMXError, program::program::Program};
 
 pub struct KeyChain {
-    key_manager: Rc<KeyManager<DatabaseKeyStore>>,
-    communications_key: Keypair,
-    ecdsa_index: KeyIndex,
-    winternitz_index: KeyIndex,
-    musig2_signer: MuSig2Signer,
-    _store: Rc<Storage>,
+    pub key_manager: Rc<KeyManager<DatabaseKeyStore>>,
+    pub communications_key: Keypair,
+    pub musig2_signer: MuSig2Signer,
+    pub store: Rc<Storage>,
+}
+
+pub type Index = u32;
+
+#[derive(Debug)]
+pub enum KeyChainStorageKeys {
+    EcdsaIndex(Index),
+    WinternitzIndex(Index),
+}
+
+impl KeyChainStorageKeys {
+    pub fn get_key(&self) -> String {
+        let prefix = "keychain";
+
+        match self {
+            KeyChainStorageKeys::EcdsaIndex(index) => format!("{prefix}/ecdsa/{}", index),
+            KeyChainStorageKeys::WinternitzIndex(index) => format!("{prefix}/winternitz/{}", index),
+        }
+    }
 }
 
 impl KeyChain {
@@ -35,6 +52,7 @@ impl KeyChain {
             &config.key_storage,
             &config.key_manager.network,
         )?;
+
         let key_manager = create_key_manager_from_config(&config.key_manager, keystore)?;
 
         // TODO: hardcoded communications key to be on allowed list
@@ -47,21 +65,49 @@ impl KeyChain {
 
         Ok(Self {
             key_manager,
-            ecdsa_index: KeyIndex::new(),
-            winternitz_index: KeyIndex::new(),
             communications_key,
             musig2_signer,
-            _store: store,
+            store,
         })
     }
 
-    pub fn get_key_manager(&self) -> Rc<KeyManager<DatabaseKeyStore>> {
-        self.key_manager.clone()
+    pub fn get_new_ecdsa_index(&self) -> Result<Index, BitVMXError> {
+        let key = KeyChainStorageKeys::EcdsaIndex(0).get_key();
+        let index: Option<Index> = self.store.get(&key).map_err(BitVMXError::from)?;
+
+        let next_index = match index {
+            Some(current_index) => current_index + 1,
+            None => 0,
+        };
+
+        self.store
+            .set(&key, next_index, None)
+            .map_err(BitVMXError::from)?;
+
+        Ok(next_index)
+    }
+
+    pub fn get_new_winternitz_index(&self) -> Result<Index, BitVMXError> {
+        let key = KeyChainStorageKeys::WinternitzIndex(0).get_key();
+        let index: Option<Index> = self.store.get(&key).map_err(BitVMXError::from)?;
+
+        let next_index = match index {
+            Some(current_index) => current_index + 1,
+            None => 0,
+        };
+
+        self.store
+            .set(&key, next_index, None)
+            .map_err(BitVMXError::from)?;
+
+        Ok(next_index)
     }
 
     pub fn derive_keypair(&mut self) -> Result<PublicKey, BitVMXError> {
+        let index = self.get_new_ecdsa_index()?;
+
         self.key_manager
-            .derive_keypair(self.ecdsa_index.next())
+            .derive_keypair(index)
             .map_err(BitVMXError::from)
     }
 
@@ -76,12 +122,10 @@ impl KeyChain {
         &mut self,
         message_bytes: usize,
     ) -> Result<WinternitzPublicKey, BitVMXError> {
+        let index = self.get_new_winternitz_index()?;
+
         self.key_manager
-            .derive_winternitz(
-                message_bytes,
-                WinternitzType::HASH160,
-                self.winternitz_index.next(),
-            )
+            .derive_winternitz(message_bytes, WinternitzType::HASH160, index)
             .map_err(BitVMXError::from)
     }
 
@@ -89,12 +133,10 @@ impl KeyChain {
         &mut self,
         message_bytes: usize,
     ) -> Result<WinternitzPublicKey, BitVMXError> {
+        let index = self.get_new_winternitz_index()?;
+
         self.key_manager
-            .derive_winternitz(
-                message_bytes,
-                WinternitzType::SHA256,
-                self.winternitz_index.next(),
-            )
+            .derive_winternitz(message_bytes, WinternitzType::SHA256, index)
             .map_err(BitVMXError::from)
     }
 
@@ -117,10 +159,6 @@ impl KeyChain {
     pub fn unspendable_key(&mut self) -> Result<XOnlyPublicKey, BitVMXError> {
         let mut rng = secp256k1::rand::thread_rng();
         Ok(XOnlyPublicKey::from(unspendable_key(&mut rng)?))
-    }
-
-    pub(crate) fn communications_key(&self) -> Keypair {
-        self.communications_key.clone()
     }
 
     pub fn sign_program(&self, program: &Program) -> Result<(), BitVMXError> {
@@ -162,15 +200,6 @@ impl KeyChain {
         Ok(())
     }
 
-    //CHECK: Commenting to avoid miss use of internal state
-    /*pub fn ecdsa_index(&self) -> u32 {
-        self.ecdsa_index.index
-    }
-
-    pub fn winternitz_index(&self) -> u32 {
-        self.winternitz_index.index
-    }*/
-
     fn derive_winternitz_keys(
         &mut self,
         size_in_bytes: usize,
@@ -178,8 +207,9 @@ impl KeyChain {
         quantity: u32,
     ) -> Result<Vec<WinternitzPublicKey>, BitVMXError> {
         let mut keys = Vec::new();
+
         for _ in 0..quantity {
-            let index = self.winternitz_index.next();
+            let index = self.get_new_winternitz_index()?;
             let pk = self
                 .key_manager
                 .derive_winternitz(size_in_bytes, key_type, index)?;
@@ -234,27 +264,5 @@ impl KeyChain {
         }
 
         Ok(())
-    }
-}
-
-pub struct KeyIndex {
-    index: u32,
-}
-
-impl Default for KeyIndex {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl KeyIndex {
-    pub fn new() -> Self {
-        Self { index: 0 }
-    }
-
-    pub fn next(&mut self) -> u32 {
-        let next = self.index;
-        self.index += 1;
-        next
     }
 }

@@ -75,7 +75,7 @@ impl WitnessData {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Program {
-    pub id: Uuid,
+    pub program_id: Uuid,
     pub my_role: ParticipantRole,
     // TODO:  We need to find a better name for my_info (party_data) and the other participant (counterparty_data)
     pub party_data: ParticipantData,
@@ -92,17 +92,17 @@ pub struct Program {
 
 impl Program {
     pub fn new(
-        id: Uuid,
+        program_id: Uuid,
         my_role: ParticipantRole,
         prover: ParticipantData,
         verifier: ParticipantData,
         funding: Funding,
         storage: Rc<Storage>,
     ) -> Result<Self, ProgramError> {
-        let drp = DisputeResolutionProtocol::new(funding, id, storage.clone())?;
+        let drp = DisputeResolutionProtocol::new(funding, program_id, storage.clone())?;
 
         let program = Program {
-            id,
+            program_id,
             my_role,
             party_data: prover,
             counterparty_data: verifier,
@@ -133,9 +133,9 @@ impl Program {
     }
 
     pub fn save(&self) -> Result<Uuid, ProgramError> {
-        let key = format!("program_{}", self.id);
+        let key = format!("program_{}", self.program_id);
         self.storage.clone().unwrap().set(key, self, None)?;
-        Ok(self.id)
+        Ok(self.program_id)
     }
 
     pub fn setup_counterparty_keys(&mut self, keys: ParticipantKeys) -> Result<(), BitVMXError> {
@@ -229,7 +229,7 @@ impl Program {
             send_keys(
                 comms,
                 &self.party_data,
-                &self.id,
+                &self.program_id,
                 self.counterparty_data.p2p_address.peer_id,
                 self.get_address_if_prover(),
             )?;
@@ -245,7 +245,7 @@ impl Program {
             send_nonces(
                 comms,
                 &self.party_data,
-                &self.id,
+                &self.program_id,
                 self.counterparty_data.p2p_address.peer_id,
                 self.get_address_if_prover(),
             )?;
@@ -269,7 +269,7 @@ impl Program {
             send_signatures(
                 comms,
                 &self.party_data,
-                &self.id,
+                &self.program_id,
                 self.counterparty_data.p2p_address.peer_id,
                 self.get_address_if_prover(),
             )?;

@@ -65,8 +65,8 @@ impl BitVMX {
     pub fn new(config: Config) -> Result<Self, BitVMXError> {
         let bitcoin = Self::new_bitcoin_client(&config)?;
         let storage = Rc::new(Storage::new_with_path(&PathBuf::from(&config.storage.db))?);
-        let keys = KeyChain::new(&config, storage.clone())?;
-        let communications_key = keys.communications_key();
+        let key_chain = KeyChain::new(&config, storage.clone())?;
+        let communications_key = key_chain.communications_key.clone();
         let comms = P2pHandler::new::<LocalAllowList>(
             config.p2p_address().to_string(),
             communications_key,
@@ -75,7 +75,7 @@ impl BitVMX {
         let orchestrator = Orchestrator::new_with_paths(
             &config.bitcoin,
             storage.clone(),
-            keys.get_key_manager(),
+            key_chain.key_manager.clone(),
             config.monitor.checkpoint_height,
             config.monitor.confirmation_threshold,
             config.bitcoin.network,
@@ -97,7 +97,7 @@ impl BitVMX {
             _config: config,
             bitcoin,
             comms,
-            key_chain: keys,
+            key_chain,
             storage,
             orchestrator,
             broker,
