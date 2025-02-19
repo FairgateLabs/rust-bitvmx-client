@@ -240,7 +240,7 @@ mod tests {
     #[test]
     fn test_message_contains_invalid_byte_value() {
         let version = "1.0";
-        let msg_type = P2PMessageType::Key;
+        let msg_type = P2PMessageType::Keys;
         let program_id = Uuid::new_v4();
 
         // Create a JSON payload with an invalid value (>255)
