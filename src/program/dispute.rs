@@ -135,9 +135,10 @@ impl DisputeResolutionProtocol {
         )?;
 
         let kickoff_spending = scripts::kickoff(
-            &prover.protocol_key(),
-            &prover.program_ending_state_key(),
-            &prover.program_ending_step_number_key(),
+            prover.protocol_key(),
+            prover.program_input_key(),
+            prover.program_ending_state_key(),
+            prover.program_ending_step_number_key(),
         )?;
 
         builder.add_taproot_script_spend_connection(

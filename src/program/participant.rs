@@ -108,6 +108,7 @@ pub struct ParticipantKeys {
     protocol: PublicKey,
     speedup: PublicKey,
     timelock: PublicKey,
+    program_input_key: WinternitzPublicKey,
     program_ending_state: WinternitzPublicKey,
     program_ending_step_number: WinternitzPublicKey,
     dispute_resolution: Vec<WinternitzPublicKey>,
@@ -121,6 +122,7 @@ impl ParticipantKeys {
         protocol: PublicKey,
         speedup: PublicKey,
         timelock: PublicKey,
+        program_input_key: WinternitzPublicKey,
         program_ending_state: WinternitzPublicKey,
         program_ending_step_number: WinternitzPublicKey,
         dispute_resolution: Vec<WinternitzPublicKey>,
@@ -131,6 +133,7 @@ impl ParticipantKeys {
             protocol,
             speedup,
             timelock,
+            program_input_key,
             program_ending_state,
             program_ending_step_number,
             dispute_resolution,
@@ -169,6 +172,10 @@ impl ParticipantKeys {
 
     pub fn prekickoff_key(&self) -> &PublicKey {
         &self.pre_kickoff
+    }
+
+    pub fn program_input_key(&self) -> &WinternitzPublicKey {
+        &self.program_input_key
     }
 
     pub fn program_ending_state_key(&self) -> &WinternitzPublicKey {

@@ -345,6 +345,7 @@ impl BitVMX {
         let speedup = self.key_chain.derive_keypair()?;
         let timelock = self.key_chain.derive_keypair()?;
         let internal = self.key_chain.unspendable_key()?;
+        let program_input = self.key_chain.derive_winternitz_hash160(message_size)?;
         let program_ending_state = self.key_chain.derive_winternitz_hash160(message_size)?;
         let program_ending_step_number = self.key_chain.derive_winternitz_hash160(message_size)?;
         let dispute_resolution = self
@@ -357,6 +358,7 @@ impl BitVMX {
             protocol,
             speedup,
             timelock,
+            program_input,
             program_ending_state,
             program_ending_step_number,
             dispute_resolution,
