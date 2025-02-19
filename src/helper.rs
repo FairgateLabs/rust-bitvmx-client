@@ -96,6 +96,9 @@ fn keys_encoding_test() -> Result<(), anyhow::Error> {
         .parse::<PublicKey>()
         .unwrap();
 
+    let program_input =
+        WinternitzPublicKey::from_bytes(&[0u8; 32], WinternitzType::SHA256).unwrap();
+
     let program_ending_state =
         WinternitzPublicKey::from_bytes(&[0u8; 32], WinternitzType::SHA256).unwrap();
 
@@ -111,6 +114,7 @@ fn keys_encoding_test() -> Result<(), anyhow::Error> {
         protocol,
         speedup_key,
         timelock_key,
+        program_input,
         program_ending_state,
         program_ending_step_number,
         dispute_resolution,
