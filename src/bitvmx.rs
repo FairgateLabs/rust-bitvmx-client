@@ -473,8 +473,8 @@ impl BitVMX {
                         self.key_chain.add_nonces(
                             program_id,
                             nonces,
-                            participant_key.clone(),
-                            my_pubkey.clone(),
+                            participant_key,
+                            my_pubkey,
                         )?;
                     }
                     P2PMessageType::PartialSignatures => {

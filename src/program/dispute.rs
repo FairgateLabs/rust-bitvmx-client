@@ -31,12 +31,12 @@ impl SearchParams {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Funding {
-    txid: Txid,
-    vout: u32,
-    amount: Amount,
-    protocol: u64,
-    timelock: u64,
-    speedup: u64,
+    pub txid: Txid,
+    pub vout: u32,
+    pub amount: Amount,
+    pub protocol: u64,
+    pub timelock: u64,
+    pub speedup: u64,
 }
 
 impl Funding {
@@ -57,36 +57,12 @@ impl Funding {
             speedup,
         }
     }
-
-    pub fn txid(&self) -> Txid {
-        self.txid
-    }
-
-    pub fn vout(&self) -> u32 {
-        self.vout
-    }
-
-    pub fn amount(&self) -> Amount {
-        self.amount
-    }
-
-    pub fn protocol(&self) -> u64 {
-        self.protocol
-    }
-
-    pub fn timelock(&self) -> u64 {
-        self.timelock
-    }
-
-    pub fn speedup(&self) -> u64 {
-        self.speedup
-    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DisputeResolutionProtocol {
-    protocol_name: String,
-    funding: Funding,
+    pub protocol_name: String,
+    pub funding: Funding,
     #[serde(skip)]
     storage: Option<Rc<Storage>>,
 }
@@ -127,8 +103,8 @@ impl DisputeResolutionProtocol {
         let output_spending_type =
             OutputSpendingType::new_segwit_key_spend(&prover.pre_kickoff, self.funding.amount);
         builder.connect_with_external_transaction(
-            self.funding.txid(),
-            self.funding.vout(),
+            self.funding.txid,
+            self.funding.vout,
             output_spending_type,
             PREKICKOFF,
             &ecdsa_sighash_type,
@@ -187,10 +163,6 @@ impl DisputeResolutionProtocol {
         protocol.update_input_signatures(transaction_name, input_index, signatures)?;
         self.save_protocol(protocol)?;
         Ok(())
-    }
-
-    pub fn funding(&self) -> &Funding {
-        &self.funding
     }
 
     fn load_protocol(&self) -> Result<Protocol, ProtocolBuilderError> {

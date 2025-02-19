@@ -85,15 +85,6 @@ impl ParticipantKeys {
         // TODO: Implement
         vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     }
-
-    pub fn check_if_keys(&self, keys: Vec<u8>) -> bool {
-        // TODO: Implement
-        if keys == vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9] {
-            true
-        } else {
-            false
-        }
-    }
 }
 
 #[derive(PartialEq, Clone, Serialize, Deserialize)]

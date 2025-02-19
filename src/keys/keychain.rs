@@ -26,7 +26,7 @@ pub struct KeyChain {
     ecdsa_index: KeyIndex,
     winternitz_index: KeyIndex,
     musig2_signer: MuSig2Signer,
-    store: Rc<Storage>,
+    _store: Rc<Storage>,
 }
 
 impl KeyChain {
@@ -51,7 +51,7 @@ impl KeyChain {
             winternitz_index: KeyIndex::new(),
             communications_key,
             musig2_signer,
-            store,
+            _store: store,
         })
     }
 

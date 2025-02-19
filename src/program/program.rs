@@ -77,7 +77,7 @@ impl WitnessData {
 pub struct Program {
     pub id: Uuid,
     pub my_role: ParticipantRole,
-    // TODO:  We need to find a better name here
+    // TODO:  We need to find a better name for my_info (party_data) and the other participant (counterparty_data)
     pub party_data: ParticipantData,
     pub counterparty_data: ParticipantData,
     pub drp: DisputeResolutionProtocol,
@@ -121,7 +121,7 @@ impl Program {
     }
 
     pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Self, ProgramError> {
-        let mut program: Program = match storage.get(&format!("program_{}", program_id))? {
+        let mut program: Program = match storage.get(format!("program_{program_id}"))? {
             Some(program) => program,
             None => return Err(ProgramError::ProgramNotFound(*program_id)),
         };
@@ -187,27 +187,27 @@ impl Program {
     }
 
     pub fn funding_txid(&self) -> Txid {
-        self.drp.funding().txid()
+        self.drp.funding.txid
     }
 
     pub fn funding_vout(&self) -> u32 {
-        self.drp.funding().vout()
+        self.drp.funding.vout
     }
 
     pub fn funding_amount(&self) -> u64 {
-        self.drp.funding().amount().to_sat()
+        self.drp.funding.amount.to_sat()
     }
 
     pub fn protocol_amount(&self) -> u64 {
-        self.drp.funding().protocol()
+        self.drp.funding.protocol
     }
 
     pub fn timelock_amount(&self) -> u64 {
-        self.drp.funding().timelock()
+        self.drp.funding.timelock
     }
 
     pub fn speedup_amount(&self) -> u64 {
-        self.drp.funding().speedup()
+        self.drp.funding.speedup
     }
 
     pub fn push_witness_value(&mut self, txid: Txid, name: &str, value: WinternitzSignature) {
