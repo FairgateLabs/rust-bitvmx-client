@@ -230,8 +230,8 @@ impl Repl {
 
     fn program_details(&self, program_id: &Uuid) -> Result<()> {
         let program = self.bitvmx.load_program(program_id)?;
-        let prover = program.prover();
-        let verifier = program.verifier();
+        let prover = program.get_prover_participant();
+        let verifier = program.get_verifier_participant();
 
         let (prover_drp_size, prover_drp_type) =
             fmt_option_winternitz_pks(prover.keys.as_ref().map(|k| &k.dispute_resolution));
@@ -241,7 +241,7 @@ impl Repl {
         let mut table = Table::new();
         table
             .add_row(vec![
-                format!("Program ({})\n{}", program.state(), program.id()).as_str(),
+                format!("Program ({})\n{}", program.state, program.id).as_str(),
                 format!(
                     "Funding tx\n{}:{}",
                     program.funding_txid(),

@@ -14,7 +14,7 @@ use crate::{
 
 use super::{
     dispute::{DisputeResolutionProtocol, Funding, SearchParams},
-    participant::{Participant, ParticipantKeys, ParticipantRole},
+    participant::{ParticipantData, ParticipantKeys, ParticipantRole},
 };
 
 #[derive(PartialEq, Clone, Serialize, Deserialize, Debug)]
@@ -75,12 +75,13 @@ impl WitnessData {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Program {
-    id: Uuid,
-    my_role: ParticipantRole,
-    prover: Participant,
-    verifier: Participant,
-    drp: DisputeResolutionProtocol,
-    state: ProgramState,
+    pub id: Uuid,
+    pub my_role: ParticipantRole,
+    // TODO:  We need to find a better name here
+    pub party_data: ParticipantData,
+    pub counterparty_data: ParticipantData,
+    pub drp: DisputeResolutionProtocol,
+    pub state: ProgramState,
     _trace: Trace,
     _ending_state: u8,
     _ending_step_number: u32,
@@ -93,8 +94,8 @@ impl Program {
     pub fn new(
         id: Uuid,
         my_role: ParticipantRole,
-        prover: Participant,
-        verifier: Participant,
+        prover: ParticipantData,
+        verifier: ParticipantData,
         funding: Funding,
         storage: Rc<Storage>,
     ) -> Result<Self, ProgramError> {
@@ -103,8 +104,8 @@ impl Program {
         let program = Program {
             id,
             my_role,
-            prover,
-            verifier,
+            party_data: prover,
+            counterparty_data: verifier,
             drp,
             state: ProgramState::Inactive,
             _trace: Trace {},
@@ -138,16 +139,13 @@ impl Program {
     }
 
     pub fn setup_counterparty_keys(&mut self, keys: ParticipantKeys) -> Result<(), BitVMXError> {
-        match self.my_role {
-            ParticipantRole::Prover => self.verifier.keys = Some(keys),
-            ParticipantRole::Verifier => self.prover.keys = Some(keys),
-        }
+        self.counterparty_data.keys = Some(keys);
 
         let search_params = SearchParams::new(8, 32);
 
         self.drp.build_protocol(
-            self.prover.keys.as_ref().unwrap(),
-            self.verifier.keys.as_ref().unwrap(),
+            self.party_data.keys.as_ref().unwrap(),
+            self.counterparty_data.keys.as_ref().unwrap(),
             search_params,
         )?;
 
@@ -155,27 +153,11 @@ impl Program {
     }
 
     pub fn prekickoff_transaction(&self) -> Result<Transaction, BitVMXError> {
-        self.dispute_resolution_protocol()
-            .prekickoff_transaction()
-            .map_err(BitVMXError::from)
+        self.drp.prekickoff_transaction().map_err(BitVMXError::from)
     }
 
     pub fn kickoff_transaction(&self) -> Result<Transaction, BitVMXError> {
-        self.dispute_resolution_protocol()
-            .kickoff_transaction()
-            .map_err(BitVMXError::from)
-    }
-
-    pub fn id(&self) -> Uuid {
-        self.id
-    }
-
-    pub fn prover(&self) -> &Participant {
-        &self.prover
-    }
-
-    pub fn verifier(&self) -> &Participant {
-        &self.verifier
+        self.drp.kickoff_transaction().map_err(BitVMXError::from)
     }
 
     pub fn deploy(&mut self) {
@@ -204,39 +186,28 @@ impl Program {
         self.state == ProgramState::Ready
     }
 
-    pub fn state(&self) -> &ProgramState {
-        &self.state
-    }
-
     pub fn funding_txid(&self) -> Txid {
-        self.dispute_resolution_protocol().funding().txid()
+        self.drp.funding().txid()
     }
 
     pub fn funding_vout(&self) -> u32 {
-        self.dispute_resolution_protocol().funding().vout()
+        self.drp.funding().vout()
     }
 
     pub fn funding_amount(&self) -> u64 {
-        self.dispute_resolution_protocol()
-            .funding()
-            .amount()
-            .to_sat()
+        self.drp.funding().amount().to_sat()
     }
 
     pub fn protocol_amount(&self) -> u64 {
-        self.dispute_resolution_protocol().funding().protocol()
+        self.drp.funding().protocol()
     }
 
     pub fn timelock_amount(&self) -> u64 {
-        self.dispute_resolution_protocol().funding().timelock()
+        self.drp.funding().timelock()
     }
 
     pub fn speedup_amount(&self) -> u64 {
-        self.dispute_resolution_protocol().funding().speedup()
-    }
-
-    pub fn dispute_resolution_protocol(&self) -> &DisputeResolutionProtocol {
-        &self.drp
+        self.drp.funding().speedup()
     }
 
     pub fn push_witness_value(&mut self, txid: Txid, name: &str, value: WinternitzSignature) {
@@ -255,9 +226,9 @@ impl Program {
         if self.state == ProgramState::Ready {
             send_keys(
                 comms,
-                self.get_participant_me(),
+                &self.party_data,
                 &self.id,
-                self.get_participant_other().address.peer_id,
+                self.counterparty_data.address.peer_id,
                 self.get_address_if_prover(),
             )?;
             self.state = ProgramState::KeySent;
@@ -271,9 +242,9 @@ impl Program {
         if self.state == ProgramState::KeySent {
             send_nonces(
                 comms,
-                self.get_participant_me(),
+                &self.party_data,
                 &self.id,
-                self.get_participant_other().address.peer_id,
+                self.counterparty_data.address.peer_id,
                 self.get_address_if_prover(),
             )?;
             self.state = ProgramState::NonceSent;
@@ -292,9 +263,9 @@ impl Program {
             //sign_program(); //TODO: add function to sign program
             send_signatures(
                 comms,
-                self.get_participant_me(),
+                &self.party_data,
                 &self.id,
-                self.get_participant_other().address.peer_id,
+                self.counterparty_data.address.peer_id,
                 self.get_address_if_prover(),
             )?;
             match self.my_role {
@@ -318,23 +289,9 @@ impl Program {
         //deploy_program //TODO: add function to deploy program
     }
 
-    pub fn get_participant_me(&self) -> &Participant {
-        match self.my_role {
-            ParticipantRole::Prover => &self.prover,
-            ParticipantRole::Verifier => &self.verifier,
-        }
-    }
-
-    pub fn get_participant_other(&self) -> &Participant {
-        match self.my_role {
-            ParticipantRole::Verifier => &self.prover,
-            ParticipantRole::Prover => &self.verifier,
-        }
-    }
-
     fn get_address_if_prover(&self) -> Option<String> {
         match self.my_role {
-            ParticipantRole::Prover => Some(self.verifier.address.address.clone()),
+            ParticipantRole::Prover => Some(self.counterparty_data.address.address.clone()),
             ParticipantRole::Verifier => None,
         }
     }
@@ -360,6 +317,20 @@ impl Program {
         self.save()?;
 
         Ok(())
+    }
+
+    pub fn get_prover_participant(&self) -> &ParticipantData {
+        match self.my_role {
+            ParticipantRole::Prover => &self.party_data,
+            ParticipantRole::Verifier => &self.counterparty_data,
+        }
+    }
+
+    pub fn get_verifier_participant(&self) -> &ParticipantData {
+        match self.my_role {
+            ParticipantRole::Prover => &self.counterparty_data,
+            ParticipantRole::Verifier => &self.party_data,
+        }
     }
 }
 

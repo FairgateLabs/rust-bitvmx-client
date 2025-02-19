@@ -7,7 +7,7 @@ use crate::{
     p2p::p2p_parser::{deserialize_msg, P2PMessageType},
     program::{
         dispute::{Funding, SearchParams},
-        participant::{P2PAddress, Participant, ParticipantKeys, ParticipantRole},
+        participant::{P2PAddress, ParticipantData, ParticipantKeys, ParticipantRole},
         program::Program,
         witness,
     },
@@ -128,14 +128,14 @@ impl BitVMX {
         let keys = self.generate_keys(pre_kickoff, &my_role)?;
 
         // Create a participant that represents me with the specified role (Prover or Verifier).
-        let me = Participant::new(
+        let me = ParticipantData::new(
             //&self.comms.address(),
             &P2PAddress::new(&self.comms.get_address(), self.comms.get_peer_id()),
             Some(keys.clone()),
         );
 
         // Create a participant that represents the counterparty with the opposite role.
-        let other = Participant::new(peer_address, None);
+        let other = ParticipantData::new(peer_address, None);
 
         // Rename the variables to the correct roles
         let (prover, verifier) = match my_role {
@@ -465,15 +465,10 @@ impl BitVMX {
                     }
                     P2PMessageType::PublicNonces => {
                         let nonces = bytes_to_nonces(data).unwrap();
-                        let participant_key = program
-                            .get_participant_other()
-                            .keys
-                            .as_ref()
-                            .unwrap()
-                            .protocol;
+                        let participant_key =
+                            program.counterparty_data.keys.as_ref().unwrap().protocol;
 
-                        let my_pubkey =
-                            program.get_participant_me().keys.as_ref().unwrap().protocol;
+                        let my_pubkey = program.party_data.keys.as_ref().unwrap().protocol;
 
                         self.key_chain.add_nonces(
                             program_id,
@@ -484,12 +479,7 @@ impl BitVMX {
                     }
                     P2PMessageType::PartialSignatures => {
                         let signatures = bytes_to_signatures(data).unwrap();
-                        let my_pubkey = program
-                            .get_participant_other()
-                            .keys
-                            .as_ref()
-                            .unwrap()
-                            .protocol;
+                        let my_pubkey = program.counterparty_data.keys.as_ref().unwrap().protocol;
 
                         self.key_chain
                             .add_signatures(program_id, signatures, my_pubkey.clone())?;

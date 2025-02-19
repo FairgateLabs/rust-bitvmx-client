@@ -5,14 +5,14 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct Participant {
+pub struct ParticipantData {
     pub address: P2PAddress,
     pub keys: Option<ParticipantKeys>,
 }
 
-impl Participant {
+impl ParticipantData {
     pub fn new(address: &P2PAddress, keys: Option<ParticipantKeys>) -> Self {
-        Participant {
+        ParticipantData {
             address: address.clone(),
             keys,
         }

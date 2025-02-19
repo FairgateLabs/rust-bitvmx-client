@@ -17,7 +17,6 @@ use protocol_builder::{
     unspendable::unspendable_key,
 };
 use storage_backend::storage::Storage;
-use uuid::Uuid;
 
 use crate::{config::Config, errors::BitVMXError, program::program::Program};
 
@@ -125,11 +124,7 @@ impl KeyChain {
     }
 
     pub fn sign_program(&self, program: &Program) -> Result<(), BitVMXError> {
-        for (txname, infos) in program
-            .dispute_resolution_protocol()
-            .spending_infos()?
-            .iter()
-        {
+        for (txname, infos) in program.drp.spending_infos()?.iter() {
             for (input_index, spending_info) in infos.iter().enumerate() {
                 let mut signatures = vec![];
                 for (message, input_key) in spending_info
@@ -159,7 +154,7 @@ impl KeyChain {
                 }
 
                 program
-                    .dispute_resolution_protocol()
+                    .drp
                     .update_input_signatures(txname, input_index as u32, signatures)?;
             }
         }

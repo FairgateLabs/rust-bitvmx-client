@@ -111,20 +111,22 @@ pub fn test_single_run() -> Result<()> {
     verifier_bitvmx.tick()?;
 
     //TODO: Serializer / Deserialize keys this exachange should happen with p2p
+
     let verifier_pub_keys = verifier_bitvmx
         .load_program(&id)
         .as_ref()
         .unwrap()
-        .verifier()
+        .get_verifier_participant()
         .keys
         .as_ref()
         .unwrap()
         .clone();
+
     let _prover_pub_keys = prover_bitvmx
         .load_program(&id)
         .as_ref()
         .unwrap()
-        .prover()
+        .get_prover_participant()
         .keys
         .as_ref()
         .unwrap()
