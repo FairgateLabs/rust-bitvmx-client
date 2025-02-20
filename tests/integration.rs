@@ -1,7 +1,8 @@
 use std::str::FromStr;
 
 use anyhow::Result;
-use bitcoin::{OutPoint, PublicKey, Txid};
+use bitcoin::{PublicKey, Txid};
+use bitcoind::bitcoind::Bitcoind;
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use bitvmx_client::{
     bitvmx::{BitVMX, BitVMXApiMessages},
@@ -16,9 +17,6 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
-mod utils;
-use utils::bitcoind::Bitcoind;
-
 fn config_trace() {
     let filter = EnvFilter::builder()
         .parse("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitvmx_orchestrator=off,p2p_protocol=off,p2p_handler=off,tarpc=off") 
@@ -30,8 +28,6 @@ fn config_trace() {
         .with_env_filter(filter)
         .init();
 }
-
-type FundingAddress = String;
 
 fn clear_db(path: &str) {
     let _ = std::fs::remove_dir_all(path);
