@@ -1,5 +1,5 @@
 use anyhow::{Ok, Result};
-use bitcoin::{OutPoint, PublicKey, XOnlyPublicKey};
+use bitcoin::{PublicKey, XOnlyPublicKey};
 use clap::{command, Parser, Subcommand, ValueEnum};
 use comfy_table::Table;
 use key_manager::winternitz::WinternitzPublicKey;
@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::bitvmx::BitVMX;
 use crate::config::Config;
+use crate::program::dispute::Funding;
 use crate::program::participant::{P2PAddress, ParticipantRole};
 
 use super::input::InputLoop;
@@ -24,7 +25,6 @@ pub struct Menu {
 
 #[derive(Subcommand)]
 enum Commands {
-    AddFunds,
     NewProgram {
         #[arg(value_name = "id", short = 'i', value_parser=clap::value_parser!(Uuid), long = "id")]
         id: Uuid,
@@ -33,10 +33,7 @@ enum Commands {
         role: Role,
 
         #[arg(value_name = "funding", short = 'f', long = "funding")]
-        funding_tx: String,
-
-        #[arg(value_name = "prekickoff", short = 'k', long = "prekickoff")]
-        pre_kickoff: String,
+        funding: String,
 
         #[arg(value_name = "peer_address", short = 'a', long = "peer_address")]
         peer_address: String,
@@ -149,18 +146,17 @@ impl Repl {
         let menu = Menu::try_parse_from(args);
         match menu {
             Result::Ok(menu) => match &menu.command {
-                Commands::AddFunds => {
-                    self.add_funds()?;
-                }
                 Commands::NewProgram {
                     id,
                     role,
-                    funding_tx,
-                    pre_kickoff,
+                    funding,
                     peer_address,
                     peer_id,
                 } => {
-                    self.setup_program(id, role, funding_tx, pre_kickoff, peer_address, peer_id)?;
+                    // This should be tested.
+                    let funding: Funding = serde_json::from_str(funding)?;
+
+                    self.setup_program(id, role, funding, peer_address, peer_id)?;
                 }
                 Commands::Deploy { program_id } => {
                     let program_id = Uuid::parse_str(program_id)?;
@@ -187,33 +183,18 @@ impl Repl {
         Ok(false)
     }
 
-    fn add_funds(&mut self) -> Result<()> {
-        let (txid, vout, pk) = self.bitvmx.add_funds()?;
-        self.input.write(&format!(
-            "Funds added, funding outpoint is: {}:{} with pk: {}",
-            txid, vout, pk
-        ));
-        Ok(())
-    }
-
     fn setup_program(
         &mut self,
         id: &Uuid,
         role: &Role,
-        funding: &str,
-        pre_kickoff: &str,
+        funding: Funding,
         peer_address: &str,
         peer_id: &str,
     ) -> Result<()> {
         let peer_address = P2PAddress::new(peer_address, PeerId::from_str(peer_id)?);
 
-        self.bitvmx.setup_program(
-            id,
-            role.clone().into(),
-            OutPoint::from_str(funding)?,
-            &PublicKey::from_str(pre_kickoff)?,
-            &peer_address,
-        )?;
+        self.bitvmx
+            .setup_program(id, role.clone().into(), funding, &peer_address)?;
 
         // self.program_details(&program_id.to_string())?;
         self.input.write(&format!("Setup program with id: {}", id)); //TODO: this is necessary to flush terminal

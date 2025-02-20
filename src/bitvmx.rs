@@ -1,5 +1,4 @@
 use crate::{
-    bitcoin::rpc::BitcoinClient,
     config::Config,
     errors::BitVMXError,
     helper::{bytes_to_nonces, bytes_to_participant_keys, bytes_to_signatures},
@@ -12,8 +11,7 @@ use crate::{
         witness,
     },
 };
-use bitcoin::PublicKey;
-use bitcoin::{Amount, OutPoint, Transaction, Txid};
+use bitcoin::{PublicKey, Transaction};
 use bitvmx_broker::{
     channel::channel::DualChannel,
     rpc::{sync_server::BrokerSync, BrokerConfig},
@@ -40,12 +38,11 @@ use uuid::Uuid;
 //TODO: This should be moved to a common place that could be used to share the messages api
 #[derive(Clone, Serialize, Deserialize)]
 pub enum BitVMXApiMessages {
-    SetupProgram(Uuid, ParticipantRole, P2PAddress),
+    SetupProgram(Uuid, ParticipantRole, P2PAddress, Funding),
 }
 
 pub struct BitVMX {
     _config: Config,
-    bitcoin: BitcoinClient,
     comms: P2pHandler,
     key_chain: KeyChain,
     storage: Rc<Storage>,
@@ -63,7 +60,6 @@ impl Drop for BitVMX {
 
 impl BitVMX {
     pub fn new(config: Config) -> Result<Self, BitVMXError> {
-        let bitcoin = Self::new_bitcoin_client(&config)?;
         let storage = Rc::new(Storage::new_with_path(&PathBuf::from(&config.storage.db))?);
         let key_chain = KeyChain::new(&config, storage.clone())?;
         let communications_key = key_chain.communications_key.clone();
@@ -95,7 +91,6 @@ impl BitVMX {
 
         Ok(Self {
             _config: config,
-            bitcoin,
             comms,
             key_chain,
             storage,
@@ -105,27 +100,15 @@ impl BitVMX {
         })
     }
 
-    pub fn add_funds(&mut self) -> Result<(Txid, u32, PublicKey), BitVMXError> {
-        let one_btc = 100_000_000;
-        let funding_key = self.key_chain.derive_keypair()?;
-        let funding_address = self.bitcoin.get_new_address(funding_key);
-
-        let (tx, vout) = self
-            .bitcoin
-            .fund_address(&funding_address, Amount::from_sat(one_btc))?;
-        Ok((tx.compute_txid(), vout, funding_key))
-    }
-
     pub fn setup_program(
         &mut self,
         id: &Uuid,
         my_role: ParticipantRole,
-        outpoint: OutPoint,
-        pre_kickoff: &PublicKey,
+        funding: Funding,
         peer_address: &P2PAddress,
     ) -> Result<ParticipantKeys, BitVMXError> {
         // Generate my keys.
-        let keys = self.generate_keys(pre_kickoff, &my_role)?;
+        let keys = self.generate_keys(&funding.pubkey, &my_role)?;
 
         let p2p_address = P2PAddress::new(&self.comms.get_address(), self.comms.get_peer_id());
         // Create a participant that represents me with the specified role (Prover or Verifier).
@@ -146,7 +129,7 @@ impl BitVMX {
             my_role,
             prover,
             verifier,
-            self.funding(outpoint),
+            funding,
             self.storage.clone(),
         )?;
 
@@ -185,28 +168,6 @@ impl BitVMX {
         false
     }
 
-    /*fn _aggregate_keys(&mut self, program_id: &Uuid) -> Result<(), BitVMXError> {
-        let program = self.program(program_id)?.clone();
-
-        // Generate the program aggregated keys.
-        // self.aggregate_keys(&prover, &verifier)?;
-
-        self.save_program(program.clone());
-        Ok(())
-    }
-
-    fn _exchange_nonces(&mut self, program_id: &Uuid) -> Result<(), BitVMXError> {
-        let program = self.program_mut(program_id)?;
-
-        // Contacts the counterparty to exchange nonces.
-        // self.send_nonces(&prover, &verifier)?;
-
-        let program_clone = program.clone();
-        self.save_program(program_clone);
-        Ok(())
-    }
-    */
-
     pub fn partial_sign(&mut self, program_id: &Uuid) -> Result<(), BitVMXError> {
         let program = self.load_program(program_id)?.clone();
 
@@ -215,23 +176,6 @@ impl BitVMX {
         self.sign_program(&program)?;
         Ok(())
     }
-
-    /*
-    fn _exchange_partial_signatures(&mut self, program_id: &Uuid) -> Result<(), BitVMXError> {
-        let _program = self.program_mut(program_id)?;
-
-        // Contacts the counterparty to exchange signatures.
-        // self.send_signatures(&prover, &verifier)?;
-
-        Ok(())
-    }
-
-    fn _aggregate_partial_signatures(&self, _program_id: &Uuid) -> Result<(), BitVMXError> {
-        // Generate the program aggregated signatures.
-        // self.aggregate_signatures(&prover, &verifier)?;
-
-        Ok(())
-    }*/
 
     /// Sends the pre-kickoff transaction to the Bitcoin network, the program is now ready for the prover to
     /// claim its funds using the kickoff transaction.
@@ -268,11 +212,6 @@ impl BitVMX {
         Ok(true)
     }
 
-    pub fn mine_blocks(&self, blocks: u64) -> Result<(), BitVMXError> {
-        self.bitcoin.mine(blocks)?;
-        Ok(())
-    }
-
     /// Executes the program offchain using the BitVMX CPU to generate the program trace, ending state and
     /// ending step number.
     pub fn run_program(&mut self, program_id: &Uuid) -> Result<(), BitVMXError> {
@@ -287,20 +226,15 @@ impl BitVMX {
 
     /// Sends the kickoff transaction to the Bitcoin network, the program is now ready for the verifier to
     /// challenge its execution.
-    pub fn claim_program(&mut self, program_id: &Uuid) -> Result<bool, BitVMXError> {
+    pub fn claim_program(&mut self, program_id: &Uuid) -> Result<(), BitVMXError> {
         let program = self.load_program(program_id)?;
-
         let transaction = program.kickoff_transaction()?;
-        let claimed = self.wait_claim(&transaction)?;
-        let mut program = self.load_program(program_id)?; //mut
+        self.monitor_claim_transaction(&transaction)?;
 
-        if claimed {
-            program.claim();
-        }
+        // TODO: Claim transaction detection should happen during orchestrator news processing,
+        // when we verify the claim transaction appears on the blockchain
 
-        info!("Program claimed: {}", program_id);
-
-        Ok(program.is_claimed())
+        Ok(())
     }
 
     pub fn address(&self) -> String {
@@ -313,17 +247,7 @@ impl BitVMX {
 
     pub fn load_program(&self, program_id: &Uuid) -> Result<Program, BitVMXError> {
         let program = Program::load(self.storage.clone(), program_id)?;
-
         Ok(program)
-    }
-
-    fn new_bitcoin_client(config: &Config) -> Result<BitcoinClient, BitVMXError> {
-        let bitcoin = BitcoinClient::new(
-            config.bitcoin.network,
-            &config.bitcoin,
-            &config.bitcoin.wallet,
-        )?;
-        Ok(bitcoin)
     }
 
     fn generate_keys(
@@ -359,17 +283,6 @@ impl BitVMX {
         );
 
         Ok(keys)
-    }
-
-    fn funding(&self, funding_outpoint: OutPoint) -> Funding {
-        Funding::new(
-            funding_outpoint.txid,
-            funding_outpoint.vout,
-            100_000_000,
-            2450000,
-            95000000,
-            2450000,
-        )
     }
 
     fn _search_params(&self) -> SearchParams {
@@ -409,29 +322,22 @@ impl BitVMX {
 
     fn _wait_deployment(
         &mut self,
-        deployment_transaction: &Transaction,
-    ) -> Result<bool, BitVMXError> {
+        _deployment_transaction: &Transaction,
+    ) -> Result<(), BitVMXError> {
         // 1. Wait for the prekickoff transaction to be confirmed
-        // 2. Return true if the transaction is confirmed, false otherwise
+        // it should introduce the transaction to the orchestrator and what for news.
 
-        let txid = self
-            .bitcoin
-            .send_transaction(deployment_transaction.clone())?;
-        while self.bitcoin.get_transaction(&txid)?.is_none() {}
-
-        Ok(true)
+        Ok(())
     }
 
-    fn wait_claim(&mut self, claim_transaction: &Transaction) -> Result<bool, BitVMXError> {
+    fn monitor_claim_transaction(
+        &mut self,
+        _claim_transaction: &Transaction,
+    ) -> Result<(), BitVMXError> {
         // 1. Wait for the kickoff transaction to be confirmed
-        // 2. Return true if the transaction is confirmed, false otherwise
+        // it should introduce the transaction to the orchestrator and what for news.
 
-        let mut txid = self.bitcoin.send_transaction(claim_transaction.clone())?;
-        while self.bitcoin.get_transaction(&txid)?.is_none() {
-            txid = self.bitcoin.send_transaction(claim_transaction.clone())?;
-        }
-
-        Ok(true)
+        Ok(())
     }
 
     pub fn process_p2p_messages(&mut self) -> Result<(), BitVMXError> {
@@ -475,7 +381,7 @@ impl BitVMX {
                         let my_pubkey = program.other.keys.as_ref().unwrap().protocol;
 
                         self.key_chain
-                            .add_signatures(program_id, signatures, my_pubkey.clone())?;
+                            .add_signatures(program_id, signatures, my_pubkey)?;
                     }
                 }
             }
@@ -535,15 +441,9 @@ impl BitVMX {
         if let Some((msg, _from)) = self.broker_channel.recv()? {
             let decoded: BitVMXApiMessages = serde_json::from_str(&msg)?;
             match decoded {
-                BitVMXApiMessages::SetupProgram(id, role, peer_address) => {
-                    let (txid, vout, key) = self.add_funds()?;
-                    let _prover_pub_keys = self.setup_program(
-                        &id,
-                        role,
-                        OutPoint { txid, vout },
-                        &key,
-                        &peer_address,
-                    )?;
+                BitVMXApiMessages::SetupProgram(id, role, peer_address, funding) => {
+                    let _prover_pub_keys =
+                        self.setup_program(&id, role.clone(), funding, &peer_address)?;
                 }
             }
         }

@@ -1,6 +1,6 @@
 use std::{collections::HashMap, rc::Rc};
 
-use bitcoin::{Amount, Transaction, Txid};
+use bitcoin::{Amount, PublicKey, Transaction, Txid};
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder, SpendingArgs},
     errors::ProtocolBuilderError,
@@ -33,6 +33,7 @@ impl SearchParams {
 pub struct Funding {
     pub txid: Txid,
     pub vout: u32,
+    pub pubkey: PublicKey,
     pub amount: Amount,
     pub protocol: u64,
     pub timelock: u64,
@@ -43,6 +44,7 @@ impl Funding {
     pub fn new(
         txid: Txid,
         vout: u32,
+        pubkey: PublicKey,
         amount: u64,
         protocol: u64,
         timelock: u64,
@@ -51,6 +53,7 @@ impl Funding {
         Self {
             txid,
             vout,
+            pubkey,
             amount: Amount::from_sat(amount),
             protocol,
             timelock,

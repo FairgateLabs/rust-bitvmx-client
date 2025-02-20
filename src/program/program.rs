@@ -120,9 +120,11 @@ impl Program {
     }
 
     pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Self, ProgramError> {
-        let mut program: Program = match storage.get(format!("program_{program_id}"))? {
+        let mut program: Program = match storage.get(format!("program_{}", program_id))? {
             Some(program) => program,
-            None => return Err(ProgramError::ProgramNotFound(*program_id)),
+            None => {
+                return Err(ProgramError::ProgramNotFound(*program_id));
+            }
         };
 
         program.storage = Some(storage.clone());
@@ -133,7 +135,7 @@ impl Program {
 
     pub fn save(&self) -> Result<Uuid, ProgramError> {
         let key = format!("program_{}", self.program_id);
-        self.storage.clone().unwrap().set(key, self, None)?;
+        self.storage.as_ref().unwrap().set(key, self, None)?;
         Ok(self.program_id)
     }
 

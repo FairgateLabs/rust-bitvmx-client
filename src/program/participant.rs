@@ -4,7 +4,7 @@ use p2p_handler::PeerId;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ParticipantData {
     pub p2p_address: P2PAddress,
     pub keys: Option<ParticipantKeys>,
@@ -34,14 +34,6 @@ impl fmt::Display for ParticipantRole {
     }
 }
 
-impl ParticipantRole {
-    pub fn counterparty_role(&self) -> ParticipantRole {
-        match self {
-            ParticipantRole::Prover => ParticipantRole::Verifier,
-            ParticipantRole::Verifier => ParticipantRole::Prover,
-        }
-    }
-}
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct ParticipantKeys {
     pub pre_kickoff: PublicKey,
@@ -87,7 +79,7 @@ impl ParticipantKeys {
     }
 }
 
-#[derive(PartialEq, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Clone, Serialize, Deserialize, Debug)]
 pub struct P2PAddress {
     pub address: String,
     pub peer_id: PeerId,
