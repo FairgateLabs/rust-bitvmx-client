@@ -93,8 +93,8 @@ impl Program {
     pub fn new(
         program_id: Uuid,
         my_role: ParticipantRole,
-        prover: ParticipantData,
-        verifier: ParticipantData,
+        me: ParticipantData,
+        other: ParticipantData,
         funding: Funding,
         storage: Rc<Storage>,
     ) -> Result<Self, ProgramError> {
@@ -103,8 +103,8 @@ impl Program {
         let program = Program {
             program_id,
             my_role,
-            me: prover,
-            other: verifier,
+            me,
+            other,
             drp,
             state: ProgramState::Inactive,
             _trace: Trace {},

@@ -1,8 +1,9 @@
 use std::str::FromStr;
 
 use anyhow::Result;
-use bitcoin::{PublicKey, Txid};
+use bitcoin::{Network, PublicKey, Txid};
 use bitcoind::bitcoind::Bitcoind;
+use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use bitvmx_client::{
     bitvmx::{BitVMX, BitVMXApiMessages},
@@ -35,7 +36,6 @@ fn clear_db(path: &str) {
 
 fn init_bitvmx(role: &str) -> Result<(BitVMX, Funding, P2PAddress, DualChannel)> {
     let config = Config::new(Some(format!("config/{}.yaml", role)))?;
-
     let broker_config = BrokerConfig::new(config.broker_port, None);
     let bridge_client = DualChannel::new(&broker_config, 2);
 
@@ -55,6 +55,7 @@ fn init_bitvmx(role: &str) -> Result<(BitVMX, Funding, P2PAddress, DualChannel)>
 
     let address = P2PAddress::new(&bitvmx.address(), PeerId::from_str(&bitvmx.peer_id())?);
 
+    println!("Address: {:?}", address);
     //This messagas will come from the bridge client.
 
     Ok((bitvmx, funding, address, bridge_client))
@@ -69,20 +70,33 @@ pub fn test_single_run() -> Result<()> {
     let config = Config::new(Some(format!("config/prover.yaml")))?;
 
     let bitcoind = Bitcoind::new(
-        "bitcoin-regtest2",
+        "bitcoin-regtest",
         "ruimarinho/bitcoin-core",
-        config.bitcoin,
+        config.bitcoin.clone(),
     );
+    info!("Starting bitcoind");
     bitcoind.start()?;
 
-    info!("start prover");
+    let bitcoin_client = BitcoinClient::new(
+        &config.bitcoin.url,
+        &config.bitcoin.username,
+        &config.bitcoin.password,
+    )?;
 
-    let (mut prover_bitvmx, prover_funding, prover_address, prover_bridge_channel) =
-        init_bitvmx("prover")?;
+    let wallet = bitcoin_client
+        .init_wallet(Network::Regtest, "test_wallet")
+        .unwrap();
 
-    info!("start verifier");
+    info!("Mining 10 blocks to address {:?}", wallet);
+    bitcoin_client.mine_blocks_to_address(10, &wallet).unwrap();
 
-    let (mut verifier_bitvmx, verifier_funding, verifier_address, verifier_bridge_channel) =
+    info!("Start prover");
+
+    let (mut me_bitvmx, prover_funding, prover_address, my_bridge_channel) = init_bitvmx("prover")?;
+
+    info!("Start verifier");
+
+    let (mut other_bitvmx, verifier_funding, verifier_address, other_bridge_channel) =
         init_bitvmx("verifier")?;
 
     let program_id = Uuid::new_v4();
@@ -95,7 +109,7 @@ pub fn test_single_run() -> Result<()> {
     ))
     .unwrap();
 
-    prover_bridge_channel.send(1, setup_msg)?;
+    my_bridge_channel.send(1, setup_msg)?;
 
     let setup_msg = serde_json::to_string(&BitVMXApiMessages::SetupProgram(
         program_id.clone(),
@@ -104,36 +118,31 @@ pub fn test_single_run() -> Result<()> {
         prover_funding,
     ))
     .unwrap();
-    verifier_bridge_channel.send(1, setup_msg)?;
 
-    info!("tick in prover to detect program setup");
-    prover_bitvmx.tick()?;
+    other_bridge_channel.send(1, setup_msg)?;
 
-    info!("tick in verifier to detect program setup");
-    verifier_bitvmx.tick()?;
+    info!("Tick in me to detect program setup");
+    me_bitvmx.tick()?;
+
+    info!("Tick in the other party to detect program setup");
+    other_bitvmx.tick()?;
 
     //TODO: Serializer / Deserialize keys this exachange should happen with p2p
 
-    info!("Start sending");
-    prover_bitvmx.start_sending(program_id)?;
+    // prover_bitvmx.partial_sign(&program_id)?;
+    // //TODO: Partial signs by counterparty
+    // prover_bitvmx.deploy_program(&program_id)?;
 
-    //TODO: Serializer / Deserialize keys
-    // prover_bitvmx.setup_counterparty_keys(&program_id, verifier_pub_keys)?;
-    // verifier_bitvmx.setup_counterparty_keys(&program_id, prover_pub_keys)?;
+    // //TODO: main loop
+    // for i in 0..1000 {
+    //     if i % 20 == 0 {
+    //         //bitcoind.mine_block()?;
+    //     }
+    //     prover_bitvmx.tick()?;
+    //     verifier_bitvmx.tick()?;
+    // }
 
-    prover_bitvmx.partial_sign(&program_id)?;
-    //TODO: Partial signs by counterparty
-    prover_bitvmx.deploy_program(&program_id)?;
-
-    //TODO: main loop
-    for i in 0..1000 {
-        if i % 20 == 0 {
-            //bitcoind.mine_block()?;
-        }
-        prover_bitvmx.tick()?;
-        verifier_bitvmx.tick()?;
-    }
-
+    info!("Stopping bitcoind");
     bitcoind.stop()?;
 
     //TODO: Push witness and then claim

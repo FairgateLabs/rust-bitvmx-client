@@ -31,8 +31,8 @@ pub type Index = u32;
 
 #[derive(Debug)]
 pub enum KeyChainStorageKeys {
-    EcdsaIndex(Index),
-    WinternitzIndex(Index),
+    EcdsaIndex,
+    WinternitzIndex,
 }
 
 impl KeyChainStorageKeys {
@@ -40,8 +40,8 @@ impl KeyChainStorageKeys {
         let prefix = "keychain";
 
         match self {
-            KeyChainStorageKeys::EcdsaIndex(index) => format!("{prefix}/ecdsa/{}", index),
-            KeyChainStorageKeys::WinternitzIndex(index) => format!("{prefix}/winternitz/{}", index),
+            KeyChainStorageKeys::EcdsaIndex => format!("{prefix}/ecdsa"),
+            KeyChainStorageKeys::WinternitzIndex => format!("{prefix}/winternitz"),
         }
     }
 }
@@ -72,7 +72,7 @@ impl KeyChain {
     }
 
     pub fn get_new_ecdsa_index(&self) -> Result<Index, BitVMXError> {
-        let key = KeyChainStorageKeys::EcdsaIndex(0).get_key();
+        let key = KeyChainStorageKeys::EcdsaIndex.get_key();
         let index: Option<Index> = self.store.get(&key).map_err(BitVMXError::from)?;
 
         let next_index = match index {
@@ -88,7 +88,7 @@ impl KeyChain {
     }
 
     pub fn get_new_winternitz_index(&self) -> Result<Index, BitVMXError> {
-        let key = KeyChainStorageKeys::WinternitzIndex(0).get_key();
+        let key = KeyChainStorageKeys::WinternitzIndex.get_key();
         let index: Option<Index> = self.store.get(&key).map_err(BitVMXError::from)?;
 
         let next_index = match index {

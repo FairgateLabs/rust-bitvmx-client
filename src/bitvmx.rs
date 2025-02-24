@@ -3,7 +3,10 @@ use crate::{
     errors::BitVMXError,
     helper::{bytes_to_nonces, bytes_to_participant_keys, bytes_to_signatures},
     keys::keychain::KeyChain,
-    p2p::p2p_parser::{deserialize_msg, P2PMessageType},
+    p2p::{
+        p2p_manager::send_keys,
+        p2p_parser::{deserialize_msg, P2PMessageType},
+    },
     program::{
         dispute::{Funding, SearchParams},
         participant::{P2PAddress, ParticipantData, ParticipantKeys, ParticipantRole},
@@ -13,6 +16,7 @@ use crate::{
 };
 use bitcoin::{PublicKey, Transaction};
 use bitvmx_broker::{
+    broker_storage::BrokerStorage,
     channel::channel::DualChannel,
     rpc::{sync_server::BrokerSync, BrokerConfig},
 };
@@ -80,9 +84,8 @@ impl BitVMX {
         //TOOD: This could be moved to a simplified helper inside brokerstorage new
         //Also the broker could be run independently if needed
         let broker_backend = Storage::new_with_path(&PathBuf::from(&config.broker_storage))?;
-        let broker_storage = Arc::new(Mutex::new(
-            bitvmx_broker::broker_storage::BrokerStorage::new(Arc::new(Mutex::new(broker_backend))),
-        ));
+        let broker_backend = Arc::new(Mutex::new(broker_backend));
+        let broker_storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
         let broker_config = BrokerConfig::new(config.broker_port, None);
         let broker = BrokerSync::new(&broker_config, broker_storage);
 
@@ -108,32 +111,19 @@ impl BitVMX {
         peer_address: &P2PAddress,
     ) -> Result<ParticipantKeys, BitVMXError> {
         // Generate my keys.
-        let keys = self.generate_keys(&funding.pubkey, &my_role)?;
+        let my_keys = self.generate_keys(&funding.pubkey, &my_role)?;
 
         let p2p_address = P2PAddress::new(&self.comms.get_address(), self.comms.get_peer_id());
         // Create a participant that represents me with the specified role (Prover or Verifier).
-        let me = ParticipantData::new(&p2p_address, Some(keys.clone()));
+        let me = ParticipantData::new(&p2p_address, Some(my_keys.clone()));
 
         // Create a participant that represents the counterparty with the opposite role.
         let other = ParticipantData::new(peer_address, None);
 
-        // Rename the variables to the correct roles
-        let (prover, verifier) = match my_role {
-            ParticipantRole::Prover => (me, other.clone()),
-            ParticipantRole::Verifier => (other.clone(), me),
-        };
-
         // Create a program with the funding information, and the dispute resolution search parameters.
-        Program::new(
-            *id,
-            my_role,
-            prover,
-            verifier,
-            funding,
-            self.storage.clone(),
-        )?;
+        Program::new(*id, my_role, me, other, funding, self.storage.clone())?;
 
-        Ok(keys)
+        Ok(my_keys)
     }
 
     // After contaction  the counterparty to setup the same program, exchange public keys to allow us (and the counterparty)
@@ -442,8 +432,11 @@ impl BitVMX {
             let decoded: BitVMXApiMessages = serde_json::from_str(&msg)?;
             match decoded {
                 BitVMXApiMessages::SetupProgram(id, role, peer_address, funding) => {
-                    let _prover_pub_keys =
+                    let other_keys =
                         self.setup_program(&id, role.clone(), funding, &peer_address)?;
+
+                    // TODO: send keys to the other party.
+                    // send_keys(comms, participant, id, peer_id, addr)
                 }
             }
         }
@@ -455,12 +448,6 @@ impl BitVMX {
         self.process_api_messages()?;
         self.process_p2p_messages()?;
         self.process_bitcoin_updates()?;
-        Ok(())
-    }
-
-    pub fn start_sending(&mut self, program_id: Uuid) -> Result<(), BitVMXError> {
-        let mut program = self.load_program(&program_id).unwrap();
-        program.tick(&mut self.comms).unwrap();
         Ok(())
     }
 }
