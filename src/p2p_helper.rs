@@ -1,10 +1,48 @@
+use crate::{errors::BitVMXError, program::participant::ParticipantKeys};
+use p2p_handler::{P2pHandler, PeerId};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::errors::BitVMXError;
-
 const MIN_EXPECTED_MSG_LEN: usize = 4; // 2 bytes for version + 2 bytes for message type
 const MAX_EXPECTED_MSG_LEN: usize = 1024; // Maximum length for a message //TODO: Change this value
+
+pub fn send_keys(
+    comms: &mut P2pHandler,
+    program_id: &Uuid,
+    peer_id: PeerId,
+    addr: String,
+    _keys: ParticipantKeys,
+) -> Result<(), BitVMXError> {
+    let keys = vec![0, 1, 2];
+
+    let msg = serialize_msg("1.0", P2PMessageType::Keys, program_id, keys)?;
+    comms.request(peer_id, addr, msg)?;
+    Ok(())
+}
+
+pub fn send_nonces(
+    comms: &mut P2pHandler,
+    program_id: &Uuid,
+    peer_id: PeerId,
+    addr: String,
+    nonces: Vec<u8>,
+) -> Result<(), BitVMXError> {
+    let msg = serialize_msg("1.0", P2PMessageType::PublicNonces, program_id, nonces)?;
+    comms.request(peer_id, addr, msg)?;
+    Ok(())
+}
+
+pub fn send_signatures(
+    comms: &mut P2pHandler,
+    program_id: &Uuid,
+    peer_id: PeerId,
+    addr: String,
+    sigs: Vec<u8>,
+) -> Result<(), BitVMXError> {
+    let msg = serialize_msg("1.0", P2PMessageType::PartialSignatures, program_id, sigs)?;
+    comms.request(peer_id, addr, msg)?;
+    Ok(())
+}
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum P2PMessageType {
