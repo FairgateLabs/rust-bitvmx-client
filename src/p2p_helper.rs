@@ -1,62 +1,43 @@
-use crate::{errors::BitVMXError, program::participant::ParticipantKeys};
-use p2p_handler::{P2pHandler, PeerId};
+use crate::{errors::BitVMXError, program::participant::P2PAddress};
+use p2p_handler::P2pHandler;
+use serde::Serialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
 const MIN_EXPECTED_MSG_LEN: usize = 4; // 2 bytes for version + 2 bytes for message type
 const MAX_EXPECTED_MSG_LEN: usize = 1024; // Maximum length for a message //TODO: Change this value
 
-pub fn send_keys(
+pub fn send<T: Serialize>(
     comms: &mut P2pHandler,
     program_id: &Uuid,
-    peer_id: PeerId,
-    addr: String,
-    _keys: ParticipantKeys,
+    p2p_address: P2PAddress,
+    msg_type: P2PMessageType,
+    msg: T,
 ) -> Result<(), BitVMXError> {
-    let keys = vec![0, 1, 2];
-
-    let msg = serialize_msg("1.0", P2PMessageType::Keys, program_id, keys)?;
-    comms.request(peer_id, addr, msg)?;
-    Ok(())
-}
-
-pub fn send_nonces(
-    comms: &mut P2pHandler,
-    program_id: &Uuid,
-    peer_id: PeerId,
-    addr: String,
-    nonces: Vec<u8>,
-) -> Result<(), BitVMXError> {
-    let msg = serialize_msg("1.0", P2PMessageType::PublicNonces, program_id, nonces)?;
-    comms.request(peer_id, addr, msg)?;
-    Ok(())
-}
-
-pub fn send_signatures(
-    comms: &mut P2pHandler,
-    program_id: &Uuid,
-    peer_id: PeerId,
-    addr: String,
-    sigs: Vec<u8>,
-) -> Result<(), BitVMXError> {
-    let msg = serialize_msg("1.0", P2PMessageType::PartialSignatures, program_id, sigs)?;
-    comms.request(peer_id, addr, msg)?;
+    let serialize_msg = serialize_msg(msg_type, program_id, msg)?;
+    comms.request(p2p_address.peer_id, p2p_address.address, serialize_msg)?;
     Ok(())
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum P2PMessageType {
     Keys,
+    KeysAck,
     PublicNonces,
+    PublicNoncesAck,
     PartialSignatures,
+    PartialSignaturesAck,
 }
 
 impl P2PMessageType {
     // Define a mapping between message kinds and their byte representations
     const KIND_MAP: &'static [(&'static P2PMessageType, [u8; 2])] = &[
         (&P2PMessageType::Keys, [0x00, 0x01]),
-        (&P2PMessageType::PublicNonces, [0x00, 0x02]),
-        (&P2PMessageType::PartialSignatures, [0x00, 0x03]),
+        (&P2PMessageType::KeysAck, [0x00, 0x02]),
+        (&P2PMessageType::PublicNonces, [0x00, 0x03]),
+        (&P2PMessageType::PublicNoncesAck, [0x00, 0x04]),
+        (&P2PMessageType::PartialSignatures, [0x00, 0x05]),
+        (&P2PMessageType::PartialSignaturesAck, [0x00, 0x06]),
     ];
 
     // Convert message type to 2-byte representation
@@ -108,12 +89,12 @@ impl Version {
 }
 
 // Serialize the message into the required format
-pub fn serialize_msg(
-    version: &str,
+pub fn serialize_msg<T: Serialize>(
     msg_type: P2PMessageType,
     program_id: &Uuid,
-    msg: Vec<u8>,
+    data: T,
 ) -> Result<Vec<u8>, BitVMXError> {
+    let version = "1.0";
     // Convert version and message type to bytes
     let version_bytes = Version::to_bytes(version)?;
     let msg_type_bytes = msg_type.to_bytes()?;
@@ -121,7 +102,7 @@ pub fn serialize_msg(
     // Serialize the payload as JSON
     let payload = json!({
         "program_id": program_id.to_string(),
-        "msg": msg,
+        "msg": data,
     });
     let json_payload = serde_json::to_vec(&payload).map_err(|_| BitVMXError::SerializationError)?;
 

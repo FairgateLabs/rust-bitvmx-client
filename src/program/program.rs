@@ -1,6 +1,6 @@
 use crate::{
     errors::{BitVMXError, ProgramError},
-    p2p_helper::{send_keys, send_nonces, send_signatures},
+    p2p_helper::{send, P2PMessageType},
 };
 use bitcoin::{Transaction, Txid};
 use key_manager::winternitz::WinternitzSignature;
@@ -18,15 +18,20 @@ use super::{
 
 #[derive(PartialEq, Clone, Serialize, Deserialize, Debug)]
 pub enum ProgramState {
-    Inactive,
+    New,
     Ready,
     Claimed,
     Challenged,
     DeployProgram,
-    Error, //TODO: check somewhere
+    Error,
 
+    KeysWaiting,
     KeysSent,
+
+    NoncesWaiting,
     NoncesSent,
+
+    SignaturesWaiting,
     SignaturesSent,
 }
 
@@ -87,7 +92,7 @@ impl Program {
             me,
             other,
             drp,
-            state: ProgramState::Inactive,
+            state: ProgramState::New,
             witness_data: HashMap::new(),
             storage: Some(storage),
         };
@@ -177,20 +182,17 @@ impl Program {
     }
 
     fn send_keys(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
-        //TODO: Ready = IDLE?
         if self.state == ProgramState::Ready {
             let keys = self.me.keys.clone().unwrap();
 
-            send_keys(
+            send(
                 comms,
                 &self.program_id,
-                self.other.p2p_address.peer_id,
-                self.other.p2p_address.address.clone(),
+                self.other.p2p_address.clone(),
+                P2PMessageType::Keys,
                 keys,
             )?;
             self.state = ProgramState::KeysSent;
-        } else {
-            self.state = ProgramState::Error;
         }
         Ok(())
     }
@@ -198,16 +200,14 @@ impl Program {
     fn send_nonces(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
         if self.state == ProgramState::KeysSent {
             let nonces: Vec<u8> = vec![0, 1, 2, 3];
-            send_nonces(
+            send(
                 comms,
                 &self.program_id,
-                self.other.p2p_address.peer_id,
-                self.other.p2p_address.address.clone(),
+                self.other.p2p_address.clone(),
+                P2PMessageType::PublicNonces,
                 nonces,
             )?;
             self.state = ProgramState::NoncesSent;
-        } else {
-            self.state = ProgramState::Error;
         }
 
         self.save()?;
@@ -219,13 +219,14 @@ impl Program {
         if self.state == ProgramState::NoncesSent {
             let signatures: Vec<u8> = vec![0, 1, 2, 3];
 
-            send_signatures(
+            send(
                 comms,
                 &self.program_id,
-                self.other.p2p_address.peer_id,
-                self.other.p2p_address.address.clone(),
+                self.other.p2p_address.clone(),
+                P2PMessageType::PartialSignatures,
                 signatures,
             )?;
+
             match self.my_role {
                 ParticipantRole::Prover => self.state = ProgramState::SignaturesSent,
                 ParticipantRole::Verifier => {
@@ -255,10 +256,8 @@ impl Program {
 
     pub fn tick(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
         match (&self.state, &self.my_role) {
-            (ProgramState::Inactive, _) => {
-                //TODO: take out, only for testing
+            (ProgramState::New, _) => {
                 self.state = ProgramState::Ready;
-                self.tick(comms)?;
             }
 
             (ProgramState::Ready, _) => self.send_keys(comms)?,
