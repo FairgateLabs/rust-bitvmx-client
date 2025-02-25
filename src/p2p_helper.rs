@@ -172,13 +172,22 @@ mod tests {
     #[test]
     fn test_p2p_message_kind_to_bytes() {
         assert_eq!(P2PMessageType::Keys.to_bytes().unwrap(), [0x00, 0x01]);
+        assert_eq!(P2PMessageType::KeysAck.to_bytes().unwrap(), [0x00, 0x02]);
         assert_eq!(
             P2PMessageType::PublicNonces.to_bytes().unwrap(),
-            [0x00, 0x02]
+            [0x00, 0x03]
+        );
+        assert_eq!(
+            P2PMessageType::PublicNoncesAck.to_bytes().unwrap(),
+            [0x00, 0x04]
         );
         assert_eq!(
             P2PMessageType::PartialSignatures.to_bytes().unwrap(),
-            [0x00, 0x03]
+            [0x00, 0x05]
+        );
+        assert_eq!(
+            P2PMessageType::PartialSignaturesAck.to_bytes().unwrap(),
+            [0x00, 0x06]
         );
     }
 
@@ -190,11 +199,23 @@ mod tests {
         );
         assert_eq!(
             P2PMessageType::from_bytes([0x00, 0x02]).unwrap(),
-            P2PMessageType::PublicNonces
+            P2PMessageType::KeysAck
         );
         assert_eq!(
             P2PMessageType::from_bytes([0x00, 0x03]).unwrap(),
+            P2PMessageType::PublicNonces
+        );
+        assert_eq!(
+            P2PMessageType::from_bytes([0x00, 0x04]).unwrap(),
+            P2PMessageType::PublicNoncesAck
+        );
+        assert_eq!(
+            P2PMessageType::from_bytes([0x00, 0x05]).unwrap(),
             P2PMessageType::PartialSignatures
+        );
+        assert_eq!(
+            P2PMessageType::from_bytes([0x00, 0x06]).unwrap(),
+            P2PMessageType::PartialSignaturesAck
         );
     }
 
@@ -215,7 +236,7 @@ mod tests {
         let program_id = Uuid::new_v4();
         let msg = vec![0x01, 0x02, 0x03];
 
-        let result = serialize_msg(version, msg_type.clone(), &program_id, msg.clone()).unwrap();
+        let result = serialize_msg(msg_type.clone(), &program_id, msg.clone()).unwrap();
 
         let expected_version = Version::to_bytes(version).unwrap();
         let expected_msg_type = msg_type.to_bytes().unwrap();
@@ -241,8 +262,7 @@ mod tests {
         let program_id = Uuid::new_v4();
         let msg = vec![0x01, 0x02, 0x03];
 
-        let serialized_msg =
-            serialize_msg(version, msg_type.clone(), &program_id, msg.clone()).unwrap();
+        let serialized_msg = serialize_msg(msg_type.clone(), &program_id, msg.clone()).unwrap();
         let (
             deserialized_version,
             deserialized_msg_type,
