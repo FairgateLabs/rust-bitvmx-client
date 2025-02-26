@@ -6,7 +6,6 @@ use crate::{
 };
 use bitcoin::{Transaction, Txid};
 use key_manager::winternitz::WinternitzSignature;
-use p2p_handler::P2pHandler;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, rc::Rc};
 use storage_backend::storage::{KeyValueStore, Storage};

@@ -10,7 +10,7 @@ use crate::{
         program::{Program, ProgramState},
         witness,
     },
-    types::ProgramContext,
+    types::{ProgramContext, ProgramStatus},
 };
 
 use bitcoin::{PublicKey, Transaction};
@@ -467,21 +467,26 @@ impl BitVMX {
     }
 
     fn advance_programs(&mut self) -> Result<(), BitVMXError> {
-        let programs = self.get_programs_to_advance()?;
+        let programs = self.get_active_programs()?;
         for mut program in programs {
             program.tick(&mut self.program_context)?;
+
+            if !program.is_active() {
+                self.mark_program_inactive(&program.program_id)?;
+            }
         }
         Ok(())
     }
 
-    fn get_programs(&self) -> Result<Vec<Uuid>, BitVMXError> {
-        let programs_ids: Option<Vec<Uuid>> = self
+    fn get_programs(&self) -> Result<Vec<ProgramStatus>, BitVMXError> {
+        let programs_ids: Option<Vec<ProgramStatus>> = self
             .store
             .get("bitvmx/programs/all")
             .map_err(BitVMXError::StorageError)?;
 
         if programs_ids.is_none() {
-            let empty_programs = vec![];
+            let empty_programs: Vec<ProgramStatus> = vec![];
+
             self.store
                 .set("bitvmx/programs/all", empty_programs.clone(), None)?;
             return Ok(empty_programs);
@@ -490,36 +495,48 @@ impl BitVMX {
         Ok(programs_ids.unwrap())
     }
 
-    fn get_programs_to_advance(&self) -> Result<Vec<Program>, BitVMXError> {
-        let programs_ids = self.get_programs()?;
+    fn get_active_programs(&self) -> Result<Vec<Program>, BitVMXError> {
+        let programs = self.get_programs()?;
 
-        let mut programs_to_advance = vec![];
+        let mut active_programs = vec![];
 
-        for program_id in programs_ids {
-            let program = self.load_program(&program_id)?;
-            if !program.is_active() {
-                programs_to_advance.push(program);
+        for program_status in programs {
+            if program_status.is_active {
+                let program = self.load_program(&program_status.program_id)?;
+                active_programs.push(program);
             }
         }
 
-        Ok(programs_to_advance)
+        Ok(active_programs)
     }
 
     fn add_new_program(&mut self, program_id: &Uuid) -> Result<(), BitVMXError> {
         let mut programs = self.get_programs()?;
 
-        if programs.contains(program_id) {
+        if programs.iter().any(|p| p.program_id == *program_id) {
             return Err(BitVMXError::ProgramAlreadyExists(*program_id));
         }
 
-        programs.push(program_id.clone());
+        programs.push(ProgramStatus::new(*program_id));
+
         self.store.set("bitvmx/programs/all", programs, None)?;
 
         Ok(())
     }
 
+    fn mark_program_inactive(&mut self, program_id: &Uuid) -> Result<(), BitVMXError> {
+        let mut programs = self.get_programs()?;
+
+        if let Some(program) = programs.iter_mut().find(|p| p.program_id == *program_id) {
+            program.is_active = false;
+        }
+
+        self.store.set("bitvmx/programs/all", programs, None)?;
+        Ok(())
+    }
+
     fn program_exists(&self, program_id: &Uuid) -> Result<bool, BitVMXError> {
         let programs = self.get_programs()?;
-        Ok(programs.contains(program_id))
+        Ok(programs.iter().any(|p| p.program_id == *program_id))
     }
 }
