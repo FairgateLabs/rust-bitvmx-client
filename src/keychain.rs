@@ -265,4 +265,43 @@ impl KeyChain {
 
         Ok(())
     }
+
+    pub fn get_nonces(
+        &self,
+        program_id: uuid::Uuid,
+        dag_messages: Vec<Vec<u8>>,
+    ) -> Result<Vec<PubNonce>, BitVMXError> {
+        let mut pub_nonces = vec![];
+
+        for index in 0..dag_messages.len() {
+            let musig_id = format!("{program_id}_{index}");
+            let nonce = self
+                .musig2_signer
+                .get_my_pub_nonce(&musig_id, dag_messages[index].clone())
+                .map_err(|_| BitVMXError::AggregateNoncesError)?;
+
+            pub_nonces.push(nonce);
+        }
+
+        Ok(pub_nonces)
+    }
+
+    pub fn get_signatures(
+        &self,
+        program_id: uuid::Uuid,
+        num_messages: u32,
+    ) -> Result<Vec<PartialSignature>, BitVMXError> {
+        let mut partial_signatures = vec![];
+
+        for index in 0..num_messages {
+            let musig_id = format!("{program_id}_{index}");
+            let signature = self
+                .musig2_signer
+                .get_my_partial_signature(&musig_id)
+                .map_err(|_| BitVMXError::MuSig2SignerError)?;
+            partial_signatures.push(signature);
+        }
+
+        Ok(partial_signatures)
+    }
 }

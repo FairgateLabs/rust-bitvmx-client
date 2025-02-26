@@ -88,6 +88,12 @@ pub enum BitVMXError {
 
     #[error("Failed to aggregate partial signatures")]
     AggregatePartialSignaturesError,
+
+    #[error("Error from MuSig2 client")]
+    MuSig2SignerError,
+
+    #[error("Program already exists")]
+    ProgramAlreadyExists(Uuid),
 }
 
 #[derive(Error, Debug)]

@@ -8,7 +8,7 @@ const MIN_EXPECTED_MSG_LEN: usize = 4; // 2 bytes for version + 2 bytes for mess
 const MAX_EXPECTED_MSG_LEN: usize = 1024; // Maximum length for a message //TODO: Change this value
 
 pub fn send<T: Serialize>(
-    comms: &mut P2pHandler,
+    comms: &P2pHandler,
     program_id: &Uuid,
     p2p_address: P2PAddress,
     msg_type: P2PMessageType,

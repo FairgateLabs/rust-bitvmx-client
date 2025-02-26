@@ -7,9 +7,10 @@ use crate::{
     program::{
         dispute::{Funding, SearchParams},
         participant::{P2PAddress, ParticipantData, ParticipantKeys, ParticipantRole},
-        program::Program,
+        program::{Program, ProgramState},
         witness,
     },
+    types::ProgramContext,
 };
 
 use bitcoin::{PublicKey, Transaction};
@@ -32,7 +33,7 @@ use std::{
     thread::sleep,
     time::Duration,
 };
-use storage_backend::storage::Storage;
+use storage_backend::storage::{KeyValueStore, Storage};
 
 use tracing::info;
 use uuid::Uuid;
@@ -45,8 +46,7 @@ pub enum BitVMXApiMessages {
 
 pub struct BitVMX {
     _config: Config,
-    comms: P2pHandler,
-    key_chain: KeyChain,
+    program_context: ProgramContext,
     store: Rc<Storage>,
     orchestrator: OrchestratorType,
     broker: BrokerSync,
@@ -90,10 +90,11 @@ impl BitVMX {
         //TODO: A channel that talks directly with the broker without going through localhost loopback could be implemented
         let broker_channel = DualChannel::new(&broker_config, 1);
 
+        let program_context = ProgramContext::new(comms, key_chain);
+
         Ok(Self {
             _config: config,
-            comms,
-            key_chain,
+            program_context,
             store: storage,
             orchestrator,
             broker,
@@ -107,11 +108,14 @@ impl BitVMX {
         my_role: ParticipantRole,
         funding: Funding,
         peer_address: &P2PAddress,
-    ) -> Result<ParticipantKeys, BitVMXError> {
+    ) -> Result<(), BitVMXError> {
         // Generate my keys.
         let my_keys = self.generate_keys(&funding.pubkey, &my_role)?;
 
-        let p2p_address = P2PAddress::new(&self.comms.get_address(), self.comms.get_peer_id());
+        let p2p_address = P2PAddress::new(
+            &self.program_context.comms.get_address(),
+            self.program_context.comms.get_peer_id(),
+        );
         // Create a participant that represents me with the specified role (Prover or Verifier).
         let me = ParticipantData::new(&p2p_address, Some(my_keys.clone()));
 
@@ -120,22 +124,6 @@ impl BitVMX {
 
         // Create a program with the funding information, and the dispute resolution search parameters.
         Program::new(*id, my_role, me, other, funding, self.store.clone())?;
-
-        Ok(my_keys)
-    }
-
-    // After contaction  the counterparty to setup the same program, exchange public keys to allow us (and the counterparty)
-    // generate the program aggregated signatures.
-    pub fn setup_counterparty_keys(
-        &mut self,
-        id: &Uuid,
-        keys: ParticipantKeys,
-    ) -> Result<(), BitVMXError> {
-        // 1. Send keys and program data (id and config) to counterparty
-        // 2. Receive keys from counterparty
-
-        let mut program = self.load_program(id)?;
-        program.set_other_keys(keys)?;
 
         Ok(())
     }
@@ -226,11 +214,11 @@ impl BitVMX {
     }
 
     pub fn address(&self) -> String {
-        self.comms.get_address()
+        self.program_context.comms.get_address()
     }
 
     pub fn peer_id(&self) -> String {
-        self.comms.get_peer_id().to_string()
+        self.program_context.comms.get_peer_id().to_string()
     }
 
     pub fn load_program(&self, program_id: &Uuid) -> Result<Program, BitVMXError> {
@@ -247,14 +235,24 @@ impl BitVMX {
         let message_size = 2;
         let one_time_keys_count = 10;
 
-        let protocol = self.key_chain.derive_keypair()?;
-        let speedup = self.key_chain.derive_keypair()?;
-        let timelock = self.key_chain.derive_keypair()?;
-        let internal = self.key_chain.unspendable_key()?;
-        let program_input = self.key_chain.derive_winternitz_hash160(message_size)?;
-        let program_ending_state = self.key_chain.derive_winternitz_hash160(message_size)?;
-        let program_ending_step_number = self.key_chain.derive_winternitz_hash160(message_size)?;
+        let protocol = self.program_context.key_chain.derive_keypair()?;
+        let speedup = self.program_context.key_chain.derive_keypair()?;
+        let timelock = self.program_context.key_chain.derive_keypair()?;
+        let internal = self.program_context.key_chain.unspendable_key()?;
+        let program_input = self
+            .program_context
+            .key_chain
+            .derive_winternitz_hash160(message_size)?;
+        let program_ending_state = self
+            .program_context
+            .key_chain
+            .derive_winternitz_hash160(message_size)?;
+        let program_ending_step_number = self
+            .program_context
+            .key_chain
+            .derive_winternitz_hash160(message_size)?;
         let dispute_resolution = self
+            .program_context
             .key_chain
             .derive_winternitz_hash160_keys(message_size, one_time_keys_count)?;
 
@@ -290,7 +288,7 @@ impl BitVMX {
     // }
 
     fn sign_program(&mut self, program: &Program) -> Result<(), BitVMXError> {
-        self.key_chain.sign_program(program)?;
+        self.program_context.key_chain.sign_program(program)?;
 
         // 1. Send signatures to counterparty
         // 2. Receive signatures from counterparty
@@ -329,7 +327,7 @@ impl BitVMX {
     }
 
     pub fn process_p2p_messages(&mut self) -> Result<(), BitVMXError> {
-        let message = self.comms.check_receive();
+        let message = self.program_context.comms.check_receive();
 
         if message.is_none() {
             return Ok(());
@@ -337,48 +335,42 @@ impl BitVMX {
 
         let message = message.unwrap();
 
-        // let _priority = self.comms.check_priority(); //TODO: handle priority
+        //TODO: handle priority
+        // let _priority = self.comms.check_piority();
 
         match message {
             ReceiveHandlerChannel::Msg(_peer_id, msg) => {
                 let (_version, msg_type, program_id, data) = deserialize_msg(msg).unwrap();
                 let mut program = self.load_program(&program_id).unwrap();
 
+                if !Self::should_program_handle_msg(&program.state, &msg_type) {
+                    //TODO: log that we are not handling this message
+                    return Ok(());
+                }
+
                 match msg_type {
                     P2PMessageType::Keys => {
                         let participant_keys = bytes_to_participant_keys(data)
                             .map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
-                        program.set_other_keys(participant_keys.clone())?;
-                    }
-                    P2PMessageType::KeysAck => {
-                        // Handle keys acknowledgment
+                        program.recieve_participant_keys(participant_keys.clone())?;
                     }
                     P2PMessageType::PublicNonces => {
-                        let nonces = bytes_to_nonces(data).unwrap();
-                        let participant_key = program.other.keys.as_ref().unwrap().protocol;
-                        let my_pubkey = program.me.keys.as_ref().unwrap().protocol;
-
-                        self.key_chain.add_nonces(
-                            program_id,
-                            nonces,
-                            participant_key,
-                            my_pubkey,
-                        )?;
-                    }
-                    P2PMessageType::PublicNoncesAck => {
-                        // Handle nonces acknowledgment
+                        let nonces =
+                            bytes_to_nonces(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+                        program
+                            .recieve_participant_nonces(nonces, &self.program_context.key_chain)?;
                     }
                     P2PMessageType::PartialSignatures => {
-                        let signatures = bytes_to_signatures(data).unwrap();
-                        let my_pubkey = program.other.keys.as_ref().unwrap().protocol;
+                        let signatures = bytes_to_signatures(data)
+                            .map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
-                        self.key_chain
-                            .add_signatures(program_id, signatures, my_pubkey)?;
+                        program.recieve_participant_partial_signatures(
+                            signatures,
+                            &self.program_context.key_chain,
+                        )?;
                     }
-                    P2PMessageType::PartialSignaturesAck => {
-                        // Handle signatures acknowledgment
-                    }
+                    _ => {}
                 }
             }
             ReceiveHandlerChannel::Error(e) => {
@@ -437,10 +429,16 @@ impl BitVMX {
         //TODO: Dedice if we want to process all message in a while or just one per tick
         if let Some((msg, _from)) = self.broker_channel.recv()? {
             let decoded: BitVMXApiMessages = serde_json::from_str(&msg)?;
+
             match decoded {
                 BitVMXApiMessages::SetupProgram(id, role, peer_address, funding) => {
-                    let _other_keys =
-                        self.setup_program(&id, role.clone(), funding, &peer_address)?;
+                    if self.program_exists(&id)? {
+                        return Err(BitVMXError::ProgramAlreadyExists(id));
+                    }
+
+                    //TODO: This should be done in a single atomic operation
+                    self.add_new_program(&id)?;
+                    self.setup_program(&id, role.clone(), funding, &peer_address)?;
                 }
             }
         }
@@ -449,10 +447,79 @@ impl BitVMX {
     }
 
     pub fn tick(&mut self) -> Result<(), BitVMXError> {
+        self.advance_programs()?;
         self.process_api_messages()?;
         self.process_p2p_messages()?;
         self.process_bitcoin_updates()?;
+        Ok(())
+    }
+
+    pub fn should_program_handle_msg(state: &ProgramState, msg_type: &P2PMessageType) -> bool {
+        match (state, msg_type) {
+            (ProgramState::WaitingKeys, P2PMessageType::Keys) => true,
+            (ProgramState::WaitingNonces, P2PMessageType::PublicNonces) => true,
+            (ProgramState::WaitingSignatures, P2PMessageType::PartialSignatures) => true,
+            (ProgramState::KeysSent, P2PMessageType::KeysAck) => true,
+            (ProgramState::NoncesSent, P2PMessageType::PublicNoncesAck) => true,
+            (ProgramState::SignaturesSent, P2PMessageType::PartialSignaturesAck) => true,
+            _ => false,
+        }
+    }
+
+    fn advance_programs(&mut self) -> Result<(), BitVMXError> {
+        let programs = self.get_programs_to_advance()?;
+        for mut program in programs {
+            program.tick(&mut self.program_context)?;
+        }
+        Ok(())
+    }
+
+    fn get_programs(&self) -> Result<Vec<Uuid>, BitVMXError> {
+        let programs_ids: Option<Vec<Uuid>> = self
+            .store
+            .get("bitvmx/programs/all")
+            .map_err(BitVMXError::StorageError)?;
+
+        if programs_ids.is_none() {
+            let empty_programs = vec![];
+            self.store
+                .set("bitvmx/programs/all", empty_programs.clone(), None)?;
+            return Ok(empty_programs);
+        }
+
+        Ok(programs_ids.unwrap())
+    }
+
+    fn get_programs_to_advance(&self) -> Result<Vec<Program>, BitVMXError> {
+        let programs_ids = self.get_programs()?;
+
+        let mut programs_to_advance = vec![];
+
+        for program_id in programs_ids {
+            let program = self.load_program(&program_id)?;
+            if !program.is_active() {
+                programs_to_advance.push(program);
+            }
+        }
+
+        Ok(programs_to_advance)
+    }
+
+    fn add_new_program(&mut self, program_id: &Uuid) -> Result<(), BitVMXError> {
+        let mut programs = self.get_programs()?;
+
+        if programs.contains(program_id) {
+            return Err(BitVMXError::ProgramAlreadyExists(*program_id));
+        }
+
+        programs.push(program_id.clone());
+        self.store.set("bitvmx/programs/all", programs, None)?;
 
         Ok(())
+    }
+
+    fn program_exists(&self, program_id: &Uuid) -> Result<bool, BitVMXError> {
+        let programs = self.get_programs()?;
+        Ok(programs.contains(program_id))
     }
 }

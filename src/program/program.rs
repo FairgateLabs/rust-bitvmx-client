@@ -1,6 +1,8 @@
 use crate::{
     errors::{BitVMXError, ProgramError},
+    keychain::KeyChain,
     p2p_helper::{send, P2PMessageType},
+    types::ProgramContext,
 };
 use bitcoin::{Transaction, Txid};
 use key_manager::winternitz::WinternitzSignature;
@@ -19,20 +21,20 @@ use super::{
 #[derive(PartialEq, Clone, Serialize, Deserialize, Debug)]
 pub enum ProgramState {
     New,
-    Ready,
     Claimed,
     Challenged,
-    DeployProgram,
+    Ready,
     Error,
 
-    KeysWaiting,
+    // Exchange messages
+    WaitingKeys,
     KeysSent,
-
-    NoncesWaiting,
+    WaitingNonces,
     NoncesSent,
-
-    SignaturesWaiting,
+    WaitingSignatures,
     SignaturesSent,
+
+    Completed,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -122,7 +124,7 @@ impl Program {
         Ok(self.program_id)
     }
 
-    pub fn set_other_keys(&mut self, keys: ParticipantKeys) -> Result<(), BitVMXError> {
+    pub fn recieve_participant_keys(&mut self, keys: ParticipantKeys) -> Result<(), BitVMXError> {
         self.other.keys = Some(keys);
 
         let search_params = SearchParams::new(8, 32);
@@ -133,7 +135,32 @@ impl Program {
             search_params,
         )?;
 
-        self.save()?;
+        self.move_to_next_state()?;
+
+        Ok(())
+    }
+
+    pub fn recieve_participant_nonces(
+        &mut self,
+        nonces: Vec<bitvmx_musig2::PubNonce>,
+        key_chain: &KeyChain,
+    ) -> Result<(), BitVMXError> {
+        let participant_key = self.other.keys.as_ref().unwrap().protocol;
+        let my_pubkey = self.me.keys.as_ref().unwrap().protocol;
+        key_chain.add_nonces(self.program_id, nonces, participant_key, my_pubkey)?;
+        self.move_to_next_state()?;
+
+        Ok(())
+    }
+
+    pub fn recieve_participant_partial_signatures(
+        &mut self,
+        signatures: Vec<bitvmx_musig2::PartialSignature>,
+        key_chain: &KeyChain,
+    ) -> Result<(), BitVMXError> {
+        let other_pubkey = self.other.keys.as_ref().unwrap().protocol;
+        key_chain.add_signatures(self.program_id, signatures, other_pubkey)?;
+        self.move_to_next_state()?;
 
         Ok(())
     }
@@ -181,67 +208,6 @@ impl Program {
         self.witness_data.get(&txid)
     }
 
-    fn send_keys(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
-        if self.state == ProgramState::Ready {
-            let keys = self.me.keys.clone().unwrap();
-
-            send(
-                comms,
-                &self.program_id,
-                self.other.p2p_address.clone(),
-                P2PMessageType::Keys,
-                keys,
-            )?;
-            self.state = ProgramState::KeysSent;
-        }
-        Ok(())
-    }
-
-    fn send_nonces(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
-        if self.state == ProgramState::KeysSent {
-            let nonces: Vec<u8> = vec![0, 1, 2, 3];
-            send(
-                comms,
-                &self.program_id,
-                self.other.p2p_address.clone(),
-                P2PMessageType::PublicNonces,
-                nonces,
-            )?;
-            self.state = ProgramState::NoncesSent;
-        }
-
-        self.save()?;
-
-        Ok(())
-    }
-
-    fn send_signatures(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
-        if self.state == ProgramState::NoncesSent {
-            let signatures: Vec<u8> = vec![0, 1, 2, 3];
-
-            send(
-                comms,
-                &self.program_id,
-                self.other.p2p_address.clone(),
-                P2PMessageType::PartialSignatures,
-                signatures,
-            )?;
-
-            match self.my_role {
-                ParticipantRole::Prover => self.state = ProgramState::SignaturesSent,
-                ParticipantRole::Verifier => {
-                    self.state = ProgramState::DeployProgram;
-                    self.deploy_program();
-                }
-            }
-        } else {
-            self.state = ProgramState::Error;
-        }
-
-        self.save()?;
-        Ok(())
-    }
-
     fn deploy_program(&mut self) {
         match self.my_role {
             ParticipantRole::Prover => info!("Deploying the prover program"),
@@ -251,30 +217,110 @@ impl Program {
     }
 
     pub fn is_ready(&self) -> bool {
-        self.state == ProgramState::Ready
+        self.state == ProgramState::New
     }
 
-    pub fn tick(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
-        match (&self.state, &self.my_role) {
-            (ProgramState::New, _) => {
-                self.state = ProgramState::Ready;
+    pub fn tick(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
+        match &self.state {
+            ProgramState::New => {
+                self.state = ProgramState::KeysSent;
             }
 
-            (ProgramState::Ready, _) => self.send_keys(comms)?,
-            (ProgramState::KeysSent, _) => self.send_nonces(comms)?,
-            (ProgramState::NoncesSent, _) => self.send_signatures(comms)?, // Sign program and send signature
-            (ProgramState::SignaturesSent, ParticipantRole::Prover) => self.deploy_program(),
+            ProgramState::KeysSent => {
+                let my_keys = self.me.keys.clone().unwrap();
 
+                send(
+                    &program_context.comms,
+                    &self.program_id,
+                    self.other.p2p_address.clone(),
+                    P2PMessageType::Keys,
+                    my_keys,
+                )?;
+            }
+            ProgramState::NoncesSent => {
+                //TODO: get dag messages from the drp
+                let dag_messages = vec![];
+                let nonces = program_context
+                    .key_chain
+                    .get_nonces(self.program_id, dag_messages)?;
+                send(
+                    &program_context.comms,
+                    &self.program_id,
+                    self.other.p2p_address.clone(),
+                    P2PMessageType::PublicNonces,
+                    nonces,
+                )?;
+            }
+            ProgramState::SignaturesSent => {
+                let dag_messages_count = 10;
+                let signatures = program_context
+                    .key_chain
+                    .get_signatures(self.program_id, dag_messages_count)?;
+                send(
+                    &program_context.comms,
+                    &self.program_id,
+                    self.other.p2p_address.clone(),
+                    P2PMessageType::PartialSignatures,
+                    signatures,
+                )?;
+            }
             _ => {
                 self.state = ProgramState::Error;
+                self.save()?;
             }
         }
+
+        Ok(())
+    }
+
+    pub fn move_to_next_state(&mut self) -> Result<(), BitVMXError> {
+        let next_state = match self.my_role {
+            ParticipantRole::Prover => match self.state {
+                ProgramState::New => ProgramState::KeysSent,
+                ProgramState::KeysSent => ProgramState::WaitingKeys,
+                ProgramState::WaitingKeys => ProgramState::NoncesSent,
+                ProgramState::NoncesSent => ProgramState::WaitingSignatures,
+                ProgramState::WaitingNonces => ProgramState::SignaturesSent,
+                ProgramState::SignaturesSent => ProgramState::WaitingSignatures,
+                ProgramState::WaitingSignatures => ProgramState::Ready,
+                ProgramState::Claimed => ProgramState::Claimed,
+                ProgramState::Challenged => ProgramState::Challenged,
+                ProgramState::Ready => ProgramState::Ready,
+                ProgramState::Error => ProgramState::Error,
+                ProgramState::Completed => ProgramState::Completed,
+            },
+            ParticipantRole::Verifier => match self.state {
+                ProgramState::New => ProgramState::WaitingKeys,
+                ProgramState::WaitingKeys => ProgramState::KeysSent,
+                ProgramState::KeysSent => ProgramState::WaitingNonces,
+                ProgramState::WaitingNonces => ProgramState::NoncesSent,
+                ProgramState::NoncesSent => ProgramState::WaitingSignatures,
+                ProgramState::WaitingSignatures => ProgramState::SignaturesSent,
+                ProgramState::SignaturesSent => ProgramState::Ready,
+                ProgramState::Claimed => ProgramState::Claimed,
+                ProgramState::Challenged => ProgramState::Challenged,
+                ProgramState::Ready => ProgramState::Ready,
+                ProgramState::Error => ProgramState::Error,
+                ProgramState::Completed => ProgramState::Completed,
+            },
+        };
+
+        self.state = next_state;
 
         self.save()?;
 
         Ok(())
     }
-}
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Trace {}
+    pub fn is_active(&self) -> bool {
+        matches!(
+            self.state,
+            ProgramState::WaitingKeys
+                | ProgramState::KeysSent
+                | ProgramState::WaitingNonces
+                | ProgramState::NoncesSent
+                | ProgramState::WaitingSignatures
+                | ProgramState::SignaturesSent
+        )
+    }
+}
