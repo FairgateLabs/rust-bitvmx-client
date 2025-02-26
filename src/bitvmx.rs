@@ -2,11 +2,8 @@ use crate::{
     config::Config,
     errors::BitVMXError,
     helper::{bytes_to_nonces, bytes_to_participant_keys, bytes_to_signatures},
-    keys::keychain::KeyChain,
-    p2p::{
-        p2p_manager::send_keys,
-        p2p_parser::{deserialize_msg, P2PMessageType},
-    },
+    keychain::KeyChain,
+    p2p_helper::{deserialize_msg, P2PMessageType},
     program::{
         dispute::{Funding, SearchParams},
         participant::{P2PAddress, ParticipantData, ParticipantKeys, ParticipantRole},
@@ -14,6 +11,7 @@ use crate::{
         witness,
     },
 };
+
 use bitcoin::{PublicKey, Transaction};
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
@@ -49,7 +47,7 @@ pub struct BitVMX {
     _config: Config,
     comms: P2pHandler,
     key_chain: KeyChain,
-    storage: Rc<Storage>,
+    store: Rc<Storage>,
     orchestrator: OrchestratorType,
     broker: BrokerSync,
     broker_channel: DualChannel,
@@ -96,7 +94,7 @@ impl BitVMX {
             _config: config,
             comms,
             key_chain,
-            storage,
+            store: storage,
             orchestrator,
             broker,
             broker_channel,
@@ -121,7 +119,7 @@ impl BitVMX {
         let other = ParticipantData::new(peer_address, None);
 
         // Create a program with the funding information, and the dispute resolution search parameters.
-        Program::new(*id, my_role, me, other, funding, self.storage.clone())?;
+        Program::new(*id, my_role, me, other, funding, self.store.clone())?;
 
         Ok(my_keys)
     }
@@ -137,7 +135,7 @@ impl BitVMX {
         // 2. Receive keys from counterparty
 
         let mut program = self.load_program(id)?;
-        program.setup_counterparty_keys(keys)?;
+        program.set_other_keys(keys)?;
 
         Ok(())
     }
@@ -236,7 +234,7 @@ impl BitVMX {
     }
 
     pub fn load_program(&self, program_id: &Uuid) -> Result<Program, BitVMXError> {
-        let program = Program::load(self.storage.clone(), program_id)?;
+        let program = Program::load(self.store.clone(), program_id)?;
         Ok(program)
     }
 
@@ -351,12 +349,14 @@ impl BitVMX {
                         let participant_keys = bytes_to_participant_keys(data)
                             .map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
-                        program.setup_counterparty_keys(participant_keys.clone())?;
+                        program.set_other_keys(participant_keys.clone())?;
+                    }
+                    P2PMessageType::KeysAck => {
+                        // Handle keys acknowledgment
                     }
                     P2PMessageType::PublicNonces => {
                         let nonces = bytes_to_nonces(data).unwrap();
                         let participant_key = program.other.keys.as_ref().unwrap().protocol;
-
                         let my_pubkey = program.me.keys.as_ref().unwrap().protocol;
 
                         self.key_chain.add_nonces(
@@ -366,12 +366,18 @@ impl BitVMX {
                             my_pubkey,
                         )?;
                     }
+                    P2PMessageType::PublicNoncesAck => {
+                        // Handle nonces acknowledgment
+                    }
                     P2PMessageType::PartialSignatures => {
                         let signatures = bytes_to_signatures(data).unwrap();
                         let my_pubkey = program.other.keys.as_ref().unwrap().protocol;
 
                         self.key_chain
                             .add_signatures(program_id, signatures, my_pubkey)?;
+                    }
+                    P2PMessageType::PartialSignaturesAck => {
+                        // Handle signatures acknowledgment
                     }
                 }
             }
@@ -402,6 +408,7 @@ impl BitVMX {
         }
 
         let mut ret = vec![];
+
         for (program_id, txs) in news.txs_by_id {
             let mut ret_tx = vec![];
             for tx in txs {
@@ -409,9 +416,9 @@ impl BitVMX {
             }
             ret.push((program_id, ret_tx));
 
-            let mut p = self.load_program(&program_id)?;
+            let _program = self.load_program(&program_id)?;
             //TODO: Check that the transaction
-            p.deploy();
+            // program.deploy();
         }
 
         //let txids = news.txs_by_id.iter().map(|tx| (tx.0, tx.1)).collect::<Vec<Txid>>();
@@ -432,11 +439,8 @@ impl BitVMX {
             let decoded: BitVMXApiMessages = serde_json::from_str(&msg)?;
             match decoded {
                 BitVMXApiMessages::SetupProgram(id, role, peer_address, funding) => {
-                    let other_keys =
+                    let _other_keys =
                         self.setup_program(&id, role.clone(), funding, &peer_address)?;
-
-                    // TODO: send keys to the other party.
-                    // send_keys(comms, participant, id, peer_id, addr)
                 }
             }
         }
@@ -448,6 +452,7 @@ impl BitVMX {
         self.process_api_messages()?;
         self.process_p2p_messages()?;
         self.process_bitcoin_updates()?;
+
         Ok(())
     }
 }

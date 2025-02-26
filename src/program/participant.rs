@@ -72,11 +72,6 @@ impl ParticipantKeys {
             dispute_resolution,
         }
     }
-
-    pub fn get_keys(&self) -> Vec<u8> {
-        // TODO: Implement
-        vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-    }
 }
 
 #[derive(PartialEq, Clone, Serialize, Deserialize, Debug)]
