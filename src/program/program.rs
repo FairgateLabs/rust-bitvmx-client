@@ -27,11 +27,11 @@ pub enum ProgramState {
 
     // Exchange messages
     WaitingKeys,
-    KeysSent,
+    SendingKeys,
     WaitingNonces,
-    NoncesSent,
+    SendingNonces,
     WaitingSignatures,
-    SignaturesSent,
+    SendingSignatures,
 
     Completed,
 }
@@ -220,12 +220,14 @@ impl Program {
     }
 
     pub fn tick(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
+        info!("I am {:?} and I'm being ticked to advance", self.my_role);
+
         match &self.state {
             ProgramState::New => {
-                self.state = ProgramState::KeysSent;
+                self.move_to_next_state()?;
             }
 
-            ProgramState::KeysSent => {
+            ProgramState::SendingKeys => {
                 let my_keys = self.me.keys.clone().unwrap();
 
                 send(
@@ -234,9 +236,10 @@ impl Program {
                     self.other.p2p_address.clone(),
                     P2PMessageType::Keys,
                     my_keys,
-                )?;
+                )
+                .unwrap();
             }
-            ProgramState::NoncesSent => {
+            ProgramState::SendingNonces => {
                 //TODO: get dag messages from the drp
                 let dag_messages = vec![];
                 let nonces = program_context
@@ -250,7 +253,7 @@ impl Program {
                     nonces,
                 )?;
             }
-            ProgramState::SignaturesSent => {
+            ProgramState::SendingSignatures => {
                 let dag_messages_count = 10;
                 let signatures = program_context
                     .key_chain
@@ -265,9 +268,10 @@ impl Program {
             }
             _ => {
                 self.state = ProgramState::Error;
-                self.save()?;
             }
         }
+
+        self.save()?;
 
         Ok(())
     }
@@ -275,12 +279,12 @@ impl Program {
     pub fn move_to_next_state(&mut self) -> Result<(), BitVMXError> {
         let next_state = match self.my_role {
             ParticipantRole::Prover => match self.state {
-                ProgramState::New => ProgramState::KeysSent,
-                ProgramState::KeysSent => ProgramState::WaitingKeys,
-                ProgramState::WaitingKeys => ProgramState::NoncesSent,
-                ProgramState::NoncesSent => ProgramState::WaitingSignatures,
-                ProgramState::WaitingNonces => ProgramState::SignaturesSent,
-                ProgramState::SignaturesSent => ProgramState::WaitingSignatures,
+                ProgramState::New => ProgramState::SendingKeys,
+                ProgramState::SendingKeys => ProgramState::WaitingKeys,
+                ProgramState::WaitingKeys => ProgramState::SendingNonces,
+                ProgramState::SendingNonces => ProgramState::WaitingSignatures,
+                ProgramState::WaitingNonces => ProgramState::SendingSignatures,
+                ProgramState::SendingSignatures => ProgramState::WaitingSignatures,
                 ProgramState::WaitingSignatures => ProgramState::Ready,
                 ProgramState::Claimed => ProgramState::Claimed,
                 ProgramState::Challenged => ProgramState::Challenged,
@@ -290,12 +294,12 @@ impl Program {
             },
             ParticipantRole::Verifier => match self.state {
                 ProgramState::New => ProgramState::WaitingKeys,
-                ProgramState::WaitingKeys => ProgramState::KeysSent,
-                ProgramState::KeysSent => ProgramState::WaitingNonces,
-                ProgramState::WaitingNonces => ProgramState::NoncesSent,
-                ProgramState::NoncesSent => ProgramState::WaitingSignatures,
-                ProgramState::WaitingSignatures => ProgramState::SignaturesSent,
-                ProgramState::SignaturesSent => ProgramState::Ready,
+                ProgramState::WaitingKeys => ProgramState::SendingKeys,
+                ProgramState::SendingKeys => ProgramState::WaitingNonces,
+                ProgramState::WaitingNonces => ProgramState::SendingNonces,
+                ProgramState::SendingNonces => ProgramState::WaitingSignatures,
+                ProgramState::WaitingSignatures => ProgramState::SendingSignatures,
+                ProgramState::SendingSignatures => ProgramState::Ready,
                 ProgramState::Claimed => ProgramState::Claimed,
                 ProgramState::Challenged => ProgramState::Challenged,
                 ProgramState::Ready => ProgramState::Ready,
@@ -315,11 +319,11 @@ impl Program {
         matches!(
             self.state,
             ProgramState::WaitingKeys
-                | ProgramState::KeysSent
+                | ProgramState::SendingKeys
                 | ProgramState::WaitingNonces
-                | ProgramState::NoncesSent
+                | ProgramState::SendingNonces
                 | ProgramState::WaitingSignatures
-                | ProgramState::SignaturesSent
+                | ProgramState::SendingSignatures
         )
     }
 }

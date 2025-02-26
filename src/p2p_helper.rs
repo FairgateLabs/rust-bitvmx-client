@@ -2,6 +2,7 @@ use crate::{errors::BitVMXError, program::participant::P2PAddress};
 use p2p_handler::P2pHandler;
 use serde::Serialize;
 use serde_json::{json, Value};
+use tracing::info;
 use uuid::Uuid;
 
 const MIN_EXPECTED_MSG_LEN: usize = 4; // 2 bytes for version + 2 bytes for message type
@@ -14,8 +15,19 @@ pub fn send<T: Serialize>(
     msg_type: P2PMessageType,
     msg: T,
 ) -> Result<(), BitVMXError> {
+    info!(
+        "Sending message {:?} to {:?}",
+        msg_type,
+        p2p_address.address.to_string()
+    );
+
     let serialize_msg = serialize_msg(msg_type, program_id, msg)?;
-    comms.request(p2p_address.peer_id, p2p_address.address, serialize_msg)?;
+
+    info!("Sending message {:?} ", serialize_msg);
+
+    comms
+        .request(p2p_address.peer_id, p2p_address.address, serialize_msg)
+        .unwrap();
     Ok(())
 }
 

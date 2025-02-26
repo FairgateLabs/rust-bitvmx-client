@@ -55,7 +55,6 @@ fn init_bitvmx(role: &str) -> Result<(BitVMX, Funding, P2PAddress, DualChannel)>
 
     let address = P2PAddress::new(&bitvmx.address(), PeerId::from_str(&bitvmx.peer_id())?);
 
-    println!("Address: {:?}", address);
     //This messagas will come from the bridge client.
 
     Ok((bitvmx, funding, address, bridge_client))
@@ -133,14 +132,14 @@ pub fn test_single_run() -> Result<()> {
     // //TODO: Partial signs by counterparty
     // prover_bitvmx.deploy_program(&program_id)?;
 
-    // //TODO: main loop
-    // for i in 0..1000 {
-    //     if i % 20 == 0 {
-    //         //bitcoind.mine_block()?;
-    //     }
-    //     prover_bitvmx.tick()?;
-    //     verifier_bitvmx.tick()?;
-    // }
+    //TODO: main loop
+    for i in 0..3 {
+        if i % 20 == 0 {
+            //  bitcoin_client.mine_blocks(1)?;
+        }
+        me_bitvmx.tick()?;
+        other_bitvmx.tick()?;
+    }
 
     info!("Stopping bitcoind");
     bitcoind.stop()?;

@@ -327,9 +327,11 @@ impl BitVMX {
     }
 
     pub fn process_p2p_messages(&mut self) -> Result<(), BitVMXError> {
+        info!("Processing p2p messages");
         let message = self.program_context.comms.check_receive();
 
         if message.is_none() {
+            info!("No message received");
             return Ok(());
         }
 
@@ -342,7 +344,7 @@ impl BitVMX {
             ReceiveHandlerChannel::Msg(_peer_id, msg) => {
                 let (_version, msg_type, program_id, data) = deserialize_msg(msg).unwrap();
                 let mut program = self.load_program(&program_id).unwrap();
-
+                info!("Program {:?} received message {:?}", program_id, msg_type);
                 if !Self::should_program_handle_msg(&program.state, &msg_type) {
                     //TODO: log that we are not handling this message
                     return Ok(());
@@ -353,6 +355,7 @@ impl BitVMX {
                         let participant_keys = bytes_to_participant_keys(data)
                             .map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
+                        info!("Received keys from peer {:?}", _peer_id);
                         program.recieve_participant_keys(participant_keys.clone())?;
                     }
                     P2PMessageType::PublicNonces => {
@@ -459,9 +462,9 @@ impl BitVMX {
             (ProgramState::WaitingKeys, P2PMessageType::Keys) => true,
             (ProgramState::WaitingNonces, P2PMessageType::PublicNonces) => true,
             (ProgramState::WaitingSignatures, P2PMessageType::PartialSignatures) => true,
-            (ProgramState::KeysSent, P2PMessageType::KeysAck) => true,
-            (ProgramState::NoncesSent, P2PMessageType::PublicNoncesAck) => true,
-            (ProgramState::SignaturesSent, P2PMessageType::PartialSignaturesAck) => true,
+            (ProgramState::SendingKeys, P2PMessageType::KeysAck) => true,
+            (ProgramState::SendingNonces, P2PMessageType::PublicNoncesAck) => true,
+            (ProgramState::SendingSignatures, P2PMessageType::PartialSignaturesAck) => true,
             _ => false,
         }
     }
