@@ -226,24 +226,20 @@ impl KeyChain {
         participant_pubkey: PublicKey,
         my_pubkey: PublicKey,
     ) -> Result<(), BitVMXError> {
-        for (index, nonce) in nonces.iter().enumerate() {
-            let mut pubkey_nonce_map = HashMap::new();
-            pubkey_nonce_map.insert(participant_pubkey, nonce.clone());
+        let mut pubkey_nonce_map = HashMap::new();
+        pubkey_nonce_map.insert(participant_pubkey, nonces);
 
-            let program_id_with_index = format!("{program_id}_{index}");
+        let participant_pubkeys = vec![participant_pubkey, my_pubkey];
 
-            let participant_pubkeys = vec![participant_pubkey, my_pubkey];
+        // Initialize MuSig2 session
+        self.musig2_signer
+            .init_musig2(&program_id.to_string(), participant_pubkeys, my_pubkey)
+            .map_err(|_| BitVMXError::InitMusig2Error)?;
 
-            // Initialize MuSig2 session
-            self.musig2_signer
-                .init_musig2(&program_id_with_index, participant_pubkeys, my_pubkey)
-                .map_err(|_| BitVMXError::InitMusig2Error)?;
-
-            // Aggregate nonces
-            self.musig2_signer
-                .aggregate_nonces(&program_id_with_index, pubkey_nonce_map)
-                .map_err(|_| BitVMXError::AggregateNoncesError)?;
-        }
+        // Aggregate nonces
+        self.musig2_signer
+            .aggregate_nonces(&program_id.to_string(), pubkey_nonce_map)
+            .map_err(|_| BitVMXError::AggregateNoncesError)?;
 
         Ok(())
     }
@@ -254,14 +250,12 @@ impl KeyChain {
         partial_signatures: Vec<PartialSignature>,
         participant_pub_key: PublicKey,
     ) -> Result<(), BitVMXError> {
-        for (index, signature) in partial_signatures.iter().enumerate() {
-            let mut pubkey_signature_map = HashMap::new();
-            pubkey_signature_map.insert(participant_pub_key, signature.clone());
-            let program_id_with_index = format!("{program_id}_{index}");
-            self.musig2_signer
-                .aggregate_partial_signatures(&program_id_with_index, pubkey_signature_map)
-                .map_err(|_| BitVMXError::AggregatePartialSignaturesError)?;
-        }
+        let mut pubkey_signature_map = HashMap::new();
+        pubkey_signature_map.insert(participant_pub_key, partial_signatures);
+
+        self.musig2_signer
+            .aggregate_partial_signatures(&program_id.to_string(), pubkey_signature_map)
+            .map_err(|_| BitVMXError::AggregatePartialSignaturesError)?;
 
         Ok(())
     }
@@ -269,39 +263,25 @@ impl KeyChain {
     pub fn get_nonces(
         &self,
         program_id: uuid::Uuid,
-        dag_messages: Vec<Vec<u8>>,
+        messages: Vec<Vec<u8>>,
     ) -> Result<Vec<PubNonce>, BitVMXError> {
-        let mut pub_nonces = vec![];
+        let nonces = self
+            .musig2_signer
+            .get_my_pub_nonces(&program_id.to_string(), messages)
+            .map_err(|_| BitVMXError::AggregateNoncesError)?;
 
-        for index in 0..dag_messages.len() {
-            let musig_id = format!("{program_id}_{index}");
-            let nonce = self
-                .musig2_signer
-                .get_my_pub_nonce(&musig_id, dag_messages[index].clone())
-                .map_err(|_| BitVMXError::AggregateNoncesError)?;
-
-            pub_nonces.push(nonce);
-        }
-
-        Ok(pub_nonces)
+        Ok(nonces)
     }
 
     pub fn get_signatures(
         &self,
         program_id: uuid::Uuid,
-        num_messages: u32,
     ) -> Result<Vec<PartialSignature>, BitVMXError> {
-        let mut partial_signatures = vec![];
+        let signatures = self
+            .musig2_signer
+            .get_my_partial_signatures(&program_id.to_string())
+            .map_err(|_| BitVMXError::MuSig2SignerError)?;
 
-        for index in 0..num_messages {
-            let musig_id = format!("{program_id}_{index}");
-            let signature = self
-                .musig2_signer
-                .get_my_partial_signature(&musig_id)
-                .map_err(|_| BitVMXError::MuSig2SignerError)?;
-            partial_signatures.push(signature);
-        }
-
-        Ok(partial_signatures)
+        Ok(signatures)
     }
 }

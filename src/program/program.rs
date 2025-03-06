@@ -251,10 +251,7 @@ impl Program {
             }
             ProgramState::SendingSignatures => {
                 info!("{:?}: Sending signatures", self.my_role);
-                let dag_messages_count = 10;
-                let signatures = program_context
-                    .key_chain
-                    .get_signatures(self.program_id, dag_messages_count)?;
+                let signatures = program_context.key_chain.get_signatures(self.program_id)?;
                 request(
                     &program_context.comms,
                     &self.program_id,
