@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 fn config_trace() {
     let filter = EnvFilter::builder()
-        .parse("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitvmx_orchestrator=off,p2p_protocol=off,p2p_handler=off,tarpc=off") 
+        .parse("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitvmx_orchestrator=off,p2p_handler=off,tarpc=off") 
         .expect("Invalid filter");
 
     tracing_subscriber::fmt()
@@ -86,16 +86,13 @@ pub fn test_single_run() -> Result<()> {
         .init_wallet(Network::Regtest, "test_wallet")
         .unwrap();
 
-    info!("Mining 10 blocks to address {:?}", wallet);
-    bitcoin_client.mine_blocks_to_address(10, &wallet).unwrap();
+    info!("Mine 1 block to address {:?}", wallet);
+    bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
 
-    info!("Start prover");
+    let (mut prover_bitvmx, prover_funding, prover_address, my_bridge_channel) =
+        init_bitvmx("prover")?;
 
-    let (mut me_bitvmx, prover_funding, prover_address, my_bridge_channel) = init_bitvmx("prover")?;
-
-    info!("Start verifier");
-
-    let (mut other_bitvmx, verifier_funding, verifier_address, other_bridge_channel) =
+    let (mut verifier_bitvmx, verifier_funding, verifier_address, other_bridge_channel) =
         init_bitvmx("verifier")?;
 
     let program_id = Uuid::new_v4();
@@ -120,11 +117,11 @@ pub fn test_single_run() -> Result<()> {
 
     other_bridge_channel.send(1, setup_msg)?;
 
-    info!("Tick in me to detect program setup");
-    me_bitvmx.tick()?;
+    info!("PROVER Tick to detect program setup");
+    prover_bitvmx.tick()?;
 
-    info!("Tick in the other party to detect program setup");
-    other_bitvmx.tick()?;
+    info!("VERIFIER Tick to detect program setup");
+    verifier_bitvmx.tick()?;
 
     //TODO: Serializer / Deserialize keys this exachange should happen with p2p
 
@@ -133,12 +130,17 @@ pub fn test_single_run() -> Result<()> {
     // prover_bitvmx.deploy_program(&program_id)?;
 
     //TODO: main loop
-    for i in 0..3 {
-        if i % 20 == 0 {
-            //  bitcoin_client.mine_blocks(1)?;
-        }
-        me_bitvmx.tick()?;
-        other_bitvmx.tick()?;
+    for i in 0..1000 {
+        // if i % 20 == 0 {
+        //     //  bitcoin_client.mine_blocks(1)?;
+        // }
+        info!("NEW Ticks");
+        //  bitcoin_client.mine_blocks(1)?;
+        prover_bitvmx.tick()?;
+
+        std::thread::sleep(std::time::Duration::from_secs(5));
+
+        verifier_bitvmx.tick()?;
     }
 
     info!("Stopping bitcoind");
@@ -150,7 +152,7 @@ pub fn test_single_run() -> Result<()> {
     //TODO: Verifier waiting for any claim
 
     //sleep for 2 secs
-    std::thread::sleep(std::time::Duration::from_secs(2));
+    //std::thread::sleep(std::time::Duration::from_secs(2));
 
     Ok(())
 }

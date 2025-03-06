@@ -1,7 +1,7 @@
 use crate::{
     errors::{BitVMXError, ProgramError},
     keychain::KeyChain,
-    p2p_helper::{send, P2PMessageType},
+    p2p_helper::{request, response, P2PMessageType},
     types::ProgramContext,
 };
 use bitcoin::{Transaction, Txid};
@@ -104,12 +104,8 @@ impl Program {
     }
 
     pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Self, ProgramError> {
-        let mut program: Program = match storage.get(format!("program_{}", program_id))? {
-            Some(program) => program,
-            None => {
-                return Err(ProgramError::ProgramNotFound(*program_id));
-            }
-        };
+        let program = storage.get(format!("program_{}", program_id))?;
+        let mut program: Program = program.ok_or(ProgramError::ProgramNotFound(*program_id))?;
 
         program.storage = Some(storage.clone());
         program.drp.set_storage(storage);
@@ -117,10 +113,10 @@ impl Program {
         Ok(program)
     }
 
-    pub fn save(&self) -> Result<Uuid, ProgramError> {
+    pub fn save(&self) -> Result<(), ProgramError> {
         let key = format!("program_{}", self.program_id);
         self.storage.as_ref().unwrap().set(key, self, None)?;
-        Ok(self.program_id)
+        Ok(())
     }
 
     pub fn recieve_participant_keys(&mut self, keys: ParticipantKeys) -> Result<(), BitVMXError> {
@@ -220,32 +216,32 @@ impl Program {
     }
 
     pub fn tick(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
-        info!("I am {:?} and I'm being ticked to advance", self.my_role);
-
         match &self.state {
             ProgramState::New => {
                 self.move_to_next_state()?;
             }
 
             ProgramState::SendingKeys => {
+                info!("{:?}: Sending keys", self.my_role);
                 let my_keys = self.me.keys.clone().unwrap();
 
-                send(
+                request(
                     &program_context.comms,
                     &self.program_id,
                     self.other.p2p_address.clone(),
                     P2PMessageType::Keys,
                     my_keys,
-                )
-                .unwrap();
+                )?;
             }
             ProgramState::SendingNonces => {
+                info!("{:?}: Sending nonces", self.my_role);
+
                 //TODO: get dag messages from the drp
                 let dag_messages = vec![];
                 let nonces = program_context
                     .key_chain
                     .get_nonces(self.program_id, dag_messages)?;
-                send(
+                request(
                     &program_context.comms,
                     &self.program_id,
                     self.other.p2p_address.clone(),
@@ -254,11 +250,12 @@ impl Program {
                 )?;
             }
             ProgramState::SendingSignatures => {
+                info!("{:?}: Sending signatures", self.my_role);
                 let dag_messages_count = 10;
                 let signatures = program_context
                     .key_chain
                     .get_signatures(self.program_id, dag_messages_count)?;
-                send(
+                request(
                     &program_context.comms,
                     &self.program_id,
                     self.other.p2p_address.clone(),
@@ -267,11 +264,9 @@ impl Program {
                 )?;
             }
             _ => {
-                self.state = ProgramState::Error;
+                //self.state = ProgramState::Error;
             }
         }
-
-        self.save()?;
 
         Ok(())
     }
@@ -325,5 +320,44 @@ impl Program {
                 | ProgramState::WaitingSignatures
                 | ProgramState::SendingSignatures
         )
+    }
+
+    pub fn send_keys_ack(&self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
+        info!("{:?}: Sending keys ack", self.my_role);
+        response(
+            &program_context.comms,
+            &self.program_id,
+            self.other.p2p_address.peer_id,
+            P2PMessageType::KeysAck,
+            (),
+        )?;
+
+        Ok(())
+    }
+
+    pub fn send_nonces_ack(&self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
+        info!("{:?}: Sending nonces ack", self.my_role);
+        response(
+            &program_context.comms,
+            &self.program_id,
+            self.other.p2p_address.peer_id,
+            P2PMessageType::PublicNoncesAck,
+            (),
+        )?;
+
+        Ok(())
+    }
+
+    pub fn send_signatures_ack(&self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
+        info!("{:?}: Sending signatures ack", self.my_role);
+        response(
+            &program_context.comms,
+            &self.program_id,
+            self.other.p2p_address.peer_id,
+            P2PMessageType::PartialSignaturesAck,
+            (),
+        )?;
+
+        Ok(())
     }
 }

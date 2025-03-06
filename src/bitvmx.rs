@@ -39,7 +39,7 @@ use tracing::info;
 use uuid::Uuid;
 
 //TODO: This should be moved to a common place that could be used to share the messages api
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum BitVMXApiMessages {
     SetupProgram(Uuid, ParticipantRole, P2PAddress, Funding),
 }
@@ -62,8 +62,8 @@ impl Drop for BitVMX {
 
 impl BitVMX {
     pub fn new(config: Config) -> Result<Self, BitVMXError> {
-        let storage = Rc::new(Storage::new_with_path(&PathBuf::from(&config.storage.db))?);
-        let key_chain = KeyChain::new(&config, storage.clone())?;
+        let store = Rc::new(Storage::new_with_path(&PathBuf::from(&config.storage.db))?);
+        let key_chain = KeyChain::new(&config, store.clone())?;
         let communications_key = key_chain.communications_key.clone();
         let comms = P2pHandler::new::<LocalAllowList>(
             config.p2p_address().to_string(),
@@ -72,7 +72,7 @@ impl BitVMX {
 
         let orchestrator = Orchestrator::new_with_paths(
             &config.bitcoin,
-            storage.clone(),
+            store.clone(),
             key_chain.key_manager.clone(),
             config.monitor.checkpoint_height,
             config.monitor.confirmation_threshold,
@@ -95,7 +95,7 @@ impl BitVMX {
         Ok(Self {
             _config: config,
             program_context,
-            store: storage,
+            store,
             orchestrator,
             broker,
             broker_channel,
@@ -327,11 +327,11 @@ impl BitVMX {
     }
 
     pub fn process_p2p_messages(&mut self) -> Result<(), BitVMXError> {
-        info!("Processing p2p messages");
         let message = self.program_context.comms.check_receive();
 
+        info!("Message recieved? >>>>>>>>>>>>>>>>>>>>>>>>>");
+
         if message.is_none() {
-            info!("No message received");
             return Ok(());
         }
 
@@ -342,29 +342,59 @@ impl BitVMX {
 
         match message {
             ReceiveHandlerChannel::Msg(_peer_id, msg) => {
-                let (_version, msg_type, program_id, data) = deserialize_msg(msg).unwrap();
-                let mut program = self.load_program(&program_id).unwrap();
-                info!("Program {:?} received message {:?}", program_id, msg_type);
-                if !Self::should_program_handle_msg(&program.state, &msg_type) {
-                    //TODO: log that we are not handling this message
-                    return Ok(());
-                }
+                let (_version, msg_type, program_id, data) = deserialize_msg(msg)?;
+                let mut program = self.load_program(&program_id)?;
 
                 match msg_type {
                     P2PMessageType::Keys => {
+                        info!("{:?}: RECIEVE KEYSSS", program.my_role);
+
+                        if !Self::should_program_handle_msg(&program.state, &msg_type) {
+                            // Just send ack to the other party
+                            info!("{:?}: SEND KEYS ACK", program.my_role);
+                            program.send_keys_ack(&self.program_context)?;
+                            return Ok(());
+                        }
+
+                        info!("{:?}: SAVING KEYS", program.my_role);
+                        // Receive keys from the other party
                         let participant_keys = bytes_to_participant_keys(data)
                             .map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
-                        info!("Received keys from peer {:?}", _peer_id);
                         program.recieve_participant_keys(participant_keys.clone())?;
+
+                        // Send ack to the other party
+                        program.send_keys_ack(&self.program_context)?;
                     }
                     P2PMessageType::PublicNonces => {
+                        info!("{:?}: RECIEVE NONCES", program.my_role);
+
+                        if !Self::should_program_handle_msg(&program.state, &msg_type) {
+                            // Just send ack to the other party
+                            program.send_nonces_ack(&self.program_context)?;
+
+                            info!("{:?}: SEND NONCES ACK", program.my_role);
+                            return Ok(());
+                        }
+
                         let nonces =
                             bytes_to_nonces(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
                         program
                             .recieve_participant_nonces(nonces, &self.program_context.key_chain)?;
+
+                        // Send ack to the other party
+                        program.send_nonces_ack(&self.program_context)?;
                     }
                     P2PMessageType::PartialSignatures => {
+                        info!("{:?}: RECIEVE SIGNATURES", program.my_role);
+
+                        if !Self::should_program_handle_msg(&program.state, &msg_type) {
+                            // Just send ack to the other party
+                            info!("{:?}: SEND SIGNATURES ACK", program.my_role);
+                            program.send_signatures_ack(&self.program_context)?;
+                            return Ok(());
+                        }
+
                         let signatures = bytes_to_signatures(data)
                             .map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
@@ -372,8 +402,37 @@ impl BitVMX {
                             signatures,
                             &self.program_context.key_chain,
                         )?;
+
+                        // Send ack to the other party
+                        program.send_signatures_ack(&self.program_context)?;
                     }
-                    _ => {}
+                    P2PMessageType::KeysAck => {
+                        info!("{:?}: RECIEVE KEYS ACK", program.my_role);
+
+                        if !Self::should_program_handle_msg(&program.state, &msg_type) {
+                            return Ok(());
+                        }
+
+                        program.move_to_next_state()?;
+                    }
+                    P2PMessageType::PublicNoncesAck => {
+                        info!("{:?}: RECIEVE NONCES ACK", program.my_role);
+
+                        if !Self::should_program_handle_msg(&program.state, &msg_type) {
+                            return Ok(());
+                        }
+
+                        program.move_to_next_state()?;
+                    }
+                    P2PMessageType::PartialSignaturesAck => {
+                        info!("{:?}: RECIEVE SIGNATURES ACK", program.my_role);
+
+                        if !Self::should_program_handle_msg(&program.state, &msg_type) {
+                            return Ok(());
+                        }
+
+                        program.move_to_next_state()?;
+                    }
                 }
             }
             ReceiveHandlerChannel::Error(e) => {
@@ -381,6 +440,7 @@ impl BitVMX {
             } //TODO: handle error
         }
 
+        info!("Chau >>>>>>>>>>>>>>>>>>>>>>>>>");
         Ok(())
     }
 
@@ -432,6 +492,7 @@ impl BitVMX {
         //TODO: Dedice if we want to process all message in a while or just one per tick
         if let Some((msg, _from)) = self.broker_channel.recv()? {
             let decoded: BitVMXApiMessages = serde_json::from_str(&msg)?;
+            // info!("Processing api message {:#?}", decoded);
 
             match decoded {
                 BitVMXApiMessages::SetupProgram(id, role, peer_address, funding) => {
@@ -442,6 +503,7 @@ impl BitVMX {
                     //TODO: This should be done in a single atomic operation
                     self.add_new_program(&id)?;
                     self.setup_program(&id, role.clone(), funding, &peer_address)?;
+                    info!("{}: Program Setup", role);
                 }
             }
         }
@@ -450,10 +512,10 @@ impl BitVMX {
     }
 
     pub fn tick(&mut self) -> Result<(), BitVMXError> {
+        self.process_p2p_messages()?;
         self.advance_programs()?;
         self.process_api_messages()?;
-        self.process_p2p_messages()?;
-        self.process_bitcoin_updates()?;
+        //self.process_bitcoin_updates()?;
         Ok(())
     }
 
@@ -465,7 +527,10 @@ impl BitVMX {
             (ProgramState::SendingKeys, P2PMessageType::KeysAck) => true,
             (ProgramState::SendingNonces, P2PMessageType::PublicNoncesAck) => true,
             (ProgramState::SendingSignatures, P2PMessageType::PartialSignaturesAck) => true,
-            _ => false,
+            _ => {
+                info!("NO SE HANDLEA: {:?} {:?}", state, msg_type);
+                false
+            }
         }
     }
 
@@ -475,6 +540,7 @@ impl BitVMX {
             program.tick(&mut self.program_context)?;
 
             if !program.is_active() {
+                info!("INACTIVO!!!! {:?} ", program.program_id);
                 self.mark_program_inactive(&program.program_id)?;
             }
         }

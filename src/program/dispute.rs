@@ -29,7 +29,7 @@ impl SearchParams {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Funding {
     pub txid: Txid,
     pub vout: u32,
