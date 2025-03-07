@@ -16,8 +16,8 @@ builder:
 key_manager:
   network: regtest
   key_derivation_path: m/101/1/0/0/
-  key_derivation_seed: deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
-  winternitz_seed: deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+  key_derivation_seed: deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeec
+  winternitz_seed: deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeec
 
 key_storage:
   password: secret_password
@@ -40,3 +40,7 @@ monitor:
 
 broker_storage: /tmp/verifier/broker.db
 broker_port: 33333
+
+client: 
+  retry: 1
+  retry_delay: 1000

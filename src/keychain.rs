@@ -17,6 +17,7 @@ use protocol_builder::{
     unspendable::unspendable_key,
 };
 use storage_backend::storage::{KeyValueStore, Storage};
+use tracing::error;
 
 use crate::{config::Config, errors::BitVMXError, program::program::Program};
 
@@ -224,22 +225,27 @@ impl KeyChain {
         program_id: uuid::Uuid,
         nonces: Vec<PubNonce>,
         participant_pubkey: PublicKey,
-        my_pubkey: PublicKey,
     ) -> Result<(), BitVMXError> {
         let mut pubkey_nonce_map = HashMap::new();
         pubkey_nonce_map.insert(participant_pubkey, nonces);
 
-        let participant_pubkeys = vec![participant_pubkey, my_pubkey];
+        self.musig2_signer
+            .aggregate_nonces(&program_id.to_string(), pubkey_nonce_map)
+            .map_err(BitVMXError::MuSig2SignerError)?;
 
+        Ok(())
+    }
+
+    pub fn init_musig2(
+        &self,
+        program_id: uuid::Uuid,
+        participant_pubkeys: Vec<PublicKey>,
+        my_pubkey: PublicKey,
+    ) -> Result<(), BitVMXError> {
         // Initialize MuSig2 session
         self.musig2_signer
             .init_musig2(&program_id.to_string(), participant_pubkeys, my_pubkey)
-            .map_err(|_| BitVMXError::InitMusig2Error)?;
-
-        // Aggregate nonces
-        self.musig2_signer
-            .aggregate_nonces(&program_id.to_string(), pubkey_nonce_map)
-            .map_err(|_| BitVMXError::AggregateNoncesError)?;
+            .map_err(BitVMXError::MuSig2SignerError)?;
 
         Ok(())
     }
@@ -255,7 +261,7 @@ impl KeyChain {
 
         self.musig2_signer
             .aggregate_partial_signatures(&program_id.to_string(), pubkey_signature_map)
-            .map_err(|_| BitVMXError::AggregatePartialSignaturesError)?;
+            .map_err(BitVMXError::MuSig2SignerError)?;
 
         Ok(())
     }
@@ -268,7 +274,7 @@ impl KeyChain {
         let nonces = self
             .musig2_signer
             .get_my_pub_nonces(&program_id.to_string(), messages)
-            .map_err(|_| BitVMXError::AggregateNoncesError)?;
+            .map_err(BitVMXError::MuSig2SignerError)?;
 
         Ok(nonces)
     }
@@ -280,8 +286,16 @@ impl KeyChain {
         let signatures = self
             .musig2_signer
             .get_my_partial_signatures(&program_id.to_string())
-            .map_err(|_| BitVMXError::MuSig2SignerError)?;
+            .map_err(BitVMXError::MuSig2SignerError)?;
 
         Ok(signatures)
+    }
+
+    pub fn set_musig2_messages(&self, program_id: uuid::Uuid) -> Result<(), BitVMXError> {
+        let messages = vec![vec![1], vec![2], vec![3]];
+        self.musig2_signer
+            .get_my_pub_nonces(&program_id.to_string(), messages)
+            .map_err(BitVMXError::MuSig2SignerError)?;
+        Ok(())
     }
 }

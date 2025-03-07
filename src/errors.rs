@@ -1,6 +1,7 @@
 use bitcoin::{consensus::encode::FromHexError, network::ParseNetworkError};
 use bitcoincore_rpc::bitcoin::{key::ParsePublicKeyError, sighash::SighashTypeParseError};
 use bitvmx_broker::rpc::errors::BrokerError;
+use bitvmx_musig2::errors::Musig2SignerError;
 use bitvmx_orchestrator::errors::OrchestratorError;
 use config as settings;
 use key_manager::errors::{KeyManagerError, KeyStoreError, WinternitzError};
@@ -80,17 +81,8 @@ pub enum BitVMXError {
     #[error("Failed to process message")]
     MessageProcessingError,
 
-    #[error("Failed to aggregate nonces")]
-    AggregateNoncesError,
-
-    #[error("Failed to initialize MuSig2")]
-    InitMusig2Error,
-
-    #[error("Failed to aggregate partial signatures")]
-    AggregatePartialSignaturesError,
-
-    #[error("Error from MuSig2 client")]
-    MuSig2SignerError,
+    #[error("Failed in MuSig2 signer {0}")]
+    MuSig2SignerError(#[from] Musig2SignerError),
 
     #[error("Program already exists")]
     ProgramAlreadyExists(Uuid),
@@ -186,13 +178,13 @@ pub enum ClientError {
 #[derive(Error, Debug, PartialEq)]
 pub enum ParseError {
     #[error("Invalid nonce")]
-    InvalidNonce,
+    InvalidNonces,
 
     #[error("Invalid public key")]
-    InvalidPublicKey,
+    InvalidPublicKeys,
 
     #[error("Invalid signature")]
-    InvalidSignature,
+    InvalidPartialSignatures,
 
     #[error("Invalid participant keys")]
     InvalidParticipantKeys,

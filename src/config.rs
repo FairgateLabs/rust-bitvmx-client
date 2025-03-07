@@ -1,7 +1,7 @@
 use bitvmx_bitcoin_rpc::rpc_config::RpcConfig;
 use bitvmx_orchestrator::config::MonitorConfig;
 use key_manager::config::{KeyManagerConfig, KeyStorageConfig};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tracing::info;
 use uuid::Uuid;
@@ -33,6 +33,12 @@ pub struct StorageConfig {
     pub program: String, //TODO: Unifiy stroage
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ClientConfig {
+    pub retry: u32,
+    pub retry_delay: u64,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)] // enforce strict field compliance
 pub struct Config {
@@ -45,6 +51,7 @@ pub struct Config {
     pub monitor: MonitorConfig,
     pub broker_storage: String,
     pub broker_port: u16,
+    pub client: ClientConfig,
 }
 
 impl Config {

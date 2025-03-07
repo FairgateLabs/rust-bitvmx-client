@@ -1,7 +1,7 @@
 use crate::{
     config::Config,
     errors::BitVMXError,
-    helper::{bytes_to_nonces, bytes_to_participant_keys, bytes_to_signatures},
+    helper::{parse_keys, parse_nonces, parse_signatures},
     keychain::KeyChain,
     p2p_helper::{deserialize_msg, P2PMessageType},
     program::{
@@ -123,7 +123,15 @@ impl BitVMX {
         let other = ParticipantData::new(peer_address, None);
 
         // Create a program with the funding information, and the dispute resolution search parameters.
-        Program::new(*id, my_role, me, other, funding, self.store.clone())?;
+        Program::new(
+            *id,
+            my_role,
+            me,
+            other,
+            funding,
+            self.store.clone(),
+            self._config.client.clone(),
+        )?;
 
         Ok(())
     }
@@ -358,10 +366,25 @@ impl BitVMX {
 
                         info!("{:?}: SAVING KEYS", program.my_role);
                         // Receive keys from the other party
-                        let participant_keys = bytes_to_participant_keys(data)
-                            .map_err(|_| BitVMXError::InvalidMessageFormat)?;
+                        let participant_keys =
+                            parse_keys(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
                         program.recieve_participant_keys(participant_keys.clone())?;
+
+                        let my_protocol_key = program.me.keys.as_ref().unwrap().protocol;
+                        let other_protocol_key = program.other.keys.as_ref().unwrap().protocol;
+
+                        self.program_context.key_chain.init_musig2(
+                            program.program_id,
+                            vec![my_protocol_key, other_protocol_key],
+                            my_protocol_key,
+                        )?;
+
+                        //TODO: Once the keys are exchanged, the program should be able to send the nonces
+                        // in order to get the nonces messages should be set in musig2
+                        self.program_context
+                            .key_chain
+                            .set_musig2_messages(program.program_id)?;
 
                         // Send ack to the other party
                         program.send_keys_ack(&self.program_context)?;
@@ -378,7 +401,8 @@ impl BitVMX {
                         }
 
                         let nonces =
-                            bytes_to_nonces(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+                            parse_nonces(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+
                         program
                             .recieve_participant_nonces(nonces, &self.program_context.key_chain)?;
 
@@ -395,7 +419,7 @@ impl BitVMX {
                             return Ok(());
                         }
 
-                        let signatures = bytes_to_signatures(data)
+                        let signatures = parse_signatures(data)
                             .map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
                         program.recieve_participant_partial_signatures(
