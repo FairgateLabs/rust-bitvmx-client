@@ -374,10 +374,15 @@ impl BitVMX {
                         let my_protocol_key = program.me.keys.as_ref().unwrap().protocol;
                         let other_protocol_key = program.other.keys.as_ref().unwrap().protocol;
 
+                        //TODO: get dag messages from the drp, this will be the messages that will be signed
+                        //TODO: this will changed , messages will be set in the init.
+                        let messages = vec![vec![1], vec![2], vec![3]];
+
                         self.program_context.key_chain.init_musig2(
                             program.program_id,
                             vec![my_protocol_key, other_protocol_key],
                             my_protocol_key,
+                            messages,
                         )?;
 
                         //TODO: Once the keys are exchanged, the program should be able to send the nonces
@@ -561,10 +566,10 @@ impl BitVMX {
     fn advance_programs(&mut self) -> Result<(), BitVMXError> {
         let programs = self.get_active_programs()?;
         for mut program in programs {
-            program.tick(&mut self.program_context)?;
+            program.tick(&self.program_context)?;
 
-            if !program.is_active() {
-                info!("INACTIVO!!!! {:?} ", program.program_id);
+            if !program.is_setting_up() {
+                info!("Program is ready: {:?} ", program.program_id);
                 self.mark_program_inactive(&program.program_id)?;
             }
         }

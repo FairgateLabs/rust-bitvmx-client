@@ -1,6 +1,6 @@
 use crate::{errors::ParseError, program::participant::ParticipantKeys};
 use bitcoin::{
-    key::{constants, rand, Keypair, Secp256k1},
+    key::{rand, Keypair, Secp256k1},
     PublicKey, XOnlyPublicKey,
 };
 use bitvmx_musig2::{PartialSignature, PubNonce};

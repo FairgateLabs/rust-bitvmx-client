@@ -215,14 +215,6 @@ impl Program {
         self.witness_data.get(&txid)
     }
 
-    fn deploy_program(&mut self) {
-        match self.my_role {
-            ParticipantRole::Prover => info!("Deploying the prover program"),
-            ParticipantRole::Verifier => info!("Deploying the verifier program"),
-        }
-        //deploy_program //TODO: add function to deploy program
-    }
-
     pub fn is_ready(&self) -> bool {
         self.state == ProgramState::New
     }
@@ -264,17 +256,8 @@ impl Program {
                 }
 
                 info!("{:?}: Sending nonces", self.my_role);
-                //TODO: get dag messages from the drp, this will be the messages that will be signed
-                //TODO: this will changed , messages will be set in the init.
-                let dag_messages = vec![
-                    "message1".as_bytes().to_vec(),
-                    "message2".as_bytes().to_vec(),
-                    "message3".as_bytes().to_vec(),
-                ];
 
-                let nonces = program_context
-                    .key_chain
-                    .get_nonces(self.program_id, dag_messages)?;
+                let nonces = program_context.key_chain.get_nonces(self.program_id)?;
 
                 request(
                     &program_context.comms,
@@ -428,7 +411,7 @@ impl Program {
         Ok(())
     }
 
-    pub fn is_active(&self) -> bool {
+    pub fn is_setting_up(&self) -> bool {
         matches!(
             self.state,
             ProgramState::WaitingKeys

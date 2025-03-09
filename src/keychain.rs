@@ -17,7 +17,6 @@ use protocol_builder::{
     unspendable::unspendable_key,
 };
 use storage_backend::storage::{KeyValueStore, Storage};
-use tracing::error;
 
 use crate::{config::Config, errors::BitVMXError, program::program::Program};
 
@@ -241,10 +240,15 @@ impl KeyChain {
         program_id: uuid::Uuid,
         participant_pubkeys: Vec<PublicKey>,
         my_pubkey: PublicKey,
+        messages: Vec<Vec<u8>>,
     ) -> Result<(), BitVMXError> {
-        // Initialize MuSig2 session
         self.musig2_signer
-            .init_musig2(&program_id.to_string(), participant_pubkeys, my_pubkey)
+            .init_musig2(
+                &program_id.to_string(),
+                participant_pubkeys,
+                my_pubkey,
+                messages,
+            )
             .map_err(BitVMXError::MuSig2SignerError)?;
 
         Ok(())
@@ -266,14 +270,10 @@ impl KeyChain {
         Ok(())
     }
 
-    pub fn get_nonces(
-        &self,
-        program_id: uuid::Uuid,
-        messages: Vec<Vec<u8>>,
-    ) -> Result<Vec<PubNonce>, BitVMXError> {
+    pub fn get_nonces(&self, program_id: uuid::Uuid) -> Result<Vec<PubNonce>, BitVMXError> {
         let nonces = self
             .musig2_signer
-            .get_my_pub_nonces(&program_id.to_string(), messages)
+            .get_my_pub_nonces(&program_id.to_string())
             .map_err(BitVMXError::MuSig2SignerError)?;
 
         Ok(nonces)
@@ -292,9 +292,8 @@ impl KeyChain {
     }
 
     pub fn set_musig2_messages(&self, program_id: uuid::Uuid) -> Result<(), BitVMXError> {
-        let messages = vec![vec![1], vec![2], vec![3]];
         self.musig2_signer
-            .get_my_pub_nonces(&program_id.to_string(), messages)
+            .get_my_pub_nonces(&program_id.to_string())
             .map_err(BitVMXError::MuSig2SignerError)?;
         Ok(())
     }
