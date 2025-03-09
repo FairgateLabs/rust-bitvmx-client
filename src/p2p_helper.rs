@@ -1,21 +1,35 @@
 use crate::{errors::BitVMXError, program::participant::P2PAddress};
-use p2p_handler::P2pHandler;
+use p2p_handler::{P2pHandler, PeerId};
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{json, to_vec, Value};
 use uuid::Uuid;
 
 const MIN_EXPECTED_MSG_LEN: usize = 4; // 2 bytes for version + 2 bytes for message type
-const MAX_EXPECTED_MSG_LEN: usize = 1024; // Maximum length for a message //TODO: Change this value
+const MAX_EXPECTED_MSG_LEN: usize = 1000000; // Maximum length for a message //TODO: Change this value
 
-pub fn send<T: Serialize>(
-    comms: &mut P2pHandler,
+pub fn request<T: Serialize>(
+    comms: &P2pHandler,
     program_id: &Uuid,
     p2p_address: P2PAddress,
     msg_type: P2PMessageType,
     msg: T,
 ) -> Result<(), BitVMXError> {
     let serialize_msg = serialize_msg(msg_type, program_id, msg)?;
-    comms.request(p2p_address.peer_id, p2p_address.address, serialize_msg)?;
+    comms
+        .request(p2p_address.peer_id, p2p_address.address, serialize_msg)
+        .unwrap();
+    Ok(())
+}
+
+pub fn response<T: Serialize>(
+    comms: &P2pHandler,
+    program_id: &Uuid,
+    peer_id: PeerId,
+    msg_type: P2PMessageType,
+    msg: T,
+) -> Result<(), BitVMXError> {
+    let serialize_msg = serialize_msg(msg_type, program_id, msg)?;
+    comms.response(peer_id, serialize_msg).unwrap();
     Ok(())
 }
 
@@ -144,25 +158,26 @@ pub fn deserialize_msg(
 
     let msg = payload
         .get("msg")
-        .and_then(|m| m.as_array())
         .ok_or(BitVMXError::InvalidMessageFormat)?;
     // Convert program ID to Uuid
     let program_id = Uuid::parse_str(program_id).map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
+    //TODO: CHECK THIS WITH @KEVIN
     // Validate that "msg" is a byte array by filtering out invalid values
-    let message: Vec<u8> = msg
-        .iter()
-        .filter_map(|v| {
-            v.as_u64()
-                .and_then(|b| if b <= 255 { Some(b as u8) } else { None })
-        })
-        .collect();
+    // let message = to_vec(&msg)
+    //     .unwrap()
+    //     .iter()
+    //     .filter_map(|v| {
+    //         v.as_u64()
+    //             .and_then(|b| if b <= 255 { Some(b as u8) } else { None })
+    //     })
+    //     .collect();
 
-    if message.len() != msg.len() {
-        return Err(BitVMXError::InvalidMessageFormat); // Ensure no invalid bytes after filtering previously
-    }
+    // if message.len() != msg.len() {
+    //     return Err(BitVMXError::InvalidMessageFormat); // Ensure no invalid bytes after filtering previously
+    // }
 
-    Ok((version, msg_type, program_id, message))
+    Ok((version, msg_type, program_id, to_vec(&msg).unwrap()))
 }
 
 #[cfg(test)]

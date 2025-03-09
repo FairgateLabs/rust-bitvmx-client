@@ -40,3 +40,7 @@ monitor:
 
 broker_storage: /tmp/prover/broker.db
 broker_port: 22222
+
+client: 
+  retry: 1
+  retry_delay: 1000

@@ -1,10 +1,13 @@
 use crate::{
+    config::ClientConfig,
     errors::{BitVMXError, ProgramError},
-    p2p_helper::{send, P2PMessageType},
+    keychain::KeyChain,
+    p2p_helper::{request, response, P2PMessageType},
+    types::{ProgramContext, ProgramRequestInfo},
 };
 use bitcoin::{Transaction, Txid};
+use chrono::Utc;
 use key_manager::winternitz::WinternitzSignature;
-use p2p_handler::P2pHandler;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, rc::Rc};
 use storage_backend::storage::{KeyValueStore, Storage};
@@ -19,20 +22,28 @@ use super::{
 #[derive(PartialEq, Clone, Serialize, Deserialize, Debug)]
 pub enum ProgramState {
     New,
-    Ready,
     Claimed,
     Challenged,
-    DeployProgram,
+    Ready,
     Error,
 
-    KeysWaiting,
-    KeysSent,
+    // Exchange messages
+    WaitingKeys,
+    SendingKeys,
+    WaitingNonces,
+    SendingNonces,
+    WaitingSignatures,
+    SendingSignatures,
 
-    NoncesWaiting,
-    NoncesSent,
+    Completed,
+}
 
-    SignaturesWaiting,
-    SignaturesSent,
+#[derive(Debug, Clone)]
+enum StoreKey {
+    LastRequestKeys(Uuid),
+    LastRequestNonces(Uuid),
+    LastRequestSignatures(Uuid),
+    Program(Uuid),
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -73,6 +84,7 @@ pub struct Program {
     witness_data: HashMap<Txid, WitnessData>,
     #[serde(skip)]
     storage: Option<Rc<Storage>>,
+    config: ClientConfig,
 }
 
 impl Program {
@@ -83,6 +95,7 @@ impl Program {
         other: ParticipantData,
         funding: Funding,
         storage: Rc<Storage>,
+        config: ClientConfig,
     ) -> Result<Self, ProgramError> {
         let drp = DisputeResolutionProtocol::new(funding, program_id, storage.clone())?;
 
@@ -95,6 +108,7 @@ impl Program {
             state: ProgramState::New,
             witness_data: HashMap::new(),
             storage: Some(storage),
+            config,
         };
 
         program.save()?;
@@ -103,12 +117,8 @@ impl Program {
     }
 
     pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Self, ProgramError> {
-        let mut program: Program = match storage.get(format!("program_{}", program_id))? {
-            Some(program) => program,
-            None => {
-                return Err(ProgramError::ProgramNotFound(*program_id));
-            }
-        };
+        let program = storage.get(Self::get_key(StoreKey::Program(*program_id)))?;
+        let mut program: Program = program.ok_or(ProgramError::ProgramNotFound(*program_id))?;
 
         program.storage = Some(storage.clone());
         program.drp.set_storage(storage);
@@ -116,13 +126,13 @@ impl Program {
         Ok(program)
     }
 
-    pub fn save(&self) -> Result<Uuid, ProgramError> {
-        let key = format!("program_{}", self.program_id);
+    pub fn save(&self) -> Result<(), ProgramError> {
+        let key = Self::get_key(StoreKey::Program(self.program_id));
         self.storage.as_ref().unwrap().set(key, self, None)?;
-        Ok(self.program_id)
+        Ok(())
     }
 
-    pub fn set_other_keys(&mut self, keys: ParticipantKeys) -> Result<(), BitVMXError> {
+    pub fn recieve_participant_keys(&mut self, keys: ParticipantKeys) -> Result<(), BitVMXError> {
         self.other.keys = Some(keys);
 
         let search_params = SearchParams::new(8, 32);
@@ -133,7 +143,31 @@ impl Program {
             search_params,
         )?;
 
-        self.save()?;
+        self.move_to_next_state()?;
+
+        Ok(())
+    }
+
+    pub fn recieve_participant_nonces(
+        &mut self,
+        nonces: Vec<bitvmx_musig2::PubNonce>,
+        key_chain: &KeyChain,
+    ) -> Result<(), BitVMXError> {
+        let participant_key = self.other.keys.as_ref().unwrap().protocol;
+        key_chain.add_nonces(self.program_id, nonces, participant_key)?;
+        self.move_to_next_state()?;
+
+        Ok(())
+    }
+
+    pub fn recieve_participant_partial_signatures(
+        &mut self,
+        signatures: Vec<bitvmx_musig2::PartialSignature>,
+        key_chain: &KeyChain,
+    ) -> Result<(), BitVMXError> {
+        let other_pubkey = self.other.keys.as_ref().unwrap().protocol;
+        key_chain.add_signatures(self.program_id, signatures, other_pubkey)?;
+        self.move_to_next_state()?;
 
         Ok(())
     }
@@ -181,100 +215,250 @@ impl Program {
         self.witness_data.get(&txid)
     }
 
-    fn send_keys(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
-        if self.state == ProgramState::Ready {
-            let keys = self.me.keys.clone().unwrap();
-
-            send(
-                comms,
-                &self.program_id,
-                self.other.p2p_address.clone(),
-                P2PMessageType::Keys,
-                keys,
-            )?;
-            self.state = ProgramState::KeysSent;
-        }
-        Ok(())
-    }
-
-    fn send_nonces(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
-        if self.state == ProgramState::KeysSent {
-            let nonces: Vec<u8> = vec![0, 1, 2, 3];
-            send(
-                comms,
-                &self.program_id,
-                self.other.p2p_address.clone(),
-                P2PMessageType::PublicNonces,
-                nonces,
-            )?;
-            self.state = ProgramState::NoncesSent;
-        }
-
-        self.save()?;
-
-        Ok(())
-    }
-
-    fn send_signatures(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
-        if self.state == ProgramState::NoncesSent {
-            let signatures: Vec<u8> = vec![0, 1, 2, 3];
-
-            send(
-                comms,
-                &self.program_id,
-                self.other.p2p_address.clone(),
-                P2PMessageType::PartialSignatures,
-                signatures,
-            )?;
-
-            match self.my_role {
-                ParticipantRole::Prover => self.state = ProgramState::SignaturesSent,
-                ParticipantRole::Verifier => {
-                    self.state = ProgramState::DeployProgram;
-                    self.deploy_program();
-                }
-            }
-        } else {
-            self.state = ProgramState::Error;
-        }
-
-        self.save()?;
-        Ok(())
-    }
-
-    fn deploy_program(&mut self) {
-        match self.my_role {
-            ParticipantRole::Prover => info!("Deploying the prover program"),
-            ParticipantRole::Verifier => info!("Deploying the verifier program"),
-        }
-        //deploy_program //TODO: add function to deploy program
-    }
-
     pub fn is_ready(&self) -> bool {
-        self.state == ProgramState::Ready
+        self.state == ProgramState::New
     }
 
-    pub fn tick(&mut self, comms: &mut P2pHandler) -> Result<(), BitVMXError> {
-        match (&self.state, &self.my_role) {
-            (ProgramState::New, _) => {
-                self.state = ProgramState::Ready;
+    pub fn tick(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
+        match &self.state {
+            ProgramState::New => {
+                self.move_to_next_state()?;
             }
 
-            (ProgramState::Ready, _) => self.send_keys(comms)?,
-            (ProgramState::KeysSent, _) => self.send_nonces(comms)?,
-            (ProgramState::NoncesSent, _) => self.send_signatures(comms)?, // Sign program and send signature
-            (ProgramState::SignaturesSent, ParticipantRole::Prover) => self.deploy_program(),
+            ProgramState::SendingKeys => {
+                let my_keys = self.me.keys.clone().unwrap();
 
+                let should_send_request =
+                    self.should_send_request(StoreKey::LastRequestKeys(self.program_id))?;
+
+                if !should_send_request {
+                    return Ok(());
+                }
+
+                info!("{:?}: Sending keys", self.my_role);
+
+                request(
+                    &program_context.comms,
+                    &self.program_id,
+                    self.other.p2p_address.clone(),
+                    P2PMessageType::Keys,
+                    my_keys,
+                )?;
+
+                self.save_retry(StoreKey::LastRequestKeys(self.program_id))?;
+            }
+            ProgramState::SendingNonces => {
+                let should_send_request =
+                    self.should_send_request(StoreKey::LastRequestNonces(self.program_id))?;
+
+                if !should_send_request {
+                    return Ok(());
+                }
+
+                info!("{:?}: Sending nonces", self.my_role);
+
+                let nonces = program_context.key_chain.get_nonces(self.program_id)?;
+
+                request(
+                    &program_context.comms,
+                    &self.program_id,
+                    self.other.p2p_address.clone(),
+                    P2PMessageType::PublicNonces,
+                    nonces,
+                )?;
+
+                self.save_retry(StoreKey::LastRequestNonces(self.program_id))?;
+            }
+            ProgramState::SendingSignatures => {
+                let should_send_request =
+                    self.should_send_request(StoreKey::LastRequestSignatures(self.program_id))?;
+
+                if !should_send_request {
+                    info!("{:?}: Not sending signatures", self.my_role);
+                    return Ok(());
+                }
+
+                info!("{:?}: Sending signatures", self.my_role);
+
+                let signatures = program_context.key_chain.get_signatures(self.program_id)?;
+
+                request(
+                    &program_context.comms,
+                    &self.program_id,
+                    self.other.p2p_address.clone(),
+                    P2PMessageType::PartialSignatures,
+                    signatures,
+                )?;
+
+                self.save_retry(StoreKey::LastRequestSignatures(self.program_id))?;
+            }
             _ => {
-                self.state = ProgramState::Error;
+                //self.state = ProgramState::Error;
             }
         }
 
+        Ok(())
+    }
+
+    fn get_key(key: StoreKey) -> String {
+        let prefix = "program";
+        match key {
+            StoreKey::LastRequestKeys(id) => format!("{prefix}/{id}/last_request_keys"),
+            StoreKey::LastRequestNonces(id) => {
+                format!("{prefix}/{id}/last_request_nonces")
+            }
+            StoreKey::LastRequestSignatures(id) => {
+                format!("{prefix}/{id}/last_request_signatures")
+            }
+            StoreKey::Program(id) => format!("{prefix}/{id}"),
+        }
+    }
+
+    fn save_retry(&mut self, key: StoreKey) -> Result<(), BitVMXError> {
+        let retries = self
+            .storage
+            .as_ref()
+            .unwrap()
+            .get(Self::get_key(key.clone()))?
+            .unwrap_or(ProgramRequestInfo::default())
+            .retries
+            + 1;
+
+        let last_request = ProgramRequestInfo {
+            retries,
+            last_request_time: Utc::now(),
+        };
+
+        self.storage
+            .as_ref()
+            .unwrap()
+            .set(Self::get_key(key), last_request, None)?;
+
+        Ok(())
+    }
+
+    fn should_send_request(&mut self, key: StoreKey) -> Result<bool, BitVMXError> {
+        let retry_delay = self.config.retry_delay;
+        let last_request: ProgramRequestInfo = self
+            .storage
+            .as_ref()
+            .unwrap()
+            .get(Self::get_key(key.clone()))?
+            .unwrap_or(ProgramRequestInfo::default());
+
+        info!(
+            "Last request retries: {}, time: {:?}, key: {:?}",
+            last_request.retries, last_request.last_request_time, key
+        );
+
+        if last_request.retries >= self.config.retry {
+            return Ok(false);
+        }
+
+        if last_request.retries >= self.config.retry {
+            return Ok(false);
+        }
+
+        if last_request.retries == 0 {
+            return Ok(true);
+        }
+
+        let now = Utc::now();
+        let diff = now.signed_duration_since(last_request.last_request_time);
+        if diff.num_milliseconds() < retry_delay as i64 {
+            return Ok(false);
+        }
+
+        Ok(true)
+    }
+
+    pub fn move_to_next_state(&mut self) -> Result<(), BitVMXError> {
+        let next_state = match self.my_role {
+            ParticipantRole::Prover => match self.state {
+                ProgramState::New => ProgramState::SendingKeys,
+                ProgramState::SendingKeys => ProgramState::WaitingKeys,
+                ProgramState::WaitingKeys => ProgramState::SendingNonces,
+                ProgramState::SendingNonces => ProgramState::WaitingNonces,
+                ProgramState::WaitingNonces => ProgramState::SendingSignatures,
+                ProgramState::SendingSignatures => ProgramState::WaitingSignatures,
+                ProgramState::WaitingSignatures => ProgramState::Ready,
+                ProgramState::Claimed => ProgramState::Claimed,
+                ProgramState::Challenged => ProgramState::Challenged,
+                ProgramState::Ready => ProgramState::Ready,
+                ProgramState::Error => ProgramState::Error,
+                ProgramState::Completed => ProgramState::Completed,
+            },
+            ParticipantRole::Verifier => match self.state {
+                ProgramState::New => ProgramState::WaitingKeys,
+                ProgramState::WaitingKeys => ProgramState::SendingKeys,
+                ProgramState::SendingKeys => ProgramState::WaitingNonces,
+                ProgramState::WaitingNonces => ProgramState::SendingNonces,
+                ProgramState::SendingNonces => ProgramState::WaitingSignatures,
+                ProgramState::WaitingSignatures => ProgramState::SendingSignatures,
+                ProgramState::SendingSignatures => ProgramState::Ready,
+                ProgramState::Claimed => ProgramState::Claimed,
+                ProgramState::Challenged => ProgramState::Challenged,
+                ProgramState::Ready => ProgramState::Ready,
+                ProgramState::Error => ProgramState::Error,
+                ProgramState::Completed => ProgramState::Completed,
+            },
+        };
+
+        self.state = next_state;
+
         self.save()?;
+
+        Ok(())
+    }
+
+    pub fn is_setting_up(&self) -> bool {
+        matches!(
+            self.state,
+            ProgramState::WaitingKeys
+                | ProgramState::SendingKeys
+                | ProgramState::WaitingNonces
+                | ProgramState::SendingNonces
+                | ProgramState::WaitingSignatures
+                | ProgramState::SendingSignatures
+        )
+    }
+
+    pub fn send_keys_ack(&self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
+        info!("{:?}: Sending keys ack", self.my_role);
+        response(
+            &program_context.comms,
+            &self.program_id,
+            self.other.p2p_address.peer_id,
+            P2PMessageType::KeysAck,
+            (),
+        )?;
+
+        Ok(())
+    }
+
+    pub fn send_nonces_ack(&self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
+        info!("{:?}: Sending nonces ack", self.my_role);
+        response(
+            &program_context.comms,
+            &self.program_id,
+            self.other.p2p_address.peer_id,
+            P2PMessageType::PublicNoncesAck,
+            (),
+        )?;
+
+        Ok(())
+    }
+
+    pub fn send_signatures_ack(&self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
+        info!("{:?}: Sending signatures ack", self.my_role);
+        response(
+            &program_context.comms,
+            &self.program_id,
+            self.other.p2p_address.peer_id,
+            P2PMessageType::PartialSignaturesAck,
+            (),
+        )?;
 
         Ok(())
     }
 }
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Trace {}
