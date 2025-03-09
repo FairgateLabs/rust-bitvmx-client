@@ -337,8 +337,6 @@ impl BitVMX {
     pub fn process_p2p_messages(&mut self) -> Result<(), BitVMXError> {
         let message = self.program_context.comms.check_receive();
 
-        info!("Message recieved? >>>>>>>>>>>>>>>>>>>>>>>>>");
-
         if message.is_none() {
             return Ok(());
         }
@@ -353,10 +351,10 @@ impl BitVMX {
                 let (_version, msg_type, program_id, data) = deserialize_msg(msg)?;
                 let mut program = self.load_program(&program_id)?;
 
+                info!("{}: Message recieved: {:?} ", program.my_role, msg_type);
+
                 match msg_type {
                     P2PMessageType::Keys => {
-                        info!("{:?}: RECIEVE KEYSSS", program.my_role);
-
                         if !Self::should_program_handle_msg(&program.state, &msg_type) {
                             // Just send ack to the other party
                             info!("{:?}: SEND KEYS ACK", program.my_role);
@@ -364,7 +362,6 @@ impl BitVMX {
                             return Ok(());
                         }
 
-                        info!("{:?}: SAVING KEYS", program.my_role);
                         // Receive keys from the other party
                         let participant_keys =
                             parse_keys(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
@@ -375,7 +372,6 @@ impl BitVMX {
                         let other_protocol_key = program.other.keys.as_ref().unwrap().protocol;
 
                         //TODO: get dag messages from the drp, this will be the messages that will be signed
-                        //TODO: this will changed , messages will be set in the init.
                         let messages = vec![vec![1], vec![2], vec![3]];
 
                         self.program_context.key_chain.init_musig2(
@@ -395,8 +391,6 @@ impl BitVMX {
                         program.send_keys_ack(&self.program_context)?;
                     }
                     P2PMessageType::PublicNonces => {
-                        info!("{:?}: RECIEVE NONCES", program.my_role);
-
                         if !Self::should_program_handle_msg(&program.state, &msg_type) {
                             // Just send ack to the other party
                             program.send_nonces_ack(&self.program_context)?;
@@ -415,8 +409,6 @@ impl BitVMX {
                         program.send_nonces_ack(&self.program_context)?;
                     }
                     P2PMessageType::PartialSignatures => {
-                        info!("{:?}: RECIEVE SIGNATURES", program.my_role);
-
                         if !Self::should_program_handle_msg(&program.state, &msg_type) {
                             // Just send ack to the other party
                             info!("{:?}: SEND SIGNATURES ACK", program.my_role);
@@ -436,8 +428,6 @@ impl BitVMX {
                         program.send_signatures_ack(&self.program_context)?;
                     }
                     P2PMessageType::KeysAck => {
-                        info!("{:?}: RECIEVE KEYS ACK", program.my_role);
-
                         if !Self::should_program_handle_msg(&program.state, &msg_type) {
                             return Ok(());
                         }
@@ -445,8 +435,6 @@ impl BitVMX {
                         program.move_to_next_state()?;
                     }
                     P2PMessageType::PublicNoncesAck => {
-                        info!("{:?}: RECIEVE NONCES ACK", program.my_role);
-
                         if !Self::should_program_handle_msg(&program.state, &msg_type) {
                             return Ok(());
                         }
@@ -454,8 +442,6 @@ impl BitVMX {
                         program.move_to_next_state()?;
                     }
                     P2PMessageType::PartialSignaturesAck => {
-                        info!("{:?}: RECIEVE SIGNATURES ACK", program.my_role);
-
                         if !Self::should_program_handle_msg(&program.state, &msg_type) {
                             return Ok(());
                         }
@@ -469,7 +455,6 @@ impl BitVMX {
             } //TODO: handle error
         }
 
-        info!("Chau >>>>>>>>>>>>>>>>>>>>>>>>>");
         Ok(())
     }
 

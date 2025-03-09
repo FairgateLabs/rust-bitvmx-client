@@ -117,10 +117,10 @@ pub fn test_single_run() -> Result<()> {
 
     other_bridge_channel.send(1, setup_msg)?;
 
-    info!("PROVER Tick to detect program setup");
+    info!("PROVER: Setting up program...");
     prover_bitvmx.tick()?;
 
-    info!("VERIFIER Tick to detect program setup");
+    info!("VERIFIER: Setting up program...");
     verifier_bitvmx.tick()?;
 
     //TODO: Serializer / Deserialize keys this exachange should happen with p2p
@@ -134,12 +134,13 @@ pub fn test_single_run() -> Result<()> {
         // if i % 20 == 0 {
         //     //  bitcoin_client.mine_blocks(1)?;
         // }
-        info!("NEW Ticks");
+        info!("PROVER: New Tick");
         //  bitcoin_client.mine_blocks(1)?;
         prover_bitvmx.tick()?;
 
-        std::thread::sleep(std::time::Duration::from_secs(5));
+        std::thread::sleep(std::time::Duration::from_secs(1));
 
+        info!("VERIFIER: New Tick");
         verifier_bitvmx.tick()?;
     }
 
