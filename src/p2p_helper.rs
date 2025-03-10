@@ -1,7 +1,7 @@
 use crate::{errors::BitVMXError, program::participant::P2PAddress};
 use p2p_handler::{P2pHandler, PeerId};
 use serde::Serialize;
-use serde_json::{json, to_vec, Value};
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 const MIN_EXPECTED_MSG_LEN: usize = 4; // 2 bytes for version + 2 bytes for message type

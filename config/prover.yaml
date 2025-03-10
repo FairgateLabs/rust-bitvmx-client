@@ -42,5 +42,7 @@ broker_storage: /tmp/prover/broker.db
 broker_port: 22222
 
 client: 
+  # Number of retries for requests
   retry: 1
+  # Delay between retries in milliseconds
   retry_delay: 1000

@@ -42,5 +42,7 @@ broker_storage: /tmp/verifier/broker.db
 broker_port: 33333
 
 client: 
+  # Number of retries for requests
   retry: 1
+  # Delay between retries in milliseconds
   retry_delay: 1000

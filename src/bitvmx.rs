@@ -355,10 +355,9 @@ impl BitVMX {
 
                 match msg_type {
                     P2PMessageType::Keys => {
+                        // TODO: Review this condition
                         if !Self::should_program_handle_msg(&program.state, &msg_type) {
-                            // Just send ack to the other party
-                            info!("{:?}: SEND KEYS ACK", program.my_role);
-                            program.send_keys_ack(&self.program_context)?;
+                            program.send_ack(&self.program_context, P2PMessageType::KeysAck)?;
                             return Ok(());
                         }
 
@@ -366,7 +365,7 @@ impl BitVMX {
                         let participant_keys =
                             parse_keys(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
-                        program.recieve_participant_keys(participant_keys.clone())?;
+                        program.save_other_keys(participant_keys.clone())?;
 
                         let my_protocol_key = program.me.keys.as_ref().unwrap().protocol;
                         let other_protocol_key = program.other.keys.as_ref().unwrap().protocol;
@@ -388,14 +387,13 @@ impl BitVMX {
                             .set_musig2_messages(program.program_id)?;
 
                         // Send ack to the other party
-                        program.send_keys_ack(&self.program_context)?;
+                        program.send_ack(&self.program_context, P2PMessageType::KeysAck)?;
                     }
                     P2PMessageType::PublicNonces => {
+                        // TODO: Review this condition
                         if !Self::should_program_handle_msg(&program.state, &msg_type) {
-                            // Just send ack to the other party
-                            program.send_nonces_ack(&self.program_context)?;
-
-                            info!("{:?}: SEND NONCES ACK", program.my_role);
+                            program
+                                .send_ack(&self.program_context, P2PMessageType::PublicNoncesAck)?;
                             return Ok(());
                         }
 
@@ -405,14 +403,15 @@ impl BitVMX {
                         program
                             .recieve_participant_nonces(nonces, &self.program_context.key_chain)?;
 
-                        // Send ack to the other party
-                        program.send_nonces_ack(&self.program_context)?;
+                        program.send_ack(&self.program_context, P2PMessageType::PublicNoncesAck)?;
                     }
                     P2PMessageType::PartialSignatures => {
+                        // TODO: Review this condition
                         if !Self::should_program_handle_msg(&program.state, &msg_type) {
-                            // Just send ack to the other party
-                            info!("{:?}: SEND SIGNATURES ACK", program.my_role);
-                            program.send_signatures_ack(&self.program_context)?;
+                            program.send_ack(
+                                &self.program_context,
+                                P2PMessageType::PartialSignaturesAck,
+                            )?;
                             return Ok(());
                         }
 
@@ -424,29 +423,19 @@ impl BitVMX {
                             &self.program_context.key_chain,
                         )?;
 
-                        // Send ack to the other party
-                        program.send_signatures_ack(&self.program_context)?;
+                        program.send_ack(
+                            &self.program_context,
+                            P2PMessageType::PartialSignaturesAck,
+                        )?;
                     }
-                    P2PMessageType::KeysAck => {
+                    P2PMessageType::KeysAck
+                    | P2PMessageType::PublicNoncesAck
+                    | P2PMessageType::PartialSignaturesAck => {
                         if !Self::should_program_handle_msg(&program.state, &msg_type) {
                             return Ok(());
                         }
 
-                        program.move_to_next_state()?;
-                    }
-                    P2PMessageType::PublicNoncesAck => {
-                        if !Self::should_program_handle_msg(&program.state, &msg_type) {
-                            return Ok(());
-                        }
-
-                        program.move_to_next_state()?;
-                    }
-                    P2PMessageType::PartialSignaturesAck => {
-                        if !Self::should_program_handle_msg(&program.state, &msg_type) {
-                            return Ok(());
-                        }
-
-                        program.move_to_next_state()?;
+                        program.move_program_to_next_state()?;
                     }
                 }
             }

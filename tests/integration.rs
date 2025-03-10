@@ -130,17 +130,15 @@ pub fn test_single_run() -> Result<()> {
     // prover_bitvmx.deploy_program(&program_id)?;
 
     //TODO: main loop
-    for i in 0..1000 {
+    for _ in 0..1000 {
         // if i % 20 == 0 {
         //     //  bitcoin_client.mine_blocks(1)?;
         // }
-        info!("PROVER: New Tick");
         //  bitcoin_client.mine_blocks(1)?;
         prover_bitvmx.tick()?;
 
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        std::thread::sleep(std::time::Duration::from_millis(100));
 
-        info!("VERIFIER: New Tick");
         verifier_bitvmx.tick()?;
     }
 

@@ -132,7 +132,7 @@ impl Program {
         Ok(())
     }
 
-    pub fn recieve_participant_keys(&mut self, keys: ParticipantKeys) -> Result<(), BitVMXError> {
+    pub fn save_other_keys(&mut self, keys: ParticipantKeys) -> Result<(), BitVMXError> {
         self.other.keys = Some(keys);
 
         let search_params = SearchParams::new(8, 32);
@@ -143,7 +143,7 @@ impl Program {
             search_params,
         )?;
 
-        self.move_to_next_state()?;
+        self.move_program_to_next_state()?;
 
         Ok(())
     }
@@ -155,7 +155,7 @@ impl Program {
     ) -> Result<(), BitVMXError> {
         let participant_key = self.other.keys.as_ref().unwrap().protocol;
         key_chain.add_nonces(self.program_id, nonces, participant_key)?;
-        self.move_to_next_state()?;
+        self.move_program_to_next_state()?;
 
         Ok(())
     }
@@ -167,7 +167,7 @@ impl Program {
     ) -> Result<(), BitVMXError> {
         let other_pubkey = self.other.keys.as_ref().unwrap().protocol;
         key_chain.add_signatures(self.program_id, signatures, other_pubkey)?;
-        self.move_to_next_state()?;
+        self.move_program_to_next_state()?;
 
         Ok(())
     }
@@ -222,7 +222,7 @@ impl Program {
     pub fn tick(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
         match &self.state {
             ProgramState::New => {
-                self.move_to_next_state()?;
+                self.move_program_to_next_state()?;
             }
 
             ProgramState::SendingKeys => {
@@ -274,11 +274,10 @@ impl Program {
                     self.should_send_request(StoreKey::LastRequestSignatures(self.program_id))?;
 
                 if !should_send_request {
-                    info!("{:?}: Not sending signatures", self.my_role);
                     return Ok(());
                 }
 
-                info!("{:?}: Sending signatures", self.my_role);
+                info!("{:?}: Sending partial signatures", self.my_role);
 
                 let signatures = program_context.key_chain.get_signatures(self.program_id)?;
 
@@ -372,7 +371,10 @@ impl Program {
         Ok(true)
     }
 
-    pub fn move_to_next_state(&mut self) -> Result<(), BitVMXError> {
+    /// This function should only be called when the program is in the correct state,
+    /// otherwise it will transition to the next state at the wrong time and break
+    /// the program's flow
+    pub fn move_program_to_next_state(&mut self) -> Result<(), BitVMXError> {
         let next_state = match self.my_role {
             ParticipantRole::Prover => match self.state {
                 ProgramState::New => ProgramState::SendingKeys,
@@ -382,6 +384,7 @@ impl Program {
                 ProgramState::WaitingNonces => ProgramState::SendingSignatures,
                 ProgramState::SendingSignatures => ProgramState::WaitingSignatures,
                 ProgramState::WaitingSignatures => ProgramState::Ready,
+
                 ProgramState::Claimed => ProgramState::Claimed,
                 ProgramState::Challenged => ProgramState::Challenged,
                 ProgramState::Ready => ProgramState::Ready,
@@ -396,6 +399,7 @@ impl Program {
                 ProgramState::SendingNonces => ProgramState::WaitingSignatures,
                 ProgramState::WaitingSignatures => ProgramState::SendingSignatures,
                 ProgramState::SendingSignatures => ProgramState::Ready,
+
                 ProgramState::Claimed => ProgramState::Claimed,
                 ProgramState::Challenged => ProgramState::Challenged,
                 ProgramState::Ready => ProgramState::Ready,
@@ -423,39 +427,18 @@ impl Program {
         )
     }
 
-    pub fn send_keys_ack(&self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
-        info!("{:?}: Sending keys ack", self.my_role);
+    pub fn send_ack(
+        &self,
+        program_context: &ProgramContext,
+        msg_type: P2PMessageType,
+    ) -> Result<(), BitVMXError> {
+        info!("{:?}: Sending {:?}", self.my_role, msg_type);
+
         response(
             &program_context.comms,
             &self.program_id,
             self.other.p2p_address.peer_id,
-            P2PMessageType::KeysAck,
-            (),
-        )?;
-
-        Ok(())
-    }
-
-    pub fn send_nonces_ack(&self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
-        info!("{:?}: Sending nonces ack", self.my_role);
-        response(
-            &program_context.comms,
-            &self.program_id,
-            self.other.p2p_address.peer_id,
-            P2PMessageType::PublicNoncesAck,
-            (),
-        )?;
-
-        Ok(())
-    }
-
-    pub fn send_signatures_ack(&self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
-        info!("{:?}: Sending signatures ack", self.my_role);
-        response(
-            &program_context.comms,
-            &self.program_id,
-            self.other.p2p_address.peer_id,
-            P2PMessageType::PartialSignaturesAck,
+            msg_type,
             (),
         )?;
 
