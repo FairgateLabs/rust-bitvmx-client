@@ -5,27 +5,25 @@ use bitcoin::{
 };
 use bitvmx_musig2::{PartialSignature, PubNonce};
 use key_manager::winternitz::{WinternitzPublicKey, WinternitzType};
+use serde_json::Value;
 
-pub fn parse_keys(value: Vec<u8>) -> Result<ParticipantKeys, ParseError> {
-    let value_str = String::from_utf8(value).map_err(|_| ParseError::InvalidParticipantKeys)?;
+pub fn parse_keys(value: Value) -> Result<ParticipantKeys, ParseError> {
     let participant_keys: ParticipantKeys =
-        serde_json::from_str(&value_str).map_err(|_| ParseError::InvalidParticipantKeys)?;
+        serde_json::from_value(value).map_err(|_| ParseError::InvalidParticipantKeys)?;
 
     Ok(participant_keys)
 }
 
-pub fn parse_nonces(data: Vec<u8>) -> Result<Vec<PubNonce>, ParseError> {
-    let value_str = String::from_utf8(data).map_err(|_| ParseError::InvalidNonces)?;
+pub fn parse_nonces(data: Value) -> Result<Vec<PubNonce>, ParseError> {
     let nonces: Vec<PubNonce> =
-        serde_json::from_str(&value_str).map_err(|_| ParseError::InvalidNonces)?;
+        serde_json::from_value(data).map_err(|_| ParseError::InvalidNonces)?;
 
     Ok(nonces)
 }
 
-pub fn parse_signatures(data: Vec<u8>) -> Result<Vec<PartialSignature>, ParseError> {
-    let value_str = String::from_utf8(data).map_err(|_| ParseError::InvalidPartialSignatures)?;
+pub fn parse_signatures(data: Value) -> Result<Vec<PartialSignature>, ParseError> {
     let signatures: Vec<PartialSignature> =
-        serde_json::from_str(&value_str).map_err(|_| ParseError::InvalidPartialSignatures)?;
+        serde_json::from_value(data).map_err(|_| ParseError::InvalidPartialSignatures)?;
 
     Ok(signatures)
 }
@@ -77,9 +75,8 @@ fn keys_encoding_test() -> Result<(), anyhow::Error> {
         dispute_resolution,
     );
 
-    let serialized = serde_json::to_string(&participant)?;
-    let vec_bytes = serialized.as_bytes().to_vec();
-    let pub_key_final = parse_keys(vec_bytes)?;
+    let participant_value = serde_json::to_value(&participant)?;
+    let pub_key_final = parse_keys(participant_value)?;
 
     assert_eq!(participant, pub_key_final);
 

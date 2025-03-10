@@ -131,7 +131,7 @@ pub fn serialize_msg<T: Serialize>(
 
 pub fn deserialize_msg(
     data: Vec<u8>,
-) -> Result<(String, P2PMessageType, Uuid, Vec<u8>), BitVMXError> {
+) -> Result<(String, P2PMessageType, Uuid, Value), BitVMXError> {
     // Minimum length check: 4 bytes (2 for version + 2 for message type) + payload
     if data.len() < MIN_EXPECTED_MSG_LEN || data.len() > MAX_EXPECTED_MSG_LEN {
         return Err(BitVMXError::InvalidMessageFormat);
@@ -156,7 +156,7 @@ pub fn deserialize_msg(
         .and_then(|id| id.as_str())
         .ok_or(BitVMXError::InvalidMessageFormat)?;
 
-    let msg = payload
+    let data = payload
         .get("msg")
         .ok_or(BitVMXError::InvalidMessageFormat)?;
     // Convert program ID to Uuid
@@ -177,7 +177,7 @@ pub fn deserialize_msg(
     //     return Err(BitVMXError::InvalidMessageFormat); // Ensure no invalid bytes after filtering previously
     // }
 
-    Ok((version, msg_type, program_id, to_vec(&msg).unwrap()))
+    Ok((version, msg_type, program_id, data.clone()))
 }
 
 #[cfg(test)]
@@ -275,7 +275,7 @@ mod tests {
         let version = "1.0";
         let msg_type = P2PMessageType::Keys;
         let program_id = Uuid::new_v4();
-        let msg = vec![0x01, 0x02, 0x03];
+        let msg = "Hello, world!";
 
         let serialized_msg = serialize_msg(msg_type.clone(), &program_id, msg.clone()).unwrap();
         let (
@@ -291,24 +291,26 @@ mod tests {
         assert_eq!(deserialized_msg, msg);
     }
 
-    #[test]
-    fn test_message_contains_invalid_byte_value() {
-        let version = "1.0";
-        let msg_type = P2PMessageType::Keys;
-        let program_id = Uuid::new_v4();
+    // TODO: This code section was commented out since it is no longer needed.
+    // Need to review with Kevin
+    // #[test]
+    // fn test_message_contains_invalid_byte_value() {
+    //     let version = "1.0";
+    //     let msg_type = P2PMessageType::Keys;
+    //     let program_id = Uuid::new_v4();
 
-        // Create a JSON payload with an invalid value (>255)
-        let payload = json!({
-            "program_id": program_id.to_string(),
-            "msg": [0, 255, 256] // 256 is invalid
-        });
-        let mut serialized_msg = Vec::new();
-        serialized_msg.extend_from_slice(&Version::to_bytes(version).unwrap());
-        serialized_msg.extend_from_slice(&msg_type.to_bytes().unwrap());
-        serialized_msg.extend_from_slice(&serde_json::to_vec(&payload).unwrap());
+    //     // Create a JSON payload with an invalid value (>255)
+    //     let payload = json!({
+    //         "program_id": program_id.to_string(),
+    //         "msg": [0, 255, 256] // 256 is invalid
+    //     });
+    //     let mut serialized_msg = Vec::new();
+    //     serialized_msg.extend_from_slice(&Version::to_bytes(version).unwrap());
+    //     serialized_msg.extend_from_slice(&msg_type.to_bytes().unwrap());
+    //     serialized_msg.extend_from_slice(&serde_json::to_vec(&payload).unwrap());
 
-        // Expect deserialization to fail due to an invalid byte (>255)
-        let result = deserialize_msg(serialized_msg);
-        assert!(matches!(result, Err(BitVMXError::InvalidMessageFormat)));
-    }
+    //     // Expect deserialization to fail due to an invalid byte (>255)
+    //     let result = deserialize_msg(serialized_msg);
+    //     assert!(matches!(result, Err(BitVMXError::InvalidMessageFormat)));
+    // }
 }
