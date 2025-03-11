@@ -14,14 +14,14 @@ use crate::{
 };
 
 use bitcoin::{PublicKey, Transaction};
+use bitcoin_coordinator::{
+    coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi},
+    types::{BitcoinCoordinatorType, BitvmxInstance, ProcessedNews, TransactionPartialInfo},
+};
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
     channel::channel::DualChannel,
     rpc::{sync_server::BrokerSync, BrokerConfig},
-};
-use bitvmx_orchestrator::{
-    orchestrator::{Orchestrator, OrchestratorApi},
-    types::{BitvmxInstance, OrchestratorType, ProcessedNews, TransactionPartialInfo},
 };
 use key_manager::winternitz;
 use p2p_handler::{LocalAllowList, P2pHandler, ReceiveHandlerChannel};
@@ -48,7 +48,7 @@ pub struct BitVMX {
     _config: Config,
     program_context: ProgramContext,
     store: Rc<Storage>,
-    orchestrator: OrchestratorType,
+    bitcoin_coordinator: BitcoinCoordinatorType,
     broker: BrokerSync,
     broker_channel: DualChannel,
 }
@@ -70,7 +70,7 @@ impl BitVMX {
             communications_key,
         )?;
 
-        let orchestrator = Orchestrator::new_with_paths(
+        let bitcoin_coordinator = BitcoinCoordinator::new_with_paths(
             &config.bitcoin,
             store.clone(),
             key_chain.key_manager.clone(),
@@ -96,7 +96,7 @@ impl BitVMX {
             _config: config,
             program_context,
             store,
-            orchestrator,
+            bitcoin_coordinator,
             broker,
             broker_channel,
         })
@@ -168,15 +168,15 @@ impl BitVMX {
         let transaction = program.prekickoff_transaction()?;
 
         let instance: BitvmxInstance<TransactionPartialInfo> =
-            bitvmx_orchestrator::types::BitvmxInstance::new(
+            bitcoin_coordinator::types::BitvmxInstance::new(
                 *program_id,
                 vec![TransactionPartialInfo::from(transaction.compute_txid())],
                 None,
             );
 
-        self.orchestrator.monitor_instance(&instance)?;
+        self.bitcoin_coordinator.monitor_instance(&instance)?;
 
-        self.orchestrator
+        self.bitcoin_coordinator
             .send_tx_instance(*program_id, &transaction)?;
 
         info!("Attempt to deploy program: {}", program_id);
@@ -215,7 +215,7 @@ impl BitVMX {
         let transaction = program.kickoff_transaction()?;
         self.monitor_claim_transaction(&transaction)?;
 
-        // TODO: Claim transaction detection should happen during orchestrator news processing,
+        // TODO: Claim transaction detection should happen during bitcoin coordinator news processing,
         // when we verify the claim transaction appears on the blockchain
 
         Ok(())
@@ -319,7 +319,7 @@ impl BitVMX {
         _deployment_transaction: &Transaction,
     ) -> Result<(), BitVMXError> {
         // 1. Wait for the prekickoff transaction to be confirmed
-        // it should introduce the transaction to the orchestrator and what for news.
+        // it should introduce the transaction to the bitcoin coordinator and what for news.
 
         Ok(())
     }
@@ -329,7 +329,7 @@ impl BitVMX {
         _claim_transaction: &Transaction,
     ) -> Result<(), BitVMXError> {
         // 1. Wait for the kickoff transaction to be confirmed
-        // it should introduce the transaction to the orchestrator and what for news.
+        // it should introduce the transaction to the bitcoin coordinator and what for news.
 
         Ok(())
     }
@@ -448,17 +448,17 @@ impl BitVMX {
     }
 
     pub fn process_bitcoin_updates(&mut self) -> Result<bool, BitVMXError> {
-        let ret = self.orchestrator.tick();
+        let ret = self.bitcoin_coordinator.tick();
         if ret.is_err() {
-            //TODO: Fix why orchestrator is failing
+            //TODO: Fix why bitcoin coordinator is failing
             return Ok(false);
         }
 
-        if !self.orchestrator.is_ready()? {
+        if !self.bitcoin_coordinator.is_ready()? {
             return Ok(false);
         }
 
-        let news = self.orchestrator.get_news()?;
+        let news = self.bitcoin_coordinator.get_news()?;
         if !news.txs_by_id.is_empty() {
             info!("Processing news: {:?}", news);
         } else {
@@ -486,7 +486,7 @@ impl BitVMX {
             funds_requests: vec![],
         };
 
-        self.orchestrator.acknowledge_news(processed_news)?;
+        self.bitcoin_coordinator.acknowledge_news(processed_news)?;
 
         Ok(false)
     }

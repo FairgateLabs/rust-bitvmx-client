@@ -1,8 +1,8 @@
 use bitcoin::{consensus::encode::FromHexError, network::ParseNetworkError};
+use bitcoin_coordinator::errors::BitcoinCoordinatorError;
 use bitcoincore_rpc::bitcoin::{key::ParsePublicKeyError, sighash::SighashTypeParseError};
 use bitvmx_broker::rpc::errors::BrokerError;
 use bitvmx_musig2::errors::Musig2SignerError;
-use bitvmx_orchestrator::errors::OrchestratorError;
 use config as settings;
 use key_manager::errors::{KeyManagerError, KeyStoreError, WinternitzError};
 use p2p_handler::P2pHandlerError;
@@ -57,8 +57,8 @@ pub enum BitVMXError {
     #[error("Keys not found in program {0}")]
     KeysNotFound(Uuid),
 
-    #[error("Failed to use Orchestrator")]
-    OrchestratorError(#[from] OrchestratorError),
+    #[error("Failed to use Bitcoin Coordinator")]
+    BitcoinCoordinatorError(#[from] BitcoinCoordinatorError),
 
     #[error("Broker channel error")]
     BrokerError(#[from] BrokerError),

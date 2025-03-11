@@ -1,5 +1,5 @@
+use bitcoin_coordinator::config::MonitorConfig;
 use bitvmx_bitcoin_rpc::rpc_config::RpcConfig;
-use bitvmx_orchestrator::config::MonitorConfig;
 use key_manager::config::{KeyManagerConfig, KeyStorageConfig};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
