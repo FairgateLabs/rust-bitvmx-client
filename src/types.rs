@@ -14,17 +14,24 @@ impl ProgramContext {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum ProgramStatusStore {
+    SettingUp,
+    Ready,
+    Completed,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ProgramStatus {
     pub program_id: Uuid,
-    pub is_active: bool,
+    pub state: ProgramStatusStore,
 }
 
 impl ProgramStatus {
     pub fn new(program_id: Uuid) -> Self {
         Self {
             program_id,
-            is_active: true,
+            state: ProgramStatusStore::SettingUp,
         }
     }
 }
@@ -33,6 +40,15 @@ impl ProgramStatus {
 pub struct ProgramRequestInfo {
     pub retries: u32,
     pub last_request_time: DateTime<Utc>,
+}
+
+impl ProgramRequestInfo {
+    pub fn new() -> Self {
+        Self {
+            retries: 0,
+            last_request_time: Utc::now(),
+        }
+    }
 }
 
 impl Default for ProgramRequestInfo {

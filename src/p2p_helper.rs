@@ -277,7 +277,7 @@ mod tests {
         let program_id = Uuid::new_v4();
         let msg = "Hello, world!";
 
-        let serialized_msg = serialize_msg(msg_type.clone(), &program_id, msg.clone()).unwrap();
+        let serialized_msg = serialize_msg(msg_type.clone(), &program_id, msg).unwrap();
         let (
             deserialized_version,
             deserialized_msg_type,

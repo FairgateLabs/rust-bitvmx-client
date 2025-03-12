@@ -10,7 +10,7 @@ use crate::{
         program::{Program, ProgramState},
         witness,
     },
-    types::{ProgramContext, ProgramStatus},
+    types::{ProgramContext, ProgramStatus, ProgramStatusStore},
 };
 
 use bitcoin::{PublicKey, Transaction};
@@ -57,6 +57,17 @@ impl Drop for BitVMX {
     fn drop(&mut self) {
         self.broker.close();
         sleep(Duration::from_millis(100));
+    }
+}
+enum StoreKey {
+    Programs,
+}
+
+impl StoreKey {
+    fn get_key(&self) -> String {
+        match self {
+            StoreKey::Programs => "bitvmx/programs/all".to_string(),
+        }
     }
 }
 
@@ -530,21 +541,18 @@ impl BitVMX {
             (ProgramState::SendingKeys, P2PMessageType::KeysAck) => true,
             (ProgramState::SendingNonces, P2PMessageType::PublicNoncesAck) => true,
             (ProgramState::SendingSignatures, P2PMessageType::PartialSignaturesAck) => true,
-            _ => {
-                info!("NO SE HANDLEA: {:?} {:?}", state, msg_type);
-                false
-            }
+            _ => false,
         }
     }
 
     fn advance_programs(&mut self) -> Result<(), BitVMXError> {
-        let programs = self.get_active_programs()?;
+        let programs = self.get_setting_up_programs()?;
         for mut program in programs {
             program.tick(&self.program_context)?;
 
             if !program.is_setting_up() {
                 info!("Program is ready: {:?} ", program.program_id);
-                self.mark_program_inactive(&program.program_id)?;
+                self.mark_program_ready(&program.program_id)?;
             }
         }
         Ok(())
@@ -553,27 +561,27 @@ impl BitVMX {
     fn get_programs(&self) -> Result<Vec<ProgramStatus>, BitVMXError> {
         let programs_ids: Option<Vec<ProgramStatus>> = self
             .store
-            .get("bitvmx/programs/all")
+            .get(StoreKey::Programs.get_key())
             .map_err(BitVMXError::StorageError)?;
 
         if programs_ids.is_none() {
             let empty_programs: Vec<ProgramStatus> = vec![];
 
             self.store
-                .set("bitvmx/programs/all", empty_programs.clone(), None)?;
+                .set(StoreKey::Programs.get_key(), empty_programs.clone(), None)?;
             return Ok(empty_programs);
         }
 
         Ok(programs_ids.unwrap())
     }
 
-    fn get_active_programs(&self) -> Result<Vec<Program>, BitVMXError> {
+    fn get_setting_up_programs(&self) -> Result<Vec<Program>, BitVMXError> {
         let programs = self.get_programs()?;
 
         let mut active_programs = vec![];
 
         for program_status in programs {
-            if program_status.is_active {
+            if program_status.state == ProgramStatusStore::SettingUp {
                 let program = self.load_program(&program_status.program_id)?;
                 active_programs.push(program);
             }
@@ -591,19 +599,21 @@ impl BitVMX {
 
         programs.push(ProgramStatus::new(*program_id));
 
-        self.store.set("bitvmx/programs/all", programs, None)?;
+        self.store
+            .set(StoreKey::Programs.get_key(), programs, None)?;
 
         Ok(())
     }
 
-    fn mark_program_inactive(&mut self, program_id: &Uuid) -> Result<(), BitVMXError> {
+    fn mark_program_ready(&mut self, program_id: &Uuid) -> Result<(), BitVMXError> {
         let mut programs = self.get_programs()?;
 
         if let Some(program) = programs.iter_mut().find(|p| p.program_id == *program_id) {
-            program.is_active = false;
+            program.state = ProgramStatusStore::Ready;
         }
 
-        self.store.set("bitvmx/programs/all", programs, None)?;
+        self.store
+            .set(StoreKey::Programs.get_key(), programs, None)?;
         Ok(())
     }
 
