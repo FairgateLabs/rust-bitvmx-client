@@ -366,9 +366,11 @@ impl BitVMX {
 
                 match msg_type {
                     P2PMessageType::Keys => {
-                        // TODO: Review this condition
-                        if !Self::should_program_handle_msg(&program.state, &msg_type) {
-                            program.send_ack(&self.program_context, P2PMessageType::KeysAck)?;
+                        if !Self::should_handle_msg(&program.state, &msg_type) {
+                            if Self::should_answer_ack(&program.state, &msg_type, &program.my_role)
+                            {
+                                program.send_ack(&self.program_context, P2PMessageType::KeysAck)?;
+                            }
                             return Ok(());
                         }
 
@@ -402,9 +404,14 @@ impl BitVMX {
                     }
                     P2PMessageType::PublicNonces => {
                         // TODO: Review this condition
-                        if !Self::should_program_handle_msg(&program.state, &msg_type) {
-                            program
-                                .send_ack(&self.program_context, P2PMessageType::PublicNoncesAck)?;
+                        if !Self::should_handle_msg(&program.state, &msg_type) {
+                            if Self::should_answer_ack(&program.state, &msg_type, &program.my_role)
+                            {
+                                program.send_ack(
+                                    &self.program_context,
+                                    P2PMessageType::PublicNoncesAck,
+                                )?;
+                            }
                             return Ok(());
                         }
 
@@ -418,11 +425,14 @@ impl BitVMX {
                     }
                     P2PMessageType::PartialSignatures => {
                         // TODO: Review this condition
-                        if !Self::should_program_handle_msg(&program.state, &msg_type) {
-                            program.send_ack(
-                                &self.program_context,
-                                P2PMessageType::PartialSignaturesAck,
-                            )?;
+                        if !Self::should_handle_msg(&program.state, &msg_type) {
+                            if Self::should_answer_ack(&program.state, &msg_type, &program.my_role)
+                            {
+                                program.send_ack(
+                                    &self.program_context,
+                                    P2PMessageType::PartialSignaturesAck,
+                                )?;
+                            }
                             return Ok(());
                         }
 
@@ -442,7 +452,7 @@ impl BitVMX {
                     P2PMessageType::KeysAck
                     | P2PMessageType::PublicNoncesAck
                     | P2PMessageType::PartialSignaturesAck => {
-                        if !Self::should_program_handle_msg(&program.state, &msg_type) {
+                        if !Self::should_handle_msg(&program.state, &msg_type) {
                             return Ok(());
                         }
 
@@ -533,7 +543,42 @@ impl BitVMX {
         Ok(())
     }
 
-    pub fn should_program_handle_msg(state: &ProgramState, msg_type: &P2PMessageType) -> bool {
+    pub fn should_answer_ack(
+        state: &ProgramState,
+        msg_type: &P2PMessageType,
+        role: &ParticipantRole,
+    ) -> bool {
+        if role == &ParticipantRole::Prover {
+            // Prover flow:
+            // 1. Sends keys and waits for KeysAck
+            // 2. Waits for Keys from verifier
+            // 3. Sends nonces and waits for NoncesAck
+            // 4. Waits for nonces from verifier
+            // 5. Sends signatures and waits for SignaturesAck
+            // 6. Waits for signatures from verifier
+            return match (state, msg_type) {
+                (ProgramState::SendingNonces, P2PMessageType::Keys) => true,
+                (ProgramState::SendingSignatures, P2PMessageType::PublicNonces) => true,
+                _ => false,
+            };
+        } else {
+            // Verifier flow:
+            // 1. Waits for keys from prover
+            // 2. Sends keys and waits for KeysAck
+            // 3. Waits for nonces from prover
+            // 4. Sends nonces and waits for NoncesAck
+            // 5. Waits for signatures from prover
+            // 6. Sends signatures and waits for SignaturesAck
+            return match (state, msg_type) {
+                (ProgramState::SendingKeys, P2PMessageType::Keys) => true,
+                (ProgramState::SendingNonces, P2PMessageType::PublicNonces) => true,
+                (ProgramState::SendingSignatures, P2PMessageType::PartialSignatures) => true,
+                _ => false,
+            };
+        }
+    }
+
+    pub fn should_handle_msg(state: &ProgramState, msg_type: &P2PMessageType) -> bool {
         match (state, msg_type) {
             (ProgramState::WaitingKeys, P2PMessageType::Keys) => true,
             (ProgramState::WaitingNonces, P2PMessageType::PublicNonces) => true,
@@ -551,8 +596,7 @@ impl BitVMX {
             program.tick(&self.program_context)?;
 
             if !program.is_setting_up() {
-                info!("Program is ready: {:?} ", program.program_id);
-                self.mark_program_ready(&program.program_id)?;
+                self.change_program_status(&program.program_id, ProgramStatusStore::Ready)?;
             }
         }
         Ok(())
@@ -605,11 +649,15 @@ impl BitVMX {
         Ok(())
     }
 
-    fn mark_program_ready(&mut self, program_id: &Uuid) -> Result<(), BitVMXError> {
+    fn change_program_status(
+        &mut self,
+        program_id: &Uuid,
+        state: ProgramStatusStore,
+    ) -> Result<(), BitVMXError> {
         let mut programs = self.get_programs()?;
 
         if let Some(program) = programs.iter_mut().find(|p| p.program_id == *program_id) {
-            program.state = ProgramStatusStore::Ready;
+            program.state = state;
         }
 
         self.store
