@@ -5,7 +5,7 @@ use crate::{
     p2p_helper::{request, response, P2PMessageType},
     types::{ProgramContext, ProgramRequestInfo},
 };
-use bitcoin::{Transaction, Txid};
+use bitcoin::{secp256k1::Message, PublicKey, Transaction, Txid, XOnlyPublicKey};
 use chrono::Utc;
 use key_manager::winternitz::WinternitzSignature;
 use serde::{Deserialize, Serialize};
@@ -134,18 +134,42 @@ impl Program {
 
     pub fn save_other_keys(&mut self, keys: ParticipantKeys) -> Result<(), BitVMXError> {
         self.other.keys = Some(keys);
-
-        let search_params = SearchParams::new(8, 32);
-
-        self.drp.build_protocol(
-            self.me.keys.as_ref().unwrap(),
-            self.other.keys.as_ref().unwrap(),
-            search_params,
-        )?;
-
         self.move_program_to_next_state()?;
 
         Ok(())
+    }
+
+    pub fn get_prover(&self) -> &ParticipantData {
+        if self.my_role == ParticipantRole::Prover {
+            &self.me
+        } else {
+            &self.other
+        }
+    }
+
+    pub fn get_verifier(&self) -> &ParticipantData {
+        if self.my_role == ParticipantRole::Verifier {
+            &self.me
+        } else {
+            &self.other
+        }
+    }
+
+    pub fn build_protocol(&self, internal_key: &PublicKey) -> Result<(), BitVMXError> {
+        let search_params = SearchParams::new(8, 32);
+
+        self.drp.build_protocol(
+            internal_key,
+            self.get_prover().keys.as_ref().unwrap(),
+            self.get_verifier().keys.as_ref().unwrap(), 
+            search_params,
+        )?;
+
+        Ok(())
+    }
+
+    pub fn protocol_sighashes(&self) -> Result<Vec<Message>, BitVMXError> {
+        Ok(self.drp.protocol_sighashes()?)
     }
 
     pub fn recieve_participant_nonces(
@@ -345,10 +369,10 @@ impl Program {
             .get(Self::get_key(key.clone()))?
             .unwrap_or(ProgramRequestInfo::default());
 
-        info!(
-            "Last request retries: {}, time: {:?}, key: {:?}",
-            last_request.retries, last_request.last_request_time, key
-        );
+        // info!(
+        //     "Last request retries: {}, time: {:?}, key: {:?}",
+        //     last_request.retries, last_request.last_request_time, key
+        // );
 
         if last_request.retries >= self.config.retry {
             return Ok(false);
