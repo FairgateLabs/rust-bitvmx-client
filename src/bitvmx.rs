@@ -23,6 +23,7 @@ use bitvmx_broker::{
     channel::channel::DualChannel,
     rpc::{sync_server::BrokerSync, BrokerConfig},
 };
+use bitvmx_musig2::musig::{MuSig2Signer, MuSig2SignerApi};
 use key_manager::winternitz;
 use p2p_handler::{LocalAllowList, P2pHandler, ReceiveHandlerChannel};
 use serde::{Deserialize, Serialize};
@@ -383,12 +384,18 @@ impl BitVMX {
                         let my_protocol_key = program.me.keys.as_ref().unwrap().protocol;
                         let other_protocol_key = program.other.keys.as_ref().unwrap().protocol;
 
-                        //TODO: get dag messages from the drp, this will be the messages that will be signed
-                        let messages = vec![vec![1], vec![2], vec![3]];
+                        let participant_keys = vec![my_protocol_key, other_protocol_key];
+                        let aggregated_key = MuSig2Signer::get_aggregated_pubkey(participant_keys.clone())?;
+
+                        program.build_protocol(&aggregated_key)?;
+
+                        // TODO Return a different structure that preserves the relationship between messages, txs, inputs and taproot leaves
+                        let mut messages: Vec<Vec<u8>> = program.protocol_sighashes()?.iter().map(|m| m.as_ref().to_vec()).collect();
+                        messages.sort();
 
                         self.program_context.key_chain.init_musig2(
                             program.program_id,
-                            vec![my_protocol_key, other_protocol_key],
+                            participant_keys,
                             my_protocol_key,
                             messages,
                         )?;
@@ -443,6 +450,10 @@ impl BitVMX {
                             signatures,
                             &self.program_context.key_chain,
                         )?;
+
+                        //TODO Integration.
+                        //let signatures = program.get_aggregated_signatures();
+                        //self.program.save_signatures(signatures)?;
 
                         program.send_ack(
                             &self.program_context,
