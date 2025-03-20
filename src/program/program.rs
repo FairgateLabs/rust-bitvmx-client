@@ -6,6 +6,7 @@ use crate::{
     types::{ProgramContext, ProgramRequestInfo},
 };
 use bitcoin::{secp256k1::Message, PublicKey, Transaction, Txid, XOnlyPublicKey};
+use bitcoin_coordinator::types::TransactionNew;
 use chrono::Utc;
 use key_manager::winternitz::WinternitzSignature;
 use serde::{Deserialize, Serialize};
@@ -161,7 +162,7 @@ impl Program {
         self.drp.build_protocol(
             internal_key,
             self.get_prover().keys.as_ref().unwrap(),
-            self.get_verifier().keys.as_ref().unwrap(), 
+            self.get_verifier().keys.as_ref().unwrap(),
             search_params,
         )?;
 
@@ -204,30 +205,6 @@ impl Program {
         self.drp.kickoff_transaction().map_err(BitVMXError::from)
     }
 
-    pub fn funding_txid(&self) -> Txid {
-        self.drp.funding.txid
-    }
-
-    pub fn funding_vout(&self) -> u32 {
-        self.drp.funding.vout
-    }
-
-    pub fn funding_amount(&self) -> u64 {
-        self.drp.funding.amount.to_sat()
-    }
-
-    pub fn protocol_amount(&self) -> u64 {
-        self.drp.funding.protocol
-    }
-
-    pub fn timelock_amount(&self) -> u64 {
-        self.drp.funding.timelock
-    }
-
-    pub fn speedup_amount(&self) -> u64 {
-        self.drp.funding.speedup
-    }
-
     pub fn push_witness_value(&mut self, txid: Txid, name: &str, value: WinternitzSignature) {
         self.witness_data
             .entry(txid)
@@ -240,7 +217,7 @@ impl Program {
     }
 
     pub fn is_ready(&self) -> bool {
-        self.state == ProgramState::New
+        self.state == ProgramState::Ready
     }
 
     pub fn tick(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
@@ -467,5 +444,32 @@ impl Program {
         )?;
 
         Ok(())
+    }
+
+    pub fn inform_news(&self, _txs: Vec<TransactionNew>) -> Result<(), BitVMXError> {
+        //TODO: implement this
+        Ok(())
+    }
+
+    pub fn get_txs_to_monitor(&self) -> Result<Vec<Txid>, BitVMXError> {
+        //TODO: get the full DAG of the protocol
+        // let prekickoff_tx = self.prekickoff_transaction()?;
+        // let kickoff_tx = self.kickoff_transaction()?;
+
+        // let data = vec![prekickoff_tx.compute_txid(), kickoff_tx.compute_txid()];
+
+        let txs = vec![
+            "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+                .parse::<Txid>()
+                .unwrap(),
+            "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+                .parse::<Txid>()
+                .unwrap(),
+            "9876543210fedcba9876543210fedcba9876543210fedcba9876543210fedcba"
+                .parse::<Txid>()
+                .unwrap(),
+        ];
+
+        Ok(txs)
     }
 }

@@ -1,4 +1,11 @@
-use crate::keychain::KeyChain;
+use crate::{
+    keychain::KeyChain,
+    program::{
+        dispute::Funding,
+        participant::{P2PAddress, ParticipantRole},
+    },
+};
+use bitcoin_coordinator::types::AddressNew;
 use chrono::{DateTime, Utc};
 use p2p_handler::P2pHandler;
 use serde::{Deserialize, Serialize};
@@ -16,8 +23,16 @@ impl ProgramContext {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum ProgramStatusStore {
+    // Setting up the program means exchanging keys, nonces and signatures
     SettingUp,
-    Ready,
+
+    // Should send transactions to monitor to the coordinator
+    MonitorTransactions,
+
+    // Waiting for transactions to be mined and confirmed then decide what to do next
+    WaitingForTransactions,
+
+    // Completed means that the program has finished
     Completed,
 }
 
@@ -58,4 +73,18 @@ impl Default for ProgramRequestInfo {
             last_request_time: Utc::now(),
         }
     }
+}
+
+//TODO: This should be moved to a common place that could be used to share the messages api
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub enum IncomingBitVMXApiMessages {
+    SetupProgram(Uuid, ParticipantRole, P2PAddress, Funding),
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub enum OutgoingBitVMXApiMessages {
+    // Represents when pegins addresses are found
+    PegInAddressFound(Vec<AddressNew>),
+    // Represents when a program is running out of funds
+    SpeedUpProgramNoFunds(Vec<Uuid>),
 }

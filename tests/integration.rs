@@ -6,12 +6,13 @@ use bitcoind::bitcoind::Bitcoind;
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use bitvmx_client::{
-    bitvmx::{BitVMX, BitVMXApiMessages},
+    bitvmx::BitVMX,
     config::Config,
     program::{
         dispute::Funding,
         participant::{P2PAddress, ParticipantRole},
     },
+    types::IncomingBitVMXApiMessages,
 };
 use p2p_handler::PeerId;
 use tracing::info;
@@ -89,33 +90,31 @@ pub fn test_single_run() -> Result<()> {
     info!("Mine 1 block to address {:?}", wallet);
     bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
 
-    let (mut prover_bitvmx, prover_funding, prover_address, my_bridge_channel) =
+    let (mut prover_bitvmx, prover_funding, prover_address, prover_bridge_channel) =
         init_bitvmx("prover")?;
 
-    let (mut verifier_bitvmx, verifier_funding, verifier_address, other_bridge_channel) =
+    let (mut verifier_bitvmx, verifier_funding, verifier_address, verifier_bridge_channel) =
         init_bitvmx("verifier")?;
 
     let program_id = Uuid::new_v4();
 
-    let setup_msg = serde_json::to_string(&BitVMXApiMessages::SetupProgram(
+    let setup_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetupProgram(
         program_id.clone(),
         ParticipantRole::Prover,
         verifier_address.clone(),
         verifier_funding,
-    ))
-    .unwrap();
+    ))?;
 
-    my_bridge_channel.send(1, setup_msg)?;
+    prover_bridge_channel.send(1, setup_msg)?;
 
-    let setup_msg = serde_json::to_string(&BitVMXApiMessages::SetupProgram(
+    let setup_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetupProgram(
         program_id.clone(),
         ParticipantRole::Verifier,
         prover_address.clone(),
         prover_funding,
-    ))
-    .unwrap();
+    ))?;
 
-    other_bridge_channel.send(1, setup_msg)?;
+    verifier_bridge_channel.send(1, setup_msg)?;
 
     info!("PROVER: Setting up program...");
     prover_bitvmx.tick()?;
@@ -137,7 +136,15 @@ pub fn test_single_run() -> Result<()> {
         //  bitcoin_client.mine_blocks(1)?;
         prover_bitvmx.tick()?;
 
+        if let Ok(Some((msg, _from))) = prover_bridge_channel.recv() {
+            info!("PROVER received message: {}", msg);
+        }
+
         std::thread::sleep(std::time::Duration::from_millis(100));
+
+        if let Ok(Some((msg, _from))) = verifier_bridge_channel.recv() {
+            info!("VERIFIER received message: {}", msg);
+        }
 
         verifier_bitvmx.tick()?;
     }
