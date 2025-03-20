@@ -500,11 +500,13 @@ impl BitVMX {
             txs_by_address.push(address);
         }
 
-        let data = serde_json::to_string(&OutgoingBitVMXApiMessages::SpeedUpProgramNoFunds(
-            news.funds_requests.clone(),
-        ))?;
+        if !news.funds_requests.is_empty() {
+            let data = serde_json::to_string(&OutgoingBitVMXApiMessages::SpeedUpProgramNoFunds(
+                news.funds_requests.clone(),
+            ))?;
 
-        self.broker_channel.send(100, data)?;
+            self.broker_channel.send(100, data)?;
+        }
 
         let processed_news = ProcessedNews {
             txs_by_id,
