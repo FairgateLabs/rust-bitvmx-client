@@ -453,12 +453,23 @@ impl Program {
 
     pub fn get_txs_to_monitor(&self) -> Result<Vec<Txid>, BitVMXError> {
         //TODO: get the full DAG of the protocol
-        let prekickoff_tx = self.prekickoff_transaction()?;
-        let kickoff_tx = self.kickoff_transaction()?;
+        // let prekickoff_tx = self.prekickoff_transaction()?;
+        // let kickoff_tx = self.kickoff_transaction()?;
 
-        Ok(vec![
-            prekickoff_tx.compute_txid(),
-            kickoff_tx.compute_txid(),
-        ])
+        // let data = vec![prekickoff_tx.compute_txid(), kickoff_tx.compute_txid()];
+
+        let txs = vec![
+            "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+                .parse::<Txid>()
+                .unwrap(),
+            "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+                .parse::<Txid>()
+                .unwrap(),
+            "9876543210fedcba9876543210fedcba9876543210fedcba9876543210fedcba"
+                .parse::<Txid>()
+                .unwrap(),
+        ];
+
+        Ok(txs)
     }
 }
