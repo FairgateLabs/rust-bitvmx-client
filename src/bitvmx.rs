@@ -10,7 +10,10 @@ use crate::{
         program::{Program, ProgramState},
         witness,
     },
-    types::{ProgramContext, ProgramStatus, ProgramStatusStore},
+    types::{
+        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus,
+        ProgramStatusStore,
+    },
 };
 
 use bitcoin::{PublicKey, Transaction};
@@ -26,7 +29,6 @@ use bitvmx_broker::{
 use bitvmx_musig2::musig::{MuSig2Signer, MuSig2SignerApi};
 use key_manager::winternitz;
 use p2p_handler::{LocalAllowList, P2pHandler, ReceiveHandlerChannel};
-use serde::{Deserialize, Serialize};
 use std::{
     path::PathBuf,
     rc::Rc,
@@ -38,12 +40,6 @@ use storage_backend::storage::{KeyValueStore, Storage};
 
 use tracing::info;
 use uuid::Uuid;
-
-//TODO: This should be moved to a common place that could be used to share the messages api
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub enum BitVMXApiMessages {
-    SetupProgram(Uuid, ParticipantRole, P2PAddress, Funding),
-}
 
 pub struct BitVMX {
     _config: Config,
@@ -179,12 +175,11 @@ impl BitVMX {
         let program = self.load_program(program_id)?;
         let transaction = program.prekickoff_transaction()?;
 
-        let instance: BitvmxInstance<TransactionPartialInfo> =
-            bitcoin_coordinator::types::BitvmxInstance::new(
-                *program_id,
-                vec![TransactionPartialInfo::from(transaction.compute_txid())],
-                None,
-            );
+        let instance: BitvmxInstance<TransactionPartialInfo> = BitvmxInstance::new(
+            *program_id,
+            vec![TransactionPartialInfo::from(transaction.compute_txid())],
+            None,
+        );
 
         self.bitcoin_coordinator.monitor_instance(&instance)?;
 
@@ -200,24 +195,10 @@ impl BitVMX {
             program.deploy();
         }
 
-
-
         info!("Program deployed: {}", program_id);
 
-        Ok(program.is_ready())*/
+        */
         Ok(true)
-    }
-
-    /// Executes the program offchain using the BitVMX CPU to generate the program trace, ending state and
-    /// ending step number.
-    pub fn run_program(&mut self, program_id: &Uuid) -> Result<(), BitVMXError> {
-        let program = self.load_program(program_id)?;
-        if !program.is_ready() {
-            return Err(BitVMXError::ProgramNotReady(*program_id));
-        }
-
-        // Run program on the CPU and store the execution result (end step, end state and trace) in the program instance
-        Ok(())
     }
 
     /// Sends the kickoff transaction to the Bitcoin network, the program is now ready for the verifier to
@@ -385,12 +366,17 @@ impl BitVMX {
                         let other_protocol_key = program.other.keys.as_ref().unwrap().protocol;
 
                         let participant_keys = vec![my_protocol_key, other_protocol_key];
-                        let aggregated_key = MuSig2Signer::get_aggregated_pubkey(participant_keys.clone())?;
+                        let aggregated_key =
+                            MuSig2Signer::get_aggregated_pubkey(participant_keys.clone())?;
 
                         program.build_protocol(&aggregated_key)?;
 
                         // TODO Return a different structure that preserves the relationship between messages, txs, inputs and taproot leaves
-                        let mut messages: Vec<Vec<u8>> = program.protocol_sighashes()?.iter().map(|m| m.as_ref().to_vec()).collect();
+                        let mut messages: Vec<Vec<u8>> = program
+                            .protocol_sighashes()?
+                            .iter()
+                            .map(|m| m.as_ref().to_vec())
+                            .collect();
                         messages.sort();
 
                         self.program_context.key_chain.init_musig2(
@@ -479,58 +465,67 @@ impl BitVMX {
         Ok(())
     }
 
-    pub fn process_bitcoin_updates(&mut self) -> Result<bool, BitVMXError> {
-        let ret = self.bitcoin_coordinator.tick();
-        if ret.is_err() {
-            //TODO: Fix why bitcoin coordinator is failing
-            return Ok(false);
-        }
+    pub fn process_bitcoin_updates(&mut self) -> Result<(), BitVMXError> {
+        self.bitcoin_coordinator.tick()?;
 
         if !self.bitcoin_coordinator.is_ready()? {
-            return Ok(false);
+            return Ok(());
         }
 
         let news = self.bitcoin_coordinator.get_news()?;
+
         if !news.txs_by_id.is_empty() {
             info!("Processing news: {:?}", news);
-        } else {
-            return Ok(true);
-        }
-
-        let mut ret = vec![];
-
-        for (program_id, txs) in news.txs_by_id {
-            let mut ret_tx = vec![];
-            for tx in txs {
-                ret_tx.push(tx.tx.compute_txid());
-            }
-            ret.push((program_id, ret_tx));
-
-            let _program = self.load_program(&program_id)?;
-            //TODO: Check that the transaction
-            // program.deploy();
-        }
-
-        //let txids = news.txs_by_id.iter().map(|tx| (tx.0, tx.1)).collect::<Vec<Txid>>();
-        let processed_news = ProcessedNews {
-            txs_by_id: ret,
-            txs_by_address: vec![],
-            funds_requests: vec![],
         };
 
+        let mut txs_by_id = vec![];
+
+        for (program_id, txs) in news.txs_by_id {
+            let program = self.load_program(&program_id)?;
+
+            program.inform_news(txs.clone())?;
+
+            txs_by_id.push((
+                program_id,
+                txs.iter().map(|tx| tx.tx.compute_txid()).collect(),
+            ));
+        }
+
+        let mut txs_by_address = vec![];
+
+        for (address, txs) in news.txs_by_address {
+            // Call broker (main thread) to process the news , for now dest is 100 (is hardcoded).
+            let data = serde_json::to_string(&OutgoingBitVMXApiMessages::PegInAddressFound(txs))?;
+            self.broker_channel.send(100, data)?;
+            txs_by_address.push(address);
+        }
+
+        let data = serde_json::to_string(&OutgoingBitVMXApiMessages::SpeedUpProgramNoFunds(
+            news.funds_requests.clone(),
+        ))?;
+
+        self.broker_channel.send(100, data)?;
+
+        let processed_news = ProcessedNews {
+            txs_by_id,
+            txs_by_address,
+            funds_requests: news.funds_requests,
+        };
+
+        // acknowledge news to the bitcoin coordinator means won't be notified again about the same news
         self.bitcoin_coordinator.acknowledge_news(processed_news)?;
 
-        Ok(false)
+        Ok(())
     }
 
     pub fn process_api_messages(&mut self) -> Result<(), BitVMXError> {
         //TODO: Dedice if we want to process all message in a while or just one per tick
         if let Some((msg, _from)) = self.broker_channel.recv()? {
-            let decoded: BitVMXApiMessages = serde_json::from_str(&msg)?;
+            let decoded: IncomingBitVMXApiMessages = serde_json::from_str(&msg)?;
             // info!("Processing api message {:#?}", decoded);
 
             match decoded {
-                BitVMXApiMessages::SetupProgram(id, role, peer_address, funding) => {
+                IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address, funding) => {
                     if self.program_exists(&id)? {
                         return Err(BitVMXError::ProgramAlreadyExists(id));
                     }
@@ -548,9 +543,9 @@ impl BitVMX {
 
     pub fn tick(&mut self) -> Result<(), BitVMXError> {
         self.process_p2p_messages()?;
-        self.advance_programs()?;
+        self.process_programs()?;
         self.process_api_messages()?;
-        //self.process_bitcoin_updates()?;
+        self.process_bitcoin_updates()?;
         Ok(())
     }
 
@@ -601,13 +596,36 @@ impl BitVMX {
         }
     }
 
-    fn advance_programs(&mut self) -> Result<(), BitVMXError> {
+    fn process_programs(&mut self) -> Result<(), BitVMXError> {
         let programs = self.get_setting_up_programs()?;
         for mut program in programs {
             program.tick(&self.program_context)?;
 
-            if !program.is_setting_up() {
-                self.change_program_status(&program.program_id, ProgramStatusStore::Ready)?;
+            if program.is_ready() {
+                // After the program is ready, we need to monitor the transactions
+                self.change_program_status(
+                    &program.program_id,
+                    ProgramStatusStore::MonitorTransactions,
+                )?;
+
+                let txns_to_monitor = program.get_txs_to_monitor()?;
+
+                // TODO : COMPLETE THE FUNDING TX FOR SPEED UP
+                let txs_to_monitor: BitvmxInstance<TransactionPartialInfo> = BitvmxInstance::new(
+                    program.program_id,
+                    txns_to_monitor
+                        .iter()
+                        .map(|tx| TransactionPartialInfo::from(*tx))
+                        .collect(),
+                    None,
+                );
+
+                self.bitcoin_coordinator.monitor_instance(&txs_to_monitor)?;
+
+                self.change_program_status(
+                    &program.program_id,
+                    ProgramStatusStore::WaitingForTransactions,
+                )?;
             }
         }
         Ok(())

@@ -133,7 +133,7 @@ impl DisputeResolutionProtocol {
         builder.add_speedup_output(PREKICKOFF, self.funding.speedup, &prover_keys.speedup)?;
 
         let protocol = builder.build()?;
-        
+
         self.save_protocol(protocol)?;
 
         Ok(())
@@ -178,11 +178,11 @@ impl DisputeResolutionProtocol {
             for info in infos {
                 for message in info.hashed_messages() {
                     sighashes.push(message.to_owned());
-                }  
+                }
             }
         }
 
-        Ok(sighashes) 
+        Ok(sighashes)
     }
 
     fn load_protocol(&self) -> Result<Protocol, ProtocolBuilderError> {
