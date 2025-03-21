@@ -21,33 +21,14 @@ impl ProgramContext {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub enum ProgramStatusStore {
-    // Setting up the program means exchanging keys, nonces and signatures
-    SettingUp,
-
-    // Should send transactions to monitor to the coordinator
-    MonitorTransactions,
-
-    // Waiting for transactions to be mined and confirmed then decide what to do next
-    WaitingForTransactions,
-
-    // Completed means that the program has finished
-    Completed,
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ProgramStatus {
     pub program_id: Uuid,
-    pub state: ProgramStatusStore,
 }
 
 impl ProgramStatus {
     pub fn new(program_id: Uuid) -> Self {
-        Self {
-            program_id,
-            state: ProgramStatusStore::SettingUp,
-        }
+        Self { program_id }
     }
 }
 

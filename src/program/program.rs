@@ -5,7 +5,9 @@ use crate::{
     p2p_helper::{request, response, P2PMessageType},
     types::{ProgramContext, ProgramRequestInfo},
 };
-use bitcoin::{secp256k1::Message, PublicKey, Transaction, Txid, XOnlyPublicKey};
+use bitcoin::{
+    absolute::LockTime, secp256k1::Message, transaction::Version, PublicKey, Transaction, Txid,
+};
 use bitcoin_coordinator::types::TransactionNew;
 use chrono::Utc;
 use key_manager::winternitz::WinternitzSignature;
@@ -22,21 +24,41 @@ use super::{
 
 #[derive(PartialEq, Clone, Serialize, Deserialize, Debug)]
 pub enum ProgramState {
+    /// Initial state when a program is first created
     New,
+
+    /// Program is in setup phase, exchanging keys, nonces and signatures with counterparty.
+    /// Contains a SettingUpState enum specifying the exact setup step.
+    SettingUp(SettingUpState),
+
+    /// Program setup is complete and is ready to send transactions monitor
+    Monitoring,
+
+    /// Program is dispatching transactions to the blockchain to complete the protocol
+    /// TODO: Dispatching should have (Claimed, Challenged) inside it
+    Dispatching,
+
+    /// Program has been claimed by one party
     Claimed,
+
+    /// Program has been challenged
     Challenged,
-    Ready,
+
+    /// Program encountered an error and cannot continue
     Error,
 
-    // Exchange messages
+    /// Program has completed successfully
+    Completed,
+}
+
+#[derive(PartialEq, Clone, Serialize, Deserialize, Debug)]
+pub enum SettingUpState {
     WaitingKeys,
     SendingKeys,
     WaitingNonces,
     SendingNonces,
     WaitingSignatures,
     SendingSignatures,
-
-    Completed,
 }
 
 #[derive(Debug, Clone)]
@@ -216,17 +238,13 @@ impl Program {
         self.witness_data.get(&txid)
     }
 
-    pub fn is_ready(&self) -> bool {
-        self.state == ProgramState::Ready
-    }
-
     pub fn tick(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
         match &self.state {
             ProgramState::New => {
                 self.move_program_to_next_state()?;
             }
 
-            ProgramState::SendingKeys => {
+            ProgramState::SettingUp(SettingUpState::SendingKeys) => {
                 let my_keys = self.me.keys.clone().unwrap();
 
                 let should_send_request =
@@ -248,7 +266,7 @@ impl Program {
 
                 self.save_retry(StoreKey::LastRequestKeys(self.program_id))?;
             }
-            ProgramState::SendingNonces => {
+            ProgramState::SettingUp(SettingUpState::SendingNonces) => {
                 let should_send_request =
                     self.should_send_request(StoreKey::LastRequestNonces(self.program_id))?;
 
@@ -270,7 +288,7 @@ impl Program {
 
                 self.save_retry(StoreKey::LastRequestNonces(self.program_id))?;
             }
-            ProgramState::SendingSignatures => {
+            ProgramState::SettingUp(SettingUpState::SendingSignatures) => {
                 let should_send_request =
                     self.should_send_request(StoreKey::LastRequestSignatures(self.program_id))?;
 
@@ -378,34 +396,61 @@ impl Program {
     pub fn move_program_to_next_state(&mut self) -> Result<(), BitVMXError> {
         let next_state = match self.my_role {
             ParticipantRole::Prover => match self.state {
-                ProgramState::New => ProgramState::SendingKeys,
-                ProgramState::SendingKeys => ProgramState::WaitingKeys,
-                ProgramState::WaitingKeys => ProgramState::SendingNonces,
-                ProgramState::SendingNonces => ProgramState::WaitingNonces,
-                ProgramState::WaitingNonces => ProgramState::SendingSignatures,
-                ProgramState::SendingSignatures => ProgramState::WaitingSignatures,
-                ProgramState::WaitingSignatures => ProgramState::Ready,
+                ProgramState::New => ProgramState::SettingUp(SettingUpState::SendingKeys),
+                ProgramState::SettingUp(SettingUpState::SendingKeys) => {
+                    ProgramState::SettingUp(SettingUpState::WaitingKeys)
+                }
+                ProgramState::SettingUp(SettingUpState::WaitingKeys) => {
+                    ProgramState::SettingUp(SettingUpState::SendingNonces)
+                }
+                ProgramState::SettingUp(SettingUpState::SendingNonces) => {
+                    ProgramState::SettingUp(SettingUpState::WaitingNonces)
+                }
+                ProgramState::SettingUp(SettingUpState::WaitingNonces) => {
+                    ProgramState::SettingUp(SettingUpState::SendingSignatures)
+                }
+                ProgramState::SettingUp(SettingUpState::SendingSignatures) => {
+                    ProgramState::SettingUp(SettingUpState::WaitingSignatures)
+                }
+                ProgramState::SettingUp(SettingUpState::WaitingSignatures) => {
+                    ProgramState::Monitoring
+                }
 
+                ProgramState::Monitoring => ProgramState::Dispatching,
                 ProgramState::Claimed => ProgramState::Claimed,
                 ProgramState::Challenged => ProgramState::Challenged,
-                ProgramState::Ready => ProgramState::Ready,
                 ProgramState::Error => ProgramState::Error,
                 ProgramState::Completed => ProgramState::Completed,
+                //TODO: This should change to Claimed or Challenged , there is 2 options .
+                ProgramState::Dispatching => ProgramState::Dispatching,
             },
             ParticipantRole::Verifier => match self.state {
-                ProgramState::New => ProgramState::WaitingKeys,
-                ProgramState::WaitingKeys => ProgramState::SendingKeys,
-                ProgramState::SendingKeys => ProgramState::WaitingNonces,
-                ProgramState::WaitingNonces => ProgramState::SendingNonces,
-                ProgramState::SendingNonces => ProgramState::WaitingSignatures,
-                ProgramState::WaitingSignatures => ProgramState::SendingSignatures,
-                ProgramState::SendingSignatures => ProgramState::Ready,
+                ProgramState::New => ProgramState::SettingUp(SettingUpState::WaitingKeys),
+                ProgramState::SettingUp(SettingUpState::WaitingKeys) => {
+                    ProgramState::SettingUp(SettingUpState::SendingKeys)
+                }
+                ProgramState::SettingUp(SettingUpState::SendingKeys) => {
+                    ProgramState::SettingUp(SettingUpState::WaitingNonces)
+                }
+                ProgramState::SettingUp(SettingUpState::WaitingNonces) => {
+                    ProgramState::SettingUp(SettingUpState::SendingNonces)
+                }
+                ProgramState::SettingUp(SettingUpState::SendingNonces) => {
+                    ProgramState::SettingUp(SettingUpState::WaitingSignatures)
+                }
+                ProgramState::SettingUp(SettingUpState::WaitingSignatures) => {
+                    ProgramState::SettingUp(SettingUpState::SendingSignatures)
+                }
+                ProgramState::SettingUp(SettingUpState::SendingSignatures) => {
+                    ProgramState::Monitoring
+                }
 
+                ProgramState::Monitoring => ProgramState::Dispatching,
                 ProgramState::Claimed => ProgramState::Claimed,
                 ProgramState::Challenged => ProgramState::Challenged,
-                ProgramState::Ready => ProgramState::Ready,
                 ProgramState::Error => ProgramState::Error,
                 ProgramState::Completed => ProgramState::Completed,
+                ProgramState::Dispatching => ProgramState::Dispatching,
             },
         };
 
@@ -416,16 +461,23 @@ impl Program {
         Ok(())
     }
 
+    pub fn is_active(&self) -> bool {
+        let is_setting_up = self.is_setting_up();
+        let is_monitoring = self.is_monitoring();
+        let is_dispatching = self.is_dispatching();
+        is_setting_up || is_monitoring || is_dispatching
+    }
+
     pub fn is_setting_up(&self) -> bool {
-        matches!(
-            self.state,
-            ProgramState::WaitingKeys
-                | ProgramState::SendingKeys
-                | ProgramState::WaitingNonces
-                | ProgramState::SendingNonces
-                | ProgramState::WaitingSignatures
-                | ProgramState::SendingSignatures
-        )
+        matches!(self.state, ProgramState::New | ProgramState::SettingUp(_))
+    }
+
+    pub fn is_dispatching(&self) -> bool {
+        matches!(self.state, ProgramState::Dispatching)
+    }
+
+    pub fn is_monitoring(&self) -> bool {
+        self.state == ProgramState::Monitoring
     }
 
     pub fn send_ack(
@@ -446,17 +498,13 @@ impl Program {
         Ok(())
     }
 
-    pub fn inform_news(&self, _txs: Vec<TransactionNew>) -> Result<(), BitVMXError> {
-        //TODO: implement this
+    pub fn notify_news(&self, _txs: Vec<TransactionNew>) -> Result<(), BitVMXError> {
+        //TODO: for each tx the protocol should decide something to do
         Ok(())
     }
 
     pub fn get_txs_to_monitor(&self) -> Result<Vec<Txid>, BitVMXError> {
-        //TODO: get the full DAG of the protocol
-        // let prekickoff_tx = self.prekickoff_transaction()?;
-        // let kickoff_tx = self.kickoff_transaction()?;
-
-        // let data = vec![prekickoff_tx.compute_txid(), kickoff_tx.compute_txid()];
+        //TODO: get the full DAG of the protocol and remove the hardcoded txs
 
         let txs = vec![
             "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
@@ -471,5 +519,17 @@ impl Program {
         ];
 
         Ok(txs)
+    }
+
+    pub fn get_tx_to_dispatch(&self) -> Result<Option<Transaction>, BitVMXError> {
+        //TODO: This is hardcoded for now, this should return None or the answer of the protocol with a transaction to dispatch.
+        let _tx = Transaction {
+            version: Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![],
+            output: vec![],
+        };
+
+        Ok(None)
     }
 }

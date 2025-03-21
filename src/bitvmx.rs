@@ -7,13 +7,10 @@ use crate::{
     program::{
         dispute::{Funding, SearchParams},
         participant::{P2PAddress, ParticipantData, ParticipantKeys, ParticipantRole},
-        program::{Program, ProgramState},
+        program::{Program, ProgramState, SettingUpState},
         witness,
     },
-    types::{
-        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus,
-        ProgramStatusStore,
-    },
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus},
 };
 
 use bitcoin::{PublicKey, Transaction};
@@ -483,7 +480,7 @@ impl BitVMX {
         for (program_id, txs) in news.txs_by_id {
             let program = self.load_program(&program_id)?;
 
-            program.inform_news(txs.clone())?;
+            program.notify_news(txs.clone())?;
 
             txs_by_id.push((
                 program_id,
@@ -496,6 +493,7 @@ impl BitVMX {
         for (address, txs) in news.txs_by_address {
             // Call broker (main thread) to process the news , for now dest is 100 (is hardcoded).
             let data = serde_json::to_string(&OutgoingBitVMXApiMessages::PegInAddressFound(txs))?;
+            info!("Sending txs by address to broker");
             self.broker_channel.send(100, data)?;
             txs_by_address.push(address);
         }
@@ -505,17 +503,19 @@ impl BitVMX {
                 news.funds_requests.clone(),
             ))?;
 
+            info!("Sending funds request to broker");
             self.broker_channel.send(100, data)?;
         }
 
-        let processed_news = ProcessedNews {
-            txs_by_id,
-            txs_by_address,
-            funds_requests: news.funds_requests,
-        };
-
         // acknowledge news to the bitcoin coordinator means won't be notified again about the same news
-        self.bitcoin_coordinator.acknowledge_news(processed_news)?;
+        if !txs_by_id.is_empty() || !txs_by_address.is_empty() || !news.funds_requests.is_empty() {
+            let processed_news = ProcessedNews {
+                txs_by_id,
+                txs_by_address,
+                funds_requests: news.funds_requests,
+            };
+            self.bitcoin_coordinator.acknowledge_news(processed_news)?;
+        }
 
         Ok(())
     }
@@ -535,7 +535,7 @@ impl BitVMX {
                     //TODO: This should be done in a single atomic operation
                     self.add_new_program(&id)?;
                     self.setup_program(&id, role.clone(), funding, &peer_address)?;
-                    info!("{}: Program Setup", role);
+                    info!("{}: Program Setup Finished", role);
                 }
             }
         }
@@ -565,8 +565,13 @@ impl BitVMX {
             // 5. Sends signatures and waits for SignaturesAck
             // 6. Waits for signatures from verifier
             return match (state, msg_type) {
-                (ProgramState::SendingNonces, P2PMessageType::Keys) => true,
-                (ProgramState::SendingSignatures, P2PMessageType::PublicNonces) => true,
+                (ProgramState::SettingUp(SettingUpState::SendingNonces), P2PMessageType::Keys) => {
+                    true
+                }
+                (
+                    ProgramState::SettingUp(SettingUpState::SendingSignatures),
+                    P2PMessageType::PublicNonces,
+                ) => true,
                 _ => false,
             };
         } else {
@@ -578,9 +583,17 @@ impl BitVMX {
             // 5. Waits for signatures from prover
             // 6. Sends signatures and waits for SignaturesAck
             return match (state, msg_type) {
-                (ProgramState::SendingKeys, P2PMessageType::Keys) => true,
-                (ProgramState::SendingNonces, P2PMessageType::PublicNonces) => true,
-                (ProgramState::SendingSignatures, P2PMessageType::PartialSignatures) => true,
+                (ProgramState::SettingUp(SettingUpState::SendingKeys), P2PMessageType::Keys) => {
+                    true
+                }
+                (
+                    ProgramState::SettingUp(SettingUpState::SendingNonces),
+                    P2PMessageType::PublicNonces,
+                ) => true,
+                (
+                    ProgramState::SettingUp(SettingUpState::SendingSignatures),
+                    P2PMessageType::PartialSignatures,
+                ) => true,
                 _ => false,
             };
         }
@@ -588,27 +601,45 @@ impl BitVMX {
 
     pub fn should_handle_msg(state: &ProgramState, msg_type: &P2PMessageType) -> bool {
         match (state, msg_type) {
-            (ProgramState::WaitingKeys, P2PMessageType::Keys) => true,
-            (ProgramState::WaitingNonces, P2PMessageType::PublicNonces) => true,
-            (ProgramState::WaitingSignatures, P2PMessageType::PartialSignatures) => true,
-            (ProgramState::SendingKeys, P2PMessageType::KeysAck) => true,
-            (ProgramState::SendingNonces, P2PMessageType::PublicNoncesAck) => true,
-            (ProgramState::SendingSignatures, P2PMessageType::PartialSignaturesAck) => true,
+            (ProgramState::SettingUp(SettingUpState::WaitingKeys), P2PMessageType::Keys) => true,
+            (
+                ProgramState::SettingUp(SettingUpState::WaitingNonces),
+                P2PMessageType::PublicNonces,
+            ) => true,
+            (
+                ProgramState::SettingUp(SettingUpState::WaitingSignatures),
+                P2PMessageType::PartialSignatures,
+            ) => true,
+            (ProgramState::SettingUp(SettingUpState::SendingKeys), P2PMessageType::KeysAck) => true,
+            (
+                ProgramState::SettingUp(SettingUpState::SendingNonces),
+                P2PMessageType::PublicNoncesAck,
+            ) => true,
+            (
+                ProgramState::SettingUp(SettingUpState::SendingSignatures),
+                P2PMessageType::PartialSignaturesAck,
+            ) => true,
             _ => false,
         }
     }
 
     fn process_programs(&mut self) -> Result<(), BitVMXError> {
-        let programs = self.get_setting_up_programs()?;
-        for mut program in programs {
-            program.tick(&self.program_context)?;
+        let programs = self.get_active_programs()?;
 
-            if program.is_ready() {
+        for mut program in programs {
+            if program.is_setting_up() {
+                info!("Program state is_setting_up: {:?}", program.state);
+                // TODO: Improvement, I think this tick function we should have different name.
+                // I think a better name could be proceed_with_setting_up
+                // Besides that I think tick only exist as a function for a library to use it outside of the library.
+                program.tick(&self.program_context)?;
+
+                return Ok(());
+            }
+
+            if program.is_monitoring() {
+                info!("Program state is_monitoring: {:?}", program.state);
                 // After the program is ready, we need to monitor the transactions
-                self.change_program_status(
-                    &program.program_id,
-                    ProgramStatusStore::MonitorTransactions,
-                )?;
 
                 let txns_to_monitor = program.get_txs_to_monitor()?;
 
@@ -624,10 +655,20 @@ impl BitVMX {
 
                 self.bitcoin_coordinator.monitor_instance(&txs_to_monitor)?;
 
-                self.change_program_status(
-                    &program.program_id,
-                    ProgramStatusStore::WaitingForTransactions,
-                )?;
+                program.move_program_to_next_state()?;
+
+                return Ok(());
+            }
+
+            if program.is_dispatching() {
+                info!("Program state is_dispatching: {:?}", program.state);
+                let tx_to_dispatch: Option<Transaction> = program.get_tx_to_dispatch()?;
+
+                if let Some(tx) = tx_to_dispatch {
+                    self.bitcoin_coordinator
+                        .send_tx_instance(program.program_id, &tx)?;
+                }
+                return Ok(());
             }
         }
         Ok(())
@@ -650,14 +691,15 @@ impl BitVMX {
         Ok(programs_ids.unwrap())
     }
 
-    fn get_setting_up_programs(&self) -> Result<Vec<Program>, BitVMXError> {
+    fn get_active_programs(&self) -> Result<Vec<Program>, BitVMXError> {
         let programs = self.get_programs()?;
 
         let mut active_programs = vec![];
 
         for program_status in programs {
-            if program_status.state == ProgramStatusStore::SettingUp {
-                let program = self.load_program(&program_status.program_id)?;
+            let program = self.load_program(&program_status.program_id)?;
+
+            if program.is_active() {
                 active_programs.push(program);
             }
         }
@@ -677,22 +719,6 @@ impl BitVMX {
         self.store
             .set(StoreKey::Programs.get_key(), programs, None)?;
 
-        Ok(())
-    }
-
-    fn change_program_status(
-        &mut self,
-        program_id: &Uuid,
-        state: ProgramStatusStore,
-    ) -> Result<(), BitVMXError> {
-        let mut programs = self.get_programs()?;
-
-        if let Some(program) = programs.iter_mut().find(|p| p.program_id == *program_id) {
-            program.state = state;
-        }
-
-        self.store
-            .set(StoreKey::Programs.get_key(), programs, None)?;
         Ok(())
     }
 
