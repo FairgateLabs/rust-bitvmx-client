@@ -1,6 +1,6 @@
 use std::{collections::HashMap, rc::Rc};
 
-use bitcoin::{p2p::message, secp256k1::Message, Amount, PublicKey, Transaction, Txid};
+use bitcoin::{secp256k1::Message, Amount, PublicKey, Transaction, Txid};
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder, SpendingArgs},
     errors::ProtocolBuilderError,

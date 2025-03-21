@@ -1,9 +1,12 @@
 use crate::{errors::ParseError, program::participant::ParticipantKeys};
+#[cfg(test)]
 use bitcoin::{
     key::{rand, Keypair, Secp256k1},
     PublicKey, XOnlyPublicKey,
 };
+
 use bitvmx_musig2::{PartialSignature, PubNonce};
+#[cfg(test)]
 use key_manager::winternitz::{WinternitzPublicKey, WinternitzType};
 use serde_json::Value;
 
