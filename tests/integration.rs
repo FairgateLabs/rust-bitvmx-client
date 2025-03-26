@@ -87,8 +87,8 @@ pub fn test_single_run() -> Result<()> {
         .init_wallet(Network::Regtest, "test_wallet")
         .unwrap();
 
-    info!("Mine 1 block to address {:?}", wallet);
-    bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
+    info!("Mine 100 block to address {:?}", wallet);
+    bitcoin_client.mine_blocks_to_address(100, &wallet).unwrap();
 
     let (mut prover_bitvmx, prover_funding, prover_address, prover_bridge_channel) =
         init_bitvmx("prover")?;
@@ -129,10 +129,10 @@ pub fn test_single_run() -> Result<()> {
     // prover_bitvmx.deploy_program(&program_id)?;
 
     //TODO: main loop
-    for _ in 0..1000 {
-        // if i % 20 == 0 {
-        //     //  bitcoin_client.mine_blocks(1)?;
-        // }
+    for i in 0..200 {
+        if i % 20 == 0 {
+            bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
+        }
         //  bitcoin_client.mine_blocks(1)?;
         prover_bitvmx.tick()?;
 

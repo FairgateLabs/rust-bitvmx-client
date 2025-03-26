@@ -447,6 +447,10 @@ impl BitVMX {
                     | P2PMessageType::PublicNoncesAck
                     | P2PMessageType::PartialSignaturesAck => {
                         if !Self::should_handle_msg(&program.state, &msg_type) {
+                            info!(
+                                "Ignoring message {} {:?} {:?}",
+                                program.my_role, msg_type, program.state
+                            );
                             return Ok(());
                         }
 
@@ -628,7 +632,10 @@ impl BitVMX {
 
         for mut program in programs {
             if program.is_setting_up() {
-                info!("Program state is_setting_up: {:?}", program.state);
+                info!(
+                    "Program state is_setting_up: {} {:?}",
+                    program.my_role, program.state
+                );
                 // TODO: Improvement, I think this tick function we should have different name.
                 // I think a better name could be proceed_with_setting_up
                 // Besides that I think tick only exist as a function for a library to use it outside of the library.
@@ -638,7 +645,10 @@ impl BitVMX {
             }
 
             if program.is_monitoring() {
-                info!("Program state is_monitoring: {:?}", program.state);
+                info!(
+                    "Program state is_monitoring: {} {:?}",
+                    program.my_role, program.state
+                );
                 // After the program is ready, we need to monitor the transactions
 
                 let txns_to_monitor = program.get_txs_to_monitor()?;

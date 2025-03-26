@@ -364,16 +364,13 @@ impl Program {
             .get(Self::get_key(key.clone()))?
             .unwrap_or(ProgramRequestInfo::default());
 
-        // info!(
-        //     "Last request retries: {}, time: {:?}, key: {:?}",
-        //     last_request.retries, last_request.last_request_time, key
-        // );
+        /*info!(
+            "Last request retries: {}, time: {:?}, key: {:?}",
+            last_request.retries, last_request.last_request_time, key
+        );*/
 
         if last_request.retries >= self.config.retry {
-            return Ok(false);
-        }
-
-        if last_request.retries >= self.config.retry {
+            info!("Max retries reached, program in error state");
             return Ok(false);
         }
 
