@@ -406,31 +406,33 @@ impl BitVMX {
 
         let news = self.bitcoin_coordinator.get_news()?;
 
-        if !news.txs_by_id.is_empty() {
+        if !news.instance_txs.is_empty() {
             info!("Processing news: {:?}", news);
         };
 
-        let mut txs_by_id = vec![];
+        let mut instance_txs = vec![];
 
-        for (program_id, txs) in news.txs_by_id {
+        for (program_id, txs) in news.instance_txs {
             let program = self.load_program(&program_id)?;
 
             program.notify_news(txs.clone())?;
 
-            txs_by_id.push((
+            instance_txs.push((
                 program_id,
                 txs.iter().map(|tx| tx.tx.compute_txid()).collect(),
             ));
         }
 
-        let mut txs_by_address = vec![];
+        let mut single_txs = vec![];
 
-        for (address, txs) in news.txs_by_address {
+        for tx_new in news.single_txs {
             // Call broker (main thread) to process the news , for now dest is 100 (is hardcoded).
-            let data = serde_json::to_string(&OutgoingBitVMXApiMessages::PegInAddressFound(txs))?;
-            info!("Sending txs by address to broker");
+            let data = serde_json::to_string(&OutgoingBitVMXApiMessages::PeginTransactionFound(
+                tx_new.clone(),
+            ))?;
+            info!("Sending pegin tx to broker found");
             self.broker_channel.send(100, data)?;
-            txs_by_address.push(address);
+            single_txs.push(tx_new.tx.compute_txid());
         }
 
         if !news.funds_requests.is_empty() {
@@ -443,10 +445,10 @@ impl BitVMX {
         }
 
         // acknowledge news to the bitcoin coordinator means won't be notified again about the same news
-        if !txs_by_id.is_empty() || !txs_by_address.is_empty() || !news.funds_requests.is_empty() {
+        if !instance_txs.is_empty() || !single_txs.is_empty() || !news.funds_requests.is_empty() {
             let processed_news = ProcessedNews {
-                txs_by_id,
-                txs_by_address,
+                instance_txs,
+                single_txs,
                 funds_requests: news.funds_requests,
             };
             self.bitcoin_coordinator.acknowledge_news(processed_news)?;
