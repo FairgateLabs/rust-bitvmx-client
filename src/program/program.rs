@@ -1,11 +1,11 @@
 use crate::{
     config::ClientConfig,
     errors::{BitVMXError, ProgramError},
-    keychain::KeyChain,
     p2p_helper::{request, response, P2PMessageType},
     types::{ProgramContext, ProgramRequestInfo},
 };
-use bitcoin::{secp256k1::Message, Transaction, Txid};
+use bitcoin::{absolute::LockTime, transaction::Version, Transaction, Txid};
+use bitcoin_coordinator::types::TransactionNew;
 use chrono::Utc;
 use key_manager::{key_manager::KeyManager, keystorage::database::DatabaseKeyStore, musig2::{types::MessageId, PartialSignature, PubNonce}, winternitz::WinternitzSignature};
 use serde::{Deserialize, Serialize};
