@@ -4,10 +4,7 @@ use bitcoin::{
     key::{rand, Keypair, Secp256k1},
     PublicKey, XOnlyPublicKey,
 };
-
-use bitvmx_musig2::{PartialSignature, PubNonce};
-#[cfg(test)]
-use key_manager::winternitz::{WinternitzPublicKey, WinternitzType};
+use key_manager::{musig2::{types::MessageId, PartialSignature, PubNonce}, winternitz::{WinternitzPublicKey, WinternitzType}};
 use serde_json::Value;
 
 pub fn parse_keys(value: Value) -> Result<ParticipantKeys, ParseError> {
@@ -17,15 +14,15 @@ pub fn parse_keys(value: Value) -> Result<ParticipantKeys, ParseError> {
     Ok(participant_keys)
 }
 
-pub fn parse_nonces(data: Value) -> Result<Vec<PubNonce>, ParseError> {
-    let nonces: Vec<PubNonce> =
+pub fn parse_nonces(data: Value) -> Result<Vec<(MessageId, PubNonce)>, ParseError> {
+    let nonces: Vec<(MessageId, PubNonce)> =
         serde_json::from_value(data).map_err(|_| ParseError::InvalidNonces)?;
 
     Ok(nonces)
 }
 
-pub fn parse_signatures(data: Value) -> Result<Vec<PartialSignature>, ParseError> {
-    let signatures: Vec<PartialSignature> =
+pub fn parse_signatures(data: Value) -> Result<Vec<(MessageId, PartialSignature)>, ParseError> {
+    let signatures: Vec<(MessageId, PartialSignature)> =
         serde_json::from_value(data).map_err(|_| ParseError::InvalidPartialSignatures)?;
 
     Ok(signatures)

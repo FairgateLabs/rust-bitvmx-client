@@ -37,8 +37,6 @@ bitvmx-bitcoin-rpc = { path = "../rust-bitvmx-bitcoin-rpc" }
 bitvmx-broker = { path = "../rust-bitvmx-broker", features = [
     "storagebackend",
 ] }
-bitvmx-musig2 = { path = "../rust-bitvmx-musig2" }
-
 
 [dev-dependencies]
 bollard = "0.11.0"

@@ -1,18 +1,19 @@
 use std::{collections::HashMap, rc::Rc};
 
-use bitcoin::{secp256k1::Message, Amount, PublicKey, Transaction, Txid};
+use bitcoin::{key::UntweakedPublicKey, secp256k1::{self, Message}, Amount, PublicKey, ScriptBuf, Transaction, TxOut, Txid, XOnlyPublicKey};
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder, SpendingArgs},
     errors::ProtocolBuilderError,
     graph::{
-        input::{InputSpendingInfo, SighashType, Signature},
-        output::OutputSpendingType,
+        graph::MessageId, input::{InputSpendingInfo, SighashType, Signature}, output::OutputSpendingType
     },
     scripts,
 };
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::Storage;
 use uuid::Uuid;
+
+use crate::keychain::KeyChain;
 
 use super::participant::ParticipantKeys;
 pub struct SearchParams {
@@ -93,25 +94,39 @@ impl DisputeResolutionProtocol {
         self.storage = Some(storage);
     }
 
-    pub fn build_protocol(
+    pub fn build(
         &self,
+        id: &str,
         internal_key: &PublicKey,
         prover_keys: &ParticipantKeys,
         _verifier_keys: &ParticipantKeys,
         _search: SearchParams,
+        key_chain: &KeyChain,
     ) -> Result<(), ProtocolBuilderError> {
-        let ecdsa_sighash_type = SighashType::ecdsa_all();
+        // let ecdsa_sighash_type = SighashType::ecdsa_all();
         let tr_sighash_type = SighashType::taproot_all();
 
         let mut builder = ProtocolBuilder::new(&self.protocol_name, self.storage.clone().unwrap())?;
-        let output_spending_type =
-            OutputSpendingType::new_segwit_key_spend(&prover_keys.pre_kickoff, self.funding.amount);
+        // let output_type =
+        //     OutputSpendingType::new_segwit_key_spend(&internal_key, self.funding.amount);
+
+        let secp = secp256k1::Secp256k1::new();
+        let untweaked_key: UntweakedPublicKey = XOnlyPublicKey::from(*internal_key);
+        let script_pubkey = ScriptBuf::new_p2tr(&secp, untweaked_key, None);
+
+        let prevout = TxOut{
+            value: self.funding.amount,
+            script_pubkey,
+        };
+
+        let output_type = OutputSpendingType::TaprootUntweakedKey { key: internal_key.clone(), prevouts: vec![prevout] };
+            
         builder.connect_with_external_transaction(
             self.funding.txid,
             self.funding.vout,
-            output_spending_type,
+            output_type,
             PREKICKOFF,
-            &ecdsa_sighash_type,
+            &tr_sighash_type,
         )?;
 
         let kickoff_spending = scripts::kickoff(
@@ -132,10 +147,17 @@ impl DisputeResolutionProtocol {
         )?;
         builder.add_speedup_output(PREKICKOFF, self.funding.speedup, &prover_keys.speedup)?;
 
-        let protocol = builder.build()?;
-
+        let protocol = builder.build(id, &key_chain.key_manager)?;
+        
         self.save_protocol(protocol)?;
 
+        Ok(())
+    }
+
+    pub fn sign(&mut self, id: &str, key_chain: &KeyChain) -> Result<(), ProtocolBuilderError> {
+        let mut protocol = self.load_protocol()?;
+        protocol.sign(id, &key_chain.key_manager)?;
+        self.save_protocol(protocol)?;
         Ok(())
     }
 
@@ -170,17 +192,18 @@ impl DisputeResolutionProtocol {
         Ok(())
     }
 
-    pub fn protocol_sighashes(&self) -> Result<Vec<Message>, ProtocolBuilderError> {
-        let spending_infos = self.load_protocol()?.spending_infos()?;
-        let mut sighashes = Vec::new();
+    pub fn protocol_sighashes(&self) -> Result<Vec<(MessageId, Message)>, ProtocolBuilderError> {
+        let sighashes = self.load_protocol()?.get_all_sighashes()?;
 
-        for (_, infos) in spending_infos {
-            for info in infos {
-                for message in info.hashed_messages() {
-                    sighashes.push(message.to_owned());
-                }
-            }
-        }
+        // let mut sighashes = Vec::new();
+
+        // for (_, infos) in spending_infos {
+        //     for info in infos {
+        //         for message in info.hashed_messages() {
+        //             sighashes.push(message.to_owned());
+        //         }  
+        //     }
+        // }
 
         Ok(sighashes)
     }

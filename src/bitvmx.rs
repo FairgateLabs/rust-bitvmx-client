@@ -23,7 +23,6 @@ use bitvmx_broker::{
     channel::channel::DualChannel,
     rpc::{sync_server::BrokerSync, BrokerConfig},
 };
-use bitvmx_musig2::musig::{MuSig2Signer, MuSig2SignerApi};
 use key_manager::winternitz;
 use p2p_handler::{LocalAllowList, P2pHandler, ReceiveHandlerChannel};
 use std::{
@@ -157,14 +156,14 @@ impl BitVMX {
         false
     }
 
-    pub fn partial_sign(&mut self, program_id: &Uuid) -> Result<(), BitVMXError> {
-        let program = self.load_program(program_id)?.clone();
+    // pub fn partial_sign(&mut self, program_id: &Uuid) -> Result<(), BitVMXError> {
+    //     let program = self.load_program(program_id)?.clone();
 
-        // Generate the program partial signatures.
+    //     // Generate the program partial signatures.
 
-        self.sign_program(&program)?;
-        Ok(())
-    }
+    //     self.sign_program(&program)?;
+    //     Ok(())
+    // }
 
     /// Sends the pre-kickoff transaction to the Bitcoin network, the program is now ready for the prover to
     /// claim its funds using the kickoff transaction.
@@ -341,7 +340,7 @@ impl BitVMX {
                 let (_version, msg_type, program_id, data) = deserialize_msg(msg)?;
                 let mut program = self.load_program(&program_id)?;
 
-                info!("{}: Message recieved: {:?} ", program.my_role, msg_type);
+                info!("{}: Message received: {:?} ", program.my_role, msg_type);
 
                 match msg_type {
                     P2PMessageType::Keys => {
@@ -353,41 +352,11 @@ impl BitVMX {
                             return Ok(());
                         }
 
-                        // Receive keys from the other party
-                        let participant_keys =
-                            parse_keys(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+                        // Parse the keys received
+                        let keys = parse_keys(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
-                        program.save_other_keys(participant_keys.clone())?;
-
-                        let my_protocol_key = program.me.keys.as_ref().unwrap().protocol;
-                        let other_protocol_key = program.other.keys.as_ref().unwrap().protocol;
-
-                        let participant_keys = vec![my_protocol_key, other_protocol_key];
-                        let aggregated_key =
-                            MuSig2Signer::get_aggregated_pubkey(participant_keys.clone())?;
-
-                        program.build_protocol(&aggregated_key)?;
-
-                        // TODO Return a different structure that preserves the relationship between messages, txs, inputs and taproot leaves
-                        let mut messages: Vec<Vec<u8>> = program
-                            .protocol_sighashes()?
-                            .iter()
-                            .map(|m| m.as_ref().to_vec())
-                            .collect();
-                        messages.sort();
-
-                        self.program_context.key_chain.init_musig2(
-                            program.program_id,
-                            participant_keys,
-                            my_protocol_key,
-                            messages,
-                        )?;
-
-                        //TODO: Once the keys are exchanged, the program should be able to send the nonces
-                        // in order to get the nonces messages should be set in musig2
-                        self.program_context
-                            .key_chain
-                            .set_musig2_messages(program.program_id)?;
+                        // Build the protocol
+                        program.build_protocol(&self.program_context, keys)?;
 
                         // Send ack to the other party
                         program.send_ack(&self.program_context, P2PMessageType::KeysAck)?;
@@ -409,7 +378,7 @@ impl BitVMX {
                             parse_nonces(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
                         program
-                            .recieve_participant_nonces(nonces, &self.program_context.key_chain)?;
+                            .receive_participant_nonces(nonces, &self.program_context)?;
 
                         program.send_ack(&self.program_context, P2PMessageType::PublicNoncesAck)?;
                     }
@@ -429,9 +398,9 @@ impl BitVMX {
                         let signatures = parse_signatures(data)
                             .map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
-                        program.recieve_participant_partial_signatures(
+                        program.sign_protocol(
                             signatures,
-                            &self.program_context.key_chain,
+                            &self.program_context,
                         )?;
 
                         //TODO Integration.
