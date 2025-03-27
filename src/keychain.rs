@@ -1,8 +1,15 @@
 use std::{collections::HashMap, rc::Rc};
 
-use bitcoin::{secp256k1::{self, Message}, PublicKey, XOnlyPublicKey};
+use bitcoin::{
+    secp256k1::{self},
+    PublicKey, XOnlyPublicKey,
+};
 use key_manager::{
-    create_database_key_store_from_config, create_key_manager_from_config, key_manager::KeyManager, keystorage::database::DatabaseKeyStore, musig2::{types::MessageId, PartialSignature, PubNonce}, winternitz::{WinternitzPublicKey, WinternitzType}
+    create_database_key_store_from_config, create_key_manager_from_config,
+    key_manager::KeyManager,
+    keystorage::database::DatabaseKeyStore,
+    musig2::{types::MessageId, PartialSignature, PubNonce},
+    winternitz::{WinternitzPublicKey, WinternitzType},
 };
 use p2p_handler::Keypair;
 use protocol_builder::{
@@ -46,7 +53,8 @@ impl KeyChain {
             &config.key_manager.network,
         )?;
 
-        let key_manager = create_key_manager_from_config(&config.key_manager, keystore, store.clone())?;
+        let key_manager =
+            create_key_manager_from_config(&config.key_manager, keystore, store.clone())?;
 
         // TODO: hardcoded communications key to be on allowed list
         let privk = config.p2p_key();
@@ -235,14 +243,16 @@ impl KeyChain {
         my_pubkey: PublicKey,
     ) -> Result<(), BitVMXError> {
         self.key_manager
-            .init_musig2(
-                &program_id.to_string(),
-                participant_pubkeys,
-                my_pubkey,
-            )
+            .init_musig2(&program_id.to_string(), participant_pubkeys, my_pubkey)
             .map_err(BitVMXError::MuSig2SignerError)?;
 
         Ok(())
+    }
+
+    pub fn get_aggregated_pubkey(&self, program_id: uuid::Uuid) -> Result<PublicKey, BitVMXError> {
+        self.key_manager
+            .get_aggregated_pubkey(&program_id.to_string(), None)
+            .map_err(BitVMXError::MuSig2SignerError)
     }
 
     pub fn add_signatures(
@@ -252,31 +262,26 @@ impl KeyChain {
         participant_pub_key: PublicKey,
     ) -> Result<(), BitVMXError> {
         self.key_manager
-            .save_partial_signatures(&program_id.to_string(), participant_pub_key, participant_partial_signatures)
+            .save_partial_signatures(
+                &program_id.to_string(),
+                participant_pub_key,
+                participant_partial_signatures,
+            )
             .map_err(BitVMXError::MuSig2SignerError)?;
 
         Ok(())
     }
 
-    pub fn get_nonces(&self, program_id: uuid::Uuid) -> Result<Vec<(MessageId, PubNonce)>, BitVMXError> {
+    pub fn get_nonces(
+        &self,
+        program_id: uuid::Uuid,
+    ) -> Result<Vec<(MessageId, PubNonce)>, BitVMXError> {
         let nonces = self
             .key_manager
             .get_my_pub_nonces(&program_id.to_string())
             .map_err(BitVMXError::MuSig2SignerError)?;
 
         Ok(nonces)
-    }
-
-    pub fn get_signatures(
-        &self,
-        program_id: uuid::Uuid,
-    ) -> Result<Vec<(MessageId, PartialSignature)>, BitVMXError> {
-        let signatures = self
-            .key_manager
-            .get_my_partial_signatures(&program_id.to_string())
-            .map_err(BitVMXError::MuSig2SignerError)?;
-
-        Ok(signatures)
     }
 
     pub fn get_aggregated_signature(
@@ -297,6 +302,18 @@ impl KeyChain {
             .get_my_pub_nonces(&program_id.to_string())
             .map_err(BitVMXError::MuSig2SignerError)?;
         Ok(())
+    }
+
+    pub fn get_signatures(
+        &self,
+        program_id: uuid::Uuid,
+    ) -> Result<Vec<(MessageId, PartialSignature)>, BitVMXError> {
+        let signatures = self
+            .key_manager
+            .get_my_partial_signatures(&program_id.to_string())
+            .map_err(BitVMXError::MuSig2SignerError)?;
+
+        Ok(signatures)
     }
 
     // pub fn generate_pub_nonce(&self, program_id: uuid::Uuid, message_id: &str, message: Message) -> Result<(), BitVMXError> {

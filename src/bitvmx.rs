@@ -272,28 +272,6 @@ impl BitVMX {
         SearchParams::new(0, 0)
     }
 
-    // fn get_counterparty(&mut self, role: &ParticipantRole, address: &P2PAddress, my_keys: &ParticipantKeys) -> Result<Participant, BitVMXError> {
-    //     // 1. Connect with the counterparty using the address
-    //     // 2. Send my keys to counterparty
-    //     // 3. Receive counterparty keys as a response
-    //     // 4. Build counterparty participant with received keys and return it
-    //     Ok(Participant::new(
-    //         role,
-    //         address,
-    //         self.generate_keys()?,
-    //     ))
-    // }
-
-    fn sign_program(&mut self, program: &Program) -> Result<(), BitVMXError> {
-        self.program_context.key_chain.sign_program(program)?;
-
-        // 1. Send signatures to counterparty
-        // 2. Receive signatures from counterparty
-        // 3. Verify signatures
-
-        Ok(())
-    }
-
     fn _decode_witness_data(
         &self,
         winternitz_message_sizes: Vec<usize>,
@@ -353,7 +331,8 @@ impl BitVMX {
                         }
 
                         // Parse the keys received
-                        let keys = parse_keys(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+                        let keys =
+                            parse_keys(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
                         // Build the protocol
                         program.build_protocol(&self.program_context, keys)?;
@@ -377,8 +356,7 @@ impl BitVMX {
                         let nonces =
                             parse_nonces(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
-                        program
-                            .receive_participant_nonces(nonces, &self.program_context)?;
+                        program.receive_participant_nonces(nonces, &self.program_context)?;
 
                         program.send_ack(&self.program_context, P2PMessageType::PublicNoncesAck)?;
                     }
@@ -398,10 +376,7 @@ impl BitVMX {
                         let signatures = parse_signatures(data)
                             .map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
-                        program.sign_protocol(
-                            signatures,
-                            &self.program_context,
-                        )?;
+                        program.sign_protocol(signatures, &self.program_context)?;
 
                         //TODO Integration.
                         //let signatures = program.get_aggregated_signatures();
@@ -533,7 +508,7 @@ impl BitVMX {
             // 4. Waits for nonces from verifier
             // 5. Sends signatures and waits for SignaturesAck
             // 6. Waits for signatures from verifier
-            return match (state, msg_type) {
+            match (state, msg_type) {
                 (ProgramState::SettingUp(SettingUpState::SendingNonces), P2PMessageType::Keys) => {
                     true
                 }
@@ -542,7 +517,7 @@ impl BitVMX {
                     P2PMessageType::PublicNonces,
                 ) => true,
                 _ => false,
-            };
+            }
         } else {
             // Verifier flow:
             // 1. Waits for keys from prover
@@ -551,7 +526,7 @@ impl BitVMX {
             // 4. Sends nonces and waits for NoncesAck
             // 5. Waits for signatures from prover
             // 6. Sends signatures and waits for SignaturesAck
-            return match (state, msg_type) {
+            match (state, msg_type) {
                 (ProgramState::SettingUp(SettingUpState::SendingKeys), P2PMessageType::Keys) => {
                     true
                 }
@@ -564,7 +539,7 @@ impl BitVMX {
                     P2PMessageType::PartialSignatures,
                 ) => true,
                 _ => false,
-            };
+            }
         }
     }
 

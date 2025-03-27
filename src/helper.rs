@@ -4,7 +4,10 @@ use bitcoin::{
     key::{rand, Keypair, Secp256k1},
     PublicKey, XOnlyPublicKey,
 };
-use key_manager::{musig2::{types::MessageId, PartialSignature, PubNonce}, winternitz::{WinternitzPublicKey, WinternitzType}};
+use key_manager::{
+    musig2::{types::MessageId, PartialSignature, PubNonce},
+    winternitz::{WinternitzPublicKey, WinternitzType},
+};
 use serde_json::Value;
 
 pub fn parse_keys(value: Value) -> Result<ParticipantKeys, ParseError> {

@@ -4,7 +4,10 @@ use bitcoincore_rpc::bitcoin::{key::ParsePublicKeyError, sighash::SighashTypePar
 use bitvmx_broker::rpc::errors::BrokerError;
 // use bitvmx_musig2::errors::Musig2SignerError;
 use config as settings;
-use key_manager::{errors::{KeyManagerError, KeyStoreError, WinternitzError}, musig2::errors::Musig2SignerError};
+use key_manager::{
+    errors::{KeyManagerError, KeyStoreError, WinternitzError},
+    musig2::errors::Musig2SignerError,
+};
 use p2p_handler::P2pHandlerError;
 use protocol_builder::errors::{ProtocolBuilderError, UnspendableKeyError};
 use storage_backend::error::StorageError;

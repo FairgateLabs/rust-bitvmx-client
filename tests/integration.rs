@@ -67,7 +67,7 @@ fn init_bitvmx(role: &str) -> Result<(BitVMX, Funding, P2PAddress, DualChannel)>
 pub fn test_single_run() -> Result<()> {
     config_trace();
 
-    let config = Config::new(Some(format!("config/prover.yaml")))?;
+    let config = Config::new(Some("config/prover.yaml".to_string()))?;
 
     let bitcoind = Bitcoind::new(
         "bitcoin-regtest",
@@ -99,7 +99,7 @@ pub fn test_single_run() -> Result<()> {
     let program_id = Uuid::new_v4();
 
     let setup_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetupProgram(
-        program_id.clone(),
+        program_id,
         ParticipantRole::Prover,
         verifier_address.clone(),
         verifier_funding,
@@ -108,7 +108,7 @@ pub fn test_single_run() -> Result<()> {
     prover_bridge_channel.send(1, setup_msg)?;
 
     let setup_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetupProgram(
-        program_id.clone(),
+        program_id,
         ParticipantRole::Verifier,
         prover_address.clone(),
         prover_funding,

@@ -1,11 +1,17 @@
 use std::{collections::HashMap, rc::Rc};
 
-use bitcoin::{key::UntweakedPublicKey, secp256k1::{self, Message}, Amount, PublicKey, ScriptBuf, Transaction, TxOut, Txid, XOnlyPublicKey};
+use bitcoin::{
+    key::UntweakedPublicKey,
+    secp256k1::{self, Message},
+    Amount, PublicKey, ScriptBuf, Transaction, TxOut, Txid, XOnlyPublicKey,
+};
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder, SpendingArgs},
     errors::ProtocolBuilderError,
     graph::{
-        graph::MessageId, input::{InputSpendingInfo, SighashType, Signature}, output::OutputSpendingType
+        graph::MessageId,
+        input::{InputSpendingInfo, SighashType, Signature},
+        output::OutputSpendingType,
     },
     scripts,
 };
@@ -114,13 +120,16 @@ impl DisputeResolutionProtocol {
         let untweaked_key: UntweakedPublicKey = XOnlyPublicKey::from(*internal_key);
         let script_pubkey = ScriptBuf::new_p2tr(&secp, untweaked_key, None);
 
-        let prevout = TxOut{
+        let prevout = TxOut {
             value: self.funding.amount,
             script_pubkey,
         };
 
-        let output_type = OutputSpendingType::TaprootUntweakedKey { key: internal_key.clone(), prevouts: vec![prevout] };
-            
+        let output_type = OutputSpendingType::TaprootUntweakedKey {
+            key: *internal_key,
+            prevouts: vec![prevout],
+        };
+
         builder.connect_with_external_transaction(
             self.funding.txid,
             self.funding.vout,
@@ -148,7 +157,7 @@ impl DisputeResolutionProtocol {
         builder.add_speedup_output(PREKICKOFF, self.funding.speedup, &prover_keys.speedup)?;
 
         let protocol = builder.build(id, &key_chain.key_manager)?;
-        
+
         self.save_protocol(protocol)?;
 
         Ok(())
@@ -201,7 +210,7 @@ impl DisputeResolutionProtocol {
         //     for info in infos {
         //         for message in info.hashed_messages() {
         //             sighashes.push(message.to_owned());
-        //         }  
+        //         }
         //     }
         // }
 

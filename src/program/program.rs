@@ -7,7 +7,10 @@ use crate::{
 use bitcoin::{absolute::LockTime, transaction::Version, Transaction, Txid};
 use bitcoin_coordinator::types::TransactionNew;
 use chrono::Utc;
-use key_manager::{key_manager::KeyManager, keystorage::database::DatabaseKeyStore, musig2::{types::MessageId, PartialSignature, PubNonce}, winternitz::WinternitzSignature};
+use key_manager::{
+    musig2::{types::MessageId, PartialSignature, PubNonce},
+    winternitz::WinternitzSignature,
+};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, rc::Rc};
 use storage_backend::storage::{KeyValueStore, Storage};
@@ -175,21 +178,28 @@ impl Program {
         }
     }
 
-    pub fn build_protocol(&mut self, context: &ProgramContext, keys: ParticipantKeys) -> Result<(), BitVMXError> {
+    pub fn build_protocol(
+        &mut self,
+        context: &ProgramContext,
+        keys: ParticipantKeys,
+    ) -> Result<(), BitVMXError> {
         let search_params = SearchParams::new(8, 32);
 
         // 1. Save the received keys
         self.other.keys = Some(keys);
 
-        // 2. Aggregate the participants public keys
         let my_protocol_key = self.me.keys.as_ref().unwrap().protocol;
         let other_protocol_key = self.other.keys.as_ref().unwrap().protocol;
 
         let participant_keys = vec![my_protocol_key, other_protocol_key];
-        let aggregated_key = KeyManager::<DatabaseKeyStore>::get_aggregated_pubkey::<DatabaseKeyStore>(participant_keys.clone(), None)?;
 
-        // 3. Init the musig2 signer for this program
-        context.key_chain.init_musig2(self.program_id, participant_keys, my_protocol_key)?;
+        // 2. Init the musig2 signer for this program
+        context
+            .key_chain
+            .init_musig2(self.program_id, participant_keys, my_protocol_key)?;
+
+        // 3. Aggregate the participants public keys
+        let aggregated_key = context.key_chain.get_aggregated_pubkey(self.program_id)?;
 
         // 4. Build the protocol using the aggregated key as internal key for taproot
         self.drp.build(
@@ -224,7 +234,9 @@ impl Program {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         let participant_key = self.other.keys.as_ref().unwrap().protocol;
-        context.key_chain.add_nonces(self.program_id, nonces, participant_key)?;
+        context
+            .key_chain
+            .add_nonces(self.program_id, nonces, participant_key)?;
         self.move_program_to_next_state()?;
 
         Ok(())
@@ -233,15 +245,15 @@ impl Program {
     pub fn sign_protocol(
         &mut self,
         signatures: Vec<(MessageId, PartialSignature)>,
-        context: &ProgramContext, 
+        context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         let other_pubkey = self.other.keys.as_ref().unwrap().protocol;
-        context.key_chain.add_signatures(self.program_id, signatures, other_pubkey)?;
+        context
+            .key_chain
+            .add_signatures(self.program_id, signatures, other_pubkey)?;
 
-        self.drp.sign(
-            &self.program_id.to_string(),
-            &context.key_chain,
-        )?;
+        self.drp
+            .sign(&self.program_id.to_string(), &context.key_chain)?;
 
         //key_chain.get_aggregated_signature(self.program_id, &id.to_string())?;
 
@@ -328,7 +340,6 @@ impl Program {
                 }
 
                 info!("{:?}: Sending PartialSignatures", self.my_role);
-
                 let signatures = program_context.key_chain.get_signatures(self.program_id)?;
 
                 request(
