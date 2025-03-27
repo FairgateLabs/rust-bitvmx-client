@@ -211,18 +211,7 @@ impl Program {
             &context.key_chain,
         )?;
 
-        // 5. Get all the protocol sighashes
-        // let sighashes: Vec<(MessageId, Message)> = self.drp.protocol_sighashes()?
-        //     .into_iter()
-        //     .map(|(id, msg)| (MessageId::from(id.to_string()), msg))
-        //     .collect();
-
-        // 6. Generate the pubnonces for each sighash
-        // for (id, msg) in sighashes {
-        //     context.key_chain.generate_pub_nonce(self.program_id, &id, msg)?;
-        // }
-
-        // 7. Move the program to the next state
+        // 6. Move the program to the next state
         self.move_program_to_next_state()?;
 
         Ok(())
@@ -254,8 +243,6 @@ impl Program {
 
         self.drp
             .sign(&self.program_id.to_string(), &context.key_chain)?;
-
-        //key_chain.get_aggregated_signature(self.program_id, &id.to_string())?;
 
         self.move_program_to_next_state()?;
 

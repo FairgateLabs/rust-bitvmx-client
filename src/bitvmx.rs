@@ -156,15 +156,6 @@ impl BitVMX {
         false
     }
 
-    // pub fn partial_sign(&mut self, program_id: &Uuid) -> Result<(), BitVMXError> {
-    //     let program = self.load_program(program_id)?.clone();
-
-    //     // Generate the program partial signatures.
-
-    //     self.sign_program(&program)?;
-    //     Ok(())
-    // }
-
     /// Sends the pre-kickoff transaction to the Bitcoin network, the program is now ready for the prover to
     /// claim its funds using the kickoff transaction.
     pub fn deploy_program(&mut self, program_id: &Uuid) -> Result<bool, BitVMXError> {
