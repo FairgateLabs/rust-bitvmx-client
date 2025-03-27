@@ -194,14 +194,11 @@ impl Program {
         let participant_keys = vec![my_protocol_key, other_protocol_key];
 
         // 2. Init the musig2 signer for this program
-        context
+        let aggregated_key = context
             .key_chain
-            .init_musig2(self.program_id, participant_keys, my_protocol_key)?;
+            .new_musig2_session(self.program_id, participant_keys, my_protocol_key, None)?;
 
-        // 3. Aggregate the participants public keys
-        let aggregated_key = context.key_chain.get_aggregated_pubkey(self.program_id)?;
-
-        // 4. Build the protocol using the aggregated key as internal key for taproot
+        // 3. Build the protocol using the aggregated key as internal key for taproot
         self.drp.build(
             &self.program_id.to_string(),
             &aggregated_key,
