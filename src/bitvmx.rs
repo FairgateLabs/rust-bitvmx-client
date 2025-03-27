@@ -382,6 +382,10 @@ impl BitVMX {
                     | P2PMessageType::PublicNoncesAck
                     | P2PMessageType::PartialSignaturesAck => {
                         if !Self::should_handle_msg(&program.state, &msg_type) {
+                            info!(
+                                "Ignoring message {} {:?} {:?}",
+                                program.my_role, msg_type, program.state
+                            );
                             return Ok(());
                         }
 
