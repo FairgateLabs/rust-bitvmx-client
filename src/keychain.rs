@@ -1,8 +1,7 @@
 use std::{collections::HashMap, rc::Rc};
 
 use bitcoin::{
-    secp256k1::{self},
-    PublicKey, XOnlyPublicKey,
+    secp256k1::{self}, PublicKey, TapNodeHash, XOnlyPublicKey
 };
 use key_manager::{
     create_database_key_store_from_config, create_key_manager_from_config,
@@ -236,22 +235,21 @@ impl KeyChain {
         Ok(())
     }
 
-    pub fn init_musig2(
+    pub fn new_musig2_session(
         &self,
         program_id: uuid::Uuid,
         participant_pubkeys: Vec<PublicKey>,
         my_pubkey: PublicKey,
-    ) -> Result<(), BitVMXError> {
+        tweak: Option<TapNodeHash>,
+    ) -> Result<PublicKey, BitVMXError> {
         self.key_manager
-            .init_musig2(&program_id.to_string(), participant_pubkeys, my_pubkey)
-            .map_err(BitVMXError::MuSig2SignerError)?;
-
-        Ok(())
+            .new_musig2_session(&program_id.to_string(), participant_pubkeys, my_pubkey, tweak)
+            .map_err(BitVMXError::MuSig2SignerError)
     }
 
-    pub fn get_aggregated_pubkey(&self, program_id: uuid::Uuid) -> Result<PublicKey, BitVMXError> {
+    pub fn get_aggregated_pubkey(&self, program_id: uuid::Uuid, tweak: Option<TapNodeHash>,) -> Result<PublicKey, BitVMXError> {
         self.key_manager
-            .get_aggregated_pubkey(&program_id.to_string(), None)
+            .get_aggregated_pubkey(&program_id.to_string(), tweak)
             .map_err(BitVMXError::MuSig2SignerError)
     }
 

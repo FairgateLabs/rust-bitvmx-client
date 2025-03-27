@@ -563,7 +563,7 @@ impl BitVMX {
 
         for mut program in programs {
             if program.is_setting_up() {
-                info!("Program state is_setting_up: {:?}", program.state);
+                // info!("Program state is_setting_up: {:?}", program.state);
                 // TODO: Improvement, I think this tick function we should have different name.
                 // I think a better name could be proceed_with_setting_up
                 // Besides that I think tick only exist as a function for a library to use it outside of the library.
@@ -596,7 +596,7 @@ impl BitVMX {
             }
 
             if program.is_dispatching() {
-                info!("Program state is_dispatching: {:?}", program.state);
+                //info!("Program state is_dispatching: {:?}", program.state);
                 let tx_to_dispatch: Option<Transaction> = program.get_tx_to_dispatch()?;
 
                 if let Some(tx) = tx_to_dispatch {
