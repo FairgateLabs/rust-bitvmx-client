@@ -5,7 +5,7 @@ use crate::{
         participant::{P2PAddress, ParticipantRole},
     },
 };
-use bitcoin_coordinator::types::AddressNew;
+use bitcoin_coordinator::types::TransactionNew;
 use chrono::{DateTime, Utc};
 use p2p_handler::P2pHandler;
 use serde::{Deserialize, Serialize};
@@ -64,8 +64,8 @@ pub enum IncomingBitVMXApiMessages {
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum OutgoingBitVMXApiMessages {
-    // Represents when pegins addresses are found
-    PegInAddressFound(Vec<AddressNew>),
+    // Represents when pegin transactions is found
+    PeginTransactionFound(TransactionNew),
     // Represents when a program is running out of funds
     SpeedUpProgramNoFunds(Vec<Uuid>),
 }

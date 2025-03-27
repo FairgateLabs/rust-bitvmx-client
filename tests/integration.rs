@@ -88,7 +88,7 @@ pub fn test_single_run() -> Result<()> {
         .unwrap();
 
     info!("Mine 1 block to address {:?}", wallet);
-    bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
+    bitcoin_client.mine_blocks_to_address(10, &wallet).unwrap();
 
     let (mut prover_bitvmx, prover_funding, prover_address, prover_bridge_channel) =
         init_bitvmx("prover")?;
@@ -122,43 +122,29 @@ pub fn test_single_run() -> Result<()> {
     info!("VERIFIER: Setting up program...");
     verifier_bitvmx.tick()?;
 
-    //TODO: Serializer / Deserialize keys this exachange should happen with p2p
-
-    // prover_bitvmx.partial_sign(&program_id)?;
-    // //TODO: Partial signs by counterparty
-    // prover_bitvmx.deploy_program(&program_id)?;
-
     //TODO: main loop
-    for _ in 0..1000 {
-        // if i % 20 == 0 {
-        //     //  bitcoin_client.mine_blocks(1)?;
-        // }
-        //  bitcoin_client.mine_blocks(1)?;
+    for i in 0..1000 {
+        if i % 20 == 0 {
+            bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
+        }
+
         prover_bitvmx.tick()?;
 
-        if let Ok(Some((msg, _from))) = prover_bridge_channel.recv() {
-            info!("PROVER received message: {}", msg);
-        }
+        // if let Ok(Some((msg, _from))) = prover_bridge_channel.recv() {
+        //     info!("PROVER received message: {}", msg);
+        // }
 
         std::thread::sleep(std::time::Duration::from_millis(100));
 
-        if let Ok(Some((msg, _from))) = verifier_bridge_channel.recv() {
-            info!("VERIFIER received message: {}", msg);
-        }
+        // if let Ok(Some((msg, _from))) = verifier_bridge_channel.recv() {
+        //     info!("VERIFIER received message: {}", msg);
+        // }
 
         verifier_bitvmx.tick()?;
     }
 
     info!("Stopping bitcoind");
     bitcoind.stop()?;
-
-    //TODO: Push witness and then claim
-    //prover_bitvmx.claim_program(&id)?;
-
-    //TODO: Verifier waiting for any claim
-
-    //sleep for 2 secs
-    //std::thread::sleep(std::time::Duration::from_secs(2));
 
     Ok(())
 }
