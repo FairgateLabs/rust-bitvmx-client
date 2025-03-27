@@ -524,9 +524,12 @@ impl BitVMX {
         //TODO: Dedice if we want to process all message in a while or just one per tick
         if let Some((msg, _from)) = self.broker_channel.recv()? {
             let decoded: IncomingBitVMXApiMessages = serde_json::from_str(&msg)?;
-            // info!("Processing api message {:#?}", decoded);
+            info!("Processing api message {:#?}", decoded);
 
             match decoded {
+                IncomingBitVMXApiMessages::Ping() => {
+                    self.broker_channel.send(100, serde_json::to_string(&OutgoingBitVMXApiMessages::Pong())?)?;
+                }
                 IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address, funding) => {
                     if self.program_exists(&id)? {
                         return Err(BitVMXError::ProgramAlreadyExists(id));

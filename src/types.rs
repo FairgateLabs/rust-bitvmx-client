@@ -59,11 +59,13 @@ impl Default for ProgramRequestInfo {
 //TODO: This should be moved to a common place that could be used to share the messages api
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum IncomingBitVMXApiMessages {
+    Ping(),
     SetupProgram(Uuid, ParticipantRole, P2PAddress, Funding),
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum OutgoingBitVMXApiMessages {
+    Pong(),
     // Represents when pegins addresses are found
     PegInAddressFound(Vec<AddressNew>),
     // Represents when a program is running out of funds

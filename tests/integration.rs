@@ -42,6 +42,7 @@ fn init_bitvmx(role: &str) -> Result<(BitVMX, Funding, P2PAddress, DualChannel)>
 
     clear_db(&config.storage.db);
     clear_db(&config.key_storage.path);
+    clear_db(&config.broker_storage);
 
     info!("config: {:?}", config.storage.db);
 
