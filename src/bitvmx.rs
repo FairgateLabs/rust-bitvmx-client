@@ -564,8 +564,8 @@ impl BitVMX {
         let programs = self.get_active_programs()?;
 
         for mut program in programs {
+            info!("Program state: {:?}", program.state);
             if program.is_setting_up() {
-                // info!("Program state is_setting_up: {:?}", program.state);
                 // TODO: Improvement, I think this tick function we should have different name.
                 // I think a better name could be proceed_with_setting_up
                 // Besides that I think tick only exist as a function for a library to use it outside of the library.
@@ -575,9 +575,7 @@ impl BitVMX {
             }
 
             if program.is_monitoring() {
-                info!("Program state is_monitoring: {:?}", program.state);
                 // After the program is ready, we need to monitor the transactions
-
                 let txns_to_monitor = program.get_txs_to_monitor()?;
 
                 // TODO : COMPLETE THE FUNDING TX FOR SPEED UP
@@ -598,7 +596,6 @@ impl BitVMX {
             }
 
             if program.is_dispatching() {
-                //info!("Program state is_dispatching: {:?}", program.state);
                 let tx_to_dispatch: Option<Transaction> = program.get_tx_to_dispatch()?;
 
                 if let Some(tx) = tx_to_dispatch {
