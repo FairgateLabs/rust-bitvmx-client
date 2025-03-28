@@ -56,6 +56,7 @@ fn init_bitvmx(role: &str) -> Result<(BitVMX, Funding, P2PAddress, DualChannel)>
     let funding = Funding::new(txid, 0, pubkey, 100_000_000, 2450000, 95000000, 2450000);
 
     let address = P2PAddress::new(&bitvmx.address(), PeerId::from_str(&bitvmx.peer_id())?);
+    info!("peer id {:?}", bitvmx.peer_id());
 
     //This messagas will come from the bridge client.
 

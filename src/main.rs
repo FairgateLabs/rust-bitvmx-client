@@ -1,6 +1,8 @@
 use std::{str::FromStr, thread, time::Duration};
 use anyhow::Result;
 use bitcoin::{Network, PublicKey, Txid};
+use bitcoind::bitcoind::Bitcoind;
+use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use tracing::{info, error};
 use tracing_subscriber::EnvFilter;
@@ -51,7 +53,7 @@ fn run_bitvmx(role: &str) -> Result<()> {
     info!("Starting BitVMX instance with role: {}", role);
     
     let (mut bitvmx, bridge_channel) = init_bitvmx(role)?;
-    
+
     info!("BitVMX instance initialized");
     info!("P2P Address: {}", bitvmx.address());
     info!("Peer ID: {}", bitvmx.peer_id());
@@ -89,6 +91,28 @@ fn main() -> Result<()> {
         error!("Invalid role. Must be either 'prover' or 'verifier'");
         std::process::exit(1);
     }
+
+    let config = Config::new(Some(format!("config/prover.yaml")))?;
+    let bitcoind = Bitcoind::new(
+        "bitcoin-regtest",
+        "ruimarinho/bitcoin-core",
+        config.bitcoin.clone(),
+    );
+    info!("Starting bitcoind");
+    bitcoind.start()?;
+
+    let bitcoin_client = BitcoinClient::new(
+        &config.bitcoin.url,
+        &config.bitcoin.username,
+        &config.bitcoin.password,
+    )?;
+
+    let wallet = bitcoin_client
+        .init_wallet(Network::Regtest, "test_wallet")
+        .unwrap();
+
+    info!("Mine 1 block to address {:?}", wallet);
+    bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
 
     run_bitvmx(role)
 }

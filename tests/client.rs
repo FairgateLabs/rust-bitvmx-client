@@ -1,46 +1,103 @@
-use std::{str::FromStr, thread, time::Duration};
+use std::str::FromStr;
 
 use anyhow::Result;
-use bitcoin::{Network, PublicKey, Txid};
-use bitcoind::bitcoind::Bitcoind;
-use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
-use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
-use bitvmx_client::{
-    bitvmx::BitVMX, client::BitVMXClient, config::Config, program::{
-        dispute::Funding,
-        participant::{P2PAddress, ParticipantRole},
-    }, types::IncomingBitVMXApiMessages
-};
+use bitcoin::{absolute::LockTime, transaction::Version, PublicKey, Transaction, Txid};
+use bitvmx_client::{client::BitVMXClient, config::Config, program::{dispute::Funding, participant::{P2PAddress, ParticipantRole}}, types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages}};
 use p2p_handler::PeerId;
 use tracing::{info, error};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
-fn config_trace() {
+struct ClientTest {
+    client: BitVMXClient,
+}
+
+impl ClientTest {
+    fn new() -> Self {
+        configure_logging();
+
+        Self {
+            client: BitVMXClient::new(22222, 478)
+        }
+    }
+
+    fn test_ping(&mut self) -> Result<()> {
+        self.client.send_message(IncomingBitVMXApiMessages::Ping()).unwrap();
+        let response = self.client.wait_message();
+
+        assert_eq!(response.unwrap(), OutgoingBitVMXApiMessages::Pong());
+        Ok(())
+    }
+
+    fn test_setup(&mut self) -> Result<()> {
+        let config = Config::new(Some(format!("config/prover.yaml")))?;
+
+        let txid =
+            Txid::from_str("4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b").unwrap();
+        let pubkey =
+            PublicKey::from_str("032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af")?;
+
+        let funding = Funding::new(txid, 0, pubkey, 100_000_000, 2450000, 95000000, 2450000);
+        let address = P2PAddress::new(
+            config.p2p_address(),
+            PeerId::from_str("12D3KooWCL2CbGe2uHPo5CSPy7SuWSji9RjP18hRwVdvdMFK8uuC")?);
+        let program_id = Uuid::new_v4();
+
+        self.client.setup(
+            program_id.clone(),
+            ParticipantRole::Verifier,
+            address.clone(),
+            funding
+        )
+    }
+
+    fn test_get_transaction(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    fn test_subscribe_to_transaction(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    fn test_dispatch_transaction(&mut self) -> Result<()> {
+        let program_id = Uuid::new_v4();
+        let tx = Transaction {
+            version: Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![],
+            output: vec![],
+        };
+
+        self.client.dispatch_transaction(program_id, tx)?;
+        Ok(())
+    }
+}
+
+fn configure_logging() {
     let filter = EnvFilter::builder()
-        .parse("info")
+        .parse("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitcoin_coordinator=off,p2p_protocol=off,p2p_handler=off,tarpc=off") 
         .expect("Invalid filter");
 
     tracing_subscriber::fmt()
+        .without_time()
+        .with_target(true)
         .with_env_filter(filter)
         .init();
 }
 
-//cargo test --release  -- --ignored
+
 #[ignore]
 #[test]
-pub fn client() -> Result<()> {
-    config_trace();
-    
-    info!("Starting client");
-    let client = BitVMXClient::new(22222, 478);
+pub fn test_client() -> Result<()> {
+    let mut test = ClientTest::new();
 
-    info!("Sending message");
-    client.send_message(IncomingBitVMXApiMessages::Ping()).unwrap();
+    // This tests are coupled. They depend on each other.
+    // test.test_ping()?;
+    test.test_setup()?;
+    // test.test_get_transaction()?;
+    // test.test_subscribe_to_transaction()?;
+    std::thread::sleep(std::time::Duration::from_secs(30));
+    test.test_dispatch_transaction()?;
 
-    let msg = client.get_message();
-    info!("Received message: {:?}", msg);
-    
-    info!("Bye");
     Ok(())
 }

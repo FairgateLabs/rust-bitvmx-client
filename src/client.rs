@@ -1,8 +1,10 @@
 use anyhow::Result;
+use bitcoin::Transaction;
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
+use uuid::Uuid;
 use std::{thread, time::Duration};
 use tracing::info;
-use crate::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages};
+use crate::{program::{dispute::Funding, participant::{P2PAddress, ParticipantRole}}, types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages}};
 
 pub struct BitVMXClient {
     channel: DualChannel,
@@ -16,6 +18,18 @@ impl BitVMXClient {
         Self { channel, client_id }
     }
 
+    pub fn ping(&self) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::Ping())
+    }
+
+    pub fn setup(&self, id: Uuid, role: ParticipantRole, address: P2PAddress, funding: Funding) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SetupProgram(id, role, address, funding))
+    }
+
+    pub fn dispatch_transaction(&self, id: Uuid, tx: Transaction) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::DispatchTransaction(id, tx))
+    }
+
     pub fn send_message(&self, msg: IncomingBitVMXApiMessages) -> Result<()> {
         // BitVMX instance uses ID 1 by convention
         let bitvmx_id = 1;
@@ -25,26 +39,37 @@ impl BitVMXClient {
         Ok(())
     }
 
-    pub fn subscribe<F>(&self, mut callback: F)
-    where
-        F: FnMut(OutgoingBitVMXApiMessages),
-    {
-        loop {
-            if let Ok(Some((msg, from))) = self.channel.recv() {
-                match serde_json::from_str(&msg) {
-                    Ok(decoded_msg) => callback(decoded_msg),
-                    Err(e) => println!("Failed to decode message from {}: {}", from, e),
-                }
-            }
-            thread::sleep(Duration::from_millis(100));
-        }
+    /// Busy wait for a message from the broker
+    pub fn wait_message(&self) -> Result<OutgoingBitVMXApiMessages> {
+        // TODO: add timeout
+        // TODO: add sleep
+        let (msg, from) = loop {
+            if let Some(message) = self.get_message()? { break message; }
+        };
+        Ok(msg)
     }
 
-    pub fn get_message(&self) -> Option<(String, u32)> {
+    // pub fn subscribe<F>(&self, mut callback: F)
+    // where
+    //     F: FnMut(OutgoingBitVMXApiMessages),
+    // {
+    //     loop {
+    //         if let Ok(Some((msg, from))) = self.channel.recv() {
+    //             match serde_json::from_str(&msg) {
+    //                 Ok(decoded_msg) => callback(decoded_msg),
+    //                 Err(e) => println!("Failed to decode message from {}: {}", from, e),
+    //             }
+    //         }
+    //         thread::sleep(Duration::from_millis(100));
+    //     }
+    // }
+
+    pub fn get_message(&self) -> Result<Option<(OutgoingBitVMXApiMessages, u32)>> {
         if let Ok(Some((msg, from))) = self.channel.recv() {
-            Some((msg, from))
+            let dezerialized = serde_json::from_str(&msg)?;
+            Ok(Some((dezerialized, from)))
         } else {
-            None
+            Ok(None)
         }
     }
 }

@@ -520,29 +520,54 @@ impl BitVMX {
         Ok(())
     }
 
+    // TODO: move to separate trait
     pub fn process_api_messages(&mut self) -> Result<(), BitVMXError> {
-        //TODO: Dedice if we want to process all message in a while or just one per tick
-        if let Some((msg, _from)) = self.broker_channel.recv()? {
+        if let Some((msg, from)) = self.broker_channel.recv()? {
             let decoded: IncomingBitVMXApiMessages = serde_json::from_str(&msg)?;
-            info!("Processing api message {:#?}", decoded);
+            info!("< {:#?}", decoded);
 
             match decoded {
-                IncomingBitVMXApiMessages::Ping() => {
-                    self.broker_channel.send(100, serde_json::to_string(&OutgoingBitVMXApiMessages::Pong())?)?;
-                }
-                IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address, funding) => {
-                    if self.program_exists(&id)? {
-                        return Err(BitVMXError::ProgramAlreadyExists(id));
-                    }
-
-                    //TODO: This should be done in a single atomic operation
-                    self.add_new_program(&id)?;
-                    self.setup_program(&id, role.clone(), funding, &peer_address)?;
-                    info!("{}: Program Setup Finished", role);
-                }
+                IncomingBitVMXApiMessages::Ping() => self._ping(from)?,
+                IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address, funding) =>
+                    self._setup_program(id, role, peer_address, funding)?,
+                IncomingBitVMXApiMessages::GetTransaction(txid) => todo!("Implement get transaction"),
+                IncomingBitVMXApiMessages::SubscribeToTransaction(txid) => todo!("Implement subscribe"),
+                IncomingBitVMXApiMessages::DispatchTransaction(id, tx) => self._dispatch_transaction(id, tx)?,
             }
         }
 
+        Ok(())
+    }
+
+    fn _ping(&mut self, from: u32) -> Result<(), BitVMXError> {
+        self.broker_channel.send(
+            from,
+            serde_json::to_string(&OutgoingBitVMXApiMessages::Pong())?,
+        )?;
+        info!("> {:?}", OutgoingBitVMXApiMessages::Pong());
+        Ok(())
+    }
+
+    fn _setup_program(
+        &mut self,
+        id: Uuid,
+        role: ParticipantRole,
+        peer_address: P2PAddress,
+        funding: Funding,
+    ) -> Result<(), BitVMXError> {
+        if self.program_exists(&id)? {
+            return Err(BitVMXError::ProgramAlreadyExists(id));
+        }
+
+        //TODO: This should be done in a single atomic operation
+        self.add_new_program(&id)?;
+        self.setup_program(&id, role.clone(), funding, &peer_address)?;
+        info!("{}: Program Setup Finished", role);
+        Ok(())
+    }
+
+    fn _dispatch_transaction(&mut self, id: Uuid, tx: Transaction) -> Result<(), BitVMXError> {
+        self.bitcoin_coordinator.send_tx_instance(id, &tx)?;
         Ok(())
     }
 
@@ -631,7 +656,7 @@ impl BitVMX {
 
         for mut program in programs {
             if program.is_setting_up() {
-                info!("Program state is_setting_up: {:?}", program.state);
+                // info!("Program state is_setting_up: {:?}", program.state);
                 // TODO: Improvement, I think this tick function we should have different name.
                 // I think a better name could be proceed_with_setting_up
                 // Besides that I think tick only exist as a function for a library to use it outside of the library.
@@ -641,7 +666,7 @@ impl BitVMX {
             }
 
             if program.is_monitoring() {
-                info!("Program state is_monitoring: {:?}", program.state);
+                // info!("Program state is_monitoring: {:?}", program.state);
                 // After the program is ready, we need to monitor the transactions
 
                 let txns_to_monitor = program.get_txs_to_monitor()?;
@@ -664,7 +689,7 @@ impl BitVMX {
             }
 
             if program.is_dispatching() {
-                info!("Program state is_dispatching: {:?}", program.state);
+                // info!("Program state is_dispatching: {:?}", program.state);
                 let tx_to_dispatch: Option<Transaction> = program.get_tx_to_dispatch()?;
 
                 if let Some(tx) = tx_to_dispatch {
