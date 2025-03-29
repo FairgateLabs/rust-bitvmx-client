@@ -20,8 +20,19 @@ use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 fn config_trace() {
+    let default_modules = [
+        "info",
+        "libp2p=off",
+        "bitvmx_transaction_monitor",
+        "bitcoin_indexer",
+        "bitcoin_coordinator=off",
+        "p2p_protocol=off",
+        "p2p_handler=off",
+        "tarpc=off",
+    ];
+
     let filter = EnvFilter::builder()
-        .parse("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitcoin_coordinator=off,p2p_protocol=off,p2p_handler=off,tarpc=off") 
+        .parse(default_modules.join(","))
         .expect("Invalid filter");
 
     tracing_subscriber::fmt()
