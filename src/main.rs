@@ -92,23 +92,24 @@ fn main() -> Result<()> {
         std::process::exit(1);
     }
 
-    let config = Config::new(Some(format!("config/prover.yaml")))?;
-    let bitcoind = Bitcoind::new(
-        "bitcoin-regtest",
-        "ruimarinho/bitcoin-core",
-        config.bitcoin.clone(),
-    );
-    info!("Starting bitcoind");
-    bitcoind.start()?;
+    let config = Config::new(Some(format!("config/{}.yaml", role)))?;
+    // let bitcoind = Bitcoind::new(
+    //     "bitcoin-regtest",
+    //     "ruimarinho/bitcoin-core",
+    //     config.bitcoin.clone(),
+    // );
+    // info!("Starting bitcoind");
+    // bitcoind.start()?;
 
+    let wallet_name = format!("test_wallet_{}", role);
     let bitcoin_client = BitcoinClient::new(
-        &config.bitcoin.url,
+        &format!("{}/wallet/{}", config.bitcoin.url, wallet_name),
         &config.bitcoin.username,
         &config.bitcoin.password,
     )?;
 
     let wallet = bitcoin_client
-        .init_wallet(Network::Regtest, "test_wallet")
+        .init_wallet(Network::Regtest, &wallet_name)
         .unwrap();
 
     info!("Mine 1 block to address {:?}", wallet);

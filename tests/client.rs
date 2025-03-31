@@ -9,7 +9,8 @@ use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 struct ClientTest {
-    client: BitVMXClient,
+    prover_client: BitVMXClient,
+    verifier_client: BitVMXClient,
 }
 
 impl ClientTest {
@@ -17,38 +18,50 @@ impl ClientTest {
         configure_logging();
 
         Self {
-            client: BitVMXClient::new(22222, 478)
+            prover_client: BitVMXClient::new(22222, 478),
+            verifier_client: BitVMXClient::new(33333, 478)
         }
     }
 
     fn test_ping(&mut self) -> Result<()> {
-        self.client.send_message(IncomingBitVMXApiMessages::Ping()).unwrap();
-        let response = self.client.wait_message();
+        self.prover_client.send_message(IncomingBitVMXApiMessages::Ping()).unwrap();
+        let response = self.prover_client.wait_message();
 
         assert_eq!(response.unwrap(), OutgoingBitVMXApiMessages::Pong());
         Ok(())
     }
 
     fn test_setup(&mut self) -> Result<()> {
-        let config = Config::new(Some(format!("config/prover.yaml")))?;
-
-        let txid =
-            Txid::from_str("4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b").unwrap();
-        let pubkey =
-            PublicKey::from_str("032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af")?;
-
-        let funding = Funding::new(txid, 0, pubkey, 100_000_000, 2450000, 95000000, 2450000);
-        let address = P2PAddress::new(
-            config.p2p_address(),
-            PeerId::from_str("12D3KooWCL2CbGe2uHPo5CSPy7SuWSji9RjP18hRwVdvdMFK8uuC")?);
+        let txid = Txid::from_str("4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b").unwrap();
+        let pubkey = PublicKey::from_str("032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af")?;
         let program_id = Uuid::new_v4();
 
-        self.client.setup(
+        let prover_config = Config::new(Some(format!("config/prover.yaml")))?;
+        let prover_funding = Funding::new(txid, 0, pubkey, 100_000_000, 2450000, 95000000, 2450000);
+        let prover_address = P2PAddress::new(
+            prover_config.p2p_address(),
+            PeerId::from_str("12D3KooWSYPZx6XNGMTqmjVftriFopc5orpEDmVAZQUcVzSUPcux")?);
+
+        let verifier_config = Config::new(Some(format!("config/verifier.yaml")))?;
+        let verifier_funding = Funding::new(txid, 0, pubkey, 100_000_000, 2450000, 95000000, 2450000);
+        let verifier_address = P2PAddress::new(
+            verifier_config.p2p_address(),
+            PeerId::from_str("12D3KooWCL2CbGe2uHPo5CSPy7SuWSji9RjP18hRwVdvdMFK8uuC")?);
+
+        self.prover_client.setup(
+            program_id.clone(),
+            ParticipantRole::Prover,
+            verifier_address.clone(),
+            verifier_funding
+        )?;
+
+        self.verifier_client.setup(
             program_id.clone(),
             ParticipantRole::Verifier,
-            address.clone(),
-            funding
+            prover_address.clone(),
+            prover_funding
         )
+
     }
 
     fn test_get_transaction(&mut self) -> Result<()> {
@@ -68,7 +81,7 @@ impl ClientTest {
             output: vec![],
         };
 
-        self.client.dispatch_transaction(program_id, tx)?;
+        self.prover_client.dispatch_transaction(program_id, tx)?;
         Ok(())
     }
 }
@@ -96,8 +109,8 @@ pub fn test_client() -> Result<()> {
     test.test_setup()?;
     // test.test_get_transaction()?;
     // test.test_subscribe_to_transaction()?;
-    std::thread::sleep(std::time::Duration::from_secs(30));
-    test.test_dispatch_transaction()?;
+    // std::thread::sleep(std::time::Duration::from_secs(30));
+    // test.test_dispatch_transaction()?;
 
     Ok(())
 }
