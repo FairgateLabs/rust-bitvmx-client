@@ -1,16 +1,16 @@
 use crate::{
     config::ClientConfig,
     errors::{BitVMXError, ProgramError},
-    keychain::KeyChain,
     p2p_helper::{request, response, P2PMessageType},
     types::{ProgramContext, ProgramRequestInfo},
 };
-use bitcoin::{
-    absolute::LockTime, secp256k1::Message, transaction::Version, PublicKey, Transaction, Txid,
-};
+use bitcoin::{absolute::LockTime, transaction::Version, Transaction, Txid};
 use bitcoin_coordinator::types::TransactionNew;
 use chrono::Utc;
-use key_manager::winternitz::WinternitzSignature;
+use key_manager::{
+    musig2::{types::MessageId, PartialSignature, PubNonce},
+    winternitz::WinternitzSignature,
+};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, rc::Rc};
 use storage_backend::storage::{KeyValueStore, Storage};
@@ -178,42 +178,72 @@ impl Program {
         }
     }
 
-    pub fn build_protocol(&self, internal_key: &PublicKey) -> Result<(), BitVMXError> {
+    pub fn build_protocol(
+        &mut self,
+        context: &ProgramContext,
+        keys: ParticipantKeys,
+    ) -> Result<(), BitVMXError> {
         let search_params = SearchParams::new(8, 32);
 
-        self.drp.build_protocol(
-            internal_key,
+        // 1. Save the received keys
+        self.other.keys = Some(keys);
+
+        let my_protocol_key = self.me.keys.as_ref().unwrap().protocol;
+        let other_protocol_key = self.other.keys.as_ref().unwrap().protocol;
+
+        let participant_keys = vec![my_protocol_key, other_protocol_key];
+
+        // 2. Init the musig2 signer for this program
+        let aggregated_key = context.key_chain.new_musig2_session(
+            self.program_id,
+            participant_keys,
+            my_protocol_key,
+            None,
+        )?;
+
+        // 3. Build the protocol using the aggregated key as internal key for taproot
+        self.drp.build(
+            &self.program_id.to_string(),
+            &aggregated_key,
             self.get_prover().keys.as_ref().unwrap(),
             self.get_verifier().keys.as_ref().unwrap(),
             search_params,
+            &context.key_chain,
         )?;
 
-        Ok(())
-    }
-
-    pub fn protocol_sighashes(&self) -> Result<Vec<Message>, BitVMXError> {
-        Ok(self.drp.protocol_sighashes()?)
-    }
-
-    pub fn recieve_participant_nonces(
-        &mut self,
-        nonces: Vec<bitvmx_musig2::PubNonce>,
-        key_chain: &KeyChain,
-    ) -> Result<(), BitVMXError> {
-        let participant_key = self.other.keys.as_ref().unwrap().protocol;
-        key_chain.add_nonces(self.program_id, nonces, participant_key)?;
+        // 6. Move the program to the next state
         self.move_program_to_next_state()?;
 
         Ok(())
     }
 
-    pub fn recieve_participant_partial_signatures(
+    pub fn receive_participant_nonces(
         &mut self,
-        signatures: Vec<bitvmx_musig2::PartialSignature>,
-        key_chain: &KeyChain,
+        nonces: Vec<(MessageId, PubNonce)>,
+        context: &ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        let participant_key = self.other.keys.as_ref().unwrap().protocol;
+        context
+            .key_chain
+            .add_nonces(self.program_id, nonces, participant_key)?;
+        self.move_program_to_next_state()?;
+
+        Ok(())
+    }
+
+    pub fn sign_protocol(
+        &mut self,
+        signatures: Vec<(MessageId, PartialSignature)>,
+        context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         let other_pubkey = self.other.keys.as_ref().unwrap().protocol;
-        key_chain.add_signatures(self.program_id, signatures, other_pubkey)?;
+        context
+            .key_chain
+            .add_signatures(self.program_id, signatures, other_pubkey)?;
+
+        self.drp
+            .sign(&self.program_id.to_string(), &context.key_chain)?;
+
         self.move_program_to_next_state()?;
 
         Ok(())
@@ -296,8 +326,7 @@ impl Program {
                     return Ok(());
                 }
 
-                info!("{:?}: Sending partial signatures", self.my_role);
-
+                info!("{:?}: Sending PartialSignatures", self.my_role);
                 let signatures = program_context.key_chain.get_signatures(self.program_id)?;
 
                 request(
@@ -531,5 +560,21 @@ impl Program {
         };
 
         Ok(None)
+    }
+
+    pub fn get_tx_by_id(&self, _txid: Txid) -> Result<Transaction, BitVMXError> {
+        if self.is_setting_up() {
+            return Err(BitVMXError::ProgramNotReady(self.program_id));
+        }
+
+        // TODO: load the tx from protocol here.
+        let _tx = Transaction {
+            version: Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![],
+            output: vec![],
+        };
+
+        Ok(_tx)
     }
 }

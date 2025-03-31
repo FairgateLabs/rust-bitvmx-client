@@ -6,7 +6,7 @@ use crate::{
     },
 };
 use bitcoin::{Transaction, Txid};
-use bitcoin_coordinator::types::AddressNew;
+use bitcoin_coordinator::types::{AddressNew, TransactionNew};
 use chrono::{DateTime, Utc};
 use p2p_handler::P2pHandler;
 use serde::{Deserialize, Serialize};
@@ -61,17 +61,21 @@ impl Default for ProgramRequestInfo {
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub enum IncomingBitVMXApiMessages {
     Ping(),
-    SetupProgram(Uuid, ParticipantRole, P2PAddress, Funding),
+    SetupProgram(ProgramId, ParticipantRole, P2PAddress, Funding),
     GetTransaction(Txid),
     SubscribeToTransaction(Txid),
     DispatchTransaction(Uuid, Transaction),
+    SendTransaction(ProgramId, Transaction),
+    SentTransaction(ProgramId, Txid),
 }
+
+type ProgramId = Uuid;
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub enum OutgoingBitVMXApiMessages {
     Pong(),
-    // Represents when pegins addresses are found
-    PegInAddressFound(Vec<AddressNew>),
+    // Represents when pegin transactions is found
+    PeginTransactionFound(TransactionNew),
     // Represents when a program is running out of funds
     SpeedUpProgramNoFunds(Vec<Uuid>),
 }

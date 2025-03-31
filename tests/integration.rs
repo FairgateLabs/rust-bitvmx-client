@@ -20,8 +20,19 @@ use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 fn config_trace() {
+    let default_modules = [
+        "info",
+        "libp2p=off",
+        "bitvmx_transaction_monitor",
+        "bitcoin_indexer",
+        "bitcoin_coordinator=off",
+        "p2p_protocol=off",
+        "p2p_handler=off",
+        "tarpc=off",
+    ];
+
     let filter = EnvFilter::builder()
-        .parse("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitcoin_coordinator=off,p2p_protocol=off,p2p_handler=off,tarpc=off") 
+        .parse(default_modules.join(","))
         .expect("Invalid filter");
 
     tracing_subscriber::fmt()
@@ -58,7 +69,7 @@ fn init_bitvmx(role: &str) -> Result<(BitVMX, Funding, P2PAddress, DualChannel)>
     let address = P2PAddress::new(&bitvmx.address(), PeerId::from_str(&bitvmx.peer_id())?);
     info!("peer id {:?}", bitvmx.peer_id());
 
-    //This messagas will come from the bridge client.
+    //This messages will come from the bridge client.
 
     Ok((bitvmx, funding, address, bridge_client))
 }
@@ -69,7 +80,7 @@ fn init_bitvmx(role: &str) -> Result<(BitVMX, Funding, P2PAddress, DualChannel)>
 pub fn test_single_run() -> Result<()> {
     config_trace();
 
-    let config = Config::new(Some(format!("config/prover.yaml")))?;
+    let config = Config::new(Some("config/prover.yaml".to_string()))?;
 
     let bitcoind = Bitcoind::new(
         "bitcoin-regtest",
@@ -89,8 +100,8 @@ pub fn test_single_run() -> Result<()> {
         .init_wallet(Network::Regtest, "test_wallet")
         .unwrap();
 
-    info!("Mine 1 block to address {:?}", wallet);
-    bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
+    info!("Mine 101 blocks to address {:?}", wallet);
+    bitcoin_client.mine_blocks_to_address(101, &wallet).unwrap();
 
     let (mut prover_bitvmx, prover_funding, prover_address, prover_bridge_channel) =
         init_bitvmx("prover")?;
@@ -101,7 +112,7 @@ pub fn test_single_run() -> Result<()> {
     let program_id = Uuid::new_v4();
 
     let setup_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetupProgram(
-        program_id.clone(),
+        program_id,
         ParticipantRole::Prover,
         verifier_address.clone(),
         verifier_funding,
@@ -110,7 +121,7 @@ pub fn test_single_run() -> Result<()> {
     prover_bridge_channel.send(1, setup_msg)?;
 
     let setup_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetupProgram(
-        program_id.clone(),
+        program_id,
         ParticipantRole::Verifier,
         prover_address.clone(),
         prover_funding,
@@ -124,43 +135,29 @@ pub fn test_single_run() -> Result<()> {
     info!("VERIFIER: Setting up program...");
     verifier_bitvmx.tick()?;
 
-    //TODO: Serializer / Deserialize keys this exachange should happen with p2p
-
-    // prover_bitvmx.partial_sign(&program_id)?;
-    // //TODO: Partial signs by counterparty
-    // prover_bitvmx.deploy_program(&program_id)?;
-
     //TODO: main loop
-    for _ in 0..1000 {
-        // if i % 20 == 0 {
-        //     //  bitcoin_client.mine_blocks(1)?;
-        // }
-        //  bitcoin_client.mine_blocks(1)?;
+    for i in 0..200 {
+        if i % 20 == 0 {
+            bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
+        }
+
         prover_bitvmx.tick()?;
 
-        if let Ok(Some((msg, _from))) = prover_bridge_channel.recv() {
-            info!("PROVER received message: {}", msg);
-        }
+        // if let Ok(Some((msg, _from))) = prover_bridge_channel.recv() {
+        //     info!("PROVER received message: {}", msg);
+        // }
 
         std::thread::sleep(std::time::Duration::from_millis(100));
 
-        if let Ok(Some((msg, _from))) = verifier_bridge_channel.recv() {
-            info!("VERIFIER received message: {}", msg);
-        }
+        // if let Ok(Some((msg, _from))) = verifier_bridge_channel.recv() {
+        //     info!("VERIFIER received message: {}", msg);
+        // }
 
         verifier_bitvmx.tick()?;
     }
 
     info!("Stopping bitcoind");
     bitcoind.stop()?;
-
-    //TODO: Push witness and then claim
-    //prover_bitvmx.claim_program(&id)?;
-
-    //TODO: Verifier waiting for any claim
-
-    //sleep for 2 secs
-    //std::thread::sleep(std::time::Duration::from_secs(2));
 
     Ok(())
 }

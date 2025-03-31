@@ -40,7 +40,6 @@ bitvmx-broker = { path = "../rust-bitvmx-broker", features = [
 bitvmx-musig2 = { path = "../rust-bitvmx-musig2" }
 bitcoind = { path = "../rust-bitcoind" }
 
-
 [dev-dependencies]
 bollard = "0.11.0"
 futures-util = "0.3"

@@ -23,7 +23,6 @@ use bitvmx_broker::{
     channel::channel::DualChannel,
     rpc::{sync_server::BrokerSync, BrokerConfig},
 };
-use bitvmx_musig2::musig::{MuSig2Signer, MuSig2SignerApi};
 use key_manager::winternitz;
 use p2p_handler::{LocalAllowList, P2pHandler, ReceiveHandlerChannel};
 use std::{
@@ -157,15 +156,6 @@ impl BitVMX {
         false
     }
 
-    pub fn partial_sign(&mut self, program_id: &Uuid) -> Result<(), BitVMXError> {
-        let program = self.load_program(program_id)?.clone();
-
-        // Generate the program partial signatures.
-
-        self.sign_program(&program)?;
-        Ok(())
-    }
-
     /// Sends the pre-kickoff transaction to the Bitcoin network, the program is now ready for the prover to
     /// claim its funds using the kickoff transaction.
     pub fn deploy_program(&mut self, program_id: &Uuid) -> Result<bool, BitVMXError> {
@@ -273,28 +263,6 @@ impl BitVMX {
         SearchParams::new(0, 0)
     }
 
-    // fn get_counterparty(&mut self, role: &ParticipantRole, address: &P2PAddress, my_keys: &ParticipantKeys) -> Result<Participant, BitVMXError> {
-    //     // 1. Connect with the counterparty using the address
-    //     // 2. Send my keys to counterparty
-    //     // 3. Receive counterparty keys as a response
-    //     // 4. Build counterparty participant with received keys and return it
-    //     Ok(Participant::new(
-    //         role,
-    //         address,
-    //         self.generate_keys()?,
-    //     ))
-    // }
-
-    fn sign_program(&mut self, program: &Program) -> Result<(), BitVMXError> {
-        self.program_context.key_chain.sign_program(program)?;
-
-        // 1. Send signatures to counterparty
-        // 2. Receive signatures from counterparty
-        // 3. Verify signatures
-
-        Ok(())
-    }
-
     fn _decode_witness_data(
         &self,
         winternitz_message_sizes: Vec<usize>,
@@ -341,7 +309,7 @@ impl BitVMX {
                 let (_version, msg_type, program_id, data) = deserialize_msg(msg)?;
                 let mut program = self.load_program(&program_id)?;
 
-                info!("{}: Message recieved: {:?} ", program.my_role, msg_type);
+                info!("{}: Message received: {:?} ", program.my_role, msg_type);
 
                 match msg_type {
                     P2PMessageType::Keys => {
@@ -353,41 +321,12 @@ impl BitVMX {
                             return Ok(());
                         }
 
-                        // Receive keys from the other party
-                        let participant_keys =
+                        // Parse the keys received
+                        let keys =
                             parse_keys(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
-                        program.save_other_keys(participant_keys.clone())?;
-
-                        let my_protocol_key = program.me.keys.as_ref().unwrap().protocol;
-                        let other_protocol_key = program.other.keys.as_ref().unwrap().protocol;
-
-                        let participant_keys = vec![my_protocol_key, other_protocol_key];
-                        let aggregated_key =
-                            MuSig2Signer::get_aggregated_pubkey(participant_keys.clone())?;
-
-                        program.build_protocol(&aggregated_key)?;
-
-                        // TODO Return a different structure that preserves the relationship between messages, txs, inputs and taproot leaves
-                        let mut messages: Vec<Vec<u8>> = program
-                            .protocol_sighashes()?
-                            .iter()
-                            .map(|m| m.as_ref().to_vec())
-                            .collect();
-                        messages.sort();
-
-                        self.program_context.key_chain.init_musig2(
-                            program.program_id,
-                            participant_keys,
-                            my_protocol_key,
-                            messages,
-                        )?;
-
-                        //TODO: Once the keys are exchanged, the program should be able to send the nonces
-                        // in order to get the nonces messages should be set in musig2
-                        self.program_context
-                            .key_chain
-                            .set_musig2_messages(program.program_id)?;
+                        // Build the protocol
+                        program.build_protocol(&self.program_context, keys)?;
 
                         // Send ack to the other party
                         program.send_ack(&self.program_context, P2PMessageType::KeysAck)?;
@@ -408,8 +347,7 @@ impl BitVMX {
                         let nonces =
                             parse_nonces(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
-                        program
-                            .recieve_participant_nonces(nonces, &self.program_context.key_chain)?;
+                        program.receive_participant_nonces(nonces, &self.program_context)?;
 
                         program.send_ack(&self.program_context, P2PMessageType::PublicNoncesAck)?;
                     }
@@ -429,10 +367,7 @@ impl BitVMX {
                         let signatures = parse_signatures(data)
                             .map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
-                        program.recieve_participant_partial_signatures(
-                            signatures,
-                            &self.program_context.key_chain,
-                        )?;
+                        program.sign_protocol(signatures, &self.program_context)?;
 
                         //TODO Integration.
                         //let signatures = program.get_aggregated_signatures();
@@ -447,6 +382,10 @@ impl BitVMX {
                     | P2PMessageType::PublicNoncesAck
                     | P2PMessageType::PartialSignaturesAck => {
                         if !Self::should_handle_msg(&program.state, &msg_type) {
+                            info!(
+                                "Ignoring message {} {:?} {:?}",
+                                program.my_role, msg_type, program.state
+                            );
                             return Ok(());
                         }
 
@@ -471,31 +410,33 @@ impl BitVMX {
 
         let news = self.bitcoin_coordinator.get_news()?;
 
-        if !news.txs_by_id.is_empty() {
+        if !news.instance_txs.is_empty() {
             info!("Processing news: {:?}", news);
         };
 
-        let mut txs_by_id = vec![];
+        let mut instance_txs = vec![];
 
-        for (program_id, txs) in news.txs_by_id {
+        for (program_id, txs) in news.instance_txs {
             let program = self.load_program(&program_id)?;
 
             program.notify_news(txs.clone())?;
 
-            txs_by_id.push((
+            instance_txs.push((
                 program_id,
                 txs.iter().map(|tx| tx.tx.compute_txid()).collect(),
             ));
         }
 
-        let mut txs_by_address = vec![];
+        let mut single_txs = vec![];
 
-        for (address, txs) in news.txs_by_address {
+        for tx_new in news.single_txs {
             // Call broker (main thread) to process the news , for now dest is 100 (is hardcoded).
-            let data = serde_json::to_string(&OutgoingBitVMXApiMessages::PegInAddressFound(txs))?;
-            info!("Sending txs by address to broker");
+            let data = serde_json::to_string(&OutgoingBitVMXApiMessages::PeginTransactionFound(
+                tx_new.clone(),
+            ))?;
+            info!("Sending pegin tx to broker found");
             self.broker_channel.send(100, data)?;
-            txs_by_address.push(address);
+            single_txs.push(tx_new.tx.compute_txid());
         }
 
         if !news.funds_requests.is_empty() {
@@ -508,10 +449,10 @@ impl BitVMX {
         }
 
         // acknowledge news to the bitcoin coordinator means won't be notified again about the same news
-        if !txs_by_id.is_empty() || !txs_by_address.is_empty() || !news.funds_requests.is_empty() {
+        if !instance_txs.is_empty() || !single_txs.is_empty() || !news.funds_requests.is_empty() {
             let processed_news = ProcessedNews {
-                txs_by_id,
-                txs_by_address,
+                instance_txs,
+                single_txs,
                 funds_requests: news.funds_requests,
             };
             self.bitcoin_coordinator.acknowledge_news(processed_news)?;
@@ -533,6 +474,14 @@ impl BitVMX {
                 IncomingBitVMXApiMessages::GetTransaction(txid) => todo!("Implement get transaction"),
                 IncomingBitVMXApiMessages::SubscribeToTransaction(txid) => todo!("Implement subscribe"),
                 IncomingBitVMXApiMessages::DispatchTransaction(id, tx) => self._dispatch_transaction(id, tx)?,
+                IncomingBitVMXApiMessages::SendTransaction(id, tx) => {
+                    self.bitcoin_coordinator.send_tx_instance(id, &tx)?;
+                }
+                IncomingBitVMXApiMessages::SentTransaction(id, txid) => {
+                    let program = self.load_program(&id)?;
+                    let tx = program.get_tx_by_id(txid)?;
+                    self.bitcoin_coordinator.send_tx_instance(id, &tx)?;
+                }
             }
         }
 
@@ -556,13 +505,15 @@ impl BitVMX {
         funding: Funding,
     ) -> Result<(), BitVMXError> {
         if self.program_exists(&id)? {
+            info!("{}: Program already exists", role);
             return Err(BitVMXError::ProgramAlreadyExists(id));
         }
 
         //TODO: This should be done in a single atomic operation
-        self.add_new_program(&id)?;
         self.setup_program(&id, role.clone(), funding, &peer_address)?;
+        self.add_new_program(&id)?;
         info!("{}: Program Setup Finished", role);
+
         Ok(())
     }
 
@@ -592,7 +543,7 @@ impl BitVMX {
             // 4. Waits for nonces from verifier
             // 5. Sends signatures and waits for SignaturesAck
             // 6. Waits for signatures from verifier
-            return match (state, msg_type) {
+            match (state, msg_type) {
                 (ProgramState::SettingUp(SettingUpState::SendingNonces), P2PMessageType::Keys) => {
                     true
                 }
@@ -601,7 +552,7 @@ impl BitVMX {
                     P2PMessageType::PublicNonces,
                 ) => true,
                 _ => false,
-            };
+            }
         } else {
             // Verifier flow:
             // 1. Waits for keys from prover
@@ -610,7 +561,7 @@ impl BitVMX {
             // 4. Sends nonces and waits for NoncesAck
             // 5. Waits for signatures from prover
             // 6. Sends signatures and waits for SignaturesAck
-            return match (state, msg_type) {
+            match (state, msg_type) {
                 (ProgramState::SettingUp(SettingUpState::SendingKeys), P2PMessageType::Keys) => {
                     true
                 }
@@ -623,7 +574,7 @@ impl BitVMX {
                     P2PMessageType::PartialSignatures,
                 ) => true,
                 _ => false,
-            };
+            }
         }
     }
 
@@ -655,6 +606,7 @@ impl BitVMX {
         let programs = self.get_active_programs()?;
 
         for mut program in programs {
+            info!("Program state: {:?}", program.state);
             if program.is_setting_up() {
                 // info!("Program state is_setting_up: {:?}", program.state);
                 // TODO: Improvement, I think this tick function we should have different name.
@@ -668,7 +620,6 @@ impl BitVMX {
             if program.is_monitoring() {
                 // info!("Program state is_monitoring: {:?}", program.state);
                 // After the program is ready, we need to monitor the transactions
-
                 let txns_to_monitor = program.get_txs_to_monitor()?;
 
                 // TODO : COMPLETE THE FUNDING TX FOR SPEED UP
@@ -754,4 +705,39 @@ impl BitVMX {
         let programs = self.get_programs()?;
         Ok(programs.iter().any(|p| p.program_id == *program_id))
     }
+}
+
+fn run_bitvmx(config: Config, role: String, running: Arc<AtomicBool>) -> Result<()> {
+    let mut bitvmx = init_bitvmx(config)?;
+
+    info!("[{}] BitVMX instance initialized", role);
+    info!("[{}] P2P Address: {}", role, bitvmx.address());
+    info!("[{}] Peer ID: {}", role, bitvmx.peer_id());
+
+    // Main processing loop
+    while running.load(Ordering::SeqCst) {
+        match bitvmx.tick() {
+            Ok(_) => {
+                // prevent busy waiting
+                thread::sleep(Duration::from_millis(100));
+            }
+            Err(e) => {
+                error!("[{}] Error in BitVMX tick: {:?}", role, e);
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn spawn_bitvmx_thread(config: Config, role: String, running: Arc<AtomicBool>) -> thread::JoinHandle<()> {
+    let role_clone = role.clone();
+    thread::spawn(move || {
+        info!("Starting BitVMX with role: {}", role);
+        if let Err(e) = run_bitvmx(config, role_clone, running) {
+            error!("{} thread error: {:?}", role, e);
+        }
+        info!("Shutting down {} thread", role);
+    })
 }
