@@ -5,6 +5,7 @@ use crate::{
         participant::{P2PAddress, ParticipantRole},
     },
 };
+use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::types::TransactionNew;
 use chrono::{DateTime, Utc};
 use p2p_handler::P2pHandler;
@@ -59,8 +60,12 @@ impl Default for ProgramRequestInfo {
 //TODO: This should be moved to a common place that could be used to share the messages api
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum IncomingBitVMXApiMessages {
-    SetupProgram(Uuid, ParticipantRole, P2PAddress, Funding),
+    SetupProgram(ProgramId, ParticipantRole, P2PAddress, Funding),
+    SendTransaction(ProgramId, Transaction),
+    SentTransaction(ProgramId, Txid),
 }
+
+type ProgramId = Uuid;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum OutgoingBitVMXApiMessages {

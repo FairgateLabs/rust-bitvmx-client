@@ -194,9 +194,12 @@ impl Program {
         let participant_keys = vec![my_protocol_key, other_protocol_key];
 
         // 2. Init the musig2 signer for this program
-        let aggregated_key = context
-            .key_chain
-            .new_musig2_session(self.program_id, participant_keys, my_protocol_key, None)?;
+        let aggregated_key = context.key_chain.new_musig2_session(
+            self.program_id,
+            participant_keys,
+            my_protocol_key,
+            None,
+        )?;
 
         // 3. Build the protocol using the aggregated key as internal key for taproot
         self.drp.build(
@@ -557,5 +560,21 @@ impl Program {
         };
 
         Ok(None)
+    }
+
+    pub fn get_tx_by_id(&self, _txid: Txid) -> Result<Transaction, BitVMXError> {
+        if self.is_setting_up() {
+            return Err(BitVMXError::ProgramNotReady(self.program_id));
+        }
+
+        // TODO: load the tx from protocol here.
+        let _tx = Transaction {
+            version: Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![],
+            output: vec![],
+        };
+
+        Ok(_tx)
     }
 }

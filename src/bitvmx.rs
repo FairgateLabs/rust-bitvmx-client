@@ -479,6 +479,14 @@ impl BitVMX {
                     self.add_new_program(&id)?;
                     info!("{}: Program Setup Finished", role);
                 }
+                IncomingBitVMXApiMessages::SendTransaction(id, tx) => {
+                    self.bitcoin_coordinator.send_tx_instance(id, &tx)?;
+                }
+                IncomingBitVMXApiMessages::SentTransaction(id, txid) => {
+                    let program = self.load_program(&id)?;
+                    let tx = program.get_tx_by_id(txid)?;
+                    self.bitcoin_coordinator.send_tx_instance(id, &tx)?;
+                }
             }
         }
 
