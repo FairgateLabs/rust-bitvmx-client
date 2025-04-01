@@ -480,9 +480,11 @@ impl BitVMX {
                     info!("{}: Program Setup Finished", role);
                 }
                 IncomingBitVMXApiMessages::SendTransaction(id, tx) => {
-                    self.bitcoin_coordinator.send_tx_instance(id, &tx)?;
+                    self.bitcoin_coordinator.include_tx_to_instance(id, &tx)?;
+
+                    self.bitcoin_coordinator.send_tx_instance(id, &tx)?; // add to monitor + dispatch transaction.
                 }
-                IncomingBitVMXApiMessages::SentTransaction(id, txid) => {
+                IncomingBitVMXApiMessages::SendExistingTransaction(id, txid) => {
                     let program = self.load_program(&id)?;
                     let tx = program.get_tx_by_id(txid)?;
                     self.bitcoin_coordinator.send_tx_instance(id, &tx)?;

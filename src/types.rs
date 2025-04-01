@@ -62,7 +62,7 @@ impl Default for ProgramRequestInfo {
 pub enum IncomingBitVMXApiMessages {
     SetupProgram(ProgramId, ParticipantRole, P2PAddress, Funding),
     SendTransaction(ProgramId, Transaction),
-    SentTransaction(ProgramId, Txid),
+    SendExistingTransaction(ProgramId, Txid),
 }
 
 type ProgramId = Uuid;
