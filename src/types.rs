@@ -6,7 +6,7 @@ use crate::{
     },
 };
 use bitcoin::{Transaction, Txid};
-use bitcoin_coordinator::types::{AddressNew, TransactionNew};
+use bitcoin_coordinator::types::TransactionNew;
 use chrono::{DateTime, Utc};
 use p2p_handler::P2pHandler;
 use serde::{Deserialize, Serialize};
@@ -65,7 +65,6 @@ pub enum IncomingBitVMXApiMessages {
     GetTransaction(Txid),
     SubscribeToTransaction(Txid),
     DispatchTransaction(Uuid, Transaction),
-    SendTransaction(ProgramId, Transaction),
     SentTransaction(ProgramId, Txid),
 }
 

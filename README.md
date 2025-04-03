@@ -14,73 +14,46 @@ cargo build
 ```
 
 
-## Pre requisits
+## Testing
 
-You will need to have access to a bitcoin node.
+### Client test
 
-## Run a client
-
-There are 3 configurations develoment, prover and verifier. They can be found at [config](./config/). To choose betwen them you should set the `BITVMX_ENV` env variable, default is development.
-
-You can run it using 
+You will need a regtest Bitcoin node running.
 
 ```bash
-cargo run --release -- --configuration config/prover.yaml
+docker run --rm --name bitcoin-server -it \
+    -p 18443:18443 \
+    -p 18444:18444 \
+    ruimarinho/bitcoin-core:24.0.1 \
+    -printtoconsole \
+    -regtest=1 \
+    -rpcallowip=172.17.0.0/16 \
+    -rpcbind=0.0.0.0 \
+    -rpcauth='foo:337f951003371b21ba0a964464a1d34a$591adbcccece2e5bc1fdd8426c3aa9441a8a6c5cf0fa9a3ed6f7f53029e76130' \
+    -fallbackfee=0.0001 \
+    -minrelaytxfee=0.00001 \
+    -maxtxfee=10000000 \
+    -txindex \
 ```
 
-or 
-
+Start a bitvmx instance with a prover role:
 ```bash
-cargo run --release -- --configuration config/verifier.yaml
+RUST_BACKTRACE=1 cargo run -- prover
 ```
 
-If no bitvmx flag is added it will default to prover
-
-### Peer id and address
-
-After running it the first thig we will see is the id and and address (ip and port)
-
-```
-INFO Peer ID: 12D3KooWAKhpiQGyGt1YtYm948gRCU8JEE9nabLPTnvVQYKEtcwZ
-bitvmx »  INFO Listening on /ip4/127.0.0.1/tcp/61180
-```
-
-Prover is currently run at 61180 while the Verifier is run at 61181
-Peer ID is generated using the key on the config file
-
-### Development
-
-In order to run bitvmx-client in development you will need a regtest bitcoin node that accepts incomming rpc calls. You can do this by configuring the following flags in the bitcoin.conf file or add them as flags in the bitcoin-cli command line.
-
-```conf
-# Bitcoin config file example
-# https://gist.github.com/huxley-sparks/943278
-
-# server=1 tells Bitcoin to accept JSON-RPC commands.
-server=1
-# Network Options
-regtest=1
-# RPC Options
-rpcuser=foo
-rpcpassword=rpcpassword
-regtest.rpcport=18443
-# Set default fee rate https://bitcoin.stackexchange.com/questions/97174/when-using-bitcoin-cli-i-get-an-error-regarding-fallback-fees-when-trying-to-sen
-fallbackfee=0.00001
-```
-
-The client will use default test_wallet, you can add it and check it's information by running
-
+Also start a verifier:
 ```bash
-bitcoin-cli create test_wallet
-bitcoin-cli loadwallet test_wallet 
-bitcoin-cli listwallets
-bitcoin-cli getwalletinfo
+RUST_BACKTRACE=1 cargo run -- verifier
 ```
-  
-## User journey
 
-1- [Run a prover](#run-a-client)
-2- [Run a verifier](#run-a-client)
-3- Use the prover client to [add funds](#add-funds)
-4- Use the prover client to create a [new program](#new-program)
-5- Use the prover to deploy a program
+Run the client tests:
+```bash
+RUST_BACKTRACE=1 cargo test client -- --ignored
+```
+
+### Integration test
+
+If you are running a bitcoin node, you should stop it before running the integratio test (as it handles its own node).
+```bash
+RUST_BACKTRACE=1 cargo test test_single_run -- --ignored
+```

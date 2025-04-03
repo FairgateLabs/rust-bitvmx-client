@@ -474,9 +474,6 @@ impl BitVMX {
                 IncomingBitVMXApiMessages::GetTransaction(txid) => todo!("Implement get transaction"),
                 IncomingBitVMXApiMessages::SubscribeToTransaction(txid) => todo!("Implement subscribe"),
                 IncomingBitVMXApiMessages::DispatchTransaction(id, tx) => self._dispatch_transaction(id, tx)?,
-                IncomingBitVMXApiMessages::SendTransaction(id, tx) => {
-                    self.bitcoin_coordinator.send_tx_instance(id, &tx)?;
-                }
                 IncomingBitVMXApiMessages::SentTransaction(id, txid) => {
                     let program = self.load_program(&id)?;
                     let tx = program.get_tx_by_id(txid)?;
@@ -509,6 +506,7 @@ impl BitVMX {
             return Err(BitVMXError::ProgramAlreadyExists(id));
         }
 
+        info!("Setting up program: {:?}", id);
         //TODO: This should be done in a single atomic operation
         self.setup_program(&id, role.clone(), funding, &peer_address)?;
         self.add_new_program(&id)?;
@@ -518,6 +516,8 @@ impl BitVMX {
     }
 
     fn _dispatch_transaction(&mut self, id: Uuid, tx: Transaction) -> Result<(), BitVMXError> {
+        info!("Dispatching transaction: {:?} for instance: {:?}", tx, id);
+        self.bitcoin_coordinator.include_tx_to_instance(id, &tx)?;
         self.bitcoin_coordinator.send_tx_instance(id, &tx)?;
         Ok(())
     }
@@ -606,7 +606,7 @@ impl BitVMX {
         let programs = self.get_active_programs()?;
 
         for mut program in programs {
-            info!("Program state: {:?}", program.state);
+            // info!("Program state: {:?}", program.state);
             if program.is_setting_up() {
                 // info!("Program state is_setting_up: {:?}", program.state);
                 // TODO: Improvement, I think this tick function we should have different name.
@@ -705,39 +705,4 @@ impl BitVMX {
         let programs = self.get_programs()?;
         Ok(programs.iter().any(|p| p.program_id == *program_id))
     }
-}
-
-fn run_bitvmx(config: Config, role: String, running: Arc<AtomicBool>) -> Result<()> {
-    let mut bitvmx = init_bitvmx(config)?;
-
-    info!("[{}] BitVMX instance initialized", role);
-    info!("[{}] P2P Address: {}", role, bitvmx.address());
-    info!("[{}] Peer ID: {}", role, bitvmx.peer_id());
-
-    // Main processing loop
-    while running.load(Ordering::SeqCst) {
-        match bitvmx.tick() {
-            Ok(_) => {
-                // prevent busy waiting
-                thread::sleep(Duration::from_millis(100));
-            }
-            Err(e) => {
-                error!("[{}] Error in BitVMX tick: {:?}", role, e);
-                break;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn spawn_bitvmx_thread(config: Config, role: String, running: Arc<AtomicBool>) -> thread::JoinHandle<()> {
-    let role_clone = role.clone();
-    thread::spawn(move || {
-        info!("Starting BitVMX with role: {}", role);
-        if let Err(e) = run_bitvmx(config, role_clone, running) {
-            error!("{} thread error: {:?}", role, e);
-        }
-        info!("Shutting down {} thread", role);
-    })
 }

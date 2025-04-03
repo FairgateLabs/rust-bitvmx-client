@@ -9,6 +9,7 @@ use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 struct ClientTest {
+    program_id: Uuid,
     prover_client: BitVMXClient,
     verifier_client: BitVMXClient,
 }
@@ -18,6 +19,7 @@ impl ClientTest {
         configure_logging();
 
         Self {
+            program_id: Uuid::new_v4(),
             prover_client: BitVMXClient::new(22222, 478),
             verifier_client: BitVMXClient::new(33333, 478)
         }
@@ -34,7 +36,6 @@ impl ClientTest {
     fn test_setup(&mut self) -> Result<()> {
         let txid = Txid::from_str("4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b").unwrap();
         let pubkey = PublicKey::from_str("032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af")?;
-        let program_id = Uuid::new_v4();
 
         let prover_config = Config::new(Some(format!("config/prover.yaml")))?;
         let prover_funding = Funding::new(txid, 0, pubkey, 100_000_000, 2450000, 95000000, 2450000);
@@ -49,14 +50,14 @@ impl ClientTest {
             PeerId::from_str("12D3KooWCL2CbGe2uHPo5CSPy7SuWSji9RjP18hRwVdvdMFK8uuC")?);
 
         self.prover_client.setup(
-            program_id.clone(),
+            self.program_id,
             ParticipantRole::Prover,
             verifier_address.clone(),
             verifier_funding
         )?;
 
         self.verifier_client.setup(
-            program_id.clone(),
+            self.program_id,
             ParticipantRole::Verifier,
             prover_address.clone(),
             prover_funding
@@ -73,7 +74,6 @@ impl ClientTest {
     }
 
     fn test_dispatch_transaction(&mut self) -> Result<()> {
-        let program_id = Uuid::new_v4();
         let tx = Transaction {
             version: Version::TWO,
             lock_time: LockTime::ZERO,
@@ -81,7 +81,7 @@ impl ClientTest {
             output: vec![],
         };
 
-        self.prover_client.dispatch_transaction(program_id, tx)?;
+        self.prover_client.dispatch_transaction(self.program_id, tx)?;
         Ok(())
     }
 }
@@ -110,7 +110,7 @@ pub fn test_client() -> Result<()> {
     // test.test_get_transaction()?;
     // test.test_subscribe_to_transaction()?;
     // std::thread::sleep(std::time::Duration::from_secs(30));
-    // test.test_dispatch_transaction()?;
+    test.test_dispatch_transaction()?;
 
     Ok(())
 }
