@@ -105,7 +105,7 @@ pub fn test_client() -> Result<()> {
     let mut test = ClientTest::new();
 
     // This tests are coupled. They depend on each other.
-    // test.test_ping()?;
+    test.test_ping()?;
     test.test_setup()?;
     // test.test_get_transaction()?;
     // test.test_subscribe_to_transaction()?;

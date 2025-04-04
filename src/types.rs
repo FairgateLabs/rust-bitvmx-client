@@ -65,7 +65,6 @@ pub enum IncomingBitVMXApiMessages {
     GetTransaction(Txid),
     SubscribeToTransaction(Txid),
     DispatchTransaction(Uuid, Transaction),
-    SentTransaction(ProgramId, Txid),
 }
 
 type ProgramId = Uuid;

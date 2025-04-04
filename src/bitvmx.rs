@@ -11,6 +11,7 @@ use crate::{
         witness,
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus},
+    api::BitVMXApi,
 };
 
 use bitcoin::{PublicKey, Transaction};
@@ -461,64 +462,11 @@ impl BitVMX {
         Ok(())
     }
 
-    // TODO: move to separate trait
     pub fn process_api_messages(&mut self) -> Result<(), BitVMXError> {
         if let Some((msg, from)) = self.broker_channel.recv()? {
-            let decoded: IncomingBitVMXApiMessages = serde_json::from_str(&msg)?;
-            info!("< {:#?}", decoded);
-
-            match decoded {
-                IncomingBitVMXApiMessages::Ping() => self._ping(from)?,
-                IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address, funding) =>
-                    self._setup_program(id, role, peer_address, funding)?,
-                IncomingBitVMXApiMessages::GetTransaction(txid) => todo!("Implement get transaction"),
-                IncomingBitVMXApiMessages::SubscribeToTransaction(txid) => todo!("Implement subscribe"),
-                IncomingBitVMXApiMessages::DispatchTransaction(id, tx) => self._dispatch_transaction(id, tx)?,
-                IncomingBitVMXApiMessages::SentTransaction(id, txid) => {
-                    let program = self.load_program(&id)?;
-                    let tx = program.get_tx_by_id(txid)?;
-                    self.bitcoin_coordinator.send_tx_instance(id, &tx)?;
-                }
-            }
+            BitVMXApi::handle_message(self, msg, from)?;
         }
 
-        Ok(())
-    }
-
-    fn _ping(&mut self, from: u32) -> Result<(), BitVMXError> {
-        self.broker_channel.send(
-            from,
-            serde_json::to_string(&OutgoingBitVMXApiMessages::Pong())?,
-        )?;
-        info!("> {:?}", OutgoingBitVMXApiMessages::Pong());
-        Ok(())
-    }
-
-    fn _setup_program(
-        &mut self,
-        id: Uuid,
-        role: ParticipantRole,
-        peer_address: P2PAddress,
-        funding: Funding,
-    ) -> Result<(), BitVMXError> {
-        if self.program_exists(&id)? {
-            info!("{}: Program already exists", role);
-            return Err(BitVMXError::ProgramAlreadyExists(id));
-        }
-
-        info!("Setting up program: {:?}", id);
-        //TODO: This should be done in a single atomic operation
-        self.setup_program(&id, role.clone(), funding, &peer_address)?;
-        self.add_new_program(&id)?;
-        info!("{}: Program Setup Finished", role);
-
-        Ok(())
-    }
-
-    fn _dispatch_transaction(&mut self, id: Uuid, tx: Transaction) -> Result<(), BitVMXError> {
-        info!("Dispatching transaction: {:?} for instance: {:?}", tx, id);
-        self.bitcoin_coordinator.include_tx_to_instance(id, &tx)?;
-        self.bitcoin_coordinator.send_tx_instance(id, &tx)?;
         Ok(())
     }
 
@@ -704,5 +652,64 @@ impl BitVMX {
     fn program_exists(&self, program_id: &Uuid) -> Result<bool, BitVMXError> {
         let programs = self.get_programs()?;
         Ok(programs.iter().any(|p| p.program_id == *program_id))
+    }
+}
+
+impl BitVMXApi for BitVMX {
+    fn ping(&mut self, from: u32) -> Result<(), BitVMXError> {
+        self.broker_channel.send(
+            from,
+            serde_json::to_string(&OutgoingBitVMXApiMessages::Pong())?,
+        )?;
+        info!("> {:?}", OutgoingBitVMXApiMessages::Pong());
+        Ok(())
+    }
+
+    fn setup_program(
+        &mut self,
+        id: Uuid,
+        role: ParticipantRole,
+        peer_address: P2PAddress,
+        funding: Funding,
+    ) -> Result<(), BitVMXError> {
+        if self.program_exists(&id)? {
+            info!("{}: Program already exists", role);
+            return Err(BitVMXError::ProgramAlreadyExists(id));
+        }
+
+        info!("Setting up program: {:?}", id);
+        //TODO: This should be done in a single atomic operation
+        self.setup_program(&id, role.clone(), funding, &peer_address)?;
+        self.add_new_program(&id)?;
+        info!("{}: Program Setup Finished", role);
+
+        Ok(())
+    }
+
+    fn dispatch_transaction(&mut self, id: Uuid, tx: Transaction) -> Result<(), BitVMXError> {
+        info!("Dispatching transaction: {:?} for instance: {:?}", tx, id);
+        self.bitcoin_coordinator.include_tx_to_instance(id, &tx)?;
+        self.bitcoin_coordinator.send_tx_instance(id, &tx)?;
+        Ok(())
+    }
+
+    fn handle_message(&mut self, msg: String, from: u32) -> Result<(), BitVMXError> {
+        let decoded: IncomingBitVMXApiMessages = serde_json::from_str(&msg)?;
+        info!("< {:#?}", decoded);
+
+        match decoded {
+            IncomingBitVMXApiMessages::Ping() =>
+                BitVMXApi::ping(self, from)?,
+            IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address, funding) =>
+                BitVMXApi::setup_program(self, id, role, peer_address, funding)?,
+            IncomingBitVMXApiMessages::GetTransaction(txid) =>
+                todo!("Implement get transaction"),
+            IncomingBitVMXApiMessages::SubscribeToTransaction(txid) =>
+                todo!("Implement subscribe"),
+            IncomingBitVMXApiMessages::DispatchTransaction(id, tx) =>
+                BitVMXApi::dispatch_transaction(self, id, tx)?,
+        }
+
+        Ok(())
     }
 }
