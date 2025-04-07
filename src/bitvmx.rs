@@ -10,12 +10,12 @@ use crate::{
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus},
 };
 
-use bitcoin::{Network, Transaction};
+use bitcoin::Transaction;
 use bitcoin_coordinator::{
     coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi},
     types::{BitcoinCoordinatorType, BitvmxInstance, ProcessedNews, TransactionPartialInfo},
 };
-use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
+
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
     channel::channel::DualChannel,
@@ -476,9 +476,6 @@ impl BitVMX {
                     let tx = program.get_tx_by_id(txid)?;
                     self.bitcoin_coordinator.send_tx_instance(id, &tx)?;
                 }
-                IncomingBitVMXApiMessages::SendTransaction(id, tx) => {
-                    self.bitcoin_coordinator.send_tx_instance(id, &tx)?;
-                }
                 IncomingBitVMXApiMessages::SentTransaction(id, txid) => {
                     let program = self.load_program(&id)?;
                     let tx = program.get_tx_by_id(txid)?;
@@ -504,7 +501,7 @@ impl BitVMX {
         id: Uuid,
         role: ParticipantRole,
         peer_address: P2PAddress,
-        funding: Funding,
+        utxo: Utxo,
     ) -> Result<(), BitVMXError> {
         if self.program_exists(&id)? {
             info!("{}: Program already exists", role);
@@ -513,7 +510,7 @@ impl BitVMX {
 
         info!("Setting up program: {:?}", id);
         //TODO: This should be done in a single atomic operation
-        self.setup_program(&id, role.clone(), funding, &peer_address)?;
+        self.setup_program(&id, role.clone(), &peer_address, utxo)?;
         self.add_new_program(&id)?;
         info!("{}: Program Setup Finished", role);
 
