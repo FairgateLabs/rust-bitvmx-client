@@ -1,21 +1,14 @@
-use std::{str::FromStr, thread, time::Duration};
+use std::{thread, time::Duration};
 use anyhow::Result;
-use bitcoin::{Network, PublicKey, Txid};
-use bitcoind::bitcoind::Bitcoind;
+use bitcoin::Network;
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use tracing::{info, error};
 use tracing_subscriber::EnvFilter;
-use uuid::Uuid;
 
 use bitvmx_client::{
     bitvmx::BitVMX,
     config::Config,
-    program::{
-        dispute::Funding,
-        participant::{P2PAddress, ParticipantRole},
-    },
-    types::IncomingBitVMXApiMessages,
 };
 
 fn config_trace() {

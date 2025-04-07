@@ -2,8 +2,9 @@ use std::str::FromStr;
 
 use anyhow::Result;
 use bitcoin::{absolute::LockTime, transaction::Version, PublicKey, Transaction, Txid};
-use bitvmx_client::{client::BitVMXClient, config::Config, program::{dispute::Funding, participant::{P2PAddress, ParticipantRole}}, types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages}};
+use bitvmx_client::{client::BitVMXClient, config::Config, program::{participant::{P2PAddress, ParticipantRole}}, types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages}};
 use p2p_handler::PeerId;
+use protocol_builder::builder::Utxo;
 use tracing::{info, error};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
@@ -38,13 +39,13 @@ impl ClientTest {
         let pubkey = PublicKey::from_str("032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af")?;
 
         let prover_config = Config::new(Some(format!("config/prover.yaml")))?;
-        let prover_funding = Funding::new(txid, 0, pubkey, 100_000_000, 2450000, 95000000, 2450000);
+        let prover_funding = Utxo::new("prover_utxo".to_string(), txid, 0, 100_000_000, &pubkey);
         let prover_address = P2PAddress::new(
             prover_config.p2p_address(),
             PeerId::from_str("12D3KooWSYPZx6XNGMTqmjVftriFopc5orpEDmVAZQUcVzSUPcux")?);
 
         let verifier_config = Config::new(Some(format!("config/verifier.yaml")))?;
-        let verifier_funding = Funding::new(txid, 0, pubkey, 100_000_000, 2450000, 95000000, 2450000);
+        let verifier_funding = Utxo::new("verifier_utxo".to_string(), txid, 0, 100_000_000, &pubkey);
         let verifier_address = P2PAddress::new(
             verifier_config.p2p_address(),
             PeerId::from_str("12D3KooWCL2CbGe2uHPo5CSPy7SuWSji9RjP18hRwVdvdMFK8uuC")?);
