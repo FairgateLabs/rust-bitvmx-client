@@ -509,9 +509,7 @@ impl BitVMX {
         }
 
         info!("Setting up program: {:?}", id);
-        //TODO: This should be done in a single atomic operation
         self.setup_program(&id, role.clone(), &peer_address, utxo)?;
-        self.add_new_program(&id)?;
         info!("{}: Program Setup Finished", role);
 
         Ok(())
