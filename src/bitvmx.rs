@@ -125,7 +125,7 @@ impl BitVMX {
         // Create a participant that represents the counterparty with the opposite role.
         let other = ParticipantData::new(peer_address, None);
 
-        // Create a program with the funding information, and the dispute resolution search parameters.
+        // Create a program with the utxo information, and the dispute resolution search parameters.
         Program::new(
             *id,
             my_role,
@@ -466,8 +466,8 @@ impl BitVMX {
 
             match decoded {
                 IncomingBitVMXApiMessages::Ping() => self._ping(from)?,
-                IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address, funding) =>
-                    self._setup_program(id, role, peer_address, funding)?,
+                IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address, utxo) =>
+                    self._setup_program(id, role, peer_address, utxo)?,
                 IncomingBitVMXApiMessages::GetTransaction(txid) => todo!("Implement get transaction"),
                 IncomingBitVMXApiMessages::SubscribeToTransaction(txid) => todo!("Implement subscribe"),
                 IncomingBitVMXApiMessages::DispatchTransaction(id, tx) => self._dispatch_transaction(id, tx)?,
