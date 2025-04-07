@@ -1,20 +1,15 @@
 use std::str::FromStr;
 
 use anyhow::Result;
-use bitcoin::{Network, PublicKey, Txid};
+use bitcoin::{secp256k1, Address, Amount, KnownHrp, Network, PublicKey, XOnlyPublicKey};
 use bitcoind::bitcoind::Bitcoind;
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use bitvmx_client::{
-    bitvmx::BitVMX,
-    config::Config,
-    program::{
-        dispute::Funding,
-        participant::{P2PAddress, ParticipantRole},
-    },
-    types::IncomingBitVMXApiMessages,
+    bitvmx::BitVMX, config::Config, program::participant::{P2PAddress, ParticipantRole}, types::IncomingBitVMXApiMessages
 };
 use p2p_handler::PeerId;
+use protocol_builder::{builder::Utxo, scripts};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
@@ -24,7 +19,7 @@ fn config_trace() {
         "info",
         "libp2p=off",
         "bitvmx_transaction_monitor",
-        "bitcoin_indexer",
+        "bitcoin_indexer=off",
         "bitcoin_coordinator=off",
         "p2p_protocol=off",
         "p2p_handler=off",
@@ -46,7 +41,7 @@ fn clear_db(path: &str) {
     let _ = std::fs::remove_dir_all(path);
 }
 
-fn init_bitvmx(role: &str) -> Result<(BitVMX, Funding, P2PAddress, DualChannel)> {
+fn init_bitvmx(role: &str) -> Result<(BitVMX, P2PAddress, DualChannel)> {
     let config = Config::new(Some(format!("config/{}.yaml", role)))?;
     let broker_config = BrokerConfig::new(config.broker_port, None);
     let bridge_client = DualChannel::new(&broker_config, 2);
@@ -58,20 +53,39 @@ fn init_bitvmx(role: &str) -> Result<(BitVMX, Funding, P2PAddress, DualChannel)>
     info!("config: {:?}", config.storage.db);
 
     let bitvmx = BitVMX::new(config)?;
-    //TODO: Pre-kickoff only prover ?? make independent ??
-    let txid =
-        Txid::from_str("4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b").unwrap();
-    let pubkey =
-        PublicKey::from_str("032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af")?;
-
-    let funding = Funding::new(txid, 0, pubkey, 100_000_000, 2450000, 95000000, 2450000);
 
     let address = P2PAddress::new(&bitvmx.address(), PeerId::from_str(&bitvmx.peer_id())?);
     info!("peer id {:?}", bitvmx.peer_id());
 
     //This messages will come from the bridge client.
 
-    Ok((bitvmx, funding, address, bridge_client))
+    Ok((bitvmx, address, bridge_client))
+}
+
+fn init_utxo(bitcoin_client: &BitcoinClient) -> Result<Utxo> {
+    // TODO perform a key aggregation with participants public keys. This is a harcoded key for now.
+    let secp = secp256k1::Secp256k1::new();
+    let public_key = PublicKey::from_str("020d48dbe8043e0114f3255f205152fa621dd7f4e1bbf69d4e255ddb2aaa2878d2")?;
+    let untweaked_key = XOnlyPublicKey::from(public_key);
+
+    let spending_scripts = vec![scripts::timelock_renew(&public_key)];
+    let taproot_spend_info = scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
+    let p2tr_address = Address::p2tr(&secp, untweaked_key, taproot_spend_info.merkle_root(), KnownHrp::Regtest);
+    
+    let (tx, vout) = bitcoin_client.fund_address(&p2tr_address, Amount::from_sat(100_000_000))?;
+    
+    let utxo = Utxo::new(
+        "External".to_string(),
+        tx.compute_txid(),
+        vout,
+        100_000_000,
+        &public_key,
+    );
+
+    // Spend the UTXO to test Musig2 signature aggregation
+    // spend_utxo(bitcoin_client, utxo.clone(), public_key, p2tr_address, taproot_spend_info)?;
+
+    Ok(utxo)
 }
 
 //cargo test --release  -- --ignored
@@ -101,12 +115,15 @@ pub fn test_single_run() -> Result<()> {
         .unwrap();
 
     info!("Mine 101 blocks to address {:?}", wallet);
-    bitcoin_client.mine_blocks_to_address(101, &wallet).unwrap();
+    bitcoin_client.mine_blocks_to_address(202, &wallet).unwrap();
 
-    let (mut prover_bitvmx, prover_funding, prover_address, prover_bridge_channel) =
+    info!("Initializing UTXO for program");
+    let utxo = init_utxo(&bitcoin_client)?;
+
+    let (mut prover_bitvmx, prover_address, prover_bridge_channel) =
         init_bitvmx("prover")?;
 
-    let (mut verifier_bitvmx, verifier_funding, verifier_address, verifier_bridge_channel) =
+    let (mut verifier_bitvmx, verifier_address, verifier_bridge_channel) =
         init_bitvmx("verifier")?;
 
     let program_id = Uuid::new_v4();
@@ -115,7 +132,7 @@ pub fn test_single_run() -> Result<()> {
         program_id,
         ParticipantRole::Prover,
         verifier_address.clone(),
-        verifier_funding,
+        utxo.clone(),
     ))?;
 
     prover_bridge_channel.send(1, setup_msg)?;
@@ -124,7 +141,7 @@ pub fn test_single_run() -> Result<()> {
         program_id,
         ParticipantRole::Verifier,
         prover_address.clone(),
-        prover_funding,
+        utxo,
     ))?;
 
     verifier_bridge_channel.send(1, setup_msg)?;

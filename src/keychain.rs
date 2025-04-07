@@ -11,18 +11,15 @@ use key_manager::{
     winternitz::{WinternitzPublicKey, WinternitzType},
 };
 use p2p_handler::Keypair;
-use protocol_builder::{
-    graph::input::{SighashType, Signature},
-    unspendable::unspendable_key,
-};
+
+use protocol_builder::unspendable::unspendable_key;
 use storage_backend::storage::{KeyValueStore, Storage};
 
-use crate::{config::Config, errors::BitVMXError, program::program::Program};
+use crate::{config::Config, errors::BitVMXError};
 
 pub struct KeyChain {
     pub key_manager: Rc<KeyManager<DatabaseKeyStore>>,
     pub communications_key: Keypair,
-    // pub musig2_signer: MuSig2Signer,
     pub store: Rc<Storage>,
 }
 
@@ -61,12 +58,10 @@ impl KeyChain {
             Keypair::from_protobuf_encoding(&hex::decode(privk.as_bytes()).unwrap()).unwrap();
 
         let key_manager = Rc::new(key_manager);
-        // let musig2_signer = MuSig2Signer::new(store.clone(), key_manager.clone());
 
         Ok(Self {
             key_manager,
             communications_key,
-            // musig2_signer,
             store,
         })
     }
@@ -111,13 +106,6 @@ impl KeyChain {
             .map_err(BitVMXError::from)
     }
 
-    /* //CHECK: Is this function necessary ?
-    pub fn derive_keypair_with_index(&mut self, index: u32) -> Result<PublicKey, BitVMXError> {
-        self.key_manager
-            .derive_keypair(index)
-            .map_err(BitVMXError::from)
-    }*/
-
     pub fn derive_winternitz_hash160(
         &mut self,
         message_bytes: usize,
@@ -161,45 +149,6 @@ impl KeyChain {
         Ok(XOnlyPublicKey::from(unspendable_key(&mut rng)?))
     }
 
-    pub fn sign_program(&self, program: &Program) -> Result<(), BitVMXError> {
-        for (txname, infos) in program.drp.spending_infos()?.iter() {
-            for (input_index, spending_info) in infos.iter().enumerate() {
-                let mut signatures = vec![];
-                for (message, input_key) in spending_info
-                    .hashed_messages()
-                    .iter()
-                    .zip(spending_info.input_keys().iter())
-                {
-                    let signature = match spending_info.sighash_type() {
-                        SighashType::Ecdsa(sighash_type) => {
-                            let signature =
-                                self.key_manager.sign_ecdsa_message(message, input_key)?;
-                            Signature::Ecdsa(bitcoin::ecdsa::Signature {
-                                signature,
-                                sighash_type: *sighash_type,
-                            })
-                        }
-                        SighashType::Taproot(sighash_type) => {
-                            let signature =
-                                self.key_manager.sign_schnorr_message(message, input_key)?;
-                            Signature::Taproot(bitcoin::taproot::Signature {
-                                signature,
-                                sighash_type: *sighash_type,
-                            })
-                        }
-                    };
-                    signatures.push(signature);
-                }
-
-                program
-                    .drp
-                    .update_input_signatures(txname, input_index as u32, signatures)?;
-            }
-        }
-
-        Ok(())
-    }
-
     fn derive_winternitz_keys(
         &mut self,
         size_in_bytes: usize,
@@ -240,16 +189,15 @@ impl KeyChain {
         program_id: uuid::Uuid,
         participant_pubkeys: Vec<PublicKey>,
         my_pubkey: PublicKey,
-        tweak: Option<TapNodeHash>,
     ) -> Result<PublicKey, BitVMXError> {
         self.key_manager
-            .new_musig2_session(&program_id.to_string(), participant_pubkeys, my_pubkey, tweak)
+            .new_musig2_session(&program_id.to_string(), participant_pubkeys, my_pubkey)
             .map_err(BitVMXError::MuSig2SignerError)
     }
 
-    pub fn get_aggregated_pubkey(&self, program_id: uuid::Uuid, tweak: Option<TapNodeHash>,) -> Result<PublicKey, BitVMXError> {
+    pub fn get_aggregated_pubkey(&self, program_id: uuid::Uuid) -> Result<PublicKey, BitVMXError> {
         self.key_manager
-            .get_aggregated_pubkey(&program_id.to_string(), tweak)
+            .get_aggregated_pubkey(&program_id.to_string())
             .map_err(BitVMXError::MuSig2SignerError)
     }
 
@@ -295,7 +243,7 @@ impl KeyChain {
         Ok(signature)
     }
 
-    pub fn generate_nonces(&self, program_id: uuid::Uuid) -> Result<(), BitVMXError> {
+    pub fn get_pub_nonces(&self, program_id: uuid::Uuid) -> Result<(), BitVMXError> {
         self.key_manager
             .get_my_pub_nonces(&program_id.to_string())
             .map_err(BitVMXError::MuSig2SignerError)?;

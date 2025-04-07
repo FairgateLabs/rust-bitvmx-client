@@ -1,13 +1,11 @@
 use crate::{errors::ParseError, program::participant::ParticipantKeys};
 #[cfg(test)]
 use bitcoin::{
-    key::{rand, Keypair, Secp256k1},
-    PublicKey, XOnlyPublicKey,
+    key::Secp256k1,
+    PublicKey,
 };
-use key_manager::{
-    musig2::{types::MessageId, PartialSignature, PubNonce},
-    winternitz::{WinternitzPublicKey, WinternitzType},
-};
+
+use key_manager::{musig2::{types::MessageId, PartialSignature, PubNonce}, winternitz::{WinternitzPublicKey, WinternitzType}};
 use serde_json::Value;
 
 pub fn parse_keys(value: Value) -> Result<ParticipantKeys, ParseError> {
@@ -34,13 +32,6 @@ pub fn parse_signatures(data: Value) -> Result<Vec<(MessageId, PartialSignature)
 #[test]
 fn keys_encoding_test() -> Result<(), anyhow::Error> {
     let secp = Secp256k1::new();
-    let keypair = Keypair::new(&secp, &mut rand::thread_rng());
-
-    let pre_kickoff = "026e14224899cf9c780fef5dd200f92a28cc67f71c0af6fe30b5657ffc943f08f4"
-        .parse::<PublicKey>()
-        .unwrap();
-
-    let (internal, _) = XOnlyPublicKey::from_keypair(&keypair);
 
     let protocol = "026e14224899cf9c780fef5dd200f92a28cc67f71c0af6fe30b5657ffc943f08f4"
         .parse::<PublicKey>()
@@ -67,8 +58,6 @@ fn keys_encoding_test() -> Result<(), anyhow::Error> {
     let dispute_resolution: Vec<WinternitzPublicKey> = vec![dp];
 
     let participant = ParticipantKeys::new(
-        pre_kickoff,
-        internal,
         protocol,
         speedup_key,
         timelock_key,

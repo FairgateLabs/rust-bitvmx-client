@@ -4,13 +4,14 @@ use crate::{
     p2p_helper::{request, response, P2PMessageType},
     types::{ProgramContext, ProgramRequestInfo},
 };
-use bitcoin::{absolute::LockTime, transaction::Version, Transaction, Txid};
+use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::types::TransactionNew;
 use chrono::Utc;
 use key_manager::{
     musig2::{types::MessageId, PartialSignature, PubNonce},
     winternitz::WinternitzSignature,
 };
+use protocol_builder::builder::Utxo;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, rc::Rc};
 use storage_backend::storage::{KeyValueStore, Storage};
@@ -18,7 +19,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use super::{
-    dispute::{DisputeResolutionProtocol, Funding, SearchParams},
+    dispute::{DisputeResolutionProtocol, SearchParams},
     participant::{ParticipantData, ParticipantKeys, ParticipantRole},
 };
 
@@ -102,6 +103,7 @@ pub struct Program {
     pub my_role: ParticipantRole,
     pub me: ParticipantData,
     pub other: ParticipantData,
+    pub utxo: Utxo,
     pub drp: DisputeResolutionProtocol,
     pub state: ProgramState,
     witness_data: HashMap<Txid, WitnessData>,
@@ -116,17 +118,18 @@ impl Program {
         my_role: ParticipantRole,
         me: ParticipantData,
         other: ParticipantData,
-        funding: Funding,
+        utxo: Utxo,
         storage: Rc<Storage>,
         config: ClientConfig,
     ) -> Result<Self, ProgramError> {
-        let drp = DisputeResolutionProtocol::new(funding, program_id, storage.clone())?;
+        let drp = DisputeResolutionProtocol::new(program_id, storage.clone())?;
 
         let program = Program {
             program_id,
             my_role,
             me,
             other,
+            utxo,
             drp,
             state: ProgramState::New,
             witness_data: HashMap::new(),
@@ -191,25 +194,28 @@ impl Program {
         let my_protocol_key = self.me.keys.as_ref().unwrap().protocol;
         let other_protocol_key = self.other.keys.as_ref().unwrap().protocol;
 
-        let participant_keys = vec![my_protocol_key, other_protocol_key];
+        let mut participant_keys = vec![my_protocol_key, other_protocol_key];
+        participant_keys.sort();
 
         // 2. Init the musig2 signer for this program
         let aggregated_key = context.key_chain.new_musig2_session(
             self.program_id,
             participant_keys,
             my_protocol_key,
-            None,
         )?;
 
         // 3. Build the protocol using the aggregated key as internal key for taproot
+        info!("Building protocol for: {:?}", self.my_role);
         self.drp.build(
             &self.program_id.to_string(),
+            self.utxo.clone(),
             &aggregated_key,
             self.get_prover().keys.as_ref().unwrap(),
             self.get_verifier().keys.as_ref().unwrap(),
             search_params,
             &context.key_chain,
         )?;
+        info!("Protocol built for role: {:?}", self.my_role);
 
         // 6. Move the program to the next state
         self.move_program_to_next_state()?;
@@ -533,48 +539,22 @@ impl Program {
     }
 
     pub fn get_txs_to_monitor(&self) -> Result<Vec<Txid>, BitVMXError> {
-        //TODO: get the full DAG of the protocol and remove the hardcoded txs
-
-        let txs = vec![
-            "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-                .parse::<Txid>()
-                .unwrap(),
-            "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
-                .parse::<Txid>()
-                .unwrap(),
-            "9876543210fedcba9876543210fedcba9876543210fedcba9876543210fedcba"
-                .parse::<Txid>()
-                .unwrap(),
-        ];
-
-        Ok(txs)
+        self.drp.get_transaction_ids().map_err(BitVMXError::from)
     }
 
     pub fn get_tx_to_dispatch(&self) -> Result<Option<Transaction>, BitVMXError> {
-        //TODO: This is hardcoded for now, this should return None or the answer of the protocol with a transaction to dispatch.
-        let _tx = Transaction {
-            version: Version::TWO,
-            lock_time: LockTime::ZERO,
-            input: vec![],
-            output: vec![],
-        };
-
-        Ok(None)
+        if self.my_role == ParticipantRole::Prover {
+            return Ok(Some(self.drp.prekickoff_transaction()?));
+        } else {
+            return Ok(None);
+        }
     }
 
-    pub fn get_tx_by_id(&self, _txid: Txid) -> Result<Transaction, BitVMXError> {
+    pub fn get_tx_by_id(&self, txid: Txid) -> Result<Transaction, BitVMXError> {
         if self.is_setting_up() {
             return Err(BitVMXError::ProgramNotReady(self.program_id));
         }
 
-        // TODO: load the tx from protocol here.
-        let _tx = Transaction {
-            version: Version::TWO,
-            lock_time: LockTime::ZERO,
-            input: vec![],
-            output: vec![],
-        };
-
-        Ok(_tx)
+        self.drp.get_transaction_by_id(txid).map_err(BitVMXError::from).map_err(BitVMXError::from)
     }
 }
