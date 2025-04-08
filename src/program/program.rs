@@ -3,7 +3,7 @@ use crate::{
     errors::{BitVMXError, ProgramError},
     helper::{parse_keys, parse_nonces, parse_signatures},
     p2p_helper::{request, response, P2PMessageType},
-    types::{ProgramContext, ProgramRequestInfo},
+    types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramRequestInfo, L2_ID},
 };
 use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::coordinator::BitcoinCoordinatorApi;
@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashMap, rc::Rc};
 use storage_backend::storage::{KeyValueStore, Storage};
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use super::{
@@ -310,6 +310,15 @@ impl Program {
                 .monitor_instance(&txs_to_monitor)?;
 
             self.move_program_to_next_state()?;
+
+            let result = program_context.broker_channel.send(
+                L2_ID,
+                OutgoingBitVMXApiMessages::SetupCompleted(self.program_id).to_string()?,
+            );
+            if let Err(e) = result {
+                warn!("Error sending setup completed message: {:?}", e);
+                //TODO: Handle error and rollback
+            }
 
             return Ok(());
         }

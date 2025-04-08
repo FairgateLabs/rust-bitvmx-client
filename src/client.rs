@@ -1,6 +1,6 @@
 use crate::{
     program::participant::{P2PAddress, ParticipantRole},
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
 use anyhow::Result;
 use bitcoin::Transaction;
@@ -46,10 +46,9 @@ impl BitVMXClient {
 
     pub fn send_message(&self, msg: IncomingBitVMXApiMessages) -> Result<()> {
         // BitVMX instance uses ID 1 by convention
-        let bitvmx_id = 1;
         let serialized = serde_json::to_string(&msg)?;
-        info!("Sending message to {}: {:?}", bitvmx_id, serialized);
-        self.channel.send(bitvmx_id, serialized)?;
+        info!("Sending message to {}: {:?}", BITVMX_ID, serialized);
+        self.channel.send(BITVMX_ID, serialized)?;
         Ok(())
     }
 

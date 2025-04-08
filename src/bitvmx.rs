@@ -9,7 +9,9 @@ use crate::{
         program::Program,
         witness,
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus},
+    types::{
+        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus, L2_ID,
+    },
 };
 
 use bitcoin::Transaction;
@@ -43,7 +45,6 @@ pub struct BitVMX {
     program_context: ProgramContext,
     store: Rc<Storage>,
     broker: BrokerSync,
-    broker_channel: DualChannel,
 }
 
 impl Drop for BitVMX {
@@ -94,14 +95,14 @@ impl BitVMX {
         //TODO: A channel that talks directly with the broker without going through localhost loopback could be implemented
         let broker_channel = DualChannel::new(&broker_config, 1);
 
-        let program_context = ProgramContext::new(comms, key_chain, bitcoin_coordinator);
+        let program_context =
+            ProgramContext::new(comms, key_chain, bitcoin_coordinator, broker_channel);
 
         Ok(Self {
             _config: config,
             program_context,
             store,
             broker,
-            broker_channel,
         })
     }
 
@@ -349,7 +350,7 @@ impl BitVMX {
                 tx_new.clone(),
             ))?;
             info!("Sending pegin tx to broker found");
-            self.broker_channel.send(100, data)?;
+            self.program_context.broker_channel.send(L2_ID, data)?;
             single_txs.push(tx_new.tx.compute_txid());
         }
 
@@ -359,7 +360,7 @@ impl BitVMX {
             ))?;
 
             info!("Sending funds request to broker");
-            self.broker_channel.send(100, data)?;
+            self.program_context.broker_channel.send(L2_ID, data)?;
         }
 
         // acknowledge news to the bitcoin coordinator means won't be notified again about the same news
@@ -379,7 +380,7 @@ impl BitVMX {
 
     // TODO: move to separate trait
     pub fn process_api_messages(&mut self) -> Result<(), BitVMXError> {
-        if let Some((msg, from)) = self.broker_channel.recv()? {
+        if let Some((msg, from)) = self.program_context.broker_channel.recv()? {
             let decoded: IncomingBitVMXApiMessages = serde_json::from_str(&msg)?;
             info!("< {:#?}", decoded);
 
@@ -411,7 +412,7 @@ impl BitVMX {
     }
 
     fn _ping(&mut self, from: u32) -> Result<(), BitVMXError> {
-        self.broker_channel.send(
+        self.program_context.broker_channel.send(
             from,
             serde_json::to_string(&OutgoingBitVMXApiMessages::Pong())?,
         )?;
@@ -453,7 +454,7 @@ impl BitVMX {
         self.process_p2p_messages()?;
         self.process_programs()?;
         self.process_api_messages()?;
-        self.process_bitcoin_updates()?;
+        //self.process_bitcoin_updates()?;
         Ok(())
     }
 
