@@ -388,21 +388,14 @@ impl BitVMX {
                 IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address, utxo) => {
                     self._setup_program(id, role, peer_address, utxo)?
                 }
-                IncomingBitVMXApiMessages::GetTransaction(txid) => {
+                IncomingBitVMXApiMessages::GetTransaction(_txid) => {
                     todo!("Implement get transaction")
                 }
-                IncomingBitVMXApiMessages::SubscribeToTransaction(txid) => {
+                IncomingBitVMXApiMessages::SubscribeToTransaction(_txid) => {
                     todo!("Implement subscribe")
                 }
                 IncomingBitVMXApiMessages::DispatchTransaction(id, tx) => {
                     self._dispatch_transaction(id, tx)?
-                }
-                IncomingBitVMXApiMessages::SentTransaction(id, txid) => {
-                    let program = self.load_program(&id)?;
-                    let tx = program.get_tx_by_id(txid)?;
-                    self.program_context
-                        .bitcoin_coordinator
-                        .send_tx_instance(id, &tx)?;
                 }
                 IncomingBitVMXApiMessages::SentTransaction(id, txid) => {
                     let program = self.load_program(&id)?;

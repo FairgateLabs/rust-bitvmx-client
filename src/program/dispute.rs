@@ -1,16 +1,13 @@
-use std::{collections::HashMap, rc::Rc};
+use std::rc::Rc;
 
 use bitcoin::{
     key::UntweakedPublicKey, secp256k1, Amount, PublicKey, ScriptBuf, Transaction, TxOut, Txid,
     XOnlyPublicKey,
 };
 use protocol_builder::{
-    builder::{Protocol, ProtocolBuilder, SpendingArgs, Utxo},
+    builder::{Protocol, SpendingArgs, Utxo},
     errors::ProtocolBuilderError,
-    graph::{
-        input::{InputSpendingInfo, SighashType},
-        output::OutputSpendingType,
-    },
+    graph::{input::SighashType, output::OutputSpendingType},
     scripts,
 };
 use serde::{Deserialize, Serialize};
@@ -76,10 +73,9 @@ impl DisputeResolutionProtocol {
         let _p2pkh_dust_threshold: u64 = 546;
         let _p2sh_p2wpkh_dust_threshold: u64 = 540;
         let p2wpkh_dust_threshold: u64 = 99_999_000; // 294;
-        let taproot_dust_threshold: u64 = 330;
+        let _taproot_dust_threshold: u64 = 330;
 
         let tr_sighash_type = SighashType::taproot_all();
-        let mut builder = ProtocolBuilder::new(&self.protocol_name, self.storage.clone().unwrap())?;
 
         let secp = secp256k1::Secp256k1::new();
         let untweaked_key: UntweakedPublicKey = XOnlyPublicKey::from(*internal_key);
@@ -104,7 +100,11 @@ impl DisputeResolutionProtocol {
 
         // let output_type = OutputSpendingType::TaprootUntweakedKey { key: *internal_key, prevouts: vec![prevout] };
 
-        builder.connect_with_external_transaction(
+        //let mut builder = ProtocolBuilder::new(&self.protocol_name, self.storage.clone().unwrap())?;
+        let mut protocol = Protocol::load(&self.protocol_name, self.storage.clone().unwrap())?
+            .unwrap_or(Protocol::new(&self.protocol_name));
+
+        protocol.connect_with_external_transaction(
             utxo.txid,
             utxo.vout,
             output_type,
@@ -128,10 +128,9 @@ impl DisputeResolutionProtocol {
         //     KICKOFF,
         //     &tr_sighash_type,
         // )?;
-        builder.add_speedup_output(PREKICKOFF, p2wpkh_dust_threshold, &prover_keys.speedup)?;
+        protocol.add_speedup_output(PREKICKOFF, p2wpkh_dust_threshold, &prover_keys.speedup)?;
 
-        let protocol = builder.build(id, &key_chain.key_manager)?;
-
+        protocol.build(id, &key_chain.key_manager)?;
         self.save_protocol(protocol)?;
 
         Ok(())
