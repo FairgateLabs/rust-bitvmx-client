@@ -1,5 +1,6 @@
 use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::types::{BitcoinCoordinatorType, TransactionNew};
+use bitvmx_broker::channel::channel::DualChannel;
 use chrono::{DateTime, Utc};
 use p2p_handler::P2pHandler;
 use protocol_builder::builder::Utxo;
@@ -7,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
+    errors::BitVMXError,
     keychain::KeyChain,
     program::participant::{P2PAddress, ParticipantRole},
 };
@@ -14,18 +16,26 @@ pub struct ProgramContext {
     pub key_chain: KeyChain,
     pub comms: P2pHandler,
     pub bitcoin_coordinator: BitcoinCoordinatorType,
+    pub broker_channel: DualChannel,
 }
+
+pub const BITVMX_ID: u32 = 1;
+pub const L2_ID: u32 = 100;
+pub const EMULATOR_ID: u32 = 1000;
+pub const PROOF_ID: u32 = 2000;
 
 impl ProgramContext {
     pub fn new(
         comms: P2pHandler,
         key_chain: KeyChain,
         bitcoin_coordinator: BitcoinCoordinatorType,
+        broker_channel: DualChannel,
     ) -> Self {
         Self {
             comms,
             key_chain,
             bitcoin_coordinator,
+            broker_channel,
         }
     }
 }
@@ -82,6 +92,11 @@ pub enum IncomingBitVMXApiMessages {
     GetZKPExecutionResult(),
     Finalize(),
 }
+impl IncomingBitVMXApiMessages {
+    pub fn to_string(&self) -> Result<String, BitVMXError> {
+        Ok(serde_json::to_string(self)?)
+    }
+}
 
 type ProgramId = Uuid;
 
@@ -92,9 +107,17 @@ pub enum OutgoingBitVMXApiMessages {
     PeginTransactionFound(TransactionNew),
     // Represents when a program is running out of funds
     SpeedUpProgramNoFunds(Vec<Uuid>),
+    // Setup Completed,
+    SetupCompleted(ProgramId),
     // Add response types for the new messages if needed
     AggregatedPubkey(/* Add appropriate type */),
     ZKPResult(/* Add appropriate type */),
     ExecutionResult(/* Add appropriate type */),
     TransactionResult(/* Add appropriate type */),
+}
+
+impl OutgoingBitVMXApiMessages {
+    pub fn to_string(&self) -> Result<String, BitVMXError> {
+        Ok(serde_json::to_string(self)?)
+    }
 }
