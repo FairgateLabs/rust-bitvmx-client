@@ -1,0 +1,27 @@
+{
+    "rpc": {
+        "network": "regtest",
+        "url": "http://127.0.0.1:18443",
+        "username": "foo",
+        "password": "rpcpassword",
+        "wallet": "test_wallet"
+    },
+    "builder": {
+        "protocol_amount": 200,
+        "speedup_amount": 9999859,
+        "locked_amount": 5000000000,
+        "locked_blocks": 200,
+        "ecdsa_sighash_type": "SIGHASH_ALL",
+        "taproot_sighash_type": "SIGHASH_ALL"
+    },
+    "key_manager": {
+        "network": "regtest",
+        "key_derivation_path": "m/101/1/0/0/",
+        "key_derivation_seed": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        "winternitz_seed": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    },
+    "key_storage": {
+        "password": "secret_password",
+        "path": "/tmp/storage.db"
+    }
+}

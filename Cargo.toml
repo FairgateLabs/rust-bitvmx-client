@@ -20,8 +20,8 @@ tracing-subscriber = "0.3.18"
 uuid = { version = "1.11.0", features = ["v4"] }
 url = { version = "2.5.4" }
 chrono = "0.4.31"
-
 tokio = { version = "1.40.0", features = ["sync"] }
+sha2 = "0.10"
 
 bitcoincore-rpc = { version = "0.19.0" }
 bitcoin-script = { git = "https://github.com/FairgateLabs/rust-bitcoin-script/", branch = "bitvmx" }
@@ -39,7 +39,10 @@ bitvmx-broker = { path = "../rust-bitvmx-broker", features = [
 ] }
 bitvmx-musig2 = { path = "../rust-bitvmx-musig2" }
 bitcoind = { path = "../rust-bitcoind" }
+rust-bitvmx-transactions = { path = "../rust-bitvmx-transactions" }
+
 
 [dev-dependencies]
 bollard = "0.11.0"
 futures-util = "0.3"
+

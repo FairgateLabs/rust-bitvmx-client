@@ -1,3 +1,5 @@
+mod fixtures;
+
 use std::str::FromStr;
 
 use anyhow::Result;
@@ -8,10 +10,13 @@ use tracing::{info, error};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
+use crate::fixtures::make_fixtures;
+
 struct ClientTest {
     program_id: Uuid,
     prover_client: BitVMXClient,
     verifier_client: BitVMXClient,
+    fixtures: bitcoin::Transaction,
 }
 
 impl ClientTest {
@@ -21,7 +26,8 @@ impl ClientTest {
         Self {
             program_id: Uuid::new_v4(),
             prover_client: BitVMXClient::new(22222, 478),
-            verifier_client: BitVMXClient::new(33333, 478)
+            verifier_client: BitVMXClient::new(33333, 478),
+            fixtures: make_fixtures().unwrap(),
         }
     }
 
@@ -81,7 +87,7 @@ impl ClientTest {
             output: vec![],
         };
 
-        self.prover_client.dispatch_transaction(self.program_id, tx)?;
+        self.prover_client.dispatch_transaction(self.program_id, self.fixtures.clone())?;
         Ok(())
     }
 }
@@ -106,10 +112,9 @@ pub fn test_client() -> Result<()> {
 
     // This tests are coupled. They depend on each other.
     test.test_ping()?;
-    test.test_setup()?;
+    // test.test_setup()?;
     // test.test_get_transaction()?;
     // test.test_subscribe_to_transaction()?;
-    // std::thread::sleep(std::time::Duration::from_secs(30));
     test.test_dispatch_transaction()?;
 
     Ok(())
