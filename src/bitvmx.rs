@@ -1,11 +1,13 @@
 use crate::{
     config::Config,
     errors::BitVMXError,
-    helper::{parse_keys, parse_nonces, parse_signatures},
     keychain::KeyChain,
-    p2p_helper::{deserialize_msg, P2PMessageType},
+    p2p_helper::deserialize_msg,
     program::{
-        dispute::SearchParams, participant::{P2PAddress, ParticipantData, ParticipantKeys, ParticipantRole}, program::{Program, ProgramState, SettingUpState}, witness
+        dispute::SearchParams,
+        participant::{P2PAddress, ParticipantData, ParticipantKeys, ParticipantRole},
+        program::Program,
+        witness,
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus},
     api::BitVMXApi,
@@ -14,7 +16,7 @@ use crate::{
 use bitcoin::Transaction;
 use bitcoin_coordinator::{
     coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi},
-    types::{BitcoinCoordinatorType, BitvmxInstance, ProcessedNews, TransactionPartialInfo},
+    types::{BitvmxInstance, ProcessedNews, TransactionPartialInfo},
 };
 
 use bitvmx_broker::{
@@ -41,7 +43,6 @@ pub struct BitVMX {
     _config: Config,
     program_context: ProgramContext,
     store: Rc<Storage>,
-    bitcoin_coordinator: BitcoinCoordinatorType,
     broker: BrokerSync,
     broker_channel: DualChannel,
 }
@@ -94,13 +95,12 @@ impl BitVMX {
         //TODO: A channel that talks directly with the broker without going through localhost loopback could be implemented
         let broker_channel = DualChannel::new(&broker_config, 1);
 
-        let program_context = ProgramContext::new(comms, key_chain);
+        let program_context = ProgramContext::new(comms, key_chain, bitcoin_coordinator);
 
         Ok(Self {
             _config: config,
             program_context,
             store,
-            bitcoin_coordinator,
             broker,
             broker_channel,
         })
@@ -170,9 +170,12 @@ impl BitVMX {
             None,
         );
 
-        self.bitcoin_coordinator.monitor_instance(&instance)?;
+        self.program_context
+            .bitcoin_coordinator
+            .monitor_instance(&instance)?;
 
-        self.bitcoin_coordinator
+        self.program_context
+            .bitcoin_coordinator
             .send_tx_instance(*program_id, &transaction)?;
 
         info!("Attempt to deploy program: {}", program_id);
@@ -216,10 +219,7 @@ impl BitVMX {
         Ok(program)
     }
 
-    fn generate_keys(
-        &mut self,
-        _role: &ParticipantRole,
-    ) -> Result<ParticipantKeys, BitVMXError> {
+    fn generate_keys(&mut self, _role: &ParticipantRole) -> Result<ParticipantKeys, BitVMXError> {
         //TODO: define which keys are generated for each role
         let message_size = 2;
         let one_time_keys_count = 10;
@@ -306,90 +306,7 @@ impl BitVMX {
             ReceiveHandlerChannel::Msg(_peer_id, msg) => {
                 let (_version, msg_type, program_id, data) = deserialize_msg(msg)?;
                 let mut program = self.load_program(&program_id)?;
-
-                info!("{}: Message received: {:?} ", program.my_role, msg_type);
-
-                match msg_type {
-                    P2PMessageType::Keys => {
-                        if !Self::should_handle_msg(&program.state, &msg_type) {
-                            if Self::should_answer_ack(&program.state, &msg_type, &program.my_role)
-                            {
-                                program.send_ack(&self.program_context, P2PMessageType::KeysAck)?;
-                            }
-                            return Ok(());
-                        }
-
-                        // Parse the keys received
-                        let keys =
-                            parse_keys(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
-
-                        // Build the protocol
-                        program.build_protocol(&self.program_context, keys)?;
-
-                        // Send ack to the other party
-                        program.send_ack(&self.program_context, P2PMessageType::KeysAck)?;
-                    }
-                    P2PMessageType::PublicNonces => {
-                        // TODO: Review this condition
-                        if !Self::should_handle_msg(&program.state, &msg_type) {
-                            if Self::should_answer_ack(&program.state, &msg_type, &program.my_role)
-                            {
-                                program.send_ack(
-                                    &self.program_context,
-                                    P2PMessageType::PublicNoncesAck,
-                                )?;
-                            }
-                            return Ok(());
-                        }
-
-                        let nonces =
-                            parse_nonces(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
-
-                        program.receive_participant_nonces(nonces, &self.program_context)?;
-
-                        program.send_ack(&self.program_context, P2PMessageType::PublicNoncesAck)?;
-                    }
-                    P2PMessageType::PartialSignatures => {
-                        // TODO: Review this condition
-                        if !Self::should_handle_msg(&program.state, &msg_type) {
-                            if Self::should_answer_ack(&program.state, &msg_type, &program.my_role)
-                            {
-                                program.send_ack(
-                                    &self.program_context,
-                                    P2PMessageType::PartialSignaturesAck,
-                                )?;
-                            }
-                            return Ok(());
-                        }
-
-                        let signatures = parse_signatures(data)
-                            .map_err(|_| BitVMXError::InvalidMessageFormat)?;
-
-                        program.sign_protocol(signatures, &self.program_context)?;
-
-                        //TODO Integration.
-                        //let signatures = program.get_aggregated_signatures();
-                        //self.program.save_signatures(signatures)?;
-
-                        program.send_ack(
-                            &self.program_context,
-                            P2PMessageType::PartialSignaturesAck,
-                        )?;
-                    }
-                    P2PMessageType::KeysAck
-                    | P2PMessageType::PublicNoncesAck
-                    | P2PMessageType::PartialSignaturesAck => {
-                        if !Self::should_handle_msg(&program.state, &msg_type) {
-                            info!(
-                                "Ignoring message {} {:?} {:?}",
-                                program.my_role, msg_type, program.state
-                            );
-                            return Ok(());
-                        }
-
-                        program.move_program_to_next_state()?;
-                    }
-                }
+                program.process_p2p_message(msg_type, data, &self.program_context)?;
             }
             ReceiveHandlerChannel::Error(e) => {
                 info!("Error receiving message {}", e);
@@ -400,13 +317,13 @@ impl BitVMX {
     }
 
     pub fn process_bitcoin_updates(&mut self) -> Result<(), BitVMXError> {
-        self.bitcoin_coordinator.tick()?;
+        self.program_context.bitcoin_coordinator.tick()?;
 
-        if !self.bitcoin_coordinator.is_ready()? {
+        if !self.program_context.bitcoin_coordinator.is_ready()? {
             return Ok(());
         }
 
-        let news = self.bitcoin_coordinator.get_news()?;
+        let news = self.program_context.bitcoin_coordinator.get_news()?;
 
         if !news.instance_txs.is_empty() {
             info!("Processing news: {:?}", news);
@@ -453,7 +370,9 @@ impl BitVMX {
                 single_txs,
                 funds_requests: news.funds_requests,
             };
-            self.bitcoin_coordinator.acknowledge_news(processed_news)?;
+            self.program_context
+                .bitcoin_coordinator
+                .acknowledge_news(processed_news)?;
         }
 
         Ok(())
@@ -475,125 +394,11 @@ impl BitVMX {
         Ok(())
     }
 
-    pub fn should_answer_ack(
-        state: &ProgramState,
-        msg_type: &P2PMessageType,
-        role: &ParticipantRole,
-    ) -> bool {
-        if role == &ParticipantRole::Prover {
-            // Prover flow:
-            // 1. Sends keys and waits for KeysAck
-            // 2. Waits for Keys from verifier
-            // 3. Sends nonces and waits for NoncesAck
-            // 4. Waits for nonces from verifier
-            // 5. Sends signatures and waits for SignaturesAck
-            // 6. Waits for signatures from verifier
-            match (state, msg_type) {
-                (ProgramState::SettingUp(SettingUpState::SendingNonces), P2PMessageType::Keys) => {
-                    true
-                }
-                (
-                    ProgramState::SettingUp(SettingUpState::SendingSignatures),
-                    P2PMessageType::PublicNonces,
-                ) => true,
-                _ => false,
-            }
-        } else {
-            // Verifier flow:
-            // 1. Waits for keys from prover
-            // 2. Sends keys and waits for KeysAck
-            // 3. Waits for nonces from prover
-            // 4. Sends nonces and waits for NoncesAck
-            // 5. Waits for signatures from prover
-            // 6. Sends signatures and waits for SignaturesAck
-            match (state, msg_type) {
-                (ProgramState::SettingUp(SettingUpState::SendingKeys), P2PMessageType::Keys) => {
-                    true
-                }
-                (
-                    ProgramState::SettingUp(SettingUpState::SendingNonces),
-                    P2PMessageType::PublicNonces,
-                ) => true,
-                (
-                    ProgramState::SettingUp(SettingUpState::SendingSignatures),
-                    P2PMessageType::PartialSignatures,
-                ) => true,
-                _ => false,
-            }
-        }
-    }
-
-    pub fn should_handle_msg(state: &ProgramState, msg_type: &P2PMessageType) -> bool {
-        match (state, msg_type) {
-            (ProgramState::SettingUp(SettingUpState::WaitingKeys), P2PMessageType::Keys) => true,
-            (
-                ProgramState::SettingUp(SettingUpState::WaitingNonces),
-                P2PMessageType::PublicNonces,
-            ) => true,
-            (
-                ProgramState::SettingUp(SettingUpState::WaitingSignatures),
-                P2PMessageType::PartialSignatures,
-            ) => true,
-            (ProgramState::SettingUp(SettingUpState::SendingKeys), P2PMessageType::KeysAck) => true,
-            (
-                ProgramState::SettingUp(SettingUpState::SendingNonces),
-                P2PMessageType::PublicNoncesAck,
-            ) => true,
-            (
-                ProgramState::SettingUp(SettingUpState::SendingSignatures),
-                P2PMessageType::PartialSignaturesAck,
-            ) => true,
-            _ => false,
-        }
-    }
-
     fn process_programs(&mut self) -> Result<(), BitVMXError> {
         let programs = self.get_active_programs()?;
 
         for mut program in programs {
-            // info!("Program state: {:?}", program.state);
-            if program.is_setting_up() {
-                // info!("Program state is_setting_up: {:?}", program.state);
-                // TODO: Improvement, I think this tick function we should have different name.
-                // I think a better name could be proceed_with_setting_up
-                // Besides that I think tick only exist as a function for a library to use it outside of the library.
-                program.tick(&self.program_context)?;
-
-                return Ok(());
-            }
-
-            if program.is_monitoring() {
-                // info!("Program state is_monitoring: {:?}", program.state);
-                // After the program is ready, we need to monitor the transactions
-                let txns_to_monitor = program.get_txs_to_monitor()?;
-
-                // TODO : COMPLETE THE FUNDING TX FOR SPEED UP
-                let txs_to_monitor: BitvmxInstance<TransactionPartialInfo> = BitvmxInstance::new(
-                    program.program_id,
-                    txns_to_monitor
-                        .iter()
-                        .map(|tx| TransactionPartialInfo::from(*tx))
-                        .collect(),
-                    None,
-                );
-
-                self.bitcoin_coordinator.monitor_instance(&txs_to_monitor)?;
-
-                program.move_program_to_next_state()?;
-
-                return Ok(());
-            }
-
-            if program.is_dispatching() {
-                // info!("Program state is_dispatching: {:?}", program.state);
-                let tx_to_dispatch: Option<Transaction> = program.get_tx_to_dispatch()?;
-
-                if let Some(tx) = tx_to_dispatch {
-                    self.bitcoin_coordinator
-                        .send_tx_instance(program.program_id, &tx)?;
-                }
-                return Ok(());
-            }
+            program.process_program(&self.program_context)?
         }
         Ok(())
     }
@@ -725,8 +530,8 @@ impl BitVMXApi for BitVMX {
 
     fn dispatch_transaction(&mut self, id: Uuid, tx: Transaction) -> Result<(), BitVMXError> {
         info!("Dispatching transaction: {:?} for instance: {:?}", tx, id);
-        self.bitcoin_coordinator.include_tx_to_instance(id, &tx)?;
-        self.bitcoin_coordinator.send_tx_instance(id, &tx)?;
+        self.program_context.bitcoin_coordinator.include_tx_to_instance(id, &tx)?;
+        self.program_context.bitcoin_coordinator.send_tx_instance(id, &tx)?;
         Ok(())
     }
 

@@ -1,11 +1,10 @@
 use crate::{errors::ParseError, program::participant::ParticipantKeys};
 #[cfg(test)]
-use bitcoin::{
-    key::Secp256k1,
-    PublicKey,
-};
+use bitcoin::{key::Secp256k1, PublicKey};
+#[cfg(test)]
+use key_manager::winternitz::{WinternitzPublicKey, WinternitzType};
 
-use key_manager::{musig2::{types::MessageId, PartialSignature, PubNonce}, winternitz::{WinternitzPublicKey, WinternitzType}};
+use key_manager::musig2::{types::MessageId, PartialSignature, PubNonce};
 use serde_json::Value;
 
 pub fn parse_keys(value: Value) -> Result<ParticipantKeys, ParseError> {
@@ -31,7 +30,7 @@ pub fn parse_signatures(data: Value) -> Result<Vec<(MessageId, PartialSignature)
 
 #[test]
 fn keys_encoding_test() -> Result<(), anyhow::Error> {
-    let secp = Secp256k1::new();
+    let _secp = Secp256k1::new();
 
     let protocol = "026e14224899cf9c780fef5dd200f92a28cc67f71c0af6fe30b5657ffc943f08f4"
         .parse::<PublicKey>()

@@ -1,29 +1,43 @@
+use crate::{
+    program::participant::{P2PAddress, ParticipantRole},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages},
+};
 use anyhow::Result;
 use bitcoin::{Transaction, Txid};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use protocol_builder::builder::Utxo;
-use uuid::Uuid;
 use tracing::info;
-use crate::{program::participant::{P2PAddress, ParticipantRole}, types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages}};
+use uuid::Uuid;
 
 pub struct BitVMXClient {
     channel: DualChannel,
-    client_id: u32,
+    _client_id: u32,
 }
 
 impl BitVMXClient {
     pub fn new(broker_port: u16, client_id: u32) -> Self {
         let config = BrokerConfig::new(broker_port, None);
         let channel = DualChannel::new(&config, client_id);
-        Self { channel, client_id }
+        Self {
+            channel,
+            _client_id: client_id,
+        }
     }
 
     pub fn ping(&self) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::Ping())
     }
 
-    pub fn setup(&self, id: Uuid, role: ParticipantRole, address: P2PAddress, utxo: Utxo) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::SetupProgram(id, role, address, utxo))
+    pub fn setup(
+        &self,
+        id: Uuid,
+        role: ParticipantRole,
+        address: P2PAddress,
+        utxo: Utxo,
+    ) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SetupProgram(
+            id, role, address, utxo,
+        ))
     }
 
     pub fn dispatch_transaction(&self, id: Uuid, tx: Transaction) -> Result<()> {
@@ -84,7 +98,9 @@ impl BitVMXClient {
         // TODO: add timeout
         // TODO: add sleep
         let (msg, from) = loop {
-            if let Some(message) = self.get_message()? { break message; }
+            if let Some(message) = self.get_message()? {
+                break message;
+            }
         };
         Ok(msg)
     }

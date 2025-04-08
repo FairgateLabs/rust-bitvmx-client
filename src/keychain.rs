@@ -1,7 +1,8 @@
 use std::{collections::HashMap, rc::Rc};
 
 use bitcoin::{
-    secp256k1::{self}, PublicKey, TapNodeHash, XOnlyPublicKey
+    secp256k1::{self},
+    PublicKey, XOnlyPublicKey,
 };
 use key_manager::{
     create_database_key_store_from_config, create_key_manager_from_config,
