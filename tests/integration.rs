@@ -6,7 +6,10 @@ use bitcoind::bitcoind::Bitcoind;
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use bitvmx_client::{
-    bitvmx::BitVMX, config::Config, program::participant::{P2PAddress, ParticipantRole}, types::IncomingBitVMXApiMessages
+    bitvmx::BitVMX,
+    config::Config,
+    program::participant::{P2PAddress, ParticipantRole},
+    types::IncomingBitVMXApiMessages,
 };
 use p2p_handler::PeerId;
 use protocol_builder::{builder::Utxo, scripts};
@@ -65,15 +68,22 @@ fn init_bitvmx(role: &str) -> Result<(BitVMX, P2PAddress, DualChannel)> {
 fn init_utxo(bitcoin_client: &BitcoinClient) -> Result<Utxo> {
     // TODO perform a key aggregation with participants public keys. This is a harcoded key for now.
     let secp = secp256k1::Secp256k1::new();
-    let public_key = PublicKey::from_str("020d48dbe8043e0114f3255f205152fa621dd7f4e1bbf69d4e255ddb2aaa2878d2")?;
+    let public_key =
+        PublicKey::from_str("020d48dbe8043e0114f3255f205152fa621dd7f4e1bbf69d4e255ddb2aaa2878d2")?;
     let untweaked_key = XOnlyPublicKey::from(public_key);
 
     let spending_scripts = vec![scripts::timelock_renew(&public_key)];
-    let taproot_spend_info = scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
-    let p2tr_address = Address::p2tr(&secp, untweaked_key, taproot_spend_info.merkle_root(), KnownHrp::Regtest);
-    
+    let taproot_spend_info =
+        scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
+    let p2tr_address = Address::p2tr(
+        &secp,
+        untweaked_key,
+        taproot_spend_info.merkle_root(),
+        KnownHrp::Regtest,
+    );
+
     let (tx, vout) = bitcoin_client.fund_address(&p2tr_address, Amount::from_sat(100_000_000))?;
-    
+
     let utxo = Utxo::new(
         "External".to_string(),
         tx.compute_txid(),
@@ -120,11 +130,9 @@ pub fn test_single_run() -> Result<()> {
     info!("Initializing UTXO for program");
     let utxo = init_utxo(&bitcoin_client)?;
 
-    let (mut prover_bitvmx, prover_address, prover_bridge_channel) =
-        init_bitvmx("prover")?;
+    let (mut prover_bitvmx, prover_address, prover_bridge_channel) = init_bitvmx("prover")?;
 
-    let (mut verifier_bitvmx, verifier_address, verifier_bridge_channel) =
-        init_bitvmx("verifier")?;
+    let (mut verifier_bitvmx, verifier_address, verifier_bridge_channel) = init_bitvmx("verifier")?;
 
     let program_id = Uuid::new_v4();
 
@@ -164,7 +172,7 @@ pub fn test_single_run() -> Result<()> {
         //     info!("PROVER received message: {}", msg);
         // }
 
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        std::thread::sleep(std::time::Duration::from_millis(10));
 
         // if let Ok(Some((msg, _from))) = verifier_bridge_channel.recv() {
         //     info!("VERIFIER received message: {}", msg);

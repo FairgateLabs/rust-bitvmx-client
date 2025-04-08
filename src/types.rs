@@ -1,20 +1,32 @@
 use bitcoin::{Transaction, Txid};
-use bitcoin_coordinator::types::TransactionNew;
+use bitcoin_coordinator::types::{BitcoinCoordinatorType, TransactionNew};
 use chrono::{DateTime, Utc};
 use p2p_handler::P2pHandler;
 use protocol_builder::builder::Utxo;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{keychain::KeyChain, program::participant::{P2PAddress, ParticipantRole}};
+use crate::{
+    keychain::KeyChain,
+    program::participant::{P2PAddress, ParticipantRole},
+};
 pub struct ProgramContext {
     pub key_chain: KeyChain,
     pub comms: P2pHandler,
+    pub bitcoin_coordinator: BitcoinCoordinatorType,
 }
 
 impl ProgramContext {
-    pub fn new(comms: P2pHandler, key_chain: KeyChain) -> Self {
-        Self { comms, key_chain }
+    pub fn new(
+        comms: P2pHandler,
+        key_chain: KeyChain,
+        bitcoin_coordinator: BitcoinCoordinatorType,
+    ) -> Self {
+        Self {
+            comms,
+            key_chain,
+            bitcoin_coordinator,
+        }
     }
 }
 

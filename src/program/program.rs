@@ -1,11 +1,13 @@
 use crate::{
     config::ClientConfig,
     errors::{BitVMXError, ProgramError},
+    helper::{parse_keys, parse_nonces, parse_signatures},
     p2p_helper::{request, response, P2PMessageType},
     types::{ProgramContext, ProgramRequestInfo},
 };
 use bitcoin::{Transaction, Txid};
-use bitcoin_coordinator::types::TransactionNew;
+use bitcoin_coordinator::coordinator::BitcoinCoordinatorApi;
+use bitcoin_coordinator::types::{BitvmxInstance, TransactionNew, TransactionPartialInfo};
 use chrono::Utc;
 use key_manager::{
     musig2::{types::MessageId, PartialSignature, PubNonce},
@@ -13,6 +15,7 @@ use key_manager::{
 };
 use protocol_builder::builder::Utxo;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::{collections::HashMap, rc::Rc};
 use storage_backend::storage::{KeyValueStore, Storage};
 use tracing::info;
@@ -274,6 +277,57 @@ impl Program {
         self.witness_data.get(&txid)
     }
 
+    //TODO: Check if this shouldnt be part of the tick
+    pub fn process_program(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
+        // info!("Program state: {:?}", program.state);
+        if self.is_setting_up() {
+            // info!("Program state is_setting_up: {:?}", program.state);
+            // TODO: Improvement, I think this tick function we should have different name.
+            // I think a better name could be proceed_with_setting_up
+            // Besides that I think tick only exist as a function for a library to use it outside of the library.
+            self.tick(program_context)?;
+
+            return Ok(());
+        }
+
+        if self.is_monitoring() {
+            // info!("Program state is_monitoring: {:?}", program.state);
+            // After the program is ready, we need to monitor the transactions
+            let txns_to_monitor = self.get_txs_to_monitor()?;
+
+            // TODO : COMPLETE THE FUNDING TX FOR SPEED UP
+            let txs_to_monitor: BitvmxInstance<TransactionPartialInfo> = BitvmxInstance::new(
+                self.program_id,
+                txns_to_monitor
+                    .iter()
+                    .map(|tx| TransactionPartialInfo::from(*tx))
+                    .collect(),
+                None,
+            );
+
+            program_context
+                .bitcoin_coordinator
+                .monitor_instance(&txs_to_monitor)?;
+
+            self.move_program_to_next_state()?;
+
+            return Ok(());
+        }
+
+        if self.is_dispatching() {
+            // info!("Program state is_dispatching: {:?}", program.state);
+            let tx_to_dispatch: Option<Transaction> = self.get_tx_to_dispatch()?;
+
+            if let Some(tx) = tx_to_dispatch {
+                program_context
+                    .bitcoin_coordinator
+                    .send_tx_instance(self.program_id, &tx)?;
+            }
+            return Ok(());
+        }
+        Ok(())
+    }
+
     pub fn tick(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
         match &self.state {
             ProgramState::New => {
@@ -496,6 +550,152 @@ impl Program {
         Ok(())
     }
 
+    pub fn process_p2p_message(
+        &mut self,
+        msg_type: P2PMessageType,
+        data: Value,
+        program_context: &ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        info!("{}: Message received: {:?} ", self.my_role, msg_type);
+
+        match msg_type {
+            P2PMessageType::Keys => {
+                if !self.should_handle_msg(&msg_type) {
+                    if self.should_answer_ack(&msg_type) {
+                        self.send_ack(program_context, P2PMessageType::KeysAck)?;
+                    }
+                    return Ok(());
+                }
+
+                // Parse the keys received
+                let keys = parse_keys(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+
+                // Build the protocol
+                self.build_protocol(program_context, keys)?;
+
+                // Send ack to the other party
+                self.send_ack(program_context, P2PMessageType::KeysAck)?;
+            }
+            P2PMessageType::PublicNonces => {
+                // TODO: Review this condition
+                if !self.should_handle_msg(&msg_type) {
+                    if self.should_answer_ack(&msg_type) {
+                        self.send_ack(program_context, P2PMessageType::PublicNoncesAck)?;
+                    }
+                    return Ok(());
+                }
+
+                let nonces = parse_nonces(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+
+                self.receive_participant_nonces(nonces, program_context)?;
+
+                self.send_ack(&program_context, P2PMessageType::PublicNoncesAck)?;
+            }
+            P2PMessageType::PartialSignatures => {
+                // TODO: Review this condition
+                if !self.should_handle_msg(&msg_type) {
+                    if self.should_answer_ack(&msg_type) {
+                        self.send_ack(program_context, P2PMessageType::PartialSignaturesAck)?;
+                    }
+                    return Ok(());
+                }
+
+                let signatures =
+                    parse_signatures(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+
+                self.sign_protocol(signatures, program_context)?;
+
+                //TODO Integration.
+                //let signatures = program.get_aggregated_signatures();
+                //self.program.save_signatures(signatures)?;
+
+                self.send_ack(program_context, P2PMessageType::PartialSignaturesAck)?;
+            }
+            P2PMessageType::KeysAck
+            | P2PMessageType::PublicNoncesAck
+            | P2PMessageType::PartialSignaturesAck => {
+                if !self.should_handle_msg(&msg_type) {
+                    info!(
+                        "Ignoring message {} {:?} {:?}",
+                        self.my_role, msg_type, self.state
+                    );
+                    return Ok(());
+                }
+
+                self.move_program_to_next_state()?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn should_answer_ack(&self, msg_type: &P2PMessageType) -> bool {
+        if &self.my_role == &ParticipantRole::Prover {
+            // Prover flow:
+            // 1. Sends keys and waits for KeysAck
+            // 2. Waits for Keys from verifier
+            // 3. Sends nonces and waits for NoncesAck
+            // 4. Waits for nonces from verifier
+            // 5. Sends signatures and waits for SignaturesAck
+            // 6. Waits for signatures from verifier
+            match (&self.state, msg_type) {
+                (ProgramState::SettingUp(SettingUpState::SendingNonces), P2PMessageType::Keys) => {
+                    true
+                }
+                (
+                    ProgramState::SettingUp(SettingUpState::SendingSignatures),
+                    P2PMessageType::PublicNonces,
+                ) => true,
+                _ => false,
+            }
+        } else {
+            // Verifier flow:
+            // 1. Waits for keys from prover
+            // 2. Sends keys and waits for KeysAck
+            // 3. Waits for nonces from prover
+            // 4. Sends nonces and waits for NoncesAck
+            // 5. Waits for signatures from prover
+            // 6. Sends signatures and waits for SignaturesAck
+            match (&self.state, msg_type) {
+                (ProgramState::SettingUp(SettingUpState::SendingKeys), P2PMessageType::Keys) => {
+                    true
+                }
+                (
+                    ProgramState::SettingUp(SettingUpState::SendingNonces),
+                    P2PMessageType::PublicNonces,
+                ) => true,
+                (
+                    ProgramState::SettingUp(SettingUpState::SendingSignatures),
+                    P2PMessageType::PartialSignatures,
+                ) => true,
+                _ => false,
+            }
+        }
+    }
+
+    pub fn should_handle_msg(&self, msg_type: &P2PMessageType) -> bool {
+        match (&self.state, msg_type) {
+            (ProgramState::SettingUp(SettingUpState::WaitingKeys), P2PMessageType::Keys) => true,
+            (
+                ProgramState::SettingUp(SettingUpState::WaitingNonces),
+                P2PMessageType::PublicNonces,
+            ) => true,
+            (
+                ProgramState::SettingUp(SettingUpState::WaitingSignatures),
+                P2PMessageType::PartialSignatures,
+            ) => true,
+            (ProgramState::SettingUp(SettingUpState::SendingKeys), P2PMessageType::KeysAck) => true,
+            (
+                ProgramState::SettingUp(SettingUpState::SendingNonces),
+                P2PMessageType::PublicNoncesAck,
+            ) => true,
+            (
+                ProgramState::SettingUp(SettingUpState::SendingSignatures),
+                P2PMessageType::PartialSignaturesAck,
+            ) => true,
+            _ => false,
+        }
+    }
     pub fn is_active(&self) -> bool {
         let is_setting_up = self.is_setting_up();
         let is_monitoring = self.is_monitoring();
@@ -555,6 +755,9 @@ impl Program {
             return Err(BitVMXError::ProgramNotReady(self.program_id));
         }
 
-        self.drp.get_transaction_by_id(txid).map_err(BitVMXError::from).map_err(BitVMXError::from)
+        self.drp
+            .get_transaction_by_id(txid)
+            .map_err(BitVMXError::from)
+            .map_err(BitVMXError::from)
     }
 }
