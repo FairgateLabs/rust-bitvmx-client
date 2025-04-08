@@ -11,7 +11,7 @@ use tracing::{info, error};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
-use crate::fixtures::make_fixtures;
+use crate::fixtures::setup;
 
 struct ClientTest {
     program_id: Uuid,
@@ -28,7 +28,7 @@ impl ClientTest {
             program_id: Uuid::new_v4(),
             prover_client: BitVMXClient::new(22222, 478),
             verifier_client: BitVMXClient::new(33333, 478),
-            fixtures: make_fixtures().unwrap(),
+            fixtures: setup().unwrap(),
         }
     }
 
