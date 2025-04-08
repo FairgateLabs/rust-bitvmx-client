@@ -1,4 +1,5 @@
 use crate::{
+    api::BitVMXApi,
     config::Config,
     errors::BitVMXError,
     keychain::KeyChain,
@@ -10,7 +11,6 @@ use crate::{
         witness,
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus},
-    api::BitVMXApi,
 };
 
 use bitcoin::Transaction;
@@ -522,7 +522,6 @@ impl BitVMXApi for BitVMX {
         info!("Setting up program: {:?}", id);
         //TODO: This should be done in a single atomic operation
         self.setup_program(&id, role.clone(), &peer_address, utxo)?;
-        self.add_new_program(&id)?;
         info!("{}: Program Setup Finished", role);
 
         Ok(())
@@ -530,8 +529,12 @@ impl BitVMXApi for BitVMX {
 
     fn dispatch_transaction(&mut self, id: Uuid, tx: Transaction) -> Result<(), BitVMXError> {
         info!("Dispatching transaction: {:?} for instance: {:?}", tx, id);
-        self.program_context.bitcoin_coordinator.include_tx_to_instance(id, &tx)?;
-        self.program_context.bitcoin_coordinator.send_tx_instance(id, &tx)?;
+        self.program_context
+            .bitcoin_coordinator
+            .include_tx_to_instance(id, &tx)?;
+        self.program_context
+            .bitcoin_coordinator
+            .send_tx_instance(id, &tx)?;
         Ok(())
     }
 
@@ -540,32 +543,29 @@ impl BitVMXApi for BitVMX {
         info!("< {:#?}", decoded);
 
         match decoded {
-            IncomingBitVMXApiMessages::Ping() =>
-                BitVMXApi::ping(self, from)?,
-            IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address, utxo) =>
-                BitVMXApi::setup_program(self, id, role, peer_address, utxo)?,
-            IncomingBitVMXApiMessages::GetTransaction(txid) =>
-                BitVMXApi::get_tx(self)?,
-            IncomingBitVMXApiMessages::SubscribeToTransaction(txid) =>
-                BitVMXApi::subscribe_to_tx(self)?,
-            IncomingBitVMXApiMessages::SubscribeUTXO() =>
-                BitVMXApi::subscribe_utxo(self)?,
-            IncomingBitVMXApiMessages::DispatchTransaction(id, tx) =>
-                BitVMXApi::dispatch_transaction(self, id, tx)?,
-            IncomingBitVMXApiMessages::SetupKey() =>
-                BitVMXApi::setup_key(self)?,
-            IncomingBitVMXApiMessages::GetAggregatedPubkey() =>
-                BitVMXApi::get_aggregated_pubkey(self)?,
-            IncomingBitVMXApiMessages::GenerateZKP() =>
-                BitVMXApi::generate_zkp(self)?,
-            IncomingBitVMXApiMessages::ProofReady() =>
-                BitVMXApi::proof_ready(self)?,
-            IncomingBitVMXApiMessages::ExecuteZKP() =>
-                BitVMXApi::execute_zkp(self)?,
-            IncomingBitVMXApiMessages::GetZKPExecutionResult() =>
-                BitVMXApi::get_zkp_execution_result(self)?,
-            IncomingBitVMXApiMessages::Finalize() =>
-                BitVMXApi::finalize(self)?,
+            IncomingBitVMXApiMessages::Ping() => BitVMXApi::ping(self, from)?,
+            IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address, utxo) => {
+                BitVMXApi::setup_program(self, id, role, peer_address, utxo)?
+            }
+            IncomingBitVMXApiMessages::GetTransaction(txid) => BitVMXApi::get_tx(self)?,
+            IncomingBitVMXApiMessages::SubscribeToTransaction(txid) => {
+                BitVMXApi::subscribe_to_tx(self)?
+            }
+            IncomingBitVMXApiMessages::SubscribeUTXO() => BitVMXApi::subscribe_utxo(self)?,
+            IncomingBitVMXApiMessages::DispatchTransaction(id, tx) => {
+                BitVMXApi::dispatch_transaction(self, id, tx)?
+            }
+            IncomingBitVMXApiMessages::SetupKey() => BitVMXApi::setup_key(self)?,
+            IncomingBitVMXApiMessages::GetAggregatedPubkey() => {
+                BitVMXApi::get_aggregated_pubkey(self)?
+            }
+            IncomingBitVMXApiMessages::GenerateZKP() => BitVMXApi::generate_zkp(self)?,
+            IncomingBitVMXApiMessages::ProofReady() => BitVMXApi::proof_ready(self)?,
+            IncomingBitVMXApiMessages::ExecuteZKP() => BitVMXApi::execute_zkp(self)?,
+            IncomingBitVMXApiMessages::GetZKPExecutionResult() => {
+                BitVMXApi::get_zkp_execution_result(self)?
+            }
+            IncomingBitVMXApiMessages::Finalize() => BitVMXApi::finalize(self)?,
         }
 
         Ok(())
