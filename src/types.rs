@@ -64,7 +64,15 @@ pub enum IncomingBitVMXApiMessages {
     SetupProgram(ProgramId, ParticipantRole, P2PAddress, Funding),
     GetTransaction(Txid),
     SubscribeToTransaction(Txid),
+    SubscribeUTXO(),
     DispatchTransaction(Uuid, Transaction),
+    SetupKey(),
+    GetAggregatedPubkey(),
+    GenerateZKP(),
+    ProofReady(),
+    ExecuteZKP(),
+    GetZKPExecutionResult(),
+    Finalize(),
 }
 
 type ProgramId = Uuid;
@@ -76,4 +84,9 @@ pub enum OutgoingBitVMXApiMessages {
     PeginTransactionFound(TransactionNew),
     // Represents when a program is running out of funds
     SpeedUpProgramNoFunds(Vec<Uuid>),
+    // Add response types for the new messages if needed
+    AggregatedPubkey(/* Add appropriate type */),
+    ZKPResult(/* Add appropriate type */),
+    ExecutionResult(/* Add appropriate type */),
+    TransactionResult(/* Add appropriate type */),
 }

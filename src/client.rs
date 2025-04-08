@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bitcoin::Transaction;
+use bitcoin::{Transaction, Txid};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use uuid::Uuid;
 use std::{thread, time::Duration};
@@ -28,6 +28,46 @@ impl BitVMXClient {
 
     pub fn dispatch_transaction(&self, id: Uuid, tx: Transaction) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::DispatchTransaction(id, tx))
+    }
+
+    pub fn setup_key(&self) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SetupKey())
+    }
+
+    pub fn get_aggregated_pubkey(&self) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetAggregatedPubkey())
+    }
+
+    pub fn generate_zkp(&self) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GenerateZKP())
+    }
+
+    pub fn proof_ready(&self) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::ProofReady())
+    }
+
+    pub fn execute_zkp(&self) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::ExecuteZKP())
+    }
+
+    pub fn get_zkp_execution_result(&self) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetZKPExecutionResult())
+    }
+
+    pub fn finalize(&self) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::Finalize())
+    }
+
+    pub fn get_tx(&self, txid: Txid) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetTransaction(txid))
+    }
+
+    pub fn subscribe_tx(&self, txid: Txid) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SubscribeToTransaction(txid))
+    }
+
+    pub fn subscribe_utxo(&self) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SubscribeUTXO())
     }
 
     pub fn send_message(&self, msg: IncomingBitVMXApiMessages) -> Result<()> {

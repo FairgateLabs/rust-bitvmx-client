@@ -665,6 +665,46 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
+    fn setup_key(&mut self) -> Result<(), BitVMXError> {
+        Ok(())
+    }
+
+    fn get_aggregated_pubkey(&mut self) -> Result<(), BitVMXError> {
+        Ok(())
+    }
+
+    fn generate_zkp(&mut self) -> Result<(), BitVMXError> {
+        Ok(())
+    }
+
+    fn proof_ready(&mut self) -> Result<(), BitVMXError> {
+        Ok(())
+    }
+
+    fn execute_zkp(&mut self) -> Result<(), BitVMXError> {
+        Ok(())
+    }
+
+    fn get_zkp_execution_result(&mut self) -> Result<(), BitVMXError> {
+        Ok(())
+    }
+
+    fn finalize(&mut self) -> Result<(), BitVMXError> {
+        Ok(())
+    }
+
+    fn get_tx(&mut self) -> Result<(), BitVMXError> {
+        Ok(())
+    }
+
+    fn subscribe_to_tx(&mut self) -> Result<(), BitVMXError> {
+        Ok(())
+    }
+
+    fn subscribe_utxo(&mut self) -> Result<(), BitVMXError> {
+        Ok(())
+    }
+
     fn setup_program(
         &mut self,
         id: Uuid,
@@ -703,11 +743,27 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address, funding) =>
                 BitVMXApi::setup_program(self, id, role, peer_address, funding)?,
             IncomingBitVMXApiMessages::GetTransaction(txid) =>
-                todo!("Implement get transaction"),
+                BitVMXApi::get_tx(self)?,
             IncomingBitVMXApiMessages::SubscribeToTransaction(txid) =>
-                todo!("Implement subscribe"),
+                BitVMXApi::subscribe_to_tx(self)?,
+            IncomingBitVMXApiMessages::SubscribeUTXO() =>
+                BitVMXApi::subscribe_utxo(self)?,
             IncomingBitVMXApiMessages::DispatchTransaction(id, tx) =>
                 BitVMXApi::dispatch_transaction(self, id, tx)?,
+            IncomingBitVMXApiMessages::SetupKey() =>
+                BitVMXApi::setup_key(self)?,
+            IncomingBitVMXApiMessages::GetAggregatedPubkey() =>
+                BitVMXApi::get_aggregated_pubkey(self)?,
+            IncomingBitVMXApiMessages::GenerateZKP() =>
+                BitVMXApi::generate_zkp(self)?,
+            IncomingBitVMXApiMessages::ProofReady() =>
+                BitVMXApi::proof_ready(self)?,
+            IncomingBitVMXApiMessages::ExecuteZKP() =>
+                BitVMXApi::execute_zkp(self)?,
+            IncomingBitVMXApiMessages::GetZKPExecutionResult() =>
+                BitVMXApi::get_zkp_execution_result(self)?,
+            IncomingBitVMXApiMessages::Finalize() =>
+                BitVMXApi::finalize(self)?,
         }
 
         Ok(())
