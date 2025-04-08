@@ -1,12 +1,10 @@
 use bitcoin::Transaction;
+use protocol_builder::builder::Utxo;
 use uuid::Uuid;
 
 use crate::{
     errors::BitVMXError,
-    program::{
-        dispute::Funding,
-        participant::{P2PAddress, ParticipantRole},
-    },
+    program::participant::{P2PAddress, ParticipantRole},
 };
 
 pub trait BitVMXApi {
@@ -17,7 +15,7 @@ pub trait BitVMXApi {
         id: Uuid,
         role: ParticipantRole,
         peer_address: P2PAddress,
-        funding: Funding,
+        utxo: Utxo,
     ) -> Result<(), BitVMXError>;
 
     fn dispatch_transaction(&mut self, id: Uuid, tx: Transaction) -> Result<(), BitVMXError>;
