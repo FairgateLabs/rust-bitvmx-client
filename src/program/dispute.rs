@@ -1,13 +1,14 @@
 use std::{collections::HashMap, rc::Rc};
 
 use bitcoin::{
-    key::UntweakedPublicKey, secp256k1, Amount, PublicKey, ScriptBuf, Transaction, TxOut, Txid, XOnlyPublicKey
+    key::UntweakedPublicKey, secp256k1, Amount, PublicKey, ScriptBuf, Transaction, TxOut, Txid,
+    XOnlyPublicKey,
 };
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder, SpendingArgs, Utxo},
     errors::ProtocolBuilderError,
     graph::{
-        input::{InputSpendingInfo, SighashType,},
+        input::{InputSpendingInfo, SighashType},
         output::OutputSpendingType,
     },
     scripts,
@@ -42,7 +43,7 @@ pub struct DisputeResolutionProtocol {
 
 const PREKICKOFF: &str = "pre_kickoff";
 const KICKOFF: &str = "kickoff";
-const PROTOCOL: &str = "protocol";
+const _PROTOCOL: &str = "protocol";
 
 impl DisputeResolutionProtocol {
     pub fn new(
@@ -72,10 +73,10 @@ impl DisputeResolutionProtocol {
         key_chain: &KeyChain,
     ) -> Result<(), ProtocolBuilderError> {
         // TODO get this from config, all values expressed in satoshis
-        let _p2pkh_dust_threshold: u64 = 546; 
-        let _p2sh_p2wpkh_dust_threshold: u64 = 540; 
-        let p2wpkh_dust_threshold: u64 = 99_999_000; // 294; 
-        let taproot_dust_threshold: u64 = 330; 
+        let _p2pkh_dust_threshold: u64 = 546;
+        let _p2sh_p2wpkh_dust_threshold: u64 = 540;
+        let p2wpkh_dust_threshold: u64 = 99_999_000; // 294;
+        let taproot_dust_threshold: u64 = 330;
 
         let tr_sighash_type = SighashType::taproot_all();
         let mut builder = ProtocolBuilder::new(&self.protocol_name, self.storage.clone().unwrap())?;
@@ -84,7 +85,8 @@ impl DisputeResolutionProtocol {
         let untweaked_key: UntweakedPublicKey = XOnlyPublicKey::from(*internal_key);
 
         let spending_scripts = vec![scripts::timelock_renew(&internal_key)];
-        let spend_info = scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
+        let spend_info =
+            scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
 
         let script_pubkey = ScriptBuf::new_p2tr(&secp, untweaked_key, spend_info.merkle_root());
 
@@ -143,7 +145,9 @@ impl DisputeResolutionProtocol {
     }
 
     pub fn prekickoff_transaction(&self) -> Result<Transaction, ProtocolBuilderError> {
-        let signature = self.load_protocol()?.input_taproot_key_spend_signature(PREKICKOFF, 0)?;
+        let signature = self
+            .load_protocol()?
+            .input_taproot_key_spend_signature(PREKICKOFF, 0)?;
         let mut taproot_arg = SpendingArgs::new_args();
         taproot_arg.push_taproot_signature(signature);
 
@@ -155,17 +159,12 @@ impl DisputeResolutionProtocol {
         self.load_protocol()?.transaction_to_send(KICKOFF, &[])
     }
 
-    pub fn get_transaction_by_id(
-        &self,
-        txid: Txid,
-    ) -> Result<Transaction, ProtocolBuilderError> {
+    pub fn get_transaction_by_id(&self, txid: Txid) -> Result<Transaction, ProtocolBuilderError> {
         let protocol = self.load_protocol()?;
         protocol.transaction_with_id(txid).cloned()
     }
 
-    pub fn get_transaction_ids(
-        &self,
-    ) -> Result<Vec<Txid>, ProtocolBuilderError> {
+    pub fn get_transaction_ids(&self) -> Result<Vec<Txid>, ProtocolBuilderError> {
         let protocol = self.load_protocol()?;
         Ok(protocol.get_transaction_ids())
     }

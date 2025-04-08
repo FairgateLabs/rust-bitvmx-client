@@ -3,8 +3,8 @@ use std::rc::Rc;
 use bitcoin::PublicKey;
 use p2p_handler::PeerId;
 use protocol_builder::builder::Utxo;
-use storage_backend::storage::Storage;
 use serde::{Deserialize, Serialize};
+use storage_backend::storage::Storage;
 
 type SessionId = String;
 type ParticipantId = PeerId;
@@ -26,7 +26,7 @@ pub struct Session {
     participants: Vec<ParticipantId>,
     state: SessionState,
     #[serde(skip)]
-    storage: Option<Rc<Storage>>,
+    _storage: Option<Rc<Storage>>,
 }
 
 impl Session {
@@ -43,7 +43,7 @@ impl Session {
             utxo,
             participants,
             state: SessionState::Created,
-            storage: Some(storage),
+            _storage: Some(storage),
         }
     }
 

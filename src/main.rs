@@ -1,15 +1,12 @@
-use std::{thread, time::Duration};
 use anyhow::Result;
 use bitcoin::Network;
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
-use tracing::{info, error};
+use std::{thread, time::Duration};
+use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-use bitvmx_client::{
-    bitvmx::BitVMX,
-    config::Config,
-};
+use bitvmx_client::{bitvmx::BitVMX, config::Config};
 
 fn config_trace() {
     let filter = EnvFilter::builder()
@@ -44,8 +41,8 @@ fn init_bitvmx(role: &str) -> Result<(BitVMX, DualChannel)> {
 
 fn run_bitvmx(role: &str) -> Result<()> {
     info!("Starting BitVMX instance with role: {}", role);
-    
-    let (mut bitvmx, bridge_channel) = init_bitvmx(role)?;
+
+    let (mut bitvmx, _bridge_channel) = init_bitvmx(role)?;
 
     info!("BitVMX instance initialized");
     info!("P2P Address: {}", bitvmx.address());
@@ -79,7 +76,7 @@ fn main() -> Result<()> {
     // Get role from command line args
     let args: Vec<String> = std::env::args().collect();
     let role = args.get(1).map(String::as_str).unwrap_or("prover");
-    
+
     if role != "prover" && role != "verifier" {
         error!("Invalid role. Must be either 'prover' or 'verifier'");
         std::process::exit(1);
