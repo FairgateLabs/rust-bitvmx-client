@@ -1,16 +1,12 @@
-use crate::{
-    keychain::KeyChain,
-    program::{
-        dispute::Funding,
-        participant::{P2PAddress, ParticipantRole},
-    },
-};
 use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::types::TransactionNew;
 use chrono::{DateTime, Utc};
 use p2p_handler::P2pHandler;
+use protocol_builder::builder::Utxo;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+use crate::{keychain::KeyChain, program::participant::{P2PAddress, ParticipantRole}};
 pub struct ProgramContext {
     pub key_chain: KeyChain,
     pub comms: P2pHandler,
@@ -61,7 +57,7 @@ impl Default for ProgramRequestInfo {
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub enum IncomingBitVMXApiMessages {
     Ping(),
-    SetupProgram(ProgramId, ParticipantRole, P2PAddress, Funding),
+    SetupProgram(ProgramId, ParticipantRole, P2PAddress, Utxo),
     GetTransaction(Txid),
     SubscribeToTransaction(Txid),
     SubscribeUTXO(),

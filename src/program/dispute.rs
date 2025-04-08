@@ -1,16 +1,13 @@
 use std::{collections::HashMap, rc::Rc};
 
 use bitcoin::{
-    key::UntweakedPublicKey,
-    secp256k1::{self, Message},
-    Amount, PublicKey, ScriptBuf, Transaction, TxOut, Txid, XOnlyPublicKey,
+    key::UntweakedPublicKey, secp256k1, Amount, PublicKey, ScriptBuf, Transaction, TxOut, Txid, XOnlyPublicKey
 };
 use protocol_builder::{
-    builder::{Protocol, ProtocolBuilder, SpendingArgs},
+    builder::{Protocol, ProtocolBuilder, SpendingArgs, Utxo},
     errors::ProtocolBuilderError,
     graph::{
-        graph::MessageId,
-        input::{InputSpendingInfo, SighashType, Signature},
+        input::{InputSpendingInfo, SighashType,},
         output::OutputSpendingType,
     },
     scripts,
@@ -36,43 +33,9 @@ impl SearchParams {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
-pub struct Funding {
-    pub txid: Txid,
-    pub vout: u32,
-    pub pubkey: PublicKey,
-    pub amount: Amount,
-    pub protocol: u64,
-    pub timelock: u64,
-    pub speedup: u64,
-}
-
-impl Funding {
-    pub fn new(
-        txid: Txid,
-        vout: u32,
-        pubkey: PublicKey,
-        amount: u64,
-        protocol: u64,
-        timelock: u64,
-        speedup: u64,
-    ) -> Self {
-        Self {
-            txid,
-            vout,
-            pubkey,
-            amount: Amount::from_sat(amount),
-            protocol,
-            timelock,
-            speedup,
-        }
-    }
-}
-
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DisputeResolutionProtocol {
     pub protocol_name: String,
-    pub funding: Funding,
     #[serde(skip)]
     storage: Option<Rc<Storage>>,
 }
@@ -83,7 +46,6 @@ const PROTOCOL: &str = "protocol";
 
 impl DisputeResolutionProtocol {
     pub fn new(
-        funding: Funding,
         program_id: Uuid,
         storage: Rc<Storage>,
     ) -> Result<DisputeResolutionProtocol, ProtocolBuilderError> {
@@ -91,7 +53,6 @@ impl DisputeResolutionProtocol {
 
         Ok(Self {
             protocol_name,
-            funding,
             storage: Some(storage),
         })
     }
@@ -103,58 +64,69 @@ impl DisputeResolutionProtocol {
     pub fn build(
         &self,
         id: &str,
+        utxo: Utxo,
         internal_key: &PublicKey,
         prover_keys: &ParticipantKeys,
         _verifier_keys: &ParticipantKeys,
         _search: SearchParams,
         key_chain: &KeyChain,
     ) -> Result<(), ProtocolBuilderError> {
-        // let ecdsa_sighash_type = SighashType::ecdsa_all();
-        let tr_sighash_type = SighashType::taproot_all();
+        // TODO get this from config, all values expressed in satoshis
+        let _p2pkh_dust_threshold: u64 = 546; 
+        let _p2sh_p2wpkh_dust_threshold: u64 = 540; 
+        let p2wpkh_dust_threshold: u64 = 99_999_000; // 294; 
+        let taproot_dust_threshold: u64 = 330; 
 
+        let tr_sighash_type = SighashType::taproot_all();
         let mut builder = ProtocolBuilder::new(&self.protocol_name, self.storage.clone().unwrap())?;
-        // let output_type =
-        //     OutputSpendingType::new_segwit_key_spend(&internal_key, self.funding.amount);
 
         let secp = secp256k1::Secp256k1::new();
         let untweaked_key: UntweakedPublicKey = XOnlyPublicKey::from(*internal_key);
-        let script_pubkey = ScriptBuf::new_p2tr(&secp, untweaked_key, None);
+
+        let spending_scripts = vec![scripts::timelock_renew(&internal_key)];
+        let spend_info = scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
+
+        let script_pubkey = ScriptBuf::new_p2tr(&secp, untweaked_key, spend_info.merkle_root());
 
         let prevout = TxOut {
-            value: self.funding.amount,
+            value: Amount::from_sat(utxo.amount),
             script_pubkey,
         };
 
-        let output_type = OutputSpendingType::TaprootUntweakedKey {
-            key: *internal_key,
+        let output_type = OutputSpendingType::TaprootScript {
+            spending_scripts,
+            spend_info,
+            internal_key: untweaked_key,
             prevouts: vec![prevout],
         };
 
+        // let output_type = OutputSpendingType::TaprootUntweakedKey { key: *internal_key, prevouts: vec![prevout] };
+
         builder.connect_with_external_transaction(
-            self.funding.txid,
-            self.funding.vout,
+            utxo.txid,
+            utxo.vout,
             output_type,
             PREKICKOFF,
             &tr_sighash_type,
         )?;
 
-        let kickoff_spending = scripts::kickoff(
-            internal_key,
-            &prover_keys.program_input_key,
-            &prover_keys.program_ending_state,
-            &prover_keys.program_ending_step_number,
-        )?;
+        // let kickoff_spending = scripts::kickoff(
+        //     internal_key,
+        //     &prover_keys.program_input_key,
+        //     &prover_keys.program_ending_state,
+        //     &prover_keys.program_ending_step_number,
+        // )?;
 
-        builder.add_taproot_script_spend_connection(
-            PROTOCOL,
-            PREKICKOFF,
-            self.funding.protocol + self.funding.timelock,
-            &prover_keys.internal,
-            &[kickoff_spending],
-            KICKOFF,
-            &tr_sighash_type,
-        )?;
-        builder.add_speedup_output(PREKICKOFF, self.funding.speedup, &prover_keys.speedup)?;
+        // builder.add_taproot_script_spend_connection(
+        //     PROTOCOL,
+        //     PREKICKOFF,
+        //     taproot_dust_threshold,
+        //     &XOnlyPublicKey::from(*internal_key),
+        //     &[kickoff_spending],
+        //     KICKOFF,
+        //     &tr_sighash_type,
+        // )?;
+        builder.add_speedup_output(PREKICKOFF, p2wpkh_dust_threshold, &prover_keys.speedup)?;
 
         let protocol = builder.build(id, &key_chain.key_manager)?;
 
@@ -171,50 +143,31 @@ impl DisputeResolutionProtocol {
     }
 
     pub fn prekickoff_transaction(&self) -> Result<Transaction, ProtocolBuilderError> {
-        let signature = self.load_protocol()?.input_ecdsa_signature(PREKICKOFF, 0)?;
-        let mut ecdsa_arg = SpendingArgs::new_args();
-        ecdsa_arg.push_ecdsa_signature(signature);
+        let signature = self.load_protocol()?.input_taproot_key_spend_signature(PREKICKOFF, 0)?;
+        let mut taproot_arg = SpendingArgs::new_args();
+        taproot_arg.push_taproot_signature(signature);
 
         self.load_protocol()?
-            .transaction_to_send(PREKICKOFF, &[ecdsa_arg])
+            .transaction_to_send(PREKICKOFF, &[taproot_arg])
     }
 
     pub fn kickoff_transaction(&self) -> Result<Transaction, ProtocolBuilderError> {
         self.load_protocol()?.transaction_to_send(KICKOFF, &[])
     }
 
-    pub fn spending_infos(
+    pub fn get_transaction_by_id(
         &self,
-    ) -> Result<HashMap<String, Vec<InputSpendingInfo>>, ProtocolBuilderError> {
-        self.load_protocol()?.spending_infos()
+        txid: Txid,
+    ) -> Result<Transaction, ProtocolBuilderError> {
+        let protocol = self.load_protocol()?;
+        protocol.transaction_with_id(txid).cloned()
     }
 
-    pub fn update_input_signatures(
+    pub fn get_transaction_ids(
         &self,
-        transaction_name: &str,
-        input_index: u32,
-        signatures: Vec<Signature>,
-    ) -> Result<(), ProtocolBuilderError> {
-        let mut protocol = self.load_protocol()?;
-        protocol.update_input_signatures(transaction_name, input_index, signatures)?;
-        self.save_protocol(protocol)?;
-        Ok(())
-    }
-
-    pub fn protocol_sighashes(&self) -> Result<Vec<(MessageId, Message)>, ProtocolBuilderError> {
-        let sighashes = self.load_protocol()?.get_all_sighashes()?;
-
-        // let mut sighashes = Vec::new();
-
-        // for (_, infos) in spending_infos {
-        //     for info in infos {
-        //         for message in info.hashed_messages() {
-        //             sighashes.push(message.to_owned());
-        //         }
-        //     }
-        // }
-
-        Ok(sighashes)
+    ) -> Result<Vec<Txid>, ProtocolBuilderError> {
+        let protocol = self.load_protocol()?;
+        Ok(protocol.get_transaction_ids())
     }
 
     fn load_protocol(&self) -> Result<Protocol, ProtocolBuilderError> {

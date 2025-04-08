@@ -1,10 +1,10 @@
 use anyhow::Result;
 use bitcoin::{Transaction, Txid};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
+use protocol_builder::builder::Utxo;
 use uuid::Uuid;
-use std::{thread, time::Duration};
 use tracing::info;
-use crate::{program::{dispute::Funding, participant::{P2PAddress, ParticipantRole}}, types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages}};
+use crate::{program::participant::{P2PAddress, ParticipantRole}, types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages}};
 
 pub struct BitVMXClient {
     channel: DualChannel,
@@ -22,8 +22,8 @@ impl BitVMXClient {
         self.send_message(IncomingBitVMXApiMessages::Ping())
     }
 
-    pub fn setup(&self, id: Uuid, role: ParticipantRole, address: P2PAddress, funding: Funding) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::SetupProgram(id, role, address, funding))
+    pub fn setup(&self, id: Uuid, role: ParticipantRole, address: P2PAddress, utxo: Utxo) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SetupProgram(id, role, address, utxo))
     }
 
     pub fn dispatch_transaction(&self, id: Uuid, tx: Transaction) -> Result<()> {

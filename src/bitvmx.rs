@@ -5,20 +5,18 @@ use crate::{
     keychain::KeyChain,
     p2p_helper::{deserialize_msg, P2PMessageType},
     program::{
-        dispute::{Funding, SearchParams},
-        participant::{P2PAddress, ParticipantData, ParticipantKeys, ParticipantRole},
-        program::{Program, ProgramState, SettingUpState},
-        witness,
+        dispute::SearchParams, participant::{P2PAddress, ParticipantData, ParticipantKeys, ParticipantRole}, program::{Program, ProgramState, SettingUpState}, witness
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus},
     api::BitVMXApi,
 };
 
-use bitcoin::{PublicKey, Transaction};
+use bitcoin::Transaction;
 use bitcoin_coordinator::{
     coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi},
     types::{BitcoinCoordinatorType, BitvmxInstance, ProcessedNews, TransactionPartialInfo},
 };
+
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
     channel::channel::DualChannel,
@@ -26,6 +24,7 @@ use bitvmx_broker::{
 };
 use key_manager::winternitz;
 use p2p_handler::{LocalAllowList, P2pHandler, ReceiveHandlerChannel};
+use protocol_builder::builder::Utxo;
 use std::{
     path::PathBuf,
     rc::Rc,
@@ -111,11 +110,11 @@ impl BitVMX {
         &mut self,
         id: &Uuid,
         my_role: ParticipantRole,
-        funding: Funding,
         peer_address: &P2PAddress,
+        utxo: Utxo,
     ) -> Result<(), BitVMXError> {
         // Generate my keys.
-        let my_keys = self.generate_keys(&funding.pubkey, &my_role)?;
+        let my_keys = self.generate_keys(&my_role)?;
 
         let p2p_address = P2PAddress::new(
             &self.program_context.comms.get_address(),
@@ -127,16 +126,18 @@ impl BitVMX {
         // Create a participant that represents the counterparty with the opposite role.
         let other = ParticipantData::new(peer_address, None);
 
-        // Create a program with the funding information, and the dispute resolution search parameters.
+        // Create a program with the utxo information, and the dispute resolution search parameters.
         Program::new(
             *id,
             my_role,
             me,
             other,
-            funding,
+            utxo,
             self.store.clone(),
             self._config.client.clone(),
         )?;
+
+        self.add_new_program(&id)?;
 
         Ok(())
     }
@@ -217,17 +218,15 @@ impl BitVMX {
 
     fn generate_keys(
         &mut self,
-        pre_kickoff: &PublicKey,
         _role: &ParticipantRole,
     ) -> Result<ParticipantKeys, BitVMXError> {
         //TODO: define which keys are generated for each role
         let message_size = 2;
         let one_time_keys_count = 10;
-
         let protocol = self.program_context.key_chain.derive_keypair()?;
         let speedup = self.program_context.key_chain.derive_keypair()?;
         let timelock = self.program_context.key_chain.derive_keypair()?;
-        let internal = self.program_context.key_chain.unspendable_key()?;
+
         let program_input = self
             .program_context
             .key_chain
@@ -246,8 +245,6 @@ impl BitVMX {
             .derive_winternitz_hash160_keys(message_size, one_time_keys_count)?;
 
         let keys = ParticipantKeys::new(
-            *pre_kickoff,
-            internal,
             protocol,
             speedup,
             timelock,
@@ -710,7 +707,7 @@ impl BitVMXApi for BitVMX {
         id: Uuid,
         role: ParticipantRole,
         peer_address: P2PAddress,
-        funding: Funding,
+        utxo: Utxo,
     ) -> Result<(), BitVMXError> {
         if self.program_exists(&id)? {
             info!("{}: Program already exists", role);
@@ -719,7 +716,7 @@ impl BitVMXApi for BitVMX {
 
         info!("Setting up program: {:?}", id);
         //TODO: This should be done in a single atomic operation
-        self.setup_program(&id, role.clone(), funding, &peer_address)?;
+        self.setup_program(&id, role.clone(), &peer_address, utxo)?;
         self.add_new_program(&id)?;
         info!("{}: Program Setup Finished", role);
 
@@ -740,8 +737,8 @@ impl BitVMXApi for BitVMX {
         match decoded {
             IncomingBitVMXApiMessages::Ping() =>
                 BitVMXApi::ping(self, from)?,
-            IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address, funding) =>
-                BitVMXApi::setup_program(self, id, role, peer_address, funding)?,
+            IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address, utxo) =>
+                BitVMXApi::setup_program(self, id, role, peer_address, utxo)?,
             IncomingBitVMXApiMessages::GetTransaction(txid) =>
                 BitVMXApi::get_tx(self)?,
             IncomingBitVMXApiMessages::SubscribeToTransaction(txid) =>

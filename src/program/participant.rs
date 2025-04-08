@@ -1,4 +1,4 @@
-use bitcoin::{PublicKey, XOnlyPublicKey};
+use bitcoin::PublicKey;
 use key_manager::winternitz::WinternitzPublicKey;
 use p2p_handler::PeerId;
 use serde::{Deserialize, Serialize};
@@ -36,8 +36,6 @@ impl fmt::Display for ParticipantRole {
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct ParticipantKeys {
-    pub pre_kickoff: PublicKey,
-    pub internal: XOnlyPublicKey,
     pub protocol: PublicKey,
     pub speedup: PublicKey,
     pub timelock: PublicKey,
@@ -50,8 +48,6 @@ pub struct ParticipantKeys {
 impl ParticipantKeys {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        pre_kickoff: PublicKey,
-        internal: XOnlyPublicKey,
         protocol: PublicKey,
         speedup: PublicKey,
         timelock: PublicKey,
@@ -61,8 +57,6 @@ impl ParticipantKeys {
         dispute_resolution: Vec<WinternitzPublicKey>,
     ) -> Self {
         Self {
-            pre_kickoff,
-            internal,
             protocol,
             speedup,
             timelock,
