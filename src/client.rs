@@ -1,9 +1,9 @@
 use crate::{
     program::participant::{P2PAddress, ParticipantRole},
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
 use anyhow::Result;
-use bitcoin::Transaction;
+use bitcoin::{Transaction, Txid};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use protocol_builder::builder::Utxo;
 use tracing::info;
@@ -44,12 +44,51 @@ impl BitVMXClient {
         self.send_message(IncomingBitVMXApiMessages::DispatchTransaction(id, tx))
     }
 
+    pub fn setup_key(&self) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SetupKey())
+    }
+
+    pub fn get_aggregated_pubkey(&self) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetAggregatedPubkey())
+    }
+
+    pub fn generate_zkp(&self) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GenerateZKP())
+    }
+
+    pub fn proof_ready(&self) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::ProofReady())
+    }
+
+    pub fn execute_zkp(&self) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::ExecuteZKP())
+    }
+
+    pub fn get_zkp_execution_result(&self) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetZKPExecutionResult())
+    }
+
+    pub fn finalize(&self) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::Finalize())
+    }
+
+    pub fn get_tx(&self, txid: Txid) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetTransaction(txid))
+    }
+
+    pub fn subscribe_tx(&self, txid: Txid) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SubscribeToTransaction(txid))
+    }
+
+    pub fn subscribe_utxo(&self) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SubscribeUTXO())
+    }
+
     pub fn send_message(&self, msg: IncomingBitVMXApiMessages) -> Result<()> {
         // BitVMX instance uses ID 1 by convention
-        let bitvmx_id = 1;
         let serialized = serde_json::to_string(&msg)?;
-        info!("Sending message to {}: {:?}", bitvmx_id, serialized);
-        self.channel.send(bitvmx_id, serialized)?;
+        info!("Sending message to {}: {:?}", BITVMX_ID, serialized);
+        self.channel.send(BITVMX_ID, serialized)?;
         Ok(())
     }
 

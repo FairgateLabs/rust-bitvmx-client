@@ -1,3 +1,4 @@
+pub mod api;
 pub mod bitvmx;
 pub mod client;
 pub mod config;

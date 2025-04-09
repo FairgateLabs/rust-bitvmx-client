@@ -3,7 +3,7 @@ use crate::{
     errors::{BitVMXError, ProgramError},
     helper::{parse_keys, parse_nonces, parse_signatures},
     p2p_helper::{request, response, P2PMessageType},
-    types::{ProgramContext, ProgramRequestInfo},
+    types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramRequestInfo, L2_ID},
 };
 use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::coordinator::BitcoinCoordinatorApi;
@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashMap, rc::Rc};
 use storage_backend::storage::{KeyValueStore, Storage};
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use super::{
@@ -40,19 +40,21 @@ pub enum ProgramState {
 
     /// Program is dispatching transactions to the blockchain to complete the protocol
     /// TODO: Dispatching should have (Claimed, Challenged) inside it
-    Dispatching,
+    //Dispatching,
 
-    /// Program has been claimed by one party
-    Claimed,
+    /// Ready state after setup is completed and the transactions are being monitored
+    Ready,
+    // Program has been claimed by one party
+    //Claimed,
 
-    /// Program has been challenged
-    Challenged,
+    // Program has been challenged
+    //Challenged,
 
-    /// Program encountered an error and cannot continue
-    Error,
+    // Program encountered an error and cannot continue
+    //Error,
 
-    /// Program has completed successfully
-    Completed,
+    // Program has completed successfully
+    //Completed,
 }
 
 #[derive(PartialEq, Clone, Serialize, Deserialize, Debug)]
@@ -262,9 +264,9 @@ impl Program {
         self.drp.prekickoff_transaction().map_err(BitVMXError::from)
     }
 
-    pub fn kickoff_transaction(&self) -> Result<Transaction, BitVMXError> {
+    /*pub fn kickoff_transaction(&self) -> Result<Transaction, BitVMXError> {
         self.drp.kickoff_transaction().map_err(BitVMXError::from)
-    }
+    }*/
 
     pub fn push_witness_value(&mut self, txid: Txid, name: &str, value: WinternitzSignature) {
         self.witness_data
@@ -311,10 +313,19 @@ impl Program {
 
             self.move_program_to_next_state()?;
 
+            let result = program_context.broker_channel.send(
+                L2_ID,
+                OutgoingBitVMXApiMessages::SetupCompleted(self.program_id).to_string()?,
+            );
+            if let Err(e) = result {
+                warn!("Error sending setup completed message: {:?}", e);
+                //TODO: Handle error and rollback
+            }
+
             return Ok(());
         }
 
-        if self.is_dispatching() {
+        /*if self.is_dispatching() {
             // info!("Program state is_dispatching: {:?}", program.state);
             let tx_to_dispatch: Option<Transaction> = self.get_tx_to_dispatch()?;
 
@@ -324,7 +335,7 @@ impl Program {
                     .send_tx_instance(self.program_id, &tx)?;
             }
             return Ok(());
-        }
+        }*/
         Ok(())
     }
 
@@ -505,13 +516,14 @@ impl Program {
                     ProgramState::Monitoring
                 }
 
-                ProgramState::Monitoring => ProgramState::Dispatching,
-                ProgramState::Claimed => ProgramState::Claimed,
+                ProgramState::Monitoring => ProgramState::Ready,
+                ProgramState::Ready => ProgramState::Ready,
+                /*ProgramState::Claimed => ProgramState::Claimed,
                 ProgramState::Challenged => ProgramState::Challenged,
                 ProgramState::Error => ProgramState::Error,
                 ProgramState::Completed => ProgramState::Completed,
                 //TODO: This should change to Claimed or Challenged , there is 2 options .
-                ProgramState::Dispatching => ProgramState::Dispatching,
+                ProgramState::Dispatching => ProgramState::Dispatching,*/
             },
             ParticipantRole::Verifier => match self.state {
                 ProgramState::New => ProgramState::SettingUp(SettingUpState::WaitingKeys),
@@ -534,12 +546,13 @@ impl Program {
                     ProgramState::Monitoring
                 }
 
-                ProgramState::Monitoring => ProgramState::Dispatching,
-                ProgramState::Claimed => ProgramState::Claimed,
+                ProgramState::Monitoring => ProgramState::Ready,
+                ProgramState::Ready => ProgramState::Ready,
+                /*ProgramState::Claimed => ProgramState::Claimed,
                 ProgramState::Challenged => ProgramState::Challenged,
                 ProgramState::Error => ProgramState::Error,
                 ProgramState::Completed => ProgramState::Completed,
-                ProgramState::Dispatching => ProgramState::Dispatching,
+                ProgramState::Dispatching => ProgramState::Dispatching,*/
             },
         };
 
@@ -699,17 +712,17 @@ impl Program {
     pub fn is_active(&self) -> bool {
         let is_setting_up = self.is_setting_up();
         let is_monitoring = self.is_monitoring();
-        let is_dispatching = self.is_dispatching();
-        is_setting_up || is_monitoring || is_dispatching
+        //let is_dispatching = self.is_dispatching();
+        is_setting_up || is_monitoring //|| is_dispatching
     }
 
     pub fn is_setting_up(&self) -> bool {
         matches!(self.state, ProgramState::New | ProgramState::SettingUp(_))
     }
 
-    pub fn is_dispatching(&self) -> bool {
+    /*pub fn is_dispatching(&self) -> bool {
         matches!(self.state, ProgramState::Dispatching)
-    }
+    }*/
 
     pub fn is_monitoring(&self) -> bool {
         self.state == ProgramState::Monitoring
@@ -733,6 +746,20 @@ impl Program {
         Ok(())
     }
 
+    pub fn dispatch_transaction_name(
+        &self,
+        program_context: &ProgramContext,
+        _name: &str,
+    ) -> Result<(), BitVMXError> {
+        //TODO: Get transactions by identification
+        let tx_to_dispatch = self.drp.prekickoff_transaction()?;
+
+        program_context
+            .bitcoin_coordinator
+            .send_tx_instance(self.program_id, &tx_to_dispatch)?;
+        Ok(())
+    }
+
     pub fn notify_news(&self, _txs: Vec<TransactionNew>) -> Result<(), BitVMXError> {
         //TODO: for each tx the protocol should decide something to do
         Ok(())
@@ -742,13 +769,13 @@ impl Program {
         self.drp.get_transaction_ids().map_err(BitVMXError::from)
     }
 
-    pub fn get_tx_to_dispatch(&self) -> Result<Option<Transaction>, BitVMXError> {
+    /*pub fn get_tx_to_dispatch(&self) -> Result<Option<Transaction>, BitVMXError> {
         if self.my_role == ParticipantRole::Prover {
             return Ok(Some(self.drp.prekickoff_transaction()?));
         } else {
             return Ok(None);
         }
-    }
+    }*/
 
     pub fn get_tx_by_id(&self, txid: Txid) -> Result<Transaction, BitVMXError> {
         if self.is_setting_up() {

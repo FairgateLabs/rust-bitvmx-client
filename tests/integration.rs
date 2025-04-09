@@ -9,7 +9,7 @@ use bitvmx_client::{
     bitvmx::BitVMX,
     config::Config,
     program::participant::{P2PAddress, ParticipantRole},
-    types::IncomingBitVMXApiMessages,
+    types::{IncomingBitVMXApiMessages, BITVMX_ID, L2_ID},
 };
 use p2p_handler::PeerId;
 use protocol_builder::{builder::Utxo, scripts};
@@ -21,7 +21,7 @@ fn config_trace() {
     let default_modules = [
         "info",
         "libp2p=off",
-        "bitvmx_transaction_monitor",
+        "bitvmx_transaction_monitor=off",
         "bitcoin_indexer=off",
         "bitcoin_coordinator=off",
         "p2p_protocol=off",
@@ -47,7 +47,7 @@ fn clear_db(path: &str) {
 fn init_bitvmx(role: &str) -> Result<(BitVMX, P2PAddress, DualChannel)> {
     let config = Config::new(Some(format!("config/{}.yaml", role)))?;
     let broker_config = BrokerConfig::new(config.broker_port, None);
-    let bridge_client = DualChannel::new(&broker_config, 2);
+    let bridge_client = DualChannel::new(&broker_config, L2_ID);
 
     clear_db(&config.storage.db);
     clear_db(&config.key_storage.path);
@@ -96,6 +96,25 @@ fn init_utxo(bitcoin_client: &BitcoinClient) -> Result<Utxo> {
     // spend_utxo(bitcoin_client, utxo.clone(), public_key, p2tr_address, taproot_spend_info)?;
 
     Ok(utxo)
+}
+
+fn wait_message_from_channel(
+    channel: &DualChannel,
+    instances: &mut Vec<&mut BitVMX>,
+) -> Result<(String, u32)> {
+    //loop to timeout
+    for _ in 0..5000 {
+        let msg = channel.recv()?;
+        if msg.is_some() {
+            info!("Received message from channel: {:?}", msg);
+            return Ok(msg.unwrap());
+        }
+        for instance in instances.iter_mut() {
+            instance.tick()?;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    panic!("Timeout waiting for message from channel");
 }
 
 //cargo test --release  -- --ignored
@@ -154,11 +173,22 @@ pub fn test_single_run() -> Result<()> {
 
     verifier_bridge_channel.send(1, setup_msg)?;
 
-    info!("PROVER: Setting up program...");
-    prover_bitvmx.tick()?;
+    info!("Waiting for setup messages...");
 
-    info!("VERIFIER: Setting up program...");
-    verifier_bitvmx.tick()?;
+    let mut instances = vec![&mut prover_bitvmx, &mut verifier_bitvmx];
+
+    //Wait
+    let msg = wait_message_from_channel(&prover_bridge_channel, &mut instances)?;
+    info!("PROVER: Received message from channel: {:?}", msg);
+    let msg = wait_message_from_channel(&verifier_bridge_channel, &mut instances)?;
+    info!("VERIFIER: Received message from channel: {:?}", msg);
+
+    //Bridge send signal to send the kickoff message
+    let _ = prover_bridge_channel.send(
+        BITVMX_ID,
+        IncomingBitVMXApiMessages::DispatchTransactionName(program_id, "prekickoff".to_string())
+            .to_string()?,
+    );
 
     //TODO: main loop
     for i in 0..200 {
