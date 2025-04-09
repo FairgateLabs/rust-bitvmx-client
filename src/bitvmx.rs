@@ -387,7 +387,7 @@ impl BitVMX {
         let programs = self.get_active_programs()?;
 
         for mut program in programs {
-            program.process_program(&self.program_context)?
+            program.tick(&self.program_context)?
         }
         Ok(())
     }

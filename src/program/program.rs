@@ -279,66 +279,6 @@ impl Program {
         self.witness_data.get(&txid)
     }
 
-    //TODO: Check if this shouldnt be part of the tick
-    pub fn process_program(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
-        // info!("Program state: {:?}", program.state);
-        if self.is_setting_up() {
-            // info!("Program state is_setting_up: {:?}", program.state);
-            // TODO: Improvement, I think this tick function we should have different name.
-            // I think a better name could be proceed_with_setting_up
-            // Besides that I think tick only exist as a function for a library to use it outside of the library.
-            self.tick(program_context)?;
-
-            return Ok(());
-        }
-
-        if self.is_monitoring() {
-            // info!("Program state is_monitoring: {:?}", program.state);
-            // After the program is ready, we need to monitor the transactions
-            let txns_to_monitor = self.get_txs_to_monitor()?;
-
-            // TODO : COMPLETE THE FUNDING TX FOR SPEED UP
-            let txs_to_monitor: BitvmxInstance<TransactionPartialInfo> = BitvmxInstance::new(
-                self.program_id,
-                txns_to_monitor
-                    .iter()
-                    .map(|tx| TransactionPartialInfo::from(*tx))
-                    .collect(),
-                None,
-            );
-
-            program_context
-                .bitcoin_coordinator
-                .monitor_instance(&txs_to_monitor)?;
-
-            self.move_program_to_next_state()?;
-
-            let result = program_context.broker_channel.send(
-                L2_ID,
-                OutgoingBitVMXApiMessages::SetupCompleted(self.program_id).to_string()?,
-            );
-            if let Err(e) = result {
-                warn!("Error sending setup completed message: {:?}", e);
-                //TODO: Handle error and rollback
-            }
-
-            return Ok(());
-        }
-
-        /*if self.is_dispatching() {
-            // info!("Program state is_dispatching: {:?}", program.state);
-            let tx_to_dispatch: Option<Transaction> = self.get_tx_to_dispatch()?;
-
-            if let Some(tx) = tx_to_dispatch {
-                program_context
-                    .bitcoin_coordinator
-                    .send_tx_instance(self.program_id, &tx)?;
-            }
-            return Ok(());
-        }*/
-        Ok(())
-    }
-
     pub fn tick(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
         match &self.state {
             ProgramState::New => {
@@ -410,9 +350,36 @@ impl Program {
 
                 self.save_retry(StoreKey::LastRequestSignatures(self.program_id))?;
             }
-            _ => {
-                //self.state = ProgramState::Error;
+            ProgramState::Monitoring => {
+                // After the program is ready, we need to monitor the transactions
+                let txns_to_monitor = self.get_txs_to_monitor()?;
+
+                // TODO : COMPLETE THE FUNDING TX FOR SPEED UP
+                let txs_to_monitor: BitvmxInstance<TransactionPartialInfo> = BitvmxInstance::new(
+                    self.program_id,
+                    txns_to_monitor
+                        .iter()
+                        .map(|tx| TransactionPartialInfo::from(*tx))
+                        .collect(),
+                    None,
+                );
+
+                program_context
+                    .bitcoin_coordinator
+                    .monitor_instance(&txs_to_monitor)?;
+
+                self.move_program_to_next_state()?;
+
+                let result = program_context.broker_channel.send(
+                    L2_ID,
+                    OutgoingBitVMXApiMessages::SetupCompleted(self.program_id).to_string()?,
+                );
+                if let Err(e) = result {
+                    warn!("Error sending setup completed message: {:?}", e);
+                    //TODO: Handle error and rollback
+                }
             }
+            _ => {}
         }
 
         Ok(())
