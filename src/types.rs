@@ -84,6 +84,7 @@ pub enum IncomingBitVMXApiMessages {
     SubscribeToTransaction(Txid),
     SubscribeUTXO(),
     DispatchTransaction(Uuid, Transaction),
+    DispatchTransactionName(Uuid, String),
     SetupKey(),
     GetAggregatedPubkey(),
     GenerateZKP(),

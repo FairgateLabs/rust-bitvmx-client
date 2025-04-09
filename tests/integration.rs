@@ -9,7 +9,7 @@ use bitvmx_client::{
     bitvmx::BitVMX,
     config::Config,
     program::participant::{P2PAddress, ParticipantRole},
-    types::{IncomingBitVMXApiMessages, L2_ID},
+    types::{IncomingBitVMXApiMessages, BITVMX_ID, L2_ID},
 };
 use p2p_handler::PeerId;
 use protocol_builder::{builder::Utxo, scripts};
@@ -21,7 +21,7 @@ fn config_trace() {
     let default_modules = [
         "info",
         "libp2p=off",
-        "bitvmx_transaction_monitor",
+        "bitvmx_transaction_monitor=off",
         "bitcoin_indexer=off",
         "bitcoin_coordinator=off",
         "p2p_protocol=off",
@@ -182,6 +182,13 @@ pub fn test_single_run() -> Result<()> {
     info!("PROVER: Received message from channel: {:?}", msg);
     let msg = wait_message_from_channel(&verifier_bridge_channel, &mut instances)?;
     info!("VERIFIER: Received message from channel: {:?}", msg);
+
+    //Bridge send signal to send the kickoff message
+    let _ = prover_bridge_channel.send(
+        BITVMX_ID,
+        IncomingBitVMXApiMessages::DispatchTransactionName(program_id, "prekickoff".to_string())
+            .to_string()?,
+    );
 
     //TODO: main loop
     for i in 0..200 {
