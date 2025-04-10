@@ -18,7 +18,7 @@ use crate::{
 use bitcoin::Transaction;
 use bitcoin_coordinator::{
     coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi},
-    types::ProcessedNews,
+    types::{BitvmxInstance, ProcessedNews, TransactionPartialInfo},
 };
 
 use bitvmx_broker::{
