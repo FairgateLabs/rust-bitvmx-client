@@ -122,4 +122,9 @@ impl OutgoingBitVMXApiMessages {
     pub fn to_string(&self) -> Result<String, BitVMXError> {
         Ok(serde_json::to_string(self)?)
     }
+
+    pub fn from_string(msg: &str) -> Result<Self, BitVMXError> {
+        let msg: OutgoingBitVMXApiMessages = serde_json::from_str(msg)?;
+        Ok(msg)
+    }
 }

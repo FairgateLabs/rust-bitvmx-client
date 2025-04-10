@@ -199,7 +199,7 @@ impl Program {
         let my_protocol_key = self.me.keys.as_ref().unwrap().protocol();
         let other_protocol_key = self.other.keys.as_ref().unwrap().protocol();
 
-        let mut participant_keys = vec![my_protocol_key, other_protocol_key];
+        /*let mut participant_keys = vec![my_protocol_key, other_protocol_key];
         participant_keys.sort();
 
         // 2. Init the musig2 signer for this program
@@ -209,12 +209,18 @@ impl Program {
             my_protocol_key,
         )?;
 
+        warn!(
+            "Program {}: Aggregated key: {}",
+            self.program_id,
+            aggregated_key.to_string()
+        );*/
+
         // 3. Build the protocol using the aggregated key as internal key for taproot
         info!("Building protocol for: {:?}", self.my_role);
         self.drp.build(
             &self.program_id.to_string(),
             self.utxo.clone(),
-            &aggregated_key,
+            //&aggregated_key,
             self.get_prover().keys.as_ref().unwrap(),
             self.get_verifier().keys.as_ref().unwrap(),
             search_params,

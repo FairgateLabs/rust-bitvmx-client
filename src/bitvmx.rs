@@ -295,19 +295,22 @@ impl BitVMX {
             ReceiveHandlerChannel::Msg(peer_id, msg) => {
                 let (_version, msg_type, program_id, data) = deserialize_msg(msg)?;
 
-                if self.collaborations.contains_key(&program_id) {
-                    let collaboration = self.collaborations.get_mut(&program_id).unwrap();
-                    collaboration.process_p2p_message(
-                        peer_id,
-                        msg_type,
-                        data,
-                        &self.program_context,
-                    )?;
-                    return Ok(());
+                //TODO: If program is not found it's is possible that is a new program that is not yet in the store
+                //Should I queue the message until the program is created for some secs?
+                if let Some(mut program) = self.load_program(&program_id).ok() {
+                    program.process_p2p_message(msg_type, data, &self.program_context)?;
+                } else {
+                    if self.collaborations.contains_key(&program_id) {
+                        let collaboration = self.collaborations.get_mut(&program_id).unwrap();
+                        collaboration.process_p2p_message(
+                            peer_id,
+                            msg_type,
+                            data,
+                            &self.program_context,
+                        )?;
+                    }
                 }
-
-                let mut program = self.load_program(&program_id)?;
-                program.process_p2p_message(msg_type, data, &self.program_context)?;
+                return Ok(());
             }
             ReceiveHandlerChannel::Error(e) => {
                 info!("Error receiving message {}", e);
@@ -399,9 +402,7 @@ impl BitVMX {
         if self.count % 100 == 0 {
             self.process_api_messages()?;
         }
-        if self.count % 50 == 0 {
-            self.process_bitcoin_updates()?;
-        }
+        self.process_bitcoin_updates()?;
 
         //TOOD: manage state of the collaborations once persisted
         if self.collaborations.len() > 0 {

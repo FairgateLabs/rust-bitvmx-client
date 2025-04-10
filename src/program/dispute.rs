@@ -63,7 +63,7 @@ impl DisputeResolutionProtocol {
         &self,
         id: &str,
         utxo: Utxo,
-        internal_key: &PublicKey,
+        //_internal_key: &PublicKey,
         prover_keys: &ParticipantKeys,
         _verifier_keys: &ParticipantKeys,
         _search: SearchParams,
@@ -78,6 +78,7 @@ impl DisputeResolutionProtocol {
         let tr_sighash_type = SighashType::taproot_all();
 
         let secp = secp256k1::Secp256k1::new();
+        let internal_key = &utxo.pub_key;
         let untweaked_key: UntweakedPublicKey = XOnlyPublicKey::from(*internal_key);
 
         let spending_scripts = vec![scripts::timelock_renew(&internal_key)];
