@@ -18,8 +18,9 @@ use crate::{
 use bitcoin::Transaction;
 use bitcoin_coordinator::{
     coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi},
-    types::ProcessedNews,
+    types::AckNews,
 };
+use bitcoin_coordinator::{AckTransactionNews, TransactionNews};
 
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
@@ -329,57 +330,75 @@ impl BitVMX {
 
         let news = self.program_context.bitcoin_coordinator.get_news()?;
 
-        if !news.instance_txs.is_empty()
-            || !news.single_txs.is_empty()
-            || !news.funds_requests.is_empty()
-        {
+        if !news.txs.is_empty() || !news.insufficient_funds.is_empty() {
             info!("Processing news: {:?}", news);
         }
 
-        let mut instance_txs = vec![];
+        for tx_news in news.txs {
+            let ack_news: AckNews;
 
-        for (program_id, txs) in news.instance_txs {
-            let program = self.load_program(&program_id)?;
+            match tx_news {
+                TransactionNews::Transaction(tx_id, tx_status, context_data) => {
+                    // We need to parse this context_data. For now, I'll assume it can be converted to a program_id.
+                    // After understanding what this data contains, it will provide insight on whether to propagate it to the program or handle it differently.
 
-            program.notify_news(txs.clone())?;
+                    // @MARTIN & AGUS : You shoud decide what to do with this context_data.
 
-            instance_txs.push((
-                program_id,
-                txs.iter().map(|tx| tx.tx.compute_txid()).collect(),
-            ));
+                    let program_id = Uuid::parse_str(&context_data).unwrap();
+                    let program = self.load_program(&program_id)?;
+
+                    program.notify_news(tx_id, tx_status, context_data)?;
+
+                    ack_news = AckNews::Transaction(AckTransactionNews::Transaction(tx_id));
+                }
+                TransactionNews::SpendingUTXOTransaction(
+                    tx_id,
+                    output_index,
+                    tx_status,
+                    _context_data,
+                ) => {
+                    let data = serde_json::to_string(
+                        &OutgoingBitVMXApiMessages::SpendingUTXOTransactionFound(
+                            tx_id,
+                            output_index,
+                            tx_status,
+                        ),
+                    )?;
+
+                    self.program_context.broker_channel.send(L2_ID, data)?;
+                    ack_news = AckNews::Transaction(AckTransactionNews::SpendingUTXOTransaction(
+                        tx_id,
+                        output_index,
+                    ));
+                }
+                TransactionNews::RskPeginTransaction(tx_id, tx_status) => {
+                    let data = serde_json::to_string(
+                        &OutgoingBitVMXApiMessages::PeginTransactionFound(tx_id, tx_status),
+                    )?;
+
+                    self.program_context.broker_channel.send(L2_ID, data)?;
+                    ack_news = AckNews::Transaction(AckTransactionNews::RskPeginTransaction(tx_id));
+                }
+            }
+
+            self.program_context
+                .bitcoin_coordinator
+                .ack_news(ack_news)?;
         }
 
-        let mut single_txs = vec![];
-
-        for tx_new in news.single_txs {
-            // Call broker (main thread) to process the news , for now dest is 100 (is hardcoded).
-            let data = serde_json::to_string(&OutgoingBitVMXApiMessages::PeginTransactionFound(
-                tx_new.clone(),
-            ))?;
-            info!("Sending pegin tx to broker found");
-            self.program_context.broker_channel.send(L2_ID, data)?;
-            single_txs.push(tx_new.tx.compute_txid());
-        }
-
-        if !news.funds_requests.is_empty() {
+        for (tx_id, context_data) in news.insufficient_funds {
             let data = serde_json::to_string(&OutgoingBitVMXApiMessages::SpeedUpProgramNoFunds(
-                news.funds_requests.clone(),
+                tx_id,
+                context_data,
             ))?;
 
             info!("Sending funds request to broker");
             self.program_context.broker_channel.send(L2_ID, data)?;
-        }
 
-        // acknowledge news to the bitcoin coordinator means won't be notified again about the same news
-        if !instance_txs.is_empty() || !single_txs.is_empty() || !news.funds_requests.is_empty() {
-            let processed_news = ProcessedNews {
-                instance_txs,
-                single_txs,
-                funds_requests: news.funds_requests,
-            };
+            let ack_news = AckNews::InsufficientFunds(tx_id);
             self.program_context
                 .bitcoin_coordinator
-                .acknowledge_news(processed_news)?;
+                .ack_news(ack_news)?;
         }
 
         Ok(())
@@ -555,12 +574,10 @@ impl BitVMXApi for BitVMX {
 
     fn dispatch_transaction(&mut self, id: Uuid, tx: Transaction) -> Result<(), BitVMXError> {
         info!("Dispatching transaction: {:?} for instance: {:?}", tx, id);
+
         self.program_context
             .bitcoin_coordinator
-            .include_tx_to_instance(id, &tx)?;
-        self.program_context
-            .bitcoin_coordinator
-            .send_tx_instance(id, &tx)?;
+            .dispatch(tx, id.to_string())?;
         Ok(())
     }
 
