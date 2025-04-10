@@ -532,7 +532,13 @@ impl BitVMXApi for BitVMX {
         info!("Dispatching transaction: {:?} for instance: {:?}", tx, id);
         self.program_context
             .bitcoin_coordinator
-            .include_tx_to_instance(id, &tx)?;
+            .monitor_instance(
+                &BitvmxInstance::new(
+                    id,
+                    vec![TransactionPartialInfo::from(tx.compute_txid())],
+                    None
+                )
+            )?;
         self.program_context
             .bitcoin_coordinator
             .send_tx_instance(id, &tx)?;

@@ -279,7 +279,7 @@ impl Program {
 
     //TODO: Check if this shouldnt be part of the tick
     pub fn process_program(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
-        // info!("Program state: {:?}", program.state);
+        info!("Program state: {:?}", self.state);
         if self.is_setting_up() {
             // info!("Program state is_setting_up: {:?}", program.state);
             // TODO: Improvement, I think this tick function we should have different name.
