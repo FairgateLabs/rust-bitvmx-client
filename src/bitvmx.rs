@@ -10,7 +10,8 @@ use crate::{
         program::Program,
     },
     types::{
-        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus, L2_ID,
+        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus,
+        BITVMX_ID, L2_ID,
     },
 };
 
@@ -22,7 +23,7 @@ use bitcoin_coordinator::{
 
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
-    channel::channel::DualChannel,
+    channel::channel::LocalChannel,
     rpc::{sync_server::BrokerSync, BrokerConfig},
 };
 use p2p_handler::{LocalAllowList, P2pHandler, ReceiveHandlerChannel};
@@ -92,10 +93,10 @@ impl BitVMX {
         let broker_backend = Arc::new(Mutex::new(broker_backend));
         let broker_storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
         let broker_config = BrokerConfig::new(config.broker_port, None);
-        let broker = BrokerSync::new(&broker_config, broker_storage);
+        let broker = BrokerSync::new(&broker_config, broker_storage.clone());
 
         //TODO: A channel that talks directly with the broker without going through localhost loopback could be implemented
-        let broker_channel = DualChannel::new(&broker_config, 1);
+        let broker_channel = LocalChannel::new(BITVMX_ID, broker_storage.clone());
 
         let program_context =
             ProgramContext::new(comms, key_chain, bitcoin_coordinator, broker_channel);
