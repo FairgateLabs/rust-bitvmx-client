@@ -39,7 +39,7 @@ pub struct DisputeResolutionProtocol {
 }
 
 const PREKICKOFF: &str = "pre_kickoff";
-const KICKOFF: &str = "kickoff";
+const _KICKOFF: &str = "kickoff";
 const _PROTOCOL: &str = "protocol";
 
 impl DisputeResolutionProtocol {
@@ -128,7 +128,7 @@ impl DisputeResolutionProtocol {
         //     KICKOFF,
         //     &tr_sighash_type,
         // )?;
-        protocol.add_speedup_output(PREKICKOFF, p2wpkh_dust_threshold, &prover_keys.speedup)?;
+        protocol.add_speedup_output(PREKICKOFF, p2wpkh_dust_threshold, &prover_keys.speedup())?;
 
         protocol.build(id, &key_chain.key_manager)?;
         self.save_protocol(protocol)?;
@@ -154,9 +154,18 @@ impl DisputeResolutionProtocol {
             .transaction_to_send(PREKICKOFF, &[taproot_arg])
     }
 
-    pub fn kickoff_transaction(&self) -> Result<Transaction, ProtocolBuilderError> {
+    /*pub fn get_transaction(
+        &self,
+        id: &str,
+        key_chain: &KeyChain,
+    ) -> Result<Transaction, ProtocolBuilderError> {
+        let protocol = self.load_protocol()?;
+        protocol.transaction_to_send(id, &[SpendingArgs::new_args()])
+    }*/
+
+    /*pub fn kickoff_transaction(&self) -> Result<Transaction, ProtocolBuilderError> {
         self.load_protocol()?.transaction_to_send(KICKOFF, &[])
-    }
+    }*/
 
     pub fn get_transaction_by_id(&self, txid: Txid) -> Result<Transaction, ProtocolBuilderError> {
         let protocol = self.load_protocol()?;

@@ -1,35 +1,35 @@
 use crate::{
     api::BitVMXApi,
+    collaborate::Collaboration,
     config::Config,
     errors::BitVMXError,
     keychain::KeyChain,
     p2p_helper::deserialize_msg,
     program::{
-        dispute::SearchParams,
         participant::{P2PAddress, ParticipantData, ParticipantKeys, ParticipantRole},
         program::Program,
-        witness,
     },
     types::{
-        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus, L2_ID,
+        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus,
+        BITVMX_ID, L2_ID,
     },
 };
 
 use bitcoin::Transaction;
 use bitcoin_coordinator::{
     coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi},
-    types::{BitvmxInstance, ProcessedNews, TransactionPartialInfo},
+    types::ProcessedNews,
 };
 
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
-    channel::channel::DualChannel,
+    channel::channel::LocalChannel,
     rpc::{sync_server::BrokerSync, BrokerConfig},
 };
-use key_manager::winternitz;
 use p2p_handler::{LocalAllowList, P2pHandler, ReceiveHandlerChannel};
 use protocol_builder::builder::Utxo;
 use std::{
+    collections::HashMap,
     path::PathBuf,
     rc::Rc,
     sync::{Arc, Mutex},
@@ -46,6 +46,8 @@ pub struct BitVMX {
     program_context: ProgramContext,
     store: Rc<Storage>,
     broker: BrokerSync,
+    count: u32,
+    collaborations: HashMap<Uuid, Collaboration>,
 }
 
 impl Drop for BitVMX {
@@ -91,10 +93,10 @@ impl BitVMX {
         let broker_backend = Arc::new(Mutex::new(broker_backend));
         let broker_storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
         let broker_config = BrokerConfig::new(config.broker_port, None);
-        let broker = BrokerSync::new(&broker_config, broker_storage);
+        let broker = BrokerSync::new(&broker_config, broker_storage.clone());
 
         //TODO: A channel that talks directly with the broker without going through localhost loopback could be implemented
-        let broker_channel = DualChannel::new(&broker_config, 1);
+        let broker_channel = LocalChannel::new(BITVMX_ID, broker_storage.clone());
 
         let program_context =
             ProgramContext::new(comms, key_chain, bitcoin_coordinator, broker_channel);
@@ -104,6 +106,8 @@ impl BitVMX {
             program_context,
             store,
             broker,
+            count: 0,
+            collaborations: HashMap::new(), //deserialize from storage
         })
     }
 
@@ -143,25 +147,9 @@ impl BitVMX {
         Ok(())
     }
 
-    pub fn read_bitcoin_updates() -> bool {
-        // Pseudo code, this code needs to be in Bitvmx in the method read_bitcoin_updates()
-        // self.blockchain.tick();
-        // let news = self.blockchain.get_news();
-
-        // // process news
-
-        // self.blockchain.acknowledge(ProcessedNews {
-        //     txs_by_id: vec![],
-        //     txs_by_address: vec![],
-        //     funds_requests: vec![],
-        // });
-
-        false
-    }
-
     /// Sends the pre-kickoff transaction to the Bitcoin network, the program is now ready for the prover to
     /// claim its funds using the kickoff transaction.
-    pub fn deploy_program(&mut self, program_id: &Uuid) -> Result<bool, BitVMXError> {
+    /*pub fn deploy_program(&mut self, program_id: &Uuid) -> Result<bool, BitVMXError> {
         let program = self.load_program(program_id)?;
         let transaction = program.prekickoff_transaction()?;
 
@@ -192,11 +180,11 @@ impl BitVMX {
 
         */
         Ok(true)
-    }
+    }*/
 
     /// Sends the kickoff transaction to the Bitcoin network, the program is now ready for the verifier to
     /// challenge its execution.
-    pub fn claim_program(&mut self, program_id: &Uuid) -> Result<(), BitVMXError> {
+    /*pub fn claim_program(&mut self, program_id: &Uuid) -> Result<(), BitVMXError> {
         let program = self.load_program(program_id)?;
         let transaction = program.kickoff_transaction()?;
         self.monitor_claim_transaction(&transaction)?;
@@ -205,7 +193,7 @@ impl BitVMX {
         // when we verify the claim transaction appears on the blockchain
 
         Ok(())
-    }
+    }*/
 
     pub fn address(&self) -> String {
         self.program_context.comms.get_address()
@@ -245,7 +233,7 @@ impl BitVMX {
             .key_chain
             .derive_winternitz_hash160_keys(message_size, one_time_keys_count)?;
 
-        let keys = ParticipantKeys::new(
+        let keys = ParticipantKeys::new_old(
             protocol,
             speedup,
             timelock,
@@ -258,20 +246,20 @@ impl BitVMX {
         Ok(keys)
     }
 
-    fn _search_params(&self) -> SearchParams {
+    /*fn _search_params(&self) -> SearchParams {
         SearchParams::new(0, 0)
-    }
+    }*/
 
-    fn _decode_witness_data(
+    /*fn _decode_witness_data(
         &self,
         winternitz_message_sizes: Vec<usize>,
         winternitz_type: winternitz::WinternitzType,
         witness: bitcoin::Witness,
     ) -> Result<Vec<winternitz::WinternitzSignature>, BitVMXError> {
         witness::decode_witness(winternitz_message_sizes, winternitz_type, witness)
-    }
+    }*/
 
-    fn _wait_deployment(
+    /*fn _wait_deployment(
         &mut self,
         _deployment_transaction: &Transaction,
     ) -> Result<(), BitVMXError> {
@@ -279,9 +267,9 @@ impl BitVMX {
         // it should introduce the transaction to the bitcoin coordinator and what for news.
 
         Ok(())
-    }
+    }*/
 
-    fn monitor_claim_transaction(
+    /*fn monitor_claim_transaction(
         &mut self,
         _claim_transaction: &Transaction,
     ) -> Result<(), BitVMXError> {
@@ -289,7 +277,7 @@ impl BitVMX {
         // it should introduce the transaction to the bitcoin coordinator and what for news.
 
         Ok(())
-    }
+    }*/
 
     pub fn process_p2p_messages(&mut self) -> Result<(), BitVMXError> {
         let message = self.program_context.comms.check_receive();
@@ -304,8 +292,20 @@ impl BitVMX {
         // let _priority = self.comms.check_piority();
 
         match message {
-            ReceiveHandlerChannel::Msg(_peer_id, msg) => {
+            ReceiveHandlerChannel::Msg(peer_id, msg) => {
                 let (_version, msg_type, program_id, data) = deserialize_msg(msg)?;
+
+                if self.collaborations.contains_key(&program_id) {
+                    let collaboration = self.collaborations.get_mut(&program_id).unwrap();
+                    collaboration.process_p2p_message(
+                        peer_id,
+                        msg_type,
+                        data,
+                        &self.program_context,
+                    )?;
+                    return Ok(());
+                }
+
                 let mut program = self.load_program(&program_id)?;
                 program.process_p2p_message(msg_type, data, &self.program_context)?;
             }
@@ -326,9 +326,12 @@ impl BitVMX {
 
         let news = self.program_context.bitcoin_coordinator.get_news()?;
 
-        if !news.instance_txs.is_empty() {
+        if !news.instance_txs.is_empty()
+            || !news.single_txs.is_empty()
+            || !news.funds_requests.is_empty()
+        {
             info!("Processing news: {:?}", news);
-        };
+        }
 
         let mut instance_txs = vec![];
 
@@ -388,10 +391,25 @@ impl BitVMX {
     }
 
     pub fn tick(&mut self) -> Result<(), BitVMXError> {
+        self.count += 1;
         self.process_p2p_messages()?;
         self.process_programs()?;
-        self.process_api_messages()?;
-        //self.process_bitcoin_updates()?;
+
+        //throthle (check values)
+        if self.count % 100 == 0 {
+            self.process_api_messages()?;
+        }
+        if self.count % 50 == 0 {
+            self.process_bitcoin_updates()?;
+        }
+
+        //TOOD: manage state of the collaborations once persisted
+        if self.collaborations.len() > 0 {
+            for (_, collaboration) in self.collaborations.iter_mut() {
+                collaboration.tick(&self.program_context)?;
+            }
+        }
+
         Ok(())
     }
 
@@ -399,7 +417,7 @@ impl BitVMX {
         let programs = self.get_active_programs()?;
 
         for mut program in programs {
-            program.process_program(&self.program_context)?
+            program.tick(&self.program_context)?
         }
         Ok(())
     }
@@ -528,6 +546,12 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
+    fn dispatch_transaction_name(&mut self, id: Uuid, name: &str) -> Result<(), BitVMXError> {
+        self.load_program(&id)?
+            .dispatch_transaction_name(&self.program_context, name)?;
+        Ok(())
+    }
+
     fn dispatch_transaction(&mut self, id: Uuid, tx: Transaction) -> Result<(), BitVMXError> {
         info!("Dispatching transaction: {:?} for instance: {:?}", tx, id);
         self.program_context
@@ -554,15 +578,30 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address, utxo) => {
                 BitVMXApi::setup_program(self, id, role, peer_address, utxo)?
             }
-            IncomingBitVMXApiMessages::GetTransaction(txid) => BitVMXApi::get_tx(self)?,
-            IncomingBitVMXApiMessages::SubscribeToTransaction(txid) => {
+            IncomingBitVMXApiMessages::GetTransaction(_txid) => BitVMXApi::get_tx(self)?,
+            IncomingBitVMXApiMessages::SubscribeToTransaction(_txid) => {
                 BitVMXApi::subscribe_to_tx(self)?
             }
             IncomingBitVMXApiMessages::SubscribeUTXO() => BitVMXApi::subscribe_utxo(self)?,
+            IncomingBitVMXApiMessages::DispatchTransactionName(id, tx) => {
+                BitVMXApi::dispatch_transaction_name(self, id, &tx)?
+            }
             IncomingBitVMXApiMessages::DispatchTransaction(id, tx) => {
                 BitVMXApi::dispatch_transaction(self, id, tx)?
             }
             IncomingBitVMXApiMessages::SetupKey() => BitVMXApi::setup_key(self)?,
+
+            IncomingBitVMXApiMessages::GenerateAggregatedPubkey(id, participants, leader_idx) => {
+                let leader = participants[leader_idx as usize].clone();
+                let collab = Collaboration::setup_aggregated_signature(
+                    &id,
+                    participants,
+                    leader,
+                    &mut self.program_context,
+                    from,
+                )?;
+                self.collaborations.insert(id, collab);
+            }
             IncomingBitVMXApiMessages::GetAggregatedPubkey() => {
                 BitVMXApi::get_aggregated_pubkey(self)?
             }

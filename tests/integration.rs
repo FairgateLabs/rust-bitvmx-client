@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{str::FromStr, time::Instant};
 
 use anyhow::Result;
 use bitcoin::{secp256k1, Address, Amount, KnownHrp, Network, PublicKey, XOnlyPublicKey};
@@ -9,7 +9,7 @@ use bitvmx_client::{
     bitvmx::BitVMX,
     config::Config,
     program::participant::{P2PAddress, ParticipantRole},
-    types::{IncomingBitVMXApiMessages, L2_ID},
+    types::{IncomingBitVMXApiMessages, BITVMX_ID, L2_ID},
 };
 use p2p_handler::PeerId;
 use protocol_builder::{builder::Utxo, scripts};
@@ -21,7 +21,7 @@ fn config_trace() {
     let default_modules = [
         "info",
         "libp2p=off",
-        "bitvmx_transaction_monitor",
+        "bitvmx_transaction_monitor=off",
         "bitcoin_indexer=off",
         "bitcoin_coordinator=off",
         "p2p_protocol=off",
@@ -34,7 +34,7 @@ fn config_trace() {
         .expect("Invalid filter");
 
     tracing_subscriber::fmt()
-        .without_time()
+        //.without_time()
         .with_target(true)
         .with_env_filter(filter)
         .init();
@@ -103,16 +103,23 @@ fn wait_message_from_channel(
     instances: &mut Vec<&mut BitVMX>,
 ) -> Result<(String, u32)> {
     //loop to timeout
-    for _ in 0..5000 {
-        let msg = channel.recv()?;
-        if msg.is_some() {
-            info!("Received message from channel: {:?}", msg);
-            return Ok(msg.unwrap());
+    for i in 0..10000 {
+        if i % 50 == 0 {
+            let msg = channel.recv()?;
+            if msg.is_some() {
+                info!("Received message from channel: {:?}", msg);
+                return Ok(msg.unwrap());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
         for instance in instances.iter_mut() {
+            let start = Instant::now();
             instance.tick()?;
+            let elapsed = start.elapsed();
+            if elapsed.as_millis() > 100 {
+                info!("Tick took too long: {:?}", elapsed);
+            }
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
     }
     panic!("Timeout waiting for message from channel");
 }
@@ -153,6 +160,24 @@ pub fn test_single_run() -> Result<()> {
 
     let (mut verifier_bitvmx, verifier_address, verifier_bridge_channel) = init_bitvmx("verifier")?;
 
+    let mut instances = vec![&mut prover_bitvmx, &mut verifier_bitvmx];
+
+    //ask the peers to generate the aggregated public key
+    let aggregation_id = Uuid::new_v4();
+    let command = IncomingBitVMXApiMessages::GenerateAggregatedPubkey(
+        aggregation_id,
+        vec![prover_address.clone(), verifier_address.clone()],
+        0,
+    )
+    .to_string()?;
+    prover_bridge_channel.send(BITVMX_ID, command.clone())?;
+    verifier_bridge_channel.send(BITVMX_ID, command)?;
+
+    let msg = wait_message_from_channel(&prover_bridge_channel, &mut instances)?;
+    info!("PROVER: Received message from channel: {:?}", msg);
+    let msg = wait_message_from_channel(&verifier_bridge_channel, &mut instances)?;
+    info!("VERIFIER: Received message from channel: {:?}", msg);
+
     let program_id = Uuid::new_v4();
 
     let setup_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetupProgram(
@@ -175,13 +200,18 @@ pub fn test_single_run() -> Result<()> {
 
     info!("Waiting for setup messages...");
 
-    let mut instances = vec![&mut prover_bitvmx, &mut verifier_bitvmx];
-
     //Wait
     let msg = wait_message_from_channel(&prover_bridge_channel, &mut instances)?;
     info!("PROVER: Received message from channel: {:?}", msg);
     let msg = wait_message_from_channel(&verifier_bridge_channel, &mut instances)?;
     info!("VERIFIER: Received message from channel: {:?}", msg);
+
+    //Bridge send signal to send the kickoff message
+    let _ = prover_bridge_channel.send(
+        BITVMX_ID,
+        IncomingBitVMXApiMessages::DispatchTransactionName(program_id, "prekickoff".to_string())
+            .to_string()?,
+    );
 
     //TODO: main loop
     for i in 0..200 {
