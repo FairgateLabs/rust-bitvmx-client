@@ -1,5 +1,5 @@
 use bitcoin::{PublicKey, Transaction, Txid};
-use bitcoin_coordinator::types::{BitcoinCoordinatorType, TransactionNew};
+use bitcoin_coordinator::{types::BitcoinCoordinatorType, TransactionStatus};
 use bitvmx_broker::{broker_storage::BrokerStorage, channel::channel::LocalChannel};
 use chrono::{DateTime, Utc};
 use p2p_handler::P2pHandler;
@@ -106,9 +106,11 @@ type ProgramId = Uuid;
 pub enum OutgoingBitVMXApiMessages {
     Pong(),
     // Represents when pegin transactions is found
-    PeginTransactionFound(TransactionNew),
+    PeginTransactionFound(Txid, TransactionStatus),
+    // Represents when a spending utxo transaction is found
+    SpendingUTXOTransactionFound(Txid, u32, TransactionStatus),
     // Represents when a program is running out of funds
-    SpeedUpProgramNoFunds(Vec<Uuid>),
+    SpeedUpProgramNoFunds(Txid, String),
     // Setup Completed,
     SetupCompleted(ProgramId),
     // Add response types for the new messages if needed

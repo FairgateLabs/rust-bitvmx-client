@@ -6,8 +6,9 @@ use crate::{
     types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramRequestInfo, L2_ID},
 };
 use bitcoin::{Transaction, Txid};
-use bitcoin_coordinator::coordinator::BitcoinCoordinatorApi;
-use bitcoin_coordinator::types::{BitvmxInstance, TransactionNew, TransactionPartialInfo};
+use bitcoin_coordinator::{
+    coordinator::BitcoinCoordinatorApi, TransactionMonitor, TransactionStatus,
+};
 use chrono::Utc;
 use key_manager::{
     musig2::{types::MessageId, PartialSignature, PubNonce},
@@ -355,18 +356,12 @@ impl Program {
                 let txns_to_monitor = self.get_txs_to_monitor()?;
 
                 // TODO : COMPLETE THE FUNDING TX FOR SPEED UP
-                let txs_to_monitor: BitvmxInstance<TransactionPartialInfo> = BitvmxInstance::new(
-                    self.program_id,
-                    txns_to_monitor
-                        .iter()
-                        .map(|tx| TransactionPartialInfo::from(*tx))
-                        .collect(),
-                    None,
-                );
+                let txs_to_monitor =
+                    TransactionMonitor::Transactions(txns_to_monitor, self.program_id.to_string());
 
                 program_context
                     .bitcoin_coordinator
-                    .monitor_instance(&txs_to_monitor)?;
+                    .monitor(txs_to_monitor)?;
 
                 self.move_program_to_next_state()?;
 
@@ -723,11 +718,16 @@ impl Program {
 
         program_context
             .bitcoin_coordinator
-            .send_tx_instance(self.program_id, &tx_to_dispatch)?;
+            .dispatch(tx_to_dispatch, self.program_id.to_string())?;
         Ok(())
     }
 
-    pub fn notify_news(&self, _txs: Vec<TransactionNew>) -> Result<(), BitVMXError> {
+    pub fn notify_news(
+        &self,
+        _tx_id: Txid,
+        _tx_status: TransactionStatus,
+        _context: String,
+    ) -> Result<(), BitVMXError> {
         //TODO: for each tx the protocol should decide something to do
         Ok(())
     }
