@@ -128,7 +128,7 @@ impl DisputeResolutionProtocol {
         //     KICKOFF,
         //     &tr_sighash_type,
         // )?;
-        protocol.add_speedup_output(PREKICKOFF, p2wpkh_dust_threshold, &prover_keys.speedup)?;
+        protocol.add_speedup_output(PREKICKOFF, p2wpkh_dust_threshold, &prover_keys.speedup())?;
 
         protocol.build(id, &key_chain.key_manager)?;
         self.save_protocol(protocol)?;

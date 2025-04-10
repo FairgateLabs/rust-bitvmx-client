@@ -2,7 +2,9 @@ use bitcoin::PublicKey;
 use key_manager::winternitz::WinternitzPublicKey;
 use p2p_handler::PeerId;
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use std::{collections::HashMap, fmt};
+
+use crate::errors::BitVMXError;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ParticipantData {
@@ -35,19 +37,40 @@ impl fmt::Display for ParticipantRole {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub enum PublicKeyType {
+    Public(PublicKey),
+    Winternitz(WinternitzPublicKey),
+}
+
+impl Into<PublicKeyType> for PublicKey {
+    fn into(self) -> PublicKeyType {
+        PublicKeyType::Public(self)
+    }
+}
+
+impl Into<PublicKeyType> for WinternitzPublicKey {
+    fn into(self) -> PublicKeyType {
+        PublicKeyType::Winternitz(self)
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct ParticipantKeys {
-    pub protocol: PublicKey,
-    pub speedup: PublicKey,
-    pub timelock: PublicKey,
-    pub program_input_key: WinternitzPublicKey,
-    pub program_ending_state: WinternitzPublicKey,
-    pub program_ending_step_number: WinternitzPublicKey,
-    pub dispute_resolution: Vec<WinternitzPublicKey>,
+    pub mapping: HashMap<String, PublicKeyType>,
 }
 
 impl ParticipantKeys {
+    pub fn new(keys: Vec<(String, PublicKeyType)>) -> Self {
+        let mut mapping = HashMap::new();
+        for (name, key) in keys {
+            mapping.insert(name, key);
+        }
+        Self { mapping }
+    }
+
+    //TODO: Check if this is still needed
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub fn new_old(
         protocol: PublicKey,
         speedup: PublicKey,
         timelock: PublicKey,
@@ -56,15 +79,59 @@ impl ParticipantKeys {
         program_ending_step_number: WinternitzPublicKey,
         dispute_resolution: Vec<WinternitzPublicKey>,
     ) -> Self {
-        Self {
-            protocol,
-            speedup,
-            timelock,
-            program_input_key,
-            program_ending_state,
-            program_ending_step_number,
-            dispute_resolution,
+        let mut mapping = HashMap::new();
+        mapping.insert("protocol".to_string(), PublicKeyType::Public(protocol));
+        mapping.insert("speedup".to_string(), PublicKeyType::Public(speedup));
+        mapping.insert("timelock".to_string(), PublicKeyType::Public(timelock));
+        mapping.insert(
+            "program_input_key".to_string(),
+            PublicKeyType::Winternitz(program_input_key),
+        );
+        mapping.insert(
+            "program_ending_state".to_string(),
+            PublicKeyType::Winternitz(program_ending_state),
+        );
+        mapping.insert(
+            "program_ending_step_number".to_string(),
+            PublicKeyType::Winternitz(program_ending_step_number),
+        );
+        mapping.insert(
+            "dispute_resolution".to_string(),
+            PublicKeyType::Winternitz(dispute_resolution[0].clone()),
+        );
+
+        Self { mapping }
+    }
+
+    pub fn get_winternitz(&self, name: &str) -> Result<WinternitzPublicKey, BitVMXError> {
+        let pkt = self
+            .mapping
+            .get(name)
+            .ok_or(BitVMXError::InvalidMessageFormat)?;
+        match pkt {
+            PublicKeyType::Winternitz(key) => Ok(key.clone()),
+            _ => Err(BitVMXError::InvalidMessageFormat),
         }
+    }
+
+    pub fn get_public(&self, name: &str) -> Result<PublicKey, BitVMXError> {
+        let pkt = self
+            .mapping
+            .get(name)
+            .ok_or(BitVMXError::InvalidMessageFormat)?;
+
+        match pkt {
+            PublicKeyType::Public(key) => Ok(key.clone()),
+            _ => Err(BitVMXError::InvalidMessageFormat),
+        }
+    }
+
+    pub fn protocol(&self) -> PublicKey {
+        self.get_public("protocol").unwrap()
+    }
+
+    pub fn speedup(&self) -> PublicKey {
+        self.get_public("speedup").unwrap()
     }
 }
 

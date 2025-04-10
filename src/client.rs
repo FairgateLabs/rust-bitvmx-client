@@ -96,7 +96,7 @@ impl BitVMXClient {
     pub fn wait_message(&self) -> Result<OutgoingBitVMXApiMessages> {
         // TODO: add timeout
         // TODO: add sleep
-        let (msg, from) = loop {
+        let (msg, _from) = loop {
             if let Some(message) = self.get_message()? {
                 break message;
             }

@@ -196,8 +196,8 @@ impl Program {
         // 1. Save the received keys
         self.other.keys = Some(keys);
 
-        let my_protocol_key = self.me.keys.as_ref().unwrap().protocol;
-        let other_protocol_key = self.other.keys.as_ref().unwrap().protocol;
+        let my_protocol_key = self.me.keys.as_ref().unwrap().protocol();
+        let other_protocol_key = self.other.keys.as_ref().unwrap().protocol();
 
         let mut participant_keys = vec![my_protocol_key, other_protocol_key];
         participant_keys.sort();
@@ -233,7 +233,7 @@ impl Program {
         nonces: Vec<(MessageId, PubNonce)>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let participant_key = self.other.keys.as_ref().unwrap().protocol;
+        let participant_key = self.other.keys.as_ref().unwrap().protocol();
         context
             .key_chain
             .add_nonces(self.program_id, nonces, participant_key)?;
@@ -247,7 +247,7 @@ impl Program {
         signatures: Vec<(MessageId, PartialSignature)>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let other_pubkey = self.other.keys.as_ref().unwrap().protocol;
+        let other_pubkey = self.other.keys.as_ref().unwrap().protocol();
         context
             .key_chain
             .add_signatures(self.program_id, signatures, other_pubkey)?;

@@ -56,7 +56,7 @@ fn keys_encoding_test() -> Result<(), anyhow::Error> {
     let dp = WinternitzPublicKey::from_bytes(&[0u8; 32], WinternitzType::SHA256).unwrap();
     let dispute_resolution: Vec<WinternitzPublicKey> = vec![dp];
 
-    let participant = ParticipantKeys::new(
+    let participant = ParticipantKeys::new_old(
         protocol,
         speedup_key,
         timelock_key,

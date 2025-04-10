@@ -1,6 +1,7 @@
 pub mod api;
 pub mod bitvmx;
 pub mod client;
+pub mod collaborate;
 pub mod config;
 pub mod errors;
 pub mod helper;

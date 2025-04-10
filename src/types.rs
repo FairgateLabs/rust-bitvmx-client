@@ -1,4 +1,4 @@
-use bitcoin::{Transaction, Txid};
+use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::types::{BitcoinCoordinatorType, TransactionNew};
 use bitvmx_broker::channel::channel::DualChannel;
 use chrono::{DateTime, Utc};
@@ -86,6 +86,7 @@ pub enum IncomingBitVMXApiMessages {
     DispatchTransaction(Uuid, Transaction),
     DispatchTransactionName(Uuid, String),
     SetupKey(),
+    GenerateAggregatedPubkey(Uuid, Vec<P2PAddress>, u16),
     GetAggregatedPubkey(),
     GenerateZKP(),
     ProofReady(),
@@ -111,7 +112,7 @@ pub enum OutgoingBitVMXApiMessages {
     // Setup Completed,
     SetupCompleted(ProgramId),
     // Add response types for the new messages if needed
-    AggregatedPubkey(/* Add appropriate type */),
+    AggregatedPubkey(Uuid, PublicKey),
     ZKPResult(/* Add appropriate type */),
     ExecutionResult(/* Add appropriate type */),
     TransactionResult(/* Add appropriate type */),
