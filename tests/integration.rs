@@ -35,6 +35,7 @@ fn config_trace() {
 
     tracing_subscriber::fmt()
         //.without_time()
+        //.with_ansi(false)
         .with_target(true)
         .with_env_filter(filter)
         .init();
@@ -90,6 +91,7 @@ fn init_utxo(bitcoin_client: &BitcoinClient, aggregated_pub_key: PublicKey) -> R
         &aggregated_pub_key,
     );
 
+    info!("UTXO: {:?}", utxo);
     // Spend the UTXO to test Musig2 signature aggregation
     // spend_utxo(bitcoin_client, utxo.clone(), public_key, p2tr_address, taproot_spend_info)?;
 
@@ -158,16 +160,15 @@ pub fn test_single_run() -> Result<()> {
 
     let mut instances = vec![&mut prover_bitvmx, &mut verifier_bitvmx];
 
-    let aggregated_pub_key =
-        PublicKey::from_str("020d48dbe8043e0114f3255f205152fa621dd7f4e1bbf69d4e255ddb2aaa2878d2")?;
+    //let aggregated_pub_key =
+    //    PublicKey::from_str("020d48dbe8043e0114f3255f205152fa621dd7f4e1bbf69d4e255ddb2aaa2878d2")?;
 
-    let program_id = Uuid::new_v4();
     //ask the peers to generate the aggregated public key
-    //let aggregation_id = Uuid::new_v4();
+    let aggregation_id = Uuid::new_v4();
     let command = IncomingBitVMXApiMessages::GenerateAggregatedPubkey(
-        program_id,
+        aggregation_id,
         vec![prover_address.clone(), verifier_address.clone()],
-        1,
+        0,
     )
     .to_string()?;
     prover_bridge_channel.send(BITVMX_ID, command.clone())?;
@@ -189,6 +190,7 @@ pub fn test_single_run() -> Result<()> {
 
     let utxo = init_utxo(&bitcoin_client, aggregated_pub_key)?;
 
+    let program_id = Uuid::new_v4();
     let setup_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetupProgram(
         program_id,
         ParticipantRole::Prover,

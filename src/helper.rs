@@ -14,15 +14,19 @@ pub fn parse_keys(value: Value) -> Result<ParticipantKeys, ParseError> {
     Ok(participant_keys)
 }
 
-pub fn parse_nonces(data: Value) -> Result<Vec<(MessageId, PubNonce)>, ParseError> {
-    let nonces: Vec<(MessageId, PubNonce)> =
+type PubNonceMessage = (bitcoin::PublicKey, Vec<(MessageId, PubNonce)>);
+
+pub fn parse_nonces(data: Value) -> Result<PubNonceMessage, ParseError> {
+    let nonces: PubNonceMessage =
         serde_json::from_value(data).map_err(|_| ParseError::InvalidNonces)?;
 
     Ok(nonces)
 }
 
-pub fn parse_signatures(data: Value) -> Result<Vec<(MessageId, PartialSignature)>, ParseError> {
-    let signatures: Vec<(MessageId, PartialSignature)> =
+type PartialSignatureMessage = (bitcoin::PublicKey, Vec<(MessageId, PartialSignature)>);
+
+pub fn parse_signatures(data: Value) -> Result<PartialSignatureMessage, ParseError> {
+    let signatures: PartialSignatureMessage =
         serde_json::from_value(data).map_err(|_| ParseError::InvalidPartialSignatures)?;
 
     Ok(signatures)

@@ -5,7 +5,7 @@ use crate::{
     p2p_helper::{request, response, P2PMessageType},
     types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramRequestInfo, L2_ID},
 };
-use bitcoin::{Transaction, Txid};
+use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{
     coordinator::BitcoinCoordinatorApi, TransactionMonitor, TransactionStatus,
 };
@@ -197,8 +197,8 @@ impl Program {
         // 1. Save the received keys
         self.other.keys = Some(keys);
 
-        let my_protocol_key = self.me.keys.as_ref().unwrap().protocol();
-        let other_protocol_key = self.other.keys.as_ref().unwrap().protocol();
+        //let my_protocol_key = self.me.keys.as_ref().unwrap().protocol();
+        //let other_protocol_key = self.other.keys.as_ref().unwrap().protocol();
 
         /*let mut participant_keys = vec![my_protocol_key, other_protocol_key];
         participant_keys.sort();
@@ -219,7 +219,6 @@ impl Program {
         // 3. Build the protocol using the aggregated key as internal key for taproot
         info!("Building protocol for: {:?}", self.my_role);
         self.drp.build(
-            &self.program_id.to_string(),
             self.utxo.clone(),
             //&aggregated_key,
             self.get_prover().keys.as_ref().unwrap(),
@@ -238,12 +237,13 @@ impl Program {
     pub fn receive_participant_nonces(
         &mut self,
         nonces: Vec<(MessageId, PubNonce)>,
+        participant_pubkey: &PublicKey,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let participant_key = self.other.keys.as_ref().unwrap().protocol();
+        //the participant key is WRONG NEEDS TO BE THE ONE FROM THE AGGREGATED
         context
             .key_chain
-            .add_nonces(self.program_id, nonces, participant_key)?;
+            .add_nonces(&self.utxo.pub_key, Some(participant_pubkey), nonces)?;
         self.move_program_to_next_state()?;
 
         Ok(())
@@ -253,14 +253,14 @@ impl Program {
         &mut self,
         signatures: Vec<(MessageId, PartialSignature)>,
         context: &ProgramContext,
+        other_pubkey: &PublicKey,
     ) -> Result<(), BitVMXError> {
-        let other_pubkey = self.other.keys.as_ref().unwrap().protocol();
+        //let other_pubkey = self.other.keys.as_ref().unwrap().protocol();
         context
             .key_chain
-            .add_signatures(self.program_id, signatures, other_pubkey)?;
+            .add_signatures(&self.utxo.pub_key, signatures, other_pubkey)?;
 
-        self.drp
-            .sign(&self.program_id.to_string(), &context.key_chain)?;
+        self.drp.sign(&context.key_chain)?;
 
         self.move_program_to_next_state()?;
 
@@ -324,14 +324,19 @@ impl Program {
 
                 info!("{:?}: Sending nonces", self.my_role);
 
-                let nonces = program_context.key_chain.get_nonces(self.program_id)?;
+                //TODO: support multiple keys
+                let nonces = program_context.key_chain.get_nonces(&self.utxo.pub_key)?;
+                let my_pub = program_context
+                    .key_chain
+                    .key_manager
+                    .get_my_public_key(&self.utxo.pub_key)?;
 
                 request(
                     &program_context.comms,
                     &self.program_id,
                     self.other.p2p_address.clone(),
                     P2PMessageType::PublicNonces,
-                    nonces,
+                    (my_pub, nonces),
                 )?;
 
                 self.save_retry(StoreKey::LastRequestNonces(self.program_id))?;
@@ -344,15 +349,22 @@ impl Program {
                     return Ok(());
                 }
 
+                //TODO: support multiple keys
                 info!("{:?}: Sending PartialSignatures", self.my_role);
-                let signatures = program_context.key_chain.get_signatures(self.program_id)?;
+                let signatures = program_context
+                    .key_chain
+                    .get_signatures(&self.utxo.pub_key)?;
+                let my_pub = program_context
+                    .key_chain
+                    .key_manager
+                    .get_my_public_key(&self.utxo.pub_key)?;
 
                 request(
                     &program_context.comms,
                     &self.program_id,
                     self.other.p2p_address.clone(),
                     P2PMessageType::PartialSignatures,
-                    signatures,
+                    (my_pub, signatures),
                 )?;
 
                 self.save_retry(StoreKey::LastRequestSignatures(self.program_id))?;
@@ -566,9 +578,11 @@ impl Program {
                     return Ok(());
                 }
 
-                let nonces = parse_nonces(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+                //TODO: Santitize pariticipant_pub_key with message origin
+                let (participant_pub_key, nonces) =
+                    parse_nonces(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
-                self.receive_participant_nonces(nonces, program_context)?;
+                self.receive_participant_nonces(nonces, &participant_pub_key, program_context)?;
 
                 self.send_ack(&program_context, P2PMessageType::PublicNoncesAck)?;
             }
@@ -581,10 +595,10 @@ impl Program {
                     return Ok(());
                 }
 
-                let signatures =
+                let (other_pub_key, signatures) =
                     parse_signatures(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
-                self.sign_protocol(signatures, program_context)?;
+                self.sign_protocol(signatures, program_context, &other_pub_key)?;
 
                 //TODO Integration.
                 //let signatures = program.get_aggregated_signatures();

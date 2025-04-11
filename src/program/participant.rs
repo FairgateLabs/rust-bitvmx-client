@@ -42,6 +42,21 @@ pub enum PublicKeyType {
     Winternitz(WinternitzPublicKey),
 }
 
+impl PublicKeyType {
+    pub fn public(&self) -> Option<&PublicKey> {
+        match self {
+            PublicKeyType::Public(key) => Some(key),
+            _ => None,
+        }
+    }
+    pub fn winternitz(&self) -> Option<&WinternitzPublicKey> {
+        match self {
+            PublicKeyType::Winternitz(key) => Some(key),
+            _ => None,
+        }
+    }
+}
+
 impl Into<PublicKeyType> for PublicKey {
     fn into(self) -> PublicKeyType {
         PublicKeyType::Public(self)
@@ -103,35 +118,30 @@ impl ParticipantKeys {
         Self { mapping }
     }
 
-    pub fn get_winternitz(&self, name: &str) -> Result<WinternitzPublicKey, BitVMXError> {
-        let pkt = self
+    pub fn get_winternitz(&self, name: &str) -> Result<&WinternitzPublicKey, BitVMXError> {
+        Ok(self
             .mapping
             .get(name)
-            .ok_or(BitVMXError::InvalidMessageFormat)?;
-        match pkt {
-            PublicKeyType::Winternitz(key) => Ok(key.clone()),
-            _ => Err(BitVMXError::InvalidMessageFormat),
-        }
+            .ok_or(BitVMXError::InvalidMessageFormat)?
+            .winternitz()
+            .ok_or(BitVMXError::InvalidMessageFormat)?)
     }
 
-    pub fn get_public(&self, name: &str) -> Result<PublicKey, BitVMXError> {
-        let pkt = self
+    pub fn get_public(&self, name: &str) -> Result<&PublicKey, BitVMXError> {
+        Ok(self
             .mapping
             .get(name)
-            .ok_or(BitVMXError::InvalidMessageFormat)?;
-
-        match pkt {
-            PublicKeyType::Public(key) => Ok(key.clone()),
-            _ => Err(BitVMXError::InvalidMessageFormat),
-        }
+            .ok_or(BitVMXError::InvalidMessageFormat)?
+            .public()
+            .ok_or(BitVMXError::InvalidMessageFormat)?)
     }
 
     pub fn protocol(&self) -> PublicKey {
-        self.get_public("protocol").unwrap()
+        *self.get_public("protocol").unwrap()
     }
 
     pub fn speedup(&self) -> PublicKey {
-        self.get_public("speedup").unwrap()
+        *self.get_public("speedup").unwrap()
     }
 }
 

@@ -1,8 +1,7 @@
 use std::rc::Rc;
 
 use bitcoin::{
-    key::UntweakedPublicKey, secp256k1, Amount, PublicKey, ScriptBuf, Transaction, TxOut, Txid,
-    XOnlyPublicKey,
+    key::UntweakedPublicKey, secp256k1, Amount, ScriptBuf, Transaction, TxOut, Txid, XOnlyPublicKey,
 };
 use protocol_builder::{
     builder::{Protocol, SpendingArgs, Utxo},
@@ -61,9 +60,7 @@ impl DisputeResolutionProtocol {
 
     pub fn build(
         &self,
-        id: &str,
         utxo: Utxo,
-        //_internal_key: &PublicKey,
         prover_keys: &ParticipantKeys,
         _verifier_keys: &ParticipantKeys,
         _search: SearchParams,
@@ -131,15 +128,15 @@ impl DisputeResolutionProtocol {
         // )?;
         protocol.add_speedup_output(PREKICKOFF, p2wpkh_dust_threshold, &prover_keys.speedup())?;
 
-        protocol.build(id, &key_chain.key_manager)?;
+        protocol.build(&key_chain.key_manager)?;
         self.save_protocol(protocol)?;
 
         Ok(())
     }
 
-    pub fn sign(&mut self, id: &str, key_chain: &KeyChain) -> Result<(), ProtocolBuilderError> {
+    pub fn sign(&mut self, key_chain: &KeyChain) -> Result<(), ProtocolBuilderError> {
         let mut protocol = self.load_protocol()?;
-        protocol.sign(id, &key_chain.key_manager)?;
+        protocol.sign(&key_chain.key_manager)?;
         self.save_protocol(protocol)?;
         Ok(())
     }
