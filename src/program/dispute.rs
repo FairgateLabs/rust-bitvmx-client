@@ -93,7 +93,7 @@ impl DisputeResolutionProtocol {
             value: Amount::from_sat(utxo.amount),
             script_pubkey,
         };
-        let output_type = OutputSpendingType::TaprootScript {
+        let output_type = OutputSpendingType::TaprootScriptAndKey {
             spending_scripts,
             spend_info,
             internal_key: untweaked_key,
@@ -185,7 +185,8 @@ impl DisputeResolutionProtocol {
     pub fn prekickoff_transaction(&self) -> Result<Transaction, ProtocolBuilderError> {
         let signature = self
             .load_protocol()?
-            .input_taproot_key_spend_signature(START_CH, 0)?;
+            .input_taproot_key_spend_signature(START_CH, 0)?
+            .unwrap();
         let mut taproot_arg = SpendingArgs::new_args();
         taproot_arg.push_taproot_signature(signature);
 
@@ -202,7 +203,9 @@ impl DisputeResolutionProtocol {
 
         let txname = INPUT_1;
 
-        let signature = protocol.input_taproot_script_spend_signature(txname, 0, 0)?;
+        let signature = protocol
+            .input_taproot_script_spend_signature(txname, 0, 0)?
+            .unwrap();
         let spend = protocol.get_script_to_spend(txname, 0, 0)?;
         let mut spending_args = SpendingArgs::new_taproot_args(spend.get_script());
 
