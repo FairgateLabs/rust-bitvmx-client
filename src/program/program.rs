@@ -3,6 +3,7 @@ use crate::{
     errors::{BitVMXError, ProgramError},
     helper::{parse_keys, parse_nonces, parse_signatures},
     p2p_helper::{request, response, P2PMessageType},
+    program::dispute,
     types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramRequestInfo, L2_ID},
 };
 use bitcoin::{PublicKey, Transaction, Txid};
@@ -12,7 +13,7 @@ use bitcoin_coordinator::{
 use chrono::Utc;
 use key_manager::{
     musig2::{types::MessageId, PartialSignature, PubNonce},
-    winternitz::WinternitzSignature,
+    winternitz::{self, WinternitzSignature, WinternitzType},
 };
 use protocol_builder::builder::Utxo;
 use serde::{Deserialize, Serialize};
@@ -25,6 +26,7 @@ use uuid::Uuid;
 use super::{
     dispute::{DisputeResolutionProtocol, SearchParams},
     participant::{P2PAddress, ParticipantData, ParticipantKeys, ParticipantRole},
+    witness,
 };
 
 #[derive(PartialEq, Clone, Serialize, Deserialize, Debug)]
@@ -827,12 +829,56 @@ impl Program {
 
     pub fn notify_news(
         &self,
-        _tx_id: Txid,
-        _tx_status: TransactionStatus,
+        tx_id: Txid,
+        tx_status: TransactionStatus,
         _context: String,
+        program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         //TODO: for each tx the protocol should decide something to do
+        let name = self.drp.get_transaction_name_by_id(tx_id)?;
+        info!(
+            "Program {}: Transaction {} has been seen on-chain",
+            self.program_id, name
+        );
+
+        if name == dispute::START_CH
+            && tx_status.confirmations == 5
+            && self.my_role == ParticipantRole::Prover
+        {
+            //TODO: inform whoever is needed
+            // now act here to test
+
+            let tx_to_dispatch = self.drp.input_1_tx(1234, &program_context.key_chain)?;
+
+            program_context
+                .bitcoin_coordinator
+                .dispatch(tx_to_dispatch, self.program_id.to_string())?;
+        }
+
+        if name == dispute::INPUT_1
+            && tx_status.confirmations == 5
+            && self.my_role == ParticipantRole::Verifier
+        {
+            //self.drp.
+            //size is from def
+            let witness = tx_status.tx.input[0].witness.clone();
+            let data = self.decode_witness_data(vec![4], WinternitzType::HASH160, witness)?;
+            warn!(
+                "Program {}:{} Witness data decoded: {:?}",
+                self.program_id, name, data
+            );
+        }
+
         Ok(())
+    }
+
+    fn decode_witness_data(
+        &self,
+        winternitz_message_sizes: Vec<usize>,
+        winternitz_type: winternitz::WinternitzType,
+        witness: bitcoin::Witness,
+    ) -> Result<Vec<winternitz::WinternitzSignature>, BitVMXError> {
+        witness::decode_witness(winternitz_message_sizes, winternitz_type, witness)
     }
 
     pub fn get_txs_to_monitor(&self) -> Result<Vec<Txid>, BitVMXError> {

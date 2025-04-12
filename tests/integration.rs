@@ -218,7 +218,7 @@ pub fn test_single_run() -> Result<()> {
     info!("VERIFIER: Received message from channel: {:?}", msg);
 
     //Bridge send signal to send the kickoff message
-    let _ = prover_bridge_channel.send(
+    let _ = verifier_bridge_channel.send(
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(program_id, "prekickoff".to_string())
             .to_string()?,

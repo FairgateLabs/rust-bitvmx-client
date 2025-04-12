@@ -3,6 +3,7 @@ use std::rc::Rc;
 use bitcoin::{
     key::UntweakedPublicKey, secp256k1, Amount, ScriptBuf, Transaction, TxOut, Txid, XOnlyPublicKey,
 };
+use key_manager::winternitz::WinternitzType;
 use protocol_builder::{
     builder::{Protocol, SpendingArgs, Utxo},
     errors::ProtocolBuilderError,
@@ -11,6 +12,7 @@ use protocol_builder::{
 };
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::Storage;
+use tracing::info;
 use uuid::Uuid;
 
 use crate::{errors::BitVMXError, keychain::KeyChain};
@@ -37,7 +39,8 @@ pub struct DisputeResolutionProtocol {
     storage: Option<Rc<Storage>>,
 }
 
-const PREKICKOFF: &str = "pre_kickoff";
+pub const START_CH: &str = "pre_kickoff";
+pub const INPUT_1: &str = "INPUT_1";
 const _KICKOFF: &str = "kickoff";
 const _PROTOCOL: &str = "protocol";
 
@@ -62,15 +65,16 @@ impl DisputeResolutionProtocol {
         &self,
         utxo: Utxo,
         prover_keys: &ParticipantKeys,
-        _verifier_keys: &ParticipantKeys,
+        verifier_keys: &ParticipantKeys,
         _search: SearchParams,
         key_chain: &KeyChain,
     ) -> Result<(), BitVMXError> {
         // TODO get this from config, all values expressed in satoshis
         let _p2pkh_dust_threshold: u64 = 546;
         let _p2sh_p2wpkh_dust_threshold: u64 = 540;
-        let p2wpkh_dust_threshold: u64 = 99_999_000; // 294;
-        let _taproot_dust_threshold: u64 = 330;
+        let mut p2wpkh_dust_threshold: u64 = 99_999_000; // 294;
+        let taproot_dust_threshold: u64 = 330;
+        let fee = 1000;
 
         let tr_sighash_type = SighashType::taproot_all();
 
@@ -84,11 +88,11 @@ impl DisputeResolutionProtocol {
 
         let script_pubkey = ScriptBuf::new_p2tr(&secp, untweaked_key, spend_info.merkle_root());
 
+        //Description of the output that the START_CH consumes
         let prevout = TxOut {
             value: Amount::from_sat(utxo.amount),
             script_pubkey,
         };
-
         let output_type = OutputSpendingType::TaprootScript {
             spending_scripts,
             spend_info,
@@ -106,15 +110,46 @@ impl DisputeResolutionProtocol {
             utxo.txid,
             utxo.vout,
             output_type,
-            PREKICKOFF,
+            START_CH,
             &tr_sighash_type,
         )?;
-        protocol.add_speedup_output(PREKICKOFF, p2wpkh_dust_threshold, prover_keys.speedup())?;
+
+        //protocol.add_speedup_output(START_CH, p2wpkh_dust_threshold, verifier_keys.speedup())?;
 
         // reuse aggregated until we can have multiple aggregated keys
-        //let aggregated = &utxo.pub_key;
+        let aggregated = &utxo.pub_key;
 
-        //let input_data = scripts::verify_winternitz_signature(verifying_key, public_key)
+        let input_data = scripts::verify_winternitz_signature(
+            aggregated,
+            prover_keys.get_winternitz("program_input")?,
+        )?;
+
+        protocol.add_taproot_script_spend_connection(
+            "prover_first_input",
+            START_CH,
+            //taproot_dust_threshold,
+            p2wpkh_dust_threshold,
+            //&key_chain.unspendable_key()?,
+            &XOnlyPublicKey::from(aggregated.clone()), //TOOD: skip this one ?
+            &[input_data],
+            INPUT_1,
+            &tr_sighash_type,
+        )?;
+        p2wpkh_dust_threshold -= fee;
+
+        protocol.add_speedup_output(INPUT_1, p2wpkh_dust_threshold, prover_keys.speedup())?;
+
+        //protocol.add_taproot_key_spend_output(START_CH, value, internal_key, prevouts)
+
+        // builder.add_taproot_script_spend_connection(
+        //     PROTOCOL,
+        //     PREKICKOFF,
+        //     taproot_dust_threshold,
+        //     &XOnlyPublicKey::from(*internal_key),
+        //     &[kickoff_spending],
+        //     KICKOFF,
+        //     &tr_sighash_type,
+        // )?;
 
         // let kickoff_spending = scripts::kickoff(
         //     internal_key,
@@ -134,6 +169,7 @@ impl DisputeResolutionProtocol {
         // )?;
 
         protocol.build(&key_chain.key_manager)?;
+        info!("{}", protocol.visualize()?);
         self.save_protocol(protocol)?;
 
         Ok(())
@@ -149,12 +185,39 @@ impl DisputeResolutionProtocol {
     pub fn prekickoff_transaction(&self) -> Result<Transaction, ProtocolBuilderError> {
         let signature = self
             .load_protocol()?
-            .input_taproot_key_spend_signature(PREKICKOFF, 0)?;
+            .input_taproot_key_spend_signature(START_CH, 0)?;
         let mut taproot_arg = SpendingArgs::new_args();
         taproot_arg.push_taproot_signature(signature);
 
         self.load_protocol()?
-            .transaction_to_send(PREKICKOFF, &[taproot_arg])
+            .transaction_to_send(START_CH, &[taproot_arg])
+    }
+
+    pub fn input_1_tx(
+        &self,
+        data: u32,
+        key_chain: &KeyChain,
+    ) -> Result<Transaction, ProtocolBuilderError> {
+        let protocol = self.load_protocol()?;
+
+        let txname = INPUT_1;
+
+        let signature = protocol.input_taproot_script_spend_signature(txname, 0, 0)?;
+        let spend = protocol.get_script_to_spend(txname, 0, 0)?;
+        let mut spending_args = SpendingArgs::new_taproot_args(spend.get_script());
+
+        //TODO: set value for variable from outside
+        let message_to_sign = data.to_le_bytes();
+        let winternitz_signature = key_chain.key_manager.sign_winternitz_message(
+            &message_to_sign,
+            WinternitzType::HASH160,
+            0,
+        )?;
+
+        spending_args.push_winternitz_signature(winternitz_signature);
+        spending_args.push_taproot_signature(signature);
+
+        protocol.transaction_to_send(txname, &[spending_args])
     }
 
     /*pub fn get_transaction(
@@ -178,6 +241,11 @@ impl DisputeResolutionProtocol {
     pub fn get_transaction_ids(&self) -> Result<Vec<Txid>, ProtocolBuilderError> {
         let protocol = self.load_protocol()?;
         Ok(protocol.get_transaction_ids())
+    }
+
+    pub fn get_transaction_name_by_id(&self, txid: Txid) -> Result<String, ProtocolBuilderError> {
+        let protocol = self.load_protocol()?;
+        protocol.transaction_name_by_id(txid).cloned()
     }
 
     fn load_protocol(&self) -> Result<Protocol, ProtocolBuilderError> {

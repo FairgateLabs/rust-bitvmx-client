@@ -125,15 +125,6 @@ impl BitVMX {
         Ok(program)
     }
 
-    /*fn _decode_witness_data(
-        &self,
-        winternitz_message_sizes: Vec<usize>,
-        winternitz_type: winternitz::WinternitzType,
-        witness: bitcoin::Witness,
-    ) -> Result<Vec<winternitz::WinternitzSignature>, BitVMXError> {
-        witness::decode_witness(winternitz_message_sizes, winternitz_type, witness)
-    }*/
-
     pub fn process_p2p_messages(&mut self) -> Result<(), BitVMXError> {
         let message = self.program_context.comms.check_receive();
 
@@ -201,7 +192,7 @@ impl BitVMX {
                     let program_id = Uuid::parse_str(&context_data).unwrap();
                     let program = self.load_program(&program_id)?;
 
-                    program.notify_news(tx_id, tx_status, context_data)?;
+                    program.notify_news(tx_id, tx_status, context_data, &self.program_context)?;
 
                     ack_news = AckNews::Transaction(AckTransactionNews::Transaction(tx_id));
                 }

@@ -145,7 +145,7 @@ impl KeyChain {
         self.derive_winternitz_keys(size_in_bytes, WinternitzType::HASH160, quantity)
     }
 
-    pub fn unspendable_key(&mut self) -> Result<XOnlyPublicKey, BitVMXError> {
+    pub fn unspendable_key(&self) -> Result<XOnlyPublicKey, BitVMXError> {
         let mut rng = secp256k1::rand::thread_rng();
         Ok(XOnlyPublicKey::from(unspendable_key(&mut rng)?))
     }
