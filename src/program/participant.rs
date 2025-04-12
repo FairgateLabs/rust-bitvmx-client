@@ -136,12 +136,12 @@ impl ParticipantKeys {
             .ok_or(BitVMXError::InvalidMessageFormat)?)
     }
 
-    pub fn protocol(&self) -> PublicKey {
+    /*pub fn protocol(&self) -> PublicKey {
         *self.get_public("protocol").unwrap()
-    }
+    }*/
 
-    pub fn speedup(&self) -> PublicKey {
-        *self.get_public("speedup").unwrap()
+    pub fn speedup(&self) -> &PublicKey {
+        self.get_public("speedup").unwrap()
     }
 }
 

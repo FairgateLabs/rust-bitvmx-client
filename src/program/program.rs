@@ -24,7 +24,7 @@ use uuid::Uuid;
 
 use super::{
     dispute::{DisputeResolutionProtocol, SearchParams},
-    participant::{ParticipantData, ParticipantKeys, ParticipantRole},
+    participant::{P2PAddress, ParticipantData, ParticipantKeys, ParticipantRole},
 };
 
 #[derive(PartialEq, Clone, Serialize, Deserialize, Debug)]
@@ -110,7 +110,7 @@ pub struct Program {
     pub me: ParticipantData,
     pub other: ParticipantData,
     pub utxo: Utxo,
-    pub drp: DisputeResolutionProtocol,
+    pub drp: DisputeResolutionProtocol, //TODO: this might be generic
     pub state: ProgramState,
     witness_data: HashMap<Txid, WitnessData>,
     #[serde(skip)]
@@ -185,6 +185,89 @@ impl Program {
         } else {
             &self.other
         }
+    }
+
+    pub fn setup_program(
+        id: &Uuid,
+        my_role: ParticipantRole,
+        peer_address: &P2PAddress,
+        utxo: Utxo,
+        program_context: &mut ProgramContext,
+        storage: Rc<Storage>,
+        config: &ClientConfig,
+    ) -> Result<Self, BitVMXError> {
+        // Generate my keys.
+        let my_keys = Program::generate_keys(&my_role, program_context)?;
+
+        let p2p_address = P2PAddress::new(
+            &program_context.comms.get_address(),
+            program_context.comms.get_peer_id(),
+        );
+        // Create a participant that represents me with the specified role (Prover or Verifier).
+        let me = ParticipantData::new(&p2p_address, Some(my_keys));
+
+        // Create a participant that represents the counterparty with the opposite role.
+        let other = ParticipantData::new(peer_address, None);
+
+        // Create a program with the utxo information, and the dispute resolution search parameters.
+        Ok(Program::new(
+            *id,
+            my_role,
+            me,
+            other,
+            utxo,
+            storage,
+            config.clone(),
+        )?)
+    }
+
+    fn generate_keys(
+        _role: &ParticipantRole,
+        program_context: &mut ProgramContext,
+    ) -> Result<ParticipantKeys, BitVMXError> {
+        //TODO: define which keys are generated for each role
+
+        //let message_size = 2;
+        //let one_time_keys_count = 10;
+        //let protocol = self.program_context.key_chain.derive_keypair()?;
+
+        let speedup = program_context.key_chain.derive_keypair()?;
+        let timelock = program_context.key_chain.derive_keypair()?;
+
+        let program_input = program_context.key_chain.derive_winternitz_hash160(4)?;
+
+        let keys = vec![
+            ("speedup".to_string(), speedup.into()),
+            ("timelock".to_string(), timelock.into()),
+            ("program_input".to_string(), program_input.into()),
+        ];
+
+        Ok(ParticipantKeys::new(keys))
+
+        /*let program_ending_state = self
+            .program_context
+            .key_chain
+            .derive_winternitz_hash160(message_size)?;
+        let program_ending_step_number = self
+            .program_context
+            .key_chain
+            .derive_winternitz_hash160(message_size)?;
+        let dispute_resolution = self
+            .program_context
+            .key_chain
+            .derive_winternitz_hash160_keys(message_size, one_time_keys_count)?;*/
+
+        /*let keys = ParticipantKeys::new_old(
+            protocol,
+            speedup,
+            timelock,
+            program_input,
+            program_ending_state,
+            program_ending_step_number,
+            dispute_resolution,
+        );*/
+
+        //Ok(keys)
     }
 
     pub fn build_protocol(

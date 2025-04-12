@@ -6,7 +6,7 @@ use crate::{
     keychain::KeyChain,
     p2p_helper::deserialize_msg,
     program::{
-        participant::{P2PAddress, ParticipantData, ParticipantKeys, ParticipantRole},
+        participant::{P2PAddress, ParticipantRole},
         program::Program,
     },
     types::{
@@ -112,90 +112,6 @@ impl BitVMX {
         })
     }
 
-    pub fn setup_program(
-        &mut self,
-        id: &Uuid,
-        my_role: ParticipantRole,
-        peer_address: &P2PAddress,
-        utxo: Utxo,
-    ) -> Result<(), BitVMXError> {
-        // Generate my keys.
-        let my_keys = self.generate_keys(&my_role)?;
-
-        let p2p_address = P2PAddress::new(
-            &self.program_context.comms.get_address(),
-            self.program_context.comms.get_peer_id(),
-        );
-        // Create a participant that represents me with the specified role (Prover or Verifier).
-        let me = ParticipantData::new(&p2p_address, Some(my_keys.clone()));
-
-        // Create a participant that represents the counterparty with the opposite role.
-        let other = ParticipantData::new(peer_address, None);
-
-        // Create a program with the utxo information, and the dispute resolution search parameters.
-        Program::new(
-            *id,
-            my_role,
-            me,
-            other,
-            utxo,
-            self.store.clone(),
-            self._config.client.clone(),
-        )?;
-
-        self.add_new_program(&id)?;
-
-        Ok(())
-    }
-
-    /// Sends the pre-kickoff transaction to the Bitcoin network, the program is now ready for the prover to
-    /// claim its funds using the kickoff transaction.
-    /*pub fn deploy_program(&mut self, program_id: &Uuid) -> Result<bool, BitVMXError> {
-        let program = self.load_program(program_id)?;
-        let transaction = program.prekickoff_transaction()?;
-
-        let instance: BitvmxInstance<TransactionPartialInfo> = BitvmxInstance::new(
-            *program_id,
-            vec![TransactionPartialInfo::from(transaction.compute_txid())],
-            None,
-        );
-
-        self.program_context
-            .bitcoin_coordinator
-            .monitor_instance(&instance)?;
-
-        self.program_context
-            .bitcoin_coordinator
-            .send_tx_instance(*program_id, &transaction)?;
-
-        info!("Attempt to deploy program: {}", program_id);
-
-        /*let deployed = self.wait_deployment(&transaction)?;
-        let mut program = self.load_program(program_id)?;
-
-        if deployed {
-            program.deploy();
-        }
-
-        info!("Program deployed: {}", program_id);
-
-        */
-        Ok(true)
-    }*/
-
-    /// Sends the kickoff transaction to the Bitcoin network, the program is now ready for the verifier to
-    /// challenge its execution.
-    /*pub fn claim_program(&mut self, program_id: &Uuid) -> Result<(), BitVMXError> {
-        let program = self.load_program(program_id)?;
-        let transaction = program.kickoff_transaction()?;
-        self.monitor_claim_transaction(&transaction)?;
-
-        // TODO: Claim transaction detection should happen during bitcoin coordinator news processing,
-        // when we verify the claim transaction appears on the blockchain
-
-        Ok(())
-    }*/
-
     pub fn address(&self) -> String {
         self.program_context.comms.get_address()
     }
@@ -209,48 +125,6 @@ impl BitVMX {
         Ok(program)
     }
 
-    fn generate_keys(&mut self, _role: &ParticipantRole) -> Result<ParticipantKeys, BitVMXError> {
-        //TODO: define which keys are generated for each role
-        let message_size = 2;
-        let one_time_keys_count = 10;
-        let protocol = self.program_context.key_chain.derive_keypair()?;
-        let speedup = self.program_context.key_chain.derive_keypair()?;
-        let timelock = self.program_context.key_chain.derive_keypair()?;
-
-        let program_input = self
-            .program_context
-            .key_chain
-            .derive_winternitz_hash160(message_size)?;
-        let program_ending_state = self
-            .program_context
-            .key_chain
-            .derive_winternitz_hash160(message_size)?;
-        let program_ending_step_number = self
-            .program_context
-            .key_chain
-            .derive_winternitz_hash160(message_size)?;
-        let dispute_resolution = self
-            .program_context
-            .key_chain
-            .derive_winternitz_hash160_keys(message_size, one_time_keys_count)?;
-
-        let keys = ParticipantKeys::new_old(
-            protocol,
-            speedup,
-            timelock,
-            program_input,
-            program_ending_state,
-            program_ending_step_number,
-            dispute_resolution,
-        );
-
-        Ok(keys)
-    }
-
-    /*fn _search_params(&self) -> SearchParams {
-        SearchParams::new(0, 0)
-    }*/
-
     /*fn _decode_witness_data(
         &self,
         winternitz_message_sizes: Vec<usize>,
@@ -258,26 +132,6 @@ impl BitVMX {
         witness: bitcoin::Witness,
     ) -> Result<Vec<winternitz::WinternitzSignature>, BitVMXError> {
         witness::decode_witness(winternitz_message_sizes, winternitz_type, witness)
-    }*/
-
-    /*fn _wait_deployment(
-        &mut self,
-        _deployment_transaction: &Transaction,
-    ) -> Result<(), BitVMXError> {
-        // 1. Wait for the prekickoff transaction to be confirmed
-        // it should introduce the transaction to the bitcoin coordinator and what for news.
-
-        Ok(())
-    }*/
-
-    /*fn monitor_claim_transaction(
-        &mut self,
-        _claim_transaction: &Transaction,
-    ) -> Result<(), BitVMXError> {
-        // 1. Wait for the kickoff transaction to be confirmed
-        // it should introduce the transaction to the bitcoin coordinator and what for news.
-
-        Ok(())
     }*/
 
     pub fn process_p2p_messages(&mut self) -> Result<(), BitVMXError> {
@@ -559,8 +413,16 @@ impl BitVMXApi for BitVMX {
         }
 
         info!("Setting up program: {:?}", id);
-        //TODO: This should be done in a single atomic operation
-        self.setup_program(&id, role.clone(), &peer_address, utxo)?;
+        Program::setup_program(
+            &id,
+            role.clone(),
+            &peer_address,
+            utxo,
+            &mut self.program_context,
+            self.store.clone(),
+            &self._config.client,
+        )?;
+        self.add_new_program(&id)?;
         info!("{}: Program Setup Finished", role);
 
         Ok(())

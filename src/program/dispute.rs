@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use storage_backend::storage::Storage;
 use uuid::Uuid;
 
-use crate::keychain::KeyChain;
+use crate::{errors::BitVMXError, keychain::KeyChain};
 
 use super::participant::ParticipantKeys;
 pub struct SearchParams {
@@ -65,7 +65,7 @@ impl DisputeResolutionProtocol {
         _verifier_keys: &ParticipantKeys,
         _search: SearchParams,
         key_chain: &KeyChain,
-    ) -> Result<(), ProtocolBuilderError> {
+    ) -> Result<(), BitVMXError> {
         // TODO get this from config, all values expressed in satoshis
         let _p2pkh_dust_threshold: u64 = 546;
         let _p2sh_p2wpkh_dust_threshold: u64 = 540;
@@ -109,6 +109,12 @@ impl DisputeResolutionProtocol {
             PREKICKOFF,
             &tr_sighash_type,
         )?;
+        protocol.add_speedup_output(PREKICKOFF, p2wpkh_dust_threshold, prover_keys.speedup())?;
+
+        // reuse aggregated until we can have multiple aggregated keys
+        //let aggregated = &utxo.pub_key;
+
+        //let input_data = scripts::verify_winternitz_signature(verifying_key, public_key)
 
         // let kickoff_spending = scripts::kickoff(
         //     internal_key,
@@ -126,7 +132,6 @@ impl DisputeResolutionProtocol {
         //     KICKOFF,
         //     &tr_sighash_type,
         // )?;
-        protocol.add_speedup_output(PREKICKOFF, p2wpkh_dust_threshold, &prover_keys.speedup())?;
 
         protocol.build(&key_chain.key_manager)?;
         self.save_protocol(protocol)?;
