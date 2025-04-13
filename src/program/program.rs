@@ -848,7 +848,9 @@ impl Program {
             //TODO: inform whoever is needed
             // now act here to test
 
-            let tx_to_dispatch = self.drp.input_1_tx(1234, &program_context.key_chain)?;
+            let tx_to_dispatch = self
+                .drp
+                .input_1_tx(0x1234_4444, &program_context.key_chain)?;
 
             program_context
                 .bitcoin_coordinator
@@ -861,11 +863,16 @@ impl Program {
         {
             //self.drp.
             //size is from def
+
+            //let wpub = self.get_prover().keys.as_ref().unwrap().get_winternitz("program_input").unwrap();
             let witness = tx_status.tx.input[0].witness.clone();
             let data = self.decode_witness_data(vec![4], WinternitzType::HASH160, witness)?;
+            //info!("message bytes {:?}", data[0].message_bytes());
+            //from vec<u8> be bytes to u32
+            let message = u32::from_be_bytes(data[0].message_bytes().try_into().unwrap());
             warn!(
-                "Program {}:{} Witness data decoded: {:?}",
-                self.program_id, name, data
+                "Program {}:{} Witness data decoded: {}",
+                self.program_id, name, message
             );
         }
 

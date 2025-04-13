@@ -12,7 +12,7 @@ use protocol_builder::{
 };
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::Storage;
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{errors::BitVMXError, keychain::KeyChain};
@@ -210,12 +210,15 @@ impl DisputeResolutionProtocol {
         let mut spending_args = SpendingArgs::new_taproot_args(spend.get_script());
 
         //TODO: set value for variable from outside
-        let message_to_sign = data.to_le_bytes();
+        let message_to_sign = data.to_be_bytes();
         let winternitz_signature = key_chain.key_manager.sign_winternitz_message(
             &message_to_sign,
             WinternitzType::HASH160,
             0,
         )?;
+
+        //warn!("bytes: {:?}", message_to_sign);
+        //warn!("Sending Winternitz signature: {:?}", winternitz_signature);
 
         spending_args.push_winternitz_signature(winternitz_signature);
         spending_args.push_taproot_signature(signature);
