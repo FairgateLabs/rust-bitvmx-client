@@ -83,41 +83,6 @@ impl ParticipantKeys {
         Self { mapping }
     }
 
-    //TODO: Check if this is still needed
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_old(
-        protocol: PublicKey,
-        speedup: PublicKey,
-        timelock: PublicKey,
-        program_input_key: WinternitzPublicKey,
-        program_ending_state: WinternitzPublicKey,
-        program_ending_step_number: WinternitzPublicKey,
-        dispute_resolution: Vec<WinternitzPublicKey>,
-    ) -> Self {
-        let mut mapping = HashMap::new();
-        mapping.insert("protocol".to_string(), PublicKeyType::Public(protocol));
-        mapping.insert("speedup".to_string(), PublicKeyType::Public(speedup));
-        mapping.insert("timelock".to_string(), PublicKeyType::Public(timelock));
-        mapping.insert(
-            "program_input_key".to_string(),
-            PublicKeyType::Winternitz(program_input_key),
-        );
-        mapping.insert(
-            "program_ending_state".to_string(),
-            PublicKeyType::Winternitz(program_ending_state),
-        );
-        mapping.insert(
-            "program_ending_step_number".to_string(),
-            PublicKeyType::Winternitz(program_ending_step_number),
-        );
-        mapping.insert(
-            "dispute_resolution".to_string(),
-            PublicKeyType::Winternitz(dispute_resolution[0].clone()),
-        );
-
-        Self { mapping }
-    }
-
     pub fn get_winternitz(&self, name: &str) -> Result<&WinternitzPublicKey, BitVMXError> {
         Ok(self
             .mapping
@@ -135,10 +100,6 @@ impl ParticipantKeys {
             .public()
             .ok_or(BitVMXError::InvalidMessageFormat)?)
     }
-
-    /*pub fn protocol(&self) -> PublicKey {
-        *self.get_public("protocol").unwrap()
-    }*/
 
     pub fn speedup(&self) -> &PublicKey {
         self.get_public("speedup").unwrap()
