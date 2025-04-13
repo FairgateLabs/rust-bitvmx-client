@@ -124,7 +124,7 @@ impl Collaboration {
                     let keys: ParticipantKeys =
                         parse_keys(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
                     let key = keys.get_public(&self.collaboration_id.to_string())?;
-                    self.keys.insert(peer_id, *key);
+                    self.keys.insert(peer_id.clone(), *key);
                     info!("{:?}", self.keys);
 
                     if self.keys.len() == self.participants.len() {
@@ -140,9 +140,9 @@ impl Collaboration {
                     let keys: ParticipantKeys =
                         parse_keys(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
-                    
                     keys.mapping.iter().for_each(|(peer_id, key)| {
-                        let peer_id: PeerId = peer_id.parse().unwrap_or(self.leader.peer_id); //TODO: Handle the unwrap better
+                        let peer_id: PeerId =
+                            peer_id.parse().unwrap_or(self.leader.peer_id.clone()); //TODO: Handle the unwrap better
                         let key = key.public();
                         if let Some(key) = key {
                             self.keys.insert(peer_id, *key);
@@ -169,7 +169,7 @@ impl Collaboration {
                 response(
                     &program_context.comms,
                     &self.collaboration_id,
-                    peer_id,
+                    peer_id.clone(),
                     P2PMessageType::KeysAck,
                     (),
                 )?;

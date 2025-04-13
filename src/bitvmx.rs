@@ -263,10 +263,10 @@ impl BitVMX {
         self.process_programs()?;
 
         //throthle (check values)
-        if self.count % 100 == 0 {
+        if self.count % 5 == 0 {
             self.process_api_messages()?;
+            self.process_bitcoin_updates()?;
         }
-        self.process_bitcoin_updates()?;
 
         //TOOD: manage state of the collaborations once persisted
         if self.collaborations.len() > 0 {

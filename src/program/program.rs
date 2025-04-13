@@ -805,7 +805,7 @@ impl Program {
         response(
             &program_context.comms,
             &self.program_id,
-            self.other.p2p_address.peer_id,
+            self.other.p2p_address.peer_id.clone(),
             msg_type,
             (),
         )?;

@@ -1,4 +1,4 @@
-use std::{str::FromStr, time::Instant};
+use std::str::FromStr;
 
 use anyhow::Result;
 use bitcoin::{secp256k1, Address, Amount, KnownHrp, Network, PublicKey, XOnlyPublicKey};
@@ -110,16 +110,10 @@ fn wait_message_from_channel(
                 info!("Received message from channel: {:?}", msg);
                 return Ok(msg.unwrap());
             }
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
         for instance in instances.iter_mut() {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-            let start = Instant::now();
             instance.tick()?;
-            let elapsed = start.elapsed();
-            if elapsed.as_millis() > 100 {
-                info!("Tick took too long: {:?}", elapsed);
-            }
         }
     }
     panic!("Timeout waiting for message from channel");
@@ -152,13 +146,20 @@ pub fn test_single_run() -> Result<()> {
         .unwrap();
 
     info!("Mine 101 blocks to address {:?}", wallet);
-    bitcoin_client.mine_blocks_to_address(202, &wallet).unwrap();
+    bitcoin_client.mine_blocks_to_address(101, &wallet).unwrap();
 
     let (mut prover_bitvmx, prover_address, prover_bridge_channel) = init_bitvmx("prover")?;
 
     let (mut verifier_bitvmx, verifier_address, verifier_bridge_channel) = init_bitvmx("verifier")?;
 
     let mut instances = vec![&mut prover_bitvmx, &mut verifier_bitvmx];
+
+    //get to the top of the blockchain
+    for _ in 0..101 {
+        for instance in instances.iter_mut() {
+            instance.process_bitcoin_updates()?;
+        }
+    }
 
     //let aggregated_pub_key =
     //    PublicKey::from_str("020d48dbe8043e0114f3255f205152fa621dd7f4e1bbf69d4e255ddb2aaa2878d2")?;
@@ -225,8 +226,8 @@ pub fn test_single_run() -> Result<()> {
     );
 
     //TODO: main loop
-    for i in 0..400 {
-        if i % 20 == 0 {
+    for i in 0..200 {
+        if i % 10 == 0 {
             bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
         }
 
