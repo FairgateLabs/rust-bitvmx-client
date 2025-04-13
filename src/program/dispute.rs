@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use crate::{errors::BitVMXError, keychain::KeyChain};
 
-use super::participant::ParticipantKeys;
+use super::participant::{ParticipantKeys, ParticipantRole};
 pub struct SearchParams {
     _search_intervals: u8,
     _max_steps: u32,
@@ -59,6 +59,30 @@ impl DisputeResolutionProtocol {
 
     pub fn set_storage(&mut self, storage: Rc<Storage>) {
         self.storage = Some(storage);
+    }
+
+    pub fn generate_keys(
+        _role: &ParticipantRole,
+        key_chain: &mut KeyChain,
+    ) -> Result<ParticipantKeys, BitVMXError> {
+        //TODO: define which keys are generated for each role
+
+        //let message_size = 2;
+        //let one_time_keys_count = 10;
+        //let protocol = self.program_context.key_chain.derive_keypair()?;
+
+        let speedup = key_chain.derive_keypair()?;
+        let timelock = key_chain.derive_keypair()?;
+
+        let program_input = key_chain.derive_winternitz_hash160(4)?;
+
+        let keys = vec![
+            ("speedup".to_string(), speedup.into()),
+            ("timelock".to_string(), timelock.into()),
+            ("program_input".to_string(), program_input.into()),
+        ];
+
+        Ok(ParticipantKeys::new(keys))
     }
 
     pub fn build(

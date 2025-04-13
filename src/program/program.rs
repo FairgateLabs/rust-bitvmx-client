@@ -121,35 +121,6 @@ pub struct Program {
 }
 
 impl Program {
-    pub fn new(
-        program_id: Uuid,
-        my_role: ParticipantRole,
-        me: ParticipantData,
-        other: ParticipantData,
-        utxo: Utxo,
-        storage: Rc<Storage>,
-        config: ClientConfig,
-    ) -> Result<Self, ProgramError> {
-        let drp = DisputeResolutionProtocol::new(program_id, storage.clone())?;
-
-        let program = Program {
-            program_id,
-            my_role,
-            me,
-            other,
-            utxo,
-            drp,
-            state: ProgramState::New,
-            witness_data: HashMap::new(),
-            storage: Some(storage),
-            config,
-        };
-
-        program.save()?;
-
-        Ok(program)
-    }
-
     pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Self, ProgramError> {
         let program = storage.get(Self::get_key(StoreKey::Program(*program_id)))?;
         let mut program: Program = program.ok_or(ProgramError::ProgramNotFound(*program_id))?;
@@ -199,7 +170,8 @@ impl Program {
         config: &ClientConfig,
     ) -> Result<Self, BitVMXError> {
         // Generate my keys.
-        let my_keys = Program::generate_keys(&my_role, program_context)?;
+        let my_keys =
+            DisputeResolutionProtocol::generate_keys(&my_role, &mut program_context.key_chain)?;
 
         let p2p_address = P2PAddress::new(
             &program_context.comms.get_address(),
@@ -212,64 +184,24 @@ impl Program {
         let other = ParticipantData::new(peer_address, None);
 
         // Create a program with the utxo information, and the dispute resolution search parameters.
-        Ok(Program::new(
-            *id,
+        let drp = DisputeResolutionProtocol::new(*id, storage.clone())?;
+
+        let program = Self {
+            program_id: *id,
             my_role,
             me,
             other,
             utxo,
-            storage,
-            config.clone(),
-        )?)
-    }
+            drp,
+            state: ProgramState::New,
+            witness_data: HashMap::new(),
+            storage: Some(storage),
+            config: config.clone(),
+        };
 
-    fn generate_keys(
-        _role: &ParticipantRole,
-        program_context: &mut ProgramContext,
-    ) -> Result<ParticipantKeys, BitVMXError> {
-        //TODO: define which keys are generated for each role
+        program.save()?;
 
-        //let message_size = 2;
-        //let one_time_keys_count = 10;
-        //let protocol = self.program_context.key_chain.derive_keypair()?;
-
-        let speedup = program_context.key_chain.derive_keypair()?;
-        let timelock = program_context.key_chain.derive_keypair()?;
-
-        let program_input = program_context.key_chain.derive_winternitz_hash160(4)?;
-
-        let keys = vec![
-            ("speedup".to_string(), speedup.into()),
-            ("timelock".to_string(), timelock.into()),
-            ("program_input".to_string(), program_input.into()),
-        ];
-
-        Ok(ParticipantKeys::new(keys))
-
-        /*let program_ending_state = self
-            .program_context
-            .key_chain
-            .derive_winternitz_hash160(message_size)?;
-        let program_ending_step_number = self
-            .program_context
-            .key_chain
-            .derive_winternitz_hash160(message_size)?;
-        let dispute_resolution = self
-            .program_context
-            .key_chain
-            .derive_winternitz_hash160_keys(message_size, one_time_keys_count)?;*/
-
-        /*let keys = ParticipantKeys::new_old(
-            protocol,
-            speedup,
-            timelock,
-            program_input,
-            program_ending_state,
-            program_ending_step_number,
-            dispute_resolution,
-        );*/
-
-        //Ok(keys)
+        Ok(program)
     }
 
     pub fn build_protocol(
@@ -864,7 +796,7 @@ impl Program {
             //self.drp.
             //size is from def
 
-            //let wpub = self.get_prover().keys.as_ref().unwrap().get_winternitz("program_input").unwrap();
+            //let wpub = self .get_prover() .keys .as_ref() .unwrap() .get_winternitz("program_input") .unwrap();
             let witness = tx_status.tx.input[0].witness.clone();
             let data = self.decode_witness_data(vec![4], WinternitzType::HASH160, witness)?;
             //info!("message bytes {:?}", data[0].message_bytes());
