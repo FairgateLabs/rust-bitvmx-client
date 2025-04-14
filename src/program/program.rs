@@ -1,10 +1,5 @@
 use crate::{
-    config::ClientConfig,
-    errors::{BitVMXError, ProgramError},
-    helper::{parse_keys, parse_nonces, parse_signatures},
-    p2p_helper::{request, response, P2PMessageType},
-    program::dispute,
-    types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramRequestInfo, L2_ID},
+    bitvmx::Context, config::ClientConfig, errors::{BitVMXError, ProgramError}, helper::{parse_keys, parse_nonces, parse_signatures}, p2p_helper::{request, response, P2PMessageType}, program::dispute, types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramRequestInfo, L2_ID}
 };
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{
@@ -753,9 +748,11 @@ impl Program {
         //TODO: Get transactions by identification
         let tx_to_dispatch = self.drp.prekickoff_transaction()?;
 
+        let context = Context::ProgramId(self.program_id);
+
         program_context
             .bitcoin_coordinator
-            .dispatch(tx_to_dispatch, self.program_id.to_string())?;
+            .dispatch(tx_to_dispatch, context.to_string()?)?;
         Ok(())
     }
 

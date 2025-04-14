@@ -10,7 +10,8 @@ use bitvmx_client::{bitvmx::BitVMX, config::Config};
 
 fn config_trace() {
     let filter = EnvFilter::builder()
-        .parse("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitcoin_coordinator=off,p2p_protocol=off,p2p_handler=off,tarpc=off")
+        // .parse("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitcoin_coordinator=off,p2p_protocol=off,p2p_handler=off,tarpc=off")
+        .parse("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_coordinator=off,p2p_protocol=off,p2p_handler=off,tarpc=off")
         // .parse("info,libp2p=off,p2p_protocol=off,p2p_handler=off,tarpc=off")
         .expect("Invalid filter");
 
@@ -54,7 +55,7 @@ fn run_bitvmx(role: &str) -> Result<()> {
         match bitvmx.tick() {
             Ok(_) => {
                 // prevent busy waiting
-                thread::sleep(Duration::from_millis(100));
+                // thread::sleep(Duration::from_millis(100));
             }
             Err(e) => {
                 error!("Error in BitVMX tick: {:?}", e);
