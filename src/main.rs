@@ -11,6 +11,7 @@ use bitvmx_client::{bitvmx::BitVMX, config::Config};
 fn config_trace() {
     let filter = EnvFilter::builder()
         .parse("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitcoin_coordinator=off,p2p_protocol=off,p2p_handler=off,tarpc=off")
+        // .parse("info,libp2p=off,p2p_protocol=off,p2p_handler=off,tarpc=off")
         .expect("Invalid filter");
 
     tracing_subscriber::fmt()
@@ -52,11 +53,6 @@ fn run_bitvmx(role: &str) -> Result<()> {
     loop {
         match bitvmx.tick() {
             Ok(_) => {
-                // // Process any messages from the broker
-                // if let Ok(Some((msg, from))) = bridge_channel.recv() {
-                //     info!("Received message from {}: {}", from, msg);
-                // }
-
                 // prevent busy waiting
                 thread::sleep(Duration::from_millis(100));
             }
