@@ -803,7 +803,7 @@ impl Program {
             //from vec<u8> be bytes to u32
             let message = u32::from_be_bytes(data[0].message_bytes().try_into().unwrap());
             warn!(
-                "Program {}:{} Witness data decoded: {}",
+                "Program {}:{} Witness data decoded: {:0x}",
                 self.program_id, name, message
             );
         }

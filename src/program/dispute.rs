@@ -12,7 +12,7 @@ use protocol_builder::{
 };
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::Storage;
-use tracing::{info, warn};
+use tracing::info;
 use uuid::Uuid;
 
 use crate::{errors::BitVMXError, keychain::KeyChain};
@@ -74,12 +74,20 @@ impl DisputeResolutionProtocol {
         let speedup = key_chain.derive_keypair()?;
         let timelock = key_chain.derive_keypair()?;
 
-        let program_input = key_chain.derive_winternitz_hash160(4)?;
+        let program_input_leaf_1 = key_chain.derive_winternitz_hash160(4)?;
+        let program_input_leaf_2 = key_chain.derive_winternitz_hash160(4)?;
 
         let keys = vec![
             ("speedup".to_string(), speedup.into()),
             ("timelock".to_string(), timelock.into()),
-            ("program_input".to_string(), program_input.into()),
+            (
+                "program_input_leaf_1".to_string(),
+                program_input_leaf_1.into(),
+            ),
+            (
+                "program_input_leaf_2".to_string(),
+                program_input_leaf_2.into(),
+            ),
         ];
 
         Ok(ParticipantKeys::new(keys))
@@ -89,7 +97,7 @@ impl DisputeResolutionProtocol {
         &self,
         utxo: Utxo,
         prover_keys: &ParticipantKeys,
-        verifier_keys: &ParticipantKeys,
+        _verifier_keys: &ParticipantKeys,
         _search: SearchParams,
         key_chain: &KeyChain,
     ) -> Result<(), BitVMXError> {
@@ -97,7 +105,7 @@ impl DisputeResolutionProtocol {
         let _p2pkh_dust_threshold: u64 = 546;
         let _p2sh_p2wpkh_dust_threshold: u64 = 540;
         let mut p2wpkh_dust_threshold: u64 = 99_999_000; // 294;
-        let taproot_dust_threshold: u64 = 330;
+        let _taproot_dust_threshold: u64 = 330;
         let fee = 1000;
 
         let tr_sighash_type = SighashType::taproot_all();
@@ -143,9 +151,14 @@ impl DisputeResolutionProtocol {
         // reuse aggregated until we can have multiple aggregated keys
         let aggregated = &utxo.pub_key;
 
-        let input_data = scripts::verify_winternitz_signature(
+        let input_data_l1 = scripts::verify_winternitz_signature(
             aggregated,
-            prover_keys.get_winternitz("program_input")?,
+            prover_keys.get_winternitz("program_input_leaf_1")?,
+        )?;
+
+        let input_data_l2 = scripts::verify_winternitz_signature(
+            aggregated,
+            prover_keys.get_winternitz("program_input_leaf_2")?,
         )?;
 
         protocol.add_taproot_script_spend_connection(
@@ -155,10 +168,11 @@ impl DisputeResolutionProtocol {
             p2wpkh_dust_threshold,
             //&key_chain.unspendable_key()?,
             &XOnlyPublicKey::from(aggregated.clone()), //TOOD: skip this one ?
-            &[input_data],
+            &[input_data_l1, input_data_l2],
             INPUT_1,
             &tr_sighash_type,
         )?;
+
         p2wpkh_dust_threshold -= fee;
 
         protocol.add_speedup_output(INPUT_1, p2wpkh_dust_threshold, prover_keys.speedup())?;
@@ -228,9 +242,9 @@ impl DisputeResolutionProtocol {
         let txname = INPUT_1;
 
         let signature = protocol
-            .input_taproot_script_spend_signature(txname, 0, 0)?
+            .input_taproot_script_spend_signature(txname, 0, 1)?
             .unwrap();
-        let spend = protocol.get_script_to_spend(txname, 0, 0)?;
+        let spend = protocol.get_script_to_spend(txname, 0, 1)?;
         let mut spending_args = SpendingArgs::new_taproot_args(spend.get_script());
 
         //TODO: set value for variable from outside
@@ -238,7 +252,7 @@ impl DisputeResolutionProtocol {
         let winternitz_signature = key_chain.key_manager.sign_winternitz_message(
             &message_to_sign,
             WinternitzType::HASH160,
-            0,
+            spend.get_key("value").unwrap().derivation_index(),
         )?;
 
         //warn!("bytes: {:?}", message_to_sign);
