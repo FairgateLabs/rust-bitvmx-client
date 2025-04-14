@@ -2,7 +2,6 @@ use anyhow::Result;
 use bitcoin::Network;
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
-use std::{thread, time::Duration};
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 

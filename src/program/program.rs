@@ -1,5 +1,11 @@
 use crate::{
-    bitvmx::Context, config::ClientConfig, errors::{BitVMXError, ProgramError}, helper::{parse_keys, parse_nonces, parse_signatures}, p2p_helper::{request, response, P2PMessageType}, program::dispute, types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramRequestInfo, L2_ID}
+    bitvmx::Context,
+    config::ClientConfig,
+    errors::{BitVMXError, ProgramError},
+    helper::{parse_keys, parse_nonces, parse_signatures},
+    p2p_helper::{request, response, P2PMessageType},
+    program::dispute,
+    types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramRequestInfo, L2_ID},
 };
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{
@@ -386,10 +392,9 @@ impl Program {
                 let txns_to_monitor = self.get_txs_to_monitor()?;
 
                 // TODO : COMPLETE THE FUNDING TX FOR SPEED UP
-                let txs_to_monitor = TransactionMonitor::Transactions(
-                    txns_to_monitor.clone(),
-                    self.program_id.to_string(),
-                );
+                let context = Context::ProgramId(self.program_id);
+                let txs_to_monitor =
+                    TransactionMonitor::Transactions(txns_to_monitor.clone(), context.to_string()?);
 
                 program_context
                     .bitcoin_coordinator
@@ -793,9 +798,10 @@ impl Program {
                 .drp
                 .input_1_tx(0x1234_4444, &program_context.key_chain)?;
 
+            let context = Context::ProgramId(self.program_id);
             program_context
                 .bitcoin_coordinator
-                .dispatch(tx_to_dispatch, self.program_id.to_string())?;
+                .dispatch(tx_to_dispatch, context.to_string()?)?;
         }
 
         if name == dispute::INPUT_1
