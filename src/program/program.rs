@@ -386,12 +386,24 @@ impl Program {
                 let txns_to_monitor = self.get_txs_to_monitor()?;
 
                 // TODO : COMPLETE THE FUNDING TX FOR SPEED UP
-                let txs_to_monitor =
-                    TransactionMonitor::Transactions(txns_to_monitor, self.program_id.to_string());
+                let txs_to_monitor = TransactionMonitor::Transactions(
+                    txns_to_monitor.clone(),
+                    self.program_id.to_string(),
+                );
 
                 program_context
                     .bitcoin_coordinator
                     .monitor(txs_to_monitor)?;
+
+                let utox_to_monitor = TransactionMonitor::SpendingUTXOTransaction(
+                    txns_to_monitor[0],
+                    0,
+                    "HELLO UTXO TRANSACTION".to_string(),
+                );
+
+                program_context
+                    .bitcoin_coordinator
+                    .monitor(utox_to_monitor)?;
 
                 self.move_program_to_next_state()?;
 

@@ -40,7 +40,7 @@ use std::{
 };
 use storage_backend::storage::{KeyValueStore, Storage};
 
-use tracing::info;
+use tracing::{error, info};
 use uuid::Uuid;
 
 pub struct BitVMX {
@@ -210,6 +210,11 @@ impl BitVMX {
                     tx_status,
                     _context_data,
                 ) => {
+                    error!(
+                        "Spending UTXO Transaction Found: {:?} {}",
+                        tx_id, _context_data
+                    );
+
                     let data = serde_json::to_string(
                         &OutgoingBitVMXApiMessages::SpendingUTXOTransactionFound(
                             tx_id,
