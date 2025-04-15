@@ -57,7 +57,7 @@ impl Collaboration {
     ) -> Result<Self, BitVMXError> {
         let im_leader = program_context.comms.get_peer_id() == leader.peer_id;
         let my_key = program_context.key_chain.derive_keypair()?;
-        let keys = ParticipantKeys::new(vec![(id.to_string(), my_key.clone().into())]);
+        let keys = ParticipantKeys::new(vec![(id.to_string(), my_key.clone().into())], vec![]);
         if !im_leader {
             request(
                 &program_context.comms,
@@ -87,7 +87,7 @@ impl Collaboration {
                 .map(|(p, k)| (p.to_base58(), k.into()))
                 .collect::<Vec<_>>();
 
-            let keys = ParticipantKeys::new(all_keys);
+            let keys = ParticipantKeys::new(all_keys, vec![]);
             for peer in &self.participants {
                 if peer.peer_id == self.leader.peer_id {
                     continue;

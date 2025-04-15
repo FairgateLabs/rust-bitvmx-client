@@ -72,15 +72,21 @@ impl Into<PublicKeyType> for WinternitzPublicKey {
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct ParticipantKeys {
     pub mapping: HashMap<String, PublicKeyType>,
+    pub aggregated: Vec<String>,
+    pub computed_aggregated: HashMap<String, PublicKey>,
 }
 
 impl ParticipantKeys {
-    pub fn new(keys: Vec<(String, PublicKeyType)>) -> Self {
+    pub fn new(keys: Vec<(String, PublicKeyType)>, aggregated: Vec<String>) -> Self {
         let mut mapping = HashMap::new();
         for (name, key) in keys {
-            mapping.insert(name, key);
+            mapping.insert(name.to_string(), key);
         }
-        Self { mapping }
+        Self {
+            mapping,
+            aggregated,
+            computed_aggregated: HashMap::new(),
+        }
     }
 
     pub fn get_winternitz(&self, name: &str) -> Result<&WinternitzPublicKey, BitVMXError> {

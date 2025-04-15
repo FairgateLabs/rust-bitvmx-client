@@ -2,7 +2,9 @@ use crate::{
     bitvmx::Context,
     config::ClientConfig,
     errors::{BitVMXError, ProgramError},
-    helper::{parse_keys, parse_nonces, parse_signatures},
+    helper::{
+        parse_keys, parse_nonces, parse_signatures, PartialSignatureMessage, PubNonceMessage,
+    },
     p2p_helper::{request, response, P2PMessageType},
     program::dispute,
     types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramRequestInfo, L2_ID},
@@ -21,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashMap, rc::Rc};
 use storage_backend::storage::{KeyValueStore, Storage};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::{
@@ -142,29 +144,60 @@ impl Program {
         Ok(program)
     }
 
+    pub fn prepare_aggregated_keys(
+        &mut self,
+        context: &ProgramContext,
+    ) -> Result<HashMap<String, PublicKey>, BitVMXError> {
+        // 2. Init the musig2 signer for this program
+        let mut aggregated_keys = vec![("pregenerated".to_string(), self.utxo.pub_key.clone())];
+        let mut result = HashMap::new();
+
+        for agg_name in &self.me.keys.as_ref().unwrap().aggregated {
+            let agg_key = self
+                .me
+                .keys
+                .as_ref()
+                .unwrap()
+                .get_public(&agg_name)
+                .map_err(|_| BitVMXError::InvalidMessageFormat)?;
+
+            let mut aggregated_pub_keys = vec![agg_key.clone()];
+
+            for other in &self.others {
+                let other_key = other
+                    .keys
+                    .as_ref()
+                    .unwrap()
+                    .get_public(&agg_name)
+                    .map_err(|_| BitVMXError::InvalidMessageFormat)?;
+                aggregated_pub_keys.push(other_key.clone());
+            }
+
+            aggregated_pub_keys.sort();
+
+            let aggregated_key = context
+                .key_chain
+                .new_musig2_session(aggregated_pub_keys, *agg_key)?;
+
+            warn!(
+                "Aggregated var name {}: Aggregated key: {}",
+                agg_name,
+                aggregated_key.to_string()
+            );
+            aggregated_keys.push((agg_name.clone(), aggregated_key));
+        }
+
+        for (agg_name, aggregated_key) in aggregated_keys {
+            result.insert(agg_name.to_string(), aggregated_key);
+        }
+        self.me.keys.as_mut().unwrap().computed_aggregated = result.clone();
+        Ok(result)
+    }
+
     pub fn build_protocol(&mut self, context: &ProgramContext) -> Result<(), BitVMXError> {
         let search_params = SearchParams::new(8, 32);
 
-        // 1. Save the received keys
-
-        //let my_protocol_key = self.me.keys.as_ref().unwrap().protocol();
-        //let other_protocol_key = self.other.keys.as_ref().unwrap().protocol();
-
-        /*let mut participant_keys = vec![my_protocol_key, other_protocol_key];
-        participant_keys.sort();
-
-        // 2. Init the musig2 signer for this program
-        let aggregated_key = context.key_chain.new_musig2_session(
-            self.program_id,
-            participant_keys,
-            my_protocol_key,
-        )?;
-
-        warn!(
-            "Program {}: Aggregated key: {}",
-            self.program_id,
-            aggregated_key.to_string()
-        );*/
+        let aggregated = self.prepare_aggregated_keys(context)?;
 
         // 3. Build the protocol using the aggregated key as internal key for taproot
         info!("Building protocol for: {:?}", self.my_role);
@@ -178,6 +211,7 @@ impl Program {
             self.utxo.clone(),
             prover_key.keys.as_ref().unwrap(),
             verifier_key.keys.as_ref().unwrap(),
+            aggregated,
             search_params,
             &context.key_chain,
         )?;
@@ -192,14 +226,14 @@ impl Program {
     pub fn receive_participant_nonces(
         &mut self,
         nonces: Vec<(MessageId, PubNonce)>,
+        aggreagted: &PublicKey,
         participant_pubkey: &PublicKey,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         //the participant key is WRONG NEEDS TO BE THE ONE FROM THE AGGREGATED
         context
             .key_chain
-            .add_nonces(&self.utxo.pub_key, Some(participant_pubkey), nonces)?;
-        self.move_program_to_next_state()?;
+            .add_nonces(&aggreagted, Some(participant_pubkey), nonces)?;
 
         Ok(())
     }
@@ -208,16 +242,13 @@ impl Program {
         &mut self,
         signatures: Vec<(MessageId, PartialSignature)>,
         context: &ProgramContext,
+        aggreagted: &PublicKey,
         other_pubkey: &PublicKey,
     ) -> Result<(), BitVMXError> {
         //let other_pubkey = self.other.keys.as_ref().unwrap().protocol();
         context
             .key_chain
-            .add_signatures(&self.utxo.pub_key, signatures, other_pubkey)?;
-
-        self.drp.sign(&context.key_chain)?;
-
-        self.move_program_to_next_state()?;
+            .add_signatures(aggreagted, signatures, other_pubkey)?;
 
         Ok(())
     }
@@ -225,10 +256,6 @@ impl Program {
     pub fn prekickoff_transaction(&self) -> Result<Transaction, BitVMXError> {
         self.drp.prekickoff_transaction().map_err(BitVMXError::from)
     }
-
-    /*pub fn kickoff_transaction(&self) -> Result<Transaction, BitVMXError> {
-        self.drp.kickoff_transaction().map_err(BitVMXError::from)
-    }*/
 
     pub fn push_witness_value(&mut self, txid: Txid, name: &str, value: WinternitzSignature) {
         self.witness_data
@@ -279,19 +306,22 @@ impl Program {
 
                 info!("{:?}: Sending nonces", self.my_role);
 
-                //TODO: support multiple keys
-                let nonces = program_context.key_chain.get_nonces(&self.utxo.pub_key)?;
-                let my_pub = program_context
-                    .key_chain
-                    .key_manager
-                    .get_my_public_key(&self.utxo.pub_key)?;
+                let mut public_nonce_msg: PubNonceMessage = Vec::new();
+                for aggregated in self.me.keys.as_ref().unwrap().computed_aggregated.values() {
+                    let nonces = program_context.key_chain.get_nonces(aggregated)?;
+                    let my_pub = program_context
+                        .key_chain
+                        .key_manager
+                        .get_my_public_key(aggregated)?;
+                    public_nonce_msg.push((aggregated.clone(), my_pub, nonces));
+                }
 
                 request(
                     &program_context.comms,
                     &self.program_id,
                     self.others[0].p2p_address.clone(),
                     P2PMessageType::PublicNonces,
-                    (my_pub, nonces),
+                    public_nonce_msg,
                 )?;
 
                 self.save_retry(StoreKey::LastRequestNonces(self.program_id))?;
@@ -304,22 +334,27 @@ impl Program {
                     return Ok(());
                 }
 
-                //TODO: support multiple keys
                 info!("{:?}: Sending PartialSignatures", self.my_role);
-                let signatures = program_context
-                    .key_chain
-                    .get_signatures(&self.utxo.pub_key)?;
-                let my_pub = program_context
-                    .key_chain
-                    .key_manager
-                    .get_my_public_key(&self.utxo.pub_key)?;
+                let mut partial_sig_msg: PartialSignatureMessage = Vec::new();
+                for aggregated in self.me.keys.as_ref().unwrap().computed_aggregated.values() {
+                    debug!(
+                        "Program {}: Sending partial signatures for aggregated key: {}",
+                        self.program_id, aggregated
+                    );
+                    let signatures = program_context.key_chain.get_signatures(aggregated)?;
+                    let my_pub = program_context
+                        .key_chain
+                        .key_manager
+                        .get_my_public_key(aggregated)?;
+                    partial_sig_msg.push((aggregated.clone(), my_pub, signatures));
+                }
 
                 request(
                     &program_context.comms,
                     &self.program_id,
                     self.others[0].p2p_address.clone(),
                     P2PMessageType::PartialSignatures,
-                    (my_pub, signatures),
+                    partial_sig_msg,
                 )?;
 
                 self.save_retry(StoreKey::LastRequestSignatures(self.program_id))?;
@@ -404,11 +439,22 @@ impl Program {
                 }
 
                 //TODO: Santitize pariticipant_pub_key with message origin
-                let (participant_pub_key, nonces) =
+                let nonces_msg =
                     parse_nonces(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+                debug!(
+                    "Program {}: Received nonces: {:#?}",
+                    self.program_id, nonces_msg
+                );
+                for (aggregated, participant_pub_key, nonces) in nonces_msg {
+                    self.receive_participant_nonces(
+                        nonces,
+                        &aggregated,
+                        &participant_pub_key,
+                        program_context,
+                    )?;
+                }
 
-                self.receive_participant_nonces(nonces, &participant_pub_key, program_context)?;
-
+                self.move_program_to_next_state()?;
                 self.send_ack(&program_context, P2PMessageType::PublicNoncesAck)?;
             }
             P2PMessageType::PartialSignatures => {
@@ -420,14 +466,18 @@ impl Program {
                     return Ok(());
                 }
 
-                let (other_pub_key, signatures) =
+                let partial =
                     parse_signatures(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+                for (aggregated, other_pub_key, signatures) in partial {
+                    debug!(
+                        "Program {}: agg: {}, other: {} Received signatures: {:#?}",
+                        self.program_id, aggregated, other_pub_key, signatures
+                    );
+                    self.sign_protocol(signatures, program_context, &aggregated, &other_pub_key)?;
+                }
 
-                self.sign_protocol(signatures, program_context, &other_pub_key)?;
-
-                //TODO Integration.
-                //let signatures = program.get_aggregated_signatures();
-                //self.program.save_signatures(signatures)?;
+                self.drp.sign(&program_context.key_chain)?;
+                self.move_program_to_next_state()?;
 
                 self.send_ack(program_context, P2PMessageType::PartialSignaturesAck)?;
             }

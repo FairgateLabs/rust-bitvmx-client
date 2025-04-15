@@ -40,7 +40,7 @@ use std::{
 };
 use storage_backend::storage::{KeyValueStore, Storage};
 
-use tracing::{error, info};
+use tracing::info;
 use uuid::Uuid;
 
 pub struct BitVMX {
