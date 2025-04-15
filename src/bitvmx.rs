@@ -19,8 +19,8 @@ use bitcoin::Transaction;
 use bitcoin_coordinator::{
     coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi},
     types::AckNews,
+    AckMonitorNews, MonitorNews,
 };
-use bitcoin_coordinator::{AckTransactionNews, TransactionNews};
 
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
@@ -40,7 +40,7 @@ use std::{
 };
 use storage_backend::storage::{KeyValueStore, Storage};
 
-use tracing::info;
+use tracing::{error, info};
 use uuid::Uuid;
 
 pub struct BitVMX {
@@ -177,15 +177,15 @@ impl BitVMX {
         let news = self.program_context.bitcoin_coordinator.get_news()?;
         // info!("News: {:?}", news);
 
-        if !news.txs.is_empty() || !news.insufficient_funds.is_empty() {
-            info!("Processing news: {:?}", news);
+        if !news.monitor_news.is_empty() || !news.insufficient_funds.is_empty() {
+            //info!("Processing news: {:?}", news);
         }
 
-        for tx_news in news.txs {
+        for monitor_news in news.monitor_news {
             let ack_news: AckNews;
 
-            match tx_news {
-                TransactionNews::Transaction(tx_id, tx_status, context_data) => {
+            match monitor_news {
+                MonitorNews::Transaction(tx_id, tx_status, context_data) => {
                     let context = Context::from_string(&context_data)?;
 
                     match context {
@@ -209,9 +209,9 @@ impl BitVMX {
                         }
                     }
 
-                    ack_news = AckNews::Transaction(AckTransactionNews::Transaction(tx_id));
+                    ack_news = AckNews::Transaction(AckMonitorNews::Transaction(tx_id));
                 }
-                TransactionNews::SpendingUTXOTransaction(
+                MonitorNews::SpendingUTXOTransaction(
                     tx_id,
                     output_index,
                     tx_status,
@@ -231,18 +231,22 @@ impl BitVMX {
                     )?;
 
                     self.program_context.broker_channel.send(L2_ID, data)?;
-                    ack_news = AckNews::Transaction(AckTransactionNews::SpendingUTXOTransaction(
+                    ack_news = AckNews::Transaction(AckMonitorNews::SpendingUTXOTransaction(
                         tx_id,
                         output_index,
                     ));
                 }
-                TransactionNews::RskPeginTransaction(tx_id, tx_status) => {
+                MonitorNews::RskPeginTransaction(tx_id, tx_status) => {
                     let data = serde_json::to_string(
                         &OutgoingBitVMXApiMessages::PeginTransactionFound(tx_id, tx_status),
                     )?;
 
                     self.program_context.broker_channel.send(L2_ID, data)?;
-                    ack_news = AckNews::Transaction(AckTransactionNews::RskPeginTransaction(tx_id));
+                    ack_news = AckNews::Transaction(AckMonitorNews::RskPeginTransaction(tx_id));
+                }
+                MonitorNews::NewBlock(block_id, block_height) => {
+                    error!("New block: {:?} {}", block_id, block_height);
+                    ack_news = AckNews::NewBlock;
                 }
             }
 
