@@ -7,9 +7,7 @@ use crate::{
     types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramRequestInfo, L2_ID},
 };
 use bitcoin::{PublicKey, Transaction, Txid};
-use bitcoin_coordinator::{
-    coordinator::BitcoinCoordinatorApi, TransactionMonitor, TransactionStatus,
-};
+use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus, TypesToMonitor};
 use chrono::Utc;
 use key_manager::{
     musig2::{types::MessageId, PartialSignature, PubNonce},
@@ -20,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashMap, rc::Rc};
 use storage_backend::storage::{KeyValueStore, Storage};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use super::{
@@ -391,7 +389,7 @@ impl Program {
                 let txns_to_monitor = self.get_txs_to_monitor()?;
 
                 // TODO : COMPLETE THE FUNDING TX FOR SPEED UP
-                let txs_to_monitor = TransactionMonitor::Transactions(
+                let txs_to_monitor = TypesToMonitor::Transactions(
                     txns_to_monitor.clone(),
                     self.program_id.to_string(),
                 );
@@ -400,7 +398,7 @@ impl Program {
                     .bitcoin_coordinator
                     .monitor(txs_to_monitor)?;
 
-                let utox_to_monitor = TransactionMonitor::SpendingUTXOTransaction(
+                let utox_to_monitor = TypesToMonitor::SpendingUTXOTransaction(
                     txns_to_monitor[0],
                     0,
                     "HELLO UTXO TRANSACTION".to_string(),
@@ -409,6 +407,12 @@ impl Program {
                 program_context
                     .bitcoin_coordinator
                     .monitor(utox_to_monitor)?;
+
+                error!("Monitoring best block");
+                // Monitor when the best block changes
+                program_context
+                    .bitcoin_coordinator
+                    .monitor(TypesToMonitor::NewBlock)?;
 
                 self.move_program_to_next_state()?;
 
