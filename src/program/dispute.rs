@@ -1,7 +1,8 @@
-use std::rc::Rc;
+use std::{collections::HashMap, rc::Rc};
 
 use bitcoin::{
-    key::UntweakedPublicKey, secp256k1, Amount, ScriptBuf, Transaction, TxOut, Txid, XOnlyPublicKey,
+    key::UntweakedPublicKey, secp256k1, Amount, PublicKey, ScriptBuf, Transaction, TxOut, Txid,
+    XOnlyPublicKey,
 };
 use key_manager::winternitz::WinternitzType;
 use protocol_builder::{
@@ -70,6 +71,7 @@ impl DisputeResolutionProtocol {
         //let message_size = 2;
         //let one_time_keys_count = 10;
         //let protocol = self.program_context.key_chain.derive_keypair()?;
+        let aggregated_1 = key_chain.derive_keypair()?;
 
         let speedup = key_chain.derive_keypair()?;
         let timelock = key_chain.derive_keypair()?;
@@ -78,6 +80,7 @@ impl DisputeResolutionProtocol {
         let program_input_leaf_2 = key_chain.derive_winternitz_hash160(4)?;
 
         let keys = vec![
+            ("aggregated_1".to_string(), aggregated_1.into()),
             ("speedup".to_string(), speedup.into()),
             ("timelock".to_string(), timelock.into()),
             (
@@ -90,7 +93,7 @@ impl DisputeResolutionProtocol {
             ),
         ];
 
-        Ok(ParticipantKeys::new(keys))
+        Ok(ParticipantKeys::new(keys, vec!["aggregated_1".to_string()]))
     }
 
     pub fn build(
@@ -98,6 +101,7 @@ impl DisputeResolutionProtocol {
         utxo: Utxo,
         prover_keys: &ParticipantKeys,
         _verifier_keys: &ParticipantKeys,
+        computed_aggregated: HashMap<String, PublicKey>,
         _search: SearchParams,
         key_chain: &KeyChain,
     ) -> Result<(), BitVMXError> {
@@ -149,7 +153,7 @@ impl DisputeResolutionProtocol {
         //protocol.add_speedup_output(START_CH, p2wpkh_dust_threshold, verifier_keys.speedup())?;
 
         // reuse aggregated until we can have multiple aggregated keys
-        let aggregated = &utxo.pub_key;
+        let aggregated = computed_aggregated.get("aggregated_1").unwrap();
 
         let input_data_l1 = scripts::verify_winternitz_signature(
             aggregated,

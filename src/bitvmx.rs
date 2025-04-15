@@ -29,6 +29,7 @@ use bitvmx_broker::{
 };
 use p2p_handler::{LocalAllowList, P2pHandler, ReceiveHandlerChannel};
 use protocol_builder::builder::Utxo;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -174,6 +175,7 @@ impl BitVMX {
         }
 
         let news = self.program_context.bitcoin_coordinator.get_news()?;
+        // info!("News: {:?}", news);
 
         if !news.monitor_news.is_empty() || !news.insufficient_funds.is_empty() {
             //info!("Processing news: {:?}", news);
@@ -184,15 +186,28 @@ impl BitVMX {
 
             match monitor_news {
                 MonitorNews::Transaction(tx_id, tx_status, context_data) => {
-                    // We need to parse this context_data. For now, I'll assume it can be converted to a program_id.
-                    // After understanding what this data contains, it will provide insight on whether to propagate it to the program or handle it differently.
+                    let context = Context::from_string(&context_data)?;
 
-                    // @MARTIN & AGUS : You shoud decide what to do with this context_data.
+                    match context {
+                        Context::ProgramId(program_id) => {
+                            let program = self.load_program(&program_id)?;
 
-                    let program_id = Uuid::parse_str(&context_data).unwrap();
-                    let program = self.load_program(&program_id)?;
-
-                    program.notify_news(tx_id, tx_status, context_data, &self.program_context)?;
+                            program.notify_news(
+                                tx_id,
+                                tx_status,
+                                context_data,
+                                &self.program_context,
+                            )?;
+                        }
+                        Context::RequestId(request_id, from) => {
+                            self.program_context.broker_channel.send(
+                                from,
+                                serde_json::to_string(&OutgoingBitVMXApiMessages::Transaction(
+                                    request_id, tx_status,
+                                ))?,
+                            )?;
+                        }
+                    }
 
                     ack_news = AckNews::Transaction(AckMonitorNews::Transaction(tx_id));
                 }
@@ -202,7 +217,7 @@ impl BitVMX {
                     tx_status,
                     _context_data,
                 ) => {
-                    error!(
+                    info!(
                         "Spending UTXO Transaction Found: {:?} {}",
                         tx_id, _context_data
                     );
@@ -321,7 +336,7 @@ impl BitVMX {
         for program_status in programs {
             let program = self.load_program(&program_status.program_id)?;
 
-            if program.is_active() {
+            if program.state.is_active() {
                 active_programs.push(program);
             }
         }
@@ -393,6 +408,7 @@ impl BitVMXApi for BitVMX {
     }
 
     fn subscribe_to_tx(&mut self) -> Result<(), BitVMXError> {
+        // TODO will not implment, for now. We may not need this.
         Ok(())
     }
 
@@ -434,12 +450,17 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn dispatch_transaction(&mut self, id: Uuid, tx: Transaction) -> Result<(), BitVMXError> {
+    fn dispatch_transaction(
+        &mut self,
+        from: u32,
+        id: Uuid,
+        tx: Transaction,
+    ) -> Result<(), BitVMXError> {
         info!("Dispatching transaction: {:?} for instance: {:?}", tx, id);
 
         self.program_context
             .bitcoin_coordinator
-            .dispatch(tx, id.to_string())?;
+            .dispatch(tx, Context::RequestId(id, from).to_string()?)?;
         Ok(())
     }
 
@@ -461,7 +482,7 @@ impl BitVMXApi for BitVMX {
                 BitVMXApi::dispatch_transaction_name(self, id, &tx)?
             }
             IncomingBitVMXApiMessages::DispatchTransaction(id, tx) => {
-                BitVMXApi::dispatch_transaction(self, id, tx)?
+                BitVMXApi::dispatch_transaction(self, from, id, tx)?
             }
             IncomingBitVMXApiMessages::SetupKey() => BitVMXApi::setup_key(self)?,
 
@@ -489,5 +510,22 @@ impl BitVMXApi for BitVMX {
         }
 
         Ok(())
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum Context {
+    ProgramId(Uuid),
+    RequestId(Uuid, u32),
+}
+
+impl Context {
+    pub fn to_string(&self) -> Result<String, BitVMXError> {
+        Ok(serde_json::to_string(self)?)
+    }
+
+    pub fn from_string(msg: &str) -> Result<Self, BitVMXError> {
+        let msg: Context = serde_json::from_str(msg)?;
+        Ok(msg)
     }
 }

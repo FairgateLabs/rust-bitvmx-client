@@ -105,6 +105,8 @@ type ProgramId = Uuid;
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub enum OutgoingBitVMXApiMessages {
     Pong(),
+    // response for transaction get and dispatch
+    Transaction(Uuid, TransactionStatus),
     // Represents when pegin transactions is found
     PeginTransactionFound(Txid, TransactionStatus),
     // Represents when a spending utxo transaction is found
@@ -117,7 +119,6 @@ pub enum OutgoingBitVMXApiMessages {
     AggregatedPubkey(Uuid, PublicKey),
     ZKPResult(/* Add appropriate type */),
     ExecutionResult(/* Add appropriate type */),
-    TransactionResult(/* Add appropriate type */),
 }
 
 impl OutgoingBitVMXApiMessages {
@@ -128,5 +129,14 @@ impl OutgoingBitVMXApiMessages {
     pub fn from_string(msg: &str) -> Result<Self, BitVMXError> {
         let msg: OutgoingBitVMXApiMessages = serde_json::from_str(msg)?;
         Ok(msg)
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub struct RequestId(Uuid);
+
+impl RequestId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
     }
 }

@@ -14,7 +14,11 @@ pub fn parse_keys(value: Value) -> Result<ParticipantKeys, ParseError> {
     Ok(participant_keys)
 }
 
-type PubNonceMessage = (bitcoin::PublicKey, Vec<(MessageId, PubNonce)>);
+pub type PubNonceMessage = Vec<(
+    bitcoin::PublicKey,
+    bitcoin::PublicKey,
+    Vec<(MessageId, PubNonce)>,
+)>;
 
 pub fn parse_nonces(data: Value) -> Result<PubNonceMessage, ParseError> {
     let nonces: PubNonceMessage =
@@ -23,7 +27,11 @@ pub fn parse_nonces(data: Value) -> Result<PubNonceMessage, ParseError> {
     Ok(nonces)
 }
 
-type PartialSignatureMessage = (bitcoin::PublicKey, Vec<(MessageId, PartialSignature)>);
+pub type PartialSignatureMessage = Vec<(
+    bitcoin::PublicKey,
+    bitcoin::PublicKey,
+    Vec<(MessageId, PartialSignature)>,
+)>;
 
 pub fn parse_signatures(data: Value) -> Result<PartialSignatureMessage, ParseError> {
     let signatures: PartialSignatureMessage =
@@ -82,7 +90,7 @@ fn keys_encoding_test() -> Result<(), anyhow::Error> {
         ),
     ];
 
-    let participant = ParticipantKeys::new(keys);
+    let participant = ParticipantKeys::new(keys, vec![]);
 
     let participant_value = serde_json::to_value(&participant)?;
     let pub_key_final = parse_keys(participant_value)?;
