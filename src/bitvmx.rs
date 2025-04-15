@@ -192,12 +192,19 @@ impl BitVMX {
                         Context::ProgramId(program_id) => {
                             let program = self.load_program(&program_id)?;
 
-                            program.notify_news(tx_id, tx_status, context_data, &self.program_context)?;
+                            program.notify_news(
+                                tx_id,
+                                tx_status,
+                                context_data,
+                                &self.program_context,
+                            )?;
                         }
                         Context::RequestId(request_id, from) => {
                             self.program_context.broker_channel.send(
                                 from,
-                                serde_json::to_string(&OutgoingBitVMXApiMessages::Transaction(request_id, tx_status))?,
+                                serde_json::to_string(&OutgoingBitVMXApiMessages::Transaction(
+                                    request_id, tx_status,
+                                ))?,
                             )?;
                         }
                     }
@@ -210,7 +217,7 @@ impl BitVMX {
                     tx_status,
                     _context_data,
                 ) => {
-                    error!(
+                    info!(
                         "Spending UTXO Transaction Found: {:?} {}",
                         tx_id, _context_data
                     );
@@ -325,7 +332,7 @@ impl BitVMX {
         for program_status in programs {
             let program = self.load_program(&program_status.program_id)?;
 
-            if program.is_active() {
+            if program.state.is_active() {
                 active_programs.push(program);
             }
         }
@@ -439,7 +446,12 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn dispatch_transaction(&mut self, from: u32, id: Uuid, tx: Transaction) -> Result<(), BitVMXError> {
+    fn dispatch_transaction(
+        &mut self,
+        from: u32,
+        id: Uuid,
+        tx: Transaction,
+    ) -> Result<(), BitVMXError> {
         info!("Dispatching transaction: {:?} for instance: {:?}", tx, id);
 
         self.program_context
@@ -496,7 +508,6 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 }
-
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Context {
