@@ -12,7 +12,7 @@ use bitvmx_client::{
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID},
 };
 use p2p_handler::PeerId;
-use protocol_builder::{builder::Utxo, scripts};
+use protocol_builder::{scripts, types::Utxo};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
@@ -27,6 +27,7 @@ fn config_trace() {
         "p2p_protocol=off",
         "p2p_handler=off",
         "tarpc=off",
+        "key_manager=off",
     ];
 
     let filter = EnvFilter::builder()
@@ -84,7 +85,6 @@ fn init_utxo(bitcoin_client: &BitcoinClient, aggregated_pub_key: PublicKey) -> R
     let (tx, vout) = bitcoin_client.fund_address(&p2tr_address, Amount::from_sat(100_000_000))?;
 
     let utxo = Utxo::new(
-        "External".to_string(),
         tx.compute_txid(),
         vout,
         100_000_000,

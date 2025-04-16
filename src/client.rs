@@ -5,7 +5,7 @@ use crate::{
 use anyhow::Result;
 use bitcoin::{Transaction, Txid};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
-use protocol_builder::builder::Utxo;
+use protocol_builder::types::Utxo;
 use tracing::info;
 use uuid::Uuid;
 
