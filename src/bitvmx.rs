@@ -15,7 +15,7 @@ use crate::{
     },
 };
 
-use bitcoin::Transaction;
+use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::{
     coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi},
     types::{BitvmxInstance, ProcessedNews, TransactionPartialInfo},
@@ -514,18 +514,6 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn get_tx(&mut self) -> Result<(), BitVMXError> {
-        Ok(())
-    }
-
-    fn subscribe_to_tx(&mut self) -> Result<(), BitVMXError> {
-        Ok(())
-    }
-
-    fn subscribe_utxo(&mut self) -> Result<(), BitVMXError> {
-        Ok(())
-    }
-
     fn setup_program(
         &mut self,
         id: Uuid,
@@ -546,9 +534,22 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn dispatch_transaction_name(&mut self, id: Uuid, name: &str) -> Result<(), BitVMXError> {
-        self.load_program(&id)?
-            .dispatch_transaction_name(&self.program_context, name)?;
+    fn get_transaction(&mut self, from: u32, id: Uuid, txid: Txid) -> Result<(), BitVMXError> {
+        let tx_status = self.program_context.bitcoin_coordinator.get_transaction(txid)?;
+
+        self.program_context.broker_channel.send(
+            from,
+            serde_json::to_string(&OutgoingBitVMXApiMessages::Transaction(id, tx_status))?,
+        )?;
+        Ok(())
+    }
+
+    fn subscribe_to_tx(&mut self) -> Result<(), BitVMXError> {
+        // TODO will not implment, for now. We may not need this.
+        Ok(())
+    }
+
+    fn subscribe_utxo(&mut self) -> Result<(), BitVMXError> {
         Ok(())
     }
 
@@ -556,16 +557,14 @@ impl BitVMXApi for BitVMX {
         info!("Dispatching transaction: {:?} for instance: {:?}", tx, id);
         self.program_context
             .bitcoin_coordinator
-            .monitor_instance(
-                &BitvmxInstance::new(
-                    id,
-                    vec![TransactionPartialInfo::from(tx.compute_txid())],
-                    None
-                )
-            )?;
-        self.program_context
-            .bitcoin_coordinator
-            .send_tx_instance(id, &tx)?;
+            .dispatch(tx, Context::RequestId(id, from).to_string()?)?;
+
+        Ok(())
+    }
+
+    fn dispatch_transaction_name(&mut self, id: Uuid, name: &str) -> Result<(), BitVMXError> {
+        self.load_program(&id)?
+            .dispatch_transaction_name(&self.program_context, name)?;
         Ok(())
     }
 
@@ -578,7 +577,9 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address, utxo) => {
                 BitVMXApi::setup_program(self, id, role, peer_address, utxo)?
             }
-            IncomingBitVMXApiMessages::GetTransaction(_txid) => BitVMXApi::get_tx(self)?,
+            IncomingBitVMXApiMessages::GetTransaction(id, txid) => {
+                BitVMXApi::get_transaction(self, from, id, txid)?
+            }
             IncomingBitVMXApiMessages::SubscribeToTransaction(_txid) => {
                 BitVMXApi::subscribe_to_tx(self)?
             }
