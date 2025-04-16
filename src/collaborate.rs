@@ -3,14 +3,14 @@ use std::collections::HashMap;
 use bitcoin::PublicKey;
 use p2p_handler::PeerId;
 use serde_json::Value;
-use tracing::info;
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::{
     errors::BitVMXError,
     helper::parse_keys,
     p2p_helper::{request, response, P2PMessageType},
-    program::participant::{P2PAddress, ParticipantKeys},
+    program::participant::{P2PAddress, ParticipantKeys, PublicKeyType},
     types::{OutgoingBitVMXApiMessages, ProgramContext},
 };
 
@@ -57,12 +57,7 @@ impl Collaboration {
     ) -> Result<Self, BitVMXError> {
         let im_leader = program_context.comms.get_peer_id() == leader.peer_id;
         let my_key = program_context.key_chain.derive_keypair()?;
-        info!(
-            "Start Collaboration id: {}: My key: {}",
-            id,
-            my_key.to_string()
-        );
-        let keys = ParticipantKeys::new(vec![(id.to_string(), my_key.clone().into())]);
+        let keys = ParticipantKeys::new(vec![(id.to_string(), my_key.clone().into())], vec![]);
         if !im_leader {
             request(
                 &program_context.comms,
@@ -84,10 +79,15 @@ impl Collaboration {
 
     pub fn tick(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
         if self.state {
-            let keys = ParticipantKeys::new(vec![(
-                self.collaboration_id.to_string(),
-                self.aggregated_key.unwrap().clone().into(),
-            )]);
+            //collect all the keys from the participants in a vec (peeer_id,key)
+            let all_keys: Vec<(String, PublicKeyType)> = self
+                .keys
+                .clone()
+                .into_iter()
+                .map(|(p, k)| (p.to_base58(), k.into()))
+                .collect::<Vec<_>>();
+
+            let keys = ParticipantKeys::new(all_keys, vec![]);
             for peer in &self.participants {
                 if peer.peer_id == self.leader.peer_id {
                     continue;
@@ -118,23 +118,17 @@ impl Collaboration {
         data: Value,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        info!(
-            "Collaboration id: {}: Message received: {:?} leader: {} ",
-            self.collaboration_id, msg_type, self.im_leader
-        );
-
         match msg_type {
             P2PMessageType::Keys => {
                 if self.im_leader {
                     let keys: ParticipantKeys =
                         parse_keys(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
                     let key = keys.get_public(&self.collaboration_id.to_string())?;
-                    self.keys.insert(peer_id, key);
+                    self.keys.insert(peer_id.clone(), *key);
                     info!("{:?}", self.keys);
 
                     if self.keys.len() == self.participants.len() {
                         let aggregated = program_context.key_chain.new_musig2_session(
-                            self.collaboration_id,
                             self.keys.values().cloned().collect(),
                             self.my_key.clone(),
                         )?;
@@ -145,8 +139,23 @@ impl Collaboration {
                 } else {
                     let keys: ParticipantKeys =
                         parse_keys(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
-                    let key = keys.get_public(&self.collaboration_id.to_string())?;
-                    self.aggregated_key = Some(key.clone());
+
+                    keys.mapping.iter().for_each(|(peer_id, key)| {
+                        let peer_id: PeerId =
+                            peer_id.parse().unwrap_or(self.leader.peer_id.clone()); //TODO: Handle the unwrap better
+                        let key = key.public();
+                        if let Some(key) = key {
+                            self.keys.insert(peer_id, *key);
+                        } else {
+                            warn!("Key not found for peer: {}", peer_id);
+                        }
+                    });
+
+                    let aggregated = program_context.key_chain.new_musig2_session(
+                        self.keys.values().cloned().collect(),
+                        self.my_key.clone(),
+                    )?;
+                    self.aggregated_key = Some(aggregated.clone());
                 }
                 program_context.broker_channel.send(
                     self.request_from,
@@ -160,13 +169,13 @@ impl Collaboration {
                 response(
                     &program_context.comms,
                     &self.collaboration_id,
-                    peer_id,
+                    peer_id.clone(),
                     P2PMessageType::KeysAck,
                     (),
                 )?;
             }
             P2PMessageType::KeysAck => {
-                info!(
+                debug!(
                     "Collaboration id: {}: KeysAck received by {}",
                     self.collaboration_id, peer_id
                 );

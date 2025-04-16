@@ -1,4 +1,4 @@
-use std::{str::FromStr, time::Instant};
+use std::str::FromStr;
 
 use anyhow::Result;
 use bitcoin::{secp256k1, Address, Amount, KnownHrp, Network, PublicKey, XOnlyPublicKey};
@@ -9,10 +9,10 @@ use bitvmx_client::{
     bitvmx::BitVMX,
     config::Config,
     program::participant::{P2PAddress, ParticipantRole},
-    types::{IncomingBitVMXApiMessages, BITVMX_ID, L2_ID},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID},
 };
 use p2p_handler::PeerId;
-use protocol_builder::{builder::Utxo, scripts};
+use protocol_builder::{scripts, types::Utxo};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
@@ -27,6 +27,7 @@ fn config_trace() {
         "p2p_protocol=off",
         "p2p_handler=off",
         "tarpc=off",
+        "key_manager=off",
     ];
 
     let filter = EnvFilter::builder()
@@ -35,6 +36,7 @@ fn config_trace() {
 
     tracing_subscriber::fmt()
         //.without_time()
+        //.with_ansi(false)
         .with_target(true)
         .with_env_filter(filter)
         .init();
@@ -65,14 +67,12 @@ fn init_bitvmx(role: &str) -> Result<(BitVMX, P2PAddress, DualChannel)> {
     Ok((bitvmx, address, bridge_client))
 }
 
-fn init_utxo(bitcoin_client: &BitcoinClient) -> Result<Utxo> {
+fn init_utxo(bitcoin_client: &BitcoinClient, aggregated_pub_key: PublicKey) -> Result<Utxo> {
     // TODO perform a key aggregation with participants public keys. This is a harcoded key for now.
     let secp = secp256k1::Secp256k1::new();
-    let public_key =
-        PublicKey::from_str("020d48dbe8043e0114f3255f205152fa621dd7f4e1bbf69d4e255ddb2aaa2878d2")?;
-    let untweaked_key = XOnlyPublicKey::from(public_key);
+    let untweaked_key = XOnlyPublicKey::from(aggregated_pub_key);
 
-    let spending_scripts = vec![scripts::timelock_renew(&public_key)];
+    let spending_scripts = vec![scripts::timelock_renew(&aggregated_pub_key)];
     let taproot_spend_info =
         scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
     let p2tr_address = Address::p2tr(
@@ -85,13 +85,13 @@ fn init_utxo(bitcoin_client: &BitcoinClient) -> Result<Utxo> {
     let (tx, vout) = bitcoin_client.fund_address(&p2tr_address, Amount::from_sat(100_000_000))?;
 
     let utxo = Utxo::new(
-        "External".to_string(),
         tx.compute_txid(),
         vout,
         100_000_000,
-        &public_key,
+        &aggregated_pub_key,
     );
 
+    info!("UTXO: {:?}", utxo);
     // Spend the UTXO to test Musig2 signature aggregation
     // spend_utxo(bitcoin_client, utxo.clone(), public_key, p2tr_address, taproot_spend_info)?;
 
@@ -110,15 +110,10 @@ fn wait_message_from_channel(
                 info!("Received message from channel: {:?}", msg);
                 return Ok(msg.unwrap());
             }
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
         for instance in instances.iter_mut() {
-            let start = Instant::now();
             instance.tick()?;
-            let elapsed = start.elapsed();
-            if elapsed.as_millis() > 100 {
-                info!("Tick took too long: {:?}", elapsed);
-            }
         }
     }
     panic!("Timeout waiting for message from channel");
@@ -151,16 +146,23 @@ pub fn test_single_run() -> Result<()> {
         .unwrap();
 
     info!("Mine 101 blocks to address {:?}", wallet);
-    bitcoin_client.mine_blocks_to_address(202, &wallet).unwrap();
-
-    info!("Initializing UTXO for program");
-    let utxo = init_utxo(&bitcoin_client)?;
+    bitcoin_client.mine_blocks_to_address(101, &wallet).unwrap();
 
     let (mut prover_bitvmx, prover_address, prover_bridge_channel) = init_bitvmx("prover")?;
 
     let (mut verifier_bitvmx, verifier_address, verifier_bridge_channel) = init_bitvmx("verifier")?;
 
     let mut instances = vec![&mut prover_bitvmx, &mut verifier_bitvmx];
+
+    //get to the top of the blockchain
+    for _ in 0..101 {
+        for instance in instances.iter_mut() {
+            instance.process_bitcoin_updates()?;
+        }
+    }
+
+    //let aggregated_pub_key =
+    //    PublicKey::from_str("020d48dbe8043e0114f3255f205152fa621dd7f4e1bbf69d4e255ddb2aaa2878d2")?;
 
     //ask the peers to generate the aggregated public key
     let aggregation_id = Uuid::new_v4();
@@ -178,8 +180,18 @@ pub fn test_single_run() -> Result<()> {
     let msg = wait_message_from_channel(&verifier_bridge_channel, &mut instances)?;
     info!("VERIFIER: Received message from channel: {:?}", msg);
 
-    let program_id = Uuid::new_v4();
+    info!("Initializing UTXO for program");
+    let msg = OutgoingBitVMXApiMessages::from_string(&msg.0)?;
+    let aggregated_pub_key = match msg {
+        OutgoingBitVMXApiMessages::AggregatedPubkey(_uuid, aggregated_pub_key) => {
+            aggregated_pub_key
+        }
+        _ => panic!("Expected AggregatedPubkey message"),
+    };
 
+    let utxo = init_utxo(&bitcoin_client, aggregated_pub_key)?;
+
+    let program_id = Uuid::new_v4();
     let setup_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetupProgram(
         program_id,
         ParticipantRole::Prover,
@@ -187,7 +199,7 @@ pub fn test_single_run() -> Result<()> {
         utxo.clone(),
     ))?;
 
-    prover_bridge_channel.send(1, setup_msg)?;
+    prover_bridge_channel.send(BITVMX_ID, setup_msg)?;
 
     let setup_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetupProgram(
         program_id,
@@ -196,7 +208,7 @@ pub fn test_single_run() -> Result<()> {
         utxo,
     ))?;
 
-    verifier_bridge_channel.send(1, setup_msg)?;
+    verifier_bridge_channel.send(BITVMX_ID, setup_msg)?;
 
     info!("Waiting for setup messages...");
 
@@ -207,7 +219,7 @@ pub fn test_single_run() -> Result<()> {
     info!("VERIFIER: Received message from channel: {:?}", msg);
 
     //Bridge send signal to send the kickoff message
-    let _ = prover_bridge_channel.send(
+    let _ = verifier_bridge_channel.send(
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(program_id, "prekickoff".to_string())
             .to_string()?,
@@ -215,7 +227,7 @@ pub fn test_single_run() -> Result<()> {
 
     //TODO: main loop
     for i in 0..200 {
-        if i % 20 == 0 {
+        if i % 10 == 0 {
             bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
         }
 

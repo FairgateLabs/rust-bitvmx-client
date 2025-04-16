@@ -42,6 +42,21 @@ pub enum PublicKeyType {
     Winternitz(WinternitzPublicKey),
 }
 
+impl PublicKeyType {
+    pub fn public(&self) -> Option<&PublicKey> {
+        match self {
+            PublicKeyType::Public(key) => Some(key),
+            _ => None,
+        }
+    }
+    pub fn winternitz(&self) -> Option<&WinternitzPublicKey> {
+        match self {
+            PublicKeyType::Winternitz(key) => Some(key),
+            _ => None,
+        }
+    }
+}
+
 impl Into<PublicKeyType> for PublicKey {
     fn into(self) -> PublicKeyType {
         PublicKeyType::Public(self)
@@ -57,80 +72,42 @@ impl Into<PublicKeyType> for WinternitzPublicKey {
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct ParticipantKeys {
     pub mapping: HashMap<String, PublicKeyType>,
+    pub aggregated: Vec<String>,
+    pub computed_aggregated: HashMap<String, PublicKey>,
 }
 
 impl ParticipantKeys {
-    pub fn new(keys: Vec<(String, PublicKeyType)>) -> Self {
+    pub fn new(keys: Vec<(String, PublicKeyType)>, aggregated: Vec<String>) -> Self {
         let mut mapping = HashMap::new();
         for (name, key) in keys {
-            mapping.insert(name, key);
+            mapping.insert(name.to_string(), key);
         }
-        Self { mapping }
+        Self {
+            mapping,
+            aggregated,
+            computed_aggregated: HashMap::new(),
+        }
     }
 
-    //TODO: Check if this is still needed
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_old(
-        protocol: PublicKey,
-        speedup: PublicKey,
-        timelock: PublicKey,
-        program_input_key: WinternitzPublicKey,
-        program_ending_state: WinternitzPublicKey,
-        program_ending_step_number: WinternitzPublicKey,
-        dispute_resolution: Vec<WinternitzPublicKey>,
-    ) -> Self {
-        let mut mapping = HashMap::new();
-        mapping.insert("protocol".to_string(), PublicKeyType::Public(protocol));
-        mapping.insert("speedup".to_string(), PublicKeyType::Public(speedup));
-        mapping.insert("timelock".to_string(), PublicKeyType::Public(timelock));
-        mapping.insert(
-            "program_input_key".to_string(),
-            PublicKeyType::Winternitz(program_input_key),
-        );
-        mapping.insert(
-            "program_ending_state".to_string(),
-            PublicKeyType::Winternitz(program_ending_state),
-        );
-        mapping.insert(
-            "program_ending_step_number".to_string(),
-            PublicKeyType::Winternitz(program_ending_step_number),
-        );
-        mapping.insert(
-            "dispute_resolution".to_string(),
-            PublicKeyType::Winternitz(dispute_resolution[0].clone()),
-        );
-
-        Self { mapping }
-    }
-
-    pub fn get_winternitz(&self, name: &str) -> Result<WinternitzPublicKey, BitVMXError> {
-        let pkt = self
+    pub fn get_winternitz(&self, name: &str) -> Result<&WinternitzPublicKey, BitVMXError> {
+        Ok(self
             .mapping
             .get(name)
-            .ok_or(BitVMXError::InvalidMessageFormat)?;
-        match pkt {
-            PublicKeyType::Winternitz(key) => Ok(key.clone()),
-            _ => Err(BitVMXError::InvalidMessageFormat),
-        }
+            .ok_or(BitVMXError::InvalidMessageFormat)?
+            .winternitz()
+            .ok_or(BitVMXError::InvalidMessageFormat)?)
     }
 
-    pub fn get_public(&self, name: &str) -> Result<PublicKey, BitVMXError> {
-        let pkt = self
+    pub fn get_public(&self, name: &str) -> Result<&PublicKey, BitVMXError> {
+        Ok(self
             .mapping
             .get(name)
-            .ok_or(BitVMXError::InvalidMessageFormat)?;
-
-        match pkt {
-            PublicKeyType::Public(key) => Ok(key.clone()),
-            _ => Err(BitVMXError::InvalidMessageFormat),
-        }
+            .ok_or(BitVMXError::InvalidMessageFormat)?
+            .public()
+            .ok_or(BitVMXError::InvalidMessageFormat)?)
     }
 
-    pub fn protocol(&self) -> PublicKey {
-        self.get_public("protocol").unwrap()
-    }
-
-    pub fn speedup(&self) -> PublicKey {
+    pub fn speedup(&self) -> &PublicKey {
         self.get_public("speedup").unwrap()
     }
 }

@@ -1,9 +1,9 @@
 use bitcoin::{PublicKey, Transaction, Txid};
-use bitcoin_coordinator::types::{BitcoinCoordinatorType, TransactionNew};
+use bitcoin_coordinator::{types::BitcoinCoordinatorType, TransactionStatus};
 use bitvmx_broker::{broker_storage::BrokerStorage, channel::channel::LocalChannel};
 use chrono::{DateTime, Utc};
 use p2p_handler::P2pHandler;
-use protocol_builder::builder::Utxo;
+use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -105,21 +105,38 @@ type ProgramId = Uuid;
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub enum OutgoingBitVMXApiMessages {
     Pong(),
+    // response for transaction get and dispatch
+    Transaction(Uuid, TransactionStatus),
     // Represents when pegin transactions is found
-    PeginTransactionFound(TransactionNew),
+    PeginTransactionFound(Txid, TransactionStatus),
+    // Represents when a spending utxo transaction is found
+    SpendingUTXOTransactionFound(Txid, u32, TransactionStatus),
     // Represents when a program is running out of funds
-    SpeedUpProgramNoFunds(Vec<Uuid>),
+    SpeedUpProgramNoFunds(Txid, String),
     // Setup Completed,
     SetupCompleted(ProgramId),
     // Add response types for the new messages if needed
     AggregatedPubkey(Uuid, PublicKey),
     ZKPResult(/* Add appropriate type */),
     ExecutionResult(/* Add appropriate type */),
-    TransactionResult(/* Add appropriate type */),
 }
 
 impl OutgoingBitVMXApiMessages {
     pub fn to_string(&self) -> Result<String, BitVMXError> {
         Ok(serde_json::to_string(self)?)
+    }
+
+    pub fn from_string(msg: &str) -> Result<Self, BitVMXError> {
+        let msg: OutgoingBitVMXApiMessages = serde_json::from_str(msg)?;
+        Ok(msg)
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub struct RequestId(Uuid);
+
+impl RequestId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
     }
 }

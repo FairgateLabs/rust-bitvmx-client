@@ -14,15 +14,27 @@ pub fn parse_keys(value: Value) -> Result<ParticipantKeys, ParseError> {
     Ok(participant_keys)
 }
 
-pub fn parse_nonces(data: Value) -> Result<Vec<(MessageId, PubNonce)>, ParseError> {
-    let nonces: Vec<(MessageId, PubNonce)> =
+pub type PubNonceMessage = Vec<(
+    bitcoin::PublicKey,
+    bitcoin::PublicKey,
+    Vec<(MessageId, PubNonce)>,
+)>;
+
+pub fn parse_nonces(data: Value) -> Result<PubNonceMessage, ParseError> {
+    let nonces: PubNonceMessage =
         serde_json::from_value(data).map_err(|_| ParseError::InvalidNonces)?;
 
     Ok(nonces)
 }
 
-pub fn parse_signatures(data: Value) -> Result<Vec<(MessageId, PartialSignature)>, ParseError> {
-    let signatures: Vec<(MessageId, PartialSignature)> =
+pub type PartialSignatureMessage = Vec<(
+    bitcoin::PublicKey,
+    bitcoin::PublicKey,
+    Vec<(MessageId, PartialSignature)>,
+)>;
+
+pub fn parse_signatures(data: Value) -> Result<PartialSignatureMessage, ParseError> {
+    let signatures: PartialSignatureMessage =
         serde_json::from_value(data).map_err(|_| ParseError::InvalidPartialSignatures)?;
 
     Ok(signatures)
@@ -56,15 +68,29 @@ fn keys_encoding_test() -> Result<(), anyhow::Error> {
     let dp = WinternitzPublicKey::from_bytes(&[0u8; 32], WinternitzType::SHA256).unwrap();
     let dispute_resolution: Vec<WinternitzPublicKey> = vec![dp];
 
-    let participant = ParticipantKeys::new_old(
-        protocol,
-        speedup_key,
-        timelock_key,
-        program_input,
-        program_ending_state,
-        program_ending_step_number,
-        dispute_resolution,
-    );
+    let keys = vec![
+        ("protocol".to_string(), protocol.into()),
+        ("speedup".to_string(), speedup_key.into()),
+        ("timelock".to_string(), timelock_key.into()),
+        (
+            "program_input_key".to_string(),
+            program_input.clone().into(),
+        ),
+        (
+            "program_ending_state".to_string(),
+            program_ending_state.clone().into(),
+        ),
+        (
+            "program_ending_step_number".to_string(),
+            program_ending_step_number.clone().into(),
+        ),
+        (
+            "dispute_resolution".to_string(),
+            dispute_resolution[0].clone().into(),
+        ),
+    ];
+
+    let participant = ParticipantKeys::new(keys, vec![]);
 
     let participant_value = serde_json::to_value(&participant)?;
     let pub_key_final = parse_keys(participant_value)?;

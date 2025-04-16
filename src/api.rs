@@ -1,5 +1,5 @@
 use bitcoin::{Transaction, Txid};
-use protocol_builder::builder::Utxo;
+use protocol_builder::types::Utxo;
 use uuid::Uuid;
 
 use crate::{
@@ -20,7 +20,7 @@ pub trait BitVMXApi {
 
     fn dispatch_transaction_name(&mut self, id: Uuid, name: &str) -> Result<(), BitVMXError>;
 
-    fn dispatch_transaction(&mut self, id: Uuid, tx: Transaction) -> Result<(), BitVMXError>;
+    fn dispatch_transaction(&mut self, from: u32, id: Uuid, tx: Transaction) -> Result<(), BitVMXError>;
 
     fn handle_message(&mut self, msg: String, from: u32) -> Result<(), BitVMXError>;
 

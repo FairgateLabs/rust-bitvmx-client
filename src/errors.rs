@@ -9,7 +9,7 @@ use key_manager::{
     musig2::errors::Musig2SignerError,
 };
 use p2p_handler::P2pHandlerError;
-use protocol_builder::errors::{ProtocolBuilderError, UnspendableKeyError};
+use protocol_builder::errors::{ProtocolBuilderError, ScriptError, UnspendableKeyError};
 use storage_backend::error::StorageError;
 use thiserror::Error;
 use uuid::Uuid;
@@ -89,6 +89,9 @@ pub enum BitVMXError {
 
     #[error("Program already exists")]
     ProgramAlreadyExists(Uuid),
+
+    #[error("Error creating script {0}")]
+    ScriptError(#[from] ScriptError),
 }
 
 #[derive(Error, Debug)]
