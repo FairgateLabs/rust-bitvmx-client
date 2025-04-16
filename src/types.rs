@@ -3,7 +3,7 @@ use bitcoin_coordinator::{types::BitcoinCoordinatorType, TransactionStatus};
 use bitvmx_broker::{broker_storage::BrokerStorage, channel::channel::LocalChannel};
 use chrono::{DateTime, Utc};
 use p2p_handler::P2pHandler;
-use protocol_builder::builder::Utxo;
+use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

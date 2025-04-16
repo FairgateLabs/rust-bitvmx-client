@@ -1,5 +1,5 @@
 use bitcoin::Transaction;
-use protocol_builder::builder::Utxo;
+use protocol_builder::types::Utxo;
 use uuid::Uuid;
 
 use crate::{

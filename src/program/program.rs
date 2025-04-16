@@ -16,7 +16,7 @@ use key_manager::{
     musig2::{types::MessageId, PartialSignature, PubNonce},
     winternitz::{self, WinternitzSignature, WinternitzType},
 };
-use protocol_builder::builder::Utxo;
+use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashMap, rc::Rc};
@@ -147,7 +147,7 @@ impl Program {
         context: &ProgramContext,
     ) -> Result<HashMap<String, PublicKey>, BitVMXError> {
         // 2. Init the musig2 signer for this program
-        let mut aggregated_keys = vec![("pregenerated".to_string(), self.utxo.pub_key.clone())];
+        let mut aggregated_keys = vec![("pregenerated".to_string(), self.utxo.pub_key)];
         let mut result = HashMap::new();
 
         for agg_name in &self.me.keys.as_ref().unwrap().aggregated {
@@ -156,7 +156,7 @@ impl Program {
                 .keys
                 .as_ref()
                 .unwrap()
-                .get_public(&agg_name)
+                .get_public(agg_name)
                 .map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
             let mut aggregated_pub_keys = vec![agg_key.clone()];
@@ -166,9 +166,9 @@ impl Program {
                     .keys
                     .as_ref()
                     .unwrap()
-                    .get_public(&agg_name)
+                    .get_public(agg_name)
                     .map_err(|_| BitVMXError::InvalidMessageFormat)?;
-                aggregated_pub_keys.push(other_key.clone());
+                aggregated_pub_keys.push(*other_key);
             }
 
             aggregated_pub_keys.sort();
@@ -224,14 +224,14 @@ impl Program {
     pub fn receive_participant_nonces(
         &mut self,
         nonces: Vec<(MessageId, PubNonce)>,
-        aggreagted: &PublicKey,
+        aggregated: &PublicKey,
         participant_pubkey: &PublicKey,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         //the participant key is WRONG NEEDS TO BE THE ONE FROM THE AGGREGATED
         context
             .key_chain
-            .add_nonces(&aggreagted, Some(participant_pubkey), nonces)?;
+            .add_nonces(aggregated, Some(participant_pubkey), nonces)?;
 
         Ok(())
     }

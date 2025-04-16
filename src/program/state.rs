@@ -17,7 +17,7 @@ pub enum ProgramState {
     Monitoring,
 
     /// Program is dispatching transactions to the blockchain to complete the protocol
-    /// TODO: Dispatching should have (Claimed, Challenged) inside it
+    // TODO: Dispatching should have (Claimed, Challenged) inside it
     //Dispatching,
 
     /// Ready state after setup is completed and the transactions are being monitored

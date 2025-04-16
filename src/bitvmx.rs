@@ -23,12 +23,10 @@ use bitcoin_coordinator::{
 };
 
 use bitvmx_broker::{
-    broker_storage::BrokerStorage,
-    channel::channel::LocalChannel,
-    rpc::{sync_server::BrokerSync, BrokerConfig},
+    broker_storage::BrokerStorage, channel::channel::LocalChannel, rpc::{sync_server::BrokerSync, BrokerConfig}
 };
 use p2p_handler::{LocalAllowList, P2pHandler, ReceiveHandlerChannel};
-use protocol_builder::builder::Utxo;
+use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
