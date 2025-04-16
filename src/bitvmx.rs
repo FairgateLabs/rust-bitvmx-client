@@ -243,7 +243,7 @@ impl BitVMX {
                     ack_news = AckNews::Transaction(AckMonitorNews::RskPeginTransaction(tx_id));
                 }
                 MonitorNews::NewBlock(block_id, block_height) => {
-                    error!("New block: {:?} {}", block_id, block_height);
+                    debug!("New block: {:?} {}", block_id, block_height);
                     ack_news = AckNews::NewBlock;
                 }
             }

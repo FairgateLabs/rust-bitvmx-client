@@ -177,7 +177,7 @@ impl Program {
                 .key_chain
                 .new_musig2_session(aggregated_pub_keys, *agg_key)?;
 
-            warn!(
+            info!(
                 "Aggregated var name {}: Aggregated key: {}",
                 agg_name,
                 aggregated_key.to_string()
@@ -379,7 +379,7 @@ impl Program {
                     .bitcoin_coordinator
                     .monitor(utox_to_monitor)?;
 
-                error!("Monitoring best block");
+                debug!("Monitoring best block");
                 // Monitor when the best block changes
                 program_context
                     .bitcoin_coordinator
