@@ -23,7 +23,9 @@ use bitcoin_coordinator::{
 };
 
 use bitvmx_broker::{
-    broker_storage::BrokerStorage, channel::channel::LocalChannel, rpc::{sync_server::BrokerSync, BrokerConfig}
+    broker_storage::BrokerStorage,
+    channel::channel::LocalChannel,
+    rpc::{sync_server::BrokerSync, BrokerConfig},
 };
 use p2p_handler::{LocalAllowList, P2pHandler, ReceiveHandlerChannel};
 use protocol_builder::types::Utxo;
@@ -38,7 +40,7 @@ use std::{
 };
 use storage_backend::storage::{KeyValueStore, Storage};
 
-use tracing::{debug, error, info};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 pub struct BitVMX {
@@ -414,6 +416,36 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
+    fn setup_slot(
+        &mut self,
+        id: Uuid,
+        peer_address: Vec<P2PAddress>,
+        leader: u16,
+        utxo: Utxo,
+    ) -> Result<(), BitVMXError> {
+        if self.program_exists(&id)? {
+            warn!("Program already exists");
+            return Err(BitVMXError::ProgramAlreadyExists(id));
+        }
+
+        info!("Setting up program: {:?}", id);
+        Program::setup_slot(
+            &id,
+            peer_address,
+            leader,
+            utxo,
+            &mut self.program_context,
+            self.store.clone(),
+            &self._config.client,
+        )?;
+        self.add_new_program(&id)?;
+        info!(
+            "Program Setup Finished {}",
+            self.program_context.comms.get_peer_id()
+        );
+
+        Ok(())
+    }
     fn setup_program(
         &mut self,
         id: Uuid,

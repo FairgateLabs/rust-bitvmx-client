@@ -10,6 +10,14 @@ use crate::{
 pub trait BitVMXApi {
     fn ping(&mut self, from: u32) -> Result<(), BitVMXError>;
 
+    fn setup_slot(
+        &mut self,
+        id: Uuid,
+        peer_address: Vec<P2PAddress>,
+        leader: u16,
+        utxo: Utxo,
+    ) -> Result<(), BitVMXError>;
+
     fn setup_program(
         &mut self,
         id: Uuid,
@@ -20,7 +28,12 @@ pub trait BitVMXApi {
 
     fn dispatch_transaction_name(&mut self, id: Uuid, name: &str) -> Result<(), BitVMXError>;
 
-    fn dispatch_transaction(&mut self, from: u32, id: Uuid, tx: Transaction) -> Result<(), BitVMXError>;
+    fn dispatch_transaction(
+        &mut self,
+        from: u32,
+        id: Uuid,
+        tx: Transaction,
+    ) -> Result<(), BitVMXError>;
 
     fn handle_message(&mut self, msg: String, from: u32) -> Result<(), BitVMXError>;
 

@@ -21,12 +21,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashMap, rc::Rc};
 use storage_backend::storage::{KeyValueStore, Storage};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::{
     dispute::{DisputeResolutionProtocol, SearchParams},
     participant::{P2PAddress, ParticipantData, ParticipantRole},
+    protocol_handler::{ProtocolHandler, ProtocolType},
+    slot::SlotProtocol,
     state::{ProgramState, SettingUpState},
     witness,
 };
@@ -58,6 +60,10 @@ impl WitnessData {
     }
 }
 
+//use crate::program::protocol_handler::ProtocolHandler;
+
+//#[derive(Clone, Serialize, Deserialize)]
+
 #[derive(Debug, Clone)]
 pub enum StoreKey {
     LastRequestKeys(Uuid),
@@ -73,7 +79,7 @@ pub struct Program {
     pub me: ParticipantData,
     pub others: Vec<ParticipantData>,
     pub utxo: Utxo,
-    pub drp: DisputeResolutionProtocol, //TODO: this might be generic
+    pub drp: ProtocolType, //TODO: this might be generic
     pub state: ProgramState,
     witness_data: HashMap<Txid, WitnessData>,
     #[serde(skip)]
@@ -98,6 +104,51 @@ impl Program {
         Ok(())
     }
 
+    pub fn setup_slot(
+        id: &Uuid,
+        peers: Vec<P2PAddress>,
+        _leader: u16,
+        utxo: Utxo,
+        program_context: &mut ProgramContext,
+        storage: Rc<Storage>,
+        config: &ClientConfig,
+    ) -> Result<Self, BitVMXError> {
+        // Generate my keys.
+        let my_keys = SlotProtocol::generate_keys(&mut program_context.key_chain)?;
+
+        let p2p_address = P2PAddress::new(
+            &program_context.comms.get_address(),
+            program_context.comms.get_peer_id(),
+        );
+        // Create a participant that represents me with the specified role (Prover or Verifier).
+        let me = ParticipantData::new(&p2p_address, Some(my_keys));
+
+        //Creates space for the participants
+        let others = peers
+            .iter()
+            .map(|peer| ParticipantData::new(peer, None))
+            .collect::<Vec<_>>();
+
+        // Create a program with the utxo information, and the dispute resolution search parameters.
+        let drp = ProtocolType::SlotProtocol(SlotProtocol::new(*id, storage.clone()));
+
+        let program = Self {
+            program_id: *id,
+            my_role: ParticipantRole::Prover, //TODO: This should be part of the protocol context and generic
+            me,
+            others,
+            utxo,
+            drp,
+            state: ProgramState::New,
+            witness_data: HashMap::new(),
+            storage: Some(storage),
+            config: config.clone(),
+        };
+
+        program.save()?;
+
+        Ok(program)
+    }
     pub fn setup_program(
         id: &Uuid,
         my_role: ParticipantRole,
@@ -122,7 +173,10 @@ impl Program {
         let other = ParticipantData::new(peer_address, None);
 
         // Create a program with the utxo information, and the dispute resolution search parameters.
-        let drp = DisputeResolutionProtocol::new(*id, storage.clone())?;
+        let drp = ProtocolType::DisputeResolutionProtocol(DisputeResolutionProtocol::new(
+            *id,
+            storage.clone(),
+        ));
 
         let program = Self {
             program_id: *id,
@@ -205,7 +259,7 @@ impl Program {
             ParticipantRole::Verifier => (&self.others[0], &self.me),
         };
 
-        self.drp.build(
+        self.drp.as_drp_mut().unwrap().build(
             self.utxo.clone(),
             prover_key.keys.as_ref().unwrap(),
             verifier_key.keys.as_ref().unwrap(),
@@ -252,7 +306,11 @@ impl Program {
     }
 
     pub fn prekickoff_transaction(&self) -> Result<Transaction, BitVMXError> {
-        self.drp.prekickoff_transaction().map_err(BitVMXError::from)
+        self.drp
+            .as_drp()
+            .unwrap()
+            .prekickoff_transaction()
+            .map_err(BitVMXError::from)
     }
 
     pub fn push_witness_value(&mut self, txid: Txid, name: &str, value: WinternitzSignature) {
@@ -526,7 +584,7 @@ impl Program {
         _name: &str,
     ) -> Result<(), BitVMXError> {
         //TODO: Get transactions by identification
-        let tx_to_dispatch = self.drp.prekickoff_transaction()?;
+        let tx_to_dispatch = self.drp.as_drp().unwrap().prekickoff_transaction()?;
 
         let context = Context::ProgramId(self.program_id);
 
@@ -559,6 +617,8 @@ impl Program {
 
             let tx_to_dispatch = self
                 .drp
+                .as_drp()
+                .unwrap()
                 .input_1_tx(0x1234_4444, &program_context.key_chain)?;
 
             let context = Context::ProgramId(self.program_id);
@@ -691,7 +751,7 @@ impl Program {
         }
 
         self.drp
-            .get_transaction_by_id(txid)
+            .get_transaction_by_id(&txid)
             .map_err(BitVMXError::from)
             .map_err(BitVMXError::from)
     }
