@@ -78,7 +78,8 @@ impl Collaboration {
     }
 
     pub fn tick(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
-        if self.state {
+        if self.state && self.im_leader {
+            info!("Send keys to peers");
             //collect all the keys from the participants in a vec (peeer_id,key)
             let all_keys: Vec<(String, PublicKeyType)> = self
                 .keys
@@ -157,14 +158,18 @@ impl Collaboration {
                     )?;
                     self.aggregated_key = Some(aggregated.clone());
                 }
-                program_context.broker_channel.send(
-                    self.request_from,
-                    OutgoingBitVMXApiMessages::AggregatedPubkey(
-                        self.collaboration_id,
-                        self.aggregated_key.unwrap().clone(),
-                    )
-                    .to_string()?,
-                )?;
+
+                if self.aggregated_key.is_some() {
+                    info!("Aggregated generated ({})", self.im_leader);
+                    program_context.broker_channel.send(
+                        self.request_from,
+                        OutgoingBitVMXApiMessages::AggregatedPubkey(
+                            self.collaboration_id,
+                            self.aggregated_key.unwrap().clone(),
+                        )
+                        .to_string()?,
+                    )?;
+                }
 
                 response(
                     &program_context.comms,

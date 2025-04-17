@@ -1,0 +1,48 @@
+bitcoin:
+  network: regtest
+  url: http://127.0.0.1:18443
+  username: foo
+  password: rpcpassword
+  wallet: test_wallet
+
+builder:
+  protocol_amount: 2450000
+  speedup_amount: 2450000
+  locked_amount: 95000000
+  locked_blocks: 200
+  ecdsa_sighash_type: SIGHASH_ALL
+  taproot_sighash_type: SIGHASH_ALL
+
+key_manager:
+  network: regtest
+  key_derivation_path: m/101/1/0/0/
+  key_derivation_seed: deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeec
+  winternitz_seed: deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeec
+
+key_storage:
+  password: secret_password
+  path: /tmp/third/keys.db
+
+storage:
+  password: secret_password
+  db: /tmp/third/storage.db
+  program: /tmp/third/
+
+p2p:
+  address: /ip4/127.0.0.1/tcp/61182
+  key: 111111111152d71640c7c226a09da3d4f4299eadd636cb375037e34fcbbe2c8e93577ea82550385621b3f807ba79dc93725f50bca4dc2eee215e95dc9ef863dcfcf4bc1b
+  peer_id_file: peer_id
+  timeout: 5
+
+monitor:
+  checkpoint_height: 1
+  confirmation_threshold: 6
+
+broker_storage: /tmp/third/broker.db
+broker_port: 44444
+
+client: 
+  # Number of retries for requests
+  retry: 1
+  # Delay between retries in milliseconds
+  retry_delay: 1000

@@ -281,6 +281,16 @@ impl BitVMX {
         Ok(())
     }
 
+    pub fn process_collaboration(&mut self) -> Result<(), BitVMXError> {
+        //TOOD: manage state of the collaborations once persisted
+        if self.collaborations.len() > 0 {
+            for (_, collaboration) in self.collaborations.iter_mut() {
+                collaboration.tick(&self.program_context)?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn tick(&mut self) -> Result<(), BitVMXError> {
         self.count += 1;
         self.process_p2p_messages()?;
@@ -292,17 +302,12 @@ impl BitVMX {
             self.process_bitcoin_updates()?;
         }
 
-        //TOOD: manage state of the collaborations once persisted
-        if self.collaborations.len() > 0 {
-            for (_, collaboration) in self.collaborations.iter_mut() {
-                collaboration.tick(&self.program_context)?;
-            }
-        }
+        self.process_collaboration()?;
 
         Ok(())
     }
 
-    fn process_programs(&mut self) -> Result<(), BitVMXError> {
+    pub fn process_programs(&mut self) -> Result<(), BitVMXError> {
         let programs = self.get_active_programs()?;
 
         for mut program in programs {
@@ -502,6 +507,9 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::Ping() => BitVMXApi::ping(self, from)?,
             IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address, utxo) => {
                 BitVMXApi::setup_program(self, id, role, peer_address, utxo)?
+            }
+            IncomingBitVMXApiMessages::SetupSlot(id, participants, leader, utxo) => {
+                BitVMXApi::setup_slot(self, id, participants, leader, utxo)?
             }
             IncomingBitVMXApiMessages::GetTransaction(_txid) => BitVMXApi::get_tx(self)?,
             IncomingBitVMXApiMessages::SubscribeToTransaction(_txid) => {
