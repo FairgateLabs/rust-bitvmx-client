@@ -5,13 +5,11 @@ use bitcoin::{key::Secp256k1, PublicKey};
 use key_manager::winternitz::{WinternitzPublicKey, WinternitzType};
 
 use key_manager::musig2::{types::MessageId, PartialSignature, PubNonce};
+use p2p_handler::PeerId;
 use serde_json::Value;
 
-pub fn parse_keys(value: Value) -> Result<ParticipantKeys, ParseError> {
-    let participant_keys: ParticipantKeys =
-        serde_json::from_value(value).map_err(|_| ParseError::InvalidParticipantKeys)?;
-
-    Ok(participant_keys)
+pub fn parse_keys(value: Value) -> Result<Vec<(PeerId, ParticipantKeys)>, ParseError> {
+    Ok(serde_json::from_value(value).map_err(|_| ParseError::InvalidParticipantKeys))?
 }
 
 pub type PubNonceMessage = Vec<(
@@ -93,9 +91,11 @@ fn keys_encoding_test() -> Result<(), anyhow::Error> {
     let participant = ParticipantKeys::new(keys, vec![]);
 
     let participant_value = serde_json::to_value(&participant)?;
-    let pub_key_final = parse_keys(participant_value)?;
 
-    assert_eq!(participant, pub_key_final);
+    let parsed = serde_json::from_value(participant_value)
+        .map_err(|_| ParseError::InvalidParticipantKeys)?;
+
+    assert_eq!(participant, parsed);
 
     Ok(())
 }

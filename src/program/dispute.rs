@@ -114,8 +114,6 @@ impl DisputeResolutionProtocol {
         let _taproot_dust_threshold: u64 = 330;
         let fee = 1000;
 
-        let tr_sighash_type = SighashType::taproot_all();
-
         let secp = secp256k1::Secp256k1::new();
         let internal_key = &utxo.pub_key;
         let untweaked_key: UntweakedPublicKey = XOnlyPublicKey::from(*internal_key);
@@ -163,7 +161,7 @@ impl DisputeResolutionProtocol {
             utxo.vout,
             output_type,
             START_CH,
-            &tr_sighash_type,
+            &SighashType::taproot_all(),
         )?;
 
         //protocol.add_speedup_output(START_CH, p2wpkh_dust_threshold, verifier_keys.speedup())?;
@@ -205,7 +203,7 @@ impl DisputeResolutionProtocol {
             START_CH,
             INPUT_1,
             output_type,
-            &tr_sighash_type,
+            &SighashType::taproot_all(),
         )?;
 
         p2wpkh_dust_threshold -= fee;

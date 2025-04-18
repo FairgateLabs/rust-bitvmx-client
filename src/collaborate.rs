@@ -57,7 +57,10 @@ impl Collaboration {
     ) -> Result<Self, BitVMXError> {
         let im_leader = program_context.comms.get_peer_id() == leader.peer_id;
         let my_key = program_context.key_chain.derive_keypair()?;
-        let keys = ParticipantKeys::new(vec![(id.to_string(), my_key.clone().into())], vec![]);
+        let keys = vec![(
+            program_context.comms.get_peer_id(),
+            ParticipantKeys::new(vec![(id.to_string(), my_key.clone().into())], vec![]),
+        )];
         if !im_leader {
             request(
                 &program_context.comms,
@@ -88,7 +91,8 @@ impl Collaboration {
                 .map(|(p, k)| (p.to_base58(), k.into()))
                 .collect::<Vec<_>>();
 
-            let keys = ParticipantKeys::new(all_keys, vec![]);
+            let peerid = program_context.comms.get_peer_id();
+            let keys = vec![(peerid, ParticipantKeys::new(all_keys, vec![]))];
             for peer in &self.participants {
                 if peer.peer_id == self.leader.peer_id {
                     continue;
@@ -122,8 +126,12 @@ impl Collaboration {
         match msg_type {
             P2PMessageType::Keys => {
                 if self.im_leader {
-                    let keys: ParticipantKeys =
-                        parse_keys(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+                    let keys: ParticipantKeys = parse_keys(data)
+                        .map_err(|_| BitVMXError::InvalidMessageFormat)?
+                        .first()
+                        .unwrap()
+                        .1
+                        .clone();
                     let key = keys.get_public(&self.collaboration_id.to_string())?;
                     self.keys.insert(peer_id.clone(), *key);
                     info!("{:?}", self.keys);
@@ -138,8 +146,12 @@ impl Collaboration {
                         self.state = true;
                     }
                 } else {
-                    let keys: ParticipantKeys =
-                        parse_keys(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+                    let keys: ParticipantKeys = parse_keys(data)
+                        .map_err(|_| BitVMXError::InvalidMessageFormat)?
+                        .first()
+                        .unwrap()
+                        .1
+                        .clone();
 
                     keys.mapping.iter().for_each(|(peer_id, key)| {
                         let peer_id: PeerId =

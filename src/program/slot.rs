@@ -4,7 +4,7 @@ use bitcoin::{
     key::UntweakedPublicKey, secp256k1, Amount, PublicKey, ScriptBuf, TxOut, XOnlyPublicKey,
 };
 use protocol_builder::{
-    builder::Protocol,
+    builder::{Protocol, ProtocolBuilder},
     scripts,
     types::{input::SighashType, OutputType, Utxo},
 };
@@ -54,19 +54,16 @@ impl SlotProtocol {
     pub fn build(
         &self,
         utxo: Utxo,
-        _prover_keys: &ParticipantKeys,
-        _verifier_keys: &ParticipantKeys,
-        _computed_aggregated: HashMap<String, PublicKey>,
-        _key_chain: &KeyChain,
+        keys: Vec<ParticipantKeys>,
+        computed_aggregated: HashMap<String, PublicKey>,
+        key_chain: &KeyChain,
     ) -> Result<(), BitVMXError> {
         // TODO get this from config, all values expressed in satoshis
         let _p2pkh_dust_threshold: u64 = 546;
         let _p2sh_p2wpkh_dust_threshold: u64 = 540;
-        let mut _p2wpkh_dust_threshold: u64 = 99_999_000; // 294;
+        let p2wpkh_dust_threshold: u64 = 99_999_000; // 294;
         let _taproot_dust_threshold: u64 = 330;
         let _fee = 1000;
-
-        let tr_sighash_type = SighashType::taproot_all();
 
         let secp = secp256k1::Secp256k1::new();
         let internal_key = &utxo.pub_key;
@@ -83,15 +80,6 @@ impl SlotProtocol {
             value: Amount::from_sat(utxo.amount),
             script_pubkey,
         };
-
-        // let output_type = OutputType::TaprootScript {
-        //     value: Amount::from_sat(utxo.amount),
-        //     internal_key: *internal_key,
-        //     script_pubkey,
-        //     spending_scripts,
-        //     with_key_path: true,
-        //     prevouts: vec![prevout],
-        // };
 
         let output_type = OutputType::tr_script(
             utxo.amount,
@@ -115,9 +103,19 @@ impl SlotProtocol {
             utxo.vout,
             output_type,
             "accept_tx",
-            &tr_sighash_type,
+            &SighashType::taproot_all(),
         )?;
 
+        let aggregated = computed_aggregated.get("aggregated_1").unwrap();
+        let pb = ProtocolBuilder {};
+        pb.add_speedup_output(
+            &mut protocol,
+            "accept_tx",
+            p2wpkh_dust_threshold,
+            aggregated,
+        )?;
+
+        protocol.build(true, &key_chain.key_manager)?;
         info!("{}", protocol.visualize()?);
         self.save_protocol(protocol)?;
 
