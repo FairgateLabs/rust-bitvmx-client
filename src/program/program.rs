@@ -16,6 +16,7 @@ use key_manager::{
     musig2::{types::MessageId, PartialSignature, PubNonce},
     winternitz::{self, WinternitzSignature, WinternitzType},
 };
+use p2p_handler::PeerId;
 use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -72,12 +73,29 @@ pub enum StoreKey {
     Program(Uuid),
 }
 
+pub fn get_other_index_by_peer_id(peer_id: &PeerId, others: &Vec<ParticipantData>) -> usize {
+    others
+        .iter()
+        .position(|participant| &participant.p2p_address.peer_id == peer_id)
+        .unwrap() //TODO: handle
+}
+
+pub fn all_keys_ready(others: &Vec<ParticipantData>) -> bool {
+    for other in others {
+        if other.keys.is_none() {
+            return false;
+        }
+    }
+    true
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Program {
     pub program_id: Uuid,
     pub my_role: ParticipantRole,
-    pub me: ParticipantData,
+    pub my_idx: usize,
     pub others: Vec<ParticipantData>,
+    pub leader: usize,
     pub utxo: Utxo,
     pub drp: ProtocolType, //TODO: this might be generic
     pub state: ProgramState,
@@ -107,36 +125,58 @@ impl Program {
     pub fn setup_slot(
         id: &Uuid,
         peers: Vec<P2PAddress>,
-        _leader: u16,
+        leader: usize,
         utxo: Utxo,
         program_context: &mut ProgramContext,
         storage: Rc<Storage>,
         config: &ClientConfig,
     ) -> Result<Self, BitVMXError> {
         // Generate my keys.
+        if leader >= peers.len() {
+            return Err(BitVMXError::InvalidMessageFormat);
+        }
+
         let my_keys = SlotProtocol::generate_keys(&mut program_context.key_chain)?;
 
         let p2p_address = P2PAddress::new(
             &program_context.comms.get_address(),
             program_context.comms.get_peer_id(),
         );
-        // Create a participant that represents me with the specified role (Prover or Verifier).
-        let me = ParticipantData::new(&p2p_address, Some(my_keys));
+
+        //FIX EXCPECT WITH PROPER ERROR (invalid message as I'm not in the list)
+        let my_idx = peers
+            .iter()
+            .position(|peer| peer.peer_id == p2p_address.peer_id)
+            .expect("Peer not found in the list");
+
+        info!("my_pos: {}", my_idx);
+        info!("Leader pos: {}", leader);
 
         //Creates space for the participants
-        let others = peers
+        let mut others = peers
             .iter()
             .map(|peer| ParticipantData::new(peer, None))
             .collect::<Vec<_>>();
 
+        // save my pos in the others list to have the complete message ready
+        others[my_idx] = ParticipantData::new(&p2p_address, Some(my_keys));
+
         // Create a program with the utxo information, and the dispute resolution search parameters.
         let drp = ProtocolType::SlotProtocol(SlotProtocol::new(*id, storage.clone()));
 
+        // AS PROVER STARTS COMMUNICATION PUT LEADER AS VERIFIER TO WAIT FOR ALL THE INFORMATION FOR OTHERS
+        let role = if my_idx == leader as usize {
+            ParticipantRole::Verifier
+        } else {
+            ParticipantRole::Prover
+        };
+
         let program = Self {
             program_id: *id,
-            my_role: ParticipantRole::Prover, //TODO: This should be part of the protocol context and generic
-            me,
+            my_role: role, //TODO: This should be part of the protocol context and generic
+            my_idx,
             others,
+            leader,
             utxo,
             drp,
             state: ProgramState::New,
@@ -178,11 +218,20 @@ impl Program {
             storage.clone(),
         ));
 
+        let (prover, verifier, my_idx) = if my_role == ParticipantRole::Prover {
+            (me, other, 0)
+        } else {
+            (other, me, 1)
+        };
+
+        let others = vec![prover, verifier];
+
         let program = Self {
             program_id: *id,
             my_role,
-            me,
-            others: vec![other],
+            my_idx,
+            others,
+            leader: 0,
             utxo,
             drp,
             state: ProgramState::New,
@@ -204,16 +253,15 @@ impl Program {
         let mut aggregated_keys = vec![("pregenerated".to_string(), self.utxo.pub_key)];
         let mut result = HashMap::new();
 
-        for agg_name in &self.me.keys.as_ref().unwrap().aggregated {
-            let agg_key = self
-                .me
+        for agg_name in &self.others[self.my_idx].keys.as_ref().unwrap().aggregated {
+            let agg_key = self.others[self.my_idx]
                 .keys
                 .as_ref()
                 .unwrap()
                 .get_public(agg_name)
                 .map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
-            let mut aggregated_pub_keys = vec![agg_key.clone()];
+            let mut aggregated_pub_keys = vec![];
 
             for other in &self.others {
                 let other_key = other
@@ -242,7 +290,11 @@ impl Program {
         for (agg_name, aggregated_key) in aggregated_keys {
             result.insert(agg_name.to_string(), aggregated_key);
         }
-        self.me.keys.as_mut().unwrap().computed_aggregated = result.clone();
+        self.others[self.my_idx]
+            .keys
+            .as_mut()
+            .unwrap()
+            .computed_aggregated = result.clone();
         Ok(result)
     }
 
@@ -252,25 +304,23 @@ impl Program {
         let aggregated = self.prepare_aggregated_keys(context)?;
 
         // 3. Build the protocol using the aggregated key as internal key for taproot
-        info!("Building protocol for: {:?}", self.my_role);
 
-        let (prover_key, verifier_key) = match self.my_role {
-            ParticipantRole::Prover => (&self.me, &self.others[0]),
-            ParticipantRole::Verifier => (&self.others[0], &self.me),
-        };
+        if self.drp.as_drp().is_some() {
+            info!("Building protocol for: {:?}", self.my_role);
 
-        self.drp.as_drp_mut().unwrap().build(
-            self.utxo.clone(),
-            prover_key.keys.as_ref().unwrap(),
-            verifier_key.keys.as_ref().unwrap(),
-            aggregated,
-            search_params,
-            &context.key_chain,
-        )?;
-        info!("Protocol built for role: {:?}", self.my_role);
+            self.drp.as_drp_mut().unwrap().build(
+                self.utxo.clone(),
+                self.others[0].keys.as_ref().unwrap(),
+                self.others[1].keys.as_ref().unwrap(),
+                aggregated,
+                search_params,
+                &context.key_chain,
+            )?;
+            info!("Protocol built for role: {:?}", self.my_role);
 
-        // 6. Move the program to the next state
-        self.move_program_to_next_state()?;
+            // 6. Move the program to the next state
+            self.move_program_to_next_state()?;
+        }
 
         Ok(())
     }
@@ -331,8 +381,6 @@ impl Program {
             }
 
             ProgramState::SettingUp(SettingUpState::SendingKeys) => {
-                let my_keys = self.me.keys.clone().unwrap();
-
                 let should_send_request =
                     self.should_send_request(StoreKey::LastRequestKeys(self.program_id))?;
 
@@ -342,10 +390,12 @@ impl Program {
 
                 info!("{:?}: Sending keys", self.my_role);
 
+                let my_keys = self.others[self.my_idx].keys.clone().unwrap();
+                let other = 1 - self.my_idx;
                 request(
                     &program_context.comms,
                     &self.program_id,
-                    self.others[0].p2p_address.clone(),
+                    self.others[other].p2p_address.clone(),
                     P2PMessageType::Keys,
                     my_keys,
                 )?;
@@ -363,7 +413,13 @@ impl Program {
                 info!("{:?}: Sending nonces", self.my_role);
 
                 let mut public_nonce_msg: PubNonceMessage = Vec::new();
-                for aggregated in self.me.keys.as_ref().unwrap().computed_aggregated.values() {
+                for aggregated in self.others[self.my_idx]
+                    .keys
+                    .as_ref()
+                    .unwrap()
+                    .computed_aggregated
+                    .values()
+                {
                     let nonces = program_context.key_chain.get_nonces(aggregated)?;
                     let my_pub = program_context
                         .key_chain
@@ -375,7 +431,7 @@ impl Program {
                 request(
                     &program_context.comms,
                     &self.program_id,
-                    self.others[0].p2p_address.clone(),
+                    self.others[1 - self.my_idx].p2p_address.clone(),
                     P2PMessageType::PublicNonces,
                     public_nonce_msg,
                 )?;
@@ -392,7 +448,13 @@ impl Program {
 
                 info!("{:?}: Sending PartialSignatures", self.my_role);
                 let mut partial_sig_msg: PartialSignatureMessage = Vec::new();
-                for aggregated in self.me.keys.as_ref().unwrap().computed_aggregated.values() {
+                for aggregated in self.others[self.my_idx]
+                    .keys
+                    .as_ref()
+                    .unwrap()
+                    .computed_aggregated
+                    .values()
+                {
                     debug!(
                         "Program {}: Sending partial signatures for aggregated key: {}",
                         self.program_id, aggregated
@@ -408,7 +470,7 @@ impl Program {
                 request(
                     &program_context.comms,
                     &self.program_id,
-                    self.others[0].p2p_address.clone(),
+                    self.others[1 - self.my_idx].p2p_address.clone(),
                     P2PMessageType::PartialSignatures,
                     partial_sig_msg,
                 )?;
@@ -462,6 +524,7 @@ impl Program {
 
     pub fn process_p2p_message(
         &mut self,
+        peer_id: PeerId,
         msg_type: P2PMessageType,
         data: Value,
         program_context: &ProgramContext,
@@ -472,7 +535,7 @@ impl Program {
             P2PMessageType::Keys => {
                 if !self.state.should_handle_msg(&msg_type) {
                     if self.state.should_answer_ack(&self.my_role, &msg_type) {
-                        self.send_ack(program_context, P2PMessageType::KeysAck)?;
+                        self.send_ack(program_context, &peer_id, P2PMessageType::KeysAck)?;
                     }
                     return Ok(());
                 }
@@ -480,21 +543,56 @@ impl Program {
                 // Parse the keys received
                 let keys = parse_keys(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
                 //save others key
-                self.others[0].keys = Some(keys);
+                let other_pos = get_other_index_by_peer_id(&peer_id, &self.others);
+                info!("other pos: {}", other_pos);
+                self.others[other_pos].keys = Some(keys);
                 self.save()?;
 
-                //TODO :if all the keys ready
-                // Build the protocol
-                self.build_protocol(program_context)?;
+                // Send ack to the other party
+                self.send_ack(program_context, &peer_id, P2PMessageType::KeysAck)?;
+
+                if all_keys_ready(&self.others) {
+                    /*info!(
+                        "Program {}: All keys ready {:#?}",
+                        self.program_id, self.others
+                    );*/
+                    //TODO :if all the keys ready
+                    // Build the protocol
+                    self.build_protocol(program_context)?;
+                }
+            }
+            /*P2PMessageType::KeysAll => {
+                let chk_msg_type = P2PMessageType::Keys;
+                if !self.state.should_handle_msg(&chk_msg_type) {
+                    if self.state.should_answer_ack(&self.my_role, &chk_msg_type) {
+                        self.send_ack(program_context, P2PMessageType::KeysAck)?;
+                    }
+                    return Ok(());
+                }
+
+                // Parse the keys received
+                let other_keys =
+                    parse_all_keys(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+                for (peer, keys) in other_keys {
+                    let idx = get_other_index_by_peer_id(&peer, &self.others);
+                    self.others[idx].keys = Some(keys);
+                }
+                self.save()?;
 
                 // Send ack to the other party
                 self.send_ack(program_context, P2PMessageType::KeysAck)?;
-            }
+
+                if !all_keys_ready(&self.others) {
+                    error!("Program {}: Not all keys are ready", self.program_id);
+                    return Err(BitVMXError::InvalidMessageFormat);
+                }
+                self.build_protocol(program_context)?;
+            }*/
             P2PMessageType::PublicNonces => {
                 // TODO: Review this condition
                 if !self.state.should_handle_msg(&msg_type) {
                     if self.state.should_answer_ack(&self.my_role, &msg_type) {
-                        self.send_ack(program_context, P2PMessageType::PublicNoncesAck)?;
+                        self.send_ack(program_context, &peer_id, P2PMessageType::PublicNoncesAck)?;
                     }
                     return Ok(());
                 }
@@ -502,10 +600,10 @@ impl Program {
                 //TODO: Santitize pariticipant_pub_key with message origin
                 let nonces_msg =
                     parse_nonces(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
-                debug!(
+                /*info!(
                     "Program {}: Received nonces: {:#?}",
                     self.program_id, nonces_msg
-                );
+                );*/
                 for (aggregated, participant_pub_key, nonces) in nonces_msg {
                     self.receive_participant_nonces(
                         nonces,
@@ -516,13 +614,17 @@ impl Program {
                 }
 
                 self.move_program_to_next_state()?;
-                self.send_ack(&program_context, P2PMessageType::PublicNoncesAck)?;
+                self.send_ack(&program_context, &peer_id, P2PMessageType::PublicNoncesAck)?;
             }
             P2PMessageType::PartialSignatures => {
                 // TODO: Review this condition
                 if !self.state.should_handle_msg(&msg_type) {
                     if self.state.should_answer_ack(&self.my_role, &msg_type) {
-                        self.send_ack(program_context, P2PMessageType::PartialSignaturesAck)?;
+                        self.send_ack(
+                            program_context,
+                            &peer_id,
+                            P2PMessageType::PartialSignaturesAck,
+                        )?;
                     }
                     return Ok(());
                 }
@@ -540,7 +642,11 @@ impl Program {
                 self.drp.sign(&program_context.key_chain)?;
                 self.move_program_to_next_state()?;
 
-                self.send_ack(program_context, P2PMessageType::PartialSignaturesAck)?;
+                self.send_ack(
+                    program_context,
+                    &peer_id,
+                    P2PMessageType::PartialSignaturesAck,
+                )?;
             }
             P2PMessageType::KeysAck
             | P2PMessageType::PublicNoncesAck
@@ -563,6 +669,7 @@ impl Program {
     pub fn send_ack(
         &self,
         program_context: &ProgramContext,
+        peer_id: &PeerId,
         msg_type: P2PMessageType,
     ) -> Result<(), BitVMXError> {
         info!("{:?}: Sending {:?}", self.my_role, msg_type);
@@ -570,7 +677,8 @@ impl Program {
         response(
             &program_context.comms,
             &self.program_id,
-            self.others[0].p2p_address.peer_id.clone(),
+            //self.others[0].p2p_address.peer_id.clone(),
+            peer_id.clone(),
             msg_type,
             (),
         )?;
@@ -662,13 +770,6 @@ impl Program {
         self.drp.get_transaction_ids().map_err(BitVMXError::from)
     }
 
-    /*pub fn get_tx_to_dispatch(&self) -> Result<Option<Transaction>, BitVMXError> {
-        if self.my_role == ParticipantRole::Prover {
-            return Ok(Some(self.drp.prekickoff_transaction()?));
-        } else {
-            return Ok(None);
-        }
-    }*/
     fn get_key(key: StoreKey) -> String {
         let prefix = "program";
         match key {

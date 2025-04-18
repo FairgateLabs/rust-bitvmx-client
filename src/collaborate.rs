@@ -144,8 +144,7 @@ impl Collaboration {
                     keys.mapping.iter().for_each(|(peer_id, key)| {
                         let peer_id: PeerId =
                             peer_id.parse().unwrap_or(self.leader.peer_id.clone()); //TODO: Handle the unwrap better
-                        let key = key.public();
-                        if let Some(key) = key {
+                        if let Some(key) = key.public() {
                             self.keys.insert(peer_id, *key);
                         } else {
                             warn!("Key not found for peer: {}", peer_id);

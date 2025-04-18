@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{ops::Add, str::FromStr};
 
 use anyhow::Result;
 use bitcoin::{secp256k1, Address, Amount, KnownHrp, Network, PublicKey, XOnlyPublicKey};
@@ -106,7 +106,7 @@ fn wait_message_from_channel(
     fake_tick: bool,
 ) -> Result<(String, u32)> {
     //loop to timeout
-    for i in 0..10000 {
+    for i in 0..20000 {
         if i % 50 == 0 {
             let msg = channel.recv()?;
             if msg.is_some() {
@@ -126,12 +126,7 @@ fn wait_message_from_channel(
     panic!("Timeout waiting for message from channel");
 }
 
-//cargo test --release  -- test_single_run --ignored
-#[ignore]
-#[test]
-pub fn test_single_run() -> Result<()> {
-    config_trace();
-
+fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Address)> {
     let config = Config::new(Some("config/prover.yaml".to_string()))?;
 
     let bitcoind = Bitcoind::new(
@@ -154,6 +149,17 @@ pub fn test_single_run() -> Result<()> {
 
     info!("Mine 101 blocks to address {:?}", wallet);
     bitcoin_client.mine_blocks_to_address(101, &wallet).unwrap();
+
+    Ok((bitcoin_client, bitcoind, wallet))
+}
+
+//cargo test --release  -- test_single_run --ignored
+#[ignore]
+#[test]
+pub fn test_single_run() -> Result<()> {
+    config_trace();
+
+    let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
 
     let (mut prover_bitvmx, prover_address, prover_bridge_channel) = init_bitvmx("prover")?;
 
@@ -265,27 +271,7 @@ pub fn test_single_run() -> Result<()> {
 pub fn test_aggregation() -> Result<()> {
     config_trace();
 
-    let config = Config::new(Some("config/prover.yaml".to_string()))?;
-    let bitcoind = Bitcoind::new(
-        "bitcoin-regtest",
-        "ruimarinho/bitcoin-core",
-        config.bitcoin.clone(),
-    );
-    info!("Starting bitcoind");
-    bitcoind.start()?;
-
-    let bitcoin_client = BitcoinClient::new(
-        &config.bitcoin.url,
-        &config.bitcoin.username,
-        &config.bitcoin.password,
-    )?;
-
-    let wallet = bitcoin_client
-        .init_wallet(Network::Regtest, "test_wallet")
-        .unwrap();
-
-    info!("Mine 101 blocks to address {:?}", wallet);
-    bitcoin_client.mine_blocks_to_address(101, &wallet).unwrap();
+    let (_bitcoin_client, bitcoind, _wallet) = prepare_bitcoin()?;
 
     let (mut bitvmx_1, addres_1, bridge_1) = init_bitvmx("prover")?;
     let (mut bitvmx_2, addres_2, bridge_2) = init_bitvmx("verifier")?;
@@ -317,6 +303,70 @@ pub fn test_aggregation() -> Result<()> {
         }
         _ => panic!("Expected AggregatedPubkey message"),
     };
+
+    bitcoind.stop()?;
+    Ok(())
+}
+
+#[ignore]
+#[test]
+pub fn test_slot() -> Result<()> {
+    config_trace();
+
+    let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
+
+    let (mut bitvmx_1, addres_1, bridge_1) = init_bitvmx("prover")?;
+    let (mut bitvmx_2, addres_2, bridge_2) = init_bitvmx("verifier")?;
+    let (mut bitvmx_3, addres_3, bridge_3) = init_bitvmx("third")?;
+
+    let mut instances = vec![&mut bitvmx_1, &mut bitvmx_2, &mut bitvmx_3];
+
+    //get to the top of the blockchain
+    for _ in 0..101 {
+        for instance in instances.iter_mut() {
+            instance.process_bitcoin_updates()?;
+        }
+    }
+
+    let addresses = vec![addres_1.clone(), addres_2.clone(), addres_3.clone()];
+
+    //ask the peers to generate the aggregated public key
+    let aggregation_id = Uuid::new_v4();
+    let command =
+        IncomingBitVMXApiMessages::GenerateAggregatedPubkey(aggregation_id, addresses.clone(), 0)
+            .to_string()?;
+
+    bridge_1.send(BITVMX_ID, command.clone())?;
+    bridge_2.send(BITVMX_ID, command.clone())?;
+    bridge_3.send(BITVMX_ID, command.clone())?;
+
+    let msg_1 = wait_message_from_channel(&bridge_1, &mut instances, true)?;
+    let _msg_2 = wait_message_from_channel(&bridge_2, &mut instances, true)?;
+    let _msg_3 = wait_message_from_channel(&bridge_3, &mut instances, true)?;
+
+    let msg = OutgoingBitVMXApiMessages::from_string(&msg_1.0)?;
+    let aggregated_pub_key = match msg {
+        OutgoingBitVMXApiMessages::AggregatedPubkey(_uuid, aggregated_pub_key) => {
+            aggregated_pub_key
+        }
+        _ => panic!("Expected AggregatedPubkey message"),
+    };
+
+    let utxo = init_utxo(&bitcoin_client, aggregated_pub_key)?;
+
+    let program_id = Uuid::new_v4();
+    let setup_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetupSlot(
+        program_id,
+        addresses,
+        0,
+        utxo.clone(),
+    ))?;
+
+    bridge_1.send(BITVMX_ID, setup_msg.clone())?;
+    bridge_2.send(BITVMX_ID, setup_msg.clone())?;
+    bridge_3.send(BITVMX_ID, setup_msg.clone())?;
+
+    let msg_1 = wait_message_from_channel(&bridge_1, &mut instances, true)?;
 
     bitcoind.stop()?;
     Ok(())

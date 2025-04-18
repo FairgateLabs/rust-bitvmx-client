@@ -145,7 +145,7 @@ impl BitVMX {
                 //TODO: If program is not found it's is possible that is a new program that is not yet in the store
                 //Should I queue the message until the program is created for some secs?
                 if let Some(mut program) = self.load_program(&program_id).ok() {
-                    program.process_p2p_message(msg_type, data, &self.program_context)?;
+                    program.process_p2p_message(peer_id, msg_type, data, &self.program_context)?;
                 } else {
                     if self.collaborations.contains_key(&program_id) {
                         let collaboration = self.collaborations.get_mut(&program_id).unwrap();
@@ -437,7 +437,7 @@ impl BitVMXApi for BitVMX {
         Program::setup_slot(
             &id,
             peer_address,
-            leader,
+            leader as usize,
             utxo,
             &mut self.program_context,
             self.store.clone(),
