@@ -54,7 +54,7 @@ impl SlotProtocol {
     pub fn build(
         &self,
         utxo: Utxo,
-        keys: Vec<ParticipantKeys>,
+        _keys: Vec<ParticipantKeys>,
         computed_aggregated: HashMap<String, PublicKey>,
         key_chain: &KeyChain,
     ) -> Result<(), BitVMXError> {

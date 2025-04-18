@@ -20,7 +20,6 @@ use p2p_handler::PeerId;
 use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::digest::typenum::Bit;
 use std::{collections::HashMap, rc::Rc};
 use storage_backend::storage::{KeyValueStore, Storage};
 use tracing::{debug, info, warn};
@@ -395,6 +394,45 @@ impl Program {
         self.witness_data.get(&txid)
     }
 
+    pub fn get_address_from_peer_id(&self, peer_id: &PeerId) -> Result<P2PAddress, BitVMXError> {
+        for p in &self.participants {
+            if &p.p2p_address.peer_id == peer_id {
+                return Ok(p.p2p_address.clone());
+            }
+        }
+        return Err(BitVMXError::P2PCommunicationError);
+    }
+
+    pub fn request_helper<T>(
+        &mut self,
+        program_context: &ProgramContext,
+        to_send: Vec<(PeerId, T)>,
+        msg_type: P2PMessageType,
+    ) -> Result<(), BitVMXError>
+    where
+        T: Serialize + Clone,
+    {
+        let my_peer_id = &program_context.comms.get_peer_id();
+        for (other, _) in to_send.iter() {
+            if self.leader != self.my_idx || other != my_peer_id {
+                let dest = if self.leader != self.my_idx {
+                    self.participants[self.leader].p2p_address.clone()
+                } else {
+                    self.get_address_from_peer_id(other)?
+                };
+
+                request(
+                    &program_context.comms,
+                    &self.program_id,
+                    dest,
+                    msg_type.clone(),
+                    to_send.clone(),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn send_keys(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
         let should_send_request =
             self.should_send_request(StoreKey::LastRequestKeys(self.program_id))?;
@@ -404,7 +442,7 @@ impl Program {
         }
 
         info!("{:?}: Sending keys", self.my_role);
-        if self.my_idx == self.leader {
+        let keys = if self.my_idx == self.leader {
             let mut keys = vec![];
             for other in &self.participants {
                 keys.push((
@@ -412,28 +450,14 @@ impl Program {
                     other.keys.clone().unwrap(),
                 ));
             }
-            for (idx, _) in keys.iter().enumerate() {
-                if idx != self.leader {
-                    request(
-                        &program_context.comms,
-                        &self.program_id,
-                        self.participants[idx].p2p_address.clone(),
-                        P2PMessageType::Keys,
-                        keys.clone(),
-                    )?;
-                }
-            }
+            keys
         } else {
-            let mypeer = self.participants[self.my_idx].p2p_address.peer_id.clone();
-            let my_keys = vec![(mypeer, self.participants[self.my_idx].keys.clone().unwrap())];
-            request(
-                &program_context.comms,
-                &self.program_id,
-                self.participants[self.leader].p2p_address.clone(),
-                P2PMessageType::Keys,
-                my_keys,
-            )?;
-        }
+            vec![(
+                self.participants[self.my_idx].p2p_address.peer_id.clone(),
+                self.participants[self.my_idx].keys.clone().unwrap(),
+            )]
+        };
+        self.request_helper(program_context, keys, P2PMessageType::Keys)?;
 
         self.save_retry(StoreKey::LastRequestKeys(self.program_id))?;
         Ok(())
