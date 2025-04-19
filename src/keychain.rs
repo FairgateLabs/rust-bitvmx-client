@@ -212,7 +212,7 @@ impl KeyChain {
         partial_signature_mapping: HashMap<PublicKey, Vec<(MessageId, PartialSignature)>>,
     ) -> Result<(), BitVMXError> {
         self.key_manager
-            .save_partial_signatures(aggregated_pubkey, partial_signature_mapping)
+            .save_partial_signatures_multi(aggregated_pubkey, partial_signature_mapping)
             .map_err(BitVMXError::MuSig2SignerError)?;
 
         Ok(())
