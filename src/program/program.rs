@@ -99,6 +99,16 @@ pub fn all_nonces_ready(others: &Vec<ParticipantData>) -> bool {
     c >= others.len() - 1
 }
 
+pub fn all_signatures_ready(others: &Vec<ParticipantData>) -> bool {
+    let mut c = 0;
+    for other in others {
+        if other.partial.is_some() {
+            c += 1;
+        }
+    }
+    c >= others.len() - 1
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Program {
     pub program_id: Uuid,
@@ -352,32 +362,6 @@ impl Program {
 
         // 6. Move the program to the next state
         self.move_program_to_next_state()?;
-        Ok(())
-    }
-
-    pub fn receive_participant_nonces(
-        &self,
-        nonces_map: HashMap<PublicKey, Vec<(MessageId, PubNonce)>>,
-        aggregated: &PublicKey,
-        context: &ProgramContext,
-    ) -> Result<(), BitVMXError> {
-        //the participant key is WRONG NEEDS TO BE THE ONE FROM THE AGGREGATED
-
-        Ok(())
-    }
-
-    pub fn sign_protocol(
-        &mut self,
-        signatures: Vec<(MessageId, PartialSignature)>,
-        context: &ProgramContext,
-        aggreagted: &PublicKey,
-        other_pubkey: &PublicKey,
-    ) -> Result<(), BitVMXError> {
-        //let other_pubkey = self.other.keys.as_ref().unwrap().protocol();
-        context
-            .key_chain
-            .add_signatures(aggreagted, signatures, other_pubkey)?;
-
         Ok(())
     }
 
@@ -640,27 +624,41 @@ impl Program {
             .computed_aggregated
             .values()
         {
-            debug!(
-                "Program {}: Sending partial signatures for aggregated key: {}",
-                self.program_id, aggregated
-            );
-            let signatures = program_context.key_chain.get_signatures(aggregated)?;
+            let signatures = program_context.key_chain.get_signatures(aggregated);
+            if signatures.is_err() {
+                warn!(
+                    "{}. Error geting partial signature for aggregated key: {:?}",
+                    self.my_idx, aggregated
+                );
+                continue;
+            }
             let my_pub = program_context
                 .key_chain
                 .key_manager
                 .get_my_public_key(aggregated)?;
-            partial_sig_msg.push((aggregated.clone(), my_pub, signatures));
+            info!(
+                "{}. Sending partial signatures for aggregated key: {} {:?} {:?}",
+                self.my_idx, aggregated, my_pub, signatures
+            );
+            partial_sig_msg.push((aggregated.clone(), my_pub, signatures.unwrap()));
         }
 
-        request(
-            &program_context.comms,
-            &self.program_id,
-            self.participants[1 - self.my_idx].p2p_address.clone(),
-            P2PMessageType::PartialSignatures,
-            partial_sig_msg,
-        )?;
+        self.participants[self.my_idx].partial = Some(partial_sig_msg);
+        warn!("I'm {} and I'm setting my partial", self.my_idx);
+
+        let mut partials = vec![];
+        for other in &self.participants {
+            if other.partial.is_some() {
+                partials.push((
+                    other.p2p_address.peer_id.clone(),
+                    other.partial.clone().unwrap(),
+                ));
+            }
+        }
+        self.request_helper(program_context, partials, P2PMessageType::PartialSignatures)?;
 
         self.save_retry(StoreKey::LastRequestSignatures(self.program_id))?;
+        self.save()?;
         Ok(())
     }
 
@@ -682,17 +680,47 @@ impl Program {
             return Ok(());
         }
 
-        let partial = parse_signatures(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
-        for (aggregated, other_pub_key, signatures) in partial {
-            debug!(
-                "Program {}: agg: {}, other: {} Received signatures: {:#?}",
-                self.program_id, aggregated, other_pub_key, signatures
-            );
-            self.sign_protocol(signatures, program_context, &aggregated, &other_pub_key)?;
+        let partial_msg = parse_signatures(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+        for (peer_id, particpant_partials) in partial_msg {
+            let other_pos = get_other_index_by_peer_id(&peer_id, &self.participants);
+            info!("{}. Got partials for pos: {}", self.my_idx, other_pos);
+            self.participants[other_pos].partial = Some(particpant_partials);
         }
+        self.save()?;
 
-        self.protocol.sign(&program_context.key_chain)?;
-        self.move_program_to_next_state()?;
+        if all_signatures_ready(&self.participants) {
+            let mut map_of_maps: HashMap<
+                PublicKey,
+                HashMap<PublicKey, Vec<(MessageId, PartialSignature)>>,
+            > = HashMap::new();
+
+            for (idx, participant) in self.participants.iter().enumerate() {
+                if idx != self.my_idx {
+                    for (aggregated, other_pub_key, signatures) in
+                        participant.partial.as_ref().unwrap()
+                    {
+                        info!(
+                            "Program {}: agg: {}, other: {} Received signatures: {:#?}",
+                            self.program_id, aggregated, other_pub_key, signatures
+                        );
+
+                        map_of_maps
+                            .entry(aggregated.clone())
+                            .or_insert_with(HashMap::new)
+                            .insert(*other_pub_key, signatures.clone());
+                    }
+                }
+            }
+
+            for (aggregated, partial_map) in map_of_maps {
+                program_context
+                    .key_chain
+                    .add_signatures(&aggregated, partial_map)?;
+            }
+
+            self.protocol.sign(&program_context.key_chain)?;
+            self.move_program_to_next_state()?;
+        }
 
         self.send_ack(
             program_context,

@@ -28,11 +28,8 @@ pub type PartialSignatureMessage = Vec<(
     Vec<(MessageId, PartialSignature)>,
 )>;
 
-pub fn parse_signatures(data: Value) -> Result<PartialSignatureMessage, ParseError> {
-    let signatures: PartialSignatureMessage =
-        serde_json::from_value(data).map_err(|_| ParseError::InvalidPartialSignatures)?;
-
-    Ok(signatures)
+pub fn parse_signatures(data: Value) -> Result<Vec<(PeerId, PartialSignatureMessage)>, ParseError> {
+    Ok(serde_json::from_value(data).map_err(|_| ParseError::InvalidPartialSignatures))?
 }
 
 #[test]

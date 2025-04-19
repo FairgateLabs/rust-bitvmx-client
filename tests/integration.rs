@@ -36,7 +36,7 @@ fn config_trace() {
 
     tracing_subscriber::fmt()
         //.without_time()
-        //.with_ansi(false)
+        .with_ansi(false)
         .with_target(true)
         .with_env_filter(filter)
         .init();
@@ -269,7 +269,7 @@ pub fn test_single_run() -> Result<()> {
 #[ignore]
 #[test]
 pub fn test_aggregation() -> Result<()> {
-    config_trace();
+    //config_trace();
 
     let (_bitcoin_client, bitcoind, _wallet) = prepare_bitcoin()?;
 
@@ -311,7 +311,7 @@ pub fn test_aggregation() -> Result<()> {
 #[ignore]
 #[test]
 pub fn test_slot() -> Result<()> {
-    config_trace();
+    //config_trace();
 
     let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
 
@@ -366,7 +366,9 @@ pub fn test_slot() -> Result<()> {
     bridge_2.send(BITVMX_ID, setup_msg.clone())?;
     bridge_3.send(BITVMX_ID, setup_msg.clone())?;
 
-    let msg_1 = wait_message_from_channel(&bridge_1, &mut instances, true)?;
+    let _msg_1 = wait_message_from_channel(&bridge_1, &mut instances, true)?;
+    let _msg_2 = wait_message_from_channel(&bridge_2, &mut instances, true)?;
+    let _msg_3 = wait_message_from_channel(&bridge_3, &mut instances, true)?;
 
     bitcoind.stop()?;
     Ok(())

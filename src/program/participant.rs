@@ -4,13 +4,17 @@ use p2p_handler::PeerId;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt};
 
-use crate::{errors::BitVMXError, helper::PubNonceMessage};
+use crate::{
+    errors::BitVMXError,
+    helper::{PartialSignatureMessage, PubNonceMessage},
+};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ParticipantData {
     pub p2p_address: P2PAddress,
     pub keys: Option<ParticipantKeys>,
     pub nonces: Option<PubNonceMessage>,
+    pub partial: Option<PartialSignatureMessage>,
 }
 
 impl ParticipantData {
@@ -19,6 +23,7 @@ impl ParticipantData {
             p2p_address: address.clone(),
             keys,
             nonces: None,
+            partial: None,
         }
     }
 }

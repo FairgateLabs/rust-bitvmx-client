@@ -209,15 +209,10 @@ impl KeyChain {
     pub fn add_signatures(
         &self,
         aggregated_pubkey: &PublicKey,
-        participant_partial_signatures: Vec<(MessageId, PartialSignature)>,
-        participant_pub_key: &PublicKey,
+        partial_signature_mapping: HashMap<PublicKey, Vec<(MessageId, PartialSignature)>>,
     ) -> Result<(), BitVMXError> {
         self.key_manager
-            .save_partial_signatures(
-                aggregated_pubkey,
-                *participant_pub_key,
-                participant_partial_signatures,
-            )
+            .save_partial_signatures(aggregated_pubkey, partial_signature_mapping)
             .map_err(BitVMXError::MuSig2SignerError)?;
 
         Ok(())
