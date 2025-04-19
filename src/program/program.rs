@@ -365,14 +365,6 @@ impl Program {
         Ok(())
     }
 
-    pub fn prekickoff_transaction(&self) -> Result<Transaction, BitVMXError> {
-        self.protocol
-            .as_drp()
-            .unwrap()
-            .prekickoff_transaction()
-            .map_err(BitVMXError::from)
-    }
-
     pub fn push_witness_value(&mut self, txid: Txid, name: &str, value: WinternitzSignature) {
         self.witness_data
             .entry(txid)
@@ -853,10 +845,10 @@ impl Program {
     pub fn dispatch_transaction_name(
         &self,
         program_context: &ProgramContext,
-        _name: &str,
+        name: &str,
     ) -> Result<(), BitVMXError> {
         //TODO: Get transactions by identification
-        let tx_to_dispatch = self.protocol.as_drp().unwrap().prekickoff_transaction()?;
+        let tx_to_dispatch = self.protocol.get_transaction_name(name, program_context)?;
 
         let context = Context::ProgramId(self.program_id);
 

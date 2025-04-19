@@ -5,9 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 use storage_backend::storage::Storage;
 
+use crate::errors::BitVMXError;
 use crate::keychain::KeyChain;
 
 use crate::program::dispute::DisputeResolutionProtocol;
+use crate::types::ProgramContext;
 
 use super::slot::SlotProtocol;
 
@@ -53,6 +55,12 @@ pub trait ProtocolHandler {
         protocol.save(self.context().storage.clone().unwrap())?;
         Ok(())
     }
+
+    fn get_transaction_name(
+        &self,
+        name: &str,
+        context: &ProgramContext,
+    ) -> Result<Transaction, BitVMXError>;
 }
 
 #[derive(Clone, Serialize, Deserialize)]

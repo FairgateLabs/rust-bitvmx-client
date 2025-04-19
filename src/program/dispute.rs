@@ -16,7 +16,7 @@ use storage_backend::storage::Storage;
 use tracing::info;
 use uuid::Uuid;
 
-use crate::{errors::BitVMXError, keychain::KeyChain};
+use crate::{errors::BitVMXError, keychain::KeyChain, types::ProgramContext};
 
 use super::{
     participant::{ParticipantKeys, ParticipantRole},
@@ -53,6 +53,17 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
     fn context_mut(&mut self) -> &mut ProtocolContext {
         &mut self.ctx
+    }
+
+    fn get_transaction_name(
+        &self,
+        name: &str,
+        _context: &ProgramContext,
+    ) -> Result<Transaction, BitVMXError> {
+        match name {
+            START_CH => Ok(self.prekickoff_transaction()?),
+            _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
+        }
     }
 }
 

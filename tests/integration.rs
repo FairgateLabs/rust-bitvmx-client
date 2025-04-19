@@ -1,4 +1,4 @@
-use std::{ops::Add, str::FromStr};
+use std::str::FromStr;
 
 use anyhow::Result;
 use bitcoin::{secp256k1, Address, Amount, KnownHrp, Network, PublicKey, XOnlyPublicKey};
@@ -8,7 +8,10 @@ use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use bitvmx_client::{
     bitvmx::BitVMX,
     config::Config,
-    program::participant::{P2PAddress, ParticipantRole},
+    program::{
+        self,
+        participant::{P2PAddress, ParticipantRole},
+    },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID},
 };
 use p2p_handler::PeerId;
@@ -17,7 +20,17 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
+use std::sync::Once;
+
+static INIT: Once = Once::new();
+
 fn config_trace() {
+    INIT.call_once(|| {
+        config_trace_aux();
+    });
+}
+
+fn config_trace_aux() {
     let default_modules = [
         "info",
         "libp2p=off",
@@ -234,8 +247,11 @@ pub fn test_single_run() -> Result<()> {
     //Bridge send signal to send the kickoff message
     let _ = verifier_bridge_channel.send(
         BITVMX_ID,
-        IncomingBitVMXApiMessages::DispatchTransactionName(program_id, "prekickoff".to_string())
-            .to_string()?,
+        IncomingBitVMXApiMessages::DispatchTransactionName(
+            program_id,
+            program::dispute::START_CH.to_string(),
+        )
+        .to_string()?,
     );
 
     //TODO: main loop
@@ -269,7 +285,7 @@ pub fn test_single_run() -> Result<()> {
 #[ignore]
 #[test]
 pub fn test_aggregation() -> Result<()> {
-    //config_trace();
+    config_trace();
 
     let (_bitcoin_client, bitcoind, _wallet) = prepare_bitcoin()?;
 
@@ -311,7 +327,7 @@ pub fn test_aggregation() -> Result<()> {
 #[ignore]
 #[test]
 pub fn test_slot() -> Result<()> {
-    //config_trace();
+    config_trace();
 
     let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
 
@@ -369,6 +385,28 @@ pub fn test_slot() -> Result<()> {
     let _msg_1 = wait_message_from_channel(&bridge_1, &mut instances, true)?;
     let _msg_2 = wait_message_from_channel(&bridge_2, &mut instances, true)?;
     let _msg_3 = wait_message_from_channel(&bridge_3, &mut instances, true)?;
+
+    //Bridge send signal to send the kickoff message
+    let _ = bridge_2.send(
+        BITVMX_ID,
+        IncomingBitVMXApiMessages::DispatchTransactionName(
+            program_id,
+            program::slot::ACCEPT_TX.to_string(),
+        )
+        .to_string()?,
+    );
+
+    //TODO: main loop
+    for i in 0..200 {
+        if i % 10 == 0 {
+            bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
+        }
+
+        for instance in instances.iter_mut() {
+            instance.tick()?;
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
 
     bitcoind.stop()?;
     Ok(())

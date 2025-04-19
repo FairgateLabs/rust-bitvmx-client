@@ -1,19 +1,21 @@
 use std::{collections::HashMap, rc::Rc};
 
 use bitcoin::{
-    key::UntweakedPublicKey, secp256k1, Amount, PublicKey, ScriptBuf, TxOut, XOnlyPublicKey,
+    key::UntweakedPublicKey, secp256k1, Amount, PublicKey, ScriptBuf, Transaction, TxOut,
+    XOnlyPublicKey,
 };
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
+    errors::ProtocolBuilderError,
     scripts,
-    types::{input::SighashType, OutputType, Utxo},
+    types::{input::SighashType, InputArgs, OutputType, Utxo},
 };
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::Storage;
 use tracing::info;
 use uuid::Uuid;
 
-use crate::{errors::BitVMXError, keychain::KeyChain};
+use crate::{errors::BitVMXError, keychain::KeyChain, types::ProgramContext};
 
 use super::{
     participant::ParticipantKeys,
@@ -33,7 +35,20 @@ impl ProtocolHandler for SlotProtocol {
     fn context_mut(&mut self) -> &mut ProtocolContext {
         &mut self.ctx
     }
+
+    fn get_transaction_name(
+        &self,
+        name: &str,
+        _context: &ProgramContext,
+    ) -> Result<Transaction, BitVMXError> {
+        match name {
+            ACCEPT_TX => Ok(self.accept_tx()?),
+            _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
+        }
+    }
 }
+
+pub const ACCEPT_TX: &str = "accept_tx";
 
 impl SlotProtocol {
     pub fn new(program_id: Uuid, storage: Rc<Storage>) -> Self {
@@ -102,23 +117,30 @@ impl SlotProtocol {
             utxo.txid,
             utxo.vout,
             output_type,
-            "accept_tx",
+            ACCEPT_TX,
             &SighashType::taproot_all(),
         )?;
 
         let aggregated = computed_aggregated.get("aggregated_1").unwrap();
         let pb = ProtocolBuilder {};
-        pb.add_speedup_output(
-            &mut protocol,
-            "accept_tx",
-            p2wpkh_dust_threshold,
-            aggregated,
-        )?;
+        pb.add_speedup_output(&mut protocol, ACCEPT_TX, p2wpkh_dust_threshold, aggregated)?;
 
         protocol.build(true, &key_chain.key_manager)?;
         info!("{}", protocol.visualize()?);
         self.save_protocol(protocol)?;
 
         Ok(())
+    }
+
+    pub fn accept_tx(&self) -> Result<Transaction, ProtocolBuilderError> {
+        let signature = self
+            .load_protocol()?
+            .input_taproot_key_spend_signature(ACCEPT_TX, 0)?
+            .unwrap();
+        let mut taproot_arg = InputArgs::new_taproot_key_args();
+        taproot_arg.push_taproot_signature(signature)?;
+
+        self.load_protocol()?
+            .transaction_to_send(ACCEPT_TX, &[taproot_arg])
     }
 }

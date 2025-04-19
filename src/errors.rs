@@ -81,6 +81,9 @@ pub enum BitVMXError {
     #[error("Invalid receive message format")]
     InvalidMessageFormat,
 
+    #[error("Invalid transaction name {0}")]
+    InvalidTransactionName(String),
+
     #[error("Failed to process message")]
     MessageProcessingError,
 
