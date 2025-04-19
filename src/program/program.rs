@@ -89,6 +89,16 @@ pub fn all_keys_ready(others: &Vec<ParticipantData>) -> bool {
     true
 }
 
+pub fn all_nonces_ready(others: &Vec<ParticipantData>) -> bool {
+    let mut c = 0;
+    for other in others {
+        if other.nonces.is_some() {
+            c += 1;
+        }
+    }
+    c >= others.len() - 1
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Program {
     pub program_id: Uuid,
@@ -346,16 +356,12 @@ impl Program {
     }
 
     pub fn receive_participant_nonces(
-        &mut self,
-        nonces: Vec<(MessageId, PubNonce)>,
+        &self,
+        nonces_map: HashMap<PublicKey, Vec<(MessageId, PubNonce)>>,
         aggregated: &PublicKey,
-        participant_pubkey: &PublicKey,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         //the participant key is WRONG NEEDS TO BE THE ONE FROM THE AGGREGATED
-        context
-            .key_chain
-            .add_nonces(aggregated, Some(participant_pubkey), nonces)?;
 
         Ok(())
     }
@@ -420,6 +426,11 @@ impl Program {
                 } else {
                     self.get_address_from_peer_id(other)?
                 };
+
+                info!(
+                    "Sending message {:?} from {} to {}",
+                    &msg_type, self.my_idx, dest.peer_id
+                );
 
                 request(
                     &program_context.comms,
@@ -513,11 +524,6 @@ impl Program {
             .computed_aggregated
             .values()
         {
-            warn!(
-                "{} going to get nonces for agg: {:?}",
-                self.my_idx, aggregated
-            );
-
             let nonces = program_context.key_chain.get_nonces(aggregated);
             if nonces.is_err() {
                 warn!(
@@ -530,22 +536,29 @@ impl Program {
                 .key_chain
                 .key_manager
                 .get_my_public_key(aggregated)?;
+            info!(
+                "{}. Sending nonces for aggregated key: {} {:?} {:?}",
+                self.my_idx, aggregated, my_pub, nonces
+            );
             public_nonce_msg.push((aggregated.clone(), my_pub, nonces.unwrap()));
         }
 
-        /*if self.my_idx == self.leader {
-            panic!("not there yet");
-        }*/
+        self.participants[self.my_idx].nonces = Some(public_nonce_msg);
+        warn!("I'm {} and I'm setting my nonces", self.my_idx);
 
-        request(
-            &program_context.comms,
-            &self.program_id,
-            self.participants[1 - self.my_idx].p2p_address.clone(),
-            P2PMessageType::PublicNonces,
-            public_nonce_msg,
-        )?;
+        let mut nonces = vec![];
+        for other in &self.participants {
+            if other.nonces.is_some() {
+                nonces.push((
+                    other.p2p_address.peer_id.clone(),
+                    other.nonces.clone().unwrap(),
+                ));
+            }
+        }
+        self.request_helper(program_context, nonces, P2PMessageType::PublicNonces)?;
 
         self.save_retry(StoreKey::LastRequestNonces(self.program_id))?;
+        self.save()?;
         Ok(())
     }
 
@@ -565,20 +578,47 @@ impl Program {
 
         //TODO: Santitize pariticipant_pub_key with message origin
         let nonces_msg = parse_nonces(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
-        /*info!(
-            "Program {}: Received nonces: {:#?}",
-            self.program_id, nonces_msg
-        );*/
-        for (aggregated, participant_pub_key, nonces) in nonces_msg {
-            self.receive_participant_nonces(
-                nonces,
-                &aggregated,
-                &participant_pub_key,
-                program_context,
-            )?;
+
+        for (peer_id, particpant_nonces) in nonces_msg {
+            let other_pos = get_other_index_by_peer_id(&peer_id, &self.participants);
+            info!("{}. Got nonces for pos: {}", self.my_idx, other_pos);
+            self.participants[other_pos].nonces = Some(particpant_nonces);
+        }
+        self.save()?;
+
+        if all_nonces_ready(&self.participants) {
+            let mut map_of_maps: HashMap<
+                PublicKey,
+                HashMap<PublicKey, Vec<(MessageId, PubNonce)>>,
+            > = HashMap::new();
+
+            for (idx, participant) in self.participants.iter().enumerate() {
+                if idx != self.my_idx {
+                    for (aggregated, participant_pub_key, nonces) in
+                        participant.nonces.as_ref().unwrap()
+                    {
+                        info!(
+                            "will do nonces for: {} {:?} {:?} {:?} ",
+                            idx, aggregated, participant_pub_key, nonces
+                        );
+                        map_of_maps
+                            .entry(aggregated.clone())
+                            .or_insert_with(HashMap::new)
+                            .insert(*participant_pub_key, nonces.clone());
+                    }
+                }
+            }
+            for (aggregated, pubkey_nonce_map) in map_of_maps {
+                program_context
+                    .key_chain
+                    .add_nonces(&aggregated, pubkey_nonce_map)?;
+            }
+
+            self.move_program_to_next_state()?;
+        } else {
+            warn!("{}. Not all nonces ready", self.my_idx);
         }
 
-        self.move_program_to_next_state()?;
         self.send_ack(&program_context, &peer_id, P2PMessageType::PublicNoncesAck)?;
         Ok(())
     }

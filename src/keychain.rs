@@ -172,19 +172,18 @@ impl KeyChain {
     pub fn add_nonces(
         &self,
         aggregated_pubkey: &PublicKey,
-        participant_pubkey: Option<&PublicKey>,
-        nonces: Vec<(MessageId, PubNonce)>,
+        nonces_map: HashMap<PublicKey, Vec<(MessageId, PubNonce)>>,
     ) -> Result<(), BitVMXError> {
-        let participant_pubkey = match participant_pubkey {
+        /*let participant_pubkey = match participant_pubkey {
             Some(key) => *key,
             None => self.key_manager.get_my_public_key(aggregated_pubkey)?,
-        };
+        };*/
 
-        let mut pubkey_nonce_map = HashMap::new();
-        pubkey_nonce_map.insert(participant_pubkey, nonces);
+        //let mut pubkey_nonce_map = HashMap::new();
+        //pubkey_nonce_map.insert(participant_pubkey, nonces);
 
         self.key_manager
-            .aggregate_nonces(aggregated_pubkey, pubkey_nonce_map)
+            .aggregate_nonces(aggregated_pubkey, nonces_map)
             .map_err(BitVMXError::MuSig2SignerError)?;
 
         Ok(())

@@ -18,11 +18,8 @@ pub type PubNonceMessage = Vec<(
     Vec<(MessageId, PubNonce)>,
 )>;
 
-pub fn parse_nonces(data: Value) -> Result<PubNonceMessage, ParseError> {
-    let nonces: PubNonceMessage =
-        serde_json::from_value(data).map_err(|_| ParseError::InvalidNonces)?;
-
-    Ok(nonces)
+pub fn parse_nonces(data: Value) -> Result<Vec<(PeerId, PubNonceMessage)>, ParseError> {
+    Ok(serde_json::from_value(data).map_err(|_| ParseError::InvalidNonces))?
 }
 
 pub type PartialSignatureMessage = Vec<(
