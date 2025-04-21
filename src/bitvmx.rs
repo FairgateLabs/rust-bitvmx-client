@@ -23,7 +23,9 @@ use bitcoin_coordinator::{
 };
 
 use bitvmx_broker::{
-    broker_storage::BrokerStorage, channel::channel::LocalChannel, rpc::{sync_server::BrokerSync, BrokerConfig}
+    broker_storage::BrokerStorage,
+    channel::channel::LocalChannel,
+    rpc::{sync_server::BrokerSync, BrokerConfig},
 };
 use p2p_handler::{LocalAllowList, P2pHandler, ReceiveHandlerChannel};
 use protocol_builder::types::Utxo;
@@ -38,7 +40,7 @@ use std::{
 };
 use storage_backend::storage::{KeyValueStore, Storage};
 
-use tracing::{debug, error, info};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 pub struct BitVMX {
@@ -143,7 +145,7 @@ impl BitVMX {
                 //TODO: If program is not found it's is possible that is a new program that is not yet in the store
                 //Should I queue the message until the program is created for some secs?
                 if let Some(mut program) = self.load_program(&program_id).ok() {
-                    program.process_p2p_message(msg_type, data, &self.program_context)?;
+                    program.process_p2p_message(peer_id, msg_type, data, &self.program_context)?;
                 } else {
                     if self.collaborations.contains_key(&program_id) {
                         let collaboration = self.collaborations.get_mut(&program_id).unwrap();
@@ -279,6 +281,16 @@ impl BitVMX {
         Ok(())
     }
 
+    pub fn process_collaboration(&mut self) -> Result<(), BitVMXError> {
+        //TOOD: manage state of the collaborations once persisted
+        if self.collaborations.len() > 0 {
+            for (_, collaboration) in self.collaborations.iter_mut() {
+                collaboration.tick(&self.program_context)?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn tick(&mut self) -> Result<(), BitVMXError> {
         self.count += 1;
         self.process_p2p_messages()?;
@@ -290,17 +302,12 @@ impl BitVMX {
             self.process_bitcoin_updates()?;
         }
 
-        //TOOD: manage state of the collaborations once persisted
-        if self.collaborations.len() > 0 {
-            for (_, collaboration) in self.collaborations.iter_mut() {
-                collaboration.tick(&self.program_context)?;
-            }
-        }
+        self.process_collaboration()?;
 
         Ok(())
     }
 
-    fn process_programs(&mut self) -> Result<(), BitVMXError> {
+    pub fn process_programs(&mut self) -> Result<(), BitVMXError> {
         let programs = self.get_active_programs()?;
 
         for mut program in programs {
@@ -401,6 +408,46 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
+    fn subscribe_to_tx(&mut self) -> Result<(), BitVMXError> {
+        // TODO will not implment, for now. We may not need this.
+        Ok(())
+    }
+
+    fn subscribe_utxo(&mut self) -> Result<(), BitVMXError> {
+        Ok(())
+    }
+
+    fn setup_slot(
+        &mut self,
+        id: Uuid,
+        peer_address: Vec<P2PAddress>,
+        leader: u16,
+        utxo: Utxo,
+    ) -> Result<(), BitVMXError> {
+        if self.program_exists(&id)? {
+            warn!("Program already exists");
+            return Err(BitVMXError::ProgramAlreadyExists(id));
+        }
+
+        info!("Setting up program: {:?}", id);
+        Program::setup_slot(
+            &id,
+            peer_address,
+            leader as usize,
+            utxo,
+            &mut self.program_context,
+            self.store.clone(),
+            &self._config.client,
+        )?;
+        self.add_new_program(&id)?;
+        info!(
+            "Program Setup Finished {}",
+            self.program_context.comms.get_peer_id()
+        );
+
+        Ok(())
+    }
+
     fn setup_program(
         &mut self,
         id: Uuid,
@@ -439,15 +486,6 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn subscribe_to_tx(&mut self) -> Result<(), BitVMXError> {
-        // TODO will not implment, for now. We may not need this.
-        Ok(())
-    }
-
-    fn subscribe_utxo(&mut self) -> Result<(), BitVMXError> {
-        Ok(())
-    }
-
     fn dispatch_transaction(
         &mut self,
         from: u32,
@@ -479,6 +517,9 @@ impl BitVMXApi for BitVMX {
             }
             IncomingBitVMXApiMessages::GetTransaction(id, txid) => {
                 BitVMXApi::get_transaction(self, from, id, txid)?
+            }
+            IncomingBitVMXApiMessages::SetupSlot(id, participants, leader, utxo) => {
+                BitVMXApi::setup_slot(self, id, participants, leader, utxo)?
             }
             IncomingBitVMXApiMessages::SubscribeToTransaction(_txid) => {
                 BitVMXApi::subscribe_to_tx(self)?

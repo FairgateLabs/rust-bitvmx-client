@@ -16,20 +16,20 @@ builder:
 key_manager:
   network: regtest
   key_derivation_path: m/101/1/0/0/
-  key_derivation_seed: 2222beefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeec
-  winternitz_seed: 2222beefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeec
+  key_derivation_seed: 3333beefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeec
+  winternitz_seed: 3333beefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeec
 
 key_storage:
-  password: secret_password_3
-  path: /tmp/verifier/keys.db
+  password: secret_password_4
+  path: /tmp/third/keys.db
 
 storage:
-  db: /tmp/verifier/storage.db
-  program: /tmp/verifier/
+  db: /tmp/third/storage.db
+  program: /tmp/third/
 
 p2p:
-  address: /ip4/127.0.0.1/tcp/61181
-  key: 080112406e52d71640c7c226a09da3d4f4299eadd636cb375037e34fcbbe2c8e93577ea82550385621b3f807ba79dc93725f50bca4dc2eee215e95dc9ef863dcfcf4bc1b
+  address: /ip4/127.0.0.1/tcp/61182
+  key: 0801124098a7c8db342852696d63dd2be8db3d46d16180fd10429f8bdcdc25e299e44223cb449d3daa2efcb84541670187d2163d76cfd0e8f1c3fdad34163882ee0f2240
   peer_id_file: peer_id
   timeout: 5
 
@@ -37,8 +37,8 @@ monitor:
   checkpoint_height: 1
   confirmation_threshold: 6
 
-broker_storage: /tmp/verifier/broker.db
-broker_port: 33333
+broker_storage: /tmp/third/broker.db
+broker_port: 44444
 
 client: 
   # Number of retries for requests

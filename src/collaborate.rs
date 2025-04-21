@@ -57,7 +57,10 @@ impl Collaboration {
     ) -> Result<Self, BitVMXError> {
         let im_leader = program_context.comms.get_peer_id() == leader.peer_id;
         let my_key = program_context.key_chain.derive_keypair()?;
-        let keys = ParticipantKeys::new(vec![(id.to_string(), my_key.clone().into())], vec![]);
+        let keys = vec![(
+            program_context.comms.get_peer_id(),
+            ParticipantKeys::new(vec![(id.to_string(), my_key.clone().into())], vec![]),
+        )];
         if !im_leader {
             request(
                 &program_context.comms,
@@ -78,7 +81,8 @@ impl Collaboration {
     }
 
     pub fn tick(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
-        if self.state {
+        if self.state && self.im_leader {
+            info!("Send keys to peers");
             //collect all the keys from the participants in a vec (peeer_id,key)
             let all_keys: Vec<(String, PublicKeyType)> = self
                 .keys
@@ -87,7 +91,8 @@ impl Collaboration {
                 .map(|(p, k)| (p.to_base58(), k.into()))
                 .collect::<Vec<_>>();
 
-            let keys = ParticipantKeys::new(all_keys, vec![]);
+            let peerid = program_context.comms.get_peer_id();
+            let keys = vec![(peerid, ParticipantKeys::new(all_keys, vec![]))];
             for peer in &self.participants {
                 if peer.peer_id == self.leader.peer_id {
                     continue;
@@ -121,8 +126,12 @@ impl Collaboration {
         match msg_type {
             P2PMessageType::Keys => {
                 if self.im_leader {
-                    let keys: ParticipantKeys =
-                        parse_keys(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+                    let keys: ParticipantKeys = parse_keys(data)
+                        .map_err(|_| BitVMXError::InvalidMessageFormat)?
+                        .first()
+                        .unwrap()
+                        .1
+                        .clone();
                     let key = keys.get_public(&self.collaboration_id.to_string())?;
                     self.keys.insert(peer_id.clone(), *key);
                     info!("{:?}", self.keys);
@@ -137,14 +146,17 @@ impl Collaboration {
                         self.state = true;
                     }
                 } else {
-                    let keys: ParticipantKeys =
-                        parse_keys(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+                    let keys: ParticipantKeys = parse_keys(data)
+                        .map_err(|_| BitVMXError::InvalidMessageFormat)?
+                        .first()
+                        .unwrap()
+                        .1
+                        .clone();
 
                     keys.mapping.iter().for_each(|(peer_id, key)| {
                         let peer_id: PeerId =
                             peer_id.parse().unwrap_or(self.leader.peer_id.clone()); //TODO: Handle the unwrap better
-                        let key = key.public();
-                        if let Some(key) = key {
+                        if let Some(key) = key.public() {
                             self.keys.insert(peer_id, *key);
                         } else {
                             warn!("Key not found for peer: {}", peer_id);
@@ -157,14 +169,18 @@ impl Collaboration {
                     )?;
                     self.aggregated_key = Some(aggregated.clone());
                 }
-                program_context.broker_channel.send(
-                    self.request_from,
-                    OutgoingBitVMXApiMessages::AggregatedPubkey(
-                        self.collaboration_id,
-                        self.aggregated_key.unwrap().clone(),
-                    )
-                    .to_string()?,
-                )?;
+
+                if self.aggregated_key.is_some() {
+                    info!("Aggregated generated ({})", self.im_leader);
+                    program_context.broker_channel.send(
+                        self.request_from,
+                        OutgoingBitVMXApiMessages::AggregatedPubkey(
+                            self.collaboration_id,
+                            self.aggregated_key.unwrap().clone(),
+                        )
+                        .to_string()?,
+                    )?;
+                }
 
                 response(
                     &program_context.comms,

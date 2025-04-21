@@ -172,19 +172,18 @@ impl KeyChain {
     pub fn add_nonces(
         &self,
         aggregated_pubkey: &PublicKey,
-        participant_pubkey: Option<&PublicKey>,
-        nonces: Vec<(MessageId, PubNonce)>,
+        nonces_map: HashMap<PublicKey, Vec<(MessageId, PubNonce)>>,
     ) -> Result<(), BitVMXError> {
-        let participant_pubkey = match participant_pubkey {
+        /*let participant_pubkey = match participant_pubkey {
             Some(key) => *key,
             None => self.key_manager.get_my_public_key(aggregated_pubkey)?,
-        };
+        };*/
 
-        let mut pubkey_nonce_map = HashMap::new();
-        pubkey_nonce_map.insert(participant_pubkey, nonces);
+        //let mut pubkey_nonce_map = HashMap::new();
+        //pubkey_nonce_map.insert(participant_pubkey, nonces);
 
         self.key_manager
-            .aggregate_nonces(aggregated_pubkey, pubkey_nonce_map)
+            .aggregate_nonces(aggregated_pubkey, nonces_map)
             .map_err(BitVMXError::MuSig2SignerError)?;
 
         Ok(())
@@ -210,15 +209,10 @@ impl KeyChain {
     pub fn add_signatures(
         &self,
         aggregated_pubkey: &PublicKey,
-        participant_partial_signatures: Vec<(MessageId, PartialSignature)>,
-        participant_pub_key: &PublicKey,
+        partial_signature_mapping: HashMap<PublicKey, Vec<(MessageId, PartialSignature)>>,
     ) -> Result<(), BitVMXError> {
         self.key_manager
-            .save_partial_signatures(
-                aggregated_pubkey,
-                *participant_pub_key,
-                participant_partial_signatures,
-            )
+            .save_partial_signatures_multi(aggregated_pubkey, partial_signature_mapping)
             .map_err(BitVMXError::MuSig2SignerError)?;
 
         Ok(())

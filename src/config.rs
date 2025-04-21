@@ -28,7 +28,6 @@ pub struct P2PConfig {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct StorageConfig {
-    pub password: String,
     pub db: String,
     pub program: String, //TODO: Unifiy stroage
 }

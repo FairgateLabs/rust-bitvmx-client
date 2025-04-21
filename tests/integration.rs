@@ -8,7 +8,10 @@ use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use bitvmx_client::{
     bitvmx::BitVMX,
     config::Config,
-    program::participant::{P2PAddress, ParticipantRole},
+    program::{
+        self,
+        participant::{P2PAddress, ParticipantRole},
+    },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID},
 };
 use p2p_handler::PeerId;
@@ -17,7 +20,17 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
+use std::sync::Once;
+
+static INIT: Once = Once::new();
+
 fn config_trace() {
+    INIT.call_once(|| {
+        config_trace_aux();
+    });
+}
+
+fn config_trace_aux() {
     let default_modules = [
         "info",
         "libp2p=off",
@@ -36,7 +49,7 @@ fn config_trace() {
 
     tracing_subscriber::fmt()
         //.without_time()
-        //.with_ansi(false)
+        .with_ansi(false)
         .with_target(true)
         .with_env_filter(filter)
         .init();
@@ -84,12 +97,7 @@ fn init_utxo(bitcoin_client: &BitcoinClient, aggregated_pub_key: PublicKey) -> R
 
     let (tx, vout) = bitcoin_client.fund_address(&p2tr_address, Amount::from_sat(100_000_000))?;
 
-    let utxo = Utxo::new(
-        tx.compute_txid(),
-        vout,
-        100_000_000,
-        &aggregated_pub_key,
-    );
+    let utxo = Utxo::new(tx.compute_txid(), vout, 100_000_000, &aggregated_pub_key);
 
     info!("UTXO: {:?}", utxo);
     // Spend the UTXO to test Musig2 signature aggregation
@@ -98,12 +106,20 @@ fn init_utxo(bitcoin_client: &BitcoinClient, aggregated_pub_key: PublicKey) -> R
     Ok(utxo)
 }
 
+fn tick(instance: &mut BitVMX) {
+    instance.process_api_messages().unwrap();
+    instance.process_p2p_messages().unwrap();
+    instance.process_programs().unwrap();
+    instance.process_collaboration().unwrap();
+}
+
 fn wait_message_from_channel(
     channel: &DualChannel,
     instances: &mut Vec<&mut BitVMX>,
+    fake_tick: bool,
 ) -> Result<(String, u32)> {
     //loop to timeout
-    for i in 0..10000 {
+    for i in 0..20000 {
         if i % 50 == 0 {
             let msg = channel.recv()?;
             if msg.is_some() {
@@ -113,18 +129,17 @@ fn wait_message_from_channel(
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         for instance in instances.iter_mut() {
-            instance.tick()?;
+            if fake_tick {
+                tick(instance);
+            } else {
+                instance.tick()?;
+            }
         }
     }
     panic!("Timeout waiting for message from channel");
 }
 
-//cargo test --release  -- --ignored
-#[ignore]
-#[test]
-pub fn test_single_run() -> Result<()> {
-    config_trace();
-
+fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Address)> {
     let config = Config::new(Some("config/prover.yaml".to_string()))?;
 
     let bitcoind = Bitcoind::new(
@@ -147,6 +162,17 @@ pub fn test_single_run() -> Result<()> {
 
     info!("Mine 101 blocks to address {:?}", wallet);
     bitcoin_client.mine_blocks_to_address(101, &wallet).unwrap();
+
+    Ok((bitcoin_client, bitcoind, wallet))
+}
+
+//cargo test --release  -- test_single_run --ignored
+#[ignore]
+#[test]
+pub fn test_single_run() -> Result<()> {
+    config_trace();
+
+    let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
 
     let (mut prover_bitvmx, prover_address, prover_bridge_channel) = init_bitvmx("prover")?;
 
@@ -175,9 +201,9 @@ pub fn test_single_run() -> Result<()> {
     prover_bridge_channel.send(BITVMX_ID, command.clone())?;
     verifier_bridge_channel.send(BITVMX_ID, command)?;
 
-    let msg = wait_message_from_channel(&prover_bridge_channel, &mut instances)?;
+    let msg = wait_message_from_channel(&prover_bridge_channel, &mut instances, false)?;
     info!("PROVER: Received message from channel: {:?}", msg);
-    let msg = wait_message_from_channel(&verifier_bridge_channel, &mut instances)?;
+    let msg = wait_message_from_channel(&verifier_bridge_channel, &mut instances, false)?;
     info!("VERIFIER: Received message from channel: {:?}", msg);
 
     info!("Initializing UTXO for program");
@@ -213,16 +239,19 @@ pub fn test_single_run() -> Result<()> {
     info!("Waiting for setup messages...");
 
     //Wait
-    let msg = wait_message_from_channel(&prover_bridge_channel, &mut instances)?;
+    let msg = wait_message_from_channel(&prover_bridge_channel, &mut instances, false)?;
     info!("PROVER: Received message from channel: {:?}", msg);
-    let msg = wait_message_from_channel(&verifier_bridge_channel, &mut instances)?;
+    let msg = wait_message_from_channel(&verifier_bridge_channel, &mut instances, false)?;
     info!("VERIFIER: Received message from channel: {:?}", msg);
 
     //Bridge send signal to send the kickoff message
     let _ = verifier_bridge_channel.send(
         BITVMX_ID,
-        IncomingBitVMXApiMessages::DispatchTransactionName(program_id, "prekickoff".to_string())
-            .to_string()?,
+        IncomingBitVMXApiMessages::DispatchTransactionName(
+            program_id,
+            program::dispute::START_CH.to_string(),
+        )
+        .to_string()?,
     );
 
     //TODO: main loop
@@ -249,5 +278,136 @@ pub fn test_single_run() -> Result<()> {
     info!("Stopping bitcoind");
     bitcoind.stop()?;
 
+    Ok(())
+}
+
+//Test aggregation with three parts
+#[ignore]
+#[test]
+pub fn test_aggregation() -> Result<()> {
+    config_trace();
+
+    let (_bitcoin_client, bitcoind, _wallet) = prepare_bitcoin()?;
+
+    let (mut bitvmx_1, addres_1, bridge_1) = init_bitvmx("prover")?;
+    let (mut bitvmx_2, addres_2, bridge_2) = init_bitvmx("verifier")?;
+    let (mut bitvmx_3, addres_3, bridge_3) = init_bitvmx("third")?;
+
+    let mut instances = vec![&mut bitvmx_1, &mut bitvmx_2, &mut bitvmx_3];
+
+    //ask the peers to generate the aggregated public key
+    let aggregation_id = Uuid::new_v4();
+    let command = IncomingBitVMXApiMessages::GenerateAggregatedPubkey(
+        aggregation_id,
+        vec![addres_1.clone(), addres_2.clone(), addres_3.clone()],
+        0,
+    )
+    .to_string()?;
+
+    bridge_1.send(BITVMX_ID, command.clone())?;
+    bridge_2.send(BITVMX_ID, command.clone())?;
+    bridge_3.send(BITVMX_ID, command.clone())?;
+
+    let msg_1 = wait_message_from_channel(&bridge_1, &mut instances, true)?;
+    let _msg_2 = wait_message_from_channel(&bridge_2, &mut instances, true)?;
+    let _msg_3 = wait_message_from_channel(&bridge_3, &mut instances, true)?;
+
+    let msg = OutgoingBitVMXApiMessages::from_string(&msg_1.0)?;
+    let _aggregated_pub_key = match msg {
+        OutgoingBitVMXApiMessages::AggregatedPubkey(_uuid, aggregated_pub_key) => {
+            aggregated_pub_key
+        }
+        _ => panic!("Expected AggregatedPubkey message"),
+    };
+
+    bitcoind.stop()?;
+    Ok(())
+}
+
+#[ignore]
+#[test]
+pub fn test_slot() -> Result<()> {
+    config_trace();
+
+    let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
+
+    let (mut bitvmx_1, addres_1, bridge_1) = init_bitvmx("prover")?;
+    let (mut bitvmx_2, addres_2, bridge_2) = init_bitvmx("verifier")?;
+    let (mut bitvmx_3, addres_3, bridge_3) = init_bitvmx("third")?;
+
+    let mut instances = vec![&mut bitvmx_1, &mut bitvmx_2, &mut bitvmx_3];
+
+    //get to the top of the blockchain
+    for _ in 0..101 {
+        for instance in instances.iter_mut() {
+            instance.process_bitcoin_updates()?;
+        }
+    }
+
+    let addresses = vec![addres_1.clone(), addres_2.clone(), addres_3.clone()];
+
+    //ask the peers to generate the aggregated public key
+    let aggregation_id = Uuid::new_v4();
+    let command =
+        IncomingBitVMXApiMessages::GenerateAggregatedPubkey(aggregation_id, addresses.clone(), 0)
+            .to_string()?;
+
+    bridge_1.send(BITVMX_ID, command.clone())?;
+    bridge_2.send(BITVMX_ID, command.clone())?;
+    bridge_3.send(BITVMX_ID, command.clone())?;
+
+    let msg_1 = wait_message_from_channel(&bridge_1, &mut instances, true)?;
+    let _msg_2 = wait_message_from_channel(&bridge_2, &mut instances, true)?;
+    let _msg_3 = wait_message_from_channel(&bridge_3, &mut instances, true)?;
+
+    let msg = OutgoingBitVMXApiMessages::from_string(&msg_1.0)?;
+    let aggregated_pub_key = match msg {
+        OutgoingBitVMXApiMessages::AggregatedPubkey(_uuid, aggregated_pub_key) => {
+            aggregated_pub_key
+        }
+        _ => panic!("Expected AggregatedPubkey message"),
+    };
+
+    let utxo = init_utxo(&bitcoin_client, aggregated_pub_key)?;
+
+    let program_id = Uuid::new_v4();
+    let setup_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetupSlot(
+        program_id,
+        addresses,
+        0,
+        utxo.clone(),
+    ))?;
+
+    bridge_1.send(BITVMX_ID, setup_msg.clone())?;
+    bridge_2.send(BITVMX_ID, setup_msg.clone())?;
+    bridge_3.send(BITVMX_ID, setup_msg.clone())?;
+
+    let _msg_1 = wait_message_from_channel(&bridge_1, &mut instances, true)?;
+    let _msg_2 = wait_message_from_channel(&bridge_2, &mut instances, true)?;
+    let _msg_3 = wait_message_from_channel(&bridge_3, &mut instances, true)?;
+
+    //Bridge send signal to send the kickoff message
+    let _ = bridge_2.send(
+        BITVMX_ID,
+        IncomingBitVMXApiMessages::DispatchTransactionName(
+            program_id,
+            program::slot::ACCEPT_TX.to_string(),
+        )
+        .to_string()?,
+    );
+
+    //TODO: main loop
+    for i in 0..200 {
+        if i % 10 == 0 {
+            bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
+        }
+
+        for instance in instances.iter_mut() {
+            instance.tick()?;
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    bitcoind.stop()?;
     Ok(())
 }

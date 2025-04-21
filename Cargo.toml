@@ -22,6 +22,7 @@ url = { version = "2.5.4" }
 chrono = "0.4.31"
 tokio = { version = "1.40.0", features = ["sync"] }
 sha2 = "0.10"
+enum_dispatch = { version = "0.3.13" }
 
 bitcoincore-rpc = { version = "0.19.0" }
 bitcoin-script = { git = "https://github.com/FairgateLabs/rust-bitcoin-script/", branch = "bitvmx" }
@@ -31,6 +32,7 @@ bitvmx-key-manager = { path = "../rust-bitvmx-key-manager" }
 bitvmx-protocol-builder = { path = "../rust-bitvmx-protocol-builder" }
 bitcoin-coordinator = { path = "../rust-bitcoin-coordinator" }
 p2p_handler = { path = "../rust-p2p-handler" }
+#p2p_handler = { path = "../rust-fakep2p" }
 rust-bitvmx-storage-backend = { path = "../rust-bitvmx-storage-backend" }
 bitvmx-settings = { path = "../rust-bitvmx-settings" }
 bitvmx-bitcoin-rpc = { path = "../rust-bitvmx-bitcoin-rpc" }

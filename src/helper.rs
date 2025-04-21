@@ -5,13 +5,11 @@ use bitcoin::{key::Secp256k1, PublicKey};
 use key_manager::winternitz::{WinternitzPublicKey, WinternitzType};
 
 use key_manager::musig2::{types::MessageId, PartialSignature, PubNonce};
+use p2p_handler::PeerId;
 use serde_json::Value;
 
-pub fn parse_keys(value: Value) -> Result<ParticipantKeys, ParseError> {
-    let participant_keys: ParticipantKeys =
-        serde_json::from_value(value).map_err(|_| ParseError::InvalidParticipantKeys)?;
-
-    Ok(participant_keys)
+pub fn parse_keys(value: Value) -> Result<Vec<(PeerId, ParticipantKeys)>, ParseError> {
+    Ok(serde_json::from_value(value).map_err(|_| ParseError::InvalidParticipantKeys))?
 }
 
 pub type PubNonceMessage = Vec<(
@@ -20,11 +18,8 @@ pub type PubNonceMessage = Vec<(
     Vec<(MessageId, PubNonce)>,
 )>;
 
-pub fn parse_nonces(data: Value) -> Result<PubNonceMessage, ParseError> {
-    let nonces: PubNonceMessage =
-        serde_json::from_value(data).map_err(|_| ParseError::InvalidNonces)?;
-
-    Ok(nonces)
+pub fn parse_nonces(data: Value) -> Result<Vec<(PeerId, PubNonceMessage)>, ParseError> {
+    Ok(serde_json::from_value(data).map_err(|_| ParseError::InvalidNonces))?
 }
 
 pub type PartialSignatureMessage = Vec<(
@@ -33,11 +28,8 @@ pub type PartialSignatureMessage = Vec<(
     Vec<(MessageId, PartialSignature)>,
 )>;
 
-pub fn parse_signatures(data: Value) -> Result<PartialSignatureMessage, ParseError> {
-    let signatures: PartialSignatureMessage =
-        serde_json::from_value(data).map_err(|_| ParseError::InvalidPartialSignatures)?;
-
-    Ok(signatures)
+pub fn parse_signatures(data: Value) -> Result<Vec<(PeerId, PartialSignatureMessage)>, ParseError> {
+    Ok(serde_json::from_value(data).map_err(|_| ParseError::InvalidPartialSignatures))?
 }
 
 #[test]
@@ -93,9 +85,11 @@ fn keys_encoding_test() -> Result<(), anyhow::Error> {
     let participant = ParticipantKeys::new(keys, vec![]);
 
     let participant_value = serde_json::to_value(&participant)?;
-    let pub_key_final = parse_keys(participant_value)?;
 
-    assert_eq!(participant, pub_key_final);
+    let parsed = serde_json::from_value(participant_value)
+        .map_err(|_| ParseError::InvalidParticipantKeys)?;
+
+    assert_eq!(participant, parsed);
 
     Ok(())
 }

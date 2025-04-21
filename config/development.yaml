@@ -16,15 +16,14 @@ builder:
 key_manager:
   network: regtest
   key_derivation_path: m/101/1/0/0/
-  key_derivation_seed: deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
-  winternitz_seed: deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+  key_derivation_seed: 1000beefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+  winternitz_seed: 1000beefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
 
 key_storage:
-  password: secret_password
+  password: secret_password_1
   path: /tmp/development/keys.db
 
 storage:
-  password: secret_password
   db: /tmp/development/storage.db
   program: /tmp/development/
 
