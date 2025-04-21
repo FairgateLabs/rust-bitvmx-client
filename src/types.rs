@@ -86,9 +86,8 @@ pub enum IncomingBitVMXApiMessages {
     SubscribeUTXO(),
     DispatchTransaction(Uuid, Transaction),
     DispatchTransactionName(Uuid, String),
-    SetupKey(),
-    GenerateAggregatedPubkey(Uuid, Vec<P2PAddress>, u16),
-    GetAggregatedPubkey(),
+    SetupKey(Uuid, Vec<P2PAddress>, u16),
+    GetAggregatedPubkey(Uuid),
     GenerateZKP(),
     ProofReady(),
     ExecuteZKP(),
@@ -118,6 +117,7 @@ pub enum OutgoingBitVMXApiMessages {
     SetupCompleted(ProgramId),
     // Add response types for the new messages if needed
     AggregatedPubkey(Uuid, PublicKey),
+    AggregatedPubkeyNotReady(Uuid),
     ZKPResult(/* Add appropriate type */),
     ExecutionResult(/* Add appropriate type */),
 }

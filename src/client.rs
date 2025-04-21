@@ -44,12 +44,12 @@ impl BitVMXClient {
         self.send_message(IncomingBitVMXApiMessages::DispatchTransaction(id, tx))
     }
 
-    pub fn setup_key(&self) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::SetupKey())
+    pub fn setup_key(&self, id: Uuid, participants: Vec<P2PAddress>, leader_idx: u16) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SetupKey(id, participants, leader_idx))
     }
 
-    pub fn get_aggregated_pubkey(&self) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::GetAggregatedPubkey())
+    pub fn get_aggregated_pubkey(&self, id: Uuid) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetAggregatedPubkey(id))
     }
 
     pub fn generate_zkp(&self) -> Result<()> {

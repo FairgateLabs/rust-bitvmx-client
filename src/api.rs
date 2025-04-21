@@ -10,6 +10,14 @@ use crate::{
 pub trait BitVMXApi {
     fn ping(&mut self, from: u32) -> Result<(), BitVMXError>;
 
+    fn setup_key(
+        &mut self,
+        from: u32,
+        id: Uuid,
+        participants: Vec<P2PAddress>,
+        leader_idx: u16,
+    ) -> Result<(), BitVMXError>;
+
     fn setup_slot(
         &mut self,
         id: Uuid,
@@ -37,9 +45,7 @@ pub trait BitVMXApi {
 
     fn handle_message(&mut self, msg: String, from: u32) -> Result<(), BitVMXError>;
 
-    fn setup_key(&mut self) -> Result<(), BitVMXError>;
-
-    fn get_aggregated_pubkey(&mut self) -> Result<(), BitVMXError>;
+    fn get_aggregated_pubkey(&mut self, from: u32, id: Uuid) -> Result<(), BitVMXError>;
 
     fn generate_zkp(&mut self) -> Result<(), BitVMXError>;
 
