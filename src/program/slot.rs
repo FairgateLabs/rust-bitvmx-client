@@ -69,6 +69,7 @@ impl SlotProtocol {
     pub fn build(
         &self,
         utxo: Utxo,
+        _user_secret: String,
         _keys: Vec<ParticipantKeys>,
         computed_aggregated: HashMap<String, PublicKey>,
         key_chain: &KeyChain,

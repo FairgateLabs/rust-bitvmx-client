@@ -2,8 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::p2p_helper::P2PMessageType;
 
-use super::participant::ParticipantRole;
-
 #[derive(PartialEq, Clone, Serialize, Deserialize, Debug)]
 pub enum ProgramState {
     /// Initial state when a program is first created
@@ -46,9 +44,9 @@ pub enum SettingUpState {
 }
 
 impl ProgramState {
-    pub fn next_state(&self, role: &ParticipantRole) -> Self {
-        match role {
-            ParticipantRole::Prover => match self {
+    pub fn next_state(&self, leader: bool) -> Self {
+        match leader {
+            false => match self {
                 ProgramState::New => ProgramState::SettingUp(SettingUpState::SendingKeys),
                 ProgramState::SettingUp(SettingUpState::SendingKeys) => {
                     ProgramState::SettingUp(SettingUpState::WaitingKeys)
@@ -78,7 +76,7 @@ impl ProgramState {
                 //TODO: This should change to Claimed or Challenged , there is 2 options .
                 ProgramState::Dispatching => ProgramState::Dispatching,*/
             },
-            ParticipantRole::Verifier => match self {
+            true => match self {
                 ProgramState::New => ProgramState::SettingUp(SettingUpState::WaitingKeys),
                 ProgramState::SettingUp(SettingUpState::WaitingKeys) => {
                     ProgramState::SettingUp(SettingUpState::SendingKeys)
@@ -110,8 +108,8 @@ impl ProgramState {
         }
     }
 
-    pub fn should_answer_ack(&self, role: &ParticipantRole, msg_type: &P2PMessageType) -> bool {
-        if role == &ParticipantRole::Prover {
+    pub fn should_answer_ack(&self, leader: bool, msg_type: &P2PMessageType) -> bool {
+        if !leader {
             // Prover flow:
             // 1. Sends keys and waits for KeysAck
             // 2. Waits for Keys from verifier

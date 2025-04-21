@@ -12,6 +12,7 @@ use crate::{
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus, TypesToMonitor};
 use chrono::Utc;
+use core::panic;
 use key_manager::{
     musig2::{types::MessageId, PartialSignature, PubNonce},
     winternitz::{self, WinternitzSignature, WinternitzType},
@@ -110,14 +111,52 @@ pub fn all_signatures_ready(others: &Vec<ParticipantData>) -> bool {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+pub struct DrpParameters {
+    pub role: ParticipantRole,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SlotParameters;
+
+#[derive(Clone, Serialize, Deserialize)]
+pub enum ProtocolParameters {
+    DisputeResolutionProtocol(DrpParameters),
+    SlotProtocol(SlotParameters),
+}
+
+impl ProtocolParameters {
+    pub fn new_drp(role: ParticipantRole) -> Self {
+        ProtocolParameters::DisputeResolutionProtocol(DrpParameters { role })
+    }
+
+    pub fn new_slot() -> Self {
+        ProtocolParameters::SlotProtocol(SlotParameters {})
+    }
+
+    pub fn drp(&self) -> &DrpParameters {
+        match self {
+            ProtocolParameters::DisputeResolutionProtocol(drp) => drp,
+            _ => panic!("Not a DRP protocol"),
+        }
+    }
+
+    pub fn slot(&self) -> &SlotParameters {
+        match self {
+            ProtocolParameters::SlotProtocol(slot) => slot,
+            _ => panic!("Not a Slot protocol"),
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Program {
     pub program_id: Uuid,
-    pub my_role: ParticipantRole,
+    pub parameters: ProtocolParameters,
     pub my_idx: usize,
     pub participants: Vec<ParticipantData>,
     pub leader: usize,
     pub utxo: Utxo,
-    pub protocol: ProtocolType, //TODO: this might be generic
+    pub protocol: ProtocolType,
     pub state: ProgramState,
     witness_data: HashMap<Txid, WitnessData>,
     #[serde(skip)]
@@ -136,6 +175,9 @@ impl Program {
         Ok(program)
     }
 
+    pub fn im_leader(&self) -> bool {
+        self.my_idx == self.leader
+    }
     pub fn save(&self) -> Result<(), ProgramError> {
         let key = Self::get_key(StoreKey::Program(self.program_id));
         self.storage.as_ref().unwrap().set(key, self, None)?;
@@ -184,16 +226,9 @@ impl Program {
         // Create a program with the utxo information, and the dispute resolution search parameters.
         let protocol = ProtocolType::SlotProtocol(SlotProtocol::new(*id, storage.clone()));
 
-        // AS PROVER STARTS COMMUNICATION PUT LEADER AS VERIFIER TO WAIT FOR ALL THE INFORMATION FOR OTHERS
-        let role = if my_idx == leader as usize {
-            ParticipantRole::Verifier
-        } else {
-            ParticipantRole::Prover
-        };
-
         let program = Self {
             program_id: *id,
-            my_role: role, //TODO: This should be part of the protocol context and generic
+            parameters: ProtocolParameters::new_slot(),
             my_idx,
             participants: others,
             leader,
@@ -249,10 +284,10 @@ impl Program {
 
         let program = Self {
             program_id: *id,
-            my_role,
+            parameters: ProtocolParameters::new_drp(my_role),
             my_idx,
             participants: others,
-            leader: 1 - my_idx, //verifier is the leader (because prover starts sending data) //TODO: decouple order from role
+            leader: 1, //verifier is the leader (because prover starts sending data)
             utxo,
             protocol: drp,
             state: ProgramState::New,
@@ -335,7 +370,7 @@ impl Program {
         // 3. Build the protocol using the aggregated key as internal key for taproot
 
         if self.protocol.as_drp().is_some() {
-            info!("Building protocol for: {:?}", self.my_role);
+            info!("Building protocol for: {:?}", self.parameters.drp().role);
 
             self.protocol.as_drp_mut().unwrap().build(
                 self.utxo.clone(),
@@ -345,7 +380,7 @@ impl Program {
                 search_params,
                 &context.key_chain,
             )?;
-            info!("Protocol built for role: {:?}", self.my_role);
+            info!("Protocol built for role: {:?}", self.parameters.drp().role);
         } else {
             let keys: Vec<ParticipantKeys> = self
                 .participants
@@ -354,6 +389,7 @@ impl Program {
                 .collect();
             self.protocol.as_slot_mut().unwrap().build(
                 self.utxo.clone(),
+                "top_secret".to_string(),
                 keys,
                 aggregated,
                 &context.key_chain,
@@ -428,7 +464,7 @@ impl Program {
             return Ok(());
         }
 
-        info!("{:?}: Sending keys", self.my_role);
+        info!("{:?}: Sending keys", self.my_idx);
         let keys = if self.my_idx == self.leader {
             let mut keys = vec![];
             for other in &self.participants {
@@ -458,7 +494,7 @@ impl Program {
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         if !self.state.should_handle_msg(&msg_type) {
-            if self.state.should_answer_ack(&self.my_role, &msg_type) {
+            if self.state.should_answer_ack(self.im_leader(), &msg_type) {
                 self.send_ack(program_context, &peer_id, P2PMessageType::KeysAck)?;
             }
             return Ok(());
@@ -490,7 +526,7 @@ impl Program {
             return Ok(());
         }
 
-        info!("{:?}: Sending nonces {}", self.my_role, self.my_idx);
+        info!("{}. Sending nonces", self.my_idx);
 
         let mut public_nonce_msg: PubNonceMessage = Vec::new();
         for aggregated in self.participants[self.my_idx]
@@ -546,7 +582,7 @@ impl Program {
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         if !self.state.should_handle_msg(&msg_type) {
-            if self.state.should_answer_ack(&self.my_role, &msg_type) {
+            if self.state.should_answer_ack(self.im_leader(), &msg_type) {
                 self.send_ack(program_context, &peer_id, P2PMessageType::PublicNoncesAck)?;
             }
             return Ok(());
@@ -607,7 +643,7 @@ impl Program {
             return Ok(());
         }
 
-        info!("{:?}: Sending PartialSignatures", self.my_role);
+        info!("{}. Sending PartialSignatures", self.my_idx);
         let mut partial_sig_msg: PartialSignatureMessage = Vec::new();
         for aggregated in self.participants[self.my_idx]
             .keys
@@ -662,7 +698,7 @@ impl Program {
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         if !self.state.should_handle_msg(&msg_type) {
-            if self.state.should_answer_ack(&self.my_role, &msg_type) {
+            if self.state.should_answer_ack(self.im_leader(), &msg_type) {
                 self.send_ack(
                     program_context,
                     &peer_id,
@@ -789,10 +825,7 @@ impl Program {
         data: Value,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        warn!(
-            "{} {}: Message received: {:?} ",
-            self.my_idx, self.my_role, msg_type
-        );
+        warn!("{}: Message received: {:?} ", self.my_idx, msg_type);
 
         match msg_type {
             P2PMessageType::Keys => {
@@ -809,8 +842,8 @@ impl Program {
             | P2PMessageType::PartialSignaturesAck => {
                 if !self.state.should_handle_msg(&msg_type) {
                     info!(
-                        "Ignoring message {} {:?} {:?}",
-                        self.my_role, msg_type, self.state
+                        "{}. Ignoring message {:?} {:?}",
+                        self.my_idx, msg_type, self.state
                     );
                     return Ok(());
                 }
@@ -828,7 +861,7 @@ impl Program {
         peer_id: &PeerId,
         msg_type: P2PMessageType,
     ) -> Result<(), BitVMXError> {
-        info!("{:?}: Sending {:?}", self.my_role, msg_type);
+        info!("{}. Sending {:?}", self.my_idx, msg_type);
 
         response(
             &program_context.comms,
@@ -874,7 +907,7 @@ impl Program {
 
         if name == dispute::START_CH
             && tx_status.confirmations == 5
-            && self.my_role == ParticipantRole::Prover
+            && self.parameters.drp().role == ParticipantRole::Prover
         {
             //TODO: inform whoever is needed
             // now act here to test
@@ -893,7 +926,7 @@ impl Program {
 
         if name == dispute::INPUT_1
             && tx_status.confirmations == 5
-            && self.my_role == ParticipantRole::Verifier
+            && self.parameters.drp().role == ParticipantRole::Verifier
         {
             //self.drp.
             //size is from def
@@ -999,7 +1032,7 @@ impl Program {
     /// otherwise it will transition to the next state at the wrong time and break
     /// the program's flow
     pub fn move_program_to_next_state(&mut self) -> Result<(), BitVMXError> {
-        self.state = self.state.next_state(&self.my_role);
+        self.state = self.state.next_state(self.im_leader());
         self.save()?;
         Ok(())
     }

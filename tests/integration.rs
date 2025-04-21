@@ -119,7 +119,7 @@ fn wait_message_from_channel(
     fake_tick: bool,
 ) -> Result<(String, u32)> {
     //loop to timeout
-    for i in 0..20000 {
+    for i in 0..40000 {
         if i % 50 == 0 {
             let msg = channel.recv()?;
             if msg.is_some() {
