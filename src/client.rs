@@ -72,8 +72,8 @@ impl BitVMXClient {
         self.send_message(IncomingBitVMXApiMessages::Finalize())
     }
 
-    pub fn get_tx(&self, txid: Txid) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::GetTransaction(txid))
+    pub fn get_transaction(&self, request_id: Uuid, txid: Txid) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetTransaction(request_id, txid))
     }
 
     pub fn subscribe_tx(&self, txid: Txid) -> Result<()> {
@@ -103,21 +103,6 @@ impl BitVMXClient {
         };
         Ok(msg)
     }
-
-    // pub fn subscribe<F>(&self, mut callback: F)
-    // where
-    //     F: FnMut(OutgoingBitVMXApiMessages),
-    // {
-    //     loop {
-    //         if let Ok(Some((msg, from))) = self.channel.recv() {
-    //             match serde_json::from_str(&msg) {
-    //                 Ok(decoded_msg) => callback(decoded_msg),
-    //                 Err(e) => println!("Failed to decode message from {}: {}", from, e),
-    //             }
-    //         }
-    //         thread::sleep(Duration::from_millis(100));
-    //     }
-    // }
 
     pub fn get_message(&self) -> Result<Option<(OutgoingBitVMXApiMessages, u32)>> {
         if let Ok(Some((msg, from))) = self.channel.recv() {

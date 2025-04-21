@@ -15,7 +15,7 @@ use crate::{
     },
 };
 
-use bitcoin::Transaction;
+use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::{
     coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi},
     types::AckNews,
@@ -408,10 +408,6 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn get_tx(&mut self) -> Result<(), BitVMXError> {
-        Ok(())
-    }
-
     fn subscribe_to_tx(&mut self) -> Result<(), BitVMXError> {
         // TODO will not implment, for now. We may not need this.
         Ok(())
@@ -451,6 +447,7 @@ impl BitVMXApi for BitVMX {
 
         Ok(())
     }
+
     fn setup_program(
         &mut self,
         id: Uuid,
@@ -479,9 +476,13 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn dispatch_transaction_name(&mut self, id: Uuid, name: &str) -> Result<(), BitVMXError> {
-        self.load_program(&id)?
-            .dispatch_transaction_name(&self.program_context, name)?;
+    fn get_transaction(&mut self, from: u32, id: Uuid, txid: Txid) -> Result<(), BitVMXError> {
+        let tx_status = self.program_context.bitcoin_coordinator.get_transaction(txid)?;
+
+        self.program_context.broker_channel.send(
+            from,
+            serde_json::to_string(&OutgoingBitVMXApiMessages::Transaction(id, tx_status))?,
+        )?;
         Ok(())
     }
 
@@ -499,6 +500,12 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
+    fn dispatch_transaction_name(&mut self, id: Uuid, name: &str) -> Result<(), BitVMXError> {
+        self.load_program(&id)?
+            .dispatch_transaction_name(&self.program_context, name)?;
+        Ok(())
+    }
+
     fn handle_message(&mut self, msg: String, from: u32) -> Result<(), BitVMXError> {
         let decoded: IncomingBitVMXApiMessages = serde_json::from_str(&msg)?;
         info!("< {:#?}", decoded);
@@ -508,10 +515,12 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address, utxo) => {
                 BitVMXApi::setup_program(self, id, role, peer_address, utxo)?
             }
+            IncomingBitVMXApiMessages::GetTransaction(id, txid) => {
+                BitVMXApi::get_transaction(self, from, id, txid)?
+            }
             IncomingBitVMXApiMessages::SetupSlot(id, participants, leader, utxo) => {
                 BitVMXApi::setup_slot(self, id, participants, leader, utxo)?
             }
-            IncomingBitVMXApiMessages::GetTransaction(_txid) => BitVMXApi::get_tx(self)?,
             IncomingBitVMXApiMessages::SubscribeToTransaction(_txid) => {
                 BitVMXApi::subscribe_to_tx(self)?
             }

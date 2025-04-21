@@ -80,8 +80,8 @@ impl Default for ProgramRequestInfo {
 pub enum IncomingBitVMXApiMessages {
     Ping(),
     SetupProgram(ProgramId, ParticipantRole, P2PAddress, Utxo),
+    GetTransaction(Uuid, Txid),
     SetupSlot(ProgramId, Vec<P2PAddress>, u16, Utxo),
-    GetTransaction(Txid),
     SubscribeToTransaction(Txid),
     SubscribeUTXO(),
     DispatchTransaction(Uuid, Transaction),
