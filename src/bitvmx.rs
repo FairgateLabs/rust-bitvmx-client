@@ -404,7 +404,6 @@ impl BitVMXApi for BitVMX {
 
     fn get_aggregated_pubkey(&mut self, from: u32, id: Uuid) -> Result<(), BitVMXError> {
         info!("Getting aggregated pubkey for collaboration: {:?}", id);
-        info!("Current collaborations: {:?}", self.collaborations);
 
         let response = if let Some(collaboration) = self.collaborations.get(&id) {
             if let Some(aggregated_pubkey) = &collaboration.aggregated_key {
@@ -420,6 +419,7 @@ impl BitVMXApi for BitVMX {
             from,
             serde_json::to_string(&response)?,
         )?;
+
         Ok(())
     }
 
