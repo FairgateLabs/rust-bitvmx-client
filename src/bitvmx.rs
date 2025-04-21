@@ -15,7 +15,7 @@ use crate::{
     },
 };
 
-use bitcoin::Transaction;
+use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::{
     coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi},
     types::AckNews,
@@ -42,6 +42,7 @@ use storage_backend::storage::{KeyValueStore, Storage};
 
 use tracing::{debug, info, warn};
 use uuid::Uuid;
+
 
 pub struct BitVMX {
     _config: Config,
@@ -380,11 +381,45 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn setup_key(&mut self) -> Result<(), BitVMXError> {
+    fn setup_key(
+        &mut self,
+        from: u32,
+        id: Uuid,
+        participants: Vec<P2PAddress>,
+        leader_idx: u16,
+    ) -> Result<(), BitVMXError> {
+        info!("Setting up key for program: {:?}", id);
+        let leader = participants[leader_idx as usize].clone();
+        let collab = Collaboration::setup_aggregated_signature(
+            &id,
+            participants,
+            leader,
+            &mut self.program_context,
+            from,
+        )?;
+        self.collaborations.insert(id, collab);
+        info!("Key setup finished for program: {:?}", id);
         Ok(())
     }
 
-    fn get_aggregated_pubkey(&mut self) -> Result<(), BitVMXError> {
+    fn get_aggregated_pubkey(&mut self, from: u32, id: Uuid) -> Result<(), BitVMXError> {
+        info!("Getting aggregated pubkey for collaboration: {:?}", id);
+
+        let response = if let Some(collaboration) = self.collaborations.get(&id) {
+            if let Some(aggregated_pubkey) = &collaboration.aggregated_key {
+                OutgoingBitVMXApiMessages::AggregatedPubkey(id, aggregated_pubkey.clone())
+            } else {
+                OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(id)
+            }
+        } else {
+            OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(id)
+        };
+
+        self.program_context.broker_channel.send(
+            from,
+            serde_json::to_string(&response)?,
+        )?;
+
         Ok(())
     }
 
@@ -405,10 +440,6 @@ impl BitVMXApi for BitVMX {
     }
 
     fn finalize(&mut self) -> Result<(), BitVMXError> {
-        Ok(())
-    }
-
-    fn get_tx(&mut self) -> Result<(), BitVMXError> {
         Ok(())
     }
 
@@ -451,6 +482,7 @@ impl BitVMXApi for BitVMX {
 
         Ok(())
     }
+
     fn setup_program(
         &mut self,
         id: Uuid,
@@ -479,9 +511,13 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn dispatch_transaction_name(&mut self, id: Uuid, name: &str) -> Result<(), BitVMXError> {
-        self.load_program(&id)?
-            .dispatch_transaction_name(&self.program_context, name)?;
+    fn get_transaction(&mut self, from: u32, id: Uuid, txid: Txid) -> Result<(), BitVMXError> {
+        let tx_status = self.program_context.bitcoin_coordinator.get_transaction(txid)?;
+
+        self.program_context.broker_channel.send(
+            from,
+            serde_json::to_string(&OutgoingBitVMXApiMessages::Transaction(id, tx_status))?,
+        )?;
         Ok(())
     }
 
@@ -499,6 +535,12 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
+    fn dispatch_transaction_name(&mut self, id: Uuid, name: &str) -> Result<(), BitVMXError> {
+        self.load_program(&id)?
+            .dispatch_transaction_name(&self.program_context, name)?;
+        Ok(())
+    }
+
     fn handle_message(&mut self, msg: String, from: u32) -> Result<(), BitVMXError> {
         let decoded: IncomingBitVMXApiMessages = serde_json::from_str(&msg)?;
         info!("< {:#?}", decoded);
@@ -508,10 +550,12 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address, utxo) => {
                 BitVMXApi::setup_program(self, id, role, peer_address, utxo)?
             }
+            IncomingBitVMXApiMessages::GetTransaction(id, txid) => {
+                BitVMXApi::get_transaction(self, from, id, txid)?
+            }
             IncomingBitVMXApiMessages::SetupSlot(id, participants, leader, utxo) => {
                 BitVMXApi::setup_slot(self, id, participants, leader, utxo)?
             }
-            IncomingBitVMXApiMessages::GetTransaction(_txid) => BitVMXApi::get_tx(self)?,
             IncomingBitVMXApiMessages::SubscribeToTransaction(_txid) => {
                 BitVMXApi::subscribe_to_tx(self)?
             }
@@ -522,21 +566,11 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::DispatchTransaction(id, tx) => {
                 BitVMXApi::dispatch_transaction(self, from, id, tx)?
             }
-            IncomingBitVMXApiMessages::SetupKey() => BitVMXApi::setup_key(self)?,
-
-            IncomingBitVMXApiMessages::GenerateAggregatedPubkey(id, participants, leader_idx) => {
-                let leader = participants[leader_idx as usize].clone();
-                let collab = Collaboration::setup_aggregated_signature(
-                    &id,
-                    participants,
-                    leader,
-                    &mut self.program_context,
-                    from,
-                )?;
-                self.collaborations.insert(id, collab);
+            IncomingBitVMXApiMessages::SetupKey(id, participants, leader_idx) => {
+                BitVMXApi::setup_key(self, from, id, participants, leader_idx)?
             }
-            IncomingBitVMXApiMessages::GetAggregatedPubkey() => {
-                BitVMXApi::get_aggregated_pubkey(self)?
+            IncomingBitVMXApiMessages::GetAggregatedPubkey(id) => {
+                BitVMXApi::get_aggregated_pubkey(self, from, id)?
             }
             IncomingBitVMXApiMessages::GenerateZKP() => BitVMXApi::generate_zkp(self)?,
             IncomingBitVMXApiMessages::ProofReady() => BitVMXApi::proof_ready(self)?,

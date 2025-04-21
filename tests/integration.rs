@@ -192,7 +192,7 @@ pub fn test_single_run() -> Result<()> {
 
     //ask the peers to generate the aggregated public key
     let aggregation_id = Uuid::new_v4();
-    let command = IncomingBitVMXApiMessages::GenerateAggregatedPubkey(
+    let command = IncomingBitVMXApiMessages::SetupKey(
         aggregation_id,
         vec![prover_address.clone(), verifier_address.clone()],
         0,
@@ -297,7 +297,7 @@ pub fn test_aggregation() -> Result<()> {
 
     //ask the peers to generate the aggregated public key
     let aggregation_id = Uuid::new_v4();
-    let command = IncomingBitVMXApiMessages::GenerateAggregatedPubkey(
+    let command = IncomingBitVMXApiMessages::SetupKey(
         aggregation_id,
         vec![addres_1.clone(), addres_2.clone(), addres_3.clone()],
         0,
@@ -349,7 +349,7 @@ pub fn test_slot() -> Result<()> {
     //ask the peers to generate the aggregated public key
     let aggregation_id = Uuid::new_v4();
     let command =
-        IncomingBitVMXApiMessages::GenerateAggregatedPubkey(aggregation_id, addresses.clone(), 0)
+        IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), 0)
             .to_string()?;
 
     bridge_1.send(BITVMX_ID, command.clone())?;

@@ -14,6 +14,7 @@ use crate::{
     types::{OutgoingBitVMXApiMessages, ProgramContext},
 };
 
+#[derive(Debug)]
 pub struct Collaboration {
     pub collaboration_id: Uuid,
     pub participants: Vec<P2PAddress>,
