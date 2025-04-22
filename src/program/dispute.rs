@@ -71,7 +71,7 @@ impl DisputeResolutionProtocol {
     pub fn new(program_id: Uuid, storage: Rc<Storage>) -> Self {
         let protocol_name = format!("drp_{}", program_id);
         Self {
-            ctx: ProtocolContext::new(protocol_name, storage),
+            ctx: ProtocolContext::new(program_id, protocol_name, storage),
         }
     }
 

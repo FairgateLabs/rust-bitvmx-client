@@ -4,6 +4,7 @@ use protocol_builder::{builder::Protocol, errors::ProtocolBuilderError};
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 use storage_backend::storage::Storage;
+use uuid::Uuid;
 
 use crate::errors::BitVMXError;
 use crate::keychain::KeyChain;
@@ -66,13 +67,15 @@ pub trait ProtocolHandler {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ProtocolContext {
     pub protocol_name: String,
+    pub id: Uuid,
     #[serde(skip)]
     pub storage: Option<Rc<Storage>>,
 }
 
 impl ProtocolContext {
-    pub fn new(name: String, storage: Rc<Storage>) -> Self {
+    pub fn new(id: Uuid, name: String, storage: Rc<Storage>) -> Self {
         Self {
+            id,
             protocol_name: name,
             storage: Some(storage),
         }

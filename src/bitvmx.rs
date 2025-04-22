@@ -8,6 +8,7 @@ use crate::{
     program::{
         participant::{P2PAddress, ParticipantRole},
         program::Program,
+        variables::Globals,
     },
     types::{
         IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus,
@@ -42,7 +43,6 @@ use storage_backend::storage::{KeyValueStore, Storage};
 
 use tracing::{debug, info, warn};
 use uuid::Uuid;
-
 
 pub struct BitVMX {
     _config: Config,
@@ -101,13 +101,18 @@ impl BitVMX {
         //TODO: A channel that talks directly with the broker without going through localhost loopback could be implemented
         let broker_channel = LocalChannel::new(BITVMX_ID, broker_storage.clone());
 
-        let program_context =
-            ProgramContext::new(comms, key_chain, bitcoin_coordinator, broker_channel);
+        let program_context = ProgramContext::new(
+            comms,
+            key_chain,
+            bitcoin_coordinator,
+            broker_channel,
+            Globals::new(store.clone()),
+        );
 
         Ok(Self {
             _config: config,
             program_context,
-            store,
+            store: store.clone(),
             broker,
             count: 0,
             collaborations: HashMap::new(), //deserialize from storage
@@ -415,10 +420,9 @@ impl BitVMXApi for BitVMX {
             OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(id)
         };
 
-        self.program_context.broker_channel.send(
-            from,
-            serde_json::to_string(&response)?,
-        )?;
+        self.program_context
+            .broker_channel
+            .send(from, serde_json::to_string(&response)?)?;
 
         Ok(())
     }
@@ -512,7 +516,10 @@ impl BitVMXApi for BitVMX {
     }
 
     fn get_transaction(&mut self, from: u32, id: Uuid, txid: Txid) -> Result<(), BitVMXError> {
-        let tx_status = self.program_context.bitcoin_coordinator.get_transaction(txid)?;
+        let tx_status = self
+            .program_context
+            .bitcoin_coordinator
+            .get_transaction(txid)?;
 
         self.program_context.broker_channel.send(
             from,
@@ -547,6 +554,10 @@ impl BitVMXApi for BitVMX {
 
         match decoded {
             IncomingBitVMXApiMessages::Ping() => BitVMXApi::ping(self, from)?,
+            IncomingBitVMXApiMessages::SetVar(uuid, key, value) => {
+                info!("Setting variable {}: {:?}", key, value);
+                self.program_context.globals.set_var(&uuid, &key, value)?;
+            }
             IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address, utxo) => {
                 BitVMXApi::setup_program(self, id, role, peer_address, utxo)?
             }

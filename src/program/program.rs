@@ -392,7 +392,7 @@ impl Program {
                 "top_secret".to_string(),
                 keys,
                 aggregated,
-                &context.key_chain,
+                &context,
             )?;
         }
 

@@ -10,13 +10,17 @@ use uuid::Uuid;
 use crate::{
     errors::BitVMXError,
     keychain::KeyChain,
-    program::participant::{P2PAddress, ParticipantRole},
+    program::{
+        participant::{P2PAddress, ParticipantRole},
+        variables::Globals,
+    },
 };
 pub struct ProgramContext {
     pub key_chain: KeyChain,
     pub comms: P2pHandler,
     pub bitcoin_coordinator: BitcoinCoordinatorType,
     pub broker_channel: LocalChannel<BrokerStorage>,
+    pub globals: Globals,
 }
 
 pub const BITVMX_ID: u32 = 1;
@@ -30,12 +34,14 @@ impl ProgramContext {
         key_chain: KeyChain,
         bitcoin_coordinator: BitcoinCoordinatorType,
         broker_channel: LocalChannel<BrokerStorage>,
+        globals: Globals,
     ) -> Self {
         Self {
             comms,
             key_chain,
             bitcoin_coordinator,
             broker_channel,
+            globals,
         }
     }
 }
@@ -75,10 +81,31 @@ impl Default for ProgramRequestInfo {
     }
 }
 
+/*
+- winternitz
+- lamport
+- secret
+- key (schnor pub)
+- utxo [ txid, vout, optional(amount)]*/
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub enum VariableTypes {
+    Secret(Vec<u8>),
+}
+
+impl VariableTypes {
+    pub fn secret(&self) -> Result<Vec<u8>, BitVMXError> {
+        match self {
+            VariableTypes::Secret(secret) => Ok(secret.clone()),
+        }
+    }
+}
+
 //TODO: This should be moved to a common place that could be used to share the messages api
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub enum IncomingBitVMXApiMessages {
     Ping(),
+    SetVar(Uuid, String, VariableTypes),
     SetupProgram(ProgramId, ParticipantRole, P2PAddress, Utxo),
     GetTransaction(Uuid, Txid),
     SetupSlot(ProgramId, Vec<P2PAddress>, u16, Utxo),

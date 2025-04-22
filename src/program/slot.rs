@@ -54,7 +54,7 @@ impl SlotProtocol {
     pub fn new(program_id: Uuid, storage: Rc<Storage>) -> Self {
         let protocol_name = format!("slot_{}", program_id);
         Self {
-            ctx: ProtocolContext::new(protocol_name, storage),
+            ctx: ProtocolContext::new(program_id, protocol_name, storage),
         }
     }
 
@@ -72,7 +72,7 @@ impl SlotProtocol {
         _user_secret: String,
         _keys: Vec<ParticipantKeys>,
         computed_aggregated: HashMap<String, PublicKey>,
-        key_chain: &KeyChain,
+        context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         // TODO get this from config, all values expressed in satoshis
         let _p2pkh_dust_threshold: u64 = 546;
@@ -85,7 +85,18 @@ impl SlotProtocol {
         let internal_key = &utxo.pub_key;
         let untweaked_key: UntweakedPublicKey = XOnlyPublicKey::from(*internal_key);
 
-        let spending_scripts = vec![scripts::timelock_renew(&internal_key)];
+        let secret = context.globals.get_var(&self.ctx.id, "secret")?;
+        if secret.is_none() {
+            return Err(BitVMXError::VariableNotFound(
+                self.ctx.id.clone(),
+                "secret".to_string(),
+            ));
+        }
+        let secret = secret.unwrap().secret()?;
+
+        let spending_scripts = vec![scripts::reveal_secret(secret, &internal_key)];
+        //let spending_scripts = vec![scripts::check_aggregated_signature(&internal_key)];
+
         let spend_info =
             scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
 
@@ -126,7 +137,7 @@ impl SlotProtocol {
         let pb = ProtocolBuilder {};
         pb.add_speedup_output(&mut protocol, ACCEPT_TX, p2wpkh_dust_threshold, aggregated)?;
 
-        protocol.build(true, &key_chain.key_manager)?;
+        protocol.build(true, &context.key_chain.key_manager)?;
         info!("{}", protocol.visualize()?);
         self.save_protocol(protocol)?;
 
@@ -136,10 +147,11 @@ impl SlotProtocol {
     pub fn accept_tx(&self) -> Result<Transaction, ProtocolBuilderError> {
         let signature = self
             .load_protocol()?
-            .input_taproot_key_spend_signature(ACCEPT_TX, 0)?
+            .input_taproot_script_spend_signature(ACCEPT_TX, 0, 0)?
             .unwrap();
-        let mut taproot_arg = InputArgs::new_taproot_key_args();
+        let mut taproot_arg = InputArgs::new_taproot_script_args(0);
         taproot_arg.push_taproot_signature(signature)?;
+        taproot_arg.push_slice(&"secret".as_bytes().to_vec());
 
         self.load_protocol()?
             .transaction_to_send(ACCEPT_TX, &[taproot_arg])

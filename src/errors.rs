@@ -49,6 +49,9 @@ pub enum BitVMXError {
     #[error("Program {0} is not ready to run. Please install it first.")]
     ProgramNotReady(Uuid),
 
+    #[error("Cannot find the variable {0}.{1}")]
+    VariableNotFound(Uuid, String),
+
     // #[error("Failed to create communications key")]
     // CommunicationsKeyGenerationError(#[from] DecodingError),
     #[error("Failed to encode P2P data")]

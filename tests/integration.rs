@@ -12,10 +12,13 @@ use bitvmx_client::{
         self,
         participant::{P2PAddress, ParticipantRole},
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID},
+    types::{
+        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, VariableTypes, BITVMX_ID, L2_ID,
+    },
 };
 use p2p_handler::PeerId;
 use protocol_builder::{scripts, types::Utxo};
+use sha2::{Digest, Sha256};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
@@ -80,12 +83,22 @@ fn init_bitvmx(role: &str) -> Result<(BitVMX, P2PAddress, DualChannel)> {
     Ok((bitvmx, address, bridge_client))
 }
 
-fn init_utxo(bitcoin_client: &BitcoinClient, aggregated_pub_key: PublicKey) -> Result<Utxo> {
+fn init_utxo(
+    bitcoin_client: &BitcoinClient,
+    aggregated_pub_key: PublicKey,
+    secret: Option<Vec<u8>>,
+) -> Result<Utxo> {
     // TODO perform a key aggregation with participants public keys. This is a harcoded key for now.
     let secp = secp256k1::Secp256k1::new();
     let untweaked_key = XOnlyPublicKey::from(aggregated_pub_key);
 
-    let spending_scripts = vec![scripts::timelock_renew(&aggregated_pub_key)];
+    let spending_scripts = if secret.is_some() {
+        vec![scripts::reveal_secret(secret.unwrap(), &aggregated_pub_key)]
+        //vec![scripts::check_aggregated_signature(&aggregated_pub_key)]
+    } else {
+        vec![scripts::timelock_renew(&aggregated_pub_key)]
+    };
+
     let taproot_spend_info =
         scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
     let p2tr_address = Address::p2tr(
@@ -215,7 +228,7 @@ pub fn test_single_run() -> Result<()> {
         _ => panic!("Expected AggregatedPubkey message"),
     };
 
-    let utxo = init_utxo(&bitcoin_client, aggregated_pub_key)?;
+    let utxo = init_utxo(&bitcoin_client, aggregated_pub_key, None)?;
 
     let program_id = Uuid::new_v4();
     let setup_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetupProgram(
@@ -324,6 +337,12 @@ pub fn test_aggregation() -> Result<()> {
     Ok(())
 }
 
+pub fn sha256(data: Vec<u8>) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hasher.update(&data);
+    hasher.finalize().to_vec()
+}
+
 #[ignore]
 #[test]
 pub fn test_slot() -> Result<()> {
@@ -349,8 +368,7 @@ pub fn test_slot() -> Result<()> {
     //ask the peers to generate the aggregated public key
     let aggregation_id = Uuid::new_v4();
     let command =
-        IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), 0)
-            .to_string()?;
+        IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), 0).to_string()?;
 
     bridge_1.send(BITVMX_ID, command.clone())?;
     bridge_2.send(BITVMX_ID, command.clone())?;
@@ -368,9 +386,22 @@ pub fn test_slot() -> Result<()> {
         _ => panic!("Expected AggregatedPubkey message"),
     };
 
-    let utxo = init_utxo(&bitcoin_client, aggregated_pub_key)?;
-
     let program_id = Uuid::new_v4();
+
+    let preimage = "secret".to_string();
+    let hash = sha256(preimage.as_bytes().to_vec());
+
+    let utxo = init_utxo(&bitcoin_client, aggregated_pub_key, Some(hash.clone()))?;
+
+    let setup_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetVar(
+        program_id,
+        "secret".to_string(),
+        VariableTypes::Secret(hash),
+    ))?;
+    bridge_1.send(BITVMX_ID, setup_msg.clone())?;
+    bridge_2.send(BITVMX_ID, setup_msg.clone())?;
+    bridge_3.send(BITVMX_ID, setup_msg.clone())?;
+
     let setup_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetupSlot(
         program_id,
         addresses,
