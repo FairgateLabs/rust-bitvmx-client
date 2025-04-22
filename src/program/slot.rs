@@ -1,9 +1,10 @@
 use std::{collections::HashMap, rc::Rc};
 
 use bitcoin::{
-    key::UntweakedPublicKey, secp256k1, Amount, PublicKey, ScriptBuf, Transaction, TxOut,
+    key::UntweakedPublicKey, secp256k1, Amount, PublicKey, ScriptBuf, Transaction, TxOut, Txid,
     XOnlyPublicKey,
 };
+use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
     scripts,
@@ -18,6 +19,7 @@ use crate::{errors::BitVMXError, keychain::KeyChain, types::ProgramContext};
 
 use super::{
     participant::ParticipantKeys,
+    program::ProtocolParameters,
     protocol_handler::{ProtocolContext, ProtocolHandler},
 };
 
@@ -44,6 +46,29 @@ impl ProtocolHandler for SlotProtocol {
             ACCEPT_TX => Ok(self.accept_tx(context)?),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
+    }
+    fn notify_news(
+        &self,
+        tx_id: Txid,
+        tx_status: TransactionStatus,
+        _context: String,
+        _program_context: &ProgramContext,
+        _parameters: &ProtocolParameters,
+    ) -> Result<(), BitVMXError> {
+        let name = self.get_transaction_name_by_id(tx_id)?;
+        info!(
+            "Program {}: Transaction {} has been seen on-chain",
+            self.ctx.id, name
+        );
+        if name == ACCEPT_TX && tx_status.confirmations == 5 {
+            let witness = tx_status.tx.input[0].witness.clone();
+            info!(
+                "secret witness {:?}",
+                String::from_utf8(witness[1].to_vec())
+                    .map_err(|_| BitVMXError::InvalidMessageFormat)?
+            );
+        }
+        Ok(())
     }
 }
 

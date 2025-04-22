@@ -6,17 +6,14 @@ use crate::{
         parse_keys, parse_nonces, parse_signatures, PartialSignatureMessage, PubNonceMessage,
     },
     p2p_helper::{request, response, P2PMessageType},
-    program::{dispute, participant::ParticipantKeys},
+    program::participant::ParticipantKeys,
     types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramRequestInfo, L2_ID},
 };
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus, TypesToMonitor};
 use chrono::Utc;
 use core::panic;
-use key_manager::{
-    musig2::{types::MessageId, PartialSignature, PubNonce},
-    winternitz::{self, WinternitzSignature, WinternitzType},
-};
+use key_manager::musig2::{types::MessageId, PartialSignature, PubNonce};
 use p2p_handler::PeerId;
 use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
@@ -32,39 +29,7 @@ use super::{
     protocol_handler::{ProtocolHandler, ProtocolType},
     slot::SlotProtocol,
     state::{ProgramState, SettingUpState},
-    witness,
 };
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct WitnessData {
-    values: HashMap<String, WinternitzSignature>,
-}
-
-impl Default for WitnessData {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl WitnessData {
-    pub fn new() -> Self {
-        Self {
-            values: HashMap::new(),
-        }
-    }
-
-    pub fn insert(&mut self, name: String, value: WinternitzSignature) {
-        self.values.insert(name, value);
-    }
-
-    pub fn get(&self, name: &str) -> Option<&WinternitzSignature> {
-        self.values.get(name)
-    }
-}
-
-//use crate::program::protocol_handler::ProtocolHandler;
-
-//#[derive(Clone, Serialize, Deserialize)]
 
 #[derive(Debug, Clone)]
 pub enum StoreKey {
@@ -158,7 +123,6 @@ pub struct Program {
     pub utxo: Utxo,
     pub protocol: ProtocolType,
     pub state: ProgramState,
-    witness_data: HashMap<Txid, WitnessData>,
     #[serde(skip)]
     storage: Option<Rc<Storage>>,
     config: ClientConfig,
@@ -235,7 +199,6 @@ impl Program {
             utxo,
             protocol,
             state: ProgramState::New,
-            witness_data: HashMap::new(),
             storage: Some(storage),
             config: config.clone(),
         };
@@ -291,7 +254,6 @@ impl Program {
             utxo,
             protocol: drp,
             state: ProgramState::New,
-            witness_data: HashMap::new(),
             storage: Some(storage),
             config: config.clone(),
         };
@@ -399,17 +361,6 @@ impl Program {
         // 6. Move the program to the next state
         self.move_program_to_next_state()?;
         Ok(())
-    }
-
-    pub fn push_witness_value(&mut self, txid: Txid, name: &str, value: WinternitzSignature) {
-        self.witness_data
-            .entry(txid)
-            .or_default()
-            .insert(name.to_string(), value);
-    }
-
-    pub fn witness(&self, txid: Txid) -> Option<&WitnessData> {
-        self.witness_data.get(&txid)
     }
 
     pub fn get_address_from_peer_id(&self, peer_id: &PeerId) -> Result<P2PAddress, BitVMXError> {
@@ -895,64 +846,11 @@ impl Program {
         &self,
         tx_id: Txid,
         tx_status: TransactionStatus,
-        _context: String,
+        context: String,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        //TODO: for each tx the protocol should decide something to do
-        let name = self.protocol.get_transaction_name_by_id(tx_id)?;
-        info!(
-            "Program {}: Transaction {} has been seen on-chain",
-            self.program_id, name
-        );
-
-        if name == dispute::START_CH
-            && tx_status.confirmations == 5
-            && self.parameters.drp().role == ParticipantRole::Prover
-        {
-            //TODO: inform whoever is needed
-            // now act here to test
-
-            let tx_to_dispatch = self
-                .protocol
-                .as_drp()
-                .unwrap()
-                .input_1_tx(0x1234_4444, &program_context.key_chain)?;
-
-            let context = Context::ProgramId(self.program_id);
-            program_context
-                .bitcoin_coordinator
-                .dispatch(tx_to_dispatch, context.to_string()?)?;
-        }
-
-        if name == dispute::INPUT_1
-            && tx_status.confirmations == 5
-            && self.parameters.drp().role == ParticipantRole::Verifier
-        {
-            //self.drp.
-            //size is from def
-
-            //let wpub = self .get_prover() .keys .as_ref() .unwrap() .get_winternitz("program_input") .unwrap();
-            let witness = tx_status.tx.input[0].witness.clone();
-            let data = self.decode_witness_data(vec![4], WinternitzType::HASH160, witness)?;
-            //info!("message bytes {:?}", data[0].message_bytes());
-            //from vec<u8> be bytes to u32
-            let message = u32::from_be_bytes(data[0].message_bytes().try_into().unwrap());
-            warn!(
-                "Program {}:{} Witness data decoded: {:0x}",
-                self.program_id, name, message
-            );
-        }
-
-        Ok(())
-    }
-
-    fn decode_witness_data(
-        &self,
-        winternitz_message_sizes: Vec<usize>,
-        winternitz_type: winternitz::WinternitzType,
-        witness: bitcoin::Witness,
-    ) -> Result<Vec<winternitz::WinternitzSignature>, BitVMXError> {
-        witness::decode_witness(winternitz_message_sizes, winternitz_type, witness)
+        self.protocol
+            .notify_news(tx_id, tx_status, context, program_context, &self.parameters)
     }
 
     pub fn get_txs_to_monitor(&self) -> Result<Vec<Txid>, BitVMXError> {

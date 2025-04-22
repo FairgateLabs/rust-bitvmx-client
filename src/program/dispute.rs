@@ -1,9 +1,10 @@
 use std::{collections::HashMap, rc::Rc};
 
 use bitcoin::{
-    key::UntweakedPublicKey, secp256k1, Amount, PublicKey, ScriptBuf, Transaction, TxOut,
+    key::UntweakedPublicKey, secp256k1, Amount, PublicKey, ScriptBuf, Transaction, TxOut, Txid,
     XOnlyPublicKey,
 };
+use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use key_manager::winternitz::WinternitzType;
 use protocol_builder::{
     builder::Protocol,
@@ -13,13 +14,17 @@ use protocol_builder::{
 };
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::Storage;
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::{errors::BitVMXError, keychain::KeyChain, types::ProgramContext};
+use crate::{
+    bitvmx::Context, errors::BitVMXError, keychain::KeyChain, program::witness,
+    types::ProgramContext,
+};
 
 use super::{
     participant::{ParticipantKeys, ParticipantRole},
+    program::ProtocolParameters,
     protocol_handler::{ProtocolContext, ProtocolHandler},
 };
 pub struct SearchParams {
@@ -64,6 +69,54 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             START_CH => Ok(self.prekickoff_transaction()?),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
+    }
+
+    fn notify_news(
+        &self,
+        tx_id: Txid,
+        tx_status: TransactionStatus,
+        _context: String,
+        program_context: &ProgramContext,
+        parameters: &ProtocolParameters,
+    ) -> Result<(), BitVMXError> {
+        let name = self.get_transaction_name_by_id(tx_id)?;
+        info!(
+            "Program {}: Transaction {} has been seen on-chain",
+            self.ctx.id, name
+        );
+
+        if name == START_CH
+            && tx_status.confirmations == 5
+            && parameters.drp().role == ParticipantRole::Prover
+        {
+            //TODO: inform whoever is needed
+            // now act here to test
+
+            let tx_to_dispatch = self.input_1_tx(0x1234_4444, &program_context.key_chain)?;
+
+            let context = Context::ProgramId(self.ctx.id);
+            program_context
+                .bitcoin_coordinator
+                .dispatch(tx_to_dispatch, context.to_string()?)?;
+        }
+
+        if name == INPUT_1
+            && tx_status.confirmations == 5
+            && parameters.drp().role == ParticipantRole::Verifier
+        {
+            //let wpub = self .get_prover() .keys .as_ref() .unwrap() .get_winternitz("program_input") .unwrap();
+            let witness = tx_status.tx.input[0].witness.clone();
+            let data = witness::decode_witness(vec![4], WinternitzType::HASH160, witness)?;
+            //info!("message bytes {:?}", data[0].message_bytes());
+            //from vec<u8> be bytes to u32
+            let message = u32::from_be_bytes(data[0].message_bytes().try_into().unwrap());
+            warn!(
+                "Program {}:{} Witness data decoded: {:0x}",
+                self.ctx.id, name, message
+            );
+        }
+
+        Ok(())
     }
 }
 

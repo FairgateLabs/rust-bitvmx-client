@@ -1,4 +1,5 @@
 use bitcoin::{Transaction, Txid};
+use bitcoin_coordinator::TransactionStatus;
 use enum_dispatch::enum_dispatch;
 use protocol_builder::{builder::Protocol, errors::ProtocolBuilderError};
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,7 @@ use crate::keychain::KeyChain;
 use crate::program::dispute::DisputeResolutionProtocol;
 use crate::types::ProgramContext;
 
+use super::program::ProtocolParameters;
 use super::slot::SlotProtocol;
 
 #[enum_dispatch]
@@ -62,6 +64,15 @@ pub trait ProtocolHandler {
         name: &str,
         context: &ProgramContext,
     ) -> Result<Transaction, BitVMXError>;
+
+    fn notify_news(
+        &self,
+        tx_id: Txid,
+        tx_status: TransactionStatus,
+        context: String,
+        program_context: &ProgramContext,
+        parameters: &ProtocolParameters,
+    ) -> Result<(), BitVMXError>;
 }
 
 #[derive(Clone, Serialize, Deserialize)]
