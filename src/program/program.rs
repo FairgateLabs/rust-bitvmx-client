@@ -507,7 +507,7 @@ impl Program {
         }
 
         self.participants[self.my_idx].nonces = Some(public_nonce_msg);
-        warn!("I'm {} and I'm setting my nonces", self.my_idx);
+        info!("I'm {} and I'm setting my nonces", self.my_idx);
 
         let mut nonces = vec![];
         for other in &self.participants {
@@ -579,7 +579,7 @@ impl Program {
 
             self.move_program_to_next_state()?;
         } else {
-            warn!("{}. Not all nonces ready", self.my_idx);
+            info!("{}. Not all nonces ready", self.my_idx);
         }
 
         self.send_ack(&program_context, &peer_id, P2PMessageType::PublicNoncesAck)?;
@@ -623,7 +623,7 @@ impl Program {
         }
 
         self.participants[self.my_idx].partial = Some(partial_sig_msg);
-        warn!("I'm {} and I'm setting my partial", self.my_idx);
+        info!("I'm {} and I'm setting my partial", self.my_idx);
 
         let mut partials = vec![];
         for other in &self.participants {
@@ -776,7 +776,7 @@ impl Program {
         data: Value,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        warn!("{}: Message received: {:?} ", self.my_idx, msg_type);
+        info!("{}: Message received: {:?} ", self.my_idx, msg_type);
 
         match msg_type {
             P2PMessageType::Keys => {

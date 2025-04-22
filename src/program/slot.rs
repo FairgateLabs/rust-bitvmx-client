@@ -12,7 +12,7 @@ use protocol_builder::{
 };
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::Storage;
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{errors::BitVMXError, keychain::KeyChain, types::ProgramContext};
@@ -110,13 +110,27 @@ impl SlotProtocol {
         let untweaked_key: UntweakedPublicKey = XOnlyPublicKey::from(*internal_key);
 
         let secret = context.globals.get_var(&self.ctx.id, "secret")?;
-        if secret.is_none() {
-            return Err(BitVMXError::VariableNotFound(
-                self.ctx.id.clone(),
-                "secret".to_string(),
-            ));
-        }
-        let secret = secret.unwrap().secret()?;
+        let secret = secret.secret()?;
+
+        let ordinal_utxo = context
+            .globals
+            .get_var(&self.ctx.id, "ordinal_utxo")?
+            .utxo()?;
+
+        let protocol_utxo = context
+            .globals
+            .get_var(&self.ctx.id, "protocol_utxo")?
+            .utxo()?;
+
+        let user_pubkey = context
+            .globals
+            .get_var(&self.ctx.id, "user_pubkey")?
+            .pubkey()?;
+
+        warn!(
+            "Setup with: {:?} {:?} {:?}",
+            ordinal_utxo, protocol_utxo, user_pubkey
+        );
 
         let spending_scripts = vec![scripts::reveal_secret(secret, &internal_key)];
         //let spending_scripts = vec![scripts::check_aggregated_signature(&internal_key)];

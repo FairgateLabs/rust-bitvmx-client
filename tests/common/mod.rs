@@ -1,0 +1,140 @@
+use std::str::FromStr;
+
+use anyhow::Result;
+use bitcoin::{
+    secp256k1::{self},
+    Address, Amount, KnownHrp, Network, PublicKey, XOnlyPublicKey,
+};
+use bitcoind::bitcoind::Bitcoind;
+use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
+use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
+use bitvmx_client::{
+    bitvmx::BitVMX, config::Config, program::participant::P2PAddress, types::L2_ID,
+};
+use p2p_handler::PeerId;
+use protocol_builder::{
+    scripts::{self},
+    types::Utxo,
+};
+use tracing::info;
+
+pub fn clear_db(path: &str) {
+    let _ = std::fs::remove_dir_all(path);
+}
+
+pub fn init_bitvmx(role: &str) -> Result<(BitVMX, P2PAddress, DualChannel)> {
+    let config = Config::new(Some(format!("config/{}.yaml", role)))?;
+    let broker_config = BrokerConfig::new(config.broker_port, None);
+    let bridge_client = DualChannel::new(&broker_config, L2_ID);
+
+    clear_db(&config.storage.db);
+    clear_db(&config.key_storage.path);
+    clear_db(&config.broker_storage);
+
+    info!("config: {:?}", config.storage.db);
+
+    let bitvmx = BitVMX::new(config)?;
+
+    let address = P2PAddress::new(&bitvmx.address(), PeerId::from_str(&bitvmx.peer_id())?);
+    info!("peer id {:?}", bitvmx.peer_id());
+
+    //This messages will come from the bridge client.
+
+    Ok((bitvmx, address, bridge_client))
+}
+
+pub fn init_utxo(
+    bitcoin_client: &BitcoinClient,
+    aggregated_pub_key: PublicKey,
+    secret: Option<Vec<u8>>,
+) -> Result<Utxo> {
+    // TODO perform a key aggregation with participants public keys. This is a harcoded key for now.
+    let secp = secp256k1::Secp256k1::new();
+    let untweaked_key = XOnlyPublicKey::from(aggregated_pub_key);
+
+    let spending_scripts = if secret.is_some() {
+        vec![scripts::reveal_secret(secret.unwrap(), &aggregated_pub_key)]
+        //vec![scripts::check_aggregated_signature(&aggregated_pub_key)]
+    } else {
+        vec![scripts::timelock_renew(&aggregated_pub_key)]
+    };
+
+    let taproot_spend_info =
+        scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
+    let p2tr_address = Address::p2tr(
+        &secp,
+        untweaked_key,
+        taproot_spend_info.merkle_root(),
+        KnownHrp::Regtest,
+    );
+
+    let (tx, vout) = bitcoin_client.fund_address(&p2tr_address, Amount::from_sat(100_000_000))?;
+
+    let utxo = Utxo::new(tx.compute_txid(), vout, 100_000_000, &aggregated_pub_key);
+
+    info!("UTXO: {:?}", utxo);
+    // Spend the UTXO to test Musig2 signature aggregation
+    // spend_utxo(bitcoin_client, utxo.clone(), public_key, p2tr_address, taproot_spend_info)?;
+
+    Ok(utxo)
+}
+
+pub fn tick(instance: &mut BitVMX) {
+    instance.process_api_messages().unwrap();
+    instance.process_p2p_messages().unwrap();
+    instance.process_programs().unwrap();
+    instance.process_collaboration().unwrap();
+}
+
+pub fn wait_message_from_channel(
+    channel: &DualChannel,
+    instances: &mut Vec<&mut BitVMX>,
+    fake_tick: bool,
+) -> Result<(String, u32)> {
+    //loop to timeout
+    for i in 0..40000 {
+        if i % 50 == 0 {
+            let msg = channel.recv()?;
+            if msg.is_some() {
+                info!("Received message from channel: {:?}", msg);
+                return Ok(msg.unwrap());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        for instance in instances.iter_mut() {
+            if fake_tick {
+                tick(instance);
+            } else {
+                instance.tick()?;
+            }
+        }
+    }
+    panic!("Timeout waiting for message from channel");
+}
+
+pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Address)> {
+    let config = Config::new(Some("config/prover.yaml".to_string()))?;
+
+    let bitcoind = Bitcoind::new(
+        "bitcoin-regtest",
+        "ruimarinho/bitcoin-core",
+        config.bitcoin.clone(),
+    );
+    info!("Starting bitcoind");
+    bitcoind.start()?;
+
+    let bitcoin_client = BitcoinClient::new(
+        &config.bitcoin.url,
+        &config.bitcoin.username,
+        &config.bitcoin.password,
+    )?;
+
+    let wallet = bitcoin_client
+        .init_wallet(Network::Regtest, "test_wallet")
+        .unwrap();
+
+    info!("Mine 101 blocks to address {:?}", wallet);
+    bitcoin_client.mine_blocks_to_address(101, &wallet).unwrap();
+
+    Ok((bitcoin_client, bitcoind, wallet))
+}
