@@ -8,7 +8,7 @@ use crate::{
     program::{
         participant::{P2PAddress, ParticipantRole},
         program::Program,
-        variables::Globals,
+        variables::{Globals, WitnessVars},
     },
     types::{
         IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus,
@@ -107,6 +107,7 @@ impl BitVMX {
             bitcoin_coordinator,
             broker_channel,
             Globals::new(store.clone()),
+            WitnessVars::new(store.clone()),
         );
 
         Ok(Self {
@@ -557,6 +558,12 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::SetVar(uuid, key, value) => {
                 info!("Setting variable {}: {:?}", key, value);
                 self.program_context.globals.set_var(&uuid, &key, value)?;
+            }
+            IncomingBitVMXApiMessages::SetWitness(uuid, key, value) => {
+                info!("Setting witness {}: {:?}", key, value);
+                self.program_context
+                    .witness
+                    .set_witness(&uuid, &key, value)?;
             }
             IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address, utxo) => {
                 BitVMXApi::setup_program(self, id, role, peer_address, utxo)?

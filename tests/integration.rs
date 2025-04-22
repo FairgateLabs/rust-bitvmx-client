@@ -11,10 +11,9 @@ use bitvmx_client::{
     program::{
         self,
         participant::{P2PAddress, ParticipantRole},
+        variables::{VariableTypes, WitnessTypes},
     },
-    types::{
-        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, VariableTypes, BITVMX_ID, L2_ID,
-    },
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID},
 };
 use p2p_handler::PeerId;
 use protocol_builder::{scripts, types::Utxo};
@@ -388,7 +387,7 @@ pub fn test_slot() -> Result<()> {
 
     let program_id = Uuid::new_v4();
 
-    let preimage = "secret".to_string();
+    let preimage = "top_secret".to_string();
     let hash = sha256(preimage.as_bytes().to_vec());
 
     let utxo = init_utxo(&bitcoin_client, aggregated_pub_key, Some(hash.clone()))?;
@@ -418,6 +417,13 @@ pub fn test_slot() -> Result<()> {
     let _msg_3 = wait_message_from_channel(&bridge_3, &mut instances, true)?;
 
     //Bridge send signal to send the kickoff message
+    let witness_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetWitness(
+        program_id,
+        "secret".to_string(),
+        WitnessTypes::Secret(preimage.as_bytes().to_vec()),
+    ))?;
+    bridge_2.send(BITVMX_ID, witness_msg.clone())?;
+
     let _ = bridge_2.send(
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(

@@ -6,7 +6,6 @@ use bitcoin::{
 };
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
-    errors::ProtocolBuilderError,
     scripts,
     types::{input::SighashType, InputArgs, OutputType, Utxo},
 };
@@ -39,10 +38,10 @@ impl ProtocolHandler for SlotProtocol {
     fn get_transaction_name(
         &self,
         name: &str,
-        _context: &ProgramContext,
+        context: &ProgramContext,
     ) -> Result<Transaction, BitVMXError> {
         match name {
-            ACCEPT_TX => Ok(self.accept_tx()?),
+            ACCEPT_TX => Ok(self.accept_tx(context)?),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
     }
@@ -144,16 +143,23 @@ impl SlotProtocol {
         Ok(())
     }
 
-    pub fn accept_tx(&self) -> Result<Transaction, ProtocolBuilderError> {
+    pub fn accept_tx(&self, context: &ProgramContext) -> Result<Transaction, BitVMXError> {
         let signature = self
             .load_protocol()?
             .input_taproot_script_spend_signature(ACCEPT_TX, 0, 0)?
             .unwrap();
         let mut taproot_arg = InputArgs::new_taproot_script_args(0);
         taproot_arg.push_taproot_signature(signature)?;
-        taproot_arg.push_slice(&"secret".as_bytes().to_vec());
 
-        self.load_protocol()?
-            .transaction_to_send(ACCEPT_TX, &[taproot_arg])
+        let secret = context
+            .witness
+            .get_witness(&self.ctx.id, "secret")?
+            .unwrap()
+            .secret()?;
+        taproot_arg.push_slice(&secret);
+
+        Ok(self
+            .load_protocol()?
+            .transaction_to_send(ACCEPT_TX, &[taproot_arg])?)
     }
 }
