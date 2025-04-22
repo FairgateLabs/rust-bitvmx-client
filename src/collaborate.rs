@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use bitcoin::PublicKey;
 use p2p_handler::PeerId;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -14,7 +15,7 @@ use crate::{
     types::{OutgoingBitVMXApiMessages, ProgramContext},
 };
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Collaboration {
     pub collaboration_id: Uuid,
     pub participants: Vec<P2PAddress>,

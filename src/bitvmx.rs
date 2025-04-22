@@ -61,12 +61,14 @@ impl Drop for BitVMX {
 }
 enum StoreKey {
     Programs,
+    Collaborations,
 }
 
 impl StoreKey {
     fn get_key(&self) -> String {
         match self {
             StoreKey::Programs => "bitvmx/programs/all".to_string(),
+            StoreKey::Collaborations => "bitvmx/collaborations/all".to_string(),
         }
     }
 }
@@ -110,13 +112,20 @@ impl BitVMX {
             WitnessVars::new(store.clone()),
         );
 
+
+        let raw_collaborations: Option<String> = store.get(StoreKey::Collaborations.get_key())?;
+        let collaborations: HashMap<Uuid, Collaboration> = match raw_collaborations {
+            Some(data) => serde_json::from_str(&data)?,
+            None => HashMap::new(),
+        };
+
         Ok(Self {
             _config: config,
             program_context,
             store: store.clone(),
             broker,
             count: 0,
-            collaborations: HashMap::new(), //deserialize from storage
+            collaborations,
         })
     }
 
@@ -163,6 +172,13 @@ impl BitVMX {
                             &self.program_context,
                         )?;
                     }
+                    self.store
+                        .set(
+                            StoreKey::Collaborations.get_key(),
+                            serde_json::to_string(&self.collaborations)?,
+                            None,
+                        )
+                        .map_err(BitVMXError::StorageError)?;
                 }
                 return Ok(());
             }
@@ -294,6 +310,11 @@ impl BitVMX {
             for (_, collaboration) in self.collaborations.iter_mut() {
                 collaboration.tick(&self.program_context)?;
             }
+            self.store.set(
+                StoreKey::Collaborations.get_key(),
+                serde_json::to_string(&self.collaborations)?,
+                None,
+            )?;
         }
         Ok(())
     }
@@ -404,6 +425,13 @@ impl BitVMXApi for BitVMX {
             from,
         )?;
         self.collaborations.insert(id, collab);
+        self.store
+            .set(
+                StoreKey::Collaborations.get_key(),
+                serde_json::to_string(&self.collaborations)?,
+                None,
+            )
+            .map_err(BitVMXError::StorageError)?;
         info!("Key setup finished for program: {:?}", id);
         Ok(())
     }
