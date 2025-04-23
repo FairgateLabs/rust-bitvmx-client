@@ -275,19 +275,12 @@ impl SlotProtocol {
                 vec![],
             )?, // We do not need prevouts cause the tx is in the graph,
         )?;
-        warn!("ordinal amount {:?}", ordinal_utxo.2.unwrap());
-        warn!("protocol amount {:?}", amount);
-        warn!("dust amount {:?}", SPEEDUP_DUST);
 
         // START DEFINING THE HAPPY_PATH_TX
         // The following script is the output that user timeout could use as input
         let amount = amount - fee - SPEEDUP_DUST;
         let mut happy_path_check = scripts::check_aggregated_signature(&ops_agg_happy_path);
         happy_path_check.set_skip_signing(true);
-
-        warn!("ordinal amount {:?}", ordinal_utxo.2.unwrap());
-        warn!("protocol amount {:?}", amount);
-        warn!("dust amount {:?}", SPEEDUP_DUST);
 
         protocol.add_transaction(HAPY_PATH_TX)?;
         protocol.add_transaction_input(

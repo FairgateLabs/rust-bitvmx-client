@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use bitcoin::{PublicKey, Transaction, Txid};
+use bitcoin::{PrivateKey, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{types::BitcoinCoordinatorType, TransactionStatus};
 use bitvmx_broker::{broker_storage::BrokerStorage, channel::channel::LocalChannel};
 use chrono::{DateTime, Utc};
@@ -102,6 +102,7 @@ pub enum IncomingBitVMXApiMessages {
     DispatchTransactionName(Uuid, String),
     SetupKey(Uuid, Vec<P2PAddress>, u16),
     GetAggregatedPubkey(Uuid),
+    GetKeyPair(Uuid),
     GenerateZKP(),
     ProofReady(),
     ExecuteZKP(),
@@ -135,6 +136,7 @@ pub enum OutgoingBitVMXApiMessages {
     ZKPResult(/* Add appropriate type */),
     ExecutionResult(/* Add appropriate type */),
     CommInfo(P2PAddress),
+    KeyPair(Uuid, PrivateKey, PublicKey),
 }
 
 impl OutgoingBitVMXApiMessages {

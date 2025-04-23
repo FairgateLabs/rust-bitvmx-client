@@ -237,6 +237,19 @@ pub fn test_slot() -> Result<()> {
         _ => panic!("Expected AggregatedPubkey message"),
     };
 
+    // get keypair to share with the user for happy path too
+    let command = IncomingBitVMXApiMessages::GetKeyPair(aggregation_id).to_string()?;
+    send_all(&channels, &command)?;
+    let msgs = get_all(&channels, &mut instances, false)?;
+    info!("Received keypair message from all channels");
+    let msg = OutgoingBitVMXApiMessages::from_string(&msgs[0].0)?;
+    match msg {
+        OutgoingBitVMXApiMessages::KeyPair(uuid, private_key, public_key) => {
+            info!("Keypair: {} {:?} {:?}", uuid, private_key, public_key);
+        }
+        _ => panic!("Expected keypair message"),
+    };
+
     let program_id = Uuid::new_v4();
 
     let preimage = "top_secret".to_string();

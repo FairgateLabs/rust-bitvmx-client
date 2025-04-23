@@ -617,6 +617,26 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::SetupKey(id, participants, leader_idx) => {
                 BitVMXApi::setup_key(self, from, id, participants, leader_idx)?
             }
+            IncomingBitVMXApiMessages::GetKeyPair(id) => {
+                let collaboration = self
+                    .collaborations
+                    .get(&id)
+                    .ok_or(BitVMXError::ProgramNotFound(id))?;
+                let aggregated = collaboration
+                    .aggregated_key
+                    .ok_or(BitVMXError::ProgramNotFound(id))?;
+                let pair = self
+                    .program_context
+                    .key_chain
+                    .key_manager
+                    .get_key_pair_for_too_insecure(&aggregated)?;
+                self.program_context.broker_channel.send(
+                    from,
+                    serde_json::to_string(&OutgoingBitVMXApiMessages::KeyPair(id, pair.0, pair.1))?,
+                )?;
+                //RETURN PK
+                //TODO: Revisit this as it might be insecure
+            }
             IncomingBitVMXApiMessages::GetAggregatedPubkey(id) => {
                 BitVMXApi::get_aggregated_pubkey(self, from, id)?
             }
