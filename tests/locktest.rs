@@ -49,6 +49,7 @@ fn config_trace_aux() {
         "p2p_handler=off",
         "tarpc=off",
         "key_manager=off",
+        "memory=off",
     ];
 
     let filter = EnvFilter::builder()
@@ -107,6 +108,38 @@ pub fn get_all(
         ret.push(msg);
     }
     Ok(ret)
+}
+
+pub fn mine_and_wait(
+    bitcoin_client: &BitcoinClient,
+    channels: &Vec<DualChannel>,
+    instances: &mut Vec<BitVMX>,
+    wallet: &Address,
+) -> Result<()> {
+    //MINE AND WAIT
+    for i in 0..100 {
+        if i % 10 == 0 {
+            bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
+        }
+        for instance in instances.iter_mut() {
+            instance.tick()?;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(40));
+    }
+    let msgs = get_all(&channels, instances, false)?;
+
+    let msg = OutgoingBitVMXApiMessages::from_string(&msgs[0].0)?;
+    let (uuid, txid, name) = match msg {
+        OutgoingBitVMXApiMessages::Transaction(uuid, status, name) => {
+            (uuid, status.tx_id, name.unwrap())
+        }
+        _ => panic!("Expected transaction message"),
+    };
+    info!(
+        "Transaction notification: uuid: {} txid: {} name: {}",
+        uuid, txid, name
+    );
+    Ok(())
 }
 
 pub fn init_broker(role: &str) -> Result<DualChannel> {
@@ -189,6 +222,21 @@ pub fn test_slot() -> Result<()> {
         _ => panic!("Expected AggregatedPubkey message"),
     };
 
+    //aggregated for happy path
+    let aggregation_id = Uuid::new_v4();
+    let command =
+        IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), 0).to_string()?;
+    send_all(&channels, &command)?;
+    let msgs = get_all(&channels, &mut instances, false)?;
+    info!("Received AggregatedPubkey message from all channels");
+    let msg = OutgoingBitVMXApiMessages::from_string(&msgs[0].0)?;
+    let aggregated_happy_path = match msg {
+        OutgoingBitVMXApiMessages::AggregatedPubkey(_uuid, aggregated_pub_key) => {
+            aggregated_pub_key
+        }
+        _ => panic!("Expected AggregatedPubkey message"),
+    };
+
     let program_id = Uuid::new_v4();
 
     let preimage = "top_secret".to_string();
@@ -210,6 +258,14 @@ pub fn test_slot() -> Result<()> {
     )
     .to_string()?;
     send_all(&channels, &set_ops_aggregated)?;
+
+    let set_ops_aggregated_hp = IncomingBitVMXApiMessages::SetVar(
+        program_id,
+        "operators_aggregated_happy_path".to_string(),
+        VariableTypes::PubKey(aggregated_happy_path),
+    )
+    .to_string()?;
+    send_all(&channels, &set_ops_aggregated_hp)?;
 
     let set_unspendable = IncomingBitVMXApiMessages::SetVar(
         program_id,
@@ -274,30 +330,20 @@ pub fn test_slot() -> Result<()> {
         .to_string()?,
     );
 
-    //TODO: main loop
-    for i in 0..100 {
-        if i % 10 == 0 {
-            bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
-        }
+    mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
-        for instance in instances.iter_mut() {
-            instance.tick()?;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(40));
-    }
-    let msgs = get_all(&channels, &mut instances, false)?;
-
-    let msg = OutgoingBitVMXApiMessages::from_string(&msgs[0].0)?;
-    let (uuid, txid, name) = match msg {
-        OutgoingBitVMXApiMessages::Transaction(uuid, status, name) => {
-            (uuid, status.tx_id, name.unwrap())
-        }
-        _ => panic!("Expected transaction message"),
-    };
-    info!(
-        "Transaction notification: uuid: {} txid: {} name: {}",
-        uuid, txid, name
+    //EVENTUALY L2 DECIDED TO SEND THE HAPPY PATH
+    //TODO: It should actually be signed in this moment and not before (could be signed but not shared the partials)
+    let _ = channels[1].send(
+        BITVMX_ID,
+        IncomingBitVMXApiMessages::DispatchTransactionName(
+            program_id,
+            program::slot::HAPY_PATH_TX.to_string(),
+        )
+        .to_string()?,
     );
+
+    mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
     if bitcoind.is_some() {
         bitcoind.unwrap().stop()?;

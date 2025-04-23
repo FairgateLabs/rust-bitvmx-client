@@ -81,7 +81,9 @@ pub struct DrpParameters {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct SlotParameters;
+pub struct SlotParameters {
+    pub my_id: u32,
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum ProtocolParameters {
@@ -94,8 +96,8 @@ impl ProtocolParameters {
         ProtocolParameters::DisputeResolutionProtocol(DrpParameters { role })
     }
 
-    pub fn new_slot() -> Self {
-        ProtocolParameters::SlotProtocol(SlotParameters {})
+    pub fn new_slot(my_id: u32) -> Self {
+        ProtocolParameters::SlotProtocol(SlotParameters { my_id })
     }
 
     pub fn drp(&self) -> &DrpParameters {
@@ -191,7 +193,7 @@ impl Program {
 
         let program = Self {
             program_id: *id,
-            parameters: ProtocolParameters::new_slot(),
+            parameters: ProtocolParameters::new_slot(my_idx as u32),
             my_idx,
             participants: others,
             leader,
@@ -685,7 +687,7 @@ impl Program {
                         participant.partial.as_ref().unwrap()
                     {
                         info!(
-                            "Program {}: agg: {}, other: {} Received signatures: {:#?}",
+                            "Program {}: agg: {}, other: {} Received signatures: {:?}",
                             self.program_id, aggregated, other_pub_key, signatures
                         );
 
@@ -863,7 +865,7 @@ impl Program {
             &self.parameters,
         )?;
 
-        if tx_status.confirmations == 6 {
+        if tx_status.confirmations == 1 {
             let name = self.protocol.get_transaction_name_by_id(tx_id)?;
             program_context.broker_channel.send(
                 L2_ID,
