@@ -7,10 +7,7 @@ use bitcoin::{
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use key_manager::winternitz::WinternitzType;
 use protocol_builder::{
-    builder::Protocol,
-    errors::ProtocolBuilderError,
-    scripts,
-    types::{input::SighashType, InputArgs, OutputType, Utxo},
+    builder::Protocol, errors::ProtocolBuilderError, scripts, types::{input::{LeafSpec, SighashType}, InputArgs, OutputType, Utxo}
 };
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::Storage;
@@ -339,7 +336,7 @@ impl DisputeResolutionProtocol {
             .input_taproot_script_spend_signature(txname, 0, 1)?
             .unwrap();
         let spend = protocol.get_script_to_spend(txname, 0, 1)?;
-        let mut spending_args = InputArgs::new_taproot_script_args(1);
+        let mut spending_args = InputArgs::new_taproot_script_args(LeafSpec::Index(1));
 
         //TODO: set value for variable from outside
         let message_to_sign = data.to_be_bytes();

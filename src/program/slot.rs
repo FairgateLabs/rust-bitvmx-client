@@ -1,8 +1,8 @@
 use std::{collections::HashMap, rc::Rc};
 
 use bitcoin::{
-    key::UntweakedPublicKey, secp256k1, secp256k1::PublicKey as SecpPublicKey, Amount, PublicKey,
-    ScriptBuf, Transaction, TxOut, Txid, XOnlyPublicKey,
+    secp256k1, secp256k1::PublicKey as SecpPublicKey, Amount, PublicKey,
+    ScriptBuf, Transaction, TxOut, Txid,
 };
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
@@ -10,7 +10,7 @@ use protocol_builder::{
     scripts::{
         self, build_taproot_spend_info, fake_reveal_secret, reveal_secret, timelock, ProtocolScript,
     },
-    types::{input::SighashType, InputArgs, OutputType},
+    types::{input::{LeafSpec, SighashType}, InputArgs, OutputType},
 };
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::Storage;
@@ -282,7 +282,7 @@ impl SlotProtocol {
             .load_protocol()?
             .input_taproot_script_spend_signature(LOCK_TX, 0, 1)?
             .unwrap();
-        let mut taproot_arg_0 = InputArgs::new_taproot_script_args(1);
+        let mut taproot_arg_0 = InputArgs::new_taproot_script_args(LeafSpec::Index(1));
         taproot_arg_0.push_taproot_signature(signature)?;
 
         let secret = context
@@ -296,7 +296,7 @@ impl SlotProtocol {
             .load_protocol()?
             .input_taproot_script_spend_signature(LOCK_TX, 1, 1)?
             .unwrap();
-        let mut taproot_arg_1 = InputArgs::new_taproot_script_args(1);
+        let mut taproot_arg_1 = InputArgs::new_taproot_script_args(LeafSpec::Index(1));
         taproot_arg_1.push_taproot_signature(signature)?;
 
         taproot_arg_1.push_slice(&secret);
