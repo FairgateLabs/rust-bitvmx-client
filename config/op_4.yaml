@@ -38,7 +38,7 @@ monitor:
   confirmation_threshold: 6
 
 broker_storage: /tmp/op_4/broker.db
-broker_port: 55555 
+broker_port: 55554 
 
 client: 
   # Number of retries for requests

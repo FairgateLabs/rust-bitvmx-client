@@ -322,11 +322,11 @@ impl BitVMX {
 
     pub fn tick(&mut self) -> Result<(), BitVMXError> {
         self.count += 1;
-        self.process_p2p_messages()?;
         self.process_programs()?;
 
         //throthle (check values)
         if self.count % 5 == 0 {
+            self.process_p2p_messages()?;
             self.process_api_messages()?;
             self.process_bitcoin_updates()?;
             self.process_pending_messages()?;
