@@ -217,9 +217,23 @@ impl SlotProtocol {
             &SighashType::taproot_all(),
         )?;
 
-        let amount = ordinal_utxo.2.unwrap() + protocol_utxo.2.unwrap() - fee;
+        let eol_timelock_duration = 100; // TODO: get this from config
 
-        /*protocol.add_transaction_output(
+        // The following script is the output that user timeout could use as input
+        let taproot_script_eol_timelock_expired_tx_lock =
+            scripts::timelock(eol_timelock_duration, &user_pubkey);
+        // Mark this script as unsigned scritp, so the protocol builder wont try to sign it
+        let taproot_script_eol_timelock_expired_tx_lock = ProtocolScript::new_unsigned_script(
+            taproot_script_eol_timelock_expired_tx_lock
+                .get_script()
+                .clone(),
+            &user_pubkey,
+        );
+
+        //this should be another aggregated to be signed later
+        let taproot_script_all_sign_tx_lock = scripts::check_aggregated_signature(&ops_agg_pubkey);
+
+        protocol.add_transaction_output(
             LOCK_TX,
             OutputType::tr_script(
                 ordinal_utxo.2.unwrap(),
@@ -231,11 +245,30 @@ impl SlotProtocol {
                 false,
                 vec![],
             )?, // We do not need prevouts cause the tx is in the graph,
-        )?;*/
+        )?;
+
+        //this could be even a different one, but we will use the same for now
+        let taproot_script_protocol_fee_addres_signature_in_tx_lock =
+            scripts::check_aggregated_signature(&ops_agg_pubkey);
+
+        const SPEEDUP_DUST: u64 = 500;
+        let amount = protocol_utxo.2.unwrap() - fee - SPEEDUP_DUST;
+        // [Protocol fees taproot output]
+        // taproot output sending the fee (incentive to bridge) to the fee address
+        protocol.add_transaction_output(
+            LOCK_TX,
+            OutputType::tr_script(
+                amount,
+                &ops_agg_pubkey, // TODO, perhaps we want an un-spendable key here to force the script path spend
+                &[taproot_script_protocol_fee_addres_signature_in_tx_lock],
+                true,
+                vec![],
+            )?, // We do not need prevouts cause the tx is in the graph,
+        )?;
 
         let aggregated = computed_aggregated.get("aggregated_1").unwrap();
         let pb = ProtocolBuilder {};
-        pb.add_speedup_output(&mut protocol, LOCK_TX, amount, aggregated)?;
+        pb.add_speedup_output(&mut protocol, LOCK_TX, SPEEDUP_DUST, aggregated)?;
 
         protocol.build(true, &context.key_chain.key_manager)?;
         info!("{}", protocol.visualize()?);
