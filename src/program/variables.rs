@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use bitcoin::{Amount, PublicKey, Txid};
+use bitcoin::{PublicKey, Txid};
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::{KeyValueStore, Storage};
 use uuid::Uuid;

@@ -18,10 +18,10 @@ use bitvmx_client::{
 };
 use common::{init_bitvmx, prepare_bitcoin, wait_message_from_channel};
 use protocol_builder::scripts::{
-    build_taproot_spend_info, fake_reveal_secret, reveal_secret, timelock, ProtocolScript,
+    build_taproot_spend_info, reveal_secret, timelock, ProtocolScript,
 };
 use sha2::{Digest, Sha256};
-use tracing::info;
+use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
@@ -123,7 +123,7 @@ pub fn test_slot() -> Result<()> {
 
     //let utxo = init_utxo(&bitcoin_client, aggregated_pub_key, Some(hash.clone()))?;
 
-    let (txid, pubuser, protocol_fee, ordinal_fee) = create_loqreq_ready(
+    let (txid, pubuser, ordinal_fee, protocol_fee) = create_loqreq_ready(
         aggregated_pub_key,
         hash.clone(),
         Network::Regtest,
@@ -320,8 +320,7 @@ pub fn create_loqreq_ready(
         &user_address,
         MINER_FEE,
         secret_hash,
-        //unspendable,
-        aggregated_operators.inner,
+        unspendable,
     );
 
     tracing::debug!("Signed lockreq transaction: {:#?}", signed_lockreq_tx);
@@ -354,7 +353,7 @@ pub fn test_send_lockreq_tx() -> Result<()> {
     let preimage = "top_secret".to_string();
     let hash = sha256(preimage.as_bytes().to_vec());
 
-    let (txid, pubuser, protocol_fee, ordinal_fee) =
+    let (txid, pubuser, ordinal_fee, protocol_fee) =
         create_loqreq_ready(ops_agg_pubkey, hash, Network::Regtest, &bitcoin_client)?;
 
     info!("Lockreq txid: {:?}", txid);
@@ -404,7 +403,7 @@ fn create_lockreq_tx_and_sign(
 ) -> Transaction {
     let timelock_script = timelock(timelock_blocks, &user_pubkey);
 
-    let reveal_secret_script = fake_reveal_secret(secret_hash.to_vec(), &ops_agg_pubkey);
+    let reveal_secret_script = reveal_secret(secret_hash.to_vec(), &ops_agg_pubkey);
     let lockreq_tx_output_taptree = build_taptree_for_lockreq_tx_outputs(
         &secp,
         unspendable_pub_key,

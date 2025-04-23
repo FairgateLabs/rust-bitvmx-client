@@ -1,20 +1,21 @@
 use std::{collections::HashMap, rc::Rc};
 
 use bitcoin::{
-    secp256k1, secp256k1::PublicKey as SecpPublicKey, Amount, PublicKey,
-    ScriptBuf, Transaction, TxOut, Txid,
+    secp256k1, secp256k1::PublicKey as SecpPublicKey, Amount, PublicKey, ScriptBuf, Transaction,
+    TxOut, Txid,
 };
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
-    scripts::{
-        self, build_taproot_spend_info, fake_reveal_secret, reveal_secret, timelock, ProtocolScript,
+    scripts::{self, build_taproot_spend_info, reveal_secret, timelock, ProtocolScript},
+    types::{
+        input::{LeafSpec, SighashType},
+        InputArgs, OutputType,
     },
-    types::{input::{LeafSpec, SighashType}, InputArgs, OutputType},
 };
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::Storage;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::{errors::BitVMXError, keychain::KeyChain, types::ProgramContext};
@@ -144,12 +145,11 @@ impl SlotProtocol {
         let timelock_script =
             ProtocolScript::new_unsigned_script(timelock_script.get_script().clone(), &user_pubkey);
 
-        let reveal_secret_script = fake_reveal_secret(secret.to_vec(), &ops_agg_pubkey);
+        let reveal_secret_script = reveal_secret(secret.to_vec(), &ops_agg_pubkey);
         let leaves = vec![timelock_script.clone(), reveal_secret_script.clone()];
         let lockreq_tx_output_taptree = build_taptree_for_lockreq_tx_outputs(
             &secp,
-            //unspendable(),
-            ops_agg_pubkey.clone().inner,
+            unspendable(),
             timelock_script,
             reveal_secret_script,
         )
@@ -175,23 +175,19 @@ impl SlotProtocol {
 
         let prevouts = vec![prevout_0, prevout_1];
 
-        //TODO: Add support again for unspendable key
         let output_type_ordinal = OutputType::tr_script(
             ordinal_utxo.2.unwrap(),
-            //&unspendable().into(), //this should be the unspendable key?
-            &ops_agg_pubkey.into(),
+            &unspendable().into(),
             &leaves,
-            true,
+            false,
             prevouts.clone(),
         )?;
 
-        //TODO: Add support again for unspendable key
         let output_type_protocol = OutputType::tr_script(
             protocol_utxo.2.unwrap(),
-            //&unspendable().into(), //this should be the unspendable key?
-            &ops_agg_pubkey.into(),
+            &unspendable().into(),
             &leaves,
-            true,
+            false,
             prevouts,
         )?;
 
@@ -278,18 +274,18 @@ impl SlotProtocol {
     }
 
     pub fn accept_tx(&self, context: &ProgramContext) -> Result<Transaction, BitVMXError> {
+        let secret = context
+            .witness
+            .get_witness(&self.ctx.id, "secret")?
+            .unwrap()
+            .secret()?;
+
         let signature = self
             .load_protocol()?
             .input_taproot_script_spend_signature(LOCK_TX, 0, 1)?
             .unwrap();
         let mut taproot_arg_0 = InputArgs::new_taproot_script_args(LeafSpec::Index(1));
         taproot_arg_0.push_taproot_signature(signature)?;
-
-        let secret = context
-            .witness
-            .get_witness(&self.ctx.id, "secret")?
-            .unwrap()
-            .secret()?;
         taproot_arg_0.push_slice(&secret);
 
         let signature = self
@@ -298,7 +294,6 @@ impl SlotProtocol {
             .unwrap();
         let mut taproot_arg_1 = InputArgs::new_taproot_script_args(LeafSpec::Index(1));
         taproot_arg_1.push_taproot_signature(signature)?;
-
         taproot_arg_1.push_slice(&secret);
 
         let tx = self
