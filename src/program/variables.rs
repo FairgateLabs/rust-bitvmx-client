@@ -14,7 +14,7 @@ use crate::errors::BitVMXError;
 - key (schnor pub)
 - utxo [ txid, vout, optional(amount)]*/
 
-pub type PartialUtxo = (Txid, u32, Option<Amount>);
+pub type PartialUtxo = (Txid, u32, Option<u64>);
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub enum VariableTypes {

@@ -23,7 +23,6 @@ pub trait BitVMXApi {
         id: Uuid,
         peer_address: Vec<P2PAddress>,
         leader: u16,
-        utxo: Utxo,
     ) -> Result<(), BitVMXError>;
 
     fn setup_program(

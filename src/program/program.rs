@@ -120,7 +120,7 @@ pub struct Program {
     pub my_idx: usize,
     pub participants: Vec<ParticipantData>,
     pub leader: usize,
-    pub utxo: Utxo,
+    pub utxo: Option<Utxo>,
     pub protocol: ProtocolType,
     pub state: ProgramState,
     #[serde(skip)]
@@ -152,7 +152,6 @@ impl Program {
         id: &Uuid,
         peers: Vec<P2PAddress>,
         leader: usize,
-        utxo: Utxo,
         program_context: &mut ProgramContext,
         storage: Rc<Storage>,
         config: &ClientConfig,
@@ -196,7 +195,7 @@ impl Program {
             my_idx,
             participants: others,
             leader,
-            utxo,
+            utxo: None,
             protocol,
             state: ProgramState::New,
             storage: Some(storage),
@@ -251,7 +250,7 @@ impl Program {
             my_idx,
             participants: others,
             leader: 1, //verifier is the leader (because prover starts sending data)
-            utxo,
+            utxo: Some(utxo),
             protocol: drp,
             state: ProgramState::New,
             storage: Some(storage),
@@ -268,7 +267,17 @@ impl Program {
         context: &ProgramContext,
     ) -> Result<HashMap<String, PublicKey>, BitVMXError> {
         // 2. Init the musig2 signer for this program
-        let mut aggregated_keys = vec![("pregenerated".to_string(), self.utxo.pub_key)];
+
+        let operatos_pub = if self.utxo.is_some() {
+            self.utxo.clone().unwrap().pub_key
+        } else {
+            context
+                .globals
+                .get_var(&self.program_id, "operators_aggregated_pub")?
+                .pubkey()?
+        };
+
+        let mut aggregated_keys = vec![("pregenerated".to_string(), operatos_pub)];
         let mut result = HashMap::new();
 
         for agg_name in &self.participants[self.my_idx]
@@ -335,7 +344,7 @@ impl Program {
             info!("Building protocol for: {:?}", self.parameters.drp().role);
 
             self.protocol.as_drp_mut().unwrap().build(
-                self.utxo.clone(),
+                self.utxo.as_ref().unwrap().clone(),
                 self.participants[0].keys.as_ref().unwrap(),
                 self.participants[1].keys.as_ref().unwrap(),
                 aggregated,
@@ -349,13 +358,10 @@ impl Program {
                 .iter()
                 .map(|p| p.keys.as_ref().unwrap().clone())
                 .collect();
-            self.protocol.as_slot_mut().unwrap().build(
-                self.utxo.clone(),
-                "top_secret".to_string(),
-                keys,
-                aggregated,
-                &context,
-            )?;
+            self.protocol
+                .as_slot_mut()
+                .unwrap()
+                .build(keys, aggregated, &context)?;
         }
 
         // 6. Move the program to the next state

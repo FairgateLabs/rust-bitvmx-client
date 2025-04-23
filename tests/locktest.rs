@@ -16,9 +16,9 @@ use bitvmx_client::{
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
-use common::{init_bitvmx, init_utxo, prepare_bitcoin, wait_message_from_channel};
+use common::{init_bitvmx, prepare_bitcoin, wait_message_from_channel};
 use protocol_builder::scripts::{
-    build_taproot_spend_info, reveal_secret, timelock, ProtocolScript,
+    build_taproot_spend_info, fake_reveal_secret, reveal_secret, timelock, ProtocolScript,
 };
 use sha2::{Digest, Sha256};
 use tracing::info;
@@ -121,7 +121,7 @@ pub fn test_slot() -> Result<()> {
     let preimage = "top_secret".to_string();
     let hash = sha256(preimage.as_bytes().to_vec());
 
-    let utxo = init_utxo(&bitcoin_client, aggregated_pub_key, Some(hash.clone()))?;
+    //let utxo = init_utxo(&bitcoin_client, aggregated_pub_key, Some(hash.clone()))?;
 
     let (txid, pubuser, protocol_fee, ordinal_fee) = create_loqreq_ready(
         aggregated_pub_key,
@@ -129,6 +129,14 @@ pub fn test_slot() -> Result<()> {
         Network::Regtest,
         &bitcoin_client,
     )?;
+
+    let set_ops_aggregated = IncomingBitVMXApiMessages::SetVar(
+        program_id,
+        "operators_aggregated_pub".to_string(),
+        VariableTypes::PubKey(aggregated_pub_key),
+    )
+    .to_string()?;
+    send_all(&channels, &set_ops_aggregated)?;
 
     let set_secret = IncomingBitVMXApiMessages::SetVar(
         program_id,
@@ -141,15 +149,22 @@ pub fn test_slot() -> Result<()> {
     let set_ordinal_utxo = IncomingBitVMXApiMessages::SetVar(
         program_id,
         "ordinal_utxo".to_string(),
-        VariableTypes::Utxo((txid, 0, Some(ordinal_fee))),
+        VariableTypes::Utxo((txid, 0, Some(ordinal_fee.to_sat()))),
     )
     .to_string()?;
+    /*let set_ordinal_utxo = IncomingBitVMXApiMessages::SetVar(
+        program_id,
+        "ordinal_utxo".to_string(),
+        VariableTypes::Utxo((utxo.txid, utxo.vout, Some(utxo.amount))),
+    )
+    .to_string()?;*/
+
     send_all(&channels, &set_ordinal_utxo)?;
 
     let set_protocol_fee = IncomingBitVMXApiMessages::SetVar(
         program_id,
         "protocol_utxo".to_string(),
-        VariableTypes::Utxo((txid, 1, Some(protocol_fee))),
+        VariableTypes::Utxo((txid, 1, Some(protocol_fee.to_sat()))),
     )
     .to_string()?;
     send_all(&channels, &set_protocol_fee)?;
@@ -162,8 +177,7 @@ pub fn test_slot() -> Result<()> {
     .to_string()?;
     send_all(&channels, &set_user_pubkey)?;
 
-    let setup_msg =
-        IncomingBitVMXApiMessages::SetupSlot(program_id, addresses, 0, utxo.clone()).to_string()?;
+    let setup_msg = IncomingBitVMXApiMessages::SetupSlot(program_id, addresses, 0).to_string()?;
     send_all(&channels, &setup_msg)?;
 
     let _msg_1 = wait_message_from_channel(&bridge_1, &mut instances, true)?;
@@ -182,7 +196,7 @@ pub fn test_slot() -> Result<()> {
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
-            program::slot::ACCEPT_TX.to_string(),
+            program::slot::LOCK_TX.to_string(),
         )
         .to_string()?,
     );
@@ -306,7 +320,8 @@ pub fn create_loqreq_ready(
         &user_address,
         MINER_FEE,
         secret_hash,
-        unspendable,
+        //unspendable,
+        aggregated_operators.inner,
     );
 
     tracing::debug!("Signed lockreq transaction: {:#?}", signed_lockreq_tx);
@@ -389,7 +404,7 @@ fn create_lockreq_tx_and_sign(
 ) -> Transaction {
     let timelock_script = timelock(timelock_blocks, &user_pubkey);
 
-    let reveal_secret_script = reveal_secret(secret_hash.to_vec(), &ops_agg_pubkey);
+    let reveal_secret_script = fake_reveal_secret(secret_hash.to_vec(), &ops_agg_pubkey);
     let lockreq_tx_output_taptree = build_taptree_for_lockreq_tx_outputs(
         &secp,
         unspendable_pub_key,

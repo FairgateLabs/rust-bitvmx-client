@@ -462,7 +462,6 @@ impl BitVMXApi for BitVMX {
         id: Uuid,
         peer_address: Vec<P2PAddress>,
         leader: u16,
-        utxo: Utxo,
     ) -> Result<(), BitVMXError> {
         if self.program_exists(&id)? {
             warn!("Program already exists");
@@ -474,7 +473,6 @@ impl BitVMXApi for BitVMX {
             &id,
             peer_address,
             leader as usize,
-            utxo,
             &mut self.program_context,
             self.store.clone(),
             &self._config.client,
@@ -571,8 +569,8 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::GetTransaction(id, txid) => {
                 BitVMXApi::get_transaction(self, from, id, txid)?
             }
-            IncomingBitVMXApiMessages::SetupSlot(id, participants, leader, utxo) => {
-                BitVMXApi::setup_slot(self, id, participants, leader, utxo)?
+            IncomingBitVMXApiMessages::SetupSlot(id, participants, leader) => {
+                BitVMXApi::setup_slot(self, id, participants, leader)?
             }
             IncomingBitVMXApiMessages::SubscribeToTransaction(_txid) => {
                 BitVMXApi::subscribe_to_tx(self)?
