@@ -28,11 +28,11 @@ use bitvmx_broker::{
     channel::channel::LocalChannel,
     rpc::{sync_server::BrokerSync, BrokerConfig},
 };
-use p2p_handler::{LocalAllowList, P2pHandler, ReceiveHandlerChannel};
+use p2p_handler::{LocalAllowList, P2pHandler, PeerId, ReceiveHandlerChannel};
 use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     path::PathBuf,
     rc::Rc,
     sync::{Arc, Mutex},
@@ -51,6 +51,7 @@ pub struct BitVMX {
     broker: BrokerSync,
     count: u32,
     collaborations: HashMap<Uuid, Collaboration>,
+    pending_messages: VecDeque<(PeerId, Vec<u8>)>,
 }
 
 impl Drop for BitVMX {
@@ -117,6 +118,7 @@ impl BitVMX {
             broker,
             count: 0,
             collaborations: HashMap::new(), //deserialize from storage
+            pending_messages: VecDeque::new(),
         })
     }
 
@@ -133,6 +135,42 @@ impl BitVMX {
         Ok(program)
     }
 
+    pub fn process_msg(
+        &mut self,
+        peer: PeerId,
+        msg: Vec<u8>,
+        pend_to_back: bool,
+    ) -> Result<(), BitVMXError> {
+        let (_version, msg_type, program_id, data) = deserialize_msg(msg.clone())?;
+
+        if let Some(mut program) = self.load_program(&program_id).ok() {
+            program.process_p2p_message(peer, msg_type, data, &self.program_context)?;
+        } else if self.collaborations.contains_key(&program_id) {
+            let collaboration = self.collaborations.get_mut(&program_id).unwrap();
+            collaboration.process_p2p_message(peer, msg_type, data, &self.program_context)?;
+        } else {
+            if pend_to_back {
+                info!("Pending message to back: {:?}", msg_type);
+                self.pending_messages.push_back((peer, msg));
+            } else {
+                info!("Pending message to front: {:?}", msg_type);
+                self.pending_messages.push_front((peer, msg));
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn process_pending_messages(&mut self) -> Result<(), BitVMXError> {
+        if self.pending_messages.is_empty() {
+            return Ok(());
+        }
+
+        let (peer, msg) = self.pending_messages.pop_front().unwrap();
+        self.process_msg(peer, msg, false)?;
+        Ok(())
+    }
+
     pub fn process_p2p_messages(&mut self) -> Result<(), BitVMXError> {
         let message = self.program_context.comms.check_receive();
 
@@ -147,23 +185,7 @@ impl BitVMX {
 
         match message {
             ReceiveHandlerChannel::Msg(peer_id, msg) => {
-                let (_version, msg_type, program_id, data) = deserialize_msg(msg)?;
-
-                //TODO: If program is not found it's is possible that is a new program that is not yet in the store
-                //Should I queue the message until the program is created for some secs?
-                if let Some(mut program) = self.load_program(&program_id).ok() {
-                    program.process_p2p_message(peer_id, msg_type, data, &self.program_context)?;
-                } else {
-                    if self.collaborations.contains_key(&program_id) {
-                        let collaboration = self.collaborations.get_mut(&program_id).unwrap();
-                        collaboration.process_p2p_message(
-                            peer_id,
-                            msg_type,
-                            data,
-                            &self.program_context,
-                        )?;
-                    }
-                }
+                self.process_msg(peer_id, msg, true)?;
                 return Ok(());
             }
             ReceiveHandlerChannel::Error(e) => {
@@ -174,11 +196,11 @@ impl BitVMX {
         Ok(())
     }
 
-    pub fn process_bitcoin_updates(&mut self) -> Result<(), BitVMXError> {
+    pub fn process_bitcoin_updates(&mut self) -> Result<bool, BitVMXError> {
         self.program_context.bitcoin_coordinator.tick()?;
 
         if !self.program_context.bitcoin_coordinator.is_ready()? {
-            return Ok(());
+            return Ok(false);
         }
 
         let news = self.program_context.bitcoin_coordinator.get_news()?;
@@ -277,7 +299,7 @@ impl BitVMX {
                 .ack_news(ack_news)?;
         }
 
-        Ok(())
+        Ok(true)
     }
 
     pub fn process_api_messages(&mut self) -> Result<(), BitVMXError> {
@@ -307,6 +329,7 @@ impl BitVMX {
         if self.count % 5 == 0 {
             self.process_api_messages()?;
             self.process_bitcoin_updates()?;
+            self.process_pending_messages()?;
         }
 
         self.process_collaboration()?;
@@ -549,9 +572,18 @@ impl BitVMXApi for BitVMX {
 
     fn handle_message(&mut self, msg: String, from: u32) -> Result<(), BitVMXError> {
         let decoded: IncomingBitVMXApiMessages = serde_json::from_str(&msg)?;
-        info!("< {:#?}", decoded);
+        info!("< {:?}", decoded);
 
         match decoded {
+            IncomingBitVMXApiMessages::GetCommInfo() => {
+                let comm_info = OutgoingBitVMXApiMessages::CommInfo(P2PAddress {
+                    address: self.program_context.comms.get_address(),
+                    peer_id: self.program_context.comms.get_peer_id(),
+                });
+                self.program_context
+                    .broker_channel
+                    .send(from, serde_json::to_string(&comm_info)?)?;
+            }
             IncomingBitVMXApiMessages::Ping() => BitVMXApi::ping(self, from)?,
             IncomingBitVMXApiMessages::SetVar(uuid, key, value) => {
                 info!("Setting variable {}: {:?}", key, value);

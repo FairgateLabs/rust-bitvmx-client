@@ -15,7 +15,7 @@ fn config_trace() {
         .expect("Invalid filter");
 
     tracing_subscriber::fmt()
-        .without_time()
+        //.without_time()
         .with_target(true)
         .with_env_filter(filter)
         .init();
@@ -65,6 +65,8 @@ fn run_bitvmx(opn: &str) -> Result<()> {
     })
     .expect("Error setting Ctrl+C handler");
 
+    let mut ready = false;
+
     // Main processing loop
     loop {
         // Check if Ctrl+C was pressed
@@ -73,9 +75,19 @@ fn run_bitvmx(opn: &str) -> Result<()> {
             break;
         }
         for bitvmx in instances.iter_mut() {
-            bitvmx.tick()?;
+            if ready {
+                bitvmx.tick()?;
+                thread::sleep(Duration::from_millis(10));
+            } else {
+                ready = bitvmx.process_bitcoin_updates()?;
+                if !ready {
+                    info!("Waiting to get to the top of the Bitcoin chain...");
+                } else {
+                    info!("Bitcoin updates processed, ready to run.");
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
         }
-        thread::sleep(Duration::from_millis(50));
     }
 
     Ok(())

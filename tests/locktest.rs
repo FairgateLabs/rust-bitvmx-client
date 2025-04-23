@@ -4,17 +4,19 @@ use bitcoin::{
     key::{rand::rngs::OsRng, Parity, Secp256k1},
     secp256k1::{self, All, Message, PublicKey as SecpPublicKey, SecretKey},
     sighash::SighashCache,
-    transaction, Amount, Network, OutPoint, PrivateKey as BitcoinPrivKey, PublicKey,
+    transaction, Address, Amount, Network, OutPoint, PrivateKey as BitcoinPrivKey, PublicKey,
     PublicKey as BitcoinPubKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness,
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
-use bitvmx_broker::channel::channel::DualChannel;
+use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use bitvmx_client::{
+    bitvmx::BitVMX,
+    config::Config,
     program::{
         self,
         variables::{VariableTypes, WitnessTypes},
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID},
 };
 use common::{init_bitvmx, prepare_bitcoin, wait_message_from_channel};
 use protocol_builder::scripts::{
@@ -61,33 +63,90 @@ fn config_trace_aux() {
         .init();
 }
 
+pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, Address)> {
+    let config = Config::new(Some("config/op_1.yaml".to_string()))?;
+
+    let bitcoin_client = BitcoinClient::new(
+        &config.bitcoin.url,
+        &config.bitcoin.username,
+        &config.bitcoin.password,
+    )?;
+
+    let wallet = bitcoin_client
+        .init_wallet(Network::Regtest, "test_wallet")
+        .unwrap();
+
+    info!("Mine 1 blocks to address {:?}", wallet);
+    bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
+
+    Ok((bitcoin_client, wallet))
+}
+
 pub fn sha256(data: Vec<u8>) -> Vec<u8> {
     let mut hasher = Sha256::new();
     hasher.update(&data);
     hasher.finalize().to_vec()
 }
 
-pub fn send_all(channels: &Vec<&DualChannel>, msg: &str) -> Result<()> {
+pub fn send_all(channels: &Vec<DualChannel>, msg: &str) -> Result<()> {
     for channel in channels {
         channel.send(BITVMX_ID, msg.to_string())?;
     }
     Ok(())
 }
 
+pub fn get_all(
+    channels: &Vec<DualChannel>,
+    instances: &mut Vec<BitVMX>,
+) -> Result<Vec<(String, u32)>> {
+    let mut ret = vec![];
+    let mut mutinstances = instances.iter_mut().collect::<Vec<_>>();
+    for channel in channels {
+        let msg = wait_message_from_channel(&channel, &mut mutinstances, true)?;
+        ret.push(msg);
+    }
+    Ok(ret)
+}
+
+pub fn init_broker(role: &str) -> Result<DualChannel> {
+    let config = Config::new(Some(format!("config/{}.yaml", role)))?;
+    let broker_config = BrokerConfig::new(config.broker_port, None);
+    let bridge_client = DualChannel::new(&broker_config, L2_ID);
+    Ok(bridge_client)
+}
 #[ignore]
 #[test]
 pub fn test_slot() -> Result<()> {
     config_trace();
 
-    let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
+    let independent = false;
 
-    let (mut bitvmx_1, addres_1, bridge_1) = init_bitvmx("op_1")?;
-    let (mut bitvmx_2, addres_2, bridge_2) = init_bitvmx("op_2")?;
-    let (mut bitvmx_3, addres_3, bridge_3) = init_bitvmx("op_3")?;
-    let (mut bitvmx_4, addres_4, bridge_4) = init_bitvmx("op_4")?;
+    let (bitcoin_client, bitcoind, wallet) = if independent {
+        let (bitcoin_client, wallet) = prepare_bitcoin_running()?;
+        (bitcoin_client, None, wallet)
+    } else {
+        let (client, deamon, wallet) = prepare_bitcoin()?;
+        (client, Some(deamon), wallet)
+    };
 
-    let mut instances = vec![&mut bitvmx_1, &mut bitvmx_2, &mut bitvmx_3, &mut bitvmx_4];
-    let channels = vec![&bridge_1, &bridge_2, &bridge_3, &bridge_4];
+    let (channels, mut instances) = if independent {
+        let bridge_1 = init_broker("op_1")?;
+        let bridge_2 = init_broker("op_2")?;
+        let bridge_3 = init_broker("op_3")?;
+        let bridge_4 = init_broker("op_4")?;
+
+        let instances: Vec<BitVMX> = Vec::new();
+        let channels = vec![bridge_1, bridge_2, bridge_3, bridge_4];
+        (channels, instances)
+    } else {
+        let (bitvmx_1, _addres_1, bridge_1) = init_bitvmx("op_1")?;
+        let (bitvmx_2, _addres_2, bridge_2) = init_bitvmx("op_2")?;
+        let (bitvmx_3, _addres_3, bridge_3) = init_bitvmx("op_3")?;
+        let (bitvmx_4, _addres_4, bridge_4) = init_bitvmx("op_4")?;
+        let instances = vec![bitvmx_1, bitvmx_2, bitvmx_3, bitvmx_4];
+        let channels = vec![bridge_1, bridge_2, bridge_3, bridge_4];
+        (channels, instances)
+    };
 
     //get to the top of the blockchain
     for _ in 0..101 {
@@ -96,25 +155,32 @@ pub fn test_slot() -> Result<()> {
         }
     }
 
-    let addresses = vec![
-        addres_1.clone(),
-        addres_2.clone(),
-        addres_3.clone(),
-        addres_4.clone(),
-    ];
+    let command = IncomingBitVMXApiMessages::GetCommInfo().to_string()?;
+    send_all(&channels, &command)?;
+    let msgs = get_all(&channels, &mut instances)?;
+    let addresses = msgs
+        .iter()
+        .map(|msg| {
+            let msg = OutgoingBitVMXApiMessages::from_string(&msg.0).unwrap();
+            match msg {
+                OutgoingBitVMXApiMessages::CommInfo(comm_info) => comm_info,
+                _ => panic!("Expected CommInfo message"),
+            }
+        })
+        .collect::<Vec<_>>();
 
     //ask the peers to generate the aggregated public key
     let aggregation_id = Uuid::new_v4();
     let command =
         IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), 0).to_string()?;
 
+    info!("Command to all: {:?}", command);
     send_all(&channels, &command)?;
+    info!("Waiting for AggregatedPubkey message from all channels");
+    let msgs = get_all(&channels, &mut instances)?;
+    info!("Received AggregatedPubkey message from all channels");
 
-    let msg_1 = wait_message_from_channel(&bridge_1, &mut instances, true)?;
-    let _msg_2 = wait_message_from_channel(&bridge_2, &mut instances, true)?;
-    let _msg_3 = wait_message_from_channel(&bridge_3, &mut instances, true)?;
-
-    let msg = OutgoingBitVMXApiMessages::from_string(&msg_1.0)?;
+    let msg = OutgoingBitVMXApiMessages::from_string(&msgs[0].0)?;
     let aggregated_pub_key = match msg {
         OutgoingBitVMXApiMessages::AggregatedPubkey(_uuid, aggregated_pub_key) => {
             aggregated_pub_key
@@ -166,12 +232,6 @@ pub fn test_slot() -> Result<()> {
         VariableTypes::Utxo((txid, 0, Some(ordinal_fee.to_sat()))),
     )
     .to_string()?;
-    /*let set_ordinal_utxo = IncomingBitVMXApiMessages::SetVar(
-        program_id,
-        "ordinal_utxo".to_string(),
-        VariableTypes::Utxo((utxo.txid, utxo.vout, Some(utxo.amount))),
-    )
-    .to_string()?;*/
 
     send_all(&channels, &set_ordinal_utxo)?;
 
@@ -194,9 +254,7 @@ pub fn test_slot() -> Result<()> {
     let setup_msg = IncomingBitVMXApiMessages::SetupSlot(program_id, addresses, 0).to_string()?;
     send_all(&channels, &setup_msg)?;
 
-    let _msg_1 = wait_message_from_channel(&bridge_1, &mut instances, true)?;
-    let _msg_2 = wait_message_from_channel(&bridge_2, &mut instances, true)?;
-    let _msg_3 = wait_message_from_channel(&bridge_3, &mut instances, true)?;
+    get_all(&channels, &mut instances)?;
 
     //Bridge send signal to send the kickoff message
     let witness_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetWitness(
@@ -204,9 +262,9 @@ pub fn test_slot() -> Result<()> {
         "secret".to_string(),
         WitnessTypes::Secret(preimage.as_bytes().to_vec()),
     ))?;
-    bridge_2.send(BITVMX_ID, witness_msg.clone())?;
+    channels[1].send(BITVMX_ID, witness_msg.clone())?;
 
-    let _ = bridge_2.send(
+    let _ = channels[1].send(
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
@@ -223,11 +281,13 @@ pub fn test_slot() -> Result<()> {
 
         for instance in instances.iter_mut() {
             instance.tick()?;
-            std::thread::sleep(std::time::Duration::from_millis(10));
         }
+        std::thread::sleep(std::time::Duration::from_millis(40));
     }
 
-    bitcoind.stop()?;
+    if bitcoind.is_some() {
+        bitcoind.unwrap().stop()?;
+    }
     Ok(())
 }
 

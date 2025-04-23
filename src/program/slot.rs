@@ -232,7 +232,7 @@ impl SlotProtocol {
             LOCK_TX,
             OutputType::tr_script(
                 ordinal_utxo.2.unwrap(),
-                &ops_agg_pubkey.into(),
+                &unspendable,
                 &[
                     taproot_script_eol_timelock_expired_tx_lock.clone(),
                     taproot_script_all_sign_tx_lock.clone(),
@@ -254,9 +254,9 @@ impl SlotProtocol {
             LOCK_TX,
             OutputType::tr_script(
                 amount,
-                &ops_agg_pubkey, // TODO, perhaps we want an un-spendable key here to force the script path spend
+                &unspendable,
                 &[taproot_script_protocol_fee_addres_signature_in_tx_lock],
-                true,
+                false,
                 vec![],
             )?, // We do not need prevouts cause the tx is in the graph,
         )?;

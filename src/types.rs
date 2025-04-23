@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{types::BitcoinCoordinatorType, TransactionStatus};
 use bitvmx_broker::{broker_storage::BrokerStorage, channel::channel::LocalChannel};
@@ -90,6 +92,7 @@ pub enum IncomingBitVMXApiMessages {
     Ping(),
     SetVar(Uuid, String, VariableTypes),
     SetWitness(Uuid, String, WitnessTypes),
+    GetCommInfo(),
     SetupProgram(ProgramId, ParticipantRole, P2PAddress, Utxo),
     GetTransaction(Uuid, Txid),
     SetupSlot(ProgramId, Vec<P2PAddress>, u16),
@@ -131,6 +134,7 @@ pub enum OutgoingBitVMXApiMessages {
     AggregatedPubkeyNotReady(Uuid),
     ZKPResult(/* Add appropriate type */),
     ExecutionResult(/* Add appropriate type */),
+    CommInfo(P2PAddress),
 }
 
 impl OutgoingBitVMXApiMessages {
@@ -139,6 +143,15 @@ impl OutgoingBitVMXApiMessages {
     }
 
     pub fn from_string(msg: &str) -> Result<Self, BitVMXError> {
+        let msg: OutgoingBitVMXApiMessages = serde_json::from_str(msg)?;
+        Ok(msg)
+    }
+}
+
+impl FromStr for OutgoingBitVMXApiMessages {
+    type Err = BitVMXError;
+
+    fn from_str(msg: &str) -> Result<Self, Self::Err> {
         let msg: OutgoingBitVMXApiMessages = serde_json::from_str(msg)?;
         Ok(msg)
     }
