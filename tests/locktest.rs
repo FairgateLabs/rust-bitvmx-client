@@ -562,3 +562,11 @@ fn create_lockreq_tx_and_sign(
 
     signed_transaction
 }
+
+#[ignore]
+#[test]
+pub fn test_prepare_bitcoin() -> Result<()> {
+    config_trace();
+    prepare_bitcoin()?;
+    Ok(())
+}

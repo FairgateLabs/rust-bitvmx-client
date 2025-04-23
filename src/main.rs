@@ -3,7 +3,6 @@ use std::{thread, time::Duration};
 use anyhow::Result;
 use bitcoin::Network;
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
-use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
@@ -26,10 +25,8 @@ fn clear_db(path: &str) {
     let _ = std::fs::remove_dir_all(path);
 }
 
-fn init_bitvmx(role: &str) -> Result<(BitVMX, DualChannel)> {
-    let config = Config::new(Some(format!("config/{}.yaml", role)))?;
-    let broker_config = BrokerConfig::new(config.broker_port, None);
-    let bridge_client = DualChannel::new(&broker_config, 2);
+fn init_bitvmx(opn: &str) -> Result<BitVMX> {
+    let config = Config::new(Some(format!("config/{}.yaml", opn)))?;
 
     clear_db(&config.storage.db);
     clear_db(&config.key_storage.path);
@@ -38,24 +35,36 @@ fn init_bitvmx(role: &str) -> Result<(BitVMX, DualChannel)> {
     info!("config: {:?}", config.storage.db);
 
     let bitvmx = BitVMX::new(config)?;
-    Ok((bitvmx, bridge_client))
+    Ok(bitvmx)
 }
 
-fn run_bitvmx(role: &str) -> Result<()> {
-    info!("Starting BitVMX instance with role: {}", role);
+fn run_bitvmx(opn: &str) -> Result<()> {
+    info!("Starting BitVMX instance with operator: {}", opn);
 
-    let (mut bitvmx, _bridge_channel) = init_bitvmx(role)?;
+    let mut bitvmx = init_bitvmx(opn)?;
 
     info!("BitVMX instance initialized");
     info!("P2P Address: {}", bitvmx.address());
     info!("Peer ID: {}", bitvmx.peer_id());
 
+    // Set up Ctrl+C handler
+    let (tx, rx) = std::sync::mpsc::channel();
+    ctrlc::set_handler(move || {
+        let _ = tx.send(());
+    })
+    .expect("Error setting Ctrl+C handler");
+
     // Main processing loop
     loop {
+        // Check if Ctrl+C was pressed
+        if rx.try_recv().is_ok() {
+            info!("Ctrl+C received, shutting down...");
+            break;
+        }
         match bitvmx.tick() {
             Ok(_) => {
                 // prevent busy waiting
-                thread::sleep(Duration::from_millis(10));
+                thread::sleep(Duration::from_millis(50));
             }
             Err(e) => {
                 error!("Error in BitVMX tick: {:?}", e);
@@ -72,14 +81,12 @@ fn main() -> Result<()> {
 
     // Get role from command line args
     let args: Vec<String> = std::env::args().collect();
-    let role = args.get(1).map(String::as_str).unwrap_or("prover");
+    let opn = args
+        .get(1)
+        .map(String::as_str)
+        .expect("Define the config file to use. Example: op_1, and optionaly -init_wallet");
 
-    if role != "prover" && role != "verifier" {
-        error!("Invalid role. Must be either 'prover' or 'verifier'");
-        std::process::exit(1);
-    }
-
-    let config = Config::new(Some(format!("config/{}.yaml", role)))?;
+    let config = Config::new(Some(format!("config/{}.yaml", opn)))?;
     // let bitcoind = Bitcoind::new(
     //     "bitcoin-regtest",
     //     "ruimarinho/bitcoin-core",
@@ -88,19 +95,24 @@ fn main() -> Result<()> {
     // info!("Starting bitcoind");
     // bitcoind.start()?;
 
-    let wallet_name = format!("test_wallet_{}", role);
-    let bitcoin_client = BitcoinClient::new(
-        &format!("{}/wallet/{}", config.bitcoin.url, wallet_name),
-        &config.bitcoin.username,
-        &config.bitcoin.password,
-    )?;
+    let initwallet = args.get(2).map(String::as_str).unwrap_or("");
+    if initwallet == "--init_wallet" {
+        let wallet_name = format!("test_wallet_{}", opn);
+        let bitcoin_client = BitcoinClient::new(
+            &format!("{}/wallet/{}", config.bitcoin.url, wallet_name),
+            &config.bitcoin.username,
+            &config.bitcoin.password,
+        )?;
 
-    let wallet = bitcoin_client
-        .init_wallet(Network::Regtest, &wallet_name)
-        .unwrap();
+        let wallet = bitcoin_client
+            .init_wallet(Network::Regtest, &wallet_name)
+            .unwrap();
 
-    info!("Mine 1 block to address {:?}", wallet);
-    bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
+        info!("Mine 1 block to address {:?}", wallet);
+        bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
+    } else if !initwallet.is_empty() {
+        panic!("The second optional argument must be --init_wallet");
+    }
 
-    run_bitvmx(role)
+    run_bitvmx(opn)
 }

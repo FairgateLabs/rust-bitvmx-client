@@ -23,6 +23,7 @@ chrono = "0.4.31"
 tokio = { version = "1.40.0", features = ["sync"] }
 sha2 = "0.10"
 enum_dispatch = { version = "0.3.13" }
+ctrlc = "3.2.5"
 
 bitcoincore-rpc = { version = "0.19.0" }
 bitcoin-script = { git = "https://github.com/FairgateLabs/rust-bitcoin-script/", branch = "bitvmx" }
