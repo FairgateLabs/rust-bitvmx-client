@@ -1,9 +1,6 @@
 use std::{collections::HashMap, rc::Rc};
 
-use bitcoin::{
-    secp256k1, secp256k1::PublicKey as SecpPublicKey, Amount, PublicKey, ScriptBuf, Transaction,
-    TxOut, Txid,
-};
+use bitcoin::{secp256k1, Amount, PublicKey, ScriptBuf, Transaction, TxOut, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
@@ -113,8 +110,10 @@ impl SlotProtocol {
             .get_var(&self.ctx.id, "operators_aggregated_pub")?
             .pubkey()?;
 
-        //let internal_key = &utxo.pub_key;
-        //let untweaked_key: UntweakedPublicKey = XOnlyPublicKey::from(ops_agg_pubkey);
+        let unspendable = context
+            .globals
+            .get_var(&self.ctx.id, "unspendable")?
+            .pubkey()?;
 
         let secret = context.globals.get_var(&self.ctx.id, "secret")?;
         let secret = secret.secret()?;
@@ -147,13 +146,13 @@ impl SlotProtocol {
 
         let reveal_secret_script = reveal_secret(secret.to_vec(), &ops_agg_pubkey);
         let leaves = vec![timelock_script.clone(), reveal_secret_script.clone()];
-        let lockreq_tx_output_taptree = build_taptree_for_lockreq_tx_outputs(
+
+        let (unspendable_x_only, _parity) = unspendable.inner.x_only_public_key();
+        let lockreq_tx_output_taptree = build_taproot_spend_info(
             &secp,
-            unspendable(),
-            timelock_script,
-            reveal_secret_script,
-        )
-        .unwrap();
+            &unspendable_x_only,
+            &[timelock_script, reveal_secret_script],
+        )?;
 
         let script_pubkey = ScriptBuf::new_p2tr(
             &secp,
@@ -177,7 +176,7 @@ impl SlotProtocol {
 
         let output_type_ordinal = OutputType::tr_script(
             ordinal_utxo.2.unwrap(),
-            &unspendable().into(),
+            &unspendable,
             &leaves,
             false,
             prevouts.clone(),
@@ -185,7 +184,7 @@ impl SlotProtocol {
 
         let output_type_protocol = OutputType::tr_script(
             protocol_utxo.2.unwrap(),
-            &unspendable().into(),
+            &unspendable,
             &leaves,
             false,
             prevouts,
@@ -303,35 +302,4 @@ impl SlotProtocol {
         info!("Transaction to send: {:?}", tx);
         Ok(tx)
     }
-}
-
-fn unspendable() -> SecpPublicKey {
-    // hardcoded unspendable
-    let key_bytes =
-        hex::decode("02f286025adef23a29582a429ee1b201ba400a9c57e5856840ca139abb629889ad")
-            .expect("Invalid hex input");
-    SecpPublicKey::from_slice(&key_bytes).expect("Invalid public key")
-}
-
-fn build_taptree_for_lockreq_tx_outputs(
-    secp: &secp256k1::Secp256k1<secp256k1::All>,
-    unspendable_pub_key: SecpPublicKey,
-    timelock_script: ProtocolScript,
-    reveal_secret_script: ProtocolScript,
-) -> Result<bitcoin::taproot::TaprootSpendInfo, BitVMXError> {
-    /* NOTE: we want to force the script path spend, so we will finalize with an un-spendable key */
-    let (internal_key_for_taptree_xonly, _parity) = unspendable_pub_key.x_only_public_key();
-    println!("Unspendable key: {}", unspendable_pub_key);
-    tracing::debug!(
-        "X only Unspendable key: {:?} parity: {:?}",
-        internal_key_for_taptree_xonly,
-        _parity
-    );
-    let taproot_spend_info = build_taproot_spend_info(
-        secp,
-        &internal_key_for_taptree_xonly,
-        &[timelock_script, reveal_secret_script],
-    )?;
-
-    Ok(taproot_spend_info)
 }

@@ -1,10 +1,12 @@
 use anyhow::Result;
-use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
+use bitcoin::{secp256k1, Address, Amount, KnownHrp, PublicKey, XOnlyPublicKey};
+use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_client::{
     program::{self, participant::ParticipantRole},
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
-use common::{init_bitvmx, init_utxo, prepare_bitcoin, wait_message_from_channel};
+use common::{init_bitvmx, prepare_bitcoin, wait_message_from_channel};
+use protocol_builder::{scripts, types::Utxo};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
@@ -45,6 +47,43 @@ fn config_trace_aux() {
         .with_env_filter(filter)
         .init();
 }
+
+pub fn init_utxo(
+    bitcoin_client: &BitcoinClient,
+    aggregated_pub_key: PublicKey,
+    secret: Option<Vec<u8>>,
+) -> Result<Utxo> {
+    // TODO perform a key aggregation with participants public keys. This is a harcoded key for now.
+    let secp = secp256k1::Secp256k1::new();
+    let untweaked_key = XOnlyPublicKey::from(aggregated_pub_key);
+
+    let spending_scripts = if secret.is_some() {
+        vec![scripts::reveal_secret(secret.unwrap(), &aggregated_pub_key)]
+        //vec![scripts::check_aggregated_signature(&aggregated_pub_key)]
+    } else {
+        vec![scripts::timelock_renew(&aggregated_pub_key)]
+    };
+
+    let taproot_spend_info =
+        scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
+    let p2tr_address = Address::p2tr(
+        &secp,
+        untweaked_key,
+        taproot_spend_info.merkle_root(),
+        KnownHrp::Regtest,
+    );
+
+    let (tx, vout) = bitcoin_client.fund_address(&p2tr_address, Amount::from_sat(100_000_000))?;
+
+    let utxo = Utxo::new(tx.compute_txid(), vout, 100_000_000, &aggregated_pub_key);
+
+    info!("UTXO: {:?}", utxo);
+    // Spend the UTXO to test Musig2 signature aggregation
+    // spend_utxo(bitcoin_client, utxo.clone(), public_key, p2tr_address, taproot_spend_info)?;
+
+    Ok(utxo)
+}
+
 //cargo test --release  -- test_single_run --ignored
 #[ignore]
 #[test]

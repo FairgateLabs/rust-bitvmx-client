@@ -144,6 +144,14 @@ pub fn test_slot() -> Result<()> {
     .to_string()?;
     send_all(&channels, &set_ops_aggregated)?;
 
+    let set_unspendable = IncomingBitVMXApiMessages::SetVar(
+        program_id,
+        "unspendable".to_string(),
+        VariableTypes::PubKey(hardcoded_unspendable().into()),
+    )
+    .to_string()?;
+    send_all(&channels, &set_unspendable)?;
+
     let set_secret = IncomingBitVMXApiMessages::SetVar(
         program_id,
         "secret".to_string(),
@@ -246,6 +254,14 @@ pub fn build_taptree_for_lockreq_tx_outputs(
     Ok(taproot_spend_info)
 }
 
+pub fn hardcoded_unspendable() -> SecpPublicKey {
+    // hardcoded unspendable
+    let key_bytes =
+        hex::decode("02f286025adef23a29582a429ee1b201ba400a9c57e5856840ca139abb629889ad")
+            .expect("Invalid hex input");
+    SecpPublicKey::from_slice(&key_bytes).expect("Invalid public key")
+}
+
 pub fn create_loqreq_ready(
     aggregated_operators: PublicKey,
     secret_hash: Vec<u8>,
@@ -258,10 +274,7 @@ pub fn create_loqreq_ready(
     let mut rng = OsRng;
 
     // hardcoded unspendable
-    let key_bytes =
-        hex::decode("02f286025adef23a29582a429ee1b201ba400a9c57e5856840ca139abb629889ad")
-            .expect("Invalid hex input");
-    let unspendable = SecpPublicKey::from_slice(&key_bytes).expect("Invalid public key");
+    let unspendable = hardcoded_unspendable();
 
     // emulate the user keypair
     let user_sk = SecretKey::new(&mut rng);
