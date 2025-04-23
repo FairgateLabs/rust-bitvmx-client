@@ -535,9 +535,11 @@ impl BitVMXApi for BitVMX {
     ) -> Result<(), BitVMXError> {
         info!("Dispatching transaction: {:?} for instance: {:?}", tx, id);
 
-        self.program_context
-            .bitcoin_coordinator
-            .dispatch(tx, Context::RequestId(id, from).to_string()?)?;
+        self.program_context.bitcoin_coordinator.dispatch(
+            tx,
+            Context::RequestId(id, from).to_string()?,
+            None,
+        )?;
         Ok(())
     }
 
