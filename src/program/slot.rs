@@ -299,11 +299,6 @@ impl SlotProtocol {
         let mut taproot_arg_1 = InputArgs::new_taproot_script_args(1);
         taproot_arg_1.push_taproot_signature(signature)?;
 
-        let secret = context
-            .witness
-            .get_witness(&self.ctx.id, "secret")?
-            .unwrap()
-            .secret()?;
         taproot_arg_1.push_slice(&secret);
 
         let tx = self
