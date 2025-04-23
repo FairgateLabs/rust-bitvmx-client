@@ -3,7 +3,7 @@ use std::{thread, time::Duration};
 use anyhow::Result;
 use bitcoin::Network;
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
-use tracing::{error, info};
+use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 use bitvmx_client::{bitvmx::BitVMX, config::Config};
@@ -41,11 +41,22 @@ fn init_bitvmx(opn: &str) -> Result<BitVMX> {
 fn run_bitvmx(opn: &str) -> Result<()> {
     info!("Starting BitVMX instance with operator: {}", opn);
 
-    let mut bitvmx = init_bitvmx(opn)?;
+    let mut instances = if opn == "all" {
+        vec![
+            init_bitvmx("op_1")?,
+            init_bitvmx("op_2")?,
+            init_bitvmx("op_3")?,
+            init_bitvmx("op_4")?,
+        ]
+    } else {
+        vec![init_bitvmx(opn)?]
+    };
 
     info!("BitVMX instance initialized");
-    info!("P2P Address: {}", bitvmx.address());
-    info!("Peer ID: {}", bitvmx.peer_id());
+    for bitvmx in &instances {
+        info!("P2P Address: {}", bitvmx.address());
+        info!("Peer ID: {}", bitvmx.peer_id());
+    }
 
     // Set up Ctrl+C handler
     let (tx, rx) = std::sync::mpsc::channel();
@@ -61,16 +72,10 @@ fn run_bitvmx(opn: &str) -> Result<()> {
             info!("Ctrl+C received, shutting down...");
             break;
         }
-        match bitvmx.tick() {
-            Ok(_) => {
-                // prevent busy waiting
-                thread::sleep(Duration::from_millis(50));
-            }
-            Err(e) => {
-                error!("Error in BitVMX tick: {:?}", e);
-                break;
-            }
+        for bitvmx in instances.iter_mut() {
+            bitvmx.tick()?;
         }
+        thread::sleep(Duration::from_millis(50));
     }
 
     Ok(())
@@ -86,7 +91,6 @@ fn main() -> Result<()> {
         .map(String::as_str)
         .expect("Define the config file to use. Example: op_1, and optionaly -init_wallet");
 
-    let config = Config::new(Some(format!("config/{}.yaml", opn)))?;
     // let bitcoind = Bitcoind::new(
     //     "bitcoin-regtest",
     //     "ruimarinho/bitcoin-core",
@@ -97,6 +101,7 @@ fn main() -> Result<()> {
 
     let initwallet = args.get(2).map(String::as_str).unwrap_or("");
     if initwallet == "--init_wallet" {
+        let config = Config::new(Some(format!("config/{}.yaml", opn)))?;
         let wallet_name = format!("test_wallet_{}", opn);
         let bitcoin_client = BitcoinClient::new(
             &format!("{}/wallet/{}", config.bitcoin.url, wallet_name),
