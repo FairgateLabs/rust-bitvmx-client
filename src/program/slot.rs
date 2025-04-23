@@ -15,7 +15,7 @@ use protocol_builder::{
 };
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::Storage;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{errors::BitVMXError, keychain::KeyChain, types::ProgramContext};

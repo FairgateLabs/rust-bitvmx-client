@@ -113,7 +113,7 @@ pub fn wait_message_from_channel(
 }
 
 pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Address)> {
-    let config = Config::new(Some("config/prover.yaml".to_string()))?;
+    let config = Config::new(Some("config/op_1.yaml".to_string()))?;
 
     let bitcoind = Bitcoind::new(
         "bitcoin-regtest",

@@ -21,7 +21,7 @@ use protocol_builder::scripts::{
     build_taproot_spend_info, reveal_secret, timelock, ProtocolScript,
 };
 use sha2::{Digest, Sha256};
-use tracing::{error, info};
+use tracing::info;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
@@ -81,12 +81,13 @@ pub fn test_slot() -> Result<()> {
 
     let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
 
-    let (mut bitvmx_1, addres_1, bridge_1) = init_bitvmx("prover")?;
-    let (mut bitvmx_2, addres_2, bridge_2) = init_bitvmx("verifier")?;
-    let (mut bitvmx_3, addres_3, bridge_3) = init_bitvmx("third")?;
+    let (mut bitvmx_1, addres_1, bridge_1) = init_bitvmx("op_1")?;
+    let (mut bitvmx_2, addres_2, bridge_2) = init_bitvmx("op_2")?;
+    let (mut bitvmx_3, addres_3, bridge_3) = init_bitvmx("op_3")?;
+    let (mut bitvmx_4, addres_4, bridge_4) = init_bitvmx("op_4")?;
 
-    let mut instances = vec![&mut bitvmx_1, &mut bitvmx_2, &mut bitvmx_3];
-    let channels = vec![&bridge_1, &bridge_2, &bridge_3];
+    let mut instances = vec![&mut bitvmx_1, &mut bitvmx_2, &mut bitvmx_3, &mut bitvmx_4];
+    let channels = vec![&bridge_1, &bridge_2, &bridge_3, &bridge_4];
 
     //get to the top of the blockchain
     for _ in 0..101 {
@@ -95,7 +96,12 @@ pub fn test_slot() -> Result<()> {
         }
     }
 
-    let addresses = vec![addres_1.clone(), addres_2.clone(), addres_3.clone()];
+    let addresses = vec![
+        addres_1.clone(),
+        addres_2.clone(),
+        addres_3.clone(),
+        addres_4.clone(),
+    ];
 
     //ask the peers to generate the aggregated public key
     let aggregation_id = Uuid::new_v4();

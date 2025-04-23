@@ -53,9 +53,9 @@ pub fn test_single_run() -> Result<()> {
 
     let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
 
-    let (mut prover_bitvmx, prover_address, prover_bridge_channel) = init_bitvmx("prover")?;
+    let (mut prover_bitvmx, prover_address, prover_bridge_channel) = init_bitvmx("op_1")?;
 
-    let (mut verifier_bitvmx, verifier_address, verifier_bridge_channel) = init_bitvmx("verifier")?;
+    let (mut verifier_bitvmx, verifier_address, verifier_bridge_channel) = init_bitvmx("op_2")?;
 
     let mut instances = vec![&mut prover_bitvmx, &mut verifier_bitvmx];
 
@@ -168,9 +168,9 @@ pub fn test_aggregation() -> Result<()> {
 
     let (_bitcoin_client, bitcoind, _wallet) = prepare_bitcoin()?;
 
-    let (mut bitvmx_1, addres_1, bridge_1) = init_bitvmx("prover")?;
-    let (mut bitvmx_2, addres_2, bridge_2) = init_bitvmx("verifier")?;
-    let (mut bitvmx_3, addres_3, bridge_3) = init_bitvmx("third")?;
+    let (mut bitvmx_1, addres_1, bridge_1) = init_bitvmx("op_1")?;
+    let (mut bitvmx_2, addres_2, bridge_2) = init_bitvmx("op_2")?;
+    let (mut bitvmx_3, addres_3, bridge_3) = init_bitvmx("op_3")?;
 
     let mut instances = vec![&mut bitvmx_1, &mut bitvmx_2, &mut bitvmx_3];
 
