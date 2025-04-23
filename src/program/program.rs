@@ -855,8 +855,24 @@ impl Program {
         context: String,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        self.protocol
-            .notify_news(tx_id, tx_status, context, program_context, &self.parameters)
+        self.protocol.notify_news(
+            tx_id,
+            tx_status.clone(),
+            context,
+            program_context,
+            &self.parameters,
+        )?;
+
+        if tx_status.confirmations == 6 {
+            let name = self.protocol.get_transaction_name_by_id(tx_id)?;
+            program_context.broker_channel.send(
+                L2_ID,
+                OutgoingBitVMXApiMessages::Transaction(self.program_id, tx_status, Some(name))
+                    .to_string()?,
+            )?;
+        }
+
+        Ok(())
     }
 
     pub fn get_txs_to_monitor(&self) -> Result<Vec<Txid>, BitVMXError> {

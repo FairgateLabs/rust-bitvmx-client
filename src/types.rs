@@ -120,7 +120,7 @@ type ProgramId = Uuid;
 pub enum OutgoingBitVMXApiMessages {
     Pong(),
     // response for transaction get and dispatch
-    Transaction(Uuid, TransactionStatus),
+    Transaction(Uuid, TransactionStatus, Option<String>),
     // Represents when pegin transactions is found
     PeginTransactionFound(Txid, TransactionStatus),
     // Represents when a spending utxo transaction is found

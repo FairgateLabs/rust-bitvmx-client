@@ -98,11 +98,12 @@ pub fn send_all(channels: &Vec<DualChannel>, msg: &str) -> Result<()> {
 pub fn get_all(
     channels: &Vec<DualChannel>,
     instances: &mut Vec<BitVMX>,
+    fake_tick: bool,
 ) -> Result<Vec<(String, u32)>> {
     let mut ret = vec![];
     let mut mutinstances = instances.iter_mut().collect::<Vec<_>>();
     for channel in channels {
-        let msg = wait_message_from_channel(&channel, &mut mutinstances, true)?;
+        let msg = wait_message_from_channel(&channel, &mut mutinstances, fake_tick)?;
         ret.push(msg);
     }
     Ok(ret)
@@ -157,7 +158,7 @@ pub fn test_slot() -> Result<()> {
 
     let command = IncomingBitVMXApiMessages::GetCommInfo().to_string()?;
     send_all(&channels, &command)?;
-    let msgs = get_all(&channels, &mut instances)?;
+    let msgs = get_all(&channels, &mut instances, false)?;
     let addresses = msgs
         .iter()
         .map(|msg| {
@@ -177,7 +178,7 @@ pub fn test_slot() -> Result<()> {
     info!("Command to all: {:?}", command);
     send_all(&channels, &command)?;
     info!("Waiting for AggregatedPubkey message from all channels");
-    let msgs = get_all(&channels, &mut instances)?;
+    let msgs = get_all(&channels, &mut instances, false)?;
     info!("Received AggregatedPubkey message from all channels");
 
     let msg = OutgoingBitVMXApiMessages::from_string(&msgs[0].0)?;
@@ -254,7 +255,7 @@ pub fn test_slot() -> Result<()> {
     let setup_msg = IncomingBitVMXApiMessages::SetupSlot(program_id, addresses, 0).to_string()?;
     send_all(&channels, &setup_msg)?;
 
-    get_all(&channels, &mut instances)?;
+    get_all(&channels, &mut instances, false)?;
 
     //Bridge send signal to send the kickoff message
     let witness_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetWitness(
@@ -274,7 +275,7 @@ pub fn test_slot() -> Result<()> {
     );
 
     //TODO: main loop
-    for i in 0..200 {
+    for i in 0..100 {
         if i % 10 == 0 {
             bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
         }
@@ -284,6 +285,19 @@ pub fn test_slot() -> Result<()> {
         }
         std::thread::sleep(std::time::Duration::from_millis(40));
     }
+    let msgs = get_all(&channels, &mut instances, false)?;
+
+    let msg = OutgoingBitVMXApiMessages::from_string(&msgs[0].0)?;
+    let (uuid, txid, name) = match msg {
+        OutgoingBitVMXApiMessages::Transaction(uuid, status, name) => {
+            (uuid, status.tx_id, name.unwrap())
+        }
+        _ => panic!("Expected transaction message"),
+    };
+    info!(
+        "Transaction notification: uuid: {} txid: {} name: {}",
+        uuid, txid, name
+    );
 
     if bitcoind.is_some() {
         bitcoind.unwrap().stop()?;

@@ -41,6 +41,7 @@ pub fn tick(instance: &mut BitVMX) {
     instance.process_p2p_messages().unwrap();
     instance.process_programs().unwrap();
     instance.process_collaboration().unwrap();
+    instance.process_pending_messages().unwrap();
 }
 
 pub fn wait_message_from_channel(
@@ -53,7 +54,7 @@ pub fn wait_message_from_channel(
         if i % 50 == 0 {
             let msg = channel.recv()?;
             if msg.is_some() {
-                info!("Received message from channel: {:?}", msg);
+                //info!("Received message from channel: {:?}", msg);
                 return Ok(msg.unwrap());
             }
             std::thread::sleep(std::time::Duration::from_millis(10));

@@ -232,7 +232,7 @@ impl BitVMX {
                             self.program_context.broker_channel.send(
                                 from,
                                 serde_json::to_string(&OutgoingBitVMXApiMessages::Transaction(
-                                    request_id, tx_status,
+                                    request_id, tx_status, None,
                                 ))?,
                             )?;
                         }
@@ -545,7 +545,7 @@ impl BitVMXApi for BitVMX {
 
         self.program_context.broker_channel.send(
             from,
-            serde_json::to_string(&OutgoingBitVMXApiMessages::Transaction(id, tx_status))?,
+            serde_json::to_string(&OutgoingBitVMXApiMessages::Transaction(id, tx_status, None))?,
         )?;
         Ok(())
     }
