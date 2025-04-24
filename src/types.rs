@@ -1,4 +1,6 @@
-use bitcoin::{PublicKey, Transaction, Txid};
+use std::str::FromStr;
+
+use bitcoin::{PrivateKey, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{types::BitcoinCoordinatorType, TransactionStatus};
 use bitvmx_broker::{broker_storage::BrokerStorage, channel::channel::LocalChannel};
 use chrono::{DateTime, Utc};
@@ -90,15 +92,17 @@ pub enum IncomingBitVMXApiMessages {
     Ping(),
     SetVar(Uuid, String, VariableTypes),
     SetWitness(Uuid, String, WitnessTypes),
+    GetCommInfo(),
     SetupProgram(ProgramId, ParticipantRole, P2PAddress, Utxo),
     GetTransaction(Uuid, Txid),
-    SetupSlot(ProgramId, Vec<P2PAddress>, u16, Utxo),
+    SetupSlot(ProgramId, Vec<P2PAddress>, u16),
     SubscribeToTransaction(Txid),
     SubscribeUTXO(),
     DispatchTransaction(Uuid, Transaction),
     DispatchTransactionName(Uuid, String),
     SetupKey(Uuid, Vec<P2PAddress>, u16),
     GetAggregatedPubkey(Uuid),
+    GetKeyPair(Uuid),
     GenerateZKP(),
     ProofReady(),
     ExecuteZKP(),
@@ -117,7 +121,7 @@ type ProgramId = Uuid;
 pub enum OutgoingBitVMXApiMessages {
     Pong(),
     // response for transaction get and dispatch
-    Transaction(Uuid, TransactionStatus),
+    Transaction(Uuid, TransactionStatus, Option<String>),
     // Represents when pegin transactions is found
     PeginTransactionFound(Txid, TransactionStatus),
     // Represents when a spending utxo transaction is found
@@ -131,6 +135,8 @@ pub enum OutgoingBitVMXApiMessages {
     AggregatedPubkeyNotReady(Uuid),
     ZKPResult(/* Add appropriate type */),
     ExecutionResult(/* Add appropriate type */),
+    CommInfo(P2PAddress),
+    KeyPair(Uuid, PrivateKey, PublicKey),
 }
 
 impl OutgoingBitVMXApiMessages {
@@ -139,6 +145,15 @@ impl OutgoingBitVMXApiMessages {
     }
 
     pub fn from_string(msg: &str) -> Result<Self, BitVMXError> {
+        let msg: OutgoingBitVMXApiMessages = serde_json::from_str(msg)?;
+        Ok(msg)
+    }
+}
+
+impl FromStr for OutgoingBitVMXApiMessages {
+    type Err = BitVMXError;
+
+    fn from_str(msg: &str) -> Result<Self, Self::Err> {
         let msg: OutgoingBitVMXApiMessages = serde_json::from_str(msg)?;
         Ok(msg)
     }

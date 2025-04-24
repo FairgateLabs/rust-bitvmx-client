@@ -1,18 +1,20 @@
 use std::{collections::HashMap, rc::Rc};
 
 use bitcoin::{
-    key::UntweakedPublicKey, secp256k1, Amount, PublicKey, ScriptBuf, Transaction, TxOut, Txid,
-    XOnlyPublicKey,
+    hashes::Hash, secp256k1, Amount, PublicKey, ScriptBuf, Sequence, Transaction, TxOut, Txid,
 };
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
-    scripts,
-    types::{input::SighashType, InputArgs, OutputType, Utxo},
+    scripts::{self, build_taproot_spend_info, reveal_secret, timelock, ProtocolScript},
+    types::{
+        input::{LeafSpec, SighashType},
+        InputArgs, OutputType,
+    },
 };
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::Storage;
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{errors::BitVMXError, keychain::KeyChain, types::ProgramContext};
@@ -43,7 +45,8 @@ impl ProtocolHandler for SlotProtocol {
         context: &ProgramContext,
     ) -> Result<Transaction, BitVMXError> {
         match name {
-            ACCEPT_TX => Ok(self.accept_tx(context)?),
+            LOCK_TX => Ok(self.accept_tx(context)?),
+            HAPY_PATH_TX => Ok(self.happy_path()?),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
     }
@@ -56,11 +59,13 @@ impl ProtocolHandler for SlotProtocol {
         _parameters: &ProtocolParameters,
     ) -> Result<(), BitVMXError> {
         let name = self.get_transaction_name_by_id(tx_id)?;
-        info!(
-            "Program {}: Transaction {} has been seen on-chain",
-            self.ctx.id, name
-        );
-        if name == ACCEPT_TX && tx_status.confirmations == 5 {
+        if tx_status.confirmations == 1 {
+            info!(
+                "Program {}: Transaction {} has been seen on-chain",
+                self.ctx.id, name
+            );
+        }
+        if name == LOCK_TX && tx_status.confirmations == 1 {
             let witness = tx_status.tx.input[0].witness.clone();
             info!(
                 "secret witness {:?}",
@@ -72,7 +77,8 @@ impl ProtocolHandler for SlotProtocol {
     }
 }
 
-pub const ACCEPT_TX: &str = "accept_tx";
+pub const LOCK_TX: &str = "lock_tx";
+pub const HAPY_PATH_TX: &str = "happy_path_tx";
 
 impl SlotProtocol {
     pub fn new(program_id: Uuid, storage: Rc<Storage>) -> Self {
@@ -92,8 +98,6 @@ impl SlotProtocol {
 
     pub fn build(
         &self,
-        utxo: Utxo,
-        _user_secret: String,
         _keys: Vec<ParticipantKeys>,
         computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
@@ -101,48 +105,104 @@ impl SlotProtocol {
         // TODO get this from config, all values expressed in satoshis
         let _p2pkh_dust_threshold: u64 = 546;
         let _p2sh_p2wpkh_dust_threshold: u64 = 540;
-        let p2wpkh_dust_threshold: u64 = 99_999_000; // 294;
+        let _p2wpkh_dust_threshold: u64 = 99_999_000; // 294;
         let _taproot_dust_threshold: u64 = 330;
-        let _fee = 1000;
+        let fee = 1000;
 
         let secp = secp256k1::Secp256k1::new();
-        let internal_key = &utxo.pub_key;
-        let untweaked_key: UntweakedPublicKey = XOnlyPublicKey::from(*internal_key);
+
+        let ops_agg_pubkey = context
+            .globals
+            .get_var(&self.ctx.id, "operators_aggregated_pub")?
+            .pubkey()?;
+
+        let ops_agg_happy_path = context
+            .globals
+            .get_var(&self.ctx.id, "operators_aggregated_happy_path")?
+            .pubkey()?;
+
+        let unspendable = context
+            .globals
+            .get_var(&self.ctx.id, "unspendable")?
+            .pubkey()?;
 
         let secret = context.globals.get_var(&self.ctx.id, "secret")?;
-        if secret.is_none() {
-            return Err(BitVMXError::VariableNotFound(
-                self.ctx.id.clone(),
-                "secret".to_string(),
-            ));
-        }
-        let secret = secret.unwrap().secret()?;
+        let secret = secret.secret()?;
 
-        let spending_scripts = vec![scripts::reveal_secret(secret, &internal_key)];
-        //let spending_scripts = vec![scripts::check_aggregated_signature(&internal_key)];
+        let ordinal_utxo = context
+            .globals
+            .get_var(&self.ctx.id, "ordinal_utxo")?
+            .utxo()?;
 
-        let spend_info =
-            scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
+        let protocol_utxo = context
+            .globals
+            .get_var(&self.ctx.id, "protocol_utxo")?
+            .utxo()?;
 
-        let script_pubkey = ScriptBuf::new_p2tr(&secp, untweaked_key, spend_info.merkle_root());
+        let user_pubkey = context
+            .globals
+            .get_var(&self.ctx.id, "user_pubkey")?
+            .pubkey()?;
 
-        //Description of the output that the START_CH consumes
-        let prevout = TxOut {
-            value: Amount::from_sat(utxo.amount),
+        warn!(
+            "Setup with: {:?} {:?} {:?}",
+            ordinal_utxo, protocol_utxo, user_pubkey
+        );
+
+        //THIS SECTION DEFINES THE OUTPUTS OF THE LOCK_REQ_TX
+        //THAT WILL BE SPENT BY THE LOCK_TX
+
+        // Mark this script as unsigned scritp, so the protocol builder wont try to sign it
+        let timelock_script = timelock(10, &user_pubkey);
+        let timelock_script =
+            ProtocolScript::new_unsigned_script(timelock_script.get_script().clone(), &user_pubkey);
+
+        let reveal_secret_script = reveal_secret(secret.to_vec(), &ops_agg_pubkey);
+        let leaves = vec![timelock_script.clone(), reveal_secret_script.clone()];
+
+        let (unspendable_x_only, _parity) = unspendable.inner.x_only_public_key();
+        let lockreq_tx_output_taptree = build_taproot_spend_info(
+            &secp,
+            &unspendable_x_only,
+            &[timelock_script, reveal_secret_script],
+        )?;
+
+        let script_pubkey = ScriptBuf::new_p2tr(
+            &secp,
+            lockreq_tx_output_taptree.internal_key(),
+            lockreq_tx_output_taptree.merkle_root(),
+        );
+
+        //Description of the output that the LOCK_TX consumes (outputs of LOCK_REQ_TX)
+        let prevout_0 = TxOut {
+            value: Amount::from_sat(ordinal_utxo.2.unwrap()),
+            script_pubkey: script_pubkey.clone(),
+        };
+
+        //Description of the output that the LOCK_TX consumes (outputs of LOCK_REQ_TX)
+        let prevout_1 = TxOut {
+            value: Amount::from_sat(protocol_utxo.2.unwrap()),
             script_pubkey,
         };
 
-        let output_type = OutputType::tr_script(
-            utxo.amount,
-            internal_key,
-            &spending_scripts,
-            true,
-            vec![prevout],
+        let prevouts = vec![prevout_0, prevout_1];
+
+        let output_type_ordinal = OutputType::tr_script(
+            ordinal_utxo.2.unwrap(),
+            &unspendable,
+            &leaves,
+            false,
+            prevouts.clone(),
         )?;
 
-        // let output_type = OutputSpendingType::TaprootUntweakedKey { key: *internal_key, prevouts: vec![prevout] };
+        let output_type_protocol = OutputType::tr_script(
+            protocol_utxo.2.unwrap(),
+            &unspendable,
+            &leaves,
+            false,
+            prevouts,
+        )?;
 
-        //let mut builder = ProtocolBuilder::new(&self.protocol_name, self.storage.clone().unwrap())?;
         let mut protocol = Protocol::load(
             &self.context().protocol_name,
             self.context().storage.clone().unwrap(),
@@ -150,16 +210,121 @@ impl SlotProtocol {
         .unwrap_or(Protocol::new(&self.context().protocol_name));
 
         protocol.add_external_connection(
-            utxo.txid,
-            utxo.vout,
-            output_type,
-            ACCEPT_TX,
+            ordinal_utxo.0,
+            ordinal_utxo.1,
+            output_type_ordinal,
+            LOCK_TX,
             &SighashType::taproot_all(),
         )?;
 
+        protocol.add_external_connection(
+            protocol_utxo.0,
+            protocol_utxo.1,
+            output_type_protocol,
+            LOCK_TX,
+            &SighashType::taproot_all(),
+        )?;
+
+        // START DEFINING THE OUTPUTS OF THE LOCK_TX
+
+        let eol_timelock_duration = 100; // TODO: get this from config
+
+        // The following script is the output that user timeout could use as input
+        let taproot_script_eol_timelock_expired_tx_lock =
+            scripts::timelock(eol_timelock_duration, &user_pubkey);
+        // Mark this script as unsigned scritp, so the protocol builder wont try to sign it
+        let taproot_script_eol_timelock_expired_tx_lock = ProtocolScript::new_unsigned_script(
+            taproot_script_eol_timelock_expired_tx_lock
+                .get_script()
+                .clone(),
+            &user_pubkey,
+        );
+
+        //this should be another aggregated to be signed later
+        let taproot_script_all_sign_tx_lock = scripts::check_aggregated_signature(&ops_agg_pubkey);
+
+        protocol.add_transaction_output(
+            LOCK_TX,
+            OutputType::tr_script(
+                ordinal_utxo.2.unwrap(),
+                &unspendable,
+                &[
+                    taproot_script_eol_timelock_expired_tx_lock.clone(),
+                    taproot_script_all_sign_tx_lock.clone(),
+                ],
+                false,
+                vec![],
+            )?, // We do not need prevouts cause the tx is in the graph,
+        )?;
+
+        //this could be even a different one, but we will use the same for now
+        let taproot_script_protocol_fee_addres_signature_in_tx_lock =
+            scripts::check_aggregated_signature(&ops_agg_pubkey);
+
+        const SPEEDUP_DUST: u64 = 500;
+        let amount = protocol_utxo.2.unwrap() - fee - SPEEDUP_DUST;
+        // [Protocol fees taproot output]
+        // taproot output sending the fee (incentive to bridge) to the fee address
+        protocol.add_transaction_output(
+            LOCK_TX,
+            OutputType::tr_script(
+                amount,
+                &unspendable,
+                &[taproot_script_protocol_fee_addres_signature_in_tx_lock],
+                false,
+                vec![],
+            )?, // We do not need prevouts cause the tx is in the graph,
+        )?;
+
+        // START DEFINING THE HAPPY_PATH_TX
+        // The following script is the output that user timeout could use as input
+        let amount = amount - fee - SPEEDUP_DUST;
+        let mut happy_path_check = scripts::check_aggregated_signature(&ops_agg_happy_path);
+        happy_path_check.set_skip_signing(true);
+
+        protocol.add_transaction(HAPY_PATH_TX)?;
+        protocol.add_transaction_input(
+            Hash::all_zeros(),
+            0,
+            HAPY_PATH_TX,
+            Sequence::ENABLE_RBF_NO_LOCKTIME,
+            &SighashType::taproot_all(),
+        )?;
+        protocol.add_transaction_input(
+            Hash::all_zeros(),
+            1,
+            HAPY_PATH_TX,
+            Sequence::ENABLE_RBF_NO_LOCKTIME,
+            &SighashType::taproot_all(),
+        )?;
+
+        protocol.add_transaction_output(
+            HAPY_PATH_TX,
+            OutputType::tr_script(
+                ordinal_utxo.2.unwrap(),
+                &unspendable,
+                &[happy_path_check.clone()],
+                false,
+                vec![],
+            )?,
+        )?;
+        protocol.add_transaction_output(
+            HAPY_PATH_TX,
+            OutputType::tr_script(
+                amount,
+                &unspendable,
+                &[happy_path_check.clone()],
+                false,
+                vec![],
+            )?,
+        )?;
+        protocol.connect("spend_hp_1", LOCK_TX, 0, HAPY_PATH_TX, 0)?;
+        protocol.connect("spend_hp_2", LOCK_TX, 1, HAPY_PATH_TX, 1)?;
+
         let aggregated = computed_aggregated.get("aggregated_1").unwrap();
         let pb = ProtocolBuilder {};
-        pb.add_speedup_output(&mut protocol, ACCEPT_TX, p2wpkh_dust_threshold, aggregated)?;
+        pb.add_speedup_output(&mut protocol, LOCK_TX, SPEEDUP_DUST, aggregated)?;
+        pb.add_speedup_output(&mut protocol, HAPY_PATH_TX, SPEEDUP_DUST, aggregated)?;
 
         protocol.build(true, &context.key_chain.key_manager)?;
         info!("{}", protocol.visualize()?);
@@ -169,22 +334,56 @@ impl SlotProtocol {
     }
 
     pub fn accept_tx(&self, context: &ProgramContext) -> Result<Transaction, BitVMXError> {
-        let signature = self
-            .load_protocol()?
-            .input_taproot_script_spend_signature(ACCEPT_TX, 0, 0)?
-            .unwrap();
-        let mut taproot_arg = InputArgs::new_taproot_script_args(0);
-        taproot_arg.push_taproot_signature(signature)?;
-
         let secret = context
             .witness
             .get_witness(&self.ctx.id, "secret")?
             .unwrap()
             .secret()?;
-        taproot_arg.push_slice(&secret);
 
-        Ok(self
+        let signature = self
             .load_protocol()?
-            .transaction_to_send(ACCEPT_TX, &[taproot_arg])?)
+            .input_taproot_script_spend_signature(LOCK_TX, 0, 1)?
+            .unwrap();
+        let mut taproot_arg_0 = InputArgs::new_taproot_script_args(LeafSpec::Index(1));
+        taproot_arg_0.push_taproot_signature(signature)?;
+        taproot_arg_0.push_slice(&secret);
+
+        let signature = self
+            .load_protocol()?
+            .input_taproot_script_spend_signature(LOCK_TX, 1, 1)?
+            .unwrap();
+        let mut taproot_arg_1 = InputArgs::new_taproot_script_args(LeafSpec::Index(1));
+        taproot_arg_1.push_taproot_signature(signature)?;
+        taproot_arg_1.push_slice(&secret);
+
+        let tx = self
+            .load_protocol()?
+            .transaction_to_send(LOCK_TX, &[taproot_arg_0, taproot_arg_1])?;
+
+        info!("Transaction to send: {:?}", tx);
+        Ok(tx)
+    }
+
+    pub fn happy_path(&self) -> Result<Transaction, BitVMXError> {
+        let signature = self
+            .load_protocol()?
+            .input_taproot_script_spend_signature(HAPY_PATH_TX, 0, 1)?
+            .unwrap();
+        let mut taproot_arg_0 = InputArgs::new_taproot_script_args(LeafSpec::Index(1));
+        taproot_arg_0.push_taproot_signature(signature)?;
+
+        let signature = self
+            .load_protocol()?
+            .input_taproot_script_spend_signature(HAPY_PATH_TX, 1, 0)?
+            .unwrap();
+        let mut taproot_arg_1 = InputArgs::new_taproot_script_args(LeafSpec::Index(0));
+        taproot_arg_1.push_taproot_signature(signature)?;
+
+        let tx = self
+            .load_protocol()?
+            .transaction_to_send(HAPY_PATH_TX, &[taproot_arg_0, taproot_arg_1])?;
+
+        info!("Transaction to send: {:?}", tx);
+        Ok(tx)
     }
 }

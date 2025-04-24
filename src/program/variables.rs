@@ -1,5 +1,6 @@
 use std::rc::Rc;
 
+use bitcoin::{PublicKey, Txid};
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::{KeyValueStore, Storage};
 use uuid::Uuid;
@@ -13,15 +14,32 @@ use crate::errors::BitVMXError;
 - key (schnor pub)
 - utxo [ txid, vout, optional(amount)]*/
 
+pub type PartialUtxo = (Txid, u32, Option<u64>);
+
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub enum VariableTypes {
     Secret(Vec<u8>),
+    PubKey(PublicKey),
+    Utxo(PartialUtxo),
 }
 
 impl VariableTypes {
     pub fn secret(&self) -> Result<Vec<u8>, BitVMXError> {
         match self {
             VariableTypes::Secret(secret) => Ok(secret.clone()),
+            _ => Err(BitVMXError::InvalidVariableType),
+        }
+    }
+    pub fn pubkey(&self) -> Result<PublicKey, BitVMXError> {
+        match self {
+            VariableTypes::PubKey(key) => Ok(key.clone()),
+            _ => Err(BitVMXError::InvalidVariableType),
+        }
+    }
+    pub fn utxo(&self) -> Result<PartialUtxo, BitVMXError> {
+        match self {
+            VariableTypes::Utxo(utxo) => Ok(utxo.clone()),
+            _ => Err(BitVMXError::InvalidVariableType),
         }
     }
 }
@@ -39,10 +57,13 @@ impl Globals {
         Ok(self.storage.set(&key, value, None)?)
     }
 
-    pub fn get_var(&self, uuid: &Uuid, key: &str) -> Result<Option<VariableTypes>, BitVMXError> {
+    pub fn get_var(&self, uuid: &Uuid, key: &str) -> Result<VariableTypes, BitVMXError> {
         let key = format!("{}:{}", uuid, key);
-        let value = self.storage.get(&key)?;
-        Ok(value)
+        let value: Option<VariableTypes> = self.storage.get(&key)?;
+        if value.is_none() {
+            return Err(BitVMXError::VariableNotFound(*uuid, key));
+        }
+        Ok(value.unwrap())
     }
 }
 

@@ -136,7 +136,7 @@ impl Collaboration {
                         .clone();
                     let key = keys.get_public(&self.collaboration_id.to_string())?;
                     self.keys.insert(peer_id.clone(), *key);
-                    info!("{:?}", self.keys);
+                    info!("Got keys {:?}", self.keys);
 
                     if self.keys.len() == self.participants.len() {
                         let aggregated = program_context.key_chain.new_musig2_session(

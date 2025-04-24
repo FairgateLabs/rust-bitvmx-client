@@ -81,7 +81,9 @@ pub struct DrpParameters {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct SlotParameters;
+pub struct SlotParameters {
+    pub my_id: u32,
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum ProtocolParameters {
@@ -94,8 +96,8 @@ impl ProtocolParameters {
         ProtocolParameters::DisputeResolutionProtocol(DrpParameters { role })
     }
 
-    pub fn new_slot() -> Self {
-        ProtocolParameters::SlotProtocol(SlotParameters {})
+    pub fn new_slot(my_id: u32) -> Self {
+        ProtocolParameters::SlotProtocol(SlotParameters { my_id })
     }
 
     pub fn drp(&self) -> &DrpParameters {
@@ -120,7 +122,7 @@ pub struct Program {
     pub my_idx: usize,
     pub participants: Vec<ParticipantData>,
     pub leader: usize,
-    pub utxo: Utxo,
+    pub utxo: Option<Utxo>,
     pub protocol: ProtocolType,
     pub state: ProgramState,
     #[serde(skip)]
@@ -152,7 +154,6 @@ impl Program {
         id: &Uuid,
         peers: Vec<P2PAddress>,
         leader: usize,
-        utxo: Utxo,
         program_context: &mut ProgramContext,
         storage: Rc<Storage>,
         config: &ClientConfig,
@@ -192,11 +193,11 @@ impl Program {
 
         let program = Self {
             program_id: *id,
-            parameters: ProtocolParameters::new_slot(),
+            parameters: ProtocolParameters::new_slot(my_idx as u32),
             my_idx,
             participants: others,
             leader,
-            utxo,
+            utxo: None,
             protocol,
             state: ProgramState::New,
             storage: Some(storage),
@@ -251,7 +252,7 @@ impl Program {
             my_idx,
             participants: others,
             leader: 1, //verifier is the leader (because prover starts sending data)
-            utxo,
+            utxo: Some(utxo),
             protocol: drp,
             state: ProgramState::New,
             storage: Some(storage),
@@ -268,7 +269,17 @@ impl Program {
         context: &ProgramContext,
     ) -> Result<HashMap<String, PublicKey>, BitVMXError> {
         // 2. Init the musig2 signer for this program
-        let mut aggregated_keys = vec![("pregenerated".to_string(), self.utxo.pub_key)];
+
+        let operatos_pub = if self.utxo.is_some() {
+            self.utxo.clone().unwrap().pub_key
+        } else {
+            context
+                .globals
+                .get_var(&self.program_id, "operators_aggregated_pub")?
+                .pubkey()?
+        };
+
+        let mut aggregated_keys = vec![("pregenerated".to_string(), operatos_pub)];
         let mut result = HashMap::new();
 
         for agg_name in &self.participants[self.my_idx]
@@ -335,7 +346,7 @@ impl Program {
             info!("Building protocol for: {:?}", self.parameters.drp().role);
 
             self.protocol.as_drp_mut().unwrap().build(
-                self.utxo.clone(),
+                self.utxo.as_ref().unwrap().clone(),
                 self.participants[0].keys.as_ref().unwrap(),
                 self.participants[1].keys.as_ref().unwrap(),
                 aggregated,
@@ -349,13 +360,10 @@ impl Program {
                 .iter()
                 .map(|p| p.keys.as_ref().unwrap().clone())
                 .collect();
-            self.protocol.as_slot_mut().unwrap().build(
-                self.utxo.clone(),
-                "top_secret".to_string(),
-                keys,
-                aggregated,
-                &context,
-            )?;
+            self.protocol
+                .as_slot_mut()
+                .unwrap()
+                .build(keys, aggregated, &context)?;
         }
 
         // 6. Move the program to the next state
@@ -507,7 +515,7 @@ impl Program {
         }
 
         self.participants[self.my_idx].nonces = Some(public_nonce_msg);
-        warn!("I'm {} and I'm setting my nonces", self.my_idx);
+        info!("I'm {} and I'm setting my nonces", self.my_idx);
 
         let mut nonces = vec![];
         for other in &self.participants {
@@ -579,7 +587,7 @@ impl Program {
 
             self.move_program_to_next_state()?;
         } else {
-            warn!("{}. Not all nonces ready", self.my_idx);
+            info!("{}. Not all nonces ready", self.my_idx);
         }
 
         self.send_ack(&program_context, &peer_id, P2PMessageType::PublicNoncesAck)?;
@@ -623,7 +631,7 @@ impl Program {
         }
 
         self.participants[self.my_idx].partial = Some(partial_sig_msg);
-        warn!("I'm {} and I'm setting my partial", self.my_idx);
+        info!("I'm {} and I'm setting my partial", self.my_idx);
 
         let mut partials = vec![];
         for other in &self.participants {
@@ -679,7 +687,7 @@ impl Program {
                         participant.partial.as_ref().unwrap()
                     {
                         info!(
-                            "Program {}: agg: {}, other: {} Received signatures: {:#?}",
+                            "Program {}: agg: {}, other: {} Received signatures: {:?}",
                             self.program_id, aggregated, other_pub_key, signatures
                         );
 
@@ -776,7 +784,7 @@ impl Program {
         data: Value,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        warn!("{}: Message received: {:?} ", self.my_idx, msg_type);
+        info!("{}: Message received: {:?} ", self.my_idx, msg_type);
 
         match msg_type {
             P2PMessageType::Keys => {
@@ -838,7 +846,7 @@ impl Program {
 
         program_context
             .bitcoin_coordinator
-            .dispatch(tx_to_dispatch, context.to_string()?)?;
+            .dispatch(tx_to_dispatch, context.to_string()?, None)?;
         Ok(())
     }
 
@@ -849,8 +857,24 @@ impl Program {
         context: String,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        self.protocol
-            .notify_news(tx_id, tx_status, context, program_context, &self.parameters)
+        self.protocol.notify_news(
+            tx_id,
+            tx_status.clone(),
+            context,
+            program_context,
+            &self.parameters,
+        )?;
+
+        if tx_status.confirmations == 1 {
+            let name = self.protocol.get_transaction_name_by_id(tx_id)?;
+            program_context.broker_channel.send(
+                L2_ID,
+                OutgoingBitVMXApiMessages::Transaction(self.program_id, tx_status, Some(name))
+                    .to_string()?,
+            )?;
+        }
+
+        Ok(())
     }
 
     pub fn get_txs_to_monitor(&self) -> Result<Vec<Txid>, BitVMXError> {

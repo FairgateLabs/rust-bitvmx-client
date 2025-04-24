@@ -10,7 +10,10 @@ use protocol_builder::{
     builder::Protocol,
     errors::ProtocolBuilderError,
     scripts,
-    types::{input::SighashType, InputArgs, OutputType, Utxo},
+    types::{
+        input::{LeafSpec, SighashType},
+        InputArgs, OutputType, Utxo,
+    },
 };
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::Storage;
@@ -95,9 +98,11 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             let tx_to_dispatch = self.input_1_tx(0x1234_4444, &program_context.key_chain)?;
 
             let context = Context::ProgramId(self.ctx.id);
-            program_context
-                .bitcoin_coordinator
-                .dispatch(tx_to_dispatch, context.to_string()?)?;
+            program_context.bitcoin_coordinator.dispatch(
+                tx_to_dispatch,
+                context.to_string()?,
+                None,
+            )?;
         }
 
         if name == INPUT_1
@@ -339,7 +344,7 @@ impl DisputeResolutionProtocol {
             .input_taproot_script_spend_signature(txname, 0, 1)?
             .unwrap();
         let spend = protocol.get_script_to_spend(txname, 0, 1)?;
-        let mut spending_args = InputArgs::new_taproot_script_args(1);
+        let mut spending_args = InputArgs::new_taproot_script_args(LeafSpec::Index(1));
 
         //TODO: set value for variable from outside
         let message_to_sign = data.to_be_bytes();

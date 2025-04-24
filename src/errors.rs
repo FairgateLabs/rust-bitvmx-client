@@ -52,6 +52,9 @@ pub enum BitVMXError {
     #[error("Cannot find the variable {0}.{1}")]
     VariableNotFound(Uuid, String),
 
+    #[error("Invalid variable type")]
+    InvalidVariableType,
+
     // #[error("Failed to create communications key")]
     // CommunicationsKeyGenerationError(#[from] DecodingError),
     #[error("Failed to encode P2P data")]
