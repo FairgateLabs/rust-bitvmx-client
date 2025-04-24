@@ -846,7 +846,7 @@ impl Program {
 
         program_context
             .bitcoin_coordinator
-            .dispatch(tx_to_dispatch, context.to_string()?)?;
+            .dispatch(tx_to_dispatch, context.to_string()?, None)?;
         Ok(())
     }
 

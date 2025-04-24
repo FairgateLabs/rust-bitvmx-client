@@ -7,7 +7,13 @@ use bitcoin::{
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use key_manager::winternitz::WinternitzType;
 use protocol_builder::{
-    builder::Protocol, errors::ProtocolBuilderError, scripts, types::{input::{LeafSpec, SighashType}, InputArgs, OutputType, Utxo}
+    builder::Protocol,
+    errors::ProtocolBuilderError,
+    scripts,
+    types::{
+        input::{LeafSpec, SighashType},
+        InputArgs, OutputType, Utxo,
+    },
 };
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::Storage;
@@ -92,9 +98,11 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             let tx_to_dispatch = self.input_1_tx(0x1234_4444, &program_context.key_chain)?;
 
             let context = Context::ProgramId(self.ctx.id);
-            program_context
-                .bitcoin_coordinator
-                .dispatch(tx_to_dispatch, context.to_string()?)?;
+            program_context.bitcoin_coordinator.dispatch(
+                tx_to_dispatch,
+                context.to_string()?,
+                None,
+            )?;
         }
 
         if name == INPUT_1
