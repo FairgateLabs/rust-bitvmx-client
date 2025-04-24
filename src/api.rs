@@ -58,7 +58,7 @@ pub trait BitVMXApi {
 
     fn get_transaction(&mut self, from: u32, id: Uuid, txid: Txid) -> Result<(), BitVMXError>;
 
-    fn subscribe_to_tx(&mut self) -> Result<(), BitVMXError>;
+    fn subscribe_to_tx(&mut self, from: u32, id: Uuid, txid: Txid) -> Result<(), BitVMXError>;
 
     fn subscribe_utxo(&mut self) -> Result<(), BitVMXError>;
 }

@@ -20,7 +20,7 @@ use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::{
     coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi},
     types::AckNews,
-    AckMonitorNews, MonitorNews,
+    AckMonitorNews, MonitorNews, TypesToMonitor,
 };
 
 use bitvmx_broker::{
@@ -204,7 +204,6 @@ impl BitVMX {
         }
 
         let news = self.program_context.bitcoin_coordinator.get_news()?;
-        // info!("News: {:?}", news);
 
         if !news.monitor_news.is_empty() || !news.insufficient_funds.is_empty() {
             //info!("Processing news: {:?}", news);
@@ -229,12 +228,17 @@ impl BitVMX {
                             )?;
                         }
                         Context::RequestId(request_id, from) => {
-                            self.program_context.broker_channel.send(
-                                from,
-                                serde_json::to_string(&OutgoingBitVMXApiMessages::Transaction(
-                                    request_id, tx_status, None,
-                                ))?,
-                            )?;
+                            if tx_status.confirmations == 1 {
+                                info!("Seding News: {:?} for context: {:?}", tx_id, context);
+                                self.program_context.broker_channel.send(
+                                    from,
+                                    serde_json::to_string(
+                                        &OutgoingBitVMXApiMessages::Transaction(
+                                            request_id, tx_status, None,
+                                        ),
+                                    )?,
+                                )?;
+                            }
                         }
                     }
 
@@ -471,8 +475,18 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn subscribe_to_tx(&mut self) -> Result<(), BitVMXError> {
-        // TODO will not implment, for now. We may not need this.
+    fn subscribe_to_tx(&mut self, from: u32, id: Uuid, txid: Txid) -> Result<(), BitVMXError> {
+        info!(
+            "Subscribing to transaction: {:?} from: {} id: {}",
+            txid, from, id
+        );
+        self.program_context
+            .bitcoin_coordinator
+            .monitor(TypesToMonitor::Transactions(
+                vec![txid],
+                Context::RequestId(id, from).to_string()?,
+            ))?;
+
         Ok(())
     }
 
@@ -606,8 +620,8 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::SetupSlot(id, participants, leader) => {
                 BitVMXApi::setup_slot(self, id, participants, leader)?
             }
-            IncomingBitVMXApiMessages::SubscribeToTransaction(_txid) => {
-                BitVMXApi::subscribe_to_tx(self)?
+            IncomingBitVMXApiMessages::SubscribeToTransaction(uuid, txid) => {
+                BitVMXApi::subscribe_to_tx(self, from, uuid, txid)?
             }
             IncomingBitVMXApiMessages::SubscribeUTXO() => BitVMXApi::subscribe_utxo(self)?,
             IncomingBitVMXApiMessages::DispatchTransactionName(id, tx) => {

@@ -96,7 +96,7 @@ pub enum IncomingBitVMXApiMessages {
     SetupProgram(ProgramId, ParticipantRole, P2PAddress, Utxo),
     GetTransaction(Uuid, Txid),
     SetupSlot(ProgramId, Vec<P2PAddress>, u16),
-    SubscribeToTransaction(Txid),
+    SubscribeToTransaction(Uuid, Txid),
     SubscribeUTXO(),
     DispatchTransaction(Uuid, Transaction),
     DispatchTransactionName(Uuid, String),

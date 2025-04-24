@@ -131,7 +131,7 @@ pub fn mine_and_wait(
     let msg = OutgoingBitVMXApiMessages::from_string(&msgs[0].0)?;
     let (uuid, txid, name) = match msg {
         OutgoingBitVMXApiMessages::Transaction(uuid, status, name) => {
-            (uuid, status.tx_id, name.unwrap())
+            (uuid, status.tx_id, name.unwrap_or_default())
         }
         _ => panic!("Expected transaction message"),
     };
@@ -263,6 +263,12 @@ pub fn test_slot() -> Result<()> {
         Network::Regtest,
         &bitcoin_client,
     )?;
+
+    let locktx_on_chain = Uuid::new_v4();
+    let command =
+        IncomingBitVMXApiMessages::SubscribeToTransaction(locktx_on_chain, txid).to_string()?;
+    send_all(&channels, &command)?;
+    mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
     let set_ops_aggregated = IncomingBitVMXApiMessages::SetVar(
         program_id,
