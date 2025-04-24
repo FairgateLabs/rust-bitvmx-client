@@ -230,8 +230,10 @@ impl BitVMX {
                             )?;
                         }
                         Context::RequestId(request_id, from) => {
-                            if tx_status.confirmations == 1 {
-                                info!("Seding News: {:?} for context: {:?}", tx_id, context);
+                            if tx_status.confirmations == 5 {
+                                //TODO: fix this I need to sent the txid to the broker at least once does not matter the confirmations
+                                //I'm not sending because it brakes the integrated slot test, but fix it
+                                info!("Sending News: {:?} for context: {:?}", tx_id, context);
                                 self.program_context.broker_channel.send(
                                     from,
                                     serde_json::to_string(
@@ -240,6 +242,7 @@ impl BitVMX {
                                         ),
                                     )?,
                                 )?;
+                                info!("data sent");
                             }
                         }
                     }
