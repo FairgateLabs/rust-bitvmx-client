@@ -151,9 +151,17 @@ pub fn init_broker(role: &str) -> Result<DualChannel> {
 #[ignore]
 #[test]
 pub fn test_slot() -> Result<()> {
-    config_trace();
+    test_slot_aux(false, false)
+}
 
-    let independent = false;
+#[ignore]
+#[test]
+pub fn test_integration() -> Result<()> {
+    test_slot_aux(true, true)
+}
+
+pub fn test_slot_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
+    config_trace();
 
     let (bitcoin_client, bitcoind, wallet) = if independent {
         let (bitcoin_client, wallet) = prepare_bitcoin_running()?;
@@ -222,32 +230,50 @@ pub fn test_slot() -> Result<()> {
         _ => panic!("Expected AggregatedPubkey message"),
     };
 
-    //aggregated for happy path
-    let aggregation_id = Uuid::new_v4();
-    let command =
-        IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), 0).to_string()?;
-    send_all(&channels, &command)?;
-    let msgs = get_all(&channels, &mut instances, false)?;
-    info!("Received AggregatedPubkey message from all channels");
-    let msg = OutgoingBitVMXApiMessages::from_string(&msgs[0].0)?;
-    let aggregated_happy_path = match msg {
-        OutgoingBitVMXApiMessages::AggregatedPubkey(_uuid, aggregated_pub_key) => {
-            aggregated_pub_key
-        }
-        _ => panic!("Expected AggregatedPubkey message"),
-    };
+    let (aggregated_happy_path, fake_secret) = if fake_hapy_path {
+        // emulate the user keypair
+        let secp = secp256k1::Secp256k1::new();
+        let mut rng = OsRng;
+        let too_sk = SecretKey::new(&mut rng);
+        let too_pk = SecpPublicKey::from_secret_key(&secp, &too_sk);
+        let (too_pk, too_sk) = adjust_parity(&secp, too_pk, too_sk);
+        let aggregated_happy_path = BitcoinPubKey {
+            compressed: true,
+            inner: too_pk,
+        };
+        (
+            aggregated_happy_path,
+            format!("{}", too_sk.display_secret()),
+        )
+    } else {
+        //aggregated for happy path
+        let aggregation_id = Uuid::new_v4();
+        let command = IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), 0)
+            .to_string()?;
+        send_all(&channels, &command)?;
+        let msgs = get_all(&channels, &mut instances, false)?;
+        info!("Received AggregatedPubkey message from all channels");
+        let msg = OutgoingBitVMXApiMessages::from_string(&msgs[0].0)?;
+        let aggregated_happy_path = match msg {
+            OutgoingBitVMXApiMessages::AggregatedPubkey(_uuid, aggregated_pub_key) => {
+                aggregated_pub_key
+            }
+            _ => panic!("Expected AggregatedPubkey message"),
+        };
 
-    // get keypair to share with the user for happy path too
-    let command = IncomingBitVMXApiMessages::GetKeyPair(aggregation_id).to_string()?;
-    send_all(&channels, &command)?;
-    let msgs = get_all(&channels, &mut instances, false)?;
-    info!("Received keypair message from all channels");
-    let msg = OutgoingBitVMXApiMessages::from_string(&msgs[0].0)?;
-    match msg {
-        OutgoingBitVMXApiMessages::KeyPair(uuid, private_key, public_key) => {
-            info!("Keypair: {} {:?} {:?}", uuid, private_key, public_key);
-        }
-        _ => panic!("Expected keypair message"),
+        // get keypair to share with the user for happy path too
+        let command = IncomingBitVMXApiMessages::GetKeyPair(aggregation_id).to_string()?;
+        send_all(&channels, &command)?;
+        let msgs = get_all(&channels, &mut instances, false)?;
+        info!("Received keypair message from all channels");
+        let msg = OutgoingBitVMXApiMessages::from_string(&msgs[0].0)?;
+        match msg {
+            OutgoingBitVMXApiMessages::KeyPair(uuid, private_key, public_key) => {
+                info!("Keypair: {} {:?} {:?}", uuid, private_key, public_key);
+            }
+            _ => panic!("Expected keypair message"),
+        };
+        (aggregated_happy_path, "".to_string())
     };
 
     let program_id = Uuid::new_v4();
@@ -363,6 +389,9 @@ pub fn test_slot() -> Result<()> {
     );
 
     mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+
+    info!("happy path secret: {}", fake_secret);
+    info!("happy path public: {}", aggregated_happy_path);
 
     if bitcoind.is_some() {
         bitcoind.unwrap().stop()?;
