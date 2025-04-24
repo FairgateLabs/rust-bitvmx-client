@@ -32,7 +32,7 @@ use p2p_handler::{LocalAllowList, P2pHandler, PeerId, ReceiveHandlerChannel};
 use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::VecDeque,
     path::PathBuf,
     rc::Rc,
     sync::{Arc, Mutex},
@@ -68,7 +68,7 @@ impl StoreKey {
     fn get_key(&self) -> String {
         match self {
             StoreKey::Programs => "bitvmx/programs/all".to_string(),
-            StoreKey::Collaborations => "bitvmx/collaborations/all".to_string(),
+            StoreKey::Collaborations => "bitvmx/collaborations/".to_string(),
         }
     }
 }
@@ -112,13 +112,6 @@ impl BitVMX {
             WitnessVars::new(store.clone()),
         );
 
-
-        let raw_collaborations: Option<String> = store.get(StoreKey::Collaborations.get_key())?;
-        let collaborations: HashMap<Uuid, Collaboration> = match raw_collaborations {
-            Some(data) => serde_json::from_str(&data)?,
-            None => HashMap::new(),
-        };
-
         Ok(Self {
             _config: config,
             program_context,
@@ -152,9 +145,9 @@ impl BitVMX {
 
         if let Some(mut program) = self.load_program(&program_id).ok() {
             program.process_p2p_message(peer, msg_type, data, &self.program_context)?;
-        } else if self.collaborations.contains_key(&program_id) {
-            let collaboration = self.collaborations.get_mut(&program_id).unwrap();
+        } else if let Some(mut collaboration) = self.get_collaboration(&program_id)? {
             collaboration.process_p2p_message(peer, msg_type, data, &self.program_context)?;
+            self.save_collaboration(&collaboration)?;
         } else {
             if pend_to_back {
                 info!("Pending message to back: {:?}", msg_type);
@@ -319,16 +312,12 @@ impl BitVMX {
 
     pub fn process_collaboration(&mut self) -> Result<(), BitVMXError> {
         //TOOD: manage state of the collaborations once persisted
-        if self.collaborations.len() > 0 {
-            for (_, collaboration) in self.collaborations.iter_mut() {
+        let collaborations = self.store.partial_compare(&StoreKey::Collaborations.get_key())?;
+            for (_, collaboration) in collaborations.iter() {
+                let mut collaboration: Collaboration = serde_json::from_str(collaboration)?;
                 collaboration.tick(&self.program_context)?;
+                self.save_collaboration(&collaboration)?;
             }
-            self.store.set(
-                StoreKey::Collaborations.get_key(),
-                serde_json::to_string(&self.collaborations)?,
-                None,
-            )?;
-        }
         Ok(())
     }
 
@@ -410,6 +399,24 @@ impl BitVMX {
         let programs = self.get_programs()?;
         Ok(programs.iter().any(|p| p.program_id == *program_id))
     }
+
+    fn get_collaboration(&self, id: &Uuid) -> Result<Option<Collaboration>, BitVMXError> {
+        let key = format!("{}{}", StoreKey::Collaborations.get_key(), id); 
+        let result = self.store.get(&key)?;
+        Ok(result)
+    }
+
+    fn contains_collaboration(&self, id: &Uuid) -> Result<bool, BitVMXError> {
+        let key = format!("{}{}", StoreKey::Collaborations.get_key(), id);
+        Ok(self.store.has_key(&key)?)
+    }
+
+    fn save_collaboration(&mut self, collaboration: &Collaboration) -> Result<(), BitVMXError> {
+        let key = format!("{}{}", StoreKey::Collaborations.get_key(), collaboration.collaboration_id);
+        self.store
+            .set(key, serde_json::to_string(collaboration)?, None)?;
+        Ok(())
+    }
 }
 
 impl BitVMXApi for BitVMX {
@@ -438,14 +445,7 @@ impl BitVMXApi for BitVMX {
             &mut self.program_context,
             from,
         )?;
-        self.collaborations.insert(id, collab);
-        self.store
-            .set(
-                StoreKey::Collaborations.get_key(),
-                serde_json::to_string(&self.collaborations)?,
-                None,
-            )
-            .map_err(BitVMXError::StorageError)?;
+        self.save_collaboration(&collab)?;
         info!("Key setup finished for program: {:?}", id);
         Ok(())
     }
@@ -453,7 +453,7 @@ impl BitVMXApi for BitVMX {
     fn get_aggregated_pubkey(&mut self, from: u32, id: Uuid) -> Result<(), BitVMXError> {
         info!("Getting aggregated pubkey for collaboration: {:?}", id);
 
-        let response = if let Some(collaboration) = self.collaborations.get(&id) {
+        let response = if let Some(collaboration) = self.get_collaboration(&id)? {
             if let Some(aggregated_pubkey) = &collaboration.aggregated_key {
                 OutgoingBitVMXApiMessages::AggregatedPubkey(id, aggregated_pubkey.clone())
             } else {
@@ -639,8 +639,7 @@ impl BitVMXApi for BitVMX {
             }
             IncomingBitVMXApiMessages::GetKeyPair(id) => {
                 let collaboration = self
-                    .collaborations
-                    .get(&id)
+                    .get_collaboration(&id)?
                     .ok_or(BitVMXError::ProgramNotFound(id))?;
                 let aggregated = collaboration
                     .aggregated_key
