@@ -314,7 +314,7 @@ impl BitVMX {
 
     pub fn process_collaboration(&mut self) -> Result<(), BitVMXError> {
         //TOOD: manage state of the collaborations once persisted
-        let collaborations = self.store.partial_compare(&"bitvmx/collaborations/")?;
+        let collaborations = self.store.partial_compare(&"bitvmx/collaboration/")?;
         for (_, collaboration) in collaborations.iter() {
             let mut collaboration: Collaboration = serde_json::from_str(collaboration)?;
             if collaboration.tick(&self.program_context)? {
@@ -437,8 +437,7 @@ impl BitVMX {
 
     fn save_collaboration(&mut self, collaboration: &Collaboration) -> Result<(), BitVMXError> {
         let key = StoreKey::Collaboration(collaboration.collaboration_id).get_key();
-        self.store
-            .set(key, collaboration, None)?;
+        self.store.set(key, collaboration, None)?;
         Ok(())
     }
 }
