@@ -61,14 +61,16 @@ impl Drop for BitVMX {
 }
 enum StoreKey {
     Programs,
-    Collaborations,
+    Collaboration(Uuid),
+    CompleteCollaboration(Uuid),
 }
 
 impl StoreKey {
     fn get_key(&self) -> String {
         match self {
             StoreKey::Programs => "bitvmx/programs/all".to_string(),
-            StoreKey::Collaborations => "bitvmx/collaborations/".to_string(),
+            StoreKey::Collaboration(id) => format!("bitvmx/collaboration/{}", id),
+            StoreKey::CompleteCollaboration(id) => format!("bitvmx/collaboration_complete/{}", id),
         }
     }
 }
@@ -312,12 +314,13 @@ impl BitVMX {
 
     pub fn process_collaboration(&mut self) -> Result<(), BitVMXError> {
         //TOOD: manage state of the collaborations once persisted
-        let collaborations = self.store.partial_compare(&StoreKey::Collaborations.get_key())?;
-            for (_, collaboration) in collaborations.iter() {
-                let mut collaboration: Collaboration = serde_json::from_str(collaboration)?;
-                collaboration.tick(&self.program_context)?;
-                self.save_collaboration(&collaboration)?;
-            }
+        let collaborations = self.store.partial_compare(&"bitvmx/collaborations/")?;
+        for (_, collaboration) in collaborations.iter() {
+            let mut collaboration: Collaboration = serde_json::from_str(collaboration)?;
+            if collaboration.tick(&self.program_context)? {
+                self.mark_collaboration_as_complete(&collaboration)?;
+            };
+        }
         Ok(())
     }
 
@@ -401,18 +404,39 @@ impl BitVMX {
     }
 
     fn get_collaboration(&self, id: &Uuid) -> Result<Option<Collaboration>, BitVMXError> {
-        let key = format!("{}{}", StoreKey::Collaborations.get_key(), id); 
-        let result = self.store.get(&key)?;
+        let key = StoreKey::Collaboration(*id).get_key();
+        let mut result = self.store.get(&key)?;
+        
+        if result.is_none() {
+            let key = StoreKey::CompleteCollaboration(*id).get_key();
+            result = self.store.get(&key)?;
+        }
+
         Ok(result)
     }
 
-    fn contains_collaboration(&self, id: &Uuid) -> Result<bool, BitVMXError> {
-        let key = format!("{}{}", StoreKey::Collaborations.get_key(), id);
-        Ok(self.store.has_key(&key)?)
+    fn mark_collaboration_as_complete(
+        &mut self,
+        collaboration: &Collaboration,
+    ) -> Result<(), BitVMXError> {
+        let transaction_id = self.store.begin_transaction();
+
+        self.store.set(
+            StoreKey::CompleteCollaboration(collaboration.collaboration_id).get_key(),
+            serde_json::to_string(collaboration)?,
+            Some(transaction_id),
+        )?;
+        self.store.transactional_delete(
+            &StoreKey::Collaboration(collaboration.collaboration_id).get_key(),
+            transaction_id,
+        )?;
+
+        self.store.commit_transaction(transaction_id)?;
+        Ok(())
     }
 
     fn save_collaboration(&mut self, collaboration: &Collaboration) -> Result<(), BitVMXError> {
-        let key = format!("{}{}", StoreKey::Collaborations.get_key(), collaboration.collaboration_id);
+        let key = StoreKey::Collaboration(collaboration.collaboration_id).get_key();
         self.store
             .set(key, serde_json::to_string(collaboration)?, None)?;
         Ok(())
@@ -580,6 +604,7 @@ impl BitVMXApi for BitVMX {
         self.program_context.bitcoin_coordinator.dispatch(
             tx,
             Context::RequestId(id, from).to_string()?,
+            None,
         )?;
         Ok(())
     }
