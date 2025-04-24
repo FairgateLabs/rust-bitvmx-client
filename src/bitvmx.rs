@@ -406,7 +406,7 @@ impl BitVMX {
     fn get_collaboration(&self, id: &Uuid) -> Result<Option<Collaboration>, BitVMXError> {
         let key = StoreKey::Collaboration(*id).get_key();
         let mut result = self.store.get(&key)?;
-        
+
         if result.is_none() {
             let key = StoreKey::CompleteCollaboration(*id).get_key();
             result = self.store.get(&key)?;
@@ -423,7 +423,7 @@ impl BitVMX {
 
         self.store.set(
             StoreKey::CompleteCollaboration(collaboration.collaboration_id).get_key(),
-            serde_json::to_string(collaboration)?,
+            collaboration,
             Some(transaction_id),
         )?;
         self.store.transactional_delete(
@@ -438,7 +438,7 @@ impl BitVMX {
     fn save_collaboration(&mut self, collaboration: &Collaboration) -> Result<(), BitVMXError> {
         let key = StoreKey::Collaboration(collaboration.collaboration_id).get_key();
         self.store
-            .set(key, serde_json::to_string(collaboration)?, None)?;
+            .set(key, collaboration, None)?;
         Ok(())
     }
 }
