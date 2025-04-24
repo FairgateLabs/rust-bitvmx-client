@@ -26,6 +26,7 @@ pub struct Collaboration {
     pub aggregated_key: Option<PublicKey>,
     pub request_from: u32,
     pub state: bool,
+    pub completed: bool,
 }
 
 impl Collaboration {
@@ -47,6 +48,7 @@ impl Collaboration {
             aggregated_key: None,
             request_from,
             state: false,
+            completed: false,
         }
     }
 
@@ -82,7 +84,7 @@ impl Collaboration {
         Ok(collaboration)
     }
 
-    pub fn tick(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
+    pub fn tick(&mut self, program_context: &ProgramContext) -> Result<bool, BitVMXError> {
         if self.state && self.im_leader {
             info!("Send keys to peers");
             //collect all the keys from the participants in a vec (peeer_id,key)
@@ -114,8 +116,9 @@ impl Collaboration {
                 )?;
             }
             self.state = false;
+            self.completed = true;
         }
-        Ok(())
+        Ok(self.completed)
     }
 
     pub fn process_p2p_message(
@@ -170,6 +173,7 @@ impl Collaboration {
                         self.my_key.clone(),
                     )?;
                     self.aggregated_key = Some(aggregated.clone());
+                    self.completed = true;
                 }
 
                 if self.aggregated_key.is_some() {
