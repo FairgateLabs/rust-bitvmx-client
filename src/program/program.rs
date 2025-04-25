@@ -865,14 +865,12 @@ impl Program {
             &self.parameters,
         )?;
 
-        if tx_status.confirmations == 1 {
-            let name = self.protocol.get_transaction_name_by_id(tx_id)?;
-            program_context.broker_channel.send(
-                L2_ID,
-                OutgoingBitVMXApiMessages::Transaction(self.program_id, tx_status, Some(name))
-                    .to_string()?,
-            )?;
-        }
+        let name = self.protocol.get_transaction_name_by_id(tx_id)?;
+        program_context.broker_channel.send(
+            L2_ID,
+            OutgoingBitVMXApiMessages::Transaction(self.program_id, tx_status, Some(name))
+                .to_string()?,
+        )?;
 
         Ok(())
     }

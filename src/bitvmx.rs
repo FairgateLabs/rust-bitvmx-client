@@ -32,7 +32,7 @@ use p2p_handler::{LocalAllowList, P2pHandler, PeerId, ReceiveHandlerChannel};
 use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     path::PathBuf,
     rc::Rc,
     sync::{Arc, Mutex},
@@ -51,6 +51,7 @@ pub struct BitVMX {
     broker: BrokerSync,
     count: u32,
     pending_messages: VecDeque<(PeerId, Vec<u8>)>,
+    notified_request: HashSet<(Uuid, Txid)>,
 }
 
 impl Drop for BitVMX {
@@ -121,6 +122,7 @@ impl BitVMX {
             broker,
             count: 0,
             pending_messages: VecDeque::new(),
+            notified_request: HashSet::new(),
         })
     }
 
@@ -217,22 +219,27 @@ impl BitVMX {
             match monitor_news {
                 MonitorNews::Transaction(tx_id, tx_status, context_data) => {
                     let context = Context::from_string(&context_data)?;
+                    info!(
+                        "Transaction Found: {:?} {:?} for context: {:?}",
+                        tx_id, tx_status, context
+                    );
 
                     match context {
                         Context::ProgramId(program_id) => {
-                            let program = self.load_program(&program_id)?;
+                            if !self.notified_request.contains(&(program_id, tx_id)) {
+                                let program = self.load_program(&program_id)?;
 
-                            program.notify_news(
-                                tx_id,
-                                tx_status,
-                                context_data,
-                                &self.program_context,
-                            )?;
+                                program.notify_news(
+                                    tx_id,
+                                    tx_status,
+                                    context_data,
+                                    &self.program_context,
+                                )?;
+                                self.notified_request.insert((program_id, tx_id));
+                            }
                         }
                         Context::RequestId(request_id, from) => {
-                            if tx_status.confirmations == 5 {
-                                //TODO: fix this I need to sent the txid to the broker at least once does not matter the confirmations
-                                //I'm not sending because it brakes the integrated slot test, but fix it
+                            if !self.notified_request.contains(&(request_id, tx_id)) {
                                 info!("Sending News: {:?} for context: {:?}", tx_id, context);
                                 self.program_context.broker_channel.send(
                                     from,
@@ -242,7 +249,7 @@ impl BitVMX {
                                         ),
                                     )?,
                                 )?;
-                                info!("data sent");
+                                self.notified_request.insert((request_id, tx_id));
                             }
                         }
                     }
@@ -252,10 +259,10 @@ impl BitVMX {
                 MonitorNews::SpendingUTXOTransaction(
                     tx_id,
                     output_index,
-                    tx_status,
+                    _tx_status,
                     _context_data,
                 ) => {
-                    info!(
+                    /*info!(
                         "Spending UTXO Transaction Found: {:?} {}",
                         tx_id, _context_data
                     );
@@ -269,6 +276,7 @@ impl BitVMX {
                     )?;
 
                     self.program_context.broker_channel.send(L2_ID, data)?;
+                    */
                     ack_news = AckNews::Transaction(AckMonitorNews::SpendingUTXOTransaction(
                         tx_id,
                         output_index,

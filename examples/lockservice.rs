@@ -10,7 +10,6 @@ use bitcoin::{
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use bitvmx_client::{
-    bitvmx::BitVMX,
     config::Config,
     program::{
         self,
@@ -18,7 +17,6 @@ use bitvmx_client::{
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID},
 };
-use common::{init_bitvmx, prepare_bitcoin, wait_message_from_channel};
 use protocol_builder::scripts::{
     build_taproot_spend_info, reveal_secret, timelock, ProtocolScript,
 };
@@ -27,8 +25,7 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
-use std::sync::Once;
-mod common;
+use std::{str::FromStr, sync::Once};
 
 static INIT: Once = Once::new();
 
@@ -64,6 +61,25 @@ fn config_trace_aux() {
         .init();
 }
 
+pub fn wait_message_from_channel(channel: &DualChannel) -> Result<(String, u32)> {
+    //loop to timeout
+    let mut i = 0;
+    loop {
+        i += 1;
+        if i % 10 == 0 {
+            let msg = channel.recv()?;
+            if msg.is_some() {
+                info!("Received message from channel: {:?}", msg);
+                return Ok(msg.unwrap());
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        if i > 100000 {
+            break;
+        }
+    }
+    panic!("Timeout waiting for message from channel");
+}
 pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, Address)> {
     let config = Config::new(Some("config/op_1.yaml".to_string()))?;
 
@@ -96,50 +112,13 @@ pub fn send_all(channels: &Vec<DualChannel>, msg: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn get_all(
-    channels: &Vec<DualChannel>,
-    instances: &mut Vec<BitVMX>,
-    fake_tick: bool,
-) -> Result<Vec<(String, u32)>> {
+pub fn get_all(channels: &Vec<DualChannel>) -> Result<Vec<(String, u32)>> {
     let mut ret = vec![];
-    let mut mutinstances = instances.iter_mut().collect::<Vec<_>>();
     for channel in channels {
-        let msg = wait_message_from_channel(&channel, &mut mutinstances, fake_tick)?;
+        let msg = wait_message_from_channel(&channel)?;
         ret.push(msg);
     }
     Ok(ret)
-}
-
-pub fn mine_and_wait(
-    bitcoin_client: &BitcoinClient,
-    channels: &Vec<DualChannel>,
-    instances: &mut Vec<BitVMX>,
-    wallet: &Address,
-) -> Result<()> {
-    //MINE AND WAIT
-    for i in 0..100 {
-        if i % 10 == 0 {
-            bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
-        }
-        for instance in instances.iter_mut() {
-            instance.tick()?;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(40));
-    }
-    let msgs = get_all(&channels, instances, false)?;
-
-    let msg = OutgoingBitVMXApiMessages::from_string(&msgs[0].0)?;
-    let (uuid, txid, name) = match msg {
-        OutgoingBitVMXApiMessages::Transaction(uuid, status, name) => {
-            (uuid, status.tx_id, name.unwrap_or_default())
-        }
-        _ => panic!("Expected transaction message"),
-    };
-    info!(
-        "Transaction notification: uuid: {} txid: {} name: {}",
-        uuid, txid, name
-    );
-    Ok(())
 }
 
 pub fn init_broker(role: &str) -> Result<DualChannel> {
@@ -148,58 +127,27 @@ pub fn init_broker(role: &str) -> Result<DualChannel> {
     let bridge_client = DualChannel::new(&broker_config, L2_ID);
     Ok(bridge_client)
 }
-#[ignore]
-#[test]
-pub fn test_slot() -> Result<()> {
-    test_slot_aux(false, false)
-}
 
-#[ignore]
-#[test]
-pub fn test_integration() -> Result<()> {
-    test_slot_aux(true, true)
-}
-
-pub fn test_slot_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
+pub fn main() -> Result<()> {
     config_trace();
+    lockservice()?;
 
-    let (bitcoin_client, bitcoind, wallet) = if independent {
-        let (bitcoin_client, wallet) = prepare_bitcoin_running()?;
-        (bitcoin_client, None, wallet)
-    } else {
-        let (client, deamon, wallet) = prepare_bitcoin()?;
-        (client, Some(deamon), wallet)
-    };
+    Ok(())
+}
 
-    let (channels, mut instances) = if independent {
-        let bridge_1 = init_broker("op_1")?;
-        let bridge_2 = init_broker("op_2")?;
-        let bridge_3 = init_broker("op_3")?;
-        let bridge_4 = init_broker("op_4")?;
+pub fn lockservice() -> Result<()> {
+    let (bitcoin_client, wallet) = prepare_bitcoin_running()?;
 
-        let instances: Vec<BitVMX> = Vec::new();
-        let channels = vec![bridge_1, bridge_2, bridge_3, bridge_4];
-        (channels, instances)
-    } else {
-        let (bitvmx_1, _addres_1, bridge_1) = init_bitvmx("op_1")?;
-        let (bitvmx_2, _addres_2, bridge_2) = init_bitvmx("op_2")?;
-        let (bitvmx_3, _addres_3, bridge_3) = init_bitvmx("op_3")?;
-        let (bitvmx_4, _addres_4, bridge_4) = init_bitvmx("op_4")?;
-        let instances = vec![bitvmx_1, bitvmx_2, bitvmx_3, bitvmx_4];
-        let channels = vec![bridge_1, bridge_2, bridge_3, bridge_4];
-        (channels, instances)
-    };
+    let bridge_1 = init_broker("op_1")?;
+    let bridge_2 = init_broker("op_2")?;
+    let bridge_3 = init_broker("op_3")?;
+    let bridge_4 = init_broker("op_4")?;
 
-    //get to the top of the blockchain
-    for _ in 0..101 {
-        for instance in instances.iter_mut() {
-            instance.process_bitcoin_updates()?;
-        }
-    }
+    let channels = vec![bridge_1, bridge_2, bridge_3, bridge_4];
 
     let command = IncomingBitVMXApiMessages::GetCommInfo().to_string()?;
     send_all(&channels, &command)?;
-    let msgs = get_all(&channels, &mut instances, false)?;
+    let msgs = get_all(&channels)?;
     let addresses = msgs
         .iter()
         .map(|msg| {
@@ -219,7 +167,7 @@ pub fn test_slot_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     info!("Command to all: {:?}", command);
     send_all(&channels, &command)?;
     info!("Waiting for AggregatedPubkey message from all channels");
-    let msgs = get_all(&channels, &mut instances, false)?;
+    let msgs = get_all(&channels)?;
     info!("Received AggregatedPubkey message from all channels");
 
     let msg = OutgoingBitVMXApiMessages::from_string(&msgs[0].0)?;
@@ -230,6 +178,7 @@ pub fn test_slot_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         _ => panic!("Expected AggregatedPubkey message"),
     };
 
+    let fake_hapy_path = true;
     let (aggregated_happy_path, fake_secret) = if fake_hapy_path {
         // emulate the user keypair
         let secp = secp256k1::Secp256k1::new();
@@ -251,7 +200,7 @@ pub fn test_slot_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         let command = IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), 0)
             .to_string()?;
         send_all(&channels, &command)?;
-        let msgs = get_all(&channels, &mut instances, false)?;
+        let msgs = get_all(&channels)?;
         info!("Received AggregatedPubkey message from all channels");
         let msg = OutgoingBitVMXApiMessages::from_string(&msgs[0].0)?;
         let aggregated_happy_path = match msg {
@@ -264,7 +213,7 @@ pub fn test_slot_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         // get keypair to share with the user for happy path too
         let command = IncomingBitVMXApiMessages::GetKeyPair(aggregation_id).to_string()?;
         send_all(&channels, &command)?;
-        let msgs = get_all(&channels, &mut instances, false)?;
+        let msgs = get_all(&channels)?;
         info!("Received keypair message from all channels");
         let msg = OutgoingBitVMXApiMessages::from_string(&msgs[0].0)?;
         match msg {
@@ -294,7 +243,10 @@ pub fn test_slot_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     let command =
         IncomingBitVMXApiMessages::SubscribeToTransaction(lockreqtx_on_chain, txid).to_string()?;
     send_all(&channels, &command)?;
-    mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+
+    bitcoin_client.mine_blocks_to_address(10, &wallet)?;
+    std::thread::sleep(std::time::Duration::from_millis(1000));
+    get_all(&channels)?;
 
     let set_ops_aggregated = IncomingBitVMXApiMessages::SetVar(
         program_id,
@@ -356,7 +308,7 @@ pub fn test_slot_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     let setup_msg = IncomingBitVMXApiMessages::SetupSlot(program_id, addresses, 0).to_string()?;
     send_all(&channels, &setup_msg)?;
 
-    get_all(&channels, &mut instances, false)?;
+    get_all(&channels)?;
 
     //Bridge send signal to send the kickoff message
     let witness_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetWitness(
@@ -375,7 +327,13 @@ pub fn test_slot_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         .to_string()?,
     );
 
-    mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    info!("Sent lock tx");
+
+    std::thread::sleep(std::time::Duration::from_millis(1000));
+    info!("Mining blocks to confirm lock tx");
+    bitcoin_client.mine_blocks_to_address(10, &wallet)?;
+    info!("Wait for confirmation of lock tx");
+    get_all(&channels)?;
 
     //EVENTUALY L2 DECIDED TO SEND THE HAPPY PATH
     //TODO: It should actually be signed in this moment and not before (could be signed but not shared the partials)
@@ -388,14 +346,22 @@ pub fn test_slot_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         .to_string()?,
     );
 
-    mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    info!("Sent happy path tx");
+    std::thread::sleep(std::time::Duration::from_millis(1000));
+    info!("Mining blocks to confirm happy path tx");
+    bitcoin_client.mine_blocks_to_address(10, &wallet)?;
+    info!("Wait for confirmation of happy path tx");
+    let ret = get_all(&channels)?;
+    let msg = OutgoingBitVMXApiMessages::from_str(&ret[0].0)?;
+    let (_id, status, _name) = match msg {
+        OutgoingBitVMXApiMessages::Transaction(id, status, name) => (id, status, name),
+        _ => panic!("Expected Transaction message"),
+    };
 
+    info!("Received message from channel: {:?}", status.tx_id);
     info!("happy path secret: {}", fake_secret);
     info!("happy path public: {}", aggregated_happy_path);
 
-    if bitcoind.is_some() {
-        bitcoind.unwrap().stop()?;
-    }
     Ok(())
 }
 
