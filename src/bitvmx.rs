@@ -670,6 +670,17 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::GetTransaction(id, txid) => {
                 BitVMXApi::get_transaction(self, from, id, txid)?
             }
+            IncomingBitVMXApiMessages::GetTransactionInofByName(id, name) => {
+                let tx = self
+                    .load_program(&id)?
+                    .get_transaction_by_name(&self.program_context, &name)?;
+                self.program_context.broker_channel.send(
+                    from,
+                    serde_json::to_string(&OutgoingBitVMXApiMessages::TransactionInfo(
+                        id, name, tx,
+                    ))?,
+                )?;
+            }
             IncomingBitVMXApiMessages::SetupSlot(id, participants, leader) => {
                 BitVMXApi::setup_slot(self, id, participants, leader)?
             }

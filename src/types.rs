@@ -95,6 +95,7 @@ pub enum IncomingBitVMXApiMessages {
     GetCommInfo(),
     SetupProgram(ProgramId, ParticipantRole, P2PAddress, Utxo),
     GetTransaction(Uuid, Txid),
+    GetTransactionInofByName(Uuid, String),
     SetupSlot(ProgramId, Vec<P2PAddress>, u16),
     SubscribeToTransaction(Uuid, Txid),
     SubscribeUTXO(),
@@ -133,6 +134,7 @@ pub enum OutgoingBitVMXApiMessages {
     // Add response types for the new messages if needed
     AggregatedPubkey(Uuid, PublicKey),
     AggregatedPubkeyNotReady(Uuid),
+    TransactionInfo(Uuid, String, Transaction),
     ZKPResult(/* Add appropriate type */),
     ExecutionResult(/* Add appropriate type */),
     CommInfo(P2PAddress),

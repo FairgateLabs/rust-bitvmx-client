@@ -346,6 +346,7 @@ impl SlotProtocol {
             .unwrap();
         let mut taproot_arg_0 = InputArgs::new_taproot_script_args(LeafSpec::Index(1));
         taproot_arg_0.push_taproot_signature(signature)?;
+        //info!("signature =====>: {:?}", signature);
         taproot_arg_0.push_slice(&secret);
 
         let signature = self

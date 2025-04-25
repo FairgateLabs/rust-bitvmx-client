@@ -834,6 +834,14 @@ impl Program {
         Ok(())
     }
 
+    pub fn get_transaction_by_name(
+        &self,
+        program_context: &ProgramContext,
+        name: &str,
+    ) -> Result<Transaction, BitVMXError> {
+        self.protocol.get_transaction_name(name, program_context)
+    }
+
     pub fn dispatch_transaction_name(
         &self,
         program_context: &ProgramContext,

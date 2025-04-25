@@ -350,6 +350,28 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
 
         let _ = channels[1].send(
             BITVMX_ID,
+            IncomingBitVMXApiMessages::GetTransactionInofByName(
+                program_id,
+                program::slot::LOCK_TX.to_string(),
+            )
+            .to_string()?,
+        );
+
+        let msg = wait_message_from_channel(&channels[1])?;
+        let msg = OutgoingBitVMXApiMessages::from_string(&msg.0)?;
+        let (_id, name, tx) = match msg {
+            OutgoingBitVMXApiMessages::TransactionInfo(uuid, name, tx) => (uuid, name, tx),
+            _ => panic!("Expected transaction message"),
+        };
+        info!("Transaction name: {} details: {:?} ", name, tx);
+
+        info!(
+            "SIGNATURE: ====> {:?}",
+            hex::encode(tx.input[0].witness[0].to_vec())
+        );
+
+        let _ = channels[1].send(
+            BITVMX_ID,
             IncomingBitVMXApiMessages::DispatchTransactionName(
                 program_id,
                 program::slot::LOCK_TX.to_string(),
