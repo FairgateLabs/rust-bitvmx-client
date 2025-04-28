@@ -92,6 +92,8 @@ pub enum IncomingBitVMXApiMessages {
     Ping(),
     SetVar(Uuid, String, VariableTypes),
     SetWitness(Uuid, String, WitnessTypes),
+    GetVar(Uuid, String),
+    GetWitness(Uuid, String),
     GetCommInfo(),
     SetupProgram(ProgramId, ParticipantRole, P2PAddress, Utxo),
     GetTransaction(Uuid, Txid),
@@ -139,6 +141,9 @@ pub enum OutgoingBitVMXApiMessages {
     ExecutionResult(/* Add appropriate type */),
     CommInfo(P2PAddress),
     KeyPair(Uuid, PrivateKey, PublicKey),
+    Variable(Uuid, String, VariableTypes),
+    Witness(Uuid, String, WitnessTypes),
+    NotFound(Uuid, String),
 }
 
 impl OutgoingBitVMXApiMessages {

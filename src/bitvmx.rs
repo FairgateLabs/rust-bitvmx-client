@@ -44,6 +44,8 @@ use storage_backend::storage::{KeyValueStore, Storage};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+pub const THROTTLE_TICKS: u32 = 5;
+
 pub struct BitVMX {
     _config: Config,
     program_context: ProgramContext,
@@ -372,8 +374,7 @@ impl BitVMX {
         self.count += 1;
         self.process_programs()?;
 
-        //throthle (check values)
-        if self.count % 5 == 0 {
+        if self.count % THROTTLE_TICKS == 0 {
             self.process_p2p_messages()?;
             self.process_api_messages()?;
             self.process_bitcoin_updates()?;
@@ -493,6 +494,34 @@ impl BitVMXApi for BitVMX {
             serde_json::to_string(&OutgoingBitVMXApiMessages::Pong())?,
         )?;
         info!("> {:?}", OutgoingBitVMXApiMessages::Pong());
+        Ok(())
+    }
+
+    fn get_var(&mut self, from: u32, id: Uuid, key: &str) -> Result<(), BitVMXError> {
+        info!("Getting variable {}", key);
+        let value = self.program_context.globals.get_var(&id, key)?;
+
+        self.program_context.broker_channel.send(
+            from,
+            serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(id, key.to_string(), value))?,
+        )?;
+        Ok(())
+    }
+
+    fn get_witness(&mut self, from: u32, id: Uuid, key: &str) -> Result<(), BitVMXError> {
+        info!("Getting witness {}", key);
+        let value = self.program_context.witness.get_witness(&id, key)?;
+        
+        // Create response based on whether we found a value
+        let response = match value {
+            Some(witness) => OutgoingBitVMXApiMessages::Witness(id, key.to_string(), witness),
+            None => OutgoingBitVMXApiMessages::NotFound(id, key.to_string()),
+        };
+
+        self.program_context.broker_channel.send(
+            from,
+            serde_json::to_string(&response)?,
+        )?;
         Ok(())
     }
 
@@ -692,6 +721,12 @@ impl BitVMXApi for BitVMX {
                 self.program_context
                     .witness
                     .set_witness(&uuid, &key, value)?;
+            }
+            IncomingBitVMXApiMessages::GetVar(uuid, key) => {
+                BitVMXApi::get_var(self, from, uuid, &key)?;
+            }
+            IncomingBitVMXApiMessages::GetWitness(uuid, key) => {
+                BitVMXApi::get_witness(self, from, uuid, &key)?;
             }
             IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address, utxo) => {
                 BitVMXApi::setup_program(self, id, role, peer_address, utxo)?

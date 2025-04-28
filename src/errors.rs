@@ -13,6 +13,7 @@ use protocol_builder::errors::{ProtocolBuilderError, ScriptError, UnspendableKey
 use storage_backend::error::StorageError;
 use thiserror::Error;
 use uuid::Uuid;
+use std::time::Duration;
 
 #[derive(Error, Debug)]
 pub enum BitVMXError {
@@ -101,6 +102,9 @@ pub enum BitVMXError {
 
     #[error("Error creating script {0}")]
     ScriptError(#[from] ScriptError),
+
+    #[error("Client error")]
+    ClientError(#[from] ClientError),
 }
 
 #[derive(Error, Debug)]
@@ -188,6 +192,9 @@ pub enum BitcoinClientError {
 pub enum ClientError {
     #[error("Invalid command line arguments {0}")]
     InvalidArguments(String),
+
+    #[error("Timeout waiting for message after {0:?}")]
+    MessageTimeout(Duration),
 }
 
 #[derive(Error, Debug, PartialEq)]
