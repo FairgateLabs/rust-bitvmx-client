@@ -38,7 +38,7 @@ pub struct ClientConfig {
     pub retry_delay: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)] // enforce strict field compliance
 pub struct Config {
     pub bitcoin: RpcConfig,

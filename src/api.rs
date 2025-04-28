@@ -61,4 +61,8 @@ pub trait BitVMXApi {
     fn subscribe_to_tx(&mut self, from: u32, id: Uuid, txid: Txid) -> Result<(), BitVMXError>;
 
     fn subscribe_utxo(&mut self) -> Result<(), BitVMXError>;
+
+    fn get_var(&mut self, from: u32, id: Uuid, key: &str) -> Result<(), BitVMXError>;
+
+    fn get_witness(&mut self, from: u32, id: Uuid, key: &str) -> Result<(), BitVMXError>;
 }
