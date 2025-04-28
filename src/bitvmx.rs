@@ -19,7 +19,7 @@ use crate::{
 use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::{
     coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi},
-    types::AckNews,
+    types::{AckCoordinatorNews, AckNews, CoordinatorNews},
     AckMonitorNews, MonitorNews, TypesToMonitor,
 };
 
@@ -209,7 +209,7 @@ impl BitVMX {
 
         let news = self.program_context.bitcoin_coordinator.get_news()?;
 
-        if !news.monitor_news.is_empty() || !news.insufficient_funds.is_empty() {
+        if !news.monitor_news.is_empty() || !news.coordinator_news.is_empty() {
             //info!("Processing news: {:?}", news);
         }
 
@@ -254,7 +254,7 @@ impl BitVMX {
                         }
                     }
 
-                    ack_news = AckNews::Transaction(AckMonitorNews::Transaction(tx_id));
+                    ack_news = AckNews::Monitor(AckMonitorNews::Transaction(tx_id));
                 }
                 MonitorNews::SpendingUTXOTransaction(
                     tx_id,
@@ -277,7 +277,7 @@ impl BitVMX {
 
                     self.program_context.broker_channel.send(L2_ID, data)?;
                     */
-                    ack_news = AckNews::Transaction(AckMonitorNews::SpendingUTXOTransaction(
+                    ack_news = AckNews::Monitor(AckMonitorNews::SpendingUTXOTransaction(
                         tx_id,
                         output_index,
                     ));
@@ -288,11 +288,11 @@ impl BitVMX {
                     )?;
 
                     self.program_context.broker_channel.send(L2_ID, data)?;
-                    ack_news = AckNews::Transaction(AckMonitorNews::RskPeginTransaction(tx_id));
+                    ack_news = AckNews::Monitor(AckMonitorNews::RskPeginTransaction(tx_id));
                 }
                 MonitorNews::NewBlock(block_id, block_height) => {
                     debug!("New block: {:?} {}", block_id, block_height);
-                    ack_news = AckNews::NewBlock;
+                    ack_news = AckNews::Monitor(AckMonitorNews::NewBlock);
                 }
             }
 
@@ -301,16 +301,45 @@ impl BitVMX {
                 .ack_news(ack_news)?;
         }
 
-        for (tx_id, context_data) in news.insufficient_funds {
-            let data = serde_json::to_string(&OutgoingBitVMXApiMessages::SpeedUpProgramNoFunds(
-                tx_id,
-                context_data,
-            ))?;
+        for coordinator_news in news.coordinator_news {
+            let ack_news: AckNews;
 
-            info!("Sending funds request to broker");
-            self.program_context.broker_channel.send(L2_ID, data)?;
+            match coordinator_news {
+                CoordinatorNews::InsufficientFunds(
+                    tx_id,
+                    context_data,
+                    _funding_tx_id,
+                    _funding_context_data,
+                ) => {
+                    // Complete new params
+                    let message =
+                        OutgoingBitVMXApiMessages::SpeedUpProgramNoFunds(tx_id, context_data);
 
-            let ack_news = AckNews::InsufficientFunds(tx_id);
+                    let data = serde_json::to_string(&message)?;
+
+                    info!("Sending funds request to broker");
+                    self.program_context.broker_channel.send(L2_ID, data)?;
+                    ack_news = AckNews::Coordinator(AckCoordinatorNews::InsufficientFunds(tx_id));
+                }
+                CoordinatorNews::NewSpeedUp(_tx_id, _context_data, _counter) => {
+                    // Complete
+
+                    ack_news = AckNews::Coordinator(AckCoordinatorNews::NewSpeedUp(_tx_id));
+                }
+                CoordinatorNews::DispatchTransactionError(_tx_id, _context_data, _counter) => {
+                    // Complete
+
+                    ack_news =
+                        AckNews::Coordinator(AckCoordinatorNews::DispatchTransactionError(_tx_id));
+                }
+                CoordinatorNews::DispatchSpeedUpError(_tx_id, _context_data, _counter) => {
+                    // Complete
+
+                    ack_news =
+                        AckNews::Coordinator(AckCoordinatorNews::DispatchSpeedUpError(_tx_id));
+                }
+            }
+
             self.program_context
                 .bitcoin_coordinator
                 .ack_news(ack_news)?;
