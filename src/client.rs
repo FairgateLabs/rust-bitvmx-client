@@ -42,6 +42,10 @@ impl BitVMXClient {
         ))
     }
 
+    pub fn setup_slot(&self, id: Uuid, addresses: Vec<P2PAddress>, leader: u16) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SetupSlot(id, addresses, leader))
+    }
+
     pub fn dispatch_transaction(&self, id: Uuid, tx: Transaction) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::DispatchTransaction(id, tx))
     }
@@ -87,7 +91,7 @@ impl BitVMXClient {
         self.send_message(IncomingBitVMXApiMessages::GetTransaction(request_id, txid))
     }
 
-    pub fn subscribe_tx(&self, request_id: Uuid, txid: Txid) -> Result<()> {
+    pub fn subscribe_to_transaction(&self, request_id: Uuid, txid: Txid) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::SubscribeToTransaction(
             request_id, txid,
         ))
@@ -97,8 +101,12 @@ impl BitVMXClient {
         self.send_message(IncomingBitVMXApiMessages::SubscribeUTXO())
     }
 
-    pub fn set_var(&self, id: Uuid, key: String, value: VariableTypes) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::SetVar(id, key, value))
+    pub fn set_var(&self, program_id: Uuid, key: &str, value: VariableTypes) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SetVar(
+            program_id,
+            Self::serialize_key(key),
+            value,
+        ))
     }
 
     pub fn get_var(&self, id: Uuid, key: String) -> Result<()> {
@@ -156,4 +164,9 @@ impl BitVMXClient {
             Ok(None)
         }
     }
+
+    fn serialize_key(s: &str) -> String {
+        s.to_string()
+    }
+
 }
