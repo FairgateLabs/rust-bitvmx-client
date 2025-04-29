@@ -1,14 +1,19 @@
 use crate::{
-    errors::{BitVMXError, ClientError}, program::{participant::{P2PAddress, ParticipantRole}, variables::{VariableTypes, WitnessTypes}}, types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID}
+    errors::ClientError,
+    program::{
+        participant::{P2PAddress, ParticipantRole},
+        variables::{VariableTypes, WitnessTypes},
+    },
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
 use anyhow::Result;
 use bitcoin::{Transaction, Txid};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use protocol_builder::types::Utxo;
+use std::thread;
+use std::time::{Duration, Instant};
 use tracing::info;
 use uuid::Uuid;
-use std::time::{Duration, Instant};
-use std::thread;
 
 pub struct BitVMXClient {
     channel: DualChannel,
@@ -130,7 +135,7 @@ impl BitVMXClient {
     }
 
     /// Busy wait for a message from the broker with configurable timeout and sleep duration
-    /// 
+    ///
     /// # Arguments
     /// * `timeout` - Optional timeout duration. Default is 10 seconds.
     /// * `sleep_duration` - Optional sleep duration between checks. Default is 100ms.
@@ -168,5 +173,4 @@ impl BitVMXClient {
     fn serialize_key(s: &str) -> String {
         s.to_string()
     }
-
 }

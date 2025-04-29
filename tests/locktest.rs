@@ -155,11 +155,12 @@ pub fn test_slot() -> Result<()> {
     test_slot_aux(false, false)
 }
 
+/*
 #[ignore]
 #[test]
 pub fn test_integration() -> Result<()> {
     test_slot_aux(true, true)
-}
+}*/
 
 pub fn test_slot_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     config_trace();
