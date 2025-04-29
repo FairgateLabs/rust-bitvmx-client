@@ -51,7 +51,7 @@ pub fn build_taptree_for_lockreq_tx_outputs(
 ) -> Result<bitcoin::taproot::TaprootSpendInfo> {
     /* NOTE: we want to force the script path spend, so we will finalize with an un-spendable key */
     let (internal_key_for_taptree_xonly, _parity) = unspendable_pub_key.x_only_public_key();
-    println!("Unspendable key: {}", unspendable_pub_key);
+    // println!("Unspendable key: {}", unspendable_pub_key);
     tracing::debug!(
         "X only Unspendable key: {:?} parity: {:?}",
         internal_key_for_taptree_xonly,

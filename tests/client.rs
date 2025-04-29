@@ -1,7 +1,7 @@
 use std::{str::FromStr, thread::sleep, time::Duration};
 
 use anyhow::Result;
-use bitcoin::{absolute::LockTime, transaction::Version, Address, Network::Regtest, PublicKey, Transaction, Txid};
+use bitcoin::{absolute::LockTime, transaction::Version, Address, Network::{self, Regtest}, PublicKey, Transaction, Txid};
 
 mod common;
 use common::{clear_db, init_bitvmx, prepare_bitcoin, wait_message_from_channel, INITIAL_BLOCK_COUNT};
@@ -15,6 +15,7 @@ use protocol_builder::types::Utxo;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
+mod fixtures;
 
 
 struct ClientTest {
@@ -40,12 +41,6 @@ impl ClientTest {
         let mut prover = Operator::new(prover_config.clone())?;
         let mut verifier = Operator::new(verifier_config.clone())?;
 
-        // get to the top of the chain
-        for _ in 0..THROTTLE_TICKS * INITIAL_BLOCK_COUNT as u32 {
-            prover.bitvmx.tick().unwrap();
-            verifier.bitvmx.tick().unwrap();
-        }
-
         Ok(Self {
             program_id: Uuid::new_v4(),
             collaboration_id: Uuid::new_v4(),
@@ -57,6 +52,10 @@ impl ClientTest {
             miner_address: Address::from_str("bcrt1q6uv2aekfwz20gpddpuzmw9pe8c9fzf87h9k0fq")?.require_network(Regtest)?,
         })
     }
+
+    // 
+    // API messages
+    // 
 
     fn ping(&mut self) -> Result<()> {
         // 1. send ping
@@ -89,28 +88,159 @@ impl ClientTest {
 
         self.advance(2);
 
-        let response1 = self.prover_client.wait_message(None, None).unwrap();
+        let response = self.prover_client.wait_message(None, None).unwrap();
 
-        let pubkey1 = if let OutgoingBitVMXApiMessages::AggregatedPubkey(id, pubkey) = response1 {
+        let pubkey1 = if let OutgoingBitVMXApiMessages::AggregatedPubkey(id, pubkey) = response {
             assert_eq!(id, self.collaboration_id);
             pubkey
         } else {
-            anyhow::bail!("Expected AggregatedPubkey response, got {:?}", response1);
+            anyhow::bail!("Expected AggregatedPubkey response, got {:?}", response);
         };
 
         self.prover_client.get_aggregated_pubkey(self.collaboration_id)?;
         self.advance(1);
 
-        let response2 = self.prover_client.wait_message(None, None).unwrap();
+        let response = self.prover_client.wait_message(None, None).unwrap();
 
-        if let OutgoingBitVMXApiMessages::AggregatedPubkey(id, pubkey2) = response2 {
+        if let OutgoingBitVMXApiMessages::AggregatedPubkey(id, pubkey2) = response {
             assert_eq!(id, self.collaboration_id);
             assert_eq!(pubkey1, pubkey2, "Aggregated pubkeys should match");
         } else {
-            anyhow::bail!("Expected AggregatedPubkey response, got {:?}", response2);
+            anyhow::bail!("Expected AggregatedPubkey response, got {:?}", response);
         }
 
         Ok(pubkey1)
+    }
+
+    fn set_var(&mut self, pubkey: PublicKey, secret: Vec<u8>) -> Result<()> {
+        // Set operators aggregated public key
+        self.prover_client.set_var(
+            self.program_id,
+            "operators_aggregated_pub",
+            VariableTypes::PubKey(pubkey)
+        )?;
+
+        // Set operators aggregated happy path
+        self.prover_client.set_var(
+            self.program_id,
+            "operators_aggregated_happy_path",
+            VariableTypes::PubKey(pubkey)  // Using same key for simplicity, in real scenario this would be different
+        )?;
+
+        // Set unspendable key
+        let unspendable = fixtures::hardcoded_unspendable().into();
+        self.prover_client.set_var(
+            self.program_id,
+            "unspendable",
+            VariableTypes::PubKey(unspendable)
+        )?;
+
+        // Set secret hash
+        self.prover_client.set_var(
+            self.program_id,
+            "secret",
+            VariableTypes::Secret(secret.clone())
+        )?;
+
+        // Create lock request transaction
+        let (txid, pubuser, ordinal_fee, protocol_fee) = fixtures::create_lockreq_ready(
+            pubkey,
+            secret,
+            Network::Regtest,
+            &self.bitcoin_client
+        )?;
+
+        // Set ordinal UTXO
+        self.prover_client.set_var(
+            self.program_id,
+            "ordinal_utxo",
+            VariableTypes::Utxo((txid, 0, Some(ordinal_fee.to_sat())))
+        )?;
+
+        // Set protocol fee UTXO
+        self.prover_client.set_var(
+            self.program_id,
+            "protocol_utxo",
+            VariableTypes::Utxo((txid, 1, Some(protocol_fee.to_sat())))
+        )?;
+
+        // Set user public key
+        self.prover_client.set_var(
+            self.program_id,
+            "user_pubkey",
+            VariableTypes::PubKey(bitcoin::PublicKey::from(pubuser))
+        )?;
+
+        self.advance(7);
+
+        Ok(())
+    }
+
+    fn get_var(&mut self, pubkey: PublicKey) -> Result<()> {
+        self.prover_client.get_var(
+            self.program_id,
+            "operators_aggregated_pub".to_string()
+        )?;
+
+        self.advance(1);
+
+        let response = self.prover_client.wait_message(None, None).unwrap();
+
+        match response {
+            OutgoingBitVMXApiMessages::Variable(id, key, value) => {
+                assert_eq!(id, self.program_id);
+                assert_eq!(key, "operators_aggregated_pub".to_string());
+                assert_eq!(value, VariableTypes::PubKey(pubkey));
+            }
+            _ => anyhow::bail!("Expected Variable response, got {:?}", response),
+        }
+
+        Ok(())
+    }
+
+    fn setup_slot(&mut self) -> Result<()> {
+        let addresses = vec![self.prover.address.clone(), self.verifier.address.clone()];
+
+        self.prover_client.setup_slot(self.program_id, addresses.clone(), 0)?;
+        // self.verifier_client.setup_slot(self.program_id, addresses, 0)?;
+
+        self.advance(1);
+
+        Ok(())
+    }
+
+    fn set_witness(&mut self, preimage: String) -> Result<String> {
+        self.prover_client.set_witness(
+            self.program_id,
+            "secret".to_string(),
+            WitnessTypes::Secret(preimage.as_bytes().to_vec())
+        )?;
+
+        self.advance(1);
+
+        Ok(preimage)
+    }
+
+    fn get_witness(&mut self, preimage: String) -> Result<()> {
+        self.prover_client.get_witness(
+            self.program_id,
+            "secret".to_string()
+        )?;
+
+        self.advance(1);
+
+        let response = self.prover_client.wait_message(None, None).unwrap();
+
+        match response {
+            OutgoingBitVMXApiMessages::Witness(id, key, witness) => {
+                assert_eq!(id, self.program_id);
+                assert_eq!(key, "secret".to_string());
+                assert_eq!(witness, WitnessTypes::Secret(preimage.as_bytes().to_vec()));
+            }
+            _ => anyhow::bail!("Expected Witness response, got {:?}", response),
+        }
+
+        Ok(())
     }
 
     // fn setup(&mut self) -> Result<()> {
@@ -151,7 +281,36 @@ impl ClientTest {
     //     )
     // }
 
-    fn subscribe_to_transaction(&mut self) -> Result<()> {
+    fn subscribe_to_transaction(&mut self, pubkey: PublicKey, secret: Vec<u8>) -> Result<()> {
+        // Create and send lock request transaction
+        let (txid, pubuser, ordinal_fee, protocol_fee) = fixtures::create_lockreq_ready(
+            pubkey,
+            secret,
+            Network::Regtest,
+            &self.bitcoin_client,
+        )?;
+
+        // Subscribe to the transaction
+        let request_id = Uuid::new_v4();
+        self.prover_client.subscribe_to_transaction(request_id, txid)?;
+
+        // Mine blocks to ensure the transaction is confirmed
+        self.bitcoin_client.mine_blocks_to_address(7, &self.miner_address)?;
+
+        self.advance(12);
+
+        // Wait for the transaction status
+        let response = self.prover_client.wait_message(None, None).unwrap();
+        match response {
+            OutgoingBitVMXApiMessages::Transaction(rid, tx_status, _) => {
+                assert_eq!(rid, request_id);
+                assert_eq!(tx_status.tx_id, txid);
+                assert_eq!(tx_status.status, Finalized);
+                assert_eq!(tx_status.confirmations, 6); // BitVMX has an off by one bug
+            }
+            _ => anyhow::bail!("Expected Transaction response, got {:?}", response),
+        }
+
         Ok(())
     }
 
@@ -252,75 +411,9 @@ impl ClientTest {
     //     Ok(())
     // }
 
-    fn set_var(&mut self, pubkey: PublicKey) -> Result<()> {
-        self.prover_client.set_var(
-            self.program_id,
-            "operators_aggregated_pub".to_string(),
-            VariableTypes::PubKey(pubkey)
-        )?;
-
-        self.advance(1);
-
-        Ok(())
-    }
-
-    fn get_var(&mut self, pubkey: PublicKey) -> Result<()> {
-        self.prover_client.get_var(
-            self.program_id,
-            "operators_aggregated_pub".to_string()
-        )?;
-
-        self.advance(1);
-
-        let response = self.prover_client.wait_message(None, None).unwrap();
-
-        match response {
-            OutgoingBitVMXApiMessages::Variable(id, key, value) => {
-                assert_eq!(id, self.program_id);
-                assert_eq!(key, "operators_aggregated_pub".to_string());
-                assert_eq!(value, VariableTypes::PubKey(pubkey));
-            }
-            _ => anyhow::bail!("Expected Variable response, got {:?}", response),
-        }
-
-        Ok(())
-    }
-
-    fn set_witness(&mut self) -> Result<String> {
-        let preimage = "top_secret".to_string();
-
-        self.prover_client.set_witness(
-            self.program_id,
-            "secret".to_string(),
-            WitnessTypes::Secret(preimage.as_bytes().to_vec())
-        )?;
-
-        self.advance(1);
-
-        Ok(preimage)
-    }
-
-    fn get_witness(&mut self, preimage: String) -> Result<()> {
-        self.prover_client.get_witness(
-            self.program_id,
-            "secret".to_string()
-        )?;
-
-        self.advance(1);
-
-        let response = self.prover_client.wait_message(None, None).unwrap();
-
-        match response {
-            OutgoingBitVMXApiMessages::Witness(id, key, witness) => {
-                assert_eq!(id, self.program_id);
-                assert_eq!(key, "secret".to_string());
-                assert_eq!(witness, WitnessTypes::Secret(preimage.as_bytes().to_vec()));
-            }
-            _ => anyhow::bail!("Expected Witness response, got {:?}", response),
-        }
-
-        Ok(())
-    }
+    // 
+    // helpers
+    // 
 
     fn advance(&mut self, ticks: u32) {
         for _ in 0.. ticks * THROTTLE_TICKS {
@@ -383,18 +476,29 @@ impl Operator {
 #[ignore]
 #[test]
 pub fn test_client() -> Result<()> {
+    // setup test
     let mut test = ClientTest::new()?;
 
+    // get to the top of the chain
+    test.advance(INITIAL_BLOCK_COUNT as u32);
+
+    // initialize secret
+    let preimage = "top_secret".to_string();
+    let secret = fixtures::sha256(preimage.as_bytes().to_vec());
+
+    // run the tests
     // This tests are coupled. They depend on each other.
     test.ping()?;
     let pubkey = test.get_aggregated_pubkey()?;
+    test.subscribe_to_transaction(pubkey, secret.clone())?;
+    test.set_var(pubkey, secret)?;
+    test.get_var(pubkey)?;
+    test.setup_slot()?;
+    let preimage = test.set_witness(preimage)?;
+    test.get_witness(preimage)?;
     // test.dispatch_transaction()?;
     // test.get_transaction()?;
     // test.generate_zkp()?;
-    test.set_var(pubkey)?;
-    test.get_var(pubkey)?;
-    let preimage = test.set_witness()?;
-    test.get_witness(preimage)?;
 
     Ok(())
 }
