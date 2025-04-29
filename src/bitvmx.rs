@@ -221,7 +221,7 @@ impl BitVMX {
             match monitor_news {
                 MonitorNews::Transaction(tx_id, tx_status, context_data) => {
                     let context = Context::from_string(&context_data)?;
-                    info!(
+                    debug!(
                         "Transaction Found: {:?} {:?} for context: {:?}",
                         tx_id, tx_status, context
                     );
@@ -503,7 +503,11 @@ impl BitVMXApi for BitVMX {
 
         self.program_context.broker_channel.send(
             from,
-            serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(id, key.to_string(), value))?,
+            serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(
+                id,
+                key.to_string(),
+                value,
+            ))?,
         )?;
         Ok(())
     }
@@ -511,17 +515,16 @@ impl BitVMXApi for BitVMX {
     fn get_witness(&mut self, from: u32, id: Uuid, key: &str) -> Result<(), BitVMXError> {
         info!("Getting witness {}", key);
         let value = self.program_context.witness.get_witness(&id, key)?;
-        
+
         // Create response based on whether we found a value
         let response = match value {
             Some(witness) => OutgoingBitVMXApiMessages::Witness(id, key.to_string(), witness),
             None => OutgoingBitVMXApiMessages::NotFound(id, key.to_string()),
         };
 
-        self.program_context.broker_channel.send(
-            from,
-            serde_json::to_string(&response)?,
-        )?;
+        self.program_context
+            .broker_channel
+            .send(from, serde_json::to_string(&response)?)?;
         Ok(())
     }
 

@@ -34,6 +34,7 @@ fn config_trace_aux() {
         "p2p_handler=off",
         "tarpc=off",
         "key_manager=off",
+        "broker=off",
     ];
 
     let filter = EnvFilter::builder()

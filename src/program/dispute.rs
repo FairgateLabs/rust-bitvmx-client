@@ -84,17 +84,17 @@ impl ProtocolHandler for DisputeResolutionProtocol {
     ) -> Result<(), BitVMXError> {
         let name = self.get_transaction_name_by_id(tx_id)?;
         info!(
-            "Program {}: Transaction {} has been seen on-chain",
-            self.ctx.id, name
+            "Program {}: Transaction {} has been seen on-chain {}",
+            self.ctx.id,
+            name,
+            parameters.drp().role
         );
 
-        if name == START_CH
-            && tx_status.confirmations == 5
-            && parameters.drp().role == ParticipantRole::Prover
-        {
+        if name == START_CH && parameters.drp().role == ParticipantRole::Prover {
             //TODO: inform whoever is needed
             // now act here to test
 
+            info!("Dispatching transaction the input 1 tx");
             let tx_to_dispatch = self.input_1_tx(0x1234_4444, &program_context.key_chain)?;
 
             let context = Context::ProgramId(self.ctx.id);
@@ -105,10 +105,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             )?;
         }
 
-        if name == INPUT_1
-            && tx_status.confirmations == 5
-            && parameters.drp().role == ParticipantRole::Verifier
-        {
+        if name == INPUT_1 && parameters.drp().role == ParticipantRole::Verifier {
             //let wpub = self .get_prover() .keys .as_ref() .unwrap() .get_winternitz("program_input") .unwrap();
             let witness = tx_status.tx.input[0].witness.clone();
             let data = witness::decode_witness(vec![4], WinternitzType::HASH160, witness)?;
@@ -134,7 +131,7 @@ impl DisputeResolutionProtocol {
     }
 
     pub fn generate_keys(
-        _role: &ParticipantRole,
+        role: &ParticipantRole,
         key_chain: &mut KeyChain,
     ) -> Result<ParticipantKeys, BitVMXError> {
         //TODO: define which keys are generated for each role
@@ -147,22 +144,24 @@ impl DisputeResolutionProtocol {
         let speedup = key_chain.derive_keypair()?;
         let timelock = key_chain.derive_keypair()?;
 
-        let program_input_leaf_1 = key_chain.derive_winternitz_hash160(4)?;
-        let program_input_leaf_2 = key_chain.derive_winternitz_hash160(4)?;
-
-        let keys = vec![
+        let mut keys = vec![
             ("aggregated_1".to_string(), aggregated_1.into()),
             ("speedup".to_string(), speedup.into()),
             ("timelock".to_string(), timelock.into()),
-            (
+        ];
+
+        let program_input_leaf_1 = key_chain.derive_winternitz_hash160(4)?;
+        let program_input_leaf_2 = key_chain.derive_winternitz_hash160(4)?;
+        if role == &ParticipantRole::Prover {
+            keys.push((
                 "program_input_leaf_1".to_string(),
                 program_input_leaf_1.into(),
-            ),
-            (
+            ));
+            keys.push((
                 "program_input_leaf_2".to_string(),
                 program_input_leaf_2.into(),
-            ),
-        ];
+            ));
+        }
 
         Ok(ParticipantKeys::new(keys, vec!["aggregated_1".to_string()]))
     }
