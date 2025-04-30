@@ -88,12 +88,78 @@ impl SlotProtocol {
         }
     }
 
-    pub fn generate_keys(key_chain: &mut KeyChain) -> Result<ParticipantKeys, BitVMXError> {
+    pub fn generate_keys(
+        my_idx: usize,
+        key_chain: &mut KeyChain,
+    ) -> Result<ParticipantKeys, BitVMXError> {
         let aggregated_1 = key_chain.derive_keypair()?;
 
-        let keys = vec![("aggregated_1".to_string(), aggregated_1.into())];
+        let mut keys = vec![("aggregated_1".to_string(), aggregated_1.into())];
+
+        //TODO: get from a variable the number of bytes required to encode the too_id
+        let start_id = key_chain.derive_winternitz_hash160(1)?;
+        keys.push((format!("too_id_{}", my_idx), start_id.into()));
 
         Ok(ParticipantKeys::new(keys, vec!["aggregated_1".to_string()]))
+    }
+
+    pub fn add_happy_path(
+        &self,
+        context: &ProgramContext,
+        protocol: &mut Protocol,
+        unspendable: &PublicKey,
+        amount_ordinal: u64,
+        amount_protocol: u64,
+    ) -> Result<(), BitVMXError> {
+        // START DEFINING THE HAPPY_PATH_TX
+        let ops_agg_happy_path = context
+            .globals
+            .get_var(&self.ctx.id, "operators_aggregated_happy_path")?
+            .pubkey()?;
+
+        let mut happy_path_check = scripts::check_aggregated_signature(&ops_agg_happy_path);
+        happy_path_check.set_skip_signing(true);
+
+        protocol.add_transaction(HAPY_PATH_TX)?;
+        protocol.add_transaction_input(
+            Hash::all_zeros(),
+            0,
+            HAPY_PATH_TX,
+            Sequence::ENABLE_RBF_NO_LOCKTIME,
+            &SighashType::taproot_all(),
+        )?;
+        protocol.add_transaction_input(
+            Hash::all_zeros(),
+            1,
+            HAPY_PATH_TX,
+            Sequence::ENABLE_RBF_NO_LOCKTIME,
+            &SighashType::taproot_all(),
+        )?;
+
+        protocol.add_transaction_output(
+            HAPY_PATH_TX,
+            OutputType::tr_script(
+                amount_ordinal,
+                &unspendable,
+                &[happy_path_check.clone()],
+                false,
+                vec![],
+            )?,
+        )?;
+        protocol.add_transaction_output(
+            HAPY_PATH_TX,
+            OutputType::tr_script(
+                amount_protocol,
+                &unspendable,
+                &[happy_path_check.clone()],
+                false,
+                vec![],
+            )?,
+        )?;
+        protocol.connect("spend_hp_1", LOCK_TX, 0, HAPY_PATH_TX, 0)?;
+        protocol.connect("spend_hp_2", LOCK_TX, 1, HAPY_PATH_TX, 1)?;
+
+        Ok(())
     }
 
     pub fn build(
@@ -114,11 +180,6 @@ impl SlotProtocol {
         let ops_agg_pubkey = context
             .globals
             .get_var(&self.ctx.id, "operators_aggregated_pub")?
-            .pubkey()?;
-
-        let ops_agg_happy_path = context
-            .globals
-            .get_var(&self.ctx.id, "operators_aggregated_happy_path")?
             .pubkey()?;
 
         let unspendable = context
@@ -276,50 +337,13 @@ impl SlotProtocol {
             )?, // We do not need prevouts cause the tx is in the graph,
         )?;
 
-        // START DEFINING THE HAPPY_PATH_TX
-        // The following script is the output that user timeout could use as input
-        let amount = amount - fee - SPEEDUP_DUST;
-        let mut happy_path_check = scripts::check_aggregated_signature(&ops_agg_happy_path);
-        happy_path_check.set_skip_signing(true);
-
-        protocol.add_transaction(HAPY_PATH_TX)?;
-        protocol.add_transaction_input(
-            Hash::all_zeros(),
-            0,
-            HAPY_PATH_TX,
-            Sequence::ENABLE_RBF_NO_LOCKTIME,
-            &SighashType::taproot_all(),
+        self.add_happy_path(
+            context,
+            &mut protocol,
+            &unspendable,
+            ordinal_utxo.2.unwrap(),
+            amount - fee - SPEEDUP_DUST,
         )?;
-        protocol.add_transaction_input(
-            Hash::all_zeros(),
-            1,
-            HAPY_PATH_TX,
-            Sequence::ENABLE_RBF_NO_LOCKTIME,
-            &SighashType::taproot_all(),
-        )?;
-
-        protocol.add_transaction_output(
-            HAPY_PATH_TX,
-            OutputType::tr_script(
-                ordinal_utxo.2.unwrap(),
-                &unspendable,
-                &[happy_path_check.clone()],
-                false,
-                vec![],
-            )?,
-        )?;
-        protocol.add_transaction_output(
-            HAPY_PATH_TX,
-            OutputType::tr_script(
-                amount,
-                &unspendable,
-                &[happy_path_check.clone()],
-                false,
-                vec![],
-            )?,
-        )?;
-        protocol.connect("spend_hp_1", LOCK_TX, 0, HAPY_PATH_TX, 0)?;
-        protocol.connect("spend_hp_2", LOCK_TX, 1, HAPY_PATH_TX, 1)?;
 
         let aggregated = computed_aggregated.get("aggregated_1").unwrap();
         let pb = ProtocolBuilder {};

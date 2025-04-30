@@ -163,8 +163,6 @@ impl Program {
             return Err(BitVMXError::InvalidMessageFormat);
         }
 
-        let my_keys = SlotProtocol::generate_keys(&mut program_context.key_chain)?;
-
         let p2p_address = P2PAddress::new(
             &program_context.comms.get_address(),
             program_context.comms.get_peer_id(),
@@ -178,6 +176,8 @@ impl Program {
 
         info!("my_pos: {}", my_idx);
         info!("Leader pos: {}", leader);
+
+        let my_keys = SlotProtocol::generate_keys(my_idx, &mut program_context.key_chain)?;
 
         //Creates space for the participants
         let mut others = peers
