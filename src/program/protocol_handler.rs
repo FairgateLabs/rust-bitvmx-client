@@ -32,6 +32,25 @@ pub trait ProtocolHandler {
         Ok(())
     }
 
+    fn get_hashed_message(
+        &mut self,
+        transaction_name: &str,
+        input_index: u32,
+        message_index: u32,
+    ) -> Result<String, BitVMXError> {
+        let ret = self.load_protocol()?.get_hashed_message(
+            transaction_name,
+            input_index,
+            message_index,
+        )?;
+        if ret.is_none() {
+            return Err(BitVMXError::InvalidTransactionName(
+                transaction_name.to_string(),
+            ));
+        }
+        Ok(format!("{}", ret.unwrap()))
+    }
+
     fn get_transaction_by_id(&self, txid: &Txid) -> Result<Transaction, ProtocolBuilderError> {
         self.load_protocol()?.transaction_by_id(txid).cloned()
     }

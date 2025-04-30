@@ -269,17 +269,23 @@ impl Program {
         context: &ProgramContext,
     ) -> Result<HashMap<String, PublicKey>, BitVMXError> {
         // 2. Init the musig2 signer for this program
-
-        let operatos_pub = if self.utxo.is_some() {
-            self.utxo.clone().unwrap().pub_key
+        //TODO: move this to code inside each protocol
+        let mut aggregated_keys = vec![];
+        if self.utxo.is_some() {
+            aggregated_keys.push((
+                "pregenerated".to_string(),
+                self.utxo.clone().unwrap().pub_key,
+            ));
         } else {
-            context
-                .globals
-                .get_var(&self.program_id, "operators_aggregated_pub")?
-                .pubkey()?
+            aggregated_keys.push((
+                "pregenerated".to_string(),
+                context
+                    .globals
+                    .get_var(&self.program_id, "operators_aggregated_pub")?
+                    .pubkey()?,
+            ));
         };
 
-        let mut aggregated_keys = vec![("pregenerated".to_string(), operatos_pub)];
         let mut result = HashMap::new();
 
         for agg_name in &self.participants[self.my_idx]

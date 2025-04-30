@@ -1,3 +1,4 @@
+use crate::program::protocol_handler::ProtocolHandler;
 use crate::{
     api::BitVMXApi,
     collaborate::Collaboration,
@@ -705,6 +706,18 @@ impl BitVMXApi for BitVMX {
         info!("< {:?}", decoded);
 
         match decoded {
+            IncomingBitVMXApiMessages::GetHashedMessage(id, name, vout, leaf) => {
+                let hashed = self
+                    .load_program(&id)?
+                    .protocol
+                    .get_hashed_message(&name, vout, leaf)?;
+                self.program_context.broker_channel.send(
+                    from,
+                    serde_json::to_string(&OutgoingBitVMXApiMessages::HashedMessage(
+                        id, name, vout, leaf, hashed,
+                    ))?,
+                )?;
+            }
             IncomingBitVMXApiMessages::GetCommInfo() => {
                 let comm_info = OutgoingBitVMXApiMessages::CommInfo(P2PAddress {
                     address: self.program_context.comms.get_address(),

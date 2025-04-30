@@ -98,6 +98,7 @@ pub enum IncomingBitVMXApiMessages {
     SetupProgram(ProgramId, ParticipantRole, P2PAddress, Utxo),
     GetTransaction(Uuid, Txid),
     GetTransactionInofByName(Uuid, String),
+    GetHashedMessage(Uuid, String, u32, u32),
     SetupSlot(ProgramId, Vec<P2PAddress>, u16),
     SubscribeToTransaction(Uuid, Txid),
     SubscribeUTXO(),
@@ -144,6 +145,7 @@ pub enum OutgoingBitVMXApiMessages {
     Variable(Uuid, String, VariableTypes),
     Witness(Uuid, String, WitnessTypes),
     NotFound(Uuid, String),
+    HashedMessage(Uuid, String, u32, u32, String),
 }
 
 impl OutgoingBitVMXApiMessages {

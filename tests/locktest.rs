@@ -388,6 +388,26 @@ pub fn test_slot_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         hex::encode(tx.input[0].witness[0].to_vec())
     );
 
+    let _ = channels[1].send(
+        BITVMX_ID,
+        IncomingBitVMXApiMessages::GetHashedMessage(
+            program_id,
+            program::slot::LOCK_TX.to_string(),
+            0,
+            1,
+        )
+        .to_string()?,
+    );
+
+    let msg = wait_message_from_channel(&channels[1], &mut mutinstances, false)?;
+    let msg = OutgoingBitVMXApiMessages::from_string(&msg.0)?;
+    let hashed = match msg {
+        OutgoingBitVMXApiMessages::HashedMessage(_uuid, _name, _vout, _leaf, hashed) => hashed,
+        _ => panic!("Expected transaction message"),
+    };
+    info!("HASHED MESSAGE: ====> {:?}", hashed);
+    info!("AGGREGATED PUB: ====> {}", aggregated_pub_key);
+
     drop(mutinstances);
 
     let _ = channels[1].send(
