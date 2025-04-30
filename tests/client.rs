@@ -1,22 +1,31 @@
-use std::{str::FromStr, thread::sleep, time::Duration};
+use std::str::FromStr;
 
 use anyhow::Result;
-use bitcoin::{absolute::LockTime, transaction::Version, Address, Network::{self, Regtest}, PublicKey, Transaction, Txid};
+use bitcoin::{
+    Address,
+    Network::{self, Regtest},
+    PublicKey,
+};
 
 mod common;
-use common::{clear_db, init_bitvmx, prepare_bitcoin, wait_message_from_channel, INITIAL_BLOCK_COUNT};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_client::{
-    bitvmx::{BitVMX, THROTTLE_TICKS}, client::BitVMXClient, config::Config, program::{participant::{P2PAddress, ParticipantRole}, variables::{VariableTypes, WitnessTypes}}, types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, L2_ID}
+    bitvmx::{BitVMX, THROTTLE_TICKS},
+    client::BitVMXClient,
+    config::Config,
+    program::{
+        participant::P2PAddress,
+        variables::{VariableTypes, WitnessTypes},
+    },
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, L2_ID},
 };
-use bitvmx_transaction_monitor::types::TransactionBlockchainStatus::{Confirmed, Finalized};
+use bitvmx_transaction_monitor::types::TransactionBlockchainStatus::Finalized;
+use common::{clear_db, prepare_bitcoin, INITIAL_BLOCK_COUNT};
 use p2p_handler::PeerId;
-use protocol_builder::types::Utxo;
-use tracing::{error, info};
+use tracing::info;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 mod fixtures;
-
 
 struct ClientTest {
     program_id: Uuid,
@@ -33,13 +42,13 @@ impl ClientTest {
     fn new() -> Result<Self> {
         configure_logging();
 
-        let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
+        let (bitcoin_client, _bitcoind, _wallet) = prepare_bitcoin()?;
 
         let prover_config = Config::new(Some(format!("config/op_1.yaml")))?;
         let verifier_config = Config::new(Some(format!("config/op_2.yaml")))?;
 
-        let mut prover = Operator::new(prover_config.clone())?;
-        let mut verifier = Operator::new(verifier_config.clone())?;
+        let prover = Operator::new(prover_config.clone())?;
+        let verifier = Operator::new(verifier_config.clone())?;
 
         Ok(Self {
             program_id: Uuid::new_v4(),
@@ -49,13 +58,14 @@ impl ClientTest {
             prover_client: BitVMXClient::new(prover_config.broker_port, L2_ID),
             verifier_client: BitVMXClient::new(verifier_config.broker_port, L2_ID),
             bitcoin_client: bitcoin_client,
-            miner_address: Address::from_str("bcrt1q6uv2aekfwz20gpddpuzmw9pe8c9fzf87h9k0fq")?.require_network(Regtest)?,
+            miner_address: Address::from_str("bcrt1q6uv2aekfwz20gpddpuzmw9pe8c9fzf87h9k0fq")?
+                .require_network(Regtest)?,
         })
     }
 
-    // 
+    //
     // API messages
-    // 
+    //
 
     fn ping(&mut self) -> Result<()> {
         // 1. send ping
@@ -77,13 +87,13 @@ impl ClientTest {
         self.prover_client.setup_key(
             self.collaboration_id,
             vec![self.prover.address.clone(), self.verifier.address.clone()],
-            0
+            0,
         )?;
-        
+
         self.verifier_client.setup_key(
             self.collaboration_id,
             vec![self.prover.address.clone(), self.verifier.address.clone()],
-            0
+            0,
         )?;
 
         self.advance(2);
@@ -97,7 +107,8 @@ impl ClientTest {
             anyhow::bail!("Expected AggregatedPubkey response, got {:?}", response);
         };
 
-        self.prover_client.get_aggregated_pubkey(self.collaboration_id)?;
+        self.prover_client
+            .get_aggregated_pubkey(self.collaboration_id)?;
         self.advance(1);
 
         let response = self.prover_client.wait_message(None, None).unwrap();
@@ -117,14 +128,14 @@ impl ClientTest {
         self.prover_client.set_var(
             self.program_id,
             "operators_aggregated_pub",
-            VariableTypes::PubKey(pubkey)
+            VariableTypes::PubKey(pubkey),
         )?;
 
         // Set operators aggregated happy path
         self.prover_client.set_var(
             self.program_id,
             "operators_aggregated_happy_path",
-            VariableTypes::PubKey(pubkey)  // Using same key for simplicity, in real scenario this would be different
+            VariableTypes::PubKey(pubkey), // Using same key for simplicity, in real scenario this would be different
         )?;
 
         // Set unspendable key
@@ -132,43 +143,39 @@ impl ClientTest {
         self.prover_client.set_var(
             self.program_id,
             "unspendable",
-            VariableTypes::PubKey(unspendable)
+            VariableTypes::PubKey(unspendable),
         )?;
 
         // Set secret hash
         self.prover_client.set_var(
             self.program_id,
             "secret",
-            VariableTypes::Secret(secret.clone())
+            VariableTypes::Secret(secret.clone()),
         )?;
 
         // Create lock request transaction
-        let (txid, pubuser, ordinal_fee, protocol_fee) = fixtures::create_lockreq_ready(
-            pubkey,
-            secret,
-            Network::Regtest,
-            &self.bitcoin_client
-        )?;
+        let (txid, pubuser, ordinal_fee, protocol_fee) =
+            fixtures::create_lockreq_ready(pubkey, secret, Network::Regtest, &self.bitcoin_client)?;
 
         // Set ordinal UTXO
         self.prover_client.set_var(
             self.program_id,
             "ordinal_utxo",
-            VariableTypes::Utxo((txid, 0, Some(ordinal_fee.to_sat())))
+            VariableTypes::Utxo((txid, 0, Some(ordinal_fee.to_sat()))),
         )?;
 
         // Set protocol fee UTXO
         self.prover_client.set_var(
             self.program_id,
             "protocol_utxo",
-            VariableTypes::Utxo((txid, 1, Some(protocol_fee.to_sat())))
+            VariableTypes::Utxo((txid, 1, Some(protocol_fee.to_sat()))),
         )?;
 
         // Set user public key
         self.prover_client.set_var(
             self.program_id,
             "user_pubkey",
-            VariableTypes::PubKey(bitcoin::PublicKey::from(pubuser))
+            VariableTypes::PubKey(bitcoin::PublicKey::from(pubuser)),
         )?;
 
         self.advance(7);
@@ -177,10 +184,8 @@ impl ClientTest {
     }
 
     fn get_var(&mut self, pubkey: PublicKey) -> Result<()> {
-        self.prover_client.get_var(
-            self.program_id,
-            "operators_aggregated_pub".to_string()
-        )?;
+        self.prover_client
+            .get_var(self.program_id, "operators_aggregated_pub".to_string())?;
 
         self.advance(1);
 
@@ -201,7 +206,8 @@ impl ClientTest {
     fn setup_slot(&mut self) -> Result<()> {
         let addresses = vec![self.prover.address.clone(), self.verifier.address.clone()];
 
-        self.prover_client.setup_slot(self.program_id, addresses.clone(), 0)?;
+        self.prover_client
+            .setup_slot(self.program_id, addresses.clone(), 0)?;
         // self.verifier_client.setup_slot(self.program_id, addresses, 0)?;
 
         self.advance(1);
@@ -213,7 +219,7 @@ impl ClientTest {
         self.prover_client.set_witness(
             self.program_id,
             "secret".to_string(),
-            WitnessTypes::Secret(preimage.as_bytes().to_vec())
+            WitnessTypes::Secret(preimage.as_bytes().to_vec()),
         )?;
 
         self.advance(1);
@@ -222,10 +228,8 @@ impl ClientTest {
     }
 
     fn get_witness(&mut self, preimage: String) -> Result<()> {
-        self.prover_client.get_witness(
-            self.program_id,
-            "secret".to_string()
-        )?;
+        self.prover_client
+            .get_witness(self.program_id, "secret".to_string())?;
 
         self.advance(1);
 
@@ -283,19 +287,17 @@ impl ClientTest {
 
     fn subscribe_to_transaction(&mut self, pubkey: PublicKey, secret: Vec<u8>) -> Result<()> {
         // Create and send lock request transaction
-        let (txid, pubuser, ordinal_fee, protocol_fee) = fixtures::create_lockreq_ready(
-            pubkey,
-            secret,
-            Network::Regtest,
-            &self.bitcoin_client,
-        )?;
+        let (txid, _pubuser, _ordinal_fee, _protocol_fee) =
+            fixtures::create_lockreq_ready(pubkey, secret, Network::Regtest, &self.bitcoin_client)?;
 
         // Subscribe to the transaction
         let request_id = Uuid::new_v4();
-        self.prover_client.subscribe_to_transaction(request_id, txid)?;
+        self.prover_client
+            .subscribe_to_transaction(request_id, txid)?;
 
         // Mine blocks to ensure the transaction is confirmed
-        self.bitcoin_client.mine_blocks_to_address(7, &self.miner_address)?;
+        self.bitcoin_client
+            .mine_blocks_to_address(7, &self.miner_address)?;
 
         self.advance(12);
 
@@ -355,7 +357,7 @@ impl ClientTest {
     //             1,
     //             &self.miner_address,
     //         )?;
-            
+
     //         let response = self.prover_client.wait_message().unwrap();
     //         match response {
     //             OutgoingBitVMXApiMessages::Transaction(rid, tx_status) => {
@@ -411,18 +413,17 @@ impl ClientTest {
     //     Ok(())
     // }
 
-    // 
+    //
     // helpers
-    // 
+    //
 
     fn advance(&mut self, ticks: u32) {
-        for _ in 0.. ticks * THROTTLE_TICKS {
+        for _ in 0..ticks * THROTTLE_TICKS {
             self.prover.bitvmx.tick().unwrap();
             self.verifier.bitvmx.tick().unwrap();
         }
     }
 }
-
 
 fn configure_logging() {
     let default_modules = [
@@ -464,13 +465,11 @@ impl Operator {
         clear_db(&config.key_storage.path);
         clear_db(&config.broker_storage);
 
-    
         let bitvmx = BitVMX::new(config)?;
         let address = P2PAddress::new(&bitvmx.address(), PeerId::from_str(&bitvmx.peer_id())?);
 
         Ok(Self { bitvmx, address })
     }
-    
 }
 
 #[ignore]

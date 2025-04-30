@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::str::FromStr;
 
 use anyhow::Result;
@@ -94,8 +95,13 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Address)> {
         .init_wallet(Network::Regtest, "test_wallet")
         .unwrap();
 
-    info!("Mine {} blocks to address {:?}", INITIAL_BLOCK_COUNT, wallet);
-    bitcoin_client.mine_blocks_to_address(INITIAL_BLOCK_COUNT, &wallet).unwrap();
+    info!(
+        "Mine {} blocks to address {:?}",
+        INITIAL_BLOCK_COUNT, wallet
+    );
+    bitcoin_client
+        .mine_blocks_to_address(INITIAL_BLOCK_COUNT, &wallet)
+        .unwrap();
 
     Ok((bitcoin_client, bitcoind, wallet))
 }

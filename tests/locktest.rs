@@ -1,11 +1,8 @@
 use anyhow::Result;
 use bitcoin::{
-    absolute,
-    key::{rand::rngs::OsRng, Parity, Secp256k1},
-    secp256k1::{self, All, Message, PublicKey as SecpPublicKey, SecretKey},
-    sighash::SighashCache,
-    transaction, Address, Amount, Network, OutPoint, PrivateKey as BitcoinPrivKey, PublicKey,
-    PublicKey as BitcoinPubKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness,
+    key::rand::rngs::OsRng,
+    secp256k1::{self, PublicKey as SecpPublicKey, SecretKey},
+    Address, Amount, Network, OutPoint, PublicKey, PublicKey as BitcoinPubKey, Transaction, Txid,
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
@@ -19,9 +16,7 @@ use bitvmx_client::{
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID},
 };
 use common::{init_bitvmx, prepare_bitcoin, wait_message_from_channel};
-use protocol_builder::scripts::{
-    build_taproot_spend_info, reveal_secret, timelock, ProtocolScript,
-};
+use protocol_builder::scripts::{build_taproot_spend_info, ProtocolScript};
 use sha2::{Digest, Sha256};
 use tracing::info;
 use tracing_subscriber::EnvFilter;

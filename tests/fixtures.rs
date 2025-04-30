@@ -4,7 +4,7 @@ use bitcoin::{
     key::{rand::rngs::OsRng, Parity, Secp256k1},
     secp256k1::{self, All, Message, PublicKey as SecpPublicKey, SecretKey},
     sighash::SighashCache,
-    transaction, Address, Amount, Network, OutPoint, PrivateKey as BitcoinPrivKey, PublicKey,
+    transaction, Amount, Network, OutPoint, PrivateKey as BitcoinPrivKey, PublicKey,
     PublicKey as BitcoinPubKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness,
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
@@ -300,4 +300,4 @@ pub fn create_lockreq_tx_and_sign(
     let signed_transaction = sighasher.into_transaction().to_owned();
 
     signed_transaction
-} 
+}
