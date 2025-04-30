@@ -372,6 +372,26 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
 
         let _ = channels[1].send(
             BITVMX_ID,
+            IncomingBitVMXApiMessages::GetHashedMessage(
+                program_id,
+                program::slot::LOCK_TX.to_string(),
+                0,
+                1,
+            )
+            .to_string()?,
+        );
+
+        let msg = wait_message_from_channel(&channels[1])?;
+        let msg = OutgoingBitVMXApiMessages::from_string(&msg.0)?;
+        let hashed = match msg {
+            OutgoingBitVMXApiMessages::HashedMessage(_uuid, _name, _vout, _leaf, hashed) => hashed,
+            _ => panic!("Expected hashed message"),
+        };
+        info!("HASHED MESSAGE: ====> {:?}", hashed);
+        info!("AGGREGATED PUB: ====> {}", aggregated_pub_key);
+
+        let _ = channels[1].send(
+            BITVMX_ID,
             IncomingBitVMXApiMessages::DispatchTransactionName(
                 program_id,
                 program::slot::LOCK_TX.to_string(),
