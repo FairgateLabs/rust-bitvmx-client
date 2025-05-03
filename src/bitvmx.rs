@@ -761,7 +761,7 @@ impl BitVMXApi for BitVMX {
                     ))?,
                 )?;
             }
-            IncomingBitVMXApiMessages::SetupSlot(id, participants, leader) => {
+            IncomingBitVMXApiMessages::SetupLock(id, participants, leader) => {
                 BitVMXApi::setup_slot(self, id, participants, leader)?
             }
             IncomingBitVMXApiMessages::SubscribeToTransaction(uuid, txid) => {

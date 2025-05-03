@@ -146,19 +146,21 @@ pub fn init_broker(role: &str) -> Result<DualChannel> {
 }
 #[ignore]
 #[test]
-pub fn test_slot() -> Result<()> {
-    test_slot_aux(false, false)
+pub fn test_lock() -> Result<()> {
+    test_lock_aux(false, false)
 }
 
 /*
 #[ignore]
 #[test]
 pub fn test_integration() -> Result<()> {
-    test_slot_aux(true, true)
+    LockProtocol(true, true)
 }*/
 
-pub fn test_slot_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
+pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     config_trace();
+
+    const NETWORK: Network = Network::Regtest;
 
     let (bitcoin_client, bitcoind, wallet) = if independent {
         let (bitcoin_client, wallet) = prepare_bitcoin_running()?;
@@ -227,6 +229,9 @@ pub fn test_slot_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         _ => panic!("Expected AggregatedPubkey message"),
     };
 
+    // THE AGGREGATED_HAPPY_PATH NEEDS TO BE USED FOR THE HAPPY PATH
+    // THE OPTION FOR FAKE ONE IS UNTIL THE AGGREGATED SECRET IS IMPLEMENTED
+    // TO SIGN THE HAPPY PATH TX
     let (aggregated_happy_path, fake_secret) = if fake_hapy_path {
         // emulate the user keypair
         let secp = secp256k1::Secp256k1::new();
@@ -273,24 +278,31 @@ pub fn test_slot_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         (aggregated_happy_path, "".to_string())
     };
 
-    let program_id = Uuid::new_v4();
-
+    // USER CREATES LOCKREQ TX
     let preimage = "top_secret".to_string();
     let hash = fixtures::sha256(preimage.as_bytes().to_vec());
 
-    let (txid, pubuser, ordinal_fee, protocol_fee) = fixtures::create_lockreq_ready(
-        aggregated_pub_key,
-        hash.clone(),
-        Network::Regtest,
-        &bitcoin_client,
-    )?;
+    let (txid, pubuser, ordinal_fee, protocol_fee) =
+        fixtures::create_lockreq_ready(aggregated_pub_key, hash.clone(), NETWORK, &bitcoin_client)?;
 
+    // OPERATORS WAITS FOR LOCKREQ TX
     let lockreqtx_on_chain = Uuid::new_v4();
     let command =
         IncomingBitVMXApiMessages::SubscribeToTransaction(lockreqtx_on_chain, txid).to_string()?;
     send_all(&channels, &command)?;
     mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
+    // FUND A TX TO PAY FOR THE PROTOCOL
+    //TODO: precalculate or implement method to calculate the dusts
+    const PROTOCOL_TOTAL_COST: Amount = Amount::from_sat(1_000_000);
+    let ops_funding_address: bitcoin::Address =
+        bitcoin_client.get_new_address(aggregated_pub_key, NETWORK);
+    let (tx_protocol_cost, vout_protocol_cost) =
+        bitcoin_client.fund_address(&ops_funding_address, PROTOCOL_TOTAL_COST)?;
+
+    // SETUP LOCK BEGIN
+
+    let program_id = Uuid::new_v4();
     let set_ops_aggregated = IncomingBitVMXApiMessages::SetVar(
         program_id,
         "operators_aggregated_pub".to_string(),
@@ -340,6 +352,18 @@ pub fn test_slot_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     .to_string()?;
     send_all(&channels, &set_protocol_fee)?;
 
+    let set_protocol_cost = IncomingBitVMXApiMessages::SetVar(
+        program_id,
+        "protocol_cost_utxo".to_string(),
+        VariableTypes::Utxo((
+            tx_protocol_cost.compute_txid(),
+            vout_protocol_cost,
+            Some(PROTOCOL_TOTAL_COST.to_sat()),
+        )),
+    )
+    .to_string()?;
+    send_all(&channels, &set_protocol_cost)?;
+
     let set_user_pubkey = IncomingBitVMXApiMessages::SetVar(
         program_id,
         "user_pubkey".to_string(),
@@ -348,7 +372,7 @@ pub fn test_slot_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     .to_string()?;
     send_all(&channels, &set_user_pubkey)?;
 
-    let setup_msg = IncomingBitVMXApiMessages::SetupSlot(program_id, addresses, 0).to_string()?;
+    let setup_msg = IncomingBitVMXApiMessages::SetupLock(program_id, addresses, 0).to_string()?;
     send_all(&channels, &setup_msg)?;
 
     get_all(&channels, &mut instances, false)?;
@@ -365,7 +389,7 @@ pub fn test_slot_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         BITVMX_ID,
         IncomingBitVMXApiMessages::GetTransactionInofByName(
             program_id,
-            program::slot::LOCK_TX.to_string(),
+            program::lock::LOCK_TX.to_string(),
         )
         .to_string()?,
     );
@@ -387,7 +411,7 @@ pub fn test_slot_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         BITVMX_ID,
         IncomingBitVMXApiMessages::GetHashedMessage(
             program_id,
-            program::slot::LOCK_TX.to_string(),
+            program::lock::LOCK_TX.to_string(),
             0,
             1,
         )
@@ -409,7 +433,7 @@ pub fn test_slot_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
-            program::slot::LOCK_TX.to_string(),
+            program::lock::LOCK_TX.to_string(),
         )
         .to_string()?,
     );
@@ -422,7 +446,7 @@ pub fn test_slot_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
-            program::slot::HAPY_PATH_TX.to_string(),
+            program::lock::HAPY_PATH_TX.to_string(),
         )
         .to_string()?,
     );

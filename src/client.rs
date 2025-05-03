@@ -48,7 +48,7 @@ impl BitVMXClient {
     }
 
     pub fn setup_slot(&self, id: Uuid, addresses: Vec<P2PAddress>, leader: u16) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::SetupSlot(id, addresses, leader))
+        self.send_message(IncomingBitVMXApiMessages::SetupLock(id, addresses, leader))
     }
 
     pub fn dispatch_transaction(&self, id: Uuid, tx: Transaction) -> Result<()> {

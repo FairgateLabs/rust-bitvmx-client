@@ -26,11 +26,11 @@ use super::{
 };
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct SlotProtocol {
+pub struct LockProtocol {
     ctx: ProtocolContext,
 }
 
-impl ProtocolHandler for SlotProtocol {
+impl ProtocolHandler for LockProtocol {
     fn context(&self) -> &ProtocolContext {
         &self.ctx
     }
@@ -80,7 +80,7 @@ impl ProtocolHandler for SlotProtocol {
 pub const LOCK_TX: &str = "lock_tx";
 pub const HAPY_PATH_TX: &str = "happy_path_tx";
 
-impl SlotProtocol {
+impl LockProtocol {
     pub fn new(program_id: Uuid, storage: Rc<Storage>) -> Self {
         let protocol_name = format!("slot_{}", program_id);
         Self {

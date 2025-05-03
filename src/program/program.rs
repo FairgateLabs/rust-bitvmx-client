@@ -6,7 +6,7 @@ use crate::{
         parse_keys, parse_nonces, parse_signatures, PartialSignatureMessage, PubNonceMessage,
     },
     p2p_helper::{request, response, P2PMessageType},
-    program::participant::ParticipantKeys,
+    program::{lock::LockProtocol, participant::ParticipantKeys},
     types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramRequestInfo, L2_ID},
 };
 use bitcoin::{PublicKey, Transaction, Txid};
@@ -27,7 +27,6 @@ use super::{
     dispute::{DisputeResolutionProtocol, SearchParams},
     participant::{P2PAddress, ParticipantData, ParticipantRole},
     protocol_handler::{ProtocolHandler, ProtocolType},
-    slot::SlotProtocol,
     state::{ProgramState, SettingUpState},
 };
 
@@ -81,14 +80,14 @@ pub struct DrpParameters {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct SlotParameters {
+pub struct LockParameters {
     pub my_id: u32,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum ProtocolParameters {
     DisputeResolutionProtocol(DrpParameters),
-    SlotProtocol(SlotParameters),
+    LockProtocol(LockParameters),
 }
 
 impl ProtocolParameters {
@@ -97,7 +96,7 @@ impl ProtocolParameters {
     }
 
     pub fn new_slot(my_id: u32) -> Self {
-        ProtocolParameters::SlotProtocol(SlotParameters { my_id })
+        ProtocolParameters::LockProtocol(LockParameters { my_id })
     }
 
     pub fn drp(&self) -> &DrpParameters {
@@ -107,9 +106,9 @@ impl ProtocolParameters {
         }
     }
 
-    pub fn slot(&self) -> &SlotParameters {
+    pub fn slot(&self) -> &LockParameters {
         match self {
-            ProtocolParameters::SlotProtocol(slot) => slot,
+            ProtocolParameters::LockProtocol(slot) => slot,
             _ => panic!("Not a Slot protocol"),
         }
     }
@@ -177,7 +176,7 @@ impl Program {
         info!("my_pos: {}", my_idx);
         info!("Leader pos: {}", leader);
 
-        let my_keys = SlotProtocol::generate_keys(my_idx, &mut program_context.key_chain)?;
+        let my_keys = LockProtocol::generate_keys(my_idx, &mut program_context.key_chain)?;
 
         //Creates space for the participants
         let mut others = peers
@@ -189,7 +188,7 @@ impl Program {
         others[my_idx] = ParticipantData::new(&p2p_address, Some(my_keys));
 
         // Create a program with the utxo information, and the dispute resolution search parameters.
-        let protocol = ProtocolType::SlotProtocol(SlotProtocol::new(*id, storage.clone()));
+        let protocol = ProtocolType::LockProtocol(LockProtocol::new(*id, storage.clone()));
 
         let program = Self {
             program_id: *id,

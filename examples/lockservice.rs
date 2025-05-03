@@ -335,7 +335,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
         send_all(&channels, &set_user_pubkey)?;
 
         let setup_msg =
-            IncomingBitVMXApiMessages::SetupSlot(program_id, addresses.clone(), 0).to_string()?;
+            IncomingBitVMXApiMessages::SetupLock(program_id, addresses.clone(), 0).to_string()?;
         send_all(&channels, &setup_msg)?;
 
         get_all(&channels)?;
@@ -352,7 +352,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
             BITVMX_ID,
             IncomingBitVMXApiMessages::GetTransactionInofByName(
                 program_id,
-                program::slot::LOCK_TX.to_string(),
+                program::lock::LOCK_TX.to_string(),
             )
             .to_string()?,
         );
@@ -374,7 +374,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
             BITVMX_ID,
             IncomingBitVMXApiMessages::GetHashedMessage(
                 program_id,
-                program::slot::LOCK_TX.to_string(),
+                program::lock::LOCK_TX.to_string(),
                 0,
                 1,
             )
@@ -394,7 +394,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
             BITVMX_ID,
             IncomingBitVMXApiMessages::DispatchTransactionName(
                 program_id,
-                program::slot::LOCK_TX.to_string(),
+                program::lock::LOCK_TX.to_string(),
             )
             .to_string()?,
         );
@@ -427,7 +427,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
             BITVMX_ID,
             IncomingBitVMXApiMessages::DispatchTransactionName(
                 program_id,
-                program::slot::HAPY_PATH_TX.to_string(),
+                program::lock::HAPY_PATH_TX.to_string(),
             )
             .to_string()?,
         );
