@@ -120,56 +120,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         Ok(())
     }
-}
 
-impl DisputeResolutionProtocol {
-    pub fn new(program_id: Uuid, storage: Rc<Storage>) -> Self {
-        let protocol_name = format!("drp_{}", program_id);
-        Self {
-            ctx: ProtocolContext::new(program_id, protocol_name, storage),
-        }
-    }
-
-    pub fn generate_keys(
-        role: &ParticipantRole,
-        key_chain: &mut KeyChain,
-    ) -> Result<ParticipantKeys, BitVMXError> {
-        //TODO: define which keys are generated for each role
-
-        //let message_size = 2;
-        //let one_time_keys_count = 10;
-        //let protocol = self.program_context.key_chain.derive_keypair()?;
-        let aggregated_1 = key_chain.derive_keypair()?;
-
-        let speedup = key_chain.derive_keypair()?;
-        let timelock = key_chain.derive_keypair()?;
-
-        let mut keys = vec![
-            ("aggregated_1".to_string(), aggregated_1.into()),
-            ("speedup".to_string(), speedup.into()),
-            ("timelock".to_string(), timelock.into()),
-        ];
-
-        let program_input_leaf_1 = key_chain.derive_winternitz_hash160(4)?;
-        let program_input_leaf_2 = key_chain.derive_winternitz_hash160(4)?;
-        if role == &ParticipantRole::Prover {
-            keys.push((
-                "program_input_leaf_1".to_string(),
-                program_input_leaf_1.into(),
-            ));
-            keys.push((
-                "program_input_leaf_2".to_string(),
-                program_input_leaf_2.into(),
-            ));
-        }
-
-        Ok(ParticipantKeys::new(keys, vec!["aggregated_1".to_string()]))
-    }
-
-    pub fn build(
+    fn build(
         &self,
-        prover_keys: &ParticipantKeys,
-        _verifier_keys: &ParticipantKeys,
+        keys: Vec<ParticipantKeys>,
         computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
@@ -242,12 +196,12 @@ impl DisputeResolutionProtocol {
 
         let input_data_l1 = scripts::verify_winternitz_signature(
             aggregated,
-            prover_keys.get_winternitz("program_input_leaf_1")?,
+            keys[0].get_winternitz("program_input_leaf_1")?,
         )?;
 
         let input_data_l2 = scripts::verify_winternitz_signature(
             aggregated,
-            prover_keys.get_winternitz("program_input_leaf_2")?,
+            keys[0].get_winternitz("program_input_leaf_2")?,
         )?;
 
         // protocol.add_taproot_script_spend_connection(
@@ -282,7 +236,7 @@ impl DisputeResolutionProtocol {
         // protocol.add_speedup_output(INPUT_1, p2wpkh_dust_threshold, prover_keys.speedup())?;
 
         // Speedup output
-        let output_type = OutputType::segwit_key(p2wpkh_dust_threshold, prover_keys.speedup())?;
+        let output_type = OutputType::segwit_key(p2wpkh_dust_threshold, keys[0].speedup())?;
         protocol.add_transaction_output(INPUT_1, output_type)?;
 
         //protocol.add_taproot_key_spend_output(START_CH, value, internal_key, prevouts)
@@ -319,6 +273,51 @@ impl DisputeResolutionProtocol {
         self.save_protocol(protocol)?;
 
         Ok(())
+    }
+}
+
+impl DisputeResolutionProtocol {
+    pub fn new(program_id: Uuid, storage: Rc<Storage>) -> Self {
+        let protocol_name = format!("drp_{}", program_id);
+        Self {
+            ctx: ProtocolContext::new(program_id, protocol_name, storage),
+        }
+    }
+
+    pub fn generate_keys(
+        role: &ParticipantRole,
+        key_chain: &mut KeyChain,
+    ) -> Result<ParticipantKeys, BitVMXError> {
+        //TODO: define which keys are generated for each role
+
+        //let message_size = 2;
+        //let one_time_keys_count = 10;
+        //let protocol = self.program_context.key_chain.derive_keypair()?;
+        let aggregated_1 = key_chain.derive_keypair()?;
+
+        let speedup = key_chain.derive_keypair()?;
+        let timelock = key_chain.derive_keypair()?;
+
+        let mut keys = vec![
+            ("aggregated_1".to_string(), aggregated_1.into()),
+            ("speedup".to_string(), speedup.into()),
+            ("timelock".to_string(), timelock.into()),
+        ];
+
+        let program_input_leaf_1 = key_chain.derive_winternitz_hash160(4)?;
+        let program_input_leaf_2 = key_chain.derive_winternitz_hash160(4)?;
+        if role == &ParticipantRole::Prover {
+            keys.push((
+                "program_input_leaf_1".to_string(),
+                program_input_leaf_1.into(),
+            ));
+            keys.push((
+                "program_input_leaf_2".to_string(),
+                program_input_leaf_2.into(),
+            ));
+        }
+
+        Ok(ParticipantKeys::new(keys, vec!["aggregated_1".to_string()]))
     }
 
     pub fn prekickoff_transaction(&self) -> Result<Transaction, ProtocolBuilderError> {

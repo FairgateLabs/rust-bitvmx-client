@@ -54,6 +54,15 @@ impl ProtocolHandler for SlotProtocol {
     ) -> Result<(), BitVMXError> {
         Ok(())
     }
+
+    fn build(
+        &self,
+        _keys: Vec<ParticipantKeys>,
+        _computed_aggregated: HashMap<String, PublicKey>,
+        _context: &ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        Ok(())
+    }
 }
 
 pub const SETUP_TX: &str = "setup_tx";
@@ -79,14 +88,5 @@ impl SlotProtocol {
         keys.push((format!("too_id_{}", my_idx), start_id.into()));
 
         Ok(ParticipantKeys::new(keys, vec!["aggregated_1".to_string()]))
-    }
-
-    pub fn build(
-        &self,
-        _keys: Vec<ParticipantKeys>,
-        _computed_aggregated: HashMap<String, PublicKey>,
-        _context: &ProgramContext,
-    ) -> Result<(), BitVMXError> {
-        Ok(())
     }
 }

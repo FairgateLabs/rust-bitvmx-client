@@ -73,17 +73,17 @@ pub fn all_signatures_ready(others: &Vec<ParticipantData>) -> bool {
     c >= others.len() - 1
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DrpParameters {
     pub role: ParticipantRole,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LockParameters {
     pub my_id: u32,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ProtocolParameters {
     DisputeResolutionProtocol(DrpParameters),
     LockProtocol(LockParameters),
@@ -239,13 +239,13 @@ impl Program {
             (other, me, 1)
         };
 
-        let others = vec![prover, verifier];
+        let participants = vec![prover, verifier];
 
         let program = Self {
             program_id: *id,
             parameters: ProtocolParameters::new_drp(my_role),
             my_idx,
-            participants: others,
+            participants: participants,
             leader: 1, //verifier is the leader (because prover starts sending data)
             protocol: drp,
             state: ProgramState::New,
@@ -322,29 +322,15 @@ impl Program {
             "{}. Building with aggregated: {:?}",
             self.my_idx, aggregated
         );
-        // 3. Build the protocol using the aggregated key as internal key for taproot
 
-        if self.protocol.as_drp().is_some() {
-            info!("Building protocol for: {:?}", self.parameters.drp().role);
+        let keys: Vec<ParticipantKeys> = self
+            .participants
+            .iter()
+            .map(|p| p.keys.as_ref().unwrap().clone())
+            .collect();
 
-            self.protocol.as_drp_mut().unwrap().build(
-                self.participants[0].keys.as_ref().unwrap(),
-                self.participants[1].keys.as_ref().unwrap(),
-                aggregated,
-                &context,
-            )?;
-            info!("Protocol built for role: {:?}", self.parameters.drp().role);
-        } else {
-            let keys: Vec<ParticipantKeys> = self
-                .participants
-                .iter()
-                .map(|p| p.keys.as_ref().unwrap().clone())
-                .collect();
-            self.protocol
-                .as_lock_mut()
-                .unwrap()
-                .build(keys, aggregated, &context)?;
-        }
+        info!("Building protocol for: {:?}", self.parameters);
+        self.protocol.build(keys, aggregated, &context)?;
 
         // 6. Move the program to the next state
         self.move_program_to_next_state()?;

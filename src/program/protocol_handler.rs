@@ -3,6 +3,7 @@ use bitcoin_coordinator::TransactionStatus;
 use enum_dispatch::enum_dispatch;
 use protocol_builder::{builder::Protocol, errors::ProtocolBuilderError};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::rc::Rc;
 use storage_backend::storage::Storage;
 use uuid::Uuid;
@@ -14,6 +15,7 @@ use crate::program::dispute::DisputeResolutionProtocol;
 use crate::types::ProgramContext;
 
 use super::lock::LockProtocol;
+use super::participant::ParticipantKeys;
 use super::program::ProtocolParameters;
 use super::slot::SlotProtocol;
 
@@ -29,6 +31,13 @@ pub trait ProtocolHandler {
     fn set_storage(&mut self, storage: Rc<Storage>) {
         self.context_mut().storage = Some(storage);
     }
+
+    fn build(
+        &self,
+        _keys: Vec<ParticipantKeys>,
+        _computed_aggregated: HashMap<String, PublicKey>,
+        _context: &ProgramContext,
+    ) -> Result<(), BitVMXError>;
 
     fn sign(&mut self, key_chain: &KeyChain) -> Result<(), ProtocolBuilderError> {
         let mut protocol = self.load_protocol()?;
@@ -123,44 +132,4 @@ pub enum ProtocolType {
     DisputeResolutionProtocol,
     LockProtocol,
     SlotProtocol,
-}
-
-impl ProtocolType {
-    pub fn as_drp(&self) -> Option<&DisputeResolutionProtocol> {
-        match self {
-            ProtocolType::DisputeResolutionProtocol(drp) => Some(drp),
-            _ => None,
-        }
-    }
-    pub fn as_drp_mut(&mut self) -> Option<&mut DisputeResolutionProtocol> {
-        match self {
-            ProtocolType::DisputeResolutionProtocol(drp) => Some(drp),
-            _ => None,
-        }
-    }
-
-    pub fn as_lock(&self) -> Option<&LockProtocol> {
-        match self {
-            ProtocolType::LockProtocol(slot) => Some(slot),
-            _ => None,
-        }
-    }
-    pub fn as_lock_mut(&mut self) -> Option<&mut LockProtocol> {
-        match self {
-            ProtocolType::LockProtocol(slot) => Some(slot),
-            _ => None,
-        }
-    }
-    pub fn as_slot(&self) -> Option<&SlotProtocol> {
-        match self {
-            ProtocolType::SlotProtocol(slot) => Some(slot),
-            _ => None,
-        }
-    }
-    pub fn as_slot_mut(&mut self) -> Option<&mut SlotProtocol> {
-        match self {
-            ProtocolType::SlotProtocol(slot) => Some(slot),
-            _ => None,
-        }
-    }
 }
