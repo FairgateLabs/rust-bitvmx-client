@@ -157,6 +157,55 @@ impl OutgoingBitVMXApiMessages {
         let msg: OutgoingBitVMXApiMessages = serde_json::from_str(msg)?;
         Ok(msg)
     }
+
+    pub fn comm_info(&self) -> Option<P2PAddress> {
+        match self {
+            OutgoingBitVMXApiMessages::CommInfo(info) => Some(info.clone()),
+            _ => None,
+        }
+    }
+    pub fn aggregated_pub_key(&self) -> Option<PublicKey> {
+        match self {
+            OutgoingBitVMXApiMessages::AggregatedPubkey(_, pub_key) => Some(pub_key.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn transaction(&self) -> Option<(Uuid, TransactionStatus, Option<String>)> {
+        match self {
+            OutgoingBitVMXApiMessages::Transaction(uuid, status, tx) => {
+                Some((uuid.clone(), status.clone(), tx.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn key_pair(&self) -> Option<(Uuid, PrivateKey, PublicKey)> {
+        match self {
+            OutgoingBitVMXApiMessages::KeyPair(uuid, priv_key, pub_key) => {
+                Some((uuid.clone(), priv_key.clone(), pub_key.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn transaction_info(&self) -> Option<(Uuid, String, Transaction)> {
+        match self {
+            OutgoingBitVMXApiMessages::TransactionInfo(_, name, tx) => {
+                Some((Uuid::new_v4(), name.clone(), tx.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn hashed_message(&self) -> Option<(Uuid, String, u32, u32, String)> {
+        match self {
+            OutgoingBitVMXApiMessages::HashedMessage(_, name, hash1, hash2, msg) => {
+                Some((Uuid::new_v4(), name.clone(), *hash1, *hash2, msg.clone()))
+            }
+            _ => None,
+        }
+    }
 }
 
 impl FromStr for OutgoingBitVMXApiMessages {

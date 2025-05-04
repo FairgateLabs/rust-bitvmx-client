@@ -82,7 +82,7 @@ pub const HAPY_PATH_TX: &str = "happy_path_tx";
 
 impl LockProtocol {
     pub fn new(program_id: Uuid, storage: Rc<Storage>) -> Self {
-        let protocol_name = format!("slot_{}", program_id);
+        let protocol_name = format!("lock_{}", program_id);
         Self {
             ctx: ProtocolContext::new(program_id, protocol_name, storage),
         }

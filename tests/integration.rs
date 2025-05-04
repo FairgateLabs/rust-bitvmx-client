@@ -5,49 +5,12 @@ use bitvmx_client::{
     program::{self, participant::ParticipantRole},
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
-use common::{init_bitvmx, prepare_bitcoin, wait_message_from_channel};
+use common::{config_trace, init_bitvmx, prepare_bitcoin, wait_message_from_channel};
 use protocol_builder::{scripts, types::Utxo};
 use tracing::info;
-use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
-use std::sync::Once;
-
 mod common;
-
-static INIT: Once = Once::new();
-
-fn config_trace() {
-    INIT.call_once(|| {
-        config_trace_aux();
-    });
-}
-
-fn config_trace_aux() {
-    let default_modules = [
-        "info",
-        "libp2p=off",
-        "bitvmx_transaction_monitor=off",
-        "bitcoin_indexer=off",
-        "bitcoin_coordinator=off",
-        "p2p_protocol=off",
-        "p2p_handler=off",
-        "tarpc=off",
-        "key_manager=off",
-        "broker=off",
-    ];
-
-    let filter = EnvFilter::builder()
-        .parse(default_modules.join(","))
-        .expect("Invalid filter");
-
-    tracing_subscriber::fmt()
-        //.without_time()
-        .with_ansi(false)
-        .with_target(true)
-        .with_env_filter(filter)
-        .init();
-}
 
 pub fn init_utxo(
     bitcoin_client: &BitcoinClient,

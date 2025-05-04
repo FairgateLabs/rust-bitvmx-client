@@ -15,6 +15,7 @@ use crate::types::ProgramContext;
 
 use super::lock::LockProtocol;
 use super::program::ProtocolParameters;
+use super::slot::SlotProtocol;
 
 #[enum_dispatch]
 pub trait ProtocolHandler {
@@ -117,6 +118,7 @@ impl ProtocolContext {
 pub enum ProtocolType {
     DisputeResolutionProtocol,
     LockProtocol,
+    SlotProtocol,
 }
 
 impl ProtocolType {
@@ -133,15 +135,27 @@ impl ProtocolType {
         }
     }
 
-    pub fn as_slot(&self) -> Option<&LockProtocol> {
+    pub fn as_lock(&self) -> Option<&LockProtocol> {
         match self {
             ProtocolType::LockProtocol(slot) => Some(slot),
             _ => None,
         }
     }
-    pub fn as_slot_mut(&mut self) -> Option<&mut LockProtocol> {
+    pub fn as_lock_mut(&mut self) -> Option<&mut LockProtocol> {
         match self {
             ProtocolType::LockProtocol(slot) => Some(slot),
+            _ => None,
+        }
+    }
+    pub fn as_slot(&self) -> Option<&SlotProtocol> {
+        match self {
+            ProtocolType::SlotProtocol(slot) => Some(slot),
+            _ => None,
+        }
+    }
+    pub fn as_slot_mut(&mut self) -> Option<&mut SlotProtocol> {
+        match self {
+            ProtocolType::SlotProtocol(slot) => Some(slot),
             _ => None,
         }
     }

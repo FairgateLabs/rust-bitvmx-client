@@ -366,7 +366,7 @@ impl Program {
                 .map(|p| p.keys.as_ref().unwrap().clone())
                 .collect();
             self.protocol
-                .as_slot_mut()
+                .as_lock_mut()
                 .unwrap()
                 .build(keys, aggregated, &context)?;
         }
