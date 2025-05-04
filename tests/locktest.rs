@@ -13,7 +13,9 @@ use bitvmx_client::{
         self,
         variables::{VariableTypes, WitnessTypes},
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID},
+    types::{
+        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID, PROGRAM_TYPE_LOCK,
+    },
 };
 use common::{config_trace, init_bitvmx, prepare_bitcoin, wait_message_from_channel};
 use protocol_builder::scripts::{build_taproot_spend_info, ProtocolScript};
@@ -284,7 +286,9 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     .to_string()?;
     send_all(&channels, &set_user_pubkey)?;
 
-    let setup_msg = IncomingBitVMXApiMessages::SetupLock(program_id, addresses, 0).to_string()?;
+    let setup_msg =
+        IncomingBitVMXApiMessages::Setup(program_id, PROGRAM_TYPE_LOCK.to_string(), addresses, 0)
+            .to_string()?;
     send_all(&channels, &setup_msg)?;
 
     get_all(&channels, &mut instances, false)?;

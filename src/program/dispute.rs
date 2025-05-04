@@ -1,4 +1,4 @@
-use std::{collections::HashMap, rc::Rc};
+use std::collections::HashMap;
 
 use bitcoin::{
     key::UntweakedPublicKey, secp256k1, Amount, PublicKey, ScriptBuf, Transaction, TxOut, Txid,
@@ -16,9 +16,7 @@ use protocol_builder::{
     },
 };
 use serde::{Deserialize, Serialize};
-use storage_backend::storage::Storage;
 use tracing::{info, warn};
-use uuid::Uuid;
 
 use crate::{
     bitvmx::Context, errors::BitVMXError, keychain::KeyChain, program::witness,
@@ -27,7 +25,6 @@ use crate::{
 
 use super::{
     participant::{ParticipantKeys, ParticipantRole},
-    program::ProtocolParameters,
     protocol_handler::{ProtocolContext, ProtocolHandler},
 };
 
@@ -39,6 +36,14 @@ const _PROTOCOL: &str = "protocol";
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DisputeResolutionProtocol {
     ctx: ProtocolContext,
+}
+
+fn get_role(my_idx: usize) -> ParticipantRole {
+    if my_idx == 0 {
+        ParticipantRole::Prover
+    } else {
+        ParticipantRole::Verifier
+    }
 }
 
 impl ProtocolHandler for DisputeResolutionProtocol {
@@ -63,6 +68,49 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         )])
     }
 
+    fn generate_keys(
+        &self,
+        my_idx: usize,
+        key_chain: &mut KeyChain,
+    ) -> Result<ParticipantKeys, BitVMXError> {
+        //TODO: define which keys are generated for each role
+
+        let role = if my_idx == 0 {
+            &ParticipantRole::Prover
+        } else {
+            &ParticipantRole::Verifier
+        };
+
+        //let message_size = 2;
+        //let one_time_keys_count = 10;
+        //let protocol = self.program_context.key_chain.derive_keypair()?;
+        let aggregated_1 = key_chain.derive_keypair()?;
+
+        let speedup = key_chain.derive_keypair()?;
+        let timelock = key_chain.derive_keypair()?;
+
+        let mut keys = vec![
+            ("aggregated_1".to_string(), aggregated_1.into()),
+            ("speedup".to_string(), speedup.into()),
+            ("timelock".to_string(), timelock.into()),
+        ];
+
+        let program_input_leaf_1 = key_chain.derive_winternitz_hash160(4)?;
+        let program_input_leaf_2 = key_chain.derive_winternitz_hash160(4)?;
+        if role == &ParticipantRole::Prover {
+            keys.push((
+                "program_input_leaf_1".to_string(),
+                program_input_leaf_1.into(),
+            ));
+            keys.push((
+                "program_input_leaf_2".to_string(),
+                program_input_leaf_2.into(),
+            ));
+        }
+
+        Ok(ParticipantKeys::new(keys, vec!["aggregated_1".to_string()]))
+    }
+
     fn get_transaction_name(
         &self,
         name: &str,
@@ -80,17 +128,16 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         tx_status: TransactionStatus,
         _context: String,
         program_context: &ProgramContext,
-        parameters: &ProtocolParameters,
     ) -> Result<(), BitVMXError> {
         let name = self.get_transaction_name_by_id(tx_id)?;
         info!(
             "Program {}: Transaction {} has been seen on-chain {}",
             self.ctx.id,
             name,
-            parameters.drp().role
+            self.role()
         );
 
-        if name == START_CH && parameters.drp().role == ParticipantRole::Prover {
+        if name == START_CH && self.role() == ParticipantRole::Prover {
             //TODO: inform whoever is needed
             // now act here to test
 
@@ -105,7 +152,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             )?;
         }
 
-        if name == INPUT_1 && parameters.drp().role == ParticipantRole::Verifier {
+        if name == INPUT_1 && self.role() == ParticipantRole::Verifier {
             //let wpub = self .get_prover() .keys .as_ref() .unwrap() .get_winternitz("program_input") .unwrap();
             let witness = tx_status.tx.input[0].witness.clone();
             let data = witness::decode_witness(vec![4], WinternitzType::HASH160, witness)?;
@@ -277,47 +324,12 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 }
 
 impl DisputeResolutionProtocol {
-    pub fn new(program_id: Uuid, storage: Rc<Storage>) -> Self {
-        let protocol_name = format!("drp_{}", program_id);
-        Self {
-            ctx: ProtocolContext::new(program_id, protocol_name, storage),
-        }
+    pub fn new(context: ProtocolContext) -> Self {
+        Self { ctx: context }
     }
 
-    pub fn generate_keys(
-        role: &ParticipantRole,
-        key_chain: &mut KeyChain,
-    ) -> Result<ParticipantKeys, BitVMXError> {
-        //TODO: define which keys are generated for each role
-
-        //let message_size = 2;
-        //let one_time_keys_count = 10;
-        //let protocol = self.program_context.key_chain.derive_keypair()?;
-        let aggregated_1 = key_chain.derive_keypair()?;
-
-        let speedup = key_chain.derive_keypair()?;
-        let timelock = key_chain.derive_keypair()?;
-
-        let mut keys = vec![
-            ("aggregated_1".to_string(), aggregated_1.into()),
-            ("speedup".to_string(), speedup.into()),
-            ("timelock".to_string(), timelock.into()),
-        ];
-
-        let program_input_leaf_1 = key_chain.derive_winternitz_hash160(4)?;
-        let program_input_leaf_2 = key_chain.derive_winternitz_hash160(4)?;
-        if role == &ParticipantRole::Prover {
-            keys.push((
-                "program_input_leaf_1".to_string(),
-                program_input_leaf_1.into(),
-            ));
-            keys.push((
-                "program_input_leaf_2".to_string(),
-                program_input_leaf_2.into(),
-            ));
-        }
-
-        Ok(ParticipantKeys::new(keys, vec!["aggregated_1".to_string()]))
+    pub fn role(&self) -> ParticipantRole {
+        get_role(self.ctx.my_idx)
     }
 
     pub fn prekickoff_transaction(&self) -> Result<Transaction, ProtocolBuilderError> {

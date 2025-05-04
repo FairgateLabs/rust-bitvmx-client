@@ -7,7 +7,7 @@ use crate::{
     keychain::KeyChain,
     p2p_helper::deserialize_msg,
     program::{
-        participant::{P2PAddress, ParticipantRole},
+        participant::P2PAddress,
         program::Program,
         variables::{Globals, WitnessVars},
     },
@@ -16,7 +16,6 @@ use crate::{
         BITVMX_ID, L2_ID,
     },
 };
-
 use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::{
     coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi},
@@ -156,10 +155,10 @@ impl BitVMX {
             self.save_collaboration(&collaboration)?;
         } else {
             if pend_to_back {
-                info!("Pending message to back: {} {:?}", program_id, msg_type);
+                info!("Pending message to back: {:?}", msg_type);
                 self.pending_messages.push_back((peer, msg));
             } else {
-                info!("Pending message to front: {} {:?}", program_id, msg_type);
+                info!("Pending message to front: {:?}", msg_type);
                 self.pending_messages.push_front((peer, msg));
             }
         }
@@ -608,9 +607,10 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn setup_slot(
+    fn setup(
         &mut self,
         id: Uuid,
+        program_type: String,
         peer_address: Vec<P2PAddress>,
         leader: u16,
     ) -> Result<(), BitVMXError> {
@@ -619,9 +619,10 @@ impl BitVMXApi for BitVMX {
             return Err(BitVMXError::ProgramAlreadyExists(id));
         }
 
-        info!("Setting up program: {:?}", id);
-        Program::setup_slot(
+        info!("Setting up program: {:?} type {}", id, program_type);
+        Program::setup(
             &id,
+            &program_type,
             peer_address,
             leader as usize,
             &mut self.program_context,
@@ -633,32 +634,6 @@ impl BitVMXApi for BitVMX {
             "Program Setup Finished {}",
             self.program_context.comms.get_peer_id()
         );
-
-        Ok(())
-    }
-
-    fn setup_program(
-        &mut self,
-        id: Uuid,
-        role: ParticipantRole,
-        peer_address: P2PAddress,
-    ) -> Result<(), BitVMXError> {
-        if self.program_exists(&id)? {
-            info!("{}: Program already exists", role);
-            return Err(BitVMXError::ProgramAlreadyExists(id));
-        }
-
-        info!("Setting up program: {:?}", id);
-        Program::setup_program(
-            &id,
-            role.clone(),
-            &peer_address,
-            &mut self.program_context,
-            self.store.clone(),
-            &self._config.client,
-        )?;
-        self.add_new_program(&id)?;
-        info!("{}: Program Setup Finished", role);
 
         Ok(())
     }
@@ -741,9 +716,6 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::GetWitness(uuid, key) => {
                 BitVMXApi::get_witness(self, from, uuid, &key)?;
             }
-            IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address) => {
-                BitVMXApi::setup_program(self, id, role, peer_address)?
-            }
             IncomingBitVMXApiMessages::GetTransaction(id, txid) => {
                 BitVMXApi::get_transaction(self, from, id, txid)?
             }
@@ -758,8 +730,8 @@ impl BitVMXApi for BitVMX {
                     ))?,
                 )?;
             }
-            IncomingBitVMXApiMessages::SetupLock(id, participants, leader) => {
-                BitVMXApi::setup_slot(self, id, participants, leader)?
+            IncomingBitVMXApiMessages::Setup(id, program_type, participants, leader) => {
+                BitVMXApi::setup(self, id, program_type, participants, leader)?
             }
             IncomingBitVMXApiMessages::SubscribeToTransaction(uuid, txid) => {
                 BitVMXApi::subscribe_to_tx(self, from, uuid, txid)?

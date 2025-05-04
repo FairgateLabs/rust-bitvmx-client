@@ -2,8 +2,8 @@ use anyhow::Result;
 use bitcoin::{secp256k1, Address, Amount, KnownHrp, PublicKey, XOnlyPublicKey};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_client::{
-    program::{self, participant::ParticipantRole, variables::VariableTypes},
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
+    program::{self, variables::VariableTypes},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_DRP},
 };
 use common::{config_trace, init_bitvmx, prepare_bitcoin, wait_message_from_channel};
 use protocol_builder::{scripts, types::Utxo};
@@ -69,14 +69,12 @@ pub fn test_single_run() -> Result<()> {
         }
     }
 
+    let participants = vec![prover_address.clone(), verifier_address.clone()];
+
     //ask the peers to generate the aggregated public key
     let aggregation_id = Uuid::new_v4();
-    let command = IncomingBitVMXApiMessages::SetupKey(
-        aggregation_id,
-        vec![prover_address.clone(), verifier_address.clone()],
-        0,
-    )
-    .to_string()?;
+    let command =
+        IncomingBitVMXApiMessages::SetupKey(aggregation_id, participants.clone(), 0).to_string()?;
     prover_bridge_channel.send(BITVMX_ID, command.clone())?;
     verifier_bridge_channel.send(BITVMX_ID, command)?;
 
@@ -116,20 +114,11 @@ pub fn test_single_run() -> Result<()> {
     prover_bridge_channel.send(BITVMX_ID, set_utxo_msg.clone())?;
     verifier_bridge_channel.send(BITVMX_ID, set_utxo_msg)?;
 
-    let setup_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetupProgram(
-        program_id,
-        ParticipantRole::Prover,
-        verifier_address.clone(),
-    ))?;
+    let setup_msg =
+        IncomingBitVMXApiMessages::Setup(program_id, PROGRAM_TYPE_DRP.to_string(), participants, 1)
+            .to_string()?;
 
-    prover_bridge_channel.send(BITVMX_ID, setup_msg)?;
-
-    let setup_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetupProgram(
-        program_id,
-        ParticipantRole::Verifier,
-        prover_address.clone(),
-    ))?;
-
+    prover_bridge_channel.send(BITVMX_ID, setup_msg.clone())?;
     verifier_bridge_channel.send(BITVMX_ID, setup_msg)?;
 
     info!("Waiting for setup messages...");

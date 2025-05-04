@@ -11,12 +11,11 @@ use uuid::Uuid;
 use crate::errors::BitVMXError;
 use crate::keychain::KeyChain;
 
-use crate::program::dispute::DisputeResolutionProtocol;
-use crate::types::ProgramContext;
+use crate::types::{ProgramContext, PROGRAM_TYPE_DRP, PROGRAM_TYPE_LOCK, PROGRAM_TYPE_SLOT};
 
+use super::dispute::DisputeResolutionProtocol;
 use super::lock::LockProtocol;
 use super::participant::ParticipantKeys;
-use super::program::ProtocolParameters;
 use super::slot::SlotProtocol;
 
 #[enum_dispatch]
@@ -27,6 +26,12 @@ pub trait ProtocolHandler {
         &self,
         context: &ProgramContext,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError>;
+
+    fn generate_keys(
+        &self,
+        my_idx: usize,
+        key_chain: &mut KeyChain,
+    ) -> Result<ParticipantKeys, BitVMXError>;
 
     fn set_storage(&mut self, storage: Rc<Storage>) {
         self.context_mut().storage = Some(storage);
@@ -104,7 +109,6 @@ pub trait ProtocolHandler {
         tx_status: TransactionStatus,
         context: String,
         program_context: &ProgramContext,
-        parameters: &ProtocolParameters,
     ) -> Result<(), BitVMXError>;
 }
 
@@ -112,15 +116,17 @@ pub trait ProtocolHandler {
 pub struct ProtocolContext {
     pub protocol_name: String,
     pub id: Uuid,
+    pub my_idx: usize,
     #[serde(skip)]
     pub storage: Option<Rc<Storage>>,
 }
 
 impl ProtocolContext {
-    pub fn new(id: Uuid, name: String, storage: Rc<Storage>) -> Self {
+    pub fn new(id: Uuid, name: &str, my_idx: usize, storage: Rc<Storage>) -> Self {
         Self {
             id,
-            protocol_name: name,
+            protocol_name: name.to_string(),
+            my_idx,
             storage: Some(storage),
         }
     }
@@ -132,4 +138,23 @@ pub enum ProtocolType {
     DisputeResolutionProtocol,
     LockProtocol,
     SlotProtocol,
+}
+
+pub fn new_protocol_type(
+    id: Uuid,
+    name: &str,
+    my_idx: usize,
+    storage: Rc<Storage>,
+) -> Result<ProtocolType, BitVMXError> {
+    let protocol_name = format!("{}_{}", name, id);
+    let ctx = ProtocolContext::new(id, &protocol_name, my_idx, storage);
+
+    match name {
+        PROGRAM_TYPE_DRP => Ok(ProtocolType::DisputeResolutionProtocol(
+            DisputeResolutionProtocol::new(ctx),
+        )),
+        PROGRAM_TYPE_LOCK => Ok(ProtocolType::LockProtocol(LockProtocol::new(ctx))),
+        PROGRAM_TYPE_SLOT => Ok(ProtocolType::SlotProtocol(SlotProtocol::new(ctx))),
+        _ => Err(BitVMXError::NotImplemented(name.to_string())),
+    }
 }

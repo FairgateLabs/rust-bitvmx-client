@@ -1,7 +1,7 @@
 use crate::{
     errors::ClientError,
     program::{
-        participant::{P2PAddress, ParticipantRole},
+        participant::P2PAddress,
         variables::{VariableTypes, WitnessTypes},
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
@@ -34,12 +34,19 @@ impl BitVMXClient {
         self.send_message(IncomingBitVMXApiMessages::Ping())
     }
 
-    pub fn setup(&self, id: Uuid, role: ParticipantRole, address: P2PAddress) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::SetupProgram(id, role, address))
-    }
-
-    pub fn setup_slot(&self, id: Uuid, addresses: Vec<P2PAddress>, leader: u16) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::SetupLock(id, addresses, leader))
+    pub fn setup(
+        &self,
+        id: Uuid,
+        program_type: String,
+        addresses: Vec<P2PAddress>,
+        leader: u16,
+    ) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::Setup(
+            id,
+            program_type,
+            addresses,
+            leader,
+        ))
     }
 
     pub fn dispatch_transaction(&self, id: Uuid, tx: Transaction) -> Result<()> {

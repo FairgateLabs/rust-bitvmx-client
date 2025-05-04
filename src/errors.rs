@@ -10,10 +10,10 @@ use key_manager::{
 };
 use p2p_handler::P2pHandlerError;
 use protocol_builder::errors::{ProtocolBuilderError, ScriptError, UnspendableKeyError};
+use std::time::Duration;
 use storage_backend::error::StorageError;
 use thiserror::Error;
 use uuid::Uuid;
-use std::time::Duration;
 
 #[derive(Error, Debug)]
 pub enum BitVMXError {
@@ -105,6 +105,9 @@ pub enum BitVMXError {
 
     #[error("Client error")]
     ClientError(#[from] ClientError),
+
+    #[error("This feature is not implemented yet {0}")]
+    NotImplemented(String),
 }
 
 #[derive(Error, Debug)]

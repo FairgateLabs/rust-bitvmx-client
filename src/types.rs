@@ -12,7 +12,7 @@ use crate::{
     errors::BitVMXError,
     keychain::KeyChain,
     program::{
-        participant::{P2PAddress, ParticipantRole},
+        participant::P2PAddress,
         variables::{Globals, VariableTypes, WitnessTypes, WitnessVars},
     },
 };
@@ -94,11 +94,10 @@ pub enum IncomingBitVMXApiMessages {
     GetVar(Uuid, String),
     GetWitness(Uuid, String),
     GetCommInfo(),
-    SetupProgram(ProgramId, ParticipantRole, P2PAddress),
     GetTransaction(Uuid, Txid),
     GetTransactionInofByName(Uuid, String),
     GetHashedMessage(Uuid, String, u32, u32),
-    SetupLock(ProgramId, Vec<P2PAddress>, u16),
+    Setup(ProgramId, String, Vec<P2PAddress>, u16),
     SubscribeToTransaction(Uuid, Txid),
     SubscribeUTXO(),
     DispatchTransaction(Uuid, Transaction),
@@ -224,3 +223,8 @@ impl RequestId {
         Self(Uuid::new_v4())
     }
 }
+
+pub const PROGRAM_TYPE_LOCK: &str = "lock";
+pub const PROGRAM_TYPE_DRP: &str = "drp";
+pub const PROGRAM_TYPE_SLOT: &str = "slot";
+pub const PROGRAM_TYPE_FINAL: &str = "final";

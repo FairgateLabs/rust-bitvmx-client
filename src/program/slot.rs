@@ -1,16 +1,13 @@
-use std::{collections::HashMap, rc::Rc};
+use std::collections::HashMap;
 
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use serde::{Deserialize, Serialize};
-use storage_backend::storage::Storage;
-use uuid::Uuid;
 
 use crate::{errors::BitVMXError, keychain::KeyChain, types::ProgramContext};
 
 use super::{
     participant::ParticipantKeys,
-    program::ProtocolParameters,
     protocol_handler::{ProtocolContext, ProtocolHandler},
 };
 
@@ -35,6 +32,14 @@ impl ProtocolHandler for SlotProtocol {
         Ok(vec![])
     }
 
+    fn generate_keys(
+        &self,
+        _my_idx: usize,
+        _key_chain: &mut KeyChain,
+    ) -> Result<ParticipantKeys, BitVMXError> {
+        Err(BitVMXError::NotImplemented("generate_keys".to_string()))
+    }
+
     fn get_transaction_name(
         &self,
         name: &str,
@@ -50,7 +55,6 @@ impl ProtocolHandler for SlotProtocol {
         _tx_status: TransactionStatus,
         _context: String,
         _program_context: &ProgramContext,
-        _parameters: &ProtocolParameters,
     ) -> Result<(), BitVMXError> {
         Ok(())
     }
@@ -68,13 +72,9 @@ impl ProtocolHandler for SlotProtocol {
 pub const SETUP_TX: &str = "setup_tx";
 
 impl SlotProtocol {
-    pub fn new(program_id: Uuid, storage: Rc<Storage>) -> Self {
-        let protocol_name = format!("slot_{}", program_id);
-        Self {
-            ctx: ProtocolContext::new(program_id, protocol_name, storage),
-        }
+    pub fn new(context: ProtocolContext) -> Self {
+        Self { ctx: context }
     }
-
     pub fn generate_keys(
         my_idx: usize,
         key_chain: &mut KeyChain,

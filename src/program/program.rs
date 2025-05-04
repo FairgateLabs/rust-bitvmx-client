@@ -6,13 +6,12 @@ use crate::{
         parse_keys, parse_nonces, parse_signatures, PartialSignatureMessage, PubNonceMessage,
     },
     p2p_helper::{request, response, P2PMessageType},
-    program::{lock::LockProtocol, participant::ParticipantKeys},
+    program::{participant::ParticipantKeys, protocol_handler::new_protocol_type},
     types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramRequestInfo, L2_ID},
 };
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus, TypesToMonitor};
 use chrono::Utc;
-use core::panic;
 use key_manager::musig2::{types::MessageId, PartialSignature, PubNonce};
 use p2p_handler::PeerId;
 use serde::{Deserialize, Serialize};
@@ -23,7 +22,6 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::{
-    dispute::DisputeResolutionProtocol,
     participant::{P2PAddress, ParticipantData, ParticipantRole},
     protocol_handler::{ProtocolHandler, ProtocolType},
     state::{ProgramState, SettingUpState},
@@ -83,40 +81,9 @@ pub struct LockParameters {
     pub my_id: u32,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum ProtocolParameters {
-    DisputeResolutionProtocol(DrpParameters),
-    LockProtocol(LockParameters),
-}
-
-impl ProtocolParameters {
-    pub fn new_drp(role: ParticipantRole) -> Self {
-        ProtocolParameters::DisputeResolutionProtocol(DrpParameters { role })
-    }
-
-    pub fn new_slot(my_id: u32) -> Self {
-        ProtocolParameters::LockProtocol(LockParameters { my_id })
-    }
-
-    pub fn drp(&self) -> &DrpParameters {
-        match self {
-            ProtocolParameters::DisputeResolutionProtocol(drp) => drp,
-            _ => panic!("Not a DRP protocol"),
-        }
-    }
-
-    pub fn slot(&self) -> &LockParameters {
-        match self {
-            ProtocolParameters::LockProtocol(slot) => slot,
-            _ => panic!("Not a Slot protocol"),
-        }
-    }
-}
-
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Program {
     pub program_id: Uuid,
-    pub parameters: ProtocolParameters,
     pub my_idx: usize,
     pub participants: Vec<ParticipantData>,
     pub leader: usize,
@@ -153,7 +120,6 @@ impl Program {
         protocol_type: &str,
         peers: Vec<P2PAddress>,
         leader: usize,
-        my_idx: usize,
         program_context: &mut ProgramContext,
         storage: Rc<Storage>,
         config: &ClientConfig,
@@ -177,7 +143,8 @@ impl Program {
         info!("my_pos: {}", my_idx);
         info!("Leader pos: {}", leader);
 
-        let my_keys = LockProtocol::generate_keys(my_idx, &mut program_context.key_chain)?;
+        let protocol = new_protocol_type(*id, protocol_type, my_idx, storage.clone())?;
+        let my_keys = protocol.generate_keys(my_idx, &mut program_context.key_chain)?;
 
         //Creates space for the participants
         let mut others = peers
@@ -188,69 +155,12 @@ impl Program {
         // save my pos in the others list to have the complete message ready
         others[my_idx] = ParticipantData::new(&p2p_address, Some(my_keys));
 
-        // Create a program with the utxo information, and the dispute resolution search parameters.
-        let protocol = ProtocolType::LockProtocol(LockProtocol::new(*id, storage.clone()));
-
         let program = Self {
             program_id: *id,
-            parameters: ProtocolParameters::new_slot(my_idx as u32),
             my_idx,
             participants: others,
             leader,
             protocol,
-            state: ProgramState::New,
-            storage: Some(storage),
-            config: config.clone(),
-        };
-
-        program.save()?;
-
-        Ok(program)
-    }
-
-    pub fn setup_program(
-        id: &Uuid,
-        my_role: ParticipantRole,
-        peer_address: &P2PAddress,
-        program_context: &mut ProgramContext,
-        storage: Rc<Storage>,
-        config: &ClientConfig,
-    ) -> Result<Self, BitVMXError> {
-        // Generate my keys.
-        let my_keys =
-            DisputeResolutionProtocol::generate_keys(&my_role, &mut program_context.key_chain)?;
-
-        let p2p_address = P2PAddress::new(
-            &program_context.comms.get_address(),
-            program_context.comms.get_peer_id(),
-        );
-        // Create a participant that represents me with the specified role (Prover or Verifier).
-        let me = ParticipantData::new(&p2p_address, Some(my_keys));
-
-        // Create a participant that represents the counterparty with the opposite role.
-        let other = ParticipantData::new(peer_address, None);
-
-        // Create a program with the utxo information, and the dispute resolution search parameters.
-        let drp = ProtocolType::DisputeResolutionProtocol(DisputeResolutionProtocol::new(
-            *id,
-            storage.clone(),
-        ));
-
-        let (prover, verifier, my_idx) = if my_role == ParticipantRole::Prover {
-            (me, other, 0)
-        } else {
-            (other, me, 1)
-        };
-
-        let participants = vec![prover, verifier];
-
-        let program = Self {
-            program_id: *id,
-            parameters: ProtocolParameters::new_drp(my_role),
-            my_idx,
-            participants: participants,
-            leader: 1, //verifier is the leader (because prover starts sending data)
-            protocol: drp,
             state: ProgramState::New,
             storage: Some(storage),
             config: config.clone(),
@@ -332,7 +242,7 @@ impl Program {
             .map(|p| p.keys.as_ref().unwrap().clone())
             .collect();
 
-        info!("Building protocol for: {:?}", self.parameters);
+        info!("Building protocol for: {} {}", self.program_id, self.my_idx);
         self.protocol.build(keys, aggregated, &context)?;
 
         // 6. Move the program to the next state
@@ -834,13 +744,8 @@ impl Program {
         context: String,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        self.protocol.notify_news(
-            tx_id,
-            tx_status.clone(),
-            context,
-            program_context,
-            &self.parameters,
-        )?;
+        self.protocol
+            .notify_news(tx_id, tx_status.clone(), context, program_context)?;
 
         let name = self.protocol.get_transaction_name_by_id(tx_id)?;
         program_context.broker_channel.send(

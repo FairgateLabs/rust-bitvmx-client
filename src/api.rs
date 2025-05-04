@@ -1,10 +1,7 @@
 use bitcoin::{Transaction, Txid};
 use uuid::Uuid;
 
-use crate::{
-    errors::BitVMXError,
-    program::participant::{P2PAddress, ParticipantRole},
-};
+use crate::{errors::BitVMXError, program::participant::P2PAddress};
 
 pub trait BitVMXApi {
     fn ping(&mut self, from: u32) -> Result<(), BitVMXError>;
@@ -17,18 +14,12 @@ pub trait BitVMXApi {
         leader_idx: u16,
     ) -> Result<(), BitVMXError>;
 
-    fn setup_slot(
+    fn setup(
         &mut self,
         id: Uuid,
+        program_type: String,
         peer_address: Vec<P2PAddress>,
         leader: u16,
-    ) -> Result<(), BitVMXError>;
-
-    fn setup_program(
-        &mut self,
-        id: Uuid,
-        role: ParticipantRole,
-        peer_address: P2PAddress,
     ) -> Result<(), BitVMXError>;
 
     fn dispatch_transaction_name(&mut self, id: Uuid, name: &str) -> Result<(), BitVMXError>;

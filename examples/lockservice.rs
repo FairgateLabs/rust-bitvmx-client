@@ -16,7 +16,9 @@ use bitvmx_client::{
         self,
         variables::{VariableTypes, WitnessTypes},
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID},
+    types::{
+        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID, PROGRAM_TYPE_LOCK,
+    },
 };
 
 use storage_backend::storage::Storage;
@@ -334,8 +336,13 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
         .to_string()?;
         send_all(&channels, &set_user_pubkey)?;
 
-        let setup_msg =
-            IncomingBitVMXApiMessages::SetupLock(program_id, addresses.clone(), 0).to_string()?;
+        let setup_msg = IncomingBitVMXApiMessages::Setup(
+            program_id,
+            PROGRAM_TYPE_LOCK.to_string(),
+            addresses.clone(),
+            0,
+        )
+        .to_string()?;
         send_all(&channels, &setup_msg)?;
 
         get_all(&channels)?;

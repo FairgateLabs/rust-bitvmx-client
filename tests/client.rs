@@ -17,7 +17,7 @@ use bitvmx_client::{
         participant::P2PAddress,
         variables::{VariableTypes, WitnessTypes},
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, L2_ID},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, L2_ID, PROGRAM_TYPE_LOCK},
 };
 use bitvmx_transaction_monitor::types::TransactionBlockchainStatus::Finalized;
 use common::{clear_db, prepare_bitcoin, INITIAL_BLOCK_COUNT};
@@ -203,11 +203,15 @@ impl ClientTest {
         Ok(())
     }
 
-    fn setup_slot(&mut self) -> Result<()> {
+    fn setup_lock(&mut self) -> Result<()> {
         let addresses = vec![self.prover.address.clone(), self.verifier.address.clone()];
 
-        self.prover_client
-            .setup_slot(self.program_id, addresses.clone(), 0)?;
+        self.prover_client.setup(
+            self.program_id,
+            PROGRAM_TYPE_LOCK.to_string(),
+            addresses.clone(),
+            0,
+        )?;
         // self.verifier_client.setup_slot(self.program_id, addresses, 0)?;
 
         self.advance(1);
@@ -492,7 +496,7 @@ pub fn test_client() -> Result<()> {
     test.subscribe_to_transaction(pubkey, secret.clone())?;
     test.set_var(pubkey, secret)?;
     test.get_var(pubkey)?;
-    test.setup_slot()?;
+    test.setup_lock()?;
     let preimage = test.set_witness(preimage)?;
     test.get_witness(preimage)?;
     // test.dispatch_transaction()?;
