@@ -1,4 +1,4 @@
-use bitcoin::{Transaction, Txid};
+use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use enum_dispatch::enum_dispatch;
 use protocol_builder::{builder::Protocol, errors::ProtocolBuilderError};
@@ -21,6 +21,10 @@ use super::slot::SlotProtocol;
 pub trait ProtocolHandler {
     fn context(&self) -> &ProtocolContext;
     fn context_mut(&mut self) -> &mut ProtocolContext;
+    fn get_pregenerated_aggregated_keys(
+        &self,
+        context: &ProgramContext,
+    ) -> Result<Vec<(String, PublicKey)>, BitVMXError>;
 
     fn set_storage(&mut self, storage: Rc<Storage>) {
         self.context_mut().storage = Some(storage);

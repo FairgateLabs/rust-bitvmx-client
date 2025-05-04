@@ -15,7 +15,6 @@ use chrono::Utc;
 use core::panic;
 use key_manager::musig2::{types::MessageId, PartialSignature, PubNonce};
 use p2p_handler::PeerId;
-use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashMap, rc::Rc};
@@ -24,7 +23,7 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::{
-    dispute::{DisputeResolutionProtocol, SearchParams},
+    dispute::DisputeResolutionProtocol,
     participant::{P2PAddress, ParticipantData, ParticipantRole},
     protocol_handler::{ProtocolHandler, ProtocolType},
     state::{ProgramState, SettingUpState},
@@ -121,7 +120,6 @@ pub struct Program {
     pub my_idx: usize,
     pub participants: Vec<ParticipantData>,
     pub leader: usize,
-    pub utxo: Option<Utxo>,
     pub protocol: ProtocolType,
     pub state: ProgramState,
     #[serde(skip)]
@@ -196,7 +194,6 @@ impl Program {
             my_idx,
             participants: others,
             leader,
-            utxo: None,
             protocol,
             state: ProgramState::New,
             storage: Some(storage),
@@ -212,7 +209,6 @@ impl Program {
         id: &Uuid,
         my_role: ParticipantRole,
         peer_address: &P2PAddress,
-        utxo: Utxo,
         program_context: &mut ProgramContext,
         storage: Rc<Storage>,
         config: &ClientConfig,
@@ -251,7 +247,6 @@ impl Program {
             my_idx,
             participants: others,
             leader: 1, //verifier is the leader (because prover starts sending data)
-            utxo: Some(utxo),
             protocol: drp,
             state: ProgramState::New,
             storage: Some(storage),
@@ -267,23 +262,7 @@ impl Program {
         &mut self,
         context: &ProgramContext,
     ) -> Result<HashMap<String, PublicKey>, BitVMXError> {
-        // 2. Init the musig2 signer for this program
-        //TODO: move this to code inside each protocol
-        let mut aggregated_keys = vec![];
-        if self.utxo.is_some() {
-            aggregated_keys.push((
-                "pregenerated".to_string(),
-                self.utxo.clone().unwrap().pub_key,
-            ));
-        } else {
-            aggregated_keys.push((
-                "pregenerated".to_string(),
-                context
-                    .globals
-                    .get_var(&self.program_id, "operators_aggregated_pub")?
-                    .pubkey()?,
-            ));
-        };
+        let mut aggregated_keys = self.protocol.get_pregenerated_aggregated_keys(context)?;
 
         let mut result = HashMap::new();
 
@@ -338,8 +317,6 @@ impl Program {
     }
 
     pub fn build_protocol(&mut self, context: &ProgramContext) -> Result<(), BitVMXError> {
-        let search_params = SearchParams::new(8, 32);
-
         let aggregated = self.prepare_aggregated_keys(context)?;
         info!(
             "{}. Building with aggregated: {:?}",
@@ -351,12 +328,10 @@ impl Program {
             info!("Building protocol for: {:?}", self.parameters.drp().role);
 
             self.protocol.as_drp_mut().unwrap().build(
-                self.utxo.as_ref().unwrap().clone(),
                 self.participants[0].keys.as_ref().unwrap(),
                 self.participants[1].keys.as_ref().unwrap(),
                 aggregated,
-                search_params,
-                &context.key_chain,
+                &context,
             )?;
             info!("Protocol built for role: {:?}", self.parameters.drp().role);
         } else {

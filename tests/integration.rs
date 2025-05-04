@@ -2,7 +2,7 @@ use anyhow::Result;
 use bitcoin::{secp256k1, Address, Amount, KnownHrp, PublicKey, XOnlyPublicKey};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_client::{
-    program::{self, participant::ParticipantRole},
+    program::{self, participant::ParticipantRole, variables::VariableTypes},
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
 use common::{config_trace, init_bitvmx, prepare_bitcoin, wait_message_from_channel};
@@ -69,9 +69,6 @@ pub fn test_single_run() -> Result<()> {
         }
     }
 
-    //let aggregated_pub_key =
-    //    PublicKey::from_str("020d48dbe8043e0114f3255f205152fa621dd7f4e1bbf69d4e255ddb2aaa2878d2")?;
-
     //ask the peers to generate the aggregated public key
     let aggregation_id = Uuid::new_v4();
     let command = IncomingBitVMXApiMessages::SetupKey(
@@ -100,11 +97,29 @@ pub fn test_single_run() -> Result<()> {
     let utxo = init_utxo(&bitcoin_client, aggregated_pub_key, None)?;
 
     let program_id = Uuid::new_v4();
+
+    let set_aggregated_msg = IncomingBitVMXApiMessages::SetVar(
+        program_id,
+        "aggregated".to_string(),
+        VariableTypes::PubKey(utxo.pub_key),
+    )
+    .to_string()?;
+    prover_bridge_channel.send(BITVMX_ID, set_aggregated_msg.clone())?;
+    verifier_bridge_channel.send(BITVMX_ID, set_aggregated_msg)?;
+
+    let set_utxo_msg = IncomingBitVMXApiMessages::SetVar(
+        program_id,
+        "utxo".to_string(),
+        VariableTypes::Utxo((utxo.txid, utxo.vout, Some(utxo.amount))),
+    )
+    .to_string()?;
+    prover_bridge_channel.send(BITVMX_ID, set_utxo_msg.clone())?;
+    verifier_bridge_channel.send(BITVMX_ID, set_utxo_msg)?;
+
     let setup_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetupProgram(
         program_id,
         ParticipantRole::Prover,
         verifier_address.clone(),
-        utxo.clone(),
     ))?;
 
     prover_bridge_channel.send(BITVMX_ID, setup_msg)?;
@@ -113,7 +128,6 @@ pub fn test_single_run() -> Result<()> {
         program_id,
         ParticipantRole::Verifier,
         prover_address.clone(),
-        utxo,
     ))?;
 
     verifier_bridge_channel.send(BITVMX_ID, setup_msg)?;

@@ -39,6 +39,20 @@ impl ProtocolHandler for LockProtocol {
         &mut self.ctx
     }
 
+    fn get_pregenerated_aggregated_keys(
+        &self,
+
+        context: &ProgramContext,
+    ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
+        Ok(vec![(
+            "pregenerated".to_string(),
+            context
+                .globals
+                .get_var(&self.ctx.id, "operators_aggregated_pub")?
+                .pubkey()?,
+        )])
+    }
+
     fn get_transaction_name(
         &self,
         name: &str,

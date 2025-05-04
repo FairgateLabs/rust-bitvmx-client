@@ -30,7 +30,6 @@ use bitvmx_broker::{
     rpc::{sync_server::BrokerSync, BrokerConfig},
 };
 use p2p_handler::{LocalAllowList, P2pHandler, PeerId, ReceiveHandlerChannel};
-use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashSet, VecDeque},
@@ -157,10 +156,10 @@ impl BitVMX {
             self.save_collaboration(&collaboration)?;
         } else {
             if pend_to_back {
-                info!("Pending message to back: {:?}", msg_type);
+                info!("Pending message to back: {} {:?}", program_id, msg_type);
                 self.pending_messages.push_back((peer, msg));
             } else {
-                info!("Pending message to front: {:?}", msg_type);
+                info!("Pending message to front: {} {:?}", program_id, msg_type);
                 self.pending_messages.push_front((peer, msg));
             }
         }
@@ -643,7 +642,6 @@ impl BitVMXApi for BitVMX {
         id: Uuid,
         role: ParticipantRole,
         peer_address: P2PAddress,
-        utxo: Utxo,
     ) -> Result<(), BitVMXError> {
         if self.program_exists(&id)? {
             info!("{}: Program already exists", role);
@@ -655,7 +653,6 @@ impl BitVMXApi for BitVMX {
             &id,
             role.clone(),
             &peer_address,
-            utxo,
             &mut self.program_context,
             self.store.clone(),
             &self._config.client,
@@ -744,8 +741,8 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::GetWitness(uuid, key) => {
                 BitVMXApi::get_witness(self, from, uuid, &key)?;
             }
-            IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address, utxo) => {
-                BitVMXApi::setup_program(self, id, role, peer_address, utxo)?
+            IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address) => {
+                BitVMXApi::setup_program(self, id, role, peer_address)?
             }
             IncomingBitVMXApiMessages::GetTransaction(id, txid) => {
                 BitVMXApi::get_transaction(self, from, id, txid)?

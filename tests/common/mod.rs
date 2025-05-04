@@ -128,6 +128,7 @@ fn config_trace_aux() {
         "tarpc=off",
         "key_manager=off",
         "memory=off",
+        "broker=off",
     ];
 
     let filter = EnvFilter::builder()

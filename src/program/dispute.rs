@@ -12,7 +12,7 @@ use protocol_builder::{
     scripts,
     types::{
         input::{LeafSpec, SighashType},
-        InputArgs, OutputType, Utxo,
+        InputArgs, OutputType,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -30,19 +30,6 @@ use super::{
     program::ProtocolParameters,
     protocol_handler::{ProtocolContext, ProtocolHandler},
 };
-pub struct SearchParams {
-    _search_intervals: u8,
-    _max_steps: u32,
-}
-
-impl SearchParams {
-    pub fn new(search_intervals: u8, max_steps: u32) -> Self {
-        Self {
-            _search_intervals: search_intervals,
-            _max_steps: max_steps,
-        }
-    }
-}
 
 pub const START_CH: &str = "pre_kickoff";
 pub const INPUT_1: &str = "INPUT_1";
@@ -61,6 +48,19 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
     fn context_mut(&mut self) -> &mut ProtocolContext {
         &mut self.ctx
+    }
+
+    fn get_pregenerated_aggregated_keys(
+        &self,
+        context: &ProgramContext,
+    ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
+        Ok(vec![(
+            "pregenerated".to_string(),
+            context
+                .globals
+                .get_var(&self.ctx.id, "aggregated")?
+                .pubkey()?,
+        )])
     }
 
     fn get_transaction_name(
@@ -168,12 +168,10 @@ impl DisputeResolutionProtocol {
 
     pub fn build(
         &self,
-        utxo: Utxo,
         prover_keys: &ParticipantKeys,
         _verifier_keys: &ParticipantKeys,
         computed_aggregated: HashMap<String, PublicKey>,
-        _search: SearchParams,
-        key_chain: &KeyChain,
+        context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         // TODO get this from config, all values expressed in satoshis
         let _p2pkh_dust_threshold: u64 = 546;
@@ -182,9 +180,14 @@ impl DisputeResolutionProtocol {
         let _taproot_dust_threshold: u64 = 330;
         let fee = 1000;
 
+        let utxo = context.globals.get_var(&self.ctx.id, "utxo")?.utxo()?;
+
         let secp = secp256k1::Secp256k1::new();
-        let internal_key = &utxo.pub_key;
-        let untweaked_key: UntweakedPublicKey = XOnlyPublicKey::from(*internal_key);
+        let internal_key = context
+            .globals
+            .get_var(&self.ctx.id, "aggregated")?
+            .pubkey()?;
+        let untweaked_key: UntweakedPublicKey = XOnlyPublicKey::from(internal_key);
 
         let spending_scripts = vec![scripts::timelock_renew(&internal_key)];
         let spend_info =
@@ -194,7 +197,7 @@ impl DisputeResolutionProtocol {
 
         //Description of the output that the START_CH consumes
         let prevout = TxOut {
-            value: Amount::from_sat(utxo.amount),
+            value: Amount::from_sat(utxo.2.unwrap()),
             script_pubkey,
         };
 
@@ -208,8 +211,8 @@ impl DisputeResolutionProtocol {
         // };
 
         let output_type = OutputType::tr_script(
-            utxo.amount,
-            internal_key,
+            utxo.2.unwrap(),
+            &internal_key,
             &spending_scripts,
             true,
             vec![prevout],
@@ -225,8 +228,8 @@ impl DisputeResolutionProtocol {
         .unwrap_or(Protocol::new(&self.context().protocol_name));
 
         protocol.add_external_connection(
-            utxo.txid,
-            utxo.vout,
+            utxo.0,
+            utxo.1,
             output_type,
             START_CH,
             &SighashType::taproot_all(),
@@ -261,7 +264,7 @@ impl DisputeResolutionProtocol {
 
         let output_type = OutputType::tr_script(
             p2wpkh_dust_threshold,
-            internal_key,
+            &internal_key,
             &[input_data_l1, input_data_l2],
             true,
             vec![],
@@ -311,7 +314,7 @@ impl DisputeResolutionProtocol {
         //     &tr_sighash_type,
         // )?;
 
-        protocol.build(true, &key_chain.key_manager)?;
+        protocol.build(true, &context.key_chain.key_manager)?;
         info!("{}", protocol.visualize()?);
         self.save_protocol(protocol)?;
 

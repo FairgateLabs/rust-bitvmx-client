@@ -1,20 +1,9 @@
 use std::{collections::HashMap, rc::Rc};
 
-use bitcoin::{
-    hashes::Hash, secp256k1, Amount, PublicKey, ScriptBuf, Sequence, Transaction, TxOut, Txid,
-};
+use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
-use protocol_builder::{
-    builder::{Protocol, ProtocolBuilder},
-    scripts::{self, build_taproot_spend_info, reveal_secret, timelock, ProtocolScript},
-    types::{
-        input::{LeafSpec, SighashType},
-        InputArgs, OutputType,
-    },
-};
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::Storage;
-use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{errors::BitVMXError, keychain::KeyChain, types::ProgramContext};
@@ -39,10 +28,17 @@ impl ProtocolHandler for SlotProtocol {
         &mut self.ctx
     }
 
+    fn get_pregenerated_aggregated_keys(
+        &self,
+        _context: &ProgramContext,
+    ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
+        Ok(vec![])
+    }
+
     fn get_transaction_name(
         &self,
         name: &str,
-        context: &ProgramContext,
+        _context: &ProgramContext,
     ) -> Result<Transaction, BitVMXError> {
         match name {
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
@@ -50,8 +46,8 @@ impl ProtocolHandler for SlotProtocol {
     }
     fn notify_news(
         &self,
-        tx_id: Txid,
-        tx_status: TransactionStatus,
+        _tx_id: Txid,
+        _tx_status: TransactionStatus,
         _context: String,
         _program_context: &ProgramContext,
         _parameters: &ProtocolParameters,
@@ -88,8 +84,8 @@ impl SlotProtocol {
     pub fn build(
         &self,
         _keys: Vec<ParticipantKeys>,
-        computed_aggregated: HashMap<String, PublicKey>,
-        context: &ProgramContext,
+        _computed_aggregated: HashMap<String, PublicKey>,
+        _context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         Ok(())
     }
