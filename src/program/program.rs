@@ -147,10 +147,13 @@ impl Program {
         Ok(())
     }
 
-    pub fn setup_slot(
+    //TODO UNIFY SETUPS WITH NAMES
+    pub fn setup(
         id: &Uuid,
+        protocol_type: &str,
         peers: Vec<P2PAddress>,
         leader: usize,
+        my_idx: usize,
         program_context: &mut ProgramContext,
         storage: Rc<Storage>,
         config: &ClientConfig,

@@ -21,6 +21,7 @@ pub enum VariableTypes {
     Secret(Vec<u8>),
     PubKey(PublicKey),
     Utxo(PartialUtxo),
+    Number(u32),
 }
 
 impl VariableTypes {
@@ -39,6 +40,12 @@ impl VariableTypes {
     pub fn utxo(&self) -> Result<PartialUtxo, BitVMXError> {
         match self {
             VariableTypes::Utxo(utxo) => Ok(utxo.clone()),
+            _ => Err(BitVMXError::InvalidVariableType),
+        }
+    }
+    pub fn number(&self) -> Result<u32, BitVMXError> {
+        match self {
+            VariableTypes::Number(num) => Ok(*num),
             _ => Err(BitVMXError::InvalidVariableType),
         }
     }
