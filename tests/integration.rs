@@ -134,7 +134,7 @@ pub fn test_single_run() -> Result<()> {
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
-            program::dispute::START_CH.to_string(),
+            program::protocols::dispute::START_CH.to_string(),
         )
         .to_string()?,
     );

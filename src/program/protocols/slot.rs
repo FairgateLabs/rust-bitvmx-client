@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::{errors::BitVMXError, keychain::KeyChain, types::ProgramContext};
 
 use super::{
-    participant::ParticipantKeys,
+    super::participant::ParticipantKeys,
     protocol_handler::{ProtocolContext, ProtocolHandler},
 };
 

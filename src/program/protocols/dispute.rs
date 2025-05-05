@@ -19,12 +19,15 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::{
-    bitvmx::Context, errors::BitVMXError, keychain::KeyChain, program::witness,
+    bitvmx::Context,
+    errors::BitVMXError,
+    keychain::KeyChain,
+    program::{participant::ParticipantRole, witness},
     types::ProgramContext,
 };
 
 use super::{
-    participant::{ParticipantKeys, ParticipantRole},
+    super::participant::ParticipantKeys,
     protocol_handler::{ProtocolContext, ProtocolHandler},
 };
 

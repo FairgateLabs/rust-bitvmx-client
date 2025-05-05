@@ -13,9 +13,9 @@ use crate::keychain::KeyChain;
 
 use crate::types::{ProgramContext, PROGRAM_TYPE_DRP, PROGRAM_TYPE_LOCK, PROGRAM_TYPE_SLOT};
 
+use super::super::participant::ParticipantKeys;
 use super::dispute::DisputeResolutionProtocol;
 use super::lock::LockProtocol;
-use super::participant::ParticipantKeys;
 use super::slot::SlotProtocol;
 
 #[enum_dispatch]

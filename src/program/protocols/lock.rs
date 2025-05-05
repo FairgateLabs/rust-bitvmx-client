@@ -18,7 +18,7 @@ use tracing::{info, warn};
 use crate::{errors::BitVMXError, keychain::KeyChain, types::ProgramContext};
 
 use super::{
-    participant::ParticipantKeys,
+    super::participant::ParticipantKeys,
     protocol_handler::{ProtocolContext, ProtocolHandler},
 };
 

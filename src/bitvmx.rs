@@ -1,4 +1,4 @@
-use crate::program::protocol_handler::ProtocolHandler;
+use crate::program::protocols::protocol_handler::ProtocolHandler;
 use crate::{
     api::BitVMXApi,
     collaborate::Collaboration,

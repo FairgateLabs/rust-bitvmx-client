@@ -6,7 +6,7 @@ use crate::{
         parse_keys, parse_nonces, parse_signatures, PartialSignatureMessage, PubNonceMessage,
     },
     p2p_helper::{request, response, P2PMessageType},
-    program::{participant::ParticipantKeys, protocol_handler::new_protocol_type},
+    program::{participant::ParticipantKeys, protocols::protocol_handler::new_protocol_type},
     types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramRequestInfo, L2_ID},
 };
 use bitcoin::{PublicKey, Transaction, Txid};
@@ -23,7 +23,7 @@ use uuid::Uuid;
 
 use super::{
     participant::{P2PAddress, ParticipantData, ParticipantRole},
-    protocol_handler::{ProtocolHandler, ProtocolType},
+    protocols::protocol_handler::{ProtocolHandler, ProtocolType},
     state::{ProgramState, SettingUpState},
 };
 
