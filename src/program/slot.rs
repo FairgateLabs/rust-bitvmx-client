@@ -75,18 +75,4 @@ impl SlotProtocol {
     pub fn new(context: ProtocolContext) -> Self {
         Self { ctx: context }
     }
-    pub fn generate_keys(
-        my_idx: usize,
-        key_chain: &mut KeyChain,
-    ) -> Result<ParticipantKeys, BitVMXError> {
-        let aggregated_1 = key_chain.derive_keypair()?;
-
-        let mut keys = vec![("aggregated_1".to_string(), aggregated_1.into())];
-
-        //TODO: get from a variable the number of bytes required to encode the too_id
-        let start_id = key_chain.derive_winternitz_hash160(1)?;
-        keys.push((format!("too_id_{}", my_idx), start_id.into()));
-
-        Ok(ParticipantKeys::new(keys, vec!["aggregated_1".to_string()]))
-    }
 }
