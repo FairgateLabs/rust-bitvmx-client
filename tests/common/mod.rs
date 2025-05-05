@@ -7,7 +7,10 @@ use bitcoind::bitcoind::Bitcoind;
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use bitvmx_client::{
-    bitvmx::BitVMX, config::Config, program::participant::P2PAddress, types::L2_ID,
+    bitvmx::BitVMX,
+    config::Config,
+    program::participant::P2PAddress,
+    types::{OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID},
 };
 use p2p_handler::PeerId;
 use std::sync::Once;
@@ -141,4 +144,58 @@ fn config_trace_aux() {
         .with_target(true)
         .with_env_filter(filter)
         .init();
+}
+
+pub fn send_all(channels: &Vec<DualChannel>, msg: &str) -> Result<()> {
+    for channel in channels {
+        channel.send(BITVMX_ID, msg.to_string())?;
+    }
+    Ok(())
+}
+
+pub fn get_all(
+    channels: &Vec<DualChannel>,
+    instances: &mut Vec<BitVMX>,
+    fake_tick: bool,
+) -> Result<Vec<OutgoingBitVMXApiMessages>> {
+    let mut ret = vec![];
+    let mut mutinstances = instances.iter_mut().collect::<Vec<_>>();
+    for channel in channels {
+        let msg = wait_message_from_channel(&channel, &mut mutinstances, fake_tick)?;
+        ret.push(OutgoingBitVMXApiMessages::from_string(&msg.0)?);
+    }
+    Ok(ret)
+}
+
+pub fn mine_and_wait(
+    bitcoin_client: &BitcoinClient,
+    channels: &Vec<DualChannel>,
+    instances: &mut Vec<BitVMX>,
+    wallet: &Address,
+) -> Result<()> {
+    //MINE AND WAIT
+    for i in 0..100 {
+        if i % 10 == 0 {
+            bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
+        }
+        for instance in instances.iter_mut() {
+            instance.tick()?;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(40));
+    }
+    let msgs = get_all(&channels, instances, false)?;
+
+    let (uuid, txid, name) = msgs[0].transaction().unwrap();
+    info!(
+        "Transaction notification: uuid: {} txid: {:?} name: {:?}",
+        uuid, txid, name
+    );
+    Ok(())
+}
+
+pub fn init_broker(role: &str) -> Result<DualChannel> {
+    let config = Config::new(Some(format!("config/{}.yaml", role)))?;
+    let broker_config = BrokerConfig::new(config.broker_port, None);
+    let bridge_client = DualChannel::new(&broker_config, L2_ID);
+    Ok(bridge_client)
 }
