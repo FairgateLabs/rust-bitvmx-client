@@ -1,16 +1,16 @@
 use std::collections::HashMap;
 
-use bitcoin::{
-    key::UntweakedPublicKey, secp256k1, Amount, PublicKey, ScriptBuf, Transaction, TxOut, Txid,
-    XOnlyPublicKey,
-};
+use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use key_manager::winternitz::WinternitzType;
 use protocol_builder::{
+    builder::ProtocolBuilder,
     errors::ProtocolBuilderError,
     scripts::{self, SignMode},
     types::{
-        input::{LeafSpec, SighashType}, output::SpendMode, InputArgs, OutputType
+        input::{LeafSpec, SighashType},
+        output::SpendMode,
+        InputArgs, OutputType,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -20,7 +20,7 @@ use crate::{
     bitvmx::Context,
     errors::BitVMXError,
     keychain::KeyChain,
-    program::{participant::ParticipantRole, witness},
+    program::{participant::ParticipantRole, protocols::slot::external_fund_tx, witness},
     types::ProgramContext,
 };
 
@@ -69,18 +69,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         )])
     }
 
-    fn generate_keys(
-        &self,
-        my_idx: usize,
-        key_chain: &mut KeyChain,
-    ) -> Result<ParticipantKeys, BitVMXError> {
+    fn generate_keys(&self, key_chain: &mut KeyChain) -> Result<ParticipantKeys, BitVMXError> {
         //TODO: define which keys are generated for each role
-
-        let role = if my_idx == 0 {
-            &ParticipantRole::Prover
-        } else {
-            &ParticipantRole::Verifier
-        };
 
         //let message_size = 2;
         //let one_time_keys_count = 10;
@@ -98,7 +88,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         let program_input_leaf_1 = key_chain.derive_winternitz_hash160(4)?;
         let program_input_leaf_2 = key_chain.derive_winternitz_hash160(4)?;
-        if role == &ParticipantRole::Prover {
+        if self.role() == ParticipantRole::Prover {
             keys.push((
                 "program_input_leaf_1".to_string(),
                 program_input_leaf_1.into(),
@@ -176,56 +166,20 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         // TODO get this from config, all values expressed in satoshis
-        let _p2pkh_dust_threshold: u64 = 546;
-        let _p2sh_p2wpkh_dust_threshold: u64 = 540;
-        let mut p2wpkh_dust_threshold: u64 = 99_999_000; // 294;
-        let _taproot_dust_threshold: u64 = 330;
         let fee = 1000;
 
         let utxo = context.globals.get_var(&self.ctx.id, "utxo")?.utxo()?;
 
-        let secp = secp256k1::Secp256k1::new();
-        let internal_key = context
+        let aggregated = context
             .globals
             .get_var(&self.ctx.id, "aggregated")?
             .pubkey()?;
-        let untweaked_key: UntweakedPublicKey = XOnlyPublicKey::from(internal_key);
 
-        let spending_scripts = vec![scripts::timelock_renew(&internal_key, SignMode::Aggregate)];
-        let spend_info =
-            scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
-
-        let script_pubkey = ScriptBuf::new_p2tr(&secp, untweaked_key, spend_info.merkle_root());
-
-        //Description of the output that the START_CH consumes
-        let prevout = TxOut {
-            value: Amount::from_sat(utxo.2.unwrap()),
-            script_pubkey,
-        };
-
-        // let output_type = OutputType::TaprootScript {
-        //     value: Amount::from_sat(utxo.amount),
-        //     internal_key: *internal_key,
-        //     script_pubkey,
-        //     spending_scripts,
-        //     with_key_path: true,
-        //     prevouts: vec![prevout],
-        // };
-
-        let output_type = OutputType::taproot(
-            utxo.2.unwrap(),
-            &internal_key,
-            &spending_scripts,
-            &SpendMode::All {
-                key_path_sign: SignMode::Aggregate,
-            },
-            &vec![prevout],
-        )?;
-
-        // let output_type = OutputSpendingType::TaprootUntweakedKey { key: *internal_key, prevouts: vec![prevout] };
-
-        //let mut builder = ProtocolBuilder::new(&self.protocol_name, self.storage.clone().unwrap())?;
         let mut protocol = self.load_or_create_protocol();
+
+        let mut amount = utxo.2.unwrap();
+        let output_type = external_fund_tx(&aggregated, amount)?;
+
         protocol.add_external_connection(
             utxo.0,
             utxo.1,
@@ -233,8 +187,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             START_CH,
             &SighashType::taproot_all(),
         )?;
-
-        //protocol.add_speedup_output(START_CH, p2wpkh_dust_threshold, verifier_keys.speedup())?;
 
         // reuse aggregated until we can have multiple aggregated keys
         let aggregated = computed_aggregated.get("aggregated_1").unwrap();
@@ -251,25 +203,18 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             SignMode::Aggregate,
         )?;
 
-        // protocol.add_taproot_script_spend_connection(
-        //     "prover_first_input",
-        //     START_CH,
-        //     //taproot_dust_threshold,
-        //     p2wpkh_dust_threshold,
-        //     //&key_chain.unspendable_key()?,
-        //     &XOnlyPublicKey::from(aggregated.clone()), //TOOD: skip this one ?
-        //     &[input_data_l1, input_data_l2],
-        //     INPUT_1,
-        //     &tr_sighash_type,
-        // )?;
+        amount -= fee;
 
         let output_type = OutputType::taproot(
-            p2wpkh_dust_threshold,
-            &internal_key,
+            amount,
+            aggregated,
             &[input_data_l1, input_data_l2],
-            &SpendMode::All { key_path_sign: SignMode::Aggregate, },
+            &SpendMode::All {
+                key_path_sign: SignMode::Aggregate,
+            },
             &vec![],
         )?;
+
         protocol.add_connection(
             "prover_first_input",
             START_CH,
@@ -278,42 +223,11 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             &SighashType::taproot_all(),
         )?;
 
-        p2wpkh_dust_threshold -= fee;
-
-        // protocol.add_speedup_output(INPUT_1, p2wpkh_dust_threshold, prover_keys.speedup())?;
-
         // Speedup output
-        let output_type = OutputType::segwit_key(p2wpkh_dust_threshold, keys[0].speedup())?;
-        protocol.add_transaction_output(INPUT_1, &output_type)?;
-
-        //protocol.add_taproot_key_spend_output(START_CH, value, internal_key, prevouts)
-
-        // builder.add_taproot_script_spend_connection(
-        //     PROTOCOL,
-        //     PREKICKOFF,
-        //     taproot_dust_threshold,
-        //     &XOnlyPublicKey::from(*internal_key),
-        //     &[kickoff_spending],
-        //     KICKOFF,
-        //     &tr_sighash_type,
-        // )?;
-
-        // let kickoff_spending = scripts::kickoff(
-        //     internal_key,
-        //     &prover_keys.program_input_key,
-        //     &prover_keys.program_ending_state,
-        //     &prover_keys.program_ending_step_number,
-        // )?;
-
-        // builder.add_taproot_script_spend_connection(
-        //     PROTOCOL,
-        //     PREKICKOFF,
-        //     taproot_dust_threshold,
-        //     &XOnlyPublicKey::from(*internal_key),
-        //     &[kickoff_spending],
-        //     KICKOFF,
-        //     &tr_sighash_type,
-        // )?;
+        amount -= fee;
+        let pb = ProtocolBuilder {};
+        //put the amount here as there is no output yet
+        pb.add_speedup_output(&mut protocol, INPUT_1, amount, aggregated)?;
 
         protocol.build(&context.key_chain.key_manager)?;
         info!("{}", protocol.visualize()?);

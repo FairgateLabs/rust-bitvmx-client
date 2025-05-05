@@ -48,11 +48,7 @@ impl ProtocolHandler for SlotProtocol {
         )])
     }
 
-    fn generate_keys(
-        &self,
-        _my_idx: usize,
-        _key_chain: &mut KeyChain,
-    ) -> Result<ParticipantKeys, BitVMXError> {
+    fn generate_keys(&self, _key_chain: &mut KeyChain) -> Result<ParticipantKeys, BitVMXError> {
         Ok(ParticipantKeys::new(vec![], vec![]))
     }
 
@@ -147,11 +143,14 @@ impl SlotProtocol {
     }
 }
 
-fn external_fund_tx(aggregated: &PublicKey, amount: u64) -> Result<OutputType, BitVMXError> {
+pub fn external_fund_tx(aggregated: &PublicKey, amount: u64) -> Result<OutputType, BitVMXError> {
     let secp = secp256k1::Secp256k1::new();
     let untweaked_key: UntweakedPublicKey = XOnlyPublicKey::from(*aggregated);
 
-    let spending_scripts = vec![scripts::timelock_renew(&aggregated, SignMode::Aggregate)];
+    let spending_scripts = vec![scripts::check_aggregated_signature(
+        &aggregated,
+        SignMode::Aggregate,
+    )];
     let spend_info = scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
 
     let script_pubkey = ScriptBuf::new_p2tr(&secp, untweaked_key, spend_info.merkle_root());
@@ -166,7 +165,9 @@ fn external_fund_tx(aggregated: &PublicKey, amount: u64) -> Result<OutputType, B
         amount,
         aggregated,
         &spending_scripts,
-        &SpendMode::All { key_path_sign: SignMode::Aggregate },
+        &SpendMode::All {
+            key_path_sign: SignMode::Aggregate,
+        },
         &vec![prevout],
     )?)
 }

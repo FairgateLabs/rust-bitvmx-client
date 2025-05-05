@@ -27,11 +27,7 @@ pub trait ProtocolHandler {
         context: &ProgramContext,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError>;
 
-    fn generate_keys(
-        &self,
-        my_idx: usize,
-        key_chain: &mut KeyChain,
-    ) -> Result<ParticipantKeys, BitVMXError>;
+    fn generate_keys(&self, key_chain: &mut KeyChain) -> Result<ParticipantKeys, BitVMXError>;
 
     fn set_storage(&mut self, storage: Rc<Storage>) {
         self.context_mut().storage = Some(storage);

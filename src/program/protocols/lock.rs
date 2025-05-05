@@ -1,14 +1,17 @@
 use std::collections::HashMap;
 
 use bitcoin::{
-    hashes::Hash, secp256k1, Amount, PublicKey, ScriptBuf, Sequence, Transaction, TxOut, Txid, XOnlyPublicKey,
+    hashes::Hash, secp256k1, Amount, PublicKey, ScriptBuf, Sequence, Transaction, TxOut, Txid,
+    XOnlyPublicKey,
 };
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
     scripts::{self, build_taproot_spend_info, reveal_secret, timelock, ProtocolScript, SignMode},
     types::{
-        input::{InputSpec, LeafSpec, SighashType}, output::SpendMode, InputArgs, OutputType
+        input::{InputSpec, LeafSpec, SighashType},
+        output::SpendMode,
+        InputArgs, OutputType,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -48,18 +51,14 @@ impl ProtocolHandler for LockProtocol {
         )])
     }
 
-    fn generate_keys(
-        &self,
-        my_idx: usize,
-        key_chain: &mut KeyChain,
-    ) -> Result<ParticipantKeys, BitVMXError> {
+    fn generate_keys(&self, key_chain: &mut KeyChain) -> Result<ParticipantKeys, BitVMXError> {
         let aggregated_1 = key_chain.derive_keypair()?;
 
         let mut keys = vec![("aggregated_1".to_string(), aggregated_1.into())];
 
         //TODO: get from a variable the number of bytes required to encode the too_id
         let start_id = key_chain.derive_winternitz_hash160(1)?;
-        keys.push((format!("too_id_{}", my_idx), start_id.into()));
+        keys.push((format!("too_id_{}", self.ctx.my_idx), start_id.into()));
 
         Ok(ParticipantKeys::new(keys, vec!["aggregated_1".to_string()]))
     }
@@ -150,7 +149,9 @@ impl ProtocolHandler for LockProtocol {
 
         warn!(
             "======== Ops_agg_key: {:?} Unspendable: {:?} User_pubkey{:?}",
-            XOnlyPublicKey::from(ops_agg_pubkey).to_string(), XOnlyPublicKey::from(unspendable).to_string(), XOnlyPublicKey::from(user_pubkey).to_string()
+            XOnlyPublicKey::from(ops_agg_pubkey).to_string(),
+            XOnlyPublicKey::from(unspendable).to_string(),
+            XOnlyPublicKey::from(user_pubkey).to_string()
         );
 
         //THIS SECTION DEFINES THE OUTPUTS OF THE LOCK_REQ_TX
@@ -158,10 +159,14 @@ impl ProtocolHandler for LockProtocol {
 
         // Mark this script as unsigned script, so the protocol builder wont try to sign it
         let timelock_script = timelock(10, &user_pubkey, SignMode::Skip);
-        let timelock_script =
-            ProtocolScript::new(timelock_script.get_script().clone(), &user_pubkey, SignMode::Skip);
+        let timelock_script = ProtocolScript::new(
+            timelock_script.get_script().clone(),
+            &user_pubkey,
+            SignMode::Skip,
+        );
 
-        let reveal_secret_script = reveal_secret(secret.to_vec(), &ops_agg_pubkey, SignMode::Aggregate);
+        let reveal_secret_script =
+            reveal_secret(secret.to_vec(), &ops_agg_pubkey, SignMode::Aggregate);
         let leaves = vec![timelock_script.clone(), reveal_secret_script.clone()];
 
         let (unspendable_x_only, _parity) = unspendable.inner.x_only_public_key();
@@ -242,7 +247,8 @@ impl ProtocolHandler for LockProtocol {
         );
 
         //this should be another aggregated to be signed later
-        let taproot_script_all_sign_tx_lock = scripts::check_aggregated_signature(&ops_agg_pubkey, SignMode::Aggregate);
+        let taproot_script_all_sign_tx_lock =
+            scripts::check_aggregated_signature(&ops_agg_pubkey, SignMode::Aggregate);
 
         protocol.add_transaction_output(
             LOCK_TX,
@@ -320,7 +326,8 @@ impl LockProtocol {
             .get_var(&self.ctx.id, "operators_aggregated_happy_path")?
             .pubkey()?;
 
-        let happy_path_check = scripts::check_aggregated_signature(&ops_agg_happy_path, SignMode::Skip);
+        let happy_path_check =
+            scripts::check_aggregated_signature(&ops_agg_happy_path, SignMode::Skip);
 
         protocol.add_transaction(HAPPY_PATH_TX)?;
         protocol.add_transaction_input(

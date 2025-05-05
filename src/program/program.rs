@@ -144,7 +144,7 @@ impl Program {
         info!("Leader pos: {}", leader);
 
         let protocol = new_protocol_type(*id, protocol_type, my_idx, storage.clone())?;
-        let my_keys = protocol.generate_keys(my_idx, &mut program_context.key_chain)?;
+        let my_keys = protocol.generate_keys(&mut program_context.key_chain)?;
 
         //Creates space for the participants
         let mut others = peers
