@@ -8,8 +8,8 @@ use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     builder::ProtocolBuilder,
     errors::ProtocolBuilderError,
-    scripts,
-    types::{input::SighashType, InputArgs, OutputType},
+    scripts::{self, SignMode},
+    types::{input::SighashType, output::SpendMode, InputArgs, OutputType},
 };
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -120,7 +120,7 @@ impl ProtocolHandler for SlotProtocol {
             &ops_agg_pubkey,
         )?;
 
-        protocol.build(true, &context.key_chain.key_manager)?;
+        protocol.build(&context.key_chain.key_manager)?;
         info!("{}", protocol.visualize()?);
         self.save_protocol(protocol)?;
         Ok(())
@@ -151,7 +151,7 @@ fn external_fund_tx(aggregated: &PublicKey, amount: u64) -> Result<OutputType, B
     let secp = secp256k1::Secp256k1::new();
     let untweaked_key: UntweakedPublicKey = XOnlyPublicKey::from(*aggregated);
 
-    let spending_scripts = vec![scripts::timelock_renew(&aggregated)];
+    let spending_scripts = vec![scripts::timelock_renew(&aggregated, SignMode::Aggregate)];
     let spend_info = scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
 
     let script_pubkey = ScriptBuf::new_p2tr(&secp, untweaked_key, spend_info.merkle_root());
@@ -162,11 +162,11 @@ fn external_fund_tx(aggregated: &PublicKey, amount: u64) -> Result<OutputType, B
         script_pubkey,
     };
 
-    Ok(OutputType::tr_script(
+    Ok(OutputType::taproot(
         amount,
         aggregated,
         &spending_scripts,
-        true,
-        vec![prevout],
+        &SpendMode::All { key_path_sign: SignMode::Aggregate },
+        &vec![prevout],
     )?)
 }

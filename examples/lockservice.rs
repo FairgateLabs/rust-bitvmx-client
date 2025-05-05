@@ -434,7 +434,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
             BITVMX_ID,
             IncomingBitVMXApiMessages::DispatchTransactionName(
                 program_id,
-                program::protocols::lock::HAPY_PATH_TX.to_string(),
+                program::protocols::lock::HAPPY_PATH_TX.to_string(),
             )
             .to_string()?,
         );

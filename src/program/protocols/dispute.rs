@@ -8,10 +8,9 @@ use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus}
 use key_manager::winternitz::WinternitzType;
 use protocol_builder::{
     errors::ProtocolBuilderError,
-    scripts,
+    scripts::{self, SignMode},
     types::{
-        input::{LeafSpec, SighashType},
-        InputArgs, OutputType,
+        input::{LeafSpec, SighashType}, output::SpendMode, InputArgs, OutputType
     },
 };
 use serde::{Deserialize, Serialize};
@@ -192,7 +191,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             .pubkey()?;
         let untweaked_key: UntweakedPublicKey = XOnlyPublicKey::from(internal_key);
 
-        let spending_scripts = vec![scripts::timelock_renew(&internal_key)];
+        let spending_scripts = vec![scripts::timelock_renew(&internal_key, SignMode::Aggregate)];
         let spend_info =
             scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
 
@@ -213,12 +212,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         //     prevouts: vec![prevout],
         // };
 
-        let output_type = OutputType::tr_script(
+        let output_type = OutputType::taproot(
             utxo.2.unwrap(),
             &internal_key,
             &spending_scripts,
-            true,
-            vec![prevout],
+            &SpendMode::All {
+                key_path_sign: SignMode::Aggregate,
+            },
+            &vec![prevout],
         )?;
 
         // let output_type = OutputSpendingType::TaprootUntweakedKey { key: *internal_key, prevouts: vec![prevout] };
@@ -241,11 +242,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         let input_data_l1 = scripts::verify_winternitz_signature(
             aggregated,
             keys[0].get_winternitz("program_input_leaf_1")?,
+            SignMode::Aggregate,
         )?;
 
         let input_data_l2 = scripts::verify_winternitz_signature(
             aggregated,
             keys[0].get_winternitz("program_input_leaf_2")?,
+            SignMode::Aggregate,
         )?;
 
         // protocol.add_taproot_script_spend_connection(
@@ -260,18 +263,18 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         //     &tr_sighash_type,
         // )?;
 
-        let output_type = OutputType::tr_script(
+        let output_type = OutputType::taproot(
             p2wpkh_dust_threshold,
             &internal_key,
             &[input_data_l1, input_data_l2],
-            true,
-            vec![],
+            &SpendMode::All { key_path_sign: SignMode::Aggregate, },
+            &vec![],
         )?;
         protocol.add_connection(
             "prover_first_input",
             START_CH,
             INPUT_1,
-            output_type,
+            &output_type,
             &SighashType::taproot_all(),
         )?;
 
@@ -281,7 +284,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         // Speedup output
         let output_type = OutputType::segwit_key(p2wpkh_dust_threshold, keys[0].speedup())?;
-        protocol.add_transaction_output(INPUT_1, output_type)?;
+        protocol.add_transaction_output(INPUT_1, &output_type)?;
 
         //protocol.add_taproot_key_spend_output(START_CH, value, internal_key, prevouts)
 
@@ -312,7 +315,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         //     &tr_sighash_type,
         // )?;
 
-        protocol.build(true, &context.key_chain.key_manager)?;
+        protocol.build(&context.key_chain.key_manager)?;
         info!("{}", protocol.visualize()?);
         self.save_protocol(protocol)?;
 

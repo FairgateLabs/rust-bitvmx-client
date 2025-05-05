@@ -10,7 +10,7 @@ use bitcoin::{
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use protocol_builder::scripts::{
-    build_taproot_spend_info, reveal_secret, timelock, ProtocolScript,
+    build_taproot_spend_info, reveal_secret, timelock, ProtocolScript, SignMode,
 };
 use sha2::{Digest, Sha256};
 use tracing::info;
@@ -172,9 +172,9 @@ pub fn create_lockreq_tx_and_sign(
     secret_hash: Vec<u8>,
     unspendable_pub_key: SecpPublicKey,
 ) -> Transaction {
-    let timelock_script = timelock(timelock_blocks, &user_pubkey);
+    let timelock_script = timelock(timelock_blocks, &user_pubkey, SignMode::Single);
 
-    let reveal_secret_script = reveal_secret(secret_hash.to_vec(), &ops_agg_pubkey);
+    let reveal_secret_script = reveal_secret(secret_hash.to_vec(), &ops_agg_pubkey, SignMode::Aggregate);
     let lockreq_tx_output_taptree = build_taptree_for_lockreq_tx_outputs(
         &secp,
         unspendable_pub_key,

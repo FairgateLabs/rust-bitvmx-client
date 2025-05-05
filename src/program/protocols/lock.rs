@@ -1,15 +1,14 @@
 use std::collections::HashMap;
 
 use bitcoin::{
-    hashes::Hash, secp256k1, Amount, PublicKey, ScriptBuf, Sequence, Transaction, TxOut, Txid,
+    hashes::Hash, secp256k1, Amount, PublicKey, ScriptBuf, Sequence, Transaction, TxOut, Txid, XOnlyPublicKey,
 };
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
-    scripts::{self, build_taproot_spend_info, reveal_secret, timelock, ProtocolScript},
+    scripts::{self, build_taproot_spend_info, reveal_secret, timelock, ProtocolScript, SignMode},
     types::{
-        input::{LeafSpec, SighashType},
-        InputArgs, OutputType,
+        input::{InputSpec, LeafSpec, SighashType}, output::SpendMode, InputArgs, OutputType
     },
 };
 use serde::{Deserialize, Serialize};
@@ -72,7 +71,7 @@ impl ProtocolHandler for LockProtocol {
     ) -> Result<Transaction, BitVMXError> {
         match name {
             LOCK_TX => Ok(self.accept_tx(context)?),
-            HAPY_PATH_TX => Ok(self.happy_path()?),
+            HAPPY_PATH_TX => Ok(self.happy_path()?),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
     }
@@ -149,15 +148,20 @@ impl ProtocolHandler for LockProtocol {
             ordinal_utxo, protocol_utxo, user_pubkey
         );
 
+        warn!(
+            "======== Ops_agg_key: {:?} Unspendable: {:?} User_pubkey{:?}",
+            XOnlyPublicKey::from(ops_agg_pubkey).to_string(), XOnlyPublicKey::from(unspendable).to_string(), XOnlyPublicKey::from(user_pubkey).to_string()
+        );
+
         //THIS SECTION DEFINES THE OUTPUTS OF THE LOCK_REQ_TX
         //THAT WILL BE SPENT BY THE LOCK_TX
 
-        // Mark this script as unsigned scritp, so the protocol builder wont try to sign it
-        let timelock_script = timelock(10, &user_pubkey);
+        // Mark this script as unsigned script, so the protocol builder wont try to sign it
+        let timelock_script = timelock(10, &user_pubkey, SignMode::Skip);
         let timelock_script =
-            ProtocolScript::new_unsigned_script(timelock_script.get_script().clone(), &user_pubkey);
+            ProtocolScript::new(timelock_script.get_script().clone(), &user_pubkey, SignMode::Skip);
 
-        let reveal_secret_script = reveal_secret(secret.to_vec(), &ops_agg_pubkey);
+        let reveal_secret_script = reveal_secret(secret.to_vec(), &ops_agg_pubkey, SignMode::Aggregate);
         let leaves = vec![timelock_script.clone(), reveal_secret_script.clone()];
 
         let (unspendable_x_only, _parity) = unspendable.inner.x_only_public_key();
@@ -187,20 +191,20 @@ impl ProtocolHandler for LockProtocol {
 
         let prevouts = vec![prevout_0, prevout_1];
 
-        let output_type_ordinal = OutputType::tr_script(
+        let output_type_ordinal = OutputType::taproot(
             ordinal_utxo.2.unwrap(),
             &unspendable,
             &leaves,
-            false,
-            prevouts.clone(),
+            &SpendMode::ScriptsOnly,
+            &prevouts,
         )?;
 
-        let output_type_protocol = OutputType::tr_script(
+        let output_type_protocol = OutputType::taproot(
             protocol_utxo.2.unwrap(),
             &unspendable,
             &leaves,
-            false,
-            prevouts,
+            &SpendMode::ScriptsOnly,
+            &prevouts,
         )?;
 
         let mut protocol = self.load_or_create_protocol();
@@ -227,35 +231,36 @@ impl ProtocolHandler for LockProtocol {
 
         // The following script is the output that user timeout could use as input
         let taproot_script_eol_timelock_expired_tx_lock =
-            scripts::timelock(eol_timelock_duration, &user_pubkey);
-        // Mark this script as unsigned scritp, so the protocol builder wont try to sign it
-        let taproot_script_eol_timelock_expired_tx_lock = ProtocolScript::new_unsigned_script(
+            scripts::timelock(eol_timelock_duration, &user_pubkey, SignMode::Skip);
+        // Mark this script as unsigned script, so the protocol builder wont try to sign it
+        let taproot_script_eol_timelock_expired_tx_lock = ProtocolScript::new(
             taproot_script_eol_timelock_expired_tx_lock
                 .get_script()
                 .clone(),
             &user_pubkey,
+            SignMode::Skip,
         );
 
         //this should be another aggregated to be signed later
-        let taproot_script_all_sign_tx_lock = scripts::check_aggregated_signature(&ops_agg_pubkey);
+        let taproot_script_all_sign_tx_lock = scripts::check_aggregated_signature(&ops_agg_pubkey, SignMode::Aggregate);
 
         protocol.add_transaction_output(
             LOCK_TX,
-            OutputType::tr_script(
+            &OutputType::taproot(
                 ordinal_utxo.2.unwrap(),
                 &unspendable,
                 &[
                     taproot_script_eol_timelock_expired_tx_lock.clone(),
                     taproot_script_all_sign_tx_lock.clone(),
                 ],
-                false,
-                vec![],
+                &SpendMode::ScriptsOnly,
+                &vec![],
             )?, // We do not need prevouts cause the tx is in the graph,
         )?;
 
         //this could be even a different one, but we will use the same for now
         let taproot_script_protocol_fee_addres_signature_in_tx_lock =
-            scripts::check_aggregated_signature(&ops_agg_pubkey);
+            scripts::check_aggregated_signature(&ops_agg_pubkey, SignMode::Aggregate);
 
         const SPEEDUP_DUST: u64 = 500;
         let amount = protocol_utxo.2.unwrap() - fee - SPEEDUP_DUST;
@@ -263,12 +268,12 @@ impl ProtocolHandler for LockProtocol {
         // taproot output sending the fee (incentive to bridge) to the fee address
         protocol.add_transaction_output(
             LOCK_TX,
-            OutputType::tr_script(
+            &OutputType::taproot(
                 amount,
                 &unspendable,
                 &[taproot_script_protocol_fee_addres_signature_in_tx_lock],
-                false,
-                vec![],
+                &SpendMode::ScriptsOnly,
+                &vec![],
             )?, // We do not need prevouts cause the tx is in the graph,
         )?;
 
@@ -283,9 +288,9 @@ impl ProtocolHandler for LockProtocol {
         let aggregated = computed_aggregated.get("aggregated_1").unwrap();
         let pb = ProtocolBuilder {};
         pb.add_speedup_output(&mut protocol, LOCK_TX, SPEEDUP_DUST, aggregated)?;
-        pb.add_speedup_output(&mut protocol, HAPY_PATH_TX, SPEEDUP_DUST, aggregated)?;
+        pb.add_speedup_output(&mut protocol, HAPPY_PATH_TX, SPEEDUP_DUST, aggregated)?;
 
-        protocol.build(true, &context.key_chain.key_manager)?;
+        protocol.build(&context.key_chain.key_manager)?;
         info!("{}", protocol.visualize()?);
         self.save_protocol(protocol)?;
 
@@ -294,7 +299,7 @@ impl ProtocolHandler for LockProtocol {
 }
 
 pub const LOCK_TX: &str = "lock_tx";
-pub const HAPY_PATH_TX: &str = "happy_path_tx";
+pub const HAPPY_PATH_TX: &str = "happy_path_tx";
 
 impl LockProtocol {
     pub fn new(context: ProtocolContext) -> Self {
@@ -315,47 +320,46 @@ impl LockProtocol {
             .get_var(&self.ctx.id, "operators_aggregated_happy_path")?
             .pubkey()?;
 
-        let mut happy_path_check = scripts::check_aggregated_signature(&ops_agg_happy_path);
-        happy_path_check.set_skip_signing(true);
+        let happy_path_check = scripts::check_aggregated_signature(&ops_agg_happy_path, SignMode::Skip);
 
-        protocol.add_transaction(HAPY_PATH_TX)?;
+        protocol.add_transaction(HAPPY_PATH_TX)?;
         protocol.add_transaction_input(
             Hash::all_zeros(),
             0,
-            HAPY_PATH_TX,
+            HAPPY_PATH_TX,
             Sequence::ENABLE_RBF_NO_LOCKTIME,
             &SighashType::taproot_all(),
         )?;
         protocol.add_transaction_input(
             Hash::all_zeros(),
             1,
-            HAPY_PATH_TX,
+            HAPPY_PATH_TX,
             Sequence::ENABLE_RBF_NO_LOCKTIME,
             &SighashType::taproot_all(),
         )?;
 
         protocol.add_transaction_output(
-            HAPY_PATH_TX,
-            OutputType::tr_script(
+            HAPPY_PATH_TX,
+            &OutputType::taproot(
                 amount_ordinal,
                 &unspendable,
                 &[happy_path_check.clone()],
-                false,
-                vec![],
+                &SpendMode::ScriptsOnly,
+                &vec![],
             )?,
         )?;
         protocol.add_transaction_output(
-            HAPY_PATH_TX,
-            OutputType::tr_script(
+            HAPPY_PATH_TX,
+            &OutputType::taproot(
                 amount_protocol,
                 &unspendable,
                 &[happy_path_check.clone()],
-                false,
-                vec![],
+                &SpendMode::ScriptsOnly,
+                &vec![],
             )?,
         )?;
-        protocol.connect("spend_hp_1", LOCK_TX, 0, HAPY_PATH_TX, 0)?;
-        protocol.connect("spend_hp_2", LOCK_TX, 1, HAPY_PATH_TX, 1)?;
+        protocol.connect("spend_hp_1", LOCK_TX, 0, HAPPY_PATH_TX, InputSpec::Index(0))?;
+        protocol.connect("spend_hp_2", LOCK_TX, 1, HAPPY_PATH_TX, InputSpec::Index(1))?;
 
         Ok(())
     }
@@ -395,21 +399,21 @@ impl LockProtocol {
     pub fn happy_path(&self) -> Result<Transaction, BitVMXError> {
         let signature = self
             .load_protocol()?
-            .input_taproot_script_spend_signature(HAPY_PATH_TX, 0, 1)?
+            .input_taproot_script_spend_signature(HAPPY_PATH_TX, 0, 1)?
             .unwrap();
         let mut taproot_arg_0 = InputArgs::new_taproot_script_args(LeafSpec::Index(1));
         taproot_arg_0.push_taproot_signature(signature)?;
 
         let signature = self
             .load_protocol()?
-            .input_taproot_script_spend_signature(HAPY_PATH_TX, 1, 0)?
+            .input_taproot_script_spend_signature(HAPPY_PATH_TX, 1, 0)?
             .unwrap();
         let mut taproot_arg_1 = InputArgs::new_taproot_script_args(LeafSpec::Index(0));
         taproot_arg_1.push_taproot_signature(signature)?;
 
         let tx = self
             .load_protocol()?
-            .transaction_to_send(HAPY_PATH_TX, &[taproot_arg_0, taproot_arg_1])?;
+            .transaction_to_send(HAPPY_PATH_TX, &[taproot_arg_0, taproot_arg_1])?;
 
         info!("Transaction to send: {:?}", tx);
         Ok(tx)

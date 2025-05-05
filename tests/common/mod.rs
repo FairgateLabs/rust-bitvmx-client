@@ -13,7 +13,7 @@ use bitvmx_client::{
     types::{OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID},
 };
 use p2p_handler::PeerId;
-use protocol_builder::{scripts, types::Utxo};
+use protocol_builder::{scripts::{self, SignMode}, types::Utxo};
 use std::sync::Once;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -211,9 +211,9 @@ pub fn init_utxo(
     let untweaked_key = XOnlyPublicKey::from(aggregated_pub_key);
 
     let spending_scripts = if secret.is_some() {
-        vec![scripts::reveal_secret(secret.unwrap(), &aggregated_pub_key)]
+        vec![scripts::reveal_secret(secret.unwrap(), &aggregated_pub_key, SignMode::Aggregate)]
     } else {
-        vec![scripts::timelock_renew(&aggregated_pub_key)]
+        vec![scripts::timelock_renew(&aggregated_pub_key, SignMode::Aggregate)]
     };
 
     let taproot_spend_info =
