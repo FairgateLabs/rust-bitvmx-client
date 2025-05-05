@@ -169,61 +169,31 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     // SETUP LOCK BEGIN
 
     let program_id = Uuid::new_v4();
-    let set_ops_aggregated = IncomingBitVMXApiMessages::SetVar(
-        program_id,
-        "operators_aggregated_pub".to_string(),
-        VariableTypes::PubKey(aggregated_pub_key),
-    )
-    .to_string()?;
+    let set_ops_aggregated = VariableTypes::PubKey(aggregated_pub_key)
+        .set_msg(program_id, "operators_aggregated_pub")?;
     send_all(&channels, &set_ops_aggregated)?;
 
-    let set_ops_aggregated_hp = IncomingBitVMXApiMessages::SetVar(
-        program_id,
-        "operators_aggregated_happy_path".to_string(),
-        VariableTypes::PubKey(aggregated_happy_path),
-    )
-    .to_string()?;
+    let set_ops_aggregated_hp = VariableTypes::PubKey(aggregated_happy_path)
+        .set_msg(program_id, "operators_aggregated_happy_path")?;
     send_all(&channels, &set_ops_aggregated_hp)?;
 
-    let set_unspendable = IncomingBitVMXApiMessages::SetVar(
-        program_id,
-        "unspendable".to_string(),
-        VariableTypes::PubKey(fixtures::hardcoded_unspendable().into()),
-    )
-    .to_string()?;
+    let set_unspendable = VariableTypes::PubKey(fixtures::hardcoded_unspendable().into())
+        .set_msg(program_id, "unspendable")?;
     send_all(&channels, &set_unspendable)?;
 
-    let set_secret = IncomingBitVMXApiMessages::SetVar(
-        program_id,
-        "secret".to_string(),
-        VariableTypes::Secret(hash),
-    )
-    .to_string()?;
+    let set_secret = VariableTypes::Secret(hash).set_msg(program_id, "secret")?;
     send_all(&channels, &set_secret)?;
 
-    let set_ordinal_utxo = IncomingBitVMXApiMessages::SetVar(
-        program_id,
-        "ordinal_utxo".to_string(),
-        VariableTypes::Utxo((txid, 0, Some(ordinal_fee.to_sat()))),
-    )
-    .to_string()?;
-
+    let set_ordinal_utxo = VariableTypes::Utxo((txid, 0, Some(ordinal_fee.to_sat())))
+        .set_msg(program_id, "ordinal_utxo")?;
     send_all(&channels, &set_ordinal_utxo)?;
 
-    let set_protocol_fee = IncomingBitVMXApiMessages::SetVar(
-        program_id,
-        "protocol_utxo".to_string(),
-        VariableTypes::Utxo((txid, 1, Some(protocol_fee.to_sat()))),
-    )
-    .to_string()?;
+    let set_protocol_fee = VariableTypes::Utxo((txid, 1, Some(protocol_fee.to_sat())))
+        .set_msg(program_id, "protocol_utxo")?;
     send_all(&channels, &set_protocol_fee)?;
 
-    let set_user_pubkey = IncomingBitVMXApiMessages::SetVar(
-        program_id,
-        "user_pubkey".to_string(),
-        VariableTypes::PubKey(bitcoin::PublicKey::from(pubuser)),
-    )
-    .to_string()?;
+    let set_user_pubkey = VariableTypes::PubKey(bitcoin::PublicKey::from(pubuser))
+        .set_msg(program_id, "user_pubkey")?;
     send_all(&channels, &set_user_pubkey)?;
 
     let setup_msg =

@@ -64,28 +64,16 @@ pub fn test_slot() -> Result<()> {
 
     // SETUP SLOT BEGIN
     let program_id = Uuid::new_v4();
-    let set_fund_utxo = IncomingBitVMXApiMessages::SetVar(
-        program_id,
-        "fund_utxo".to_string(),
-        VariableTypes::Utxo((utxo.txid, utxo.vout, Some(fund_value.to_sat()))),
-    )
-    .to_string()?;
+    let set_fund_utxo = VariableTypes::Utxo((utxo.txid, utxo.vout, Some(fund_value.to_sat())))
+        .set_msg(program_id, "fund_utxo")?;
     send_all(&channels, &set_fund_utxo)?;
 
-    let set_ops_aggregated = IncomingBitVMXApiMessages::SetVar(
-        program_id,
-        "operators_aggregated_pub".to_string(),
-        VariableTypes::PubKey(aggregated_pub_key),
-    )
-    .to_string()?;
+    let set_ops_aggregated = VariableTypes::PubKey(aggregated_pub_key)
+        .set_msg(program_id, "operators_aggregated_pub")?;
     send_all(&channels, &set_ops_aggregated)?;
 
-    let set_unspendable = IncomingBitVMXApiMessages::SetVar(
-        program_id,
-        "unspendable".to_string(),
-        VariableTypes::PubKey(fixtures::hardcoded_unspendable().into()),
-    )
-    .to_string()?;
+    let set_unspendable = VariableTypes::PubKey(fixtures::hardcoded_unspendable().into())
+        .set_msg(program_id, "unspendable")?;
     send_all(&channels, &set_unspendable)?;
 
     let setup_msg =
