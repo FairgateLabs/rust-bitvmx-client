@@ -92,6 +92,14 @@ pub trait ProtocolHandler {
         }
     }
 
+    fn load_or_create_protocol(&self) -> Protocol {
+        let protocol = self.load_protocol();
+        match protocol {
+            Ok(protocol) => protocol,
+            Err(_) => Protocol::new(&self.context().protocol_name),
+        }
+    }
+
     fn save_protocol(&self, protocol: Protocol) -> Result<(), ProtocolBuilderError> {
         protocol.save(self.context().storage.clone().unwrap())?;
         Ok(())

@@ -7,7 +7,6 @@ use bitcoin::{
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use key_manager::winternitz::WinternitzType;
 use protocol_builder::{
-    builder::Protocol,
     errors::ProtocolBuilderError,
     scripts,
     types::{
@@ -225,12 +224,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         // let output_type = OutputSpendingType::TaprootUntweakedKey { key: *internal_key, prevouts: vec![prevout] };
 
         //let mut builder = ProtocolBuilder::new(&self.protocol_name, self.storage.clone().unwrap())?;
-        let mut protocol = Protocol::load(
-            &self.context().protocol_name,
-            self.context().storage.clone().unwrap(),
-        )?
-        .unwrap_or(Protocol::new(&self.context().protocol_name));
-
+        let mut protocol = self.load_or_create_protocol();
         protocol.add_external_connection(
             utxo.0,
             utxo.1,

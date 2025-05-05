@@ -203,11 +203,7 @@ impl ProtocolHandler for LockProtocol {
             prevouts,
         )?;
 
-        let mut protocol = Protocol::load(
-            &self.context().protocol_name,
-            self.context().storage.clone().unwrap(),
-        )?
-        .unwrap_or(Protocol::new(&self.context().protocol_name));
+        let mut protocol = self.load_or_create_protocol();
 
         protocol.add_external_connection(
             ordinal_utxo.0,

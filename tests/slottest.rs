@@ -1,11 +1,12 @@
 use anyhow::Result;
-use bitcoin::{Amount, Network};
-use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
+use bitcoin::Amount;
 use bitvmx_client::{
-    program::variables::VariableTypes,
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages},
+    program::{self, variables::VariableTypes},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_SLOT},
 };
-use common::{config_trace, get_all, init_bitvmx, prepare_bitcoin, send_all};
+use common::{
+    config_trace, get_all, init_bitvmx, init_utxo, mine_and_wait, prepare_bitcoin, send_all,
+};
 use uuid::Uuid;
 
 mod common;
@@ -16,9 +17,9 @@ mod fixtures;
 pub fn test_slot() -> Result<()> {
     config_trace();
 
-    const NETWORK: Network = Network::Regtest;
+    //const NETWORK: Network = Network::Regtest;
 
-    let (bitcoin_client, bitcoind, _wallet) = prepare_bitcoin()?;
+    let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
 
     let (bitvmx_1, _addres_1, bridge_1) = init_bitvmx("op_1")?;
     let (bitvmx_2, _addres_2, bridge_2) = init_bitvmx("op_2")?;
@@ -54,18 +55,19 @@ pub fn test_slot() -> Result<()> {
     // Protocol fees funding
     const ONE_BTC: Amount = Amount::from_sat(100_000_000);
     let fund_value = ONE_BTC;
-    let agg_address = bitcoin_client.get_new_address(aggregated_pub_key, NETWORK);
-    let (fund_tx, fund_vout) = bitcoin_client
-        .fund_address(&agg_address, fund_value)
-        .unwrap();
-    let fund_txid = fund_tx.compute_txid();
+    let utxo = init_utxo(
+        &bitcoin_client,
+        aggregated_pub_key,
+        None,
+        Some(fund_value.to_sat()),
+    )?;
 
     // SETUP SLOT BEGIN
     let program_id = Uuid::new_v4();
     let set_fund_utxo = IncomingBitVMXApiMessages::SetVar(
         program_id,
         "fund_utxo".to_string(),
-        VariableTypes::Utxo((fund_txid, fund_vout, Some(fund_value.to_sat()))),
+        VariableTypes::Utxo((utxo.txid, utxo.vout, Some(fund_value.to_sat()))),
     )
     .to_string()?;
     send_all(&channels, &set_fund_utxo)?;
@@ -86,23 +88,23 @@ pub fn test_slot() -> Result<()> {
     .to_string()?;
     send_all(&channels, &set_unspendable)?;
 
-    /*let setup_msg =
+    let setup_msg =
         IncomingBitVMXApiMessages::Setup(program_id, PROGRAM_TYPE_SLOT.to_string(), addresses, 0)
             .to_string()?;
     send_all(&channels, &setup_msg)?;
 
-    get_all(&channels, &mut instances, false)?;*/
+    get_all(&channels, &mut instances, false)?;
 
-    /*let _ = channels[1].send(
+    let _ = channels[1].send(
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
-            program::lock::LOCK_TX.to_string(),
+            program::protocols::slot::SETUP_TX.to_string(),
         )
         .to_string()?,
-    );*/
+    );
 
-    //mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
     bitcoind.stop()?;
     Ok(())

@@ -2,7 +2,7 @@
 use std::str::FromStr;
 
 use anyhow::Result;
-use bitcoin::{Address, Network};
+use bitcoin::{secp256k1, Address, Amount, KnownHrp, Network, PublicKey, XOnlyPublicKey};
 use bitcoind::bitcoind::Bitcoind;
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
@@ -13,6 +13,7 @@ use bitvmx_client::{
     types::{OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID},
 };
 use p2p_handler::PeerId;
+use protocol_builder::{scripts, types::Utxo};
 use std::sync::Once;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -198,4 +199,38 @@ pub fn init_broker(role: &str) -> Result<DualChannel> {
     let broker_config = BrokerConfig::new(config.broker_port, None);
     let bridge_client = DualChannel::new(&broker_config, L2_ID);
     Ok(bridge_client)
+}
+
+pub fn init_utxo(
+    bitcoin_client: &BitcoinClient,
+    aggregated_pub_key: PublicKey,
+    secret: Option<Vec<u8>>,
+    amount: Option<u64>,
+) -> Result<Utxo> {
+    let secp = secp256k1::Secp256k1::new();
+    let untweaked_key = XOnlyPublicKey::from(aggregated_pub_key);
+
+    let spending_scripts = if secret.is_some() {
+        vec![scripts::reveal_secret(secret.unwrap(), &aggregated_pub_key)]
+    } else {
+        vec![scripts::timelock_renew(&aggregated_pub_key)]
+    };
+
+    let taproot_spend_info =
+        scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
+    let p2tr_address = Address::p2tr(
+        &secp,
+        untweaked_key,
+        taproot_spend_info.merkle_root(),
+        KnownHrp::Regtest,
+    );
+
+    let amount = amount.unwrap_or(100_000_000);
+    let (tx, vout) = bitcoin_client.fund_address(&p2tr_address, Amount::from_sat(amount))?;
+
+    let utxo = Utxo::new(tx.compute_txid(), vout, amount, &aggregated_pub_key);
+
+    info!("UTXO: {:?}", utxo);
+
+    Ok(utxo)
 }
