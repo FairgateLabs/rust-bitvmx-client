@@ -181,9 +181,9 @@ impl KeyChain {
 
         //let mut pubkey_nonce_map = HashMap::new();
         //pubkey_nonce_map.insert(participant_pubkey, nonces);
-
+        let id = "COMPLETE THIS";
         self.key_manager
-            .aggregate_nonces(aggregated_pubkey, nonces_map)
+            .aggregate_nonces(aggregated_pubkey, id, nonces_map)
             .map_err(BitVMXError::MuSig2SignerError)?;
 
         Ok(())
@@ -195,8 +195,9 @@ impl KeyChain {
         participant_pubkeys: Vec<PublicKey>,
         my_pubkey: PublicKey,
     ) -> Result<PublicKey, BitVMXError> {
+        let id = "COMPLETE THIS";
         self.key_manager
-            .new_musig2_session(participant_pubkeys, my_pubkey)
+            .new_musig2_session(participant_pubkeys, id, my_pubkey)
             .map_err(BitVMXError::MuSig2SignerError)
     }
 
@@ -211,8 +212,9 @@ impl KeyChain {
         aggregated_pubkey: &PublicKey,
         partial_signature_mapping: HashMap<PublicKey, Vec<(MessageId, PartialSignature)>>,
     ) -> Result<(), BitVMXError> {
+        let id = "COMPLETE THIS";
         self.key_manager
-            .save_partial_signatures_multi(aggregated_pubkey, partial_signature_mapping)
+            .save_partial_signatures_multi(aggregated_pubkey, id, partial_signature_mapping)
             .map_err(BitVMXError::MuSig2SignerError)?;
 
         Ok(())
@@ -222,9 +224,10 @@ impl KeyChain {
         &self,
         aggregated_pubkey: &PublicKey,
     ) -> Result<Vec<(MessageId, PubNonce)>, BitVMXError> {
+        let id = "COMPLETE THIS";
         let nonces = self
             .key_manager
-            .get_my_pub_nonces(aggregated_pubkey)
+            .get_my_pub_nonces(aggregated_pubkey, id)
             .map_err(BitVMXError::MuSig2SignerError)?;
 
         Ok(nonces)
@@ -235,17 +238,19 @@ impl KeyChain {
         aggregated_pubkey: &PublicKey,
         message_id: &str,
     ) -> Result<bitcoin::secp256k1::schnorr::Signature, BitVMXError> {
+        let id = "COMPLETE THIS";
         let signature = self
             .key_manager
-            .get_aggregated_signature(aggregated_pubkey, message_id)
+            .get_aggregated_signature(aggregated_pubkey, id, message_id)
             .map_err(BitVMXError::MuSig2SignerError)?;
 
         Ok(signature)
     }
 
     pub fn get_pub_nonces(&self, aggregated_pubkey: &PublicKey) -> Result<(), BitVMXError> {
+        let id = "COMPLETE THIS";
         self.key_manager
-            .get_my_pub_nonces(aggregated_pubkey)
+            .get_my_pub_nonces(aggregated_pubkey, id)
             .map_err(BitVMXError::MuSig2SignerError)?;
         Ok(())
     }
@@ -254,9 +259,10 @@ impl KeyChain {
         &self,
         aggregated_pubkey: &PublicKey,
     ) -> Result<Vec<(MessageId, PartialSignature)>, BitVMXError> {
+        let id = "COMPLETE THIS";
         let signatures = self
             .key_manager
-            .get_my_partial_signatures(aggregated_pubkey)
+            .get_my_partial_signatures(aggregated_pubkey, id)
             .map_err(BitVMXError::MuSig2SignerError)?;
 
         Ok(signatures)
