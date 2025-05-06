@@ -374,8 +374,9 @@ impl Program {
             .computed_aggregated
             .values()
         {
-            let id = "COMPLETE THIS";
-            let nonces = program_context.key_chain.get_nonces(aggregated, id);
+            let nonces = program_context
+                .key_chain
+                .get_nonces(aggregated, &self.protocol.context().protocol_name);
             if nonces.is_err() {
                 warn!(
                     "{}. Error geting nonces for aggregated key: {:?}",
@@ -460,10 +461,11 @@ impl Program {
                 }
             }
             for (aggregated, pubkey_nonce_map) in map_of_maps {
-                let id = "COMPLETE THIS";
-                program_context
-                    .key_chain
-                    .add_nonces(&aggregated, pubkey_nonce_map, id)?;
+                program_context.key_chain.add_nonces(
+                    &aggregated,
+                    pubkey_nonce_map,
+                    &self.protocol.context().protocol_name,
+                )?;
             }
 
             self.move_program_to_next_state()?;
@@ -492,8 +494,9 @@ impl Program {
             .computed_aggregated
             .values()
         {
-            let id = "COMPLETE THIS";
-            let signatures = program_context.key_chain.get_signatures(aggregated, id);
+            let signatures = program_context
+                .key_chain
+                .get_signatures(aggregated, &self.protocol.context().protocol_name);
             if signatures.is_err() {
                 warn!(
                     "{}. Error geting partial signature for aggregated key: {:?}",
@@ -582,10 +585,11 @@ impl Program {
             }
 
             for (aggregated, partial_map) in map_of_maps {
-                let id = "COMPLETE THIS";
-                program_context
-                    .key_chain
-                    .add_signatures(&aggregated, partial_map, id)?;
+                program_context.key_chain.add_signatures(
+                    &aggregated,
+                    partial_map,
+                    &self.protocol.context().protocol_name,
+                )?;
             }
 
             self.protocol.sign(&program_context.key_chain)?;
