@@ -57,6 +57,9 @@ pub enum BitVMXError {
     #[error("Invalid variable type")]
     InvalidVariableType,
 
+    #[error("Invalid witness type")]
+    InvalidWitnessType,
+
     // #[error("Failed to create communications key")]
     // CommunicationsKeyGenerationError(#[from] DecodingError),
     #[error("Failed to encode P2P data")]

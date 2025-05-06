@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use bitcoin::{PublicKey, Txid};
+use key_manager::winternitz::WinternitzSignature;
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::{KeyValueStore, Storage};
 use uuid::Uuid;
@@ -98,12 +99,21 @@ impl Globals {
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub enum WitnessTypes {
     Secret(Vec<u8>),
+    Winternitz(Vec<WinternitzSignature>),
 }
 
 impl WitnessTypes {
     pub fn secret(&self) -> Result<Vec<u8>, BitVMXError> {
         match self {
             WitnessTypes::Secret(secret) => Ok(secret.clone()),
+            _ => Err(BitVMXError::InvalidWitnessType),
+        }
+    }
+
+    pub fn winternitz(&self) -> Result<Vec<WinternitzSignature>, BitVMXError> {
+        match self {
+            WitnessTypes::Winternitz(winternitz) => Ok(winternitz.clone()),
+            _ => Err(BitVMXError::InvalidWitnessType),
         }
     }
 }
