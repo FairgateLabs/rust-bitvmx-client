@@ -206,11 +206,9 @@ impl Program {
 
             aggregated_pub_keys.sort();
 
-            let id = "COMPLETE THIS";
-            let aggregated_key =
-                context
-                    .key_chain
-                    .new_musig2_session(aggregated_pub_keys, *agg_key, id)?;
+            let aggregated_key = context
+                .key_chain
+                .new_musig2_session(aggregated_pub_keys, *agg_key)?;
 
             info!(
                 "Aggregated var name {}: Aggregated key: {}",
