@@ -142,9 +142,11 @@ impl Collaboration {
                     info!("Got keys {:?}", self.keys);
 
                     if self.keys.len() == self.participants.len() {
+                        let id = "COMPLETE THIS";
                         let aggregated = program_context.key_chain.new_musig2_session(
                             self.keys.values().cloned().collect(),
                             self.my_key.clone(),
+                            id,
                         )?;
                         self.aggregated_key = Some(aggregated.clone());
 
@@ -168,9 +170,11 @@ impl Collaboration {
                         }
                     });
 
+                    let id = "COMPLETE THIS";
                     let aggregated = program_context.key_chain.new_musig2_session(
                         self.keys.values().cloned().collect(),
                         self.my_key.clone(),
+                        id,
                     )?;
                     self.aggregated_key = Some(aggregated.clone());
                     self.completed = true;

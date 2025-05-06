@@ -116,7 +116,8 @@ impl ProtocolHandler for SlotProtocol {
             &ops_agg_pubkey,
         )?;
 
-        protocol.build(&context.key_chain.key_manager)?;
+        let id = "COMPLETE THIS";
+        protocol.build(&context.key_chain.key_manager, id)?;
         info!("{}", protocol.visualize()?);
         self.save_protocol(protocol)?;
         Ok(())
