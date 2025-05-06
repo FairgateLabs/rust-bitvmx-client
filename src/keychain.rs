@@ -194,10 +194,9 @@ impl KeyChain {
         //program_id: uuid::Uuid,
         participant_pubkeys: Vec<PublicKey>,
         my_pubkey: PublicKey,
-        id: &str,
     ) -> Result<PublicKey, BitVMXError> {
         self.key_manager
-            .new_musig2_session(participant_pubkeys, id, my_pubkey)
+            .new_musig2_session(participant_pubkeys, my_pubkey)
             .map_err(BitVMXError::MuSig2SignerError)
     }
 

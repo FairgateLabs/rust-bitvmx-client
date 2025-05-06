@@ -42,8 +42,7 @@ pub trait ProtocolHandler {
 
     fn sign(&mut self, key_chain: &KeyChain) -> Result<(), ProtocolBuilderError> {
         let mut protocol = self.load_protocol()?;
-        let id = "COMPLETE THIS";
-        protocol.sign(&key_chain.key_manager, id)?;
+        protocol.sign(&key_chain.key_manager, &self.context().protocol_name)?;
         self.save_protocol(protocol)?;
         Ok(())
     }
