@@ -115,6 +115,9 @@ pub enum BitVMXError {
 
     #[error("ProgramDefinition Error {0}")]
     ProgramDefinitionError(#[from] ProgramDefinitionError),
+
+    #[error("Job dispatcher error")]
+    DispatcherError(#[from] bitvmx_job_dispatcher::dispatcher::dispatcher_error::DispatcherError),
 }
 
 #[derive(Error, Debug)]

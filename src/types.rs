@@ -105,7 +105,7 @@ pub enum IncomingBitVMXApiMessages {
     SetupKey(Uuid, Vec<P2PAddress>, u16),
     GetAggregatedPubkey(Uuid),
     GetKeyPair(Uuid),
-    GenerateZKP(),
+    GenerateZKP(Uuid, u32),
     ProofReady(),
     ExecuteZKP(),
     GetZKPExecutionResult(),

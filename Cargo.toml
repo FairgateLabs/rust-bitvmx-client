@@ -46,6 +46,7 @@ emulator = { path = "../BitVMX-CPU/emulator" }
 
 
 musig2 = { version = "0.2.3", features = ["serde", "rand"] }
+bitvmx-job-dispatcher = { path = "../rust-bitvmx-job-dispatcher", features = ["prover"] }
 
 [dev-dependencies]
 bollard = "0.11.0"
