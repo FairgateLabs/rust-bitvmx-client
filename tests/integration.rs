@@ -71,10 +71,10 @@ pub fn test_single_run() -> Result<()> {
 
     info!("Waiting for setup messages...");
 
-    //Wait
+    //WAIT SETUP READY
     let _msgs = get_all(&channels, &mut instances, false)?;
 
-    //Bridge send signal to send the kickoff message
+    //CHALLENGERS STARTS CHALLENGE
     let _ = channels[1].send(
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
@@ -84,7 +84,40 @@ pub fn test_single_run() -> Result<()> {
         .to_string()?,
     );
 
-    mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    // PROVER OBSERVES THE CHALLENGE
+    // AND RESPONDS WITH THE INPUT
+    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    let (_uuid, _txid, name) = msgs[0].transaction().unwrap();
+    assert_eq!(
+        name.unwrap_or_default(),
+        program::protocols::dispute::START_CH.to_string()
+    );
+
+    // set input value
+    let set_input_1 = VariableTypes::Input(hex::decode("11111111").unwrap())
+        .set_msg(program_id, "program_input_1")?;
+    let _ = channels[0].send(BITVMX_ID, set_input_1)?;
+
+    // send the tx
+    let _ = channels[0].send(
+        BITVMX_ID,
+        IncomingBitVMXApiMessages::DispatchTransactionName(
+            program_id,
+            program::protocols::dispute::INPUT_1.to_string(),
+        )
+        .to_string()?,
+    );
+
+    // VERIFIER DETECTS THE INPUT
+    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    let (_uuid, _txid, name) = msgs[0].transaction().unwrap();
+    assert_eq!(
+        name.unwrap_or_default(),
+        program::protocols::dispute::INPUT_1.to_string()
+    );
+
+    //TODO: check for transactions and interact with input, and execution
+    //TODO: allow fake and true job dispatcher execution and responses so we can test the whole flow
 
     info!("Stopping bitcoind");
     bitcoind.stop()?;

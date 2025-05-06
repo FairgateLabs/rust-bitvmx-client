@@ -13,7 +13,10 @@ use bitvmx_client::{
     types::{OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID},
 };
 use p2p_handler::PeerId;
-use protocol_builder::{scripts::{self, SignMode}, types::Utxo};
+use protocol_builder::{
+    scripts::{self, SignMode},
+    types::Utxo,
+};
 use std::sync::Once;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -173,7 +176,7 @@ pub fn mine_and_wait(
     channels: &Vec<DualChannel>,
     instances: &mut Vec<BitVMX>,
     wallet: &Address,
-) -> Result<()> {
+) -> Result<Vec<OutgoingBitVMXApiMessages>> {
     //MINE AND WAIT
     for i in 0..100 {
         if i % 10 == 0 {
@@ -186,12 +189,12 @@ pub fn mine_and_wait(
     }
     let msgs = get_all(&channels, instances, false)?;
 
-    let (uuid, txid, name) = msgs[0].transaction().unwrap();
+    /*let (uuid, txid, name) = msgs[0].transaction().unwrap();
     info!(
         "Transaction notification: uuid: {} txid: {:?} name: {:?}",
         uuid, txid, name
-    );
-    Ok(())
+    );*/
+    Ok(msgs)
 }
 
 pub fn init_broker(role: &str) -> Result<DualChannel> {
@@ -211,9 +214,16 @@ pub fn init_utxo(
     let untweaked_key = XOnlyPublicKey::from(aggregated_pub_key);
 
     let spending_scripts = if secret.is_some() {
-        vec![scripts::reveal_secret(secret.unwrap(), &aggregated_pub_key, SignMode::Aggregate)]
+        vec![scripts::reveal_secret(
+            secret.unwrap(),
+            &aggregated_pub_key,
+            SignMode::Aggregate,
+        )]
     } else {
-        vec![scripts::timelock_renew(&aggregated_pub_key, SignMode::Aggregate)]
+        vec![scripts::timelock_renew(
+            &aggregated_pub_key,
+            SignMode::Aggregate,
+        )]
     };
 
     let taproot_spend_info =

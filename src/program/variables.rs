@@ -23,6 +23,7 @@ pub enum VariableTypes {
     Utxo(PartialUtxo),
     Number(u32),
     String(String),
+    Input(Vec<u8>),
 }
 
 impl VariableTypes {
@@ -53,6 +54,12 @@ impl VariableTypes {
     pub fn string(&self) -> Result<String, BitVMXError> {
         match self {
             VariableTypes::String(string) => Ok(string.clone()),
+            _ => Err(BitVMXError::InvalidVariableType),
+        }
+    }
+    pub fn input(&self) -> Result<Vec<u8>, BitVMXError> {
+        match self {
+            VariableTypes::Input(input) => Ok(input.clone()),
             _ => Err(BitVMXError::InvalidVariableType),
         }
     }

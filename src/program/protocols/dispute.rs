@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use bitcoin::{PublicKey, Transaction, Txid};
-use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
+use bitcoin_coordinator::TransactionStatus;
 use emulator::loader::program_definition::ProgramDefinition;
 use key_manager::winternitz::WinternitzType;
 use protocol_builder::{
@@ -18,7 +18,6 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::{
-    bitvmx::Context,
     errors::BitVMXError,
     keychain::KeyChain,
     program::{participant::ParticipantRole, protocols::slot::external_fund_tx, witness},
@@ -30,10 +29,8 @@ use super::{
     protocol_handler::{ProtocolContext, ProtocolHandler},
 };
 
-pub const START_CH: &str = "pre_kickoff";
+pub const START_CH: &str = "START_CHALLENGE";
 pub const INPUT_1: &str = "INPUT_1";
-const _KICKOFF: &str = "kickoff";
-const _PROTOCOL: &str = "protocol";
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DisputeResolutionProtocol {
@@ -106,10 +103,11 @@ impl ProtocolHandler for DisputeResolutionProtocol {
     fn get_transaction_name(
         &self,
         name: &str,
-        _context: &ProgramContext,
+        context: &ProgramContext,
     ) -> Result<Transaction, BitVMXError> {
         match name {
             START_CH => Ok(self.start_challenge()?),
+            INPUT_1 => Ok(self.input_1_tx(context)?),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
     }
@@ -119,7 +117,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         tx_id: Txid,
         tx_status: TransactionStatus,
         _context: String,
-        program_context: &ProgramContext,
+        _program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         let name = self.get_transaction_name_by_id(tx_id)?;
         info!(
@@ -129,21 +127,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             self.role()
         );
 
-        if name == START_CH && self.role() == ParticipantRole::Prover {
-            //TODO: inform whoever is needed
-            // now act here to test
-
-            info!("Dispatching transaction the input 1 tx");
-            let tx_to_dispatch = self.input_1_tx(0x1234_4444, &program_context.key_chain)?;
-
-            let context = Context::ProgramId(self.ctx.id);
-            program_context.bitcoin_coordinator.dispatch(
-                tx_to_dispatch,
-                context.to_string()?,
-                None,
-            )?;
-        }
-
+        // TODO: decode and notify de l2 so it can act on it
         if name == INPUT_1 && self.role() == ParticipantRole::Verifier {
             //let wpub = self .get_prover() .keys .as_ref() .unwrap() .get_winternitz("program_input") .unwrap();
             let witness = tx_status.tx.input[0].witness.clone();
@@ -239,11 +223,7 @@ impl DisputeResolutionProtocol {
             .transaction_to_send(START_CH, &[taproot_arg])
     }
 
-    pub fn input_1_tx(
-        &self,
-        data: u32,
-        key_chain: &KeyChain,
-    ) -> Result<Transaction, ProtocolBuilderError> {
+    pub fn input_1_tx(&self, context: &ProgramContext) -> Result<Transaction, BitVMXError> {
         let protocol = self.load_protocol()?;
 
         let txname = INPUT_1;
@@ -255,9 +235,14 @@ impl DisputeResolutionProtocol {
         let mut spending_args = InputArgs::new_taproot_script_args(LeafSpec::Index(0));
 
         //TODO: set value for variable from outside
-        let message_to_sign = data.to_be_bytes();
-        let winternitz_signature = key_chain.key_manager.sign_winternitz_message(
-            &message_to_sign,
+
+        let input_1_msg = context
+            .globals
+            .get_var(&self.ctx.id, "program_input_1")?
+            .input()?;
+
+        let winternitz_signature = context.key_chain.key_manager.sign_winternitz_message(
+            &input_1_msg,
             WinternitzType::HASH160,
             spend.get_key("value").unwrap().derivation_index(),
         )?;
@@ -268,7 +253,7 @@ impl DisputeResolutionProtocol {
         spending_args.push_winternitz_signature(winternitz_signature);
         spending_args.push_taproot_signature(signature)?;
 
-        protocol.transaction_to_send(txname, &[spending_args])
+        Ok(protocol.transaction_to_send(txname, &[spending_args])?)
     }
 
     pub fn add_input_tx(
@@ -287,6 +272,7 @@ impl DisputeResolutionProtocol {
         // - use the dame logic in generate keys to define the proper amount of winternitz keys
         // - use proper size from config mapped in 4 bytes word
         // - in timelock use secret to avoid the other part to spend the utxo (but is this needed, why the other part would consume it?)
+        // - the prover needs to resingn any verifier provided input (so the equivocation is possible on reads)
 
         let input_data_l1 = scripts::verify_winternitz_signature(
             aggregated,
