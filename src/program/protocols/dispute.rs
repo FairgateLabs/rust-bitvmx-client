@@ -109,7 +109,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         _context: &ProgramContext,
     ) -> Result<Transaction, BitVMXError> {
         match name {
-            START_CH => Ok(self.prekickoff_transaction()?),
+            START_CH => Ok(self.start_challenge()?),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
     }
@@ -227,7 +227,7 @@ impl DisputeResolutionProtocol {
         get_role(self.ctx.my_idx)
     }
 
-    pub fn prekickoff_transaction(&self) -> Result<Transaction, ProtocolBuilderError> {
+    pub fn start_challenge(&self) -> Result<Transaction, ProtocolBuilderError> {
         let signature = self
             .load_protocol()?
             .input_taproot_key_spend_signature(START_CH, 0)?
@@ -280,6 +280,14 @@ impl DisputeResolutionProtocol {
         amount: u64,
         fee: u64,
     ) -> Result<(), BitVMXError> {
+        //TODO:
+        // - Define one input for the inputs defined in the program
+        // - check a way to use input name "global.var_name" to get inputs from previous defined values
+        // - check if input is prover of verifier and use propero keys[n]
+        // - use the dame logic in generate keys to define the proper amount of winternitz keys
+        // - use proper size from config mapped in 4 bytes word
+        // - in timelock use secret to avoid the other part to spend the utxo (but is this needed, why the other part would consume it?)
+
         let input_data_l1 = scripts::verify_winternitz_signature(
             aggregated,
             keys[0].get_winternitz("program_input_leaf_1")?,
