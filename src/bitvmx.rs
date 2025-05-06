@@ -1,3 +1,4 @@
+use crate::program::protocols::protocol_handler::ProtocolHandler;
 use crate::{
     api::BitVMXApi,
     collaborate::Collaboration,
@@ -6,7 +7,7 @@ use crate::{
     keychain::KeyChain,
     p2p_helper::deserialize_msg,
     program::{
-        participant::{P2PAddress, ParticipantRole},
+        participant::P2PAddress,
         program::Program,
         variables::{Globals, WitnessVars},
     },
@@ -15,7 +16,6 @@ use crate::{
         BITVMX_ID, L2_ID,
     },
 };
-
 use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::{
     coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi},
@@ -29,7 +29,6 @@ use bitvmx_broker::{
     rpc::{sync_server::BrokerSync, BrokerConfig},
 };
 use p2p_handler::{LocalAllowList, P2pHandler, PeerId, ReceiveHandlerChannel};
-use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashSet, VecDeque},
@@ -221,7 +220,7 @@ impl BitVMX {
             match monitor_news {
                 MonitorNews::Transaction(tx_id, tx_status, context_data) => {
                     let context = Context::from_string(&context_data)?;
-                    info!(
+                    debug!(
                         "Transaction Found: {:?} {:?} for context: {:?}",
                         tx_id, tx_status, context
                     );
@@ -503,7 +502,11 @@ impl BitVMXApi for BitVMX {
 
         self.program_context.broker_channel.send(
             from,
-            serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(id, key.to_string(), value))?,
+            serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(
+                id,
+                key.to_string(),
+                value,
+            ))?,
         )?;
         Ok(())
     }
@@ -511,17 +514,16 @@ impl BitVMXApi for BitVMX {
     fn get_witness(&mut self, from: u32, id: Uuid, key: &str) -> Result<(), BitVMXError> {
         info!("Getting witness {}", key);
         let value = self.program_context.witness.get_witness(&id, key)?;
-        
+
         // Create response based on whether we found a value
         let response = match value {
             Some(witness) => OutgoingBitVMXApiMessages::Witness(id, key.to_string(), witness),
             None => OutgoingBitVMXApiMessages::NotFound(id, key.to_string()),
         };
 
-        self.program_context.broker_channel.send(
-            from,
-            serde_json::to_string(&response)?,
-        )?;
+        self.program_context
+            .broker_channel
+            .send(from, serde_json::to_string(&response)?)?;
         Ok(())
     }
 
@@ -605,9 +607,10 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn setup_slot(
+    fn setup(
         &mut self,
         id: Uuid,
+        program_type: String,
         peer_address: Vec<P2PAddress>,
         leader: u16,
     ) -> Result<(), BitVMXError> {
@@ -616,9 +619,10 @@ impl BitVMXApi for BitVMX {
             return Err(BitVMXError::ProgramAlreadyExists(id));
         }
 
-        info!("Setting up program: {:?}", id);
-        Program::setup_slot(
+        info!("Setting up program: {:?} type {}", id, program_type);
+        Program::setup(
             &id,
+            &program_type,
             peer_address,
             leader as usize,
             &mut self.program_context,
@@ -630,34 +634,6 @@ impl BitVMXApi for BitVMX {
             "Program Setup Finished {}",
             self.program_context.comms.get_peer_id()
         );
-
-        Ok(())
-    }
-
-    fn setup_program(
-        &mut self,
-        id: Uuid,
-        role: ParticipantRole,
-        peer_address: P2PAddress,
-        utxo: Utxo,
-    ) -> Result<(), BitVMXError> {
-        if self.program_exists(&id)? {
-            info!("{}: Program already exists", role);
-            return Err(BitVMXError::ProgramAlreadyExists(id));
-        }
-
-        info!("Setting up program: {:?}", id);
-        Program::setup_program(
-            &id,
-            role.clone(),
-            &peer_address,
-            utxo,
-            &mut self.program_context,
-            self.store.clone(),
-            &self._config.client,
-        )?;
-        self.add_new_program(&id)?;
-        info!("{}: Program Setup Finished", role);
 
         Ok(())
     }
@@ -702,6 +678,18 @@ impl BitVMXApi for BitVMX {
         info!("< {:?}", decoded);
 
         match decoded {
+            IncomingBitVMXApiMessages::GetHashedMessage(id, name, vout, leaf) => {
+                let hashed = self
+                    .load_program(&id)?
+                    .protocol
+                    .get_hashed_message(&name, vout, leaf)?;
+                self.program_context.broker_channel.send(
+                    from,
+                    serde_json::to_string(&OutgoingBitVMXApiMessages::HashedMessage(
+                        id, name, vout, leaf, hashed,
+                    ))?,
+                )?;
+            }
             IncomingBitVMXApiMessages::GetCommInfo() => {
                 let comm_info = OutgoingBitVMXApiMessages::CommInfo(P2PAddress {
                     address: self.program_context.comms.get_address(),
@@ -728,9 +716,6 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::GetWitness(uuid, key) => {
                 BitVMXApi::get_witness(self, from, uuid, &key)?;
             }
-            IncomingBitVMXApiMessages::SetupProgram(id, role, peer_address, utxo) => {
-                BitVMXApi::setup_program(self, id, role, peer_address, utxo)?
-            }
             IncomingBitVMXApiMessages::GetTransaction(id, txid) => {
                 BitVMXApi::get_transaction(self, from, id, txid)?
             }
@@ -745,8 +730,8 @@ impl BitVMXApi for BitVMX {
                     ))?,
                 )?;
             }
-            IncomingBitVMXApiMessages::SetupSlot(id, participants, leader) => {
-                BitVMXApi::setup_slot(self, id, participants, leader)?
+            IncomingBitVMXApiMessages::Setup(id, program_type, participants, leader) => {
+                BitVMXApi::setup(self, id, program_type, participants, leader)?
             }
             IncomingBitVMXApiMessages::SubscribeToTransaction(uuid, txid) => {
                 BitVMXApi::subscribe_to_tx(self, from, uuid, txid)?

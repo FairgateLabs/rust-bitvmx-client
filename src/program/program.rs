@@ -6,16 +6,14 @@ use crate::{
         parse_keys, parse_nonces, parse_signatures, PartialSignatureMessage, PubNonceMessage,
     },
     p2p_helper::{request, response, P2PMessageType},
-    program::participant::ParticipantKeys,
+    program::{participant::ParticipantKeys, protocols::protocol_handler::new_protocol_type},
     types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramRequestInfo, L2_ID},
 };
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus, TypesToMonitor};
 use chrono::Utc;
-use core::panic;
 use key_manager::musig2::{types::MessageId, PartialSignature, PubNonce};
 use p2p_handler::PeerId;
-use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashMap, rc::Rc};
@@ -24,10 +22,8 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::{
-    dispute::{DisputeResolutionProtocol, SearchParams},
     participant::{P2PAddress, ParticipantData, ParticipantRole},
-    protocol_handler::{ProtocolHandler, ProtocolType},
-    slot::SlotProtocol,
+    protocols::protocol_handler::{ProtocolHandler, ProtocolType},
     state::{ProgramState, SettingUpState},
 };
 
@@ -75,54 +71,22 @@ pub fn all_signatures_ready(others: &Vec<ParticipantData>) -> bool {
     c >= others.len() - 1
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DrpParameters {
     pub role: ParticipantRole,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct SlotParameters {
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LockParameters {
     pub my_id: u32,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub enum ProtocolParameters {
-    DisputeResolutionProtocol(DrpParameters),
-    SlotProtocol(SlotParameters),
-}
-
-impl ProtocolParameters {
-    pub fn new_drp(role: ParticipantRole) -> Self {
-        ProtocolParameters::DisputeResolutionProtocol(DrpParameters { role })
-    }
-
-    pub fn new_slot(my_id: u32) -> Self {
-        ProtocolParameters::SlotProtocol(SlotParameters { my_id })
-    }
-
-    pub fn drp(&self) -> &DrpParameters {
-        match self {
-            ProtocolParameters::DisputeResolutionProtocol(drp) => drp,
-            _ => panic!("Not a DRP protocol"),
-        }
-    }
-
-    pub fn slot(&self) -> &SlotParameters {
-        match self {
-            ProtocolParameters::SlotProtocol(slot) => slot,
-            _ => panic!("Not a Slot protocol"),
-        }
-    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Program {
     pub program_id: Uuid,
-    pub parameters: ProtocolParameters,
     pub my_idx: usize,
     pub participants: Vec<ParticipantData>,
     pub leader: usize,
-    pub utxo: Option<Utxo>,
     pub protocol: ProtocolType,
     pub state: ProgramState,
     #[serde(skip)]
@@ -150,8 +114,10 @@ impl Program {
         Ok(())
     }
 
-    pub fn setup_slot(
+    //TODO UNIFY SETUPS WITH NAMES
+    pub fn setup(
         id: &Uuid,
+        protocol_type: &str,
         peers: Vec<P2PAddress>,
         leader: usize,
         program_context: &mut ProgramContext,
@@ -162,8 +128,6 @@ impl Program {
         if leader >= peers.len() {
             return Err(BitVMXError::InvalidMessageFormat);
         }
-
-        let my_keys = SlotProtocol::generate_keys(&mut program_context.key_chain)?;
 
         let p2p_address = P2PAddress::new(
             &program_context.comms.get_address(),
@@ -179,6 +143,9 @@ impl Program {
         info!("my_pos: {}", my_idx);
         info!("Leader pos: {}", leader);
 
+        let protocol = new_protocol_type(*id, protocol_type, my_idx, storage.clone())?;
+        let my_keys = protocol.generate_keys(&mut program_context.key_chain)?;
+
         //Creates space for the participants
         let mut others = peers
             .iter()
@@ -188,72 +155,12 @@ impl Program {
         // save my pos in the others list to have the complete message ready
         others[my_idx] = ParticipantData::new(&p2p_address, Some(my_keys));
 
-        // Create a program with the utxo information, and the dispute resolution search parameters.
-        let protocol = ProtocolType::SlotProtocol(SlotProtocol::new(*id, storage.clone()));
-
         let program = Self {
             program_id: *id,
-            parameters: ProtocolParameters::new_slot(my_idx as u32),
             my_idx,
             participants: others,
             leader,
-            utxo: None,
             protocol,
-            state: ProgramState::New,
-            storage: Some(storage),
-            config: config.clone(),
-        };
-
-        program.save()?;
-
-        Ok(program)
-    }
-
-    pub fn setup_program(
-        id: &Uuid,
-        my_role: ParticipantRole,
-        peer_address: &P2PAddress,
-        utxo: Utxo,
-        program_context: &mut ProgramContext,
-        storage: Rc<Storage>,
-        config: &ClientConfig,
-    ) -> Result<Self, BitVMXError> {
-        // Generate my keys.
-        let my_keys =
-            DisputeResolutionProtocol::generate_keys(&my_role, &mut program_context.key_chain)?;
-
-        let p2p_address = P2PAddress::new(
-            &program_context.comms.get_address(),
-            program_context.comms.get_peer_id(),
-        );
-        // Create a participant that represents me with the specified role (Prover or Verifier).
-        let me = ParticipantData::new(&p2p_address, Some(my_keys));
-
-        // Create a participant that represents the counterparty with the opposite role.
-        let other = ParticipantData::new(peer_address, None);
-
-        // Create a program with the utxo information, and the dispute resolution search parameters.
-        let drp = ProtocolType::DisputeResolutionProtocol(DisputeResolutionProtocol::new(
-            *id,
-            storage.clone(),
-        ));
-
-        let (prover, verifier, my_idx) = if my_role == ParticipantRole::Prover {
-            (me, other, 0)
-        } else {
-            (other, me, 1)
-        };
-
-        let others = vec![prover, verifier];
-
-        let program = Self {
-            program_id: *id,
-            parameters: ProtocolParameters::new_drp(my_role),
-            my_idx,
-            participants: others,
-            leader: 1, //verifier is the leader (because prover starts sending data)
-            utxo: Some(utxo),
-            protocol: drp,
             state: ProgramState::New,
             storage: Some(storage),
             config: config.clone(),
@@ -268,18 +175,8 @@ impl Program {
         &mut self,
         context: &ProgramContext,
     ) -> Result<HashMap<String, PublicKey>, BitVMXError> {
-        // 2. Init the musig2 signer for this program
+        let mut aggregated_keys = self.protocol.get_pregenerated_aggregated_keys(context)?;
 
-        let operatos_pub = if self.utxo.is_some() {
-            self.utxo.clone().unwrap().pub_key
-        } else {
-            context
-                .globals
-                .get_var(&self.program_id, "operators_aggregated_pub")?
-                .pubkey()?
-        };
-
-        let mut aggregated_keys = vec![("pregenerated".to_string(), operatos_pub)];
         let mut result = HashMap::new();
 
         for agg_name in &self.participants[self.my_idx]
@@ -333,38 +230,20 @@ impl Program {
     }
 
     pub fn build_protocol(&mut self, context: &ProgramContext) -> Result<(), BitVMXError> {
-        let search_params = SearchParams::new(8, 32);
-
         let aggregated = self.prepare_aggregated_keys(context)?;
         info!(
             "{}. Building with aggregated: {:?}",
             self.my_idx, aggregated
         );
-        // 3. Build the protocol using the aggregated key as internal key for taproot
 
-        if self.protocol.as_drp().is_some() {
-            info!("Building protocol for: {:?}", self.parameters.drp().role);
+        let keys: Vec<ParticipantKeys> = self
+            .participants
+            .iter()
+            .map(|p| p.keys.as_ref().unwrap().clone())
+            .collect();
 
-            self.protocol.as_drp_mut().unwrap().build(
-                self.utxo.as_ref().unwrap().clone(),
-                self.participants[0].keys.as_ref().unwrap(),
-                self.participants[1].keys.as_ref().unwrap(),
-                aggregated,
-                search_params,
-                &context.key_chain,
-            )?;
-            info!("Protocol built for role: {:?}", self.parameters.drp().role);
-        } else {
-            let keys: Vec<ParticipantKeys> = self
-                .participants
-                .iter()
-                .map(|p| p.keys.as_ref().unwrap().clone())
-                .collect();
-            self.protocol
-                .as_slot_mut()
-                .unwrap()
-                .build(keys, aggregated, &context)?;
-        }
+        info!("Building protocol for: {} {}", self.program_id, self.my_idx);
+        self.protocol.build(keys, aggregated, &context)?;
 
         // 6. Move the program to the next state
         self.move_program_to_next_state()?;
@@ -865,13 +744,8 @@ impl Program {
         context: String,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        self.protocol.notify_news(
-            tx_id,
-            tx_status.clone(),
-            context,
-            program_context,
-            &self.parameters,
-        )?;
+        self.protocol
+            .notify_news(tx_id, tx_status.clone(), context, program_context)?;
 
         let name = self.protocol.get_transaction_name_by_id(tx_id)?;
         program_context.broker_channel.send(

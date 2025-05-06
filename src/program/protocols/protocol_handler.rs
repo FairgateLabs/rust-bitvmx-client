@@ -1,8 +1,9 @@
-use bitcoin::{Transaction, Txid};
+use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use enum_dispatch::enum_dispatch;
 use protocol_builder::{builder::Protocol, errors::ProtocolBuilderError};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::rc::Rc;
 use storage_backend::storage::Storage;
 use uuid::Uuid;
@@ -10,26 +11,59 @@ use uuid::Uuid;
 use crate::errors::BitVMXError;
 use crate::keychain::KeyChain;
 
-use crate::program::dispute::DisputeResolutionProtocol;
-use crate::types::ProgramContext;
+use crate::types::{ProgramContext, PROGRAM_TYPE_DRP, PROGRAM_TYPE_LOCK, PROGRAM_TYPE_SLOT};
 
-use super::program::ProtocolParameters;
+use super::super::participant::ParticipantKeys;
+use super::dispute::DisputeResolutionProtocol;
+use super::lock::LockProtocol;
 use super::slot::SlotProtocol;
 
 #[enum_dispatch]
 pub trait ProtocolHandler {
     fn context(&self) -> &ProtocolContext;
     fn context_mut(&mut self) -> &mut ProtocolContext;
+    fn get_pregenerated_aggregated_keys(
+        &self,
+        context: &ProgramContext,
+    ) -> Result<Vec<(String, PublicKey)>, BitVMXError>;
+
+    fn generate_keys(&self, key_chain: &mut KeyChain) -> Result<ParticipantKeys, BitVMXError>;
 
     fn set_storage(&mut self, storage: Rc<Storage>) {
         self.context_mut().storage = Some(storage);
     }
 
+    fn build(
+        &self,
+        _keys: Vec<ParticipantKeys>,
+        _computed_aggregated: HashMap<String, PublicKey>,
+        _context: &ProgramContext,
+    ) -> Result<(), BitVMXError>;
+
     fn sign(&mut self, key_chain: &KeyChain) -> Result<(), ProtocolBuilderError> {
         let mut protocol = self.load_protocol()?;
-        protocol.sign(true, &key_chain.key_manager)?;
+        protocol.sign(&key_chain.key_manager)?;
         self.save_protocol(protocol)?;
         Ok(())
+    }
+
+    fn get_hashed_message(
+        &mut self,
+        transaction_name: &str,
+        input_index: u32,
+        message_index: u32,
+    ) -> Result<String, BitVMXError> {
+        let ret = self.load_protocol()?.get_hashed_message(
+            transaction_name,
+            input_index,
+            message_index,
+        )?;
+        if ret.is_none() {
+            return Err(BitVMXError::InvalidTransactionName(
+                transaction_name.to_string(),
+            ));
+        }
+        Ok(format!("{}", ret.unwrap()))
     }
 
     fn get_transaction_by_id(&self, txid: &Txid) -> Result<Transaction, ProtocolBuilderError> {
@@ -54,6 +88,14 @@ pub trait ProtocolHandler {
         }
     }
 
+    fn load_or_create_protocol(&self) -> Protocol {
+        let protocol = self.load_protocol();
+        match protocol {
+            Ok(protocol) => protocol,
+            Err(_) => Protocol::new(&self.context().protocol_name),
+        }
+    }
+
     fn save_protocol(&self, protocol: Protocol) -> Result<(), ProtocolBuilderError> {
         protocol.save(self.context().storage.clone().unwrap())?;
         Ok(())
@@ -71,7 +113,6 @@ pub trait ProtocolHandler {
         tx_status: TransactionStatus,
         context: String,
         program_context: &ProgramContext,
-        parameters: &ProtocolParameters,
     ) -> Result<(), BitVMXError>;
 }
 
@@ -79,15 +120,17 @@ pub trait ProtocolHandler {
 pub struct ProtocolContext {
     pub protocol_name: String,
     pub id: Uuid,
+    pub my_idx: usize,
     #[serde(skip)]
     pub storage: Option<Rc<Storage>>,
 }
 
 impl ProtocolContext {
-    pub fn new(id: Uuid, name: String, storage: Rc<Storage>) -> Self {
+    pub fn new(id: Uuid, name: &str, my_idx: usize, storage: Rc<Storage>) -> Self {
         Self {
             id,
-            protocol_name: name,
+            protocol_name: name.to_string(),
+            my_idx,
             storage: Some(storage),
         }
     }
@@ -97,33 +140,25 @@ impl ProtocolContext {
 #[derive(Clone, Serialize, Deserialize)]
 pub enum ProtocolType {
     DisputeResolutionProtocol,
+    LockProtocol,
     SlotProtocol,
 }
 
-impl ProtocolType {
-    pub fn as_drp(&self) -> Option<&DisputeResolutionProtocol> {
-        match self {
-            ProtocolType::DisputeResolutionProtocol(drp) => Some(drp),
-            _ => None,
-        }
-    }
-    pub fn as_drp_mut(&mut self) -> Option<&mut DisputeResolutionProtocol> {
-        match self {
-            ProtocolType::DisputeResolutionProtocol(drp) => Some(drp),
-            _ => None,
-        }
-    }
+pub fn new_protocol_type(
+    id: Uuid,
+    name: &str,
+    my_idx: usize,
+    storage: Rc<Storage>,
+) -> Result<ProtocolType, BitVMXError> {
+    let protocol_name = format!("{}_{}", name, id);
+    let ctx = ProtocolContext::new(id, &protocol_name, my_idx, storage);
 
-    pub fn as_slot(&self) -> Option<&SlotProtocol> {
-        match self {
-            ProtocolType::SlotProtocol(slot) => Some(slot),
-            _ => None,
-        }
-    }
-    pub fn as_slot_mut(&mut self) -> Option<&mut SlotProtocol> {
-        match self {
-            ProtocolType::SlotProtocol(slot) => Some(slot),
-            _ => None,
-        }
+    match name {
+        PROGRAM_TYPE_DRP => Ok(ProtocolType::DisputeResolutionProtocol(
+            DisputeResolutionProtocol::new(ctx),
+        )),
+        PROGRAM_TYPE_LOCK => Ok(ProtocolType::LockProtocol(LockProtocol::new(ctx))),
+        PROGRAM_TYPE_SLOT => Ok(ProtocolType::SlotProtocol(SlotProtocol::new(ctx))),
+        _ => Err(BitVMXError::NotImplemented(name.to_string())),
     }
 }

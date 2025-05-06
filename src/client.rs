@@ -1,7 +1,7 @@
 use crate::{
     errors::ClientError,
     program::{
-        participant::{P2PAddress, ParticipantRole},
+        participant::P2PAddress,
         variables::{VariableTypes, WitnessTypes},
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
@@ -9,7 +9,6 @@ use crate::{
 use anyhow::Result;
 use bitcoin::{Transaction, Txid};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
-use protocol_builder::types::Utxo;
 use std::thread;
 use std::time::{Duration, Instant};
 use tracing::info;
@@ -38,17 +37,16 @@ impl BitVMXClient {
     pub fn setup(
         &self,
         id: Uuid,
-        role: ParticipantRole,
-        address: P2PAddress,
-        utxo: Utxo,
+        program_type: String,
+        addresses: Vec<P2PAddress>,
+        leader: u16,
     ) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::SetupProgram(
-            id, role, address, utxo,
+        self.send_message(IncomingBitVMXApiMessages::Setup(
+            id,
+            program_type,
+            addresses,
+            leader,
         ))
-    }
-
-    pub fn setup_slot(&self, id: Uuid, addresses: Vec<P2PAddress>, leader: u16) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::SetupSlot(id, addresses, leader))
     }
 
     pub fn dispatch_transaction(&self, id: Uuid, tx: Transaction) -> Result<()> {

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use storage_backend::storage::{KeyValueStore, Storage};
 use uuid::Uuid;
 
-use crate::errors::BitVMXError;
+use crate::{errors::BitVMXError, types::IncomingBitVMXApiMessages};
 
 /*
 - winternitz
@@ -21,6 +21,9 @@ pub enum VariableTypes {
     Secret(Vec<u8>),
     PubKey(PublicKey),
     Utxo(PartialUtxo),
+    Number(u32),
+    String(String),
+    Input(Vec<u8>),
 }
 
 impl VariableTypes {
@@ -41,6 +44,29 @@ impl VariableTypes {
             VariableTypes::Utxo(utxo) => Ok(utxo.clone()),
             _ => Err(BitVMXError::InvalidVariableType),
         }
+    }
+    pub fn number(&self) -> Result<u32, BitVMXError> {
+        match self {
+            VariableTypes::Number(num) => Ok(*num),
+            _ => Err(BitVMXError::InvalidVariableType),
+        }
+    }
+    pub fn string(&self) -> Result<String, BitVMXError> {
+        match self {
+            VariableTypes::String(string) => Ok(string.clone()),
+            _ => Err(BitVMXError::InvalidVariableType),
+        }
+    }
+    pub fn input(&self) -> Result<Vec<u8>, BitVMXError> {
+        match self {
+            VariableTypes::Input(input) => Ok(input.clone()),
+            _ => Err(BitVMXError::InvalidVariableType),
+        }
+    }
+
+    pub fn set_msg(self, id: Uuid, key: &str) -> Result<String, BitVMXError> {
+        let msg = IncomingBitVMXApiMessages::SetVar(id, key.to_string(), self).to_string()?;
+        Ok(msg)
     }
 }
 pub struct Globals {

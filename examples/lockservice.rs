@@ -16,7 +16,9 @@ use bitvmx_client::{
         self,
         variables::{VariableTypes, WitnessTypes},
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID},
+    types::{
+        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID, PROGRAM_TYPE_LOCK,
+    },
 };
 
 use storage_backend::storage::Storage;
@@ -277,65 +279,40 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
         std::thread::sleep(std::time::Duration::from_millis(1000));
         get_all(&channels)?;
 
-        let set_ops_aggregated = IncomingBitVMXApiMessages::SetVar(
-            program_id,
-            "operators_aggregated_pub".to_string(),
-            VariableTypes::PubKey(aggregated_pub_key),
-        )
-        .to_string()?;
+        let set_ops_aggregated = VariableTypes::PubKey(aggregated_pub_key)
+            .set_msg(program_id, "operators_aggregated_pub")?;
         send_all(&channels, &set_ops_aggregated)?;
 
-        let set_ops_aggregated_hp = IncomingBitVMXApiMessages::SetVar(
-            program_id,
-            "operators_aggregated_happy_path".to_string(),
-            VariableTypes::PubKey(aggregated_happy_path),
-        )
-        .to_string()?;
+        let set_ops_aggregated_hp = VariableTypes::PubKey(aggregated_happy_path)
+            .set_msg(program_id, "operators_aggregated_happy_path")?;
         send_all(&channels, &set_ops_aggregated_hp)?;
 
-        let set_unspendable = IncomingBitVMXApiMessages::SetVar(
-            program_id,
-            "unspendable".to_string(),
-            VariableTypes::PubKey(hardcoded_unspendable().into()),
-        )
-        .to_string()?;
+        let set_unspendable = VariableTypes::PubKey(hardcoded_unspendable().into())
+            .set_msg(program_id, "unspendable")?;
         send_all(&channels, &set_unspendable)?;
 
-        let set_secret = IncomingBitVMXApiMessages::SetVar(
-            program_id,
-            "secret".to_string(),
-            VariableTypes::Secret(hash),
-        )
-        .to_string()?;
+        let set_secret = VariableTypes::Secret(hash).set_msg(program_id, "secret")?;
         send_all(&channels, &set_secret)?;
 
-        let set_ordinal_utxo = IncomingBitVMXApiMessages::SetVar(
-            program_id,
-            "ordinal_utxo".to_string(),
-            VariableTypes::Utxo((txid, 0, Some(ordinal_fee.to_sat()))),
-        )
-        .to_string()?;
-
+        let set_ordinal_utxo = VariableTypes::Utxo((txid, 0, Some(ordinal_fee.to_sat())))
+            .set_msg(program_id, "ordinal_utxo")?;
         send_all(&channels, &set_ordinal_utxo)?;
 
-        let set_protocol_fee = IncomingBitVMXApiMessages::SetVar(
-            program_id,
-            "protocol_utxo".to_string(),
-            VariableTypes::Utxo((txid, 1, Some(protocol_fee.to_sat()))),
-        )
-        .to_string()?;
+        let set_protocol_fee = VariableTypes::Utxo((txid, 1, Some(protocol_fee.to_sat())))
+            .set_msg(program_id, "protocol_utxo")?;
         send_all(&channels, &set_protocol_fee)?;
 
-        let set_user_pubkey = IncomingBitVMXApiMessages::SetVar(
-            program_id,
-            "user_pubkey".to_string(),
-            VariableTypes::PubKey(bitcoin::PublicKey::from(pubuser)),
-        )
-        .to_string()?;
+        let set_user_pubkey = VariableTypes::PubKey(bitcoin::PublicKey::from(pubuser))
+            .set_msg(program_id, "user_pubkey")?;
         send_all(&channels, &set_user_pubkey)?;
 
-        let setup_msg =
-            IncomingBitVMXApiMessages::SetupSlot(program_id, addresses.clone(), 0).to_string()?;
+        let setup_msg = IncomingBitVMXApiMessages::Setup(
+            program_id,
+            PROGRAM_TYPE_LOCK.to_string(),
+            addresses.clone(),
+            0,
+        )
+        .to_string()?;
         send_all(&channels, &setup_msg)?;
 
         get_all(&channels)?;
@@ -352,7 +329,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
             BITVMX_ID,
             IncomingBitVMXApiMessages::GetTransactionInofByName(
                 program_id,
-                program::slot::LOCK_TX.to_string(),
+                program::protocols::lock::LOCK_TX.to_string(),
             )
             .to_string()?,
         );
@@ -372,9 +349,29 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
 
         let _ = channels[1].send(
             BITVMX_ID,
+            IncomingBitVMXApiMessages::GetHashedMessage(
+                program_id,
+                program::protocols::lock::LOCK_TX.to_string(),
+                0,
+                1,
+            )
+            .to_string()?,
+        );
+
+        let msg = wait_message_from_channel(&channels[1])?;
+        let msg = OutgoingBitVMXApiMessages::from_string(&msg.0)?;
+        let hashed = match msg {
+            OutgoingBitVMXApiMessages::HashedMessage(_uuid, _name, _vout, _leaf, hashed) => hashed,
+            _ => panic!("Expected hashed message"),
+        };
+        info!("HASHED MESSAGE: ====> {:?}", hashed);
+        info!("AGGREGATED PUB: ====> {}", aggregated_pub_key);
+
+        let _ = channels[1].send(
+            BITVMX_ID,
             IncomingBitVMXApiMessages::DispatchTransactionName(
                 program_id,
-                program::slot::LOCK_TX.to_string(),
+                program::protocols::lock::LOCK_TX.to_string(),
             )
             .to_string()?,
         );
@@ -407,7 +404,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
             BITVMX_ID,
             IncomingBitVMXApiMessages::DispatchTransactionName(
                 program_id,
-                program::slot::HAPY_PATH_TX.to_string(),
+                program::protocols::lock::HAPPY_PATH_TX.to_string(),
             )
             .to_string()?,
         );

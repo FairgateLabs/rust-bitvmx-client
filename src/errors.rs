@@ -4,16 +4,17 @@ use bitcoincore_rpc::bitcoin::{key::ParsePublicKeyError, sighash::SighashTypePar
 use bitvmx_broker::rpc::errors::BrokerError;
 // use bitvmx_musig2::errors::Musig2SignerError;
 use config as settings;
+use emulator::{loader::program_definition::ProgramDefinitionError, EmulatorError};
 use key_manager::{
     errors::{KeyManagerError, KeyStoreError, WinternitzError},
     musig2::errors::Musig2SignerError,
 };
 use p2p_handler::P2pHandlerError;
 use protocol_builder::errors::{ProtocolBuilderError, ScriptError, UnspendableKeyError};
+use std::time::Duration;
 use storage_backend::error::StorageError;
 use thiserror::Error;
 use uuid::Uuid;
-use std::time::Duration;
 
 #[derive(Error, Debug)]
 pub enum BitVMXError {
@@ -105,6 +106,15 @@ pub enum BitVMXError {
 
     #[error("Client error")]
     ClientError(#[from] ClientError),
+
+    #[error("This feature is not implemented yet {0}")]
+    NotImplemented(String),
+
+    #[error("Emulator Error {0}")]
+    EmulatorError(#[from] EmulatorError),
+
+    #[error("ProgramDefinition Error {0}")]
+    ProgramDefinitionError(#[from] ProgramDefinitionError),
 }
 
 #[derive(Error, Debug)]

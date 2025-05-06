@@ -5,7 +5,6 @@ use bitcoin_coordinator::{types::BitcoinCoordinatorType, TransactionStatus};
 use bitvmx_broker::{broker_storage::BrokerStorage, channel::channel::LocalChannel};
 use chrono::{DateTime, Utc};
 use p2p_handler::P2pHandler;
-use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -13,7 +12,7 @@ use crate::{
     errors::BitVMXError,
     keychain::KeyChain,
     program::{
-        participant::{P2PAddress, ParticipantRole},
+        participant::P2PAddress,
         variables::{Globals, VariableTypes, WitnessTypes, WitnessVars},
     },
 };
@@ -95,10 +94,10 @@ pub enum IncomingBitVMXApiMessages {
     GetVar(Uuid, String),
     GetWitness(Uuid, String),
     GetCommInfo(),
-    SetupProgram(ProgramId, ParticipantRole, P2PAddress, Utxo),
     GetTransaction(Uuid, Txid),
     GetTransactionInofByName(Uuid, String),
-    SetupSlot(ProgramId, Vec<P2PAddress>, u16),
+    GetHashedMessage(Uuid, String, u32, u32),
+    Setup(ProgramId, String, Vec<P2PAddress>, u16),
     SubscribeToTransaction(Uuid, Txid),
     SubscribeUTXO(),
     DispatchTransaction(Uuid, Transaction),
@@ -144,6 +143,7 @@ pub enum OutgoingBitVMXApiMessages {
     Variable(Uuid, String, VariableTypes),
     Witness(Uuid, String, WitnessTypes),
     NotFound(Uuid, String),
+    HashedMessage(Uuid, String, u32, u32, String),
 }
 
 impl OutgoingBitVMXApiMessages {
@@ -154,6 +154,55 @@ impl OutgoingBitVMXApiMessages {
     pub fn from_string(msg: &str) -> Result<Self, BitVMXError> {
         let msg: OutgoingBitVMXApiMessages = serde_json::from_str(msg)?;
         Ok(msg)
+    }
+
+    pub fn comm_info(&self) -> Option<P2PAddress> {
+        match self {
+            OutgoingBitVMXApiMessages::CommInfo(info) => Some(info.clone()),
+            _ => None,
+        }
+    }
+    pub fn aggregated_pub_key(&self) -> Option<PublicKey> {
+        match self {
+            OutgoingBitVMXApiMessages::AggregatedPubkey(_, pub_key) => Some(pub_key.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn transaction(&self) -> Option<(Uuid, TransactionStatus, Option<String>)> {
+        match self {
+            OutgoingBitVMXApiMessages::Transaction(uuid, status, tx) => {
+                Some((uuid.clone(), status.clone(), tx.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn key_pair(&self) -> Option<(Uuid, PrivateKey, PublicKey)> {
+        match self {
+            OutgoingBitVMXApiMessages::KeyPair(uuid, priv_key, pub_key) => {
+                Some((uuid.clone(), priv_key.clone(), pub_key.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn transaction_info(&self) -> Option<(Uuid, String, Transaction)> {
+        match self {
+            OutgoingBitVMXApiMessages::TransactionInfo(_, name, tx) => {
+                Some((Uuid::new_v4(), name.clone(), tx.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn hashed_message(&self) -> Option<(Uuid, String, u32, u32, String)> {
+        match self {
+            OutgoingBitVMXApiMessages::HashedMessage(_, name, hash1, hash2, msg) => {
+                Some((Uuid::new_v4(), name.clone(), *hash1, *hash2, msg.clone()))
+            }
+            _ => None,
+        }
     }
 }
 
@@ -174,3 +223,8 @@ impl RequestId {
         Self(Uuid::new_v4())
     }
 }
+
+pub const PROGRAM_TYPE_LOCK: &str = "lock";
+pub const PROGRAM_TYPE_DRP: &str = "drp";
+pub const PROGRAM_TYPE_SLOT: &str = "slot";
+pub const PROGRAM_TYPE_FINAL: &str = "final";
