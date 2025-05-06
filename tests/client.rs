@@ -22,7 +22,7 @@ use bitvmx_client::{
 use bitvmx_transaction_monitor::types::TransactionBlockchainStatus::Finalized;
 use common::{clear_db, prepare_bitcoin, INITIAL_BLOCK_COUNT};
 use p2p_handler::PeerId;
-use tracing::info;
+use tracing::{info, error};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 use bitvmx_broker::{rpc::{sync_server::BrokerSync, BrokerConfig}, broker_memstorage::MemStorage};
@@ -357,6 +357,39 @@ impl ClientTest {
         Ok(())
     }
 
+    fn proof_ready(&mut self) -> Result<()> {
+        let request_id = Uuid::new_v4();
+        let input = 50;
+
+        // First check when proof is not ready
+        self.prover_client.proof_ready(request_id)?;
+        self.advance(1);
+
+        let response = self.prover_client.wait_message(None, None).unwrap();
+        info!("Response: {:?}", response);
+        assert!(matches!(
+            response,
+            OutgoingBitVMXApiMessages::ProofNotReady(request_id)
+        ));
+
+        // Generate a proof
+        self.prover_client.generate_zkp(request_id, input)?;
+        self.advance(1);
+
+        // Now check when proof is ready
+        self.prover_client.proof_ready(request_id)?;
+        self.advance(1);
+
+        let response = self.prover_client.wait_message(None, None).unwrap();
+        info!("Response: {:?}", response);
+        assert!(matches!(
+            response,
+            OutgoingBitVMXApiMessages::ProofReady(request_id)
+        ));
+
+        Ok(())
+    }
+
     // fn dispatch_transaction(&mut self) -> Result<()> {
     //     info!("Dispatching transaction: {:?}", self.fixtures.lockreq_tx.clone().compute_txid());
     //     let request_id = Uuid::new_v4();
@@ -551,11 +584,11 @@ pub fn test_client() -> Result<()> {
     test.setup_lock()?;
     let preimage = test.set_witness(preimage)?;
     test.get_witness(preimage)?;
-    test.generate_zkp()?;
+    // test.generate_zkp()?;
+    test.proof_ready()?;
 
     // test.dispatch_transaction()?;
     // test.get_transaction()?;
-    // test.generate_zkp()?;
 
     Ok(())
 }

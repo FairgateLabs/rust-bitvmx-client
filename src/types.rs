@@ -106,7 +106,7 @@ pub enum IncomingBitVMXApiMessages {
     GetAggregatedPubkey(Uuid),
     GetKeyPair(Uuid),
     GenerateZKP(Uuid, u32),
-    ProofReady(),
+    ProofReady(Uuid),
     ExecuteZKP(),
     GetZKPExecutionResult(),
     Finalize(),
@@ -144,6 +144,8 @@ pub enum OutgoingBitVMXApiMessages {
     Witness(Uuid, String, WitnessTypes),
     NotFound(Uuid, String),
     HashedMessage(Uuid, String, u32, u32, String),
+    ProofReady(Uuid),
+    ProofNotReady(Uuid),
 }
 
 impl OutgoingBitVMXApiMessages {

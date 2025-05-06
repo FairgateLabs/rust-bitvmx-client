@@ -66,6 +66,8 @@ enum StoreKey {
     Programs,
     Collaboration(Uuid),
     CompleteCollaboration(Uuid),
+    ZKPProof(Uuid),
+    ZKPStatus(Uuid),
 }
 
 impl StoreKey {
@@ -74,6 +76,8 @@ impl StoreKey {
             StoreKey::Programs => "bitvmx/programs/all".to_string(),
             StoreKey::Collaboration(id) => format!("bitvmx/collaboration/{}", id),
             StoreKey::CompleteCollaboration(id) => format!("bitvmx/collaboration_complete/{}", id),
+            StoreKey::ZKPProof(id) => format!("bitvmx/zkp/{}/proof", id),
+            StoreKey::ZKPStatus(id) => format!("bitvmx/zkp/{}/status", id),
         }
     }
 }
@@ -588,17 +592,42 @@ impl BitVMXApi for BitVMX {
                 info!("Received: {}", msg);
                 let result = ProverResultType::from_json_string(msg)?;
                 info!("Result: {:?}", result);
+                
+                // Store the result in storage
+                match result {
+                    ProverResultType::ProveResult { vec, status } => {
+                        // Store the proof data
+                        self.store.set(StoreKey::ZKPProof(id).get_key(), vec, None)?;
+                        // Store the status
+                        self.store.set(StoreKey::ZKPStatus(id).get_key(), status, None)?;
+                    }
+                }
                 break;
             } else {
                 info!("Waiting for job {} to finish", id);
                 sleep(Duration::from_secs(3));
             }
         }
-        
+
         Ok(())
     }
 
-    fn proof_ready(&mut self) -> Result<(), BitVMXError> {
+    fn proof_ready(&mut self, from: u32, id: Uuid) -> Result<(), BitVMXError> {
+        info!("Checking if proof is ready for job: {}", id);
+        
+        // Get the status from storage
+        let status: Option<String> = self.store.get(StoreKey::ZKPStatus(id).get_key())?;
+
+        let response = match status {
+            Some(status_str) if status_str == "OK" => OutgoingBitVMXApiMessages::ProofReady(id),
+            _ => OutgoingBitVMXApiMessages::ProofNotReady(id),
+        };
+
+        self.program_context.broker_channel.send(
+            from,
+            serde_json::to_string(&response)?,
+        )?;
+
         Ok(())
     }
 
@@ -795,7 +824,7 @@ impl BitVMXApi for BitVMX {
                 BitVMXApi::get_aggregated_pubkey(self, from, id)?
             }
             IncomingBitVMXApiMessages::GenerateZKP(id, input) => BitVMXApi::generate_zkp(self, id, input)?,
-            IncomingBitVMXApiMessages::ProofReady() => BitVMXApi::proof_ready(self)?,
+            IncomingBitVMXApiMessages::ProofReady(id) => BitVMXApi::proof_ready(self, from, id)?,
             IncomingBitVMXApiMessages::ExecuteZKP() => BitVMXApi::execute_zkp(self)?,
             IncomingBitVMXApiMessages::GetZKPExecutionResult() => {
                 BitVMXApi::get_zkp_execution_result(self)?
