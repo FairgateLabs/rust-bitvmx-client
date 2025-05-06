@@ -194,7 +194,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         //amount -= fee;
 
-        protocol.build(&context.key_chain.key_manager)?;
+        let id = "COMPLETE THIS";
+        protocol.build(&context.key_chain.key_manager, id)?;
         info!("{}", protocol.visualize()?);
         self.save_protocol(protocol)?;
 

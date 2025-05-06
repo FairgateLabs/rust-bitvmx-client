@@ -206,9 +206,11 @@ impl Program {
 
             aggregated_pub_keys.sort();
 
-            let aggregated_key = context
-                .key_chain
-                .new_musig2_session(aggregated_pub_keys, *agg_key)?;
+            let id = "COMPLETE THIS";
+            let aggregated_key =
+                context
+                    .key_chain
+                    .new_musig2_session(aggregated_pub_keys, *agg_key, id)?;
 
             info!(
                 "Aggregated var name {}: Aggregated key: {}",
@@ -374,7 +376,8 @@ impl Program {
             .computed_aggregated
             .values()
         {
-            let nonces = program_context.key_chain.get_nonces(aggregated);
+            let id = "COMPLETE THIS";
+            let nonces = program_context.key_chain.get_nonces(aggregated, id);
             if nonces.is_err() {
                 warn!(
                     "{}. Error geting nonces for aggregated key: {:?}",
@@ -459,9 +462,10 @@ impl Program {
                 }
             }
             for (aggregated, pubkey_nonce_map) in map_of_maps {
+                let id = "COMPLETE THIS";
                 program_context
                     .key_chain
-                    .add_nonces(&aggregated, pubkey_nonce_map)?;
+                    .add_nonces(&aggregated, pubkey_nonce_map, id)?;
             }
 
             self.move_program_to_next_state()?;
@@ -490,7 +494,8 @@ impl Program {
             .computed_aggregated
             .values()
         {
-            let signatures = program_context.key_chain.get_signatures(aggregated);
+            let id = "COMPLETE THIS";
+            let signatures = program_context.key_chain.get_signatures(aggregated, id);
             if signatures.is_err() {
                 warn!(
                     "{}. Error geting partial signature for aggregated key: {:?}",
@@ -579,9 +584,10 @@ impl Program {
             }
 
             for (aggregated, partial_map) in map_of_maps {
+                let id = "COMPLETE THIS";
                 program_context
                     .key_chain
-                    .add_signatures(&aggregated, partial_map)?;
+                    .add_signatures(&aggregated, partial_map, id)?;
             }
 
             self.protocol.sign(&program_context.key_chain)?;
