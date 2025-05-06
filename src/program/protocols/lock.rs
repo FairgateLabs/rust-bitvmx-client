@@ -296,7 +296,7 @@ impl ProtocolHandler for LockProtocol {
         pb.add_speedup_output(&mut protocol, LOCK_TX, SPEEDUP_DUST, aggregated)?;
         pb.add_speedup_output(&mut protocol, HAPPY_PATH_TX, SPEEDUP_DUST, aggregated)?;
 
-        protocol.build(&context.key_chain.key_manager)?;
+        protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("{}", protocol.visualize()?);
         self.save_protocol(protocol)?;
 

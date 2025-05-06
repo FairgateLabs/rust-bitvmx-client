@@ -15,12 +15,15 @@ use protocol_builder::{
     },
 };
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::{
     errors::BitVMXError,
     keychain::KeyChain,
-    program::{participant::ParticipantRole, protocols::slot::external_fund_tx, witness},
+    program::{
+        participant::ParticipantRole, protocols::slot::external_fund_tx, variables::WitnessTypes,
+        witness,
+    },
     types::ProgramContext,
 };
 
@@ -117,7 +120,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         tx_id: Txid,
         tx_status: TransactionStatus,
         _context: String,
-        _program_context: &ProgramContext,
+        program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         let name = self.get_transaction_name_by_id(tx_id)?;
         info!(
@@ -127,18 +130,22 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             self.role()
         );
 
-        // TODO: decode and notify de l2 so it can act on it
+        //TODO: generalize decoding
         if name == INPUT_1 && self.role() == ParticipantRole::Verifier {
-            //let wpub = self .get_prover() .keys .as_ref() .unwrap() .get_winternitz("program_input") .unwrap();
             let witness = tx_status.tx.input[0].witness.clone();
             let data = witness::decode_witness(vec![4], WinternitzType::HASH160, witness)?;
-            //info!("message bytes {:?}", data[0].message_bytes());
-            //from vec<u8> be bytes to u32
+
             let message = u32::from_be_bytes(data[0].message_bytes().try_into().unwrap());
-            warn!(
+            info!(
                 "Program {}:{} Witness data decoded: {:0x}",
                 self.ctx.id, name, message
             );
+
+            program_context.witness.set_witness(
+                &self.ctx.id,
+                "program_input_1",
+                WitnessTypes::Winternitz(data),
+            )?;
         }
 
         Ok(())
@@ -194,7 +201,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         //amount -= fee;
 
-        protocol.build(&context.key_chain.key_manager)?;
+        protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("{}", protocol.visualize()?);
         self.save_protocol(protocol)?;
 

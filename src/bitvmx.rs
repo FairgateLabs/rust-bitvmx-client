@@ -249,11 +249,10 @@ impl BitVMX {
                                 info!("Sending News: {:?} for context: {:?}", tx_id, context);
                                 self.program_context.broker_channel.send(
                                     from,
-                                    serde_json::to_string(
-                                        &OutgoingBitVMXApiMessages::Transaction(
-                                            request_id, tx_status, None,
-                                        ),
-                                    )?,
+                                    OutgoingBitVMXApiMessages::Transaction(
+                                        request_id, tx_status, None,
+                                    )
+                                    .to_string()?,
                                 )?;
                                 self.notified_request.insert((request_id, tx_id));
                             }
@@ -318,10 +317,9 @@ impl BitVMX {
                     _funding_context_data,
                 ) => {
                     // Complete new params
-                    let message =
-                        OutgoingBitVMXApiMessages::SpeedUpProgramNoFunds(tx_id, context_data);
-
-                    let data = serde_json::to_string(&message)?;
+                    let data =
+                        OutgoingBitVMXApiMessages::SpeedUpProgramNoFunds(tx_id, context_data)
+                            .to_string()?;
 
                     info!("Sending funds request to broker");
                     self.program_context.broker_channel.send(L2_ID, data)?;

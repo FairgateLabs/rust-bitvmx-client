@@ -116,7 +116,7 @@ impl ProtocolHandler for SlotProtocol {
             &ops_agg_pubkey,
         )?;
 
-        protocol.build(&context.key_chain.key_manager)?;
+        protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("{}", protocol.visualize()?);
         self.save_protocol(protocol)?;
         Ok(())

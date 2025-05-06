@@ -18,6 +18,7 @@ use common::{
     config_trace, get_all, init_bitvmx, init_broker, mine_and_wait, prepare_bitcoin, send_all,
     wait_message_from_channel,
 };
+use key_manager::verifier::SignatureVerifier;
 use protocol_builder::scripts::{build_taproot_spend_info, ProtocolScript};
 use tracing::info;
 use uuid::Uuid;
@@ -248,6 +249,15 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         .unwrap();
     info!("HASHED MESSAGE: ====> {:?}", hashed);
     info!("AGGREGATED PUB: ====> {}", aggregated_pub_key);
+
+    let verifier = SignatureVerifier::new();
+    let mut signature = tx.input[0].witness[0].to_vec();
+    signature.pop();
+    let hashed = hex::decode(hashed).unwrap();
+    let hashed_array: [u8; 32] = hashed.try_into().expect("Hash must be 32 bytes");
+    let message = secp256k1::Message::from_digest(hashed_array);
+    let signature = secp256k1::schnorr::Signature::from_slice(&signature.as_slice())?;
+    assert!(verifier.verify_schnorr_signature(&signature, &message, aggregated_pub_key));
 
     drop(mutinstances);
 

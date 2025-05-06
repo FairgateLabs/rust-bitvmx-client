@@ -110,11 +110,26 @@ pub fn test_single_run() -> Result<()> {
 
     // VERIFIER DETECTS THE INPUT
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
-    let (_uuid, _txid, name) = msgs[0].transaction().unwrap();
+    let (_uuid, _txid, name) = msgs[1].transaction().unwrap();
     assert_eq!(
         name.unwrap_or_default(),
         program::protocols::dispute::INPUT_1.to_string()
     );
+
+    let _ = channels[1].send(
+        BITVMX_ID,
+        IncomingBitVMXApiMessages::GetWitness(program_id, "program_input_1".to_string())
+            .to_string()?,
+    )?;
+
+    let mut mutinstances = instances.iter_mut().collect::<Vec<_>>();
+    let msg = wait_message_from_channel(&channels[1], &mut mutinstances, false)?;
+    let (_uuid, _name, witness) = OutgoingBitVMXApiMessages::from_string(&msg.0)?
+        .witness()
+        .unwrap();
+
+    let input1 = &witness.winternitz().unwrap()[0].message_bytes();
+    info!("Verifier observed Input 1: {:?}", input1);
 
     //TODO: check for transactions and interact with input, and execution
     //TODO: allow fake and true job dispatcher execution and responses so we can test the whole flow
