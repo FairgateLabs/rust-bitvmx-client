@@ -58,6 +58,12 @@ pub fn test_single_run() -> Result<()> {
         .set_msg(program_id, "utxo")?;
     send_all(&channels, &set_utxo_msg)?;
 
+    let set_program = VariableTypes::String(
+        "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml".to_string(),
+    )
+    .set_msg(program_id, "program_definition")?;
+    send_all(&channels, &set_program)?;
+
     let setup_msg =
         IncomingBitVMXApiMessages::Setup(program_id, PROGRAM_TYPE_DRP.to_string(), participants, 1)
             .to_string()?;

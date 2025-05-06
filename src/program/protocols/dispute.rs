@@ -2,9 +2,10 @@ use std::collections::HashMap;
 
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
+use emulator::loader::program_definition::ProgramDefinition;
 use key_manager::winternitz::WinternitzType;
 use protocol_builder::{
-    builder::ProtocolBuilder,
+    builder::{Protocol, ProtocolBuilder},
     errors::ProtocolBuilderError,
     scripts::{self, SignMode},
     types::{
@@ -167,10 +168,17 @@ impl ProtocolHandler for DisputeResolutionProtocol {
     ) -> Result<(), BitVMXError> {
         // TODO get this from config, all values expressed in satoshis
         let fee = 1000;
+        const TIMELOCK_BLOCKS: u16 = 10;
 
         let utxo = context.globals.get_var(&self.ctx.id, "utxo")?.utxo()?;
 
-        let aggregated = context
+        let program_definition = context
+            .globals
+            .get_var(&self.ctx.id, "program_definition")?
+            .string()?;
+        let _program = ProgramDefinition::from_config(&program_definition)?;
+
+        let external_aggregated = context
             .globals
             .get_var(&self.ctx.id, "aggregated")?
             .pubkey()?;
@@ -178,7 +186,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         let mut protocol = self.load_or_create_protocol();
 
         let mut amount = utxo.2.unwrap();
-        let output_type = external_fund_tx(&aggregated, amount)?;
+        let output_type = external_fund_tx(&external_aggregated, amount)?;
 
         protocol.add_external_connection(
             utxo.0,
@@ -188,46 +196,19 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             &SighashType::taproot_all(),
         )?;
 
-        // reuse aggregated until we can have multiple aggregated keys
         let aggregated = computed_aggregated.get("aggregated_1").unwrap();
 
-        let input_data_l1 = scripts::verify_winternitz_signature(
-            aggregated,
-            keys[0].get_winternitz("program_input_leaf_1")?,
-            SignMode::Aggregate,
-        )?;
-
-        let input_data_l2 = scripts::verify_winternitz_signature(
-            aggregated,
-            keys[0].get_winternitz("program_input_leaf_2")?,
-            SignMode::Aggregate,
-        )?;
-
         amount -= fee;
-
-        let output_type = OutputType::taproot(
+        self.add_input_tx(
+            aggregated,
+            &mut protocol,
+            TIMELOCK_BLOCKS,
+            &keys,
             amount,
-            aggregated,
-            &[input_data_l1, input_data_l2],
-            &SpendMode::All {
-                key_path_sign: SignMode::Aggregate,
-            },
-            &vec![],
+            fee,
         )?;
 
-        protocol.add_connection(
-            "prover_first_input",
-            START_CH,
-            INPUT_1,
-            &output_type,
-            &SighashType::taproot_all(),
-        )?;
-
-        // Speedup output
-        amount -= fee;
-        let pb = ProtocolBuilder {};
-        //put the amount here as there is no output yet
-        pb.add_speedup_output(&mut protocol, INPUT_1, amount, aggregated)?;
+        //amount -= fee;
 
         protocol.build(&context.key_chain.key_manager)?;
         info!("{}", protocol.visualize()?);
@@ -268,10 +249,10 @@ impl DisputeResolutionProtocol {
         let txname = INPUT_1;
 
         let signature = protocol
-            .input_taproot_script_spend_signature(txname, 0, 1)?
+            .input_taproot_script_spend_signature(txname, 0, 0)?
             .unwrap();
-        let spend = protocol.get_script_to_spend(txname, 0, 1)?;
-        let mut spending_args = InputArgs::new_taproot_script_args(LeafSpec::Index(1));
+        let spend = protocol.get_script_to_spend(txname, 0, 0)?;
+        let mut spending_args = InputArgs::new_taproot_script_args(LeafSpec::Index(0));
 
         //TODO: set value for variable from outside
         let message_to_sign = data.to_be_bytes();
@@ -288,5 +269,47 @@ impl DisputeResolutionProtocol {
         spending_args.push_taproot_signature(signature)?;
 
         protocol.transaction_to_send(txname, &[spending_args])
+    }
+
+    pub fn add_input_tx(
+        &self,
+        aggregated: &PublicKey,
+        protocol: &mut Protocol,
+        timelock_blocks: u16,
+        keys: &Vec<ParticipantKeys>,
+        amount: u64,
+        fee: u64,
+    ) -> Result<(), BitVMXError> {
+        let input_data_l1 = scripts::verify_winternitz_signature(
+            aggregated,
+            keys[0].get_winternitz("program_input_leaf_1")?,
+            SignMode::Aggregate,
+        )?;
+
+        let timeout = scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
+
+        let output_type = OutputType::taproot(
+            amount,
+            aggregated,
+            &[input_data_l1, timeout],
+            &SpendMode::All {
+                key_path_sign: SignMode::Aggregate,
+            },
+            &vec![],
+        )?;
+
+        protocol.add_connection(
+            "prover_first_input",
+            START_CH,
+            INPUT_1,
+            &output_type,
+            &SighashType::taproot_all(),
+        )?;
+
+        let pb = ProtocolBuilder {};
+        //put the amount here as there is no output yet
+        pb.add_speedup_output(protocol, INPUT_1, amount - fee, aggregated)?;
+
+        Ok(())
     }
 }
