@@ -106,10 +106,6 @@ impl ProtocolHandler for LockProtocol {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         // TODO get this from config, all values expressed in satoshis
-        let _p2pkh_dust_threshold: u64 = 546;
-        let _p2sh_p2wpkh_dust_threshold: u64 = 540;
-        let _p2wpkh_dust_threshold: u64 = 99_999_000; // 294;
-        let _taproot_dust_threshold: u64 = 330;
         let fee = 1000;
 
         let secp = secp256k1::Secp256k1::new();
