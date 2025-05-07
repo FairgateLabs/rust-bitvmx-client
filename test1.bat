@@ -1,3 +1,4 @@
+REM test
 call ..\stop.bat
 call ..\start.bat
 rmdir /s /q \tmp\verifier  
