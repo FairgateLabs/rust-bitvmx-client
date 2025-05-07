@@ -31,6 +31,7 @@ use bitvmx_client::{
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, L2_ID, PROGRAM_TYPE_LOCK},
 };
+use bitvmx_job_dispatcher_types::ProverJobType;
 use common::{clear_db, prepare_bitcoin, INITIAL_BLOCK_COUNT};
 use p2p_handler::PeerId;
 use tracing::{error, info};
@@ -76,9 +77,11 @@ impl ClientTest {
             use bitvmx_broker::channel::channel::DualChannel;
             let channel = DualChannel::new(&broker_config, 10);
             let check_interval = Duration::from_secs(1);
-            if let Err(e) =
-                bitvmx_risczero_dispatcher::dispatcher_loop(channel, check_interval, running_clone)
-            {
+            if let Err(e) = bitvmx_job_dispatcher::dispatcher_loop::<ProverJobType>(
+                channel,
+                check_interval,
+                running_clone,
+            ) {
                 error!("Job dispatcher error: {}", e);
             }
         });

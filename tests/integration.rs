@@ -3,6 +3,7 @@ use bitvmx_client::{
     program::{self, variables::VariableTypes},
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_DRP},
 };
+use bitvmx_job_dispatcher_types::EmulatorJobType;
 use common::{
     config_trace, get_all, init_bitvmx, init_utxo, mine_and_wait, prepare_bitcoin, send_all,
     wait_message_from_channel,
@@ -133,10 +134,12 @@ pub fn test_single_run() -> Result<()> {
     let input1 = &witness.winternitz().unwrap()[0].message_bytes();
     info!("Verifier observed Input 1: {:?}", input1);
 
-    let mut prover_dispatcher =
-        bitvmx_emulator_dispatcher::DispatcherHandler::new(prover_emulator_channel.unwrap());
-    let mut verifier_dispatcher =
-        bitvmx_emulator_dispatcher::DispatcherHandler::new(verifier_emulator_channel.unwrap());
+    let mut prover_dispatcher = bitvmx_job_dispatcher::DispatcherHandler::<EmulatorJobType>::new(
+        prover_emulator_channel.unwrap(),
+    );
+    let mut verifier_dispatcher = bitvmx_job_dispatcher::DispatcherHandler::<EmulatorJobType>::new(
+        verifier_emulator_channel.unwrap(),
+    );
 
     for _ in 0..10 {
         prover_dispatcher.tick();

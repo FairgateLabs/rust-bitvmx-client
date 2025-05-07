@@ -55,5 +55,4 @@ bollard = "0.11.0"
 futures-util = "0.3"
 bitcoind = { path = "../rust-bitcoind" }
 
-bitvmx-emulator-dispatcher = { path = "../rust-bitvmx-job-dispatcher/emulator-dispatcher" }
-bitvmx-risczero-dispatcher = { path = "../rust-bitvmx-job-dispatcher/risczero-dispatcher" }
+bitvmx-job-dispatcher = { path = "../rust-bitvmx-job-dispatcher/dispatcher" }
