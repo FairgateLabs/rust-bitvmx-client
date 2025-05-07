@@ -45,6 +45,8 @@ bitcoind = { path = "../rust-bitcoind" }
 emulator = { path = "../BitVMX-CPU/emulator" }
 
 bitvmx-job-dispatcher-types = { path = "../rust-bitvmx-job-dispatcher/jobtypes" }
+zk-result = { path = "../rust-bitvmx-zk-proof/zk-result" }
+
 
 musig2 = { version = "0.2.3", features = ["serde", "rand"] }
 
@@ -53,5 +55,5 @@ bollard = "0.11.0"
 futures-util = "0.3"
 bitcoind = { path = "../rust-bitcoind" }
 
-bitvmx-transaction-monitor = { path = "../rust-bitvmx-transaction-monitor" }
 bitvmx-emulator-dispatcher = { path = "../rust-bitvmx-job-dispatcher/emulator-dispatcher" }
+bitvmx-risczero-dispatcher = { path = "../rust-bitvmx-job-dispatcher/risczero-dispatcher" }

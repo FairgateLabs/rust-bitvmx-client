@@ -24,12 +24,14 @@ use bitcoin_coordinator::{
     AckMonitorNews, MonitorNews, TypesToMonitor,
 };
 
+use bitvmx_broker::channel::channel::DualChannel;
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
     channel::channel::LocalChannel,
     rpc::{sync_server::BrokerSync, BrokerConfig},
 };
-use bitvmx_job_dispatcher_types::EmulatorResultType;
+use bitvmx_job_dispatcher_types::dispatcher_job::DispatcherJob;
+use bitvmx_job_dispatcher_types::{EmulatorResultType, ProverJobType};
 use p2p_handler::{LocalAllowList, P2pHandler, PeerId, ReceiveHandlerChannel};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -67,6 +69,8 @@ enum StoreKey {
     Programs,
     Collaboration(Uuid),
     CompleteCollaboration(Uuid),
+    ZKPProof(Uuid),
+    ZKPStatus(Uuid),
 }
 
 impl StoreKey {
@@ -75,6 +79,8 @@ impl StoreKey {
             StoreKey::Programs => "bitvmx/programs/all".to_string(),
             StoreKey::Collaboration(id) => format!("bitvmx/collaboration/{}", id),
             StoreKey::CompleteCollaboration(id) => format!("bitvmx/collaboration_complete/{}", id),
+            StoreKey::ZKPProof(id) => format!("bitvmx/zkp/{}/proof", id),
+            StoreKey::ZKPStatus(id) => format!("bitvmx/zkp/{}/status", id),
         }
     }
 }
@@ -568,11 +574,63 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn generate_zkp(&mut self) -> Result<(), BitVMXError> {
+    fn generate_zkp(&mut self, id: Uuid, input: u32) -> Result<(), BitVMXError> {
+        info!("Generating ZKP for input: {}", input);
+
+        let channel = DualChannel::new(&BrokerConfig::new(10000, None), 2);
+        let msg = serde_json::to_string(&DispatcherJob {
+            job_id: id.to_string(),
+            job_type: ProverJobType::Prove(
+                input.to_be_bytes().to_vec(),
+                "./a.elf".to_string(),
+                "./output.json".to_string(),
+            ),
+        })?;
+        channel.send(10, msg)?;
+
+        loop {
+            if let Some((msg, _from)) = channel.recv()? {
+                info!("Received: {}", msg);
+                let result = zk_result::ResultType::from_json_string(msg)
+                    .map_err(|_e| BitVMXError::InvalidMessageFormat)?;
+                info!("Result: {:?}", result);
+
+                // Store the result in storage
+                match result {
+                    zk_result::ResultType::ProveResult { seal, status } => {
+                        // Store the proof data
+                        self.store
+                            .set(StoreKey::ZKPProof(id).get_key(), seal, None)?;
+                        // Store the status
+                        self.store
+                            .set(StoreKey::ZKPStatus(id).get_key(), status, None)?;
+                    }
+                }
+                break;
+            } else {
+                info!("Waiting for job {} to finish", id);
+                sleep(Duration::from_secs(3));
+            }
+        }
+
         Ok(())
     }
 
-    fn proof_ready(&mut self) -> Result<(), BitVMXError> {
+    fn proof_ready(&mut self, from: u32, id: Uuid) -> Result<(), BitVMXError> {
+        info!("Checking if proof is ready for job: {}", id);
+
+        // Get the status from storage
+        let status: Option<String> = self.store.get(StoreKey::ZKPStatus(id).get_key())?;
+
+        let response = match status {
+            Some(status_str) if status_str == "OK" => OutgoingBitVMXApiMessages::ProofReady(id),
+            _ => OutgoingBitVMXApiMessages::ProofNotReady(id),
+        };
+
+        self.program_context
+            .broker_channel
+            .send(from, serde_json::to_string(&response)?)?;
+
         Ok(())
     }
 
@@ -775,8 +833,10 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::GetAggregatedPubkey(id) => {
                 BitVMXApi::get_aggregated_pubkey(self, from, id)?
             }
-            IncomingBitVMXApiMessages::GenerateZKP() => BitVMXApi::generate_zkp(self)?,
-            IncomingBitVMXApiMessages::ProofReady() => BitVMXApi::proof_ready(self)?,
+            IncomingBitVMXApiMessages::GenerateZKP(id, input) => {
+                BitVMXApi::generate_zkp(self, id, input)?
+            }
+            IncomingBitVMXApiMessages::ProofReady(id) => BitVMXApi::proof_ready(self, from, id)?,
             IncomingBitVMXApiMessages::ExecuteZKP() => BitVMXApi::execute_zkp(self)?,
             IncomingBitVMXApiMessages::GetZKPExecutionResult() => {
                 BitVMXApi::get_zkp_execution_result(self)?

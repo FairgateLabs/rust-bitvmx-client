@@ -70,12 +70,12 @@ impl BitVMXClient {
         self.send_message(IncomingBitVMXApiMessages::GetAggregatedPubkey(id))
     }
 
-    pub fn generate_zkp(&self) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::GenerateZKP())
+    pub fn generate_zkp(&self, id: Uuid, input: u32) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GenerateZKP(id, input))
     }
 
-    pub fn proof_ready(&self) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::ProofReady())
+    pub fn proof_ready(&self, id: Uuid) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::ProofReady(id))
     }
 
     pub fn execute_zkp(&self) -> Result<()> {

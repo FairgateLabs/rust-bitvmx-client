@@ -105,8 +105,8 @@ pub enum IncomingBitVMXApiMessages {
     SetupKey(Uuid, Vec<P2PAddress>, u16),
     GetAggregatedPubkey(Uuid),
     GetKeyPair(Uuid),
-    GenerateZKP(),
-    ProofReady(),
+    GenerateZKP(Uuid, u32),
+    ProofReady(Uuid),
     ExecuteZKP(),
     GetZKPExecutionResult(),
     Finalize(),
@@ -144,6 +144,8 @@ pub enum OutgoingBitVMXApiMessages {
     Witness(Uuid, String, WitnessTypes),
     NotFound(Uuid, String),
     HashedMessage(Uuid, String, u32, u32, String),
+    ProofReady(Uuid),
+    ProofNotReady(Uuid),
 }
 
 impl OutgoingBitVMXApiMessages {
