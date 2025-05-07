@@ -150,6 +150,9 @@ pub fn test_single_run() -> Result<()> {
     }
     prover_dispatcher.tick();
 
+    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    info!("Msgs: {:?}", msgs);
+
     //prover_emulator.tic
 
     //TODO: check for transactions and interact with input, and execution

@@ -36,6 +36,9 @@ pub enum BitVMXError {
     #[error("Error when creating protocol")]
     ProtocolBuilderError(#[from] ProtocolBuilderError),
 
+    #[error("Error decoding hex string {0}")]
+    FromHexError(#[from] hex::FromHexError),
+
     #[error("Error when creating the storagge")]
     StorageError(#[from] StorageError),
 

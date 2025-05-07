@@ -746,7 +746,7 @@ impl BitVMXApi for BitVMX {
             self.load_program(&job_id)?
                 .protocol
                 .dispute()?
-                .execution_result(&decoded, &self.program_context);
+                .execution_result(&decoded, &self.program_context)?;
             return Ok(());
         }
 

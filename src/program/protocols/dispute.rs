@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use bitcoin::{PublicKey, Transaction, Txid};
-use bitcoin_coordinator::TransactionStatus;
+use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::emulator_messages::{EmulatorJobType, EmulatorResultType};
 use emulator::loader::program_definition::ProgramDefinition;
@@ -17,13 +17,16 @@ use protocol_builder::{
     },
 };
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{error, info};
 
 use crate::{
+    bitvmx::Context,
     errors::BitVMXError,
     keychain::KeyChain,
     program::{
-        participant::ParticipantRole, protocols::slot::external_fund_tx, variables::WitnessTypes,
+        participant::ParticipantRole,
+        protocols::slot::external_fund_tx,
+        variables::{VariableTypes, WitnessTypes},
         witness,
     },
     types::{ProgramContext, EMULATOR_ID},
@@ -91,11 +94,11 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             let program_input_leaf_1 = key_chain.derive_winternitz_hash160(4)?;
 
             let last_step = key_chain.derive_winternitz_hash160(8)?;
-            let initial_hash = key_chain.derive_winternitz_hash160(20)?;
+            let last_hash = key_chain.derive_winternitz_hash160(20)?;
             keys.push(("program_input_1".to_string(), program_input_leaf_1.into()));
 
             keys.push(("last_step".to_string(), last_step.into()));
-            keys.push(("initial_hash".to_string(), initial_hash.into()));
+            keys.push(("last_hash".to_string(), last_hash.into()));
         }
 
         Ok(ParticipantKeys::new(keys, vec!["aggregated_1".to_string()]))
@@ -176,6 +179,19 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             )?;
         }
 
+        if name == COMMITMENT && self.role() == ParticipantRole::Verifier {
+            let witness = tx_status.tx.input[0].witness.clone();
+            info!("Witness: {:?}", witness);
+            let data = witness::decode_witness(vec![8, 20], WinternitzType::HASH160, witness)?;
+            info!("Data: {:?}", data);
+
+            /*program_context.witness.set_witness(
+                &self.ctx.id,
+                "last_step",
+                WitnessTypes::Winternitz(data),
+            )?;*/
+        }
+
         Ok(())
     }
 
@@ -186,7 +202,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         // TODO get this from config, all values expressed in satoshis
-        let fee = 1000;
+        let fee = 3000;
         let speedup_dust = 500;
         const TIMELOCK_BLOCKS: u16 = 10;
 
@@ -240,7 +256,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             &keys[0],
             amount,
             amount - fee, //in the last one goes the change
-            &vec!["last_step", "initial_hash"],
+            &vec!["last_step", "last_hash"],
             INPUT_1,
             COMMITMENT,
         )?;
@@ -293,6 +309,9 @@ impl DisputeResolutionProtocol {
         for k in spend.get_keys().iter().rev() {
             let message = context.globals.get_var(&self.ctx.id, k.name())?.input()?;
 
+            error!("Signigng message: {:?}", message);
+            error!("With key: {:?}", k);
+
             let winternitz_signature = context.key_chain.key_manager.sign_winternitz_message(
                 &message,
                 WinternitzType::HASH160,
@@ -331,10 +350,15 @@ impl DisputeResolutionProtocol {
         // - use proper size from config mapped in 4 bytes word
         // - in timelock use secret to avoid the other part to spend the utxo (but is this needed, why the other part would consume it?)
         // - the prover needs to resingn any verifier provided input (so the equivocation is possible on reads)
+        error!("Adding winternitz check for {} to {}", from, to);
+        error!("Amount: {}", amount);
+        error!("Speedup: {}", amount_speedup);
         let names_and_keys = var_names
             .iter()
             .map(|v| (*v, keys.get_winternitz(v).unwrap()))
             .collect();
+
+        error!("Names and keys: {:?}", names_and_keys);
 
         let winternitz_check = scripts::verify_winternitz_signatures(
             aggregated,
@@ -368,7 +392,40 @@ impl DisputeResolutionProtocol {
         Ok(())
     }
 
-    pub fn execution_result(&self, result: &EmulatorResultType, _context: &ProgramContext) {
-        info!("Execution result: {:?}", result);
+    pub fn execution_result(
+        &self,
+        result: &EmulatorResultType,
+        context: &ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        match result {
+            EmulatorResultType::ProverExecuteResult {
+                last_step,
+                last_hash,
+            } => {
+                info!("Last step: {:?}", last_step);
+                info!("Last hash: {:?}", last_hash);
+                context.globals.set_var(
+                    &self.ctx.id,
+                    "last_step",
+                    VariableTypes::Input(last_step.to_be_bytes().to_vec()),
+                )?;
+
+                context.globals.set_var(
+                    &self.ctx.id,
+                    "last_hash",
+                    VariableTypes::Input(hex::decode(last_hash)?),
+                )?;
+
+                context.bitcoin_coordinator.dispatch(
+                    self.get_signed_tx(context, COMMITMENT, 0, 0)?,
+                    Context::ProgramId(self.ctx.id).to_string()?,
+                    None,
+                )?;
+            }
+            _ => {
+                info!("Execution result: {:?}", result);
+            }
+        }
+        Ok(())
     }
 }
