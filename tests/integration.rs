@@ -97,7 +97,7 @@ pub fn test_single_run() -> Result<()> {
     );
 
     // set input value
-    let set_input_1 = VariableTypes::Input(hex::decode("11111111").unwrap())
+    let set_input_1 = VariableTypes::Input(hex::decode("11111100").unwrap())
         .set_msg(program_id, "program_input_1")?;
     let _ = channels[0].send(BITVMX_ID, set_input_1)?;
 
