@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
-use bitvmx_job_dispatcher_types::{dispatcher_job::DispatcherJob, EmulatorJobType};
+use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
+use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use emulator::loader::program_definition::ProgramDefinition;
 use key_manager::winternitz::WinternitzType;
 use protocol_builder::{

@@ -3,7 +3,7 @@ use bitvmx_client::{
     program::{self, variables::VariableTypes},
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_DRP},
 };
-use bitvmx_job_dispatcher_types::EmulatorJobType;
+use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use common::{
     config_trace, get_all, init_bitvmx, init_utxo, mine_and_wait, prepare_bitcoin, send_all,
     wait_message_from_channel,

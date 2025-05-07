@@ -31,7 +31,7 @@ use bitvmx_client::{
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, L2_ID, PROGRAM_TYPE_LOCK},
 };
-use bitvmx_job_dispatcher_types::ProverJobType;
+use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use common::{clear_db, prepare_bitcoin, INITIAL_BLOCK_COUNT};
 use p2p_handler::PeerId;
 use tracing::{error, info};

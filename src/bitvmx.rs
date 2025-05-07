@@ -30,8 +30,9 @@ use bitvmx_broker::{
     channel::channel::LocalChannel,
     rpc::{sync_server::BrokerSync, BrokerConfig},
 };
-use bitvmx_job_dispatcher_types::dispatcher_job::DispatcherJob;
-use bitvmx_job_dispatcher_types::{EmulatorResultType, ProverJobType};
+use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
+use bitvmx_job_dispatcher_types::emulator_messages::EmulatorResultType;
+use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use p2p_handler::{LocalAllowList, P2pHandler, PeerId, ReceiveHandlerChannel};
 use serde::{Deserialize, Serialize};
 use std::{

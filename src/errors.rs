@@ -2,7 +2,7 @@ use bitcoin::{consensus::encode::FromHexError, network::ParseNetworkError};
 use bitcoin_coordinator::errors::BitcoinCoordinatorError;
 use bitcoincore_rpc::bitcoin::{key::ParsePublicKeyError, sighash::SighashTypeParseError};
 use bitvmx_broker::rpc::errors::BrokerError;
-use bitvmx_job_dispatcher_types::JobTypeError;
+use bitvmx_job_dispatcher::dispatcher_error::DispatcherError;
 use config as settings;
 use emulator::{loader::program_definition::ProgramDefinitionError, EmulatorError};
 use key_manager::{
@@ -61,7 +61,7 @@ pub enum BitVMXError {
     InvalidWitnessType,
 
     #[error("Job type error {0}")]
-    JobTypeError(#[from] JobTypeError),
+    DispatcherError(#[from] DispatcherError),
 
     // #[error("Failed to create communications key")]
     // CommunicationsKeyGenerationError(#[from] DecodingError),
