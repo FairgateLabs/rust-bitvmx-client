@@ -81,10 +81,10 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         let channels = vec![bridge_1, bridge_2, bridge_3, bridge_4];
         (channels, instances)
     } else {
-        let (bitvmx_1, _addres_1, bridge_1) = init_bitvmx("op_1")?;
-        let (bitvmx_2, _addres_2, bridge_2) = init_bitvmx("op_2")?;
-        let (bitvmx_3, _addres_3, bridge_3) = init_bitvmx("op_3")?;
-        let (bitvmx_4, _addres_4, bridge_4) = init_bitvmx("op_4")?;
+        let (bitvmx_1, _addres_1, bridge_1, _) = init_bitvmx("op_1", false)?;
+        let (bitvmx_2, _addres_2, bridge_2, _) = init_bitvmx("op_2", false)?;
+        let (bitvmx_3, _addres_3, bridge_3, _) = init_bitvmx("op_3", false)?;
+        let (bitvmx_4, _addres_4, bridge_4, _) = init_bitvmx("op_4", false)?;
         let instances = vec![bitvmx_1, bitvmx_2, bitvmx_3, bitvmx_4];
         let channels = vec![bridge_1, bridge_2, bridge_3, bridge_4];
         (channels, instances)

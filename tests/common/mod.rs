@@ -10,7 +10,7 @@ use bitvmx_client::{
     bitvmx::BitVMX,
     config::Config,
     program::participant::P2PAddress,
-    types::{OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID},
+    types::{OutgoingBitVMXApiMessages, BITVMX_ID, EMULATOR_ID, L2_ID},
 };
 use p2p_handler::PeerId;
 use protocol_builder::{
@@ -28,10 +28,18 @@ pub fn clear_db(path: &str) {
     let _ = std::fs::remove_dir_all(path);
 }
 
-pub fn init_bitvmx(role: &str) -> Result<(BitVMX, P2PAddress, DualChannel)> {
+pub fn init_bitvmx(
+    role: &str,
+    emulator_dispatcher: bool,
+) -> Result<(BitVMX, P2PAddress, DualChannel, Option<DualChannel>)> {
     let config = Config::new(Some(format!("config/{}.yaml", role)))?;
     let broker_config = BrokerConfig::new(config.broker_port, None);
     let bridge_client = DualChannel::new(&broker_config, L2_ID);
+    let dispatcher_channel = if emulator_dispatcher {
+        Some(DualChannel::new(&broker_config, EMULATOR_ID))
+    } else {
+        None
+    };
 
     clear_db(&config.storage.db);
     clear_db(&config.key_storage.path);
@@ -46,7 +54,7 @@ pub fn init_bitvmx(role: &str) -> Result<(BitVMX, P2PAddress, DualChannel)> {
 
     //This messages will come from the bridge client.
 
-    Ok((bitvmx, address, bridge_client))
+    Ok((bitvmx, address, bridge_client, dispatcher_channel))
 }
 
 pub fn tick(instance: &mut BitVMX) {

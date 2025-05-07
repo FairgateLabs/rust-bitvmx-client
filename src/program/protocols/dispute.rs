@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
+use bitvmx_job_dispatcher_types::{dispatcher_job::DispatcherJob, EmulatorJobType};
 use emulator::loader::program_definition::ProgramDefinition;
 use key_manager::winternitz::WinternitzType;
 use protocol_builder::{
@@ -24,7 +25,7 @@ use crate::{
         participant::ParticipantRole, protocols::slot::external_fund_tx, variables::WitnessTypes,
         witness,
     },
-    types::ProgramContext,
+    types::{ProgramContext, EMULATOR_ID},
 };
 
 use super::{
@@ -140,6 +141,25 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 "Program {}:{} Witness data decoded: {:0x}",
                 self.ctx.id, name, message
             );
+
+            let input_program = data[0].message_bytes();
+
+            let program_definition = program_context
+                .globals
+                .get_var(&self.ctx.id, "program_definition")?
+                .string()?;
+
+            let msg = serde_json::to_string(&DispatcherJob {
+                job_id: "uid_job".to_string(),
+                job_type: EmulatorJobType::ProverExecute(
+                    program_definition,
+                    input_program,
+                    "runs/".to_string(),
+                    format!("runs/{}", "execution.json").to_string(),
+                ),
+            })?;
+
+            program_context.broker_channel.send(EMULATOR_ID, msg)?;
 
             program_context.witness.set_witness(
                 &self.ctx.id,

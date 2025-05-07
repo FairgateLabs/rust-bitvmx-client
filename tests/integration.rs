@@ -3,6 +3,7 @@ use bitvmx_client::{
     program::{self, variables::VariableTypes},
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_DRP},
 };
+use bitvmx_job_dispatcher::DispatcherHandler;
 use common::{
     config_trace, get_all, init_bitvmx, init_utxo, mine_and_wait, prepare_bitcoin, send_all,
     wait_message_from_channel,
@@ -20,9 +21,11 @@ pub fn test_single_run() -> Result<()> {
 
     let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
 
-    let (prover_bitvmx, prover_address, prover_bridge_channel) = init_bitvmx("op_1")?;
+    let (prover_bitvmx, prover_address, prover_bridge_channel, prover_emulator_channel) =
+        init_bitvmx("op_1", true)?;
 
-    let (verifier_bitvmx, verifier_address, verifier_bridge_channel) = init_bitvmx("op_2")?;
+    let (verifier_bitvmx, verifier_address, verifier_bridge_channel, verifier_emulator_channel) =
+        init_bitvmx("op_2", true)?;
 
     let mut instances = vec![prover_bitvmx, verifier_bitvmx];
     let channels = vec![prover_bridge_channel, verifier_bridge_channel];
@@ -131,6 +134,20 @@ pub fn test_single_run() -> Result<()> {
     let input1 = &witness.winternitz().unwrap()[0].message_bytes();
     info!("Verifier observed Input 1: {:?}", input1);
 
+    let mut prover_dispatcher = DispatcherHandler::new(prover_emulator_channel.unwrap());
+    let mut verifier_dispatcher = DispatcherHandler::new(verifier_emulator_channel.unwrap());
+
+    for _ in 0..10 {
+        prover_dispatcher.tick();
+        verifier_dispatcher.tick();
+        instances[0].tick()?;
+        instances[1].tick()?;
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    prover_dispatcher.tick();
+
+    //prover_emulator.tic
+
     //TODO: check for transactions and interact with input, and execution
     //TODO: allow fake and true job dispatcher execution and responses so we can test the whole flow
 
@@ -148,9 +165,9 @@ pub fn test_aggregation() -> Result<()> {
 
     let (_bitcoin_client, bitcoind, _wallet) = prepare_bitcoin()?;
 
-    let (mut bitvmx_1, addres_1, bridge_1) = init_bitvmx("op_1")?;
-    let (mut bitvmx_2, addres_2, bridge_2) = init_bitvmx("op_2")?;
-    let (mut bitvmx_3, addres_3, bridge_3) = init_bitvmx("op_3")?;
+    let (mut bitvmx_1, addres_1, bridge_1, _) = init_bitvmx("op_1", false)?;
+    let (mut bitvmx_2, addres_2, bridge_2, _) = init_bitvmx("op_2", false)?;
+    let (mut bitvmx_3, addres_3, bridge_3, _) = init_bitvmx("op_3", false)?;
 
     let mut instances = vec![&mut bitvmx_1, &mut bitvmx_2, &mut bitvmx_3];
 

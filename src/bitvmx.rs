@@ -1,4 +1,5 @@
 use crate::program::protocols::protocol_handler::ProtocolHandler;
+use crate::types::EMULATOR_ID;
 use crate::{
     api::BitVMXApi,
     collaborate::Collaboration,
@@ -28,6 +29,7 @@ use bitvmx_broker::{
     channel::channel::LocalChannel,
     rpc::{sync_server::BrokerSync, BrokerConfig},
 };
+use bitvmx_job_dispatcher_types::EmulatorResultType;
 use p2p_handler::{LocalAllowList, P2pHandler, PeerId, ReceiveHandlerChannel};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -672,6 +674,13 @@ impl BitVMXApi for BitVMX {
     }
 
     fn handle_message(&mut self, msg: String, from: u32) -> Result<(), BitVMXError> {
+        if from == EMULATOR_ID {
+            let value = serde_json::from_str::<serde_json::Value>(&msg)?;
+            let decoded = EmulatorResultType::from_value(value)?;
+            info!("< {:?}", decoded);
+            return Ok(());
+        }
+
         let decoded: IncomingBitVMXApiMessages = serde_json::from_str(&msg)?;
         info!("< {:?}", decoded);
 

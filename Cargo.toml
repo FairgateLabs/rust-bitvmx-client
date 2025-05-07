@@ -44,6 +44,7 @@ bitvmx-broker = { path = "../rust-bitvmx-broker", features = [
 bitcoind = { path = "../rust-bitcoind" }
 emulator = { path = "../BitVMX-CPU/emulator" }
 
+bitvmx-job-dispatcher-types = { path = "../rust-bitvmx-job-dispatcher/jobtypes" }
 
 musig2 = { version = "0.2.3", features = ["serde", "rand"] }
 
@@ -53,3 +54,6 @@ futures-util = "0.3"
 bitcoind = { path = "../rust-bitcoind" }
 
 bitvmx-transaction-monitor = { path = "../rust-bitvmx-transaction-monitor" }
+bitvmx-job-dispatcher = { path = "../rust-bitvmx-job-dispatcher/dispatcher", features = [
+    "emulator",
+] }
