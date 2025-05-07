@@ -54,6 +54,4 @@ futures-util = "0.3"
 bitcoind = { path = "../rust-bitcoind" }
 
 bitvmx-transaction-monitor = { path = "../rust-bitvmx-transaction-monitor" }
-bitvmx-job-dispatcher = { path = "../rust-bitvmx-job-dispatcher/dispatcher", features = [
-    "emulator",
-] }
+bitvmx-emulator-dispatcher = { path = "../rust-bitvmx-job-dispatcher/emulator-dispatcher" }
