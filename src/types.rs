@@ -206,15 +206,6 @@ impl OutgoingBitVMXApiMessages {
             _ => None,
         }
     }
-
-    pub fn witness(&self) -> Option<(Uuid, String, WitnessTypes)> {
-        match self {
-            OutgoingBitVMXApiMessages::Witness(uuid, name, witness) => {
-                Some((uuid.clone(), name.clone(), witness.clone()))
-            }
-            _ => None,
-        }
-    }
 }
 
 impl FromStr for OutgoingBitVMXApiMessages {

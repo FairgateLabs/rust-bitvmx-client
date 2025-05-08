@@ -24,7 +24,6 @@ use bitcoin_coordinator::{
     AckMonitorNews, MonitorNews, TypesToMonitor,
 };
 
-use bitvmx_broker::channel::channel::DualChannel;
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
     channel::channel::LocalChannel,
@@ -722,38 +721,28 @@ impl BitVMXApi for BitVMX {
     }
 
     fn handle_prover_message(&mut self, msg: String) -> Result<(), BitVMXError> {
-        // Parse the raw message first
-        let parsed: serde_json::Value = serde_json::from_str(&msg)
-            .map_err(|e| {
-                warn!("Failed to parse raw JSON: {}. Raw message: {}", e, msg);
-                BitVMXError::InvalidMessageFormat
-            })?;
-
-        // Extract the required fields
-        let job_id = parsed["job_id"]
-            .as_str()
-            .ok_or_else(|| {
-                warn!("Missing job_id field. Raw message: {}", msg);
-                BitVMXError::InvalidMessageFormat
-            })?;
-
-        let id = Uuid::parse_str(job_id)
+        // Parse the message as ResultMessage
+        let result_message = ResultMessage::from_str(&msg)?;
+        let id = Uuid::parse_str(&result_message.job_id)
             .map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
-        // The data field contains status and vec
-        let status = parsed["data"]["status"]
-            .as_str()
-            .ok_or_else(|| {
-                warn!("Missing status field. Raw message: {}", msg);
-                BitVMXError::InvalidMessageFormat
-            })?;
+        // Parse the result JSON
+        let parsed: serde_json::Value = result_message.result_as_value()?;
+        let data = parsed.get("data").ok_or_else(|| {
+            warn!("Missing data field in result. Raw message: {}", msg);
+            BitVMXError::InvalidMessageFormat
+        })?;
 
-        let vec = parsed["data"]["vec"]
-            .as_array()
-            .ok_or_else(|| {
-                warn!("Missing vec field. Raw message: {}", msg);
-                BitVMXError::InvalidMessageFormat
-            })?;
+        // Extract status and vec from data
+        let status = data["status"].as_str().ok_or_else(|| {
+            warn!("Missing status field in data. Raw message: {}", msg);
+            BitVMXError::InvalidMessageFormat
+        })?;
+
+        let vec = data["vec"].as_array().ok_or_else(|| {
+            warn!("Missing vec field in data. Raw message: {}", msg);
+            BitVMXError::InvalidMessageFormat
+        })?;
 
         // Convert vec to Vec<u8>
         let seal: Vec<u8> = vec
@@ -762,13 +751,9 @@ impl BitVMXApi for BitVMX {
             .map(|v| v as u8)
             .collect();
 
-        // Store the proof data
-        self.store
-            .set(StoreKey::ZKPProof(id).get_key(), seal, None)?;
-
-        // Store the status
-        let status_key = StoreKey::ZKPStatus(id).get_key();
-        self.store.set(status_key, status.to_string(), None)?;
+        // Store the proof data and status
+        self.store.set(StoreKey::ZKPProof(id).get_key(), seal, None)?;
+        self.store.set(StoreKey::ZKPStatus(id).get_key(), status.to_string(), None)?;
 
         Ok(())
     }
