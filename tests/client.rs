@@ -5,7 +5,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
-    thread::{sleep, JoinHandle},
+    thread::JoinHandle,
     time::Duration,
 };
 
@@ -29,7 +29,9 @@ use bitvmx_client::{
         participant::P2PAddress,
         variables::{VariableTypes, WitnessTypes},
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, L2_ID, PROGRAM_TYPE_LOCK, PROVER_ID},
+    types::{
+        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, L2_ID, PROGRAM_TYPE_LOCK, PROVER_ID,
+    },
 };
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use common::{clear_db, prepare_bitcoin, INITIAL_BLOCK_COUNT};
@@ -370,6 +372,7 @@ impl ClientTest {
         Ok(())
     }
 
+    #[cfg(target_os = "linux")]
     fn proof_ready(&mut self) -> Result<()> {
         let request_id = Uuid::new_v4();
         let input = vec![50, 0, 0, 0];
@@ -392,7 +395,7 @@ impl ClientTest {
         // while proof is not ready, ask proof_ready and wait for the response
         let mut response = OutgoingBitVMXApiMessages::ProofNotReady(request_id);
         while !matches!(response, OutgoingBitVMXApiMessages::ProofReady(request_id)) {
-            sleep(Duration::from_secs(5));
+            thread::sleep(Duration::from_secs(5));
             info!("Waiting for proof to be ready");
             self.prover_client.proof_ready(request_id)?;
             self.advance(2);
@@ -562,7 +565,6 @@ impl Operator {
     }
 }
 
-#[cfg(target_os = "linux")]
 #[ignore]
 #[test]
 pub fn test_client() -> Result<()> {
@@ -587,6 +589,7 @@ pub fn test_client() -> Result<()> {
     let preimage = test.set_witness(preimage)?;
     test.get_witness(preimage)?;
     // test.generate_zkp()?;
+    #[cfg(target_os = "linux")]
     test.proof_ready()?;
 
     // test.dispatch_transaction()?;
