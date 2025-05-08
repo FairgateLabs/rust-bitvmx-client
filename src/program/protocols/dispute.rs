@@ -6,7 +6,7 @@ use bitvmx_cpu_definitions::challenge::EmulatorResultType;
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use emulator::loader::program_definition::ProgramDefinition;
-use key_manager::winternitz::WinternitzType;
+use key_manager::winternitz::{message_bytes_length, WinternitzType};
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
     errors::ProtocolBuilderError,
@@ -18,7 +18,7 @@ use protocol_builder::{
     },
 };
 use serde::{Deserialize, Serialize};
-use tracing::{error, info};
+use tracing::info;
 
 use crate::{
     bitvmx::Context,
@@ -123,6 +123,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         tx_status: TransactionStatus,
         _context: String,
         program_context: &ProgramContext,
+        participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         let name = self.get_transaction_name_by_id(tx_id)?;
         info!(
@@ -164,33 +165,23 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             program_context.broker_channel.send(EMULATOR_ID, msg)?;
         }
         if name == INPUT_1 && self.role() == ParticipantRole::Verifier {
-            let witness = tx_status.tx.input[0].witness.clone();
-            let data = witness::decode_witness(vec![4], WinternitzType::HASH160, witness)?;
-
-            let message = u32::from_be_bytes(data[0].message_bytes().try_into().unwrap());
-            info!(
-                "Program {}:{} Witness data decoded: {:0x}",
-                self.ctx.id, name, message
-            );
-
-            program_context.witness.set_witness(
-                &self.ctx.id,
-                "program_input_1",
-                WitnessTypes::Winternitz(data),
+            self.decode_witness_for_tx(
+                &name,
+                0,
+                program_context,
+                &participant_keys,
+                &tx_status.tx,
             )?;
         }
 
         if name == COMMITMENT && self.role() == ParticipantRole::Verifier {
-            let witness = tx_status.tx.input[0].witness.clone();
-            info!("Witness: {:?}", witness);
-            let data = witness::decode_witness(vec![8, 20], WinternitzType::HASH160, witness)?;
-            info!("Data: {:?}", data);
-
-            /*program_context.witness.set_witness(
-                &self.ctx.id,
-                "last_step",
-                WitnessTypes::Winternitz(data),
-            )?;*/
+            self.decode_witness_for_tx(
+                &name,
+                0,
+                program_context,
+                &participant_keys,
+                &tx_status.tx,
+            )?;
         }
 
         Ok(())
@@ -234,8 +225,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         )?;
 
         let aggregated = computed_aggregated.get("aggregated_1").unwrap();
-
         amount -= fee;
+
         self.add_winternitz_check(
             aggregated,
             &mut protocol,
@@ -247,9 +238,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             START_CH,
             INPUT_1,
         )?;
-
         amount -= fee;
         amount -= speedup_dust;
+
         self.add_winternitz_check(
             aggregated,
             &mut protocol,
@@ -291,6 +282,10 @@ impl DisputeResolutionProtocol {
             .transaction_to_send(START_CH, &[taproot_arg])
     }
 
+    pub fn input_1_tx(&self, context: &ProgramContext) -> Result<Transaction, BitVMXError> {
+        self.get_signed_tx(context, INPUT_1, 0, 0)
+    }
+
     pub fn get_signed_tx(
         &self,
         context: &ProgramContext,
@@ -310,8 +305,8 @@ impl DisputeResolutionProtocol {
         for k in spend.get_keys().iter().rev() {
             let message = context.globals.get_var(&self.ctx.id, k.name())?.input()?;
 
-            error!("Signigng message: {:?}", message);
-            error!("With key: {:?}", k);
+            info!("Signigng message: {}", hex::encode(message.clone()));
+            info!("With key: {:?}", k);
 
             let winternitz_signature = context.key_chain.key_manager.sign_winternitz_message(
                 &message,
@@ -325,10 +320,6 @@ impl DisputeResolutionProtocol {
         spending_args.push_taproot_signature(signature)?;
 
         Ok(protocol.transaction_to_send(name, &[spending_args])?)
-    }
-
-    pub fn input_1_tx(&self, context: &ProgramContext) -> Result<Transaction, BitVMXError> {
-        self.get_signed_tx(context, INPUT_1, 0, 0)
     }
 
     pub fn add_winternitz_check(
@@ -351,15 +342,13 @@ impl DisputeResolutionProtocol {
         // - use proper size from config mapped in 4 bytes word
         // - in timelock use secret to avoid the other part to spend the utxo (but is this needed, why the other part would consume it?)
         // - the prover needs to resingn any verifier provided input (so the equivocation is possible on reads)
-        error!("Adding winternitz check for {} to {}", from, to);
-        error!("Amount: {}", amount);
-        error!("Speedup: {}", amount_speedup);
+        info!("Adding winternitz check for {} to {}", from, to);
+        info!("Amount: {}", amount);
+        info!("Speedup: {}", amount_speedup);
         let names_and_keys = var_names
             .iter()
             .map(|v| (*v, keys.get_winternitz(v).unwrap()))
             .collect();
-
-        error!("Names and keys: {:?}", names_and_keys);
 
         let winternitz_check = scripts::verify_winternitz_signatures(
             aggregated,
@@ -429,6 +418,53 @@ impl DisputeResolutionProtocol {
             _ => {
                 info!("Execution result: {:?}", result);
             }
+        }
+        Ok(())
+    }
+
+    pub fn decode_witness_for_tx(
+        &self,
+        name: &str,
+        input_index: u32,
+        program_context: &ProgramContext,
+        participant_keys: &Vec<&ParticipantKeys>,
+        transaction: &Transaction,
+    ) -> Result<(), BitVMXError> {
+        let protocol = self.load_protocol()?;
+        //TODO: detect leaf index from the first forced witness of the tx
+        let script = protocol.get_script_to_spend(&name, input_index, 0)?;
+
+        let mut names = vec![];
+        let mut sizes = vec![];
+        script.get_keys().iter().rev().for_each(|k| {
+            names.push(k.name().to_string());
+            sizes.push(message_bytes_length(
+                participant_keys[0]
+                    .get_winternitz(k.name())
+                    .unwrap()
+                    .message_size()
+                    .unwrap(),
+            ));
+        });
+        info!("Decoding data for {}", name);
+        info!("Names: {:?}", names);
+        info!("Sizes: {:?}", sizes);
+
+        let witness = transaction.input[0].witness.clone();
+
+        let data = witness::decode_witness(sizes, WinternitzType::HASH160, witness)?;
+        for i in 0..data.len() {
+            info!(
+                "Program {}:{} Witness data decoded: {}",
+                self.ctx.id,
+                names[i],
+                hex::encode(&data[i].message_bytes())
+            );
+            program_context.witness.set_witness(
+                &self.ctx.id,
+                &names[i],
+                WitnessTypes::Winternitz(data[i].clone()),
+            )?;
         }
         Ok(())
     }

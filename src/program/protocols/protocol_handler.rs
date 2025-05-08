@@ -113,6 +113,7 @@ pub trait ProtocolHandler {
         tx_status: TransactionStatus,
         context: String,
         program_context: &ProgramContext,
+        participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError>;
 }
 

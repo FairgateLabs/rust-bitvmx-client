@@ -99,7 +99,7 @@ impl Globals {
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub enum WitnessTypes {
     Secret(Vec<u8>),
-    Winternitz(Vec<WinternitzSignature>),
+    Winternitz(WinternitzSignature),
 }
 
 impl WitnessTypes {
@@ -110,7 +110,7 @@ impl WitnessTypes {
         }
     }
 
-    pub fn winternitz(&self) -> Result<Vec<WinternitzSignature>, BitVMXError> {
+    pub fn winternitz(&self) -> Result<WinternitzSignature, BitVMXError> {
         match self {
             WitnessTypes::Winternitz(winternitz) => Ok(winternitz.clone()),
             _ => Err(BitVMXError::InvalidWitnessType),

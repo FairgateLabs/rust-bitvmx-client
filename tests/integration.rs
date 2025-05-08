@@ -131,7 +131,7 @@ pub fn test_single_run() -> Result<()> {
         .witness()
         .unwrap();
 
-    let input1 = &witness.winternitz().unwrap()[0].message_bytes();
+    let input1 = &witness.winternitz().unwrap().message_bytes();
     info!("Verifier observed Input 1: {:?}", input1);
 
     let mut prover_dispatcher = bitvmx_job_dispatcher::DispatcherHandler::<EmulatorJobType>::new(
@@ -150,8 +150,8 @@ pub fn test_single_run() -> Result<()> {
     }
     prover_dispatcher.tick();
 
-    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
-    info!("Msgs: {:?}", msgs);
+    let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    //info!("Msgs: {:?}", msgs);
 
     //prover_emulator.tic
 

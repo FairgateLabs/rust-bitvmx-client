@@ -752,8 +752,19 @@ impl Program {
         context: String,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        self.protocol
-            .notify_news(tx_id, tx_status.clone(), context, program_context)?;
+        let participant_keys = self
+            .participants
+            .iter()
+            .map(|p| p.keys.as_ref().unwrap())
+            .collect::<Vec<_>>();
+
+        self.protocol.notify_news(
+            tx_id,
+            tx_status.clone(),
+            context,
+            program_context,
+            participant_keys,
+        )?;
 
         let name = self.protocol.get_transaction_name_by_id(tx_id)?;
         program_context.broker_channel.send(
