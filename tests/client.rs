@@ -369,7 +369,7 @@ impl ClientTest {
         Ok(())
     }
 
-    fn _proof_ready(&mut self) -> Result<()> {
+    fn proof_ready(&mut self) -> Result<()> {
         let request_id = Uuid::new_v4();
         let input = 50;
 
@@ -597,7 +597,7 @@ pub fn test_client() -> Result<()> {
     let preimage = test.set_witness(preimage)?;
     test.get_witness(preimage)?;
     // test.generate_zkp()?;
-    //test.proof_ready()?;
+    test.proof_ready()?;
 
     // test.dispatch_transaction()?;
     // test.get_transaction()?;

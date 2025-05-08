@@ -578,6 +578,7 @@ impl BitVMXApi for BitVMX {
     fn generate_zkp(&mut self, id: Uuid, input: u32) -> Result<(), BitVMXError> {
         info!("Generating ZKP for input: {}", input);
 
+        // generalizar input a vec[u8]
         let channel = DualChannel::new(&BrokerConfig::new(10000, None), 2);
         let msg = serde_json::to_string(&DispatcherJob {
             job_id: id.to_string(),
@@ -587,24 +588,63 @@ impl BitVMXApi for BitVMX {
                 "./output.json".to_string(),
             ),
         })?;
+        info!("Sending dispatcher job message: {}", msg);
         channel.send(10, msg)?;
 
         loop {
-            if let Some((msg, _from)) = channel.recv()? {
-                info!("Received: {}", msg);
-                let result = zk_result::ResultType::from_json_string(msg)
-                    .map_err(|_e| BitVMXError::InvalidMessageFormat)?;
-                info!("Result: {:?}", result);
+            if let Some((msg, from)) = channel.recv()? {
+                info!("Received raw message from {}: {}", from, msg);
+
+                // Parse the raw message first
+                let parsed: serde_json::Value = serde_json::from_str(&msg)
+                    .map_err(|e| {
+                        warn!("Failed to parse raw JSON: {}. Raw message: {}", e, msg);
+                        BitVMXError::InvalidMessageFormat
+                    })?;
+
+                // Transform the message format
+                let transformed = if let Some(data) = parsed.get("data") {
+                    if let (Some(status), Some(vec)) = (data.get("status"), data.get("vec")) {
+                        serde_json::json!({
+                            "type": "ProveResult",
+                            "data": {
+                                "seal": vec,
+                                "status": status
+                            }
+                        })
+                    } else {
+                        warn!("Missing required fields in data. Raw message: {}", msg);
+                        return Err(BitVMXError::InvalidMessageFormat);
+                    }
+                } else {
+                    warn!("Missing data field. Raw message: {}", msg);
+                    return Err(BitVMXError::InvalidMessageFormat);
+                };
+
+                info!("Transformed message: {}", transformed);
+                
+                let result = match zk_result::ResultType::from_json_string(transformed.to_string()) {
+                    Ok(r) => {
+                        info!("Successfully parsed ZK result: {:?}", r);
+                        r
+                    },
+                    Err(e) => {
+                        warn!("Failed to parse ZK result: {}. Transformed message: {}", e, transformed);
+                        return Err(BitVMXError::InvalidMessageFormat);
+                    }
+                };
 
                 // Store the result in storage
                 match result {
                     zk_result::ResultType::ProveResult { seal, status } => {
+                        info!("Storing ZKP proof with status: {} and seal length: {}", status, seal.len());
                         // Store the proof data
                         self.store
                             .set(StoreKey::ZKPProof(id).get_key(), seal, None)?;
                         // Store the status
-                        self.store
-                            .set(StoreKey::ZKPStatus(id).get_key(), status, None)?;
+                        let status_key = StoreKey::ZKPStatus(id).get_key();
+                        info!("Storing status '{}' at key: {}", status, status_key);
+                        self.store.set(status_key, status, None)?;
                     }
                 }
                 break;
@@ -621,13 +661,30 @@ impl BitVMXApi for BitVMX {
         info!("Checking if proof is ready for job: {}", id);
 
         // Get the status from storage
-        let status: Option<String> = self.store.get(StoreKey::ZKPStatus(id).get_key())?;
+        let status_key = StoreKey::ZKPStatus(id).get_key();
+        info!("Looking up status at key: {}", status_key);
+        let status: Option<String> = self.store.get(&status_key)?;
+
+        info!("Retrieved status from storage: {:?}", status);
 
         let response = match status {
-            Some(status_str) if status_str == "OK" => OutgoingBitVMXApiMessages::ProofReady(id),
-            _ => OutgoingBitVMXApiMessages::ProofNotReady(id),
+            Some(status_str) => {
+                info!("Found status: '{}', comparing with 'OK'", status_str);
+                if status_str == "OK" {
+                    info!("Status matches 'OK', proof is ready");
+                    OutgoingBitVMXApiMessages::ProofReady(id)
+                } else {
+                    info!("Status does not match 'OK', proof is not ready");
+                    OutgoingBitVMXApiMessages::ProofNotReady(id)
+                }
+            }
+            None => {
+                info!("No status found in storage, proof is not ready");
+                OutgoingBitVMXApiMessages::ProofNotReady(id)
+            }
         };
 
+        info!("Sending response: {:?}", response);
         self.program_context
             .broker_channel
             .send(from, serde_json::to_string(&response)?)?;
