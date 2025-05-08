@@ -70,7 +70,7 @@ impl BitVMXClient {
         self.send_message(IncomingBitVMXApiMessages::GetAggregatedPubkey(id))
     }
 
-    pub fn generate_zkp(&self, id: Uuid, input: u32) -> Result<()> {
+    pub fn generate_zkp(&self, id: Uuid, input: Vec<u8>) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::GenerateZKP(id, input))
     }
 

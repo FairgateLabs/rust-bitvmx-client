@@ -28,7 +28,7 @@ pub struct ProgramContext {
 pub const BITVMX_ID: u32 = 1;
 pub const L2_ID: u32 = 100;
 pub const EMULATOR_ID: u32 = 1000;
-pub const PROOF_ID: u32 = 2000;
+pub const PROVER_ID: u32 = 2000;
 
 impl ProgramContext {
     pub fn new(
@@ -105,7 +105,7 @@ pub enum IncomingBitVMXApiMessages {
     SetupKey(Uuid, Vec<P2PAddress>, u16),
     GetAggregatedPubkey(Uuid),
     GetKeyPair(Uuid),
-    GenerateZKP(Uuid, u32),
+    GenerateZKP(Uuid, Vec<u8>),
     ProofReady(Uuid),
     ExecuteZKP(),
     GetZKPExecutionResult(),
