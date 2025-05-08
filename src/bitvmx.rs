@@ -44,7 +44,7 @@ use std::{
 };
 use storage_backend::storage::{KeyValueStore, Storage};
 
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 pub const THROTTLE_TICKS: u32 = 5;
@@ -336,7 +336,7 @@ impl BitVMX {
                     ack_news = AckNews::Coordinator(AckCoordinatorNews::NewSpeedUp(_tx_id));
                 }
                 CoordinatorNews::DispatchTransactionError(_tx_id, _context_data, _counter) => {
-                    info!(
+                    error!(
                         "Dispatch Transaction Error: {:?} {:?} {}",
                         _tx_id, _context_data, _counter
                     );

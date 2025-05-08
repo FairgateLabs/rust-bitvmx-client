@@ -10,12 +10,11 @@ pub fn decode_witness(
 ) -> Result<Vec<WinternitzSignature>, BitVMXError> {
     let mut signatures = vec![];
 
+    let mut iter = witness.iter();
     for message_size in winternitz_message_sizes.iter() {
         let message_digits_len = winternitz::message_digits_length(*message_size);
         let checksum_digits_len = winternitz::checksum_length(message_digits_len);
         let winternitz_signature_size = message_digits_len + checksum_digits_len;
-
-        let mut iter = witness.iter();
 
         let mut processed = 0;
         let mut hashes = vec![];
