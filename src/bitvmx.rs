@@ -71,6 +71,7 @@ enum StoreKey {
     CompleteCollaboration(Uuid),
     ZKPProof(Uuid),
     ZKPStatus(Uuid),
+    ZKPFrom(Uuid),
 }
 
 impl StoreKey {
@@ -81,6 +82,7 @@ impl StoreKey {
             StoreKey::CompleteCollaboration(id) => format!("bitvmx/collaboration_complete/{}", id),
             StoreKey::ZKPProof(id) => format!("bitvmx/zkp/{}/proof", id),
             StoreKey::ZKPStatus(id) => format!("bitvmx/zkp/{}/status", id),
+            StoreKey::ZKPFrom(id) => format!("bitvmx/zkp/{}/from", id),
         }
     }
 }
@@ -578,8 +580,11 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn generate_zkp(&mut self, id: Uuid, input: Vec<u8>) -> Result<(), BitVMXError> {
+    fn generate_zkp(&mut self, from: u32, id: Uuid, input: Vec<u8>) -> Result<(), BitVMXError> {
         info!("Generating ZKP for input: {:?}", input);
+
+        // Store the 'from' parameter
+        self.store.set(StoreKey::ZKPFrom(id).get_key(), from, None)?;
 
         let msg = serde_json::to_string(&DispatcherJob {
             job_id: id.to_string(),
@@ -589,8 +594,8 @@ impl BitVMXApi for BitVMX {
                 "./output.json".to_string(),
             ),
         })?;
-        info!("Sending dispatcher job message: {}", msg);
 
+        info!("Sending dispatcher job message: {}", msg);
         self.program_context.broker_channel.send(PROVER_ID, msg)?;
 
         Ok(())
@@ -755,6 +760,13 @@ impl BitVMXApi for BitVMX {
         self.store.set(StoreKey::ZKPProof(id).get_key(), seal, None)?;
         self.store.set(StoreKey::ZKPStatus(id).get_key(), status.to_string(), None)?;
 
+        // Get the stored 'from' parameter
+        let from: u32 = self.store.get(StoreKey::ZKPFrom(id).get_key())?.ok_or_else(|| {
+            warn!("Missing 'from' parameter for ZKP request: {}", id);
+            BitVMXError::InvalidMessageFormat
+        })?;
+
+        self.proof_ready(from, id)?;
         Ok(())
     }
 
@@ -872,7 +884,7 @@ impl BitVMXApi for BitVMX {
                 BitVMXApi::get_aggregated_pubkey(self, from, id)?
             }
             IncomingBitVMXApiMessages::GenerateZKP(id, input) => {
-                BitVMXApi::generate_zkp(self, id, input)?
+                BitVMXApi::generate_zkp(self, from, id, input)?
             }
             IncomingBitVMXApiMessages::ProofReady(id) => BitVMXApi::proof_ready(self, from, id)?,
             IncomingBitVMXApiMessages::ExecuteZKP() => BitVMXApi::execute_zkp(self)?,
