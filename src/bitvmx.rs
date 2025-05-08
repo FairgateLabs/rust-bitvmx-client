@@ -1,5 +1,5 @@
 use crate::program::protocols::protocol_handler::ProtocolHandler;
-use crate::types::EMULATOR_ID;
+use crate::types::{EMULATOR_ID, PROVER_ID};
 use crate::{
     api::BitVMXApi,
     collaborate::Collaboration,
@@ -24,7 +24,6 @@ use bitcoin_coordinator::{
     AckMonitorNews, MonitorNews, TypesToMonitor,
 };
 
-use bitvmx_broker::channel::channel::DualChannel;
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
     channel::channel::LocalChannel,
@@ -72,6 +71,7 @@ enum StoreKey {
     CompleteCollaboration(Uuid),
     ZKPProof(Uuid),
     ZKPStatus(Uuid),
+    ZKPFrom(Uuid),
 }
 
 impl StoreKey {
@@ -82,6 +82,7 @@ impl StoreKey {
             StoreKey::CompleteCollaboration(id) => format!("bitvmx/collaboration_complete/{}", id),
             StoreKey::ZKPProof(id) => format!("bitvmx/zkp/{}/proof", id),
             StoreKey::ZKPStatus(id) => format!("bitvmx/zkp/{}/status", id),
+            StoreKey::ZKPFrom(id) => format!("bitvmx/zkp/{}/from", id),
         }
     }
 }
@@ -579,44 +580,23 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn generate_zkp(&mut self, id: Uuid, input: u32) -> Result<(), BitVMXError> {
-        info!("Generating ZKP for input: {}", input);
+    fn generate_zkp(&mut self, from: u32, id: Uuid, input: Vec<u8>) -> Result<(), BitVMXError> {
+        info!("Generating ZKP for input: {:?}", input);
 
-        let channel = DualChannel::new(&BrokerConfig::new(10000, None), 2);
+        // Store the 'from' parameter
+        self.store.set(StoreKey::ZKPFrom(id).get_key(), from, None)?;
+
         let msg = serde_json::to_string(&DispatcherJob {
             job_id: id.to_string(),
             job_type: ProverJobType::Prove(
-                input.to_be_bytes().to_vec(),
+                input,
                 "./a.elf".to_string(),
                 "./output.json".to_string(),
             ),
         })?;
-        channel.send(10, msg)?;
 
-        loop {
-            if let Some((msg, _from)) = channel.recv()? {
-                info!("Received: {}", msg);
-                let result = zk_result::ResultType::from_json_string(msg)
-                    .map_err(|_e| BitVMXError::InvalidMessageFormat)?;
-                info!("Result: {:?}", result);
-
-                // Store the result in storage
-                match result {
-                    zk_result::ResultType::ProveResult { seal, status } => {
-                        // Store the proof data
-                        self.store
-                            .set(StoreKey::ZKPProof(id).get_key(), seal, None)?;
-                        // Store the status
-                        self.store
-                            .set(StoreKey::ZKPStatus(id).get_key(), status, None)?;
-                    }
-                }
-                break;
-            } else {
-                info!("Waiting for job {} to finish", id);
-                sleep(Duration::from_secs(3));
-            }
-        }
+        info!("Sending dispatcher job message: {}", msg);
+        self.program_context.broker_channel.send(PROVER_ID, msg)?;
 
         Ok(())
     }
@@ -625,11 +605,20 @@ impl BitVMXApi for BitVMX {
         info!("Checking if proof is ready for job: {}", id);
 
         // Get the status from storage
-        let status: Option<String> = self.store.get(StoreKey::ZKPStatus(id).get_key())?;
+        let status_key = StoreKey::ZKPStatus(id).get_key();
+        let status: Option<String> = self.store.get(&status_key)?;
 
         let response = match status {
-            Some(status_str) if status_str == "OK" => OutgoingBitVMXApiMessages::ProofReady(id),
-            _ => OutgoingBitVMXApiMessages::ProofNotReady(id),
+            Some(status_str) => {
+                if status_str == "OK" {
+                    OutgoingBitVMXApiMessages::ProofReady(id)
+                } else {
+                    OutgoingBitVMXApiMessages::ProofNotReady(id)
+                }
+            }
+            None => {
+                OutgoingBitVMXApiMessages::ProofNotReady(id)
+            }
         };
 
         self.program_context
@@ -736,6 +725,51 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
+    fn handle_prover_message(&mut self, msg: String) -> Result<(), BitVMXError> {
+        // Parse the message as ResultMessage
+        let result_message = ResultMessage::from_str(&msg)?;
+        let id = Uuid::parse_str(&result_message.job_id)
+            .map_err(|_| BitVMXError::InvalidMessageFormat)?;
+
+        // Parse the result JSON
+        let parsed: serde_json::Value = result_message.result_as_value()?;
+        let data = parsed.get("data").ok_or_else(|| {
+            warn!("Missing data field in result. Raw message: {}", msg);
+            BitVMXError::InvalidMessageFormat
+        })?;
+
+        // Extract status and vec from data
+        let status = data["status"].as_str().ok_or_else(|| {
+            warn!("Missing status field in data. Raw message: {}", msg);
+            BitVMXError::InvalidMessageFormat
+        })?;
+
+        let vec = data["vec"].as_array().ok_or_else(|| {
+            warn!("Missing vec field in data. Raw message: {}", msg);
+            BitVMXError::InvalidMessageFormat
+        })?;
+
+        // Convert vec to Vec<u8>
+        let seal: Vec<u8> = vec
+            .iter()
+            .filter_map(|v| v.as_u64())
+            .map(|v| v as u8)
+            .collect();
+
+        // Store the proof data and status
+        self.store.set(StoreKey::ZKPProof(id).get_key(), seal, None)?;
+        self.store.set(StoreKey::ZKPStatus(id).get_key(), status.to_string(), None)?;
+
+        // Get the stored 'from' parameter
+        let from: u32 = self.store.get(StoreKey::ZKPFrom(id).get_key())?.ok_or_else(|| {
+            warn!("Missing 'from' parameter for ZKP request: {}", id);
+            BitVMXError::InvalidMessageFormat
+        })?;
+
+        self.proof_ready(from, id)?;
+        Ok(())
+    }
+
     fn handle_message(&mut self, msg: String, from: u32) -> Result<(), BitVMXError> {
         if from == EMULATOR_ID {
             let result_message = ResultMessage::from_str(&msg)?;
@@ -747,6 +781,11 @@ impl BitVMXApi for BitVMX {
                 .protocol
                 .dispute()?
                 .execution_result(&decoded, &self.program_context)?;
+            return Ok(());
+        }
+
+        if from == PROVER_ID {
+            self.handle_prover_message(msg)?;
             return Ok(());
         }
 
@@ -845,7 +884,7 @@ impl BitVMXApi for BitVMX {
                 BitVMXApi::get_aggregated_pubkey(self, from, id)?
             }
             IncomingBitVMXApiMessages::GenerateZKP(id, input) => {
-                BitVMXApi::generate_zkp(self, id, input)?
+                BitVMXApi::generate_zkp(self, from, id, input)?
             }
             IncomingBitVMXApiMessages::ProofReady(id) => BitVMXApi::proof_ready(self, from, id)?,
             IncomingBitVMXApiMessages::ExecuteZKP() => BitVMXApi::execute_zkp(self)?,

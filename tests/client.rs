@@ -5,7 +5,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
-    thread::JoinHandle,
+    thread::{sleep, JoinHandle},
     time::Duration,
 };
 
@@ -29,7 +29,7 @@ use bitvmx_client::{
         participant::P2PAddress,
         variables::{VariableTypes, WitnessTypes},
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, L2_ID, PROGRAM_TYPE_LOCK},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, L2_ID, PROGRAM_TYPE_LOCK, PROVER_ID},
 };
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use common::{clear_db, prepare_bitcoin, INITIAL_BLOCK_COUNT};
@@ -59,23 +59,24 @@ impl ClientTest {
 
         let (bitcoin_client, _bitcoind, _wallet) = prepare_bitcoin()?;
 
-        // Start broker server
-        let broker_config = BrokerConfig::new(10000, Some(IpAddr::from([127, 0, 0, 1])));
-        let broker_storage = Arc::new(Mutex::new(MemStorage::new()));
-        let broker = BrokerSync::new(&broker_config, broker_storage);
-
         let prover_config = Config::new(Some(format!("config/op_1.yaml")))?;
         let verifier_config = Config::new(Some(format!("config/op_2.yaml")))?;
 
         let prover = Operator::new(prover_config.clone())?;
         let verifier = Operator::new(verifier_config.clone())?;
 
+        // Start broker server
+        // let broker_config = BrokerConfig::new(10000, Some(IpAddr::from([127, 0, 0, 1])));
+        let broker_config = BrokerConfig::new(22222, Some(IpAddr::from([127, 0, 0, 1])));
+        let broker_storage = Arc::new(Mutex::new(MemStorage::new()));
+        let broker = BrokerSync::new(&broker_config, broker_storage);
+
         // Start job dispatcher in a separate thread
         let running = Arc::new(AtomicBool::new(true));
         let running_clone = running.clone();
         let job_dispatcher_handle = std::thread::spawn(move || {
             use bitvmx_broker::channel::channel::DualChannel;
-            let channel = DualChannel::new(&broker_config, 10);
+            let channel = DualChannel::new(&broker_config, PROVER_ID);
             let check_interval = Duration::from_secs(1);
             if let Err(e) = bitvmx_job_dispatcher::dispatcher_loop::<ProverJobType>(
                 channel,
@@ -361,7 +362,7 @@ impl ClientTest {
 
     fn _generate_zkp(&mut self) -> Result<()> {
         let request_id = Uuid::new_v4();
-        let input = 50;
+        let input = vec![50, 0, 0, 0];
 
         self.prover_client.generate_zkp(request_id, input)?;
         self.advance(1);
@@ -369,34 +370,38 @@ impl ClientTest {
         Ok(())
     }
 
-    fn _proof_ready(&mut self) -> Result<()> {
+    fn proof_ready(&mut self) -> Result<()> {
         let request_id = Uuid::new_v4();
-        let input = 50;
+        let input = vec![50, 0, 0, 0];
 
-        // First check when proof is not ready
+        // proof was not requested yet
         self.prover_client.proof_ready(request_id)?;
         self.advance(1);
 
+        // it should not be ready
         let response = self.prover_client.wait_message(None, None).unwrap();
-        info!("Response: {:?}", response);
         assert!(matches!(
             response,
-            OutgoingBitVMXApiMessages::ProofNotReady(_request_id)
+            OutgoingBitVMXApiMessages::ProofNotReady(request_id)
         ));
 
         // Generate a proof
         self.prover_client.generate_zkp(request_id, input)?;
         self.advance(1);
 
-        // Now check when proof is ready
-        self.prover_client.proof_ready(request_id)?;
-        self.advance(1);
+        // while proof is not ready, ask proof_ready and wait for the response
+        let mut response = OutgoingBitVMXApiMessages::ProofNotReady(request_id);
+        while !matches!(response, OutgoingBitVMXApiMessages::ProofReady(request_id)) {
+            sleep(Duration::from_secs(5));
+            info!("Waiting for proof to be ready");
+            self.prover_client.proof_ready(request_id)?;
+            self.advance(2);
+            response = self.prover_client.wait_message(None, None).unwrap();
+        }
 
-        let response = self.prover_client.wait_message(None, None).unwrap();
-        info!("Response: {:?}", response);
         assert!(matches!(
             response,
-            OutgoingBitVMXApiMessages::ProofReady(_request_id)
+            OutgoingBitVMXApiMessages::ProofReady(request_id)
         ));
 
         Ok(())
@@ -483,22 +488,6 @@ impl ClientTest {
     //     Ok(())
     // }
 
-    // fn generate_zkp(&mut self) -> Result<()> {
-    //     let request_id = Uuid::new_v4();
-
-    //     self.prover_client.generate_zkp(request_id)?;
-
-    //     Ok(())
-    // }
-
-    // fn proof_ready(&mut self) -> Result<()> {
-    //     Ok(())
-    // }
-
-    // fn execute_zkp(&mut self) -> Result<()> {
-    //     Ok(())
-    // }
-
     //
     // helpers
     //
@@ -532,7 +521,7 @@ fn configure_logging() {
         "libp2p=off",
         "bitvmx_transaction_monitor=off",
         "bitcoin_indexer=off",
-        // "bitcoin_coordinator=off",
+        "bitcoin_coordinator=off",
         "p2p_protocol=off",
         "p2p_handler=off",
         "tarpc=off",
@@ -573,6 +562,7 @@ impl Operator {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[ignore]
 #[test]
 pub fn test_client() -> Result<()> {
@@ -597,7 +587,7 @@ pub fn test_client() -> Result<()> {
     let preimage = test.set_witness(preimage)?;
     test.get_witness(preimage)?;
     // test.generate_zkp()?;
-    //test.proof_ready()?;
+    test.proof_ready()?;
 
     // test.dispatch_transaction()?;
     // test.get_transaction()?;
