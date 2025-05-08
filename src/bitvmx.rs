@@ -376,8 +376,12 @@ impl BitVMX {
         if self.count % THROTTLE_TICKS == 0 {
             self.process_p2p_messages()?;
             self.process_api_messages()?;
-            self.process_bitcoin_updates()?;
             self.process_pending_messages()?;
+        }
+
+        if self.count % (THROTTLE_TICKS*100) == 0 {
+            self.process_bitcoin_updates()?;
+            info!("Processing Bitcoin updates...");
         }
 
         self.process_collaboration()?;

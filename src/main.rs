@@ -26,7 +26,10 @@ fn clear_db(path: &str) {
 }
 
 fn init_bitvmx(opn: &str) -> Result<BitVMX> {
+    #[cfg(not(feature = "testnet"))]
     let config = Config::new(Some(format!("config/{}.yaml", opn)))?;
+    #[cfg(feature = "testnet")]
+    let config = Config::new(Some(format!("config/{}_testnet.yaml", opn)))?;
 
     clear_db(&config.storage.db);
     clear_db(&config.key_storage.path);
@@ -113,7 +116,13 @@ fn main() -> Result<()> {
 
     let initwallet = args.get(2).map(String::as_str).unwrap_or("");
     if initwallet == "--init_wallet" {
+
+        #[cfg(not(feature = "testnet"))]
         let config = Config::new(Some(format!("config/{}.yaml", opn)))?;
+        #[cfg(feature = "testnet")]
+        let config = Config::new(Some(format!("config/{}_testnet.yaml", opn)))?;
+    
+
         let wallet_name = format!("test_wallet_{}", opn);
         let bitcoin_client = BitcoinClient::new(
             &format!("{}/wallet/{}", config.bitcoin.url, wallet_name),

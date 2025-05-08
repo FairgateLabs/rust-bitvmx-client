@@ -1,0 +1,47 @@
+bitcoin:
+  network: testnet
+  url: "https://distinguished-intensive-frost.btc-testnet.quiknode.pro/38d0f064dc8e72fe44d8a9a762d448bc64c54619/"
+  username: ""
+  password: ""
+  wallet: test_wallet
+
+builder:
+  protocol_amount: 2450000
+  speedup_amount: 2450000
+  locked_amount: 95000000
+  locked_blocks: 200
+  ecdsa_sighash_type: SIGHASH_ALL
+  taproot_sighash_type: SIGHASH_ALL
+
+key_manager:
+  network: testnet
+  key_derivation_path: m/101/1/0/0/
+  key_derivation_seed: 3333beefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeec
+  winternitz_seed: 3333beefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeec
+
+key_storage:
+  password: secret_password_4
+  path: /tmp/op_3/keys.db
+
+storage:
+  db: /tmp/op_3/storage.db
+  program: /tmp/op_3/
+
+p2p:
+  address: /ip4/127.0.0.1/tcp/61182
+  key: 0801124098a7c8db342852696d63dd2be8db3d46d16180fd10429f8bdcdc25e299e44223cb449d3daa2efcb84541670187d2163d76cfd0e8f1c3fdad34163882ee0f2240
+  peer_id_file: peer_id
+  timeout: 5
+
+monitor:
+  checkpoint_height: 4325442
+  confirmation_threshold: 1
+
+broker_storage: /tmp/op_3/broker.db
+broker_port: 44444
+
+client:
+  # Number of retries for requests
+  retry: 1
+  # Delay between retries in milliseconds
+  retry_delay: 1000

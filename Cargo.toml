@@ -53,3 +53,8 @@ futures-util = "0.3"
 bitcoind = { path = "../rust-bitcoind" }
 
 bitvmx-transaction-monitor = { path = "../rust-bitvmx-transaction-monitor" }
+
+[features]
+testnet = []
+# default = ["testnet"]
+default = [] 
