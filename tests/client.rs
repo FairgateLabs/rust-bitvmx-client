@@ -562,6 +562,7 @@ impl Operator {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[ignore]
 #[test]
 pub fn test_client() -> Result<()> {
