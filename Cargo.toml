@@ -43,6 +43,7 @@ bitvmx-broker = { path = "../rust-bitvmx-broker", features = [
 ] }
 bitcoind = { path = "../rust-bitcoind" }
 emulator = { path = "../BitVMX-CPU/emulator" }
+bitvmx-cpu-definitions = { path = "../BitVMX-CPU/definitions" }
 
 bitvmx-job-dispatcher = { path = "../rust-bitvmx-job-dispatcher/dispatcher" }
 bitvmx-job-dispatcher-types = { path = "../rust-bitvmx-job-dispatcher/jobtypes", features = [

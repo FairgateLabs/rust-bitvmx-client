@@ -2,8 +2,9 @@ use std::collections::HashMap;
 
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
+use bitvmx_cpu_definitions::challenge::EmulatorResultType;
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
-use bitvmx_job_dispatcher_types::emulator_messages::{EmulatorJobType, EmulatorResultType};
+use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use emulator::loader::program_definition::ProgramDefinition;
 use key_manager::winternitz::WinternitzType;
 use protocol_builder::{
@@ -401,9 +402,12 @@ impl DisputeResolutionProtocol {
             EmulatorResultType::ProverExecuteResult {
                 last_step,
                 last_hash,
+                halt,
             } => {
                 info!("Last step: {:?}", last_step);
                 info!("Last hash: {:?}", last_hash);
+                info!("halt: {:?}", halt);
+                //TODO: chef if it's halt 0 before commiting the transaction
                 context.globals.set_var(
                     &self.ctx.id,
                     "last_step",
