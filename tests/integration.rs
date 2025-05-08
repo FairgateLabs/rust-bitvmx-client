@@ -97,7 +97,7 @@ pub fn test_single_run() -> Result<()> {
     );
 
     // set input value
-    let set_input_1 = VariableTypes::Input(hex::decode("11111111").unwrap())
+    let set_input_1 = VariableTypes::Input(hex::decode("11111100").unwrap())
         .set_msg(program_id, "program_input_1")?;
     let _ = channels[0].send(BITVMX_ID, set_input_1)?;
 
@@ -149,6 +149,9 @@ pub fn test_single_run() -> Result<()> {
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
     prover_dispatcher.tick();
+
+    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    info!("Msgs: {:?}", msgs);
 
     //prover_emulator.tic
 

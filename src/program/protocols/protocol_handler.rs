@@ -162,3 +162,12 @@ pub fn new_protocol_type(
         _ => Err(BitVMXError::NotImplemented(name.to_string())),
     }
 }
+
+impl ProtocolType {
+    pub fn dispute(self) -> Result<DisputeResolutionProtocol, BitVMXError> {
+        match self {
+            ProtocolType::DisputeResolutionProtocol(protocol) => Ok(protocol),
+            _ => Err(BitVMXError::InvalidMessageType),
+        }
+    }
+}

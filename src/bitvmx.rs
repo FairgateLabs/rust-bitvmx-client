@@ -30,8 +30,8 @@ use bitvmx_broker::{
     channel::channel::LocalChannel,
     rpc::{sync_server::BrokerSync, BrokerConfig},
 };
-use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
-use bitvmx_job_dispatcher_types::emulator_messages::EmulatorResultType;
+use bitvmx_cpu_definitions::challenge::EmulatorResultType;
+use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use p2p_handler::{LocalAllowList, P2pHandler, PeerId, ReceiveHandlerChannel};
 use serde::{Deserialize, Serialize};
@@ -335,6 +335,10 @@ impl BitVMX {
                     ack_news = AckNews::Coordinator(AckCoordinatorNews::NewSpeedUp(_tx_id));
                 }
                 CoordinatorNews::DispatchTransactionError(_tx_id, _context_data, _counter) => {
+                    info!(
+                        "Dispatch Transaction Error: {:?} {:?} {}",
+                        _tx_id, _context_data, _counter
+                    );
                     // Complete
 
                     ack_news =
@@ -771,9 +775,15 @@ impl BitVMXApi for BitVMX {
 
     fn handle_message(&mut self, msg: String, from: u32) -> Result<(), BitVMXError> {
         if from == EMULATOR_ID {
-            let value = serde_json::from_str::<serde_json::Value>(&msg)?;
+            let result_message = ResultMessage::from_str(&msg)?;
+            let value = result_message.result_as_value()?;
             let decoded = EmulatorResultType::from_value(value)?;
-            info!("< {:?}", decoded);
+            let job_id = Uuid::parse_str(&result_message.job_id)
+                .map_err(|_| BitVMXError::InvalidMessageFormat)?;
+            self.load_program(&job_id)?
+                .protocol
+                .dispute()?
+                .execution_result(&decoded, &self.program_context)?;
             return Ok(());
         }
 
