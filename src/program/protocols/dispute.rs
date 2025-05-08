@@ -23,7 +23,6 @@ use tracing::info;
 use crate::{
     bitvmx::Context,
     errors::BitVMXError,
-    keychain::KeyChain,
     program::{
         participant::ParticipantRole,
         protocols::slot::external_fund_tx,
@@ -77,8 +76,12 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         )])
     }
 
-    fn generate_keys(&self, key_chain: &mut KeyChain) -> Result<ParticipantKeys, BitVMXError> {
+    fn generate_keys(
+        &self,
+        program_context: &mut ProgramContext,
+    ) -> Result<ParticipantKeys, BitVMXError> {
         //TODO: define which keys are generated for each role
+        let key_chain = &mut program_context.key_chain;
 
         let aggregated_1 = key_chain.derive_keypair()?;
 
@@ -90,6 +93,15 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             ("speedup".to_string(), speedup.into()),
             ("timelock".to_string(), timelock.into()),
         ];
+
+        let pdf = program_context
+            .globals
+            .get_var(&self.ctx.id, "program_definition")?
+            .string()?;
+        let program_def = ProgramDefinition::from_config(&pdf).unwrap();
+        let nary_def = program_def.nary_def();
+        //nary_def.full_rounds
+        info!("Nary def: {:?}", nary_def);
 
         if self.role() == ParticipantRole::Prover {
             let program_input_leaf_1 = key_chain.derive_winternitz_hash160(4)?;
@@ -182,6 +194,50 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &participant_keys,
                 &tx_status.tx,
             )?;
+
+            let program_definition = program_context
+                .globals
+                .get_var(&self.ctx.id, "program_definition")?
+                .string()?;
+
+            let execution_path = format!("runs/{}/verifier/", self.ctx.id);
+            let _ = std::fs::create_dir_all(&execution_path);
+
+            let input_program = program_context
+                .witness
+                .get_witness(&self.ctx.id, "program_input_1")?
+                .unwrap()
+                .winternitz()?
+                .message_bytes();
+
+            let last_hash = program_context
+                .witness
+                .get_witness(&self.ctx.id, "last_hash")?
+                .unwrap()
+                .winternitz()?
+                .message_bytes();
+
+            let last_step = program_context
+                .witness
+                .get_witness(&self.ctx.id, "last_step")?
+                .unwrap()
+                .winternitz()?
+                .message_bytes();
+            let last_step = u64::from_be_bytes(last_step.try_into().unwrap());
+
+            let msg = serde_json::to_string(&DispatcherJob {
+                job_id: self.ctx.id.to_string(),
+                job_type: EmulatorJobType::VerifierCheckExecution(
+                    program_definition,
+                    input_program,
+                    execution_path.clone(),
+                    last_step,
+                    hex::encode(last_hash),
+                    format!("{}/{}", execution_path, "execution.json").to_string(),
+                ),
+            })?;
+
+            program_context.broker_channel.send(EMULATOR_ID, msg)?;
         }
 
         Ok(())

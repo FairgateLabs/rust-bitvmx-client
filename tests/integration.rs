@@ -141,6 +141,7 @@ pub fn test_single_run() -> Result<()> {
         verifier_emulator_channel.unwrap(),
     );
 
+    //wait for execution
     for _ in 0..10 {
         prover_dispatcher.tick();
         verifier_dispatcher.tick();
@@ -148,14 +149,18 @@ pub fn test_single_run() -> Result<()> {
         instances[1].tick()?;
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
-    prover_dispatcher.tick();
 
+    // wait for commitment tx
     let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
-    //info!("Msgs: {:?}", msgs);
+    // wait for verifier execution
+    for _ in 0..10 {
+        prover_dispatcher.tick();
+        verifier_dispatcher.tick();
+        instances[0].tick()?;
+        instances[1].tick()?;
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
 
-    //prover_emulator.tic
-
-    //TODO: check for transactions and interact with input, and execution
     //TODO: allow fake and true job dispatcher execution and responses so we can test the whole flow
 
     info!("Stopping bitcoind");

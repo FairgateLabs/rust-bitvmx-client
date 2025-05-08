@@ -14,7 +14,7 @@ use protocol_builder::{
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use crate::{errors::BitVMXError, keychain::KeyChain, types::ProgramContext};
+use crate::{errors::BitVMXError, types::ProgramContext};
 
 use super::{
     super::participant::ParticipantKeys,
@@ -48,7 +48,10 @@ impl ProtocolHandler for SlotProtocol {
         )])
     }
 
-    fn generate_keys(&self, _key_chain: &mut KeyChain) -> Result<ParticipantKeys, BitVMXError> {
+    fn generate_keys(
+        &self,
+        _program_context: &mut ProgramContext,
+    ) -> Result<ParticipantKeys, BitVMXError> {
         Ok(ParticipantKeys::new(vec![], vec![]))
     }
 

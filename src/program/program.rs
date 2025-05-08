@@ -144,7 +144,7 @@ impl Program {
         info!("Leader pos: {}", leader);
 
         let protocol = new_protocol_type(*id, protocol_type, my_idx, storage.clone())?;
-        let my_keys = protocol.generate_keys(&mut program_context.key_chain)?;
+        let my_keys = protocol.generate_keys(program_context)?;
 
         //Creates space for the participants
         let mut others = peers
@@ -738,6 +738,8 @@ impl Program {
         let tx_to_dispatch = self.protocol.get_transaction_name(name, program_context)?;
 
         let context = Context::ProgramId(self.program_id);
+
+        info!("Dispatching transaction: {}", tx_to_dispatch.compute_txid());
 
         program_context
             .bitcoin_coordinator

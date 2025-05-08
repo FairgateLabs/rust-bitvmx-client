@@ -17,7 +17,7 @@ use protocol_builder::{
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
-use crate::{errors::BitVMXError, keychain::KeyChain, types::ProgramContext};
+use crate::{errors::BitVMXError, types::ProgramContext};
 
 use super::{
     super::participant::ParticipantKeys,
@@ -51,13 +51,16 @@ impl ProtocolHandler for LockProtocol {
         )])
     }
 
-    fn generate_keys(&self, key_chain: &mut KeyChain) -> Result<ParticipantKeys, BitVMXError> {
-        let aggregated_1 = key_chain.derive_keypair()?;
+    fn generate_keys(
+        &self,
+        program_context: &mut ProgramContext,
+    ) -> Result<ParticipantKeys, BitVMXError> {
+        let aggregated_1 = program_context.key_chain.derive_keypair()?;
 
         let mut keys = vec![("aggregated_1".to_string(), aggregated_1.into())];
 
         //TODO: get from a variable the number of bytes required to encode the too_id
-        let start_id = key_chain.derive_winternitz_hash160(1)?;
+        let start_id = program_context.key_chain.derive_winternitz_hash160(1)?;
         keys.push((format!("too_id_{}", self.ctx.my_idx), start_id.into()));
 
         Ok(ParticipantKeys::new(keys, vec!["aggregated_1".to_string()]))
