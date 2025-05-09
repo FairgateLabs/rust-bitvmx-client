@@ -39,6 +39,12 @@ pub struct ClientConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct ThrotthleUpdate {
+    pub throtthle_bitcoin_updates_until_sync: u64,
+    pub throtthle_bitcoin_updates: u64,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)] // enforce strict field compliance
 pub struct Config {
     pub bitcoin: RpcConfig,
@@ -51,6 +57,7 @@ pub struct Config {
     pub broker_storage: String,
     pub broker_port: u16,
     pub client: ClientConfig,
+    pub coordinator: ThrotthleUpdate,
 }
 
 impl Config {

@@ -37,6 +37,10 @@ monitor:
   checkpoint_height: 1
   confirmation_threshold: 6
 
+coordinator:
+  throtthle_bitcoin_updates_until_sync: 0
+  throtthle_bitcoin_updates: 0
+
 broker_storage: /tmp/op_2/broker.db
 broker_port: 33333
 
