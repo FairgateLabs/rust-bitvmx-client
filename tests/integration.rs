@@ -13,10 +13,10 @@ use uuid::Uuid;
 
 mod common;
 
-//cargo test --release  -- test_single_run --ignored
+//cargo test --release  -- test_drp --ignored
 #[ignore]
 #[test]
-pub fn test_single_run() -> Result<()> {
+pub fn test_drp() -> Result<()> {
     config_trace();
 
     let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
