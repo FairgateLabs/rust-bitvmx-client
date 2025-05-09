@@ -425,8 +425,8 @@ impl BitVMX {
 
         if should_update {
             let updated = self.process_bitcoin_updates()?;
+            self.bitcoin_update.last_update = now;
             if updated {
-                self.bitcoin_update.last_update = now;
                 self.bitcoin_update.was_synced = true;
 
                 // info!(
