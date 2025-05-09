@@ -395,7 +395,7 @@ impl ClientTest {
         // while proof is not ready, ask proof_ready and wait for the response
         let mut response = OutgoingBitVMXApiMessages::ProofNotReady(request_id);
         while !matches!(response, OutgoingBitVMXApiMessages::ProofReady(request_id)) {
-            thread::sleep(Duration::from_secs(5));
+            std::thread::sleep(Duration::from_secs(5));
             info!("Waiting for proof to be ready");
             self.prover_client.proof_ready(request_id)?;
             self.advance(2);
