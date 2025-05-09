@@ -34,6 +34,7 @@ use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use p2p_handler::{LocalAllowList, P2pHandler, PeerId, ReceiveHandlerChannel};
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
 use std::{
     collections::{HashSet, VecDeque},
     path::PathBuf,
@@ -49,14 +50,21 @@ use uuid::Uuid;
 
 pub const THROTTLE_TICKS: u32 = 5;
 
+#[derive(Debug)]
+struct BitcoinUpdateState {
+    last_update: Instant,
+    was_synced: bool,
+}
+
 pub struct BitVMX {
-    _config: Config,
+    config: Config,
     program_context: ProgramContext,
     store: Rc<Storage>,
     broker: BrokerSync,
     count: u32,
     pending_messages: VecDeque<(PeerId, Vec<u8>)>,
     notified_request: HashSet<(Uuid, Txid)>,
+    bitcoin_update: BitcoinUpdateState,
 }
 
 impl Drop for BitVMX {
@@ -127,13 +135,17 @@ impl BitVMX {
         );
 
         Ok(Self {
-            _config: config,
+            config: config,
             program_context,
             store: store.clone(),
             broker,
             count: 0,
             pending_messages: VecDeque::new(),
             notified_request: HashSet::new(),
+            bitcoin_update: BitcoinUpdateState {
+                last_update: Instant::now(),
+                was_synced: false,
+            },
         })
     }
 
@@ -388,15 +400,49 @@ impl BitVMX {
         if self.count % THROTTLE_TICKS == 0 {
             self.process_p2p_messages()?;
             self.process_api_messages()?;
-            self.process_bitcoin_updates()?;
             self.process_pending_messages()?;
         }
 
+        self.process_bitcoin_updates_with_throttle()?;
         self.process_collaboration()?;
 
         Ok(())
     }
 
+    pub fn process_bitcoin_updates_with_throttle(&mut self) -> Result<(), BitVMXError> {
+        let now = Instant::now();
+        let throttle_secs = if !self.bitcoin_update.was_synced {
+            self.config.coordinator.throtthle_bitcoin_updates_until_sync
+        } else {
+            self.config.coordinator.throtthle_bitcoin_updates
+        };
+
+        let should_update = if throttle_secs == 0 {
+            self.count % THROTTLE_TICKS == 0
+        } else {
+            now.duration_since(self.bitcoin_update.last_update)
+                >= Duration::from_secs(throttle_secs)
+        };
+
+        if should_update {
+            let updated = self.process_bitcoin_updates()?;
+            self.bitcoin_update.last_update = now;
+            if updated {
+                self.bitcoin_update.was_synced = true;
+
+                // info!(
+                //     "Throttling Bitcoin updates ({}): {}s",
+                //     if self.bitcoin_update.was_synced {
+                //         "post-sync"
+                //     } else {
+                //         "pre-sync"
+                //     },
+                //     throttle_secs
+                // );
+            }
+        }
+        Ok(())
+    }
     pub fn process_programs(&mut self) -> Result<(), BitVMXError> {
         let programs = self.get_active_programs()?;
 
@@ -679,7 +725,7 @@ impl BitVMXApi for BitVMX {
             leader as usize,
             &mut self.program_context,
             self.store.clone(),
-            &self._config.client,
+            &self.config.client,
         )?;
         self.add_new_program(&id)?;
         info!(
