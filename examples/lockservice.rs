@@ -46,7 +46,7 @@ fn config_trace_aux() {
         "libp2p=off",
         "bitvmx_transaction_monitor=off",
         "bitcoin_indexer=off",
-        "bitcoin_coordinator=off",
+        "bitcoin_coordinator=info",
         "p2p_protocol=off",
         "p2p_handler=off",
         "tarpc=off",
@@ -278,6 +278,9 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
         bitcoin_client.mine_blocks_to_address(10, &wallet)?;
         std::thread::sleep(std::time::Duration::from_millis(1000));
         get_all(&channels)?;
+
+        let set_fee = VariableTypes::Number(3000).set_msg(program_id, "FEE")?;
+        send_all(&channels, &set_fee)?;
 
         let set_ops_aggregated = VariableTypes::PubKey(aggregated_pub_key)
             .set_msg(program_id, "operators_aggregated_pub")?;

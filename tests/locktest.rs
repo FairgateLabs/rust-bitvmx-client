@@ -170,6 +170,9 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     // SETUP LOCK BEGIN
 
     let program_id = Uuid::new_v4();
+    let set_fee = VariableTypes::Number(3000).set_msg(program_id, "FEE")?;
+    send_all(&channels, &set_fee)?;
+
     let set_ops_aggregated = VariableTypes::PubKey(aggregated_pub_key)
         .set_msg(program_id, "operators_aggregated_pub")?;
     send_all(&channels, &set_ops_aggregated)?;

@@ -110,9 +110,10 @@ impl ProtocolHandler for LockProtocol {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         // TODO get this from config, all values expressed in satoshis
-        let fee = 1000;
 
         let secp = secp256k1::Secp256k1::new();
+
+        let fee = context.globals.get_var(&self.ctx.id, "FEE")?.number()? as u64;
 
         let ops_agg_pubkey = context
             .globals

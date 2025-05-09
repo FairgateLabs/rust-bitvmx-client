@@ -250,7 +250,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         // TODO get this from config, all values expressed in satoshis
-        let fee = 3000;
+        let fee = context.globals.get_var(&self.ctx.id, "FEE")?.number()? as u64;
         let speedup_dust = 500;
         const TIMELOCK_BLOCKS: u16 = 10;
 

@@ -52,6 +52,8 @@ pub fn test_single_run() -> Result<()> {
     let utxo = init_utxo(&bitcoin_client, aggregated_pub_key, None, None)?;
 
     let program_id = Uuid::new_v4();
+    let set_fee = VariableTypes::Number(3000).set_msg(program_id, "FEE")?;
+    send_all(&channels, &set_fee)?;
 
     let set_aggregated_msg =
         VariableTypes::PubKey(utxo.pub_key).set_msg(program_id, "aggregated")?;

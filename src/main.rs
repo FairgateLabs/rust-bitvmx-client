@@ -1,8 +1,6 @@
 use std::{thread, time::Duration};
 
 use anyhow::Result;
-use bitcoin::Network;
-use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -47,6 +45,13 @@ fn run_bitvmx(opn: &str) -> Result<()> {
             init_bitvmx("op_2")?,
             init_bitvmx("op_3")?,
             init_bitvmx("op_4")?,
+        ]
+    } else if opn == "all-testnet" {
+        vec![
+            init_bitvmx("testnet_op_1")?,
+            init_bitvmx("testnet_op_2")?,
+            init_bitvmx("testnet_op_3")?,
+            init_bitvmx("testnet_op_4")?,
         ]
     } else {
         vec![init_bitvmx(opn)?]
@@ -101,35 +106,7 @@ fn main() -> Result<()> {
     let opn = args
         .get(1)
         .map(String::as_str)
-        .expect("Define the config file to use. Example: op_1, and optionaly -init_wallet");
-
-    // let bitcoind = Bitcoind::new(
-    //     "bitcoin-regtest",
-    //     "ruimarinho/bitcoin-core",
-    //     config.bitcoin.clone(),
-    // );
-    // info!("Starting bitcoind");
-    // bitcoind.start()?;
-
-    let initwallet = args.get(2).map(String::as_str).unwrap_or("");
-    if initwallet == "--init_wallet" {
-        let config = Config::new(Some(format!("config/{}.yaml", opn)))?;
-        let wallet_name = format!("test_wallet_{}", opn);
-        let bitcoin_client = BitcoinClient::new(
-            &format!("{}/wallet/{}", config.bitcoin.url, wallet_name),
-            &config.bitcoin.username,
-            &config.bitcoin.password,
-        )?;
-
-        let wallet = bitcoin_client
-            .init_wallet(Network::Regtest, &wallet_name)
-            .unwrap();
-
-        info!("Mine 1 block to address {:?}", wallet);
-        bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
-    } else if !initwallet.is_empty() {
-        panic!("The second optional argument must be --init_wallet");
-    }
+        .expect("Define the config file to use. Example: op_1. Also can be used [all|all-testnet]");
 
     run_bitvmx(opn)
 }

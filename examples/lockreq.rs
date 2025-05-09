@@ -35,7 +35,7 @@ fn config_trace_aux() {
         "libp2p=off",
         "bitvmx_transaction_monitor=off",
         "bitcoin_indexer=off",
-        "bitcoin_coordinator=off",
+        "bitcoin_coordinator=info",
         "p2p_protocol=off",
         "p2p_handler=off",
         "tarpc=off",
@@ -227,7 +227,8 @@ fn create_lockreq_tx_and_sign(
 ) -> Transaction {
     let timelock_script = timelock(timelock_blocks, &user_pubkey, SignMode::Single);
 
-    let reveal_secret_script = reveal_secret(secret_hash.to_vec(), &ops_agg_pubkey, SignMode::Aggregate);
+    let reveal_secret_script =
+        reveal_secret(secret_hash.to_vec(), &ops_agg_pubkey, SignMode::Aggregate);
     let lockreq_tx_output_taptree = build_taptree_for_lockreq_tx_outputs(
         &secp,
         unspendable_pub_key,
