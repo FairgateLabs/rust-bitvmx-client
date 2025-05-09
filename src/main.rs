@@ -10,7 +10,7 @@ use bitvmx_client::{bitvmx::BitVMX, config::Config};
 
 fn config_trace() {
     let filter = EnvFilter::builder()
-        .parse("info,libp2p=off,bitvmx_transaction_monitor=info,bitcoin_indexer=off,bitcoin_coordinator=off,p2p_protocol=off,p2p_handler=off,tarpc=off")
+        .parse("info,libp2p=off,bitvmx_transaction_monitor=info,bitcoin_indexer=off,bitcoin_coordinator=info,p2p_protocol=off,p2p_handler=off,tarpc=off")
         .expect("Invalid filter");
 
     tracing_subscriber::fmt()
@@ -120,7 +120,7 @@ fn main() -> Result<()> {
         let config = Config::new(Some(format!("config/{}.yaml", opn)))?;
         #[cfg(feature = "testnet")]
         let config = Config::new(Some(format!("config/{}_testnet.yaml", opn)))?;
-    
+
 
         let wallet_name = format!("test_wallet_{}", opn);
         let bitcoin_client = BitcoinClient::new(
