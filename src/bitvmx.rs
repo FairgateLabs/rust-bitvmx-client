@@ -292,7 +292,7 @@ impl BitVMX {
                     ack_news = AckNews::Monitor(AckMonitorNews::RskPeginTransaction(tx_id));
                 }
                 MonitorNews::NewBlock(block_id, block_height) => {
-                    debug!("New block: {:?} {}", block_id, block_height);
+                    info!("New block: {:?} {}", block_id, block_height);
                     ack_news = AckNews::Monitor(AckMonitorNews::NewBlock);
                 }
             }
@@ -328,6 +328,10 @@ impl BitVMX {
                     ack_news = AckNews::Coordinator(AckCoordinatorNews::NewSpeedUp(_tx_id));
                 }
                 CoordinatorNews::DispatchTransactionError(_tx_id, _context_data, _counter) => {
+                    tracing::error!(
+                        "Dispatch Transaction Error: {:?} {:?} {}",
+                        _tx_id, _context_data, _counter
+                    );
                     // Complete
 
                     ack_news =
@@ -379,7 +383,7 @@ impl BitVMX {
             self.process_pending_messages()?;
         }
 
-        if self.count % (THROTTLE_TICKS*100) == 0 {
+        if self.count % (THROTTLE_TICKS*300) == 0 {
             self.process_bitcoin_updates()?;
             info!("Processing Bitcoin updates...");
         }

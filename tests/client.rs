@@ -435,7 +435,7 @@ fn configure_logging() {
         "libp2p=off",
         "bitvmx_transaction_monitor=off",
         "bitcoin_indexer=off",
-        // "bitcoin_coordinator=off",
+        "bitcoin_coordinator=info",
         "p2p_protocol=off",
         "p2p_handler=off",
         "tarpc=off",
