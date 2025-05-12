@@ -2,10 +2,11 @@ use std::collections::HashMap;
 
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
+use bitcoin_script_riscv::riscv::instruction_mapping::create_verification_script_mapping;
 use bitvmx_cpu_definitions::challenge::EmulatorResultType;
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
-use emulator::loader::program_definition::ProgramDefinition;
+use emulator::{constants::REGISTERS_BASE_ADDRESS, loader::program_definition::ProgramDefinition};
 use key_manager::winternitz::{message_bytes_length, WinternitzType};
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
@@ -40,6 +41,7 @@ use super::{
 pub const START_CH: &str = "START_CHALLENGE";
 pub const INPUT_1: &str = "INPUT_1";
 pub const COMMITMENT: &str = "COMMITMENT";
+pub const EXECUTE: &str = "EXECUTE";
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DisputeResolutionProtocol {
@@ -284,19 +286,33 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 VariableTypes::Number(round as u32),
             )?;
 
-            let (_program_definition, pdf) = self.get_program_definition(program_context)?;
+            let (program_definition, pdf) = self.get_program_definition(program_context)?;
+            let nary = program_definition.nary_def();
             let execution_path = self.get_execution_path()?;
-            let msg = serde_json::to_string(&DispatcherJob {
-                job_id: self.ctx.id.to_string(),
-                job_type: EmulatorJobType::ProverGetHashesForRound(
-                    pdf,
-                    execution_path.clone(),
-                    round as u8,
-                    decision as u32,
-                    format!("{}/{}", execution_path, "execution.json").to_string(),
-                ),
-            })?;
-            program_context.broker_channel.send(EMULATOR_ID, msg)?;
+            if round <= nary.total_rounds() as u32 {
+                let msg = serde_json::to_string(&DispatcherJob {
+                    job_id: self.ctx.id.to_string(),
+                    job_type: EmulatorJobType::ProverGetHashesForRound(
+                        pdf,
+                        execution_path.clone(),
+                        round as u8,
+                        decision as u32,
+                        format!("{}/{}", execution_path, "execution.json").to_string(),
+                    ),
+                })?;
+                program_context.broker_channel.send(EMULATOR_ID, msg)?;
+            } else {
+                let msg = serde_json::to_string(&DispatcherJob {
+                    job_id: self.ctx.id.to_string(),
+                    job_type: EmulatorJobType::ProverFinalTrace(
+                        pdf,
+                        execution_path.clone(),
+                        (decision + 1) as u32,
+                        format!("{}/{}", execution_path, "execution.json").to_string(),
+                    ),
+                })?;
+                program_context.broker_channel.send(EMULATOR_ID, msg)?;
+            }
         }
 
         if (name.starts_with("NARY_PROVER")) && self.role() == ParticipantRole::Verifier {
@@ -464,8 +480,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             prev = next;
         }
 
-        //DUMMY last tx to test
-        self.add_winternitz_check(
+        //Simple execution check
+        self.add_winternitz_and_script(
             aggregated,
             &mut protocol,
             TIMELOCK_BLOCKS,
@@ -474,7 +490,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             amount - fee,
             &vec![&format!("selection_bits_{}", 1)],
             &prev,
-            "DUMMY",
+            EXECUTE,
         )?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
@@ -578,6 +594,64 @@ impl DisputeResolutionProtocol {
             aggregated,
             &names_and_keys,
             SignMode::Aggregate,
+        )?;
+
+        let timeout = scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
+
+        let output_type = OutputType::taproot(
+            amount,
+            aggregated,
+            &[winternitz_check, timeout],
+            &SpendMode::All {
+                key_path_sign: SignMode::Aggregate,
+            },
+            &vec![],
+        )?;
+
+        protocol.add_connection(
+            &format!("{}_{}", from, to),
+            from,
+            to,
+            &output_type,
+            &SighashType::taproot_all(),
+        )?;
+
+        let pb = ProtocolBuilder {};
+        //put the amount here as there is no output yet
+        pb.add_speedup_output(protocol, to, amount_speedup, aggregated)?;
+        Ok(())
+    }
+
+    pub fn add_winternitz_and_script(
+        &self,
+        aggregated: &PublicKey,
+        protocol: &mut Protocol,
+        timelock_blocks: u16,
+        keys: &ParticipantKeys,
+        amount: u64,
+        amount_speedup: u64,
+        var_names: &Vec<&str>,
+        from: &str,
+        to: &str,
+    ) -> Result<(), BitVMXError> {
+        info!("Adding winternitz check for {} to {}", from, to);
+        info!("Amount: {}", amount);
+        info!("Speedup: {}", amount_speedup);
+        let names_and_keys = var_names
+            .iter()
+            .map(|v| (*v, keys.get_winternitz(v).unwrap()))
+            .collect();
+
+        //TODO: Create full mapping. Add a check to identify the leaf
+        let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
+        let verification_script = mapping["ecall"].0.clone();
+
+        let winternitz_check = scripts::verify_winternitz_signatures_aux(
+            aggregated,
+            &names_and_keys,
+            SignMode::Aggregate,
+            true,
+            Some(verification_script),
         )?;
 
         let timeout = scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
