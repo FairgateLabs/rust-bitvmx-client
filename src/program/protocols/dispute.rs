@@ -748,6 +748,10 @@ impl DisputeResolutionProtocol {
                     None,
                 )?;
             }
+            EmulatorResultType::ProverFinalTraceResult { final_trace } => {
+                info!("Final trace: {:?}", final_trace);
+                //TODO: set variables
+            }
             _ => {
                 info!("Execution result: {:?}", result);
             }
