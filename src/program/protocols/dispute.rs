@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use bitcoin_script_riscv::riscv::instruction_mapping::create_verification_script_mapping;
+use bitcoin_script_stack::stack::StackTracker;
 use bitvmx_cpu_definitions::challenge::EmulatorResultType;
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
@@ -42,6 +43,24 @@ pub const START_CH: &str = "START_CHALLENGE";
 pub const INPUT_1: &str = "INPUT_1";
 pub const COMMITMENT: &str = "COMMITMENT";
 pub const EXECUTE: &str = "EXECUTE";
+
+pub const TRACE_VARS: [(&str, usize); 15] = [
+    ("write_address", 4 as usize),
+    ("write_value", 4),
+    ("write_pc", 4),
+    ("write_micro", 1),
+    ("mem_witness", 1),
+    ("read_1_address", 4),
+    ("read_1_value", 4),
+    ("read_1_last_step", 8),
+    ("read_2_address", 4),
+    ("read_2_value", 4),
+    ("read_2_last_step", 8),
+    ("read_pc_address", 4),
+    ("read_pc_micro", 1),
+    ("read_pc_opcode", 4),
+    ("witness", 4),
+];
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DisputeResolutionProtocol {
@@ -105,6 +124,11 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
             keys.push(("last_step".to_string(), last_step.into()));
             keys.push(("last_hash".to_string(), last_hash.into()));
+
+            for (name, size) in TRACE_VARS {
+                let key = key_chain.derive_winternitz_hash160(size)?;
+                keys.push((name.to_string(), key.into()));
+            }
         }
 
         //generate keys for the nary search
@@ -369,6 +393,17 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             })?;
             program_context.broker_channel.send(EMULATOR_ID, msg)?;
         }
+
+        if name == EXECUTE && self.role() == ParticipantRole::Verifier {
+            self.decode_witness_for_tx(
+                &name,
+                0,
+                program_context,
+                &participant_keys[0],
+                &tx_status.tx,
+            )?;
+        }
+
         Ok(())
     }
 
@@ -481,14 +516,21 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         }
 
         //Simple execution check
+        let vars = TRACE_VARS
+            .iter()
+            .take(TRACE_VARS.len() - 1) // Skip the witness (except is needed)
+            //.rev() //reverse to get the proper order on the stack
+            .map(|(name, _)| *name)
+            .collect::<Vec<&str>>();
+
         self.add_winternitz_and_script(
             aggregated,
             &mut protocol,
             TIMELOCK_BLOCKS,
-            &keys[1],
+            &keys[0],
             amount,
             amount - fee,
-            &vec![&format!("selection_bits_{}", 1)],
+            &vars,
             &prev,
             EXECUTE,
         )?;
@@ -646,12 +688,37 @@ impl DisputeResolutionProtocol {
         let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
         let verification_script = mapping["ecall"].0.clone();
 
+        //TOODO: This is a workacround to inverse the order of the stack
+        let mut stack = StackTracker::new();
+        let all = stack.define(110, "all");
+        for i in 1..110 {
+            stack.move_var_sub_n(all, 110 - i - 1);
+        }
+        let reverse_script = stack.get_script();
+
+        //TODO: This is a workaround to remove one nibble from the micro instructions
+        //and drop the last steps. (this can be avoided)
+        let mut stack = StackTracker::new();
+        let mut stackvars = HashMap::new();
+        for (name, size) in TRACE_VARS.iter().take(TRACE_VARS.len() - 1) {
+            stackvars.insert(*name, stack.define((size * 2) as u32, name));
+        }
+        let stripped = stack.move_var_sub_n(stackvars["write_micro"], 0);
+        stack.drop(stripped);
+        let stripped = stack.move_var_sub_n(stackvars["read_pc_micro"], 0);
+        stack.drop(stripped);
+        let last_step_1 = stack.move_var(stackvars["read_1_last_step"]);
+        stack.drop(last_step_1);
+        let last_step_2 = stack.move_var(stackvars["read_2_last_step"]);
+        stack.drop(last_step_2);
+        let strip_script = stack.get_script();
+
         let winternitz_check = scripts::verify_winternitz_signatures_aux(
             aggregated,
             &names_and_keys,
             SignMode::Aggregate,
             true,
-            Some(verification_script),
+            Some(vec![reverse_script, strip_script, verification_script]),
         )?;
 
         let timeout = scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
@@ -695,17 +762,9 @@ impl DisputeResolutionProtocol {
                 info!("Last hash: {:?}", last_hash);
                 info!("halt: {:?}", halt);
                 //TODO: chef if it's halt 0 before commiting the transaction
-                context.globals.set_var(
-                    &self.ctx.id,
-                    "last_step",
-                    VariableTypes::Input(last_step.to_be_bytes().to_vec()),
-                )?;
+                self.set_input_u64(context, "last_step", *last_step)?;
 
-                context.globals.set_var(
-                    &self.ctx.id,
-                    "last_hash",
-                    VariableTypes::Input(hex::decode(last_hash)?),
-                )?;
+                self.set_input_hex(context, "last_hash", last_hash)?;
 
                 context.bitcoin_coordinator.dispatch(
                     self.get_signed_tx(context, COMMITMENT, 0, 0)?,
@@ -719,11 +778,7 @@ impl DisputeResolutionProtocol {
                     .get_var(&self.ctx.id, "current_round")?
                     .number()? as u8;
                 for (i, h) in hashes.iter().enumerate() {
-                    context.globals.set_var(
-                        &self.ctx.id,
-                        &format!("prover_hash_{}_{}", round, i),
-                        VariableTypes::Input(hex::decode(h)?),
-                    )?;
+                    self.set_input_hex(context, &format!("prover_hash_{}_{}", round, i), h)?;
                 }
                 context.bitcoin_coordinator.dispatch(
                     self.get_signed_tx(context, &format!("NARY_PROVER_{}", round), 0, 0)?,
@@ -737,11 +792,12 @@ impl DisputeResolutionProtocol {
                     .get_var(&self.ctx.id, "current_round")?
                     .number()? as u8;
 
-                context.globals.set_var(
-                    &self.ctx.id,
+                self.set_input_u8(
+                    context,
                     &format!("selection_bits_{}", round),
-                    VariableTypes::Input(vec![*v_decision as u8]),
+                    *v_decision as u8,
                 )?;
+
                 context.bitcoin_coordinator.dispatch(
                     self.get_signed_tx(context, &format!("NARY_VERIFIER_{}", round), 0, 0)?,
                     Context::ProgramId(self.ctx.id).to_string()?,
@@ -750,7 +806,55 @@ impl DisputeResolutionProtocol {
             }
             EmulatorResultType::ProverFinalTraceResult { final_trace } => {
                 info!("Final trace: {:?}", final_trace);
-                //TODO: set variables
+
+                self.set_input_u32(
+                    context,
+                    "write_address",
+                    final_trace.trace_step.get_write().address,
+                )?;
+                self.set_input_u32(
+                    context,
+                    "write_value",
+                    final_trace.trace_step.get_write().value,
+                )?;
+                self.set_input_u32(
+                    context,
+                    "write_pc",
+                    final_trace.trace_step.get_pc().get_address(),
+                )?;
+                self.set_input_u8(
+                    context,
+                    "write_micro",
+                    final_trace.trace_step.get_pc().get_micro(),
+                )?;
+
+                self.set_input_u8(context, "mem_witness", final_trace.mem_witness.byte())?;
+
+                self.set_input_u32(context, "read_1_address", final_trace.read_1.address)?;
+                self.set_input_u32(context, "read_1_value", final_trace.read_1.value)?;
+                self.set_input_u64(context, "read_1_last_step", final_trace.read_1.last_step)?;
+                self.set_input_u32(context, "read_2_address", final_trace.read_2.address)?;
+                self.set_input_u32(context, "read_2_value", final_trace.read_2.value)?;
+                self.set_input_u64(context, "read_2_last_step", final_trace.read_2.last_step)?;
+
+                self.set_input_u32(
+                    context,
+                    "read_pc_address",
+                    final_trace.read_pc.pc.get_address(),
+                )?;
+                self.set_input_u8(context, "read_pc_micro", final_trace.read_pc.pc.get_micro())?;
+                self.set_input_u32(context, "read_pc_opcode", final_trace.read_pc.opcode)?;
+                if let Some(witness) = final_trace.witness {
+                    self.set_input_u32(context, "witness", witness)?;
+                }
+                let tx = self.get_signed_tx(context, EXECUTE, 0, 0)?;
+                info!("Execution tx: {:?}", tx);
+
+                context.bitcoin_coordinator.dispatch(
+                    self.get_signed_tx(context, EXECUTE, 0, 0)?,
+                    Context::ProgramId(self.ctx.id).to_string()?,
+                    None,
+                )?;
             }
             _ => {
                 info!("Execution result: {:?}", result);
@@ -828,5 +932,53 @@ impl DisputeResolutionProtocol {
             ProgramDefinition::from_config(&program_definition)?,
             program_definition,
         ))
+    }
+
+    fn set_input_u8(
+        &self,
+        context: &ProgramContext,
+        name: &str,
+        value: u8,
+    ) -> Result<(), BitVMXError> {
+        self.set_input(context, name, vec![value])
+    }
+
+    fn set_input_u32(
+        &self,
+        context: &ProgramContext,
+        name: &str,
+        value: u32,
+    ) -> Result<(), BitVMXError> {
+        self.set_input(context, name, value.to_be_bytes().to_vec())
+    }
+
+    fn set_input_u64(
+        &self,
+        context: &ProgramContext,
+        name: &str,
+        value: u64,
+    ) -> Result<(), BitVMXError> {
+        self.set_input(context, name, value.to_be_bytes().to_vec())
+    }
+
+    fn set_input_hex(
+        &self,
+        context: &ProgramContext,
+        name: &str,
+        value: &str,
+    ) -> Result<(), BitVMXError> {
+        self.set_input(context, name, hex::decode(value)?)
+    }
+
+    fn set_input(
+        &self,
+        context: &ProgramContext,
+        name: &str,
+        value: Vec<u8>,
+    ) -> Result<(), BitVMXError> {
+        context
+            .globals
+            .set_var(&self.ctx.id, name, VariableTypes::Input(value))?;
+        Ok(())
     }
 }

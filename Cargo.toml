@@ -45,6 +45,9 @@ bitcoind = { path = "../rust-bitcoind" }
 emulator = { path = "../BitVMX-CPU/emulator" }
 bitcoin-script-riscv = { path = "../BitVMX-CPU/bitcoin-script-riscv" }
 bitvmx-cpu-definitions = { path = "../BitVMX-CPU/definitions" }
+bitcoin-script-stack = { git = "https://github.com/FairgateLabs/rust-bitcoin-script-stack", features = [
+    "interactive",
+], branch = "v2" }
 
 bitvmx-job-dispatcher = { path = "../rust-bitvmx-job-dispatcher/dispatcher" }
 bitvmx-job-dispatcher-types = { path = "../rust-bitvmx-job-dispatcher/jobtypes", features = [

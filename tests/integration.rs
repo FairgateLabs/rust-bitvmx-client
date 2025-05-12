@@ -101,7 +101,7 @@ pub fn test_drp() -> Result<()> {
     );
 
     // set input value
-    let set_input_1 = VariableTypes::Input(hex::decode("11111100").unwrap())
+    let set_input_1 = VariableTypes::Input(hex::decode("11111111").unwrap())
         .set_msg(program_id, "program_input_1")?;
     let _ = channels[0].send(BITVMX_ID, set_input_1)?;
 
@@ -164,7 +164,7 @@ pub fn test_drp() -> Result<()> {
 
     //prover final trace
     process_dispatcher(&mut dispatchers, &mut instances, 10);
-    //let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
     //TODO: allow fake and true job dispatcher execution and responses so we can test the whole flow
 
