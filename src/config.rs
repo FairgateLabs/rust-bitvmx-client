@@ -1,10 +1,9 @@
 use bitcoin_coordinator::config::MonitorConfig;
 use bitvmx_bitcoin_rpc::rpc_config::RpcConfig;
-use key_manager::config::{KeyManagerConfig, KeyStorageConfig};
+use key_manager::config::KeyManagerConfig;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use storage_backend::storage_config::StorageConfig;
 use tracing::info;
-use uuid::Uuid;
 
 use crate::errors::ConfigError;
 
@@ -26,12 +25,6 @@ pub struct P2PConfig {
     pub timeout: u64,
 }
 
-#[derive(Debug, Deserialize, Clone)]
-pub struct StorageConfig {
-    pub db: String,
-    pub program: String, //TODO: Unifiy stroage
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ClientConfig {
     pub retry: u32,
@@ -50,11 +43,11 @@ pub struct Config {
     pub bitcoin: RpcConfig,
     pub builder: ProtocolBuilderConfig,
     pub key_manager: KeyManagerConfig,
-    pub key_storage: KeyStorageConfig,
+    pub key_storage: StorageConfig,
     pub storage: StorageConfig,
     pub p2p: P2PConfig,
     pub monitor: MonitorConfig,
-    pub broker_storage: String,
+    pub broker_storage: StorageConfig,
     pub broker_port: u16,
     pub client: ClientConfig,
     pub coordinator: ThrotthleUpdate,
@@ -83,10 +76,5 @@ impl Config {
 
     pub fn p2p_timeout(&self) -> u64 {
         self.p2p.timeout
-    }
-
-    pub fn program_storage_path(&self, program_id: Uuid) -> PathBuf {
-        let root = Path::new(self.storage.program.as_str());
-        root.join(program_id.to_string())
     }
 }

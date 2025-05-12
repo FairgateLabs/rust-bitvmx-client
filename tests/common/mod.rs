@@ -41,11 +41,11 @@ pub fn init_bitvmx(
         None
     };
 
-    clear_db(&config.storage.db);
+    clear_db(&config.storage.path);
     clear_db(&config.key_storage.path);
-    clear_db(&config.broker_storage);
+    clear_db(&config.broker_storage.path);
 
-    info!("config: {:?}", config.storage.db);
+    info!("config: {:?}", config.storage.path);
 
     let bitvmx = BitVMX::new(config)?;
 
