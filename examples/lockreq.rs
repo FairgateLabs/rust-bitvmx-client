@@ -33,7 +33,7 @@ fn config_trace_aux() {
     let default_modules = [
         "info",
         "libp2p=off",
-        "bitvmx_transaction_monitor=off",
+        "bitvmx_transaction_monitor=on",
         "bitcoin_indexer=off",
         "bitcoin_coordinator=info",
         "p2p_protocol=off",

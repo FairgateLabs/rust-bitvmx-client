@@ -56,5 +56,5 @@ bitvmx-transaction-monitor = { path = "../rust-bitvmx-transaction-monitor" }
 
 [features]
 testnet = []
-# default = ["testnet"]
-default = [] 
+default = ["testnet"]
+# default = []

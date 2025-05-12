@@ -205,13 +205,14 @@ impl BitVMX {
         self.program_context.bitcoin_coordinator.tick()?;
 
         if !self.program_context.bitcoin_coordinator.is_ready()? {
+            info!("Bitcoin coordinator not ready");
             return Ok(false);
         }
 
         let news = self.program_context.bitcoin_coordinator.get_news()?;
 
         if !news.monitor_news.is_empty() || !news.coordinator_news.is_empty() {
-            //info!("Processing news: {:?}", news);
+            info!("Processing news: {:?}", news);
         }
 
         for monitor_news in news.monitor_news {
