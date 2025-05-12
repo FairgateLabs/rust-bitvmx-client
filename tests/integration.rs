@@ -1,8 +1,10 @@
 use anyhow::Result;
 use bitvmx_client::{
+    bitvmx::BitVMX,
     program::{self, variables::VariableTypes},
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_DRP},
 };
+use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use common::{
     config_trace, get_all, init_bitvmx, init_utxo, mine_and_wait, prepare_bitcoin, send_all,
@@ -52,7 +54,7 @@ pub fn test_drp() -> Result<()> {
     let utxo = init_utxo(&bitcoin_client, aggregated_pub_key, None, None)?;
 
     let program_id = Uuid::new_v4();
-    let set_fee = VariableTypes::Number(3000).set_msg(program_id, "FEE")?;
+    let set_fee = VariableTypes::Number(10_000).set_msg(program_id, "FEE")?;
     send_all(&channels, &set_fee)?;
 
     let set_aggregated_msg =
@@ -136,31 +138,28 @@ pub fn test_drp() -> Result<()> {
     let input1 = &witness.winternitz().unwrap().message_bytes();
     info!("Verifier observed Input 1: {:?}", input1);
 
-    let mut prover_dispatcher = bitvmx_job_dispatcher::DispatcherHandler::<EmulatorJobType>::new(
+    let prover_dispatcher = bitvmx_job_dispatcher::DispatcherHandler::<EmulatorJobType>::new(
         prover_emulator_channel.unwrap(),
     );
-    let mut verifier_dispatcher = bitvmx_job_dispatcher::DispatcherHandler::<EmulatorJobType>::new(
+    let verifier_dispatcher = bitvmx_job_dispatcher::DispatcherHandler::<EmulatorJobType>::new(
         verifier_emulator_channel.unwrap(),
     );
 
-    //wait for execution
-    for _ in 0..10 {
-        prover_dispatcher.tick();
-        verifier_dispatcher.tick();
-        instances[0].tick()?;
-        instances[1].tick()?;
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
+    let mut dispatchers = vec![prover_dispatcher, verifier_dispatcher];
 
-    // wait for commitment tx
+    //wait for execution
+    process_dispatcher(&mut dispatchers, &mut instances, 10);
     let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
-    // wait for verifier execution
-    for _ in 0..10 {
-        prover_dispatcher.tick();
-        verifier_dispatcher.tick();
-        instances[0].tick()?;
-        instances[1].tick()?;
-        std::thread::sleep(std::time::Duration::from_millis(200));
+
+    //TODO: take rounds from def (or get_var)
+    for _ in 0..4 {
+        //prover find hashes
+        process_dispatcher(&mut dispatchers, &mut instances, 10);
+        let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+
+        //verifier select bits
+        process_dispatcher(&mut dispatchers, &mut instances, 10);
+        let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
     }
 
     //TODO: allow fake and true job dispatcher execution and responses so we can test the whole flow
@@ -169,6 +168,22 @@ pub fn test_drp() -> Result<()> {
     bitcoind.stop()?;
 
     Ok(())
+}
+
+fn process_dispatcher(
+    dispatchers: &mut Vec<DispatcherHandler<EmulatorJobType>>,
+    instances: &mut Vec<BitVMX>,
+    times: usize,
+) {
+    for _ in 0..times {
+        for dispatcher in dispatchers.iter_mut() {
+            dispatcher.tick();
+        }
+        for instance in instances.iter_mut() {
+            instance.tick().unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
 }
 
 //Test aggregation with three parts

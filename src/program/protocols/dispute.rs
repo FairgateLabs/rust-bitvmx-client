@@ -80,7 +80,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         &self,
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
-        //TODO: define which keys are generated for each role
+        let program_def = self.get_program_definition(&program_context)?.0;
         let key_chain = &mut program_context.key_chain;
 
         let aggregated_1 = key_chain.derive_keypair()?;
@@ -94,15 +94,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             ("timelock".to_string(), timelock.into()),
         ];
 
-        let pdf = program_context
-            .globals
-            .get_var(&self.ctx.id, "program_definition")?
-            .string()?;
-        let program_def = ProgramDefinition::from_config(&pdf).unwrap();
-        let nary_def = program_def.nary_def();
-        //nary_def.full_rounds
-        info!("Nary def: {:?}", nary_def);
-
         if self.role() == ParticipantRole::Prover {
             let program_input_leaf_1 = key_chain.derive_winternitz_hash160(4)?;
 
@@ -112,6 +103,24 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
             keys.push(("last_step".to_string(), last_step.into()));
             keys.push(("last_hash".to_string(), last_hash.into()));
+        }
+
+        //generate keys for the nary search
+        let nary_def = program_def.nary_def();
+        info!("Nary def: {:?}", nary_def);
+        for i in 1..nary_def.total_rounds() + 1 {
+            if self.role() == ParticipantRole::Prover {
+                let hashes = nary_def.hashes_for_round(i);
+                for h in 0..hashes {
+                    let key = key_chain.derive_winternitz_hash160(20)?;
+                    keys.push((format!("prover_hash_{}_{}", i, h), key.into()));
+                }
+            } else {
+                let _bits = nary_def.bits_for_round(i);
+                let key = key_chain.derive_winternitz_hash160(1)?;
+                //TODO: assuming bits fits in one byte. We should also enforce in the script that the revealed are in range
+                keys.push((format!("selection_bits_{}", i), key.into()));
+            }
         }
 
         Ok(ParticipantKeys::new(keys, vec!["aggregated_1".to_string()]))
@@ -161,9 +170,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 .get_var(&self.ctx.id, "program_input_1")?
                 .input()?;
 
-            let execution_path = format!("runs/{}/prover/", self.ctx.id);
-            let _ = std::fs::create_dir_all(&execution_path);
-
+            let execution_path = self.get_execution_path()?;
             let msg = serde_json::to_string(&DispatcherJob {
                 job_id: self.ctx.id.to_string(),
                 job_type: EmulatorJobType::ProverExecute(
@@ -181,7 +188,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &name,
                 0,
                 program_context,
-                &participant_keys,
+                &participant_keys[0],
                 &tx_status.tx,
             )?;
         }
@@ -191,7 +198,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &name,
                 0,
                 program_context,
-                &participant_keys,
+                &participant_keys[0],
                 &tx_status.tx,
             )?;
 
@@ -200,9 +207,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 .get_var(&self.ctx.id, "program_definition")?
                 .string()?;
 
-            let execution_path = format!("runs/{}/verifier/", self.ctx.id);
-            let _ = std::fs::create_dir_all(&execution_path);
-
+            let execution_path = self.get_execution_path()?;
             let input_program = program_context
                 .witness
                 .get_witness(&self.ctx.id, "program_input_1")?
@@ -240,6 +245,114 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             program_context.broker_channel.send(EMULATOR_ID, msg)?;
         }
 
+        if (name == COMMITMENT || name.starts_with("NARY_VERIFIER"))
+            && self.role() == ParticipantRole::Prover
+        {
+            let mut round = name
+                .strip_prefix("NARY_VERIFIER_")
+                .unwrap_or("0")
+                .parse::<u32>()
+                .unwrap();
+
+            let decision = if name == COMMITMENT {
+                0
+            } else {
+                self.decode_witness_for_tx(
+                    &name,
+                    0,
+                    program_context,
+                    &participant_keys[1],
+                    &tx_status.tx,
+                )?;
+
+                let bits = program_context
+                    .witness
+                    .get_witness(&self.ctx.id, &format!("selection_bits_{}", round))?
+                    .unwrap()
+                    .winternitz()?
+                    .message_bytes();
+                let bits = bits[0];
+                bits
+            };
+
+            round += 1;
+
+            //TODO: make this value return from execution
+            program_context.globals.set_var(
+                &self.ctx.id,
+                "current_round",
+                VariableTypes::Number(round as u32),
+            )?;
+
+            let (_program_definition, pdf) = self.get_program_definition(program_context)?;
+            let execution_path = self.get_execution_path()?;
+            let msg = serde_json::to_string(&DispatcherJob {
+                job_id: self.ctx.id.to_string(),
+                job_type: EmulatorJobType::ProverGetHashesForRound(
+                    pdf,
+                    execution_path.clone(),
+                    round as u8,
+                    decision as u32,
+                    format!("{}/{}", execution_path, "execution.json").to_string(),
+                ),
+            })?;
+            program_context.broker_channel.send(EMULATOR_ID, msg)?;
+        }
+
+        if (name.starts_with("NARY_PROVER")) && self.role() == ParticipantRole::Verifier {
+            self.decode_witness_for_tx(
+                &name,
+                0,
+                program_context,
+                &participant_keys[0],
+                &tx_status.tx,
+            )?;
+
+            let round = name
+                .strip_prefix("NARY_PROVER_")
+                .unwrap()
+                .parse::<u32>()
+                .unwrap();
+
+            //TODO: make this value return from execution
+            program_context.globals.set_var(
+                &self.ctx.id,
+                "current_round",
+                VariableTypes::Number(round as u32),
+            )?;
+
+            let (program_definition, pdf) = self.get_program_definition(program_context)?;
+            let nary = program_definition.nary_def();
+            let hashes_count = nary.hashes_for_round(round as u8);
+
+            let hashes: Vec<String> = (0..hashes_count)
+                .map(|h| {
+                    hex::encode(
+                        program_context
+                            .witness
+                            .get_witness(&self.ctx.id, &format!("prover_hash_{}_{}", round, h))
+                            .unwrap()
+                            .unwrap()
+                            .winternitz()
+                            .unwrap()
+                            .message_bytes(),
+                    )
+                })
+                .collect();
+
+            let execution_path = self.get_execution_path()?;
+            let msg = serde_json::to_string(&DispatcherJob {
+                job_id: self.ctx.id.to_string(),
+                job_type: EmulatorJobType::VerifierChooseSegment(
+                    pdf,
+                    execution_path.clone(),
+                    round as u8,
+                    hashes,
+                    format!("{}/{}", execution_path, "execution.json").to_string(),
+                ),
+            })?;
+            program_context.broker_channel.send(EMULATOR_ID, msg)?;
+        }
         Ok(())
     }
 
@@ -256,11 +369,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         let utxo = context.globals.get_var(&self.ctx.id, "utxo")?.utxo()?;
 
-        let program_definition = context
-            .globals
-            .get_var(&self.ctx.id, "program_definition")?
-            .string()?;
-        let _program = ProgramDefinition::from_config(&program_definition)?;
+        let program_def = self.get_program_definition(context)?;
 
         let external_aggregated = context
             .globals
@@ -303,10 +412,69 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             TIMELOCK_BLOCKS,
             &keys[0],
             amount,
-            amount - fee, //in the last one goes the change
+            speedup_dust,
             &vec!["last_step", "last_hash"],
             INPUT_1,
             COMMITMENT,
+        )?;
+        amount -= fee;
+        amount -= speedup_dust;
+
+        let nary_def = program_def.0.nary_def();
+        let mut prev = COMMITMENT.to_string();
+        for i in 1..nary_def.total_rounds() + 1 {
+            let next = format!("NARY_PROVER_{}", i);
+            let hashes = nary_def.hashes_for_round(i);
+            let vars = (0..hashes)
+                .map(|h| format!("prover_hash_{}_{}", i, h))
+                .collect::<Vec<_>>();
+
+            self.add_winternitz_check(
+                aggregated,
+                &mut protocol,
+                TIMELOCK_BLOCKS,
+                &keys[0],
+                amount,
+                speedup_dust,
+                &vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
+                &prev,
+                &next,
+            )?;
+            amount -= fee;
+            amount -= speedup_dust;
+
+            prev = next;
+            let next = format!("NARY_VERIFIER_{}", i);
+            //TODO: Add a lower than value check
+            let _bits = nary_def.bits_for_round(i);
+
+            self.add_winternitz_check(
+                aggregated,
+                &mut protocol,
+                TIMELOCK_BLOCKS,
+                &keys[1],
+                amount,
+                speedup_dust,
+                &vec![&format!("selection_bits_{}", i)],
+                &prev,
+                &next,
+            )?;
+            amount -= fee;
+            amount -= speedup_dust;
+            prev = next;
+        }
+
+        //DUMMY last tx to test
+        self.add_winternitz_check(
+            aggregated,
+            &mut protocol,
+            TIMELOCK_BLOCKS,
+            &keys[1],
+            amount,
+            amount - fee,
+            &vec![&format!("selection_bits_{}", 1)],
+            &prev,
+            "DUMMY",
         )?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
@@ -425,7 +593,7 @@ impl DisputeResolutionProtocol {
         )?;
 
         protocol.add_connection(
-            &format!("{}-{}", from, to),
+            &format!("{}_{}", from, to),
             from,
             to,
             &output_type,
@@ -471,6 +639,41 @@ impl DisputeResolutionProtocol {
                     None,
                 )?;
             }
+            EmulatorResultType::ProverGetHashesForRoundResult { hashes } => {
+                let round = context
+                    .globals
+                    .get_var(&self.ctx.id, "current_round")?
+                    .number()? as u8;
+                for (i, h) in hashes.iter().enumerate() {
+                    context.globals.set_var(
+                        &self.ctx.id,
+                        &format!("prover_hash_{}_{}", round, i),
+                        VariableTypes::Input(hex::decode(h)?),
+                    )?;
+                }
+                context.bitcoin_coordinator.dispatch(
+                    self.get_signed_tx(context, &format!("NARY_PROVER_{}", round), 0, 0)?,
+                    Context::ProgramId(self.ctx.id).to_string()?,
+                    None,
+                )?;
+            }
+            EmulatorResultType::VerifierChooseSegmentResult { v_decision } => {
+                let round = context
+                    .globals
+                    .get_var(&self.ctx.id, "current_round")?
+                    .number()? as u8;
+
+                context.globals.set_var(
+                    &self.ctx.id,
+                    &format!("selection_bits_{}", round),
+                    VariableTypes::Input(vec![*v_decision as u8]),
+                )?;
+                context.bitcoin_coordinator.dispatch(
+                    self.get_signed_tx(context, &format!("NARY_VERIFIER_{}", round), 0, 0)?,
+                    Context::ProgramId(self.ctx.id).to_string()?,
+                    None,
+                )?;
+            }
             _ => {
                 info!("Execution result: {:?}", result);
             }
@@ -483,9 +686,13 @@ impl DisputeResolutionProtocol {
         name: &str,
         input_index: u32,
         program_context: &ProgramContext,
-        participant_keys: &Vec<&ParticipantKeys>,
+        participant_keys: &ParticipantKeys,
         transaction: &Transaction,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<Vec<String>, BitVMXError> {
+        info!(
+            "Program {}: Decoding witness for {} with input index {}",
+            self.ctx.id, name, input_index
+        );
         let protocol = self.load_protocol()?;
         //TODO: detect leaf index from the first forced witness of the tx
         let script = protocol.get_script_to_spend(&name, input_index, 0)?;
@@ -495,7 +702,7 @@ impl DisputeResolutionProtocol {
         script.get_keys().iter().rev().for_each(|k| {
             names.push(k.name().to_string());
             sizes.push(message_bytes_length(
-                participant_keys[0]
+                participant_keys
                     .get_winternitz(k.name())
                     .unwrap()
                     .message_size()
@@ -522,6 +729,26 @@ impl DisputeResolutionProtocol {
                 WitnessTypes::Winternitz(data[i].clone()),
             )?;
         }
-        Ok(())
+        Ok(names)
+    }
+
+    fn get_execution_path(&self) -> Result<String, BitVMXError> {
+        let execution_path = format!("runs/{}/{}/", self.role(), self.ctx.id);
+        let _ = std::fs::create_dir_all(&execution_path);
+        Ok(execution_path)
+    }
+
+    fn get_program_definition(
+        &self,
+        context: &ProgramContext,
+    ) -> Result<(ProgramDefinition, String), BitVMXError> {
+        let program_definition = context
+            .globals
+            .get_var(&self.ctx.id, "program_definition")?
+            .string()?;
+        Ok((
+            ProgramDefinition::from_config(&program_definition)?,
+            program_definition,
+        ))
     }
 }

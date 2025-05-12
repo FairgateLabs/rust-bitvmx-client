@@ -28,40 +28,44 @@ pub enum VariableTypes {
 }
 
 impl VariableTypes {
+    pub fn err(&self) -> String {
+        format!("{:?}", self)
+    }
+
     pub fn secret(&self) -> Result<Vec<u8>, BitVMXError> {
         match self {
             VariableTypes::Secret(secret) => Ok(secret.clone()),
-            _ => Err(BitVMXError::InvalidVariableType),
+            _ => Err(BitVMXError::InvalidVariableType(self.err())),
         }
     }
     pub fn pubkey(&self) -> Result<PublicKey, BitVMXError> {
         match self {
             VariableTypes::PubKey(key) => Ok(key.clone()),
-            _ => Err(BitVMXError::InvalidVariableType),
+            _ => Err(BitVMXError::InvalidVariableType(self.err())),
         }
     }
     pub fn utxo(&self) -> Result<PartialUtxo, BitVMXError> {
         match self {
             VariableTypes::Utxo(utxo) => Ok(utxo.clone()),
-            _ => Err(BitVMXError::InvalidVariableType),
+            _ => Err(BitVMXError::InvalidVariableType(self.err())),
         }
     }
     pub fn number(&self) -> Result<u32, BitVMXError> {
         match self {
             VariableTypes::Number(num) => Ok(*num),
-            _ => Err(BitVMXError::InvalidVariableType),
+            _ => Err(BitVMXError::InvalidVariableType(self.err())),
         }
     }
     pub fn string(&self) -> Result<String, BitVMXError> {
         match self {
             VariableTypes::String(string) => Ok(string.clone()),
-            _ => Err(BitVMXError::InvalidVariableType),
+            _ => Err(BitVMXError::InvalidVariableType(self.err())),
         }
     }
     pub fn input(&self) -> Result<Vec<u8>, BitVMXError> {
         match self {
             VariableTypes::Input(input) => Ok(input.clone()),
-            _ => Err(BitVMXError::InvalidVariableType),
+            _ => Err(BitVMXError::InvalidVariableType(self.err())),
         }
     }
 

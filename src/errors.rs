@@ -58,8 +58,8 @@ pub enum BitVMXError {
     #[error("Cannot find the variable {0}.{1}")]
     VariableNotFound(Uuid, String),
 
-    #[error("Invalid variable type")]
-    InvalidVariableType,
+    #[error("Invalid variable type: {0}")]
+    InvalidVariableType(String),
 
     #[error("Invalid witness type")]
     InvalidWitnessType,
