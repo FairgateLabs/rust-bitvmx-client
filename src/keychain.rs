@@ -5,9 +5,9 @@ use bitcoin::{
     PublicKey, XOnlyPublicKey,
 };
 use key_manager::{
-    create_database_key_store_from_config, create_key_manager_from_config,
+    create_key_manager_from_config,
     key_manager::KeyManager,
-    keystorage::database::DatabaseKeyStore,
+    key_store::KeyStore,
     musig2::{types::MessageId, PartialSignature, PubNonce},
     winternitz::{WinternitzPublicKey, WinternitzType},
 };
@@ -19,7 +19,7 @@ use storage_backend::storage::{KeyValueStore, Storage};
 use crate::{config::Config, errors::BitVMXError};
 
 pub struct KeyChain {
-    pub key_manager: Rc<KeyManager<DatabaseKeyStore>>,
+    pub key_manager: Rc<KeyManager>,
     pub communications_key: Keypair,
     pub store: Rc<Storage>,
 }
@@ -45,11 +45,8 @@ impl KeyChainStorageKeys {
 
 impl KeyChain {
     pub fn new(config: &Config, store: Rc<Storage>) -> Result<KeyChain, BitVMXError> {
-        let keystore = create_database_key_store_from_config(
-            &config.key_storage,
-            &config.key_manager.network,
-        )?;
-
+        let key_storage = Rc::new(Storage::new(&config.key_storage)?);
+        let keystore = KeyStore::new(key_storage);
         let key_manager =
             create_key_manager_from_config(&config.key_manager, keystore, store.clone())?;
 

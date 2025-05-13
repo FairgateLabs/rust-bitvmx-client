@@ -24,8 +24,7 @@ key_storage:
   path: /tmp/development/keys.db
 
 storage:
-  db: /tmp/development/storage.db
-  program: /tmp/development/
+  path: /tmp/development/storage.db
 
 p2p:
   address: /ip4/127.0.0.1/tcp/61182
@@ -41,5 +40,7 @@ coordinator:
   throtthle_bitcoin_updates_until_sync: 0
   throtthle_bitcoin_updates: 0
 
-broker_storage: /tmp/development/broker.db
+broker_storage: 
+  path: /tmp/development/broker.db
+  
 broker_port: 11111
