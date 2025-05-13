@@ -24,8 +24,7 @@ key_storage:
   path: /tmp/op_3/keys.db
 
 storage:
-  db: /tmp/op_3/storage.db
-  program: /tmp/op_3/
+  path: /tmp/op_3/storage.db
 
 p2p:
   address: /ip4/127.0.0.1/tcp/61182

@@ -24,8 +24,7 @@ key_storage:
   path: /tmp/op_3/keys.db
 
 storage:
-  db: /tmp/op_3/storage.db
-  program: /tmp/op_3/
+  path: /tmp/op_3/storage.db
 
 p2p:
   address: /ip4/127.0.0.1/tcp/61182
@@ -41,7 +40,8 @@ coordinator:
   throtthle_bitcoin_updates_until_sync: 1
   throtthle_bitcoin_updates: 10
   
-broker_storage: /tmp/op_3/broker.db
+broker_storage: 
+  path: /tmp/op_3/broker.db
 broker_port: 44444
 
 client:
