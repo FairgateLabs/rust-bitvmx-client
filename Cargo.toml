@@ -62,4 +62,4 @@ musig2 = { version = "0.2.3", features = ["serde", "rand"] }
 [dev-dependencies]
 bollard = "0.11.0"
 futures-util = "0.3"
-bitcoind = { path = "../rust-bitcoind" }
+bitcoind = { path = "../rust-bitcoind" } 
