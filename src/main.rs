@@ -24,11 +24,19 @@ fn clear_db(path: &str) {
     let _ = std::fs::remove_dir_all(path);
 }
 
-fn init_bitvmx(opn: &str) -> Result<BitVMX> {
-    #[cfg(not(feature = "testnet"))]
-    let config = Config::new(Some(format!("config/{}.yaml", opn)))?;
+fn get_config(role: &str) -> Result<Config> {
+    #[cfg(not(any(feature = "testnet", feature = "mainnet")))]
+    let config = Config::new(Some(format!("config/{}_regtest.yaml", role)))?;
     #[cfg(feature = "testnet")]
-    let config = Config::new(Some(format!("config/{}_testnet.yaml", opn)))?;
+    let config = Config::new(Some(format!("config/{}_testnet.yaml", role)))?;
+    #[cfg(feature = "mainnet")]
+    let config = Config::new(Some(format!("config/{}_mainnet.yaml", role)))?;
+
+    Ok(config)
+}
+
+fn init_bitvmx(opn: &str) -> Result<BitVMX> {
+    let config = get_config(opn)?;
 
     clear_db(&config.storage.db);
     clear_db(&config.key_storage.path);
@@ -116,11 +124,7 @@ fn main() -> Result<()> {
     let initwallet = args.get(2).map(String::as_str).unwrap_or("");
     if initwallet == "--init_wallet" {
 
-        #[cfg(not(feature = "testnet"))]
-        let config = Config::new(Some(format!("config/{}.yaml", opn)))?;
-        #[cfg(feature = "testnet")]
-        let config = Config::new(Some(format!("config/{}_testnet.yaml", opn)))?;
-
+        let config = get_config(opn)?;
 
         let wallet_name = format!("test_wallet_{}", opn);
         let bitcoin_client = BitcoinClient::new(

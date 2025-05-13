@@ -112,8 +112,12 @@ impl ProtocolHandler for LockProtocol {
         let _p2sh_p2wpkh_dust_threshold: u64 = 540;
         let _p2wpkh_dust_threshold: u64 = 99_999_000; // 294;
         let _taproot_dust_threshold: u64 = 330;
+        
+        #[cfg(feature = "mainnet")]
         let fee = 317*12; // vbytes * 12 sats/vbyte
-
+        #[cfg(not(feature = "mainnet"))]
+        let fee = 317*8; // vbytes * 8 sats/vbyte
+        
         let secp = secp256k1::Secp256k1::new();
 
         let ops_agg_pubkey = context
