@@ -115,14 +115,28 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             ("timelock".to_string(), timelock.into()),
         ];
 
+        for inputs in program_def.inputs.iter() {
+            //TODO: handle more inputs, owners and counter-sign
+            assert!(inputs.size % 4 == 0);
+            let words_needed = inputs.size / 4;
+            if self.role() == ParticipantRole::Prover {
+                for i in 0..words_needed {
+                    let key = key_chain.derive_winternitz_hash160(4)?;
+                    keys.push((format!("program_input_{}", i), key.into()));
+                }
+            }
+            program_context.globals.set_var(
+                &self.ctx.id,
+                "input_words",
+                VariableTypes::Number(words_needed as u32),
+            )?;
+        }
+
         if self.role() == ParticipantRole::Prover {
-            let program_input_leaf_1 = key_chain.derive_winternitz_hash160(4)?;
-
             let last_step = key_chain.derive_winternitz_hash160(8)?;
-            let last_hash = key_chain.derive_winternitz_hash160(20)?;
-            keys.push(("program_input_1".to_string(), program_input_leaf_1.into()));
-
             keys.push(("last_step".to_string(), last_step.into()));
+
+            let last_hash = key_chain.derive_winternitz_hash160(20)?;
             keys.push(("last_hash".to_string(), last_hash.into()));
 
             for (name, size) in TRACE_VARS {
@@ -191,10 +205,19 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 .string()?;
 
             //TODO: concatenate all inputs
-            let input_program = program_context
+            let words = program_context
                 .globals
-                .get_var(&self.ctx.id, "program_input_1")?
-                .input()?;
+                .get_var(&self.ctx.id, "input_words")?
+                .number()?;
+
+            let mut input_program = Vec::new();
+            for i in 0..words {
+                let input = program_context
+                    .globals
+                    .get_var(&self.ctx.id, &format!("program_input_{}", i))?
+                    .input()?;
+                input_program.extend_from_slice(&input);
+            }
 
             let execution_path = self.get_execution_path()?;
             let msg = serde_json::to_string(&DispatcherJob {
@@ -234,12 +257,22 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 .string()?;
 
             let execution_path = self.get_execution_path()?;
-            let input_program = program_context
-                .witness
-                .get_witness(&self.ctx.id, "program_input_1")?
-                .unwrap()
-                .winternitz()?
-                .message_bytes();
+            let words = program_context
+                .globals
+                .get_var(&self.ctx.id, "input_words")?
+                .number()?;
+
+            let mut input_program = Vec::new();
+
+            for i in 0..words {
+                let input = program_context
+                    .witness
+                    .get_witness(&self.ctx.id, &format!("program_input_{}", i))?
+                    .unwrap()
+                    .winternitz()?
+                    .message_bytes();
+                input_program.extend_from_slice(&input);
+            }
 
             let last_hash = program_context
                 .witness
@@ -443,6 +476,16 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         let aggregated = computed_aggregated.get("aggregated_1").unwrap();
         amount -= fee;
 
+        let words = context
+            .globals
+            .get_var(&self.ctx.id, "input_words")?
+            .number()?;
+
+        let input_vars = (0..words)
+            .map(|i| format!("program_input_{}", i))
+            .collect::<Vec<_>>();
+        let input_vars_slice = input_vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
+
         self.add_winternitz_check(
             aggregated,
             &mut protocol,
@@ -450,7 +493,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             &keys[0],
             amount,
             speedup_dust,
-            &vec!["program_input_1"],
+            &input_vars_slice,
             START_CH,
             INPUT_1,
         )?;
