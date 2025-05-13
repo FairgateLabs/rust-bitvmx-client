@@ -414,7 +414,25 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     format!("{}/{}", execution_path, "execution.json").to_string(),
                 ),
             })?;
-            program_context.broker_channel.send(EMULATOR_ID, msg)?;
+
+            if round > 1 {
+                program_context.broker_channel.send(EMULATOR_ID, msg)?;
+            } else {
+                if let Ok(_ready) = program_context
+                    .globals
+                    .get_var(&self.ctx.id, "execution-check-ready")
+                {
+                    info!("The execution is ready. Sending the choose segment message");
+                    program_context.broker_channel.send(EMULATOR_ID, msg)?;
+                } else {
+                    info!("The execution is not ready. Saving the message.");
+                    program_context.globals.set_var(
+                        &self.ctx.id,
+                        "choose-segment-msg",
+                        VariableTypes::String(msg),
+                    )?;
+                }
+            }
         }
 
         if name == EXECUTE && self.role() == ParticipantRole::Verifier {
@@ -826,6 +844,20 @@ impl DisputeResolutionProtocol {
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
                 )?;
+            }
+            EmulatorResultType::VerifierCheckExecutionResult { step } => {
+                info!("Verifier execution result: Step: {:?}", step);
+                context.globals.set_var(
+                    &self.ctx.id,
+                    "execution-check-ready",
+                    VariableTypes::Number(1),
+                )?;
+                if let Ok(msg) = context.globals.get_var(&self.ctx.id, "choose-segment-msg") {
+                    info!("The msg to choose segment was ready. Sending it");
+                    context.broker_channel.send(EMULATOR_ID, msg.string()?)?;
+                } else {
+                    info!("The msg to choose segment was not ready");
+                }
             }
             EmulatorResultType::ProverGetHashesForRoundResult { hashes } => {
                 let round = context
