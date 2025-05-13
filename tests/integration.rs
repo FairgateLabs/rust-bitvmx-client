@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bitvmx_client::{
     bitvmx::BitVMX,
-    program::{self, variables::VariableTypes},
+    program::{self, protocols::dispute::EXECUTE, variables::VariableTypes},
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_DRP},
 };
 use bitvmx_job_dispatcher::DispatcherHandler;
@@ -65,10 +65,10 @@ pub fn test_drp() -> Result<()> {
         .set_msg(program_id, "utxo")?;
     send_all(&channels, &set_utxo_msg)?;
 
-    let set_program = VariableTypes::String(
-        "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml".to_string(),
-    )
-    .set_msg(program_id, "program_definition")?;
+    //let program_path = "../BitVMX-CPU/docker-riscv32/verifier/build/zkverifier-new-mul.yaml";
+    let program_path = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
+    let set_program = VariableTypes::String(program_path.to_string())
+        .set_msg(program_id, "program_definition")?;
     send_all(&channels, &set_program)?;
 
     let setup_msg =
@@ -101,8 +101,10 @@ pub fn test_drp() -> Result<()> {
     );
 
     // set input value
-    let set_input_1 = VariableTypes::Input(hex::decode("11111100").unwrap())
-        .set_msg(program_id, "program_input_1")?;
+    //let data = "010000007bd5d42e4057965ff389683ef2304190d5e902f10190dba2887d46cccdd3389de95b00b98b086eb81f86988b252c704455eadff8f52710189e9c7d6c29b02a1ce355dcc4b00d84572a8a3414d40ecc209e5cea4e34b119b84e7455877726d3185c2847d1f4bcae30a0cd1b2da4bb3b85fa59b41dee6d9fea0258ced1e9a17c93";
+    let data = "11111111";
+    let set_input_1 =
+        VariableTypes::Input(hex::decode(data).unwrap()).set_msg(program_id, "program_input")?;
     let _ = channels[0].send(BITVMX_ID, set_input_1)?;
 
     // send the tx
@@ -125,7 +127,7 @@ pub fn test_drp() -> Result<()> {
 
     let _ = channels[1].send(
         BITVMX_ID,
-        IncomingBitVMXApiMessages::GetWitness(program_id, "program_input_1".to_string())
+        IncomingBitVMXApiMessages::GetWitness(program_id, "program_input_0".to_string())
             .to_string()?,
     )?;
 
@@ -147,23 +149,30 @@ pub fn test_drp() -> Result<()> {
 
     let mut dispatchers = vec![prover_dispatcher, verifier_dispatcher];
 
-    //wait for execution
-    process_dispatcher(&mut dispatchers, &mut instances, 10);
+    //wait for prover execution
+    process_dispatcher(&mut dispatchers, &mut instances);
     let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
-    //TODO: take rounds from def (or get_var)
-    for _ in 0..4 {
-        //prover find hashes
-        process_dispatcher(&mut dispatchers, &mut instances, 10);
-        let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    //wait for verifier execution
+    process_dispatcher(&mut dispatchers, &mut instances);
+    process_dispatcher(&mut dispatchers, &mut instances);
+    let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
-        //verifier select bits
-        process_dispatcher(&mut dispatchers, &mut instances, 10);
-        let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    loop {
+        process_dispatcher(&mut dispatchers, &mut instances);
+        let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+        let tx = msgs[0].transaction();
+        if tx.is_some() {
+            let (_uuid, _txid, name) = tx.unwrap();
+            if name.unwrap() == EXECUTE {
+                info!("Prover executed the program");
+                break;
+            }
+        }
     }
 
     //prover final trace
-    process_dispatcher(&mut dispatchers, &mut instances, 10);
+    //process_dispatcher(&mut dispatchers, &mut instances);
     //let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
     //TODO: allow fake and true job dispatcher execution and responses so we can test the whole flow
@@ -177,11 +186,20 @@ pub fn test_drp() -> Result<()> {
 fn process_dispatcher(
     dispatchers: &mut Vec<DispatcherHandler<EmulatorJobType>>,
     instances: &mut Vec<BitVMX>,
-    times: usize,
 ) {
-    for _ in 0..times {
+    info!("Processing dispatcher");
+    let mut counter = 0;
+    loop {
+        counter += 1;
+        if counter > 1000 {
+            panic!("Dispatcher timeout");
+        }
+
         for dispatcher in dispatchers.iter_mut() {
-            dispatcher.tick();
+            if dispatcher.tick() {
+                info!("Dispatcher completed a job");
+                return;
+            }
         }
         for instance in instances.iter_mut() {
             instance.tick().unwrap();
