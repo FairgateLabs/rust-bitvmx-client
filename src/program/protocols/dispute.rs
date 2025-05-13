@@ -217,6 +217,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     input_program,
                     execution_path.clone(),
                     format!("{}/{}", execution_path, "execution.json").to_string(),
+                    None,
                 ),
             })?;
 
@@ -288,6 +289,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     last_step,
                     hex::encode(last_hash),
                     format!("{}/{}", execution_path, "execution.json").to_string(),
+                    None,
                 ),
             })?;
 
@@ -345,6 +347,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                         round as u8,
                         decision as u32,
                         format!("{}/{}", execution_path, "execution.json").to_string(),
+                        None,
                     ),
                 })?;
                 program_context.broker_channel.send(EMULATOR_ID, msg)?;
@@ -356,6 +359,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                         execution_path.clone(),
                         (decision + 1) as u32,
                         format!("{}/{}", execution_path, "execution.json").to_string(),
+                        None,
                     ),
                 })?;
                 program_context.broker_channel.send(EMULATOR_ID, msg)?;
@@ -412,6 +416,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     round as u8,
                     hashes,
                     format!("{}/{}", execution_path, "execution.json").to_string(),
+                    None,
                 ),
             })?;
 
@@ -859,11 +864,12 @@ impl DisputeResolutionProtocol {
                     info!("The msg to choose segment was not ready");
                 }
             }
-            EmulatorResultType::ProverGetHashesForRoundResult { hashes } => {
-                let round = context
+            EmulatorResultType::ProverGetHashesForRoundResult { hashes, round } => {
+                let save_round = context
                     .globals
                     .get_var(&self.ctx.id, "current_round")?
                     .number()? as u8;
+                assert_eq!(save_round, *round);
                 for (i, h) in hashes.iter().enumerate() {
                     self.set_input_hex(context, &format!("prover_hash_{}_{}", round, i), h)?;
                 }
@@ -873,11 +879,12 @@ impl DisputeResolutionProtocol {
                     None,
                 )?;
             }
-            EmulatorResultType::VerifierChooseSegmentResult { v_decision } => {
-                let round = context
+            EmulatorResultType::VerifierChooseSegmentResult { v_decision, round } => {
+                let save_round = context
                     .globals
                     .get_var(&self.ctx.id, "current_round")?
                     .number()? as u8;
+                assert_eq!(save_round, *round);
 
                 self.set_input_u8(
                     context,
