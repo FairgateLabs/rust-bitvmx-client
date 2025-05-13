@@ -7,7 +7,10 @@ use bitcoin_script_stack::stack::StackTracker;
 use bitvmx_cpu_definitions::challenge::EmulatorResultType;
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
-use emulator::{constants::REGISTERS_BASE_ADDRESS, loader::program_definition::ProgramDefinition};
+use emulator::{
+    constants::REGISTERS_BASE_ADDRESS, decision::challenge::ForceCondition,
+    loader::program_definition::ProgramDefinition,
+};
 use key_manager::winternitz::{message_bytes_length, WinternitzType};
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
@@ -289,6 +292,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     last_step,
                     hex::encode(last_hash),
                     format!("{}/{}", execution_path, "execution.json").to_string(),
+                    Some(ForceCondition::Allways),
                     None,
                 ),
             })?;
