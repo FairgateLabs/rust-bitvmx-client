@@ -102,7 +102,7 @@ pub fn test_drp() -> Result<()> {
 
     // set input value
     let set_input_1 = VariableTypes::Input(hex::decode("11111111").unwrap())
-        .set_msg(program_id, "program_input_0")?;
+        .set_msg(program_id, "program_input")?;
     let _ = channels[0].send(BITVMX_ID, set_input_1)?;
 
     // send the tx

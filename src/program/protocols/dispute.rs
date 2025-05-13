@@ -204,20 +204,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 .get_var(&self.ctx.id, "program_definition")?
                 .string()?;
 
-            //TODO: concatenate all inputs
-            let words = program_context
+            let input_program = program_context
                 .globals
-                .get_var(&self.ctx.id, "input_words")?
-                .number()?;
-
-            let mut input_program = Vec::new();
-            for i in 0..words {
-                let input = program_context
-                    .globals
-                    .get_var(&self.ctx.id, &format!("program_input_{}", i))?
-                    .input()?;
-                input_program.extend_from_slice(&input);
-            }
+                .get_var(&self.ctx.id, "program_input")?
+                .input()?;
 
             let execution_path = self.get_execution_path()?;
             let msg = serde_json::to_string(&DispatcherJob {
@@ -608,6 +598,28 @@ impl DisputeResolutionProtocol {
     }
 
     pub fn input_1_tx(&self, context: &ProgramContext) -> Result<Transaction, BitVMXError> {
+        //TODO: concatenate all inputs
+        let words = context
+            .globals
+            .get_var(&self.ctx.id, "input_words")?
+            .number()?;
+
+        let full_input = context
+            .globals
+            .get_var(&self.ctx.id, "program_input")?
+            .input()?;
+
+        for i in 0..words {
+            let partial_input = full_input
+                .get((i * 4) as usize..((i + 1) * 4) as usize)
+                .unwrap();
+            context.globals.set_var(
+                &self.ctx.id,
+                &format!("program_input_{}", i),
+                VariableTypes::Input(partial_input.to_vec()),
+            )?;
+        }
+
         self.get_signed_tx(context, INPUT_1, 0, 0)
     }
 
