@@ -714,13 +714,9 @@ impl DisputeResolutionProtocol {
         to: &str,
     ) -> Result<(), BitVMXError> {
         //TODO:
-        // - Define one input for the inputs defined in the program
-        // - check a way to use input name "global.var_name" to get inputs from previous defined values
-        // - check if input is prover of verifier and use propero keys[n]
-        // - use the dame logic in generate keys to define the proper amount of winternitz keys
-        // - use proper size from config mapped in 4 bytes word
-        // - in timelock use secret to avoid the other part to spend the utxo (but is this needed, why the other part would consume it?)
-        // - the prover needs to resingn any verifier provided input (so the equivocation is possible on reads)
+        // - Support multiple inputs
+        // - check if input is prover of verifier and use proper keys[n]
+        // - the prover needs to re-sign any verifier provided input (so the equivocation is possible on reads)
         info!("Adding winternitz check for {} to {}", from, to);
         info!("Amount: {}", amount);
         info!("Speedup: {}", amount_speedup);
