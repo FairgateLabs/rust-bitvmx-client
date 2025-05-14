@@ -164,8 +164,12 @@ pub fn test_drp() -> Result<()> {
         let tx = msgs[0].transaction();
         if tx.is_some() {
             let (_uuid, _txid, name) = tx.unwrap();
-            if name.unwrap() == EXECUTE {
+            if name.as_ref().unwrap() == EXECUTE {
                 info!("Prover executed the program");
+                break;
+            }
+            if name.unwrap() == "EXECUTE_TO" {
+                info!("Verifier wins by timeout");
                 break;
             }
         }

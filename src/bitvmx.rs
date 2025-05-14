@@ -124,6 +124,8 @@ impl BitVMX {
         //TODO: A channel that talks directly with the broker without going through localhost loopback could be implemented
         let broker_channel = LocalChannel::new(BITVMX_ID, broker_storage.clone());
 
+        bitcoin_coordinator.monitor(TypesToMonitor::NewBlock)?;
+
         let program_context = ProgramContext::new(
             comms,
             key_chain,
@@ -629,7 +631,8 @@ impl BitVMXApi for BitVMX {
         info!("Generating ZKP for input: {:?}", input);
 
         // Store the 'from' parameter
-        self.store.set(StoreKey::ZKPFrom(id).get_key(), from, None)?;
+        self.store
+            .set(StoreKey::ZKPFrom(id).get_key(), from, None)?;
 
         let msg = serde_json::to_string(&DispatcherJob {
             job_id: id.to_string(),
@@ -661,9 +664,7 @@ impl BitVMXApi for BitVMX {
                     OutgoingBitVMXApiMessages::ProofNotReady(id)
                 }
             }
-            None => {
-                OutgoingBitVMXApiMessages::ProofNotReady(id)
-            }
+            None => OutgoingBitVMXApiMessages::ProofNotReady(id),
         };
 
         self.program_context
@@ -802,14 +803,19 @@ impl BitVMXApi for BitVMX {
             .collect();
 
         // Store the proof data and status
-        self.store.set(StoreKey::ZKPProof(id).get_key(), seal, None)?;
-        self.store.set(StoreKey::ZKPStatus(id).get_key(), status.to_string(), None)?;
+        self.store
+            .set(StoreKey::ZKPProof(id).get_key(), seal, None)?;
+        self.store
+            .set(StoreKey::ZKPStatus(id).get_key(), status.to_string(), None)?;
 
         // Get the stored 'from' parameter
-        let from: u32 = self.store.get(StoreKey::ZKPFrom(id).get_key())?.ok_or_else(|| {
-            warn!("Missing 'from' parameter for ZKP request: {}", id);
-            BitVMXError::InvalidMessageFormat
-        })?;
+        let from: u32 = self
+            .store
+            .get(StoreKey::ZKPFrom(id).get_key())?
+            .ok_or_else(|| {
+                warn!("Missing 'from' parameter for ZKP request: {}", id);
+                BitVMXError::InvalidMessageFormat
+            })?;
 
         self.proof_ready(from, id)?;
         Ok(())

@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
-use bitcoin::{PublicKey, Transaction, Txid};
+use bitcoin::{script::read_scriptint, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use bitcoin_script_riscv::riscv::instruction_mapping::create_verification_script_mapping;
 use bitcoin_script_stack::stack::StackTracker;
+use bitcoin_scriptexec::scriptint_vec;
 use bitvmx_cpu_definitions::challenge::EmulatorResultType;
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
@@ -46,6 +47,7 @@ pub const START_CH: &str = "START_CHALLENGE";
 pub const INPUT_1: &str = "INPUT_1";
 pub const COMMITMENT: &str = "COMMITMENT";
 pub const EXECUTE: &str = "EXECUTE";
+pub const TIMELOCK_BLOCKS: u16 = 10;
 
 pub const TRACE_VARS: [(&str, usize); 15] = [
     ("write_address", 4 as usize),
@@ -300,73 +302,86 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             program_context.broker_channel.send(EMULATOR_ID, msg)?;
         }
 
-        if (name == COMMITMENT || name.starts_with("NARY_VERIFIER"))
-            && self.role() == ParticipantRole::Prover
-        {
+        if name == COMMITMENT || name.starts_with("NARY_VERIFIER") {
             let mut round = name
                 .strip_prefix("NARY_VERIFIER_")
                 .unwrap_or("0")
                 .parse::<u32>()
                 .unwrap();
 
-            let decision = if name == COMMITMENT {
-                0
-            } else {
-                self.decode_witness_for_tx(
-                    &name,
-                    0,
-                    program_context,
-                    &participant_keys[1],
-                    &tx_status.tx,
-                )?;
-
-                let bits = program_context
-                    .witness
-                    .get_witness(&self.ctx.id, &format!("selection_bits_{}", round))?
-                    .unwrap()
-                    .winternitz()?
-                    .message_bytes();
-                let bits = bits[0];
-                bits
-            };
-
-            round += 1;
-
-            //TODO: make this value return from execution
-            program_context.globals.set_var(
-                &self.ctx.id,
-                "current_round",
-                VariableTypes::Number(round as u32),
-            )?;
-
             let (program_definition, pdf) = self.get_program_definition(program_context)?;
             let nary = program_definition.nary_def();
-            let execution_path = self.get_execution_path()?;
-            if round <= nary.total_rounds() as u32 {
-                let msg = serde_json::to_string(&DispatcherJob {
-                    job_id: self.ctx.id.to_string(),
-                    job_type: EmulatorJobType::ProverGetHashesForRound(
-                        pdf,
-                        execution_path.clone(),
-                        round as u8,
-                        decision as u32,
-                        format!("{}/{}", execution_path, "execution.json").to_string(),
-                        None,
-                    ),
-                })?;
-                program_context.broker_channel.send(EMULATOR_ID, msg)?;
+
+            if self.role() == ParticipantRole::Prover {
+                let decision = if name == COMMITMENT {
+                    0
+                } else {
+                    self.decode_witness_for_tx(
+                        &name,
+                        0,
+                        program_context,
+                        &participant_keys[1],
+                        &tx_status.tx,
+                    )?;
+
+                    let bits = program_context
+                        .witness
+                        .get_witness(&self.ctx.id, &format!("selection_bits_{}", round))?
+                        .unwrap()
+                        .winternitz()?
+                        .message_bytes();
+                    let bits = bits[0];
+                    bits
+                };
+
+                round += 1;
+
+                //TODO: make this value return from execution
+                program_context.globals.set_var(
+                    &self.ctx.id,
+                    "current_round",
+                    VariableTypes::Number(round as u32),
+                )?;
+
+                let execution_path = self.get_execution_path()?;
+                if round <= nary.total_rounds() as u32 {
+                    let msg = serde_json::to_string(&DispatcherJob {
+                        job_id: self.ctx.id.to_string(),
+                        job_type: EmulatorJobType::ProverGetHashesForRound(
+                            pdf,
+                            execution_path.clone(),
+                            round as u8,
+                            decision as u32,
+                            format!("{}/{}", execution_path, "execution.json").to_string(),
+                            None,
+                        ),
+                    })?;
+                    program_context.broker_channel.send(EMULATOR_ID, msg)?;
+                } else {
+                    let msg = serde_json::to_string(&DispatcherJob {
+                        job_id: self.ctx.id.to_string(),
+                        job_type: EmulatorJobType::ProverFinalTrace(
+                            pdf,
+                            execution_path.clone(),
+                            (decision + 1) as u32,
+                            format!("{}/{}", execution_path, "execution.json").to_string(),
+                            None,
+                        ),
+                    })?;
+                    program_context.broker_channel.send(EMULATOR_ID, msg)?;
+                }
             } else {
-                let msg = serde_json::to_string(&DispatcherJob {
-                    job_id: self.ctx.id.to_string(),
-                    job_type: EmulatorJobType::ProverFinalTrace(
-                        pdf,
-                        execution_path.clone(),
-                        (decision + 1) as u32,
-                        format!("{}/{}", execution_path, "execution.json").to_string(),
-                        None,
-                    ),
-                })?;
-                program_context.broker_channel.send(EMULATOR_ID, msg)?;
+                if round == nary.total_rounds() as u32 {
+                    info!(
+                        "Current block: {}",
+                        tx_status.block_info.as_ref().unwrap().block_height
+                    );
+                    program_context.bitcoin_coordinator.dispatch(
+                        self.get_signed_tx(program_context, "EXECUTE_TO", 0, 1)?,
+                        Context::ProgramId(self.ctx.id).to_string()?,
+                        Some(tx_status.block_info.unwrap().block_height + TIMELOCK_BLOCKS as u32),
+                    )?;
+                }
             }
         }
 
@@ -466,7 +481,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         // TODO get this from config, all values expressed in satoshis
         let fee = context.globals.get_var(&self.ctx.id, "FEE")?.number()? as u64;
         let speedup_dust = 500;
-        const TIMELOCK_BLOCKS: u16 = 10;
 
         let utxo = context.globals.get_var(&self.ctx.id, "utxo")?.utxo()?;
 
@@ -682,6 +696,7 @@ impl DisputeResolutionProtocol {
         }
 
         spending_args.push_taproot_signature(signature)?;
+        spending_args.push_slice(scriptint_vec(leaf_index as i64).as_slice());
 
         Ok(protocol.transaction_to_send(name, &[spending_args])?)
     }
@@ -722,10 +737,15 @@ impl DisputeResolutionProtocol {
 
         let timeout = scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
 
+        let mut leaves = [winternitz_check, timeout];
+        for (pos, leave) in leaves.iter_mut().enumerate() {
+            leave.set_assert_leaf_id(pos as u32);
+        }
+
         let output_type = OutputType::taproot(
             amount,
             aggregated,
-            &[winternitz_check, timeout],
+            &leaves,
             &SpendMode::All {
                 key_path_sign: SignMode::Aggregate,
             },
@@ -733,16 +753,27 @@ impl DisputeResolutionProtocol {
         )?;
 
         protocol.add_connection(
-            &format!("{}_{}", from, to),
+            &format!("{}__{}", from, to),
             from,
             to,
             &output_type,
             &SighashType::taproot_all(),
         )?;
 
+        protocol.add_connection_with_timelock(
+            &format!("{}__{}_TO", from, to),
+            from,
+            &format!("{}_TO", to),
+            &output_type,
+            &SighashType::taproot_all(),
+            timelock_blocks,
+        )?;
+
         let pb = ProtocolBuilder {};
         //put the amount here as there is no output yet
         pb.add_speedup_output(protocol, to, amount_speedup, aggregated)?;
+        pb.add_speedup_output(protocol, &format!("{}_TO", to), amount_speedup, aggregated)?;
+
         Ok(())
     }
 
@@ -805,10 +836,15 @@ impl DisputeResolutionProtocol {
 
         let timeout = scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
 
+        let mut leaves = [winternitz_check, timeout];
+        for (pos, leave) in leaves.iter_mut().enumerate() {
+            leave.set_assert_leaf_id(pos as u32);
+        }
+
         let output_type = OutputType::taproot(
             amount,
             aggregated,
-            &[winternitz_check, timeout],
+            &leaves,
             &SpendMode::All {
                 key_path_sign: SignMode::Aggregate,
             },
@@ -816,16 +852,26 @@ impl DisputeResolutionProtocol {
         )?;
 
         protocol.add_connection(
-            &format!("{}_{}", from, to),
+            &format!("{}__{}", from, to),
             from,
             to,
             &output_type,
             &SighashType::taproot_all(),
         )?;
 
+        protocol.add_connection_with_timelock(
+            &format!("{}__{}_TO", from, to),
+            from,
+            &format!("{}_TO", to),
+            &output_type,
+            &SighashType::taproot_all(),
+            timelock_blocks,
+        )?;
+
         let pb = ProtocolBuilder {};
         //put the amount here as there is no output yet
         pb.add_speedup_output(protocol, to, amount_speedup, aggregated)?;
+        pb.add_speedup_output(protocol, &format!("{}_TO", to), amount_speedup, aggregated)?;
         Ok(())
     }
 
@@ -945,8 +991,8 @@ impl DisputeResolutionProtocol {
                 if let Some(witness) = final_trace.witness {
                     self.set_input_u32(context, "witness", witness)?;
                 }
-                let tx = self.get_signed_tx(context, EXECUTE, 0, 0)?;
-                info!("Execution tx: {:?}", tx);
+                //let tx = self.get_signed_tx(context, EXECUTE, 0, 0)?;
+                //info!("Execution tx: {:?}", tx);
 
                 context.bitcoin_coordinator.dispatch(
                     self.get_signed_tx(context, EXECUTE, 0, 0)?,
@@ -974,8 +1020,10 @@ impl DisputeResolutionProtocol {
             self.ctx.id, name, input_index
         );
         let protocol = self.load_protocol()?;
-        //TODO: detect leaf index from the first forced witness of the tx
-        let script = protocol.get_script_to_spend(&name, input_index, 0)?;
+        let witness = transaction.input[0].witness.clone();
+        let leaf = read_scriptint(witness.third_to_last().unwrap()).unwrap() as u32;
+
+        let script = protocol.get_script_to_spend(&name, input_index, leaf)?;
 
         let mut names = vec![];
         let mut sizes = vec![];
@@ -992,8 +1040,6 @@ impl DisputeResolutionProtocol {
         info!("Decoding data for {}", name);
         info!("Names: {:?}", names);
         info!("Sizes: {:?}", sizes);
-
-        let witness = transaction.input[0].witness.clone();
 
         let data = witness::decode_witness(sizes, WinternitzType::HASH160, witness)?;
         for i in 0..data.len() {

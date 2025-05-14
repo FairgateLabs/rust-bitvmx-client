@@ -388,7 +388,7 @@ impl Program {
                 .key_chain
                 .key_manager
                 .get_my_public_key(aggregated)?;
-            info!(
+            debug!(
                 "{}. Sending nonces for aggregated key: {} {:?} {:?}",
                 self.my_idx, aggregated, my_pub, nonces
             );
@@ -449,8 +449,8 @@ impl Program {
                     for (aggregated, participant_pub_key, nonces) in
                         participant.nonces.as_ref().unwrap()
                     {
-                        info!(
-                            "will do nonces for: {} {:?} {:?} {:?} ",
+                        debug!(
+                            "will get nonces for: {} {:?} {:?} {:?} ",
                             idx, aggregated, participant_pub_key, nonces
                         );
                         map_of_maps
@@ -508,7 +508,7 @@ impl Program {
                 .key_chain
                 .key_manager
                 .get_my_public_key(aggregated)?;
-            info!(
+            debug!(
                 "{}. Sending partial signatures for aggregated key: {} {:?} {:?}",
                 self.my_idx, aggregated, my_pub, signatures
             );
@@ -571,7 +571,7 @@ impl Program {
                     for (aggregated, other_pub_key, signatures) in
                         participant.partial.as_ref().unwrap()
                     {
-                        info!(
+                        debug!(
                             "Program {}: agg: {}, other: {} Received signatures: {:?}",
                             self.program_id, aggregated, other_pub_key, signatures
                         );
