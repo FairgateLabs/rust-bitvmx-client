@@ -1,7 +1,6 @@
 bitcoin:
   network: bitcoin
   url: "https://frosty-winter-sailboat.btc.quiknode.pro/6b2662d80a2edeeaac3b871c546c15ccabf5fe3a/"
-  # url: [testnet] "https://distinguished-intensive-frost.btc-testnet.quiknode.pro/38d0f064dc8e72fe44d8a9a762d448bc64c54619/"
   username: ""
   password: ""
   wallet: test_wallet
@@ -35,7 +34,7 @@ p2p:
   timeout: 5
 
 monitor:
-  checkpoint_height: 896440
+  checkpoint_height: 896583
   confirmation_threshold: 6
 
 broker_storage: /tmp/op_1/broker.db

@@ -34,7 +34,7 @@ p2p:
   timeout: 5
 
 monitor:
-  checkpoint_height: 896440
+  checkpoint_height: 896583
   confirmation_threshold: 6
 
 broker_storage: /tmp/op_3/broker.db
