@@ -1,3 +1,4 @@
+pub mod claim;
 pub mod dispute;
 pub mod lock;
 pub mod protocol_handler;
