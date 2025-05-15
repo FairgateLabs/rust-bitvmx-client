@@ -175,6 +175,8 @@ pub fn test_drp() -> Result<()> {
         }
     }
 
+    //wait for claim start
+    let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
     //prover final trace
     //process_dispatcher(&mut dispatchers, &mut instances);
     //let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;

@@ -378,11 +378,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                         "Current block: {}",
                         tx_status.block_info.as_ref().unwrap().block_height
                     );
-                    program_context.bitcoin_coordinator.dispatch(
-                        self.get_signed_tx(program_context, "EXECUTE_TO", 0, 1)?,
+                    /*program_context.bitcoin_coordinator.dispatch(
+                        self.get_signed_tx(program_context, "EXECUTE_TO", 0, 1, true)?,
                         Context::ProgramId(self.ctx.id).to_string()?,
-                        Some(tx_status.block_info.unwrap().block_height + TIMELOCK_BLOCKS as u32),
-                    )?;
+                        Some(
+                            tx_status.block_info.as_ref().unwrap().block_height
+                                + TIMELOCK_BLOCKS as u32,
+                        ),
+                    )?;*/
                 }
             }
         }
@@ -471,6 +474,41 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             )?;
         }
 
+        if name == INPUT_1 && self.role() == ParticipantRole::Prover {
+            let tx = self.get_signed_tx(
+                program_context,
+                &ClaimGate::tx_start(PROVER_WINS),
+                0,
+                0,
+                false,
+            )?;
+            info!("PROVER_WINS_TX: {:?}", tx);
+        }
+        if name == EXECUTE && self.role() == ParticipantRole::Prover {
+            let tx = self.get_signed_tx(
+                program_context,
+                &ClaimGate::tx_start(PROVER_WINS),
+                0,
+                0,
+                false,
+            )?;
+            info!("PROVER_WINS_TX: {:?}", tx);
+            /*program_context.bitcoin_coordinator.dispatch(
+                tx,
+                //prover-win-start is input 1
+                Context::ProgramId(self.ctx.id).to_string()?,
+                None,
+            )?;*/
+        }
+
+        /*if name == ClaimGate::tx_start(PROVER_WINS) && self.role() == ParticipantRole::Prover {
+            program_context.bitcoin_coordinator.dispatch(
+                self.get_signed_tx(program_context, &ClaimGate::tx_start(PROVER_WINS), 0, 0)?,
+                Context::ProgramId(self.ctx.id).to_string()?,
+                Some(tx_status.block_info.as_ref().unwrap().block_height + TIMELOCK_BLOCKS as u32),
+            )?;
+        }*/
+
         Ok(())
     }
 
@@ -519,6 +557,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             .collect::<Vec<_>>();
         let input_vars_slice = input_vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
 
+        amount -= ClaimGate::cost(fee, speedup_dust, 1, 1);
+        amount -= ClaimGate::cost(fee, speedup_dust, 1, 1);
+
         self.add_winternitz_check(
             aggregated,
             &mut protocol,
@@ -539,24 +580,24 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             START_CH,
             PROVER_WINS,
             aggregated,
+            fee,
             speedup_dust,
             1,
             TIMELOCK_BLOCKS,
             vec![aggregated],
         )?;
-        amount -= claim_prover.cost;
 
         let claim_verifier = ClaimGate::new(
             &mut protocol,
             START_CH,
             VERIFIER_WINS,
             aggregated,
+            fee,
             speedup_dust,
             1,
             TIMELOCK_BLOCKS,
             vec![aggregated],
         )?;
-        amount -= claim_verifier.cost;
 
         self.add_winternitz_check(
             aggregated,
@@ -695,7 +736,7 @@ impl DisputeResolutionProtocol {
             )?;
         }
 
-        self.get_signed_tx(context, INPUT_1, 0, 0)
+        self.get_signed_tx(context, INPUT_1, 0, 0, true)
     }
 
     pub fn get_signed_tx(
@@ -704,8 +745,10 @@ impl DisputeResolutionProtocol {
         name: &str,
         input_index: u32,
         leaf_index: u32,
+        leaf_identification: bool,
     ) -> Result<Transaction, BitVMXError> {
         let protocol = self.load_protocol()?;
+        info!("Getting signed tx for {}", name);
 
         let signature = protocol
             .input_taproot_script_spend_signature(name, input_index as usize, leaf_index as usize)?
@@ -730,7 +773,9 @@ impl DisputeResolutionProtocol {
         }
 
         spending_args.push_taproot_signature(signature)?;
-        spending_args.push_slice(scriptint_vec(leaf_index as i64).as_slice());
+        if leaf_identification {
+            spending_args.push_slice(scriptint_vec(leaf_index as i64).as_slice());
+        }
 
         let mut args = vec![];
         args.push(spending_args);
@@ -950,7 +995,7 @@ impl DisputeResolutionProtocol {
                 self.set_input_hex(context, "last_hash", last_hash)?;
 
                 context.bitcoin_coordinator.dispatch(
-                    self.get_signed_tx(context, COMMITMENT, 0, 0)?,
+                    self.get_signed_tx(context, COMMITMENT, 0, 0, true)?,
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
                 )?;
@@ -979,7 +1024,7 @@ impl DisputeResolutionProtocol {
                     self.set_input_hex(context, &format!("prover_hash_{}_{}", round, i), h)?;
                 }
                 context.bitcoin_coordinator.dispatch(
-                    self.get_signed_tx(context, &format!("NARY_PROVER_{}", round), 0, 0)?,
+                    self.get_signed_tx(context, &format!("NARY_PROVER_{}", round), 0, 0, true)?,
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
                 )?;
@@ -998,7 +1043,7 @@ impl DisputeResolutionProtocol {
                 )?;
 
                 context.bitcoin_coordinator.dispatch(
-                    self.get_signed_tx(context, &format!("NARY_VERIFIER_{}", round), 0, 0)?,
+                    self.get_signed_tx(context, &format!("NARY_VERIFIER_{}", round), 0, 0, true)?,
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
                 )?;
@@ -1050,7 +1095,7 @@ impl DisputeResolutionProtocol {
                 //info!("Execution tx: {:?}", tx);
 
                 context.bitcoin_coordinator.dispatch(
-                    self.get_signed_tx(context, EXECUTE, 0, 0)?,
+                    self.get_signed_tx(context, EXECUTE, 0, 0, true)?,
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
                 )?;

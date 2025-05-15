@@ -20,12 +20,29 @@ pub struct ClaimGate {
 }
 
 impl ClaimGate {
+    pub fn tx_start(claim_name: &str) -> String {
+        format!("{}_START", claim_name)
+    }
+    pub fn tx_stop(claim_name: &str, stopper: u8) -> String {
+        format!("{}_STOP_{}", claim_name, stopper)
+    }
+    pub fn tx_success(claim_name: &str) -> String {
+        format!("{}_SUCCESS", claim_name)
+    }
+
+    pub fn cost(amount_fee: u64, amount_dust: u64, stop_count: u8, actions: usize) -> u64 {
+        let fees = (2 + stop_count as u64) * amount_fee;
+        let dust = (2 + actions as u64 + stop_count as u64) * amount_dust;
+        fees + dust
+    }
+
     pub fn new(
         protocol: &mut Protocol,
         from: &str,
         claim_name: &str,
         aggregated: &PublicKey,
-        amount: u64,
+        amount_fee: u64,
+        amount_dust: u64,
         stop_count: u8,
         timelock_blocks: u16,
         actions: Vec<&PublicKey>,
@@ -34,7 +51,7 @@ impl ClaimGate {
         let verify_aggregated =
             scripts::check_aggregated_signature(&aggregated, SignMode::Aggregate);
         let claim_start = OutputType::taproot(
-            amount,
+            amount_fee + amount_fee + ((2 + actions.len() as u64) * amount_dust),
             aggregated,
             &vec![verify_aggregated.clone()],
             &SpendMode::All {
@@ -44,7 +61,7 @@ impl ClaimGate {
         )?;
 
         let vout_idx = protocol.transaction_by_name(from)?.output.len();
-        let stx = format!("{}_START", claim_name);
+        let stx = Self::tx_start(claim_name);
         protocol.add_connection(
             &format!("{}__{}", from, &stx),
             from,
@@ -56,9 +73,9 @@ impl ClaimGate {
         let timeout = scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
 
         let start_tx_output = OutputType::taproot(
-            amount,
+            amount_fee + ((1 + actions.len() as u64) * amount_dust),
             aggregated,
-            &vec![verify_aggregated, timeout],
+            &vec![verify_aggregated.clone(), timeout],
             &SpendMode::All {
                 key_path_sign: SignMode::Aggregate,
             },
@@ -69,13 +86,23 @@ impl ClaimGate {
 
         let pb = ProtocolBuilder {};
 
+        let claim_stop = OutputType::taproot(
+            amount_fee + amount_dust,
+            aggregated,
+            &vec![verify_aggregated.clone()],
+            &SpendMode::All {
+                key_path_sign: SignMode::Aggregate,
+            },
+            &vec![],
+        )?;
+
         for i in 0..stop_count {
-            let stopname = format!("{}_STOP_{}", claim_name, i);
+            let stopname = Self::tx_stop(claim_name, i);
             protocol.add_connection(
                 &format!("{}__{}", from, &stopname),
                 from,
                 &stopname,
-                &claim_start,
+                &claim_stop,
                 &SighashType::taproot_all(),
             )?;
             protocol.add_transaction_input(
@@ -93,10 +120,10 @@ impl ClaimGate {
                 InputSpec::Index(1),
             )?;
 
-            pb.add_speedup_output(protocol, &stopname, amount, aggregated)?;
+            pb.add_speedup_output(protocol, &stopname, amount_dust, aggregated)?;
         }
 
-        let success = format!("{}_SUCCESS", claim_name);
+        let success = Self::tx_success(claim_name);
         protocol.add_connection_with_timelock(
             &format!("{}_TL_{}", from, &success),
             &stx,
@@ -110,7 +137,7 @@ impl ClaimGate {
             let verify_aggregated_action =
                 scripts::check_aggregated_signature(action, SignMode::Aggregate);
             let output_action = OutputType::taproot(
-                amount,
+                amount_dust,
                 action,
                 &vec![verify_aggregated_action],
                 &SpendMode::All {
@@ -122,10 +149,10 @@ impl ClaimGate {
             protocol.add_transaction_output(&success, &output_action)?;
         }
 
-        pb.add_speedup_output(protocol, &success, amount, aggregated)?;
-        pb.add_speedup_output(protocol, &stx, amount, aggregated)?;
+        pb.add_speedup_output(protocol, &success, amount_dust, aggregated)?;
+        pb.add_speedup_output(protocol, &stx, amount_dust, aggregated)?;
 
-        let cost = (actions.len() as u64 + 4 + (2 * stop_count as u64)) * amount;
+        let cost = Self::cost(amount_fee, amount_dust, stop_count, actions.len());
 
         Ok(Self {
             name: claim_name.to_string(),
