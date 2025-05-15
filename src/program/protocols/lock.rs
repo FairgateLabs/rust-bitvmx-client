@@ -23,10 +23,12 @@ use super::{
 };
 
 // TODO: get this from config
-#[cfg(feature = "mainnet")]
-const FEE: u64 = 317*12; // vbytes * 12 sats/vbyte
-#[cfg(not(feature = "mainnet"))]
+#[cfg(feature = "testnet")]
 const FEE: u64 = 317*8; // vbytes * 8 sats/vbyte
+#[cfg(feature = "mainnet")]
+const FEE: u64 = 317*12;
+#[cfg(not(any(feature = "testnet", feature = "mainnet")))]
+const FEE: u64 = 317*8;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct LockProtocol {

@@ -205,7 +205,7 @@ impl BitVMX {
         self.program_context.bitcoin_coordinator.tick()?;
 
         if !self.program_context.bitcoin_coordinator.is_ready()? {
-            info!("Bitcoin coordinator not ready");
+            debug!("Bitcoin coordinator not ready");
             return Ok(false);
         }
 
@@ -384,9 +384,15 @@ impl BitVMX {
             self.process_pending_messages()?;
         }
 
-        if self.count % (THROTTLE_TICKS*300) == 0 {
+        #[cfg(any(feature = "testnet", feature = "mainnet"))]
+        let throttle: u32 = 300;
+        #[cfg(not(any(feature = "testnet", feature = "mainnet")))]
+        let throttle: u32 = 1;
+
+        if self.count % (THROTTLE_TICKS*throttle) == 0 {
             self.process_bitcoin_updates()?;
-            info!("Processing Bitcoin updates...");
+
+            debug!("Processing Bitcoin updates...");
         }
 
         self.process_collaboration()?;
