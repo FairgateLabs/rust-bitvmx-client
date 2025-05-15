@@ -1,4 +1,5 @@
 use anyhow::Result;
+use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
 use bitvmx_client::{
     bitvmx::BitVMX,
     program::{self, protocols::dispute::EXECUTE, variables::VariableTypes},
@@ -176,7 +177,12 @@ pub fn test_drp() -> Result<()> {
     }
 
     //wait for claim start
-    let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
+    bitcoin_client.mine_blocks_to_address(10, &wallet).unwrap();
+    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
+
     //prover final trace
     //process_dispatcher(&mut dispatchers, &mut instances);
     //let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;

@@ -475,14 +475,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         }
 
         if name == INPUT_1 && self.role() == ParticipantRole::Prover {
-            let tx = self.get_signed_tx(
+            /*let tx = self.get_signed_tx(
                 program_context,
                 &ClaimGate::tx_start(PROVER_WINS),
                 0,
                 0,
                 false,
             )?;
-            info!("PROVER_WINS_TX: {:?}", tx);
+            info!("PROVER_WINS_TX: {:?}", tx);*/
         }
         if name == EXECUTE && self.role() == ParticipantRole::Prover {
             let tx = self.get_signed_tx(
@@ -493,21 +493,28 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 false,
             )?;
             info!("PROVER_WINS_TX: {:?}", tx);
-            /*program_context.bitcoin_coordinator.dispatch(
+            program_context.bitcoin_coordinator.dispatch(
                 tx,
                 //prover-win-start is input 1
                 Context::ProgramId(self.ctx.id).to_string()?,
                 None,
-            )?;*/
+            )?;
         }
 
-        /*if name == ClaimGate::tx_start(PROVER_WINS) && self.role() == ParticipantRole::Prover {
+        if name == ClaimGate::tx_start(PROVER_WINS) && self.role() == ParticipantRole::Prover {
+            info!("Prover wins SUCCESS dispatch");
             program_context.bitcoin_coordinator.dispatch(
-                self.get_signed_tx(program_context, &ClaimGate::tx_start(PROVER_WINS), 0, 0)?,
+                self.get_signed_tx(
+                    program_context,
+                    &ClaimGate::tx_success(PROVER_WINS),
+                    0,
+                    0,
+                    false,
+                )?,
                 Context::ProgramId(self.ctx.id).to_string()?,
                 Some(tx_status.block_info.as_ref().unwrap().block_height + TIMELOCK_BLOCKS as u32),
             )?;
-        }*/
+        }
 
         Ok(())
     }
@@ -1091,7 +1098,7 @@ impl DisputeResolutionProtocol {
                 if let Some(witness) = final_trace.witness {
                     self.set_input_u32(context, "witness", witness)?;
                 }
-                //let tx = self.get_signed_tx(context, EXECUTE, 0, 0)?;
+                //let tx = self.get_signed_tx(context, EXECUTE, 0, 0, true)?;
                 //info!("Execution tx: {:?}", tx);
 
                 context.bitcoin_coordinator.dispatch(

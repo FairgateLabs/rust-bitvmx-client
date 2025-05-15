@@ -171,7 +171,7 @@ impl ClaimGate {
         for i in 0..self.stop_count {
             protocol.add_transaction_input(
                 Hash::all_zeros(),
-                self.vout,
+                self.vout + 1,
                 to,
                 Sequence::ENABLE_RBF_NO_LOCKTIME,
                 &SighashType::taproot_all(),
