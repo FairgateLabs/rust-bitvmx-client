@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use bitcoin::{script::read_scriptint, PublicKey, Transaction, Txid};
+use bitcoin::{hashes::Hash, script::read_scriptint, PublicKey, Sequence, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use bitcoin_script_riscv::riscv::instruction_mapping::create_verification_script_mapping;
 use bitcoin_script_stack::stack::StackTracker;
@@ -18,7 +18,7 @@ use protocol_builder::{
     errors::ProtocolBuilderError,
     scripts::{self, SignMode},
     types::{
-        input::{LeafSpec, SighashType},
+        input::{InputSpec, LeafSpec, SighashType},
         output::SpendMode,
         InputArgs, OutputType,
     },
@@ -47,7 +47,9 @@ pub const START_CH: &str = "START_CHALLENGE";
 pub const INPUT_1: &str = "INPUT_1";
 pub const COMMITMENT: &str = "COMMITMENT";
 pub const EXECUTE: &str = "EXECUTE";
-pub const TIMELOCK_BLOCKS: u16 = 10;
+pub const TIMELOCK_BLOCKS: u16 = 20;
+pub const PROVER_WINS: &str = "PROVER_WINS";
+pub const VERIFIER_WINS: &str = "VERIFIER_WINS";
 
 pub const TRACE_VARS: [(&str, usize); 15] = [
     ("write_address", 4 as usize),
@@ -527,8 +529,42 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             &input_vars_slice,
             START_CH,
             INPUT_1,
+            "", //TODO: I need to add the proper claim
+            0,
         )?;
         amount -= fee;
+        amount -= speedup_dust;
+
+        let claim_prover_wins_vout = self.add_claim_gate(
+            &mut protocol,
+            START_CH,
+            PROVER_WINS,
+            aggregated,
+            speedup_dust,
+            1,
+            TIMELOCK_BLOCKS,
+        )?;
+        amount -= speedup_dust;
+        amount -= speedup_dust;
+        amount -= speedup_dust;
+        amount -= speedup_dust;
+        amount -= speedup_dust;
+        amount -= speedup_dust;
+
+        let claim_verifier_wins_vout = self.add_claim_gate(
+            &mut protocol,
+            START_CH,
+            VERIFIER_WINS,
+            aggregated,
+            speedup_dust,
+            1,
+            TIMELOCK_BLOCKS,
+        )?;
+        amount -= speedup_dust;
+        amount -= speedup_dust;
+        amount -= speedup_dust;
+        amount -= speedup_dust;
+        amount -= speedup_dust;
         amount -= speedup_dust;
 
         self.add_winternitz_check(
@@ -541,6 +577,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             &vec!["last_step", "last_hash"],
             INPUT_1,
             COMMITMENT,
+            VERIFIER_WINS,
+            claim_verifier_wins_vout,
         )?;
         amount -= fee;
         amount -= speedup_dust;
@@ -564,6 +602,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
                 &prev,
                 &next,
+                VERIFIER_WINS,
+                claim_verifier_wins_vout,
             )?;
             amount -= fee;
             amount -= speedup_dust;
@@ -583,6 +623,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &vec![&format!("selection_bits_{}", i)],
                 &prev,
                 &next,
+                PROVER_WINS,
+                claim_prover_wins_vout,
             )?;
             amount -= fee;
             amount -= speedup_dust;
@@ -607,6 +649,18 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             &vars,
             &prev,
             EXECUTE,
+            VERIFIER_WINS,
+            claim_verifier_wins_vout,
+        )?;
+
+        //Add this as if it were the final tx execution
+        self.add_claimer_win_connection(
+            &mut protocol,
+            PROVER_WINS,
+            START_CH,
+            claim_prover_wins_vout + 1,
+            EXECUTE,
+            1,
         )?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
@@ -698,7 +752,22 @@ impl DisputeResolutionProtocol {
         spending_args.push_taproot_signature(signature)?;
         spending_args.push_slice(scriptint_vec(leaf_index as i64).as_slice());
 
-        Ok(protocol.transaction_to_send(name, &[spending_args])?)
+        let mut args = vec![];
+        args.push(spending_args);
+
+        //TODO: try to generelaize to all inputs. This is a workaround to sign the claim-gate
+        let tx = protocol.transaction_by_name(name)?;
+        let total_inputs = tx.input.len();
+        if total_inputs > 1 {
+            let signature = protocol
+                .input_taproot_script_spend_signature(name, 1, 0)?
+                .unwrap();
+            let mut spending_args = InputArgs::new_taproot_script_args(LeafSpec::Index(0));
+            spending_args.push_taproot_signature(signature)?;
+            args.push(spending_args);
+        }
+
+        Ok(protocol.transaction_to_send(name, &args.as_slice())?)
     }
 
     pub fn add_winternitz_check(
@@ -712,6 +781,8 @@ impl DisputeResolutionProtocol {
         var_names: &Vec<&str>,
         from: &str,
         to: &str,
+        claim_name: &str,
+        claim_start_vout: usize,
     ) -> Result<(), BitVMXError> {
         //TODO:
         // - Support multiple inputs
@@ -765,6 +836,17 @@ impl DisputeResolutionProtocol {
             timelock_blocks,
         )?;
 
+        if claim_name.len() > 0 {
+            self.add_claimer_win_connection(
+                protocol,
+                claim_name,
+                START_CH,
+                claim_start_vout + 1,
+                &format!("{}_TO", to),
+                1,
+            )?;
+        }
+
         let pb = ProtocolBuilder {};
         //put the amount here as there is no output yet
         pb.add_speedup_output(protocol, to, amount_speedup, aggregated)?;
@@ -784,6 +866,8 @@ impl DisputeResolutionProtocol {
         var_names: &Vec<&str>,
         from: &str,
         to: &str,
+        claim_name: &str,
+        claim_start_vout: usize,
     ) -> Result<(), BitVMXError> {
         info!("Adding winternitz check for {} to {}", from, to);
         info!("Amount: {}", amount);
@@ -864,11 +948,142 @@ impl DisputeResolutionProtocol {
             timelock_blocks,
         )?;
 
+        self.add_claimer_win_connection(
+            protocol,
+            claim_name,
+            START_CH,
+            claim_start_vout + 1,
+            &format!("{}_TO", to),
+            1,
+        )?;
+
         let pb = ProtocolBuilder {};
         //put the amount here as there is no output yet
         pb.add_speedup_output(protocol, to, amount_speedup, aggregated)?;
         pb.add_speedup_output(protocol, &format!("{}_TO", to), amount_speedup, aggregated)?;
         Ok(())
+    }
+
+    pub fn add_claimer_win_connection(
+        &self,
+        protocol: &mut Protocol,
+        claim_name: &str,
+        from: &str,
+        vout: usize,
+        to: &str,
+        stop_count: u8,
+    ) -> Result<(), BitVMXError> {
+        for i in 0..stop_count {
+            protocol.add_transaction_input(
+                Hash::all_zeros(),
+                vout,
+                to,
+                Sequence::ENABLE_RBF_NO_LOCKTIME,
+                &SighashType::taproot_all(),
+            )?;
+
+            let input_index = protocol.transaction_by_name(to)?.input.len() - 1;
+            protocol.connect(
+                &format!("CLAIMER_WINS_{}_STOP_{}__{}", claim_name, i, to),
+                &from,
+                vout,
+                &to,
+                InputSpec::Index(input_index),
+            )?;
+        }
+
+        Ok(())
+    }
+
+    pub fn add_claim_gate(
+        &self,
+        protocol: &mut Protocol,
+        from: &str,
+        claim_name: &str,
+        aggregated: &PublicKey,
+        amount: u64,
+        stop_count: u8,
+        timelock_blocks: u16,
+    ) -> Result<usize, BitVMXError> {
+        //TODO: this script should check a claimer secret (or be signed only by the claimer)
+        let verify_aggregated =
+            scripts::check_aggregated_signature(&aggregated, SignMode::Aggregate);
+        let claim_start = OutputType::taproot(
+            amount,
+            aggregated,
+            &vec![verify_aggregated.clone()],
+            &SpendMode::All {
+                key_path_sign: SignMode::Aggregate,
+            },
+            &vec![],
+        )?;
+
+        let vout_idx = protocol.transaction_by_name(from)?.output.len();
+        let stx = format!("{}_START", claim_name);
+        protocol.add_connection(
+            &format!("{}__{}", from, &stx),
+            from,
+            &stx,
+            &claim_start,
+            &SighashType::taproot_all(),
+        )?;
+
+        let timeout = scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
+
+        let start_tx_output = OutputType::taproot(
+            amount,
+            aggregated,
+            &vec![verify_aggregated, timeout],
+            &SpendMode::All {
+                key_path_sign: SignMode::Aggregate,
+            },
+            &vec![],
+        )?;
+
+        protocol.add_transaction_output(&stx, &start_tx_output)?;
+
+        let pb = ProtocolBuilder {};
+
+        for i in 0..stop_count {
+            let stopname = format!("{}_STOP_{}", claim_name, i);
+            protocol.add_connection(
+                &format!("{}__{}", from, &stopname),
+                from,
+                &stopname,
+                &claim_start,
+                &SighashType::taproot_all(),
+            )?;
+            protocol.add_transaction_input(
+                Hash::all_zeros(),
+                0,
+                &stopname,
+                Sequence::ENABLE_RBF_NO_LOCKTIME,
+                &SighashType::taproot_all(),
+            )?;
+            protocol.connect(
+                &format!("CANCEL_CLAIM_{}_BY_{}", claim_name, i),
+                &stx,
+                0,
+                &stopname,
+                InputSpec::Index(1),
+            )?;
+
+            pb.add_speedup_output(protocol, &stopname, amount, aggregated)?;
+        }
+
+        let success = format!("{}_SUCCESS", claim_name);
+        protocol.add_connection_with_timelock(
+            &format!("{}_TL_{}", from, &success),
+            &stx,
+            &success,
+            &claim_start,
+            &SighashType::taproot_all(),
+            timelock_blocks,
+        )?;
+        pb.add_speedup_output(protocol, &success, amount, aggregated)?;
+        pb.add_speedup_output(protocol, &stx, amount, aggregated)?;
+
+        Ok(vout_idx)
     }
 
     pub fn execution_result(
