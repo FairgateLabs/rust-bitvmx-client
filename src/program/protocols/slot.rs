@@ -19,7 +19,9 @@ use tracing::info;
 use crate::{
     bitvmx::Context,
     errors::BitVMXError,
-    program::protocols::{dispute::TIMELOCK_BLOCKS, protocol_handler::external_fund_tx},
+    program::protocols::{
+        claim::ClaimGate, dispute::TIMELOCK_BLOCKS, protocol_handler::external_fund_tx,
+    },
     types::ProgramContext,
 };
 
@@ -227,7 +229,10 @@ impl ProtocolHandler for SlotProtocol {
         let pb = ProtocolBuilder {};
 
         let amount_for_publish_gid = fee + speedup_dust;
-        let amount_for_sequence = fee + speedup_dust + amount_for_publish_gid;
+        let claim_gate_cost = ClaimGate::cost(fee, speedup_dust, keys.len() as u8 - 1, 1);
+
+        //ClaimGate::new(&mut protocol, from, claim_name, aggregated, amount_fee, amount_dust, stop_count, timelock_blocks, actions)
+        let amount_for_sequence = fee + speedup_dust + amount_for_publish_gid + claim_gate_cost;
 
         for (i, key) in keys.iter().enumerate() {
             //Verify the winternitz signature
@@ -256,6 +261,19 @@ impl ProtocolHandler for SlotProtocol {
                 &certhashtx,
                 &output_type,
                 &SighashType::taproot_all(),
+            )?;
+
+            //add the claimgate
+            let _claim_gate = ClaimGate::new(
+                &mut protocol,
+                &certhashtx,
+                &format!("OP_WINS_{}", i),
+                &ops_agg_pubkey,
+                fee,
+                speedup_dust,
+                keys.len() as u8 - 1,
+                TIMELOCK_BLOCKS,
+                vec![],
             )?;
 
             //create the group id output
