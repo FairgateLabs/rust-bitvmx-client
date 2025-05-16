@@ -1,20 +1,27 @@
 use bitcoin::key::UntweakedPublicKey;
+use bitcoin::script::read_scriptint;
 use bitcoin::{secp256k1, Amount, PublicKey, ScriptBuf, Transaction, TxOut, Txid, XOnlyPublicKey};
 use bitcoin_coordinator::TransactionStatus;
+use bitcoin_scriptexec::scriptint_vec;
 use enum_dispatch::enum_dispatch;
+use key_manager::winternitz::{message_bytes_length, WinternitzType};
 use protocol_builder::scripts::{self, SignMode};
+use protocol_builder::types::input::LeafSpec;
 use protocol_builder::types::output::SpendMode;
-use protocol_builder::types::OutputType;
+use protocol_builder::types::{InputArgs, OutputType};
 use protocol_builder::{builder::Protocol, errors::ProtocolBuilderError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::rc::Rc;
 use storage_backend::storage::Storage;
+use tracing::info;
 use uuid::Uuid;
 
 use crate::errors::BitVMXError;
 use crate::keychain::KeyChain;
 
+use crate::program::variables::WitnessTypes;
+use crate::program::witness;
 use crate::types::{ProgramContext, PROGRAM_TYPE_DRP, PROGRAM_TYPE_LOCK, PROGRAM_TYPE_SLOT};
 
 use super::super::participant::ParticipantKeys;
@@ -122,6 +129,129 @@ pub trait ProtocolHandler {
         program_context: &ProgramContext,
         participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError>;
+
+    fn get_signed_tx(
+        &self,
+        context: &ProgramContext,
+        name: &str,
+        input_index: u32,
+        leaf_index: u32,
+        leaf_identification: bool,
+    ) -> Result<Transaction, BitVMXError> {
+        let protocol = self.load_protocol()?;
+        info!("Getting signed tx for {}", name);
+
+        //TODO: Control that the variables sizes correspond with the keys
+        //avoid invalid sig checks
+
+        let signature = protocol
+            .input_taproot_script_spend_signature(name, input_index as usize, leaf_index as usize)?
+            .unwrap();
+        let spend = protocol.get_script_to_spend(name, input_index, leaf_index)?;
+        let mut spending_args =
+            InputArgs::new_taproot_script_args(LeafSpec::Index(leaf_index as usize));
+
+        for k in spend.get_keys().iter().rev() {
+            let message = context
+                .globals
+                .get_var(&self.context().id, k.name())?
+                .input()?;
+
+            info!("Signigng message: {}", hex::encode(message.clone()));
+            info!("With key: {:?}", k);
+
+            let winternitz_signature = context.key_chain.key_manager.sign_winternitz_message(
+                &message,
+                WinternitzType::HASH160,
+                spend.get_key(k.name()).unwrap().derivation_index(),
+            )?;
+
+            spending_args.push_winternitz_signature(winternitz_signature);
+        }
+
+        spending_args.push_taproot_signature(signature)?;
+        if leaf_identification {
+            spending_args.push_slice(scriptint_vec(leaf_index as i64).as_slice());
+        }
+
+        let mut args = vec![];
+        args.push(spending_args);
+
+        //TODO: try to generelaize to all inputs. This is a workaround to sign the claim-gate
+        let tx = protocol.transaction_by_name(name)?;
+        let total_inputs = tx.input.len();
+        if total_inputs > 1 {
+            let signature = protocol
+                .input_taproot_script_spend_signature(name, 1, 0)?
+                .unwrap();
+            let mut spending_args = InputArgs::new_taproot_script_args(LeafSpec::Index(0));
+            spending_args.push_taproot_signature(signature)?;
+            args.push(spending_args);
+        }
+
+        Ok(protocol.transaction_to_send(name, &args.as_slice())?)
+    }
+
+    fn decode_witness_for_tx(
+        &self,
+        name: &str,
+        input_index: u32,
+        program_context: &ProgramContext,
+        participant_keys: &ParticipantKeys,
+        transaction: &Transaction,
+        leaf: Option<u32>,
+    ) -> Result<Vec<String>, BitVMXError> {
+        info!(
+            "Program {}: Decoding witness for {} with input index {}",
+            self.context().id,
+            name,
+            input_index
+        );
+        let protocol = self.load_protocol()?;
+
+        let witness = transaction.input[0].witness.clone();
+        let leaf = match leaf {
+            Some(idx) => idx,
+            None => {
+                let leaf = read_scriptint(witness.third_to_last().unwrap()).unwrap() as u32;
+                leaf
+            }
+        };
+
+        let script = protocol.get_script_to_spend(&name, input_index, leaf)?;
+
+        let mut names = vec![];
+        let mut sizes = vec![];
+        script.get_keys().iter().rev().for_each(|k| {
+            names.push(k.name().to_string());
+            sizes.push(message_bytes_length(
+                participant_keys
+                    .get_winternitz(k.name())
+                    .unwrap()
+                    .message_size()
+                    .unwrap(),
+            ));
+        });
+        info!("Decoding data for {}", name);
+        info!("Names: {:?}", names);
+        info!("Sizes: {:?}", sizes);
+
+        let data = witness::decode_witness(sizes, WinternitzType::HASH160, witness)?;
+        for i in 0..data.len() {
+            info!(
+                "Program {}:{} Witness data decoded: {}",
+                self.context().id,
+                names[i],
+                hex::encode(&data[i].message_bytes())
+            );
+            program_context.witness.set_witness(
+                &self.context().id,
+                &names[i],
+                WitnessTypes::Winternitz(data[i].clone()),
+            )?;
+        }
+        Ok(names)
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]

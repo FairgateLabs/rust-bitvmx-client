@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bitcoin::Amount;
 use bitvmx_client::{
-    program::{self, variables::VariableTypes},
+    program::{self, protocols::slot::group_id, variables::VariableTypes},
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_SLOT},
 };
 use common::{
@@ -64,6 +64,9 @@ pub fn test_slot() -> Result<()> {
 
     // SETUP SLOT BEGIN
     let program_id = Uuid::new_v4();
+    let set_fee = VariableTypes::Number(10_000).set_msg(program_id, "FEE")?;
+    send_all(&channels, &set_fee)?;
+
     let set_fund_utxo = VariableTypes::Utxo((utxo.txid, utxo.vout, Some(fund_value.to_sat())))
         .set_msg(program_id, "fund_utxo")?;
     send_all(&channels, &set_fund_utxo)?;
@@ -92,7 +95,34 @@ pub fn test_slot() -> Result<()> {
         .to_string()?,
     );
 
-    mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    //observe the setup tx
+    let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+
+    // one operator decide to put a certificate hash to start the transfer
+    let cert_hash = "33".repeat(20);
+    let set_cert_hash = VariableTypes::Input(hex::decode(cert_hash).unwrap())
+        .set_msg(program_id, "certificate_hash_2")?;
+    let _ = channels[2].send(BITVMX_ID, set_cert_hash)?;
+
+    let selected_gid = 4;
+    let set_gid = VariableTypes::Input(vec![selected_gid]).set_msg(program_id, &group_id(2))?;
+    let _ = channels[2].send(BITVMX_ID, set_gid)?;
+
+    // send the tx
+    let _ = channels[2].send(
+        BITVMX_ID,
+        IncomingBitVMXApiMessages::DispatchTransactionName(
+            program_id,
+            program::protocols::slot::cert_hash_tx_op(2),
+        )
+        .to_string()?,
+    );
+
+    //observes the cert hash tx
+    let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+
+    //observes the gid tx
+    let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
     bitcoind.stop()?;
     Ok(())
