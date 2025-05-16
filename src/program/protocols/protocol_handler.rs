@@ -1,6 +1,10 @@
-use bitcoin::{PublicKey, Transaction, Txid};
+use bitcoin::key::UntweakedPublicKey;
+use bitcoin::{secp256k1, Amount, PublicKey, ScriptBuf, Transaction, TxOut, Txid, XOnlyPublicKey};
 use bitcoin_coordinator::TransactionStatus;
 use enum_dispatch::enum_dispatch;
+use protocol_builder::scripts::{self, SignMode};
+use protocol_builder::types::output::SpendMode;
+use protocol_builder::types::OutputType;
 use protocol_builder::{builder::Protocol, errors::ProtocolBuilderError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -174,4 +178,33 @@ impl ProtocolType {
             _ => Err(BitVMXError::InvalidMessageType),
         }
     }
+}
+
+pub fn external_fund_tx(aggregated: &PublicKey, amount: u64) -> Result<OutputType, BitVMXError> {
+    let secp = secp256k1::Secp256k1::new();
+    let untweaked_key: UntweakedPublicKey = XOnlyPublicKey::from(*aggregated);
+
+    let spending_scripts = vec![scripts::check_aggregated_signature(
+        &aggregated,
+        SignMode::Aggregate,
+    )];
+    let spend_info = scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
+
+    let script_pubkey = ScriptBuf::new_p2tr(&secp, untweaked_key, spend_info.merkle_root());
+
+    //Description of the output that the SETUP_TX consumes
+    let prevout = TxOut {
+        value: Amount::from_sat(amount),
+        script_pubkey,
+    };
+
+    Ok(OutputType::taproot(
+        amount,
+        aggregated,
+        &spending_scripts,
+        &SpendMode::All {
+            key_path_sign: SignMode::Aggregate,
+        },
+        &vec![prevout],
+    )?)
 }

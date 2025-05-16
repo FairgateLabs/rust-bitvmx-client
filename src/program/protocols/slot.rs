@@ -1,20 +1,19 @@
 use std::collections::HashMap;
 
-use bitcoin::{
-    key::UntweakedPublicKey, secp256k1, Amount, PublicKey, ScriptBuf, Transaction, TxOut, Txid,
-    XOnlyPublicKey,
-};
+use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     builder::ProtocolBuilder,
     errors::ProtocolBuilderError,
-    scripts::{self, SignMode},
-    types::{input::SighashType, output::SpendMode, InputArgs, OutputType},
+    types::{input::SighashType, InputArgs},
 };
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use crate::{errors::BitVMXError, types::ProgramContext};
+use crate::{
+    errors::BitVMXError, program::protocols::protocol_handler::external_fund_tx,
+    types::ProgramContext,
+};
 
 use super::{
     super::participant::ParticipantKeys,
@@ -145,33 +144,4 @@ impl SlotProtocol {
         self.load_protocol()?
             .transaction_to_send(SETUP_TX, &[taproot_arg])
     }
-}
-
-pub fn external_fund_tx(aggregated: &PublicKey, amount: u64) -> Result<OutputType, BitVMXError> {
-    let secp = secp256k1::Secp256k1::new();
-    let untweaked_key: UntweakedPublicKey = XOnlyPublicKey::from(*aggregated);
-
-    let spending_scripts = vec![scripts::check_aggregated_signature(
-        &aggregated,
-        SignMode::Aggregate,
-    )];
-    let spend_info = scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
-
-    let script_pubkey = ScriptBuf::new_p2tr(&secp, untweaked_key, spend_info.merkle_root());
-
-    //Description of the output that the SETUP_TX consumes
-    let prevout = TxOut {
-        value: Amount::from_sat(amount),
-        script_pubkey,
-    };
-
-    Ok(OutputType::taproot(
-        amount,
-        aggregated,
-        &spending_scripts,
-        &SpendMode::All {
-            key_path_sign: SignMode::Aggregate,
-        },
-        &vec![prevout],
-    )?)
 }

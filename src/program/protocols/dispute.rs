@@ -31,7 +31,7 @@ use crate::{
     errors::BitVMXError,
     program::{
         participant::ParticipantRole,
-        protocols::{claim::ClaimGate, slot::external_fund_tx},
+        protocols::{claim::ClaimGate, protocol_handler::external_fund_tx},
         variables::{VariableTypes, WitnessTypes},
         witness,
     },
