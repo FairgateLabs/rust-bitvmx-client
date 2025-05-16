@@ -560,11 +560,11 @@ struct Operator {
 
 impl Operator {
     fn new(config: Config) -> Result<Self> {
-        info!("Storage: {:?}", config.storage.db);
+        info!("Storage: {:?}", config.storage.path);
         info!("Clearing previous databases");
-        clear_db(&config.storage.db);
+        clear_db(&config.storage.path);
         clear_db(&config.key_storage.path);
-        clear_db(&config.broker_storage);
+        clear_db(&config.broker_storage.path);
 
         let bitvmx = BitVMX::new(config)?;
         let address = P2PAddress::new(&bitvmx.address(), PeerId::from_str(&bitvmx.peer_id())?);

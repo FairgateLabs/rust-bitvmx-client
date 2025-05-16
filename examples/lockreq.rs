@@ -18,7 +18,7 @@ use bitcoin::{
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 pub fn get_bitcoin_client() -> Result<BitcoinClient> {
-    let config = Config::new(Some("config/op_1.yaml".to_string()))?;
+    let config = Config::new(Some("config/op_testnet.yaml".to_string()))?;
 
     let bitcoin_client = BitcoinClient::new(
         &config.bitcoin.url,
@@ -77,12 +77,10 @@ pub fn main() -> Result<()> {
         }
     }
 
-    let (txid, pubuser, ordinal_fee, protocol_fee) = create_lockreq_ready(
-        aggregated_pub_key,
-        hash.clone(),
-        Network::Regtest,
-        &bitcoin_client,
-    )?;
+    let network = Network::Regtest;
+
+    let (txid, pubuser, ordinal_fee, protocol_fee) =
+        create_lockreq_ready(aggregated_pub_key, hash.clone(), network, &bitcoin_client)?;
 
     let msg_req =
         serde_json::to_string(&(txid, pubuser, ordinal_fee, protocol_fee, preimage, hash))?;
@@ -126,8 +124,6 @@ pub fn create_lockreq_ready(
         user_address
     );
 
-    const ONE_BTC: Amount = Amount::from_sat(100_000_000);
-
     // Ordinal funding
     const ORDINAL_AMOUNT: Amount = Amount::from_sat(10_000);
     let funding_amount_ordinal = ORDINAL_AMOUNT;
@@ -139,7 +135,7 @@ pub fn create_lockreq_ready(
     let ordinal_txout = funding_tx_ordinal.output[vout_ordinal as usize].clone();
 
     // Protocol fees funding
-    let funding_amount_used_for_protocol_fees = ONE_BTC;
+    let funding_amount_used_for_protocol_fees = Amount::from_sat(10_000);
     let funding_tx_protocol_fees: Transaction;
     let vout_protocol_fees: u32;
     (funding_tx_protocol_fees, vout_protocol_fees) = bitcoin_client
@@ -154,9 +150,14 @@ pub fn create_lockreq_ready(
         OutPoint::new(funding_tx_protocol_fees.compute_txid(), vout_protocol_fees);
     tracing::debug!("Protocol fees outpoint: {:?}", protocol_fees_outpoint);
 
-    let protocol_fee = Amount::from_sat(1_000_000);
+    pub const STREAM_VALUE: u64 = 5_000;
+    pub const KEY_SPEND_FEE: u64 = 335;
+    pub const OP_RETURN_FEE: u64 = 300;
+    pub const MIN_OUTPUT_VALUE: u64 = STREAM_VALUE + KEY_SPEND_FEE + OP_RETURN_FEE;
 
-    const MINER_FEE: Amount = Amount::from_sat(355_000);
+    let protocol_fee = Amount::from_sat(MIN_OUTPUT_VALUE);
+
+    const MINER_FEE: Amount = Amount::from_sat(MIN_OUTPUT_VALUE / 10);
 
     let signed_lockreq_tx = create_lockreq_tx_and_sign(
         &secp,
@@ -227,7 +228,8 @@ fn create_lockreq_tx_and_sign(
 ) -> Transaction {
     let timelock_script = timelock(timelock_blocks, &user_pubkey, SignMode::Single);
 
-    let reveal_secret_script = reveal_secret(secret_hash.to_vec(), &ops_agg_pubkey, SignMode::Aggregate);
+    let reveal_secret_script =
+        reveal_secret(secret_hash.to_vec(), &ops_agg_pubkey, SignMode::Aggregate);
     let lockreq_tx_output_taptree = build_taptree_for_lockreq_tx_outputs(
         &secp,
         unspendable_pub_key,

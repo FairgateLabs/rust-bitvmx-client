@@ -89,7 +89,13 @@ pub fn test_single_run() -> Result<()> {
 
     // PROVER OBSERVES THE CHALLENGE
     // AND RESPONDS WITH THE INPUT
-    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    let msgs = mine_and_wait(
+        &bitcoin_client,
+        &channels,
+        &mut instances,
+        &Some(wallet.clone()),
+        true,
+    )?;
     let (_uuid, _txid, name) = msgs[0].transaction().unwrap();
     assert_eq!(
         name.unwrap_or_default(),
@@ -112,7 +118,13 @@ pub fn test_single_run() -> Result<()> {
     );
 
     // VERIFIER DETECTS THE INPUT
-    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    let msgs = mine_and_wait(
+        &bitcoin_client,
+        &channels,
+        &mut instances,
+        &Some(wallet),
+        true,
+    )?;
     let (_uuid, _txid, name) = msgs[1].transaction().unwrap();
     assert_eq!(
         name.unwrap_or_default(),

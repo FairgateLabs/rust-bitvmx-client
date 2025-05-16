@@ -92,7 +92,13 @@ pub fn test_slot() -> Result<()> {
         .to_string()?,
     );
 
-    mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    mine_and_wait(
+        &bitcoin_client,
+        &channels,
+        &mut instances,
+        &Some(wallet),
+        true,
+    )?;
 
     bitcoind.stop()?;
     Ok(())

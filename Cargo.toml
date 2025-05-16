@@ -51,7 +51,7 @@ bitvmx-job-dispatcher-types = { path = "../rust-bitvmx-job-dispatcher/jobtypes",
 ] }
 zk-result = { path = "../rust-bitvmx-zk-proof/zk-result" }
 
-
+rust-bitvmx-wallet = { path = "../rust-bitvmx-wallet" }
 musig2 = { version = "0.2.3", features = ["serde", "rand"] }
 
 [dev-dependencies]

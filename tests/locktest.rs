@@ -1,8 +1,10 @@
+use std::{fs::File, io::Write};
+
 use anyhow::Result;
 use bitcoin::{
     key::rand::rngs::OsRng,
     secp256k1::{self, PublicKey as SecpPublicKey, SecretKey},
-    Address, Amount, Network, OutPoint, PublicKey, PublicKey as BitcoinPubKey, Transaction, Txid,
+    Address, Amount, Network, PublicKey as BitcoinPubKey,
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_client::{
@@ -20,6 +22,7 @@ use common::{
 };
 use key_manager::verifier::SignatureVerifier;
 use protocol_builder::scripts::{build_taproot_spend_info, ProtocolScript};
+use serde_json::json;
 use tracing::info;
 use uuid::Uuid;
 
@@ -48,7 +51,8 @@ pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, Address)> {
 #[ignore]
 #[test]
 pub fn test_lock() -> Result<()> {
-    test_lock_aux(false, false)
+    let network = Network::Regtest; //TODO: Get from config or elsewhere
+    test_lock_aux(false, false, network)
 }
 
 /*
@@ -58,17 +62,47 @@ pub fn test_integration() -> Result<()> {
     LockProtocol(true, true)
 }*/
 
-pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
+pub fn test_lock_aux(independent: bool, fake_hapy_path: bool, network: Network) -> Result<()> {
     config_trace();
 
-    const NETWORK: Network = Network::Regtest;
+    let is_regtest = network == Network::Regtest;
 
-    let (bitcoin_client, bitcoind, wallet) = if independent {
-        let (bitcoin_client, wallet) = prepare_bitcoin_running()?;
-        (bitcoin_client, None, wallet)
+    let (bitcoin_client, bitcoind, wallet) = if is_regtest {
+        let (bitcoin_client, bitcoind, wallet) = if independent {
+            let (bitcoin_client, wallet) = prepare_bitcoin_running()?;
+            (bitcoin_client, None, Some(wallet))
+        } else {
+            let (client, deamon, wallet) = prepare_bitcoin()?;
+            (client, Some(deamon), Some(wallet))
+        };
+
+        let bitvmx_wallet = fixtures::create_wallet()?;
+
+        let address = bitvmx_wallet.get_address()?;
+    
+        let amount = Amount::from_sat(20000);
+    
+        let (tx, vout) = bitcoin_client.fund_address(&address, amount)?;
+        let txid = tx.compute_txid();
+
+        let utxo = json!({
+            "txid": txid,
+            "vout": vout
+        });
+        let json_string = serde_json::to_string_pretty(&utxo).unwrap();
+        let mut file = File::create("utxo.json")?;
+        file.write_all(json_string.as_bytes())?;
+        
+        (bitcoin_client, bitcoind, wallet)
+    
     } else {
-        let (client, deamon, wallet) = prepare_bitcoin()?;
-        (client, Some(deamon), wallet)
+        let config = Config::new(Some("config/op_1.yaml".to_string()))?;
+        let bitcoin_client = BitcoinClient::new(
+            &config.bitcoin.url,
+            &config.bitcoin.username,
+            &config.bitcoin.password,
+        )?;
+        (bitcoin_client, None, None)
     };
 
     let (channels, mut instances) = if independent {
@@ -83,10 +117,8 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     } else {
         let (bitvmx_1, _addres_1, bridge_1, _) = init_bitvmx("op_1", false)?;
         let (bitvmx_2, _addres_2, bridge_2, _) = init_bitvmx("op_2", false)?;
-        let (bitvmx_3, _addres_3, bridge_3, _) = init_bitvmx("op_3", false)?;
-        let (bitvmx_4, _addres_4, bridge_4, _) = init_bitvmx("op_4", false)?;
-        let instances = vec![bitvmx_1, bitvmx_2, bitvmx_3, bitvmx_4];
-        let channels = vec![bridge_1, bridge_2, bridge_3, bridge_4];
+        let instances = vec![bitvmx_1, bitvmx_2];
+        let channels = vec![bridge_1, bridge_2];
         (channels, instances)
     };
 
@@ -158,14 +190,21 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     let hash = fixtures::sha256(preimage.as_bytes().to_vec());
 
     let (txid, pubuser, ordinal_fee, protocol_fee) =
-        fixtures::create_lockreq_ready(aggregated_pub_key, hash.clone(), NETWORK, &bitcoin_client)?;
+        fixtures::create_lockreq_ready(aggregated_pub_key, hash.clone(), network, &bitcoin_client)?;
 
     // OPERATORS WAITS FOR LOCKREQ TX
     let lockreqtx_on_chain = Uuid::new_v4();
     let command =
         IncomingBitVMXApiMessages::SubscribeToTransaction(lockreqtx_on_chain, txid).to_string()?;
     send_all(&channels, &command)?;
-    mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+
+    mine_and_wait(
+        &bitcoin_client,
+        &channels,
+        &mut instances,
+        &wallet,
+        is_regtest,
+    )?;
 
     // SETUP LOCK BEGIN
 
@@ -270,7 +309,13 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         .to_string()?,
     );
 
-    mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    mine_and_wait(
+        &bitcoin_client,
+        &channels,
+        &mut instances,
+        &wallet,
+        is_regtest,
+    )?;
 
     //EVENTUALY L2 DECIDED TO SEND THE HAPPY PATH
     //TODO: It should actually be signed in this moment and not before (could be signed but not shared the partials)
@@ -283,7 +328,13 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         .to_string()?,
     );
 
-    mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    mine_and_wait(
+        &bitcoin_client,
+        &channels,
+        &mut instances,
+        &wallet,
+        is_regtest,
+    )?;
 
     info!("happy path secret: {}", fake_secret);
     info!("happy path public: {}", aggregated_happy_path);
@@ -323,93 +374,6 @@ pub fn hardcoded_unspendable() -> SecpPublicKey {
         hex::decode("02f286025adef23a29582a429ee1b201ba400a9c57e5856840ca139abb629889ad")
             .expect("Invalid hex input");
     SecpPublicKey::from_slice(&key_bytes).expect("Invalid public key")
-}
-
-pub fn create_lockreq_ready(
-    aggregated_operators: PublicKey,
-    secret_hash: Vec<u8>,
-    network: Network,
-    bitcoin_client: &BitcoinClient,
-) -> Result<(Txid, SecpPublicKey, Amount, Amount)> {
-    //PublicKey user, txid, 0 :amount-ordinal, 1: amount-fees
-
-    let secp = secp256k1::Secp256k1::new();
-    let mut rng = OsRng;
-
-    // hardcoded unspendable
-    let unspendable = hardcoded_unspendable();
-
-    // emulate the user keypair
-    let user_sk = SecretKey::new(&mut rng);
-    let user_pk = SecpPublicKey::from_secret_key(&secp, &user_sk);
-    let (user_pk, user_sk) = fixtures::adjust_parity(&secp, user_pk, user_sk);
-    let user_pubkey = BitcoinPubKey {
-        compressed: true,
-        inner: user_pk,
-    };
-    let user_address: bitcoin::Address = bitcoin_client.get_new_address(user_pubkey, network);
-    info!(
-        "User Address({}): {:?}",
-        user_address.address_type().unwrap(),
-        user_address
-    );
-
-    const ONE_BTC: Amount = Amount::from_sat(100_000_000);
-
-    // Ordinal funding
-    const ORDINAL_AMOUNT: Amount = Amount::from_sat(10_000);
-    let funding_amount_ordinal = ORDINAL_AMOUNT;
-    let funding_tx_ordinal: Transaction;
-    let vout_ordinal: u32;
-    (funding_tx_ordinal, vout_ordinal) = bitcoin_client
-        .fund_address(&user_address, funding_amount_ordinal)
-        .unwrap();
-    let ordinal_txout = funding_tx_ordinal.output[vout_ordinal as usize].clone();
-
-    // Protocol fees funding
-    let funding_amount_used_for_protocol_fees = ONE_BTC;
-    let funding_tx_protocol_fees: Transaction;
-    let vout_protocol_fees: u32;
-    (funding_tx_protocol_fees, vout_protocol_fees) = bitcoin_client
-        .fund_address(&user_address, funding_amount_used_for_protocol_fees)
-        .unwrap();
-    let protocol_fees_txout = funding_tx_protocol_fees.output[vout_protocol_fees as usize].clone();
-
-    let ordinal_outpoint = OutPoint::new(funding_tx_ordinal.compute_txid(), vout_ordinal);
-    tracing::debug!("Ordinal outpoint: {:?}", ordinal_outpoint);
-
-    let protocol_fees_outpoint =
-        OutPoint::new(funding_tx_protocol_fees.compute_txid(), vout_protocol_fees);
-    tracing::debug!("Protocol fees outpoint: {:?}", protocol_fees_outpoint);
-
-    let protocol_fee = Amount::from_sat(1_000_000);
-
-    const MINER_FEE: Amount = Amount::from_sat(355_000);
-
-    let signed_lockreq_tx = fixtures::create_lockreq_tx_and_sign(
-        &secp,
-        funding_amount_ordinal,
-        ordinal_outpoint,
-        ordinal_txout,
-        10,
-        funding_amount_used_for_protocol_fees,
-        protocol_fee,
-        protocol_fees_outpoint,
-        protocol_fees_txout,
-        &aggregated_operators,
-        &user_sk,
-        &user_pubkey,
-        &user_address,
-        MINER_FEE,
-        secret_hash,
-        unspendable,
-    );
-
-    tracing::debug!("Signed lockreq transaction: {:#?}", signed_lockreq_tx);
-
-    let lockreq_txid = bitcoin_client.send_transaction(&signed_lockreq_tx).unwrap();
-
-    Ok((lockreq_txid, user_pk, funding_amount_ordinal, protocol_fee))
 }
 
 #[ignore]
@@ -458,3 +422,5 @@ pub fn test_prepare_bitcoin() -> Result<()> {
     prepare_bitcoin()?;
     Ok(())
 }
+
+

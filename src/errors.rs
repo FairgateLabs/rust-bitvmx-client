@@ -6,7 +6,7 @@ use bitvmx_job_dispatcher::dispatcher_error::DispatcherError;
 use config as settings;
 use emulator::{loader::program_definition::ProgramDefinitionError, EmulatorError};
 use key_manager::{
-    errors::{KeyManagerError, KeyStoreError, WinternitzError},
+    errors::{KeyManagerError, WinternitzError},
     musig2::errors::Musig2SignerError,
 };
 use p2p_handler::P2pHandlerError;
@@ -20,9 +20,6 @@ use uuid::Uuid;
 pub enum BitVMXError {
     #[error("Invalid configuration")]
     ConfigurationError(#[from] ConfigError),
-
-    #[error("Error when using KeyStore")]
-    KeyStoreError(#[from] KeyStoreError),
 
     #[error("Error when using KeyManager")]
     KeyManagerError(#[from] KeyManagerError),

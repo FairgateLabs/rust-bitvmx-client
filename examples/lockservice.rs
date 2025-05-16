@@ -21,13 +21,12 @@ use bitvmx_client::{
     },
 };
 
-use storage_backend::storage::Storage;
+use storage_backend::{storage::Storage, storage_config::StorageConfig};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 use std::{
-    path::PathBuf,
     str::FromStr,
     sync::{Arc, Mutex, Once},
 };
@@ -95,11 +94,13 @@ pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, Address)> {
     )?;
 
     let wallet = bitcoin_client
-        .init_wallet(Network::Regtest, "test_wallet")
+        .init_wallet(config.bitcoin.network, "test_wallet")
         .unwrap();
 
-    info!("Mine 1 blocks to address {:?}", wallet);
-    bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
+    if config.bitcoin.network == Network::Regtest {
+        info!("Mine 1 blocks to address {:?}", wallet);
+        bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
+    }
 
     Ok((bitcoin_client, wallet))
 }
@@ -131,7 +132,8 @@ pub fn main() -> Result<()> {
     config_trace();
 
     // This will act as rpc with to allow the wallets to talk with the L2
-    let broker_backend = Storage::new_with_path(&PathBuf::from("/tmp/lockservice_broker"))?;
+    let config = StorageConfig::new("/tmp/lockservice_broker".to_string(), None);
+    let broker_backend = Storage::new(&config)?;
     let broker_backend = Arc::new(Mutex::new(broker_backend));
     let broker_storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
     let broker_config = BrokerConfig::new(54321, None);
@@ -155,8 +157,9 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
     let bridge_2 = init_broker("op_2")?;
     let bridge_3 = init_broker("op_3")?;
     let bridge_4 = init_broker("op_4")?;
+    let bridge_5 = init_broker("op_testnet")?;
 
-    let channels = vec![bridge_1, bridge_2, bridge_3, bridge_4];
+    let channels = vec![bridge_1, bridge_2, bridge_3, bridge_4, bridge_5];
 
     let command = IncomingBitVMXApiMessages::GetCommInfo().to_string()?;
     send_all(&channels, &command)?;

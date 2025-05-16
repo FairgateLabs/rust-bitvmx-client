@@ -37,7 +37,6 @@ use p2p_handler::{LocalAllowList, P2pHandler, PeerId, ReceiveHandlerChannel};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashSet, VecDeque},
-    path::PathBuf,
     rc::Rc,
     sync::{Arc, Mutex},
     thread::sleep,
@@ -88,7 +87,7 @@ impl StoreKey {
 
 impl BitVMX {
     pub fn new(config: Config) -> Result<Self, BitVMXError> {
-        let store = Rc::new(Storage::new_with_path(&PathBuf::from(&config.storage.db))?);
+        let store = Rc::new(Storage::new(&config.storage)?);
         let key_chain = KeyChain::new(&config, store.clone())?;
         let communications_key = key_chain.communications_key.clone();
         let comms = P2pHandler::new::<LocalAllowList>(
@@ -107,7 +106,7 @@ impl BitVMX {
 
         //TOOD: This could be moved to a simplified helper inside brokerstorage new
         //Also the broker could be run independently if needed
-        let broker_backend = Storage::new_with_path(&PathBuf::from(&config.broker_storage))?;
+        let broker_backend = Storage::new(&config.broker_storage)?;
         let broker_backend = Arc::new(Mutex::new(broker_backend));
         let broker_storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
         let broker_config = BrokerConfig::new(config.broker_port, None);

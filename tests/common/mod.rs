@@ -41,11 +41,11 @@ pub fn init_bitvmx(
         None
     };
 
-    clear_db(&config.storage.db);
+    clear_db(&config.storage.path);
     clear_db(&config.key_storage.path);
-    clear_db(&config.broker_storage);
+    clear_db(&config.broker_storage.path);
 
-    info!("config: {:?}", config.storage.db);
+    info!("config: {:?}", config.storage.path);
 
     let bitvmx = BitVMX::new(config)?;
 
@@ -183,17 +183,24 @@ pub fn mine_and_wait(
     bitcoin_client: &BitcoinClient,
     channels: &Vec<DualChannel>,
     instances: &mut Vec<BitVMX>,
-    wallet: &Address,
+    wallet: &Option<Address>,
+    is_regtest: bool,
 ) -> Result<Vec<OutgoingBitVMXApiMessages>> {
     //MINE AND WAIT
-    for i in 0..100 {
-        if i % 10 == 0 {
-            bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
+    let loop_time = if is_regtest { 100 } else { 1000 };
+    let sleep_time = if is_regtest { 40 } else { 1000 };
+
+    for i in 0..loop_time {
+        if i % 10 == 0 && is_regtest {
+            bitcoin_client
+                .mine_blocks_to_address(1, &wallet.clone().unwrap())
+                .unwrap();
         }
+
         for instance in instances.iter_mut() {
             instance.tick()?;
         }
-        std::thread::sleep(std::time::Duration::from_millis(40));
+        std::thread::sleep(std::time::Duration::from_millis(sleep_time));
     }
     let msgs = get_all(&channels, instances, false)?;
 

@@ -1,19 +1,23 @@
 #![allow(dead_code)]
+use std::str::FromStr;
+
 use anyhow::Result;
 use bitcoin::{
     absolute,
-    key::{rand::rngs::OsRng, Parity, Secp256k1},
+    key::{Parity, Secp256k1},
     secp256k1::{self, All, Message, PublicKey as SecpPublicKey, SecretKey},
     sighash::SighashCache,
     transaction, Amount, Network, OutPoint, PrivateKey as BitcoinPrivKey, PublicKey,
     PublicKey as BitcoinPubKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness,
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
+use bitvmx_client::config::Config;
 use protocol_builder::scripts::{
     build_taproot_spend_info, reveal_secret, timelock, ProtocolScript, SignMode,
 };
+use serde_json::Value;
 use sha2::{Digest, Sha256};
-use tracing::info;
+//use tracing::info;
 
 pub fn sha256(data: Vec<u8>) -> Vec<u8> {
     let mut hasher = Sha256::new();
@@ -70,69 +74,49 @@ pub fn build_taptree_for_lockreq_tx_outputs(
 pub fn create_lockreq_ready(
     aggregated_operators: PublicKey,
     secret_hash: Vec<u8>,
-    network: Network,
+    _network: Network,
     bitcoin_client: &BitcoinClient,
 ) -> Result<(Txid, SecpPublicKey, Amount, Amount)> {
     //PublicKey user, txid, 0 :amount-ordinal, 1: amount-fees
 
     let secp = secp256k1::Secp256k1::new();
-    let mut rng = OsRng;
 
     // hardcoded unspendable
     let unspendable = hardcoded_unspendable();
 
-    // emulate the user keypair
-    let user_sk = SecretKey::new(&mut rng);
-    let user_pk = SecpPublicKey::from_secret_key(&secp, &user_sk);
-    let (user_pk, user_sk) = adjust_parity(&secp, user_pk, user_sk);
-    let user_pubkey = BitcoinPubKey {
-        compressed: true,
-        inner: user_pk,
-    };
-    let user_address: bitcoin::Address = bitcoin_client.get_new_address(user_pubkey, network);
-    info!(
-        "User Address({}): {:?}",
-        user_address.address_type().unwrap(),
-        user_address
-    );
+    let data = std::fs::read_to_string("utxo.json")?;
+    let parsed: Value = serde_json::from_str(&data).expect("Failed to parse JSON");
 
-    const ONE_BTC: Amount = Amount::from_sat(100_000_000);
+    let txid = parsed["txid"].as_str().unwrap_or("missing");
+    let vout = parsed["vout"]
+        .as_u64()
+        .unwrap_or(0) as u32;
 
-    // Ordinal funding
-    const ORDINAL_AMOUNT: Amount = Amount::from_sat(10_000);
-    let funding_amount_ordinal = ORDINAL_AMOUNT;
-    let funding_tx_ordinal: Transaction;
-    let vout_ordinal: u32;
-    (funding_tx_ordinal, vout_ordinal) = bitcoin_client
-        .fund_address(&user_address, funding_amount_ordinal)
+    let bitvmx_wallet = create_wallet()?;
+    let funding_txid = Txid::from_str(txid)?;
+    let user_sk = bitvmx_wallet.get_secret_key()?;
+    let user_pubkey = bitvmx_wallet.get_pubkey()?;
+    let user_address = bitvmx_wallet.get_address()?;
+    
+    let ordinal_prev_outpoint = OutPoint::new(funding_txid, vout);
+    let funding_tx = bitcoin_client
+        .get_transaction(&funding_txid)?
         .unwrap();
-    let ordinal_txout = funding_tx_ordinal.output[vout_ordinal as usize].clone();
+    let ordinal_prev_txout = funding_tx.output[vout as usize].clone();
 
-    // Protocol fees funding
-    let funding_amount_used_for_protocol_fees = ONE_BTC;
-    let funding_tx_protocol_fees: Transaction;
-    let vout_protocol_fees: u32;
-    (funding_tx_protocol_fees, vout_protocol_fees) = bitcoin_client
-        .fund_address(&user_address, funding_amount_used_for_protocol_fees)
-        .unwrap();
-    let protocol_fees_txout = funding_tx_protocol_fees.output[vout_protocol_fees as usize].clone();
+    let protocol_fees_outpoint = OutPoint::new(funding_txid, vout);
+    let protocol_fees_txout = funding_tx.output[vout as usize].clone();
 
-    let ordinal_outpoint = OutPoint::new(funding_tx_ordinal.compute_txid(), vout_ordinal);
-    tracing::debug!("Ordinal outpoint: {:?}", ordinal_outpoint);
-
-    let protocol_fees_outpoint =
-        OutPoint::new(funding_tx_protocol_fees.compute_txid(), vout_protocol_fees);
-    tracing::debug!("Protocol fees outpoint: {:?}", protocol_fees_outpoint);
-
-    let protocol_fee = Amount::from_sat(1_000_000);
-
-    const MINER_FEE: Amount = Amount::from_sat(355_000);
+    let funding_amount_used_for_protocol_fees = funding_tx.output[vout as usize].value;
+    let funding_amount_ordinal = Amount::from_sat(10_000);
+    let protocol_fee = Amount::from_sat(1000);
+    let miner_fee = Amount::from_sat(300);
 
     let signed_lockreq_tx = create_lockreq_tx_and_sign(
         &secp,
         funding_amount_ordinal,
-        ordinal_outpoint,
-        ordinal_txout,
+        ordinal_prev_outpoint,
+        ordinal_prev_txout,
         10,
         funding_amount_used_for_protocol_fees,
         protocol_fee,
@@ -142,7 +126,7 @@ pub fn create_lockreq_ready(
         &user_sk,
         &user_pubkey,
         &user_address,
-        MINER_FEE,
+        miner_fee,
         secret_hash,
         unspendable,
     );
@@ -151,7 +135,7 @@ pub fn create_lockreq_ready(
 
     let lockreq_txid = bitcoin_client.send_transaction(&signed_lockreq_tx).unwrap();
 
-    Ok((lockreq_txid, user_pk, funding_amount_ordinal, protocol_fee))
+    Ok((lockreq_txid, user_pubkey.inner, funding_amount_ordinal, protocol_fee))
 }
 
 pub fn create_lockreq_tx_and_sign(
@@ -174,7 +158,8 @@ pub fn create_lockreq_tx_and_sign(
 ) -> Transaction {
     let timelock_script = timelock(timelock_blocks, &user_pubkey, SignMode::Single);
 
-    let reveal_secret_script = reveal_secret(secret_hash.to_vec(), &ops_agg_pubkey, SignMode::Aggregate);
+    let reveal_secret_script =
+        reveal_secret(secret_hash.to_vec(), &ops_agg_pubkey, SignMode::Aggregate);
     let lockreq_tx_output_taptree = build_taptree_for_lockreq_tx_outputs(
         &secp,
         unspendable_pub_key,
@@ -301,4 +286,22 @@ pub fn create_lockreq_tx_and_sign(
     let signed_transaction = sighasher.into_transaction().to_owned();
 
     signed_transaction
+}
+
+pub fn create_wallet() -> Result<rust_bitvmx_wallet::wallet::Wallet> {
+    let config = Config::new(Some("config/op_1.yaml".to_string()))?;
+
+    let store = std::rc::Rc::new(storage_backend::storage::Storage::new(&config.storage)?);
+
+    let keystore = key_manager::key_store::KeyStore::new(store.clone());
+
+    let key_manager = key_manager::create_key_manager_from_config(&config.key_manager, keystore, store)?;
+
+    let bitvmx_wallet = rust_bitvmx_wallet::wallet::Wallet::new(
+        config.bitcoin.network,
+        config.bitcoin,
+        key_manager,
+    );
+
+    Ok(bitvmx_wallet)
 }
