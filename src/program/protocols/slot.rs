@@ -101,6 +101,12 @@ impl ProtocolHandler for SlotProtocol {
         name: &str,
         program_context: &ProgramContext,
     ) -> Result<Transaction, BitVMXError> {
+        //TODO: this is hacky. parametrize get_transaction_name
+        if name.starts_with("unsigned_") {
+            let name = name.strip_prefix("unsigned_").unwrap();
+            return Ok(self.load_protocol()?.transaction_by_name(name)?.clone());
+        }
+
         if name.starts_with(CERT_HASH_TX) {
             return Ok(self.get_signed_tx(program_context, name, 0, 0, false)?);
         }
@@ -197,7 +203,9 @@ impl ProtocolHandler for SlotProtocol {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         let fee = context.globals.get_var(&self.ctx.id, "FEE")?.number()? as u64;
+        let protocol_cost = 200_000;
         let speedup_dust = 500;
+        let gid_max = 8;
 
         let ops_agg_pubkey = context
             .globals
@@ -232,7 +240,8 @@ impl ProtocolHandler for SlotProtocol {
         let claim_gate_cost = ClaimGate::cost(fee, speedup_dust, keys.len() as u8 - 1, 1);
 
         //ClaimGate::new(&mut protocol, from, claim_name, aggregated, amount_fee, amount_dust, stop_count, timelock_blocks, actions)
-        let amount_for_sequence = fee + speedup_dust + amount_for_publish_gid + claim_gate_cost;
+        let amount_for_sequence =
+            fee + speedup_dust + amount_for_publish_gid + claim_gate_cost + 3 * protocol_cost;
 
         for (i, key) in keys.iter().enumerate() {
             //Verify the winternitz signature
@@ -246,7 +255,7 @@ impl ProtocolHandler for SlotProtocol {
             let output_type = OutputType::taproot(
                 amount_for_sequence,
                 &ops_agg_pubkey,
-                &[winternitz_check],
+                &[winternitz_check.clone()],
                 &SpendMode::All {
                     key_path_sign: SignMode::Aggregate,
                 },
@@ -276,9 +285,25 @@ impl ProtocolHandler for SlotProtocol {
                 vec![],
             )?;
 
+            let start_challenge = OutputType::taproot(
+                protocol_cost,
+                &ops_agg_pubkey,
+                &[winternitz_check],
+                &SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+                &vec![],
+            )?;
+
+            for n in 0..keys.len() {
+                if n != i {
+                    protocol.add_transaction_output(&certhashtx, &start_challenge)?;
+                }
+            }
+
             //create the group id output
             let key_name = group_id(i);
-            let mut leaves: Vec<ProtocolScript> = (1..=15)
+            let mut leaves: Vec<ProtocolScript> = (1..=gid_max)
                 .map(|gid| winternitz_equality(key, &ops_agg_pubkey, &key_name, gid).unwrap())
                 .collect();
             let timelock_script = timelock(TIMELOCK_BLOCKS, &ops_agg_pubkey, SignMode::Aggregate);
@@ -302,7 +327,7 @@ impl ProtocolHandler for SlotProtocol {
             protocol.add_transaction_output(&certhashtx, &output_type)?;
 
             // create txs that consumes the gid
-            for gid in 1..=15 {
+            for gid in 1..=gid_max {
                 let gidtx = group_id_tx(i, gid);
                 protocol.add_transaction(&gidtx)?;
 

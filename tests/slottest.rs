@@ -6,7 +6,9 @@ use bitvmx_client::{
 };
 use common::{
     config_trace, get_all, init_bitvmx, init_utxo, mine_and_wait, prepare_bitcoin, send_all,
+    wait_message_from_channel,
 };
+use tracing::info;
 use uuid::Uuid;
 
 mod common;
@@ -24,9 +26,9 @@ pub fn test_slot() -> Result<()> {
     let (bitvmx_1, _addres_1, bridge_1, _) = init_bitvmx("op_1", false)?;
     let (bitvmx_2, _addres_2, bridge_2, _) = init_bitvmx("op_2", false)?;
     let (bitvmx_3, _addres_3, bridge_3, _) = init_bitvmx("op_3", false)?;
-    let (bitvmx_4, _addres_4, bridge_4, _) = init_bitvmx("op_4", false)?;
-    let mut instances = vec![bitvmx_1, bitvmx_2, bitvmx_3, bitvmx_4];
-    let channels = vec![bridge_1, bridge_2, bridge_3, bridge_4];
+    //let (bitvmx_4, _addres_4, bridge_4, _) = init_bitvmx("op_4", false)?;
+    let mut instances = vec![bitvmx_1, bitvmx_2, bitvmx_3]; //, bitvmx_4];
+    let channels = vec![bridge_1, bridge_2, bridge_3]; // , bridge_4];
 
     //get to the top of the blockchain
     for _ in 0..101 {
@@ -84,7 +86,28 @@ pub fn test_slot() -> Result<()> {
             .to_string()?;
     send_all(&channels, &setup_msg)?;
 
-    get_all(&channels, &mut instances, false)?;
+    //wait setup complete
+    let _msg = get_all(&channels, &mut instances, false)?;
+
+    info!("{:?}", _msg[0]);
+
+    // this should be done for all operators, but for now just setup one dispute
+    let _ = channels[1].send(
+        BITVMX_ID,
+        IncomingBitVMXApiMessages::GetTransactionInofByName(
+            program_id,
+            format!("unsigned_{}", program::protocols::slot::cert_hash_tx_op(1)),
+        )
+        .to_string()?,
+    );
+    info!("Waiting for transaction info...");
+    let mut mutinstances = instances.iter_mut().collect::<Vec<_>>();
+    let msg = wait_message_from_channel(&channels[1], &mut mutinstances, false)?;
+    let (_uuid, _name, tx) = OutgoingBitVMXApiMessages::from_string(&msg.0)?
+        .transaction_info()
+        .unwrap();
+    let output = tx.output;
+    info!("Outputs: {:?}", output);
 
     let _ = channels[1].send(
         BITVMX_ID,
