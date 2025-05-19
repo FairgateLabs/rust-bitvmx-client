@@ -299,7 +299,7 @@ impl ProtocolHandler for SlotProtocol {
                     0,
                     &gidtx,
                     Sequence::ENABLE_RBF_NO_LOCKTIME,
-                    &SpendMode::Script { leaf: 4 }, //TODO: test with gid
+                    &SpendMode::Script { leaf: gid as usize }, //TODO: test with gid
                     &SighashType::taproot_all(),
                 )?;
 
@@ -332,9 +332,7 @@ impl ProtocolHandler for SlotProtocol {
                 0,
                 &gidtotx,
                 Sequence::from_height(TIMELOCK_BLOCKS),
-                &SpendMode::All {
-                    key_path_sign: SignMode::Aggregate,
-                },
+                &SpendMode::Script { leaf: 0 },
                 &SighashType::taproot_all(),
             )?;
 
