@@ -6,8 +6,6 @@ use bitcoin_scriptexec::scriptint_vec;
 use enum_dispatch::enum_dispatch;
 use key_manager::winternitz::{message_bytes_length, WinternitzType};
 use protocol_builder::scripts::{self, SignMode};
-use protocol_builder::types::input::LeafSpec;
-use protocol_builder::types::output::SpendMode;
 use protocol_builder::types::{InputArgs, OutputType};
 use protocol_builder::{builder::Protocol, errors::ProtocolBuilderError};
 use serde::{Deserialize, Serialize};
@@ -148,8 +146,7 @@ pub trait ProtocolHandler {
             .input_taproot_script_spend_signature(name, input_index as usize, leaf_index as usize)?
             .unwrap();
         let spend = protocol.get_script_to_spend(name, input_index, leaf_index)?;
-        let mut spending_args =
-            InputArgs::new_taproot_script_args(LeafSpec::Index(leaf_index as usize));
+        let mut spending_args = InputArgs::new_taproot_script_args(leaf_index as usize);
 
         for k in spend.get_keys().iter().rev() {
             let message = context
@@ -184,7 +181,7 @@ pub trait ProtocolHandler {
             let signature = protocol
                 .input_taproot_script_spend_signature(name, 1, 0)?
                 .unwrap();
-            let mut spending_args = InputArgs::new_taproot_script_args(LeafSpec::Index(0));
+            let mut spending_args = InputArgs::new_taproot_script_args(0);
             spending_args.push_taproot_signature(signature)?;
             args.push(spending_args);
         }
@@ -332,9 +329,6 @@ pub fn external_fund_tx(aggregated: &PublicKey, amount: u64) -> Result<OutputTyp
         amount,
         aggregated,
         &spending_scripts,
-        &SpendMode::All {
-            key_path_sign: SignMode::Aggregate,
-        },
         &vec![prevout],
     )?)
 }

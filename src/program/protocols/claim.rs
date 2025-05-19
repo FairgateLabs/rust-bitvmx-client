@@ -54,9 +54,6 @@ impl ClaimGate {
             amount_fee + amount_fee + ((2 + actions.len() as u64) * amount_dust),
             aggregated,
             &vec![verify_aggregated.clone()],
-            &SpendMode::All {
-                key_path_sign: SignMode::Aggregate,
-            },
             &vec![],
         )?;
 
@@ -67,6 +64,10 @@ impl ClaimGate {
             from,
             &stx,
             &claim_start,
+            &SpendMode::All {
+                //TODO: check proper signing
+                key_path_sign: SignMode::Aggregate,
+            },
             &SighashType::taproot_all(),
         )?;
 
@@ -76,9 +77,6 @@ impl ClaimGate {
             amount_fee + ((1 + actions.len() as u64) * amount_dust),
             aggregated,
             &vec![verify_aggregated.clone(), timeout],
-            &SpendMode::All {
-                key_path_sign: SignMode::Aggregate,
-            },
             &vec![],
         )?;
 
@@ -90,9 +88,6 @@ impl ClaimGate {
             amount_fee + amount_dust,
             aggregated,
             &vec![verify_aggregated.clone()],
-            &SpendMode::All {
-                key_path_sign: SignMode::Aggregate,
-            },
             &vec![],
         )?;
 
@@ -103,6 +98,9 @@ impl ClaimGate {
                 from,
                 &stopname,
                 &claim_stop,
+                &SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
                 &SighashType::taproot_all(),
             )?;
             protocol.add_transaction_input(
@@ -110,6 +108,9 @@ impl ClaimGate {
                 0,
                 &stopname,
                 Sequence::ENABLE_RBF_NO_LOCKTIME,
+                &SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
                 &SighashType::taproot_all(),
             )?;
             protocol.connect(
@@ -129,6 +130,10 @@ impl ClaimGate {
             &stx,
             &success,
             &claim_start,
+            &SpendMode::All {
+                //TODO: check proper signing
+                key_path_sign: SignMode::Aggregate,
+            },
             &SighashType::taproot_all(),
             timelock_blocks,
         )?;
@@ -140,9 +145,6 @@ impl ClaimGate {
                 amount_dust,
                 action,
                 &vec![verify_aggregated_action],
-                &SpendMode::All {
-                    key_path_sign: SignMode::Aggregate,
-                },
                 &vec![],
             )?;
 
@@ -174,6 +176,10 @@ impl ClaimGate {
                 self.vout + 1,
                 to,
                 Sequence::ENABLE_RBF_NO_LOCKTIME,
+                &SpendMode::All {
+                    //TODO: check proper signing
+                    key_path_sign: SignMode::Aggregate,
+                },
                 &SighashType::taproot_all(),
             )?;
 

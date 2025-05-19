@@ -8,7 +8,7 @@ use protocol_builder::{
     errors::ProtocolBuilderError,
     scripts::{self, timelock, ProtocolScript, SignMode},
     types::{
-        input::{InputSpec, LeafSpec, SighashType},
+        input::{InputSpec, SighashType},
         output::SpendMode,
         InputArgs, OutputType,
     },
@@ -230,6 +230,9 @@ impl ProtocolHandler for SlotProtocol {
             fund_utxo.1,
             output_type,
             SETUP_TX,
+            &SpendMode::All {
+                key_path_sign: SignMode::Aggregate,
+            },
             &SighashType::taproot_all(),
         )?;
         amount -= fee;
@@ -256,9 +259,6 @@ impl ProtocolHandler for SlotProtocol {
                 amount_for_sequence,
                 &ops_agg_pubkey,
                 &[winternitz_check.clone()],
-                &SpendMode::All {
-                    key_path_sign: SignMode::Aggregate,
-                },
                 &vec![],
             )?;
 
@@ -269,6 +269,9 @@ impl ProtocolHandler for SlotProtocol {
                 SETUP_TX,
                 &certhashtx,
                 &output_type,
+                &SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
                 &SighashType::taproot_all(),
             )?;
 
@@ -281,19 +284,8 @@ impl ProtocolHandler for SlotProtocol {
             leaves.insert(0, timelock_script);
             //put timelock as zero so the index matches the gid
 
-            let output_type = OutputType::taproot(
-                amount_for_publish_gid,
-                &ops_agg_pubkey,
-                &leaves,
-                //TODO: this should be moved to the input part
-                /*&SpendMode::All {
-                    key_path_sign: SignMode::Aggregate,
-                },*/
-                &SpendMode::Script {
-                    leaf: LeafSpec::Index(4),
-                },
-                &vec![],
-            )?;
+            let output_type =
+                OutputType::taproot(amount_for_publish_gid, &ops_agg_pubkey, &leaves, &vec![])?;
 
             protocol.add_transaction_output(&certhashtx, &output_type)?;
 
@@ -307,6 +299,7 @@ impl ProtocolHandler for SlotProtocol {
                     0,
                     &gidtx,
                     Sequence::ENABLE_RBF_NO_LOCKTIME,
+                    &SpendMode::Script { leaf: 4 }, //TODO: test with gid
                     &SighashType::taproot_all(),
                 )?;
 
@@ -339,6 +332,9 @@ impl ProtocolHandler for SlotProtocol {
                 0,
                 &gidtotx,
                 Sequence::from_height(TIMELOCK_BLOCKS),
+                &SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
                 &SighashType::taproot_all(),
             )?;
 
@@ -363,15 +359,8 @@ impl ProtocolHandler for SlotProtocol {
                 vec![],
             )?;
 
-            let start_challenge = OutputType::taproot(
-                protocol_cost,
-                &ops_agg_pubkey,
-                &[winternitz_check],
-                &SpendMode::All {
-                    key_path_sign: SignMode::Aggregate,
-                },
-                &vec![],
-            )?;
+            let start_challenge =
+                OutputType::taproot(protocol_cost, &ops_agg_pubkey, &[winternitz_check], &vec![])?;
 
             for n in 0..keys.len() {
                 if n != i {

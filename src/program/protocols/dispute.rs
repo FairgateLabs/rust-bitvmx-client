@@ -546,6 +546,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             utxo.1,
             output_type,
             START_CH,
+            &SpendMode::All {
+                //TODO: fix proper leaf
+                key_path_sign: SignMode::Aggregate,
+            },
             &SighashType::taproot_all(),
         )?;
 
@@ -782,21 +786,17 @@ impl DisputeResolutionProtocol {
             leave.set_assert_leaf_id(pos as u32);
         }
 
-        let output_type = OutputType::taproot(
-            amount,
-            aggregated,
-            &leaves,
-            &SpendMode::All {
-                key_path_sign: SignMode::Aggregate,
-            },
-            &vec![],
-        )?;
+        let output_type = OutputType::taproot(amount, aggregated, &leaves, &vec![])?;
 
         protocol.add_connection(
             &format!("{}__{}", from, to),
             from,
             to,
             &output_type,
+            &SpendMode::All {
+                //TODO: fix proper leaf
+                key_path_sign: SignMode::Aggregate,
+            },
             &SighashType::taproot_all(),
         )?;
 
@@ -805,6 +805,10 @@ impl DisputeResolutionProtocol {
             from,
             &format!("{}_TO", to),
             &output_type,
+            &SpendMode::All {
+                //TODO: fix proper leaf
+                key_path_sign: SignMode::Aggregate,
+            },
             &SighashType::taproot_all(),
             timelock_blocks,
         )?;
@@ -886,21 +890,17 @@ impl DisputeResolutionProtocol {
             leave.set_assert_leaf_id(pos as u32);
         }
 
-        let output_type = OutputType::taproot(
-            amount,
-            aggregated,
-            &leaves,
-            &SpendMode::All {
-                key_path_sign: SignMode::Aggregate,
-            },
-            &vec![],
-        )?;
+        let output_type = OutputType::taproot(amount, aggregated, &leaves, &vec![])?;
 
         protocol.add_connection(
             &format!("{}__{}", from, to),
             from,
             to,
             &output_type,
+            &SpendMode::All {
+                //TODO: fix proper leaf
+                key_path_sign: SignMode::Aggregate,
+            },
             &SighashType::taproot_all(),
         )?;
 
@@ -909,6 +909,10 @@ impl DisputeResolutionProtocol {
             from,
             &format!("{}_TO", to),
             &output_type,
+            &SpendMode::All {
+                //TODO: fix proper leaf
+                key_path_sign: SignMode::Aggregate,
+            },
             &SighashType::taproot_all(),
             timelock_blocks,
         )?;
