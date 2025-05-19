@@ -272,35 +272,6 @@ impl ProtocolHandler for SlotProtocol {
                 &SighashType::taproot_all(),
             )?;
 
-            //add the claimgate
-            let _claim_gate = ClaimGate::new(
-                &mut protocol,
-                &certhashtx,
-                &format!("OP_WINS_{}", i),
-                &ops_agg_pubkey,
-                fee,
-                speedup_dust,
-                keys.len() as u8 - 1,
-                TIMELOCK_BLOCKS,
-                vec![],
-            )?;
-
-            let start_challenge = OutputType::taproot(
-                protocol_cost,
-                &ops_agg_pubkey,
-                &[winternitz_check],
-                &SpendMode::All {
-                    key_path_sign: SignMode::Aggregate,
-                },
-                &vec![],
-            )?;
-
-            for n in 0..keys.len() {
-                if n != i {
-                    protocol.add_transaction_output(&certhashtx, &start_challenge)?;
-                }
-            }
-
             //create the group id output
             let key_name = group_id(i);
             let mut leaves: Vec<ProtocolScript> = (1..=gid_max)
@@ -346,6 +317,16 @@ impl ProtocolHandler for SlotProtocol {
                     &gidtx,
                     InputSpec::Index(0),
                 )?;
+
+                // Add one extra non-spendable output to each challenge response transaction to ensure different txids
+                let differenciator = scripts::op_return_script(vec![gid as u8])?
+                    .get_script()
+                    .clone();
+                protocol.add_transaction_output(
+                    &gidtx,
+                    &OutputType::segwit_unspendable(differenciator)?,
+                )?;
+
                 pb.add_speedup_output(&mut protocol, &gidtx, speedup_dust, &ops_agg_pubkey)?;
             }
 
@@ -368,6 +349,35 @@ impl ProtocolHandler for SlotProtocol {
                 &gidtotx,
                 InputSpec::Index(0),
             )?;
+
+            //add the claimgate
+            let _claim_gate = ClaimGate::new(
+                &mut protocol,
+                &certhashtx,
+                &format!("OP_WINS_{}", i),
+                &ops_agg_pubkey,
+                fee,
+                speedup_dust,
+                keys.len() as u8 - 1,
+                TIMELOCK_BLOCKS,
+                vec![],
+            )?;
+
+            let start_challenge = OutputType::taproot(
+                protocol_cost,
+                &ops_agg_pubkey,
+                &[winternitz_check],
+                &SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+                &vec![],
+            )?;
+
+            for n in 0..keys.len() {
+                if n != i {
+                    protocol.add_transaction_output(&certhashtx, &start_challenge)?;
+                }
+            }
 
             pb.add_speedup_output(&mut protocol, &gidtotx, speedup_dust, &ops_agg_pubkey)?;
 

@@ -106,7 +106,39 @@ pub fn test_slot() -> Result<()> {
     let (_uuid, _name, tx) = OutgoingBitVMXApiMessages::from_string(&msg.0)?
         .transaction_info()
         .unwrap();
-    let output = tx.output;
+    let output = &tx.output;
+    let _txid = tx.compute_txid();
+
+    //=====================================
+    //should create a new aggregated for this pair (or create before all the pairs)
+    //prepare the channels and participants
+    /*
+    let drp_id_1_0 = Uuid::new_v4();
+    let protocol_fee = 200_000;
+    let set_fee = VariableTypes::Number(10_000).set_msg(program_id, "FEE")?;
+    send_all(&channels, &set_fee)?;
+
+    let set_aggregated_msg =
+        VariableTypes::PubKey(set_ops_aggregated).set_msg(program_id, "aggregated")?;
+    send_all(&channels, &set_aggregated_msg)?;
+
+    let set_utxo_msg =
+        VariableTypes::Utxo((txid, 2, Some(protocol_fee))).set_msg(program_id, "utxo")?;
+    send_all(&channels, &set_utxo_msg)?;
+
+    //let program_path = "../BitVMX-CPU/docker-riscv32/verifier/build/zkverifier-new-mul.yaml";
+    let program_path = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
+    let set_program = VariableTypes::String(program_path.to_string())
+        .set_msg(program_id, "program_definition")?;
+    send_all(&channels, &set_program)?;
+
+    let setup_msg =
+        IncomingBitVMXApiMessages::Setup(program_id, PROGRAM_TYPE_DRP.to_string(), participants, 1)
+            .to_string()?;
+    send_all(&channels, &setup_msg)?;
+    */
+    // ==========================
+
     info!("Outputs: {:?}", output);
 
     let _ = channels[1].send(
