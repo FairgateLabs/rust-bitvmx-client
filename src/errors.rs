@@ -2,6 +2,7 @@ use bitcoin::{consensus::encode::FromHexError, network::ParseNetworkError};
 use bitcoin_coordinator::errors::BitcoinCoordinatorError;
 use bitcoincore_rpc::bitcoin::{key::ParsePublicKeyError, sighash::SighashTypeParseError};
 use bitvmx_broker::rpc::errors::BrokerError;
+use bitvmx_cpu_definitions::challenge::EmulatorResultError;
 use bitvmx_job_dispatcher::dispatcher_error::DispatcherError;
 use config as settings;
 use emulator::{loader::program_definition::ProgramDefinitionError, EmulatorError};
@@ -115,6 +116,9 @@ pub enum BitVMXError {
 
     #[error("Emulator Error {0}")]
     EmulatorError(#[from] EmulatorError),
+
+    #[error("Emulator Result Error {0}")]
+    EmulatorResultError(#[from] EmulatorResultError),
 
     #[error("ProgramDefinition Error {0}")]
     ProgramDefinitionError(#[from] ProgramDefinitionError),

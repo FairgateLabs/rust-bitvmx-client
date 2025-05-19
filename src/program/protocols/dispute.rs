@@ -157,6 +157,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     input_program,
                     "runs/".to_string(),
                     format!("runs/{}", "execution.json").to_string(),
+                    None
                 ),
             })?;
 
