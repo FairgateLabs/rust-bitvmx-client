@@ -2,7 +2,10 @@ use anyhow::Result;
 use bitcoin::Amount;
 use bitvmx_client::{
     program::{self, protocols::slot::group_id, variables::VariableTypes},
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_SLOT},
+    types::{
+        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_DRP,
+        PROGRAM_TYPE_SLOT,
+    },
 };
 use common::{
     config_trace, get_all, init_bitvmx, init_utxo, mine_and_wait, prepare_bitcoin, send_all,
@@ -23,8 +26,8 @@ pub fn test_slot() -> Result<()> {
 
     let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
 
-    let (bitvmx_1, _addres_1, bridge_1, _) = init_bitvmx("op_1", false)?;
-    let (bitvmx_2, _addres_2, bridge_2, _) = init_bitvmx("op_2", false)?;
+    let (bitvmx_1, address_1, bridge_1, _) = init_bitvmx("op_1", false)?;
+    let (bitvmx_2, address_2, bridge_2, _) = init_bitvmx("op_2", false)?;
     let (bitvmx_3, _addres_3, bridge_3, _) = init_bitvmx("op_3", false)?;
     //let (bitvmx_4, _addres_4, bridge_4, _) = init_bitvmx("op_4", false)?;
     let mut instances = vec![bitvmx_1, bitvmx_2, bitvmx_3]; //, bitvmx_4];
@@ -107,37 +110,54 @@ pub fn test_slot() -> Result<()> {
         .transaction_info()
         .unwrap();
     let output = &tx.output;
-    let _txid = tx.compute_txid();
+    let txid = tx.compute_txid();
     info!("Output: {:?}", output);
 
     //=====================================
-    //should create a new aggregated for this pair (or create before all the pairs)
-    //prepare the channels and participants
-    /*
+
+    let participants = vec![address_1, address_2];
+    let sub_channel = vec![channels[0].clone(), channels[1].clone()];
+
+    //ask the peers to generate the aggregated public key
+    let aggregation_id = Uuid::new_v4();
+    let command =
+        IncomingBitVMXApiMessages::SetupKey(aggregation_id, participants.clone(), 0).to_string()?;
+    send_all(&sub_channel, &command)?;
+
+    let msgs = get_all(&sub_channel, &mut instances, false)?;
+    let pair_aggregated_pub_key = msgs[0].aggregated_pub_key().unwrap();
+
     let drp_id_1_0 = Uuid::new_v4();
     let protocol_fee = 200_000;
-    let set_fee = VariableTypes::Number(10_000).set_msg(program_id, "FEE")?;
-    send_all(&channels, &set_fee)?;
+    let set_fee = VariableTypes::Number(10_000).set_msg(drp_id_1_0, "FEE")?;
+    send_all(&sub_channel, &set_fee)?;
 
     let set_aggregated_msg =
-        VariableTypes::PubKey(set_ops_aggregated).set_msg(program_id, "aggregated")?;
-    send_all(&channels, &set_aggregated_msg)?;
+        VariableTypes::PubKey(pair_aggregated_pub_key).set_msg(drp_id_1_0, "aggregated")?;
+    send_all(&sub_channel, &set_aggregated_msg)?;
 
     let set_utxo_msg =
-        VariableTypes::Utxo((txid, 2, Some(protocol_fee))).set_msg(program_id, "utxo")?;
-    send_all(&channels, &set_utxo_msg)?;
+        VariableTypes::Utxo((txid, 4, Some(protocol_fee))).set_msg(drp_id_1_0, "utxo")?;
+    send_all(&sub_channel, &set_utxo_msg)?;
+
+    let set_utxo_msg = VariableTypes::Utxo((txid, 2, Some(10_500)))
+        .set_msg(drp_id_1_0, "utxo_prover_win_action")?;
+    send_all(&sub_channel, &set_utxo_msg)?;
 
     //let program_path = "../BitVMX-CPU/docker-riscv32/verifier/build/zkverifier-new-mul.yaml";
     let program_path = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
     let set_program = VariableTypes::String(program_path.to_string())
-        .set_msg(program_id, "program_definition")?;
-    send_all(&channels, &set_program)?;
+        .set_msg(drp_id_1_0, "program_definition")?;
+    send_all(&sub_channel, &set_program)?;
 
     let setup_msg =
-        IncomingBitVMXApiMessages::Setup(program_id, PROGRAM_TYPE_DRP.to_string(), participants, 1)
+        IncomingBitVMXApiMessages::Setup(drp_id_1_0, PROGRAM_TYPE_DRP.to_string(), participants, 1)
             .to_string()?;
-    send_all(&channels, &setup_msg)?;
-    */
+    send_all(&sub_channel, &setup_msg)?;
+    //wait setup complete
+    let msgs = get_all(&sub_channel, &mut instances, false)?;
+    info!("{:?}", msgs[0]);
+
     // ==========================
 
     info!("Outputs: {:?}", output);
