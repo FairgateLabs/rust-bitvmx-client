@@ -108,6 +108,7 @@ pub fn test_slot() -> Result<()> {
         .unwrap();
     let output = &tx.output;
     let _txid = tx.compute_txid();
+    info!("Output: {:?}", output);
 
     //=====================================
     //should create a new aggregated for this pair (or create before all the pairs)

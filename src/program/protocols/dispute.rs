@@ -15,7 +15,11 @@ use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
     errors::ProtocolBuilderError,
     scripts::{self, SignMode},
-    types::{input::SighashType, output::SpendMode, InputArgs, OutputType},
+    types::{
+        input::{InputSpec, SighashType},
+        output::SpendMode,
+        InputArgs, OutputType,
+    },
 };
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -43,6 +47,7 @@ pub const EXECUTE: &str = "EXECUTE";
 pub const TIMELOCK_BLOCKS: u16 = 20;
 pub const PROVER_WINS: &str = "PROVER_WINS";
 pub const VERIFIER_WINS: &str = "VERIFIER_WINS";
+pub const ACTION_PROVER_WINS: &str = "ACTION_PROVER_WINS";
 
 pub const TRACE_VARS: [(&str, usize); 15] = [
     ("write_address", 4 as usize),
@@ -514,6 +519,17 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             )?;
         }
 
+        if name == ClaimGate::tx_success(PROVER_WINS) && self.role() == ParticipantRole::Prover {
+            //Execute actions.
+            //Could execute more than one
+            info!("Prover. Execute Action");
+            program_context.bitcoin_coordinator.dispatch(
+                self.get_signed_tx(program_context, ACTION_PROVER_WINS, 0, 0, false)?,
+                Context::ProgramId(self.ctx.id).to_string()?,
+                None,
+            )?;
+        }
+
         Ok(())
     }
 
@@ -528,6 +544,11 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         let speedup_dust = 500;
 
         let utxo = context.globals.get_var(&self.ctx.id, "utxo")?.utxo()?;
+
+        let utxo_prover_win_action = context
+            .globals
+            .get_var(&self.ctx.id, "utxo_prover_win_action")?
+            .utxo()?;
 
         let program_def = self.get_program_definition(context)?;
 
@@ -547,7 +568,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             output_type,
             START_CH,
             &SpendMode::All {
-                //TODO: fix proper leaf
                 key_path_sign: SignMode::Aggregate,
             },
             &SighashType::taproot_all(),
@@ -595,6 +615,38 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             TIMELOCK_BLOCKS,
             vec![aggregated],
         )?;
+
+        protocol.add_transaction(ACTION_PROVER_WINS)?;
+
+        protocol.connect(
+            "PROVER_ACTION_1",
+            &ClaimGate::tx_success(PROVER_WINS),
+            0,
+            ACTION_PROVER_WINS,
+            InputSpec::SighashType(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+        )?;
+
+        let prover_win_amount = utxo_prover_win_action.2.unwrap();
+        let output_type = external_fund_tx(&external_aggregated, prover_win_amount)?;
+
+        protocol.add_external_connection(
+            utxo_prover_win_action.0,
+            utxo_prover_win_action.1,
+            output_type,
+            ACTION_PROVER_WINS,
+            &SpendMode::All {
+                key_path_sign: SignMode::Aggregate,
+            },
+            &SighashType::taproot_all(),
+        )?;
+
+        let pb = ProtocolBuilder {};
+        pb.add_speedup_output(&mut protocol, ACTION_PROVER_WINS, speedup_dust, aggregated)?;
 
         let claim_verifier = ClaimGate::new(
             &mut protocol,

@@ -52,7 +52,10 @@ pub fn test_drp() -> Result<()> {
     let aggregated_pub_key = msgs[0].aggregated_pub_key().unwrap();
 
     info!("Initializing UTXO for program");
-    let utxo = init_utxo(&bitcoin_client, aggregated_pub_key, None, None)?;
+    let utxo = init_utxo(&bitcoin_client, aggregated_pub_key, None, Some(200_000))?;
+
+    info!("Initializing UTXO for the prover action");
+    let prover_win_utxo = init_utxo(&bitcoin_client, aggregated_pub_key, None, Some(11_000))?;
 
     let program_id = Uuid::new_v4();
     let set_fee = VariableTypes::Number(10_000).set_msg(program_id, "FEE")?;
@@ -65,6 +68,14 @@ pub fn test_drp() -> Result<()> {
     let set_utxo_msg = VariableTypes::Utxo((utxo.txid, utxo.vout, Some(utxo.amount)))
         .set_msg(program_id, "utxo")?;
     send_all(&channels, &set_utxo_msg)?;
+
+    let set_prover_win_utxo = VariableTypes::Utxo((
+        prover_win_utxo.txid,
+        prover_win_utxo.vout,
+        Some(prover_win_utxo.amount),
+    ))
+    .set_msg(program_id, "utxo_prover_win_action")?;
+    send_all(&channels, &set_prover_win_utxo)?;
 
     //let program_path = "../BitVMX-CPU/docker-riscv32/verifier/build/zkverifier-new-mul.yaml";
     let program_path = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
@@ -179,7 +190,11 @@ pub fn test_drp() -> Result<()> {
     //wait for claim start
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
     info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
+    //success wait
     bitcoin_client.mine_blocks_to_address(10, &wallet).unwrap();
+    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
+    //action wait
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
     info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
 
