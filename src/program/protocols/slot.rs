@@ -364,10 +364,13 @@ impl ProtocolHandler for SlotProtocol {
             )?;
 
             //TODO:here choose the appropiate pair
+            //this should be another aggregated to be signed later
+            let pair_agg_check =
+                scripts::check_aggregated_signature(&pair_0_1_aggregated, SignMode::Aggregate);
             let start_challenge = OutputType::taproot(
                 protocol_cost,
                 &pair_0_1_aggregated,
-                &[winternitz_check],
+                &[pair_agg_check],
                 &vec![],
             )?;
 
