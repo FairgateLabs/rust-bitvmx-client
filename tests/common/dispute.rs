@@ -23,6 +23,7 @@ pub fn prepare_dispute(
     channels: Vec<DualChannel>,
     mut instances: &mut Vec<BitVMX>,
     aggregated_pub_key: &PublicKey,
+    internal_win_action: &PublicKey,
     initial_utxo: Utxo,
     prover_win_utxo: Utxo,
     fee: u32,
@@ -33,6 +34,10 @@ pub fn prepare_dispute(
 
     let set_aggregated_msg =
         VariableTypes::PubKey(*aggregated_pub_key).set_msg(program_id, "aggregated")?;
+    send_all(&channels, &set_aggregated_msg)?;
+
+    let set_aggregated_msg = VariableTypes::PubKey(*internal_win_action)
+        .set_msg(program_id, "pubkey_internal_action_win")?;
     send_all(&channels, &set_aggregated_msg)?;
 
     let set_utxo_msg = VariableTypes::Utxo((

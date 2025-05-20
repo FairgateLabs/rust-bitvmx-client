@@ -229,7 +229,11 @@ impl ProtocolHandler for SlotProtocol {
         let mut protocol = self.load_or_create_protocol();
 
         let mut amount = fund_utxo.2.unwrap();
-        let output_type = external_fund_tx(&ops_agg_pubkey, amount, false)?;
+        let output_type = external_fund_tx(
+            &ops_agg_pubkey,
+            &vec![&ops_agg_pubkey, &ops_agg_pubkey],
+            amount,
+        )?;
 
         protocol.add_external_connection(
             fund_utxo.0,
@@ -378,7 +382,7 @@ impl ProtocolHandler for SlotProtocol {
             let start_challenge = OutputType::taproot(
                 protocol_cost,
                 &pair_0_1_aggregated,
-                &[pair_agg_check],
+                &[pair_agg_check.clone(), pair_agg_check],
                 &vec![],
             )?;
 

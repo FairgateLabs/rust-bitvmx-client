@@ -13,12 +13,11 @@ use emulator::{
 };
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
-    errors::ProtocolBuilderError,
     scripts::{self, SignMode},
     types::{
         input::{InputSpec, SighashType},
         output::SpendMode,
-        InputArgs, OutputType,
+        OutputType,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -177,7 +176,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         context: &ProgramContext,
     ) -> Result<Transaction, BitVMXError> {
         match name {
-            START_CH => Ok(self.start_challenge()?),
+            START_CH => Ok(self.start_challenge(context)?),
             INPUT_1 => Ok(self.input_1_tx(context)?),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
@@ -552,6 +551,11 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             .get_var(&self.ctx.id, "utxo_prover_win_action")?
             .utxo()?;
 
+        let internal_action_win = context
+            .globals
+            .get_var(&self.ctx.id, "pubkey_internal_action_win")?
+            .pubkey()?;
+
         let program_def = self.get_program_definition(context)?;
 
         let external_aggregated = context
@@ -562,16 +566,18 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         let mut protocol = self.load_or_create_protocol();
 
         let mut amount = utxo.2.unwrap();
-        let output_type = external_fund_tx(&external_aggregated, amount, false)?;
+        let output_type = external_fund_tx(
+            &external_aggregated,
+            &vec![&external_aggregated, &external_aggregated],
+            amount,
+        )?;
 
         protocol.add_external_connection(
             utxo.0,
             utxo.1,
             output_type,
             START_CH,
-            &SpendMode::All {
-                key_path_sign: SignMode::Aggregate,
-            },
+            &SpendMode::Script { leaf: 0 },
             &SighashType::taproot_all(),
         )?;
 
@@ -635,7 +641,11 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         )?;
 
         let prover_win_amount = utxo_prover_win_action.2.unwrap();
-        let output_type = external_fund_tx(&external_aggregated, prover_win_amount, true)?;
+        let output_type = external_fund_tx(
+            &internal_action_win,
+            &vec![&internal_action_win, &external_aggregated],
+            prover_win_amount,
+        )?;
 
         protocol.add_external_connection(
             utxo_prover_win_action.0,
@@ -764,16 +774,18 @@ impl DisputeResolutionProtocol {
         get_role(self.ctx.my_idx)
     }
 
-    pub fn start_challenge(&self) -> Result<Transaction, ProtocolBuilderError> {
-        let signature = self
+    pub fn start_challenge(&self, context: &ProgramContext) -> Result<Transaction, BitVMXError> {
+        /*let signature = self
             .load_protocol()?
             .input_taproot_key_spend_signature(START_CH, 0)?
             .unwrap();
         let mut taproot_arg = InputArgs::new_taproot_key_args();
-        taproot_arg.push_taproot_signature(signature)?;
+        taproot_arg.push_taproot_signature(signature)?;*/
 
-        self.load_protocol()?
-            .transaction_to_send(START_CH, &[taproot_arg])
+        self.get_signed_tx(context, START_CH, 0, 0, false, 0)
+
+        /*self.load_protocol()?
+        .transaction_to_send(START_CH, &[taproot_arg])*/
     }
 
     pub fn input_1_tx(&self, context: &ProgramContext) -> Result<Transaction, BitVMXError> {

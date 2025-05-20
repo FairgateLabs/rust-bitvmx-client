@@ -309,23 +309,18 @@ impl ProtocolType {
 }
 
 pub fn external_fund_tx(
-    aggregated: &PublicKey,
+    internal_key: &PublicKey,
+    aggregated_list: &Vec<&PublicKey>,
     amount: u64,
-    hack_add_another_check: bool,
 ) -> Result<OutputType, BitVMXError> {
     let secp = secp256k1::Secp256k1::new();
-    let untweaked_key: UntweakedPublicKey = XOnlyPublicKey::from(*aggregated);
+    let untweaked_key: UntweakedPublicKey = XOnlyPublicKey::from(*internal_key);
 
-    let mut spending_scripts = vec![scripts::check_aggregated_signature(
-        &aggregated,
-        SignMode::Aggregate,
-    )];
-    if hack_add_another_check {
-        spending_scripts.push(scripts::check_aggregated_signature(
-            &aggregated,
-            SignMode::Aggregate,
-        ));
-    }
+    let spending_scripts = aggregated_list
+        .iter()
+        .map(|k| scripts::check_aggregated_signature(k, SignMode::Aggregate))
+        .collect::<Vec<_>>();
+
     let spend_info = scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
 
     let script_pubkey = ScriptBuf::new_p2tr(&secp, untweaked_key, spend_info.merkle_root());
@@ -338,7 +333,7 @@ pub fn external_fund_tx(
 
     Ok(OutputType::taproot(
         amount,
-        aggregated,
+        internal_key,
         &spending_scripts,
         &vec![prevout],
     )?)

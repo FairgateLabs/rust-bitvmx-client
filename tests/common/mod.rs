@@ -230,10 +230,10 @@ pub fn init_utxo(
             SignMode::Aggregate,
         )]
     } else {
-        vec![scripts::timelock_renew(
-            &aggregated_pub_key,
-            SignMode::Aggregate,
-        )]
+        vec![
+            scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate),
+            scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate), //adding twice to be compatible with the claim stop
+        ]
     };
 
     let taproot_spend_info =

@@ -59,6 +59,7 @@ pub fn test_drp() -> Result<()> {
         channels.clone(),
         &mut instances,
         &aggregated_pub_key,
+        &aggregated_pub_key,
         utxo,
         prover_win_utxo,
         10_000,

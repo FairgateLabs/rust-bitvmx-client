@@ -141,6 +141,7 @@ pub fn test_slot() -> Result<()> {
         sub_channel.clone(),
         &mut instances,
         &pair_aggregated_pub_key,
+        &aggregated_pub_key,
         initial_utxo,
         prover_win_utxo,
         tx_fee as u32,
