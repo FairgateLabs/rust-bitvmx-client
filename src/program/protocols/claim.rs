@@ -44,7 +44,7 @@ impl ClaimGate {
         amount_fee: u64,
         amount_dust: u64,
         stop_count: u8,
-        //stop_aggregated: Option<Vec<&PublicKey>>,
+        stop_aggregated: Option<Vec<&PublicKey>>,
         timelock_blocks: u16,
         actions: Vec<&PublicKey>,
     ) -> Result<Self, BitVMXError> {
@@ -80,28 +80,34 @@ impl ClaimGate {
             &vec![verify_aggregated.clone(), timeout],
             &vec![],
         )?;
-
         protocol.add_transaction_output(&stx, &start_tx_output)?;
 
         let pb = ProtocolBuilder {};
 
-        let claim_stop = OutputType::taproot(
-            amount_fee + amount_dust,
-            aggregated,
-            &vec![verify_aggregated.clone()],
-            &vec![],
-        )?;
-
         for i in 0..stop_count {
+            let mut leaves_claim_stop = vec![verify_aggregated.clone()];
+            if let Some(stop_conditions) = &stop_aggregated {
+                let verify_special = scripts::check_aggregated_signature(
+                    &stop_conditions[i as usize],
+                    SignMode::Aggregate,
+                );
+                leaves_claim_stop.push(verify_special);
+            }
+
+            let claim_stop = OutputType::taproot(
+                amount_fee + amount_dust,
+                aggregated,
+                &leaves_claim_stop,
+                &vec![],
+            )?;
+
             let stopname = Self::tx_stop(claim_name, i);
             protocol.add_connection(
                 &format!("{}__{}", from, &stopname),
                 from,
                 &stopname,
                 &claim_stop,
-                &SpendMode::All {
-                    key_path_sign: SignMode::Aggregate,
-                },
+                &SpendMode::Script { leaf: 0 },
                 &SighashType::taproot_all(),
             )?;
             protocol.add_transaction_input(

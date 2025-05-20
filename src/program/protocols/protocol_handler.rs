@@ -135,6 +135,7 @@ pub trait ProtocolHandler {
         input_index: u32,
         leaf_index: u32,
         leaf_identification: bool,
+        second_leaf_index: usize,
     ) -> Result<Transaction, BitVMXError> {
         let protocol = self.load_protocol()?;
         info!("Getting signed tx for {}", name);
@@ -179,9 +180,9 @@ pub trait ProtocolHandler {
         let total_inputs = tx.input.len();
         if total_inputs > 1 {
             let signature = protocol
-                .input_taproot_script_spend_signature(name, 1, 0)?
+                .input_taproot_script_spend_signature(name, 1, second_leaf_index)?
                 .unwrap();
-            let mut spending_args = InputArgs::new_taproot_script_args(0);
+            let mut spending_args = InputArgs::new_taproot_script_args(second_leaf_index);
             spending_args.push_taproot_signature(signature)?;
             args.push(spending_args);
         }
@@ -307,14 +308,24 @@ impl ProtocolType {
     }
 }
 
-pub fn external_fund_tx(aggregated: &PublicKey, amount: u64) -> Result<OutputType, BitVMXError> {
+pub fn external_fund_tx(
+    aggregated: &PublicKey,
+    amount: u64,
+    hack_add_another_check: bool,
+) -> Result<OutputType, BitVMXError> {
     let secp = secp256k1::Secp256k1::new();
     let untweaked_key: UntweakedPublicKey = XOnlyPublicKey::from(*aggregated);
 
-    let spending_scripts = vec![scripts::check_aggregated_signature(
+    let mut spending_scripts = vec![scripts::check_aggregated_signature(
         &aggregated,
         SignMode::Aggregate,
     )];
+    if hack_add_another_check {
+        spending_scripts.push(scripts::check_aggregated_signature(
+            &aggregated,
+            SignMode::Aggregate,
+        ));
+    }
     let spend_info = scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
 
     let script_pubkey = ScriptBuf::new_p2tr(&secp, untweaked_key, spend_info.merkle_root());

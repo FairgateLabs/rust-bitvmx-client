@@ -494,6 +494,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 0,
                 0,
                 false,
+                0,
             )?;
             info!("PROVER_WINS_TX: {:?}", tx);
             program_context.bitcoin_coordinator.dispatch(
@@ -513,6 +514,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     0,
                     0,
                     false,
+                    0,
                 )?,
                 Context::ProgramId(self.ctx.id).to_string()?,
                 Some(tx_status.block_info.as_ref().unwrap().block_height + TIMELOCK_BLOCKS as u32),
@@ -524,7 +526,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             //Could execute more than one
             info!("Prover. Execute Action");
             program_context.bitcoin_coordinator.dispatch(
-                self.get_signed_tx(program_context, ACTION_PROVER_WINS, 0, 0, false)?,
+                self.get_signed_tx(program_context, ACTION_PROVER_WINS, 0, 0, false, 1)?,
                 Context::ProgramId(self.ctx.id).to_string()?,
                 None,
             )?;
@@ -560,7 +562,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         let mut protocol = self.load_or_create_protocol();
 
         let mut amount = utxo.2.unwrap();
-        let output_type = external_fund_tx(&external_aggregated, amount)?;
+        let output_type = external_fund_tx(&external_aggregated, amount, false)?;
 
         protocol.add_external_connection(
             utxo.0,
@@ -612,6 +614,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             fee,
             speedup_dust,
             1,
+            None,
             TIMELOCK_BLOCKS,
             vec![aggregated],
         )?;
@@ -632,16 +635,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         )?;
 
         let prover_win_amount = utxo_prover_win_action.2.unwrap();
-        let output_type = external_fund_tx(&external_aggregated, prover_win_amount)?;
+        let output_type = external_fund_tx(&external_aggregated, prover_win_amount, true)?;
 
         protocol.add_external_connection(
             utxo_prover_win_action.0,
             utxo_prover_win_action.1,
             output_type,
             ACTION_PROVER_WINS,
-            &SpendMode::All {
-                key_path_sign: SignMode::Aggregate,
-            },
+            &SpendMode::Script { leaf: 1 }, //the alternate key is on leaf 1
             &SighashType::taproot_all(),
         )?;
 
@@ -656,6 +657,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             fee,
             speedup_dust,
             1,
+            None,
             TIMELOCK_BLOCKS,
             vec![aggregated],
         )?;
@@ -797,7 +799,7 @@ impl DisputeResolutionProtocol {
             )?;
         }
 
-        self.get_signed_tx(context, INPUT_1, 0, 0, true)
+        self.get_signed_tx(context, INPUT_1, 0, 0, true, 0)
     }
 
     pub fn add_winternitz_check(
@@ -1000,7 +1002,7 @@ impl DisputeResolutionProtocol {
                 self.set_input_hex(context, "last_hash", last_hash)?;
 
                 context.bitcoin_coordinator.dispatch(
-                    self.get_signed_tx(context, COMMITMENT, 0, 0, true)?,
+                    self.get_signed_tx(context, COMMITMENT, 0, 0, true, 0)?,
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
                 )?;
@@ -1029,7 +1031,7 @@ impl DisputeResolutionProtocol {
                     self.set_input_hex(context, &format!("prover_hash_{}_{}", round, i), h)?;
                 }
                 context.bitcoin_coordinator.dispatch(
-                    self.get_signed_tx(context, &format!("NARY_PROVER_{}", round), 0, 0, true)?,
+                    self.get_signed_tx(context, &format!("NARY_PROVER_{}", round), 0, 0, true, 0)?,
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
                 )?;
@@ -1048,7 +1050,14 @@ impl DisputeResolutionProtocol {
                 )?;
 
                 context.bitcoin_coordinator.dispatch(
-                    self.get_signed_tx(context, &format!("NARY_VERIFIER_{}", round), 0, 0, true)?,
+                    self.get_signed_tx(
+                        context,
+                        &format!("NARY_VERIFIER_{}", round),
+                        0,
+                        0,
+                        true,
+                        0,
+                    )?,
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
                 )?;
@@ -1100,7 +1109,7 @@ impl DisputeResolutionProtocol {
                 //info!("Execution tx: {:?}", tx);
 
                 context.bitcoin_coordinator.dispatch(
-                    self.get_signed_tx(context, EXECUTE, 0, 0, true)?,
+                    self.get_signed_tx(context, EXECUTE, 0, 0, true, 0)?,
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
                 )?;

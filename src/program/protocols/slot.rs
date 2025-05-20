@@ -108,7 +108,7 @@ impl ProtocolHandler for SlotProtocol {
         }
 
         if name.starts_with(CERT_HASH_TX) {
-            return Ok(self.get_signed_tx(program_context, name, 0, 0, false)?);
+            return Ok(self.get_signed_tx(program_context, name, 0, 0, false, 0)?);
         }
 
         match name {
@@ -161,6 +161,7 @@ impl ProtocolHandler for SlotProtocol {
                     0,
                     gid as u32,
                     false,
+                    0,
                 )?;
                 info!(
                     "Operator {} is going to send the group id {}",
@@ -228,7 +229,7 @@ impl ProtocolHandler for SlotProtocol {
         let mut protocol = self.load_or_create_protocol();
 
         let mut amount = fund_utxo.2.unwrap();
-        let output_type = external_fund_tx(&ops_agg_pubkey, amount)?;
+        let output_type = external_fund_tx(&ops_agg_pubkey, amount, false)?;
 
         protocol.add_external_connection(
             fund_utxo.0,
@@ -351,6 +352,12 @@ impl ProtocolHandler for SlotProtocol {
 
             //add the claimgate
             //TODO: set the proper pair aggregated for the stop output
+
+            let stop_count = keys.len() as u8 - 1;
+            let mut stop_pubkeys = vec![];
+            for _ in 0..stop_count {
+                stop_pubkeys.push(&pair_0_1_aggregated);
+            }
             let _claim_gate = ClaimGate::new(
                 &mut protocol,
                 &certhashtx,
@@ -358,7 +365,8 @@ impl ProtocolHandler for SlotProtocol {
                 &ops_agg_pubkey,
                 fee,
                 speedup_dust,
-                keys.len() as u8 - 1,
+                stop_count,
+                Some(stop_pubkeys),
                 TIMELOCK_BLOCKS,
                 vec![],
             )?;
