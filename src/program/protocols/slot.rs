@@ -46,8 +46,8 @@ pub fn certificate_hash(n: usize) -> String {
     format!("certificate_hash_{}", n)
 }
 
-pub fn group_id(n: usize) -> String {
-    format!("group_id_{}", n)
+pub fn group_id(op: usize) -> String {
+    format!("group_id_{}", op)
 }
 
 pub fn group_id_tx(op: usize, gid: u8) -> String {
@@ -212,6 +212,11 @@ impl ProtocolHandler for SlotProtocol {
             .get_var(&self.ctx.id, "operators_aggregated_pub")?
             .pubkey()?;
 
+        let pair_0_1_aggregated = context
+            .globals
+            .get_var(&self.ctx.id, "pair_0_1_aggregated")?
+            .pubkey()?;
+
         let _unspendable = context
             .globals
             .get_var(&self.ctx.id, "unspendable")?
@@ -345,6 +350,7 @@ impl ProtocolHandler for SlotProtocol {
             )?;
 
             //add the claimgate
+            //TODO: set the proper pair aggregated for the stop output
             let _claim_gate = ClaimGate::new(
                 &mut protocol,
                 &certhashtx,
@@ -357,8 +363,13 @@ impl ProtocolHandler for SlotProtocol {
                 vec![],
             )?;
 
-            let start_challenge =
-                OutputType::taproot(protocol_cost, &ops_agg_pubkey, &[winternitz_check], &vec![])?;
+            //TODO:here choose the appropiate pair
+            let start_challenge = OutputType::taproot(
+                protocol_cost,
+                &pair_0_1_aggregated,
+                &[winternitz_check],
+                &vec![],
+            )?;
 
             for n in 0..keys.len() {
                 if n != i {

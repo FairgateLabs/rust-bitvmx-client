@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 use std::str::FromStr;
 
+pub mod dispute;
+
 use anyhow::Result;
 use bitcoin::{secp256k1, Address, Amount, KnownHrp, Network, PublicKey, XOnlyPublicKey};
 use bitcoind::bitcoind::Bitcoind;

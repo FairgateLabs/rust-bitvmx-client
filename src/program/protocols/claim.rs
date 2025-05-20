@@ -44,6 +44,7 @@ impl ClaimGate {
         amount_fee: u64,
         amount_dust: u64,
         stop_count: u8,
+        //stop_aggregated: Option<Vec<&PublicKey>>,
         timelock_blocks: u16,
         actions: Vec<&PublicKey>,
     ) -> Result<Self, BitVMXError> {
