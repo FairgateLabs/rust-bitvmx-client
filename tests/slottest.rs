@@ -1,5 +1,6 @@
 use anyhow::Result;
 use bitcoin::Amount;
+use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
 use bitvmx_client::{
     program::{
         self,
@@ -224,6 +225,17 @@ pub fn test_slot() -> Result<()> {
         dispute_id,
         fake_drp,
     )?;
+
+    //Consume other stops through timeout
+    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
+    //Win start
+    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
+    //success wait
+    bitcoin_client.mine_blocks_to_address(10, &wallet).unwrap();
+    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
 
     bitcoind.stop()?;
     Ok(())

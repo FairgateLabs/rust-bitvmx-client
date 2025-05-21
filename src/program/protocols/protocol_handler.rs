@@ -122,6 +122,7 @@ pub trait ProtocolHandler {
     fn notify_news(
         &self,
         tx_id: Txid,
+        vout: Option<u32>,
         tx_status: TransactionStatus,
         context: String,
         program_context: &ProgramContext,

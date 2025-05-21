@@ -133,6 +133,8 @@ pub fn execute_dispute(
         program::protocols::dispute::INPUT_1.to_string()
     );
     if fake {
+        let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+        info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
         return Ok(());
     }
 

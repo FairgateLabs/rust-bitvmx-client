@@ -22,6 +22,9 @@ pub enum BitVMXError {
     #[error("Invalid configuration")]
     ConfigurationError(#[from] ConfigError),
 
+    #[error("Error parsing int")]
+    ParseIntError(#[from] std::num::ParseIntError),
+
     #[error("Error when using KeyManager")]
     KeyManagerError(#[from] KeyManagerError),
 

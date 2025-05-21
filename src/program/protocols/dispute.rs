@@ -183,6 +183,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
     fn notify_news(
         &self,
         tx_id: Txid,
+        _vout: Option<u32>,
         tx_status: TransactionStatus,
         _context: String,
         program_context: &ProgramContext,

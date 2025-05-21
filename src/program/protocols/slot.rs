@@ -21,7 +21,9 @@ use crate::{
     errors::BitVMXError,
     program::{
         protocols::{
-            claim::ClaimGate, dispute::TIMELOCK_BLOCKS, protocol_handler::external_fund_tx,
+            claim::ClaimGate,
+            dispute::{START_CH, TIMELOCK_BLOCKS},
+            protocol_handler::external_fund_tx,
         },
         variables::VariableTypes,
     },
@@ -41,6 +43,11 @@ pub struct SlotProtocol {
 pub const SETUP_TX: &str = "SETUP_TX";
 pub const CERT_HASH_TX: &str = "CERT_HASH_TX_";
 pub const GID_TX: &str = "GID_TX_";
+pub const OP_WINS: &str = "OP_WINS_";
+
+pub fn claim_name(op: usize) -> String {
+    format!("{}{}", OP_WINS, op)
+}
 
 pub fn cert_hash_tx_op(n: u32) -> String {
     format!("{}{}", CERT_HASH_TX, n)
@@ -61,7 +68,7 @@ pub fn group_id_to(op: usize) -> String {
     format!("{}{}_TO", GID_TX, op)
 }
 pub fn start_challenge_to(op: usize, op_challenger: usize) -> String {
-    format!("START_CHALLENGE_{}_{}_TO", op, op_challenger)
+    format!("{}_{}_{}_TO", START_CH, op, op_challenger)
 }
 
 impl ProtocolHandler for SlotProtocol {
@@ -126,6 +133,7 @@ impl ProtocolHandler for SlotProtocol {
     fn notify_news(
         &self,
         tx_id: Txid,
+        vout: Option<u32>,
         tx_status: TransactionStatus,
         _context: String,
         program_context: &ProgramContext,
@@ -133,16 +141,15 @@ impl ProtocolHandler for SlotProtocol {
     ) -> Result<(), BitVMXError> {
         let name = self.get_transaction_name_by_id(tx_id)?;
         info!(
-            "Program {}: Transaction {} has been seen on-chain {}",
-            self.ctx.id, name, self.ctx.my_idx
+            "Program {}: Transaction {}:{:?} has been seen on-chain {}",
+            self.ctx.id, name, vout, self.ctx.my_idx
         );
 
-        if name.starts_with(CERT_HASH_TX) {
+        if name.starts_with(CERT_HASH_TX) && vout.is_none() {
             let operator = name
                 .strip_prefix(CERT_HASH_TX)
-                .unwrap_or("0")
-                .parse::<u32>()
-                .unwrap();
+                .unwrap_or("")
+                .parse::<u32>()?;
 
             info!("Operator {} has sent a certificate hash", operator);
             self.decode_witness_for_tx(
@@ -184,6 +191,22 @@ impl ProtocolHandler for SlotProtocol {
                     .get_var(&self.ctx.id, "operators")?
                     .number()?;
 
+                let txid = tx_status.tx_id;
+
+                //notify when the stops are consumed
+                for i in 0..total_operators - 1 {
+                    info!("Subscribe to vout {}", i + 2);
+                    program_context.bitcoin_coordinator.monitor(
+                        bitcoin_coordinator::TypesToMonitor::SpendingUTXOTransaction(
+                            txid,
+                            i + 2, // the first stop is at pos 2
+                            Context::ProgramId(self.ctx.id).to_string()?,
+                        ),
+                    )?;
+                }
+
+                /*
+                For now we are sending the to after one challange is completed
                 for i in 0..total_operators {
                     if i != operator {
                         program_context.bitcoin_coordinator.dispatch(
@@ -197,13 +220,122 @@ impl ProtocolHandler for SlotProtocol {
                             )?,
                             Context::ProgramId(self.ctx.id).to_string()?,
                             Some(
-                                tx_status.block_info.as_ref().unwrap().block_height
-                                    + TIMELOCK_BLOCKS as u32,
+                                tx_status.block_info.as_ref().unwrap().block_height + 100, // TIMELOCK_BLOCKS as u32,
                             ),
                         )?;
                     }
+                }*/
+            }
+        }
+
+        if name.starts_with(CERT_HASH_TX) && vout.is_some() {
+            let operator = name
+                .strip_prefix(CERT_HASH_TX)
+                .unwrap_or("")
+                .parse::<u32>()?;
+            if operator != self.ctx.my_idx as u32 {
+                return Ok(());
+            }
+
+            let total_operators = program_context
+                .globals
+                .get_var(&self.ctx.id, "operators")?
+                .number()?;
+
+            let mut stops_consumed = program_context
+                .globals
+                .get_var(&self.ctx.id, "stops_consumed")
+                .unwrap_or(VariableTypes::Number(0))
+                .number()?;
+
+            //this part is to avoid resending. this shoudld be moved to timelock as soon as cert_hash is sent
+            if stops_consumed == 0 {
+                program_context.globals.set_var(
+                    &self.ctx.id,
+                    "stops_consumed",
+                    VariableTypes::Number(1),
+                )?;
+
+                for i in 0..total_operators - 1 {
+                    if i != vout.unwrap() - 2 {
+                        info!("Sending tx to consume the stop for {}", i);
+                        program_context.bitcoin_coordinator.dispatch(
+                            self.get_signed_tx(
+                                program_context,
+                                &start_challenge_to(operator as usize, i as usize),
+                                0,
+                                0,
+                                false,
+                                0,
+                            )?,
+                            Context::ProgramId(self.ctx.id).to_string()?,
+                            None,
+                        )?;
+                    } else {
+                        info!("The stop for the operator {} has been consumed", i);
+                    }
+                }
+            } else {
+                stops_consumed += 1;
+                program_context.globals.set_var(
+                    &self.ctx.id,
+                    "stops_consumed",
+                    VariableTypes::Number(stops_consumed),
+                )?;
+
+                if stops_consumed == total_operators - 1 {
+                    info!("All stops have been consumed");
+                    info!("Ready to send claim win start");
+
+                    let tx = self.get_signed_tx(
+                        program_context,
+                        &ClaimGate::tx_start(&claim_name(operator as usize)),
+                        0,
+                        0,
+                        false,
+                        0,
+                    )?;
+
+                    info!(
+                        "Dispatching: {} {:?}",
+                        &ClaimGate::tx_start(&claim_name(operator as usize)),
+                        &tx
+                    );
+                    program_context.bitcoin_coordinator.dispatch(
+                        tx,
+                        Context::ProgramId(self.ctx.id).to_string()?,
+                        None,
+                    )?;
                 }
             }
+        }
+
+        if name.starts_with(OP_WINS) && name.ends_with("_START") {
+            let operator = name
+                .strip_prefix(OP_WINS)
+                .unwrap_or("")
+                .strip_suffix("_START")
+                .unwrap_or("")
+                .parse::<u32>()?;
+            info!("Operator {} has sent a claim win", operator);
+            if operator != self.ctx.my_idx as u32 {
+                //TOOD: Others should react sending the stop tx
+                return Ok(());
+            }
+
+            info!("Prover sending SUCCESS tx");
+            program_context.bitcoin_coordinator.dispatch(
+                self.get_signed_tx(
+                    program_context,
+                    &ClaimGate::tx_success(&claim_name(operator as usize)),
+                    0,
+                    0,
+                    false,
+                    0,
+                )?,
+                Context::ProgramId(self.ctx.id).to_string()?,
+                Some(tx_status.block_info.as_ref().unwrap().block_height + TIMELOCK_BLOCKS as u32),
+            )?;
         }
 
         if name.starts_with(GID_TX) {
@@ -294,6 +426,11 @@ impl ProtocolHandler for SlotProtocol {
 
         //====================================
         //CREATES THE SLOTS FOR EACH OPERATOR
+        //CERT HASH TX:
+        // vout0 = gid_publish (leafs 0..=gid_max)
+        // vout1 = claim_gate_start
+        // vout2..2+operators-1 = stop_gate    [for 3 operators 2,3]
+        // (vout2+operators-1).. (vout2+operators-1+operators-1)= start_challenge  [for 3 operators 4,5]
         for (i, key) in keys.iter().enumerate() {
             //====================================
             //EVERY OPERATOR CAN SEND A CERTIFICATE HASH
@@ -410,14 +547,14 @@ impl ProtocolHandler for SlotProtocol {
             let claim_gate = ClaimGate::new(
                 &mut protocol,
                 &certhashtx,
-                &format!("OP_WINS_{}", i),
+                &claim_name(i),
                 &ops_agg_pubkey,
                 fee,
                 speedup_dust,
                 stop_count,
                 Some(stop_pubkeys),
                 TIMELOCK_BLOCKS,
-                vec![],
+                vec![&ops_agg_pubkey],
             )?;
 
             //====================================
@@ -442,7 +579,7 @@ impl ProtocolHandler for SlotProtocol {
             for n in 0..keys.len() {
                 if n != i {
                     protocol.add_transaction_output(&certhashtx, &start_challenge)?;
-                    let tx_name = start_challenge_to(i, n);
+                    let tx_name = start_challenge_to(i, count);
 
                     protocol.add_connection_with_timelock(
                         &format!("{}__{}_TL", certhashtx, tx_name),

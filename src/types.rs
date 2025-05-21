@@ -127,7 +127,7 @@ pub enum OutgoingBitVMXApiMessages {
     // Represents when pegin transactions is found
     PeginTransactionFound(Txid, TransactionStatus),
     // Represents when a spending utxo transaction is found
-    SpendingUTXOTransactionFound(Txid, u32, TransactionStatus),
+    SpendingUTXOTransactionFound(Uuid, Txid, u32, TransactionStatus),
     // Represents when a program is running out of funds
     SpeedUpProgramNoFunds(Txid, String),
     // Setup Completed,

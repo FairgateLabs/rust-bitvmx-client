@@ -80,6 +80,7 @@ impl ProtocolHandler for LockProtocol {
     fn notify_news(
         &self,
         tx_id: Txid,
+        _vout: Option<u32>,
         tx_status: TransactionStatus,
         _context: String,
         _program_context: &ProgramContext,

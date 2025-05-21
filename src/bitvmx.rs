@@ -18,6 +18,7 @@ use crate::{
     },
 };
 use bitcoin::{Transaction, Txid};
+use bitcoin_coordinator::TransactionStatus;
 use bitcoin_coordinator::{
     coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi},
     types::{AckCoordinatorNews, AckNews, CoordinatorNews},
@@ -62,7 +63,7 @@ pub struct BitVMX {
     broker: BrokerSync,
     count: u32,
     pending_messages: VecDeque<(PeerId, Vec<u8>)>,
-    notified_request: HashSet<(Uuid, Txid)>,
+    notified_request: HashSet<(Uuid, (Txid, Option<u32>))>,
     bitcoin_update: BitcoinUpdateState,
 }
 
@@ -224,6 +225,49 @@ impl BitVMX {
         Ok(())
     }
 
+    pub fn handle_news(
+        &mut self,
+        tx_id: Txid,
+        tx_status: TransactionStatus,
+        context_data: String,
+        vout: Option<u32>,
+    ) -> Result<bool, BitVMXError> {
+        let context = Context::from_string(&context_data)?;
+        debug!(
+            "Transaction Found: {:?} {:?} for context: {:?}",
+            tx_id, tx_status, context
+        );
+
+        match context {
+            Context::ProgramId(program_id) => {
+                if !self.notified_request.contains(&(program_id, (tx_id, vout))) {
+                    let program = self.load_program(&program_id)?;
+
+                    program.notify_news(
+                        tx_id,
+                        vout,
+                        tx_status,
+                        context_data,
+                        &self.program_context,
+                    )?;
+                    self.notified_request.insert((program_id, (tx_id, vout)));
+                }
+            }
+            Context::RequestId(request_id, from) => {
+                if !self.notified_request.contains(&(request_id, (tx_id, vout))) {
+                    info!("Sending News: {:?} for context: {:?}", tx_id, context);
+                    self.program_context.broker_channel.send(
+                        from,
+                        OutgoingBitVMXApiMessages::Transaction(request_id, tx_status, None)
+                            .to_string()?,
+                    )?;
+                    self.notified_request.insert((request_id, (tx_id, vout)));
+                }
+            }
+        }
+        Ok(true)
+    }
+
     pub fn process_bitcoin_updates(&mut self) -> Result<bool, BitVMXError> {
         self.program_context.bitcoin_coordinator.tick()?;
 
@@ -242,64 +286,16 @@ impl BitVMX {
 
             match monitor_news {
                 MonitorNews::Transaction(tx_id, tx_status, context_data) => {
-                    let context = Context::from_string(&context_data)?;
-                    debug!(
-                        "Transaction Found: {:?} {:?} for context: {:?}",
-                        tx_id, tx_status, context
-                    );
-
-                    match context {
-                        Context::ProgramId(program_id) => {
-                            if !self.notified_request.contains(&(program_id, tx_id)) {
-                                let program = self.load_program(&program_id)?;
-
-                                program.notify_news(
-                                    tx_id,
-                                    tx_status,
-                                    context_data,
-                                    &self.program_context,
-                                )?;
-                                self.notified_request.insert((program_id, tx_id));
-                            }
-                        }
-                        Context::RequestId(request_id, from) => {
-                            if !self.notified_request.contains(&(request_id, tx_id)) {
-                                info!("Sending News: {:?} for context: {:?}", tx_id, context);
-                                self.program_context.broker_channel.send(
-                                    from,
-                                    OutgoingBitVMXApiMessages::Transaction(
-                                        request_id, tx_status, None,
-                                    )
-                                    .to_string()?,
-                                )?;
-                                self.notified_request.insert((request_id, tx_id));
-                            }
-                        }
-                    }
-
+                    self.handle_news(tx_id, tx_status, context_data, None)?;
                     ack_news = AckNews::Monitor(AckMonitorNews::Transaction(tx_id));
                 }
                 MonitorNews::SpendingUTXOTransaction(
                     tx_id,
                     output_index,
-                    _tx_status,
-                    _context_data,
+                    tx_status,
+                    context_data,
                 ) => {
-                    /*info!(
-                        "Spending UTXO Transaction Found: {:?} {}",
-                        tx_id, _context_data
-                    );
-
-                    let data = serde_json::to_string(
-                        &OutgoingBitVMXApiMessages::SpendingUTXOTransactionFound(
-                            tx_id,
-                            output_index,
-                            tx_status,
-                        ),
-                    )?;
-
-                    self.program_context.broker_channel.send(L2_ID, data)?;
-                    */
+                    self.handle_news(tx_id, tx_status, context_data, Some(output_index))?;
                     ack_news = AckNews::Monitor(AckMonitorNews::SpendingUTXOTransaction(
                         tx_id,
                         output_index,
