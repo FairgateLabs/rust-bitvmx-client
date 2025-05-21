@@ -238,4 +238,4 @@ impl RequestId {
 pub const PROGRAM_TYPE_LOCK: &str = "lock";
 pub const PROGRAM_TYPE_DRP: &str = "drp";
 pub const PROGRAM_TYPE_SLOT: &str = "slot";
-pub const PROGRAM_TYPE_FINAL: &str = "final";
+pub const PROGRAM_TYPE_TRANSFER: &str = "transfer";
