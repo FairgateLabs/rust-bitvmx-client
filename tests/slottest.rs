@@ -30,6 +30,8 @@ mod fixtures;
 pub fn test_slot() -> Result<()> {
     config_trace();
 
+    let fake_drp = true;
+
     //const NETWORK: Network = Network::Regtest;
 
     let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
@@ -168,6 +170,7 @@ pub fn test_slot() -> Result<()> {
         prover_win_utxo,
         prover_win_output_type,
         tx_fee as u32,
+        fake_drp,
     )?;
     info!("Dispute setup done");
 
@@ -219,7 +222,9 @@ pub fn test_slot() -> Result<()> {
         &bitcoin_client,
         &wallet,
         dispute_id,
+        fake_drp,
     )?;
+
     bitcoind.stop()?;
     Ok(())
 }

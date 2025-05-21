@@ -80,6 +80,7 @@ pub fn test_drp() -> Result<()> {
         prover_win_utxo,
         prover_win_out_type,
         10_000,
+        false,
     )?;
 
     execute_dispute(
@@ -89,6 +90,7 @@ pub fn test_drp() -> Result<()> {
         &bitcoin_client,
         &wallet,
         prog_id,
+        false,
     )?;
 
     //prover final trace
