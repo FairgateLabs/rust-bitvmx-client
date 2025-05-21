@@ -86,7 +86,7 @@ impl Default for ProgramRequestInfo {
 }
 
 //TODO: This should be moved to a common place that could be used to share the messages api
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum IncomingBitVMXApiMessages {
     Ping(),
     SetVar(Uuid, String, VariableTypes),
@@ -119,7 +119,7 @@ impl IncomingBitVMXApiMessages {
 
 type ProgramId = Uuid;
 
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum OutgoingBitVMXApiMessages {
     Pong(),
     // response for transaction get and dispatch

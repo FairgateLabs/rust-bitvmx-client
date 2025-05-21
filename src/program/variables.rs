@@ -2,6 +2,7 @@ use std::rc::Rc;
 
 use bitcoin::{PublicKey, Txid};
 use key_manager::winternitz::WinternitzSignature;
+use protocol_builder::types::OutputType;
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::{KeyValueStore, Storage};
 use uuid::Uuid;
@@ -15,9 +16,9 @@ use crate::{errors::BitVMXError, types::IncomingBitVMXApiMessages};
 - key (schnor pub)
 - utxo [ txid, vout, optional(amount)]*/
 
-pub type PartialUtxo = (Txid, u32, Option<u64>);
+pub type PartialUtxo = (Txid, u32, Option<u64>, Option<OutputType>);
 
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum VariableTypes {
     Secret(Vec<u8>),
     PubKey(PublicKey),

@@ -27,9 +27,7 @@ use crate::{
     bitvmx::Context,
     errors::BitVMXError,
     program::{
-        participant::ParticipantRole,
-        protocols::{claim::ClaimGate, protocol_handler::external_fund_tx},
-        variables::VariableTypes,
+        participant::ParticipantRole, protocols::claim::ClaimGate, variables::VariableTypes,
     },
     types::{ProgramContext, EMULATOR_ID},
 };
@@ -551,33 +549,34 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             .get_var(&self.ctx.id, "utxo_prover_win_action")?
             .utxo()?;
 
-        let internal_action_win = context
-            .globals
-            .get_var(&self.ctx.id, "pubkey_internal_action_win")?
-            .pubkey()?;
+        /*let internal_action_win = context
+        .globals
+        .get_var(&self.ctx.id, "pubkey_internal_action_win")?
+        .pubkey()?;*/
 
         let program_def = self.get_program_definition(context)?;
 
-        let external_aggregated = context
-            .globals
-            .get_var(&self.ctx.id, "aggregated")?
-            .pubkey()?;
+        /*let external_aggregated = context
+        .globals
+        .get_var(&self.ctx.id, "aggregated")?
+        .pubkey()?;*/
 
         let mut protocol = self.load_or_create_protocol();
 
         let mut amount = utxo.2.unwrap();
-        let output_type = external_fund_tx(
+        let output_type = utxo.3.unwrap();
+        /*let output_type = external_fund_tx(
             &external_aggregated,
             &vec![&external_aggregated, &external_aggregated],
             amount,
-        )?;
+        )?;*/
 
         protocol.add_external_connection(
             utxo.0,
             utxo.1,
             output_type,
             START_CH,
-            &SpendMode::Script { leaf: 0 },
+            &SpendMode::Script { leaf: 1 },
             &SighashType::taproot_all(),
         )?;
 
@@ -640,12 +639,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             ),
         )?;
 
-        let prover_win_amount = utxo_prover_win_action.2.unwrap();
-        let output_type = external_fund_tx(
+        //let prover_win_amount = utxo_prover_win_action.2.unwrap();
+        let output_type = utxo_prover_win_action.3.unwrap();
+        /*let output_type = external_fund_tx(
             &internal_action_win,
             &vec![&internal_action_win, &external_aggregated],
             prover_win_amount,
-        )?;
+        )?;*/
 
         protocol.add_external_connection(
             utxo_prover_win_action.0,
@@ -782,7 +782,7 @@ impl DisputeResolutionProtocol {
         let mut taproot_arg = InputArgs::new_taproot_key_args();
         taproot_arg.push_taproot_signature(signature)?;*/
 
-        self.get_signed_tx(context, START_CH, 0, 0, false, 0)
+        self.get_signed_tx(context, START_CH, 0, 1, false, 0)
 
         /*self.load_protocol()?
         .transaction_to_send(START_CH, &[taproot_arg])*/

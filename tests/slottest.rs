@@ -1,7 +1,11 @@
 use anyhow::Result;
 use bitcoin::Amount;
 use bitvmx_client::{
-    program::{self, protocols::slot::group_id, variables::VariableTypes},
+    program::{
+        self,
+        protocols::{protocol_handler::external_fund_tx, slot::group_id},
+        variables::VariableTypes,
+    },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_SLOT},
 };
 use common::{
@@ -10,7 +14,10 @@ use common::{
     get_all, init_bitvmx, init_utxo, mine_and_wait, prepare_bitcoin, send_all,
     wait_message_from_channel,
 };
-use protocol_builder::types::Utxo;
+use protocol_builder::{
+    scripts::{self, SignMode},
+    types::Utxo,
+};
 use tracing::info;
 use uuid::Uuid;
 
@@ -83,8 +90,9 @@ pub fn test_slot() -> Result<()> {
     let set_fee = VariableTypes::Number(10_000).set_msg(program_id, "FEE")?;
     send_all(&channels, &set_fee)?;
 
-    let set_fund_utxo = VariableTypes::Utxo((utxo.txid, utxo.vout, Some(fund_value.to_sat())))
-        .set_msg(program_id, "fund_utxo")?;
+    let set_fund_utxo =
+        VariableTypes::Utxo((utxo.txid, utxo.vout, Some(fund_value.to_sat()), None))
+            .set_msg(program_id, "fund_utxo")?;
     send_all(&channels, &set_fund_utxo)?;
 
     let set_ops_aggregated = VariableTypes::PubKey(aggregated_pub_key)
@@ -135,15 +143,30 @@ pub fn test_slot() -> Result<()> {
     let prover_win_utxo = Utxo::new(txid, 2, 10_500, &pair_aggregated_pub_key);
     let emulator_channels = vec![emulator_1.unwrap(), emulator_2.unwrap()];
 
+    let initial_spending_condition = vec![
+        scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate), //convert to timelock
+        scripts::check_aggregated_signature(&pair_aggregated_pub_key, SignMode::Aggregate),
+    ];
+    let initial_output_type =
+        external_fund_tx(&aggregated_pub_key, initial_spending_condition, 200_000)?;
+
+    let prover_win_spending_condition = vec![
+        scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate), //convert to timelock
+        scripts::check_aggregated_signature(&pair_aggregated_pub_key, SignMode::Aggregate),
+    ];
+    let prover_win_output_type =
+        external_fund_tx(&aggregated_pub_key, prover_win_spending_condition, 10_500)?;
+
     info!("Dispute setup");
     let dispute_id = prepare_dispute(
         participants,
         sub_channel.clone(),
         &mut instances,
         &pair_aggregated_pub_key,
-        &aggregated_pub_key,
         initial_utxo,
+        initial_output_type,
         prover_win_utxo,
+        prover_win_output_type,
         tx_fee as u32,
     )?;
     info!("Dispute setup done");
@@ -197,7 +220,6 @@ pub fn test_slot() -> Result<()> {
         &wallet,
         dispute_id,
     )?;
-
     bitcoind.stop()?;
     Ok(())
 }

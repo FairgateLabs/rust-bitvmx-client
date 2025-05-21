@@ -12,7 +12,7 @@ use bitvmx_client::{
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 
-use protocol_builder::types::Utxo;
+use protocol_builder::types::{OutputType, Utxo};
 use tracing::info;
 use uuid::Uuid;
 
@@ -23,9 +23,10 @@ pub fn prepare_dispute(
     channels: Vec<DualChannel>,
     mut instances: &mut Vec<BitVMX>,
     aggregated_pub_key: &PublicKey,
-    internal_win_action: &PublicKey,
     initial_utxo: Utxo,
+    initial_output_type: OutputType,
     prover_win_utxo: Utxo,
+    prover_win_output_type: OutputType,
     fee: u32,
 ) -> Result<Uuid> {
     let program_id = Uuid::new_v4();
@@ -36,14 +37,15 @@ pub fn prepare_dispute(
         VariableTypes::PubKey(*aggregated_pub_key).set_msg(program_id, "aggregated")?;
     send_all(&channels, &set_aggregated_msg)?;
 
-    let set_aggregated_msg = VariableTypes::PubKey(*internal_win_action)
+    /*let set_aggregated_msg = VariableTypes::PubKey(*internal_win_action)
         .set_msg(program_id, "pubkey_internal_action_win")?;
-    send_all(&channels, &set_aggregated_msg)?;
+    send_all(&channels, &set_aggregated_msg)?;*/
 
     let set_utxo_msg = VariableTypes::Utxo((
         initial_utxo.txid,
         initial_utxo.vout,
         Some(initial_utxo.amount),
+        Some(initial_output_type),
     ))
     .set_msg(program_id, "utxo")?;
     send_all(&channels, &set_utxo_msg)?;
@@ -52,6 +54,7 @@ pub fn prepare_dispute(
         prover_win_utxo.txid,
         prover_win_utxo.vout,
         Some(prover_win_utxo.amount),
+        Some(prover_win_output_type),
     ))
     .set_msg(program_id, "utxo_prover_win_action")?;
     send_all(&channels, &set_prover_win_utxo)?;

@@ -57,6 +57,9 @@ pub fn group_id_tx(op: usize, gid: u8) -> String {
 pub fn group_id_to(op: usize) -> String {
     format!("{}{}_TO", GID_TX, op)
 }
+pub fn start_challenge_to(op: usize, op_challenger: usize) -> String {
+    format!("START_CHALLENGE_{}_{}_TO", op, op_challenger)
+}
 
 impl ProtocolHandler for SlotProtocol {
     fn context(&self) -> &ProtocolContext {
@@ -229,11 +232,11 @@ impl ProtocolHandler for SlotProtocol {
         let mut protocol = self.load_or_create_protocol();
 
         let mut amount = fund_utxo.2.unwrap();
-        let output_type = external_fund_tx(
+        let spending = vec![scripts::check_aggregated_signature(
             &ops_agg_pubkey,
-            &vec![&ops_agg_pubkey, &ops_agg_pubkey],
-            amount,
-        )?;
+            SignMode::Aggregate,
+        )];
+        let output_type = external_fund_tx(&ops_agg_pubkey, spending, amount)?;
 
         protocol.add_external_connection(
             fund_utxo.0,
@@ -356,7 +359,6 @@ impl ProtocolHandler for SlotProtocol {
 
             //add the claimgate
             //TODO: set the proper pair aggregated for the stop output
-
             let stop_count = keys.len() as u8 - 1;
             let mut stop_pubkeys = vec![];
             for _ in 0..stop_count {
@@ -377,18 +379,41 @@ impl ProtocolHandler for SlotProtocol {
 
             //TODO:here choose the appropiate pair
             //this should be another aggregated to be signed later
+            //TODO: define properly the input utxo leafs
+            //TODO: in this case we need to use a timelock to restrict the prover the take by timeout the start chhalenge
+            let ops_agg_check =
+                scripts::check_aggregated_signature(&ops_agg_pubkey, SignMode::Aggregate);
             let pair_agg_check =
                 scripts::check_aggregated_signature(&pair_0_1_aggregated, SignMode::Aggregate);
             let start_challenge = OutputType::taproot(
                 protocol_cost,
-                &pair_0_1_aggregated,
-                &[pair_agg_check.clone(), pair_agg_check],
+                &ops_agg_pubkey,
+                &[ops_agg_check, pair_agg_check],
                 &vec![],
             )?;
 
             for n in 0..keys.len() {
                 if n != i {
-                    protocol.add_transaction_output(&certhashtx, &start_challenge)?;
+                    //protocol.add_transaction_output(&certhashtx, &start_challenge)?;
+                    let tx_name = start_challenge_to(i, n);
+
+                    protocol.add_connection(
+                        &format!("{}__{}", certhashtx, tx_name),
+                        &certhashtx,
+                        &tx_name,
+                        &start_challenge,
+                        &SpendMode::Script { leaf: 0 },
+                        &SighashType::taproot_all(),
+                    )?;
+
+                    //add an output "speedup" (this is actually tacking the value of the protocol)
+                    //needs to be changed once the speedup is working
+                    pb.add_speedup_output(
+                        &mut protocol,
+                        &tx_name,
+                        protocol_cost - fee,
+                        &ops_agg_pubkey,
+                    )?;
                 }
             }
 

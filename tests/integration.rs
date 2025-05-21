@@ -3,8 +3,9 @@ use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages,
 use common::{
     config_trace,
     dispute::{execute_dispute, prepare_dispute},
-    get_all, init_bitvmx, init_utxo, prepare_bitcoin, send_all, wait_message_from_channel,
+    get_all, init_bitvmx, init_utxo_new, prepare_bitcoin, send_all, wait_message_from_channel,
 };
+use protocol_builder::scripts::{self, SignMode};
 use tracing::info;
 use uuid::Uuid;
 
@@ -49,19 +50,35 @@ pub fn test_drp() -> Result<()> {
     let aggregated_pub_key = msgs[0].aggregated_pub_key().unwrap();
 
     info!("Initializing UTXO for program");
-    let utxo = init_utxo(&bitcoin_client, aggregated_pub_key, None, Some(200_000))?;
+
+    let spending_condition = vec![
+        scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate),
+        scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate),
+    ];
+    let (utxo, initial_out_type) = init_utxo_new(
+        &bitcoin_client,
+        &aggregated_pub_key,
+        spending_condition.clone(),
+        200_000,
+    )?;
 
     info!("Initializing UTXO for the prover action");
-    let prover_win_utxo = init_utxo(&bitcoin_client, aggregated_pub_key, None, Some(11_000))?;
+    let (prover_win_utxo, prover_win_out_type) = init_utxo_new(
+        &bitcoin_client,
+        &aggregated_pub_key,
+        spending_condition.clone(),
+        11_000,
+    )?;
 
     let prog_id = prepare_dispute(
         participants,
         channels.clone(),
         &mut instances,
         &aggregated_pub_key,
-        &aggregated_pub_key,
         utxo,
+        initial_out_type,
         prover_win_utxo,
+        prover_win_out_type,
         10_000,
     )?;
 

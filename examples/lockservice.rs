@@ -297,11 +297,11 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
         let set_secret = VariableTypes::Secret(hash).set_msg(program_id, "secret")?;
         send_all(&channels, &set_secret)?;
 
-        let set_ordinal_utxo = VariableTypes::Utxo((txid, 0, Some(ordinal_fee.to_sat())))
+        let set_ordinal_utxo = VariableTypes::Utxo((txid, 0, Some(ordinal_fee.to_sat()), None))
             .set_msg(program_id, "ordinal_utxo")?;
         send_all(&channels, &set_ordinal_utxo)?;
 
-        let set_protocol_fee = VariableTypes::Utxo((txid, 1, Some(protocol_fee.to_sat())))
+        let set_protocol_fee = VariableTypes::Utxo((txid, 1, Some(protocol_fee.to_sat()), None))
             .set_msg(program_id, "protocol_utxo")?;
         send_all(&channels, &set_protocol_fee)?;
 

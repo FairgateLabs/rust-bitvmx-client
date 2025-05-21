@@ -11,13 +11,13 @@ use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use bitvmx_client::{
     bitvmx::BitVMX,
     config::Config,
-    program::participant::P2PAddress,
+    program::{participant::P2PAddress, protocols::protocol_handler::external_fund_tx},
     types::{OutgoingBitVMXApiMessages, BITVMX_ID, EMULATOR_ID, L2_ID},
 };
 use p2p_handler::PeerId;
 use protocol_builder::{
-    scripts::{self, SignMode},
-    types::Utxo,
+    scripts::{self, ProtocolScript, SignMode},
+    types::{OutputType, Utxo},
 };
 use std::sync::Once;
 use tracing::info;
@@ -214,6 +214,35 @@ pub fn init_broker(role: &str) -> Result<DualChannel> {
     Ok(bridge_client)
 }
 
+pub fn init_utxo_new(
+    bitcoin_client: &BitcoinClient,
+    internal_key: &PublicKey,
+    spending_scripts: Vec<ProtocolScript>,
+    amount: u64,
+) -> Result<(Utxo, OutputType)> {
+    let secp = secp256k1::Secp256k1::new();
+    let untweaked_key = XOnlyPublicKey::from(*internal_key);
+
+    let taproot_spend_info =
+        scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
+    let p2tr_address = Address::p2tr(
+        &secp,
+        untweaked_key,
+        taproot_spend_info.merkle_root(),
+        KnownHrp::Regtest,
+    );
+
+    let (tx, vout) = bitcoin_client.fund_address(&p2tr_address, Amount::from_sat(amount))?;
+
+    let utxo = Utxo::new(tx.compute_txid(), vout, amount, &*internal_key);
+
+    let output_type = external_fund_tx(internal_key, spending_scripts, amount)?;
+
+    info!("UTXO: {:?}", utxo);
+
+    Ok((utxo, output_type))
+}
+
 pub fn init_utxo(
     bitcoin_client: &BitcoinClient,
     aggregated_pub_key: PublicKey,
@@ -230,10 +259,10 @@ pub fn init_utxo(
             SignMode::Aggregate,
         )]
     } else {
-        vec![
-            scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate),
-            scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate), //adding twice to be compatible with the claim stop
-        ]
+        vec![scripts::check_aggregated_signature(
+            &aggregated_pub_key,
+            SignMode::Aggregate,
+        )]
     };
 
     let taproot_spend_info =
