@@ -14,7 +14,7 @@ use crate::errors::BitVMXError;
 pub struct ClaimGate {
     name: String,
     from: String,
-    vout: usize,
+    pub vout: usize,
     stop_count: u8,
     pub cost: u64,
 }

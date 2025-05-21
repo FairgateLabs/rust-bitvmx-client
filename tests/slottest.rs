@@ -3,7 +3,7 @@ use bitcoin::Amount;
 use bitvmx_client::{
     program::{
         self,
-        protocols::{protocol_handler::external_fund_tx, slot::group_id},
+        protocols::{dispute::TIMELOCK_BLOCKS, protocol_handler::external_fund_tx, slot::group_id},
         variables::VariableTypes,
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_SLOT},
@@ -146,7 +146,7 @@ pub fn test_slot() -> Result<()> {
     let emulator_channels = vec![emulator_1.unwrap(), emulator_2.unwrap()];
 
     let initial_spending_condition = vec![
-        scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate), //convert to timelock
+        scripts::timelock(TIMELOCK_BLOCKS, &aggregated_pub_key, SignMode::Aggregate), //convert to timelock
         scripts::check_aggregated_signature(&pair_aggregated_pub_key, SignMode::Aggregate),
     ];
     let initial_output_type =

@@ -19,8 +19,11 @@ use tracing::info;
 use crate::{
     bitvmx::Context,
     errors::BitVMXError,
-    program::protocols::{
-        claim::ClaimGate, dispute::TIMELOCK_BLOCKS, protocol_handler::external_fund_tx,
+    program::{
+        protocols::{
+            claim::ClaimGate, dispute::TIMELOCK_BLOCKS, protocol_handler::external_fund_tx,
+        },
+        variables::VariableTypes,
     },
     types::ProgramContext,
 };
@@ -175,6 +178,31 @@ impl ProtocolHandler for SlotProtocol {
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
                 )?;
+
+                let total_operators = program_context
+                    .globals
+                    .get_var(&self.ctx.id, "operators")?
+                    .number()?;
+
+                for i in 0..total_operators {
+                    if i != operator {
+                        program_context.bitcoin_coordinator.dispatch(
+                            self.get_signed_tx(
+                                program_context,
+                                &start_challenge_to(operator as usize, i as usize),
+                                0,
+                                0,
+                                false,
+                                0,
+                            )?,
+                            Context::ProgramId(self.ctx.id).to_string()?,
+                            Some(
+                                tx_status.block_info.as_ref().unwrap().block_height
+                                    + TIMELOCK_BLOCKS as u32,
+                            ),
+                        )?;
+                    }
+                }
             }
         }
 
@@ -210,6 +238,12 @@ impl ProtocolHandler for SlotProtocol {
         let protocol_cost = 200_000;
         let speedup_dust = 500;
         let gid_max = 8;
+
+        context.globals.set_var(
+            &self.ctx.id,
+            "operators",
+            VariableTypes::Number(keys.len() as u32),
+        )?;
 
         let ops_agg_pubkey = context
             .globals
@@ -255,11 +289,14 @@ impl ProtocolHandler for SlotProtocol {
         let amount_for_publish_gid = fee + speedup_dust;
         let claim_gate_cost = ClaimGate::cost(fee, speedup_dust, keys.len() as u8 - 1, 1);
 
-        //ClaimGate::new(&mut protocol, from, claim_name, aggregated, amount_fee, amount_dust, stop_count, timelock_blocks, actions)
         let amount_for_sequence =
             fee + speedup_dust + amount_for_publish_gid + claim_gate_cost + 3 * protocol_cost;
 
+        //====================================
+        //CREATES THE SLOTS FOR EACH OPERATOR
         for (i, key) in keys.iter().enumerate() {
+            //====================================
+            //EVERY OPERATOR CAN SEND A CERTIFICATE HASH
             //Verify the winternitz signature
             let key_name = certificate_hash(i);
             let winternitz_check = scripts::verify_winternitz_signatures(
@@ -288,6 +325,8 @@ impl ProtocolHandler for SlotProtocol {
                 &SighashType::taproot_all(),
             )?;
 
+            //====================================
+            // AFTER SETTING THE CERTIFICATE HASH, THE OPERATOR IS FORCED TO SEND THE GROUP ID
             //create the group id output
             let key_name = group_id(i);
             let mut leaves: Vec<ProtocolScript> = (1..=gid_max)
@@ -336,6 +375,8 @@ impl ProtocolHandler for SlotProtocol {
                 pb.add_speedup_output(&mut protocol, &gidtx, speedup_dust, &ops_agg_pubkey)?;
             }
 
+            //====================================
+            // IF GROUP ID IS NOT SELECTED THE REST OF THE OPERATORS CAN PENALIZE AFTER TIME OUT
             // create the timeout gid tx
             let gidtotx = group_id_to(i);
             protocol.add_transaction(&gidtotx)?;
@@ -357,14 +398,16 @@ impl ProtocolHandler for SlotProtocol {
                 InputSpec::Index(0),
             )?;
 
-            //add the claimgate
+            //====================================
+            // ADD THE CLAIM GATE THAT THE OPERATOR WINS
+            // IF CONTAINS ALSO THE STOP OUTPUTS THAT IF THE OPERATOR WINS CHALLENGE NEEDS TO CONSUME
             //TODO: set the proper pair aggregated for the stop output
             let stop_count = keys.len() as u8 - 1;
             let mut stop_pubkeys = vec![];
             for _ in 0..stop_count {
                 stop_pubkeys.push(&pair_0_1_aggregated);
             }
-            let _claim_gate = ClaimGate::new(
+            let claim_gate = ClaimGate::new(
                 &mut protocol,
                 &certhashtx,
                 &format!("OP_WINS_{}", i),
@@ -377,12 +420,15 @@ impl ProtocolHandler for SlotProtocol {
                 vec![],
             )?;
 
+            //====================================
+            // ADD THE OUTPUTS TO ALLOW EVERY OTHER OPERATOR TO CHALLENGE
+            // ALSO THIS OUTPUT CAN BE CONSUME BY TIMEOUT IF HAS NOT BEEN CHALLENGED
             //TODO:here choose the appropiate pair
             //this should be another aggregated to be signed later
             //TODO: define properly the input utxo leafs
             //TODO: in this case we need to use a timelock to restrict the prover the take by timeout the start chhalenge
             let ops_agg_check =
-                scripts::check_aggregated_signature(&ops_agg_pubkey, SignMode::Aggregate);
+                scripts::timelock(TIMELOCK_BLOCKS, &ops_agg_pubkey, SignMode::Aggregate);
             let pair_agg_check =
                 scripts::check_aggregated_signature(&pair_0_1_aggregated, SignMode::Aggregate);
             let start_challenge = OutputType::taproot(
@@ -392,18 +438,39 @@ impl ProtocolHandler for SlotProtocol {
                 &vec![],
             )?;
 
+            let mut count = 0;
             for n in 0..keys.len() {
                 if n != i {
-                    //protocol.add_transaction_output(&certhashtx, &start_challenge)?;
+                    protocol.add_transaction_output(&certhashtx, &start_challenge)?;
                     let tx_name = start_challenge_to(i, n);
 
-                    protocol.add_connection(
-                        &format!("{}__{}", certhashtx, tx_name),
+                    protocol.add_connection_with_timelock(
+                        &format!("{}__{}_TL", certhashtx, tx_name),
                         &certhashtx,
                         &tx_name,
                         &start_challenge,
                         &SpendMode::Script { leaf: 0 },
                         &SighashType::taproot_all(),
+                        TIMELOCK_BLOCKS,
+                    )?;
+
+                    //add the input that consume the stop output of the claim gate
+                    count += 1;
+                    let vout = claim_gate.vout + count;
+                    protocol.add_transaction_input(
+                        Hash::all_zeros(),
+                        vout,
+                        &tx_name,
+                        Sequence::ENABLE_RBF_NO_LOCKTIME,
+                        &SpendMode::Script { leaf: 0 },
+                        &SighashType::taproot_all(),
+                    )?;
+                    protocol.connect(
+                        &format!("{}__{}_STOP", certhashtx, tx_name),
+                        &certhashtx,
+                        claim_gate.vout + count,
+                        &tx_name,
+                        InputSpec::Index(1),
                     )?;
 
                     //add an output "speedup" (this is actually tacking the value of the protocol)
