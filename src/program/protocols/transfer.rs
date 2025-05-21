@@ -183,7 +183,7 @@ impl ProtocolHandler for TransferProtocol {
                     locked_asset_utxo.1,
                     locked_asset_utxo.3.as_ref().unwrap().clone(),
                     &txname,
-                    &SpendMode::ScriptsOnly,
+                    &SpendMode::Script { leaf: 1 },
                     &SighashType::taproot_all(),
                 )?;
 
@@ -246,10 +246,10 @@ impl TransferProtocol {
 
         let signature = self
             .load_protocol()?
-            .input_taproot_script_spend_signature(&name, 0, 0)?
+            .input_taproot_script_spend_signature(&name, 0, 1)?
             .unwrap();
 
-        let mut spending_args = InputArgs::new_taproot_script_args(0);
+        let mut spending_args = InputArgs::new_taproot_script_args(1);
         spending_args.push_taproot_signature(signature)?;
         all_signatures.push(spending_args);
 

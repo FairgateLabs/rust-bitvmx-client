@@ -60,18 +60,26 @@ pub fn test_transfer() -> Result<()> {
     let msgs = get_all(&channels, &mut instances, false)?;
     let aggregated_pub_key = msgs[0].aggregated_pub_key().unwrap();
 
+    //emulate asset
+    let asset_spending_condition = vec![
+        scripts::timelock(
+            100,
+            &fixtures::hardcoded_unspendable().into(),
+            SignMode::Skip,
+        ),
+        scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate),
+    ];
+    let asset_utxo = init_utxo_new(
+        &bitcoin_client,
+        &aggregated_pub_key,
+        asset_spending_condition.clone(),
+        10_000,
+    )?;
+
     let spending_condition = vec![scripts::check_aggregated_signature(
         &aggregated_pub_key,
         SignMode::Aggregate,
     )];
-
-    //emulate asset
-    let asset_utxo = init_utxo_new(
-        &bitcoin_client,
-        &aggregated_pub_key,
-        spending_condition.clone(),
-        10_000,
-    )?;
     //emulate op_n_gid_i
     let op_gid_utxo = init_utxo_new(
         &bitcoin_client,

@@ -231,14 +231,6 @@ impl ProtocolHandler for LockProtocol {
         // The following script is the output that user timeout could use as input
         let taproot_script_eol_timelock_expired_tx_lock =
             scripts::timelock(eol_timelock_duration, &user_pubkey, SignMode::Skip);
-        // Mark this script as unsigned script, so the protocol builder wont try to sign it
-        let taproot_script_eol_timelock_expired_tx_lock = ProtocolScript::new(
-            taproot_script_eol_timelock_expired_tx_lock
-                .get_script()
-                .clone(),
-            &user_pubkey,
-            SignMode::Skip,
-        );
 
         //this should be another aggregated to be signed later
         let taproot_script_all_sign_tx_lock =
