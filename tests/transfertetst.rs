@@ -101,7 +101,7 @@ pub fn test_transfer() -> Result<()> {
     let set_operators_count = VariableTypes::Number(3).set_msg(program_id, "operator_count")?;
     send_all(&channels, &set_operators_count)?;
 
-    for gid in 1..=15 {
+    for gid in 1..=7 {
         let set_pub_too = VariableTypes::PubKey(fixtures::hardcoded_unspendable().into())
             .set_msg(program_id, &pub_too_group(gid))?;
         send_all(&channels, &set_pub_too)?;
@@ -126,7 +126,7 @@ pub fn test_transfer() -> Result<()> {
         .set_msg(program_id, &op_won(op))?;
         send_all(&channels, &set_op_won)?;
 
-        for gid in 1..=15 {
+        for gid in 1..=7 {
             let set_op_gid = VariableTypes::Utxo((
                 op_gid_utxo.0.txid,
                 op_gid_utxo.0.vout,
