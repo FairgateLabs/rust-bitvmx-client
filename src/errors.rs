@@ -125,6 +125,9 @@ pub enum BitVMXError {
 
     #[error("ProgramDefinition Error {0}")]
     ProgramDefinitionError(#[from] ProgramDefinitionError),
+
+    #[error("Instrucion {0} not found")]
+    InstructionNotFound(String),
 }
 
 #[derive(Error, Debug)]
