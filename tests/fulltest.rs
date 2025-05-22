@@ -43,7 +43,7 @@ pub fn test_full() -> Result<()> {
     config_trace();
 
     const NETWORK: Network = Network::Regtest;
-    let fake_drp = true;
+    let fake_drp = false;
 
     let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
 
@@ -408,6 +408,7 @@ pub fn test_full() -> Result<()> {
     send_all(&channels, &set_operators_count)?;
 
     for gid in 1..=7 {
+        //XXX: REPLACE WITH THE PROPER GID PUBKEY. OR HARDCODE FOR NOW A PUBKEY WITH KNOWN SECRET
         let set_pub_too = VariableTypes::PubKey(fixtures::hardcoded_unspendable().into())
             .set_msg(transfer_program_id, &pub_too_group(gid))?;
         send_all(&channels, &set_pub_too)?;

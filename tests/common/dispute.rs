@@ -63,7 +63,8 @@ pub fn prepare_dispute(
     send_all(&channels, &set_prover_win_utxo)?;
 
     //let program_path = "../BitVMX-CPU/docker-riscv32/verifier/build/zkverifier-new-mul.yaml";
-    let program_path = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
+    //let program_path = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
+    let program_path = "verifiers/cardinal-verifier.yaml";
     let set_program = VariableTypes::String(program_path.to_string())
         .set_msg(program_id, "program_definition")?;
     send_all(&channels, &set_program)?;
@@ -110,7 +111,8 @@ pub fn execute_dispute(
 
     // set input value
     //let data = "010000007bd5d42e4057965ff389683ef2304190d5e902f10190dba2887d46cccdd3389de95b00b98b086eb81f86988b252c704455eadff8f52710189e9c7d6c29b02a1ce355dcc4b00d84572a8a3414d40ecc209e5cea4e34b119b84e7455877726d3185c2847d1f4bcae30a0cd1b2da4bb3b85fa59b41dee6d9fea0258ced1e9a17c93";
-    let data = "11111111";
+    //let data = "11111111";
+    let data = "0100000090531051d96babfc1fd5973ef01e5d69746be907654c0b99cf1a853206647906966c3c1b3b93d12206202b8c685df7554d3df6c72b5cee973de94c45e3f37a0a07000000b75f20d1aee5a1a0908edd107a25189ccc38b6d20c5dc33362a066157a6ee60350a09cfbfebe38c8d9f04a6dafe46ae2e30f6638f3eb93c1d2aeff2d52d66d0dcd68bf7f8fc07485dd04a573d233df3663d63e71568bc035ef82e8ab3525f025b487aaa4456aaf93be3141b210cda5165a714225d9fd63163f59d741bdaa8b93";
     let set_input_1 =
         VariableTypes::Input(hex::decode(data).unwrap()).set_msg(program_id, "program_input")?;
     let _ = channels[0].send(BITVMX_ID, set_input_1)?;

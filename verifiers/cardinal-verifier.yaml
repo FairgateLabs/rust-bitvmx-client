@@ -1,0 +1,10 @@
+elf: cardinal-verifier.elf
+nary_search: 8
+max_steps: 500000000
+input_section_name: .input
+inputs:
+  - size: 100
+    owner: prover
+  - size: 100
+    owner: prover
+    

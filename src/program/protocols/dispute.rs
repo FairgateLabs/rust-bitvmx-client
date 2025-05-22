@@ -38,13 +38,28 @@ use super::{
 };
 
 pub const START_CH: &str = "START_CHALLENGE";
-pub const INPUT_1: &str = "INPUT_1";
+pub const INPUT: &str = "INPUT_";
 pub const COMMITMENT: &str = "COMMITMENT";
 pub const EXECUTE: &str = "EXECUTE";
 pub const TIMELOCK_BLOCKS: u16 = 20;
 pub const PROVER_WINS: &str = "PROVER_WINS";
 pub const VERIFIER_WINS: &str = "VERIFIER_WINS";
 pub const ACTION_PROVER_WINS: &str = "ACTION_PROVER_WINS";
+
+pub fn input_var(input_section_number: u32, i: u32) -> String {
+    format!("program_input_{}_{}", input_section_number, i)
+}
+
+pub fn input_words_per_tx(input_section_number: u32) -> String {
+    format!("program_words_per_tx_{}", input_section_number)
+}
+
+pub fn input_total_txs() -> String {
+    format!("program_input_total_txs")
+}
+pub fn input_tx(tx: u32) -> String {
+    format!("{}{}", INPUT, tx)
+}
 
 pub const TRACE_VARS: [(&str, usize); 15] = [
     ("write_address", 4 as usize),
@@ -117,19 +132,25 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             ("timelock".to_string(), timelock.into()),
         ];
 
-        for inputs in program_def.inputs.iter() {
+        program_context.globals.set_var(
+            &self.ctx.id,
+            &input_total_txs(),
+            VariableTypes::Number(program_def.inputs.len() as u32),
+        )?;
+
+        for (input_idx, inputs) in program_def.inputs.iter().enumerate() {
             //TODO: handle more inputs, owners and counter-sign
             assert!(inputs.size % 4 == 0);
             let words_needed = inputs.size / 4;
             if self.role() == ParticipantRole::Prover {
                 for i in 0..words_needed {
                     let key = key_chain.derive_winternitz_hash160(4)?;
-                    keys.push((format!("program_input_{}", i), key.into()));
+                    keys.push((input_var(input_idx as u32, i as u32), key.into()));
                 }
             }
             program_context.globals.set_var(
                 &self.ctx.id,
-                "input_words",
+                &input_words_per_tx(input_idx as u32),
                 VariableTypes::Number(words_needed as u32),
             )?;
         }
@@ -492,16 +513,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             )?;
         }
 
-        if name == INPUT_1 && self.role() == ParticipantRole::Prover {
-            /*let tx = self.get_signed_tx(
-                program_context,
-                &ClaimGate::tx_start(PROVER_WINS),
-                0,
-                0,
-                false,
-            )?;
-            info!("PROVER_WINS_TX: {:?}", tx);*/
-        }
         if name == EXECUTE && self.role() == ParticipantRole::Prover {
             let tx = self.get_signed_tx(
                 program_context,
@@ -567,27 +578,12 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             .get_var(&self.ctx.id, "utxo_prover_win_action")?
             .utxo()?;
 
-        /*let internal_action_win = context
-        .globals
-        .get_var(&self.ctx.id, "pubkey_internal_action_win")?
-        .pubkey()?;*/
-
         let program_def = self.get_program_definition(context)?;
-
-        /*let external_aggregated = context
-        .globals
-        .get_var(&self.ctx.id, "aggregated")?
-        .pubkey()?;*/
 
         let mut protocol = self.load_or_create_protocol();
 
         let mut amount = utxo.2.unwrap();
         let output_type = utxo.3.unwrap();
-        /*let output_type = external_fund_tx(
-            &external_aggregated,
-            &vec![&external_aggregated, &external_aggregated],
-            amount,
-        )?;*/
 
         protocol.add_external_connection(
             utxo.0,
@@ -601,33 +597,44 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         let aggregated = computed_aggregated.get("aggregated_1").unwrap();
         amount -= fee;
 
-        let words = context
+        amount -= ClaimGate::cost(fee, speedup_dust, 1, 1);
+        amount -= ClaimGate::cost(fee, speedup_dust, 1, 1);
+
+        let total_inputs = context
             .globals
-            .get_var(&self.ctx.id, "input_words")?
+            .get_var(&self.ctx.id, &input_total_txs())?
             .number()?;
 
-        let input_vars = (0..words)
-            .map(|i| format!("program_input_{}", i))
-            .collect::<Vec<_>>();
-        let input_vars_slice = input_vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
+        let mut pre = START_CH.to_string();
+        let mut next = String::new();
+        for input_idx in 0..total_inputs {
+            let words = context
+                .globals
+                .get_var(&self.ctx.id, &input_words_per_tx(i))?
+                .number()?;
 
-        amount -= ClaimGate::cost(fee, speedup_dust, 1, 1);
-        amount -= ClaimGate::cost(fee, speedup_dust, 1, 1);
-
-        self.add_winternitz_check(
-            aggregated,
-            &mut protocol,
-            TIMELOCK_BLOCKS,
-            &keys[0],
-            amount,
-            speedup_dust,
-            &input_vars_slice,
-            START_CH,
-            INPUT_1,
-            None,
-        )?;
-        amount -= fee;
-        amount -= speedup_dust;
+            let input_vars = (0..words)
+                .map(|i| input_var(input_idx, i))
+                .collect::<Vec<_>>();
+            let input_vars_slice = input_vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
+            next = input_tx(input_idx);
+            self.add_winternitz_check(
+                aggregated,
+                &mut protocol,
+                TIMELOCK_BLOCKS,
+                &keys[0],
+                amount,
+                speedup_dust,
+                &input_vars_slice,
+                &pre,
+                &next,
+                None,
+            )?;
+            amount -= fee;
+            amount -= speedup_dust;
+            pre = next.clone();
+        }
+        let last_input = next;
 
         let claim_prover = ClaimGate::new(
             &mut protocol,
@@ -695,7 +702,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             amount,
             speedup_dust,
             &vec!["last_step", "last_hash"],
-            INPUT_1,
+            &last_input,
             COMMITMENT,
             Some(&claim_verifier),
         )?;
