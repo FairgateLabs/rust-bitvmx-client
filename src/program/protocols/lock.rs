@@ -9,7 +9,7 @@ use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
     scripts::{self, build_taproot_spend_info, reveal_secret, timelock, ProtocolScript, SignMode},
     types::{
-        input::{InputSpec, LeafSpec, SighashType},
+        input::{InputSpec, SighashType},
         output::SpendMode,
         InputArgs, OutputType,
     },
@@ -200,7 +200,6 @@ impl ProtocolHandler for LockProtocol {
             ordinal_utxo.2.unwrap(),
             &unspendable,
             &leaves,
-            &SpendMode::ScriptsOnly,
             &prevouts,
         )?;
 
@@ -208,7 +207,6 @@ impl ProtocolHandler for LockProtocol {
             protocol_utxo.2.unwrap(),
             &unspendable,
             &leaves,
-            &SpendMode::ScriptsOnly,
             &prevouts,
         )?;
 
@@ -219,6 +217,7 @@ impl ProtocolHandler for LockProtocol {
             ordinal_utxo.1,
             output_type_ordinal,
             LOCK_TX,
+            &SpendMode::ScriptsOnly,
             &SighashType::taproot_all(),
         )?;
 
@@ -227,6 +226,7 @@ impl ProtocolHandler for LockProtocol {
             protocol_utxo.1,
             output_type_protocol,
             LOCK_TX,
+            &SpendMode::ScriptsOnly,
             &SighashType::taproot_all(),
         )?;
 
@@ -259,7 +259,6 @@ impl ProtocolHandler for LockProtocol {
                     taproot_script_eol_timelock_expired_tx_lock.clone(),
                     taproot_script_all_sign_tx_lock.clone(),
                 ],
-                &SpendMode::ScriptsOnly,
                 &vec![],
             )?, // We do not need prevouts cause the tx is in the graph,
         )?;
@@ -278,7 +277,6 @@ impl ProtocolHandler for LockProtocol {
                 amount,
                 &unspendable,
                 &[taproot_script_protocol_fee_addres_signature_in_tx_lock],
-                &SpendMode::ScriptsOnly,
                 &vec![],
             )?, // We do not need prevouts cause the tx is in the graph,
         )?;
@@ -335,6 +333,7 @@ impl LockProtocol {
             0,
             HAPPY_PATH_TX,
             Sequence::ENABLE_RBF_NO_LOCKTIME,
+            &SpendMode::ScriptsOnly,
             &SighashType::taproot_all(),
         )?;
         protocol.add_transaction_input(
@@ -342,6 +341,7 @@ impl LockProtocol {
             1,
             HAPPY_PATH_TX,
             Sequence::ENABLE_RBF_NO_LOCKTIME,
+            &SpendMode::ScriptsOnly,
             &SighashType::taproot_all(),
         )?;
 
@@ -350,8 +350,7 @@ impl LockProtocol {
             &OutputType::taproot(
                 amount_ordinal,
                 &unspendable,
-                &[happy_path_check.clone()],
-                &SpendMode::ScriptsOnly,
+                &[happy_path_check.clone()],      
                 &vec![],
             )?,
         )?;
@@ -361,7 +360,6 @@ impl LockProtocol {
                 amount_protocol,
                 &unspendable,
                 &[happy_path_check.clone()],
-                &SpendMode::ScriptsOnly,
                 &vec![],
             )?,
         )?;
@@ -382,7 +380,7 @@ impl LockProtocol {
             .load_protocol()?
             .input_taproot_script_spend_signature(LOCK_TX, 0, 1)?
             .unwrap();
-        let mut taproot_arg_0 = InputArgs::new_taproot_script_args(LeafSpec::Index(1));
+        let mut taproot_arg_0 = InputArgs::new_taproot_script_args(0);
         taproot_arg_0.push_taproot_signature(signature)?;
         //info!("signature =====>: {:?}", signature);
         taproot_arg_0.push_slice(&secret);
@@ -391,7 +389,7 @@ impl LockProtocol {
             .load_protocol()?
             .input_taproot_script_spend_signature(LOCK_TX, 1, 1)?
             .unwrap();
-        let mut taproot_arg_1 = InputArgs::new_taproot_script_args(LeafSpec::Index(1));
+        let mut taproot_arg_1 = InputArgs::new_taproot_script_args(1);
         taproot_arg_1.push_taproot_signature(signature)?;
         taproot_arg_1.push_slice(&secret);
 
@@ -408,14 +406,14 @@ impl LockProtocol {
             .load_protocol()?
             .input_taproot_script_spend_signature(HAPPY_PATH_TX, 0, 1)?
             .unwrap();
-        let mut taproot_arg_0 = InputArgs::new_taproot_script_args(LeafSpec::Index(1));
+        let mut taproot_arg_0 = InputArgs::new_taproot_script_args(1);
         taproot_arg_0.push_taproot_signature(signature)?;
 
         let signature = self
             .load_protocol()?
             .input_taproot_script_spend_signature(HAPPY_PATH_TX, 1, 0)?
             .unwrap();
-        let mut taproot_arg_1 = InputArgs::new_taproot_script_args(LeafSpec::Index(0));
+        let mut taproot_arg_1 = InputArgs::new_taproot_script_args(0);
         taproot_arg_1.push_taproot_signature(signature)?;
 
         let tx = self

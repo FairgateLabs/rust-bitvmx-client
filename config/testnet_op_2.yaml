@@ -1,8 +1,8 @@
 bitcoin:
-  network: regtest
-  url: http://127.0.0.1:18443
-  username: foo
-  password: rpcpassword
+  network: testnet
+  url: "https://distinguished-intensive-frost.btc-testnet.quiknode.pro/38d0f064dc8e72fe44d8a9a762d448bc64c54619/"
+  username: ""
+  password: ""
   wallet: test_wallet
 
 builder:
@@ -14,7 +14,7 @@ builder:
   taproot_sighash_type: SIGHASH_ALL
 
 key_manager:
-  network: regtest
+  network: testnet
   key_derivation_path: m/101/1/0/0/
   key_derivation_seed: 2222beefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeec
   winternitz_seed: 2222beefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeec
@@ -33,19 +33,18 @@ p2p:
   timeout: 5
 
 monitor:
-  checkpoint_height: 1
-  confirmation_threshold: 6
+  checkpoint_height: 4393220
+  confirmation_threshold: 1
 
 coordinator:
-  throtthle_bitcoin_updates_until_sync: 0
-  throtthle_bitcoin_updates: 0
+  throtthle_bitcoin_updates_until_sync: 1
+  throtthle_bitcoin_updates: 10
 
 broker_storage: 
   path: /tmp/op_2/broker.db
-
 broker_port: 33333
 
-client: 
+client:
   # Number of retries for requests
   retry: 1
   # Delay between retries in milliseconds

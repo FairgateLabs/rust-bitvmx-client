@@ -1,10 +1,8 @@
-use std::{fs::File, io::Write};
+use std::{fs::File, io::Write, str::FromStr};
 
 use anyhow::Result;
 use bitcoin::{
-    key::rand::rngs::OsRng,
-    secp256k1::{self, PublicKey as SecpPublicKey, SecretKey},
-    Address, Amount, Network, PublicKey as BitcoinPubKey,
+    key::rand::{self, rngs::OsRng}, secp256k1::{self, PublicKey as SecpPublicKey, SecretKey}, Address, Network, PrivateKey, PublicKey as BitcoinPubKey, Txid
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_client::{
@@ -51,7 +49,7 @@ pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, Address)> {
 #[ignore]
 #[test]
 pub fn test_lock() -> Result<()> {
-    let network = Network::Regtest; //TODO: Get from config or elsewhere
+    let network = Network::Testnet; //TODO: Get from config or elsewhere
     test_lock_aux(false, false, network)
 }
 
@@ -68,35 +66,15 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool, network: Network) 
     let is_regtest = network == Network::Regtest;
 
     let (bitcoin_client, bitcoind, wallet) = if is_regtest {
-        let (bitcoin_client, bitcoind, wallet) = if independent {
+    if independent {
             let (bitcoin_client, wallet) = prepare_bitcoin_running()?;
             (bitcoin_client, None, Some(wallet))
         } else {
             let (client, deamon, wallet) = prepare_bitcoin()?;
             (client, Some(deamon), Some(wallet))
-        };
-
-        let bitvmx_wallet = fixtures::create_wallet()?;
-
-        let address = bitvmx_wallet.get_address()?;
-    
-        let amount = Amount::from_sat(20000);
-    
-        let (tx, vout) = bitcoin_client.fund_address(&address, amount)?;
-        let txid = tx.compute_txid();
-
-        let utxo = json!({
-            "txid": txid,
-            "vout": vout
-        });
-        let json_string = serde_json::to_string_pretty(&utxo).unwrap();
-        let mut file = File::create("utxo.json")?;
-        file.write_all(json_string.as_bytes())?;
-        
-        (bitcoin_client, bitcoind, wallet)
-    
+        }
     } else {
-        let config = Config::new(Some("config/op_1.yaml".to_string()))?;
+        let config = Config::new(Some("config/op_testnet_1.yaml".to_string()))?;
         let bitcoin_client = BitcoinClient::new(
             &config.bitcoin.url,
             &config.bitcoin.username,
@@ -104,6 +82,12 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool, network: Network) 
         )?;
         (bitcoin_client, None, None)
     };
+
+    let mut rng = rand::thread_rng();
+    let secp = secp256k1::Secp256k1::new();
+    let secret_key = SecretKey::new(&mut rng);
+    let private_key = PrivateKey::new(secret_key, network);
+    let to_pubkey = BitcoinPubKey::from_private_key(&secp, &private_key);
 
     let (channels, mut instances) = if independent {
         let bridge_1 = init_broker("op_1")?;
@@ -115,12 +99,35 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool, network: Network) 
         let channels = vec![bridge_1, bridge_2, bridge_3, bridge_4];
         (channels, instances)
     } else {
-        let (bitvmx_1, _addres_1, bridge_1, _) = init_bitvmx("op_1", false)?;
-        let (bitvmx_2, _addres_2, bridge_2, _) = init_bitvmx("op_2", false)?;
+        let (bitvmx_1, _addres_1, bridge_1, _) = init_bitvmx("op_testnet_1", false)?;
+        let (bitvmx_2, _addres_2, bridge_2, _) = init_bitvmx("testnet_op_2", false)?;
         let instances = vec![bitvmx_1, bitvmx_2];
         let channels = vec![bridge_1, bridge_2];
         (channels, instances)
     };
+
+    
+    let funding_txid1 = Txid::from_str("658b032b0d489c6b74c0caadfdedc1002fafec5901a1cbf8b11ee3a4a2b5e39f")?;
+    let funding_txid2 = Txid::from_str("aa998737d7eeec69384898f87bca44cb71009cd9fcd9935e990e318db8e44ac9")?;
+    let vout1 = 1;
+    let vout2 = 1;
+    let amount = 20000;
+    let fee = 150;
+
+    let bitvmx_wallet = fixtures::create_wallet()?;
+    let txid1 = bitvmx_wallet.fund_address(funding_txid1, vout1, to_pubkey, amount, fee)?;
+    let txid2 = bitvmx_wallet.fund_address(funding_txid2, vout2, to_pubkey, 5000, fee)?;
+
+    let utxo = json!({
+        "txid1": txid1,
+        "vout1": 0,
+        "txid2": txid2,
+        "vout2": 0,
+        "signer": secret_key
+    });
+    let json_string = serde_json::to_string_pretty(&utxo).unwrap();
+    let mut file = File::create("utxo.json")?;
+    file.write_all(json_string.as_bytes())?;
 
     //get to the top of the blockchain
     for _ in 0..101 {

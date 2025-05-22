@@ -11,7 +11,7 @@ use protocol_builder::{
     errors::ProtocolBuilderError,
     scripts::{self, SignMode},
     types::{
-        input::{LeafSpec, SighashType},
+        input::SighashType,
         output::SpendMode,
         InputArgs, OutputType,
     },
@@ -206,6 +206,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             utxo.1,
             output_type,
             START_CH,
+            &SpendMode::All {
+                key_path_sign: SignMode::Aggregate,
+            },
             &SighashType::taproot_all(),
         )?;
 
@@ -261,7 +264,7 @@ impl DisputeResolutionProtocol {
             .input_taproot_script_spend_signature(txname, 0, 0)?
             .unwrap();
         let spend = protocol.get_script_to_spend(txname, 0, 0)?;
-        let mut spending_args = InputArgs::new_taproot_script_args(LeafSpec::Index(0));
+        let mut spending_args = InputArgs::new_taproot_script_args(0);
 
         //TODO: set value for variable from outside
 
@@ -315,9 +318,6 @@ impl DisputeResolutionProtocol {
             amount,
             aggregated,
             &[input_data_l1, timeout],
-            &SpendMode::All {
-                key_path_sign: SignMode::Aggregate,
-            },
             &vec![],
         )?;
 
@@ -326,6 +326,9 @@ impl DisputeResolutionProtocol {
             START_CH,
             INPUT_1,
             &output_type,
+            &SpendMode::All {
+                key_path_sign: SignMode::Aggregate,
+            },
             &SighashType::taproot_all(),
         )?;
 

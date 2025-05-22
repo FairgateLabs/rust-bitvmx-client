@@ -104,6 +104,9 @@ impl ProtocolHandler for SlotProtocol {
             fund_utxo.1,
             output_type,
             SETUP_TX,
+            &SpendMode::All {
+                key_path_sign: SignMode::Aggregate,
+            },
             &SighashType::taproot_all(),
         )?;
 
@@ -165,9 +168,6 @@ pub fn external_fund_tx(aggregated: &PublicKey, amount: u64) -> Result<OutputTyp
         amount,
         aggregated,
         &spending_scripts,
-        &SpendMode::All {
-            key_path_sign: SignMode::Aggregate,
-        },
         &vec![prevout],
     )?)
 }

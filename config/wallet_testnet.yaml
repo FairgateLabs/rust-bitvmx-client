@@ -21,10 +21,10 @@ key_manager:
 
 key_storage:
   password: secret_password_2
-  path: /tmp/op_1/keys.db
+  path: /tmp/wallet/keys.db
 
 storage:
-  path: /tmp/op_1/storage.db
+  path: /tmp/wallet/storage.db
 
 p2p:
   address: /ip4/127.0.0.1/tcp/61180
@@ -33,18 +33,19 @@ p2p:
   timeout: 5
 
 monitor:
-  checkpoint_height: 4393220
-  confirmation_threshold: 1
+  checkpoint_height: 1
+  confirmation_threshold: 6
 
 coordinator:
-  throtthle_bitcoin_updates_until_sync: 1
-  throtthle_bitcoin_updates: 10
+  throtthle_bitcoin_updates_until_sync: 0
+  throtthle_bitcoin_updates: 0
 
-broker_storage:
-  path: /tmp/op_1/broker.db
+broker_storage: 
+  path: /tmp/wallet/broker.db
+
 broker_port: 22222
 
-client:
+client: 
   # Number of retries for requests
   retry: 1
   # Delay between retries in milliseconds

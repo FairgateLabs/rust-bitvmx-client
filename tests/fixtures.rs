@@ -74,11 +74,12 @@ pub fn build_taptree_for_lockreq_tx_outputs(
 pub fn create_lockreq_ready(
     aggregated_operators: PublicKey,
     secret_hash: Vec<u8>,
-    _network: Network,
+    network: Network,
     bitcoin_client: &BitcoinClient,
 ) -> Result<(Txid, SecpPublicKey, Amount, Amount)> {
     //PublicKey user, txid, 0 :amount-ordinal, 1: amount-fees
 
+    tracing::info!("Creating lockreq transaction");
     let secp = secp256k1::Secp256k1::new();
 
     // hardcoded unspendable
@@ -87,29 +88,40 @@ pub fn create_lockreq_ready(
     let data = std::fs::read_to_string("utxo.json")?;
     let parsed: Value = serde_json::from_str(&data).expect("Failed to parse JSON");
 
-    let txid = parsed["txid"].as_str().unwrap_or("missing");
-    let vout = parsed["vout"]
+    let txid1 = parsed["txid1"].as_str().unwrap_or("missing");
+    let vout1 = parsed["vout1"]
+        .as_u64()
+        .unwrap_or(0) as u32;
+    let txid2 = parsed["txid2"].as_str().unwrap_or("missing");
+    let vout2 = parsed["vout2"]
         .as_u64()
         .unwrap_or(0) as u32;
 
-    let bitvmx_wallet = create_wallet()?;
-    let funding_txid = Txid::from_str(txid)?;
-    let user_sk = bitvmx_wallet.get_secret_key()?;
-    let user_pubkey = bitvmx_wallet.get_pubkey()?;
-    let user_address = bitvmx_wallet.get_address()?;
-    
-    let ordinal_prev_outpoint = OutPoint::new(funding_txid, vout);
-    let funding_tx = bitcoin_client
-        .get_transaction(&funding_txid)?
+    let user_sk = SecretKey::from_str(parsed["signer"].as_str().unwrap())?;
+    let private_key = bitcoin::PrivateKey::new(user_sk.clone(), network);
+    let user_pubkey = BitcoinPubKey::from_private_key(&secp, &private_key);
+    let user_cpk = bitcoin::CompressedPublicKey::from_private_key(&secp, &private_key).unwrap();
+    let user_address = bitcoin::Address::p2wpkh(&user_cpk, network);
+
+
+    let funding_txid1 = Txid::from_str(txid1)?;
+    let funding_txid2 = Txid::from_str(txid2)?;
+
+    let ordinal_prev_outpoint = OutPoint::new(funding_txid1, vout1);
+    let funding_tx1 = bitcoin_client
+        .get_transaction(&funding_txid1)?
         .unwrap();
-    let ordinal_prev_txout = funding_tx.output[vout as usize].clone();
+    let funding_tx2 = bitcoin_client
+        .get_transaction(&funding_txid2)?
+        .unwrap();
+    let ordinal_prev_txout = funding_tx1.output[vout1 as usize].clone();
 
-    let protocol_fees_outpoint = OutPoint::new(funding_txid, vout);
-    let protocol_fees_txout = funding_tx.output[vout as usize].clone();
+    let protocol_fees_outpoint = OutPoint::new(funding_txid2, vout2);
+    let protocol_fees_txout = funding_tx2.output[vout2 as usize].clone();
 
-    let funding_amount_used_for_protocol_fees = funding_tx.output[vout as usize].value;
+    let funding_amount_used_for_protocol_fees = funding_tx2.output[vout2 as usize].value;
     let funding_amount_ordinal = Amount::from_sat(10_000);
-    let protocol_fee = Amount::from_sat(1000);
+    let protocol_fee = Amount::from_sat(3000);
     let miner_fee = Amount::from_sat(300);
 
     let signed_lockreq_tx = create_lockreq_tx_and_sign(
@@ -134,6 +146,8 @@ pub fn create_lockreq_ready(
     tracing::debug!("Signed lockreq transaction: {:#?}", signed_lockreq_tx);
 
     let lockreq_txid = bitcoin_client.send_transaction(&signed_lockreq_tx).unwrap();
+
+    tracing::info!("Lockreq transaction sent!");
 
     Ok((lockreq_txid, user_pubkey.inner, funding_amount_ordinal, protocol_fee))
 }
@@ -288,19 +302,14 @@ pub fn create_lockreq_tx_and_sign(
     signed_transaction
 }
 
-pub fn create_wallet() -> Result<rust_bitvmx_wallet::wallet::Wallet> {
-    let config = Config::new(Some("config/op_1.yaml".to_string()))?;
-
-    let store = std::rc::Rc::new(storage_backend::storage::Storage::new(&config.storage)?);
-
-    let keystore = key_manager::key_store::KeyStore::new(store.clone());
-
-    let key_manager = key_manager::create_key_manager_from_config(&config.key_manager, keystore, store)?;
+pub fn  create_wallet() -> Result<rust_bitvmx_wallet::wallet::Wallet> {
+    let config = Config::new(Some("config/wallet_testnet.yaml".to_string()))?;
 
     let bitvmx_wallet = rust_bitvmx_wallet::wallet::Wallet::new(
-        config.bitcoin.network,
         config.bitcoin,
-        key_manager,
+        config.key_manager,
+        config.key_storage,
+        config.storage,
     );
 
     Ok(bitvmx_wallet)
