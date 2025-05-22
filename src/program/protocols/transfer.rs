@@ -3,15 +3,27 @@ use std::collections::HashMap;
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
-    builder::ProtocolBuilder,
+    builder::{Protocol, ProtocolBuilder},
     errors::ProtocolBuilderError,
     scripts::{self, SignMode},
     types::{input::SighashType, output::SpendMode, InputArgs, OutputType},
 };
 use serde::{Deserialize, Serialize};
 use tracing::info;
+use uuid::Uuid;
 
-use crate::{errors::BitVMXError, program::variables::PartialUtxo, types::ProgramContext};
+use crate::{
+    errors::BitVMXError,
+    program::{
+        protocols::{
+            claim::ClaimGate,
+            protocol_handler::external_fund_tx,
+            slot::{self},
+        },
+        variables::PartialUtxo,
+    },
+    types::{ProgramContext, PROGRAM_TYPE_SLOT},
+};
 
 use super::{
     super::participant::ParticipantKeys,
@@ -143,26 +155,75 @@ impl ProtocolHandler for TransferProtocol {
             .utxo()?;
 
         let mut operator_txs = Vec::new();
-        for op in 0..operator_count {
-            let gidtxs: Vec<PartialUtxo> = (1..=too_groups)
-                .map(|gid| {
-                    context
-                        .globals
-                        .get_var(&self.ctx.id, &op_gid(op, gid))
-                        .unwrap()
-                        .utxo()
-                        .unwrap()
-                })
-                .collect();
+        if let Ok(var) = context.globals.get_var(&self.ctx.id, "slot_program_id") {
+            //GET TXS FROM SLOT PROGRAM
+            let slot_program_id = var.string()?;
+            let slot_uuid = Uuid::parse_str(&slot_program_id).unwrap();
 
-            let operator_won_tx = context
-                .globals
-                .get_var(&self.ctx.id, &op_won(op))
-                .unwrap()
-                .utxo()
-                .unwrap();
+            let protocol_name = format!("{}_{}", PROGRAM_TYPE_SLOT, slot_uuid);
+            let protocol = Protocol::load(
+                &protocol_name,
+                self.context().storage.as_ref().unwrap().clone(),
+            )?
+            .unwrap();
+            info!("Slot program: {}", protocol_name);
 
-            operator_txs.push((gidtxs, operator_won_tx));
+            for op in 0..operator_count {
+                //  let gidtxs: Vec<PartialUtxo> = (1..=too_groups)
+                // pub type PartialUtxo = (Txid, u32, Option<u64>, Option<OutputType>);
+                let op_won_tx = protocol
+                    .transaction_by_name(&ClaimGate::tx_success(&slot::claim_name(op as usize)))?;
+                let tx_id = op_won_tx.compute_txid();
+
+                let vout = 0;
+                let amount = speedup_dust;
+                let verify_aggregated_action =
+                    scripts::check_aggregated_signature(&ops_agg_pubkey, SignMode::Aggregate);
+                let output_action =
+                    external_fund_tx(&ops_agg_pubkey, vec![verify_aggregated_action], amount)?;
+
+                let operator_won_tx = (tx_id, vout, Some(amount), Some(output_action));
+
+                let mut gidtxs = vec![];
+
+                for gid in 1..=too_groups {
+                    let gittx =
+                        protocol.transaction_by_name(&slot::group_id_tx(op as usize, gid as u8))?;
+                    let tx_id = gittx.compute_txid();
+
+                    let vout = 0;
+                    let amount = speedup_dust;
+                    let verify_aggregated_action =
+                        scripts::check_aggregated_signature(&ops_agg_pubkey, SignMode::Aggregate);
+                    let output_action =
+                        external_fund_tx(&ops_agg_pubkey, vec![verify_aggregated_action], amount)?;
+                    gidtxs.push((tx_id, vout, Some(amount), Some(output_action)));
+                }
+                operator_txs.push((gidtxs, operator_won_tx));
+            }
+        } else {
+            //EXTERNALLY SET TXS
+            for op in 0..operator_count {
+                let gidtxs: Vec<PartialUtxo> = (1..=too_groups)
+                    .map(|gid| {
+                        context
+                            .globals
+                            .get_var(&self.ctx.id, &op_gid(op, gid))
+                            .unwrap()
+                            .utxo()
+                            .unwrap()
+                    })
+                    .collect();
+
+                let operator_won_tx = context
+                    .globals
+                    .get_var(&self.ctx.id, &op_won(op))
+                    .unwrap()
+                    .utxo()
+                    .unwrap();
+
+                operator_txs.push((gidtxs, operator_won_tx));
+            }
         }
 
         //create the protocol

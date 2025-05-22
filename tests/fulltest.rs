@@ -9,10 +9,8 @@ use bitvmx_client::{
     program::{
         self,
         protocols::{
-            dispute::TIMELOCK_BLOCKS,
-            protocol_handler::external_fund_tx,
-            slot::group_id,
-            transfer::{op_gid, op_won, pub_too_group},
+            dispute::TIMELOCK_BLOCKS, protocol_handler::external_fund_tx, slot::group_id,
+            transfer::pub_too_group,
         },
         variables::{VariableTypes, WitnessTypes},
     },
@@ -24,7 +22,7 @@ use bitvmx_client::{
 use common::{
     config_trace,
     dispute::{execute_dispute, prepare_dispute},
-    get_all, init_bitvmx, init_utxo, init_utxo_new, mine_and_wait, prepare_bitcoin, send_all,
+    get_all, init_bitvmx, init_utxo, mine_and_wait, prepare_bitcoin, send_all,
     wait_message_from_channel,
 };
 use key_manager::verifier::SignatureVerifier;
@@ -325,6 +323,7 @@ pub fn test_full() -> Result<()> {
         "SIGNATURE: ====> {:?}",
         hex::encode(tx.input[0].witness[0].to_vec())
     );
+    let locktx_id = tx.compute_txid();
 
     let _ = channels[1].send(
         BITVMX_ID,
@@ -359,33 +358,39 @@ pub fn test_full() -> Result<()> {
     //  START TRANSFER OF OWNERSHIP SETUP
     //======================================================
 
-    let spending_condition = vec![scripts::check_aggregated_signature(
-        &aggregated_pub_key,
-        SignMode::Aggregate,
-    )];
-    //CONNECT WITH REAL UTXOs
+    //====================
+    // DESCRIVE THE LOCK TX    TODO: This should be done in the lock program
+    //====================
 
-    //emulate asset
-    let asset_utxo = init_utxo_new(
-        &bitcoin_client,
-        &aggregated_pub_key,
-        spending_condition.clone(),
+    let eol_timelock_duration = 100; // TODO: get this from config
+    let taproot_script_eol_timelock_expired_tx_lock = scripts::timelock(
+        eol_timelock_duration,
+        &bitcoin::PublicKey::from(pubuser),
+        SignMode::Skip,
+    );
+
+    //this should be another aggregated to be signed later
+    let taproot_script_all_sign_tx_lock =
+        scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate);
+
+    let asset_spending_condition = vec![
+        taproot_script_eol_timelock_expired_tx_lock.clone(),
+        taproot_script_all_sign_tx_lock.clone(),
+    ];
+
+    let asset_output_type = external_fund_tx(
+        &fixtures::hardcoded_unspendable().into(),
+        asset_spending_condition,
         10_000,
     )?;
-    //emulate op_n_gid_i
-    let op_gid_utxo = init_utxo_new(
+
+    //emulate asset
+    /*let asset_utxo = init_utxo_new(
         &bitcoin_client,
-        &aggregated_pub_key,
-        spending_condition.clone(),
-        1000,
-    )?;
-    //emulate op_won
-    let op_won_utxo = init_utxo_new(
-        &bitcoin_client,
-        &aggregated_pub_key,
-        spending_condition.clone(),
-        500,
-    )?;
+        &fixtures::hardcoded_unspendable().into(),
+        asset_spending_condition.clone(),
+        10_000,
+    )?;*/
 
     // SETUP TRANSFER BEGIN
     let transfer_program_id = Uuid::new_v4();
@@ -408,36 +413,13 @@ pub fn test_full() -> Result<()> {
         send_all(&channels, &set_pub_too)?;
     }
 
-    let set_asset_utxo = VariableTypes::Utxo((
-        asset_utxo.0.txid,
-        asset_utxo.0.vout,
-        Some(asset_utxo.0.amount),
-        Some(asset_utxo.1),
-    ))
-    .set_msg(transfer_program_id, "locked_asset_utxo")?;
+    let set_asset_utxo = VariableTypes::Utxo((locktx_id, 0, Some(10_000), Some(asset_output_type)))
+        .set_msg(transfer_program_id, "locked_asset_utxo")?;
     send_all(&channels, &set_asset_utxo)?;
 
-    for op in 0..3 {
-        let set_op_won = VariableTypes::Utxo((
-            op_won_utxo.0.txid,
-            op_won_utxo.0.vout,
-            Some(op_won_utxo.0.amount),
-            Some(op_won_utxo.1.clone()),
-        ))
-        .set_msg(transfer_program_id, &op_won(op))?;
-        send_all(&channels, &set_op_won)?;
-
-        for gid in 1..=7 {
-            let set_op_gid = VariableTypes::Utxo((
-                op_gid_utxo.0.txid,
-                op_gid_utxo.0.vout,
-                Some(op_gid_utxo.0.amount),
-                Some(op_gid_utxo.1.clone()),
-            ))
-            .set_msg(transfer_program_id, &op_gid(op, gid))?;
-            send_all(&channels, &set_op_gid)?;
-        }
-    }
+    let set_slot_program_id = VariableTypes::String(slot_program_id.to_string())
+        .set_msg(transfer_program_id, "slot_program_id")?;
+    send_all(&channels, &set_slot_program_id)?;
 
     let setup_msg = IncomingBitVMXApiMessages::Setup(
         transfer_program_id,

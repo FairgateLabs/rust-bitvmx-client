@@ -418,11 +418,14 @@ impl ProtocolHandler for SlotProtocol {
 
         let pb = ProtocolBuilder {};
 
-        let amount_for_publish_gid = fee + speedup_dust;
+        let amount_for_publish_gid = fee + speedup_dust + speedup_dust;
         let claim_gate_cost = ClaimGate::cost(fee, speedup_dust, keys.len() as u8 - 1, 1);
 
-        let amount_for_sequence =
-            fee + speedup_dust + amount_for_publish_gid + claim_gate_cost + 3 * protocol_cost;
+        let amount_for_sequence = fee
+            + speedup_dust
+            + amount_for_publish_gid
+            + claim_gate_cost
+            + keys.len() as u64 * protocol_cost;
 
         //====================================
         //CREATES THE SLOTS FOR EACH OPERATOR
@@ -490,6 +493,14 @@ impl ProtocolHandler for SlotProtocol {
                     Sequence::ENABLE_RBF_NO_LOCKTIME,
                     &SpendMode::Script { leaf: gid as usize }, //TODO: test with gid
                     &SighashType::taproot_all(),
+                )?;
+
+                let gid_spend =
+                    scripts::check_aggregated_signature(&ops_agg_pubkey, SignMode::Aggregate);
+
+                protocol.add_transaction_output(
+                    &gidtx,
+                    &OutputType::taproot(speedup_dust, &ops_agg_pubkey, &[gid_spend], &vec![])?,
                 )?;
 
                 protocol.connect(
