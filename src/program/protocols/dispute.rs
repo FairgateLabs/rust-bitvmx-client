@@ -583,11 +583,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         let mut amount = utxo.2.unwrap();
         let output_type = utxo.3.unwrap();
-        /*let output_type = external_fund_tx(
-            &external_aggregated,
-            &vec![&external_aggregated, &external_aggregated],
-            amount,
-        )?;*/
 
         protocol.add_external_connection(
             utxo.0,

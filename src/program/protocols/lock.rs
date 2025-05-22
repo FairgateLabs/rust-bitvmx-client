@@ -17,7 +17,7 @@ use protocol_builder::{
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
-use crate::{errors::BitVMXError, types::ProgramContext};
+use crate::{errors::BitVMXError, program::variables::VariableTypes, types::ProgramContext};
 
 use super::{
     super::participant::ParticipantKeys,
@@ -63,6 +63,11 @@ impl ProtocolHandler for LockProtocol {
         let start_id = program_context.key_chain.derive_winternitz_hash160(1)?;
         keys.push((format!("too_id_{}", self.ctx.my_idx), start_id.into()));
 
+        if self.ctx.my_idx == 0 {
+            let start_id = program_context.key_chain.derive_winternitz_hash160(128)?;
+            keys.push(("zkp".to_string(), start_id.into()));
+        }
+
         Ok(ParticipantKeys::new(keys, vec!["aggregated_1".to_string()]))
     }
 
@@ -73,6 +78,7 @@ impl ProtocolHandler for LockProtocol {
     ) -> Result<Transaction, BitVMXError> {
         match name {
             LOCK_TX => Ok(self.accept_tx(context)?),
+            PUBLISH_ZKP => Ok(self.publish_zkp(context)?),
             HAPPY_PATH_TX => Ok(self.happy_path()?),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
@@ -106,7 +112,7 @@ impl ProtocolHandler for LockProtocol {
 
     fn build(
         &self,
-        _keys: Vec<ParticipantKeys>,
+        keys: Vec<ParticipantKeys>,
         computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
@@ -254,7 +260,14 @@ impl ProtocolHandler for LockProtocol {
             scripts::check_aggregated_signature(&ops_agg_pubkey, SignMode::Aggregate);
 
         const SPEEDUP_DUST: u64 = 500;
-        let amount = protocol_utxo.2.unwrap() - fee - SPEEDUP_DUST;
+        let fee_zkp = context
+            .globals
+            .get_var(&self.ctx.id, "FEE_ZKP")
+            .unwrap_or(VariableTypes::Number(0))
+            .number()
+            .unwrap_or(0) as u64;
+
+        let amount = protocol_utxo.2.unwrap() - fee - fee_zkp - SPEEDUP_DUST;
         // [Protocol fees taproot output]
         // taproot output sending the fee (incentive to bridge) to the fee address
         protocol.add_transaction_output(
@@ -266,6 +279,19 @@ impl ProtocolHandler for LockProtocol {
                 &vec![],
             )?, // We do not need prevouts cause the tx is in the graph,
         )?;
+
+        if fee_zkp > 0 {
+            self.add_winternitz_check(
+                &ops_agg_pubkey,
+                &mut protocol,
+                &keys[0],
+                fee_zkp,
+                SPEEDUP_DUST,
+                &vec!["zkp"],
+                LOCK_TX,
+                PUBLISH_ZKP,
+            )?;
+        }
 
         self.add_happy_path(
             context,
@@ -289,6 +315,7 @@ impl ProtocolHandler for LockProtocol {
 }
 
 pub const LOCK_TX: &str = "lock_tx";
+pub const PUBLISH_ZKP: &str = "publish_zkp";
 pub const HAPPY_PATH_TX: &str = "happy_path_tx";
 
 impl LockProtocol {
@@ -387,6 +414,9 @@ impl LockProtocol {
         Ok(tx)
     }
 
+    pub fn publish_zkp(&self, context: &ProgramContext) -> Result<Transaction, BitVMXError> {
+        self.get_signed_tx(context, PUBLISH_ZKP, 0, 0, false, 0)
+    }
     pub fn happy_path(&self) -> Result<Transaction, BitVMXError> {
         let signature = self
             .load_protocol()?
@@ -408,5 +438,52 @@ impl LockProtocol {
 
         info!("Transaction to send: {:?}", tx);
         Ok(tx)
+    }
+
+    pub fn add_winternitz_check(
+        &self,
+        aggregated: &PublicKey,
+        protocol: &mut Protocol,
+        keys: &ParticipantKeys,
+        amount: u64,
+        amount_speedup: u64,
+        var_names: &Vec<&str>,
+        from: &str,
+        to: &str,
+    ) -> Result<(), BitVMXError> {
+        info!("Adding winternitz check for {} to {}", from, to);
+        info!("Amount: {}", amount);
+        info!("Speedup: {}", amount_speedup);
+        let names_and_keys = var_names
+            .iter()
+            .map(|v| (*v, keys.get_winternitz(v).unwrap()))
+            .collect();
+
+        let winternitz_check = scripts::verify_winternitz_signatures(
+            aggregated,
+            &names_and_keys,
+            SignMode::Aggregate,
+        )?;
+
+        let leaves = [winternitz_check];
+
+        let output_type = OutputType::taproot(amount, aggregated, &leaves, &vec![])?;
+
+        protocol.add_connection(
+            &format!("{}__{}", from, to),
+            from,
+            to,
+            &output_type,
+            &SpendMode::All {
+                key_path_sign: SignMode::Aggregate,
+            },
+            &SighashType::taproot_all(),
+        )?;
+
+        let pb = ProtocolBuilder {};
+        //put the amount here as there is no output yet
+        pb.add_speedup_output(protocol, to, amount_speedup, aggregated)?;
+
+        Ok(())
     }
 }
