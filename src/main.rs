@@ -53,6 +53,13 @@ fn run_bitvmx(opn: &str) -> Result<()> {
             init_bitvmx("testnet_op_3")?,
             init_bitvmx("testnet_op_4")?,
         ]
+    } else if opn == "all-mainnet" {
+        vec![
+            init_bitvmx("mainnet_op_1")?,
+            init_bitvmx("mainnet_op_2")?,
+            init_bitvmx("mainnet_op_3")?,
+            init_bitvmx("mainnet_op_4")?,
+        ]    
     } else {
         vec![init_bitvmx(opn)?]
     };
