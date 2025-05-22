@@ -385,7 +385,7 @@ impl BitVMX {
         }
 
         #[cfg(any(feature = "testnet", feature = "mainnet"))]
-        let throttle: u32 = 300;
+        let throttle: u32 = 50;
         #[cfg(not(any(feature = "testnet", feature = "mainnet")))]
         let throttle: u32 = 1;
 
