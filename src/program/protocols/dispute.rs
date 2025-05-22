@@ -1,5 +1,4 @@
-use lazy_static::lazy_static;
-use std::{collections::HashMap, sync::Mutex};
+use std::collections::HashMap;
 
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
@@ -69,10 +68,6 @@ pub const TRACE_VARS: [(&str, usize); 16] = [
     ("step_number", 8),
     ("witness", 4),
 ];
-
-lazy_static! {
-    static ref INSTRUCTION_INDEX_MAP: Mutex<HashMap<String, usize>> = Mutex::new(HashMap::new());
-}
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DisputeResolutionProtocol {
@@ -482,7 +477,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &tx_status.tx,
                 None,
             )?;
-            info!("HERE1");
             let (_program_definition, pdf) = self.get_program_definition(program_context)?;
             let execution_path = self.get_execution_path()?;
 
@@ -534,10 +528,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 to_u32(&values["write_address"]),
                 to_u32(&values["write_value"]),
             );
-            let program_counter = ProgramCounter::new(
-                to_u32(&values["write_pc"]), //ASK: ok?
-                to_u8(&values["write_micro"]),
-            );
+            let program_counter =
+                ProgramCounter::new(to_u32(&values["write_pc"]), to_u8(&values["write_micro"]));
             let trace_step = TraceStep::new(trace_write, program_counter);
             let witness = None; //TODO: get the witness from the context?
             let mem_witness = MemoryWitness::from_byte(to_u8(&values["mem_witness"]));
@@ -1005,8 +997,8 @@ impl DisputeResolutionProtocol {
 
         //TODO: Create full mapping. Add a check to identify the leaf
         let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
-        let verification_script = mapping["ecall"].0.clone();
-        let instruction_names: Vec<_> = mapping.keys().cloned().collect();
+        let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
+        instruction_names.sort();
 
         //TODO: This is a workacround to inverse the order of the stack
         let mut stack = StackTracker::new();
@@ -1036,11 +1028,9 @@ impl DisputeResolutionProtocol {
         let strip_script = stack.get_script();
 
         let mut winternitz_check_list = vec![];
-        let mut instruction_index_map = HashMap::new();
 
-        for (i, name) in instruction_names.iter().enumerate() {
+        for (_, name) in instruction_names.iter().enumerate() {
             let script = mapping[name].0.clone();
-            instruction_index_map.insert(name.clone(), i);
             let winternitz_check = scripts::verify_winternitz_signatures_aux(
                 aggregated,
                 &names_and_keys,
@@ -1061,24 +1051,6 @@ impl DisputeResolutionProtocol {
         for (pos, leave) in winternitz_check_list.iter_mut().enumerate() {
             leave.set_assert_leaf_id(pos as u32);
         }
-
-        // let winternitz_check = scripts::verify_winternitz_signatures_aux(
-        //     aggregated,
-        //     &names_and_keys,
-        //     SignMode::Aggregate,
-        //     true,
-        //     Some(vec![reverse_script, strip_script, verification_script]),
-        // )?;
-        // let mut leaves = [winternitz_check.clone(), timeout];
-        // for (pos, leave) in leaves.iter_mut().enumerate() {
-        //     leave.set_assert_leaf_id(pos as u32);
-        // }
-        // info!("MYCHECKK:");
-        // info!("{:?}", winternitz_check);
-        // info!(
-        //     "{:?}",
-        //     winternitz_check_list[instruction_index_map["ecall"]]
-        // );
 
         let output_type = OutputType::taproot(amount, aggregated, &winternitz_check_list, &vec![])?;
 
@@ -1115,9 +1087,6 @@ impl DisputeResolutionProtocol {
         //put the amount here as there is no output yet
         pb.add_speedup_output(protocol, to, amount_speedup, aggregated)?;
         pb.add_speedup_output(protocol, &format!("{}_TO", to), amount_speedup, aggregated)?;
-
-        DisputeResolutionProtocol::set_leaf_index(instruction_index_map);
-
         Ok(())
     }
 
@@ -1245,13 +1214,16 @@ impl DisputeResolutionProtocol {
                 if let Some(witness) = final_trace.witness {
                     self.set_input_u32(context, "witness", witness)?;
                 }
-                //let tx = self.get_signed_tx(context, EXECUTE, 0, 0, true)?;
-                //info!("Execution tx: {:?}", tx);
-                info!("HERE2");
+
                 let instruction = "ecall";
-                let index = DisputeResolutionProtocol::get_leaf_index(instruction)
+                let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
+                let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
+                instruction_names.sort();
+                let index = instruction_names
+                    .iter()
+                    .position(|i| i == instruction)
                     .ok_or_else(|| BitVMXError::InstructionNotFound(instruction.to_string()))?;
-                let index = 0;
+
                 context.bitcoin_coordinator.dispatch(
                     self.get_signed_tx(context, EXECUTE, 0, index as u32, true, 0)?,
                     Context::ProgramId(self.ctx.id).to_string()?,
@@ -1260,10 +1232,9 @@ impl DisputeResolutionProtocol {
             }
             EmulatorResultType::VerifierChooseChallengeResult { challenge } => {
                 info!("Verifier choose challenge result: {:?}", challenge);
-            }
-            _ => {
-                info!("Execution result: {:?}", result);
-            }
+            } // _ => {
+              //     info!("Execution result: {:?}", result);
+              // }
         }
         Ok(())
     }
@@ -1334,15 +1305,5 @@ impl DisputeResolutionProtocol {
             .globals
             .set_var(&self.ctx.id, name, VariableTypes::Input(value))?;
         Ok(())
-    }
-
-    fn set_leaf_index(instruction_index_map: HashMap<String, usize>) {
-        let mut map = INSTRUCTION_INDEX_MAP.lock().unwrap();
-        *map = instruction_index_map;
-    }
-
-    fn get_leaf_index(instr: &str) -> Option<usize> {
-        let map = INSTRUCTION_INDEX_MAP.lock().unwrap();
-        map.get(instr).cloned()
     }
 }

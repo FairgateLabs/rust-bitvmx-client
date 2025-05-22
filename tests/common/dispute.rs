@@ -60,7 +60,7 @@ pub fn prepare_dispute(
     send_all(&channels, &set_prover_win_utxo)?;
 
     //let program_path = "../BitVMX-CPU/docker-riscv32/verifier/build/zkverifier-new-mul.yaml";
-    let program_path = "../BitVMX-CPU/bitvmx-docker-riscv32/riscv32/build/hello-world.yaml";
+    let program_path = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
     let set_program = VariableTypes::String(program_path.to_string())
         .set_msg(program_id, "program_definition")?;
     send_all(&channels, &set_program)?;
