@@ -38,7 +38,7 @@ monitor:
 
 coordinator:
   throtthle_bitcoin_updates_until_sync: 1
-  throtthle_bitcoin_updates: 10
+  throtthle_bitcoin_updates: 50
   
 broker_storage: 
   path: /tmp/op_3/broker.db
