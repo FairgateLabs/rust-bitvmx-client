@@ -631,16 +631,6 @@ impl Program {
                     .bitcoin_coordinator
                     .monitor(txs_to_monitor)?;
 
-                let utox_to_monitor = TypesToMonitor::SpendingUTXOTransaction(
-                    txns_to_monitor[0],
-                    0,
-                    "HELLO UTXO TRANSACTION".to_string(),
-                );
-
-                program_context
-                    .bitcoin_coordinator
-                    .monitor(utox_to_monitor)?;
-
                 debug!("Monitoring best block");
                 // Monitor when the best block changes
                 program_context
@@ -750,6 +740,7 @@ impl Program {
     pub fn notify_news(
         &self,
         tx_id: Txid,
+        vout: Option<u32>,
         tx_status: TransactionStatus,
         context: String,
         program_context: &ProgramContext,
@@ -762,6 +753,7 @@ impl Program {
 
         self.protocol.notify_news(
             tx_id,
+            vout,
             tx_status.clone(),
             context,
             program_context,
@@ -769,11 +761,25 @@ impl Program {
         )?;
 
         let name = self.protocol.get_transaction_name_by_id(tx_id)?;
-        program_context.broker_channel.send(
-            L2_ID,
-            OutgoingBitVMXApiMessages::Transaction(self.program_id, tx_status, Some(name))
+        if vout.is_some() {
+            /* DON'T SEND AUTOMATICALLY FOR NOW
+            program_context.broker_channel.send(
+                L2_ID,
+                OutgoingBitVMXApiMessages::SpendingUTXOTransactionFound(
+                    self.program_id,
+                    tx_id,
+                    vout.unwrap(),
+                    tx_status.clone(),
+                )
                 .to_string()?,
-        )?;
+            )?;*/
+        } else {
+            program_context.broker_channel.send(
+                L2_ID,
+                OutgoingBitVMXApiMessages::Transaction(self.program_id, tx_status, Some(name))
+                    .to_string()?,
+            )?;
+        }
 
         Ok(())
     }

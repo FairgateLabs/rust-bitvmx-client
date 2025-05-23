@@ -190,6 +190,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
     fn notify_news(
         &self,
         tx_id: Txid,
+        _vout: Option<u32>,
         tx_status: TransactionStatus,
         _context: String,
         program_context: &ProgramContext,
@@ -203,6 +204,23 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             self.role()
         );
 
+        if name == INPUT_1 && self.role() == ParticipantRole::Prover {
+            if program_context
+                .globals
+                .get_var(&self.ctx.id, "FAKE_RUN")
+                .is_ok()
+            {
+                //Execute actions.
+                //Could execute more than one
+                info!("Prover. Execute Action");
+                program_context.bitcoin_coordinator.dispatch(
+                    self.get_signed_tx(program_context, ACTION_PROVER_WINS, 0, 1, false, 0)?,
+                    Context::ProgramId(self.ctx.id).to_string()?,
+                    None,
+                )?;
+                return Ok(());
+            }
+        }
         //TODO: generalize decoding
         if name == INPUT_1 && self.role() == ParticipantRole::Prover {
             //TODO: Check if the last input
@@ -650,11 +668,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         let mut amount = utxo.2.unwrap();
         let output_type = utxo.3.unwrap();
-        /*let output_type = external_fund_tx(
-            &external_aggregated,
-            &vec![&external_aggregated, &external_aggregated],
-            amount,
-        )?;*/
 
         protocol.add_external_connection(
             utxo.0,
@@ -711,26 +724,23 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         protocol.add_transaction(ACTION_PROVER_WINS)?;
 
-        protocol.connect(
-            "PROVER_ACTION_1",
-            &ClaimGate::tx_success(PROVER_WINS),
-            0,
-            ACTION_PROVER_WINS,
-            InputSpec::SighashType(
-                SighashType::taproot_all(),
-                SpendMode::All {
-                    key_path_sign: SignMode::Aggregate,
-                },
-            ),
-        )?;
+        if context.globals.get_var(&self.ctx.id, "FAKE_RUN").is_err() {
+            protocol.connect(
+                "PROVER_ACTION_1",
+                &ClaimGate::tx_success(PROVER_WINS),
+                0,
+                ACTION_PROVER_WINS,
+                InputSpec::SighashType(
+                    SighashType::taproot_all(),
+                    SpendMode::All {
+                        key_path_sign: SignMode::Aggregate,
+                    },
+                ),
+            )?;
+        }
 
         //let prover_win_amount = utxo_prover_win_action.2.unwrap();
         let output_type = utxo_prover_win_action.3.unwrap();
-        /*let output_type = external_fund_tx(
-            &internal_action_win,
-            &vec![&internal_action_win, &external_aggregated],
-            prover_win_amount,
-        )?;*/
 
         protocol.add_external_connection(
             utxo_prover_win_action.0,

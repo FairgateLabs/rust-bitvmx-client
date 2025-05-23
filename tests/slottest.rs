@@ -1,9 +1,10 @@
 use anyhow::Result;
 use bitcoin::Amount;
+use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
 use bitvmx_client::{
     program::{
         self,
-        protocols::{protocol_handler::external_fund_tx, slot::group_id},
+        protocols::{dispute::TIMELOCK_BLOCKS, protocol_handler::external_fund_tx, slot::group_id},
         variables::VariableTypes,
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_SLOT},
@@ -29,6 +30,8 @@ mod fixtures;
 #[test]
 pub fn test_slot() -> Result<()> {
     config_trace();
+
+    let fake_drp = true;
 
     //const NETWORK: Network = Network::Regtest;
 
@@ -144,7 +147,7 @@ pub fn test_slot() -> Result<()> {
     let emulator_channels = vec![emulator_1.unwrap(), emulator_2.unwrap()];
 
     let initial_spending_condition = vec![
-        scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate), //convert to timelock
+        scripts::timelock(TIMELOCK_BLOCKS, &aggregated_pub_key, SignMode::Aggregate), //convert to timelock
         scripts::check_aggregated_signature(&pair_aggregated_pub_key, SignMode::Aggregate),
     ];
     let initial_output_type =
@@ -168,6 +171,7 @@ pub fn test_slot() -> Result<()> {
         prover_win_utxo,
         prover_win_output_type,
         tx_fee as u32,
+        fake_drp,
     )?;
     info!("Dispute setup done");
 
@@ -219,7 +223,20 @@ pub fn test_slot() -> Result<()> {
         &bitcoin_client,
         &wallet,
         dispute_id,
+        fake_drp,
     )?;
+
+    //Consume other stops through timeout
+    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
+    //Win start
+    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
+    //success wait
+    bitcoin_client.mine_blocks_to_address(10, &wallet).unwrap();
+    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
+
     bitcoind.stop()?;
     Ok(())
 }

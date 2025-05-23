@@ -28,18 +28,21 @@ pub fn prepare_dispute(
     prover_win_utxo: Utxo,
     prover_win_output_type: OutputType,
     fee: u32,
+    fake: bool,
 ) -> Result<Uuid> {
     let program_id = Uuid::new_v4();
+
+    if fake {
+        let set_fake = VariableTypes::Number(1).set_msg(program_id, "FAKE_RUN")?;
+        send_all(&channels, &set_fake)?;
+    }
+
     let set_fee = VariableTypes::Number(fee).set_msg(program_id, "FEE")?;
     send_all(&channels, &set_fee)?;
 
     let set_aggregated_msg =
         VariableTypes::PubKey(*aggregated_pub_key).set_msg(program_id, "aggregated")?;
     send_all(&channels, &set_aggregated_msg)?;
-
-    /*let set_aggregated_msg = VariableTypes::PubKey(*internal_win_action)
-        .set_msg(program_id, "pubkey_internal_action_win")?;
-    send_all(&channels, &set_aggregated_msg)?;*/
 
     let set_utxo_msg = VariableTypes::Utxo((
         initial_utxo.txid,
@@ -84,6 +87,7 @@ pub fn execute_dispute(
     bitcoin_client: &BitcoinClient,
     wallet: &Address,
     program_id: Uuid,
+    fake: bool,
 ) -> Result<()> {
     //CHALLENGERS STARTS CHALLENGE
     let _ = channels[1].send(
@@ -128,6 +132,11 @@ pub fn execute_dispute(
         name.unwrap_or_default(),
         program::protocols::dispute::INPUT_1.to_string()
     );
+    if fake {
+        let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+        info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
+        return Ok(());
+    }
 
     let _ = channels[1].send(
         BITVMX_ID,

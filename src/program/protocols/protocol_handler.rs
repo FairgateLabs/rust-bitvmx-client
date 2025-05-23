@@ -20,12 +20,15 @@ use crate::keychain::KeyChain;
 
 use crate::program::variables::WitnessTypes;
 use crate::program::witness;
-use crate::types::{ProgramContext, PROGRAM_TYPE_DRP, PROGRAM_TYPE_LOCK, PROGRAM_TYPE_SLOT};
+use crate::types::{
+    ProgramContext, PROGRAM_TYPE_DRP, PROGRAM_TYPE_LOCK, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TRANSFER,
+};
 
 use super::super::participant::ParticipantKeys;
 use super::dispute::DisputeResolutionProtocol;
 use super::lock::LockProtocol;
 use super::slot::SlotProtocol;
+use super::transfer::TransferProtocol;
 
 #[enum_dispatch]
 pub trait ProtocolHandler {
@@ -122,6 +125,7 @@ pub trait ProtocolHandler {
     fn notify_news(
         &self,
         tx_id: Txid,
+        vout: Option<u32>,
         tx_status: TransactionStatus,
         context: String,
         program_context: &ProgramContext,
@@ -278,6 +282,7 @@ pub enum ProtocolType {
     DisputeResolutionProtocol,
     LockProtocol,
     SlotProtocol,
+    TransferProtocol,
 }
 
 pub fn new_protocol_type(
@@ -295,6 +300,7 @@ pub fn new_protocol_type(
         )),
         PROGRAM_TYPE_LOCK => Ok(ProtocolType::LockProtocol(LockProtocol::new(ctx))),
         PROGRAM_TYPE_SLOT => Ok(ProtocolType::SlotProtocol(SlotProtocol::new(ctx))),
+        PROGRAM_TYPE_TRANSFER => Ok(ProtocolType::TransferProtocol(TransferProtocol::new(ctx))),
         _ => Err(BitVMXError::NotImplemented(name.to_string())),
     }
 }

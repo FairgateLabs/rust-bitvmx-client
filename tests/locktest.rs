@@ -173,6 +173,9 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     let set_fee = VariableTypes::Number(3000).set_msg(program_id, "FEE")?;
     send_all(&channels, &set_fee)?;
 
+    let set_fee = VariableTypes::Number(10000).set_msg(program_id, "FEE_ZKP")?;
+    send_all(&channels, &set_fee)?;
+
     let set_ops_aggregated = VariableTypes::PubKey(aggregated_pub_key)
         .set_msg(program_id, "operators_aggregated_pub")?;
     send_all(&channels, &set_ops_aggregated)?;
@@ -290,6 +293,21 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
 
     info!("happy path secret: {}", fake_secret);
     info!("happy path public: {}", aggregated_happy_path);
+
+    let zkp = "b75f20d1aee5a1a0908edd107a25189ccc38b6d20c5dc33362a066157a6ee60350a09cfbfebe38c8d9f04a6dafe46ae2e30f6638f3eb93c1d2aeff2d52d66d0dcd68bf7f8fc07485dd04a573d233df3663d63e71568bc035ef82e8ab3525f025b487aaa4456aaf93be3141b210cda5165a714225d9fd63163f59d741bdaa8b93";
+    let set_zkp = VariableTypes::Input(hex::decode(zkp)?).set_msg(program_id, "zkp")?;
+    send_all(&channels, &set_zkp)?;
+
+    let _ = channels[0].send(
+        BITVMX_ID,
+        IncomingBitVMXApiMessages::DispatchTransactionName(
+            program_id,
+            program::protocols::lock::PUBLISH_ZKP.to_string(),
+        )
+        .to_string()?,
+    );
+
+    mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
     if bitcoind.is_some() {
         bitcoind.unwrap().stop()?;
