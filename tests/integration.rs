@@ -56,7 +56,7 @@ pub fn test_drp() -> Result<()> {
         scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate),
     ];
     let (utxo, initial_out_type) = init_utxo_new(
-        &bitcoin_client,
+        &wallet,
         &aggregated_pub_key,
         spending_condition.clone(),
         200_000,
@@ -64,7 +64,7 @@ pub fn test_drp() -> Result<()> {
 
     info!("Initializing UTXO for the prover action");
     let (prover_win_utxo, prover_win_out_type) = init_utxo_new(
-        &bitcoin_client,
+        &wallet,
         &aggregated_pub_key,
         spending_condition.clone(),
         11_000,

@@ -4,7 +4,6 @@ use bitcoin::{
     secp256k1::{self, SecretKey},
     Amount, Network, PublicKey as BitcoinPubKey,
 };
-use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
 use bitvmx_client::{
     program::{
         self,
@@ -97,13 +96,8 @@ pub fn test_full() -> Result<()> {
     //       INITIALIZE UTXO TO PAY THE SLOT AND DISPUTE CHANNEL
     //====================================================
     // Protocol fees funding
-    let fund_value = Amount::from_sat(100_000_000);
-    let utxo = init_utxo(
-        &bitcoin_client,
-        aggregated_pub_key,
-        None,
-        Some(fund_value.to_sat()),
-    )?;
+    let fund_value = Amount::from_sat(10_000_000);
+    let utxo = init_utxo(&wallet, aggregated_pub_key, None, fund_value.to_sat())?;
 
     //======================================================
     // SETUP SLOT BEGIN
@@ -514,7 +508,7 @@ pub fn test_full() -> Result<()> {
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
     info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
     //success wait
-    bitcoin_client.mine_blocks_to_address(10, &wallet).unwrap();
+    wallet.mine(10)?;
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
     info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
 

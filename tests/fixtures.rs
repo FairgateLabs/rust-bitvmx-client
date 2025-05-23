@@ -96,7 +96,7 @@ pub fn create_lockreq_ready(
         user_address
     );
 
-    const ONE_BTC: Amount = Amount::from_sat(100_000_000);
+    const ONE_BTC: Amount = Amount::from_sat(10_000_000);
 
     // Ordinal funding
     const ORDINAL_AMOUNT: Amount = Amount::from_sat(10_000);
@@ -174,7 +174,8 @@ pub fn create_lockreq_tx_and_sign(
 ) -> Transaction {
     let timelock_script = timelock(timelock_blocks, &user_pubkey, SignMode::Single);
 
-    let reveal_secret_script = reveal_secret(secret_hash.to_vec(), &ops_agg_pubkey, SignMode::Aggregate);
+    let reveal_secret_script =
+        reveal_secret(secret_hash.to_vec(), &ops_agg_pubkey, SignMode::Aggregate);
     let lockreq_tx_output_taptree = build_taptree_for_lockreq_tx_outputs(
         &secp,
         unspendable_pub_key,

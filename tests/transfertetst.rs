@@ -70,7 +70,7 @@ pub fn test_transfer() -> Result<()> {
         scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate),
     ];
     let asset_utxo = init_utxo_new(
-        &bitcoin_client,
+        &wallet,
         &aggregated_pub_key,
         asset_spending_condition.clone(),
         10_000,
@@ -82,14 +82,14 @@ pub fn test_transfer() -> Result<()> {
     )];
     //emulate op_n_gid_i
     let op_gid_utxo = init_utxo_new(
-        &bitcoin_client,
+        &wallet,
         &aggregated_pub_key,
         spending_condition.clone(),
         1000,
     )?;
     //emulate op_won
     let op_won_utxo = init_utxo_new(
-        &bitcoin_client,
+        &wallet,
         &aggregated_pub_key,
         spending_condition.clone(),
         500,

@@ -1,6 +1,6 @@
 use anyhow::Result;
-use bitcoin::{Address, PublicKey};
-use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
+use bitcoin::PublicKey;
+use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_broker::channel::channel::DualChannel;
 use bitvmx_client::{
     bitvmx::BitVMX,
@@ -12,6 +12,7 @@ use bitvmx_client::{
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 
+use bitvmx_wallet::wallet::Wallet;
 use protocol_builder::types::{OutputType, Utxo};
 use tracing::info;
 use uuid::Uuid;
@@ -85,7 +86,7 @@ pub fn execute_dispute(
     mut instances: &mut Vec<BitVMX>,
     emulator_channels: Vec<DualChannel>,
     bitcoin_client: &BitcoinClient,
-    wallet: &Address,
+    wallet: &Wallet,
     program_id: Uuid,
     fake: bool,
 ) -> Result<()> {
@@ -195,7 +196,7 @@ pub fn execute_dispute(
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
     info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
     //success wait
-    bitcoin_client.mine_blocks_to_address(10, &wallet).unwrap();
+    wallet.mine(10)?;
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
     info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
     //action wait

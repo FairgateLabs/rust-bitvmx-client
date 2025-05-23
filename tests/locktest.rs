@@ -2,7 +2,7 @@ use anyhow::Result;
 use bitcoin::{
     key::rand::rngs::OsRng,
     secp256k1::{self, PublicKey as SecpPublicKey, SecretKey},
-    Address, Amount, Network, OutPoint, PublicKey, PublicKey as BitcoinPubKey, Transaction, Txid,
+    Amount, Network, OutPoint, PublicKey, PublicKey as BitcoinPubKey, Transaction, Txid,
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_client::{
@@ -14,6 +14,7 @@ use bitvmx_client::{
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_LOCK},
 };
+use bitvmx_wallet::wallet::Wallet;
 use common::{
     config_trace, get_all, init_bitvmx, init_broker, mine_and_wait, prepare_bitcoin, send_all,
     wait_message_from_channel,
@@ -26,7 +27,7 @@ use uuid::Uuid;
 mod common;
 mod fixtures;
 
-pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, Address)> {
+pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, Wallet)> {
     let config = Config::new(Some("config/op_1.yaml".to_string()))?;
 
     let bitcoin_client = BitcoinClient::new(
@@ -35,12 +36,16 @@ pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, Address)> {
         &config.bitcoin.password,
     )?;
 
-    let wallet = bitcoin_client
-        .init_wallet(Network::Regtest, "test_wallet")
-        .unwrap();
+    let wallet_config = match config.bitcoin.network {
+        Network::Regtest => "config/wallet_regtest.yaml",
+        Network::Testnet => "config/wallet_testnet.yaml",
+        _ => panic!("Not supported network {}", config.bitcoin.network),
+    };
 
-    info!("Mine 1 blocks to address {:?}", wallet);
-    bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
+    let wallet_config = bitvmx_settings::settings::load_config_file::<bitvmx_wallet::config::Config>(
+        Some(wallet_config.to_string()),
+    )?;
+    let wallet = Wallet::new(wallet_config, true)?;
 
     Ok((bitcoin_client, wallet))
 }
@@ -375,7 +380,7 @@ pub fn create_lockreq_ready(
         user_address
     );
 
-    const ONE_BTC: Amount = Amount::from_sat(100_000_000);
+    const ONE_BTC: Amount = Amount::from_sat(10_000_000);
 
     // Ordinal funding
     const ORDINAL_AMOUNT: Amount = Amount::from_sat(10_000);
@@ -465,7 +470,7 @@ pub fn test_send_lockreq_tx() -> Result<()> {
     info!("Ordinal fee: {:?}", ordinal_fee);
 
     // Mine 1 block to confirm transaction
-    bitcoin_client.mine_blocks_to_address(1, &wallet)?;
+    wallet.mine(1)?;
 
     bitcoind.stop()?;
 

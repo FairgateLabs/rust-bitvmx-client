@@ -25,7 +25,7 @@ p2p:
   timeout: 5
 
 monitor:
-  checkpoint_height: 4325569
+  checkpoint_height: 4400538
   confirmation_threshold: 1
 
 coordinator:
