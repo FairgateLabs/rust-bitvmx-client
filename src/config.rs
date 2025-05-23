@@ -41,7 +41,6 @@ pub struct ThrotthleUpdate {
 #[serde(deny_unknown_fields)] // enforce strict field compliance
 pub struct Config {
     pub bitcoin: RpcConfig,
-    pub builder: ProtocolBuilderConfig,
     pub key_manager: KeyManagerConfig,
     pub key_storage: StorageConfig,
     pub storage: StorageConfig,

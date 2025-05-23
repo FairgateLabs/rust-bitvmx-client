@@ -5,14 +5,6 @@ bitcoin:
   password: ""
   wallet: test_wallet
 
-builder:
-  protocol_amount: 2450000
-  speedup_amount: 2450000
-  locked_amount: 95000000
-  locked_blocks: 200
-  ecdsa_sighash_type: SIGHASH_ALL
-  taproot_sighash_type: SIGHASH_ALL
-
 key_manager:
   network: testnet
   key_derivation_path: m/101/1/0/0/
