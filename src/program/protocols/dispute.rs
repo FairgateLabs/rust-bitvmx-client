@@ -1226,7 +1226,17 @@ impl DisputeResolutionProtocol {
                 if let Some(witness) = final_trace.witness {
                     self.set_input_u32(context, "witness", witness)?;
                 }
-                let instruction = get_key_from_opcode(final_trace.read_pc.opcode);
+                let instruction = get_key_from_opcode(
+                    final_trace.read_pc.opcode,
+                    final_trace.read_pc.pc.get_micro(),
+                )
+                .ok_or_else(|| {
+                    BitVMXError::InstructionNotFound(format!(
+                        "{}_{}",
+                        final_trace.read_pc.opcode,
+                        final_trace.read_pc.pc.get_micro()
+                    ))
+                })?;
                 let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
                 let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
                 instruction_names.sort();
