@@ -2,9 +2,15 @@ use std::collections::HashMap;
 
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
-use bitcoin_script_riscv::riscv::instruction_mapping::create_verification_script_mapping;
+use bitcoin_script_riscv::riscv::instruction_mapping::{
+    create_verification_script_mapping, get_key_from_opcode,
+};
 use bitcoin_script_stack::stack::StackTracker;
-use bitvmx_cpu_definitions::challenge::EmulatorResultType;
+use bitvmx_cpu_definitions::{
+    challenge::EmulatorResultType,
+    memory::MemoryWitness,
+    trace::{ProgramCounter, TraceRWStep, TraceRead, TraceReadPC, TraceStep, TraceWrite},
+};
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use emulator::{
@@ -46,7 +52,7 @@ pub const PROVER_WINS: &str = "PROVER_WINS";
 pub const VERIFIER_WINS: &str = "VERIFIER_WINS";
 pub const ACTION_PROVER_WINS: &str = "ACTION_PROVER_WINS";
 
-pub const TRACE_VARS: [(&str, usize); 15] = [
+pub const TRACE_VARS: [(&str, usize); 16] = [
     ("write_address", 4 as usize),
     ("write_value", 4),
     ("write_pc", 4),
@@ -61,6 +67,7 @@ pub const TRACE_VARS: [(&str, usize); 15] = [
     ("read_pc_address", 4),
     ("read_pc_micro", 1),
     ("read_pc_opcode", 4),
+    ("step_number", 8),
     ("witness", 4),
 ];
 
@@ -490,6 +497,84 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &tx_status.tx,
                 None,
             )?;
+            let (_program_definition, pdf) = self.get_program_definition(program_context)?;
+            let execution_path = self.get_execution_path()?;
+
+            let mut values = std::collections::HashMap::new();
+
+            for (name, _) in TRACE_VARS.iter() {
+                if *name == "witness" {
+                    continue;
+                }
+
+                let value = program_context
+                    .witness
+                    .get_witness(&self.ctx.id, name)
+                    .unwrap()
+                    .unwrap()
+                    .winternitz()
+                    .unwrap()
+                    .message_bytes();
+
+                values.insert(*name, value);
+            }
+            fn to_u8(bytes: &[u8]) -> u8 {
+                u8::from_le_bytes(bytes.try_into().expect("Expected 1 byte for u8"))
+            }
+            fn to_u32(bytes: &[u8]) -> u32 {
+                u32::from_le_bytes(bytes.try_into().expect("Expected 4 bytes for u32"))
+            }
+            fn to_u64(bytes: &[u8]) -> u64 {
+                u64::from_le_bytes(bytes.try_into().expect("Expected 8 bytes for u64"))
+            }
+
+            let step_number = to_u64(&values["step_number"]);
+            let trace_read1 = TraceRead::new(
+                to_u32(&values["read_1_address"]),
+                to_u32(&values["read_1_value"]),
+                to_u64(&values["read_1_last_step"]),
+            );
+            let trace_read2 = TraceRead::new(
+                to_u32(&values["read_2_address"]),
+                to_u32(&values["read_2_value"]),
+                to_u64(&values["read_2_last_step"]),
+            );
+            let program_counter = ProgramCounter::new(
+                to_u32(&values["read_pc_address"]),
+                to_u8(&values["read_pc_micro"]),
+            );
+            let read_pc = TraceReadPC::new(program_counter, to_u32(&values["read_pc_opcode"]));
+            let trace_write = TraceWrite::new(
+                to_u32(&values["write_address"]),
+                to_u32(&values["write_value"]),
+            );
+            let program_counter =
+                ProgramCounter::new(to_u32(&values["write_pc"]), to_u8(&values["write_micro"]));
+            let trace_step = TraceStep::new(trace_write, program_counter);
+            let witness = None; //TODO: get the witness from the context?
+            let mem_witness = MemoryWitness::from_byte(to_u8(&values["mem_witness"]));
+
+            let final_trace = TraceRWStep::new(
+                step_number,
+                trace_read1,
+                trace_read2,
+                read_pc,
+                trace_step,
+                witness,
+                mem_witness,
+            );
+
+            let msg = serde_json::to_string(&DispatcherJob {
+                job_id: self.ctx.id.to_string(),
+                job_type: EmulatorJobType::VerifierChooseChallenge(
+                    pdf,
+                    execution_path.clone(),
+                    final_trace,
+                    format!("{}/{}", execution_path, "execution.json").to_string(),
+                    None,
+                ),
+            })?;
+            program_context.broker_channel.send(EMULATOR_ID, msg)?;
         }
 
         if name == INPUT_1 && self.role() == ParticipantRole::Prover {
@@ -924,13 +1009,14 @@ impl DisputeResolutionProtocol {
 
         //TODO: Create full mapping. Add a check to identify the leaf
         let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
-        let verification_script = mapping["ecall"].0.clone();
+        let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
+        instruction_names.sort();
 
-        //TOODO: This is a workacround to inverse the order of the stack
+        //TODO: This is a workacround to inverse the order of the stack
         let mut stack = StackTracker::new();
-        let all = stack.define(110, "all");
-        for i in 1..110 {
-            stack.move_var_sub_n(all, 110 - i - 1);
+        let all = stack.define(126, "all");
+        for i in 1..126 {
+            stack.move_var_sub_n(all, 126 - i - 1);
         }
         let reverse_script = stack.get_script();
 
@@ -941,6 +1027,8 @@ impl DisputeResolutionProtocol {
         for (name, size) in TRACE_VARS.iter().take(TRACE_VARS.len() - 1) {
             stackvars.insert(*name, stack.define((size * 2) as u32, name));
         }
+        let step_n = stack.move_var(stackvars["step_number"]);
+        stack.drop(step_n);
         let stripped = stack.move_var_sub_n(stackvars["write_micro"], 0);
         stack.drop(stripped);
         let stripped = stack.move_var_sub_n(stackvars["read_pc_micro"], 0);
@@ -951,22 +1039,32 @@ impl DisputeResolutionProtocol {
         stack.drop(last_step_2);
         let strip_script = stack.get_script();
 
-        let winternitz_check = scripts::verify_winternitz_signatures_aux(
-            aggregated,
-            &names_and_keys,
-            SignMode::Aggregate,
-            true,
-            Some(vec![reverse_script, strip_script, verification_script]),
-        )?;
+        let mut winternitz_check_list = vec![];
+
+        for (_, name) in instruction_names.iter().enumerate() {
+            let script = mapping[name].0.clone();
+            let winternitz_check = scripts::verify_winternitz_signatures_aux(
+                aggregated,
+                &names_and_keys,
+                SignMode::Aggregate,
+                true,
+                Some(vec![
+                    reverse_script.clone(),
+                    strip_script.clone(),
+                    script.clone(),
+                ]),
+            )?;
+            winternitz_check_list.push(winternitz_check);
+        }
 
         let timeout = scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
+        winternitz_check_list.push(timeout.clone());
 
-        let mut leaves = [winternitz_check, timeout];
-        for (pos, leave) in leaves.iter_mut().enumerate() {
+        for (pos, leave) in winternitz_check_list.iter_mut().enumerate() {
             leave.set_assert_leaf_id(pos as u32);
         }
 
-        let output_type = OutputType::taproot(amount, aggregated, &leaves, &vec![])?;
+        let output_type = OutputType::taproot(amount, aggregated, &winternitz_check_list, &vec![])?;
 
         protocol.add_connection(
             &format!("{}__{}", from, to),
@@ -1124,21 +1222,40 @@ impl DisputeResolutionProtocol {
                 )?;
                 self.set_input_u8(context, "read_pc_micro", final_trace.read_pc.pc.get_micro())?;
                 self.set_input_u32(context, "read_pc_opcode", final_trace.read_pc.opcode)?;
+                self.set_input_u64(context, "step_number", final_trace.step_number)?;
                 if let Some(witness) = final_trace.witness {
                     self.set_input_u32(context, "witness", witness)?;
                 }
-                //let tx = self.get_signed_tx(context, EXECUTE, 0, 0, true)?;
-                //info!("Execution tx: {:?}", tx);
+                let instruction = get_key_from_opcode(
+                    final_trace.read_pc.opcode,
+                    final_trace.read_pc.pc.get_micro(),
+                )
+                .ok_or_else(|| {
+                    BitVMXError::InstructionNotFound(format!(
+                        "{}_{}",
+                        final_trace.read_pc.opcode,
+                        final_trace.read_pc.pc.get_micro()
+                    ))
+                })?;
+                let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
+                let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
+                instruction_names.sort();
+                let index = instruction_names
+                    .iter()
+                    .position(|i| i == &instruction)
+                    .ok_or_else(|| BitVMXError::InstructionNotFound(instruction.to_string()))?;
 
                 context.bitcoin_coordinator.dispatch(
-                    self.get_signed_tx(context, EXECUTE, 0, 0, true, 0)?,
+                    self.get_signed_tx(context, EXECUTE, 0, index as u32, true, 0)?,
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
                 )?;
             }
-            _ => {
-                info!("Execution result: {:?}", result);
-            }
+            EmulatorResultType::VerifierChooseChallengeResult { challenge } => {
+                info!("Verifier choose challenge result: {:?}", challenge);
+            } // _ => {
+              //     info!("Execution result: {:?}", result);
+              // }
         }
         Ok(())
     }
