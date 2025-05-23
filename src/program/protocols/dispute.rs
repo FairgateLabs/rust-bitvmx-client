@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
-use bitcoin_script_riscv::riscv::instruction_mapping::create_verification_script_mapping;
+use bitcoin_script_riscv::riscv::instruction_mapping::{
+    create_verification_script_mapping, get_key_from_opcode,
+};
 use bitcoin_script_stack::stack::StackTracker;
 use bitvmx_cpu_definitions::{
     challenge::EmulatorResultType,
@@ -1214,14 +1216,13 @@ impl DisputeResolutionProtocol {
                 if let Some(witness) = final_trace.witness {
                     self.set_input_u32(context, "witness", witness)?;
                 }
-
-                let instruction = "ecall";
+                let instruction = get_key_from_opcode(final_trace.read_pc.opcode);
                 let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
                 let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
                 instruction_names.sort();
                 let index = instruction_names
                     .iter()
-                    .position(|i| i == instruction)
+                    .position(|i| i == &instruction)
                     .ok_or_else(|| BitVMXError::InstructionNotFound(instruction.to_string()))?;
 
                 context.bitcoin_coordinator.dispatch(
