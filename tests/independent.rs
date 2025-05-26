@@ -3,12 +3,14 @@ use bitcoin::Network;
 use bitcoind::bitcoind::Bitcoind;
 use bitvmx_broker::channel::channel::DualChannel;
 use bitvmx_broker::rpc::BrokerConfig;
+use bitvmx_client::program::participant::P2PAddress;
+use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, L2_ID};
 use bitvmx_client::{bitvmx::BitVMX, config::Config, types::EMULATOR_ID};
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use bitvmx_wallet::wallet::Wallet;
-use common::config_trace;
 use common::{clear_db, FUNDING_ID, INITIAL_BLOCK_COUNT, WALLET_NAME};
+use common::{config_trace, send_all};
 use std::sync::mpsc::channel;
 use std::time::Duration;
 use std::{
@@ -16,6 +18,7 @@ use std::{
     thread, vec,
 };
 use tracing::info;
+use uuid::Uuid;
 
 mod common;
 
@@ -65,7 +68,7 @@ fn run_bitvmx(network: Network, independent: bool, rx: Receiver<()>, tx: Sender<
             } else {
                 ready = bitvmx.process_bitcoin_updates()?;
                 if !ready {
-                    info!("Waiting to get to the top of the Bitcoin chain...");
+                    //info!("Waiting to get to the top of the Bitcoin chain...");
                 } else {
                     info!("Bitcoin updates processed, ready to run.");
                     let _ = tx.send(());
@@ -114,6 +117,7 @@ pub struct TestHelper {
     pub disp_handle: Option<thread::JoinHandle<Result<()>>>,
     pub disp_stop_tx: Sender<()>,
     pub disp_ready_rx: Receiver<usize>,
+    pub channels: Vec<DualChannel>,
 }
 
 impl TestHelper {
@@ -135,26 +139,20 @@ impl TestHelper {
             clear_db(&wallet_config.storage.path);
             clear_db(&wallet_config.key_storage.path);
 
-            Some(Bitcoind::new(
+            let bitcoind = Bitcoind::new(
                 "bitcoin-regtest",
                 "ruimarinho/bitcoin-core",
                 wallet_config.bitcoin.clone(),
-            ))
+            );
+            bitcoind.start()?;
+            Some(bitcoind)
         };
 
-        info!("wallet config: {:?}", wallet_config);
         let wallet = Wallet::new(wallet_config, true)?;
         if !independent {
-            info!("Starting bitcoind");
-            bitcoind.as_ref().unwrap().start()?;
             wallet.mine(INITIAL_BLOCK_COUNT)?;
-            thread::sleep(Duration::from_secs(1));
             wallet.create_wallet(WALLET_NAME)?;
-            thread::sleep(Duration::from_secs(1));
-            info!("Created wallet");
             wallet.regtest_fund(WALLET_NAME, FUNDING_ID, 100_000)?;
-            thread::sleep(Duration::from_secs(1));
-            info!("Regttest fund");
         }
 
         let (bitvmx_stop_tx, bitvmx_stop_rx) = channel::<()>();
@@ -171,6 +169,14 @@ impl TestHelper {
         let (disp_ready_tx, disp_ready_rx) = channel::<usize>();
         let disp_handle = thread::spawn(move || run_emulator(network, disp_stop_rx, disp_ready_tx));
 
+        let mut channels = vec![];
+        let configs = get_configs(network)?;
+        configs.iter().for_each(|config| {
+            let broker_config = BrokerConfig::new(config.broker_port, None);
+            let channel = DualChannel::new(&broker_config, L2_ID);
+            channels.push(channel);
+        });
+
         Ok(TestHelper {
             bitcoind,
             wallet,
@@ -179,14 +185,11 @@ impl TestHelper {
             disp_handle: Some(disp_handle),
             disp_stop_tx,
             disp_ready_rx,
+            channels,
         })
     }
 
     pub fn stop(&mut self) -> Result<()> {
-        if let Some(bitcoind) = &self.bitcoind {
-            info!("Stopping bitcoind");
-            bitcoind.stop()?;
-        }
         self.disp_stop_tx.send(()).unwrap();
         self.bitvmx_stop_tx.send(()).unwrap();
         let handle = self.bitvmx_handle.take().unwrap();
@@ -194,8 +197,41 @@ impl TestHelper {
         let handle = self.disp_handle.take().unwrap();
         handle.join().unwrap()?;
 
+        if let Some(bitcoind) = &self.bitcoind {
+            info!("Stopping bitcoind");
+            bitcoind.stop()?;
+        }
         info!("BitVMX instances stopped");
         Ok(())
+    }
+
+    pub fn wait_all_msg(&self) -> Result<Vec<OutgoingBitVMXApiMessages>> {
+        let mut msgs = Vec::new();
+        for (idx, _channel) in self.channels.iter().enumerate() {
+            match self.wait_msg(idx) {
+                Ok(msg) => msgs.push(msg),
+                Err(e) => {
+                    info!("Error receiving message from channel {}: {:?}", idx, e);
+                }
+            }
+        }
+        Ok(msgs)
+    }
+
+    pub fn wait_msg(&self, idx: usize) -> Result<OutgoingBitVMXApiMessages> {
+        let channel = &self.channels[idx];
+        loop {
+            let msg = channel.recv()?;
+            if let Some(msg) = msg {
+                info!("Received message from channel {}: {:?}", idx, msg);
+                return Ok(OutgoingBitVMXApiMessages::from_string(&msg.0)?);
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    pub fn send_all(&self, command: IncomingBitVMXApiMessages) -> Result<()> {
+        send_all(&self.channels, &command.to_string()?)
     }
 }
 
@@ -208,10 +244,24 @@ pub fn test_all() -> Result<()> {
     const NETWORK: Network = Network::Regtest;
     let mut helper = TestHelper::new(NETWORK, independent)?;
 
-    //let broker_config = BrokerConfig::new(config.broker_port, None);
-    //let channel = DualChannel::new(&broker_config, EMULATOR_ID);
+    let command = IncomingBitVMXApiMessages::GetCommInfo();
+    helper.send_all(command)?;
 
-    thread::sleep(Duration::from_secs(5)); // Wait for the instances to be ready
+    let addresses: Vec<P2PAddress> = helper
+        .wait_all_msg()?
+        .iter()
+        .map(|msg| msg.comm_info().unwrap())
+        .collect::<Vec<_>>();
+
+    let aggregation_id = Uuid::new_v4();
+    let command = IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), 0);
+    helper.send_all(command)?;
+    info!("Waiting for AggregatedPubkey message from all channels");
+
+    let msgs = helper.wait_all_msg()?;
+    let _aggregated_pub_key = msgs[0].aggregated_pub_key().unwrap();
+
+    //thread::sleep(Duration::from_secs(5)); // Wait for the instances to be ready
 
     helper.stop()?;
 
