@@ -680,6 +680,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         let aggregated = computed_aggregated.get("aggregated_1").unwrap();
         amount -= fee;
+        if amount <= 0{
+            return Err(BitVMXError::InsufficientAmount);
+        }
 
         let words = context
             .globals
@@ -692,7 +695,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         let input_vars_slice = input_vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
 
         amount -= ClaimGate::cost(fee, speedup_dust, 1, 1);
+        if amount <= 0{
+            return Err(BitVMXError::InsufficientAmount);
+        }
+
         amount -= ClaimGate::cost(fee, speedup_dust, 1, 1);
+        if amount <= 0{
+            return Err(BitVMXError::InsufficientAmount);
+        }
 
         self.add_winternitz_check(
             aggregated,
@@ -707,7 +717,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             None,
         )?;
         amount -= fee;
+        if amount <= 0{
+            return Err(BitVMXError::InsufficientAmount);
+        }
+
         amount -= speedup_dust;
+        if amount <= 0{
+            return Err(BitVMXError::InsufficientAmount);
+        }
 
         let claim_prover = ClaimGate::new(
             &mut protocol,
@@ -780,7 +797,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             Some(&claim_verifier),
         )?;
         amount -= fee;
+        if amount <= 0{
+            return Err(BitVMXError::InsufficientAmount);
+        }
         amount -= speedup_dust;
+        if amount <= 0{
+            return Err(BitVMXError::InsufficientAmount);
+        }
 
         let nary_def = program_def.0.nary_def();
         let mut prev = COMMITMENT.to_string();
@@ -804,7 +827,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 Some(&claim_verifier),
             )?;
             amount -= fee;
+            if amount <= 0{
+                return Err(BitVMXError::InsufficientAmount);
+            }   
             amount -= speedup_dust;
+            if amount <= 0{
+                return Err(BitVMXError::InsufficientAmount);
+            }
 
             prev = next;
             let next = format!("NARY_VERIFIER_{}", i);
@@ -824,7 +853,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 Some(&claim_prover),
             )?;
             amount -= fee;
+            if amount <= 0{
+                return Err(BitVMXError::InsufficientAmount);
+            }
             amount -= speedup_dust;
+            if amount <= 0{
+                return Err(BitVMXError::InsufficientAmount);
+            }
             prev = next;
         }
 

@@ -131,6 +131,9 @@ pub enum BitVMXError {
 
     #[error("Instrucion {0} not found")]
     InstructionNotFound(String),
+
+    #[error("Insufficient amount to send the transaction")]
+    InsufficientAmount,
 }
 
 #[derive(Error, Debug)]
