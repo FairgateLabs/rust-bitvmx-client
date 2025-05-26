@@ -555,13 +555,14 @@ impl BitVMXApi for BitVMX {
         info!("Getting variable {}", key);
         let value = self.program_context.globals.get_var(&id, key)?;
 
+        let response = match value {
+            Some(var) => OutgoingBitVMXApiMessages::Variable(id, key.to_string(), var),
+            None => OutgoingBitVMXApiMessages::NotFound(id, key.to_string()),
+        };
+
         self.program_context.broker_channel.send(
             from,
-            serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(
-                id,
-                key.to_string(),
-                value,
-            ))?,
+            serde_json::to_string(&response)?,
         )?;
         Ok(())
     }

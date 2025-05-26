@@ -89,15 +89,10 @@ impl Globals {
         Ok(self.storage.set(&key, value, None)?)
     }
 
-    pub fn get_var(&self, uuid: &Uuid, key: &str) -> Result<VariableTypes, BitVMXError> {
+    pub fn get_var(&self, uuid: &Uuid, key: &str) -> Result<Option<VariableTypes>, BitVMXError> {
         let key = format!("{}:{}", uuid, key);
         let value: Option<VariableTypes> = self.storage.get(&key)?;
-        // this halts bitvmx if the var that the client is looking for is not found
-        // TODO shouldn't this return an option instead?
-        if value.is_none() {
-            return Err(BitVMXError::VariableNotFound(*uuid, key));
-        }
-        Ok(value.unwrap())
+        Ok(value)
     }
 }
 
