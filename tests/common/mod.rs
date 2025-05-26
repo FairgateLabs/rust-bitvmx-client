@@ -115,7 +115,7 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
         _ => panic!("Not supported network {}", config.bitcoin.network),
     };
 
-    let wallet_config = bitvmx_settings::settings::load_config_file::<bitvmx_wallet::config::Config>(
+    let wallet_config = bitvmx_settings::settings::load_config_file::<bitvmx_wallet::config::WalletConfig>(
         Some(wallet_config.to_string()),
     )?;
     if config.bitcoin.network == Network::Regtest {

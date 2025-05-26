@@ -135,7 +135,7 @@ impl TestHelper {
         };
 
         let wallet_config = bitvmx_settings::settings::load_config_file::<
-            bitvmx_wallet::config::Config,
+            bitvmx_wallet::config::WalletConfig,
         >(Some(wallet_config.to_string()))?;
 
         let bitcoind = if independent {
