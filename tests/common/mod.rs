@@ -115,9 +115,9 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
         _ => panic!("Not supported network {}", config.bitcoin.network),
     };
 
-    let wallet_config = bitvmx_settings::settings::load_config_file::<bitvmx_wallet::config::Config>(
-        Some(wallet_config.to_string()),
-    )?;
+    let wallet_config = bitvmx_settings::settings::load_config_file::<
+        bitvmx_wallet::config::WalletConfig,
+    >(Some(wallet_config.to_string()))?;
     if config.bitcoin.network == Network::Regtest {
         clear_db(&wallet_config.storage.path);
         clear_db(&wallet_config.key_storage.path);
@@ -241,6 +241,7 @@ pub fn init_utxo_new(
         KnownHrp::Regtest,
     );*/
 
+    info!("Funding address: {:?} with: {}", internal_key, amount);
     let txid = wallet.fund_address(
         WALLET_NAME,
         from.unwrap_or(FUNDING_ID),
