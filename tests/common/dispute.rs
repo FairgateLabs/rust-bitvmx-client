@@ -17,12 +17,11 @@ use protocol_builder::types::{OutputType, Utxo};
 use tracing::info;
 use uuid::Uuid;
 
-use crate::common::{get_all, mine_and_wait, send_all, wait_message_from_channel};
+use crate::common::{mine_and_wait, send_all, wait_message_from_channel};
 
 pub fn prepare_dispute(
     participants: Vec<P2PAddress>,
     channels: Vec<DualChannel>,
-    mut instances: &mut Vec<BitVMX>,
     aggregated_pub_key: &PublicKey,
     initial_utxo: Utxo,
     initial_output_type: OutputType,
@@ -30,11 +29,17 @@ pub fn prepare_dispute(
     prover_win_output_type: OutputType,
     fee: u32,
     fake: bool,
+    fake_instruction: bool,
 ) -> Result<Uuid> {
     let program_id = Uuid::new_v4();
 
     if fake {
         let set_fake = VariableTypes::Number(1).set_msg(program_id, "FAKE_RUN")?;
+        send_all(&channels, &set_fake)?;
+    }
+
+    if fake_instruction {
+        let set_fake = VariableTypes::Number(1).set_msg(program_id, "FAKE_INSTRUCTION")?;
         send_all(&channels, &set_fake)?;
     }
 
@@ -76,8 +81,6 @@ pub fn prepare_dispute(
 
     info!("Waiting for setup messages...");
 
-    //WAIT SETUP READY
-    let _msgs = get_all(&channels, &mut instances, false)?;
     Ok(program_id)
 }
 

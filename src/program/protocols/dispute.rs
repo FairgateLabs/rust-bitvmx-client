@@ -47,7 +47,7 @@ pub const START_CH: &str = "START_CHALLENGE";
 pub const INPUT_1: &str = "INPUT_1";
 pub const COMMITMENT: &str = "COMMITMENT";
 pub const EXECUTE: &str = "EXECUTE";
-pub const TIMELOCK_BLOCKS: u16 = 20;
+pub const TIMELOCK_BLOCKS: u16 = 1;
 pub const PROVER_WINS: &str = "PROVER_WINS";
 pub const VERIFIER_WINS: &str = "VERIFIER_WINS";
 pub const ACTION_PROVER_WINS: &str = "ACTION_PROVER_WINS";
@@ -837,6 +837,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             .collect::<Vec<&str>>();
 
         self.add_winternitz_and_script(
+            context,
             aggregated,
             &mut protocol,
             TIMELOCK_BLOCKS,
@@ -988,6 +989,7 @@ impl DisputeResolutionProtocol {
 
     pub fn add_winternitz_and_script(
         &self,
+        context: &ProgramContext,
         aggregated: &PublicKey,
         protocol: &mut Protocol,
         timelock_blocks: u16,
@@ -1041,6 +1043,13 @@ impl DisputeResolutionProtocol {
 
         let mut winternitz_check_list = vec![];
 
+        if context
+            .globals
+            .get_var(&self.ctx.id, "FAKE_INSTRUCTION")
+            .is_err()
+        {
+            instruction_names = vec!["ecall".to_string()];
+        }
         for (_, name) in instruction_names.iter().enumerate() {
             let script = mapping[name].0.clone();
             let winternitz_check = scripts::verify_winternitz_signatures_aux(
@@ -1240,10 +1249,18 @@ impl DisputeResolutionProtocol {
                 let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
                 let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
                 instruction_names.sort();
-                let index = instruction_names
+                let mut index = instruction_names
                     .iter()
                     .position(|i| i == &instruction)
                     .ok_or_else(|| BitVMXError::InstructionNotFound(instruction.to_string()))?;
+
+                if context
+                    .globals
+                    .get_var(&self.ctx.id, "FAKE_INSTRUCTION")
+                    .is_err()
+                {
+                    index = 0;
+                }
 
                 context.bitcoin_coordinator.dispatch(
                     self.get_signed_tx(context, EXECUTE, 0, index as u32, true, 0)?,

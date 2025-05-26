@@ -60,6 +60,7 @@ pub fn test_drp() -> Result<()> {
         &aggregated_pub_key,
         spending_condition.clone(),
         200_000,
+        None,
     )?;
 
     info!("Initializing UTXO for the prover action");
@@ -68,12 +69,12 @@ pub fn test_drp() -> Result<()> {
         &aggregated_pub_key,
         spending_condition.clone(),
         11_000,
+        None,
     )?;
 
     let prog_id = prepare_dispute(
         participants,
         channels.clone(),
-        &mut instances,
         &aggregated_pub_key,
         utxo,
         initial_out_type,
@@ -81,7 +82,9 @@ pub fn test_drp() -> Result<()> {
         prover_win_out_type,
         10_000,
         false,
+        false,
     )?;
+    let _msgs = get_all(&channels, &mut instances, false)?;
 
     execute_dispute(
         channels,

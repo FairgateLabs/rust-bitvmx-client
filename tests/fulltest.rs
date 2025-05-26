@@ -43,6 +43,7 @@ pub fn test_full() -> Result<()> {
 
     const NETWORK: Network = Network::Regtest;
     let fake_drp = true;
+    let fake_instruction = true;
 
     let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
 
@@ -183,7 +184,6 @@ pub fn test_full() -> Result<()> {
     let dispute_id = prepare_dispute(
         participants,
         sub_channel.clone(),
-        &mut instances,
         &pair_aggregated_pub_key,
         initial_utxo,
         initial_output_type,
@@ -191,7 +191,11 @@ pub fn test_full() -> Result<()> {
         prover_win_output_type,
         tx_fee as u32,
         fake_drp,
+        fake_instruction,
     )?;
+
+    //WAIT SETUP READY
+    let _msgs = get_all(&channels, &mut instances, false)?;
     info!("Dispute setup done");
 
     //======================================================

@@ -74,6 +74,7 @@ pub fn test_transfer() -> Result<()> {
         &aggregated_pub_key,
         asset_spending_condition.clone(),
         10_000,
+        None,
     )?;
 
     let spending_condition = vec![scripts::check_aggregated_signature(
@@ -86,6 +87,7 @@ pub fn test_transfer() -> Result<()> {
         &aggregated_pub_key,
         spending_condition.clone(),
         1000,
+        None,
     )?;
     //emulate op_won
     let op_won_utxo = init_utxo_new(
@@ -93,6 +95,7 @@ pub fn test_transfer() -> Result<()> {
         &aggregated_pub_key,
         spending_condition.clone(),
         500,
+        None,
     )?;
 
     // SETUP TRANSFER BEGIN

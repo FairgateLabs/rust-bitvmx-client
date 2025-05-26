@@ -31,6 +31,7 @@ pub fn test_slot() -> Result<()> {
     config_trace();
 
     let fake_drp = true;
+    let fake_instruction = true;
 
     //const NETWORK: Network = Network::Regtest;
 
@@ -158,7 +159,6 @@ pub fn test_slot() -> Result<()> {
     let dispute_id = prepare_dispute(
         participants,
         sub_channel.clone(),
-        &mut instances,
         &pair_aggregated_pub_key,
         initial_utxo,
         initial_output_type,
@@ -166,7 +166,9 @@ pub fn test_slot() -> Result<()> {
         prover_win_output_type,
         tx_fee as u32,
         fake_drp,
+        fake_instruction,
     )?;
+    let _msgs = get_all(&channels, &mut instances, false)?;
     info!("Dispute setup done");
 
     // ==========================

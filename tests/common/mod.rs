@@ -227,6 +227,7 @@ pub fn init_utxo_new(
     internal_key: &PublicKey,
     spending_scripts: Vec<ProtocolScript>,
     amount: u64,
+    from: Option<&str>,
 ) -> Result<(Utxo, OutputType)> {
     /*let secp = secp256k1::Secp256k1::new();
     let untweaked_key = XOnlyPublicKey::from(*internal_key);
@@ -242,7 +243,7 @@ pub fn init_utxo_new(
 
     let txid = wallet.fund_address(
         WALLET_NAME,
-        FUNDING_ID,
+        from.unwrap_or(FUNDING_ID),
         internal_key.clone(),
         &vec![amount],
         FEE,
