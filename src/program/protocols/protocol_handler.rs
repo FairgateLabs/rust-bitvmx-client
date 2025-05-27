@@ -255,6 +255,13 @@ pub trait ProtocolHandler {
         }
         Ok(names)
     }
+
+    fn checked_sub(&self, amount: u64, value_to_subtract: u64) -> Result<u64, BitVMXError> {
+         match amount.checked_sub(value_to_subtract){
+            Some(amount) => Ok(amount),
+            None => Err(BitVMXError::InsufficientAmount)
+         }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]

@@ -693,7 +693,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         )?;
 
         let aggregated = computed_aggregated.get("aggregated_1").unwrap();
-        amount -= fee;
+        amount = self.checked_sub(amount, fee)?;
 
         let words = context
             .globals
@@ -706,8 +706,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             .collect::<Vec<_>>();
         let input_vars_slice = input_vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
 
-        amount -= ClaimGate::cost(fee, speedup_dust, 1, 1);
-        amount -= ClaimGate::cost(fee, speedup_dust, 1, 1);
+        amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
+        amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
 
         self.add_winternitz_check(
             aggregated,
@@ -721,8 +721,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             INPUT_1,
             None,
         )?;
-        amount -= fee;
-        amount -= speedup_dust;
+        amount = self.checked_sub(amount, fee)?;
+        amount = self.checked_sub(amount, speedup_dust)?;
 
         let claim_prover = ClaimGate::new(
             &mut protocol,
@@ -794,8 +794,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             COMMITMENT,
             Some(&claim_verifier),
         )?;
-        amount -= fee;
-        amount -= speedup_dust;
+        amount = self.checked_sub(amount, fee)?;
+        amount = self.checked_sub(amount, speedup_dust)?;
 
         let nary_def = program_def.0.nary_def();
         let mut prev = COMMITMENT.to_string();
@@ -818,8 +818,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &next,
                 Some(&claim_verifier),
             )?;
-            amount -= fee;
-            amount -= speedup_dust;
+            amount -= self.checked_sub(amount, fee)?;
+            amount -= self.checked_sub(amount, speedup_dust)?;
 
             prev = next;
             let next = format!("NARY_VERIFIER_{}", i);
@@ -838,8 +838,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &next,
                 Some(&claim_prover),
             )?;
-            amount -= fee;
-            amount -= speedup_dust;
+            amount = self.checked_sub(amount, fee)?;
+            amount = self.checked_sub(amount, speedup_dust)?;
             prev = next;
         }
 
@@ -858,7 +858,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             TIMELOCK_BLOCKS,
             &keys[0],
             amount,
-            amount - fee,
+            self.checked_sub(amount, fee)?,
             &vars,
             &prev,
             EXECUTE,

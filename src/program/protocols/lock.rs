@@ -280,7 +280,7 @@ impl ProtocolHandler for LockProtocol {
             .number()
             .unwrap_or(0) as u64;
 
-        let amount = protocol_utxo.2.unwrap() - fee - fee_zkp - SPEEDUP_DUST;
+        let amount = self.checked_sub(protocol_utxo.2.unwrap(), fee + fee_zkp + SPEEDUP_DUST)?;
         // [Protocol fees taproot output]
         // taproot output sending the fee (incentive to bridge) to the fee address
         protocol.add_transaction_output(
@@ -311,7 +311,7 @@ impl ProtocolHandler for LockProtocol {
             &mut protocol,
             &unspendable,
             ordinal_utxo.2.unwrap(),
-            amount - fee - SPEEDUP_DUST,
+            self.checked_sub(amount, fee + SPEEDUP_DUST)?,
         )?;
 
         let aggregated = computed_aggregated.get("aggregated_1").unwrap();
