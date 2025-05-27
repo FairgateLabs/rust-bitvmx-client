@@ -89,6 +89,7 @@ impl ProtocolHandler for SlotProtocol {
             context
                 .globals
                 .get_var(&self.ctx.id, "operators_aggregated_pub")?
+                .unwrap()
                 .pubkey()?,
         )])
     }
@@ -166,6 +167,7 @@ impl ProtocolHandler for SlotProtocol {
                 let gid = program_context
                     .globals
                     .get_var(&self.ctx.id, &group_id(operator as usize))?
+                    .unwrap()
                     .input()?[0];
 
                 let gid_selection_tx = self.get_signed_tx(
@@ -189,6 +191,7 @@ impl ProtocolHandler for SlotProtocol {
                 let total_operators = program_context
                     .globals
                     .get_var(&self.ctx.id, "operators")?
+                    .unwrap()
                     .number()?;
 
                 let txid = tx_status.tx_id;
@@ -240,11 +243,12 @@ impl ProtocolHandler for SlotProtocol {
             let total_operators = program_context
                 .globals
                 .get_var(&self.ctx.id, "operators")?
+                .unwrap()
                 .number()?;
 
             let mut stops_consumed = program_context
                 .globals
-                .get_var(&self.ctx.id, "stops_consumed")
+                .get_var(&self.ctx.id, "stops_consumed")?
                 .unwrap_or(VariableTypes::Number(0))
                 .number()?;
 
@@ -366,7 +370,11 @@ impl ProtocolHandler for SlotProtocol {
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let fee = context.globals.get_var(&self.ctx.id, "FEE")?.number()? as u64;
+        let fee = context
+            .globals
+            .get_var(&self.ctx.id, "FEE")?
+            .unwrap()
+            .number()? as u64;
         let protocol_cost = 200_000;
         let speedup_dust = 500;
         let gid_max = 8;
@@ -380,19 +388,26 @@ impl ProtocolHandler for SlotProtocol {
         let ops_agg_pubkey = context
             .globals
             .get_var(&self.ctx.id, "operators_aggregated_pub")?
+            .unwrap()
             .pubkey()?;
 
         let pair_0_1_aggregated = context
             .globals
             .get_var(&self.ctx.id, "pair_0_1_aggregated")?
+            .unwrap()
             .pubkey()?;
 
         let _unspendable = context
             .globals
             .get_var(&self.ctx.id, "unspendable")?
+            .unwrap()
             .pubkey()?;
 
-        let fund_utxo = context.globals.get_var(&self.ctx.id, "fund_utxo")?.utxo()?;
+        let fund_utxo = context
+            .globals
+            .get_var(&self.ctx.id, "fund_utxo")?
+            .unwrap()
+            .utxo()?;
 
         //create the protocol
         let mut protocol = self.load_or_create_protocol();

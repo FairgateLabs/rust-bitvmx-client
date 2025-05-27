@@ -157,6 +157,7 @@ pub trait ProtocolHandler {
             let message = context
                 .globals
                 .get_var(&self.context().id, k.name())?
+                .unwrap()
                 .input()?;
 
             info!("Signigng message: {}", hex::encode(message.clone()));
