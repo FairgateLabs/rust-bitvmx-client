@@ -188,6 +188,9 @@ pub fn execute_dispute(
         }
     }
 
+    //process verifier choose challenge
+    process_dispatcher(&mut dispatchers, &mut instances);
+
     //wait for claim start
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
     info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
