@@ -1,6 +1,7 @@
 use anyhow::Result;
 use bitcoin::Network;
 use bitcoind::bitcoind::Bitcoind;
+use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::channel::channel::DualChannel;
 use bitvmx_broker::rpc::BrokerConfig;
 use bitvmx_client::program;
@@ -23,7 +24,7 @@ use std::{
     sync::mpsc::{Receiver, Sender},
     thread, vec,
 };
-use tracing::info;
+use tracing::{error, info};
 use uuid::Uuid;
 
 mod common;
@@ -69,8 +70,11 @@ fn run_bitvmx(network: Network, independent: bool, rx: Receiver<()>, tx: Sender<
         }
         for bitvmx in instances.iter_mut() {
             if ready {
-                bitvmx.tick()?;
-                thread::sleep(Duration::from_millis(10));
+                let ret = bitvmx.tick();
+                if ret.is_err() {
+                    error!("Error in BitVMX tick: {:?}", ret);
+                    return Ok(());
+                }
             } else {
                 ready = bitvmx.process_bitcoin_updates()?;
                 if !ready {
@@ -79,9 +83,9 @@ fn run_bitvmx(network: Network, independent: bool, rx: Receiver<()>, tx: Sender<
                     info!("Bitcoin updates processed, ready to run.");
                     let _ = tx.send(());
                 }
-                thread::sleep(Duration::from_millis(10));
             }
         }
+        thread::sleep(Duration::from_millis(10));
     }
 
     Ok(())
@@ -109,12 +113,35 @@ fn run_emulator(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result
             if dispatcher.tick() {
                 let _ = tx.send(idx);
             }
-            thread::sleep(Duration::from_millis(10));
+            thread::sleep(Duration::from_millis(500));
         }
     }
     Ok(())
 }
 
+fn run_auto_mine(network: Network, rx: Receiver<()>, tx: Sender<()>, interval: u64) -> Result<()> {
+    let config = &get_configs(network)?[0];
+
+    let bitcoin_client = BitcoinClient::new(
+        &config.bitcoin.url,
+        &config.bitcoin.username,
+        &config.bitcoin.password,
+    )?;
+    let address = bitcoin_client.init_wallet(network, "test_wallet");
+    let address = address.unwrap();
+
+    // Main processing loop
+    loop {
+        if rx.try_recv().is_ok() {
+            info!("Signal received, shutting down...");
+            break;
+        }
+        bitcoin_client.mine_blocks_to_address(1, &address)?;
+        tx.send(())?;
+        thread::sleep(Duration::from_millis(interval));
+    }
+    Ok(())
+}
 pub struct TestHelper {
     pub bitcoind: Option<Bitcoind>,
     pub wallet: Wallet,
@@ -123,11 +150,14 @@ pub struct TestHelper {
     pub disp_handle: Option<thread::JoinHandle<Result<()>>>,
     pub disp_stop_tx: Sender<()>,
     pub disp_ready_rx: Receiver<usize>,
+    pub mine_handle: Option<thread::JoinHandle<Result<()>>>,
+    pub mine_stop_tx: Option<Sender<()>>,
+    pub mine_block_rx: Option<Receiver<()>>,
     pub channels: Vec<DualChannel>,
 }
 
 impl TestHelper {
-    pub fn new(network: Network, independent: bool) -> Result<Self> {
+    pub fn new(network: Network, independent: bool, auto_mine: Option<u64>) -> Result<Self> {
         let wallet_config = match network {
             Network::Regtest => "config/wallet_regtest.yaml",
             Network::Testnet => "config/wallet_testnet.yaml",
@@ -175,6 +205,26 @@ impl TestHelper {
         let (disp_ready_tx, disp_ready_rx) = channel::<usize>();
         let disp_handle = thread::spawn(move || run_emulator(network, disp_stop_rx, disp_ready_tx));
 
+        let automine_interval = if network == Network::Regtest {
+            if let Some(interval) = auto_mine {
+                interval
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+        let (mine_handle, mine_stop_tx, mine_block_rx) = if automine_interval > 0 {
+            let (mine_stop_tx, mine_stop_rx) = channel::<()>();
+            let (mine_ready_tx, mine_ready_rx) = channel::<()>();
+            let mine_handle = thread::spawn(move || {
+                run_auto_mine(network, mine_stop_rx, mine_ready_tx, automine_interval)
+            });
+            (Some(mine_handle), Some(mine_stop_tx), Some(mine_ready_rx))
+        } else {
+            (None, None, None)
+        };
+
         let mut channels = vec![];
         let configs = get_configs(network)?;
         configs.iter().for_each(|config| {
@@ -191,6 +241,9 @@ impl TestHelper {
             disp_handle: Some(disp_handle),
             disp_stop_tx,
             disp_ready_rx,
+            mine_handle,
+            mine_stop_tx,
+            mine_block_rx,
             channels,
         })
     }
@@ -202,6 +255,12 @@ impl TestHelper {
         handle.join().unwrap()?;
         let handle = self.disp_handle.take().unwrap();
         handle.join().unwrap()?;
+        if let Some(mine_stop_tx) = self.mine_stop_tx.take() {
+            mine_stop_tx.send(()).unwrap();
+        }
+        if let Some(mine_handle) = self.mine_handle.take() {
+            mine_handle.join().unwrap()?;
+        }
 
         if let Some(bitcoind) = &self.bitcoind {
             info!("Stopping bitcoind");
@@ -229,7 +288,7 @@ impl TestHelper {
         loop {
             let msg = channel.recv()?;
             if let Some(msg) = msg {
-                info!("Received message from channel {}: {:?}", idx, msg);
+                //info!("Received message from channel {}: {:?}", idx, msg);
                 return Ok(OutgoingBitVMXApiMessages::from_string(&msg.0)?);
             }
             thread::sleep(Duration::from_millis(100));
@@ -239,6 +298,24 @@ impl TestHelper {
     pub fn send_all(&self, command: IncomingBitVMXApiMessages) -> Result<()> {
         send_all(&self.channels, &command.to_string()?)
     }
+
+    pub fn wait_tx_name(&self, idx: usize, name: &str) -> Result<OutgoingBitVMXApiMessages> {
+        info!(
+            "Waiting for transaction with name: {} on channel: {}",
+            name, idx
+        );
+        loop {
+            let msg = self.wait_msg(idx)?;
+            if let Some((_uuid, _status, tx_name)) = msg.transaction() {
+                if let Some(tx_name) = tx_name {
+                    if tx_name == name {
+                        return Ok(msg);
+                    }
+                }
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
 }
 
 #[ignore]
@@ -246,9 +323,9 @@ impl TestHelper {
 pub fn test_all() -> Result<()> {
     config_trace();
 
-    let independent = true;
+    let independent = false;
     const NETWORK: Network = Network::Regtest;
-    let mut helper = TestHelper::new(NETWORK, independent)?;
+    let mut helper = TestHelper::new(NETWORK, independent, Some(1000))?;
 
     let command = IncomingBitVMXApiMessages::GetCommInfo();
     helper.send_all(command)?;
@@ -277,11 +354,6 @@ pub fn test_all() -> Result<()> {
     let pair_0_1_agg_pub_key = msg.aggregated_pub_key().unwrap();
 
     // prepare a second fund available so we don't need 2 blocks to get the UTXO
-    if !independent {
-        helper
-            .wallet
-            .regtest_fund(WALLET_NAME, "second", 100_000_000)?;
-    }
 
     info!("Initializing UTXO for program");
     let spending_condition = vec![
@@ -302,7 +374,7 @@ pub fn test_all() -> Result<()> {
         &pair_0_1_agg_pub_key,
         spending_condition.clone(),
         11_000,
-        Some("second"),
+        None,
     )?;
 
     let pair_0_1_channels = vec![helper.channels[0].clone(), helper.channels[1].clone()];
@@ -321,8 +393,11 @@ pub fn test_all() -> Result<()> {
 
     let msg = helper.wait_msg(0)?;
     info!("Setup dispute done: {:?}", msg);
+    let msg = helper.wait_msg(1)?;
+    info!("Setup dispute done: {:?}", msg);
 
     // wait input from command line
+    info!("Waiting for funding ready");
     wait_enter(independent);
 
     let _ = helper.channels[1].send(
@@ -334,8 +409,7 @@ pub fn test_all() -> Result<()> {
         .to_string()?,
     );
 
-    helper.wallet.mine(1)?;
-    wait_enter(independent);
+    helper.wait_tx_name(1, program::protocols::dispute::START_CH)?;
 
     let data = "11111111";
     let set_input_1 =
@@ -352,16 +426,7 @@ pub fn test_all() -> Result<()> {
         .to_string()?,
     );
 
-    //move this to the helper auto mining
-    if !independent {
-        for _ in 0..200 {
-            helper.wallet.mine(1)?;
-            thread::sleep(Duration::from_millis(1000));
-        }
-    }
-
-    wait_enter(independent);
-    //thread::sleep(Duration::from_secs(5)); // Wait for the instances to be ready
+    helper.wait_tx_name(1, program::protocols::dispute::ACTION_PROVER_WINS)?;
 
     helper.stop()?;
 
