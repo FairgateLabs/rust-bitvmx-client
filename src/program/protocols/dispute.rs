@@ -1064,7 +1064,7 @@ impl DisputeResolutionProtocol {
         if context
             .globals
             .get_var(&self.ctx.id, "FAKE_INSTRUCTION")
-            .is_err()
+            .is_ok()
         {
             instruction_names = vec!["ecall".to_string()];
         }
@@ -1279,7 +1279,7 @@ impl DisputeResolutionProtocol {
                 if context
                     .globals
                     .get_var(&self.ctx.id, "FAKE_INSTRUCTION")
-                    .is_err()
+                    .is_ok()
                 {
                     index = 0;
                 }
