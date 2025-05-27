@@ -694,7 +694,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
         amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
 
-
         self.add_winternitz_check(
             aggregated,
             &mut protocol,
@@ -804,14 +803,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &next,
                 Some(&claim_verifier),
             )?;
-            amount -= fee;
-            if amount <= 0{
-                return Err(BitVMXError::InsufficientAmount);
-            }   
-            amount -= speedup_dust;
-            if amount <= 0{
-                return Err(BitVMXError::InsufficientAmount);
-            }
+            amount -= self.checked_sub(amount, fee)?;
+            amount -= self.checked_sub(amount, speedup_dust)?;
 
             prev = next;
             let next = format!("NARY_VERIFIER_{}", i);
@@ -850,7 +843,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             TIMELOCK_BLOCKS,
             &keys[0],
             amount,
-                    self.checked_sub(amount, fee)?,
+            self.checked_sub(amount, fee)?,
             &vars,
             &prev,
             EXECUTE,
