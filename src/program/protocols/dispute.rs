@@ -2,8 +2,9 @@ use std::collections::HashMap;
 
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
-use bitcoin_script_riscv::riscv::instruction_mapping::{
-    create_verification_script_mapping, get_key_from_opcode,
+use bitcoin_script_riscv::riscv::{
+    challenges::halt_challenge,
+    instruction_mapping::{create_verification_script_mapping, get_key_from_opcode},
 };
 use bitcoin_script_stack::stack::StackTracker;
 use bitvmx_cpu_definitions::{
@@ -51,6 +52,7 @@ pub const TIMELOCK_BLOCKS: u16 = 20;
 pub const PROVER_WINS: &str = "PROVER_WINS";
 pub const VERIFIER_WINS: &str = "VERIFIER_WINS";
 pub const ACTION_PROVER_WINS: &str = "ACTION_PROVER_WINS";
+pub const CHALLENGE: &str = "CHALLENGE";
 
 pub const TRACE_VARS: [(&str, usize); 16] = [
     ("write_address", 4 as usize),
@@ -69,6 +71,51 @@ pub const TRACE_VARS: [(&str, usize); 16] = [
     ("read_pc_opcode", 4),
     ("step_number", 8),
     ("witness", 4),
+];
+
+pub const ENTRY_POINT_CHALLENGE: [(&str, usize); 3] = [
+    ("provided_pc", 4),
+    ("provided_micro", 1),
+    ("provided_step", 8),
+];
+pub const PROGRAM_COUNTER_CHALLENGE: [(&str, usize); 8] = [
+    ("prev_prev_hash", 20),
+    ("prev_write_add", 4),
+    ("prev_write_data", 4),
+    ("prev_write_pc", 4),
+    ("prev_write_micro", 4),
+    ("prover_read_pc", 4),
+    ("prover_read_micro", 1),
+    ("prover_prev_hash", 20),
+];
+pub const HALT_CHALLENGE: [(&str, usize); 5] = [
+    ("final_step", 8),
+    ("trace_step", 8),
+    ("read_value_1", 4),
+    ("read_value_2", 4),
+    ("opcode", 4),
+];
+pub const TRACE_HASH_CHALLENGE: [(&str, usize); 6] = [
+    ("prev_hash", 20),
+    ("write_add", 4),
+    ("write_data", 4),
+    ("write_pc", 4),
+    ("write_micro", 1),
+    ("hash", 20),
+];
+pub const TRACE_HASH_ZERO_CHALLENGE: [(&str, usize); 5] = [
+    ("write_add", 4),
+    ("write_data", 4),
+    ("write_pc", 4),
+    ("write_micro", 1),
+    ("hash", 20),
+];
+pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 5] = [
+    ("entry_point", &ENTRY_POINT_CHALLENGE),
+    ("program_counter", &PROGRAM_COUNTER_CHALLENGE),
+    ("halt", &HALT_CHALLENGE),
+    ("trace_hash", &TRACE_HASH_CHALLENGE),
+    ("trace_hash_zero", &TRACE_HASH_ZERO_CHALLENGE),
 ];
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -151,6 +198,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             for (name, size) in TRACE_VARS {
                 let key = key_chain.derive_winternitz_hash160(size)?;
                 keys.push((name.to_string(), key.into()));
+            }
+
+            for (challenge_name, challenge) in CHALLENGES.iter() {
+                for (name, size) in challenge.iter() {
+                    let key = key_chain.derive_winternitz_hash160(*size)?;
+                    keys.push((format!("{}_{}", challenge_name, name), key.into()));
+                }
             }
         }
 
@@ -577,16 +631,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             program_context.broker_channel.send(EMULATOR_ID, msg)?;
         }
 
-        if name == INPUT_1 && self.role() == ParticipantRole::Prover {
-            /*let tx = self.get_signed_tx(
-                program_context,
-                &ClaimGate::tx_start(PROVER_WINS),
-                0,
-                0,
-                false,
-            )?;
-            info!("PROVER_WINS_TX: {:?}", tx);*/
-        }
         if name == EXECUTE && self.role() == ParticipantRole::Prover {
             let tx = self.get_signed_tx(
                 program_context,
@@ -630,6 +674,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 Context::ProgramId(self.ctx.id).to_string()?,
                 None,
             )?;
+        }
+
+        if name == CHALLENGE && self.role() == ParticipantRole::Verifier {
+            //TODO:
         }
 
         Ok(())
@@ -852,6 +900,23 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         //Add this as if it were the final tx execution
         claim_prover.add_claimer_win_connection(&mut protocol, EXECUTE)?;
 
+        let vars = CHALLENGES
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<&str>>();
+        self.add_winternitz_and_challenge(
+            aggregated,
+            &mut protocol,
+            TIMELOCK_BLOCKS,
+            &keys[1],
+            amount,
+            amount - fee,
+            &vars,
+            EXECUTE,
+            CHALLENGE,
+            Some(&claim_prover),
+        )?;
+
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("{}", protocol.visualize()?);
         self.save_protocol(protocol)?;
@@ -1007,7 +1072,6 @@ impl DisputeResolutionProtocol {
             .map(|v| (*v, keys.get_winternitz(v).unwrap()))
             .collect();
 
-        //TODO: Create full mapping. Add a check to identify the leaf
         let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
         let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
         instruction_names.sort();
@@ -1056,6 +1120,94 @@ impl DisputeResolutionProtocol {
             )?;
             winternitz_check_list.push(winternitz_check);
         }
+
+        let timeout = scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
+        winternitz_check_list.push(timeout.clone());
+
+        for (pos, leave) in winternitz_check_list.iter_mut().enumerate() {
+            leave.set_assert_leaf_id(pos as u32);
+        }
+
+        let output_type = OutputType::taproot(amount, aggregated, &winternitz_check_list, &vec![])?;
+
+        protocol.add_connection(
+            &format!("{}__{}", from, to),
+            from,
+            to,
+            &output_type,
+            &SpendMode::All {
+                //TODO: fix proper leaf
+                key_path_sign: SignMode::Aggregate,
+            },
+            &SighashType::taproot_all(),
+        )?;
+
+        protocol.add_connection_with_timelock(
+            &format!("{}__{}_TO", from, to),
+            from,
+            &format!("{}_TO", to),
+            &output_type,
+            &SpendMode::All {
+                //TODO: fix proper leaf
+                key_path_sign: SignMode::Aggregate,
+            },
+            &SighashType::taproot_all(),
+            timelock_blocks,
+        )?;
+
+        if let Some(claim_gate) = claim_gate {
+            claim_gate.add_claimer_win_connection(protocol, &format!("{}_TO", to))?;
+        }
+
+        let pb = ProtocolBuilder {};
+        //put the amount here as there is no output yet
+        pb.add_speedup_output(protocol, to, amount_speedup, aggregated)?;
+        pb.add_speedup_output(protocol, &format!("{}_TO", to), amount_speedup, aggregated)?;
+        Ok(())
+    }
+
+    pub fn add_winternitz_and_challenge(
+        &self,
+        aggregated: &PublicKey,
+        protocol: &mut Protocol,
+        timelock_blocks: u16,
+        keys: &ParticipantKeys,
+        amount: u64,
+        amount_speedup: u64,
+        var_names: &Vec<&str>,
+        from: &str,
+        to: &str,
+        claim_gate: Option<&ClaimGate>,
+    ) -> Result<(), BitVMXError> {
+        info!("Adding winternitz check for {} to {}", from, to);
+        info!("Amount: {}", amount);
+        info!("Speedup: {}", amount_speedup);
+        let names_and_keys = var_names
+            .iter()
+            .map(|v| (*v, keys.get_winternitz(v).unwrap()))
+            .collect();
+
+        //TODO: Create full mapping. Add a check to identify the leaf
+        let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
+        let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
+        instruction_names.sort();
+
+        //TODO: This is a workacround to inverse the order of the stack
+        let mut stack = StackTracker::new();
+
+        halt_challenge(&mut stack); //ASK: but the ohters need parameters, where do they come from? estan todos en el program
+        let script = stack.get_script();
+
+        let mut winternitz_check_list = vec![];
+
+        let winternitz_check = scripts::verify_winternitz_signatures_aux(
+            aggregated,
+            &names_and_keys,
+            SignMode::Aggregate,
+            true,
+            Some(vec![script.clone()]),
+        )?;
+        winternitz_check_list.push(winternitz_check);
 
         let timeout = scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
         winternitz_check_list.push(timeout.clone());
