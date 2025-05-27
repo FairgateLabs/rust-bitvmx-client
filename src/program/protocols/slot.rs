@@ -414,7 +414,7 @@ impl ProtocolHandler for SlotProtocol {
             },
             &SighashType::taproot_all(),
         )?;
-        amount -= fee;
+        amount = self.checked_sub(amount, fee)?;
 
         let pb = ProtocolBuilder {};
 
@@ -635,7 +635,7 @@ impl ProtocolHandler for SlotProtocol {
             pb.add_speedup_output(&mut protocol, &gidtotx, speedup_dust, &ops_agg_pubkey)?;
 
             pb.add_speedup_output(&mut protocol, &certhashtx, speedup_dust, &ops_agg_pubkey)?;
-            amount -= amount_for_sequence;
+            amount = self.checked_sub(amount, amount_for_sequence)?;
         }
 
         // add one output to test
