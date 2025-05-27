@@ -2,7 +2,7 @@ use anyhow::Result;
 use bitcoin::{
     key::rand::rngs::OsRng,
     secp256k1::{self, SecretKey},
-    Amount, Network, PublicKey as BitcoinPubKey,
+    Network, PublicKey as BitcoinPubKey,
 };
 use bitvmx_client::{
     program::{
@@ -97,8 +97,8 @@ pub fn test_full() -> Result<()> {
     //       INITIALIZE UTXO TO PAY THE SLOT AND DISPUTE CHANNEL
     //====================================================
     // Protocol fees funding
-    let fund_value = Amount::from_sat(10_000_000);
-    let utxo = init_utxo(&wallet, aggregated_pub_key, None, fund_value.to_sat())?;
+    let fund_value = 10_000_000;
+    let utxo = init_utxo(&wallet, aggregated_pub_key, None, fund_value)?;
 
     //======================================================
     // SETUP SLOT BEGIN
@@ -107,9 +107,8 @@ pub fn test_full() -> Result<()> {
     let set_fee = VariableTypes::Number(10_000).set_msg(slot_program_id, "FEE")?;
     send_all(&channels, &set_fee)?;
 
-    let set_fund_utxo =
-        VariableTypes::Utxo((utxo.txid, utxo.vout, Some(fund_value.to_sat()), None))
-            .set_msg(slot_program_id, "fund_utxo")?;
+    let set_fund_utxo = VariableTypes::Utxo((utxo.txid, utxo.vout, Some(fund_value), None))
+        .set_msg(slot_program_id, "fund_utxo")?;
     send_all(&channels, &set_fund_utxo)?;
 
     let set_ops_aggregated = VariableTypes::PubKey(aggregated_pub_key)

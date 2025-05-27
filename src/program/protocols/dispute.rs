@@ -655,7 +655,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         let speedup_dust = 500;
 
         let utxo = context
-            .globals   
+            .globals
             .get_var(&self.ctx.id, "utxo")?
             .unwrap()
             .utxo()?;
@@ -681,6 +681,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         let mut protocol = self.load_or_create_protocol();
 
         let mut amount = utxo.2.unwrap();
+        info!("Protocol amount: {}", amount);
         let output_type = utxo.3.unwrap();
 
         protocol.add_external_connection(
@@ -818,8 +819,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &next,
                 Some(&claim_verifier),
             )?;
-            amount -= self.checked_sub(amount, fee)?;
-            amount -= self.checked_sub(amount, speedup_dust)?;
+            amount = self.checked_sub(amount, fee)?;
+            amount = self.checked_sub(amount, speedup_dust)?;
 
             prev = next;
             let next = format!("NARY_VERIFIER_{}", i);
@@ -1162,7 +1163,9 @@ impl DisputeResolutionProtocol {
                 )?;
                 if let Ok(msg) = context.globals.get_var(&self.ctx.id, "choose-segment-msg") {
                     info!("The msg to choose segment was ready. Sending it");
-                    context.broker_channel.send(EMULATOR_ID, msg.unwrap().string()?)?;
+                    context
+                        .broker_channel
+                        .send(EMULATOR_ID, msg.unwrap().string()?)?;
                 } else {
                     info!("The msg to choose segment was not ready");
                 }

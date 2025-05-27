@@ -560,10 +560,9 @@ impl BitVMXApi for BitVMX {
             None => OutgoingBitVMXApiMessages::NotFound(id, key.to_string()),
         };
 
-        self.program_context.broker_channel.send(
-            from,
-            serde_json::to_string(&response)?,
-        )?;
+        self.program_context
+            .broker_channel
+            .send(from, response.to_string()?)?;
         Ok(())
     }
 
@@ -579,7 +578,7 @@ impl BitVMXApi for BitVMX {
 
         self.program_context
             .broker_channel
-            .send(from, serde_json::to_string(&response)?)?;
+            .send(from, response.to_string()?)?;
         Ok(())
     }
 
