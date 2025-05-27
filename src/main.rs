@@ -1,4 +1,8 @@
-use std::{thread, time::Duration};
+use std::{
+    sync::mpsc::{Receiver, Sender},
+    thread,
+    time::Duration,
+};
 
 use anyhow::Result;
 use tracing::info;
@@ -36,7 +40,7 @@ fn init_bitvmx(opn: &str) -> Result<BitVMX> {
     Ok(bitvmx)
 }
 
-fn run_bitvmx(opn: &str) -> Result<()> {
+fn run_bitvmx(opn: &str, rx: Receiver<()>, tx: Option<Sender<()>>) -> Result<()> {
     info!("Starting BitVMX instance with operator: {}", opn);
 
     let mut instances = if opn == "all" {
@@ -63,13 +67,6 @@ fn run_bitvmx(opn: &str) -> Result<()> {
         info!("Peer ID: {}", bitvmx.peer_id());
     }
 
-    // Set up Ctrl+C handler
-    let (tx, rx) = std::sync::mpsc::channel();
-    ctrlc::set_handler(move || {
-        let _ = tx.send(());
-    })
-    .expect("Error setting Ctrl+C handler");
-
     let mut ready = false;
 
     // Main processing loop
@@ -89,6 +86,9 @@ fn run_bitvmx(opn: &str) -> Result<()> {
                     info!("Waiting to get to the top of the Bitcoin chain...");
                 } else {
                     info!("Bitcoin updates processed, ready to run.");
+                    if let Some(tx) = &tx {
+                        let _ = tx.send(());
+                    }
                 }
                 thread::sleep(Duration::from_millis(10));
             }
@@ -108,5 +108,12 @@ fn main() -> Result<()> {
         .map(String::as_str)
         .expect("Define the config file to use. Example: op_1. Also can be used [all|all-testnet]");
 
-    run_bitvmx(opn)
+    // Set up Ctrl+C handler
+    let (tx, rx) = std::sync::mpsc::channel();
+    ctrlc::set_handler(move || {
+        let _ = tx.send(());
+    })
+    .expect("Error setting Ctrl+C handler");
+
+    run_bitvmx(opn, rx, None)
 }

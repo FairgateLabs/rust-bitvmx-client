@@ -1,0 +1,17 @@
+bitcoin:
+  network: testnet
+  url: "https://distinguished-intensive-frost.btc-testnet.quiknode.pro/38d0f064dc8e72fe44d8a9a762d448bc64c54619/"
+  username: ""
+  password: ""
+  wallet: test_wallet
+
+key_manager:
+  network: testnet
+  key_derivation_seed: 2222beefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeec
+
+key_storage:
+  password: secret_password_1
+  path: /tmp/testnet/wallet/keys.db
+
+storage:
+  path: /tmp/testnet/wallet/storage.db

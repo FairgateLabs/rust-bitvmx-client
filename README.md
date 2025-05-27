@@ -29,3 +29,4 @@ If you are running a bitcoin node, you should stop it before running the integra
 ```bash
 RUST_BACKTRACE=1 cargo test test_single_run -- --ignored
 ```
+ 

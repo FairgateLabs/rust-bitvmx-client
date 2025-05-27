@@ -56,24 +56,25 @@ pub fn test_drp() -> Result<()> {
         scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate),
     ];
     let (utxo, initial_out_type) = init_utxo_new(
-        &bitcoin_client,
+        &wallet,
         &aggregated_pub_key,
         spending_condition.clone(),
         200_000,
+        None,
     )?;
 
     info!("Initializing UTXO for the prover action");
     let (prover_win_utxo, prover_win_out_type) = init_utxo_new(
-        &bitcoin_client,
+        &wallet,
         &aggregated_pub_key,
         spending_condition.clone(),
         11_000,
+        None,
     )?;
 
     let prog_id = prepare_dispute(
         participants,
         channels.clone(),
-        &mut instances,
         &aggregated_pub_key,
         utxo,
         initial_out_type,
@@ -81,7 +82,9 @@ pub fn test_drp() -> Result<()> {
         prover_win_out_type,
         10_000,
         false,
+        false,
     )?;
+    let _msgs = get_all(&channels, &mut instances, false)?;
 
     execute_dispute(
         channels,

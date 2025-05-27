@@ -1,6 +1,5 @@
 use anyhow::Result;
 use bitcoin::Amount;
-use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
 use bitvmx_client::{
     program::{
         self,
@@ -32,6 +31,7 @@ pub fn test_slot() -> Result<()> {
     config_trace();
 
     let fake_drp = true;
+    let fake_instruction = true;
 
     //const NETWORK: Network = Network::Regtest;
 
@@ -79,14 +79,9 @@ pub fn test_slot() -> Result<()> {
     let pair_aggregated_pub_key = msgs[0].aggregated_pub_key().unwrap();
 
     // Protocol fees funding
-    const ONE_BTC: Amount = Amount::from_sat(100_000_000);
+    const ONE_BTC: Amount = Amount::from_sat(10_000_000);
     let fund_value = ONE_BTC;
-    let utxo = init_utxo(
-        &bitcoin_client,
-        aggregated_pub_key,
-        None,
-        Some(fund_value.to_sat()),
-    )?;
+    let utxo = init_utxo(&wallet, aggregated_pub_key, None, fund_value.to_sat())?;
 
     // SETUP SLOT BEGIN
     let program_id = Uuid::new_v4();
@@ -164,7 +159,6 @@ pub fn test_slot() -> Result<()> {
     let dispute_id = prepare_dispute(
         participants,
         sub_channel.clone(),
-        &mut instances,
         &pair_aggregated_pub_key,
         initial_utxo,
         initial_output_type,
@@ -172,7 +166,9 @@ pub fn test_slot() -> Result<()> {
         prover_win_output_type,
         tx_fee as u32,
         fake_drp,
+        fake_instruction,
     )?;
+    let _msgs = get_all(&channels, &mut instances, false)?;
     info!("Dispute setup done");
 
     // ==========================
@@ -233,7 +229,7 @@ pub fn test_slot() -> Result<()> {
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
     info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
     //success wait
-    bitcoin_client.mine_blocks_to_address(10, &wallet).unwrap();
+    wallet.mine(10)?;
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
     info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
 

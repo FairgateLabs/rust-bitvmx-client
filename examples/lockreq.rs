@@ -126,7 +126,7 @@ pub fn create_lockreq_ready(
         user_address
     );
 
-    const ONE_BTC: Amount = Amount::from_sat(100_000_000);
+    const ONE_BTC: Amount = Amount::from_sat(10_000_000);
 
     // Ordinal funding
     const ORDINAL_AMOUNT: Amount = Amount::from_sat(10_000);

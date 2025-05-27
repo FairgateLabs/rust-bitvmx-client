@@ -4,9 +4,9 @@ use std::str::FromStr;
 pub mod dispute;
 
 use anyhow::Result;
-use bitcoin::{secp256k1, Address, Amount, KnownHrp, Network, PublicKey, XOnlyPublicKey};
+use bitcoin::{Network, PublicKey};
 use bitcoind::bitcoind::Bitcoind;
-use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
+use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use bitvmx_client::{
     bitvmx::BitVMX,
@@ -14,6 +14,7 @@ use bitvmx_client::{
     program::{participant::P2PAddress, protocols::protocol_handler::external_fund_tx},
     types::{OutgoingBitVMXApiMessages, BITVMX_ID, EMULATOR_ID, L2_ID},
 };
+use bitvmx_wallet::wallet::Wallet;
 use p2p_handler::PeerId;
 use protocol_builder::{
     scripts::{self, ProtocolScript, SignMode},
@@ -93,7 +94,11 @@ pub fn wait_message_from_channel(
     panic!("Timeout waiting for message from channel");
 }
 
-pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Address)> {
+pub const WALLET_NAME: &str = "wallet";
+pub const FUNDING_ID: &str = "fund_1";
+pub const FEE: u64 = 500;
+
+pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
     let config = Config::new(Some("config/op_1.yaml".to_string()))?;
 
     let bitcoind = Bitcoind::new(
@@ -104,23 +109,30 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Address)> {
     info!("Starting bitcoind");
     bitcoind.start()?;
 
+    let wallet_config = match config.bitcoin.network {
+        Network::Regtest => "config/wallet_regtest.yaml",
+        Network::Testnet => "config/wallet_testnet.yaml",
+        _ => panic!("Not supported network {}", config.bitcoin.network),
+    };
+
+    let wallet_config = bitvmx_settings::settings::load_config_file::<
+        bitvmx_wallet::config::WalletConfig,
+    >(Some(wallet_config.to_string()))?;
+    if config.bitcoin.network == Network::Regtest {
+        clear_db(&wallet_config.storage.path);
+        clear_db(&wallet_config.key_storage.path);
+    }
+    let wallet = Wallet::new(wallet_config, true)?;
+    wallet.mine(INITIAL_BLOCK_COUNT)?;
+
+    wallet.create_wallet(WALLET_NAME)?;
+    wallet.regtest_fund(WALLET_NAME, FUNDING_ID, 100_000_000)?;
+
     let bitcoin_client = BitcoinClient::new(
         &config.bitcoin.url,
         &config.bitcoin.username,
         &config.bitcoin.password,
     )?;
-
-    let wallet = bitcoin_client
-        .init_wallet(Network::Regtest, "test_wallet")
-        .unwrap();
-
-    info!(
-        "Mine {} blocks to address {:?}",
-        INITIAL_BLOCK_COUNT, wallet
-    );
-    bitcoin_client
-        .mine_blocks_to_address(INITIAL_BLOCK_COUNT, &wallet)
-        .unwrap();
 
     Ok((bitcoin_client, bitcoind, wallet))
 }
@@ -182,16 +194,17 @@ pub fn get_all(
 }
 
 pub fn mine_and_wait(
-    bitcoin_client: &BitcoinClient,
+    _bitcoin_client: &BitcoinClient,
     channels: &Vec<DualChannel>,
     instances: &mut Vec<BitVMX>,
-    wallet: &Address,
+    wallet: &Wallet,
 ) -> Result<Vec<OutgoingBitVMXApiMessages>> {
     //MINE AND WAIT
     for i in 0..100 {
         if i % 10 == 0 {
-            bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
+            wallet.mine(1)?;
         }
+
         for instance in instances.iter_mut() {
             instance.tick()?;
         }
@@ -199,11 +212,6 @@ pub fn mine_and_wait(
     }
     let msgs = get_all(&channels, instances, false)?;
 
-    /*let (uuid, txid, name) = msgs[0].transaction().unwrap();
-    info!(
-        "Transaction notification: uuid: {} txid: {:?} name: {:?}",
-        uuid, txid, name
-    );*/
     Ok(msgs)
 }
 
@@ -215,12 +223,13 @@ pub fn init_broker(role: &str) -> Result<DualChannel> {
 }
 
 pub fn init_utxo_new(
-    bitcoin_client: &BitcoinClient,
+    wallet: &Wallet,
     internal_key: &PublicKey,
     spending_scripts: Vec<ProtocolScript>,
     amount: u64,
+    from: Option<&str>,
 ) -> Result<(Utxo, OutputType)> {
-    let secp = secp256k1::Secp256k1::new();
+    /*let secp = secp256k1::Secp256k1::new();
     let untweaked_key = XOnlyPublicKey::from(*internal_key);
 
     let taproot_spend_info =
@@ -230,11 +239,21 @@ pub fn init_utxo_new(
         untweaked_key,
         taproot_spend_info.merkle_root(),
         KnownHrp::Regtest,
-    );
+    );*/
 
-    let (tx, vout) = bitcoin_client.fund_address(&p2tr_address, Amount::from_sat(amount))?;
-
-    let utxo = Utxo::new(tx.compute_txid(), vout, amount, &*internal_key);
+    info!("Funding address: {:?} with: {}", internal_key, amount);
+    let txid = wallet.fund_address(
+        WALLET_NAME,
+        from.unwrap_or(FUNDING_ID),
+        internal_key.clone(),
+        &vec![amount],
+        FEE,
+        true,
+        true,
+        Some(vec![spending_scripts.clone()]),
+    )?;
+    wallet.mine(1)?;
+    let utxo = Utxo::new(txid, 0, amount, &*internal_key);
 
     let output_type = external_fund_tx(internal_key, spending_scripts, amount)?;
 
@@ -244,13 +263,13 @@ pub fn init_utxo_new(
 }
 
 pub fn init_utxo(
-    bitcoin_client: &BitcoinClient,
+    wallet: &Wallet,
     aggregated_pub_key: PublicKey,
     secret: Option<Vec<u8>>,
-    amount: Option<u64>,
+    amount: u64,
 ) -> Result<Utxo> {
-    let secp = secp256k1::Secp256k1::new();
-    let untweaked_key = XOnlyPublicKey::from(aggregated_pub_key);
+    /*let secp = secp256k1::Secp256k1::new();
+    let untweaked_key = XOnlyPublicKey::from(aggregated_pub_key);*/
 
     let spending_scripts = if secret.is_some() {
         vec![scripts::reveal_secret(
@@ -265,19 +284,27 @@ pub fn init_utxo(
         )]
     };
 
-    let taproot_spend_info =
+    /*let taproot_spend_info =
         scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
     let p2tr_address = Address::p2tr(
         &secp,
         untweaked_key,
         taproot_spend_info.merkle_root(),
         KnownHrp::Regtest,
-    );
+    );*/
+    let txid = wallet.fund_address(
+        WALLET_NAME,
+        FUNDING_ID,
+        aggregated_pub_key.clone(),
+        &vec![amount],
+        FEE,
+        true,
+        true,
+        Some(vec![spending_scripts.clone()]),
+    )?;
+    wallet.mine(1)?;
 
-    let amount = amount.unwrap_or(100_000_000);
-    let (tx, vout) = bitcoin_client.fund_address(&p2tr_address, Amount::from_sat(amount))?;
-
-    let utxo = Utxo::new(tx.compute_txid(), vout, amount, &aggregated_pub_key);
+    let utxo = Utxo::new(txid, 0, amount, &aggregated_pub_key);
 
     info!("UTXO: {:?}", utxo);
 
