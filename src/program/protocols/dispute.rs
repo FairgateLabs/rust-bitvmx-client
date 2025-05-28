@@ -208,8 +208,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         if name == INPUT_1 && self.role() == ParticipantRole::Prover {
             if program_context
                 .globals
-                .get_var(&self.ctx.id, "FAKE_RUN")
-                .is_ok()
+                .get_var(&self.ctx.id, "FAKE_RUN")?
+                .is_some()
             {
                 //Execute actions.
                 //Could execute more than one
@@ -476,9 +476,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             if round > 1 {
                 program_context.broker_channel.send(EMULATOR_ID, msg)?;
             } else {
-                if let Ok(_ready) = program_context
+                if let Some(_ready) = program_context
                     .globals
-                    .get_var(&self.ctx.id, "execution-check-ready")
+                    .get_var(&self.ctx.id, "execution-check-ready")?
                 {
                     info!("The execution is ready. Sending the choose segment message");
                     program_context.broker_channel.send(EMULATOR_ID, msg)?;
@@ -740,7 +740,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         protocol.add_transaction(ACTION_PROVER_WINS)?;
 
-        if context.globals.get_var(&self.ctx.id, "FAKE_RUN").is_err() {
+        if context.globals.get_var(&self.ctx.id, "FAKE_RUN")?.is_none() {
             protocol.connect(
                 "PROVER_ACTION_1",
                 &ClaimGate::tx_success(PROVER_WINS),
@@ -1063,8 +1063,8 @@ impl DisputeResolutionProtocol {
 
         if context
             .globals
-            .get_var(&self.ctx.id, "FAKE_INSTRUCTION")
-            .is_ok()
+            .get_var(&self.ctx.id, "FAKE_INSTRUCTION")?
+            .is_some()
         {
             instruction_names = vec!["ecall".to_string()];
         }
@@ -1161,11 +1161,12 @@ impl DisputeResolutionProtocol {
                     "execution-check-ready",
                     VariableTypes::Number(1),
                 )?;
-                if let Ok(msg) = context.globals.get_var(&self.ctx.id, "choose-segment-msg") {
+                if let Some(msg) = context
+                    .globals
+                    .get_var(&self.ctx.id, "choose-segment-msg")?
+                {
                     info!("The msg to choose segment was ready. Sending it");
-                    context
-                        .broker_channel
-                        .send(EMULATOR_ID, msg.unwrap().string()?)?;
+                    context.broker_channel.send(EMULATOR_ID, msg.string()?)?;
                 } else {
                     info!("The msg to choose segment was not ready");
                 }
@@ -1278,8 +1279,8 @@ impl DisputeResolutionProtocol {
 
                 if context
                     .globals
-                    .get_var(&self.ctx.id, "FAKE_INSTRUCTION")
-                    .is_ok()
+                    .get_var(&self.ctx.id, "FAKE_INSTRUCTION")?
+                    .is_some()
                 {
                     index = 0;
                 }

@@ -194,7 +194,7 @@ pub fn test_full() -> Result<()> {
     )?;
 
     //WAIT SETUP READY
-    let _msgs = get_all(&channels, &mut instances, false)?;
+    let _msgs = get_all(&sub_channel, &mut instances, false)?;
     info!("Dispute setup done");
 
     //======================================================

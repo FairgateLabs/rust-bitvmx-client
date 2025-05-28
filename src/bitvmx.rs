@@ -48,7 +48,7 @@ use storage_backend::storage::{KeyValueStore, Storage};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-pub const THROTTLE_TICKS: u32 = 5;
+pub const THROTTLE_TICKS: u32 = 2;
 
 #[derive(Debug)]
 struct BitcoinUpdateState {
@@ -391,6 +391,7 @@ impl BitVMX {
     }
 
     pub fn tick(&mut self) -> Result<(), BitVMXError> {
+        //info!("Ticking BitVMX: {}", self.count);
         self.count += 1;
         self.process_programs()?;
 
