@@ -318,14 +318,10 @@ impl TestHelper {
     }
 }
 
-#[ignore]
-#[test]
-pub fn test_all() -> Result<()> {
+pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
     config_trace();
 
-    let independent = false;
-    const NETWORK: Network = Network::Regtest;
-    let mut helper = TestHelper::new(NETWORK, independent, Some(1000))?;
+    let mut helper = TestHelper::new(network, independent, Some(1000))?;
 
     let command = IncomingBitVMXApiMessages::GetCommInfo();
     helper.send_all(command)?;
@@ -367,6 +363,9 @@ pub fn test_all() -> Result<()> {
         200_000,
         None,
     )?;
+
+    info!("Wait for the first funding ready");
+    wait_enter(independent);
 
     info!("Initializing UTXO for the prover action");
     let (prover_win_utxo, prover_win_out_type) = init_utxo_new(
@@ -443,4 +442,24 @@ fn wait_enter(independent: bool) {
     std::io::stdin()
         .read_line(&mut input)
         .expect("Failed to read line");
+}
+
+#[ignore]
+#[test]
+fn test_independent_testnet() -> Result<()> {
+    test_all_aux(true, Network::Testnet)?;
+    Ok(())
+}
+#[ignore]
+#[test]
+fn test_independent_regtest() -> Result<()> {
+    test_all_aux(true, Network::Regtest)?;
+    Ok(())
+}
+
+#[ignore]
+#[test]
+fn test_all() -> Result<()> {
+    test_all_aux(false, Network::Regtest)?;
+    Ok(())
 }
