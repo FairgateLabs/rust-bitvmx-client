@@ -47,6 +47,7 @@ impl ProtocolHandler for LockProtocol {
             context
                 .globals
                 .get_var(&self.ctx.id, "operators_aggregated_pub")?
+                .unwrap()
                 .pubkey()?,
         )])
     }
@@ -120,34 +121,46 @@ impl ProtocolHandler for LockProtocol {
 
         let secp = secp256k1::Secp256k1::new();
 
-        let fee = context.globals.get_var(&self.ctx.id, "FEE")?.number()? as u64;
+        let fee = context
+            .globals   
+            .get_var(&self.ctx.id, "FEE")?
+            .unwrap()
+            .number()? as u64;
 
         let ops_agg_pubkey = context
             .globals
             .get_var(&self.ctx.id, "operators_aggregated_pub")?
+            .unwrap()
             .pubkey()?;
 
         let unspendable = context
             .globals
             .get_var(&self.ctx.id, "unspendable")?
+            .unwrap()
             .pubkey()?;
 
-        let secret = context.globals.get_var(&self.ctx.id, "secret")?;
+        let secret = context
+            .globals   
+            .get_var(&self.ctx.id, "secret")?
+            .unwrap();
         let secret = secret.secret()?;
 
         let ordinal_utxo = context
             .globals
             .get_var(&self.ctx.id, "ordinal_utxo")?
+            .unwrap()
             .utxo()?;
 
         let protocol_utxo = context
             .globals
             .get_var(&self.ctx.id, "protocol_utxo")?
+            .unwrap()
             .utxo()?;
 
         let user_pubkey = context
             .globals
-            .get_var(&self.ctx.id, "user_pubkey")?
+            .get_var(&self.ctx.id, "user_pubkey")? 
+            .unwrap()
             .pubkey()?;
 
         warn!(
@@ -262,7 +275,7 @@ impl ProtocolHandler for LockProtocol {
         const SPEEDUP_DUST: u64 = 500;
         let fee_zkp = context
             .globals
-            .get_var(&self.ctx.id, "FEE_ZKP")
+            .get_var(&self.ctx.id, "FEE_ZKP")?
             .unwrap_or(VariableTypes::Number(0))
             .number()
             .unwrap_or(0) as u64;
@@ -335,6 +348,7 @@ impl LockProtocol {
         let ops_agg_happy_path = context
             .globals
             .get_var(&self.ctx.id, "operators_aggregated_happy_path")?
+            .unwrap()
             .pubkey()?;
 
         let happy_path_check =

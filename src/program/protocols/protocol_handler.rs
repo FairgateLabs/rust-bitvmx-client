@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::rc::Rc;
 use storage_backend::storage::Storage;
-use tracing::info;
+use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::errors::BitVMXError;
@@ -157,6 +157,7 @@ pub trait ProtocolHandler {
             let message = context
                 .globals
                 .get_var(&self.context().id, k.name())?
+                .unwrap()
                 .input()?;
 
             info!("Signigng message: {}", hex::encode(message.clone()));
@@ -256,10 +257,13 @@ pub trait ProtocolHandler {
     }
 
     fn checked_sub(&self, amount: u64, value_to_subtract: u64) -> Result<u64, BitVMXError> {
-         match amount.checked_sub(value_to_subtract){
+        match amount.checked_sub(value_to_subtract) {
             Some(amount) => Ok(amount),
-            None => Err(BitVMXError::InsufficientAmount)
-         }
+            None => {
+                error!("Insufficient amount: {} - {}", amount, value_to_subtract);
+                Err(BitVMXError::InsufficientAmount)
+            }
+        }
     }
 }
 

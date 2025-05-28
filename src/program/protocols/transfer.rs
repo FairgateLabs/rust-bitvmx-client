@@ -71,6 +71,7 @@ impl ProtocolHandler for TransferProtocol {
             context
                 .globals
                 .get_var(&self.ctx.id, "operators_aggregated_pub")?
+                .unwrap()
                 .pubkey()?,
         )])
     }
@@ -124,16 +125,19 @@ impl ProtocolHandler for TransferProtocol {
         let unspendable = context
             .globals
             .get_var(&self.ctx.id, "unspendable")?
+            .unwrap()
             .pubkey()?;
 
         let ops_agg_pubkey = context
             .globals
             .get_var(&self.ctx.id, "operators_aggregated_pub")?
+            .unwrap()
             .pubkey()?;
 
         let operator_count = context
             .globals
             .get_var(&self.ctx.id, "operator_count")?
+            .unwrap()
             .number()?;
 
         let too_groups = 2_u32.pow(operator_count as u32) - 1;
@@ -144,6 +148,7 @@ impl ProtocolHandler for TransferProtocol {
                     .globals
                     .get_var(&self.ctx.id, &pub_too_group(gid))
                     .unwrap()
+                    .unwrap()
                     .pubkey()
                     .unwrap()
             })
@@ -152,12 +157,13 @@ impl ProtocolHandler for TransferProtocol {
         let locked_asset_utxo = context
             .globals
             .get_var(&self.ctx.id, "locked_asset_utxo")?
+            .unwrap()
             .utxo()?;
 
         let mut operator_txs = Vec::new();
         if let Ok(var) = context.globals.get_var(&self.ctx.id, "slot_program_id") {
             //GET TXS FROM SLOT PROGRAM
-            let slot_program_id = var.string()?;
+            let slot_program_id = var.unwrap().string()?;
             let slot_uuid = Uuid::parse_str(&slot_program_id).unwrap();
 
             let protocol_name = format!("{}_{}", PROGRAM_TYPE_SLOT, slot_uuid);
@@ -210,6 +216,7 @@ impl ProtocolHandler for TransferProtocol {
                             .globals
                             .get_var(&self.ctx.id, &op_gid(op, gid))
                             .unwrap()
+                            .unwrap()
                             .utxo()
                             .unwrap()
                     })
@@ -217,7 +224,7 @@ impl ProtocolHandler for TransferProtocol {
 
                 let operator_won_tx = context
                     .globals
-                    .get_var(&self.ctx.id, &op_won(op))
+                    .get_var(&self.ctx.id, &op_won(op))?
                     .unwrap()
                     .utxo()
                     .unwrap();

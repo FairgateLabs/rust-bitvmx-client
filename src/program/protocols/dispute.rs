@@ -102,6 +102,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             context
                 .globals
                 .get_var(&self.ctx.id, "aggregated")?
+                .unwrap()
                 .pubkey()?,
         )])
     }
@@ -207,8 +208,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         if name == INPUT_1 && self.role() == ParticipantRole::Prover {
             if program_context
                 .globals
-                .get_var(&self.ctx.id, "FAKE_RUN")
-                .is_ok()
+                .get_var(&self.ctx.id, "FAKE_RUN")?
+                .is_some()
             {
                 //Execute actions.
                 //Could execute more than one
@@ -229,11 +230,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             let program_definition = program_context
                 .globals
                 .get_var(&self.ctx.id, "program_definition")?
+                .unwrap()
                 .string()?;
 
             let input_program = program_context
                 .globals
                 .get_var(&self.ctx.id, "program_input")?
+                .unwrap()
                 .input()?;
 
             let execution_path = self.get_execution_path()?;
@@ -274,12 +277,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             let program_definition = program_context
                 .globals
                 .get_var(&self.ctx.id, "program_definition")?
+                .unwrap()
                 .string()?;
 
             let execution_path = self.get_execution_path()?;
             let words = program_context
                 .globals
                 .get_var(&self.ctx.id, "input_words")?
+                .unwrap()
                 .number()?;
 
             let mut input_program = Vec::new();
@@ -471,9 +476,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             if round > 1 {
                 program_context.broker_channel.send(EMULATOR_ID, msg)?;
             } else {
-                if let Ok(_ready) = program_context
+                if let Some(_ready) = program_context
                     .globals
-                    .get_var(&self.ctx.id, "execution-check-ready")
+                    .get_var(&self.ctx.id, "execution-check-ready")?
                 {
                     info!("The execution is ready. Sending the choose segment message");
                     program_context.broker_channel.send(EMULATOR_ID, msg)?;
@@ -642,14 +647,23 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         // TODO get this from config, all values expressed in satoshis
-        let fee = context.globals.get_var(&self.ctx.id, "FEE")?.number()? as u64;
+        let fee = context
+            .globals
+            .get_var(&self.ctx.id, "FEE")?
+            .unwrap()
+            .number()? as u64;
         let speedup_dust = 500;
 
-        let utxo = context.globals.get_var(&self.ctx.id, "utxo")?.utxo()?;
+        let utxo = context
+            .globals
+            .get_var(&self.ctx.id, "utxo")?
+            .unwrap()
+            .utxo()?;
 
         let utxo_prover_win_action = context
             .globals
             .get_var(&self.ctx.id, "utxo_prover_win_action")?
+            .unwrap()
             .utxo()?;
 
         /*let internal_action_win = context
@@ -667,6 +681,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         let mut protocol = self.load_or_create_protocol();
 
         let mut amount = utxo.2.unwrap();
+        info!("Protocol amount: {}", amount);
         let output_type = utxo.3.unwrap();
 
         protocol.add_external_connection(
@@ -684,6 +699,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         let words = context
             .globals
             .get_var(&self.ctx.id, "input_words")?
+            .unwrap()
             .number()?;
 
         let input_vars = (0..words)
@@ -724,7 +740,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         protocol.add_transaction(ACTION_PROVER_WINS)?;
 
-        if context.globals.get_var(&self.ctx.id, "FAKE_RUN").is_err() {
+        if context.globals.get_var(&self.ctx.id, "FAKE_RUN")?.is_none() {
             protocol.connect(
                 "PROVER_ACTION_1",
                 &ClaimGate::tx_success(PROVER_WINS),
@@ -803,8 +819,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &next,
                 Some(&claim_verifier),
             )?;
-            amount -= self.checked_sub(amount, fee)?;
-            amount -= self.checked_sub(amount, speedup_dust)?;
+            amount = self.checked_sub(amount, fee)?;
+            amount = self.checked_sub(amount, speedup_dust)?;
 
             prev = next;
             let next = format!("NARY_VERIFIER_{}", i);
@@ -889,11 +905,13 @@ impl DisputeResolutionProtocol {
         let words = context
             .globals
             .get_var(&self.ctx.id, "input_words")?
+            .unwrap()
             .number()?;
 
         let full_input = context
             .globals
             .get_var(&self.ctx.id, "program_input")?
+            .unwrap()
             .input()?;
 
         for i in 0..words {
@@ -1045,8 +1063,8 @@ impl DisputeResolutionProtocol {
 
         if context
             .globals
-            .get_var(&self.ctx.id, "FAKE_INSTRUCTION")
-            .is_err()
+            .get_var(&self.ctx.id, "FAKE_INSTRUCTION")?
+            .is_some()
         {
             instruction_names = vec!["ecall".to_string()];
         }
@@ -1143,7 +1161,10 @@ impl DisputeResolutionProtocol {
                     "execution-check-ready",
                     VariableTypes::Number(1),
                 )?;
-                if let Ok(msg) = context.globals.get_var(&self.ctx.id, "choose-segment-msg") {
+                if let Some(msg) = context
+                    .globals
+                    .get_var(&self.ctx.id, "choose-segment-msg")?
+                {
                     info!("The msg to choose segment was ready. Sending it");
                     context.broker_channel.send(EMULATOR_ID, msg.string()?)?;
                 } else {
@@ -1154,6 +1175,7 @@ impl DisputeResolutionProtocol {
                 let save_round = context
                     .globals
                     .get_var(&self.ctx.id, "current_round")?
+                    .unwrap()
                     .number()? as u8;
                 assert_eq!(save_round, *round);
                 for (i, h) in hashes.iter().enumerate() {
@@ -1169,6 +1191,7 @@ impl DisputeResolutionProtocol {
                 let save_round = context
                     .globals
                     .get_var(&self.ctx.id, "current_round")?
+                    .unwrap()
                     .number()? as u8;
                 assert_eq!(save_round, *round);
 
@@ -1256,8 +1279,8 @@ impl DisputeResolutionProtocol {
 
                 if context
                     .globals
-                    .get_var(&self.ctx.id, "FAKE_INSTRUCTION")
-                    .is_err()
+                    .get_var(&self.ctx.id, "FAKE_INSTRUCTION")?
+                    .is_some()
                 {
                     index = 0;
                 }
@@ -1290,6 +1313,7 @@ impl DisputeResolutionProtocol {
         let program_definition = context
             .globals
             .get_var(&self.ctx.id, "program_definition")?
+            .unwrap()
             .string()?;
         Ok((
             ProgramDefinition::from_config(&program_definition)?,
