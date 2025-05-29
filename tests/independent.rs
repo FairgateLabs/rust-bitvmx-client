@@ -250,11 +250,13 @@ impl TestHelper {
 
     pub fn stop(&mut self) -> Result<()> {
         self.disp_stop_tx.send(()).unwrap();
+        let handle = self.disp_handle.take().unwrap();
+        handle.join().unwrap()?;
+
         self.bitvmx_stop_tx.send(()).unwrap();
         let handle = self.bitvmx_handle.take().unwrap();
         handle.join().unwrap()?;
-        let handle = self.disp_handle.take().unwrap();
-        handle.join().unwrap()?;
+
         if let Some(mine_stop_tx) = self.mine_stop_tx.take() {
             mine_stop_tx.send(()).unwrap();
         }
