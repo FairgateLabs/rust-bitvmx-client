@@ -1,16 +1,13 @@
 use std::collections::HashMap;
 
-use bitcoin::{
-    hashes::Hash, secp256k1, Amount, PublicKey, ScriptBuf, Sequence, Transaction, TxOut, Txid,
-    XOnlyPublicKey,
-};
+use bitcoin::{PublicKey, Transaction, Txid, XOnlyPublicKey};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
-    scripts::{self, build_taproot_spend_info, reveal_secret, timelock, ProtocolScript, SignMode},
+    scripts::{self, reveal_secret, timelock, SignMode},
     types::{
-        input::{InputSpec, SighashType},
-        output::SpendMode,
+        connection::{InputSpec, OutputSpec},
+        input::{SighashType, SpendMode},
         InputArgs, OutputType,
     },
 };
@@ -23,6 +20,11 @@ use super::{
     super::participant::ParticipantKeys,
     protocol_handler::{ProtocolContext, ProtocolHandler},
 };
+
+pub const LOCK_REQ_TX: &str = "lock_req_tx";
+pub const LOCK_TX: &str = "lock_tx";
+pub const PUBLISH_ZKP: &str = "publish_zkp";
+pub const HAPPY_PATH_TX: &str = "happy_path_tx";
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct LockProtocol {
@@ -119,10 +121,10 @@ impl ProtocolHandler for LockProtocol {
     ) -> Result<(), BitVMXError> {
         // TODO get this from config, all values expressed in satoshis
 
-        let secp = secp256k1::Secp256k1::new();
+        //let secp = secp256k1::Secp256k1::new();
 
         let fee = context
-            .globals   
+            .globals
             .get_var(&self.ctx.id, "FEE")?
             .unwrap()
             .number()? as u64;
@@ -139,10 +141,7 @@ impl ProtocolHandler for LockProtocol {
             .unwrap()
             .pubkey()?;
 
-        let secret = context
-            .globals   
-            .get_var(&self.ctx.id, "secret")?
-            .unwrap();
+        let secret = context.globals.get_var(&self.ctx.id, "secret")?.unwrap();
         let secret = secret.secret()?;
 
         let ordinal_utxo = context
@@ -159,7 +158,7 @@ impl ProtocolHandler for LockProtocol {
 
         let user_pubkey = context
             .globals
-            .get_var(&self.ctx.id, "user_pubkey")? 
+            .get_var(&self.ctx.id, "user_pubkey")?
             .unwrap()
             .pubkey()?;
 
@@ -180,67 +179,43 @@ impl ProtocolHandler for LockProtocol {
 
         // Mark this script as unsigned script, so the protocol builder wont try to sign it
         let timelock_script = timelock(10, &user_pubkey, SignMode::Skip);
-        let timelock_script = ProtocolScript::new(
-            timelock_script.get_script().clone(),
-            &user_pubkey,
-            SignMode::Skip,
-        );
 
         let reveal_secret_script =
             reveal_secret(secret.to_vec(), &ops_agg_pubkey, SignMode::Aggregate);
         let leaves = vec![timelock_script.clone(), reveal_secret_script.clone()];
 
-        let (unspendable_x_only, _parity) = unspendable.inner.x_only_public_key();
-        let lockreq_tx_output_taptree = build_taproot_spend_info(
-            &secp,
-            &unspendable_x_only,
-            &[timelock_script, reveal_secret_script],
-        )?;
-
-        let script_pubkey = ScriptBuf::new_p2tr(
-            &secp,
-            lockreq_tx_output_taptree.internal_key(),
-            lockreq_tx_output_taptree.merkle_root(),
-        );
-
-        //Description of the output that the LOCK_TX consumes (outputs of LOCK_REQ_TX)
-        let prevout_0 = TxOut {
-            value: Amount::from_sat(ordinal_utxo.2.unwrap()),
-            script_pubkey: script_pubkey.clone(),
-        };
-
-        //Description of the output that the LOCK_TX consumes (outputs of LOCK_REQ_TX)
-        let prevout_1 = TxOut {
-            value: Amount::from_sat(protocol_utxo.2.unwrap()),
-            script_pubkey,
-        };
-
-        let prevouts = vec![prevout_0, prevout_1];
-
         let output_type_ordinal =
-            OutputType::taproot(ordinal_utxo.2.unwrap(), &unspendable, &leaves, &prevouts)?;
+            OutputType::taproot(ordinal_utxo.2.unwrap(), &unspendable, &leaves)?;
 
         let output_type_protocol =
-            OutputType::taproot(protocol_utxo.2.unwrap(), &unspendable, &leaves, &prevouts)?;
+            OutputType::taproot(protocol_utxo.2.unwrap(), &unspendable, &leaves)?;
 
         let mut protocol = self.load_or_create_protocol();
+        protocol.add_external_transaction(LOCK_REQ_TX)?;
 
-        protocol.add_external_connection(
-            ordinal_utxo.0,
-            ordinal_utxo.1,
-            output_type_ordinal,
+        protocol.add_transaction_output(LOCK_REQ_TX, &output_type_ordinal)?;
+        protocol.add_transaction_output(LOCK_REQ_TX, &output_type_protocol)?;
+
+        assert_eq!(ordinal_utxo.0, protocol_utxo.0);
+
+        protocol.add_connection(
+            "LOCK_REQ_TX__LOCK_TX_ORDINAL",
+            LOCK_REQ_TX,
+            OutputSpec::Index(0),
             LOCK_TX,
-            &SpendMode::ScriptsOnly,
-            &SighashType::taproot_all(),
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
+            None,
+            Some(ordinal_utxo.0),
         )?;
 
-        protocol.add_external_connection(
-            protocol_utxo.0,
-            protocol_utxo.1,
-            output_type_protocol,
+        protocol.add_connection(
+            "LOCK_REQ_TX__LOCK_TX_PROTOCOL",
+            LOCK_REQ_TX,
+            OutputSpec::Index(1),
             LOCK_TX,
-            &SpendMode::ScriptsOnly,
-            &SighashType::taproot_all(),
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
+            None,
+            Some(protocol_utxo.0),
         )?;
 
         // START DEFINING THE OUTPUTS OF THE LOCK_TX
@@ -264,7 +239,6 @@ impl ProtocolHandler for LockProtocol {
                     taproot_script_eol_timelock_expired_tx_lock.clone(),
                     taproot_script_all_sign_tx_lock.clone(),
                 ],
-                &vec![],
             )?, // We do not need prevouts cause the tx is in the graph,
         )?;
 
@@ -289,8 +263,7 @@ impl ProtocolHandler for LockProtocol {
                 amount,
                 &unspendable,
                 &[taproot_script_protocol_fee_addres_signature_in_tx_lock],
-                &vec![],
-            )?, // We do not need prevouts cause the tx is in the graph,
+            )?,
         )?;
 
         if fee_zkp > 0 {
@@ -327,10 +300,6 @@ impl ProtocolHandler for LockProtocol {
     }
 }
 
-pub const LOCK_TX: &str = "lock_tx";
-pub const PUBLISH_ZKP: &str = "publish_zkp";
-pub const HAPPY_PATH_TX: &str = "happy_path_tx";
-
 impl LockProtocol {
     pub fn new(context: ProtocolContext) -> Self {
         Self { ctx: context }
@@ -354,44 +323,34 @@ impl LockProtocol {
         let happy_path_check =
             scripts::check_aggregated_signature(&ops_agg_happy_path, SignMode::Skip);
 
-        protocol.add_transaction(HAPPY_PATH_TX)?;
-        protocol.add_transaction_input(
-            Hash::all_zeros(),
-            0,
+        protocol.add_connection(
+            "spend_hp_1",
+            LOCK_TX,
+            0.into(),
             HAPPY_PATH_TX,
-            Sequence::ENABLE_RBF_NO_LOCKTIME,
-            &SpendMode::ScriptsOnly,
-            &SighashType::taproot_all(),
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
+            None,
+            None,
         )?;
-        protocol.add_transaction_input(
-            Hash::all_zeros(),
-            1,
+
+        protocol.add_connection(
+            "spend_hp_2",
+            LOCK_TX,
+            1.into(),
             HAPPY_PATH_TX,
-            Sequence::ENABLE_RBF_NO_LOCKTIME,
-            &SpendMode::ScriptsOnly,
-            &SighashType::taproot_all(),
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
+            None,
+            None,
         )?;
 
         protocol.add_transaction_output(
             HAPPY_PATH_TX,
-            &OutputType::taproot(
-                amount_ordinal,
-                &unspendable,
-                &[happy_path_check.clone()],
-                &vec![],
-            )?,
+            &OutputType::taproot(amount_ordinal, &unspendable, &[happy_path_check.clone()])?,
         )?;
         protocol.add_transaction_output(
             HAPPY_PATH_TX,
-            &OutputType::taproot(
-                amount_protocol,
-                &unspendable,
-                &[happy_path_check.clone()],
-                &vec![],
-            )?,
+            &OutputType::taproot(amount_protocol, &unspendable, &[happy_path_check.clone()])?,
         )?;
-        protocol.connect("spend_hp_1", LOCK_TX, 0, HAPPY_PATH_TX, InputSpec::Index(0))?;
-        protocol.connect("spend_hp_2", LOCK_TX, 1, HAPPY_PATH_TX, InputSpec::Index(1))?;
 
         Ok(())
     }
@@ -481,17 +440,21 @@ impl LockProtocol {
 
         let leaves = [winternitz_check];
 
-        let output_type = OutputType::taproot(amount, aggregated, &leaves, &vec![])?;
+        let output_type = OutputType::taproot(amount, aggregated, &leaves)?;
 
         protocol.add_connection(
             &format!("{}__{}", from, to),
             from,
+            output_type.into(),
             to,
-            &output_type,
-            &SpendMode::All {
-                key_path_sign: SignMode::Aggregate,
-            },
-            &SighashType::taproot_all(),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            None,
         )?;
 
         let pb = ProtocolBuilder {};

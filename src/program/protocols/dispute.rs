@@ -21,8 +21,8 @@ use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
     scripts::{self, SignMode},
     types::{
-        input::{InputSpec, SighashType},
-        output::SpendMode,
+        connection::{InputSpec, OutputSpec},
+        input::{SighashType, SpendMode},
         OutputType,
     },
 };
@@ -43,6 +43,8 @@ use super::{
     protocol_handler::{ProtocolContext, ProtocolHandler},
 };
 
+pub const EXTERNAL_START: &str = "EXTERNAL_START";
+pub const EXTERNAL_ACTION: &str = "EXTERNAL_ACTION";
 pub const START_CH: &str = "START_CHALLENGE";
 pub const INPUT_1: &str = "INPUT_1";
 pub const COMMITMENT: &str = "COMMITMENT";
@@ -666,17 +668,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             .unwrap()
             .utxo()?;
 
-        /*let internal_action_win = context
-        .globals
-        .get_var(&self.ctx.id, "pubkey_internal_action_win")?
-        .pubkey()?;*/
-
         let program_def = self.get_program_definition(context)?;
-
-        /*let external_aggregated = context
-        .globals
-        .get_var(&self.ctx.id, "aggregated")?
-        .pubkey()?;*/
 
         let mut protocol = self.load_or_create_protocol();
 
@@ -684,13 +676,18 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         info!("Protocol amount: {}", amount);
         let output_type = utxo.3.unwrap();
 
-        protocol.add_external_connection(
-            utxo.0,
-            utxo.1,
-            output_type,
+        protocol.add_external_transaction(EXTERNAL_START)?;
+        protocol.add_unkwnoun_outputs(EXTERNAL_START, utxo.1)?;
+        protocol.add_transaction_output(EXTERNAL_START, &output_type)?;
+
+        protocol.add_connection(
+            &format!("{}_{}", EXTERNAL_START, START_CH),
+            EXTERNAL_START,
+            (utxo.1 as usize).into(),
             START_CH,
-            &SpendMode::Script { leaf: 1 },
-            &SighashType::taproot_all(),
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
+            None,
+            Some(utxo.0),
         )?;
 
         let aggregated = computed_aggregated.get("aggregated_1").unwrap();
@@ -741,30 +738,38 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         protocol.add_transaction(ACTION_PROVER_WINS)?;
 
         if context.globals.get_var(&self.ctx.id, "FAKE_RUN")?.is_none() {
-            protocol.connect(
+            protocol.add_connection(
                 "PROVER_ACTION_1",
                 &ClaimGate::tx_success(PROVER_WINS),
-                0,
+                0.into(),
                 ACTION_PROVER_WINS,
-                InputSpec::SighashType(
+                InputSpec::Auto(
                     SighashType::taproot_all(),
                     SpendMode::All {
                         key_path_sign: SignMode::Aggregate,
                     },
                 ),
+                None,
+                None,
             )?;
         }
 
         //let prover_win_amount = utxo_prover_win_action.2.unwrap();
         let output_type = utxo_prover_win_action.3.unwrap();
-
-        protocol.add_external_connection(
-            utxo_prover_win_action.0,
-            utxo_prover_win_action.1,
-            output_type,
+        protocol.add_external_transaction(EXTERNAL_ACTION)?;
+        protocol.add_unkwnoun_outputs(EXTERNAL_ACTION, utxo_prover_win_action.1)?;
+        protocol.add_transaction_output(EXTERNAL_ACTION, &output_type)?;
+        protocol.add_connection(
+            "EXTERNAL_ACTION__PROVER_WINS",
+            EXTERNAL_ACTION,
+            (utxo_prover_win_action.1 as usize).into(),
             ACTION_PROVER_WINS,
-            &SpendMode::Script { leaf: 1 }, //the alternate key is on leaf 1
-            &SighashType::taproot_all(),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::Script { leaf: 1 }, //the alternate key is on leaf 1
+            ),
+            None,
+            Some(utxo_prover_win_action.0),
         )?;
 
         let pb = ProtocolBuilder {};
@@ -966,31 +971,26 @@ impl DisputeResolutionProtocol {
             leave.set_assert_leaf_id(pos as u32);
         }
 
-        let output_type = OutputType::taproot(amount, aggregated, &leaves, &vec![])?;
+        let output_type = OutputType::taproot(amount, aggregated, &leaves)?;
 
         protocol.add_connection(
             &format!("{}__{}", from, to),
             from,
+            output_type.clone().into(),
             to,
-            &output_type,
-            &SpendMode::All {
-                //TODO: fix proper leaf
-                key_path_sign: SignMode::Aggregate,
-            },
-            &SighashType::taproot_all(),
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
+            None,
+            None,
         )?;
 
-        protocol.add_connection_with_timelock(
+        protocol.add_connection(
             &format!("{}__{}_TO", from, to),
             from,
+            OutputSpec::Last,
             &format!("{}_TO", to),
-            &output_type,
-            &SpendMode::All {
-                //TODO: fix proper leaf
-                key_path_sign: SignMode::Aggregate,
-            },
-            &SighashType::taproot_all(),
-            timelock_blocks,
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
+            Some(timelock_blocks),
+            None,
         )?;
 
         if let Some(claim_gate) = claim_gate {
@@ -1091,31 +1091,38 @@ impl DisputeResolutionProtocol {
             leave.set_assert_leaf_id(pos as u32);
         }
 
-        let output_type = OutputType::taproot(amount, aggregated, &winternitz_check_list, &vec![])?;
+        let output_type = OutputType::taproot(amount, aggregated, &winternitz_check_list)?;
 
         protocol.add_connection(
             &format!("{}__{}", from, to),
             from,
+            output_type.clone().into(),
             to,
-            &output_type,
-            &SpendMode::All {
-                //TODO: fix proper leaf
-                key_path_sign: SignMode::Aggregate,
-            },
-            &SighashType::taproot_all(),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    //TODO: fix proper leaf set
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            None,
         )?;
 
-        protocol.add_connection_with_timelock(
+        protocol.add_connection(
             &format!("{}__{}_TO", from, to),
             from,
+            OutputSpec::Last,
             &format!("{}_TO", to),
-            &output_type,
-            &SpendMode::All {
-                //TODO: fix proper leaf
-                key_path_sign: SignMode::Aggregate,
-            },
-            &SighashType::taproot_all(),
-            timelock_blocks,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    //TODO: sign only timelock
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            Some(timelock_blocks),
+            None,
         )?;
 
         if let Some(claim_gate) = claim_gate {
