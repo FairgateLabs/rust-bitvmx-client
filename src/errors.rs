@@ -131,6 +131,9 @@ pub enum BitVMXError {
 
     #[error("Instrucion {0} not found")]
     InstructionNotFound(String),
+
+    #[error("Challenge {0} not found")]
+    ChallengeNotFound(String),
 }
 
 #[derive(Error, Debug)]

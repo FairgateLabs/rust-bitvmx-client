@@ -59,7 +59,7 @@ pub fn test_drp() -> Result<()> {
         &wallet,
         &aggregated_pub_key,
         spending_condition.clone(),
-        200_000,
+        220_000,
         None,
     )?;
 
