@@ -24,7 +24,7 @@ use std::{
     sync::mpsc::{Receiver, Sender},
     thread, vec,
 };
-use tracing::info;
+use tracing::{error, info};
 use uuid::Uuid;
 
 mod common;
@@ -70,8 +70,11 @@ fn run_bitvmx(network: Network, independent: bool, rx: Receiver<()>, tx: Sender<
         }
         for bitvmx in instances.iter_mut() {
             if ready {
-                bitvmx.tick()?;
-                thread::sleep(Duration::from_millis(10));
+                let ret = bitvmx.tick();
+                if ret.is_err() {
+                    error!("Error in BitVMX tick: {:?}", ret);
+                    return Ok(());
+                }
             } else {
                 ready = bitvmx.process_bitcoin_updates()?;
                 if !ready {
@@ -80,9 +83,9 @@ fn run_bitvmx(network: Network, independent: bool, rx: Receiver<()>, tx: Sender<
                     info!("Bitcoin updates processed, ready to run.");
                     let _ = tx.send(());
                 }
-                thread::sleep(Duration::from_millis(10));
             }
         }
+        thread::sleep(Duration::from_millis(10));
     }
 
     Ok(())
@@ -110,7 +113,7 @@ fn run_emulator(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result
             if dispatcher.tick() {
                 let _ = tx.send(idx);
             }
-            thread::sleep(Duration::from_millis(100));
+            thread::sleep(Duration::from_millis(500));
         }
     }
     Ok(())
@@ -124,7 +127,8 @@ fn run_auto_mine(network: Network, rx: Receiver<()>, tx: Sender<()>, interval: u
         &config.bitcoin.username,
         &config.bitcoin.password,
     )?;
-    let address = bitcoin_client.init_wallet(network, "miner")?;
+    let address = bitcoin_client.init_wallet(network, "test_wallet");
+    let address = address.unwrap();
 
     // Main processing loop
     loop {
@@ -246,15 +250,17 @@ impl TestHelper {
 
     pub fn stop(&mut self) -> Result<()> {
         self.disp_stop_tx.send(()).unwrap();
+        let handle = self.disp_handle.take().unwrap();
+        handle.join().unwrap()?;
+
         self.bitvmx_stop_tx.send(()).unwrap();
         let handle = self.bitvmx_handle.take().unwrap();
         handle.join().unwrap()?;
-        let handle = self.disp_handle.take().unwrap();
-        handle.join().unwrap()?;
+
+        if let Some(mine_stop_tx) = self.mine_stop_tx.take() {
+            mine_stop_tx.send(()).unwrap();
+        }
         if let Some(mine_handle) = self.mine_handle.take() {
-            if let Some(mine_stop_tx) = self.mine_stop_tx.take() {
-                mine_stop_tx.send(()).unwrap();
-            }
             mine_handle.join().unwrap()?;
         }
 
@@ -284,7 +290,7 @@ impl TestHelper {
         loop {
             let msg = channel.recv()?;
             if let Some(msg) = msg {
-                info!("Received message from channel {}: {:?}", idx, msg);
+                //info!("Received message from channel {}: {:?}", idx, msg);
                 return Ok(OutgoingBitVMXApiMessages::from_string(&msg.0)?);
             }
             thread::sleep(Duration::from_millis(100));
@@ -294,16 +300,30 @@ impl TestHelper {
     pub fn send_all(&self, command: IncomingBitVMXApiMessages) -> Result<()> {
         send_all(&self.channels, &command.to_string()?)
     }
+
+    pub fn wait_tx_name(&self, idx: usize, name: &str) -> Result<OutgoingBitVMXApiMessages> {
+        info!(
+            "Waiting for transaction with name: {} on channel: {}",
+            name, idx
+        );
+        loop {
+            let msg = self.wait_msg(idx)?;
+            if let Some((_uuid, _status, tx_name)) = msg.transaction() {
+                if let Some(tx_name) = tx_name {
+                    if tx_name == name {
+                        return Ok(msg);
+                    }
+                }
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
 }
 
-#[ignore]
-#[test]
-pub fn test_all() -> Result<()> {
+pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
     config_trace();
 
-    let independent = false;
-    const NETWORK: Network = Network::Regtest;
-    let mut helper = TestHelper::new(NETWORK, independent, Some(1000))?;
+    let mut helper = TestHelper::new(network, independent, Some(1000))?;
 
     let command = IncomingBitVMXApiMessages::GetCommInfo();
     helper.send_all(command)?;
@@ -332,11 +352,6 @@ pub fn test_all() -> Result<()> {
     let pair_0_1_agg_pub_key = msg.aggregated_pub_key().unwrap();
 
     // prepare a second fund available so we don't need 2 blocks to get the UTXO
-    if !independent {
-        helper
-            .wallet
-            .regtest_fund(WALLET_NAME, "second", 100_000_000)?;
-    }
 
     info!("Initializing UTXO for program");
     let spending_condition = vec![
@@ -351,13 +366,16 @@ pub fn test_all() -> Result<()> {
         None,
     )?;
 
+    info!("Wait for the first funding ready");
+    wait_enter(independent);
+
     info!("Initializing UTXO for the prover action");
     let (prover_win_utxo, prover_win_out_type) = init_utxo_new(
         &helper.wallet,
         &pair_0_1_agg_pub_key,
         spending_condition.clone(),
         11_000,
-        Some("second"),
+        None,
     )?;
 
     let pair_0_1_channels = vec![helper.channels[0].clone(), helper.channels[1].clone()];
@@ -376,8 +394,11 @@ pub fn test_all() -> Result<()> {
 
     let msg = helper.wait_msg(0)?;
     info!("Setup dispute done: {:?}", msg);
+    let msg = helper.wait_msg(1)?;
+    info!("Setup dispute done: {:?}", msg);
 
     // wait input from command line
+    info!("Waiting for funding ready");
     wait_enter(independent);
 
     let _ = helper.channels[1].send(
@@ -389,7 +410,7 @@ pub fn test_all() -> Result<()> {
         .to_string()?,
     );
 
-    wait_enter(independent);
+    helper.wait_tx_name(1, program::protocols::dispute::START_CH)?;
 
     let data = "11111111";
     let set_input_1 =
@@ -406,8 +427,7 @@ pub fn test_all() -> Result<()> {
         .to_string()?,
     );
 
-    wait_enter(true);
-    thread::sleep(Duration::from_secs(5)); // Wait for the instances to be ready
+    helper.wait_tx_name(1, program::protocols::dispute::ACTION_PROVER_WINS)?;
 
     helper.stop()?;
 
@@ -424,4 +444,24 @@ fn wait_enter(independent: bool) {
     std::io::stdin()
         .read_line(&mut input)
         .expect("Failed to read line");
+}
+
+#[ignore]
+#[test]
+fn test_independent_testnet() -> Result<()> {
+    test_all_aux(true, Network::Testnet)?;
+    Ok(())
+}
+#[ignore]
+#[test]
+fn test_independent_regtest() -> Result<()> {
+    test_all_aux(true, Network::Regtest)?;
+    Ok(())
+}
+
+#[ignore]
+#[test]
+fn test_all() -> Result<()> {
+    test_all_aux(false, Network::Regtest)?;
+    Ok(())
 }

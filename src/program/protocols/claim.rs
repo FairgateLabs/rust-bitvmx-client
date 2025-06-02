@@ -3,8 +3,8 @@ use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
     scripts::{self, SignMode},
     types::{
-        input::{InputSpec, SighashType},
-        output::SpendMode,
+        connection::{InputSpec, OutputSpec},
+        input::{SighashType, SpendMode},
         OutputType,
     },
 };
@@ -55,7 +55,6 @@ impl ClaimGate {
             amount_fee + amount_fee + ((2 + actions.len() as u64) * amount_dust),
             aggregated,
             &vec![verify_aggregated.clone()],
-            &vec![],
         )?;
 
         let vout_idx = protocol.transaction_by_name(from)?.output.len();
@@ -63,13 +62,17 @@ impl ClaimGate {
         protocol.add_connection(
             &format!("{}__{}", from, &stx),
             from,
+            claim_start.clone().into(),
             &stx,
-            &claim_start,
-            &SpendMode::All {
-                //TODO: check proper signing
-                key_path_sign: SignMode::Aggregate,
-            },
-            &SighashType::taproot_all(),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    //TODO: check proper signing
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            None,
         )?;
 
         let timeout = scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
@@ -78,7 +81,6 @@ impl ClaimGate {
             amount_fee + ((1 + actions.len() as u64) * amount_dust),
             aggregated,
             &vec![verify_aggregated.clone(), timeout],
-            &vec![],
         )?;
         protocol.add_transaction_output(&stx, &start_tx_output)?;
 
@@ -94,66 +96,60 @@ impl ClaimGate {
                 leaves_claim_stop.push(verify_special);
             }
 
-            let claim_stop = OutputType::taproot(
-                amount_fee + amount_dust,
-                aggregated,
-                &leaves_claim_stop,
-                &vec![],
-            )?;
+            let claim_stop =
+                OutputType::taproot(amount_fee + amount_dust, aggregated, &leaves_claim_stop)?;
 
             let stopname = Self::tx_stop(claim_name, i);
             protocol.add_connection(
                 &format!("{}__{}", from, &stopname),
                 from,
+                claim_stop.into(),
                 &stopname,
-                &claim_stop,
-                &SpendMode::Script { leaf: 0 },
-                &SighashType::taproot_all(),
+                InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
+                None,
+                None,
             )?;
-            protocol.add_transaction_input(
-                Hash::all_zeros(),
-                0,
-                &stopname,
-                Sequence::ENABLE_RBF_NO_LOCKTIME,
-                &SpendMode::All {
-                    key_path_sign: SignMode::Aggregate,
-                },
-                &SighashType::taproot_all(),
-            )?;
-            protocol.connect(
+
+            protocol.add_connection(
                 &format!("CANCEL_CLAIM_{}_BY_{}", claim_name, i),
                 &stx,
-                0,
+                0.into(),
                 &stopname,
-                InputSpec::Index(1),
+                InputSpec::Auto(
+                    SighashType::taproot_all(),
+                    SpendMode::All {
+                        key_path_sign: SignMode::Aggregate,
+                    },
+                ),
+                None,
+                None,
             )?;
 
             pb.add_speedup_output(protocol, &stopname, amount_dust, aggregated)?;
         }
 
         let success = Self::tx_success(claim_name);
-        protocol.add_connection_with_timelock(
+        protocol.add_connection(
             &format!("{}_TL_{}", from, &success),
             &stx,
+            OutputSpec::Last,
             &success,
-            &claim_start,
-            &SpendMode::All {
-                //TODO: check proper signing
-                key_path_sign: SignMode::Aggregate,
-            },
-            &SighashType::taproot_all(),
-            timelock_blocks,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    //TODO: check proper signing
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            Some(timelock_blocks),
+            None,
         )?;
 
         for action in &actions {
             let verify_aggregated_action =
                 scripts::check_aggregated_signature(action, SignMode::Aggregate);
-            let output_action = OutputType::taproot(
-                amount_dust,
-                action,
-                &vec![verify_aggregated_action],
-                &vec![],
-            )?;
+            let output_action =
+                OutputType::taproot(amount_dust, action, &vec![verify_aggregated_action])?;
 
             protocol.add_transaction_output(&success, &output_action)?;
         }
@@ -191,12 +187,14 @@ impl ClaimGate {
             )?;
 
             let input_index = protocol.transaction_by_name(to)?.input.len() - 1;
-            protocol.connect(
+            protocol.add_connection(
                 &format!("CLAIMER_WINS_{}_STOP_{}__{}", self.name, i, to),
                 &self.from,
-                self.vout + 1,
-                &to,
-                InputSpec::Index(input_index),
+                (self.vout + 1).into(),
+                to,
+                input_index.into(),
+                None,
+                None,
             )?;
         }
 

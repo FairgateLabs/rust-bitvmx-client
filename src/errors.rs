@@ -134,6 +134,9 @@ pub enum BitVMXError {
 
     #[error("Challenge {0} not found")]
     ChallengeNotFound(String),
+
+    #[error("Insufficient amount to send the transaction")]
+    InsufficientAmount,
 }
 
 #[derive(Error, Debug)]

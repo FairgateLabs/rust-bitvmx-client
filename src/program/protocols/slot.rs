@@ -8,8 +8,8 @@ use protocol_builder::{
     errors::ProtocolBuilderError,
     scripts::{self, timelock, ProtocolScript, SignMode},
     types::{
-        input::{InputSpec, SighashType},
-        output::SpendMode,
+        connection::InputSpec,
+        input::{SighashType, SpendMode},
         InputArgs, OutputType,
     },
 };
@@ -40,6 +40,7 @@ pub struct SlotProtocol {
     ctx: ProtocolContext,
 }
 
+pub const FUND_SLOT: &str = "FUND_SLOT";
 pub const SETUP_TX: &str = "SETUP_TX";
 pub const CERT_HASH_TX: &str = "CERT_HASH_TX_";
 pub const GID_TX: &str = "GID_TX_";
@@ -89,6 +90,7 @@ impl ProtocolHandler for SlotProtocol {
             context
                 .globals
                 .get_var(&self.ctx.id, "operators_aggregated_pub")?
+                .unwrap()
                 .pubkey()?,
         )])
     }
@@ -166,6 +168,7 @@ impl ProtocolHandler for SlotProtocol {
                 let gid = program_context
                     .globals
                     .get_var(&self.ctx.id, &group_id(operator as usize))?
+                    .unwrap()
                     .input()?[0];
 
                 let gid_selection_tx = self.get_signed_tx(
@@ -189,6 +192,7 @@ impl ProtocolHandler for SlotProtocol {
                 let total_operators = program_context
                     .globals
                     .get_var(&self.ctx.id, "operators")?
+                    .unwrap()
                     .number()?;
 
                 let txid = tx_status.tx_id;
@@ -240,11 +244,12 @@ impl ProtocolHandler for SlotProtocol {
             let total_operators = program_context
                 .globals
                 .get_var(&self.ctx.id, "operators")?
+                .unwrap()
                 .number()?;
 
             let mut stops_consumed = program_context
                 .globals
-                .get_var(&self.ctx.id, "stops_consumed")
+                .get_var(&self.ctx.id, "stops_consumed")?
                 .unwrap_or(VariableTypes::Number(0))
                 .number()?;
 
@@ -366,7 +371,11 @@ impl ProtocolHandler for SlotProtocol {
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let fee = context.globals.get_var(&self.ctx.id, "FEE")?.number()? as u64;
+        let fee = context
+            .globals
+            .get_var(&self.ctx.id, "FEE")?
+            .unwrap()
+            .number()? as u64;
         let protocol_cost = 200_000;
         let speedup_dust = 500;
         let gid_max = 8;
@@ -380,19 +389,26 @@ impl ProtocolHandler for SlotProtocol {
         let ops_agg_pubkey = context
             .globals
             .get_var(&self.ctx.id, "operators_aggregated_pub")?
+            .unwrap()
             .pubkey()?;
 
         let pair_0_1_aggregated = context
             .globals
             .get_var(&self.ctx.id, "pair_0_1_aggregated")?
+            .unwrap()
             .pubkey()?;
 
         let _unspendable = context
             .globals
             .get_var(&self.ctx.id, "unspendable")?
+            .unwrap()
             .pubkey()?;
 
-        let fund_utxo = context.globals.get_var(&self.ctx.id, "fund_utxo")?.utxo()?;
+        let fund_utxo = context
+            .globals
+            .get_var(&self.ctx.id, "fund_utxo")?
+            .unwrap()
+            .utxo()?;
 
         //create the protocol
         let mut protocol = self.load_or_create_protocol();
@@ -404,17 +420,25 @@ impl ProtocolHandler for SlotProtocol {
         )];
         let output_type = external_fund_tx(&ops_agg_pubkey, spending, amount)?;
 
-        protocol.add_external_connection(
-            fund_utxo.0,
-            fund_utxo.1,
-            output_type,
+        protocol.add_external_transaction(FUND_SLOT)?;
+        protocol.add_unkwnoun_outputs(FUND_SLOT, fund_utxo.1)?;
+
+        protocol.add_connection(
+            &format!("{}__{}", FUND_SLOT, SETUP_TX),
+            FUND_SLOT,
+            output_type.into(),
             SETUP_TX,
-            &SpendMode::All {
-                key_path_sign: SignMode::Aggregate,
-            },
-            &SighashType::taproot_all(),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            Some(fund_utxo.0),
         )?;
-        amount -= fee;
+
+        amount = self.checked_sub(amount, fee)?;
 
         let pb = ProtocolBuilder {};
 
@@ -449,7 +473,6 @@ impl ProtocolHandler for SlotProtocol {
                 amount_for_sequence,
                 &ops_agg_pubkey,
                 &[winternitz_check.clone()],
-                &vec![],
             )?;
 
             let certhashtx = cert_hash_tx_op(i as u32);
@@ -457,12 +480,16 @@ impl ProtocolHandler for SlotProtocol {
             protocol.add_connection(
                 &format!("{}__{}", SETUP_TX, certhashtx),
                 SETUP_TX,
+                output_type.into(),
                 &certhashtx,
-                &output_type,
-                &SpendMode::All {
-                    key_path_sign: SignMode::Aggregate,
-                },
-                &SighashType::taproot_all(),
+                InputSpec::Auto(
+                    SighashType::taproot_all(),
+                    SpendMode::All {
+                        key_path_sign: SignMode::Aggregate,
+                    },
+                ),
+                None,
+                None,
             )?;
 
             //====================================
@@ -477,7 +504,7 @@ impl ProtocolHandler for SlotProtocol {
             //put timelock as zero so the index matches the gid
 
             let output_type =
-                OutputType::taproot(amount_for_publish_gid, &ops_agg_pubkey, &leaves, &vec![])?;
+                OutputType::taproot(amount_for_publish_gid, &ops_agg_pubkey, &leaves)?;
 
             protocol.add_transaction_output(&certhashtx, &output_type)?;
 
@@ -500,15 +527,17 @@ impl ProtocolHandler for SlotProtocol {
 
                 protocol.add_transaction_output(
                     &gidtx,
-                    &OutputType::taproot(speedup_dust, &ops_agg_pubkey, &[gid_spend], &vec![])?,
+                    &OutputType::taproot(speedup_dust, &ops_agg_pubkey, &[gid_spend])?,
                 )?;
 
-                protocol.connect(
+                protocol.add_connection(
                     &format!("{}__{}", certhashtx, gidtx),
                     &certhashtx,
-                    0,
+                    0.into(),
                     &gidtx,
-                    InputSpec::Index(0),
+                    0.into(),
+                    None,
+                    None,
                 )?;
 
                 // Add one extra non-spendable output to each challenge response transaction to ensure different txids
@@ -538,12 +567,14 @@ impl ProtocolHandler for SlotProtocol {
                 &SighashType::taproot_all(),
             )?;
 
-            protocol.connect(
+            protocol.add_connection(
                 &format!("{}__{}", certhashtx, gidtotx),
                 &certhashtx,
-                0,
+                0.into(),
                 &gidtotx,
-                InputSpec::Index(0),
+                0.into(),
+                None,
+                None,
             )?;
 
             //====================================
@@ -583,23 +614,22 @@ impl ProtocolHandler for SlotProtocol {
                 protocol_cost,
                 &ops_agg_pubkey,
                 &[ops_agg_check, pair_agg_check],
-                &vec![],
             )?;
 
             let mut count = 0;
             for n in 0..keys.len() {
                 if n != i {
-                    protocol.add_transaction_output(&certhashtx, &start_challenge)?;
+                    //protocol.add_transaction_output(&certhashtx, &start_challenge.clone())?;
                     let tx_name = start_challenge_to(i, count);
 
-                    protocol.add_connection_with_timelock(
+                    protocol.add_connection(
                         &format!("{}__{}_TL", certhashtx, tx_name),
                         &certhashtx,
+                        start_challenge.clone().into(),
                         &tx_name,
-                        &start_challenge,
-                        &SpendMode::Script { leaf: 0 },
-                        &SighashType::taproot_all(),
-                        TIMELOCK_BLOCKS,
+                        InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
+                        Some(TIMELOCK_BLOCKS),
+                        None,
                     )?;
 
                     //add the input that consume the stop output of the claim gate
@@ -613,12 +643,14 @@ impl ProtocolHandler for SlotProtocol {
                         &SpendMode::Script { leaf: 0 },
                         &SighashType::taproot_all(),
                     )?;
-                    protocol.connect(
+                    protocol.add_connection(
                         &format!("{}__{}_STOP", certhashtx, tx_name),
                         &certhashtx,
-                        claim_gate.vout + count,
+                        (claim_gate.vout + count).into(),
                         &tx_name,
-                        InputSpec::Index(1),
+                        1.into(),
+                        None,
+                        None,
                     )?;
 
                     //add an output "speedup" (this is actually tacking the value of the protocol)
@@ -635,7 +667,7 @@ impl ProtocolHandler for SlotProtocol {
             pb.add_speedup_output(&mut protocol, &gidtotx, speedup_dust, &ops_agg_pubkey)?;
 
             pb.add_speedup_output(&mut protocol, &certhashtx, speedup_dust, &ops_agg_pubkey)?;
-            amount -= amount_for_sequence;
+            amount = self.checked_sub(amount, amount_for_sequence)?;
         }
 
         // add one output to test

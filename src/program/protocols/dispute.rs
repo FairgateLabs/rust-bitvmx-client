@@ -26,8 +26,8 @@ use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
     scripts::{self, SignMode},
     types::{
-        input::{InputSpec, SighashType},
-        output::SpendMode,
+        connection::{InputSpec, OutputSpec},
+        input::{SighashType, SpendMode},
         OutputType,
     },
 };
@@ -48,6 +48,8 @@ use super::{
     protocol_handler::{ProtocolContext, ProtocolHandler},
 };
 
+pub const EXTERNAL_START: &str = "EXTERNAL_START";
+pub const EXTERNAL_ACTION: &str = "EXTERNAL_ACTION";
 pub const START_CH: &str = "START_CHALLENGE";
 pub const INPUT_1: &str = "INPUT_1";
 pub const COMMITMENT: &str = "COMMITMENT";
@@ -153,6 +155,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             context
                 .globals
                 .get_var(&self.ctx.id, "aggregated")?
+                .unwrap()
                 .pubkey()?,
         )])
     }
@@ -265,8 +268,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         if name == INPUT_1 && self.role() == ParticipantRole::Prover {
             if program_context
                 .globals
-                .get_var(&self.ctx.id, "FAKE_RUN")
-                .is_ok()
+                .get_var(&self.ctx.id, "FAKE_RUN")?
+                .is_some()
             {
                 //Execute actions.
                 //Could execute more than one
@@ -287,11 +290,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             let program_definition = program_context
                 .globals
                 .get_var(&self.ctx.id, "program_definition")?
+                .unwrap()
                 .string()?;
 
             let input_program = program_context
                 .globals
                 .get_var(&self.ctx.id, "program_input")?
+                .unwrap()
                 .input()?;
 
             let execution_path = self.get_execution_path()?;
@@ -332,12 +337,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             let program_definition = program_context
                 .globals
                 .get_var(&self.ctx.id, "program_definition")?
+                .unwrap()
                 .string()?;
 
             let execution_path = self.get_execution_path()?;
             let words = program_context
                 .globals
                 .get_var(&self.ctx.id, "input_words")?
+                .unwrap()
                 .number()?;
 
             let mut input_program = Vec::new();
@@ -529,9 +536,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             if round > 1 {
                 program_context.broker_channel.send(EMULATOR_ID, msg)?;
             } else {
-                if let Ok(_ready) = program_context
+                if let Some(_ready) = program_context
                     .globals
-                    .get_var(&self.ctx.id, "execution-check-ready")
+                    .get_var(&self.ctx.id, "execution-check-ready")?
                 {
                     info!("The execution is ready. Sending the choose segment message");
                     program_context.broker_channel.send(EMULATOR_ID, msg)?;
@@ -706,48 +713,54 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         // TODO get this from config, all values expressed in satoshis
-        let fee = context.globals.get_var(&self.ctx.id, "FEE")?.number()? as u64;
+        let fee = context
+            .globals
+            .get_var(&self.ctx.id, "FEE")?
+            .unwrap()
+            .number()? as u64;
         let speedup_dust = 500;
 
-        let utxo = context.globals.get_var(&self.ctx.id, "utxo")?.utxo()?;
+        let utxo = context
+            .globals
+            .get_var(&self.ctx.id, "utxo")?
+            .unwrap()
+            .utxo()?;
 
         let utxo_prover_win_action = context
             .globals
             .get_var(&self.ctx.id, "utxo_prover_win_action")?
+            .unwrap()
             .utxo()?;
 
-        /*let internal_action_win = context
-        .globals
-        .get_var(&self.ctx.id, "pubkey_internal_action_win")?
-        .pubkey()?;*/
-
         let program_def = self.get_program_definition(context)?;
-
-        /*let external_aggregated = context
-        .globals
-        .get_var(&self.ctx.id, "aggregated")?
-        .pubkey()?;*/
 
         let mut protocol = self.load_or_create_protocol();
 
         let mut amount = utxo.2.unwrap();
+        info!("Protocol amount: {}", amount);
         let output_type = utxo.3.unwrap();
 
-        protocol.add_external_connection(
-            utxo.0,
-            utxo.1,
-            output_type,
+        protocol.add_external_transaction(EXTERNAL_START)?;
+        protocol.add_unkwnoun_outputs(EXTERNAL_START, utxo.1)?;
+        protocol.add_transaction_output(EXTERNAL_START, &output_type)?;
+
+        protocol.add_connection(
+            &format!("{}_{}", EXTERNAL_START, START_CH),
+            EXTERNAL_START,
+            (utxo.1 as usize).into(),
             START_CH,
-            &SpendMode::Script { leaf: 1 },
-            &SighashType::taproot_all(),
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
+            None,
+            Some(utxo.0),
         )?;
 
         let aggregated = computed_aggregated.get("aggregated_1").unwrap();
-        amount -= fee;
+        amount = self.checked_sub(amount, fee)?;
 
         let words = context
             .globals
             .get_var(&self.ctx.id, "input_words")?
+            .unwrap()
             .number()?;
 
         let input_vars = (0..words)
@@ -755,8 +768,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             .collect::<Vec<_>>();
         let input_vars_slice = input_vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
 
-        amount -= ClaimGate::cost(fee, speedup_dust, 1, 1);
-        amount -= ClaimGate::cost(fee, speedup_dust, 1, 1);
+        amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
+        amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
 
         self.add_winternitz_check(
             aggregated,
@@ -770,8 +783,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             INPUT_1,
             None,
         )?;
-        amount -= fee;
-        amount -= speedup_dust;
+        amount = self.checked_sub(amount, fee)?;
+        amount = self.checked_sub(amount, speedup_dust)?;
 
         let claim_prover = ClaimGate::new(
             &mut protocol,
@@ -788,31 +801,39 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         protocol.add_transaction(ACTION_PROVER_WINS)?;
 
-        if context.globals.get_var(&self.ctx.id, "FAKE_RUN").is_err() {
-            protocol.connect(
+        if context.globals.get_var(&self.ctx.id, "FAKE_RUN")?.is_none() {
+            protocol.add_connection(
                 "PROVER_ACTION_1",
                 &ClaimGate::tx_success(PROVER_WINS),
-                0,
+                0.into(),
                 ACTION_PROVER_WINS,
-                InputSpec::SighashType(
+                InputSpec::Auto(
                     SighashType::taproot_all(),
                     SpendMode::All {
                         key_path_sign: SignMode::Aggregate,
                     },
                 ),
+                None,
+                None,
             )?;
         }
 
         //let prover_win_amount = utxo_prover_win_action.2.unwrap();
         let output_type = utxo_prover_win_action.3.unwrap();
-
-        protocol.add_external_connection(
-            utxo_prover_win_action.0,
-            utxo_prover_win_action.1,
-            output_type,
+        protocol.add_external_transaction(EXTERNAL_ACTION)?;
+        protocol.add_unkwnoun_outputs(EXTERNAL_ACTION, utxo_prover_win_action.1)?;
+        protocol.add_transaction_output(EXTERNAL_ACTION, &output_type)?;
+        protocol.add_connection(
+            "EXTERNAL_ACTION__PROVER_WINS",
+            EXTERNAL_ACTION,
+            (utxo_prover_win_action.1 as usize).into(),
             ACTION_PROVER_WINS,
-            &SpendMode::Script { leaf: 1 }, //the alternate key is on leaf 1
-            &SighashType::taproot_all(),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::Script { leaf: 1 }, //the alternate key is on leaf 1
+            ),
+            None,
+            Some(utxo_prover_win_action.0),
         )?;
 
         let pb = ProtocolBuilder {};
@@ -843,8 +864,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             COMMITMENT,
             Some(&claim_verifier),
         )?;
-        amount -= fee;
-        amount -= speedup_dust;
+        amount = self.checked_sub(amount, fee)?;
+        amount = self.checked_sub(amount, speedup_dust)?;
 
         let nary_def = program_def.0.nary_def();
         let mut prev = COMMITMENT.to_string();
@@ -867,8 +888,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &next,
                 Some(&claim_verifier),
             )?;
-            amount -= fee;
-            amount -= speedup_dust;
+            amount = self.checked_sub(amount, fee)?;
+            amount = self.checked_sub(amount, speedup_dust)?;
 
             prev = next;
             let next = format!("NARY_VERIFIER_{}", i);
@@ -887,8 +908,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &next,
                 Some(&claim_prover),
             )?;
-            amount -= fee;
-            amount -= speedup_dust;
+            amount = self.checked_sub(amount, fee)?;
+            amount = self.checked_sub(amount, speedup_dust)?;
             prev = next;
         }
 
@@ -975,11 +996,13 @@ impl DisputeResolutionProtocol {
         let words = context
             .globals
             .get_var(&self.ctx.id, "input_words")?
+            .unwrap()
             .number()?;
 
         let full_input = context
             .globals
             .get_var(&self.ctx.id, "program_input")?
+            .unwrap()
             .input()?;
 
         for i in 0..words {
@@ -1034,31 +1057,26 @@ impl DisputeResolutionProtocol {
             leave.set_assert_leaf_id(pos as u32);
         }
 
-        let output_type = OutputType::taproot(amount, aggregated, &leaves, &vec![])?;
+        let output_type = OutputType::taproot(amount, aggregated, &leaves)?;
 
         protocol.add_connection(
             &format!("{}__{}", from, to),
             from,
+            output_type.clone().into(),
             to,
-            &output_type,
-            &SpendMode::All {
-                //TODO: fix proper leaf
-                key_path_sign: SignMode::Aggregate,
-            },
-            &SighashType::taproot_all(),
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
+            None,
+            None,
         )?;
 
-        protocol.add_connection_with_timelock(
+        protocol.add_connection(
             &format!("{}__{}_TO", from, to),
             from,
+            OutputSpec::Last,
             &format!("{}_TO", to),
-            &output_type,
-            &SpendMode::All {
-                //TODO: fix proper leaf
-                key_path_sign: SignMode::Aggregate,
-            },
-            &SighashType::taproot_all(),
-            timelock_blocks,
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
+            Some(timelock_blocks),
+            None,
         )?;
 
         if let Some(claim_gate) = claim_gate {
@@ -1130,8 +1148,8 @@ impl DisputeResolutionProtocol {
 
         if context
             .globals
-            .get_var(&self.ctx.id, "FAKE_INSTRUCTION")
-            .is_err()
+            .get_var(&self.ctx.id, "FAKE_INSTRUCTION")?
+            .is_some()
         {
             instruction_names = vec!["ecall".to_string()];
         }
@@ -1158,31 +1176,38 @@ impl DisputeResolutionProtocol {
             leave.set_assert_leaf_id(pos as u32);
         }
 
-        let output_type = OutputType::taproot(amount, aggregated, &winternitz_check_list, &vec![])?;
+        let output_type = OutputType::taproot(amount, aggregated, &winternitz_check_list)?;
 
         protocol.add_connection(
             &format!("{}__{}", from, to),
             from,
+            output_type.clone().into(),
             to,
-            &output_type,
-            &SpendMode::All {
-                //TODO: fix proper leaf
-                key_path_sign: SignMode::Aggregate,
-            },
-            &SighashType::taproot_all(),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    //TODO: fix proper leaf set
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            None,
         )?;
 
-        protocol.add_connection_with_timelock(
+        protocol.add_connection(
             &format!("{}__{}_TO", from, to),
             from,
+            OutputSpec::Last,
             &format!("{}_TO", to),
-            &output_type,
-            &SpendMode::All {
-                //TODO: fix proper leaf
-                key_path_sign: SignMode::Aggregate,
-            },
-            &SighashType::taproot_all(),
-            timelock_blocks,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    //TODO: sign only timelock
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            Some(timelock_blocks),
+            None,
         )?;
 
         if let Some(claim_gate) = claim_gate {
@@ -1274,31 +1299,38 @@ impl DisputeResolutionProtocol {
             leave.set_assert_leaf_id(pos as u32);
         }
 
-        let output_type = OutputType::taproot(amount, aggregated, &winternitz_check_list, &vec![])?;
+        let output_type = OutputType::taproot(amount, aggregated, &winternitz_check_list)?;
 
         protocol.add_connection(
             &format!("{}__{}", from, to),
             from,
+            output_type.clone().into(),
             to,
-            &output_type,
-            &SpendMode::All {
-                //TODO: fix proper leaf
-                key_path_sign: SignMode::Aggregate,
-            },
-            &SighashType::taproot_all(),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    //TODO: fix proper leaf set
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            None,
         )?;
 
-        protocol.add_connection_with_timelock(
+        protocol.add_connection(
             &format!("{}__{}_TO", from, to),
             from,
+            OutputSpec::Last,
             &format!("{}_TO", to),
-            &output_type,
-            &SpendMode::All {
-                //TODO: fix proper leaf
-                key_path_sign: SignMode::Aggregate,
-            },
-            &SighashType::taproot_all(),
-            timelock_blocks,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    //TODO: sign only timelock
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            Some(timelock_blocks),
+            None,
         )?;
 
         if let Some(claim_gate) = claim_gate {
@@ -1344,7 +1376,10 @@ impl DisputeResolutionProtocol {
                     "execution-check-ready",
                     VariableTypes::Number(1),
                 )?;
-                if let Ok(msg) = context.globals.get_var(&self.ctx.id, "choose-segment-msg") {
+                if let Some(msg) = context
+                    .globals
+                    .get_var(&self.ctx.id, "choose-segment-msg")?
+                {
                     info!("The msg to choose segment was ready. Sending it");
                     context.broker_channel.send(EMULATOR_ID, msg.string()?)?;
                 } else {
@@ -1355,6 +1390,7 @@ impl DisputeResolutionProtocol {
                 let save_round = context
                     .globals
                     .get_var(&self.ctx.id, "current_round")?
+                    .unwrap()
                     .number()? as u8;
                 assert_eq!(save_round, *round);
                 for (i, h) in hashes.iter().enumerate() {
@@ -1370,6 +1406,7 @@ impl DisputeResolutionProtocol {
                 let save_round = context
                     .globals
                     .get_var(&self.ctx.id, "current_round")?
+                    .unwrap()
                     .number()? as u8;
                 assert_eq!(save_round, *round);
 
@@ -1457,8 +1494,8 @@ impl DisputeResolutionProtocol {
 
                 if context
                     .globals
-                    .get_var(&self.ctx.id, "FAKE_INSTRUCTION")
-                    .is_err()
+                    .get_var(&self.ctx.id, "FAKE_INSTRUCTION")?
+                    .is_some()
                 {
                     index = 0;
                 }
@@ -1640,6 +1677,7 @@ impl DisputeResolutionProtocol {
         let program_definition = context
             .globals
             .get_var(&self.ctx.id, "program_definition")?
+            .unwrap()
             .string()?;
         Ok((
             ProgramDefinition::from_config(&program_definition)?,

@@ -48,7 +48,7 @@ use storage_backend::storage::{KeyValueStore, Storage};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-pub const THROTTLE_TICKS: u32 = 5;
+pub const THROTTLE_TICKS: u32 = 2;
 
 #[derive(Debug)]
 struct BitcoinUpdateState {
@@ -391,6 +391,7 @@ impl BitVMX {
     }
 
     pub fn tick(&mut self) -> Result<(), BitVMXError> {
+        //info!("Ticking BitVMX: {}", self.count);
         self.count += 1;
         self.process_programs()?;
 
@@ -555,14 +556,14 @@ impl BitVMXApi for BitVMX {
         info!("Getting variable {}", key);
         let value = self.program_context.globals.get_var(&id, key)?;
 
-        self.program_context.broker_channel.send(
-            from,
-            serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(
-                id,
-                key.to_string(),
-                value,
-            ))?,
-        )?;
+        let response = match value {
+            Some(var) => OutgoingBitVMXApiMessages::Variable(id, key.to_string(), var),
+            None => OutgoingBitVMXApiMessages::NotFound(id, key.to_string()),
+        };
+
+        self.program_context
+            .broker_channel
+            .send(from, response.to_string()?)?;
         Ok(())
     }
 
@@ -578,7 +579,7 @@ impl BitVMXApi for BitVMX {
 
         self.program_context
             .broker_channel
-            .send(from, serde_json::to_string(&response)?)?;
+            .send(from, response.to_string()?)?;
         Ok(())
     }
 

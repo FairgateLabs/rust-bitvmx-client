@@ -6,7 +6,11 @@ use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
     errors::ProtocolBuilderError,
     scripts::{self, SignMode},
-    types::{input::SighashType, output::SpendMode, InputArgs, OutputType},
+    types::{
+        connection::InputSpec,
+        input::{SighashType, SpendMode},
+        InputArgs, OutputType,
+    },
 };
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -35,7 +39,17 @@ pub struct TransferProtocol {
     ctx: ProtocolContext,
 }
 
+pub const ASSET_TX: &str = "ASSET_TX";
+pub const GID_TX: &str = "GID_TX_";
+pub const OPERATOR_WON_TX: &str = "OPERATOR_WON_TX";
 pub const TOO_TX: &str = "TOO_TX_";
+
+pub fn gid_tx(op: u32, gid: u32) -> String {
+    format!("{}{}_{}", GID_TX, op, gid)
+}
+pub fn operator_won_tx_name(op: u32) -> String {
+    format!("{}{}", OPERATOR_WON_TX, op)
+}
 
 pub fn too_tx(op: u32, gid: u32) -> String {
     format!("{}{}_{}", TOO_TX, op, gid)
@@ -71,6 +85,7 @@ impl ProtocolHandler for TransferProtocol {
             context
                 .globals
                 .get_var(&self.ctx.id, "operators_aggregated_pub")?
+                .unwrap()
                 .pubkey()?,
         )])
     }
@@ -124,16 +139,19 @@ impl ProtocolHandler for TransferProtocol {
         let unspendable = context
             .globals
             .get_var(&self.ctx.id, "unspendable")?
+            .unwrap()
             .pubkey()?;
 
         let ops_agg_pubkey = context
             .globals
             .get_var(&self.ctx.id, "operators_aggregated_pub")?
+            .unwrap()
             .pubkey()?;
 
         let operator_count = context
             .globals
             .get_var(&self.ctx.id, "operator_count")?
+            .unwrap()
             .number()?;
 
         let too_groups = 2_u32.pow(operator_count as u32) - 1;
@@ -144,6 +162,7 @@ impl ProtocolHandler for TransferProtocol {
                     .globals
                     .get_var(&self.ctx.id, &pub_too_group(gid))
                     .unwrap()
+                    .unwrap()
                     .pubkey()
                     .unwrap()
             })
@@ -152,10 +171,11 @@ impl ProtocolHandler for TransferProtocol {
         let locked_asset_utxo = context
             .globals
             .get_var(&self.ctx.id, "locked_asset_utxo")?
+            .unwrap()
             .utxo()?;
 
         let mut operator_txs = Vec::new();
-        if let Ok(var) = context.globals.get_var(&self.ctx.id, "slot_program_id") {
+        if let Some(var) = context.globals.get_var(&self.ctx.id, "slot_program_id")? {
             //GET TXS FROM SLOT PROGRAM
             let slot_program_id = var.string()?;
             let slot_uuid = Uuid::parse_str(&slot_program_id).unwrap();
@@ -210,6 +230,7 @@ impl ProtocolHandler for TransferProtocol {
                             .globals
                             .get_var(&self.ctx.id, &op_gid(op, gid))
                             .unwrap()
+                            .unwrap()
                             .utxo()
                             .unwrap()
                     })
@@ -217,7 +238,7 @@ impl ProtocolHandler for TransferProtocol {
 
                 let operator_won_tx = context
                     .globals
-                    .get_var(&self.ctx.id, &op_won(op))
+                    .get_var(&self.ctx.id, &op_won(op))?
                     .unwrap()
                     .utxo()
                     .unwrap();
@@ -231,41 +252,61 @@ impl ProtocolHandler for TransferProtocol {
 
         let pb = ProtocolBuilder {};
 
+        protocol.add_external_transaction(ASSET_TX)?;
+        protocol.add_unkwnoun_outputs(ASSET_TX, locked_asset_utxo.1)?;
+        protocol.add_transaction_output(ASSET_TX, locked_asset_utxo.3.as_ref().unwrap())?;
+
         for op in 0..operator_count {
             let (gidtxs, operator_won_tx) = &operator_txs[op as usize];
+
+            let operator_won_tx_name_str = operator_won_tx_name(op);
+            protocol.add_external_transaction(&operator_won_tx_name_str)?;
+            protocol.add_unkwnoun_outputs(&operator_won_tx_name_str, operator_won_tx.1)?;
+            protocol.add_transaction_output(
+                &operator_won_tx_name_str,
+                operator_won_tx.3.as_ref().unwrap(),
+            )?;
+
             for gid in 0..too_groups {
                 let gidtx = &gidtxs[gid as usize];
+
+                let gid_tx_name = gid_tx(op, gid + 1);
+                protocol.add_external_transaction(&gid_tx_name)?;
+                protocol.add_unkwnoun_outputs(&gid_tx_name, gidtx.1)?;
 
                 let txname = too_tx(op, gid + 1);
 
                 //add the assest as first input
-                protocol.add_external_connection(
-                    locked_asset_utxo.0,
-                    locked_asset_utxo.1,
-                    locked_asset_utxo.3.as_ref().unwrap().clone(),
+                protocol.add_connection(
+                    &format!("{}__{}", ASSET_TX, &txname),
+                    ASSET_TX,
+                    (locked_asset_utxo.1 as usize).into(),
                     &txname,
-                    &SpendMode::Script { leaf: 1 },
-                    &SighashType::taproot_all(),
+                    InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
+                    None,
+                    Some(locked_asset_utxo.0),
                 )?;
 
                 //gid enabler
-                protocol.add_external_connection(
-                    gidtx.0,
-                    gidtx.1,
-                    gidtx.3.as_ref().unwrap().clone(),
+                protocol.add_connection(
+                    &format!("{}__{}", gid_tx_name, &txname),
+                    &gid_tx_name,
+                    gidtx.3.as_ref().unwrap().clone().into(),
                     &txname,
-                    &SpendMode::ScriptsOnly,
-                    &SighashType::taproot_all(),
+                    InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
+                    None,
+                    Some(gidtx.0),
                 )?;
 
                 //won enabler
-                protocol.add_external_connection(
-                    operator_won_tx.0,
-                    operator_won_tx.1,
-                    operator_won_tx.3.as_ref().unwrap().clone(),
+                protocol.add_connection(
+                    &format!("{}__{}", operator_won_tx_name_str, &txname),
+                    &operator_won_tx_name_str,
+                    (operator_won_tx.1 as usize).into(),
                     &txname,
-                    &SpendMode::ScriptsOnly,
-                    &SighashType::taproot_all(),
+                    InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
+                    None,
+                    Some(operator_won_tx.0),
                 )?;
 
                 //asset output to gid pub key
@@ -280,7 +321,6 @@ impl ProtocolHandler for TransferProtocol {
                         locked_asset_utxo.2.unwrap(),
                         &unspendable,
                         &[asset_output],
-                        &vec![],
                     )?, // We do not need prevouts cause the tx is in the graph,
                 )?;
 

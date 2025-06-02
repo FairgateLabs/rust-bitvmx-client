@@ -8,8 +8,6 @@ bitcoin:
 key_manager:
   network: regtest
   key_derivation_path: m/101/1/0/0/
-  key_derivation_seed: 1111beefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
-  winternitz_seed: 1111beefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
 
 key_storage:
   password: secret_password_2
