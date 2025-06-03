@@ -687,20 +687,49 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             )?;
         }
 
-        if name == CHALLENGE && self.role() == ParticipantRole::Verifier {
-            //TODO:
-            info!("Verifier is in challenge phase");
-            // self.decode_witness_for_tx(
-            //     &name,
-            //     0,
-            //     program_context,
-            //     &participant_keys[0],
-            //     &tx_status.tx,
-            //     None,
-            // )?;
+        if name == CHALLENGE && self.role() == ParticipantRole::Prover {
+            let input_index = 0;
+            self.decode_witness_for_tx(
+                &name,
+                input_index,
+                program_context,
+                &participant_keys[1],
+                &tx_status.tx,
+                None,
+            )?;
             // let (_program_definition, pdf) = self.get_program_definition(program_context)?;
             // let execution_path = self.get_execution_path()?;
-            // let seen = program_context.witness.get_witness
+
+            let challenge_idx = program_context
+                .globals
+                .get_var(
+                    &self.ctx.id,
+                    &format!("CHALLENGE_{}_leaf_index", input_index),
+                )?
+                .unwrap()
+                .number()?;
+
+            let (challenge_name, subchallenges) = CHALLENGES
+                .get(challenge_idx as usize)
+                .ok_or(BitVMXError::ChallengeIdxNotFound(challenge_idx))?;
+
+            let mut values = HashMap::with_capacity(subchallenges.len());
+
+            for (subname, _) in *subchallenges {
+                let full_name = format!("{}_{}", challenge_name, subname);
+                let value = program_context
+                    .witness
+                    .get_witness(&self.ctx.id, &full_name)?
+                    .unwrap()
+                    .winternitz()?
+                    .message_bytes();
+                values.insert(full_name, value);
+            }
+            info!(
+                "Prover decoded challenge {} with values: {:?}",
+                challenge_name, values
+            );
+            //TODO: continue challenge for some challenges
         }
 
         Ok(())
@@ -949,6 +978,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         amount -= speedup_dust;
 
         self.add_winternitz_and_challenge(
+            context,
             aggregated,
             &mut protocol,
             TIMELOCK_BLOCKS,
@@ -1223,6 +1253,7 @@ impl DisputeResolutionProtocol {
 
     pub fn add_winternitz_and_challenge(
         &self,
+        context: &ProgramContext,
         aggregated: &PublicKey,
         protocol: &mut Protocol,
         timelock_blocks: u16,
@@ -1269,7 +1300,8 @@ impl DisputeResolutionProtocol {
 
             match *challenge_name {
                 "entry_point" => {
-                    let entry_point = 0x00; // TODO: get real entry point from context
+                    let program = self.get_program_definition(context)?;
+                    let entry_point = program.0.load_program()?.pc.get_address();
                     entry_point_challenge(&mut stack, entry_point)
                 }
                 "program_counter" => program_counter_challenge(&mut stack),
@@ -1531,7 +1563,6 @@ impl DisputeResolutionProtocol {
                             &format!("{name}_provided_step"),
                             *prover_trace_step,
                         )?;
-                        // ASK: not using entrypoint
                     }
                     ChallengeType::ProgramCounter(
                         pre_pre_hash,
@@ -1654,6 +1685,7 @@ impl DisputeResolutionProtocol {
                     .position(|(n, _)| *n == name)
                     .ok_or_else(|| BitVMXError::ChallengeNotFound(name.to_string()))?
                     as u32;
+                info!("Leaf index: {}", leaf_index);
                 context.bitcoin_coordinator.dispatch(
                     self.get_signed_tx(context, CHALLENGE, 0, leaf_index, true, 0)?,
                     Context::ProgramId(self.ctx.id).to_string()?,
