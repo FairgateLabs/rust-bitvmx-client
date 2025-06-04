@@ -129,7 +129,7 @@ pub enum OutgoingBitVMXApiMessages {
     // Represents when a spending utxo transaction is found
     SpendingUTXOTransactionFound(Uuid, Txid, u32, TransactionStatus),
     // Represents when a program is running out of funds
-    SpeedUpProgramNoFunds(Txid, String),
+    SpeedUpProgramNoFunds(Txid),
     // Setup Completed,
     SetupCompleted(ProgramId),
     // Add response types for the new messages if needed

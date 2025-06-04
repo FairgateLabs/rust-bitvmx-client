@@ -185,6 +185,7 @@ impl ProtocolHandler for SlotProtocol {
                 );
                 program_context.bitcoin_coordinator.dispatch(
                     gid_selection_tx,
+                    None,
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
                 )?;
@@ -273,6 +274,7 @@ impl ProtocolHandler for SlotProtocol {
                                 false,
                                 0,
                             )?,
+                            None,
                             Context::ProgramId(self.ctx.id).to_string()?,
                             None,
                         )?;
@@ -308,6 +310,7 @@ impl ProtocolHandler for SlotProtocol {
                     );
                     program_context.bitcoin_coordinator.dispatch(
                         tx,
+                        None,
                         Context::ProgramId(self.ctx.id).to_string()?,
                         None,
                     )?;
@@ -338,6 +341,7 @@ impl ProtocolHandler for SlotProtocol {
                     false,
                     0,
                 )?,
+                None,
                 Context::ProgramId(self.ctx.id).to_string()?,
                 Some(tx_status.block_info.as_ref().unwrap().block_height + TIMELOCK_BLOCKS as u32),
             )?;

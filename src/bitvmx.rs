@@ -111,7 +111,6 @@ impl BitVMX {
             key_chain.key_manager.clone(),
             config.monitor.checkpoint_height,
             config.monitor.confirmation_threshold,
-            config.bitcoin.network,
         )?;
 
         //TOOD: This could be moved to a simplified helper inside brokerstorage new
@@ -324,16 +323,10 @@ impl BitVMX {
             let ack_news: AckNews;
 
             match coordinator_news {
-                CoordinatorNews::InsufficientFunds(
-                    tx_id,
-                    context_data,
-                    _funding_tx_id,
-                    _funding_context_data,
-                ) => {
+                CoordinatorNews::InsufficientFunds(tx_id) => {
                     // Complete new params
                     let data =
-                        OutgoingBitVMXApiMessages::SpeedUpProgramNoFunds(tx_id, context_data)
-                            .to_string()?;
+                        OutgoingBitVMXApiMessages::SpeedUpProgramNoFunds(tx_id).to_string()?;
 
                     info!("Sending funds request to broker");
                     self.program_context.broker_channel.send(L2_ID, data)?;
@@ -354,11 +347,16 @@ impl BitVMX {
                     ack_news =
                         AckNews::Coordinator(AckCoordinatorNews::DispatchTransactionError(_tx_id));
                 }
-                CoordinatorNews::DispatchSpeedUpError(_tx_id, _context_data, _counter) => {
+                CoordinatorNews::DispatchSpeedUpError(
+                    _tx_id,
+                    _context_data,
+                    _counter,
+                    _block_height,
+                ) => {
                     // Complete
 
                     ack_news =
-                        AckNews::Coordinator(AckCoordinatorNews::DispatchSpeedUpError(_tx_id));
+                        AckNews::Coordinator(AckCoordinatorNews::DispatchSpeedUpError(_counter));
                 }
             }
 
@@ -756,6 +754,7 @@ impl BitVMXApi for BitVMX {
 
         self.program_context.bitcoin_coordinator.dispatch(
             tx,
+            None,
             Context::RequestId(id, from).to_string()?,
             None,
         )?;

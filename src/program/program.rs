@@ -731,9 +731,12 @@ impl Program {
 
         info!("Dispatching transaction: {}", tx_to_dispatch.compute_txid());
 
-        program_context
-            .bitcoin_coordinator
-            .dispatch(tx_to_dispatch, context.to_string()?, None)?;
+        program_context.bitcoin_coordinator.dispatch(
+            tx_to_dispatch,
+            None,
+            context.to_string()?,
+            None,
+        )?;
         Ok(())
     }
 
