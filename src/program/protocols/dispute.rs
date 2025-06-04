@@ -2,12 +2,16 @@ use std::collections::HashMap;
 
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
-use bitcoin_script_riscv::riscv::instruction_mapping::{
-    create_verification_script_mapping, get_key_from_opcode,
+use bitcoin_script_riscv::riscv::{
+    challenges::{
+        entry_point_challenge, halt_challenge, program_counter_challenge, trace_hash_challenge,
+        trace_hash_zero_challenge,
+    },
+    instruction_mapping::{create_verification_script_mapping, get_key_from_opcode},
 };
 use bitcoin_script_stack::stack::StackTracker;
 use bitvmx_cpu_definitions::{
-    challenge::EmulatorResultType,
+    challenge::{ChallengeType, EmulatorResultType},
     memory::MemoryWitness,
     trace::{ProgramCounter, TraceRWStep, TraceRead, TraceReadPC, TraceStep, TraceWrite},
 };
@@ -17,6 +21,7 @@ use emulator::{
     constants::REGISTERS_BASE_ADDRESS, decision::challenge::ForceCondition,
     loader::program_definition::ProgramDefinition,
 };
+use key_manager::winternitz::WinternitzPublicKey;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
     scripts::{self, SignMode},
@@ -53,6 +58,7 @@ pub const TIMELOCK_BLOCKS: u16 = 1;
 pub const PROVER_WINS: &str = "PROVER_WINS";
 pub const VERIFIER_WINS: &str = "VERIFIER_WINS";
 pub const ACTION_PROVER_WINS: &str = "ACTION_PROVER_WINS";
+pub const CHALLENGE: &str = "CHALLENGE";
 
 pub const TRACE_VARS: [(&str, usize); 16] = [
     ("write_address", 4 as usize),
@@ -71,6 +77,51 @@ pub const TRACE_VARS: [(&str, usize); 16] = [
     ("read_pc_opcode", 4),
     ("step_number", 8),
     ("witness", 4),
+];
+
+pub const ENTRY_POINT_CHALLENGE: [(&str, usize); 3] = [
+    ("provided_pc", 4),
+    ("provided_micro", 1),
+    ("provided_step", 8),
+];
+pub const PROGRAM_COUNTER_CHALLENGE: [(&str, usize); 8] = [
+    ("prev_prev_hash", 20),
+    ("prev_write_add", 4),
+    ("prev_write_data", 4),
+    ("prev_write_pc", 4),
+    ("prev_write_micro", 4),
+    ("prover_read_pc", 4),
+    ("prover_read_micro", 1),
+    ("prover_prev_hash", 20),
+];
+pub const HALT_CHALLENGE: [(&str, usize); 5] = [
+    ("final_step", 8),
+    ("trace_step", 8),
+    ("read_value_1", 4),
+    ("read_value_2", 4),
+    ("opcode", 4),
+];
+pub const TRACE_HASH_CHALLENGE: [(&str, usize); 6] = [
+    ("prev_hash", 20),
+    ("write_add", 4),
+    ("write_data", 4),
+    ("write_pc", 4),
+    ("write_micro", 1),
+    ("hash", 20),
+];
+pub const TRACE_HASH_ZERO_CHALLENGE: [(&str, usize); 5] = [
+    ("write_add", 4),
+    ("write_data", 4),
+    ("write_pc", 4),
+    ("write_micro", 1),
+    ("hash", 20),
+];
+pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 5] = [
+    ("entry_point", &ENTRY_POINT_CHALLENGE),
+    ("program_counter", &PROGRAM_COUNTER_CHALLENGE),
+    ("halt", &HALT_CHALLENGE),
+    ("trace_hash", &TRACE_HASH_CHALLENGE),
+    ("trace_hash_zero", &TRACE_HASH_ZERO_CHALLENGE),
 ];
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -154,6 +205,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             for (name, size) in TRACE_VARS {
                 let key = key_chain.derive_winternitz_hash160(size)?;
                 keys.push((name.to_string(), key.into()));
+            }
+        } else {
+            for (challenge_name, challenge) in CHALLENGES.iter() {
+                for (name, size) in challenge.iter() {
+                    let key = key_chain.derive_winternitz_hash160(*size)?;
+                    keys.push((format!("{}_{}", challenge_name, name), key.into()));
+                }
             }
         }
 
@@ -584,16 +642,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             program_context.broker_channel.send(EMULATOR_ID, msg)?;
         }
 
-        if name == INPUT_1 && self.role() == ParticipantRole::Prover {
-            /*let tx = self.get_signed_tx(
-                program_context,
-                &ClaimGate::tx_start(PROVER_WINS),
-                0,
-                0,
-                false,
-            )?;
-            info!("PROVER_WINS_TX: {:?}", tx);*/
-        }
         if name == EXECUTE && self.role() == ParticipantRole::Prover {
             let tx = self.get_signed_tx(
                 program_context,
@@ -637,6 +685,51 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 Context::ProgramId(self.ctx.id).to_string()?,
                 None,
             )?;
+        }
+
+        if name == CHALLENGE && self.role() == ParticipantRole::Prover {
+            let input_index = 0;
+            self.decode_witness_for_tx(
+                &name,
+                input_index,
+                program_context,
+                &participant_keys[1],
+                &tx_status.tx,
+                None,
+            )?;
+            // let (_program_definition, pdf) = self.get_program_definition(program_context)?;
+            // let execution_path = self.get_execution_path()?;
+
+            let challenge_idx = program_context
+                .globals
+                .get_var(
+                    &self.ctx.id,
+                    &format!("CHALLENGE_{}_leaf_index", input_index),
+                )?
+                .unwrap()
+                .number()?;
+
+            let (challenge_name, subchallenges) = CHALLENGES
+                .get(challenge_idx as usize)
+                .ok_or(BitVMXError::ChallengeIdxNotFound(challenge_idx))?;
+
+            let mut values = HashMap::with_capacity(subchallenges.len());
+
+            for (subname, _) in *subchallenges {
+                let full_name = format!("{}_{}", challenge_name, subname);
+                let value = program_context
+                    .witness
+                    .get_witness(&self.ctx.id, &full_name)?
+                    .unwrap()
+                    .winternitz()?
+                    .message_bytes();
+                values.insert(full_name, value);
+            }
+            info!(
+                "Prover decoded challenge {} with values: {:?}",
+                challenge_name, values
+            );
+            //TODO: continue challenge for some challenges
         }
 
         Ok(())
@@ -849,6 +942,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             prev = next;
         }
 
+        // amount -= fee;
+        // amount -= speedup_dust;
+
         //Simple execution check
         let vars = TRACE_VARS
             .iter()
@@ -864,7 +960,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             TIMELOCK_BLOCKS,
             &keys[0],
             amount,
-            self.checked_sub(amount, fee)?,
+            speedup_dust,
             &vars,
             &prev,
             EXECUTE,
@@ -873,6 +969,26 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         //Add this as if it were the final tx execution
         claim_prover.add_claimer_win_connection(&mut protocol, EXECUTE)?;
+
+        info!(
+            "Amount {}, fee {}, speedup_dust {}",
+            amount, fee, speedup_dust
+        );
+        amount -= fee;
+        amount -= speedup_dust;
+
+        self.add_winternitz_and_challenge(
+            context,
+            aggregated,
+            &mut protocol,
+            TIMELOCK_BLOCKS,
+            &keys[1],
+            amount,
+            speedup_dust,
+            EXECUTE,
+            CHALLENGE,
+            Some(&claim_prover),
+        )?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("{}", protocol.visualize()?);
@@ -1027,7 +1143,6 @@ impl DisputeResolutionProtocol {
             .map(|v| (*v, keys.get_winternitz(v).unwrap()))
             .collect();
 
-        //TODO: Create full mapping. Add a check to identify the leaf
         let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
         let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
         instruction_names.sort();
@@ -1081,6 +1196,131 @@ impl DisputeResolutionProtocol {
                     script.clone(),
                 ]),
             )?;
+            winternitz_check_list.push(winternitz_check);
+        }
+
+        let timeout = scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
+        winternitz_check_list.push(timeout.clone());
+
+        for (pos, leave) in winternitz_check_list.iter_mut().enumerate() {
+            leave.set_assert_leaf_id(pos as u32);
+        }
+
+        let output_type = OutputType::taproot(amount, aggregated, &winternitz_check_list)?;
+
+        protocol.add_connection(
+            &format!("{}__{}", from, to),
+            from,
+            output_type.clone().into(),
+            to,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    //TODO: fix proper leaf set
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            None,
+        )?;
+
+        protocol.add_connection(
+            &format!("{}__{}_TO", from, to),
+            from,
+            OutputSpec::Last,
+            &format!("{}_TO", to),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    //TODO: sign only timelock
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            Some(timelock_blocks),
+            None,
+        )?;
+
+        if let Some(claim_gate) = claim_gate {
+            claim_gate.add_claimer_win_connection(protocol, &format!("{}_TO", to))?;
+        }
+
+        let pb = ProtocolBuilder {};
+        //put the amount here as there is no output yet
+        pb.add_speedup_output(protocol, to, amount_speedup, aggregated)?;
+        pb.add_speedup_output(protocol, &format!("{}_TO", to), amount_speedup, aggregated)?;
+        Ok(())
+    }
+
+    pub fn add_winternitz_and_challenge(
+        &self,
+        context: &ProgramContext,
+        aggregated: &PublicKey,
+        protocol: &mut Protocol,
+        timelock_blocks: u16,
+        keys: &ParticipantKeys,
+        amount: u64,
+        amount_speedup: u64,
+        from: &str,
+        to: &str,
+        claim_gate: Option<&ClaimGate>,
+    ) -> Result<(), BitVMXError> {
+        info!("Adding winternitz check for {} to {}", from, to);
+        info!("Amount: {}", amount);
+        info!("Speedup: {}", amount_speedup);
+
+        let mut names_and_keys: HashMap<&str, Vec<(&'static str, &WinternitzPublicKey)>> =
+            HashMap::new();
+
+        for (challenge_name, subnames) in CHALLENGES.iter() {
+            let group: Vec<(&'static str, &WinternitzPublicKey)> = subnames
+                .iter()
+                .map(|(subname, _)| {
+                    let var_name: &'static str =
+                        Box::leak(format!("{}_{}", challenge_name, subname).into_boxed_str());
+                    let key = keys.get_winternitz(var_name).unwrap();
+                    (var_name, key)
+                })
+                .collect();
+
+            names_and_keys.insert(challenge_name, group);
+        }
+
+        let mut winternitz_check_list = vec![];
+
+        for (challenge_name, subnames) in CHALLENGES.iter() {
+            let total_len = subnames.iter().map(|(_, size)| *size).sum::<usize>() as u32;
+
+            let mut stack = StackTracker::new();
+            let all = stack.define(total_len, "all");
+            //TODO: This is a workaround to remove one nibble from the micro instructions
+            for i in 1..total_len {
+                stack.move_var_sub_n(all, total_len - i - 1);
+            }
+            let reverse_script = stack.get_script();
+
+            match *challenge_name {
+                "entry_point" => {
+                    let program = self.get_program_definition(context)?;
+                    let entry_point = program.0.load_program()?.pc.get_address();
+                    entry_point_challenge(&mut stack, entry_point)
+                }
+                "program_counter" => program_counter_challenge(&mut stack),
+                "halt" => halt_challenge(&mut stack),
+                "trace_hash" => trace_hash_challenge(&mut stack),
+                "trace_hash_zero" => trace_hash_zero_challenge(&mut stack),
+                _ => panic!("Unknown challenge name: {}", challenge_name),
+            }
+
+            let script = stack.get_script();
+
+            let winternitz_check = scripts::verify_winternitz_signatures_aux(
+                aggregated,
+                &names_and_keys[challenge_name],
+                SignMode::Aggregate,
+                true,
+                Some(vec![reverse_script.clone(), script.clone()]),
+            )?;
+
             winternitz_check_list.push(winternitz_check);
         }
 
@@ -1300,9 +1540,158 @@ impl DisputeResolutionProtocol {
             }
             EmulatorResultType::VerifierChooseChallengeResult { challenge } => {
                 info!("Verifier choose challenge result: {:?}", challenge);
-            } // _ => {
-              //     info!("Execution result: {:?}", result);
-              // }
+                let leaf_index: u32;
+                let name: &str;
+
+                match challenge {
+                    ChallengeType::EntryPoint(trace_read_pc, prover_trace_step, _entrypoint) => {
+                        name = "entry_point";
+                        info!("Verifier chose {name} challenge");
+
+                        self.set_input_u32(
+                            context,
+                            &format!("{name}_provided_pc"),
+                            trace_read_pc.pc.get_address(),
+                        )?;
+                        self.set_input_u8(
+                            context,
+                            &format!("{name}_provided_micro"),
+                            trace_read_pc.pc.get_micro(),
+                        )?;
+                        self.set_input_u64(
+                            context,
+                            &format!("{name}_provided_step"),
+                            *prover_trace_step,
+                        )?;
+                    }
+                    ChallengeType::ProgramCounter(
+                        pre_pre_hash,
+                        pre_step,
+                        prover_step_hash,
+                        prover_pc_read,
+                    ) => {
+                        name = "program_counter";
+                        info!("Verifier chose {name} challenge");
+
+                        self.set_input_hex(
+                            context,
+                            &format!("{name}_prev_prev_hash"),
+                            &pre_pre_hash,
+                        )?;
+                        self.set_input_u32(
+                            context,
+                            &format!("{name}_prev_write_add"),
+                            pre_step.get_write().address,
+                        )?;
+                        self.set_input_u32(
+                            context,
+                            &format!("{name}_prev_write_data"),
+                            pre_step.get_write().value,
+                        )?;
+                        self.set_input_u32(
+                            context,
+                            &format!("{name}_prev_write_pc"),
+                            pre_step.get_pc().get_address(),
+                        )?;
+                        self.set_input_u8(
+                            context,
+                            &format!("{name}_prev_write_micro"),
+                            pre_step.get_pc().get_micro(),
+                        )?;
+                        self.set_input_u32(
+                            context,
+                            &format!("{name}_prover_read_pc"),
+                            prover_pc_read.pc.get_address(),
+                        )?;
+                        self.set_input_u8(
+                            context,
+                            &format!("{name}_prover_read_micro"),
+                            prover_pc_read.pc.get_micro(),
+                        )?;
+                        self.set_input_hex(
+                            context,
+                            &format!("{name}_prover_prev_hash"),
+                            &prover_step_hash,
+                        )?;
+                    }
+                    ChallengeType::TraceHash(
+                        prover_prev_hash,
+                        prover_trace_step,
+                        prover_step_hash,
+                    ) => {
+                        name = "trace_hash";
+                        info!("Verifier chose {name} challenge");
+
+                        self.set_input_hex(context, &format!("{name}_hash"), &prover_step_hash)?;
+                        self.set_input_u8(
+                            context,
+                            &format!("{name}_write_micro"),
+                            prover_trace_step.get_pc().get_micro(),
+                        )?;
+                        self.set_input_u32(
+                            context,
+                            &format!("{name}_write_pc"),
+                            prover_trace_step.get_pc().get_address(),
+                        )?;
+                        self.set_input_u32(
+                            context,
+                            &format!("{name}_write_data"),
+                            prover_trace_step.get_write().value,
+                        )?;
+                        self.set_input_u32(
+                            context,
+                            &format!("{name}_write_add"),
+                            prover_trace_step.get_write().address,
+                        )?;
+                        self.set_input_hex(
+                            context,
+                            &format!("{name}_prev_hash"),
+                            &prover_prev_hash,
+                        )?;
+                    }
+                    ChallengeType::TraceHashZero(prover_trace_step, prover_step_hash) => {
+                        name = "trace_hash_zero";
+                        info!("Verifier chose {name} challenge");
+
+                        self.set_input_u32(
+                            context,
+                            &format!("{name}_wite_add"),
+                            prover_trace_step.get_write().address,
+                        )?;
+                        self.set_input_u32(
+                            context,
+                            &format!("{name}_write_data"),
+                            prover_trace_step.get_write().value,
+                        )?;
+                        self.set_input_u8(
+                            context,
+                            &format!("{name}_write_micro"),
+                            prover_trace_step.get_pc().get_micro(),
+                        )?;
+                        self.set_input_u32(
+                            context,
+                            &format!("{name}_write_pc"),
+                            prover_trace_step.get_pc().get_address(),
+                        )?;
+                        self.set_input_hex(context, &format!("{name}_hash"), &prover_step_hash)?;
+                    }
+
+                    ChallengeType::InputData(_, _, _, _) => todo!(),
+                    ChallengeType::No => todo!(),
+                }
+
+                leaf_index = CHALLENGES
+                    .iter()
+                    .position(|(n, _)| *n == name)
+                    .ok_or_else(|| BitVMXError::ChallengeNotFound(name.to_string()))?
+                    as u32;
+                info!("Leaf index: {}", leaf_index);
+                context.bitcoin_coordinator.dispatch(
+                    self.get_signed_tx(context, CHALLENGE, 0, leaf_index, true, 0)?,
+                    Context::ProgramId(self.ctx.id).to_string()?,
+                    None,
+                )?;
+            }
         }
         Ok(())
     }

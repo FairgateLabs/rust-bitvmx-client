@@ -18,7 +18,7 @@ use crate::errors::BitVMXError;
 use crate::keychain::KeyChain;
 
 use crate::program::variables::WitnessTypes;
-use crate::program::witness;
+use crate::program::{variables::VariableTypes, witness};
 use crate::types::{
     ProgramContext, PROGRAM_TYPE_DRP, PROGRAM_TYPE_LOCK, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TRANSFER,
 };
@@ -210,12 +210,16 @@ pub trait ProtocolHandler {
             input_index
         );
         let protocol = self.load_protocol()?;
-
         let witness = transaction.input[0].witness.clone();
         let leaf = match leaf {
             Some(idx) => idx,
             None => {
                 let leaf = read_scriptint(witness.third_to_last().unwrap()).unwrap() as u32;
+                program_context.globals.set_var(
+                    &self.context().id,
+                    &format!("{}_{}_leaf_index", name, input_index),
+                    VariableTypes::Number(leaf),
+                )?;
                 leaf
             }
         };
