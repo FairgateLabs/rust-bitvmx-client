@@ -276,6 +276,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 info!("Prover. Execute Action");
                 program_context.bitcoin_coordinator.dispatch(
                     self.get_signed_tx(program_context, ACTION_PROVER_WINS, 0, 1, false, 0)?,
+                    None,
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
                 )?;
@@ -654,6 +655,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             info!("PROVER_WINS_TX: {:?}", tx);
             program_context.bitcoin_coordinator.dispatch(
                 tx,
+                None,
                 //prover-win-start is input 1
                 Context::ProgramId(self.ctx.id).to_string()?,
                 None,
@@ -671,6 +673,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     false,
                     0,
                 )?,
+                None,
                 Context::ProgramId(self.ctx.id).to_string()?,
                 Some(tx_status.block_info.as_ref().unwrap().block_height + TIMELOCK_BLOCKS as u32),
             )?;
@@ -682,6 +685,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             info!("Prover. Execute Action");
             program_context.bitcoin_coordinator.dispatch(
                 self.get_signed_tx(program_context, ACTION_PROVER_WINS, 0, 0, false, 1)?,
+                None,
                 Context::ProgramId(self.ctx.id).to_string()?,
                 None,
             )?;
@@ -1397,6 +1401,7 @@ impl DisputeResolutionProtocol {
 
                 context.bitcoin_coordinator.dispatch(
                     self.get_signed_tx(context, COMMITMENT, 0, 0, true, 0)?,
+                    None,
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
                 )?;
@@ -1430,6 +1435,7 @@ impl DisputeResolutionProtocol {
                 }
                 context.bitcoin_coordinator.dispatch(
                     self.get_signed_tx(context, &format!("NARY_PROVER_{}", round), 0, 0, true, 0)?,
+                    None,
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
                 )?;
@@ -1457,6 +1463,7 @@ impl DisputeResolutionProtocol {
                         true,
                         0,
                     )?,
+                    None,
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
                 )?;
@@ -1534,6 +1541,7 @@ impl DisputeResolutionProtocol {
 
                 context.bitcoin_coordinator.dispatch(
                     self.get_signed_tx(context, EXECUTE, 0, index as u32, true, 0)?,
+                    None,
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
                 )?;
@@ -1688,6 +1696,7 @@ impl DisputeResolutionProtocol {
                 info!("Leaf index: {}", leaf_index);
                 context.bitcoin_coordinator.dispatch(
                     self.get_signed_tx(context, CHALLENGE, 0, leaf_index, true, 0)?,
+                    None,
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
                 )?;
