@@ -1684,8 +1684,7 @@ impl DisputeResolutionProtocol {
                         self.set_input_hex(context, &format!("{name}_hash"), &prover_step_hash)?;
                     }
 
-                    ChallengeType::InputData(_, _, _, _) => todo!(),
-                    ChallengeType::No => todo!(),
+                    _ => todo!(),
                 }
 
                 leaf_index = CHALLENGES
