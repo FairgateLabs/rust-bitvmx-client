@@ -33,7 +33,8 @@ use uuid::Uuid;
 
 use std::{
     str::FromStr,
-    sync::{Arc, Mutex, Once},
+    sync::{Arc, Barrier, Mutex, Once},
+    thread,
 };
 
 static INIT: Once = Once::new();
@@ -56,12 +57,7 @@ pub fn main() -> Result<()> {
 
 pub fn run() -> Result<()> {
     let mut committee = Committee::new()?;
-    info!("initialize committee");
-    committee.initialize()?;
-
-    info!("setup_key");
-    committee.setup_key()?;
-
+    committee.run()?;
     Ok(())
 }
 
@@ -149,29 +145,26 @@ impl Committee {
         Ok(Self { operators, addresses: None })
     }
 
-    pub fn initialize(&mut self) -> Result<()> {
-        let addresses = self.all(|operator| operator.get_peer_info())?;
-        self.addresses = Some(addresses);
-
-        Ok(())
-    }
-
-    pub fn setup_key(&mut self) -> Result<()> {
+    pub fn run(&mut self) -> Result<()> {
+        info!("Running committee...");
         let aggregation_id = Uuid::new_v4();
-        if let Some(addresses) = self.addresses.clone() {
-            self.all(|operator| operator.setup_key(aggregation_id, &addresses))?;
-        }
-
-        self.all(|operator| operator.get_aggregated_pub_key(aggregation_id))?;
-
-        Ok(())
-    }
-
-    fn all<F, R>(&mut self, mut f: F) -> Result<Vec<R>>
-    where
-        F: FnMut(&mut Operator) -> Result<R>,
-    {
-        self.operators.iter_mut().map(|op| f(op)).collect()
+        let barrier = Arc::new(Barrier::new(self.operators.len()));
+        let addresses = Arc::new(Mutex::new(Vec::new()));
+        thread::scope(|s| {
+            let handles: Vec<_> = self
+                .operators
+                .iter_mut()
+                .map(|op| {
+                    let barrier = barrier.clone();
+                    let addresses = addresses.clone();
+                    s.spawn(move || op.run(barrier, addresses, aggregation_id))
+                })
+                .collect();
+            for handle in handles {
+                handle.join().unwrap()?;
+            }
+            Ok(())
+        })
     }
 }
 
@@ -186,6 +179,23 @@ impl Operator {
         let broker_config = BrokerConfig::new(config.broker_port, None);
         let bridge_client = DualChannel::new(&broker_config, L2_ID);
         Ok(Self { channel: bridge_client, address: None })
+    }
+
+    pub fn run(
+        &mut self,
+        barrier: Arc<Barrier>,
+        addresses: Arc<Mutex<Vec<P2PAddress>>>,
+        aggregation_id: Uuid,
+    ) -> Result<()> {
+        let address = self.get_peer_info()?;
+        addresses.lock().unwrap().push(address);
+
+        barrier.wait();
+
+        let all_addresses = addresses.lock().unwrap().clone();
+        self.setup_key(aggregation_id, &all_addresses)?;
+
+        Ok(())
     }
 
     pub fn get_peer_info(&mut self) -> Result<P2PAddress> {
@@ -214,10 +224,12 @@ impl Operator {
             IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), 0).to_string()?;
         self.channel.send(BITVMX_ID, command)?;
 
+        self.get_aggregated_pub_key()?;
+
         Ok(())
     }
 
-    pub fn get_aggregated_pub_key(&mut self, aggregation_id: Uuid) -> Result<()> {
+    pub fn get_aggregated_pub_key(&mut self) -> Result<()> {
         let msg = wait_message_from_channel(&self.channel)?;
         info!("Received message from channel: {:?}", msg);
         let msg = OutgoingBitVMXApiMessages::from_string(&msg.0)?;
