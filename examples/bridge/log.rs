@@ -16,6 +16,7 @@ pub fn configure_tracing() {
             "tarpc=off",
             "key_manager=off",
             "memory=off",
+            "bitvmx_client::config=off",
         ];
 
         let filter = EnvFilter::builder()

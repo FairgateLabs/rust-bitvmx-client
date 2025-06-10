@@ -5,13 +5,11 @@ use bitvmx_client::{
     program::participant::P2PAddress,
     types::{L2_ID, OutgoingBitVMXApiMessages::*},
 };
-use std::{
-    sync::{Arc, Barrier, Mutex},
-    thread,
-};
+use std::{thread::{self, sleep}, time::Duration};
 use tracing::{info, info_span};
 use uuid::Uuid;
-use bitcoin::PublicKey;
+use bitcoin::{key::PrivateKey, secp256k1::{self, Secp256k1}, PublicKey};
+use std::collections::HashMap;
 
 macro_rules! expect_msg {
     ($self:expr, $pattern:pat => $expr:expr) => {{
@@ -31,6 +29,9 @@ macro_rules! expect_msg {
 
 pub struct Committee {
     operators: Vec<Operator>,
+    // TODO come up with a better name for aggregation ids
+    aggregation_id_1: Uuid,
+    aggregation_id_2: Uuid,
 }
 
 impl Committee {
@@ -42,40 +43,61 @@ impl Committee {
             Operator::new("op_4")?,
         ];
 
-        Ok(Self { operators })
+        Ok(Self { operators, aggregation_id_1: Uuid::new_v4(), aggregation_id_2: Uuid::new_v4() })
     }
 
-    pub fn run(&mut self) -> Result<()> {
-        let aggregation_id = Uuid::new_v4();
-        let barrier = Arc::new(Barrier::new(self.operators.len()));
-        let addresses = Arc::new(Mutex::new(Vec::new()));
+    pub fn setup(&mut self) -> Result<()> {
+        // gather all operator addresses
+        // in a real scenario, operators should get this from the chain
+        let addresses = self.all(|op| op.get_peer_info())?;
+
+        // run setup for each operator
+        let aggregation_id_1 = self.aggregation_id_1;
+        let aggregation_id_2 = self.aggregation_id_2;
+        self.all(|op| op.setup(
+            aggregation_id_1,
+            aggregation_id_2,
+            &addresses,
+        ))?;
+
+        Ok(())
+    }
+
+    fn all<F, R>(&mut self, f: F) -> Result<Vec<R>>
+    where
+        F: Fn(&mut Operator) -> Result<R> + Send + Sync + Clone,
+        R: Send,
+    {
         thread::scope(|s| {
-            let handles: Vec<_> = self
-                .operators
+            self.operators
                 .iter_mut()
                 .map(|op| {
-                    let barrier = barrier.clone();
-                    let addresses = addresses.clone();
+                    let f = f.clone();
                     let span = info_span!("operator", id = %op.id);
-                    s.spawn(move || {
-                        let _guard = span.enter();
-                        op.run(barrier, addresses, aggregation_id)
-                    })
+                    s.spawn(move || span.in_scope(|| f(op)))
                 })
-                .collect();
-            for handle in handles {
-                handle.join().unwrap()?;
-            }
-            Ok(())
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect()
         })
     }
+}
+
+struct Keyring {
+    // TODO come up with a better name for aggregated keys
+    aggregated_key_1: Option<PublicKey>,
+    aggregated_key_2: Option<PublicKey>,
+    communication_sk: Option<PrivateKey>,
+    communication_pk: Option<PublicKey>,
+    pairwise_keys: HashMap<P2PAddress, PublicKey>,
 }
 
 struct Operator {
     id: String,
     bitvmx: BitVMXClient,
     address: Option<P2PAddress>,
-    aggregated_key: Option<PublicKey>,
+    keyring: Keyring,
 }
 
 impl Operator {
@@ -87,28 +109,14 @@ impl Operator {
             id: id.to_string(),
             address: None,
             bitvmx,
-            aggregated_key: None,
+            keyring: Keyring {
+                aggregated_key_1: None,
+                aggregated_key_2: None,
+                communication_sk: None,
+                communication_pk: None,
+                pairwise_keys: HashMap::new(),
+            },
         })
-    }
-
-    pub fn run(
-        &mut self,
-        barrier: Arc<Barrier>,
-        addresses: Arc<Mutex<Vec<P2PAddress>>>,
-        aggregation_id: Uuid,
-    ) -> Result<()> {
-        // get bitvmx node address and peer id
-        let address = self.get_peer_info()?;
-        addresses.lock().unwrap().push(address);
-
-        // wait for all operators to be done with previous step
-        barrier.wait();
-
-        // setup aggregated key
-        let all_addresses = addresses.lock().unwrap().clone();
-        self.setup_key(aggregation_id, &all_addresses)?;
-
-        Ok(())
     }
 
     pub fn get_peer_info(&mut self) -> Result<P2PAddress> {
@@ -119,13 +127,106 @@ impl Operator {
         Ok(addr)
     }
 
-    pub fn setup_key(&mut self, aggregation_id: Uuid, addresses: &Vec<P2PAddress>) -> Result<()> {
+    pub fn setup(&mut self, aggregation_id_1: Uuid, aggregation_id_2: Uuid, addresses: &Vec<P2PAddress>) -> Result<()> {
+        self.make_communication_key()?;
+        self.make_aggregated_keys(aggregation_id_1, aggregation_id_2, addresses)?;
+        self.make_pairwise_keys(addresses)?;
+        info!(
+            id = self.id,
+            communication_pk = ?self.keyring.communication_pk,
+            aggregated_key_1 = ?self.keyring.aggregated_key_1,
+            aggregated_key_2 = ?self.keyring.aggregated_key_2,
+            pairwise_keys = ?self.keyring.pairwise_keys,
+            "Setup complete"
+        );
+        Ok(())
+    }
+
+    fn make_communication_key(&mut self) -> Result<()> {
+        // TODO is this just a regular (sk,pk) pair?
+        let secp = Secp256k1::new();
+        let mut rng = secp256k1::rand::thread_rng();
+        let (secret_key, _) = secp.generate_keypair(&mut rng);
+        let private_key = PrivateKey {
+            compressed: true,
+            network: bitcoin::NetworkKind::Test,
+            inner: secret_key,
+        };
+        let public_key = private_key.public_key(&secp);
+
+        self.keyring.communication_sk = Some(private_key);
+        self.keyring.communication_pk = Some(public_key);
+
+        info!(
+            id = self.id,
+            public_key = ?public_key,
+            "Generated communication key"
+        );
+
+        Ok(())
+    }
+
+    fn make_aggregated_keys(&mut self, aggregation_id_1: Uuid, aggregation_id_2: Uuid, addresses: &Vec<P2PAddress>) -> Result<()> {
+        let aggregated_key_1 = self.setup_key(aggregation_id_1, addresses)?;
+        self.keyring.aggregated_key_1 = Some(aggregated_key_1);
+
+        let aggregated_key_2 = self.setup_key(aggregation_id_2, addresses)?;
+        self.keyring.aggregated_key_2 = Some(aggregated_key_2);
+
+        Ok(())
+    }
+
+    fn make_pairwise_keys(&mut self, all_addresses: &Vec<P2PAddress>) -> Result<()> {
+        let my_address = self
+            .address
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Operator address not set"))?
+            .clone();
+
+        // Create a sorted list of addresses to have a canonical order of pairs.
+        let mut sorted_addresses = all_addresses.clone();
+        sorted_addresses.sort();
+
+        for i in 0..sorted_addresses.len() {
+            for j in (i + 1)..sorted_addresses.len() {
+                println!("i: {}, j: {}", i, j);
+                let op1_address = &sorted_addresses[i];
+                let op2_address = &sorted_addresses[j];
+
+                // Check if the current operator is part of the pair
+                if my_address == *op1_address || my_address == *op2_address {
+                    let participants = vec![op1_address.clone(), op2_address.clone()];
+
+                    // Create a deterministic aggregation_id for the pair
+                    let namespace = Uuid::NAMESPACE_DNS;
+                    let name_to_hash = format!("{:?}{:?}", op1_address, op2_address);
+                    let aggregation_id = Uuid::new_v5(&namespace, name_to_hash.as_bytes());
+
+                    let pairwise_key = self.setup_key(aggregation_id, &participants)?;
+
+                    let other_address = if my_address == *op1_address {
+                        op2_address
+                    } else {
+                        op1_address
+                    };
+                    self.keyring
+                        .pairwise_keys
+                        .insert(other_address.clone(), pairwise_key);
+
+                    info!(peer = ?other_address, key = ?pairwise_key, "Generated pairwise key");
+                }
+                sleep(Duration::from_secs(1));
+            }
+        }
+        Ok(())
+    }
+
+    fn setup_key(&mut self, aggregation_id: Uuid, addresses: &Vec<P2PAddress>) -> Result<PublicKey> {
         self.bitvmx.setup_key(aggregation_id, addresses.clone(), 0)?;
 
         let aggregated_key = expect_msg!(self, AggregatedPubkey(_, key) => key)?;
-        self.aggregated_key = Some(aggregated_key);
         info!(aggregated_key = ?aggregated_key.inner, "Key setup complete");
 
-        Ok(())
+        Ok(aggregated_key)
     }
 }

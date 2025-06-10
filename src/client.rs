@@ -11,7 +11,6 @@ use bitcoin::{Transaction, Txid};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use std::thread;
 use std::time::{Duration, Instant};
-use tracing::info;
 use uuid::Uuid;
 
 pub struct BitVMXClient {
