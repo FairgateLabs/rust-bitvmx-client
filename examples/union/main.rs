@@ -148,12 +148,14 @@ impl Operator {
         addresses: Arc<Mutex<Vec<P2PAddress>>>,
         aggregation_id: Uuid,
     ) -> Result<()> {
+        // get bitvmx node address and peer id
         let address = self.get_peer_info()?;
         addresses.lock().unwrap().push(address);
 
         // wait for all operators to be done with previous step
         barrier.wait();
 
+        // setup aggregated key
         let all_addresses = addresses.lock().unwrap().clone();
         self.setup_key(aggregation_id, &all_addresses)?;
 
@@ -161,7 +163,6 @@ impl Operator {
     }
 
     pub fn get_peer_info(&mut self) -> Result<P2PAddress> {
-        // info!("Getting peer info");
         self.bitvmx.get_comm_info()?;
         let addr = expect_msg!(self, CommInfo(addr) => addr)?;
 
@@ -170,7 +171,6 @@ impl Operator {
     }
 
     pub fn setup_key(&mut self, aggregation_id: Uuid, addresses: &Vec<P2PAddress>) -> Result<()> {
-        // info!("Setting up key");
         self.bitvmx.setup_key(aggregation_id, addresses.clone(), 0)?;
 
         let aggregated_key = expect_msg!(self, AggregatedPubkey(_, key) => key)?;
