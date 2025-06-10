@@ -70,6 +70,10 @@ impl BitVMXClient {
         self.send_message(IncomingBitVMXApiMessages::GetAggregatedPubkey(id))
     }
 
+    pub fn get_comm_info(&self) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetCommInfo())
+    }
+
     pub fn generate_zkp(&self, id: Uuid, input: Vec<u8>) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::GenerateZKP(id, input))
     }
@@ -127,7 +131,7 @@ impl BitVMXClient {
     pub fn send_message(&self, msg: IncomingBitVMXApiMessages) -> Result<()> {
         // BitVMX instance uses ID 1 by convention
         let serialized = serde_json::to_string(&msg)?;
-        info!("Sending message to {}: {:?}", BITVMX_ID, serialized);
+        // info!("Sending message to {}: {:?}", BITVMX_ID, serialized);
         self.channel.send(BITVMX_ID, serialized)?;
         Ok(())
     }

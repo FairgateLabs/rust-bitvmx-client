@@ -5,53 +5,45 @@
 //! `cargo run --example union`
 
 use anyhow::Result;
-use bitcoin::{
-    key::{rand::rngs::OsRng, Parity, Secp256k1},
-    secp256k1::{self, All, PublicKey as SecpPublicKey, SecretKey},
-    Address, Amount, Network, PublicKey as BitcoinPubKey, Txid,
-};
-use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
-use bitvmx_broker::{
-    broker_storage::BrokerStorage,
-    channel::channel::{DualChannel, LocalChannel},
-    rpc::{sync_server::BrokerSync, BrokerConfig},
-};
 use bitvmx_client::{
+    client::BitVMXClient,
     config::Config,
-    program::{
-        self, participant::P2PAddress, variables::{VariableTypes, WitnessTypes}
-    },
-    types::{
-        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID, PROGRAM_TYPE_LOCK,
-    },
+    program::participant::P2PAddress,
+    types::{L2_ID, OutgoingBitVMXApiMessages::*},
 };
-
-use storage_backend::{storage::Storage, storage_config::StorageConfig};
-use tracing::info;
-use tracing_subscriber::EnvFilter;
-use uuid::Uuid;
-
 use std::{
-    str::FromStr,
     sync::{Arc, Barrier, Mutex, Once},
     thread,
 };
+use tracing::{info, info_span};
+use tracing_subscriber::EnvFilter;
+use uuid::Uuid;
+
+
+macro_rules! expect_msg {
+    ($self:expr, $pattern:pat => $expr:expr) => {{
+        let msg = $self.bitvmx.wait_message(None, None)?;
+
+        if let $pattern = msg {
+            Ok($expr)
+        } else {
+            Err(anyhow::anyhow!(
+                "Expected `{}` but got `{:?}`",
+                stringify!($pattern),
+                msg
+            ))
+        }
+    }};
+}
+
 
 static INIT: Once = Once::new();
 
+
 pub fn main() -> Result<()> {
     configure_tracing();
-
-    let config = StorageConfig::new("/tmp/union_broker".to_string(), None);
-    let broker_backend = Storage::new(&config)?;
-    let broker_backend = Arc::new(Mutex::new(broker_backend));
-    let broker_storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
-    let broker_config = BrokerConfig::new(54321, None);
-    let mut broker = BrokerSync::new(&broker_config, broker_storage.clone());
-
     run()?;
 
-    broker.close();
     Ok(())
 }
 
@@ -79,58 +71,17 @@ fn configure_tracing() {
         let filter = EnvFilter::builder()
             .parse(default_modules.join(","))
             .expect("Invalid filter");
-    
+
         tracing_subscriber::fmt()
-            //.without_time()
-            //.with_ansi(false)
+            .without_time()
             .with_target(true)
             .with_env_filter(filter)
             .init();
     });
 }
 
-pub fn wait_message_from_channel(channel: &DualChannel) -> Result<(String, u32)> {
-    //loop to timeout
-    let mut i = 0;
-    loop {
-        i += 1;
-        if i % 10 == 0 {
-            let msg = channel.recv()?;
-            if msg.is_some() {
-                //info!("Received message from channel: {:?}", msg);
-                return Ok(msg.unwrap());
-            }
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        if i > 100000 {
-            break;
-        }
-    }
-    panic!("Timeout waiting for message from channel");
-}
-
-pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, Address)> {
-    let config = Config::new(Some("config/op_1.yaml".to_string()))?;
-
-    let bitcoin_client = BitcoinClient::new(
-        &config.bitcoin.url,
-        &config.bitcoin.username,
-        &config.bitcoin.password,
-    )?;
-
-    let wallet = bitcoin_client
-        .init_wallet(Network::Regtest, "test_wallet")
-        .unwrap();
-
-    info!("Mine 1 blocks to address {:?}", wallet);
-    bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
-
-    Ok((bitcoin_client, wallet))
-}
-
 struct Committee {
     operators: Vec<Operator>,
-    addresses: Option<Vec<P2PAddress>>,
 }
 
 impl Committee {
@@ -142,11 +93,10 @@ impl Committee {
             Operator::new("op_4")?,
         ];
 
-        Ok(Self { operators, addresses: None })
+        Ok(Self { operators })
     }
 
     pub fn run(&mut self) -> Result<()> {
-        info!("Running committee...");
         let aggregation_id = Uuid::new_v4();
         let barrier = Arc::new(Barrier::new(self.operators.len()));
         let addresses = Arc::new(Mutex::new(Vec::new()));
@@ -157,7 +107,11 @@ impl Committee {
                 .map(|op| {
                     let barrier = barrier.clone();
                     let addresses = addresses.clone();
-                    s.spawn(move || op.run(barrier, addresses, aggregation_id))
+                    let span = info_span!("operator", id = %op.id);
+                    s.spawn(move || {
+                        let _guard = span.enter();
+                        op.run(barrier, addresses, aggregation_id)
+                    })
                 })
                 .collect();
             for handle in handles {
@@ -169,16 +123,23 @@ impl Committee {
 }
 
 struct Operator {
-    channel: DualChannel,
+    id: String,
+    bitvmx: BitVMXClient,
     address: Option<P2PAddress>,
+    aggregated_key: Option<bitcoin::PublicKey>,
 }
 
 impl Operator {
-    pub fn new(role: &str) -> Result<Self> {
-        let config = Config::new(Some(format!("config/{}.yaml", role)))?;
-        let broker_config = BrokerConfig::new(config.broker_port, None);
-        let bridge_client = DualChannel::new(&broker_config, L2_ID);
-        Ok(Self { channel: bridge_client, address: None })
+    pub fn new(id: &str) -> Result<Self> {
+        let config = Config::new(Some(format!("config/{}.yaml", id)))?;
+        let bitvmx = BitVMXClient::new(config.broker_port, L2_ID);
+
+        Ok(Self {
+            id: id.to_string(),
+            address: None,
+            bitvmx,
+            aggregated_key: None,
+        })
     }
 
     pub fn run(
@@ -190,6 +151,7 @@ impl Operator {
         let address = self.get_peer_info()?;
         addresses.lock().unwrap().push(address);
 
+        // wait for all operators to be done with previous step
         barrier.wait();
 
         let all_addresses = addresses.lock().unwrap().clone();
@@ -199,47 +161,21 @@ impl Operator {
     }
 
     pub fn get_peer_info(&mut self) -> Result<P2PAddress> {
-        let command = IncomingBitVMXApiMessages::GetCommInfo().to_string()?;
-        self.channel.send(BITVMX_ID, command)?;
-        let msg = wait_message_from_channel(&self.channel)?;
-        // info!("Received message from channel: {:?}", msg);
+        // info!("Getting peer info");
+        self.bitvmx.get_comm_info()?;
+        let addr = expect_msg!(self, CommInfo(addr) => addr)?;
 
-        let address;
-        let comm_info = OutgoingBitVMXApiMessages::from_string(&msg.0).unwrap();
-        match comm_info {
-            OutgoingBitVMXApiMessages::CommInfo(addr) => {
-                info!("CommInfo: {:?}", addr);
-                address = addr;
-            }
-            _ => panic!("Expected CommInfo message"),
-        }
-
-        self.address = Some(address.clone());
-
-        Ok(address)
+        self.address = Some(addr.clone());
+        Ok(addr)
     }
 
     pub fn setup_key(&mut self, aggregation_id: Uuid, addresses: &Vec<P2PAddress>) -> Result<()> {
-         let command =
-            IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), 0).to_string()?;
-        self.channel.send(BITVMX_ID, command)?;
+        // info!("Setting up key");
+        self.bitvmx.setup_key(aggregation_id, addresses.clone(), 0)?;
 
-        self.get_aggregated_pub_key()?;
-
-        Ok(())
-    }
-
-    pub fn get_aggregated_pub_key(&mut self) -> Result<()> {
-        let msg = wait_message_from_channel(&self.channel)?;
-        info!("Received message from channel: {:?}", msg);
-        let msg = OutgoingBitVMXApiMessages::from_string(&msg.0)?;
-        let aggregated_pub_key = match msg {
-            OutgoingBitVMXApiMessages::AggregatedPubkey(_uuid, aggregated_pub_key) => {
-                info!("Aggregated pubkey: {:?}", aggregated_pub_key);
-                aggregated_pub_key
-            }
-            _ => panic!("Expected AggregatedPubkey message"),
-        };
+        let aggregated_key = expect_msg!(self, AggregatedPubkey(_, key) => key)?;
+        self.aggregated_key = Some(aggregated_key);
+        info!(aggregated_key = ?aggregated_key.inner, "Key setup complete");
 
         Ok(())
     }
