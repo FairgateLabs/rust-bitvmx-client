@@ -1,9 +1,3 @@
-//! This example demonstrates a complete end-to-end workflow of peg-in and peg-out
-//! operations within the Union Bridge.
-//!
-//! To run this example, use the following command from the `rust-bitvmx-client` directory:
-//! `cargo run --example union`
-
 use anyhow::Result;
 use bitvmx_client::{
     client::BitVMXClient,
@@ -12,13 +6,12 @@ use bitvmx_client::{
     types::{L2_ID, OutgoingBitVMXApiMessages::*},
 };
 use std::{
-    sync::{Arc, Barrier, Mutex, Once},
+    sync::{Arc, Barrier, Mutex},
     thread,
 };
 use tracing::{info, info_span};
-use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
-
+use bitcoin::PublicKey;
 
 macro_rules! expect_msg {
     ($self:expr, $pattern:pat => $expr:expr) => {{
@@ -36,51 +29,7 @@ macro_rules! expect_msg {
     }};
 }
 
-
-static INIT: Once = Once::new();
-
-
-pub fn main() -> Result<()> {
-    configure_tracing();
-    run()?;
-
-    Ok(())
-}
-
-pub fn run() -> Result<()> {
-    let mut committee = Committee::new()?;
-    committee.run()?;
-    Ok(())
-}
-
-fn configure_tracing() {
-    INIT.call_once(|| {
-        let default_modules = [
-            "info",
-            "libp2p=off",
-            "bitvmx_transaction_monitor=off",
-            "bitcoin_indexer=off",
-            "bitcoin_coordinator=info",
-            "p2p_protocol=off",
-            "p2p_handler=off",
-            "tarpc=off",
-            "key_manager=off",
-            "memory=off",
-        ];
-    
-        let filter = EnvFilter::builder()
-            .parse(default_modules.join(","))
-            .expect("Invalid filter");
-
-        tracing_subscriber::fmt()
-            .without_time()
-            .with_target(true)
-            .with_env_filter(filter)
-            .init();
-    });
-}
-
-struct Committee {
+pub struct Committee {
     operators: Vec<Operator>,
 }
 
@@ -126,7 +75,7 @@ struct Operator {
     id: String,
     bitvmx: BitVMXClient,
     address: Option<P2PAddress>,
-    aggregated_key: Option<bitcoin::PublicKey>,
+    aggregated_key: Option<PublicKey>,
 }
 
 impl Operator {
