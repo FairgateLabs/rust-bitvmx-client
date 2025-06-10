@@ -131,6 +131,7 @@ impl Operator {
         self.make_communication_key()?;
         self.make_aggregated_keys(aggregation_id_1, aggregation_id_2, addresses)?;
         self.make_pairwise_keys(addresses)?;
+
         info!(
             id = self.id,
             communication_pk = ?self.keyring.communication_pk,
@@ -215,7 +216,6 @@ impl Operator {
 
                     info!(peer = ?other_address, key = ?pairwise_key, "Generated pairwise key");
                 }
-                sleep(Duration::from_secs(1));
             }
         }
         Ok(())
