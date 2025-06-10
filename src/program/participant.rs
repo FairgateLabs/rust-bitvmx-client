@@ -119,7 +119,7 @@ impl ParticipantKeys {
     }
 }
 
-#[derive(PartialEq, Clone, Serialize, Deserialize, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, Debug)]
 pub struct P2PAddress {
     pub address: String,
     pub peer_id: PeerId,
