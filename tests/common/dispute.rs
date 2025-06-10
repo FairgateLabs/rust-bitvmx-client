@@ -13,11 +13,24 @@ use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 
 use bitvmx_wallet::wallet::Wallet;
+use emulator::{
+    decision::challenge::{ForceChallenge, ForceCondition},
+    executor::utils::FailConfiguration,
+};
 use protocol_builder::types::{OutputType, Utxo};
 use tracing::info;
 use uuid::Uuid;
 
 use crate::common::{mine_and_wait, send_all, wait_message_from_channel};
+
+pub enum ForcedChallenges {
+    // Possible configurations for forced challenges with a malicious prover
+    TraceHash,
+    TraceHashZero,
+    EntryPoint,
+    ProgramCounter,
+    No,
+}
 
 pub fn prepare_dispute(
     participants: Vec<P2PAddress>,
@@ -30,8 +43,21 @@ pub fn prepare_dispute(
     fee: u32,
     fake: bool,
     fake_instruction: bool,
+    fail_force_config: ForcedChallenges,
 ) -> Result<Uuid> {
     let program_id = Uuid::new_v4();
+
+    let (fail_config_prover, fail_config_verifier, force, force_condition) =
+        get_fail_force_config(fail_force_config);
+
+    let set_fail_force_config = VariableTypes::FailConfiguration(
+        fail_config_prover,
+        fail_config_verifier,
+        force,
+        force_condition,
+    )
+    .set_msg(program_id, "fail_force_config")?;
+    send_all(&channels, &set_fail_force_config)?;
 
     if fake {
         let set_fake = VariableTypes::Number(1).set_msg(program_id, "FAKE_RUN")?;
@@ -231,5 +257,42 @@ pub fn process_dispatcher(
             instance.tick().unwrap();
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
+pub fn get_fail_force_config(
+    fail_force_config: ForcedChallenges,
+) -> (
+    Option<FailConfiguration>,
+    Option<FailConfiguration>,
+    ForceChallenge,
+    Option<ForceCondition>,
+) {
+    match fail_force_config {
+        ForcedChallenges::TraceHash => (
+            Some(FailConfiguration::new_fail_hash(100)),
+            None,
+            ForceChallenge::No,
+            Some(ForceCondition::ValidInputWrongStepOrHash),
+        ),
+        ForcedChallenges::TraceHashZero => (
+            Some(FailConfiguration::new_fail_hash(1)),
+            None,
+            ForceChallenge::No,
+            Some(ForceCondition::ValidInputWrongStepOrHash),
+        ),
+        ForcedChallenges::EntryPoint => (
+            Some(FailConfiguration::new_fail_pc(0)),
+            None,
+            ForceChallenge::No,
+            Some(ForceCondition::ValidInputWrongStepOrHash),
+        ),
+        ForcedChallenges::ProgramCounter => (
+            Some(FailConfiguration::new_fail_pc(1)),
+            None,
+            ForceChallenge::No,
+            Some(ForceCondition::ValidInputWrongStepOrHash),
+        ),
+        ForcedChallenges::No => (None, None, ForceChallenge::No, Some(ForceCondition::No)),
     }
 }
