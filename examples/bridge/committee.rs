@@ -5,7 +5,7 @@ use bitvmx_client::{
     program::participant::P2PAddress,
     types::{L2_ID, OutgoingBitVMXApiMessages::*},
 };
-use std::{thread::{self, sleep}, time::Duration};
+use std::thread;
 use tracing::{info, info_span};
 use uuid::Uuid;
 use bitcoin::{key::PrivateKey, secp256k1::{self, Secp256k1}, PublicKey};
@@ -27,8 +27,14 @@ macro_rules! expect_msg {
     }};
 }
 
+#[derive(Clone)]
+enum Role {
+    Operator,
+    Challenger,
+}
+
 pub struct Committee {
-    operators: Vec<Operator>,
+    members: Vec<Member>,
     // TODO come up with a better name for aggregation ids
     aggregation_id_1: Uuid,
     aggregation_id_2: Uuid,
@@ -36,28 +42,32 @@ pub struct Committee {
 
 impl Committee {
     pub fn new() -> Result<Self> {
-        let operators = vec![
-            Operator::new("op_1")?,
-            Operator::new("op_2")?,
-            Operator::new("op_3")?,
-            Operator::new("op_4")?,
+        let members = vec![
+            Member::new("op_1", Role::Operator)?,
+            Member::new("op_2", Role::Operator)?,
+            Member::new("op_3", Role::Operator)?,
+            Member::new("op_4", Role::Challenger)?,
         ];
 
-        Ok(Self { operators, aggregation_id_1: Uuid::new_v4(), aggregation_id_2: Uuid::new_v4() })
+        Ok(Self { members, aggregation_id_1: Uuid::new_v4(), aggregation_id_2: Uuid::new_v4() })
     }
 
     pub fn setup(&mut self) -> Result<()> {
         // gather all operator addresses
         // in a real scenario, operators should get this from the chain
-        let addresses = self.all(|op| op.get_peer_info())?;
+        let _addresses = self.all(|op| op.get_peer_info())?;
 
         // run setup for each operator
         let aggregation_id_1 = self.aggregation_id_1;
         let aggregation_id_2 = self.aggregation_id_2;
+
+        // Clone members to avoid borrowing issues
+        let members_clone = self.members.clone();
+
         self.all(|op| op.setup(
             aggregation_id_1,
             aggregation_id_2,
-            &addresses,
+            &members_clone,
         ))?;
 
         Ok(())
@@ -65,16 +75,16 @@ impl Committee {
 
     fn all<F, R>(&mut self, f: F) -> Result<Vec<R>>
     where
-        F: Fn(&mut Operator) -> Result<R> + Send + Sync + Clone,
+        F: Fn(&mut Member) -> Result<R> + Send + Sync + Clone,
         R: Send,
     {
         thread::scope(|s| {
-            self.operators
+            self.members
                 .iter_mut()
-                .map(|op| {
+                .map(|m| {
                     let f = f.clone();
-                    let span = info_span!("operator", id = %op.id);
-                    s.spawn(move || span.in_scope(|| f(op)))
+                    let span = info_span!("member", id = %m.id);
+                    s.spawn(move || span.in_scope(|| f(m)))
                 })
                 .collect::<Vec<_>>()
                 .into_iter()
@@ -84,6 +94,7 @@ impl Committee {
     }
 }
 
+#[derive(Clone)]
 struct Keyring {
     // TODO come up with a better name for aggregated keys
     aggregated_key_1: Option<PublicKey>,
@@ -93,20 +104,23 @@ struct Keyring {
     pairwise_keys: HashMap<P2PAddress, PublicKey>,
 }
 
-struct Operator {
+#[derive(Clone)]
+struct Member {
     id: String,
+    role: Role,
     bitvmx: BitVMXClient,
     address: Option<P2PAddress>,
     keyring: Keyring,
 }
 
-impl Operator {
-    pub fn new(id: &str) -> Result<Self> {
+impl Member {
+    pub fn new(id: &str, role: Role) -> Result<Self> {
         let config = Config::new(Some(format!("config/{}.yaml", id)))?;
         let bitvmx = BitVMXClient::new(config.broker_port, L2_ID);
 
         Ok(Self {
             id: id.to_string(),
+            role,
             address: None,
             bitvmx,
             keyring: Keyring {
@@ -127,10 +141,21 @@ impl Operator {
         Ok(addr)
     }
 
-    pub fn setup(&mut self, aggregation_id_1: Uuid, aggregation_id_2: Uuid, addresses: &Vec<P2PAddress>) -> Result<()> {
+    pub fn setup(&mut self, aggregation_id_1: Uuid, aggregation_id_2: Uuid, all_members: &Vec<Member>) -> Result<()> {
+        self.setup_keys(aggregation_id_1, aggregation_id_2, all_members)?;
+        self.setup_covenants()?;
+
+        Ok(())
+    }
+
+    fn setup_keys(&mut self, aggregation_id_1: Uuid, aggregation_id_2: Uuid, all_members: &Vec<Member>) -> Result<()> {
+        let addresses: Vec<P2PAddress> = all_members.iter()
+            .filter_map(|m| m.address.clone())
+            .collect();
+        
         self.make_communication_key()?;
-        self.make_aggregated_keys(aggregation_id_1, aggregation_id_2, addresses)?;
-        self.make_pairwise_keys(addresses)?;
+        self.make_aggregated_keys(aggregation_id_1, aggregation_id_2, &addresses)?;
+        self.make_pairwise_keys(all_members)?;
 
         info!(
             id = self.id,
@@ -140,6 +165,16 @@ impl Operator {
             pairwise_keys = ?self.keyring.pairwise_keys,
             "Setup complete"
         );
+
+        Ok(())
+    }
+
+    fn setup_covenants(&mut self) -> Result<()> {
+        self.setup_packet_covenant()?;
+        self.setup_dispute_core_covenant()?;
+        self.setup_multiparty_penalization_covenant()?;
+        self.setup_pairwise_penalization_covenant()?;
+
         Ok(())
     }
 
@@ -177,25 +212,35 @@ impl Operator {
         Ok(())
     }
 
-    fn make_pairwise_keys(&mut self, all_addresses: &Vec<P2PAddress>) -> Result<()> {
+    fn make_pairwise_keys(&mut self, all_members: &Vec<Member>) -> Result<()> {
         let my_address = self
             .address
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Operator address not set"))?
+            .ok_or_else(|| anyhow::anyhow!("Member address not set"))?
             .clone();
 
-        // Create a sorted list of addresses to have a canonical order of pairs.
-        let mut sorted_addresses = all_addresses.clone();
-        sorted_addresses.sort();
+        // Create a sorted list of members to have a canonical order of pairs.
+        let mut sorted_members = all_members.clone();
+        sorted_members.sort_by(|a, b| a.address.cmp(&b.address));
 
-        for i in 0..sorted_addresses.len() {
-            for j in (i + 1)..sorted_addresses.len() {
-                println!("i: {}, j: {}", i, j);
-                let op1_address = &sorted_addresses[i];
-                let op2_address = &sorted_addresses[j];
+        for i in 0..sorted_members.len() {
+            for j in (i + 1)..sorted_members.len() {
+                let member1 = &sorted_members[i];
+                let member2 = &sorted_members[j];
+                
+                let op1_address = member1.address.as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("Member address not set for {}", member1.id))?;
+                let op2_address = member2.address.as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("Member address not set for {}", member2.id))?;
 
                 // Check if the current operator is part of the pair
                 if my_address == *op1_address || my_address == *op2_address {
+                    // Skip key generation if both members are Challengers
+                    if matches!(member1.role, Role::Challenger) && matches!(member2.role, Role::Challenger) {
+                        info!("Skipping key generation between two Challengers: {:?} and {:?}", op1_address, op2_address);
+                        continue;
+                    }
+
                     let participants = vec![op1_address.clone(), op2_address.clone()];
 
                     // Create a deterministic aggregation_id for the pair
@@ -228,5 +273,25 @@ impl Operator {
         info!(aggregated_key = ?aggregated_key.inner, "Key setup complete");
 
         Ok(aggregated_key)
+    }
+
+    fn setup_packet_covenant(&mut self) -> Result<()> {
+        // TODO
+        Ok(())
+    }
+
+    fn setup_dispute_core_covenant(&mut self) -> Result<()> {
+        // TODO
+        Ok(())
+    }
+
+    fn setup_multiparty_penalization_covenant(&mut self) -> Result<()> {
+        // TODO
+        Ok(())
+    }
+
+    fn setup_pairwise_penalization_covenant(&mut self) -> Result<()> {
+        // TODO
+        Ok(())
     }
 }

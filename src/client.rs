@@ -13,6 +13,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+#[derive(Clone)]
 pub struct BitVMXClient {
     channel: DualChannel,
     _client_id: u32,
