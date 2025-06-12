@@ -20,7 +20,15 @@ use crate::keychain::KeyChain;
 use crate::program::variables::WitnessTypes;
 use crate::program::{variables::VariableTypes, witness};
 use crate::types::{
-    ProgramContext, PROGRAM_TYPE_DRP, PROGRAM_TYPE_LOCK, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TRANSFER,
+    ProgramContext,
+    PROGRAM_TYPE_DRP,
+    PROGRAM_TYPE_LOCK,
+    PROGRAM_TYPE_SLOT,
+    PROGRAM_TYPE_TRANSFER,
+    PROGRAM_TYPE_DISPUTE_CORE,
+    PROGRAM_TYPE_PAIRWISE_PENALIZATION,
+    PROGRAM_TYPE_MULTIPARTY_PENALIZATION,
+    PROGRAM_TYPE_PACKET,
 };
 
 use super::super::participant::ParticipantKeys;
@@ -315,6 +323,10 @@ pub fn new_protocol_type(
         PROGRAM_TYPE_LOCK => Ok(ProtocolType::LockProtocol(LockProtocol::new(ctx))),
         PROGRAM_TYPE_SLOT => Ok(ProtocolType::SlotProtocol(SlotProtocol::new(ctx))),
         PROGRAM_TYPE_TRANSFER => Ok(ProtocolType::TransferProtocol(TransferProtocol::new(ctx))),
+        PROGRAM_TYPE_DISPUTE_CORE => todo!(),
+        PROGRAM_TYPE_PAIRWISE_PENALIZATION => todo!(),
+        PROGRAM_TYPE_MULTIPARTY_PENALIZATION => todo!(),
+        PROGRAM_TYPE_PACKET => todo!(),
         _ => Err(BitVMXError::NotImplemented(name.to_string())),
     }
 }
