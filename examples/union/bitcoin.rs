@@ -43,6 +43,30 @@ fn config_trace() {
         .init();
 }
 
+pub fn stop_existing_bitcoind() -> Result<()> {
+    info!("Checking for existing bitcoind instance...");
+    
+    let config = Config::new(Some("config/op_1.yaml".to_string()))?;
+    
+    // Create a temporary Bitcoind instance to check if one is running and stop it
+    let temp_bitcoind = Bitcoind::new(
+        "bitcoin-regtest",
+        "ruimarinho/bitcoin-core",
+        config.bitcoin.clone(),
+    );
+    
+    // Attempt to stop any existing instance
+    match temp_bitcoind.stop() {
+        Ok(_) => info!("Successfully stopped existing bitcoind instance"),
+        Err(e) => {
+            // This is expected if no instance was running
+            info!("No existing bitcoind instance found or error stopping: {}", e);
+        }
+    }
+    
+    Ok(())
+}
+
 pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
     let config = Config::new(Some("config/op_1.yaml".to_string()))?;
 

@@ -2,7 +2,7 @@
 
 To run this example, first `cd` into rust-bitvmx-client root and start a bitcoin node:
 ```bash
-cargo test  -- --ignored test_prepare_bitcoin
+cargo run --example union setup_bitcoin_node
 ```
 
 Start a Bitvmx instance (defaults to four operators):
@@ -10,7 +10,7 @@ Start a Bitvmx instance (defaults to four operators):
 cargo run all
 ```
 
-Run the example script:
+Run a pegin example script:
 ```bash
-RUST_BACKTRACE=1 cargo run --example bridge
+RUST_BACKTRACE=1 cargo run --example union pegin
 ```
