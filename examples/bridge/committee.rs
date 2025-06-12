@@ -3,10 +3,10 @@ use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
     program::participant::P2PAddress,
-    types::{L2_ID, OutgoingBitVMXApiMessages::*},
+    types::{L2_ID, OutgoingBitVMXApiMessages::*, PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_DRP},
 };
 use std::thread;
-use tracing::{info, info_span};
+use tracing::{info, info_span, warn};
 use uuid::Uuid;
 use bitcoin::{key::PrivateKey, secp256k1::{self, Secp256k1}, PublicKey};
 use std::collections::HashMap;
@@ -95,6 +95,22 @@ impl Committee {
 }
 
 #[derive(Clone)]
+struct DrpCovenant {
+    covenant_id: Uuid,
+    counterparty: P2PAddress,
+}
+
+#[derive(Clone)]
+struct Covenants {
+    drp_covenants: Vec<DrpCovenant>,
+    // TODO: Add other covenant types here as needed
+    // packet_covenants: Vec<PacketCovenant>,
+    // dispute_core_covenants: Vec<DisputeCoreCovenant>,
+    // multiparty_penalization_covenants: Vec<MultipartyPenalizationCovenant>,
+    // pairwise_penalization_covenants: Vec<PairwisePenalizationCovenant>,
+}
+
+#[derive(Clone)]
 struct Keyring {
     // TODO come up with a better name for aggregated keys
     aggregated_key_1: Option<PublicKey>,
@@ -111,6 +127,7 @@ struct Member {
     bitvmx: BitVMXClient,
     address: Option<P2PAddress>,
     keyring: Keyring,
+    covenants: Covenants,
 }
 
 impl Member {
@@ -130,6 +147,9 @@ impl Member {
                 communication_pk: None,
                 pairwise_keys: HashMap::new(),
             },
+            covenants: Covenants {
+                drp_covenants: Vec::new(),
+            },
         })
     }
 
@@ -141,21 +161,21 @@ impl Member {
         Ok(addr)
     }
 
-    pub fn setup(&mut self, aggregation_id_1: Uuid, aggregation_id_2: Uuid, all_members: &Vec<Member>) -> Result<()> {
-        self.setup_keys(aggregation_id_1, aggregation_id_2, all_members)?;
-        self.setup_covenants()?;
+    pub fn setup(&mut self, aggregation_id_1: Uuid, aggregation_id_2: Uuid, members: &Vec<Member>) -> Result<()> {
+        self.setup_keys(aggregation_id_1, aggregation_id_2, members)?;
+        self.setup_covenants(members)?;
 
         Ok(())
     }
 
-    fn setup_keys(&mut self, aggregation_id_1: Uuid, aggregation_id_2: Uuid, all_members: &Vec<Member>) -> Result<()> {
-        let addresses: Vec<P2PAddress> = all_members.iter()
+    fn setup_keys(&mut self, aggregation_id_1: Uuid, aggregation_id_2: Uuid, members: &Vec<Member>) -> Result<()> {
+        let addresses: Vec<P2PAddress> = members.iter()
             .filter_map(|m| m.address.clone())
             .collect();
         
         self.make_communication_key()?;
         self.make_aggregated_keys(aggregation_id_1, aggregation_id_2, &addresses)?;
-        self.make_pairwise_keys(all_members)?;
+        self.make_pairwise_keys(members, aggregation_id_1)?;
 
         info!(
             id = self.id,
@@ -163,17 +183,24 @@ impl Member {
             aggregated_key_1 = ?self.keyring.aggregated_key_1,
             aggregated_key_2 = ?self.keyring.aggregated_key_2,
             pairwise_keys = ?self.keyring.pairwise_keys,
-            "Setup complete"
+            "Keys setup complete"
         );
 
         Ok(())
     }
 
-    fn setup_covenants(&mut self) -> Result<()> {
+    fn setup_covenants(&mut self, members: &Vec<Member>) -> Result<()> {
         self.setup_packet_covenant()?;
-        self.setup_dispute_core_covenant()?;
+        // self.setup_dispute_core_covenant(members)?;
         self.setup_multiparty_penalization_covenant()?;
         self.setup_pairwise_penalization_covenant()?;
+        // self.setup_drp_covenant(members)?;
+
+        // info!(
+        //     id = self.id,
+        //     drp_covenants_count = self.covenants.drp_covenants.len(),
+        //     "Covenant setup complete"
+        // );
 
         Ok(())
     }
@@ -212,7 +239,7 @@ impl Member {
         Ok(())
     }
 
-    fn make_pairwise_keys(&mut self, all_members: &Vec<Member>) -> Result<()> {
+    fn make_pairwise_keys(&mut self, members: &Vec<Member>, session_id: Uuid) -> Result<()> {
         let my_address = self
             .address
             .as_ref()
@@ -220,7 +247,7 @@ impl Member {
             .clone();
 
         // Create a sorted list of members to have a canonical order of pairs.
-        let mut sorted_members = all_members.clone();
+        let mut sorted_members = members.clone();
         sorted_members.sort_by(|a, b| a.address.cmp(&b.address));
 
         for i in 0..sorted_members.len() {
@@ -243,11 +270,18 @@ impl Member {
 
                     let participants = vec![op1_address.clone(), op2_address.clone()];
 
-                    // Create a deterministic aggregation_id for the pair
+                    // Create a deterministic aggregation_id for the pair that includes session_id
                     let namespace = Uuid::NAMESPACE_DNS;
-                    let name_to_hash = format!("{:?}{:?}", op1_address, op2_address);
+                    let name_to_hash = format!("{:?}{:?}{:?}", op1_address, op2_address, session_id);
                     let aggregation_id = Uuid::new_v5(&namespace, name_to_hash.as_bytes());
-
+                    warn!(
+                        id = self.id,
+                        op1_address = ?op1_address,
+                        op2_address = ?op2_address,
+                        session_id = ?session_id,
+                        aggregation_id = ?aggregation_id,
+                        "aggregation id"
+                    );
                     let pairwise_key = self.setup_key(aggregation_id, &participants)?;
 
                     let other_address = if my_address == *op1_address {
@@ -280,8 +314,11 @@ impl Member {
         Ok(())
     }
 
-    fn setup_dispute_core_covenant(&mut self) -> Result<()> {
-        // TODO
+    fn setup_dispute_core_covenant(&mut self, members: &Vec<Member>) -> Result<()> {
+        let id = Uuid::new_v4();
+        let addresses = self.get_addresses(members);
+
+        self.bitvmx.setup(id, PROGRAM_TYPE_DISPUTE_CORE.to_string(), addresses, 0)?;
         Ok(())
     }
 
@@ -293,5 +330,100 @@ impl Member {
     fn setup_pairwise_penalization_covenant(&mut self) -> Result<()> {
         // TODO
         Ok(())
+    }
+
+    fn setup_drp_covenant(&mut self, members: &Vec<Member>) -> Result<()> {
+        let my_address = self
+            .address
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Member address not set"))?
+            .clone();
+
+        // Create a sorted list of members to have a canonical order of pairs.
+        let mut sorted_members = members.clone();
+        sorted_members.sort_by(|a, b| a.address.cmp(&b.address));
+
+        for i in 0..sorted_members.len() {
+            for j in (i + 1)..sorted_members.len() {
+                let member1 = &sorted_members[i];
+                let member2 = &sorted_members[j];
+                
+                let op1_address = member1.address.as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("Member address not set for {}", member1.id))?;
+                let op2_address = member2.address.as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("Member address not set for {}", member2.id))?;
+
+                // Check if the current operator is part of the pair
+                if my_address == *op1_address || my_address == *op2_address {
+                    // Skip covenant generation if both members are Challengers
+                    if matches!(member1.role, Role::Challenger) && matches!(member2.role, Role::Challenger) {
+                        info!("Skipping DRP covenant generation between two Challengers: {:?} and {:?}", op1_address, op2_address);
+                        continue;
+                    }
+
+                    // Unlike pairwise keys, DRP covenants need to be created in both directions
+                    // Create covenant for op1_address -> op2_address
+                    let covenant_id_1 = Uuid::new_v4();
+                    let participants_1 = vec![op1_address.clone(), op2_address.clone()];
+                    self.bitvmx.setup(covenant_id_1, PROGRAM_TYPE_DRP.to_string(), participants_1, 0)?;
+                    
+                    let other_address_1 = if my_address == *op1_address {
+                        op2_address
+                    } else {
+                        op1_address
+                    };
+                    
+                    self.covenants.drp_covenants.push(DrpCovenant {
+                        covenant_id: covenant_id_1,
+                        counterparty: other_address_1.clone(),
+                    });
+
+                    // Create covenant for op2_address -> op1_address  
+                    let covenant_id_2 = Uuid::new_v4();
+                    let participants_2 = vec![op2_address.clone(), op1_address.clone()];
+                    self.bitvmx.setup(covenant_id_2, PROGRAM_TYPE_DRP.to_string(), participants_2, 0)?;
+                    
+                    self.covenants.drp_covenants.push(DrpCovenant {
+                        covenant_id: covenant_id_2,
+                        counterparty: other_address_1.clone(),
+                    });
+
+                    info!(
+                        id = self.id,
+                        counterparty = ?other_address_1,
+                        covenant_1 = ?covenant_id_1,
+                        covenant_2 = ?covenant_id_2,
+                        "Setup DRP covenants"
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn get_addresses(&self, members: &Vec<Member>) -> Vec<P2PAddress> {
+        members.iter()
+            .filter_map(|m| m.address.clone())
+            .collect()
+    }
+
+    /// Get all DRP covenant IDs for a specific counterparty
+    fn get_drp_covenants_for_counterparty(&self, counterparty: &P2PAddress) -> Vec<Uuid> {
+        self.covenants
+            .drp_covenants
+            .iter()
+            .filter(|covenant| covenant.counterparty == *counterparty)
+            .map(|covenant| covenant.covenant_id)
+            .collect()
+    }
+
+    /// Get all DRP covenant IDs
+    fn get_all_drp_covenant_ids(&self) -> Vec<Uuid> {
+        self.covenants
+            .drp_covenants
+            .iter()
+            .map(|covenant| covenant.covenant_id)
+            .collect()
     }
 }
