@@ -17,7 +17,7 @@ use protocol_builder::types::{OutputType, Utxo};
 use tracing::info;
 use uuid::Uuid;
 
-use crate::common::{mine_and_wait, send_all, wait_message_from_channel};
+use super::{mine_and_wait, send_all, wait_message_from_channel};
 
 pub fn prepare_dispute(
     participants: Vec<P2PAddress>,

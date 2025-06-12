@@ -1,15 +1,29 @@
 use anyhow::Result;
+use bitcoind::bitcoind::Bitcoind;
+use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
-    program::participant::P2PAddress,
-    types::{L2_ID, OutgoingBitVMXApiMessages::*, PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_DRP},
+    program::{participant::P2PAddress, variables::VariableTypes},
+    types::{OutgoingBitVMXApiMessages::*, L2_ID, PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_DRP, PROGRAM_TYPE_SLOT},
 };
-use std::thread;
+#[path = "../../tests/common/mod.rs"]
+mod common;
+use bitvmx_wallet::wallet::Wallet;
+use common::{
+    config_trace,
+    dispute::{execute_dispute, prepare_dispute},
+    get_all, init_bitvmx, init_utxo, mine_and_wait, send_all,
+    wait_message_from_channel,
+};
+use std::{thread, time::Duration};
 use tracing::{info, info_span, warn};
 use uuid::Uuid;
-use bitcoin::{key::PrivateKey, secp256k1::{self, Secp256k1}, PublicKey};
+use bitcoin::{key::PrivateKey, secp256k1::{self, Secp256k1}, Network, PublicKey};
 use std::collections::HashMap;
+use protocol_builder::types::Utxo;
+
+use crate::committee::common::{clear_db, FUNDING_ID, INITIAL_BLOCK_COUNT, WALLET_NAME};
 
 macro_rules! expect_msg {
     ($self:expr, $pattern:pat => $expr:expr) => {{
@@ -27,6 +41,11 @@ macro_rules! expect_msg {
     }};
 }
 
+struct Bitcoin {
+    bitcoin_client: BitcoinClient,
+    wallet: Wallet,
+}
+
 #[derive(Clone)]
 enum Role {
     Operator,
@@ -38,6 +57,7 @@ pub struct Committee {
     // TODO come up with a better name for aggregation ids
     aggregation_id_1: Uuid,
     aggregation_id_2: Uuid,
+    bitcoin: Bitcoin,
 }
 
 impl Committee {
@@ -49,7 +69,20 @@ impl Committee {
             Member::new("op_4", Role::Challenger)?,
         ];
 
-        Ok(Self { members, aggregation_id_1: Uuid::new_v4(), aggregation_id_2: Uuid::new_v4() })
+        let (bitcoin_client, wallet) = get_bitcoin_client()?;
+
+        Ok(Self { members, aggregation_id_1: Uuid::new_v4(), aggregation_id_2: Uuid::new_v4(), bitcoin: Bitcoin { bitcoin_client, wallet } })
+    }
+
+    pub fn prepare_utxo(&mut self) -> Result<Utxo> {
+        //======================================================
+        //       INITIALIZE UTXO TO PAY THE SLOT AND DISPUTE CHANNEL
+        //====================================================
+        // Protocol fees funding
+        let fund_value = 10_000_000;
+        let utxo = init_utxo(&self.bitcoin.wallet, self.members[0].keyring.aggregated_key_1.unwrap(), None, fund_value)?;
+
+        Ok(utxo)
     }
 
     pub fn setup(&mut self) -> Result<()> {
@@ -64,11 +97,15 @@ impl Committee {
         // Clone members to avoid borrowing issues
         let members_clone = self.members.clone();
 
-        self.all(|op| op.setup(
+        self.all(|op| op.setup_keys(
             aggregation_id_1,
             aggregation_id_2,
             &members_clone,
         ))?;
+
+        thread::sleep(Duration::from_secs(5));
+        let utxo = self.prepare_utxo()?;
+        self.all(|op| op.setup_covenants(&members_clone, &utxo))?;
 
         Ok(())
     }
@@ -153,19 +190,23 @@ impl Member {
         })
     }
 
+    pub fn prepare_drp(&mut self, covenant_id: Uuid, member1: &Member, member2: &Member, addresses: &Vec<P2PAddress>, utxo: &Utxo) -> Result<()> {
+        let program_path = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
+        self.bitvmx.set_var(
+            covenant_id,
+            "program_definition",
+            VariableTypes::String(program_path.to_string())
+        )?;
+
+        Ok(())
+    }
+
     pub fn get_peer_info(&mut self) -> Result<P2PAddress> {
         self.bitvmx.get_comm_info()?;
         let addr = expect_msg!(self, CommInfo(addr) => addr)?;
 
         self.address = Some(addr.clone());
         Ok(addr)
-    }
-
-    pub fn setup(&mut self, aggregation_id_1: Uuid, aggregation_id_2: Uuid, members: &Vec<Member>) -> Result<()> {
-        self.setup_keys(aggregation_id_1, aggregation_id_2, members)?;
-        self.setup_covenants(members)?;
-
-        Ok(())
     }
 
     fn setup_keys(&mut self, aggregation_id_1: Uuid, aggregation_id_2: Uuid, members: &Vec<Member>) -> Result<()> {
@@ -189,12 +230,12 @@ impl Member {
         Ok(())
     }
 
-    fn setup_covenants(&mut self, members: &Vec<Member>) -> Result<()> {
+    fn setup_covenants(&mut self, members: &Vec<Member>, utxo: &Utxo) -> Result<()> {
         self.setup_packet_covenant()?;
         // self.setup_dispute_core_covenant(members)?;
         self.setup_multiparty_penalization_covenant()?;
         self.setup_pairwise_penalization_covenant()?;
-        // self.setup_drp_covenant(members)?;
+        self.setup_drp_covenant(members, utxo)?;
 
         // info!(
         //     id = self.id,
@@ -332,7 +373,7 @@ impl Member {
         Ok(())
     }
 
-    fn setup_drp_covenant(&mut self, members: &Vec<Member>) -> Result<()> {
+    fn setup_drp_covenant(&mut self, members: &Vec<Member>, utxo: &Utxo) -> Result<()> {
         let my_address = self
             .address
             .as_ref()
@@ -365,34 +406,35 @@ impl Member {
                     // Create covenant for op1_address -> op2_address
                     let covenant_id_1 = Uuid::new_v4();
                     let participants_1 = vec![op1_address.clone(), op2_address.clone()];
+                    self.prepare_drp(covenant_id_1, member1, member2, &self.get_addresses(members), utxo)?;
                     self.bitvmx.setup(covenant_id_1, PROGRAM_TYPE_DRP.to_string(), participants_1, 0)?;
-                    
+
                     let other_address_1 = if my_address == *op1_address {
                         op2_address
                     } else {
                         op1_address
                     };
-                    
+
                     self.covenants.drp_covenants.push(DrpCovenant {
                         covenant_id: covenant_id_1,
                         counterparty: other_address_1.clone(),
                     });
 
-                    // Create covenant for op2_address -> op1_address  
-                    let covenant_id_2 = Uuid::new_v4();
-                    let participants_2 = vec![op2_address.clone(), op1_address.clone()];
-                    self.bitvmx.setup(covenant_id_2, PROGRAM_TYPE_DRP.to_string(), participants_2, 0)?;
+                    // // Create covenant for op2_address -> op1_address  
+                    // let covenant_id_2 = Uuid::new_v4();
+                    // let participants_2 = vec![op2_address.clone(), op1_address.clone()];
+                    // self.bitvmx.setup(covenant_id_2, PROGRAM_TYPE_DRP.to_string(), participants_2, 0)?;
                     
-                    self.covenants.drp_covenants.push(DrpCovenant {
-                        covenant_id: covenant_id_2,
-                        counterparty: other_address_1.clone(),
-                    });
+                    // self.covenants.drp_covenants.push(DrpCovenant {
+                    //     covenant_id: covenant_id_2,
+                    //     counterparty: other_address_1.clone(),
+                    // });
 
                     info!(
                         id = self.id,
                         counterparty = ?other_address_1,
                         covenant_1 = ?covenant_id_1,
-                        covenant_2 = ?covenant_id_2,
+                        // covenant_2 = ?covenant_id_2,
                         "Setup DRP covenants"
                     );
                 }
@@ -426,4 +468,53 @@ impl Member {
             .map(|covenant| covenant.covenant_id)
             .collect()
     }
+}
+
+pub fn hardcoded_unspendable() -> PublicKey {
+    // hardcoded unspendable
+    let key_bytes =
+        hex::decode("02f286025adef23a29582a429ee1b201ba400a9c57e5856840ca139abb629889ad")
+            .expect("Invalid hex input");
+    PublicKey::from_slice(&key_bytes).expect("Invalid public key")
+}
+
+// pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
+pub fn get_bitcoin_client() -> Result<(BitcoinClient, Wallet)> {
+    let config = Config::new(Some("config/op_1.yaml".to_string()))?;
+
+    // let bitcoind = Bitcoind::new(
+    //     "bitcoin-regtest",
+    //     "ruimarinho/bitcoin-core",
+    //     config.bitcoin.clone(),
+    // );
+    // info!("Starting bitcoind");
+    // bitcoind.start()?;
+
+    let wallet_config = match config.bitcoin.network {
+        Network::Regtest => "config/wallet_regtest.yaml",
+        Network::Testnet => "config/wallet_testnet.yaml",
+        _ => panic!("Not supported network {}", config.bitcoin.network),
+    };
+
+    let wallet_config = bitvmx_settings::settings::load_config_file::<
+        bitvmx_wallet::config::WalletConfig,
+    >(Some(wallet_config.to_string()))?;
+    if config.bitcoin.network == Network::Regtest {
+        clear_db(&wallet_config.storage.path);
+        clear_db(&wallet_config.key_storage.path);
+    }
+    let wallet = Wallet::new(wallet_config, true)?;
+    wallet.mine(INITIAL_BLOCK_COUNT)?;
+
+    wallet.create_wallet(WALLET_NAME)?;
+    wallet.regtest_fund(WALLET_NAME, FUNDING_ID, 100_000_000)?;
+
+    let bitcoin_client = BitcoinClient::new(
+        &config.bitcoin.url,
+        &config.bitcoin.username,
+        &config.bitcoin.password,
+    )?;
+
+    // Ok((bitcoin_client, bitcoind, wallet))
+    Ok((bitcoin_client, wallet))
 }

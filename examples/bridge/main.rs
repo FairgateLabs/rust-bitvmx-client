@@ -3,16 +3,30 @@
 //!
 //! To run this example, use the following command from the `rust-bitvmx-client` directory:
 //! `cargo run --example bridge`
+//!
+//! To run just the bitcoin setup, use:
+//! `BITCOIN_ONLY=1 cargo run --example bridge`
 
 use anyhow::Result;
+use std::env;
 
 mod committee;
 use committee::Committee;
 
 mod log;
+mod bitcoin;
 
 pub fn main() -> Result<()> {
     log::configure_tracing();
+    
+    // Check if we should run only bitcoin setup
+    if env::var("BITCOIN_ONLY").is_ok() {
+        println!("Running Bitcoin setup only...");
+        let (_bitcoin_client, _bitcoind, _wallet) = bitcoin::prepare_bitcoin()?;
+        println!("Bitcoin setup completed successfully!");
+        return Ok(());
+    }
+    
     pegin()?;
 
     Ok(())
