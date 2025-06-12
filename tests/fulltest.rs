@@ -7,6 +7,7 @@ use bitcoin::{
 use bitvmx_client::{
     program::{
         self,
+        participant::ParticipantRole,
         protocols::{
             dispute::TIMELOCK_BLOCKS, protocol_handler::external_fund_tx, slot::group_id,
             transfer::pub_too_group,
@@ -191,7 +192,7 @@ pub fn test_full() -> Result<()> {
         tx_fee as u32,
         fake_drp,
         fake_instruction,
-        ForcedChallenges::TraceHash,
+        ForcedChallenges::TraceHash(ParticipantRole::Prover),
     )?;
 
     //WAIT SETUP READY

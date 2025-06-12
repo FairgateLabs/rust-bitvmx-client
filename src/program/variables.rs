@@ -31,7 +31,7 @@ pub enum VariableTypes {
         Option<FailConfiguration>,
         Option<FailConfiguration>,
         emulator::decision::challenge::ForceChallenge,
-        Option<emulator::decision::challenge::ForceCondition>,
+        emulator::decision::challenge::ForceCondition,
     ),
 }
 
@@ -84,7 +84,7 @@ impl VariableTypes {
             Option<FailConfiguration>,
             Option<FailConfiguration>,
             emulator::decision::challenge::ForceChallenge,
-            Option<emulator::decision::challenge::ForceCondition>,
+            emulator::decision::challenge::ForceCondition,
         ),
         BitVMXError,
     > {

@@ -5,7 +5,10 @@ use bitvmx_broker::channel::channel::DualChannel;
 use bitvmx_client::{
     bitvmx::BitVMX,
     program::{
-        self, participant::P2PAddress, protocols::dispute::EXECUTE, variables::VariableTypes,
+        self,
+        participant::{P2PAddress, ParticipantRole},
+        protocols::dispute::EXECUTE,
+        variables::VariableTypes,
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_DRP},
 };
@@ -25,10 +28,10 @@ use crate::common::{mine_and_wait, send_all, wait_message_from_channel};
 
 pub enum ForcedChallenges {
     // Possible configurations for forced challenges with a malicious prover
-    TraceHash,
-    TraceHashZero,
-    EntryPoint,
-    ProgramCounter,
+    TraceHash(ParticipantRole),
+    TraceHashZero(ParticipantRole),
+    EntryPoint(ParticipantRole),
+    ProgramCounter(ParticipantRole),
     No,
 }
 
@@ -266,33 +269,57 @@ pub fn get_fail_force_config(
     Option<FailConfiguration>,
     Option<FailConfiguration>,
     ForceChallenge,
-    Option<ForceCondition>,
+    ForceCondition,
 ) {
     match fail_force_config {
-        ForcedChallenges::TraceHash => (
+        ForcedChallenges::TraceHash(ParticipantRole::Prover) => (
             Some(FailConfiguration::new_fail_hash(100)),
             None,
             ForceChallenge::No,
-            Some(ForceCondition::ValidInputWrongStepOrHash),
+            ForceCondition::ValidInputWrongStepOrHash,
         ),
-        ForcedChallenges::TraceHashZero => (
+        ForcedChallenges::TraceHashZero(ParticipantRole::Prover) => (
             Some(FailConfiguration::new_fail_hash(1)),
             None,
             ForceChallenge::No,
-            Some(ForceCondition::ValidInputWrongStepOrHash),
+            ForceCondition::ValidInputWrongStepOrHash,
         ),
-        ForcedChallenges::EntryPoint => (
+        ForcedChallenges::EntryPoint(ParticipantRole::Prover) => (
             Some(FailConfiguration::new_fail_pc(0)),
             None,
             ForceChallenge::No,
-            Some(ForceCondition::ValidInputWrongStepOrHash),
+            ForceCondition::ValidInputWrongStepOrHash,
         ),
-        ForcedChallenges::ProgramCounter => (
+        ForcedChallenges::ProgramCounter(ParticipantRole::Prover) => (
             Some(FailConfiguration::new_fail_pc(1)),
             None,
             ForceChallenge::No,
-            Some(ForceCondition::ValidInputWrongStepOrHash),
+            ForceCondition::ValidInputWrongStepOrHash,
         ),
-        ForcedChallenges::No => (None, None, ForceChallenge::No, Some(ForceCondition::No)),
+        ForcedChallenges::TraceHash(ParticipantRole::Verifier) => (
+            None,
+            Some(FailConfiguration::new_fail_hash(100)),
+            ForceChallenge::TraceHash,
+            ForceCondition::ValidInputWrongStepOrHash,
+        ),
+        ForcedChallenges::TraceHashZero(ParticipantRole::Verifier) => (
+            None,
+            Some(FailConfiguration::new_fail_hash(1)),
+            ForceChallenge::TraceHashZero,
+            ForceCondition::ValidInputWrongStepOrHash,
+        ),
+        ForcedChallenges::EntryPoint(ParticipantRole::Verifier) => (
+            None,
+            Some(FailConfiguration::new_fail_pc(0)),
+            ForceChallenge::EntryPoint,
+            ForceCondition::ValidInputWrongStepOrHash,
+        ),
+        ForcedChallenges::ProgramCounter(ParticipantRole::Verifier) => (
+            None,
+            Some(FailConfiguration::new_fail_pc(1)),
+            ForceChallenge::ProgramCounter,
+            ForceCondition::ValidInputWrongStepOrHash,
+        ),
+        ForcedChallenges::No => (None, None, ForceChallenge::No, ForceCondition::No),
     }
 }

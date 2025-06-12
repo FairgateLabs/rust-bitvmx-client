@@ -262,8 +262,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             self.role()
         );
 
-        //TODO: use force
-        let (fail_config_prover, fail_config_verifier, _force, force_condition) = program_context
+        let (fail_config_prover, fail_config_verifier, force, force_condition) = program_context
             .globals
             .get_var(&self.ctx.id, "fail_force_config")?
             .unwrap()
@@ -387,7 +386,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     last_step,
                     hex::encode(last_hash),
                     format!("{}/{}", execution_path, "execution.json").to_string(),
-                    force_condition.clone(),
+                    force_condition,
                     fail_config_verifier.clone(),
                 ),
             })?;
@@ -640,6 +639,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     final_trace,
                     format!("{}/{}", execution_path, "execution.json").to_string(),
                     fail_config_verifier.clone(),
+                    force,
                 ),
             })?;
             program_context.broker_channel.send(EMULATOR_ID, msg)?;

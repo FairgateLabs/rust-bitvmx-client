@@ -3,6 +3,7 @@ use bitcoin::Amount;
 use bitvmx_client::{
     program::{
         self,
+        participant::ParticipantRole,
         protocols::{dispute::TIMELOCK_BLOCKS, protocol_handler::external_fund_tx, slot::group_id},
         variables::VariableTypes,
     },
@@ -167,7 +168,7 @@ pub fn test_slot() -> Result<()> {
         tx_fee as u32,
         fake_drp,
         fake_instruction,
-        ForcedChallenges::TraceHash,
+        ForcedChallenges::TraceHash(ParticipantRole::Prover),
     )?;
     let _msgs = get_all(&channels, &mut instances, false)?;
     info!("Dispute setup done");
