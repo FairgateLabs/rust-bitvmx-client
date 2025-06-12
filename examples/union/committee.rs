@@ -105,7 +105,7 @@ impl Committee {
 
         thread::sleep(Duration::from_secs(5));
         let utxo = self.prepare_utxo()?;
-        self.all(|op| op.setup_covenants(&members_clone, &utxo))?;
+        self.all(|op| op.setup_covenants(&members_clone, &utxo, aggregation_id_1))?;
 
         Ok(())
     }
@@ -198,6 +198,12 @@ impl Member {
             VariableTypes::String(program_path.to_string())
         )?;
 
+        self.bitvmx.set_var(
+            covenant_id,
+            "aggregated",
+            VariableTypes::PubKey(self.keyring.aggregated_key_1.unwrap())
+        )?;
+
         Ok(())
     }
 
@@ -230,12 +236,12 @@ impl Member {
         Ok(())
     }
 
-    fn setup_covenants(&mut self, members: &Vec<Member>, utxo: &Utxo) -> Result<()> {
+    fn setup_covenants(&mut self, members: &Vec<Member>, utxo: &Utxo, aggregation_id_1: Uuid) -> Result<()> {
         self.setup_packet_covenant()?;
         // self.setup_dispute_core_covenant(members)?;
         self.setup_multiparty_penalization_covenant()?;
         self.setup_pairwise_penalization_covenant()?;
-        self.setup_drp_covenant(members, utxo)?;
+        self.setup_drp_covenant(members, utxo, aggregation_id_1)?;
 
         // info!(
         //     id = self.id,
@@ -373,7 +379,9 @@ impl Member {
         Ok(())
     }
 
-    fn setup_drp_covenant(&mut self, members: &Vec<Member>, utxo: &Utxo) -> Result<()> {
+    fn setup_drp_covenant(&mut self, members: &Vec<Member>, utxo: &Utxo, session_id: Uuid) -> Result<()> {
+        // TODO is this the right numbers of drps? we are skipping when both are challengers, but
+        // why do challengers need to create drps?
         let my_address = self
             .address
             .as_ref()
@@ -404,7 +412,10 @@ impl Member {
 
                     // Unlike pairwise keys, DRP covenants need to be created in both directions
                     // Create covenant for op1_address -> op2_address
-                    let covenant_id_1 = Uuid::new_v4();
+                    // let covenant_id_1 = Uuid::new_v4();
+                    let namespace = Uuid::NAMESPACE_DNS;
+                    let name_to_hash = format!("drp_covenant:{:?}:{:?}:{:?}", op1_address, op2_address, session_id);
+                    let covenant_id_1 = Uuid::new_v5(&namespace, name_to_hash.as_bytes());
                     let participants_1 = vec![op1_address.clone(), op2_address.clone()];
                     self.prepare_drp(covenant_id_1, member1, member2, &self.get_addresses(members), utxo)?;
                     self.bitvmx.setup(covenant_id_1, PROGRAM_TYPE_DRP.to_string(), participants_1, 0)?;
@@ -420,21 +431,24 @@ impl Member {
                         counterparty: other_address_1.clone(),
                     });
 
-                    // // Create covenant for op2_address -> op1_address  
+                    // Create covenant for op2_address -> op1_address  
                     // let covenant_id_2 = Uuid::new_v4();
-                    // let participants_2 = vec![op2_address.clone(), op1_address.clone()];
-                    // self.bitvmx.setup(covenant_id_2, PROGRAM_TYPE_DRP.to_string(), participants_2, 0)?;
-                    
-                    // self.covenants.drp_covenants.push(DrpCovenant {
-                    //     covenant_id: covenant_id_2,
-                    //     counterparty: other_address_1.clone(),
-                    // });
+                    let name_to_hash = format!("drp_covenant:{:?}:{:?}:{:?}", op2_address, op1_address, session_id);
+                    let covenant_id_2 = Uuid::new_v5(&namespace, name_to_hash.as_bytes());
+                    let participants_2 = vec![op2_address.clone(), op1_address.clone()];
+                    self.prepare_drp(covenant_id_2, member2, member1, &self.get_addresses(members), utxo)?;
+                    self.bitvmx.setup(covenant_id_2, PROGRAM_TYPE_DRP.to_string(), participants_2, 0)?;
+
+                    self.covenants.drp_covenants.push(DrpCovenant {
+                        covenant_id: covenant_id_2,
+                        counterparty: other_address_1.clone(),
+                    });
 
                     info!(
                         id = self.id,
                         counterparty = ?other_address_1,
                         covenant_1 = ?covenant_id_1,
-                        // covenant_2 = ?covenant_id_2,
+                        covenant_2 = ?covenant_id_2,
                         "Setup DRP covenants"
                     );
                 }
