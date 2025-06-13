@@ -4,7 +4,7 @@ use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
-    program::{participant::P2PAddress, variables::VariableTypes},
+    program::{participant::P2PAddress, protocols::{dispute::TIMELOCK_BLOCKS, protocol_handler::external_fund_tx}, variables::VariableTypes},
     types::{OutgoingBitVMXApiMessages::*, L2_ID, PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_DRP, PROGRAM_TYPE_SLOT},
 };
 #[path = "../../tests/common/mod.rs"]
@@ -20,8 +20,8 @@ use std::{thread, time::Duration};
 use tracing::{info, info_span, warn};
 use uuid::Uuid;
 use bitcoin::{key::PrivateKey, secp256k1::{self, Secp256k1}, Network, PublicKey};
-use std::collections::HashMap;
-use protocol_builder::types::Utxo;
+use protocol_builder::{scripts::{SignMode, timelock, check_aggregated_signature}, types::Utxo};
+use std::{collections::HashMap, str::FromStr};
 
 use crate::committee::common::{clear_db, FUNDING_ID, INITIAL_BLOCK_COUNT, WALLET_NAME};
 
@@ -74,40 +74,35 @@ impl Committee {
         Ok(Self { members, aggregation_id_1: Uuid::new_v4(), aggregation_id_2: Uuid::new_v4(), bitcoin: Bitcoin { bitcoin_client, wallet } })
     }
 
-    pub fn prepare_utxo(&mut self) -> Result<Utxo> {
-        //======================================================
-        //       INITIALIZE UTXO TO PAY THE SLOT AND DISPUTE CHANNEL
-        //====================================================
-        // Protocol fees funding
-        let fund_value = 10_000_000;
-        let utxo = init_utxo(&self.bitcoin.wallet, self.members[0].keyring.aggregated_key_1.unwrap(), None, fund_value)?;
-
-        Ok(utxo)
-    }
-
     pub fn setup(&mut self) -> Result<()> {
         // gather all operator addresses
         // in a real scenario, operators should get this from the chain
         let _addresses = self.all(|op| op.get_peer_info())?;
 
-        // run setup for each operator
+        // setup keys
         let aggregation_id_1 = self.aggregation_id_1;
         let aggregation_id_2 = self.aggregation_id_2;
 
-        // Clone members to avoid borrowing issues
-        let members_clone = self.members.clone();
-
+        let members = self.members.clone();
         self.all(|op| op.setup_keys(
             aggregation_id_1,
             aggregation_id_2,
-            &members_clone,
+            &members,
         ))?;
 
-        thread::sleep(Duration::from_secs(5));
-        let utxo = self.prepare_utxo()?;
-        self.all(|op| op.setup_covenants(&members_clone, &utxo, aggregation_id_1))?;
+        // setup covenants
+        let utxo = self.prepare_funding_utxo()?;
+        self.all(|op| op.setup_covenants(&members, &utxo, aggregation_id_1))?;
 
         Ok(())
+    }
+
+    fn prepare_funding_utxo(&mut self) -> Result<Utxo> {
+        // Protocol fees funding
+        let fund_value = 10_000_000;
+        let utxo = init_utxo(&self.bitcoin.wallet, self.members[0].keyring.aggregated_key_1.unwrap(), None, fund_value)?;
+
+        Ok(utxo)
     }
 
     fn all<F, R>(&mut self, f: F) -> Result<Vec<R>>
@@ -204,6 +199,52 @@ impl Member {
             VariableTypes::PubKey(self.keyring.aggregated_key_1.unwrap())
         )?;
 
+        self.bitvmx.set_var(
+            covenant_id,
+            "FEE",
+            VariableTypes::Number(10_000)
+        )?;
+
+        // TODO this txid should come from the peg-in setup?
+        let txid_str = "0000000000000000000000000000000000000000000000000000000000000000";
+        let txid = bitcoin::Txid::from_str(txid_str)
+            .map_err(|e| anyhow::anyhow!("Failed to parse txid: {}", e))?;
+
+        // Get the pairwise aggregated key for this pair
+        let counterparty_address = self.get_counterparty_address(member1, member2)?;
+        let pair_aggregated_pub_key = self.keyring.pairwise_keys.get(&counterparty_address)
+            .ok_or_else(|| anyhow::anyhow!("Pairwise key not found for counterparty: {:?}", counterparty_address))?;
+        
+        let initial_utxo = Utxo::new(txid, 4, 200_000, pair_aggregated_pub_key);
+        let prover_win_utxo = Utxo::new(txid, 2, 10_500, pair_aggregated_pub_key);
+
+        let initial_spending_condition = vec![
+            timelock(TIMELOCK_BLOCKS, &self.keyring.aggregated_key_1.unwrap(), SignMode::Aggregate), //convert to timelock
+            check_aggregated_signature(&pair_aggregated_pub_key, SignMode::Aggregate),
+        ];
+        let initial_output_type =
+            external_fund_tx(&self.keyring.aggregated_key_1.unwrap(), initial_spending_condition, 200_000)?;
+
+        let prover_win_spending_condition = vec![
+            check_aggregated_signature(&self.keyring.aggregated_key_1.unwrap(), SignMode::Aggregate), //convert to timelock
+            check_aggregated_signature(&pair_aggregated_pub_key, SignMode::Aggregate),
+        ];
+
+        let prover_win_output_type =
+            external_fund_tx(&self.keyring.aggregated_key_1.unwrap(), prover_win_spending_condition, 10_500)?;
+
+        self.bitvmx.set_var(
+            covenant_id,
+            "utxo",
+            VariableTypes::Utxo((initial_utxo.txid, initial_utxo.vout, Some(initial_utxo.amount), Some(initial_output_type)))
+        )?;
+
+        self.bitvmx.set_var(
+            covenant_id,
+            "utxo_prover_win_action",
+            VariableTypes::Utxo((prover_win_utxo.txid, prover_win_utxo.vout, Some(prover_win_utxo.amount), Some(prover_win_output_type)))
+        )?;
+
         Ok(())
     }
 
@@ -239,8 +280,8 @@ impl Member {
     fn setup_covenants(&mut self, members: &Vec<Member>, utxo: &Utxo, aggregation_id_1: Uuid) -> Result<()> {
         self.setup_packet_covenant()?;
         // self.setup_dispute_core_covenant(members)?;
-        self.setup_multiparty_penalization_covenant()?;
-        self.setup_pairwise_penalization_covenant()?;
+        // self.setup_multiparty_penalization_covenant()?;
+        // self.setup_pairwise_penalization_covenant()?;
         self.setup_drp_covenant(members, utxo, aggregation_id_1)?;
 
         // info!(
@@ -287,11 +328,7 @@ impl Member {
     }
 
     fn make_pairwise_keys(&mut self, members: &Vec<Member>, session_id: Uuid) -> Result<()> {
-        let my_address = self
-            .address
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Member address not set"))?
-            .clone();
+        let my_address = self.address()?.clone();
 
         // Create a sorted list of members to have a canonical order of pairs.
         let mut sorted_members = members.clone();
@@ -301,11 +338,9 @@ impl Member {
             for j in (i + 1)..sorted_members.len() {
                 let member1 = &sorted_members[i];
                 let member2 = &sorted_members[j];
-                
-                let op1_address = member1.address.as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("Member address not set for {}", member1.id))?;
-                let op2_address = member2.address.as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("Member address not set for {}", member2.id))?;
+
+                let op1_address = member1.address()?;
+                let op2_address = member2.address()?;
 
                 // Check if the current operator is part of the pair
                 if my_address == *op1_address || my_address == *op2_address {
@@ -331,11 +366,8 @@ impl Member {
                     );
                     let pairwise_key = self.setup_key(aggregation_id, &participants)?;
 
-                    let other_address = if my_address == *op1_address {
-                        op2_address
-                    } else {
-                        op1_address
-                    };
+                    let other_address = self.get_counterparty_address(member1, member2)?;
+
                     self.keyring
                         .pairwise_keys
                         .insert(other_address.clone(), pairwise_key);
@@ -382,11 +414,7 @@ impl Member {
     fn setup_drp_covenant(&mut self, members: &Vec<Member>, utxo: &Utxo, session_id: Uuid) -> Result<()> {
         // TODO is this the right numbers of drps? we are skipping when both are challengers, but
         // why do challengers need to create drps?
-        let my_address = self
-            .address
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Member address not set"))?
-            .clone();
+        let my_address = self.address()?.clone();
 
         // Create a sorted list of members to have a canonical order of pairs.
         let mut sorted_members = members.clone();
@@ -397,10 +425,8 @@ impl Member {
                 let member1 = &sorted_members[i];
                 let member2 = &sorted_members[j];
                 
-                let op1_address = member1.address.as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("Member address not set for {}", member1.id))?;
-                let op2_address = member2.address.as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("Member address not set for {}", member2.id))?;
+                let op1_address = member1.address()?;
+                let op2_address = member2.address()?;
 
                 // Check if the current operator is part of the pair
                 if my_address == *op1_address || my_address == *op2_address {
@@ -420,11 +446,7 @@ impl Member {
                     self.prepare_drp(covenant_id_1, member1, member2, &self.get_addresses(members), utxo)?;
                     self.bitvmx.setup(covenant_id_1, PROGRAM_TYPE_DRP.to_string(), participants_1, 0)?;
 
-                    let other_address_1 = if my_address == *op1_address {
-                        op2_address
-                    } else {
-                        op1_address
-                    };
+                    let other_address_1 = self.get_counterparty_address(member1, member2)?;
 
                     self.covenants.drp_covenants.push(DrpCovenant {
                         covenant_id: covenant_id_1,
@@ -458,29 +480,38 @@ impl Member {
         Ok(())
     }
 
+    /// Get own address
+    fn address(&self) -> Result<&P2PAddress> {
+        self.address.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Member address not set for {}", self.id))
+    }
+
+    /// Get all addresses from a list of members
     fn get_addresses(&self, members: &Vec<Member>) -> Vec<P2PAddress> {
         members.iter()
             .filter_map(|m| m.address.clone())
             .collect()
     }
 
-    /// Get all DRP covenant IDs for a specific counterparty
-    fn get_drp_covenants_for_counterparty(&self, counterparty: &P2PAddress) -> Vec<Uuid> {
-        self.covenants
-            .drp_covenants
-            .iter()
-            .filter(|covenant| covenant.counterparty == *counterparty)
-            .map(|covenant| covenant.covenant_id)
-            .collect()
-    }
+    /// Determine the counterparty address in a pair of members
+    fn get_counterparty_address(
+        &self,
+        member1: &Member,
+        member2: &Member,
+    ) -> Result<P2PAddress> {
+        let member1_address = member1.address()?;
+        let member2_address = member2.address()?;
+        let my_address = self.address()?;
 
-    /// Get all DRP covenant IDs
-    fn get_all_drp_covenant_ids(&self) -> Vec<Uuid> {
-        self.covenants
-            .drp_covenants
-            .iter()
-            .map(|covenant| covenant.covenant_id)
-            .collect()
+        let counterparty_address = if my_address == member1_address {
+            member2_address
+        } else if my_address == member2_address {
+            member1_address
+        } else {
+            return Err(anyhow::anyhow!("Current member is not part of the address pair"));
+        };
+
+        Ok(counterparty_address.clone())
     }
 }
 
