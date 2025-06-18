@@ -10,11 +10,13 @@ use bitvmx_client::program::variables::VariableTypes;
 use bitvmx_client::types::{
     IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID,
 };
-use bitvmx_client::{bitvmx::BitVMX, config::Config, types::EMULATOR_ID};
+use bitvmx_client::{
+    bitvmx::BitVMX, config::Config, program::participant::ParticipantRole, types::EMULATOR_ID,
+};
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use bitvmx_wallet::wallet::Wallet;
-use common::dispute::prepare_dispute;
+use common::dispute::{prepare_dispute, ForcedChallenges};
 use common::{clear_db, init_utxo_new, FUNDING_ID, INITIAL_BLOCK_COUNT, WALLET_NAME};
 use common::{config_trace, send_all};
 use protocol_builder::scripts::{self, SignMode};
@@ -390,6 +392,7 @@ pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
         10_000,
         false,
         true,
+        ForcedChallenges::TraceHash(ParticipantRole::Prover),
     )?;
 
     let msg = helper.wait_msg(0)?;

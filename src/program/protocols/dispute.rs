@@ -17,10 +17,7 @@ use bitvmx_cpu_definitions::{
 };
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
-use emulator::{
-    constants::REGISTERS_BASE_ADDRESS, decision::challenge::ForceCondition,
-    loader::program_definition::ProgramDefinition,
-};
+use emulator::{constants::REGISTERS_BASE_ADDRESS, loader::program_definition::ProgramDefinition};
 use key_manager::winternitz::WinternitzPublicKey;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
@@ -89,7 +86,7 @@ pub const PROGRAM_COUNTER_CHALLENGE: [(&str, usize); 8] = [
     ("prev_write_add", 4),
     ("prev_write_data", 4),
     ("prev_write_pc", 4),
-    ("prev_write_micro", 4),
+    ("prev_write_micro", 1),
     ("prover_read_pc", 4),
     ("prover_read_micro", 1),
     ("prover_prev_hash", 20),
@@ -265,6 +262,12 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             self.role()
         );
 
+        let (fail_config_prover, fail_config_verifier, force, force_condition) = program_context
+            .globals
+            .get_var(&self.ctx.id, "fail_force_config")?
+            .unwrap()
+            .fail_configuration()?;
+
         if name == INPUT_1 && self.role() == ParticipantRole::Prover {
             if program_context
                 .globals
@@ -308,10 +311,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     input_program,
                     execution_path.clone(),
                     format!("{}/{}", execution_path, "execution.json").to_string(),
-                    None,
+                    fail_config_prover.clone(),
                 ),
             })?;
-
             program_context.broker_channel.send(EMULATOR_ID, msg)?;
         }
         if name == INPUT_1 && self.role() == ParticipantRole::Verifier {
@@ -384,8 +386,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     last_step,
                     hex::encode(last_hash),
                     format!("{}/{}", execution_path, "execution.json").to_string(),
-                    Some(ForceCondition::Allways),
-                    None,
+                    force_condition,
+                    fail_config_verifier.clone(),
                 ),
             })?;
 
@@ -444,7 +446,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                             round as u8,
                             decision as u32,
                             format!("{}/{}", execution_path, "execution.json").to_string(),
-                            None,
+                            fail_config_prover.clone(),
                         ),
                     })?;
                     program_context.broker_channel.send(EMULATOR_ID, msg)?;
@@ -456,7 +458,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                             execution_path.clone(),
                             (decision + 1) as u32,
                             format!("{}/{}", execution_path, "execution.json").to_string(),
-                            None,
+                            fail_config_prover.clone(),
                         ),
                     })?;
                     program_context.broker_channel.send(EMULATOR_ID, msg)?;
@@ -530,7 +532,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     round as u8,
                     hashes,
                     format!("{}/{}", execution_path, "execution.json").to_string(),
-                    None,
+                    fail_config_verifier.clone(),
                 ),
             })?;
 
@@ -581,17 +583,16 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     .winternitz()
                     .unwrap()
                     .message_bytes();
-
                 values.insert(*name, value);
             }
             fn to_u8(bytes: &[u8]) -> u8 {
-                u8::from_le_bytes(bytes.try_into().expect("Expected 1 byte for u8"))
+                u8::from_be_bytes(bytes.try_into().expect("Expected 1 byte for u8"))
             }
             fn to_u32(bytes: &[u8]) -> u32 {
-                u32::from_le_bytes(bytes.try_into().expect("Expected 4 bytes for u32"))
+                u32::from_be_bytes(bytes.try_into().expect("Expected 4 bytes for u32"))
             }
             fn to_u64(bytes: &[u8]) -> u64 {
-                u64::from_le_bytes(bytes.try_into().expect("Expected 8 bytes for u64"))
+                u64::from_be_bytes(bytes.try_into().expect("Expected 8 bytes for u64"))
             }
 
             let step_number = to_u64(&values["step_number"]);
@@ -637,7 +638,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     execution_path.clone(),
                     final_trace,
                     format!("{}/{}", execution_path, "execution.json").to_string(),
-                    None,
+                    fail_config_verifier.clone(),
+                    force,
                 ),
             })?;
             program_context.broker_channel.send(EMULATOR_ID, msg)?;
@@ -1292,7 +1294,7 @@ impl DisputeResolutionProtocol {
         let mut winternitz_check_list = vec![];
 
         for (challenge_name, subnames) in CHALLENGES.iter() {
-            let total_len = subnames.iter().map(|(_, size)| *size).sum::<usize>() as u32;
+            let total_len = subnames.iter().map(|(_, size)| *size).sum::<usize>() as u32 * 2;
 
             let mut stack = StackTracker::new();
             let all = stack.define(total_len, "all");
@@ -1301,6 +1303,9 @@ impl DisputeResolutionProtocol {
                 stack.move_var_sub_n(all, total_len - i - 1);
             }
             let reverse_script = stack.get_script();
+            let mut scripts = vec![reverse_script.clone()];
+
+            stack = StackTracker::new();
 
             match *challenge_name {
                 "entry_point" => {
@@ -1315,14 +1320,13 @@ impl DisputeResolutionProtocol {
                 _ => panic!("Unknown challenge name: {}", challenge_name),
             }
 
-            let script = stack.get_script();
-
+            scripts.push(stack.get_script());
             let winternitz_check = scripts::verify_winternitz_signatures_aux(
                 aggregated,
                 &names_and_keys[challenge_name],
                 SignMode::Aggregate,
                 true,
-                Some(vec![reverse_script.clone(), script.clone()]),
+                Some(scripts),
             )?;
 
             winternitz_check_list.push(winternitz_check);
@@ -1663,7 +1667,7 @@ impl DisputeResolutionProtocol {
 
                         self.set_input_u32(
                             context,
-                            &format!("{name}_wite_add"),
+                            &format!("{name}_write_add"),
                             prover_trace_step.get_write().address,
                         )?;
                         self.set_input_u32(

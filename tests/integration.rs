@@ -1,8 +1,11 @@
 use anyhow::Result;
-use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID};
+use bitvmx_client::{
+    program::participant::ParticipantRole,
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
+};
 use common::{
     config_trace,
-    dispute::{execute_dispute, prepare_dispute},
+    dispute::{execute_dispute, prepare_dispute, ForcedChallenges},
     get_all, init_bitvmx, init_utxo_new, prepare_bitcoin, send_all, wait_message_from_channel,
 };
 use protocol_builder::scripts::{self, SignMode};
@@ -83,6 +86,7 @@ pub fn test_drp() -> Result<()> {
         10_000,
         false,
         false,
+        ForcedChallenges::ProgramCounter(ParticipantRole::Verifier),
     )?;
     let _msgs = get_all(&channels, &mut instances, false)?;
 
