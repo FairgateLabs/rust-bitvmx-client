@@ -16,7 +16,7 @@ use common::{
     get_all, init_bitvmx, init_utxo, mine_and_wait, send_all,
     wait_message_from_channel,
 };
-use std::{thread, time::Duration};
+use std::{thread::{self, sleep}, time::Duration};
 use tracing::{info, info_span, warn};
 use uuid::Uuid;
 use bitcoin::{key::PrivateKey, secp256k1::{self, Secp256k1}, Network, PublicKey};
@@ -186,6 +186,13 @@ impl Member {
     }
 
     pub fn prepare_drp(&mut self, covenant_id: Uuid, member1: &Member, member2: &Member, addresses: &Vec<P2PAddress>, utxo: &Utxo) -> Result<()> {
+        info!(id = self.id, "Preparing DRP covenant {} for {} and {}", covenant_id, member1.id, member2.id);
+
+        // Get the pairwise aggregated key for this pair
+        let counterparty_address = self.get_counterparty_address(member1, member2)?;
+        let pair_aggregated_pub_key = self.keyring.pairwise_keys.get(&counterparty_address)
+            .ok_or_else(|| anyhow::anyhow!("Pairwise key not found for counterparty: {:?}", counterparty_address))?;
+
         let program_path = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
         self.bitvmx.set_var(
             covenant_id,
@@ -196,7 +203,7 @@ impl Member {
         self.bitvmx.set_var(
             covenant_id,
             "aggregated",
-            VariableTypes::PubKey(self.keyring.aggregated_key_1.unwrap())
+            VariableTypes::PubKey(pair_aggregated_pub_key.clone())
         )?;
 
         self.bitvmx.set_var(
@@ -211,10 +218,10 @@ impl Member {
             .map_err(|e| anyhow::anyhow!("Failed to parse txid: {}", e))?;
 
         // Get the pairwise aggregated key for this pair
-        let counterparty_address = self.get_counterparty_address(member1, member2)?;
-        let pair_aggregated_pub_key = self.keyring.pairwise_keys.get(&counterparty_address)
-            .ok_or_else(|| anyhow::anyhow!("Pairwise key not found for counterparty: {:?}", counterparty_address))?;
-        
+        // let counterparty_address = self.get_counterparty_address(member1, member2)?;
+        // let pair_aggregated_pub_key = self.keyring.pairwise_keys.get(&counterparty_address)
+            // .ok_or_else(|| anyhow::anyhow!("Pairwise key not found for counterparty: {:?}", counterparty_address))?;
+
         let initial_utxo = Utxo::new(txid, 4, 200_000, pair_aggregated_pub_key);
         let prover_win_utxo = Utxo::new(txid, 2, 10_500, pair_aggregated_pub_key);
 
@@ -222,6 +229,7 @@ impl Member {
             timelock(TIMELOCK_BLOCKS, &self.keyring.aggregated_key_1.unwrap(), SignMode::Aggregate), //convert to timelock
             check_aggregated_signature(&pair_aggregated_pub_key, SignMode::Aggregate),
         ];
+
         let initial_output_type =
             external_fund_tx(&self.keyring.aggregated_key_1.unwrap(), initial_spending_condition, 200_000)?;
 
@@ -245,6 +253,7 @@ impl Member {
             VariableTypes::Utxo((prover_win_utxo.txid, prover_win_utxo.vout, Some(prover_win_utxo.amount), Some(prover_win_output_type)))
         )?;
 
+        sleep(Duration::from_secs(20));
         Ok(())
     }
 
@@ -282,6 +291,7 @@ impl Member {
         // self.setup_dispute_core_covenant(members)?;
         // self.setup_multiparty_penalization_covenant()?;
         // self.setup_pairwise_penalization_covenant()?;
+        sleep(Duration::from_secs(20));
         self.setup_drp_covenant(members, utxo, aggregation_id_1)?;
 
         // info!(
@@ -308,11 +318,11 @@ impl Member {
         self.keyring.communication_sk = Some(private_key);
         self.keyring.communication_pk = Some(public_key);
 
-        info!(
-            id = self.id,
-            public_key = ?public_key,
-            "Generated communication key"
-        );
+        // info!(
+        //     id = self.id,
+        //     public_key = ?public_key,
+        //     "Generated communication key"
+        // );
 
         Ok(())
     }
@@ -356,14 +366,14 @@ impl Member {
                     let namespace = Uuid::NAMESPACE_DNS;
                     let name_to_hash = format!("{:?}{:?}{:?}", op1_address, op2_address, session_id);
                     let aggregation_id = Uuid::new_v5(&namespace, name_to_hash.as_bytes());
-                    warn!(
-                        id = self.id,
-                        op1_address = ?op1_address,
-                        op2_address = ?op2_address,
-                        session_id = ?session_id,
-                        aggregation_id = ?aggregation_id,
-                        "aggregation id"
-                    );
+                    // warn!(
+                    //     id = self.id,
+                    //     op1_address = ?op1_address,
+                    //     op2_address = ?op2_address,
+                    //     session_id = ?session_id,
+                    //     aggregation_id = ?aggregation_id,
+                    //     "aggregation id"
+                    // );
                     let pairwise_key = self.setup_key(aggregation_id, &participants)?;
 
                     let other_address = self.get_counterparty_address(member1, member2)?;
@@ -372,7 +382,7 @@ impl Member {
                         .pairwise_keys
                         .insert(other_address.clone(), pairwise_key);
 
-                    info!(peer = ?other_address, key = ?pairwise_key, "Generated pairwise key");
+                    // info!(peer = ?other_address, key = ?pairwise_key, "Generated pairwise key");
                 }
             }
         }
@@ -383,7 +393,7 @@ impl Member {
         self.bitvmx.setup_key(aggregation_id, addresses.clone(), 0)?;
 
         let aggregated_key = expect_msg!(self, AggregatedPubkey(_, key) => key)?;
-        info!(aggregated_key = ?aggregated_key.inner, "Key setup complete");
+        // info!(aggregated_key = ?aggregated_key.inner, "Key setup complete");
 
         Ok(aggregated_key)
     }
