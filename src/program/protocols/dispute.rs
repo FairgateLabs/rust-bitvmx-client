@@ -17,6 +17,7 @@ use bitvmx_cpu_definitions::{
 };
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
+use console::style;
 use emulator::{constants::REGISTERS_BASE_ADDRESS, loader::program_definition::ProgramDefinition};
 use key_manager::winternitz::WinternitzPublicKey;
 use protocol_builder::{
@@ -1072,9 +1073,12 @@ impl DisputeResolutionProtocol {
         // - Support multiple inputs
         // - check if input is prover of verifier and use proper keys[n]
         // - the prover needs to re-sign any verifier provided input (so the equivocation is possible on reads)
-        info!("Adding winternitz check for {} to {}", from, to);
-        info!("Amount: {}", amount);
-        info!("Speedup: {}", amount_speedup);
+        info!(
+            "Adding winternitz check for {} to {}. Amount: {}",
+            style(from).green(),
+            style(to).green(),
+            style(amount).green()
+        );
         let names_and_keys = var_names
             .iter()
             .map(|v| (*v, keys.get_winternitz(v).unwrap()))
@@ -1141,9 +1145,12 @@ impl DisputeResolutionProtocol {
         to: &str,
         claim_gate: Option<&ClaimGate>,
     ) -> Result<(), BitVMXError> {
-        info!("Adding winternitz check for {} to {}", from, to);
-        info!("Amount: {}", amount);
-        info!("Speedup: {}", amount_speedup);
+        info!(
+            "Adding winternitz check for {} to {}. Amount: {}",
+            style(from).green(),
+            style(to).green(),
+            style(amount).green()
+        );
         let names_and_keys = var_names
             .iter()
             .map(|v| (*v, keys.get_winternitz(v).unwrap()))
@@ -1270,9 +1277,12 @@ impl DisputeResolutionProtocol {
         to: &str,
         claim_gate: Option<&ClaimGate>,
     ) -> Result<(), BitVMXError> {
-        info!("Adding winternitz check for {} to {}", from, to);
-        info!("Amount: {}", amount);
-        info!("Speedup: {}", amount_speedup);
+        info!(
+            "Adding winternitz check for {} to {}. Amount: {}",
+            style(from).green(),
+            style(to).green(),
+            style(amount).green()
+        );
 
         let mut names_and_keys: HashMap<&str, Vec<(&'static str, &WinternitzPublicKey)>> =
             HashMap::new();
@@ -1687,8 +1697,16 @@ impl DisputeResolutionProtocol {
                         )?;
                         self.set_input_hex(context, &format!("{name}_hash"), &prover_step_hash)?;
                     }
+                    ChallengeType::No => {
+                        name = "";
+                    }
 
                     _ => todo!(),
+                }
+
+                if name.is_empty() {
+                    info!("Verifier chose no challenge");
+                    return Ok(());
                 }
 
                 leaf_index = CHALLENGES

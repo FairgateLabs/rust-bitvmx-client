@@ -2,6 +2,7 @@ use bitcoin::script::read_scriptint;
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_scriptexec::scriptint_vec;
+use console::style;
 use enum_dispatch::enum_dispatch;
 use key_manager::winternitz::{message_bytes_length, WinternitzType};
 use protocol_builder::scripts::ProtocolScript;
@@ -141,7 +142,7 @@ pub trait ProtocolHandler {
         second_leaf_index: usize,
     ) -> Result<Transaction, BitVMXError> {
         let protocol = self.load_protocol()?;
-        info!("Getting signed tx for {}", name);
+        info!("Getting signed tx for {}", style(name).green());
 
         //TODO: Control that the variables sizes correspond with the keys
         //avoid invalid sig checks
@@ -159,7 +160,10 @@ pub trait ProtocolHandler {
                 .unwrap()
                 .input()?;
 
-            info!("Signigng message: {}", hex::encode(message.clone()));
+            info!(
+                "Signigng message: {}",
+                style(hex::encode(message.clone())).yellow()
+            );
             info!("With key: {:?}", k);
 
             let winternitz_signature = context.key_chain.key_manager.sign_winternitz_message(

@@ -837,7 +837,7 @@ impl BitVMXApi for BitVMX {
         }
 
         let decoded: IncomingBitVMXApiMessages = serde_json::from_str(&msg)?;
-        info!("< {:?}", decoded);
+        debug!("< {:?}", decoded);
 
         match decoded {
             IncomingBitVMXApiMessages::GetHashedMessage(id, name, vout, leaf) => {
@@ -863,11 +863,11 @@ impl BitVMXApi for BitVMX {
             }
             IncomingBitVMXApiMessages::Ping() => BitVMXApi::ping(self, from)?,
             IncomingBitVMXApiMessages::SetVar(uuid, key, value) => {
-                info!("Setting variable {}: {:?}", key, value);
+                debug!("Setting variable {}: {:?}", key, value);
                 self.program_context.globals.set_var(&uuid, &key, value)?;
             }
             IncomingBitVMXApiMessages::SetWitness(uuid, key, value) => {
-                info!("Setting witness {}: {:?}", key, value);
+                debug!("Setting witness {}: {:?}", key, value);
                 self.program_context
                     .witness
                     .set_witness(&uuid, &key, value)?;

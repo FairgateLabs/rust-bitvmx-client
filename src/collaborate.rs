@@ -86,7 +86,7 @@ impl Collaboration {
 
     pub fn tick(&mut self, program_context: &ProgramContext) -> Result<bool, BitVMXError> {
         if self.state && self.im_leader {
-            info!("Send keys to peers");
+            debug!("Send keys to peers");
             //collect all the keys from the participants in a vec (peeer_id,key)
             let all_keys: Vec<(String, PublicKeyType)> = self
                 .keys
@@ -103,7 +103,7 @@ impl Collaboration {
                 }
                 //TODO: Serialize the rest of the keys so the other peers can use them
                 //use the peerid as key
-                info!(
+                debug!(
                     "Collaboration id: {}: Sending keys to peer: {}",
                     self.collaboration_id, peer.peer_id
                 );
@@ -139,7 +139,7 @@ impl Collaboration {
                         .clone();
                     let key = keys.get_public(&self.collaboration_id.to_string())?;
                     self.keys.insert(peer_id.clone(), *key);
-                    info!("Got keys {:?}", self.keys);
+                    debug!("Got keys {:?}", self.keys);
 
                     if self.keys.len() == self.participants.len() {
                         let aggregated = program_context.key_chain.new_musig2_session(
