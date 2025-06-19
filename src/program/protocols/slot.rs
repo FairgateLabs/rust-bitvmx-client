@@ -343,7 +343,7 @@ impl ProtocolHandler for SlotProtocol {
                 )?,
                 None,
                 Context::ProgramId(self.ctx.id).to_string()?,
-                Some(tx_status.block_info.as_ref().unwrap().block_height + TIMELOCK_BLOCKS as u32),
+                Some(tx_status.block_info.height + TIMELOCK_BLOCKS as u32),
             )?;
         }
 

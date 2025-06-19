@@ -465,10 +465,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 }
             } else {
                 if round == nary.total_rounds() as u32 {
-                    info!(
-                        "Current block: {}",
-                        tx_status.block_info.as_ref().unwrap().block_height
-                    );
+                    info!("Current block: {}", tx_status.block_info.height);
                     /*program_context.bitcoin_coordinator.dispatch(
                         self.get_signed_tx(program_context, "EXECUTE_TO", 0, 1, true)?,
                         Context::ProgramId(self.ctx.id).to_string()?,
@@ -677,7 +674,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 )?,
                 None,
                 Context::ProgramId(self.ctx.id).to_string()?,
-                Some(tx_status.block_info.as_ref().unwrap().block_height + TIMELOCK_BLOCKS as u32),
+                Some(tx_status.block_info.height + TIMELOCK_BLOCKS as u32),
             )?;
         }
 
