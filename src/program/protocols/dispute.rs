@@ -4,8 +4,7 @@ use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use bitcoin_script_riscv::riscv::{
     challenges::{
-        entry_point_challenge, halt_challenge, input_challenge, opcode_challenge,
-        program_counter_challenge, trace_hash_challenge, trace_hash_zero_challenge,
+        addresses_sections_challenge, entry_point_challenge, halt_challenge, input_challenge, opcode_challenge, program_counter_challenge, trace_hash_challenge, trace_hash_zero_challenge
     },
     instruction_mapping::{create_verification_script_mapping, get_key_from_opcode},
 };
@@ -127,7 +126,15 @@ pub const INPUT_CHALLENGE: [(&str, usize); 7] = [
 
 pub const OPCODE_CHALLENGE: [(&str, usize); 2] = [("prover_pc", 4), ("prover_opcode", 4)];
 
-pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 7] = [
+pub const ADDRESSES_SECTIONS_CHALLENGE: [(&str, usize); 5] = [
+    ("read_1_add", 4),
+    ("read_2_add", 4),
+    ("write_add", 4),
+    ("memory_witness", 1),
+    ("read_pc_add", 4),
+];
+
+pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 8] = [
     ("entry_point", &ENTRY_POINT_CHALLENGE),
     ("program_counter", &PROGRAM_COUNTER_CHALLENGE),
     ("halt", &HALT_CHALLENGE),
@@ -135,6 +142,7 @@ pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 7] = [
     ("trace_hash_zero", &TRACE_HASH_ZERO_CHALLENGE),
     ("input", &INPUT_CHALLENGE),
     ("opcode", &OPCODE_CHALLENGE),
+    ("addresses_sections", &ADDRESSES_SECTIONS_CHALLENGE),
 ];
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -1442,6 +1450,20 @@ impl DisputeResolutionProtocol {
                         "halt" => halt_challenge(&mut stack),
                         "trace_hash" => trace_hash_challenge(&mut stack),
                         "trace_hash_zero" => trace_hash_zero_challenge(&mut stack),
+                        "addresses_sections" => {
+                            let read_write_sections = &program.read_write_sections;
+                            let read_only_sections = &program.read_only_sections;
+                            let register_sections = &program.register_sections;
+                            let code_sections = &program.code_sections;
+
+                            addresses_sections_challenge(
+                                &mut stack,
+                                read_write_sections,
+                                read_only_sections,
+                                register_sections,
+                                code_sections,
+                            );
+                        }
                         _ => panic!("Unknown challenge name: {}", challenge_name),
                     };
                     scripts.push(stack.get_script());
@@ -1875,6 +1897,50 @@ impl DisputeResolutionProtocol {
                             context,
                             &format!("{name}_prover_opcode"),
                             pc_read.opcode,
+                        )?;
+                    }
+                    ChallengeType::AddressesSections(
+                        read_1,
+                        read_2,
+                        write,
+                        memory_witness,
+                        program_counter,
+                        _,
+                        _,
+                        _,
+                        _,
+                    ) => {
+                        name = "addresses";
+                        info!("Verifier chose {name} challenge");
+                    
+                        self.set_input_u32(
+                            context,
+                            &format!("{name}_read_1_add"),
+                            read_1.address
+                        )?;
+                    
+                        self.set_input_u32(
+                            context,
+                            &format!("{name}_read_2_add"),
+                            read_2.address
+                        )?;
+                    
+                        self.set_input_u32(
+                            context,
+                            &format!("{name}_write_add"),
+                            write.address
+                        )?;
+                    
+                        self.set_input_u8(
+                            context,
+                            &format!("{name}_memory_witness"),
+                            memory_witness.byte()
+                        )?;
+                    
+                        self.set_input_u32(
+                            context,
+                            &format!("{name}_read_pc_add"),
+                            program_counter.get_address()
                         )?;
                     }
                     _ => todo!(),

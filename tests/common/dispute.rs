@@ -12,13 +12,17 @@ use bitvmx_client::{
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_DRP},
 };
+use bitvmx_cpu_definitions::{
+    memory::{MemoryAccessType, MemoryWitness},
+    trace::{ProgramCounter, TraceRWStep, TraceRead, TraceReadPC, TraceStep, TraceWrite},
+};
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 
 use bitvmx_wallet::wallet::Wallet;
 use emulator::{
     decision::challenge::{ForceChallenge, ForceCondition},
-    executor::utils::{FailConfiguration, FailOpcode, FailReads},
+    executor::utils::{FailConfiguration, FailExecute, FailOpcode, FailReads, FailWrite},
 };
 use protocol_builder::types::{OutputType, Utxo};
 use tracing::info;
@@ -34,6 +38,9 @@ pub enum ForcedChallenges {
     ProgramCounter(ParticipantRole),
     Input(ParticipantRole),
     Opcode(ParticipantRole),
+    ReadSection(ParticipantRole),
+    WriteSection(ParticipantRole),
+    ProgramCounterSection(ParticipantRole),
     No,
 }
 
@@ -322,6 +329,75 @@ pub fn get_fail_force_config(
             ForceChallenge::No,
             ForceCondition::ValidInputWrongStepOrHash,
         ),
+        ForcedChallenges::ReadSection(ParticipantRole::Prover) => (
+            Some(FailConfiguration::new_fail_execute(FailExecute {
+                step: 9,
+                fake_trace: TraceRWStep::new(
+                    9,
+                    TraceRead::new(4026531900, 0, 8),
+                    // reads from nullptr (address 0)
+                    TraceRead::new(0, 0, 0xffffffffffffffff),
+                    TraceReadPC::new(ProgramCounter::new(2147483672, 0), 501635),
+                    TraceStep::new(
+                        TraceWrite::new(4026531900, 0),
+                        ProgramCounter::new(2147483676, 0),
+                    ),
+                    None,
+                    MemoryWitness::new(
+                        MemoryAccessType::Register,
+                        MemoryAccessType::Memory,
+                        MemoryAccessType::Register,
+                    ),
+                ),
+            })),
+            None,
+            ForceChallenge::No,
+            ForceCondition::No,
+        ),
+        ForcedChallenges::WriteSection(ParticipantRole::Prover) => (
+            Some(FailConfiguration::new_fail_execute(FailExecute {
+                step: 10,
+                fake_trace: TraceRWStep::new(
+                    10,
+                    TraceRead::new(4026531900, 0, 8),
+                    TraceRead::new(4026531896, 1234, 9),
+                    TraceReadPC::new(ProgramCounter::new(2147483676, 0), 15179811),
+                    // writes to nullptr (address 0)
+                    TraceStep::new(TraceWrite::new(0, 1234), ProgramCounter::new(2147483680, 0)),
+                    None,
+                    MemoryWitness::new(
+                        MemoryAccessType::Register,
+                        MemoryAccessType::Register,
+                        MemoryAccessType::Memory,
+                    ),
+                ),
+            })),
+            None,
+            ForceChallenge::No,
+            ForceCondition::No,
+        ),
+        ForcedChallenges::ProgramCounterSection(ParticipantRole::Prover) => (
+            Some(FailConfiguration::new_fail_execute(FailExecute {
+                step: 9,
+                fake_trace: TraceRWStep::new(
+                    9,
+                    TraceRead::new(4026531844, 2147483700, 2),
+                    TraceRead::default(),
+                    // ProgramCounter points to nullptr (address 0)
+                    TraceReadPC::new(ProgramCounter::new(0, 0), 32871), // Jalr
+                    TraceStep::new(TraceWrite::default(), ProgramCounter::new(2147483700, 0)),
+                    None,
+                    MemoryWitness::new(
+                        MemoryAccessType::Register,
+                        MemoryAccessType::Unused,
+                        MemoryAccessType::Unused,
+                    ),
+                ),
+            })),
+            None,
+            ForceChallenge::No,
+            ForceCondition::No,
+        ),
         ForcedChallenges::TraceHash(ParticipantRole::Verifier) => (
             None,
             Some(FailConfiguration::new_fail_hash(100)),
@@ -370,6 +446,57 @@ pub fn get_fail_force_config(
             ForceChallenge::Opcode,
             ForceCondition::ValidInputWrongStepOrHash,
         ),
+        ForcedChallenges::ReadSection(ParticipantRole::Verifier) => (
+            None,
+            Some(FailConfiguration::new_fail_reads(FailReads::new(
+                None,
+                Some(&vec![
+                    "1106".to_string(),
+                    "0xaa000000".to_string(),
+                    "0x11111100".to_string(),
+                    "0x00000000".to_string(),
+                    "0xffffffffffffffff".to_string(),
+                ]),
+            ))),
+            ForceChallenge::AddressesSections,
+            ForceCondition::ValidInputWrongStepOrHash,
+        ),
+        ForcedChallenges::WriteSection(ParticipantRole::Verifier) => (
+            None,
+            Some(FailConfiguration::new_fail_write(FailWrite::new(
+                &vec![
+                    "1106".to_string(),
+                    "0xaa000000".to_string(),
+                    "0x11111100".to_string(),
+                    "0x00000000".to_string(),
+                ],
+            ))),
+            ForceChallenge::AddressesSections,
+            ForceCondition::ValidInputWrongStepOrHash,
+        ),
+        ForcedChallenges::ProgramCounterSection(ParticipantRole::Verifier) => (
+            None,
+            Some(FailConfiguration::new_fail_execute(FailExecute {
+                step: 9,
+                fake_trace: TraceRWStep::new(
+                    9,
+                    TraceRead::new(4026531844, 2147483700, 2),
+                    TraceRead::default(),
+                    // ProgramCounter points to nullptr (address 0)
+                    TraceReadPC::new(ProgramCounter::new(0, 0), 32871), // Jalr
+                    TraceStep::new(TraceWrite::default(), ProgramCounter::new(2147483700, 0)),
+                    None,
+                    MemoryWitness::new(
+                        MemoryAccessType::Register,
+                        MemoryAccessType::Unused,
+                        MemoryAccessType::Unused,
+                    ),
+                ),
+            })),
+            ForceChallenge::AddressesSections,
+            ForceCondition::ValidInputWrongStepOrHash,
+        ),
+
         ForcedChallenges::No => (None, None, ForceChallenge::No, ForceCondition::No),
     }
 }
