@@ -86,7 +86,7 @@ pub fn test_drp() -> Result<()> {
         10_000,
         false,
         false,
-        ForcedChallenges::ProgramCounter(ParticipantRole::Verifier),
+        ForcedChallenges::Input(ParticipantRole::Verifier),
     )?;
     let _msgs = get_all(&channels, &mut instances, false)?;
 

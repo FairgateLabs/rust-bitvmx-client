@@ -18,7 +18,7 @@ use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use bitvmx_wallet::wallet::Wallet;
 use emulator::{
     decision::challenge::{ForceChallenge, ForceCondition},
-    executor::utils::FailConfiguration,
+    executor::utils::{FailConfiguration, FailOpcode, FailReads},
 };
 use protocol_builder::types::{OutputType, Utxo};
 use tracing::info;
@@ -32,6 +32,8 @@ pub enum ForcedChallenges {
     TraceHashZero(ParticipantRole),
     EntryPoint(ParticipantRole),
     ProgramCounter(ParticipantRole),
+    Input(ParticipantRole),
+    Opcode(ParticipantRole),
     No,
 }
 
@@ -296,6 +298,30 @@ pub fn get_fail_force_config(
             ForceChallenge::No,
             ForceCondition::ValidInputWrongStepOrHash,
         ),
+        ForcedChallenges::Input(ParticipantRole::Prover) => (
+            Some(FailConfiguration::new_fail_reads(FailReads::new(
+                None,
+                Some(&vec![
+                    "1106".to_string(),
+                    "0xaa000000".to_string(),
+                    "0x11111100".to_string(),
+                    "0xaa000000".to_string(),
+                    "0xffffffffffffffff".to_string(),
+                ]),
+            ))),
+            None,
+            ForceChallenge::No,
+            ForceCondition::ValidInputWrongStepOrHash,
+        ),
+        ForcedChallenges::Opcode(ParticipantRole::Prover) => (
+            Some(FailConfiguration::new_fail_opcode(FailOpcode::new(&vec![
+                "2".to_string(),
+                "0x100073".to_string(),
+            ]))),
+            None,
+            ForceChallenge::No,
+            ForceCondition::ValidInputWrongStepOrHash,
+        ),
         ForcedChallenges::TraceHash(ParticipantRole::Verifier) => (
             None,
             Some(FailConfiguration::new_fail_hash(100)),
@@ -318,6 +344,30 @@ pub fn get_fail_force_config(
             None,
             Some(FailConfiguration::new_fail_pc(1)),
             ForceChallenge::ProgramCounter,
+            ForceCondition::ValidInputWrongStepOrHash,
+        ),
+        ForcedChallenges::Input(ParticipantRole::Verifier) => (
+            None,
+            Some(FailConfiguration::new_fail_reads(FailReads::new(
+                None,
+                Some(&vec![
+                    "1106".to_string(),
+                    "0xaa000000".to_string(),
+                    "0x11111100".to_string(),
+                    "0xaa000000".to_string(),
+                    "0xffffffffffffffff".to_string(),
+                ]),
+            ))),
+            ForceChallenge::InputData,
+            ForceCondition::ValidInputWrongStepOrHash,
+        ),
+        ForcedChallenges::Opcode(ParticipantRole::Verifier) => (
+            None,
+            Some(FailConfiguration::new_fail_opcode(FailOpcode::new(&vec![
+                "2".to_string(),
+                "0x100073".to_string(),
+            ]))),
+            ForceChallenge::Opcode,
             ForceCondition::ValidInputWrongStepOrHash,
         ),
         ForcedChallenges::No => (None, None, ForceChallenge::No, ForceCondition::No),
