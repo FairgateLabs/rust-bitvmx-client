@@ -516,7 +516,7 @@ impl Member {
         let id = Uuid::new_v4();
         let addresses = self.get_addresses(members);
 
-        prepare_packet_covenant();
+        // self.prepare_packet_covenant(id, &addresses, &utxo, &utxo)?;
 
         // TODO rename PROGRAM_TYPE_DISPUTE_CORE to  PROGRAM_TYPE_PACKET_COVENANT
         self.bitvmx
