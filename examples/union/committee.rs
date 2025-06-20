@@ -108,7 +108,11 @@ impl Committee {
         let aggregation_id_2 = self.aggregation_id_2;
 
         let members = self.members.clone();
-        self.all(|op| op.setup_keys(aggregation_id_1, aggregation_id_2, &members))?;
+        self.all(|op| op.setup_keys(
+            aggregation_id_1,
+            aggregation_id_2,
+            &members,
+        ))?;
 
         // setup covenants
         let utxo = self.prepare_funding_utxo()?;
@@ -215,8 +219,6 @@ impl Member {
         covenant_id: Uuid,
         member1: &Member,
         member2: &Member,
-        addresses: &Vec<P2PAddress>,
-        utxo: &Utxo,
     ) -> Result<()> {
         info!(
             id = self.id,
@@ -256,11 +258,6 @@ impl Member {
         let txid_str = "0000000000000000000000000000000000000000000000000000000000000000";
         let txid = bitcoin::Txid::from_str(txid_str)
             .map_err(|e| anyhow::anyhow!("Failed to parse txid: {}", e))?;
-
-        // Get the pairwise aggregated key for this pair
-        // let counterparty_address = self.get_counterparty_address(member1, member2)?;
-        // let pair_aggregated_pub_key = self.keyring.pairwise_keys.get(&counterparty_address)
-        // .ok_or_else(|| anyhow::anyhow!("Pairwise key not found for counterparty: {:?}", counterparty_address))?;
 
         let initial_utxo = Utxo::new(txid, 4, 200_000, pair_aggregated_pub_key);
         let prover_win_utxo = Utxo::new(txid, 2, 10_500, pair_aggregated_pub_key);
@@ -506,13 +503,8 @@ impl Member {
         Ok(())
     }
 
-    fn setup_key(
-        &mut self,
-        aggregation_id: Uuid,
-        addresses: &Vec<P2PAddress>,
-    ) -> Result<PublicKey> {
-        self.bitvmx
-            .setup_key(aggregation_id, addresses.clone(), 0)?;
+    fn setup_key(&mut self, aggregation_id: Uuid, addresses: &Vec<P2PAddress>) -> Result<PublicKey> {
+        self.bitvmx.setup_key(aggregation_id, addresses.clone(), 0)?;
 
         let aggregated_key = expect_msg!(self, AggregatedPubkey(_, key) => key)?;
         // info!(aggregated_key = ?aggregated_key.inner, "Key setup complete");
@@ -529,6 +521,7 @@ impl Member {
         // TODO rename PROGRAM_TYPE_DISPUTE_CORE to  PROGRAM_TYPE_PACKET_COVENANT
         self.bitvmx
             .setup(id, PROGRAM_TYPE_DISPUTE_CORE.to_string(), addresses, 0)?;
+
         Ok(())
     }
 
@@ -536,8 +529,7 @@ impl Member {
         let id = Uuid::new_v4();
         let addresses = self.get_addresses(members);
 
-        self.bitvmx
-            .setup(id, PROGRAM_TYPE_DISPUTE_CORE.to_string(), addresses, 0)?;
+        self.bitvmx.setup(id, PROGRAM_TYPE_DISPUTE_CORE.to_string(), addresses, 0)?;
         Ok(())
     }
 
@@ -551,14 +543,8 @@ impl Member {
         Ok(())
     }
 
-    fn setup_drp_covenant(
-        &mut self,
-        members: &Vec<Member>,
-        utxo: &Utxo,
-        session_id: Uuid,
-    ) -> Result<()> {
-        // TODO is this the right numbers of drps? we are skipping when both are challengers, but
-        // why do challengers need to create drps?
+    fn setup_drp_covenant(&mut self, members: &Vec<Member>, utxo: &Utxo, session_id: Uuid) -> Result<()> {
+        // TODO we don't need to create the B => A covenant when B is a challenger
         let my_address = self.address()?.clone();
 
         // Create a sorted list of members to have a canonical order of pairs.
@@ -587,25 +573,11 @@ impl Member {
                     // Create covenant for op1_address -> op2_address
                     // let covenant_id_1 = Uuid::new_v4();
                     let namespace = Uuid::NAMESPACE_DNS;
-                    let name_to_hash = format!(
-                        "drp_covenant:{:?}:{:?}:{:?}",
-                        op1_address, op2_address, session_id
-                    );
+                    let name_to_hash = format!("drp_covenant:{:?}:{:?}:{:?}", op1_address, op2_address, session_id);
                     let covenant_id_1 = Uuid::new_v5(&namespace, name_to_hash.as_bytes());
                     let participants_1 = vec![op1_address.clone(), op2_address.clone()];
-                    self.prepare_drp(
-                        covenant_id_1,
-                        member1,
-                        member2,
-                        &self.get_addresses(members),
-                        utxo,
-                    )?;
-                    self.bitvmx.setup(
-                        covenant_id_1,
-                        PROGRAM_TYPE_DRP.to_string(),
-                        participants_1,
-                        0,
-                    )?;
+                    self.prepare_drp(covenant_id_1, member1, member2)?;
+                    self.bitvmx.setup(covenant_id_1, PROGRAM_TYPE_DRP.to_string(), participants_1, 0)?;
 
                     let other_address_1 = self.get_counterparty_address(member1, member2)?;
 
@@ -614,27 +586,13 @@ impl Member {
                         counterparty: other_address_1.clone(),
                     });
 
-                    // Create covenant for op2_address -> op1_address
+                    // Create covenant for op2_address -> op1_address  
                     // let covenant_id_2 = Uuid::new_v4();
-                    let name_to_hash = format!(
-                        "drp_covenant:{:?}:{:?}:{:?}",
-                        op2_address, op1_address, session_id
-                    );
+                    let name_to_hash = format!("drp_covenant:{:?}:{:?}:{:?}", op2_address, op1_address, session_id);
                     let covenant_id_2 = Uuid::new_v5(&namespace, name_to_hash.as_bytes());
                     let participants_2 = vec![op2_address.clone(), op1_address.clone()];
-                    self.prepare_drp(
-                        covenant_id_2,
-                        member2,
-                        member1,
-                        &self.get_addresses(members),
-                        utxo,
-                    )?;
-                    self.bitvmx.setup(
-                        covenant_id_2,
-                        PROGRAM_TYPE_DRP.to_string(),
-                        participants_2,
-                        0,
-                    )?;
+                    self.prepare_drp(covenant_id_2, member2, member1)?;
+                    self.bitvmx.setup(covenant_id_2, PROGRAM_TYPE_DRP.to_string(), participants_2, 0)?;
 
                     self.covenants.drp_covenants.push(DrpCovenant {
                         covenant_id: covenant_id_2,
@@ -657,8 +615,7 @@ impl Member {
 
     /// Get own address
     fn address(&self) -> Result<&P2PAddress> {
-        self.address
-            .as_ref()
+        self.address.as_ref()
             .ok_or_else(|| anyhow::anyhow!("Member address not set for {}", self.id))
     }
 
@@ -678,9 +635,7 @@ impl Member {
         } else if my_address == member2_address {
             member1_address
         } else {
-            return Err(anyhow::anyhow!(
-                "Current member is not part of the address pair"
-            ));
+            return Err(anyhow::anyhow!("Current member is not part of the address pair"));
         };
 
         Ok(counterparty_address.clone())
