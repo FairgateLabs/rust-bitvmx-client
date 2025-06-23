@@ -6,6 +6,7 @@ use bitcoin::Transaction;
 use bitcoin::Txid;
 use bitcoin_coordinator::types::FullBlock;
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 
 #[derive(Debug)]
 pub struct MerkleBranch {
@@ -41,12 +42,12 @@ pub fn get_spv_proof(txid: Txid, block_info: FullBlock) -> Result<BtcTxSPVProof,
 
     // Build the merkle branch with hashes in pc endianes
     let branch = build_merkle_branch(&merkle_tree, block_info.txs.len() as u32, tx_index as u32);
-    println!(
+    debug!(
         "Merkle Tree Root: {:#?}",
         get_merkle_tree_root_hex(&merkle_tree)
     );
-    println!("Merkle Branch Path: {:#?}", branch.path);
-    println!(
+    debug!("Merkle Branch Path: {:#?}", branch.path);
+    debug!(
         "Merkle Branch Hashes {:#?}",
         branch
             .hashes
@@ -316,7 +317,7 @@ mod tests {
         // Act
         let merkle_tree = build_merkle_tree_store(&txids, false);
 
-        println!(
+        debug!(
             "merkle_tree: {:#?}",
             merkle_tree
                 .iter()
@@ -329,7 +330,7 @@ mod tests {
         let branch = build_merkle_branch(&merkle_tree, txids.len() as u32, tx_index as u32);
 
         // Assert
-        println!(
+        debug!(
             "Merkle Branch Hashes {:#?}",
             branch
                 .hashes
