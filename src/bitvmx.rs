@@ -825,7 +825,7 @@ impl BitVMXApi for BitVMX {
 
         match tx_info {
             Ok(utx) => {
-                let proof = get_spv_proof(txid, utx.block_info)?;
+                let proof = get_spv_proof(txid, utx.block_info.unwrap())?;
 
                 self.program_context.broker_channel.send(
                     from,
