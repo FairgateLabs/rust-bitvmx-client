@@ -25,6 +25,7 @@ use bitcoin_coordinator::{
     AckMonitorNews, MonitorNews, TypesToMonitor,
 };
 
+use crate::spv_proof::get_spv_proof;
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
     channel::channel::LocalChannel,
@@ -44,7 +45,6 @@ use std::{
     time::Duration,
 };
 use storage_backend::storage::{KeyValueStore, Storage};
-
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -814,6 +814,37 @@ impl BitVMXApi for BitVMX {
             })?;
 
         self.proof_ready(from, id)?;
+        Ok(())
+    }
+
+    fn get_spv_proof(&mut self, from: u32, txid: Txid) -> Result<(), BitVMXError> {
+        let tx_info = self
+            .program_context
+            .bitcoin_coordinator
+            .get_transaction(txid);
+
+        match tx_info {
+            Ok(utx) => {
+                let proof = get_spv_proof(txid, utx.block_info)?;
+
+                self.program_context.broker_channel.send(
+                    from,
+                    serde_json::to_string(&OutgoingBitVMXApiMessages::SPVProof(txid, Some(proof)))?,
+                )?;
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to retrieve transaction info for txid {}: {:?}",
+                    txid, e
+                );
+
+                self.program_context.broker_channel.send(
+                    from,
+                    serde_json::to_string(&OutgoingBitVMXApiMessages::SPVProof(txid, None))?,
+                )?;
+            }
+        };
+
         Ok(())
     }
 

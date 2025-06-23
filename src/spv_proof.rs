@@ -1,10 +1,11 @@
-use anyhow::{Ok, Result};
+use crate::errors::BitVMXError;
 use bitcoin::hashes::{sha256d, Hash, HashEngine};
 use bitcoin::hex::Case;
 use bitcoin::hex::DisplayHex;
 use bitcoin::Transaction;
 use bitcoin::Txid;
 use bitcoin_coordinator::types::FullBlock;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
 pub struct MerkleBranch {
@@ -12,6 +13,7 @@ pub struct MerkleBranch {
     path: u32,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BtcTxSPVProof {
     pub block_hash: String,
     pub tx: Transaction,
@@ -19,7 +21,7 @@ pub struct BtcTxSPVProof {
     pub merkle_branch_hashes: Vec<[u8; 32]>,
 }
 
-pub fn get_merkle_branch(txid: Txid, block_info: FullBlock) -> Result<BtcTxSPVProof> {
+pub fn get_spv_proof(txid: Txid, block_info: FullBlock) -> Result<BtcTxSPVProof, BitVMXError> {
     // Get block transactions and find our tx index
     let (tx, tx_index) = block_info
         .txs
@@ -32,7 +34,7 @@ pub fn get_merkle_branch(txid: Txid, block_info: FullBlock) -> Result<BtcTxSPVPr
                 None
             }
         })
-        .ok_or_else(|| anyhow::anyhow!("Transaction not found in block"))?;
+        .ok_or_else(|| BitVMXError::TransactionNotFoundInBlock)?;
 
     // Build the complete merkle tree with hashes in bitcoin endianes
     let merkle_tree = build_merkle_tree_store(&block_info.txs, false);
