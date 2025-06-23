@@ -214,144 +214,6 @@ impl Member {
         })
     }
 
-    pub fn prepare_drp(
-        &mut self,
-        covenant_id: Uuid,
-        member1: &Member,
-        member2: &Member,
-    ) -> Result<()> {
-        info!(
-            id = self.id,
-            "Preparing DRP covenant {} for {} and {}", covenant_id, member1.id, member2.id
-        );
-
-        // Get the pairwise aggregated key for this pair
-        let counterparty_address = self.get_counterparty_address(member1, member2)?;
-        let pair_aggregated_pub_key = self
-            .keyring
-            .pairwise_keys
-            .get(&counterparty_address)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Pairwise key not found for counterparty: {:?}",
-                    counterparty_address
-                )
-            })?;
-
-        let program_path = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
-        self.bitvmx.set_var(
-            covenant_id,
-            "program_definition",
-            VariableTypes::String(program_path.to_string()),
-        )?;
-
-        self.bitvmx.set_var(
-            covenant_id,
-            "aggregated",
-            VariableTypes::PubKey(pair_aggregated_pub_key.clone()),
-        )?;
-
-        self.bitvmx
-            .set_var(covenant_id, "FEE", VariableTypes::Number(10_000))?;
-
-        // TODO this txid should come from the peg-in setup?
-        let txid_str = "0000000000000000000000000000000000000000000000000000000000000000";
-        let txid = bitcoin::Txid::from_str(txid_str)
-            .map_err(|e| anyhow::anyhow!("Failed to parse txid: {}", e))?;
-
-        let initial_utxo = Utxo::new(txid, 4, 200_000, pair_aggregated_pub_key);
-        let prover_win_utxo = Utxo::new(txid, 2, 10_500, pair_aggregated_pub_key);
-
-        // TODO: this is not the right initial spending condition for Union. Check the Miro diagram.
-        let initial_spending_condition = vec![
-            timelock(
-                TIMELOCK_BLOCKS,
-                &self.keyring.aggregated_key_1.unwrap(),
-                SignMode::Aggregate,
-            ), //convert to timelock
-            check_aggregated_signature(&pair_aggregated_pub_key, SignMode::Aggregate),
-        ];
-
-        let initial_output_type = external_fund_tx(
-            &self.keyring.aggregated_key_1.unwrap(),
-            initial_spending_condition,
-            200_000,
-        )?;
-
-        let prover_win_spending_condition = vec![
-            check_aggregated_signature(
-                &self.keyring.aggregated_key_1.unwrap(),
-                SignMode::Aggregate,
-            ), //convert to timelock
-            check_aggregated_signature(&pair_aggregated_pub_key, SignMode::Aggregate),
-        ];
-
-        let prover_win_output_type = external_fund_tx(
-            &self.keyring.aggregated_key_1.unwrap(),
-            prover_win_spending_condition,
-            10_500,
-        )?;
-
-        self.bitvmx.set_var(
-            covenant_id,
-            "utxo",
-            VariableTypes::Utxo((
-                initial_utxo.txid,
-                initial_utxo.vout,
-                Some(initial_utxo.amount),
-                Some(initial_output_type),
-            )),
-        )?;
-
-        self.bitvmx.set_var(
-            covenant_id,
-            "utxo_prover_win_action",
-            VariableTypes::Utxo((
-                prover_win_utxo.txid,
-                prover_win_utxo.vout,
-                Some(prover_win_utxo.amount),
-                Some(prover_win_output_type),
-            )),
-        )?;
-
-        sleep(Duration::from_secs(20));
-        Ok(())
-    }
-
-    pub fn prepare_packet_covenant(
-        &mut self,
-        covenant_id: Uuid,
-        addresses: &Vec<P2PAddress>,
-        op_utxo: &Utxo,
-        wt_utxo: &Utxo,
-    ) -> Result<()> {
-        info!(
-            id = self.id,
-            "Preparing Packet covenant {} for {}", covenant_id, self.id
-        );
-
-        // let initial_output = OutputType::SegwitPublicKey {
-        //     value: 1000,
-        //     script_pubkey: ScriptBuf::new_p2wpkh(
-        //         &self.keyring.aggregated_key_1.as_ref().unwrap().wpubkey_hash().unwrap(),
-        //     ),
-        //     public_key: self.
-        // };
-
-        // self.bitvmx.set_var(
-        //     covenant_id,
-        //     "op_funding_utxo",
-        //     VariableTypes::Utxo((
-        //         op_utxo.txid,
-        //         op_utxo.vout,
-        //         Some(op_utxo.amount),
-        //         Some(initial_output_type),
-        //     )),
-        // )?;
-
-        Ok(())
-    }
-
     pub fn get_peer_info(&mut self) -> Result<P2PAddress> {
         self.bitvmx.get_comm_info()?;
         let addr = expect_msg!(self, CommInfo(addr) => addr)?;
@@ -394,8 +256,7 @@ impl Member {
         // self.setup_dispute_core_covenant(members)?;
         // self.setup_multiparty_penalization_covenant()?;
         // self.setup_pairwise_penalization_covenant()?;
-        sleep(Duration::from_secs(20));
-        self.setup_drp_covenant(members, utxo, aggregation_id_1)?;
+        // self.setup_drp_covenant(members, utxo, aggregation_id_1)?;
 
         // info!(
         //     id = self.id,
@@ -519,8 +380,8 @@ impl Member {
         // self.prepare_packet_covenant(id, &addresses, &utxo, &utxo)?;
 
         // TODO rename PROGRAM_TYPE_DISPUTE_CORE to  PROGRAM_TYPE_PACKET_COVENANT
-        self.bitvmx
-            .setup(id, PROGRAM_TYPE_DISPUTE_CORE.to_string(), addresses, 0)?;
+        // self.bitvmx
+        //     .setup(id, PROGRAM_TYPE_DISPUTE_CORE.to_string(), addresses, 0)?;
 
         Ok(())
     }
@@ -609,6 +470,144 @@ impl Member {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    pub fn prepare_drp(
+        &mut self,
+        covenant_id: Uuid,
+        member1: &Member,
+        member2: &Member,
+    ) -> Result<()> {
+        info!(
+            id = self.id,
+            "Preparing DRP covenant {} for {} and {}", covenant_id, member1.id, member2.id
+        );
+
+        // Get the pairwise aggregated key for this pair
+        let counterparty_address = self.get_counterparty_address(member1, member2)?;
+        let pair_aggregated_pub_key = self
+            .keyring
+            .pairwise_keys
+            .get(&counterparty_address)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Pairwise key not found for counterparty: {:?}",
+                    counterparty_address
+                )
+            })?;
+
+        let program_path = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
+        self.bitvmx.set_var(
+            covenant_id,
+            "program_definition",
+            VariableTypes::String(program_path.to_string()),
+        )?;
+
+        self.bitvmx.set_var(
+            covenant_id,
+            "aggregated",
+            VariableTypes::PubKey(pair_aggregated_pub_key.clone()),
+        )?;
+
+        self.bitvmx
+            .set_var(covenant_id, "FEE", VariableTypes::Number(10_000))?;
+
+        // TODO this txid should come from the peg-in setup?
+        let txid_str = "0000000000000000000000000000000000000000000000000000000000000000";
+        let txid = bitcoin::Txid::from_str(txid_str)
+            .map_err(|e| anyhow::anyhow!("Failed to parse txid: {}", e))?;
+
+        let initial_utxo = Utxo::new(txid, 4, 200_000, pair_aggregated_pub_key);
+        let prover_win_utxo = Utxo::new(txid, 2, 10_500, pair_aggregated_pub_key);
+
+        // TODO: this is not the right initial spending condition for Union. Check the Miro diagram.
+        let initial_spending_condition = vec![
+            timelock(
+                TIMELOCK_BLOCKS,
+                &self.keyring.aggregated_key_1.unwrap(),
+                SignMode::Aggregate,
+            ), //convert to timelock
+            check_aggregated_signature(&pair_aggregated_pub_key, SignMode::Aggregate),
+        ];
+
+        let initial_output_type = external_fund_tx(
+            &self.keyring.aggregated_key_1.unwrap(),
+            initial_spending_condition,
+            200_000,
+        )?;
+
+        let prover_win_spending_condition = vec![
+            check_aggregated_signature(
+                &self.keyring.aggregated_key_1.unwrap(),
+                SignMode::Aggregate,
+            ), //convert to timelock
+            check_aggregated_signature(&pair_aggregated_pub_key, SignMode::Aggregate),
+        ];
+
+        let prover_win_output_type = external_fund_tx(
+            &self.keyring.aggregated_key_1.unwrap(),
+            prover_win_spending_condition,
+            10_500,
+        )?;
+
+        self.bitvmx.set_var(
+            covenant_id,
+            "utxo",
+            VariableTypes::Utxo((
+                initial_utxo.txid,
+                initial_utxo.vout,
+                Some(initial_utxo.amount),
+                Some(initial_output_type),
+            )),
+        )?;
+
+        self.bitvmx.set_var(
+            covenant_id,
+            "utxo_prover_win_action",
+            VariableTypes::Utxo((
+                prover_win_utxo.txid,
+                prover_win_utxo.vout,
+                Some(prover_win_utxo.amount),
+                Some(prover_win_output_type),
+            )),
+        )?;
+
+        sleep(Duration::from_secs(20));
+        Ok(())
+    }
+
+    pub fn prepare_packet_covenant(
+        &mut self,
+        covenant_id: Uuid,
+        addresses: &Vec<P2PAddress>,
+        op_utxo: &Utxo,
+        wt_utxo: &Utxo,
+    ) -> Result<()> {
+        // info!(
+        //     id = self.id,
+        //     "Preparing Packet covenant {} for {}", covenant_id, self.id
+        // );
+
+        // let initial_output = OutputType::SegwitPublicKey {
+        //     value: 1000,
+        //     script_pubkey: ScriptBuf::new_p2wpkh(
+        //         &self.keyring.aggregated_key_1.as_ref().unwrap().wpubkey_hash().unwrap(),
+        //     ),
+        //     public_key: self.keyring.aggregated_key_1.as_ref().unwrap().clone(),
+        // };
+
+        // self.bitvmx.set_var(
+        //     covenant_id,
+        //     "op_funding_utxo",
+        //     VariableTypes::Utxo((
+        //         op_utxo.txid,
+        //         op_utxo.vout,
+        //         Some(op_utxo.amount),
+        //         Some(initial_output_type),
+        //     )),
+        // )?;
 
         Ok(())
     }
