@@ -1,11 +1,13 @@
 use std::str::FromStr;
 
+use crate::spv_proof::BtcTxSPVProof;
 use bitcoin::{PrivateKey, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{types::BitcoinCoordinatorType, TransactionStatus};
 use bitvmx_broker::{broker_storage::BrokerStorage, channel::channel::LocalChannel};
 use chrono::{DateTime, Utc};
 use p2p_handler::P2pHandler;
 use serde::{Deserialize, Serialize};
+
 use uuid::Uuid;
 
 use crate::{
@@ -146,6 +148,7 @@ pub enum OutgoingBitVMXApiMessages {
     HashedMessage(Uuid, String, u32, u32, String),
     ProofReady(Uuid),
     ProofNotReady(Uuid),
+    SPVProof(Txid, Option<BtcTxSPVProof>),
 }
 
 impl OutgoingBitVMXApiMessages {
