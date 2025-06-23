@@ -11,9 +11,9 @@ use bitcoin::{Transaction, Txid};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use std::thread;
 use std::time::{Duration, Instant};
-use tracing::info;
 use uuid::Uuid;
 
+#[derive(Clone)]
 pub struct BitVMXClient {
     channel: DualChannel,
     _client_id: u32,
@@ -68,6 +68,10 @@ impl BitVMXClient {
 
     pub fn get_aggregated_pubkey(&self, id: Uuid) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::GetAggregatedPubkey(id))
+    }
+
+    pub fn get_comm_info(&self) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetCommInfo())
     }
 
     pub fn generate_zkp(&self, id: Uuid, input: Vec<u8>) -> Result<()> {
@@ -127,7 +131,7 @@ impl BitVMXClient {
     pub fn send_message(&self, msg: IncomingBitVMXApiMessages) -> Result<()> {
         // BitVMX instance uses ID 1 by convention
         let serialized = serde_json::to_string(&msg)?;
-        info!("Sending message to {}: {:?}", BITVMX_ID, serialized);
+        // info!("Sending message to {}: {:?}", BITVMX_ID, serialized);
         self.channel.send(BITVMX_ID, serialized)?;
         Ok(())
     }
