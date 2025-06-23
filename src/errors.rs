@@ -140,6 +140,9 @@ pub enum BitVMXError {
 
     #[error("Insufficient amount to send the transaction")]
     InsufficientAmount,
+
+    #[error("Inconsistent data retrieved of ZKP execution result from job {0}")]
+    InconsistentZKPData(Uuid),
 }
 
 #[derive(Error, Debug)]
