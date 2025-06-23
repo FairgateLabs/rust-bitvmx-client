@@ -8,4 +8,5 @@ pub mod helper;
 pub mod keychain;
 pub mod p2p_helper;
 pub mod program;
+pub mod spv_proof;
 pub mod types;
