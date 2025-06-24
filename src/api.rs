@@ -38,9 +38,7 @@ pub trait BitVMXApi {
 
     fn proof_ready(&mut self, from: u32, id: Uuid) -> Result<(), BitVMXError>;
 
-    fn execute_zkp(&mut self) -> Result<(), BitVMXError>;
-
-    fn get_zkp_execution_result(&mut self) -> Result<(), BitVMXError>;
+    fn get_zkp_execution_result(&mut self, from: u32, id: Uuid) -> Result<(), BitVMXError>;
 
     fn finalize(&mut self) -> Result<(), BitVMXError>;
 

@@ -82,12 +82,8 @@ impl BitVMXClient {
         self.send_message(IncomingBitVMXApiMessages::ProofReady(id))
     }
 
-    pub fn execute_zkp(&self) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::ExecuteZKP())
-    }
-
-    pub fn get_zkp_execution_result(&self) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::GetZKPExecutionResult())
+    pub fn get_zkp_execution_result(&self, id: Uuid) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetZKPExecutionResult(id))
     }
 
     pub fn finalize(&self) -> Result<()> {

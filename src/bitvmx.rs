@@ -80,6 +80,7 @@ enum StoreKey {
     ZKPProof(Uuid),
     ZKPStatus(Uuid),
     ZKPFrom(Uuid),
+    ZKPJournal(Uuid),
 }
 
 impl StoreKey {
@@ -91,6 +92,7 @@ impl StoreKey {
             StoreKey::ZKPProof(id) => format!("bitvmx/zkp/{}/proof", id),
             StoreKey::ZKPStatus(id) => format!("bitvmx/zkp/{}/status", id),
             StoreKey::ZKPFrom(id) => format!("bitvmx/zkp/{}/from", id),
+            StoreKey::ZKPJournal(id) => format!("bitvmx/zkp/{}/journal", id),
         }
     }
 }
@@ -656,7 +658,7 @@ impl BitVMXApi for BitVMX {
                 if status_str == "OK" {
                     OutgoingBitVMXApiMessages::ProofReady(id)
                 } else {
-                    OutgoingBitVMXApiMessages::ProofNotReady(id)
+                    OutgoingBitVMXApiMessages::ProofGenerationError(id, status_str)
                 }
             }
             None => OutgoingBitVMXApiMessages::ProofNotReady(id),
@@ -669,11 +671,41 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn execute_zkp(&mut self) -> Result<(), BitVMXError> {
-        Ok(())
-    }
+    fn get_zkp_execution_result(&mut self, from: u32, id: Uuid) -> Result<(), BitVMXError> {
+        // Check if the proof is ready
+        info!("Checking if {} ZKP job is ready", id);
+        let status_key = StoreKey::ZKPStatus(id).get_key();
+        let status: Option<String> = self.store.get(&status_key)?;
 
-    fn get_zkp_execution_result(&mut self) -> Result<(), BitVMXError> {
+        let response = match status {
+            Some(status_str) => {
+                if status_str == "OK" {
+                    info!("Getting ZKP execution result for job: {}", id);
+                    let seal: Vec<u8> = match self.store.get(&StoreKey::ZKPProof(id).get_key())?
+                    {
+                        Some(seal) => seal,
+                        None => return Err(BitVMXError::InconsistentZKPData(id)),
+
+                    };
+
+                    let journal: Vec<u8> = match self.store.get(&StoreKey::ZKPJournal(id).get_key())? {
+                        Some(journal) => journal,
+                        None => {
+                            return Err(BitVMXError::InconsistentZKPData(id));
+                        }
+                    };
+                    OutgoingBitVMXApiMessages::ZKPResult(id, seal, journal)
+                } else {
+                    OutgoingBitVMXApiMessages::ProofGenerationError(id, status_str)
+                }
+            }
+            None => OutgoingBitVMXApiMessages::ProofNotReady(id),
+        };
+
+        self.program_context
+            .broker_channel
+            .send(from, serde_json::to_string(&response)?)?;
+
         Ok(())
     }
 
@@ -786,23 +818,36 @@ impl BitVMXApi for BitVMX {
             BitVMXError::InvalidMessageFormat
         })?;
 
-        let vec = data["vec"].as_array().ok_or_else(|| {
-            warn!("Missing vec field in data. Raw message: {}", msg);
+        let journal = data["journal"].as_str().ok_or_else(|| {
+            warn!("Missing journal field in data. Raw message: {}", msg);
             BitVMXError::InvalidMessageFormat
         })?;
 
-        // Convert vec to Vec<u8>
-        let seal: Vec<u8> = vec
+        let seal = data["seal"].as_array().ok_or_else(|| {
+            warn!("Missing seal field in data. Raw message: {}", msg);
+            BitVMXError::InvalidMessageFormat
+        })?;
+
+        // Convert seal to Vec<u8>
+        let seal: Vec<u8> = seal
             .iter()
             .filter_map(|v| v.as_u64())
             .map(|v| v as u8)
             .collect();
 
         // Store the proof data and status
+        let transaction_id= self.store.begin_transaction();
+
         self.store
-            .set(StoreKey::ZKPProof(id).get_key(), seal, None)?;
+            .set(StoreKey::ZKPProof(id).get_key(), seal, Some(transaction_id))?;
+
         self.store
-            .set(StoreKey::ZKPStatus(id).get_key(), status.to_string(), None)?;
+            .set(StoreKey::ZKPJournal(id).get_key(), journal, Some(transaction_id))?;
+
+        self.store
+            .set(StoreKey::ZKPStatus(id).get_key(), status.to_string(), Some(transaction_id))?;
+
+        self.store.commit_transaction(transaction_id)?;
 
         // Get the stored 'from' parameter
         let from: u32 = self
@@ -986,9 +1031,8 @@ impl BitVMXApi for BitVMX {
                 BitVMXApi::generate_zkp(self, from, id, input)?
             }
             IncomingBitVMXApiMessages::ProofReady(id) => BitVMXApi::proof_ready(self, from, id)?,
-            IncomingBitVMXApiMessages::ExecuteZKP() => BitVMXApi::execute_zkp(self)?,
-            IncomingBitVMXApiMessages::GetZKPExecutionResult() => {
-                BitVMXApi::get_zkp_execution_result(self)?
+            IncomingBitVMXApiMessages::GetZKPExecutionResult(id) => {
+                BitVMXApi::get_zkp_execution_result(self, from, id)?
             }
             IncomingBitVMXApiMessages::Finalize() => BitVMXApi::finalize(self)?,
         }

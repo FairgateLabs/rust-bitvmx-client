@@ -8,13 +8,14 @@ use bitvmx_client::program;
 use bitvmx_client::program::participant::P2PAddress;
 use bitvmx_client::program::variables::VariableTypes;
 use bitvmx_client::types::{
-    IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID,
+    IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID, PROVER_ID,
 };
 use bitvmx_client::{
     bitvmx::BitVMX, config::Config, program::participant::ParticipantRole, types::EMULATOR_ID,
 };
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
+use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use bitvmx_wallet::wallet::Wallet;
 use common::dispute::{prepare_dispute, ForcedChallenges};
 use common::{clear_db, init_utxo_new, FUNDING_ID, INITIAL_BLOCK_COUNT, WALLET_NAME};
@@ -121,6 +122,34 @@ fn run_emulator(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result
     Ok(())
 }
 
+fn run_zkp(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<()> {
+    let configs = get_configs(network)?;
+
+    let mut instances = vec![];
+    configs.iter().for_each(|config| {
+        let broker_config = BrokerConfig::new(config.broker_port, None);
+        let channel = DualChannel::new(&broker_config, PROVER_ID);
+
+        let prover_dispatcher = DispatcherHandler::<ProverJobType>::new(channel);
+        instances.push(prover_dispatcher);
+    });
+
+    // Main processing loop
+    loop {
+        if rx.try_recv().is_ok() {
+            info!("Signal received, shutting down...");
+            break;
+        }
+        for (idx, dispatcher) in instances.iter_mut().enumerate() {
+            if dispatcher.tick() {
+                let _ = tx.send(idx);
+            }
+            thread::sleep(Duration::from_millis(500));
+        }
+    }
+    Ok(())
+}
+
 fn run_auto_mine(network: Network, rx: Receiver<()>, tx: Sender<()>, interval: u64) -> Result<()> {
     let config = &get_configs(network)?[0];
 
@@ -155,6 +184,9 @@ pub struct TestHelper {
     pub mine_handle: Option<thread::JoinHandle<Result<()>>>,
     pub mine_stop_tx: Option<Sender<()>>,
     pub mine_block_rx: Option<Receiver<()>>,
+    pub zkp_handle: Option<thread::JoinHandle<Result<()>>>,
+    pub zkp_stop_tx: Option<Sender<()>>,
+    pub zkp_ready_rx: Receiver<usize>,
     pub channels: Vec<DualChannel>,
 }
 
@@ -207,6 +239,10 @@ impl TestHelper {
         let (disp_ready_tx, disp_ready_rx) = channel::<usize>();
         let disp_handle = thread::spawn(move || run_emulator(network, disp_stop_rx, disp_ready_tx));
 
+        let (zkp_stop_tx, zkp_stop_rx) = channel::<()>();
+        let (zkp_ready_tx, zkp_ready_rx) = channel::<usize>();
+        let zkp_handle = thread::spawn(move || run_zkp(network, zkp_stop_rx, zkp_ready_tx));
+
         let automine_interval = if network == Network::Regtest {
             if let Some(interval) = auto_mine {
                 interval
@@ -246,6 +282,9 @@ impl TestHelper {
             mine_handle,
             mine_stop_tx,
             mine_block_rx,
+            zkp_handle: Some(zkp_handle),
+            zkp_stop_tx: Some(zkp_stop_tx),
+            zkp_ready_rx,
             channels,
         })
     }
@@ -466,5 +505,25 @@ fn test_independent_regtest() -> Result<()> {
 #[test]
 fn test_all() -> Result<()> {
     test_all_aux(false, Network::Regtest)?;
+    Ok(())
+}
+
+#[ignore]
+#[test]
+fn test_zkp() -> Result<()> {
+    let mut helper = TestHelper::new(Network::Regtest, false, None)?;
+
+    let id = Uuid::new_v4();
+
+    let _ = helper.channels[0].send(
+        BITVMX_ID,
+        IncomingBitVMXApiMessages::GenerateZKP(id, vec![1,2,3,4])
+        .to_string()?,
+    );
+
+    let msg = helper.wait_msg(0)?;
+    info!("ZKP generated: {:?}", msg);
+    
+    helper.stop()?;
     Ok(())
 }

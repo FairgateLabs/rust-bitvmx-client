@@ -110,8 +110,7 @@ pub enum IncomingBitVMXApiMessages {
     GetPubKey(Uuid, bool),
     GenerateZKP(Uuid, Vec<u8>),
     ProofReady(Uuid),
-    ExecuteZKP(),
-    GetZKPExecutionResult(),
+    GetZKPExecutionResult(Uuid, ),
     Finalize(),
 }
 impl IncomingBitVMXApiMessages {
@@ -139,7 +138,7 @@ pub enum OutgoingBitVMXApiMessages {
     AggregatedPubkey(Uuid, PublicKey),
     AggregatedPubkeyNotReady(Uuid),
     TransactionInfo(Uuid, String, Transaction),
-    ZKPResult(/* Add appropriate type */),
+    ZKPResult(Uuid, Vec<u8>, Vec<u8>),
     ExecutionResult(/* Add appropriate type */),
     CommInfo(P2PAddress),
     KeyPair(Uuid, PrivateKey, PublicKey),
@@ -150,6 +149,7 @@ pub enum OutgoingBitVMXApiMessages {
     HashedMessage(Uuid, String, u32, u32, String),
     ProofReady(Uuid),
     ProofNotReady(Uuid),
+    ProofGenerationError(Uuid, String),
     SPVProof(Txid, Option<BtcTxSPVProof>),
 }
 
