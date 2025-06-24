@@ -1,3 +1,5 @@
+#![cfg(feature = "cardinal")]
+
 use anyhow::Result;
 use bitcoin::{
     key::rand::rngs::OsRng,
@@ -227,7 +229,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         BITVMX_ID,
         IncomingBitVMXApiMessages::GetTransactionInofByName(
             program_id,
-            program::protocols::lock::LOCK_TX.to_string(),
+            program::protocols::cardinal::lock::LOCK_TX.to_string(),
         )
         .to_string()?,
     );
@@ -247,7 +249,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         BITVMX_ID,
         IncomingBitVMXApiMessages::GetHashedMessage(
             program_id,
-            program::protocols::lock::LOCK_TX.to_string(),
+            program::protocols::cardinal::lock::LOCK_TX.to_string(),
             0,
             1,
         )
@@ -276,7 +278,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
-            program::protocols::lock::LOCK_TX.to_string(),
+            program::protocols::cardinal::lock::LOCK_TX.to_string(),
         )
         .to_string()?,
     );
@@ -289,7 +291,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
-            program::protocols::lock::HAPPY_PATH_TX.to_string(),
+            program::protocols::cardinal::lock::HAPPY_PATH_TX.to_string(),
         )
         .to_string()?,
     );
@@ -307,7 +309,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
-            program::protocols::lock::PUBLISH_ZKP.to_string(),
+            program::protocols::cardinal::lock::PUBLISH_ZKP.to_string(),
         )
         .to_string()?,
     );

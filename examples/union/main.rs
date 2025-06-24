@@ -12,15 +12,15 @@ use std::env;
 mod committee;
 use committee::Committee;
 
-mod log;
 mod bitcoin;
+mod log;
 
 pub fn main() -> Result<()> {
     log::configure_tracing();
-    
+
     let args: Vec<String> = env::args().collect();
     let command = args.get(1);
-    
+
     match command.map(|s| s.as_str()) {
         Some("setup_bitcoin_node") => setup_bitcoin_node()?,
         Some("pegin") => pegin()?,
@@ -28,7 +28,7 @@ pub fn main() -> Result<()> {
             eprintln!("Unknown command: {}", cmd);
             print_usage();
             std::process::exit(1);
-        },
+        }
         None => {
             print_usage();
             std::process::exit(1);

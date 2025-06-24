@@ -972,11 +972,11 @@ impl BitVMXApi for BitVMX {
                         .program_context
                         .key_chain
                         .key_manager
-                        .get_pubkey(&aggregated)?;
+                        .get_my_public_key(&aggregated)?;
                     self.program_context.broker_channel.send(
                         from,
                         serde_json::to_string(&OutgoingBitVMXApiMessages::PubKey(id, pubkey))?,
-                    )?;                    
+                    )?;
                 }
             }
             IncomingBitVMXApiMessages::GetAggregatedPubkey(id) => {

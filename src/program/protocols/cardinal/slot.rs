@@ -20,19 +20,15 @@ use crate::{
     bitvmx::Context,
     errors::BitVMXError,
     program::{
+        participant::ParticipantKeys,
         protocols::{
             claim::ClaimGate,
             dispute::{START_CH, TIMELOCK_BLOCKS},
-            protocol_handler::external_fund_tx,
+            protocol_handler::{external_fund_tx, ProtocolContext, ProtocolHandler},
         },
         variables::VariableTypes,
     },
     types::ProgramContext,
-};
-
-use super::{
-    super::participant::ParticipantKeys,
-    protocol_handler::{ProtocolContext, ProtocolHandler},
 };
 
 #[derive(Clone, Serialize, Deserialize)]

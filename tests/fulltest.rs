@@ -1,3 +1,5 @@
+#![cfg(feature = "cardinal")]
+
 use anyhow::Result;
 use bitcoin::{
     key::rand::rngs::OsRng,
@@ -9,8 +11,8 @@ use bitvmx_client::{
         self,
         participant::ParticipantRole,
         protocols::{
-            dispute::TIMELOCK_BLOCKS, protocol_handler::external_fund_tx, slot::group_id,
-            transfer::pub_too_group,
+            cardinal::slot::group_id, cardinal::transfer::pub_too_group, dispute::TIMELOCK_BLOCKS,
+            protocol_handler::external_fund_tx,
         },
         variables::{VariableTypes, WitnessTypes},
     },
@@ -143,7 +145,10 @@ pub fn test_full() -> Result<()> {
         BITVMX_ID,
         IncomingBitVMXApiMessages::GetTransactionInofByName(
             slot_program_id,
-            format!("unsigned_{}", program::protocols::slot::cert_hash_tx_op(0)),
+            format!(
+                "unsigned_{}",
+                program::protocols::cardinal::slot::cert_hash_tx_op(0)
+            ),
         )
         .to_string()?,
     );
@@ -307,7 +312,7 @@ pub fn test_full() -> Result<()> {
         BITVMX_ID,
         IncomingBitVMXApiMessages::GetTransactionInofByName(
             lock_program_id,
-            program::protocols::lock::LOCK_TX.to_string(),
+            program::protocols::cardinal::lock::LOCK_TX.to_string(),
         )
         .to_string()?,
     );
@@ -328,7 +333,7 @@ pub fn test_full() -> Result<()> {
         BITVMX_ID,
         IncomingBitVMXApiMessages::GetHashedMessage(
             lock_program_id,
-            program::protocols::lock::LOCK_TX.to_string(),
+            program::protocols::cardinal::lock::LOCK_TX.to_string(),
             0,
             1,
         )
@@ -441,7 +446,7 @@ pub fn test_full() -> Result<()> {
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             lock_program_id,
-            program::protocols::lock::LOCK_TX.to_string(),
+            program::protocols::cardinal::lock::LOCK_TX.to_string(),
         )
         .to_string()?,
     );
@@ -455,7 +460,7 @@ pub fn test_full() -> Result<()> {
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             slot_program_id,
-            program::protocols::slot::SETUP_TX.to_string(),
+            program::protocols::cardinal::slot::SETUP_TX.to_string(),
         )
         .to_string()?,
     );
@@ -482,7 +487,7 @@ pub fn test_full() -> Result<()> {
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             slot_program_id,
-            program::protocols::slot::cert_hash_tx_op(0),
+            program::protocols::cardinal::slot::cert_hash_tx_op(0),
         )
         .to_string()?,
     );
@@ -524,7 +529,7 @@ pub fn test_full() -> Result<()> {
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             transfer_program_id,
-            program::protocols::transfer::too_tx(0, 4),
+            program::protocols::cardinal::transfer::too_tx(0, 4),
         )
         .to_string()?,
     );

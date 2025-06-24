@@ -19,19 +19,15 @@ use uuid::Uuid;
 use crate::{
     errors::BitVMXError,
     program::{
+        participant::ParticipantKeys,
         protocols::{
+            cardinal::slot::{self},
             claim::ClaimGate,
-            protocol_handler::external_fund_tx,
-            slot::{self},
+            protocol_handler::{external_fund_tx, ProtocolContext, ProtocolHandler},
         },
         variables::PartialUtxo,
     },
     types::{ProgramContext, PROGRAM_TYPE_SLOT},
-};
-
-use super::{
-    super::participant::ParticipantKeys,
-    protocol_handler::{ProtocolContext, ProtocolHandler},
 };
 
 #[derive(Clone, Serialize, Deserialize)]
