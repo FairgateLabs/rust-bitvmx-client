@@ -818,7 +818,7 @@ impl BitVMXApi for BitVMX {
             BitVMXError::InvalidMessageFormat
         })?;
 
-        let journal = data["journal"].as_str().ok_or_else(|| {
+        let journal = data["journal"].as_array().ok_or_else(|| {
             warn!("Missing journal field in data. Raw message: {}", msg);
             BitVMXError::InvalidMessageFormat
         })?;
