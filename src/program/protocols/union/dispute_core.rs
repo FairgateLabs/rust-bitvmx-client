@@ -36,6 +36,7 @@ pub const WATCHTOWER_START_ENABLER_TX: &str = "WATCHTOWER_START_ENABLER_TX";
 pub const REIMBURSEMENT_KICKOFF_TX: &str = "REIMBURSEMENT_KICKOFF_TX_";
 
 pub const DISPUTE_OPENER_VALUE: u64 = 1000;
+pub const START_ENABLER_VALUE: u64 = 1000;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DisputeCoreProtocol {
@@ -61,9 +62,57 @@ impl ProtocolHandler for DisputeCoreProtocol {
 
     fn generate_keys(
         &self,
-        _program_context: &mut ProgramContext,
+        program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
-        Ok(ParticipantKeys::new(vec![], vec![]))
+        let mut take_pubkeys = Vec::new();
+        let mut dispute_pubkeys = Vec::new();
+
+        let my_take_public_key = program_context
+            .globals
+            .get_var(&self.ctx.id, "take_public_key")?
+            .unwrap()
+            .pubkey()?;
+
+        let my_dispute_public_key = program_context
+            .globals
+            .get_var(&self.ctx.id, "dispute_public_key")?
+            .unwrap()
+            .pubkey()?;
+
+        let member_count = program_context
+            .globals
+            .get_var(&self.ctx.id, "member_count")?
+            .unwrap()
+            .number()?;
+
+        for i in 0..member_count {
+            let take_public_key = program_context
+                .globals
+                .get_var(&self.ctx.id, &format!("take_public_key_{}", i))?
+                .unwrap()
+                .pubkey()?;
+
+            let dispute_public_key = program_context
+                .globals
+                .get_var(&self.ctx.id, &format!("dispute_public_key_{}", i))?
+                .unwrap()
+                .pubkey()?;
+
+            take_pubkeys.push(take_public_key);
+            dispute_pubkeys.push(dispute_public_key);
+        }
+
+        let take_aggregated_key = program_context.key_chain.new_musig2_session(
+            take_pubkeys.values().cloned().collect(),
+            my_take_public_key.clone(),
+        )?;
+
+        let dispute_aggregated_key = program_context.key_chain.new_musig2_session(
+            dispute_pubkeys.values().cloned().collect(),
+            my_dispute_public_key.clone(),
+        )?;
+
+        Ok(ParticipantKeys::new(vec![], vec![take_aggregated_key, dispute_aggregated_key]))
     }
 
     fn build(
@@ -72,17 +121,23 @@ impl ProtocolHandler for DisputeCoreProtocol {
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let public_key = context
+        let my_take_public_key = context
             .globals
-            .get_var(&self.ctx.id, "public_key")?
+            .get_var(&self.ctx.id, "take_public_key")?
             .unwrap()
             .pubkey()?;
 
-        let op_funding_utxo = context
+        let my_dispute_public_key = context
             .globals
-            .get_var(&self.ctx.id, "op_funding_utxo")?
+            .get_var(&self.ctx.id, "dispute_public_key")?
             .unwrap()
-            .utxo()?;
+            .pubkey()?;
+
+        let my_role = context
+            .globals
+            .get_var(&self.ctx.id, "role")?
+            .unwrap()
+            .string()?;
 
         let wt_funding_utxo = context
             .globals
@@ -90,56 +145,99 @@ impl ProtocolHandler for DisputeCoreProtocol {
             .unwrap()
             .utxo()?;
 
-        let slot_count = context
+        let member_count = context
             .globals
-            .get_var(&self.ctx.id, "slot_count")?
+            .get_var(&self.ctx.id, "member_count")?
+            .unwrap()
+            .number()?;
+
+        let operators_count = context
+            .globals
+            .get_var(&self.ctx.id, "op_count")?
             .unwrap()
             .number()?;
 
         //create the protocol
         let mut protocol = self.load_or_create_protocol();
 
-        // Declare the external accept op_funding transaction
-        protocol.add_external_transaction(OPERATOR_FUNDING_TX)?;
-        protocol.add_transaction_output(OPERATOR_FUNDING_TX, &op_funding_utxo.3.unwrap())?;
+        if my_role == "operator" {
+            let op_funding_utxo = context
+                .globals
+                .get_var(&self.ctx.id, "op_funding_utxo")?
+                .unwrap()
+                .utxo()?;
+
+                let slot_count = context
+                .globals
+                .get_var(&self.ctx.id, "slot_count")?
+                .unwrap()
+                .number()?;
+    
+            // Declare the external accept op_funding transaction
+            protocol.add_external_transaction(OPERATOR_FUNDING_TX)?;
+            protocol.add_transaction_output(OPERATOR_FUNDING_TX, &op_funding_utxo.3.unwrap())?;
+    
+            // Connect the operator dispute opener transaction with the op_funding transaction
+            protocol.add_connection(
+                "initial_op_deposit",
+                OPERATOR_FUNDING_TX,
+                (op_funding_utxo.1 as usize).into(),
+                OPERATOR_DISPUTE_OPENER_TX,
+                InputSpec::Auto(
+                    SighashType::ecdsa_all(),
+                    SpendMode::Segwit,
+                ),
+                None,
+                Some(op_funding_utxo.0),
+            )?;
+    
+            for i in 0..slot_count {
+                let slot_preimage = rand::thread_rng().next_u32();
+                context.globals.set_var(
+                    &self.ctx.id,
+                    &format!("slot_preimage_{}", i),
+                    VariableTypes::String(slot_preimage.to_string()),
+                )?;
+    
+                let slot_preimage_bytes = self.sha256(slot_preimage.to_le_bytes().to_vec());
+                let script = scripts::reveal_secret(slot_preimage_bytes, &public_key, SignMode::Single);
+                let script_pubkey =
+                    ScriptBuf::new_p2wsh(&WScriptHash::from(script.get_script().clone()));
+    
+                protocol.add_transaction_output(
+                    OPERATOR_DISPUTE_OPENER_TX,
+                    &OutputType::SegwitScript {
+                        value: Amount::from_sat(DISPUTE_OPENER_VALUE),
+                        script_pubkey,
+                        script,
+                    },
+                )?;
+            }
+    
+        }
 
         // Declare the external accept wt_funding transaction
         protocol.add_external_transaction(WATCHTOWER_FUNDING_TX)?;
         protocol.add_transaction_output(WATCHTOWER_FUNDING_TX, &wt_funding_utxo.3.unwrap())?;
 
-        // Connect the operator dispute opener transaction with the op_funding transaction
         protocol.add_connection(
-            "initial_deposit",
-            OPERATOR_FUNDING_TX,
-            (op_funding_utxo.1 as usize).into(),
-            OPERATOR_DISPUTE_OPENER_TX,
+            "initial_wt_deposit",
+            WATCHTOWER_FUNDING_TX,
+            (wt_funding_utxo.1 as usize).into(),
+            WATCHTOWER_START_ENABLER_TX,
             InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::KeyOnly {
-                    key_path_sign: SignMode::Aggregate,
-                },
+                SighashType::ecdsa_all(),
+                SpendMode::Segwit,
             ),
             None,
-            Some(op_funding_utxo.0),
+            Some(wt_funding_utxo.0),
         )?;
 
-        for i in 0..slot_count {
-            let slot_preimage = rand::thread_rng().next_u32();
-            context.globals.set_var(
-                &self.ctx.id,
-                &format!("slot_preimage_{}", i),
-                VariableTypes::String(slot_preimage.to_string()),
-            )?;
-
-            let slot_preimage_bytes = self.sha256(slot_preimage.to_le_bytes().to_vec());
-            let script = scripts::operator_hashed_slot_preimage(public_key, slot_preimage_bytes);
-            let script_pubkey =
-                ScriptBuf::new_p2wsh(&WScriptHash::from(script.get_script().clone()));
-
+        for i in 0..operators_count {
             protocol.add_transaction_output(
-                OPERATOR_DISPUTE_OPENER_TX,
+                WATCHTOWER_START_ENABLER_TX,
                 &OutputType::SegwitScript {
-                    value: Amount::from_sat(DISPUTE_OPENER_VALUE),
+                    value: Amount::from_sat(START_ENABLER_VALUE),
                     script_pubkey,
                     script,
                 },
