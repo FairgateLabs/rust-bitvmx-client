@@ -56,6 +56,8 @@ pub fn pegin() -> Result<()> {
     // corresponding keys and programs.
     let _committee = setup()?;
 
+    // Pegin
+
     Ok(())
 }
 

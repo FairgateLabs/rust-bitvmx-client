@@ -1,5 +1,5 @@
 use crate::{errors::BitVMXError, program::participant::P2PAddress};
-use bitcoin::{Transaction, Txid};
+use bitcoin::{PublicKey, Transaction, Txid};
 use uuid::Uuid;
 
 pub trait BitVMXApi {
@@ -10,6 +10,7 @@ pub trait BitVMXApi {
         from: u32,
         id: Uuid,
         participants: Vec<P2PAddress>,
+        participants_keys: Option<Vec<PublicKey>>,
         leader_idx: u16,
     ) -> Result<(), BitVMXError>;
 

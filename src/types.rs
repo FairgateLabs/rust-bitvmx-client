@@ -106,7 +106,7 @@ pub enum IncomingBitVMXApiMessages {
     SubscribeUTXO(),
     DispatchTransaction(Uuid, Transaction),
     DispatchTransactionName(Uuid, String),
-    SetupKey(Uuid, Vec<P2PAddress>, u16),
+    SetupKey(Uuid, Vec<P2PAddress>, Option<Vec<PublicKey>>, u16),
     GetAggregatedPubkey(Uuid),
     GetKeyPair(Uuid),
     GetPubKey(Uuid, bool),
@@ -257,5 +257,4 @@ pub const PROGRAM_TYPE_TRANSFER: &str = "transfer";
 pub const PROGRAM_TYPE_TAKE: &str = "take";
 pub const PROGRAM_TYPE_DISPUTE_CORE: &str = "dispute_core";
 pub const PROGRAM_TYPE_PAIRWISE_PENALIZATION: &str = "pairwise_penalization";
-pub const PROGRAM_TYPE_MULTIPARTY_PENALIZATION: &str = "multiparty_penalization";
 pub const PROGRAM_TYPE_PACKET: &str = "packet";
