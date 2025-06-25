@@ -64,6 +64,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
     fn generate_keys(
         &self,
         program_context: &mut ProgramContext,
+        program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
         let packet_size = self.committee(program_context)?.packet_size;
         let mut keys = vec![];
