@@ -22,7 +22,7 @@ use emulator::{constants::REGISTERS_BASE_ADDRESS, loader::program_definition::Pr
 use key_manager::winternitz::WinternitzPublicKey;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
-    scripts::{self, SignMode},
+    scripts::{self, ProtocolScript, SignMode},
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
@@ -807,17 +807,16 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
         amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
 
-        self.add_winternitz_check(
+        self.add_connection_with_scripts(
             aggregated,
             &mut protocol,
             TIMELOCK_BLOCKS,
-            &keys[0],
             amount,
             speedup_dust,
-            &input_vars_slice,
             START_CH,
             INPUT_1,
             None,
+            Self::winternitz_check(aggregated, &keys[0], &input_vars_slice)?,
         )?;
         amount = self.checked_sub(amount, fee)?;
         amount = self.checked_sub(amount, speedup_dust)?;
@@ -888,17 +887,16 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             vec![aggregated],
         )?;
 
-        self.add_winternitz_check(
+        self.add_connection_with_scripts(
             aggregated,
             &mut protocol,
             TIMELOCK_BLOCKS,
-            &keys[0],
             amount,
             speedup_dust,
-            &vec!["last_step", "last_hash"],
             INPUT_1,
             COMMITMENT,
             Some(&claim_verifier),
+            Self::winternitz_check(aggregated, &keys[0], &vec!["last_step", "last_hash"])?,
         )?;
         amount = self.checked_sub(amount, fee)?;
         amount = self.checked_sub(amount, speedup_dust)?;
@@ -912,17 +910,20 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 .map(|h| format!("prover_hash_{}_{}", i, h))
                 .collect::<Vec<_>>();
 
-            self.add_winternitz_check(
+            self.add_connection_with_scripts(
                 aggregated,
                 &mut protocol,
                 TIMELOCK_BLOCKS,
-                &keys[0],
                 amount,
                 speedup_dust,
-                &vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
                 &prev,
                 &next,
                 Some(&claim_verifier),
+                Self::winternitz_check(
+                    aggregated,
+                    &keys[0],
+                    &vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
+                )?,
             )?;
             amount = self.checked_sub(amount, fee)?;
             amount = self.checked_sub(amount, speedup_dust)?;
@@ -932,17 +933,20 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             //TODO: Add a lower than value check
             let _bits = nary_def.bits_for_round(i);
 
-            self.add_winternitz_check(
+            self.add_connection_with_scripts(
                 aggregated,
                 &mut protocol,
                 TIMELOCK_BLOCKS,
-                &keys[1],
                 amount,
                 speedup_dust,
-                &vec![&format!("selection_bits_{}", i)],
                 &prev,
                 &next,
                 Some(&claim_prover),
+                Self::winternitz_check(
+                    aggregated,
+                    &keys[1],
+                    &vec![&format!("selection_bits_{}", i)],
+                )?,
             )?;
             amount = self.checked_sub(amount, fee)?;
             amount = self.checked_sub(amount, speedup_dust)?;
@@ -960,18 +964,16 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             .map(|(name, _)| *name)
             .collect::<Vec<&str>>();
 
-        self.add_winternitz_and_script(
-            context,
+        self.add_connection_with_scripts(
             aggregated,
             &mut protocol,
             TIMELOCK_BLOCKS,
-            &keys[0],
             amount,
             speedup_dust,
-            &vars,
             &prev,
             EXECUTE,
             Some(&claim_verifier),
+            self.execute_script(context, aggregated, &keys[0], &vars)?,
         )?;
 
         //Add this as if it were the final tx execution
@@ -984,17 +986,16 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         amount -= fee;
         amount -= speedup_dust;
 
-        self.add_winternitz_and_challenge(
-            context,
+        self.add_connection_with_scripts(
             aggregated,
             &mut protocol,
             TIMELOCK_BLOCKS,
-            &keys[1],
             amount,
             speedup_dust,
             EXECUTE,
             CHALLENGE,
             Some(&claim_prover),
+            self.challenge_scripts(context, aggregated, &keys[1])?,
         )?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
@@ -1015,17 +1016,7 @@ impl DisputeResolutionProtocol {
     }
 
     pub fn start_challenge(&self, context: &ProgramContext) -> Result<Transaction, BitVMXError> {
-        /*let signature = self
-            .load_protocol()?
-            .input_taproot_key_spend_signature(START_CH, 0)?
-            .unwrap();
-        let mut taproot_arg = InputArgs::new_taproot_key_args();
-        taproot_arg.push_taproot_signature(signature)?;*/
-
         self.get_signed_tx(context, START_CH, 0, 1, false, 0)
-
-        /*self.load_protocol()?
-        .transaction_to_send(START_CH, &[taproot_arg])*/
     }
 
     pub fn input_1_tx(&self, context: &ProgramContext) -> Result<Transaction, BitVMXError> {
@@ -1056,29 +1047,11 @@ impl DisputeResolutionProtocol {
         self.get_signed_tx(context, INPUT_1, 0, 0, true, 0)
     }
 
-    pub fn add_winternitz_check(
-        &self,
+    fn winternitz_check(
         aggregated: &PublicKey,
-        protocol: &mut Protocol,
-        timelock_blocks: u16,
         keys: &ParticipantKeys,
-        amount: u64,
-        amount_speedup: u64,
         var_names: &Vec<&str>,
-        from: &str,
-        to: &str,
-        claim_gate: Option<&ClaimGate>,
-    ) -> Result<(), BitVMXError> {
-        //TODO:
-        // - Support multiple inputs
-        // - check if input is prover of verifier and use proper keys[n]
-        // - the prover needs to re-sign any verifier provided input (so the equivocation is possible on reads)
-        info!(
-            "Adding winternitz check for {} to {}. Amount: {}",
-            style(from).green(),
-            style(to).green(),
-            style(amount).green()
-        );
+    ) -> Result<Vec<ProtocolScript>, BitVMXError> {
         let names_and_keys = var_names
             .iter()
             .map(|v| (*v, keys.get_winternitz(v).unwrap()))
@@ -1090,67 +1063,16 @@ impl DisputeResolutionProtocol {
             SignMode::Aggregate,
         )?;
 
-        let timeout = scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
-
-        let mut leaves = [winternitz_check, timeout];
-        for (pos, leave) in leaves.iter_mut().enumerate() {
-            leave.set_assert_leaf_id(pos as u32);
-        }
-
-        let output_type = OutputType::taproot(amount, aggregated, &leaves)?;
-
-        protocol.add_connection(
-            &format!("{}__{}", from, to),
-            from,
-            output_type.clone().into(),
-            to,
-            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
-            None,
-            None,
-        )?;
-
-        protocol.add_connection(
-            &format!("{}__{}_TO", from, to),
-            from,
-            OutputSpec::Last,
-            &format!("{}_TO", to),
-            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
-            Some(timelock_blocks),
-            None,
-        )?;
-
-        if let Some(claim_gate) = claim_gate {
-            claim_gate.add_claimer_win_connection(protocol, &format!("{}_TO", to))?;
-        }
-
-        let pb = ProtocolBuilder {};
-        //put the amount here as there is no output yet
-        pb.add_speedup_output(protocol, to, amount_speedup, aggregated)?;
-        pb.add_speedup_output(protocol, &format!("{}_TO", to), amount_speedup, aggregated)?;
-
-        Ok(())
+        Ok(vec![winternitz_check])
     }
 
-    pub fn add_winternitz_and_script(
+    fn execute_script(
         &self,
         context: &ProgramContext,
         aggregated: &PublicKey,
-        protocol: &mut Protocol,
-        timelock_blocks: u16,
         keys: &ParticipantKeys,
-        amount: u64,
-        amount_speedup: u64,
         var_names: &Vec<&str>,
-        from: &str,
-        to: &str,
-        claim_gate: Option<&ClaimGate>,
-    ) -> Result<(), BitVMXError> {
-        info!(
-            "Adding winternitz check for {} to {}. Amount: {}",
-            style(from).green(),
-            style(to).green(),
-            style(amount).green()
-        );
+    ) -> Result<Vec<ProtocolScript>, BitVMXError> {
         let names_and_keys = var_names
             .iter()
             .map(|v| (*v, keys.get_winternitz(v).unwrap()))
@@ -1212,78 +1134,15 @@ impl DisputeResolutionProtocol {
             winternitz_check_list.push(winternitz_check);
         }
 
-        let timeout = scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
-        winternitz_check_list.push(timeout.clone());
-
-        for (pos, leave) in winternitz_check_list.iter_mut().enumerate() {
-            leave.set_assert_leaf_id(pos as u32);
-        }
-
-        let output_type = OutputType::taproot(amount, aggregated, &winternitz_check_list)?;
-
-        protocol.add_connection(
-            &format!("{}__{}", from, to),
-            from,
-            output_type.clone().into(),
-            to,
-            InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::All {
-                    //TODO: fix proper leaf set
-                    key_path_sign: SignMode::Aggregate,
-                },
-            ),
-            None,
-            None,
-        )?;
-
-        protocol.add_connection(
-            &format!("{}__{}_TO", from, to),
-            from,
-            OutputSpec::Last,
-            &format!("{}_TO", to),
-            InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::All {
-                    //TODO: sign only timelock
-                    key_path_sign: SignMode::Aggregate,
-                },
-            ),
-            Some(timelock_blocks),
-            None,
-        )?;
-
-        if let Some(claim_gate) = claim_gate {
-            claim_gate.add_claimer_win_connection(protocol, &format!("{}_TO", to))?;
-        }
-
-        let pb = ProtocolBuilder {};
-        //put the amount here as there is no output yet
-        pb.add_speedup_output(protocol, to, amount_speedup, aggregated)?;
-        pb.add_speedup_output(protocol, &format!("{}_TO", to), amount_speedup, aggregated)?;
-        Ok(())
+        Ok(winternitz_check_list)
     }
 
-    pub fn add_winternitz_and_challenge(
+    fn challenge_scripts(
         &self,
         context: &ProgramContext,
         aggregated: &PublicKey,
-        protocol: &mut Protocol,
-        timelock_blocks: u16,
         keys: &ParticipantKeys,
-        amount: u64,
-        amount_speedup: u64,
-        from: &str,
-        to: &str,
-        claim_gate: Option<&ClaimGate>,
-    ) -> Result<(), BitVMXError> {
-        info!(
-            "Adding winternitz check for {} to {}. Amount: {}",
-            style(from).green(),
-            style(to).green(),
-            style(amount).green()
-        );
-
+    ) -> Result<Vec<ProtocolScript>, BitVMXError> {
         let mut names_and_keys: HashMap<&str, Vec<(&'static str, &WinternitzPublicKey)>> =
             HashMap::new();
 
@@ -1341,15 +1200,42 @@ impl DisputeResolutionProtocol {
 
             winternitz_check_list.push(winternitz_check);
         }
+        Ok(winternitz_check_list)
+    }
 
+    pub fn add_connection_with_scripts(
+        &self,
+        aggregated: &PublicKey,
+        protocol: &mut Protocol,
+        timelock_blocks: u16,
+        amount: u64,
+        amount_speedup: u64,
+        from: &str,
+        to: &str,
+        claim_gate: Option<&ClaimGate>,
+        mut leaves: Vec<ProtocolScript>,
+    ) -> Result<(), BitVMXError> {
+        //TODO:
+        // - Support multiple inputs
+        // - check if input is prover of verifier and use proper keys[n]
+        // - the prover needs to re-sign any verifier provided input (so the equivocation is possible on reads)
+        info!(
+            "Adding winternitz check for {} to {}. Amount: {}",
+            style(from).green(),
+            style(to).green(),
+            style(amount).green()
+        );
         let timeout = scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
-        winternitz_check_list.push(timeout.clone());
 
-        for (pos, leave) in winternitz_check_list.iter_mut().enumerate() {
+        leaves.push(timeout);
+        for (pos, leave) in leaves.iter_mut().enumerate() {
             leave.set_assert_leaf_id(pos as u32);
         }
 
-        let output_type = OutputType::taproot(amount, aggregated, &winternitz_check_list)?;
+        let output_type = OutputType::taproot(amount, aggregated, &leaves)?;
+
+        //sign all except the timeout
+        let scripts_to_sign = (0..leaves.len() - 2).collect::<Vec<_>>();
 
         protocol.add_connection(
             &format!("{}__{}", from, to),
@@ -1358,9 +1244,8 @@ impl DisputeResolutionProtocol {
             to,
             InputSpec::Auto(
                 SighashType::taproot_all(),
-                SpendMode::All {
-                    //TODO: fix proper leaf set
-                    key_path_sign: SignMode::Aggregate,
+                SpendMode::Scripts {
+                    leaves: scripts_to_sign,
                 },
             ),
             None,
@@ -1374,9 +1259,9 @@ impl DisputeResolutionProtocol {
             &format!("{}_TO", to),
             InputSpec::Auto(
                 SighashType::taproot_all(),
-                SpendMode::All {
-                    //TODO: sign only timelock
-                    key_path_sign: SignMode::Aggregate,
+                SpendMode::Script {
+                    //sign timeout only
+                    leaf: leaves.len() - 1,
                 },
             ),
             Some(timelock_blocks),
@@ -1391,6 +1276,7 @@ impl DisputeResolutionProtocol {
         //put the amount here as there is no output yet
         pb.add_speedup_output(protocol, to, amount_speedup, aggregated)?;
         pb.add_speedup_output(protocol, &format!("{}_TO", to), amount_speedup, aggregated)?;
+
         Ok(())
     }
 
