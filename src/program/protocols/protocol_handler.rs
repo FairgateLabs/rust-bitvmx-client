@@ -18,7 +18,7 @@ use uuid::Uuid;
 use crate::errors::BitVMXError;
 use crate::keychain::KeyChain;
 
-use crate::program::protocols::union::dispute_core::DisputeCoreProtocol;
+// use crate::program::protocols::union::dispute_core::DisputeCoreProtocol;
 use crate::program::protocols::union::multiparty_penalization::MultipartyPenalizationProtocol;
 use crate::program::protocols::union::pairwise_penalization::PairwisePenalizationProtocol;
 use crate::program::protocols::union::take::TakeProtocol;
@@ -308,7 +308,7 @@ pub enum ProtocolType {
     SlotProtocol,
     TransferProtocol,
     TakeProtocol,
-    DisputeCoreProtocol,
+    // DisputeCoreProtocol,
     PairwisePenalizationProtocol,
     MultipartyPenalizationProtocol,
 }
@@ -330,9 +330,9 @@ pub fn new_protocol_type(
         PROGRAM_TYPE_SLOT => Ok(ProtocolType::SlotProtocol(SlotProtocol::new(ctx))),
         PROGRAM_TYPE_TRANSFER => Ok(ProtocolType::TransferProtocol(TransferProtocol::new(ctx))),
         PROGRAM_TYPE_TAKE => Ok(ProtocolType::TakeProtocol(TakeProtocol::new(ctx))),
-        PROGRAM_TYPE_DISPUTE_CORE => Ok(ProtocolType::DisputeCoreProtocol(
-            DisputeCoreProtocol::new(ctx),
-        )),
+        // PROGRAM_TYPE_DISPUTE_CORE => Ok(ProtocolType::DisputeCoreProtocol(
+        //     DisputeCoreProtocol::new(ctx),
+        // )),
         PROGRAM_TYPE_PAIRWISE_PENALIZATION => Ok(ProtocolType::PairwisePenalizationProtocol(
             PairwisePenalizationProtocol::new(ctx),
         )),

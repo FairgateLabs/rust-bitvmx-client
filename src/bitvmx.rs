@@ -958,26 +958,29 @@ impl BitVMXApi for BitVMX {
                 //RETURN PK
                 //TODO: Revisit this as it might be insecure
             }
-            IncomingBitVMXApiMessages::GetPubKey(id, new) => {
-                if new {
-                    todo!()
-                } else {
-                    let collaboration = self
-                        .get_collaboration(&id)?
-                        .ok_or(BitVMXError::ProgramNotFound(id))?;
-                    let aggregated = collaboration
-                        .aggregated_key
-                        .ok_or(BitVMXError::ProgramNotFound(id))?;
-                    let pubkey = self
-                        .program_context
-                        .key_chain
-                        .key_manager
-                        .get_pubkey(&aggregated)?;
-                    self.program_context.broker_channel.send(
-                        from,
-                        serde_json::to_string(&OutgoingBitVMXApiMessages::PubKey(id, pubkey))?,
-                    )?;                    
-                }
+            IncomingBitVMXApiMessages::CreateKeyPair(id, index) => {
+                let pubkey = self.program_context.key_chain.key_manager.derive_keypair(index)?;
+                self.program_context.broker_channel.send(
+                    from,
+                    serde_json::to_string(&OutgoingBitVMXApiMessages::PubKey(id, pubkey))?,
+                )?;
+            }
+            IncomingBitVMXApiMessages::GetPubKey(id) => {
+                let collaboration = self
+                    .get_collaboration(&id)?
+                    .ok_or(BitVMXError::ProgramNotFound(id))?;
+                let aggregated = collaboration
+                    .aggregated_key
+                    .ok_or(BitVMXError::ProgramNotFound(id))?;
+                let pubkey = self
+                    .program_context
+                    .key_chain
+                    .key_manager
+                    .get_my_public_key(&aggregated)?;
+                self.program_context.broker_channel.send(
+                    from,
+                    serde_json::to_string(&OutgoingBitVMXApiMessages::PubKey(id, pubkey))?,
+                )?;
             }
             IncomingBitVMXApiMessages::GetAggregatedPubkey(id) => {
                 BitVMXApi::get_aggregated_pubkey(self, from, id)?

@@ -70,6 +70,14 @@ impl BitVMXClient {
         self.send_message(IncomingBitVMXApiMessages::GetAggregatedPubkey(id))
     }
 
+    pub fn create_key_pair(&self, id: Uuid, index: u32) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::CreateKeyPair(id, index))
+    }
+
+    pub fn get_pubkey(&self, id: Uuid) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetPubKey(id))
+    }
+
     pub fn get_comm_info(&self) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::GetCommInfo())
     }
