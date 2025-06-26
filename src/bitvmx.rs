@@ -37,7 +37,6 @@ use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use p2p_handler::{LocalAllowList, P2pHandler, PeerId, ReceiveHandlerChannel};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
 use std::time::Instant;
 use std::{
     collections::{HashSet, VecDeque},
@@ -635,8 +634,7 @@ impl BitVMXApi for BitVMX {
 
         let path = format!("./zkp-jobs/{}", id);
 
-        fs::create_dir_all(&path)
-            .map_err(|e| BitVMXError::DirectoryCreationError(path, e))?;
+        fs::create_dir_all(&path).map_err(|e| BitVMXError::DirectoryCreationError(path, e))?;
 
         let msg = serde_json::to_string(&DispatcherJob {
             job_id: id.to_string(),
@@ -689,19 +687,18 @@ impl BitVMXApi for BitVMX {
             Some(status_str) => {
                 if status_str == "OK" {
                     info!("Getting ZKP execution result for job: {}", id);
-                    let seal: Vec<u8> = match self.store.get(&StoreKey::ZKPProof(id).get_key())?
-                    {
+                    let seal: Vec<u8> = match self.store.get(&StoreKey::ZKPProof(id).get_key())? {
                         Some(seal) => seal,
                         None => return Err(BitVMXError::InconsistentZKPData(id)),
-
                     };
 
-                    let journal: Vec<u8> = match self.store.get(&StoreKey::ZKPJournal(id).get_key())? {
-                        Some(journal) => journal,
-                        None => {
-                            return Err(BitVMXError::InconsistentZKPData(id));
-                        }
-                    };
+                    let journal: Vec<u8> =
+                        match self.store.get(&StoreKey::ZKPJournal(id).get_key())? {
+                            Some(journal) => journal,
+                            None => {
+                                return Err(BitVMXError::InconsistentZKPData(id));
+                            }
+                        };
                     OutgoingBitVMXApiMessages::ZKPResult(id, seal, journal)
                 } else {
                     OutgoingBitVMXApiMessages::ProofGenerationError(id, status_str)
@@ -844,16 +841,22 @@ impl BitVMXApi for BitVMX {
             .collect();
 
         // Store the proof data and status
-        let transaction_id= self.store.begin_transaction();
+        let transaction_id = self.store.begin_transaction();
 
         self.store
             .set(StoreKey::ZKPProof(id).get_key(), seal, Some(transaction_id))?;
 
-        self.store
-            .set(StoreKey::ZKPJournal(id).get_key(), journal, Some(transaction_id))?;
+        self.store.set(
+            StoreKey::ZKPJournal(id).get_key(),
+            journal,
+            Some(transaction_id),
+        )?;
 
-        self.store
-            .set(StoreKey::ZKPStatus(id).get_key(), status.to_string(), Some(transaction_id))?;
+        self.store.set(
+            StoreKey::ZKPStatus(id).get_key(),
+            status.to_string(),
+            Some(transaction_id),
+        )?;
 
         self.store.commit_transaction(transaction_id)?;
 

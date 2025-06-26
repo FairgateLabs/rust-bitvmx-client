@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, vec};
 
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
@@ -817,6 +817,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             INPUT_1,
             None,
             Self::winternitz_check(aggregated, &keys[0], &input_vars_slice)?,
+            false,
         )?;
         amount = self.checked_sub(amount, fee)?;
         amount = self.checked_sub(amount, speedup_dust)?;
@@ -897,6 +898,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             COMMITMENT,
             Some(&claim_verifier),
             Self::winternitz_check(aggregated, &keys[0], &vec!["last_step", "last_hash"])?,
+            false,
         )?;
         amount = self.checked_sub(amount, fee)?;
         amount = self.checked_sub(amount, speedup_dust)?;
@@ -924,6 +926,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     &keys[0],
                     &vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
                 )?,
+                false,
             )?;
             amount = self.checked_sub(amount, fee)?;
             amount = self.checked_sub(amount, speedup_dust)?;
@@ -947,6 +950,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     &keys[1],
                     &vec![&format!("selection_bits_{}", i)],
                 )?,
+                false,
             )?;
             amount = self.checked_sub(amount, fee)?;
             amount = self.checked_sub(amount, speedup_dust)?;
@@ -974,6 +978,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             EXECUTE,
             Some(&claim_verifier),
             self.execute_script(context, aggregated, &keys[0], &vars)?,
+            false,
         )?;
 
         //Add this as if it were the final tx execution
@@ -996,6 +1001,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             CHALLENGE,
             Some(&claim_prover),
             self.challenge_scripts(context, aggregated, &keys[1])?,
+            false,
         )?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
@@ -1214,17 +1220,20 @@ impl DisputeResolutionProtocol {
         to: &str,
         claim_gate: Option<&ClaimGate>,
         mut leaves: Vec<ProtocolScript>,
+        input_in_speedup: bool,
     ) -> Result<(), BitVMXError> {
         //TODO:
         // - Support multiple inputs
         // - check if input is prover of verifier and use proper keys[n]
         // - the prover needs to re-sign any verifier provided input (so the equivocation is possible on reads)
+
         info!(
             "Adding winternitz check for {} to {}. Amount: {}",
             style(from).green(),
             style(to).green(),
             style(amount).green()
         );
+
         let timeout = scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
 
         leaves.push(timeout);
@@ -1232,8 +1241,19 @@ impl DisputeResolutionProtocol {
             leave.set_assert_leaf_id(pos as u32);
         }
 
-        let output_type = OutputType::taproot(amount, aggregated, &leaves)?;
+        let (leaves, leaves_speedup) = if input_in_speedup {
+            let mut connection_flow = scripts::check_signature(aggregated, SignMode::Aggregate);
+            connection_flow.set_assert_leaf_id(0);
+            let mut timeout_flow =
+                scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
+            timeout_flow.set_assert_leaf_id(1);
+            let flow_leaves = vec![connection_flow, timeout_flow];
+            (flow_leaves, Some(leaves))
+        } else {
+            (leaves, None)
+        };
 
+        let output_type = OutputType::taproot(amount, &hardcoded_unspendable(), &leaves)?;
         //sign all except the timeout
         let scripts_to_sign = (0..leaves.len() - 2).collect::<Vec<_>>();
 
@@ -1274,7 +1294,17 @@ impl DisputeResolutionProtocol {
 
         let pb = ProtocolBuilder {};
         //put the amount here as there is no output yet
-        pb.add_speedup_output(protocol, to, amount_speedup, aggregated)?;
+        if input_in_speedup {
+            let output_type = OutputType::taproot(
+                amount_speedup,
+                &hardcoded_unspendable(),
+                &leaves_speedup.unwrap(),
+            )?;
+            protocol.add_transaction_output(from, &output_type)?;
+        } else {
+            pb.add_speedup_output(protocol, to, amount_speedup, aggregated)?;
+        }
+
         pb.add_speedup_output(protocol, &format!("{}_TO", to), amount_speedup, aggregated)?;
 
         Ok(())
@@ -1680,4 +1710,12 @@ impl DisputeResolutionProtocol {
             .set_var(&self.ctx.id, name, VariableTypes::Input(value))?;
         Ok(())
     }
+}
+
+pub fn hardcoded_unspendable() -> PublicKey {
+    // hardcoded unspendable
+    let key_bytes =
+        hex::decode("02f286025adef23a29582a429ee1b201ba400a9c57e5856840ca139abb629889ad")
+            .expect("Invalid hex input");
+    PublicKey::from_slice(&key_bytes).expect("Invalid public key")
 }
