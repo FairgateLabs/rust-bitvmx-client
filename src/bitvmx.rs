@@ -326,7 +326,7 @@ impl BitVMX {
             let ack_news: AckNews;
 
             match coordinator_news {
-                CoordinatorNews::InsufficientFunds(tx_id) => {
+                CoordinatorNews::InsufficientFunds(tx_id, _available, _required) => {
                     // Complete new params
                     let data =
                         OutgoingBitVMXApiMessages::SpeedUpProgramNoFunds(tx_id).to_string()?;
@@ -360,6 +360,11 @@ impl BitVMX {
 
                     ack_news =
                         AckNews::Coordinator(AckCoordinatorNews::DispatchSpeedUpError(_counter));
+                }
+                CoordinatorNews::FundingNotFound() => {
+                    // Complete
+                    error!("Funding not found for speed-up transaction. This is a critical error.");
+                    return Err(BitVMXError::InsufficientAmount);
                 }
             }
 

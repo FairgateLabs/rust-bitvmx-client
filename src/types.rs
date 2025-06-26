@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use crate::spv_proof::BtcTxSPVProof;
 use bitcoin::{PrivateKey, PublicKey, Transaction, Txid};
-use bitcoin_coordinator::{types::BitcoinCoordinatorType, TransactionStatus};
+use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TransactionStatus};
 use bitvmx_broker::{broker_storage::BrokerStorage, channel::channel::LocalChannel};
 use chrono::{DateTime, Utc};
 use p2p_handler::P2pHandler;
@@ -21,7 +21,7 @@ use crate::{
 pub struct ProgramContext {
     pub key_chain: KeyChain,
     pub comms: P2pHandler,
-    pub bitcoin_coordinator: BitcoinCoordinatorType,
+    pub bitcoin_coordinator: BitcoinCoordinator,
     pub broker_channel: LocalChannel<BrokerStorage>,
     pub globals: Globals,
     pub witness: WitnessVars,
@@ -36,7 +36,7 @@ impl ProgramContext {
     pub fn new(
         comms: P2pHandler,
         key_chain: KeyChain,
-        bitcoin_coordinator: BitcoinCoordinatorType,
+        bitcoin_coordinator: BitcoinCoordinator,
         broker_channel: LocalChannel<BrokerStorage>,
         globals: Globals,
         witness: WitnessVars,
@@ -110,7 +110,7 @@ pub enum IncomingBitVMXApiMessages {
     GetPubKey(Uuid, bool),
     GenerateZKP(Uuid, Vec<u8>),
     ProofReady(Uuid),
-    GetZKPExecutionResult(Uuid, ),
+    GetZKPExecutionResult(Uuid),
     Finalize(),
 }
 impl IncomingBitVMXApiMessages {
