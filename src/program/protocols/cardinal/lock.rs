@@ -14,11 +14,14 @@ use protocol_builder::{
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
-use crate::{errors::BitVMXError, program::variables::VariableTypes, types::ProgramContext};
-
-use super::{
-    super::participant::ParticipantKeys,
-    protocol_handler::{ProtocolContext, ProtocolHandler},
+use crate::{
+    errors::BitVMXError,
+    program::{
+        participant::ParticipantKeys,
+        protocols::protocol_handler::{ProtocolContext, ProtocolHandler},
+        variables::VariableTypes,
+    },
+    types::ProgramContext,
 };
 
 pub const LOCK_REQ_TX: &str = "lock_req_tx";

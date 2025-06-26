@@ -143,6 +143,16 @@ pub enum BitVMXError {
 
     #[error("Insufficient amount to send the transaction")]
     InsufficientAmount,
+
+    #[error("Transaction not found in block")]
+    TransactionNotFoundInBlock,
+
+
+    #[error("Inconsistent data retrieved of ZKP execution result from job {0}")]
+    InconsistentZKPData(Uuid),
+
+    #[error("Problem creating directory {0}: {1}")]
+    DirectoryCreationError(String, std::io::Error),
 }
 
 #[derive(Error, Debug)]

@@ -23,47 +23,12 @@ use bitvmx_client::{
 
 use storage_backend::{storage::Storage, storage_config::StorageConfig};
 use tracing::info;
-use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 use std::{
     str::FromStr,
-    sync::{Arc, Mutex, Once},
+    sync::{Arc, Mutex},
 };
-
-static INIT: Once = Once::new();
-
-fn config_trace() {
-    INIT.call_once(|| {
-        config_trace_aux();
-    });
-}
-
-fn config_trace_aux() {
-    let default_modules = [
-        "info",
-        "libp2p=off",
-        "bitvmx_transaction_monitor=off",
-        "bitcoin_indexer=off",
-        "bitcoin_coordinator=info",
-        "p2p_protocol=off",
-        "p2p_handler=off",
-        "tarpc=off",
-        "key_manager=off",
-        "memory=off",
-    ];
-
-    let filter = EnvFilter::builder()
-        .parse(default_modules.join(","))
-        .expect("Invalid filter");
-
-    tracing_subscriber::fmt()
-        //.without_time()
-        //.with_ansi(false)
-        .with_target(true)
-        .with_env_filter(filter)
-        .init();
-}
 
 pub fn wait_message_from_channel(channel: &DualChannel) -> Result<(String, u32)> {
     //loop to timeout
@@ -127,8 +92,6 @@ pub fn init_broker(role: &str) -> Result<DualChannel> {
 }
 
 pub fn main() -> Result<()> {
-    config_trace();
-
     // This will act as rpc with to allow the wallets to talk with the L2
     let config = StorageConfig::new("/tmp/lockservice_broker".to_string(), None);
     let broker_backend = Storage::new(&config)?;
@@ -335,7 +298,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
             BITVMX_ID,
             IncomingBitVMXApiMessages::GetTransactionInofByName(
                 program_id,
-                program::protocols::lock::LOCK_TX.to_string(),
+                program::protocols::cardinal::lock::LOCK_TX.to_string(),
             )
             .to_string()?,
         );
@@ -357,7 +320,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
             BITVMX_ID,
             IncomingBitVMXApiMessages::GetHashedMessage(
                 program_id,
-                program::protocols::lock::LOCK_TX.to_string(),
+                program::protocols::cardinal::lock::LOCK_TX.to_string(),
                 0,
                 1,
             )
@@ -377,7 +340,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
             BITVMX_ID,
             IncomingBitVMXApiMessages::DispatchTransactionName(
                 program_id,
-                program::protocols::lock::LOCK_TX.to_string(),
+                program::protocols::cardinal::lock::LOCK_TX.to_string(),
             )
             .to_string()?,
         );
@@ -415,7 +378,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
             BITVMX_ID,
             IncomingBitVMXApiMessages::DispatchTransactionName(
                 program_id,
-                program::protocols::lock::PUBLISH_ZKP.to_string(),
+                program::protocols::cardinal::lock::PUBLISH_ZKP.to_string(),
             )
             .to_string()?,
         );
@@ -436,7 +399,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
             BITVMX_ID,
             IncomingBitVMXApiMessages::DispatchTransactionName(
                 program_id,
-                program::protocols::lock::HAPPY_PATH_TX.to_string(),
+                program::protocols::cardinal::lock::HAPPY_PATH_TX.to_string(),
             )
             .to_string()?,
         );

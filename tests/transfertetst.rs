@@ -1,8 +1,10 @@
+#![cfg(feature = "cardinal")]
+
 use anyhow::Result;
 use bitvmx_client::{
     program::{
         self,
-        protocols::transfer::{op_gid, op_won, pub_too_group},
+        protocols::cardinal::transfer::{op_gid, op_won, pub_too_group},
         variables::VariableTypes,
     },
     types::{
@@ -167,7 +169,7 @@ pub fn test_transfer() -> Result<()> {
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
-            program::protocols::transfer::too_tx(0, 1),
+            program::protocols::cardinal::transfer::too_tx(0, 1),
         )
         .to_string()?,
     );

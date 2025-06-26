@@ -1,10 +1,14 @@
+#![cfg(feature = "cardinal")]
+
 use anyhow::Result;
 use bitcoin::Amount;
 use bitvmx_client::{
     program::{
         self,
         participant::ParticipantRole,
-        protocols::{dispute::TIMELOCK_BLOCKS, protocol_handler::external_fund_tx, slot::group_id},
+        protocols::{
+            cardinal::slot::group_id, dispute::TIMELOCK_BLOCKS, protocol_handler::external_fund_tx,
+        },
         variables::VariableTypes,
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_SLOT},
@@ -121,7 +125,10 @@ pub fn test_slot() -> Result<()> {
         BITVMX_ID,
         IncomingBitVMXApiMessages::GetTransactionInofByName(
             program_id,
-            format!("unsigned_{}", program::protocols::slot::cert_hash_tx_op(0)),
+            format!(
+                "unsigned_{}",
+                program::protocols::cardinal::slot::cert_hash_tx_op(0)
+            ),
         )
         .to_string()?,
     );
@@ -179,7 +186,7 @@ pub fn test_slot() -> Result<()> {
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
-            program::protocols::slot::SETUP_TX.to_string(),
+            program::protocols::cardinal::slot::SETUP_TX.to_string(),
         )
         .to_string()?,
     );
@@ -202,7 +209,7 @@ pub fn test_slot() -> Result<()> {
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
-            program::protocols::slot::cert_hash_tx_op(0),
+            program::protocols::cardinal::slot::cert_hash_tx_op(0),
         )
         .to_string()?,
     );

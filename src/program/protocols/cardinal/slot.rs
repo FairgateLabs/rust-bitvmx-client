@@ -20,19 +20,15 @@ use crate::{
     bitvmx::Context,
     errors::BitVMXError,
     program::{
+        participant::ParticipantKeys,
         protocols::{
             claim::ClaimGate,
             dispute::{START_CH, TIMELOCK_BLOCKS},
-            protocol_handler::external_fund_tx,
+            protocol_handler::{external_fund_tx, ProtocolContext, ProtocolHandler},
         },
         variables::VariableTypes,
     },
     types::ProgramContext,
-};
-
-use super::{
-    super::participant::ParticipantKeys,
-    protocol_handler::{ProtocolContext, ProtocolHandler},
 };
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -343,7 +339,7 @@ impl ProtocolHandler for SlotProtocol {
                 )?,
                 None,
                 Context::ProgramId(self.ctx.id).to_string()?,
-                Some(tx_status.block_info.as_ref().unwrap().block_height + TIMELOCK_BLOCKS as u32),
+                Some(tx_status.block_info.unwrap().height + TIMELOCK_BLOCKS as u32),
             )?;
         }
 

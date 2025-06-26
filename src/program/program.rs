@@ -210,7 +210,7 @@ impl Program {
                 .key_chain
                 .new_musig2_session(aggregated_pub_keys, *agg_key)?;
 
-            info!(
+            debug!(
                 "Aggregated var name {}: Aggregated key: {}",
                 agg_name,
                 aggregated_key.to_string()
@@ -277,7 +277,7 @@ impl Program {
                     self.get_address_from_peer_id(other)?
                 };
 
-                info!(
+                debug!(
                     "Sending message {:?} from {} to {}",
                     &msg_type, self.my_idx, dest.peer_id
                 );
@@ -302,7 +302,7 @@ impl Program {
             return Ok(());
         }
 
-        info!("{:?}: Sending keys", self.my_idx);
+        debug!("{:?}: Sending keys", self.my_idx);
         let keys = if self.my_idx == self.leader {
             let mut keys = vec![];
             for other in &self.participants {
@@ -364,7 +364,7 @@ impl Program {
             return Ok(());
         }
 
-        info!("{}. Sending nonces", self.my_idx);
+        debug!("{}. Sending nonces", self.my_idx);
 
         let mut public_nonce_msg: PubNonceMessage = Vec::new();
         for aggregated in self.participants[self.my_idx]
@@ -396,7 +396,7 @@ impl Program {
         }
 
         self.participants[self.my_idx].nonces = Some(public_nonce_msg);
-        info!("I'm {} and I'm setting my nonces", self.my_idx);
+        debug!("I'm {} and I'm setting my nonces", self.my_idx);
 
         let mut nonces = vec![];
         for other in &self.participants {
@@ -433,7 +433,7 @@ impl Program {
 
         for (peer_id, particpant_nonces) in nonces_msg {
             let other_pos = get_other_index_by_peer_id(&peer_id, &self.participants);
-            info!("{}. Got nonces for pos: {}", self.my_idx, other_pos);
+            debug!("{}. Got nonces for pos: {}", self.my_idx, other_pos);
             self.participants[other_pos].nonces = Some(particpant_nonces);
         }
         self.save()?;
@@ -485,7 +485,7 @@ impl Program {
             return Ok(());
         }
 
-        info!("{}. Sending PartialSignatures", self.my_idx);
+        debug!("{}. Sending PartialSignatures", self.my_idx);
         let mut partial_sig_msg: PartialSignatureMessage = Vec::new();
         for aggregated in self.participants[self.my_idx]
             .keys
@@ -516,7 +516,7 @@ impl Program {
         }
 
         self.participants[self.my_idx].partial = Some(partial_sig_msg);
-        info!("I'm {} and I'm setting my partial", self.my_idx);
+        debug!("I'm {} and I'm setting my partial", self.my_idx);
 
         let mut partials = vec![];
         for other in &self.participants {
@@ -555,7 +555,7 @@ impl Program {
         let partial_msg = parse_signatures(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
         for (peer_id, particpant_partials) in partial_msg {
             let other_pos = get_other_index_by_peer_id(&peer_id, &self.participants);
-            info!("{}. Got partials for pos: {}", self.my_idx, other_pos);
+            debug!("{}. Got partials for pos: {}", self.my_idx, other_pos);
             self.participants[other_pos].partial = Some(particpant_partials);
         }
         self.save()?;
@@ -661,7 +661,7 @@ impl Program {
         data: Value,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        info!("{}: Message received: {:?} ", self.my_idx, msg_type);
+        debug!("{}: Message received: {:?} ", self.my_idx, msg_type);
 
         match msg_type {
             P2PMessageType::Keys => {
@@ -697,7 +697,7 @@ impl Program {
         peer_id: &PeerId,
         msg_type: P2PMessageType,
     ) -> Result<(), BitVMXError> {
-        info!("{}. Sending {:?}", self.my_idx, msg_type);
+        debug!("{}. Sending {:?}", self.my_idx, msg_type);
 
         response(
             &program_context.comms,

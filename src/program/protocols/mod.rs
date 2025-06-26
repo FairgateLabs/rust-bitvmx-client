@@ -1,6 +1,7 @@
+#[cfg(feature = "cardinal")]
+pub mod cardinal;
 pub mod claim;
 pub mod dispute;
-pub mod lock;
 pub mod protocol_handler;
-pub mod slot;
-pub mod transfer;
+#[cfg(feature = "union")]
+pub mod union;

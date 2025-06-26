@@ -9,6 +9,7 @@ bitcoin = { version = "0.32.4", features = ["std", "rand-std"] }
 clap = { version = "4.5.10", features = ["derive"] }
 comfy-table = "7.1.3"
 config = "0.15.11"
+console = "0.15.4"
 hex = "0.4.3"
 lazy_static = "1.5.0"
 serde = { version = "1.0.215", features = ["derive"] }
@@ -17,7 +18,7 @@ shlex = "1.3.0"
 thiserror = "2.0.12"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
-uuid = { version = "1.11.0", features = ["v4"] }
+uuid = { version = "1.11.0", features = ["v4", "v5"] }
 url = { version = "2.5.4" }
 chrono = "0.4.31"
 tokio = { version = "1.40.0", features = ["sync"] }
@@ -64,3 +65,18 @@ bollard = "0.11.0"
 futures-util = "0.3"
 bitcoind = { path = "../rust-bitcoind" }
 bitvmx-wallet = { path = "../rust-bitvmx-wallet" }
+
+[features]
+default = ["cardinal", "union"]
+cardinal = []
+union = []
+
+[[example]]
+name = "union"
+path = "examples/union/main.rs"
+required-features = ["union"]
+
+[[example]]
+name = "cardinal"
+path = "examples/cardinal/main.rs"
+required-features = ["cardinal"]

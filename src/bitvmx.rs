@@ -25,6 +25,7 @@ use bitcoin_coordinator::{
     AckMonitorNews, MonitorNews, TypesToMonitor,
 };
 
+use crate::spv_proof::get_spv_proof;
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
     channel::channel::LocalChannel,
@@ -35,6 +36,8 @@ use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use p2p_handler::{LocalAllowList, P2pHandler, PeerId, ReceiveHandlerChannel};
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::Path;
 use std::time::Instant;
 use std::{
     collections::{HashSet, VecDeque},
@@ -44,7 +47,6 @@ use std::{
     time::Duration,
 };
 use storage_backend::storage::{KeyValueStore, Storage};
-
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -80,6 +82,7 @@ enum StoreKey {
     ZKPProof(Uuid),
     ZKPStatus(Uuid),
     ZKPFrom(Uuid),
+    ZKPJournal(Uuid),
 }
 
 impl StoreKey {
@@ -91,6 +94,7 @@ impl StoreKey {
             StoreKey::ZKPProof(id) => format!("bitvmx/zkp/{}/proof", id),
             StoreKey::ZKPStatus(id) => format!("bitvmx/zkp/{}/status", id),
             StoreKey::ZKPFrom(id) => format!("bitvmx/zkp/{}/from", id),
+            StoreKey::ZKPJournal(id) => format!("bitvmx/zkp/{}/journal", id),
         }
     }
 }
@@ -629,12 +633,18 @@ impl BitVMXApi for BitVMX {
         self.store
             .set(StoreKey::ZKPFrom(id).get_key(), from, None)?;
 
+        let path = format!("./zkp-jobs/{}", id);
+
+        fs::create_dir_all(&path)
+            .map_err(|e| BitVMXError::DirectoryCreationError(path, e))?;
+
         let msg = serde_json::to_string(&DispatcherJob {
             job_id: id.to_string(),
             job_type: ProverJobType::Prove(
                 input,
                 "./a.elf".to_string(),
-                "./output.json".to_string(),
+                format!("./zkp-jobs/{}/output.json", id),
+                format!("./zkp-jobs/{}/stark-proof.bin", id),
             ),
         })?;
 
@@ -656,7 +666,7 @@ impl BitVMXApi for BitVMX {
                 if status_str == "OK" {
                     OutgoingBitVMXApiMessages::ProofReady(id)
                 } else {
-                    OutgoingBitVMXApiMessages::ProofNotReady(id)
+                    OutgoingBitVMXApiMessages::ProofGenerationError(id, status_str)
                 }
             }
             None => OutgoingBitVMXApiMessages::ProofNotReady(id),
@@ -669,11 +679,41 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn execute_zkp(&mut self) -> Result<(), BitVMXError> {
-        Ok(())
-    }
+    fn get_zkp_execution_result(&mut self, from: u32, id: Uuid) -> Result<(), BitVMXError> {
+        // Check if the proof is ready
+        info!("Checking if {} ZKP job is ready", id);
+        let status_key = StoreKey::ZKPStatus(id).get_key();
+        let status: Option<String> = self.store.get(&status_key)?;
 
-    fn get_zkp_execution_result(&mut self) -> Result<(), BitVMXError> {
+        let response = match status {
+            Some(status_str) => {
+                if status_str == "OK" {
+                    info!("Getting ZKP execution result for job: {}", id);
+                    let seal: Vec<u8> = match self.store.get(&StoreKey::ZKPProof(id).get_key())?
+                    {
+                        Some(seal) => seal,
+                        None => return Err(BitVMXError::InconsistentZKPData(id)),
+
+                    };
+
+                    let journal: Vec<u8> = match self.store.get(&StoreKey::ZKPJournal(id).get_key())? {
+                        Some(journal) => journal,
+                        None => {
+                            return Err(BitVMXError::InconsistentZKPData(id));
+                        }
+                    };
+                    OutgoingBitVMXApiMessages::ZKPResult(id, seal, journal)
+                } else {
+                    OutgoingBitVMXApiMessages::ProofGenerationError(id, status_str)
+                }
+            }
+            None => OutgoingBitVMXApiMessages::ProofNotReady(id),
+        };
+
+        self.program_context
+            .broker_channel
+            .send(from, serde_json::to_string(&response)?)?;
+
         Ok(())
     }
 
@@ -786,23 +826,36 @@ impl BitVMXApi for BitVMX {
             BitVMXError::InvalidMessageFormat
         })?;
 
-        let vec = data["vec"].as_array().ok_or_else(|| {
-            warn!("Missing vec field in data. Raw message: {}", msg);
+        let journal = data["journal"].as_array().ok_or_else(|| {
+            warn!("Missing journal field in data. Raw message: {}", msg);
             BitVMXError::InvalidMessageFormat
         })?;
 
-        // Convert vec to Vec<u8>
-        let seal: Vec<u8> = vec
+        let seal = data["seal"].as_array().ok_or_else(|| {
+            warn!("Missing seal field in data. Raw message: {}", msg);
+            BitVMXError::InvalidMessageFormat
+        })?;
+
+        // Convert seal to Vec<u8>
+        let seal: Vec<u8> = seal
             .iter()
             .filter_map(|v| v.as_u64())
             .map(|v| v as u8)
             .collect();
 
         // Store the proof data and status
+        let transaction_id= self.store.begin_transaction();
+
         self.store
-            .set(StoreKey::ZKPProof(id).get_key(), seal, None)?;
+            .set(StoreKey::ZKPProof(id).get_key(), seal, Some(transaction_id))?;
+
         self.store
-            .set(StoreKey::ZKPStatus(id).get_key(), status.to_string(), None)?;
+            .set(StoreKey::ZKPJournal(id).get_key(), journal, Some(transaction_id))?;
+
+        self.store
+            .set(StoreKey::ZKPStatus(id).get_key(), status.to_string(), Some(transaction_id))?;
+
+        self.store.commit_transaction(transaction_id)?;
 
         // Get the stored 'from' parameter
         let from: u32 = self
@@ -814,6 +867,37 @@ impl BitVMXApi for BitVMX {
             })?;
 
         self.proof_ready(from, id)?;
+        Ok(())
+    }
+
+    fn get_spv_proof(&mut self, from: u32, txid: Txid) -> Result<(), BitVMXError> {
+        let tx_info = self
+            .program_context
+            .bitcoin_coordinator
+            .get_transaction(txid);
+
+        match tx_info {
+            Ok(utx) => {
+                let proof = get_spv_proof(txid, utx.block_info.unwrap())?;
+
+                self.program_context.broker_channel.send(
+                    from,
+                    serde_json::to_string(&OutgoingBitVMXApiMessages::SPVProof(txid, Some(proof)))?,
+                )?;
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to retrieve transaction info for txid {}: {:?}",
+                    txid, e
+                );
+
+                self.program_context.broker_channel.send(
+                    from,
+                    serde_json::to_string(&OutgoingBitVMXApiMessages::SPVProof(txid, None))?,
+                )?;
+            }
+        };
+
         Ok(())
     }
 
@@ -837,7 +921,7 @@ impl BitVMXApi for BitVMX {
         }
 
         let decoded: IncomingBitVMXApiMessages = serde_json::from_str(&msg)?;
-        info!("< {:?}", decoded);
+        debug!("< {:?}", decoded);
 
         match decoded {
             IncomingBitVMXApiMessages::GetHashedMessage(id, name, vout, leaf) => {
@@ -863,11 +947,11 @@ impl BitVMXApi for BitVMX {
             }
             IncomingBitVMXApiMessages::Ping() => BitVMXApi::ping(self, from)?,
             IncomingBitVMXApiMessages::SetVar(uuid, key, value) => {
-                info!("Setting variable {}: {:?}", key, value);
+                debug!("Setting variable {}: {:?}", key, value);
                 self.program_context.globals.set_var(&uuid, &key, value)?;
             }
             IncomingBitVMXApiMessages::SetWitness(uuid, key, value) => {
-                info!("Setting witness {}: {:?}", key, value);
+                debug!("Setting witness {}: {:?}", key, value);
                 self.program_context
                     .witness
                     .set_witness(&uuid, &key, value)?;
@@ -927,6 +1011,27 @@ impl BitVMXApi for BitVMX {
                 //RETURN PK
                 //TODO: Revisit this as it might be insecure
             }
+            IncomingBitVMXApiMessages::GetPubKey(id, new) => {
+                if new {
+                    todo!()
+                } else {
+                    let collaboration = self
+                        .get_collaboration(&id)?
+                        .ok_or(BitVMXError::ProgramNotFound(id))?;
+                    let aggregated = collaboration
+                        .aggregated_key
+                        .ok_or(BitVMXError::ProgramNotFound(id))?;
+                    let pubkey = self
+                        .program_context
+                        .key_chain
+                        .key_manager
+                        .get_my_public_key(&aggregated)?;
+                    self.program_context.broker_channel.send(
+                        from,
+                        serde_json::to_string(&OutgoingBitVMXApiMessages::PubKey(id, pubkey))?,
+                    )?;
+                }
+            }
             IncomingBitVMXApiMessages::GetAggregatedPubkey(id) => {
                 BitVMXApi::get_aggregated_pubkey(self, from, id)?
             }
@@ -934,9 +1039,8 @@ impl BitVMXApi for BitVMX {
                 BitVMXApi::generate_zkp(self, from, id, input)?
             }
             IncomingBitVMXApiMessages::ProofReady(id) => BitVMXApi::proof_ready(self, from, id)?,
-            IncomingBitVMXApiMessages::ExecuteZKP() => BitVMXApi::execute_zkp(self)?,
-            IncomingBitVMXApiMessages::GetZKPExecutionResult() => {
-                BitVMXApi::get_zkp_execution_result(self)?
+            IncomingBitVMXApiMessages::GetZKPExecutionResult(id) => {
+                BitVMXApi::get_zkp_execution_result(self, from, id)?
             }
             IncomingBitVMXApiMessages::Finalize() => BitVMXApi::finalize(self)?,
         }

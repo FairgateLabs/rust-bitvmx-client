@@ -2,6 +2,7 @@ use bitcoin::script::read_scriptint;
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_scriptexec::scriptint_vec;
+use console::style;
 use enum_dispatch::enum_dispatch;
 use key_manager::winternitz::{message_bytes_length, WinternitzType};
 use protocol_builder::scripts::ProtocolScript;
@@ -17,17 +18,18 @@ use uuid::Uuid;
 use crate::errors::BitVMXError;
 use crate::keychain::KeyChain;
 
+use super::super::participant::ParticipantKeys;
+#[cfg(feature = "cardinal")]
+use super::cardinal::{lock::LockProtocol, slot::SlotProtocol, transfer::TransferProtocol};
+use super::dispute::DisputeResolutionProtocol;
+#[cfg(feature = "union")]
+use crate::program::protocols::union::{
+    dispute_core::DisputeCoreProtocol, multiparty_penalization::MultipartyPenalizationProtocol,
+    pairwise_penalization::PairwisePenalizationProtocol, take::TakeProtocol,
+};
 use crate::program::variables::WitnessTypes;
 use crate::program::{variables::VariableTypes, witness};
-use crate::types::{
-    ProgramContext, PROGRAM_TYPE_DRP, PROGRAM_TYPE_LOCK, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TRANSFER,
-};
-
-use super::super::participant::ParticipantKeys;
-use super::dispute::DisputeResolutionProtocol;
-use super::lock::LockProtocol;
-use super::slot::SlotProtocol;
-use super::transfer::TransferProtocol;
+use crate::types::*;
 
 #[enum_dispatch]
 pub trait ProtocolHandler {
@@ -141,7 +143,7 @@ pub trait ProtocolHandler {
         second_leaf_index: usize,
     ) -> Result<Transaction, BitVMXError> {
         let protocol = self.load_protocol()?;
-        info!("Getting signed tx for {}", name);
+        info!("Getting signed tx for {}", style(name).green());
 
         //TODO: Control that the variables sizes correspond with the keys
         //avoid invalid sig checks
@@ -159,7 +161,10 @@ pub trait ProtocolHandler {
                 .unwrap()
                 .input()?;
 
-            info!("Signigng message: {}", hex::encode(message.clone()));
+            info!(
+                "Signigng message: {}",
+                style(hex::encode(message.clone())).yellow()
+            );
             info!("With key: {:?}", k);
 
             let winternitz_signature = context.key_chain.key_manager.sign_winternitz_message(
@@ -294,9 +299,20 @@ impl ProtocolContext {
 #[derive(Clone, Serialize, Deserialize)]
 pub enum ProtocolType {
     DisputeResolutionProtocol,
+    #[cfg(feature = "cardinal")]
     LockProtocol,
+    #[cfg(feature = "cardinal")]
     SlotProtocol,
+    #[cfg(feature = "cardinal")]
     TransferProtocol,
+    #[cfg(feature = "union")]
+    TakeProtocol,
+    #[cfg(feature = "union")]
+    DisputeCoreProtocol,
+    #[cfg(feature = "union")]
+    PairwisePenalizationProtocol,
+    #[cfg(feature = "union")]
+    MultipartyPenalizationProtocol,
 }
 
 pub fn new_protocol_type(
@@ -312,9 +328,28 @@ pub fn new_protocol_type(
         PROGRAM_TYPE_DRP => Ok(ProtocolType::DisputeResolutionProtocol(
             DisputeResolutionProtocol::new(ctx),
         )),
+        #[cfg(feature = "cardinal")]
         PROGRAM_TYPE_LOCK => Ok(ProtocolType::LockProtocol(LockProtocol::new(ctx))),
+        #[cfg(feature = "cardinal")]
         PROGRAM_TYPE_SLOT => Ok(ProtocolType::SlotProtocol(SlotProtocol::new(ctx))),
+        #[cfg(feature = "cardinal")]
         PROGRAM_TYPE_TRANSFER => Ok(ProtocolType::TransferProtocol(TransferProtocol::new(ctx))),
+        #[cfg(feature = "union")]
+        PROGRAM_TYPE_TAKE => Ok(ProtocolType::TakeProtocol(TakeProtocol::new(ctx))),
+        #[cfg(feature = "union")]
+        PROGRAM_TYPE_DISPUTE_CORE => Ok(ProtocolType::DisputeCoreProtocol(
+            DisputeCoreProtocol::new(ctx),
+        )),
+        #[cfg(feature = "union")]
+        PROGRAM_TYPE_PAIRWISE_PENALIZATION => Ok(ProtocolType::PairwisePenalizationProtocol(
+            PairwisePenalizationProtocol::new(ctx),
+        )),
+        #[cfg(feature = "union")]
+        PROGRAM_TYPE_MULTIPARTY_PENALIZATION => Ok(ProtocolType::MultipartyPenalizationProtocol(
+            MultipartyPenalizationProtocol::new(ctx),
+        )),
+        #[cfg(feature = "union")]
+        PROGRAM_TYPE_PACKET => todo!(),
         _ => Err(BitVMXError::NotImplemented(name.to_string())),
     }
 }

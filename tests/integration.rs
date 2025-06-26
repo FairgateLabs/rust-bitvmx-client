@@ -1,5 +1,6 @@
 use anyhow::Result;
 use bitvmx_client::{
+    //program::participant::ParticipantRole,
     program::participant::ParticipantRole,
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
@@ -86,7 +87,7 @@ pub fn test_drp() -> Result<()> {
         10_000,
         false,
         false,
-        ForcedChallenges::Rom(ParticipantRole::Verifier),
+        ForcedChallenges::Execution,
     )?;
     let _msgs = get_all(&channels, &mut instances, false)?;
 
