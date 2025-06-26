@@ -138,6 +138,9 @@ pub enum BitVMXError {
     #[error("Challenge with idx {0} not found")]
     ChallengeIdxNotFound(u32),
 
+    #[error("Rom data {0} not found")]
+    RomDataNotFound(u32),
+
     #[error("Insufficient amount to send the transaction")]
     InsufficientAmount,
 }

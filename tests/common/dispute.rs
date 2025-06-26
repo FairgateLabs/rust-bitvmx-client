@@ -13,6 +13,7 @@ use bitvmx_client::{
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_DRP},
 };
 use bitvmx_cpu_definitions::{
+    constants::LAST_STEP_INIT,
     memory::{MemoryAccessType, MemoryWitness},
     trace::{ProgramCounter, TraceRWStep, TraceRead, TraceReadPC, TraceStep, TraceWrite},
 };
@@ -31,7 +32,6 @@ use uuid::Uuid;
 use crate::common::{mine_and_wait, send_all, wait_message_from_channel};
 
 pub enum ForcedChallenges {
-    // Possible configurations for forced challenges with a malicious prover
     TraceHash(ParticipantRole),
     TraceHashZero(ParticipantRole),
     EntryPoint(ParticipantRole),
@@ -41,6 +41,7 @@ pub enum ForcedChallenges {
     ReadSection(ParticipantRole),
     WriteSection(ParticipantRole),
     ProgramCounterSection(ParticipantRole),
+    Rom(ParticipantRole),
     No,
 }
 
@@ -398,6 +399,33 @@ pub fn get_fail_force_config(
             ForceChallenge::No,
             ForceCondition::No,
         ),
+        ForcedChallenges::Rom(ParticipantRole::Prover) => {
+            let fail_execute = FailExecute {
+                step: 32,
+                fake_trace: TraceRWStep::new(
+                    32,
+                    TraceRead::new(4026531900, 2952790016, 31),
+                    TraceRead::new(2952790016, 0, LAST_STEP_INIT), // read a different value from ROM
+                    TraceReadPC::new(ProgramCounter::new(2147483708, 0), 509699),
+                    TraceStep::new(
+                        TraceWrite::new(4026531896, 0),
+                        ProgramCounter::new(2147483712, 0),
+                    ),
+                    None,
+                    MemoryWitness::new(
+                        MemoryAccessType::Register,
+                        MemoryAccessType::Memory,
+                        MemoryAccessType::Register,
+                    ),
+                ),
+            };
+            (
+                Some(FailConfiguration::new_fail_execute(fail_execute)),
+                None,
+                ForceChallenge::No,
+                ForceCondition::ValidInputWrongStepOrHash,
+            )
+        }
         ForcedChallenges::TraceHash(ParticipantRole::Verifier) => (
             None,
             Some(FailConfiguration::new_fail_hash(100)),
@@ -459,18 +487,16 @@ pub fn get_fail_force_config(
                 ]),
             ))),
             ForceChallenge::AddressesSections,
-            ForceCondition::ValidInputWrongStepOrHash,
+            ForceCondition::No,
         ),
         ForcedChallenges::WriteSection(ParticipantRole::Verifier) => (
             None,
-            Some(FailConfiguration::new_fail_write(FailWrite::new(
-                &vec![
-                    "1106".to_string(),
-                    "0xaa000000".to_string(),
-                    "0x11111100".to_string(),
-                    "0x00000000".to_string(),
-                ],
-            ))),
+            Some(FailConfiguration::new_fail_write(FailWrite::new(&vec![
+                "1106".to_string(),
+                "0xaa000000".to_string(),
+                "0x11111100".to_string(),
+                "0x00000000".to_string(),
+            ]))),
             ForceChallenge::AddressesSections,
             ForceCondition::ValidInputWrongStepOrHash,
         ),
@@ -496,6 +522,33 @@ pub fn get_fail_force_config(
             ForceChallenge::AddressesSections,
             ForceCondition::ValidInputWrongStepOrHash,
         ),
+        ForcedChallenges::Rom(ParticipantRole::Verifier) => {
+            let fail_execute = FailExecute {
+                step: 32,
+                fake_trace: TraceRWStep::new(
+                    32,
+                    TraceRead::new(4026531900, 2952790016, 31),
+                    TraceRead::new(2952790016, 0, LAST_STEP_INIT), // read a different value from ROM
+                    TraceReadPC::new(ProgramCounter::new(2147483708, 0), 509699),
+                    TraceStep::new(
+                        TraceWrite::new(4026531896, 0),
+                        ProgramCounter::new(2147483712, 0),
+                    ),
+                    None,
+                    MemoryWitness::new(
+                        MemoryAccessType::Register,
+                        MemoryAccessType::Memory,
+                        MemoryAccessType::Register,
+                    ),
+                ),
+            };
+            (
+                None,
+                Some(FailConfiguration::new_fail_execute(fail_execute)),
+                ForceChallenge::RomData,
+                ForceCondition::ValidInputWrongStepOrHash,
+            )
+        }
 
         ForcedChallenges::No => (None, None, ForceChallenge::No, ForceCondition::No),
     }

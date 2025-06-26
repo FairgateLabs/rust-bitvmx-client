@@ -4,7 +4,9 @@ use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use bitcoin_script_riscv::riscv::{
     challenges::{
-        addresses_sections_challenge, entry_point_challenge, halt_challenge, input_challenge, opcode_challenge, program_counter_challenge, trace_hash_challenge, trace_hash_zero_challenge
+        addresses_sections_challenge, entry_point_challenge, halt_challenge, input_challenge,
+        opcode_challenge, program_counter_challenge, rom_challenge, trace_hash_challenge,
+        trace_hash_zero_challenge,
     },
     instruction_mapping::{create_verification_script_mapping, get_key_from_opcode},
 };
@@ -127,22 +129,32 @@ pub const INPUT_CHALLENGE: [(&str, usize); 7] = [
 pub const OPCODE_CHALLENGE: [(&str, usize); 2] = [("prover_pc", 4), ("prover_opcode", 4)];
 
 pub const ADDRESSES_SECTIONS_CHALLENGE: [(&str, usize); 5] = [
-    ("read_1_add", 4),
-    ("read_2_add", 4),
-    ("write_add", 4),
+    ("read_1_address", 4),
+    ("read_2_address", 4),
+    ("write_address", 4),
     ("memory_witness", 1),
-    ("read_pc_add", 4),
+    ("pc_address", 4),
 ];
 
-pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 8] = [
+pub const ROM_CHALLENGE: [(&str, usize); 6] = [
+    ("prover_read_add_1", 4),
+    ("prover_read_value_1", 4),
+    ("prover_last_step_1", 8),
+    ("prover_read_add_2", 4),
+    ("prover_read_value_2", 4),
+    ("prover_last_step_2", 8),
+];
+
+pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 9] = [
     ("entry_point", &ENTRY_POINT_CHALLENGE),
     ("program_counter", &PROGRAM_COUNTER_CHALLENGE),
     ("halt", &HALT_CHALLENGE),
     ("trace_hash", &TRACE_HASH_CHALLENGE),
     ("trace_hash_zero", &TRACE_HASH_ZERO_CHALLENGE),
+    ("addresses_sections", &ADDRESSES_SECTIONS_CHALLENGE),
     ("input", &INPUT_CHALLENGE),
     ("opcode", &OPCODE_CHALLENGE),
-    ("addresses_sections", &ADDRESSES_SECTIONS_CHALLENGE),
+    ("rom", &ROM_CHALLENGE),
 ];
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -237,6 +249,12 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                         .get_var(&self.ctx.id, "input_words")?
                         .unwrap()
                         .number()?,
+                    "rom" => program_def
+                        .load_program()?
+                        .find_section_by_name(".rodata")
+                        .unwrap()
+                        .data
+                        .len() as u32,
                     _ => 1,
                 };
 
@@ -744,10 +762,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &tx_status.tx,
                 None,
             )?;
-            // let (_program_definition, pdf) = self.get_program_definition(program_context)?;
-            // let execution_path = self.get_execution_path()?;
 
-            let mut challenge_idx = program_context
+            let challenge_idx = program_context
                 .globals
                 .get_var(
                     &self.ctx.id,
@@ -756,39 +772,21 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 .unwrap()
                 .number()?;
 
-            // Find index of the "input" challenge in CHALLENGES
-            let input_idx = CHALLENGES
-                .iter()
-                .position(|(name, _)| *name == "input")
-                .expect("input challenge not found") as u32;
-            // Find index of the "opcode" challenge in CHALLENGES
-            let opcode_idx = CHALLENGES
-                .iter()
-                .position(|(name, _)| *name == "opcode")
-                .expect("opcode challenge not found") as u32;
-            if challenge_idx > input_idx {
-                challenge_idx -= program_context
-                    .globals
-                    .get_var(&self.ctx.id, "input_words")?
-                    .unwrap()
-                    .number()?
-                    - 1;
-            } else if challenge_idx > opcode_idx {
-                let program = self
-                    .get_program_definition(program_context)?
-                    .0
-                    .load_program()?;
-                let chunks_count = program.get_chunk_count(CODE_CHUNK_SIZE);
-                challenge_idx -= chunks_count;
-            }
+            let (real_idx, sub_idx) = self.resolve_challenge_idx(challenge_idx, program_context)?;
             let (challenge_name, subchallenges) = CHALLENGES
-                .get(challenge_idx as usize)
-                .ok_or(BitVMXError::ChallengeIdxNotFound(challenge_idx))?;
+                .get(real_idx as usize)
+                .ok_or(BitVMXError::ChallengeIdxNotFound(real_idx))?;
 
             let mut values = HashMap::with_capacity(subchallenges.len());
-
             for (subname, _) in *subchallenges {
-                let full_name = format!("{}_{}", challenge_name, subname);
+                let full_name = match sub_idx {
+                    Some(idx) => {
+                        format!("{}_{}_{}", challenge_name, subname, idx)
+                    }
+                    None => {
+                        format!("{}_{}", challenge_name, subname)
+                    }
+                };
                 let value = program_context
                     .witness
                     .get_witness(&self.ctx.id, &full_name)?
@@ -797,6 +795,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     .message_bytes();
                 values.insert(full_name, value);
             }
+
             info!(
                 "Prover decoded challenge {} with values: {:?}",
                 challenge_name, values
@@ -1356,6 +1355,10 @@ impl DisputeResolutionProtocol {
                     .unwrap()
                     .number()?,
             ),
+            (
+                "rom",
+                program.find_section_by_name(".rodata").unwrap().data.len() as u32,
+            ),
         ]);
 
         for (challenge_name, subnames) in CHALLENGES.iter() {
@@ -1372,7 +1375,7 @@ impl DisputeResolutionProtocol {
                         } else {
                             format!("{}_{}_{}", challenge_name, subname, i)
                         };
-                        let leaked: &'static str = Box::leak(var_name.into_boxed_str());
+                        let leaked: &'static str = Box::leak(var_name.into_boxed_str()); //TODO: dont use leak
                         let key = keys.get_winternitz(leaked).unwrap();
                         (leaked, key)
                     })
@@ -1384,8 +1387,6 @@ impl DisputeResolutionProtocol {
         }
 
         let mut winternitz_check_list = vec![];
-
-        let chunks = program.get_chunks(CODE_CHUNK_SIZE);
 
         for (challenge_name, subnames) in CHALLENGES.iter() {
             let total_len = subnames.iter().map(|(_, size)| *size).sum::<usize>() as u32 * 2;
@@ -1399,10 +1400,11 @@ impl DisputeResolutionProtocol {
             let reverse_script = stack.get_script();
             match *challenge_name {
                 "opcode" => {
+                    let chunks = program.get_chunks(CODE_CHUNK_SIZE);
                     for (i, (chunk_base, opcodes_chunk)) in chunks.iter().enumerate() {
                         let mut scripts = vec![reverse_script.clone()];
                         stack = StackTracker::new();
-                        opcode_challenge(&mut stack, *chunk_base, opcodes_chunk);
+                        opcode_challenge(&mut stack, *chunk_base, &opcodes_chunk);
                         scripts.push(stack.get_script());
                         let winternitz_check = scripts::verify_winternitz_signatures_aux(
                             aggregated,
@@ -1416,16 +1418,33 @@ impl DisputeResolutionProtocol {
                 }
                 "input" => {
                     let base_addr = program.find_section_by_name(".input").unwrap().start;
-                    let words = context
-                        .globals
-                        .get_var(&self.ctx.id, "input_words")?
-                        .unwrap()
-                        .number()?;
-                    for i in 0..words {
+                    let words = iteration_counts.get(challenge_name).unwrap();
+                    for i in 0..*words {
                         let address = base_addr + i * 4; //TODO: get 4 from context
                         let mut scripts = vec![reverse_script.clone()];
                         stack = StackTracker::new();
                         input_challenge(&mut stack, address);
+                        scripts.push(stack.get_script());
+                        let winternitz_check = scripts::verify_winternitz_signatures_aux(
+                            aggregated,
+                            &names_and_keys[challenge_name][i as usize],
+                            SignMode::Aggregate,
+                            true,
+                            Some(scripts),
+                        )?;
+                        winternitz_check_list.push(winternitz_check);
+                    }
+                }
+                "rom" => {
+                    let rodata = program.find_section_by_name(".rodata").unwrap();
+                    let base_addr = rodata.start;
+                    let words = iteration_counts.get(challenge_name).unwrap();
+                    for i in 0..*words {
+                        let address = base_addr + i;
+                        let value = program.read_mem(address).unwrap();
+                        let mut scripts = vec![reverse_script.clone()];
+                        stack = StackTracker::new();
+                        rom_challenge(&mut stack, address, value);
                         scripts.push(stack.get_script());
                         let winternitz_check = scripts::verify_winternitz_signatures_aux(
                             aggregated,
@@ -1702,7 +1721,20 @@ impl DisputeResolutionProtocol {
                 info!("Verifier choose challenge result: {:?}", challenge);
                 let leaf_index: usize;
                 let name: &str;
-                let mut leaf_offset: usize = 0;
+                let mut dynamic_offset: u32 = 0; // For offset inside a specific challenge
+
+                let (mut program, opcode_chunks, input_words, rodata_len) = {
+                    let mut program = self.get_program_definition(&context)?.0.load_program()?;
+                    let opcode_chunks = program.get_chunk_count(CODE_CHUNK_SIZE) as usize;
+                    let input_words = context
+                        .globals
+                        .get_var(&self.ctx.id, "input_words")?
+                        .unwrap()
+                        .number()? as usize;
+                    let rodata_len = program.find_section_by_name(".rodata").unwrap().data.len();
+                    (program, opcode_chunks, input_words, rodata_len)
+                };
+
                 match challenge {
                     ChallengeType::EntryPoint(trace_read_pc, prover_trace_step, _entrypoint) => {
                         name = "entry_point";
@@ -1724,6 +1756,7 @@ impl DisputeResolutionProtocol {
                             *prover_trace_step,
                         )?;
                     }
+
                     ChallengeType::ProgramCounter(
                         pre_pre_hash,
                         pre_step,
@@ -1774,6 +1807,7 @@ impl DisputeResolutionProtocol {
                             &prover_step_hash,
                         )?;
                     }
+
                     ChallengeType::TraceHash(
                         prover_prev_hash,
                         prover_trace_step,
@@ -1809,6 +1843,7 @@ impl DisputeResolutionProtocol {
                             &prover_prev_hash,
                         )?;
                     }
+
                     ChallengeType::TraceHashZero(prover_trace_step, prover_step_hash) => {
                         name = "trace_hash_zero";
                         info!("Verifier chose {name} challenge");
@@ -1835,70 +1870,81 @@ impl DisputeResolutionProtocol {
                         )?;
                         self.set_input_hex(context, &format!("{name}_hash"), &prover_step_hash)?;
                     }
-                    ChallengeType::InputData(read_1, read_2, address, _input_for_address) => {
+
+                    ChallengeType::InputData(read_1, read_2, address, input_for_address) => {
                         name = "input";
                         info!("Verifier chose {name} challenge");
-                        leaf_offset += context
-                            .globals
-                            .get_var(&self.ctx.id, "input_words")?
-                            .unwrap()
-                            .number()? as usize
-                            - 1;
 
-                        self.set_input_u32(context, &format!("{name}_prover_input"), *address)?;
+                        let base_addr = program.find_section_by_name(".input").unwrap().start;
+                        dynamic_offset = (address - base_addr) / 4; //TODO: get 4 from context
+
+                        let suffix = if input_words > 1 {
+                            format!("_{dynamic_offset}")
+                        } else {
+                            String::new()
+                        };
+
                         self.set_input_u32(
                             context,
-                            &format!("{name}_prover_read_add_1"),
+                            &format!("{name}_prover_input{suffix}"),
+                            *input_for_address,
+                        )?;
+                        self.set_input_u32(
+                            context,
+                            &format!("{name}_prover_read_add_1{suffix}"),
                             read_1.address,
                         )?;
                         self.set_input_u32(
                             context,
-                            &format!("{name}_prover_read_value_1"),
+                            &format!("{name}_prover_read_value_1{suffix}"),
                             read_1.value,
                         )?;
                         self.set_input_u64(
                             context,
-                            &format!("{name}_prover_last_step_1"),
+                            &format!("{name}_prover_last_step_1{suffix}"),
                             read_1.last_step,
                         )?;
                         self.set_input_u32(
                             context,
-                            &format!("{name}_prover_read_add_2"),
+                            &format!("{name}_prover_read_add_2{suffix}"),
                             read_2.address,
                         )?;
                         self.set_input_u32(
                             context,
-                            &format!("{name}_prover_read_value_2"),
+                            &format!("{name}_prover_read_value_2{suffix}"),
                             read_2.value,
                         )?;
                         self.set_input_u64(
                             context,
-                            &format!("{name}_prover_last_step_2"),
+                            &format!("{name}_prover_last_step_2{suffix}"),
                             read_2.last_step,
                         )?;
                     }
+
                     ChallengeType::Opcode(pc_read, chunk_index, _chunk_base, _opcodes_chunk) => {
                         name = "opcode";
                         info!("Verifier chose {name} challenge");
 
-                        leaf_offset += context
-                            .globals
-                            .get_var(&self.ctx.id, "input_words")?
-                            .unwrap()
-                            .number()? as usize
-                            - 1; // Offset for input words
-                        leaf_offset += *chunk_index as usize;
+                        dynamic_offset = *chunk_index;
+
+                        let suffix = if opcode_chunks > 1 {
+                            format!("_{dynamic_offset}")
+                        } else {
+                            String::new()
+                        };
+
                         self.set_input_u32(
                             context,
-                            &format!("{name}_prover_pc"),
+                            &format!("{name}_prover_pc{suffix}"),
                             pc_read.pc.get_address(),
                         )?;
                         self.set_input_u32(
                             context,
-                            &format!("{name}_prover_opcode"),
+                            &format!("{name}_prover_opcode{suffix}"),
                             pc_read.opcode,
                         )?;
                     }
+
                     ChallengeType::AddressesSections(
                         read_1,
                         read_2,
@@ -1910,47 +1956,103 @@ impl DisputeResolutionProtocol {
                         _,
                         _,
                     ) => {
-                        name = "addresses";
+                        name = "addresses_sections";
                         info!("Verifier chose {name} challenge");
-                    
+
                         self.set_input_u32(
                             context,
-                            &format!("{name}_read_1_add"),
-                            read_1.address
+                            &format!("{name}_read_1_address"),
+                            read_1.address,
                         )?;
-                    
                         self.set_input_u32(
                             context,
-                            &format!("{name}_read_2_add"),
-                            read_2.address
+                            &format!("{name}_read_2_address"),
+                            read_2.address,
                         )?;
-                    
                         self.set_input_u32(
                             context,
-                            &format!("{name}_write_add"),
-                            write.address
+                            &format!("{name}_write_address"),
+                            write.address,
                         )?;
-                    
                         self.set_input_u8(
                             context,
                             &format!("{name}_memory_witness"),
-                            memory_witness.byte()
+                            memory_witness.byte(),
                         )?;
-                    
                         self.set_input_u32(
                             context,
-                            &format!("{name}_read_pc_add"),
-                            program_counter.get_address()
+                            &format!("{name}_pc_address"),
+                            program_counter.get_address(),
                         )?;
                     }
+
+                    ChallengeType::RomData(read_1, read_2, address, _input_for_address) => {
+                        name = "rom";
+                        info!("Verifier chose {name} challenge");
+
+                        let base_addr = program.find_section_by_name(".rodata").unwrap().start;
+                        dynamic_offset = address - base_addr;
+
+                        let suffix = if rodata_len > 1 {
+                            format!("_{}", dynamic_offset)
+                        } else {
+                            String::new()
+                        };
+
+                        self.set_input_u32(
+                            context,
+                            &format!("{name}_prover_read_add_1{suffix}"),
+                            read_1.address,
+                        )?;
+                        self.set_input_u32(
+                            context,
+                            &format!("{name}_prover_read_value_1{suffix}"),
+                            read_1.value,
+                        )?;
+                        self.set_input_u64(
+                            context,
+                            &format!("{name}_prover_last_step_1{suffix}"),
+                            read_1.last_step,
+                        )?;
+                        self.set_input_u32(
+                            context,
+                            &format!("{name}_prover_read_add_2{suffix}"),
+                            read_2.address,
+                        )?;
+                        self.set_input_u32(
+                            context,
+                            &format!("{name}_prover_read_value_2{suffix}"),
+                            read_2.value,
+                        )?;
+                        self.set_input_u64(
+                            context,
+                            &format!("{name}_prover_last_step_2{suffix}"),
+                            read_2.last_step,
+                        )?;
+                    }
+
                     _ => todo!(),
                 }
 
+                // Determine offset
+                let passed_input = matches!(
+                    challenge,
+                    ChallengeType::Opcode(..) | ChallengeType::RomData(..)
+                );
+                let passed_opcode = matches!(challenge, ChallengeType::RomData(..));
+                let passed_rom = false; // matches!(challenge,);  TODO: add next challenges that pass rom
+
+                let leaf_offset = (if passed_input { input_words - 1 } else { 0 })
+                    + (if passed_opcode { opcode_chunks - 1 } else { 0 })
+                    + (if passed_rom { rodata_len - 1 } else { 0 })
+                    + dynamic_offset as usize;
                 leaf_index = CHALLENGES
                     .iter()
                     .position(|(n, _)| *n == name)
                     .ok_or_else(|| BitVMXError::ChallengeNotFound(name.to_string()))?;
+
                 info!("Leaf index: {}, leaf offset: {}", leaf_index, leaf_offset);
+
                 context.bitcoin_coordinator.dispatch(
                     self.get_signed_tx(
                         context,
@@ -1967,6 +2069,65 @@ impl DisputeResolutionProtocol {
             }
         }
         Ok(())
+    }
+
+    fn resolve_challenge_idx(
+        &self,
+        challenge_idx: u32,
+        program_context: &ProgramContext,
+    ) -> Result<(u32, Option<u32>), BitVMXError> {
+        let mut program = self
+            .get_program_definition(program_context)?
+            .0
+            .load_program()?;
+
+        let input_idx = Self::get_challenge_index("input");
+        let opcode_idx = Self::get_challenge_index("opcode");
+        let rom_idx = Self::get_challenge_index("rom");
+
+        let input_words = program_context
+            .globals
+            .get_var(&self.ctx.id, "input_words")?
+            .unwrap()
+            .number()?;
+        let opcode_words = program.get_chunk_count(CODE_CHUNK_SIZE);
+        let rom_words = program.find_section_by_name(".rodata").unwrap().data.len() as u32;
+
+        let input_start = input_idx;
+        let input_end = input_start + input_words;
+
+        let opcode_start = input_end;
+        let opcode_end = opcode_start + opcode_words;
+
+        let rom_start = opcode_end;
+        let rom_end = rom_start + rom_words;
+
+        let (real_idx, sub_idx) = if challenge_idx < input_start {
+            (challenge_idx, None) // simple fixed challenge
+        } else if challenge_idx < input_end {
+            let sub = challenge_idx - input_start;
+            let idx = if input_words == 1 { None } else { Some(sub) };
+            (input_idx, idx) // inside input
+        } else if challenge_idx < opcode_end {
+            let sub = challenge_idx - opcode_start;
+            let idx = if opcode_words == 1 { None } else { Some(sub) };
+            (opcode_idx, idx) // inside opcode
+        } else if challenge_idx < rom_end {
+            let sub = challenge_idx - rom_start;
+            let idx = if rom_words == 1 { None } else { Some(sub) };
+            (rom_idx, idx) // inside rom
+        } else {
+            return Err(BitVMXError::ChallengeIdxNotFound(challenge_idx));
+        };
+
+        Ok((real_idx, sub_idx))
+    }
+
+    fn get_challenge_index(name: &str) -> u32 {
+        CHALLENGES
+            .iter()
+            .position(|(n, _)| *n == name)
+            .expect("challenge not found") as u32
     }
 
     fn get_execution_path(&self) -> Result<String, BitVMXError> {
