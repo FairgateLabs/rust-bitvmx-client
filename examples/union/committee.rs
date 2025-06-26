@@ -1,45 +1,27 @@
 use anyhow::Result;
-use bitcoind::bitcoind::Bitcoind;
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
     program::{
         participant::{P2PAddress, ParticipantRole},
-        protocols::{dispute::TIMELOCK_BLOCKS, protocol_handler::external_fund_tx},
-        variables::VariableTypes,
+        protocols::union::events::events::Event,
+        variables::{PartialUtxo, VariableTypes},
     },
-    types::{
-        OutgoingBitVMXApiMessages::*, L2_ID, PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_DRP,
-        PROGRAM_TYPE_SLOT,
-    },
+    types::{OutgoingBitVMXApiMessages::*, L2_ID, PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_INIT},
 };
-#[path = "../../tests/common/mod.rs"]
-mod common;
-use bitcoin::{
-    key::PrivateKey,
-    secp256k1::{self, Secp256k1},
-    Network, PublicKey, ScriptBuf,
-};
+
+use bitcoin::{Amount, Network, PublicKey, ScriptBuf};
 use bitvmx_wallet::wallet::Wallet;
-use common::{
-    config_trace,
-    dispute::{execute_dispute, prepare_dispute},
-    get_all, init_bitvmx, init_utxo, mine_and_wait, send_all, wait_message_from_channel,
-};
-use protocol_builder::{
-    scripts::{check_aggregated_signature, timelock, SignMode},
-    types::{OutputType, Utxo},
-};
-use std::{collections::HashMap, str::FromStr};
-use std::{
-    thread::{self, sleep},
-    time::Duration,
-};
-use tracing::{info, info_span, warn};
+use protocol_builder::types::OutputType;
+use std::collections::HashMap;
+use std::thread;
+use tracing::{info, info_span};
 use uuid::Uuid;
 
-use crate::committee::common::{clear_db, FUNDING_ID, INITIAL_BLOCK_COUNT, WALLET_NAME};
+use crate::bitcoin::{clear_db, FUNDING_ID, INITIAL_BLOCK_COUNT};
+
+// use crate::committee::common::{clear_db, FUNDING_ID, INITIAL_BLOCK_COUNT, WALLET_NAME};
 
 macro_rules! expect_msg {
     ($self:expr, $pattern:pat => $expr:expr) => {{
@@ -57,6 +39,9 @@ macro_rules! expect_msg {
     }};
 }
 
+const WALLET_NAME: &str = "wallet";
+const FEE: u64 = 500;
+
 struct Bitcoin {
     bitcoin_client: BitcoinClient,
     wallet: Wallet,
@@ -73,10 +58,10 @@ pub struct Committee {
 impl Committee {
     pub fn new() -> Result<Self> {
         let members = vec![
-            Member::new("op_1", Role::Operator)?,
-            Member::new("op_2", Role::Operator)?,
-            Member::new("op_3", Role::Operator)?,
-            Member::new("op_4", Role::Challenger)?,
+            Member::new("op_1", ParticipantRole::Prover)?,
+            Member::new("op_2", ParticipantRole::Prover)?,
+            Member::new("op_3", ParticipantRole::Prover)?,
+            Member::new("op_4", ParticipantRole::Verifier)?,
         ];
 
         let (bitcoin_client, wallet) = get_bitcoin_client()?;
@@ -126,8 +111,38 @@ impl Committee {
             )
         })?;
 
+        let mut op_funding_utxos: HashMap<String, PartialUtxo> = HashMap::new();
+        let mut wt_funding_utxos: HashMap<String, PartialUtxo> = HashMap::new();
+
+        for (index, member) in members.iter().enumerate() {
+            if member.role == ParticipantRole::Prover {
+                op_funding_utxos.insert(
+                    member.id.clone(),
+                    self.prepare_funding_utxo(
+                        &self.bitcoin.wallet,
+                        "fund_1", //&format!("op_{}_utxo", index),
+                        //TODO we must use a different pub key here, same for the speedup funding
+                        &member.keyring.dispute_pubkey.unwrap(),
+                        10000000,
+                        None,
+                    )?,
+                );
+            }
+
+            wt_funding_utxos.insert(
+                member.id.clone(),
+                self.prepare_funding_utxo(
+                    &self.bitcoin.wallet,
+                    "fund_1", //&format!("wt_{}_utxo", index),
+                    //TODO we must use a different pub key here, same for the speedup funding
+                    &member.keyring.dispute_pubkey.unwrap(),
+                    10000000,
+                    None,
+                )?,
+            );
+        }
+
         // setup covenants
-        // let utxo = self.prepare_funding_utxo()?;
 
         // build a map of communication pubkeys to addresses
         let mut members_addresses = HashMap::new();
@@ -142,27 +157,47 @@ impl Committee {
         self.all(|op| {
             op.setup_covenants(
                 &members,
-                members_addresses,
-                members_take_pubkeys,
-                members_dispute_pubkeys,
+                &members_addresses,
+                &members_take_pubkeys,
+                &members_dispute_pubkeys,
+                &op_funding_utxos,
+                &wt_funding_utxos,
             )
         })?;
-
         Ok(())
     }
 
-    // fn prepare_funding_utxo(&mut self) -> Result<Utxo> {
-    //     // Protocol fees funding
-    //     let fund_value = 10_000_000;
-    //     let utxo = init_utxo(
-    //         &self.bitcoin.wallet,
-    //         self.members[0].keyring.take_aggregated_key.unwrap(),
-    //         None,
-    //         fund_value,
-    //     )?;
+    pub fn prepare_funding_utxo(
+        &self,
+        wallet: &Wallet,
+        funding_id: &str,
+        public_key: &PublicKey,
+        amount: u64,
+        from: Option<&str>,
+    ) -> Result<PartialUtxo> {
+        info!("Funding address: {:?} with: {}", public_key, amount);
+        let txid = wallet.fund_address(
+            WALLET_NAME,
+            from.unwrap_or(funding_id),
+            public_key.clone(),
+            &vec![amount],
+            FEE,
+            false,
+            true,
+            None,
+        )?;
+        wallet.mine(1)?;
 
-    //     Ok(utxo)
-    // }
+        let script_pubkey = ScriptBuf::new_p2wpkh(&public_key.wpubkey_hash().unwrap());
+
+        let output_type = OutputType::SegwitPublicKey {
+            value: Amount::from_sat(amount),
+            script_pubkey,
+            public_key: *public_key,
+        };
+
+        Ok((txid, 0, Some(amount), Some(output_type)))
+    }
 
     fn all<F, R>(&mut self, f: F) -> Result<Vec<R>>
     where
@@ -296,14 +331,22 @@ impl Member {
     fn setup_covenants(
         &mut self,
         members: &Vec<Member>,
-        members_addresses: HashMap<PublicKey, P2PAddress>,
+        members_addresses: &HashMap<PublicKey, P2PAddress>,
+        members_take_pubkeys: &Vec<PublicKey>,
+        members_dispute_pubkeys: &Vec<PublicKey>,
+        op_funding_utxos: &HashMap<String, PartialUtxo>,
+        wt_funding_utxos: &HashMap<String, PartialUtxo>,
     ) -> Result<()> {
         self.setup_init_covenant(
             members,
             members_addresses,
             members_take_pubkeys,
             members_dispute_pubkeys,
+            op_funding_utxos,
+            wt_funding_utxos,
         )?;
+
+        // TODO: add the rest of the covenants here
         // self.setup_dispute_core_covenant(members)?;
         // self.setup_multiparty_penalization_covenant()?;
         // self.setup_pairwise_penalization_covenant()?;
@@ -432,23 +475,28 @@ impl Member {
     fn setup_init_covenant(
         &mut self,
         members: &Vec<Member>,
-        members_addresses: HashMap<PublicKey, P2PAddress>,
+        members_addresses: &HashMap<PublicKey, P2PAddress>,
         members_take_pubkeys: &Vec<PublicKey>,
         members_dispute_pubkeys: &Vec<PublicKey>,
+        op_funding_utxos: &HashMap<String, PartialUtxo>,
+        wt_funding_utxos: &HashMap<String, PartialUtxo>,
     ) -> Result<()> {
         let id = Uuid::new_v4();
+        let addresses = self.get_addresses(members);
 
         self.prepare_init_covenant(
             id,
             &members,
-            &members_addresses,
+            members_addresses,
             &members_take_pubkeys,
             &members_dispute_pubkeys,
+            op_funding_utxos,
+            wt_funding_utxos,
         )?;
 
         // TODO rename PROGRAM_TYPE_DISPUTE_CORE to  PROGRAM_TYPE_PACKET_COVENANT
-        // self.bitvmx
-        //     .setup(id, PROGRAM_TYPE_DISPUTE_CORE.to_string(), addresses, 0)?;
+        self.bitvmx
+            .setup(id, PROGRAM_TYPE_INIT.to_string(), addresses, 0)?;
 
         Ok(())
     }
@@ -671,11 +719,11 @@ impl Member {
         &mut self,
         covenant_id: Uuid,
         members: &Vec<Member>,
-        members_addresses: HashMap<PublicKey, P2PAddress>,
+        members_addresses: &HashMap<PublicKey, P2PAddress>,
         members_take_pubkeys: &Vec<PublicKey>,
         members_dispute_pubkeys: &Vec<PublicKey>,
-        // op_utxo: &Utxo,
-        // wt_utxo: &Utxo,
+        op_funding_utxos: &HashMap<String, PartialUtxo>,
+        wt_funding_utxos: &HashMap<String, PartialUtxo>,
         // dispute_aggregation_id: Uuid,
     ) -> Result<()> {
         info!(
@@ -684,7 +732,7 @@ impl Member {
         );
 
         let event = Event::MembersSelected {
-            my_role: self.role,
+            my_role: self.role.clone(),
             my_take_pubkey: self.keyring.take_pubkey.clone().unwrap(),
             my_dispute_pubkey: self.keyring.dispute_pubkey.clone().unwrap(),
             take_pubkeys: members_take_pubkeys.clone(),
@@ -696,34 +744,23 @@ impl Member {
 
         self.bitvmx.set_var(
             covenant_id,
-            Event::MembersSelected.to_string(),
+            &event.to_string(),
             VariableTypes::String(serde_json::to_string(&event)?),
         )?;
 
-        // let initial_output = OutputType::SegwitPublicKey {
-        //     value: 1000,
-        //     script_pubkey: ScriptBuf::new_p2wpkh(
-        //         &self
-        //             .keyring
-        //             .take_aggregated_key
-        //             .as_ref()
-        //             .unwrap()
-        //             .wpubkey_hash()
-        //             .unwrap(),
-        //     ),
-        //     public_key: self.keyring.take_aggregated_key.as_ref().unwrap().clone(),
-        // };
+        if self.role == ParticipantRole::Prover {
+            self.bitvmx.set_var(
+                covenant_id,
+                "op_funding_utxo",
+                VariableTypes::Utxo(op_funding_utxos.get(&self.id).unwrap().clone()),
+            )?;
+        }
 
-        // self.bitvmx.set_var(
-        //     covenant_id,
-        //     "op_funding_utxo",
-        //     VariableTypes::Utxo((
-        //         op_utxo.txid,
-        //         op_utxo.vout,
-        //         Some(op_utxo.amount),
-        //         Some(initial_output_type),
-        //     )),
-        // )?;
+        self.bitvmx.set_var(
+            covenant_id,
+            "wt_funding_utxo",
+            VariableTypes::Utxo(wt_funding_utxos.get(&self.id).unwrap().clone()),
+        )?;
 
         Ok(())
     }
@@ -760,11 +797,17 @@ impl Member {
     }
 
     fn operator_count(&self, members: &Vec<Member>) -> Result<u32> {
-        Ok(members.iter().filter(|m| m.role == ParticipantRole::Prover).count() as u32)
+        Ok(members
+            .iter()
+            .filter(|m| m.role == ParticipantRole::Prover)
+            .count() as u32)
     }
 
     fn watchtower_count(&self, members: &Vec<Member>) -> Result<u32> {
-        Ok(members.iter().filter(|m| m.role == ParticipantRole::Verifier).count() as u32)
+        Ok(members
+            .iter()
+            .filter(|m| m.role == ParticipantRole::Verifier)
+            .count() as u32)
     }
 }
 
@@ -801,6 +844,7 @@ pub fn get_bitcoin_client() -> Result<(BitcoinClient, Wallet)> {
         clear_db(&wallet_config.storage.path);
         clear_db(&wallet_config.key_storage.path);
     }
+
     let wallet = Wallet::new(wallet_config, true)?;
     wallet.mine(INITIAL_BLOCK_COUNT)?;
 
