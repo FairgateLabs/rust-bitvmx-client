@@ -71,6 +71,37 @@ impl Committee {
             )
         })?;
 
+        let mut op_funding_utxos: HashMap<String, PartialUtxo> = HashMap::new();
+        let mut wt_funding_utxos: HashMap<String, PartialUtxo> = HashMap::new();
+
+        for (index, member) in members.iter().enumerate() {
+            if member.role == ParticipantRole::Prover {
+                op_funding_utxos.insert(
+                    member.id.clone(),
+                    self.prepare_funding_utxo(
+                        &self.bitcoin.wallet,
+                        "fund_1", //&format!("op_{}_utxo", index),
+                        //TODO we must use a different pub key here, same for the speedup funding
+                        &member.keyring.dispute_pubkey.unwrap(),
+                        10000000,
+                        None,
+                    )?,
+                );
+            }
+
+            wt_funding_utxos.insert(
+                member.id.clone(),
+                self.prepare_funding_utxo(
+                    &self.bitcoin.wallet,
+                    "fund_1", //&format!("wt_{}_utxo", index),
+                    //TODO we must use a different pub key here, same for the speedup funding
+                    &member.keyring.dispute_pubkey.unwrap(),
+                    10000000,
+                    None,
+                )?,
+            );
+        }
+
         // setup covenants
         for (member_index, member) in members.iter().enumerate() {
             info_span!("member", id = %member.id).in_scope(|| {
@@ -111,7 +142,6 @@ impl Committee {
                 accept_pegin_sighash.as_slice(),
             )
         })?;
-
         Ok(())
     }
 

@@ -14,13 +14,16 @@ pub const FUNDING_ID: &str = "fund_1";
 
 /// Helper function to clear database directories
 pub fn clear_db(path: &str) {
+pub fn clear_db(path: &str) {
     let _ = std::fs::remove_dir_all(path);
 }
 
 pub fn stop_existing_bitcoind() -> Result<()> {
     info!("Checking for existing bitcoind instance...");
 
+
     let config = Config::new(Some("config/op_1.yaml".to_string()))?;
+
 
     // Create a temporary Bitcoind instance to check if one is running and stop it
     let temp_bitcoind = Bitcoind::new(
@@ -28,6 +31,7 @@ pub fn stop_existing_bitcoind() -> Result<()> {
         "ruimarinho/bitcoin-core",
         config.bitcoin.clone(),
     );
+
 
     // Attempt to stop any existing instance
     match temp_bitcoind.stop() {
@@ -38,8 +42,13 @@ pub fn stop_existing_bitcoind() -> Result<()> {
                 "No existing bitcoind instance found or error stopping: {}",
                 e
             );
+            info!(
+                "No existing bitcoind instance found or error stopping: {}",
+                e
+            );
         }
     }
+
 
     Ok(())
 }
