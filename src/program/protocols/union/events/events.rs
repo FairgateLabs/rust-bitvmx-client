@@ -1,8 +1,11 @@
+use bitcoin::PublicKey;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Display};
+
+use crate::program::participant::{P2PAddress, ParticipantRole};
 
 
-#[derive(Debug, Clone, Serialize, Deserialize, Display)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Event {
     MembersSelected {
         my_role: ParticipantRole,
