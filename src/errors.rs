@@ -147,6 +147,9 @@ pub enum BitVMXError {
 
     #[error("Inconsistent data retrieved of ZKP execution result from job {0}")]
     InconsistentZKPData(Uuid),
+
+    #[error("Problem creating directory {0}: {1}")]
+    DirectoryCreationError(String, std::io::Error),
 }
 
 #[derive(Error, Debug)]
