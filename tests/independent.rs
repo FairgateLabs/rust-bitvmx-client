@@ -533,6 +533,14 @@ fn test_zkp() -> Result<()> {
     let msg = helper.wait_msg(0)?;
     info!("ZKP generated: {:?}", msg);
 
+    let _ = helper.channels[0].send(
+        BITVMX_ID,
+        IncomingBitVMXApiMessages::GetZKPExecutionResult(id).to_string()?,
+    );
+
+    let msg = helper.wait_msg(0)?;
+    info!("ZKP result: {:?}", msg);
+
     helper.stop()?;
     Ok(())
 }
