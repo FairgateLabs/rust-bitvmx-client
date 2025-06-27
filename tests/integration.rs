@@ -1,6 +1,7 @@
 use anyhow::Result;
 use bitvmx_client::{
     //program::participant::ParticipantRole,
+    program::participant::ParticipantRole,
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
 use common::{
