@@ -86,10 +86,6 @@ impl BitVMXClient {
         self.send_message(IncomingBitVMXApiMessages::GetZKPExecutionResult(id))
     }
 
-    pub fn finalize(&self) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::Finalize())
-    }
-
     pub fn get_transaction(&self, request_id: Uuid, txid: Txid) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::GetTransaction(request_id, txid))
     }

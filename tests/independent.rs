@@ -10,7 +10,7 @@ use bitvmx_client::program::variables::VariableTypes;
 use bitvmx_client::types::{
     IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, EMULATOR_ID, L2_ID, PROVER_ID,
 };
-use bitvmx_client::{bitvmx::BitVMX, config::Config, program::participant::ParticipantRole};
+use bitvmx_client::{bitvmx::BitVMX, config::Config};
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
@@ -532,6 +532,14 @@ fn test_zkp() -> Result<()> {
 
     let msg = helper.wait_msg(0)?;
     info!("ZKP generated: {:?}", msg);
+
+    let _ = helper.channels[0].send(
+        BITVMX_ID,
+        IncomingBitVMXApiMessages::GetZKPExecutionResult(id).to_string()?,
+    );
+
+    let msg = helper.wait_msg(0)?;
+    info!("ZKP result: {:?}", msg);
 
     helper.stop()?;
     Ok(())

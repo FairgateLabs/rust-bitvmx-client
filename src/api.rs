@@ -40,8 +40,6 @@ pub trait BitVMXApi {
 
     fn get_zkp_execution_result(&mut self, from: u32, id: Uuid) -> Result<(), BitVMXError>;
 
-    fn finalize(&mut self) -> Result<(), BitVMXError>;
-
     fn get_transaction(&mut self, from: u32, id: Uuid, txid: Txid) -> Result<(), BitVMXError>;
 
     fn subscribe_to_tx(&mut self, from: u32, id: Uuid, txid: Txid) -> Result<(), BitVMXError>;
