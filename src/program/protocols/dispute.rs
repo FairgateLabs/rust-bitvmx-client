@@ -1959,8 +1959,6 @@ impl DisputeResolutionProtocol {
                     ChallengeType::No => {
                         name = "";
                     }
-
-                    _ => todo!(),
                 }
 
                 if name.is_empty() {
