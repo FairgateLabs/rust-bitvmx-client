@@ -6,6 +6,7 @@ use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TransactionStatus};
 use bitvmx_broker::{broker_storage::BrokerStorage, channel::channel::LocalChannel};
 use chrono::{DateTime, Utc};
 use p2p_handler::P2pHandler;
+use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
 
 use uuid::Uuid;
@@ -93,6 +94,7 @@ pub enum IncomingBitVMXApiMessages {
     Ping(),
     SetVar(Uuid, String, VariableTypes),
     SetWitness(Uuid, String, WitnessTypes),
+    SetFundingUtxo(Utxo),
     GetVar(Uuid, String),
     GetWitness(Uuid, String),
     GetCommInfo(),
@@ -111,7 +113,6 @@ pub enum IncomingBitVMXApiMessages {
     GenerateZKP(Uuid, Vec<u8>),
     ProofReady(Uuid),
     GetZKPExecutionResult(Uuid),
-    Finalize(),
 }
 impl IncomingBitVMXApiMessages {
     pub fn to_string(&self) -> Result<String, BitVMXError> {
@@ -189,6 +190,15 @@ impl OutgoingBitVMXApiMessages {
         match self {
             OutgoingBitVMXApiMessages::KeyPair(uuid, priv_key, pub_key) => {
                 Some((uuid.clone(), priv_key.clone(), pub_key.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn public_key(&self) -> Option<(Uuid, PublicKey)> {
+        match self {
+            OutgoingBitVMXApiMessages::PubKey(uuid, pub_key) => {
+                Some((uuid.clone(), pub_key.clone()))
             }
             _ => None,
         }

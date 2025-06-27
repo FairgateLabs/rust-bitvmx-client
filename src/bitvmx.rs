@@ -719,10 +719,6 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn finalize(&mut self) -> Result<(), BitVMXError> {
-        Ok(())
-    }
-
     fn subscribe_to_tx(&mut self, from: u32, id: Uuid, txid: Txid) -> Result<(), BitVMXError> {
         info!(
             "Subscribing to transaction: {:?} from: {} id: {}",
@@ -964,6 +960,11 @@ impl BitVMXApi for BitVMX {
                     .witness
                     .set_witness(&uuid, &key, value)?;
             }
+            IncomingBitVMXApiMessages::SetFundingUtxo(utxo) => {
+                info!("Setting funding utxo {:?}", utxo);
+                self.program_context.bitcoin_coordinator.add_funding(utxo)?;
+            }
+
             IncomingBitVMXApiMessages::GetVar(uuid, key) => {
                 BitVMXApi::get_var(self, from, uuid, &key)?;
             }
@@ -1021,7 +1022,11 @@ impl BitVMXApi for BitVMX {
             }
             IncomingBitVMXApiMessages::GetPubKey(id, new) => {
                 if new {
-                    todo!()
+                    let public = self.program_context.key_chain.derive_keypair()?;
+                    self.program_context.broker_channel.send(
+                        from,
+                        serde_json::to_string(&OutgoingBitVMXApiMessages::PubKey(id, public))?,
+                    )?;
                 } else {
                     let collaboration = self
                         .get_collaboration(&id)?
@@ -1050,7 +1055,6 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::GetZKPExecutionResult(id) => {
                 BitVMXApi::get_zkp_execution_result(self, from, id)?
             }
-            IncomingBitVMXApiMessages::Finalize() => BitVMXApi::finalize(self)?,
         }
 
         Ok(())
