@@ -633,18 +633,12 @@ impl BitVMXApi for BitVMX {
         self.store
             .set(StoreKey::ZKPFrom(id).get_key(), from, None)?;
 
-        let path = format!("./zkp-jobs/{}", id);
-
-        fs::create_dir_all(&path)
-            .map_err(|e| BitVMXError::DirectoryCreationError(path, e))?;
-
         let msg = serde_json::to_string(&DispatcherJob {
             job_id: id.to_string(),
             job_type: ProverJobType::Prove(
                 input,
                 "./a.elf".to_string(),
-                format!("./zkp-jobs/{}/output.json", id),
-                format!("./zkp-jobs/{}/stark-proof.bin", id),
+                format!("./zkp-jobs/{}", id),
             ),
         })?;
 
