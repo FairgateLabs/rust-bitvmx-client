@@ -361,10 +361,25 @@ impl BitVMX {
                     ack_news =
                         AckNews::Coordinator(AckCoordinatorNews::DispatchSpeedUpError(_counter));
                 }
-                CoordinatorNews::FundingNotFound() => {
+                CoordinatorNews::FundingNotFound => {
                     // Complete
                     error!("Funding not found for speed-up transaction. This is a critical error.");
+
+                    ack_news = AckNews::Coordinator(AckCoordinatorNews::FundingNotFound);
+
                     return Err(BitVMXError::InsufficientAmount);
+                }
+                CoordinatorNews::EstimateFeerateTooHigh(estimate_fee, max_allowed) => {
+                    // Complete
+                    error!(
+                        "Estimate feerate too high: {:?} {:?}",
+                        estimate_fee, max_allowed
+                    );
+
+                    ack_news = AckNews::Coordinator(AckCoordinatorNews::EstimateFeerateTooHigh(
+                        estimate_fee,
+                        max_allowed,
+                    ));
                 }
             }
 
