@@ -19,9 +19,7 @@ use std::thread;
 use tracing::{info, info_span};
 use uuid::Uuid;
 
-use crate::bitcoin::{clear_db, FUNDING_ID, INITIAL_BLOCK_COUNT};
-
-// use crate::committee::common::{clear_db, FUNDING_ID, INITIAL_BLOCK_COUNT, WALLET_NAME};
+use crate::bitcoin::{clear_db, FUNDING_ID, INITIAL_BLOCK_COUNT, WALLET_NAME, FEE};
 
 macro_rules! expect_msg {
     ($self:expr, $pattern:pat => $expr:expr) => {{
@@ -39,8 +37,6 @@ macro_rules! expect_msg {
     }};
 }
 
-const WALLET_NAME: &str = "wallet";
-const FEE: u64 = 500;
 
 struct Bitcoin {
     bitcoin_client: BitcoinClient,
@@ -82,23 +78,16 @@ impl Committee {
         // in a real scenario, operators should get this from the chain
         let _addresses = self.all(|op| op.get_peer_info())?;
 
+        // create members pubkeys
         let keys = self.all(|op| op.make_keys())?;
 
+        // setup keys
         let members_take_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.0).collect();
         let members_dispute_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.1).collect();
         let members_communication_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.2).collect();
 
-        // info!(
-        //     members_take_pubkeys = ?members_take_pubkeys,
-        //     members_dispute_pubkeys = ?members_dispute_pubkeys,
-        //     members_communication_pubkeys = ?members_communication_pubkeys,
-        //     "Keys setup complete"
-        // );
-
-        // setup keys
         let take_aggregation_id = self.take_aggregation_id;
         let dispute_aggregation_id = self.dispute_aggregation_id;
-
         let members = self.members.clone();
 
         self.all(|op| {
@@ -153,7 +142,6 @@ impl Committee {
             );
         }
 
-        // build a map of pairwise keys to addresses
         self.all(|op| {
             op.setup_covenants(
                 &members,
@@ -164,6 +152,7 @@ impl Committee {
                 &wt_funding_utxos,
             )
         })?;
+
         Ok(())
     }
 
@@ -175,7 +164,7 @@ impl Committee {
         amount: u64,
         from: Option<&str>,
     ) -> Result<PartialUtxo> {
-        info!("Funding address: {:?} with: {}", public_key, amount);
+        // info!("Funding address: {:?} with: {}", public_key, amount);
         let txid = wallet.fund_address(
             WALLET_NAME,
             from.unwrap_or(funding_id),
@@ -316,14 +305,7 @@ impl Member {
         members_take_pubkeys: &Vec<PublicKey>,
         members_dispute_pubkeys: &Vec<PublicKey>,
     ) -> Result<()> {
-        let addresses: Vec<P2PAddress> = members.iter().filter_map(|m| m.address.clone()).collect();
         self.make_pairwise_keys(members, take_aggregation_id)?;
-
-        // info!(
-        //     id = self.id,
-        //     pairwise_keys = ?self.keyring.pairwise_keys,
-        //     "Keys setup complete"
-        // );
 
         Ok(())
     }
@@ -451,7 +433,7 @@ impl Member {
                         .pairwise_keys
                         .insert(other_address.clone(), pairwise_key);
 
-                    // info!(peer = ?other_address, key = ?pairwise_key, "Generated pairwise key");
+                    info!(peer = ?other_address, key = ?pairwise_key, "Generated pairwise key");
                 }
             }
         }
@@ -811,25 +793,8 @@ impl Member {
     }
 }
 
-pub fn hardcoded_unspendable() -> PublicKey {
-    // hardcoded unspendable
-    let key_bytes =
-        hex::decode("02f286025adef23a29582a429ee1b201ba400a9c57e5856840ca139abb629889ad")
-            .expect("Invalid hex input");
-    PublicKey::from_slice(&key_bytes).expect("Invalid public key")
-}
-
-// pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
 pub fn get_bitcoin_client() -> Result<(BitcoinClient, Wallet)> {
     let config = Config::new(Some("config/op_1.yaml".to_string()))?;
-
-    // let bitcoind = Bitcoind::new(
-    //     "bitcoin-regtest",
-    //     "ruimarinho/bitcoin-core",
-    //     config.bitcoin.clone(),
-    // );
-    // info!("Starting bitcoind");
-    // bitcoind.start()?;
 
     let wallet_config = match config.bitcoin.network {
         Network::Regtest => "config/wallet_regtest.yaml",
@@ -857,6 +822,5 @@ pub fn get_bitcoin_client() -> Result<(BitcoinClient, Wallet)> {
         &config.bitcoin.password,
     )?;
 
-    // Ok((bitcoin_client, bitcoind, wallet))
     Ok((bitcoin_client, wallet))
 }
