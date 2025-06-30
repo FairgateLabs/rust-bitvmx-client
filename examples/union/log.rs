@@ -17,6 +17,7 @@ pub fn configure_tracing() {
             "key_manager=off",
             "memory=off",
             "bitvmx_client::config=off",
+            "bitvmx_wallet=off",
         ];
 
         let filter = EnvFilter::builder()
