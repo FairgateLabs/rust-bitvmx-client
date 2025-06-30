@@ -154,8 +154,10 @@ impl Committee {
         }
 
         // build a map of pairwise keys to addresses
+        let init_covenant_id = Uuid::new_v4();
         self.all(|op| {
             op.setup_covenants(
+                init_covenant_id,
                 &members,
                 &members_addresses,
                 &members_take_pubkeys,
@@ -330,6 +332,7 @@ impl Member {
 
     fn setup_covenants(
         &mut self,
+        id: Uuid,
         members: &Vec<Member>,
         members_addresses: &HashMap<PublicKey, P2PAddress>,
         members_take_pubkeys: &Vec<PublicKey>,
@@ -338,6 +341,7 @@ impl Member {
         wt_funding_utxos: &HashMap<String, PartialUtxo>,
     ) -> Result<()> {
         self.setup_init_covenant(
+            id,
             members,
             members_addresses,
             members_take_pubkeys,
@@ -474,6 +478,7 @@ impl Member {
 
     fn setup_init_covenant(
         &mut self,
+        id: Uuid,
         members: &Vec<Member>,
         members_addresses: &HashMap<PublicKey, P2PAddress>,
         members_take_pubkeys: &Vec<PublicKey>,
@@ -481,7 +486,6 @@ impl Member {
         op_funding_utxos: &HashMap<String, PartialUtxo>,
         wt_funding_utxos: &HashMap<String, PartialUtxo>,
     ) -> Result<()> {
-        let id = Uuid::new_v4();
         let addresses = self.get_addresses(members);
 
         self.prepare_init_covenant(
