@@ -204,12 +204,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         let aggregated_1 = key_chain.derive_keypair()?;
 
         let speedup = key_chain.derive_keypair()?;
-        let timelock = key_chain.derive_keypair()?;
+
+        program_context
+            .globals
+            .set_var(&self.ctx.id, "speedup", VariableTypes::PubKey(speedup))?;
 
         let mut keys = vec![
             ("aggregated_1".to_string(), aggregated_1.into()),
             ("speedup".to_string(), speedup.into()),
-            ("timelock".to_string(), timelock.into()),
         ];
 
         for inputs in program_def.inputs.iter() {
@@ -833,6 +835,16 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             .unwrap()
             .utxo()?;
 
+        let input_in_speedup = false;
+        let prover_speedup_pub = keys[0].get_public("speedup")?;
+        let verifier_speedup_pub = keys[1].get_public("speedup")?;
+        let aggregated = computed_aggregated.get("aggregated_1").unwrap();
+        let (agg_or_prover, agg_or_verifier) = if input_in_speedup {
+            (prover_speedup_pub, verifier_speedup_pub)
+        } else {
+            (aggregated, aggregated)
+        };
+
         let program_def = self.get_program_definition(context)?;
 
         let mut protocol = self.load_or_create_protocol();
@@ -855,7 +867,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             Some(utxo.0),
         )?;
 
-        let aggregated = computed_aggregated.get("aggregated_1").unwrap();
         amount = self.checked_sub(amount, fee)?;
 
         let words = context
@@ -881,8 +892,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             START_CH,
             INPUT_1,
             None,
-            Self::winternitz_check(aggregated, &keys[0], &input_vars_slice)?,
+            Self::winternitz_check(agg_or_prover, &keys[0], &input_vars_slice)?,
             false,
+            (&prover_speedup_pub, &verifier_speedup_pub),
         )?;
         amount = self.checked_sub(amount, fee)?;
         amount = self.checked_sub(amount, speedup_dust)?;
@@ -962,8 +974,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             INPUT_1,
             COMMITMENT,
             Some(&claim_verifier),
-            Self::winternitz_check(aggregated, &keys[0], &vec!["last_step", "last_hash"])?,
+            Self::winternitz_check(agg_or_prover, &keys[0], &vec!["last_step", "last_hash"])?,
             false,
+            (&prover_speedup_pub, &verifier_speedup_pub),
         )?;
         amount = self.checked_sub(amount, fee)?;
         amount = self.checked_sub(amount, speedup_dust)?;
@@ -987,11 +1000,12 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &next,
                 Some(&claim_verifier),
                 Self::winternitz_check(
-                    aggregated,
+                    agg_or_prover,
                     &keys[0],
                     &vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
                 )?,
                 false,
+                (&prover_speedup_pub, &verifier_speedup_pub),
             )?;
             amount = self.checked_sub(amount, fee)?;
             amount = self.checked_sub(amount, speedup_dust)?;
@@ -1011,11 +1025,12 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &next,
                 Some(&claim_prover),
                 Self::winternitz_check(
-                    aggregated,
+                    agg_or_verifier,
                     &keys[1],
                     &vec![&format!("selection_bits_{}", i)],
                 )?,
                 false,
+                (&verifier_speedup_pub, &prover_speedup_pub),
             )?;
             amount = self.checked_sub(amount, fee)?;
             amount = self.checked_sub(amount, speedup_dust)?;
@@ -1042,8 +1057,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             &prev,
             EXECUTE,
             Some(&claim_verifier),
-            self.execute_script(context, aggregated, &keys[0], &vars)?,
+            self.execute_script(context, agg_or_prover, &keys[0], &vars)?,
             false,
+            (&prover_speedup_pub, &verifier_speedup_pub),
         )?;
 
         //Add this as if it were the final tx execution
@@ -1065,8 +1081,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             EXECUTE,
             CHALLENGE,
             Some(&claim_prover),
-            self.challenge_scripts(context, aggregated, &keys[1])?,
+            self.challenge_scripts(context, agg_or_verifier, &keys[1])?,
             false,
+            (&verifier_speedup_pub, &prover_speedup_pub),
         )?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
@@ -1388,6 +1405,7 @@ impl DisputeResolutionProtocol {
         claim_gate: Option<&ClaimGate>,
         mut leaves: Vec<ProtocolScript>,
         input_in_speedup: bool,
+        speedup_keys: (&PublicKey, &PublicKey),
     ) -> Result<(), BitVMXError> {
         //TODO:
         // - Support multiple inputs
@@ -1401,9 +1419,14 @@ impl DisputeResolutionProtocol {
             style(amount).green()
         );
 
-        let timeout = scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
+        let (mine_speedup, other_speedup) = speedup_keys;
+        let timeout_input = if input_in_speedup {
+            scripts::timelock(timelock_blocks, &*other_speedup, SignMode::Aggregate)
+        } else {
+            scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate)
+        };
 
-        leaves.push(timeout);
+        leaves.push(timeout_input);
         for (pos, leave) in leaves.iter_mut().enumerate() {
             leave.set_assert_leaf_id(pos as u32);
         }
@@ -1469,10 +1492,15 @@ impl DisputeResolutionProtocol {
             )?;
             protocol.add_transaction_output(from, &output_type)?;
         } else {
-            pb.add_speedup_output(protocol, to, amount_speedup, aggregated)?;
+            pb.add_speedup_output(protocol, to, amount_speedup, mine_speedup)?;
         }
 
-        pb.add_speedup_output(protocol, &format!("{}_TO", to), amount_speedup, aggregated)?;
+        pb.add_speedup_output(
+            protocol,
+            &format!("{}_TO", to),
+            amount_speedup,
+            other_speedup,
+        )?;
 
         Ok(())
     }

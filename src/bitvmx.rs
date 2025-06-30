@@ -36,7 +36,6 @@ use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use p2p_handler::{LocalAllowList, P2pHandler, PeerId, ReceiveHandlerChannel};
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::time::Instant;
 use std::{
     collections::{HashSet, VecDeque},
@@ -366,8 +365,6 @@ impl BitVMX {
                     error!("Funding not found for speed-up transaction. This is a critical error.");
 
                     ack_news = AckNews::Coordinator(AckCoordinatorNews::FundingNotFound);
-
-                    return Err(BitVMXError::InsufficientAmount);
                 }
                 CoordinatorNews::EstimateFeerateTooHigh(estimate_fee, max_allowed) => {
                     // Complete
