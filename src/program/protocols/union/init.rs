@@ -52,7 +52,7 @@ impl ProtocolHandler for InitProtocol {
         &self,
         _context: &ProgramContext,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
-        todo!()
+        Ok(vec![])
     }
 
     fn generate_keys(
@@ -225,10 +225,10 @@ impl ProtocolHandler for InitProtocol {
 
     fn get_transaction_name(
         &self,
-        _name: &str,
+        name: &str,
         _context: &ProgramContext,
     ) -> Result<Transaction, BitVMXError> {
-        todo!()
+        Err(BitVMXError::InvalidTransactionName(name.to_string()))
     }
 
     fn notify_news(
@@ -240,7 +240,8 @@ impl ProtocolHandler for InitProtocol {
         _program_context: &ProgramContext,
         _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
-        todo!()
+        // TODO
+        Ok(())
     }
 }
 
