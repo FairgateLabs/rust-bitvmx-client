@@ -197,6 +197,7 @@ impl DisputeCoreProtocol {
                         scripts::verify_signature(&dispute_aggregated_key, SignMode::Aggregate)?;
 
                     // TODO change the output from segwit to taproot
+                    // TODO change the output from segwit to taproot
                     protocol.add_transaction_output(
                         &format!("WT{}", INITIAL_DEPOSIT_TX_SUFFIX),
                         &OutputType::segwit_script(START_ENABLER_VALUE, &script)?,
@@ -405,6 +406,7 @@ impl DisputeCoreProtocol {
             None,
         )?;
 
+        // YOU_CANT_TAKE_TX connection
         // YOU_CANT_TAKE_TX connection
         protocol.add_connection(
             "disable_next_dispute_core",

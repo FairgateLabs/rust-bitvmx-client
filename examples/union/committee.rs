@@ -53,8 +53,10 @@ impl Committee {
         let keys = self.all(|op| op.setup_member_keys())?;
 
         // collect members keys
+        // collect members keys
         let members_take_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.0).collect();
         let members_dispute_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.1).collect();
+        let _members_communication_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.2).collect();
         let _members_communication_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.2).collect();
 
         let take_aggregation_id = self.take_aggregation_id;
@@ -124,6 +126,14 @@ impl Committee {
         Ok(())
     }
 
+    pub fn request_pegin(&mut self) -> Result<()> {
+        // Make a member send the user request pegin bitcoin transaction
+        self.members[0].request_pegin()?;
+        Ok(())
+    }
+
+    pub fn accept_pegin(&mut self) -> Result<()> {
+        let accept_pegin_covenant_id = Uuid::new_v4();
     pub fn accept_pegin(&mut self) -> Result<()> {
         let accept_pegin_covenant_id = Uuid::new_v4();
         let members = self.members.clone();
@@ -136,12 +146,15 @@ impl Committee {
         self.all(|op| {
             op.accept_pegin(
                 accept_pegin_covenant_id,
+            op.accept_pegin(
+                accept_pegin_covenant_id,
                 &members,
                 request_pegin_txid,
                 request_pegin_amount,
                 accept_pegin_sighash.as_slice(),
             )
         })?;
+
         Ok(())
     }
 
@@ -175,9 +188,11 @@ impl Committee {
         from: Option<&str>,
     ) -> Result<PartialUtxo> {
         // info!("Funding address: {:?} with: {}", public_key, amount);
+        // info!("Funding address: {:?} with: {}", public_key, amount);
         let txid = wallet.fund_address(
             WALLET_NAME,
             from.unwrap_or(funding_id),
+            *public_key,
             *public_key,
             &vec![amount],
             FEE,
@@ -209,6 +224,8 @@ impl Committee {
                 .map(|m| {
                     let f = f.clone();
                     let span = info_span!("member", id = %m.id);
+
+                    thread::sleep(Duration::from_millis(2000)); // Simulate some delay for each member
 
                     thread::sleep(Duration::from_millis(2000)); // Simulate some delay for each member
 

@@ -104,6 +104,8 @@ pub enum IncomingBitVMXApiMessages {
     Setup(ProgramId, String, Vec<P2PAddress>, u16),
     SubscribeToTransaction(Uuid, Txid),
     SubscribeUTXO(),
+    SubscribeToRskPegin(),
+    GetSPVProof(Txid),
     DispatchTransaction(Uuid, Transaction),
     DispatchTransactionName(Uuid, String),
     SetupKey(Uuid, Vec<P2PAddress>, Option<Vec<PublicKey>>, u16),
@@ -113,7 +115,6 @@ pub enum IncomingBitVMXApiMessages {
     GenerateZKP(Uuid, Vec<u8>, String),
     ProofReady(Uuid),
     GetZKPExecutionResult(Uuid),
-    GetSPVProof(Txid),
 }
 impl IncomingBitVMXApiMessages {
     pub fn to_string(&self) -> Result<String, BitVMXError> {
@@ -258,7 +259,6 @@ pub const PROGRAM_TYPE_TRANSFER: &str = "transfer";
 pub const PROGRAM_TYPE_ACCEPT_PEGIN: &str = "accept_pegin";
 pub const PROGRAM_TYPE_REQUEST_PEGOUT: &str = "request_pegout";
 pub const PROGRAM_TYPE_TAKE: &str = "take";
-pub const PROGRAM_TYPE_INIT: &str = "init";
 pub const PROGRAM_TYPE_DISPUTE_CORE: &str = "dispute_core";
 pub const PROGRAM_TYPE_PAIRWISE_PENALIZATION: &str = "pairwise_penalization";
 pub const PROGRAM_TYPE_PACKET: &str = "packet";

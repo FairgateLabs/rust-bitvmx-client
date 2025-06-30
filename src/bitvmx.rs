@@ -748,6 +748,14 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
+    fn subscribe_to_rsk_pegin(&mut self) -> Result<(), BitVMXError> {
+        // Enable RSK pegin transaction monitoring
+        self.program_context
+            .bitcoin_coordinator
+            .monitor(TypesToMonitor::RskPeginTransaction)?;
+        Ok(())
+    }
+
     fn setup(
         &mut self,
         id: Uuid,
@@ -1002,6 +1010,15 @@ impl BitVMXApi for BitVMX {
                 BitVMXApi::subscribe_to_tx(self, from, uuid, txid)?
             }
             IncomingBitVMXApiMessages::SubscribeUTXO() => BitVMXApi::subscribe_utxo(self)?,
+
+            IncomingBitVMXApiMessages::SubscribeToRskPegin() => {
+                BitVMXApi::subscribe_to_rsk_pegin(self)?
+            }
+
+            IncomingBitVMXApiMessages::GetSPVProof(txid) => {
+                BitVMXApi::get_spv_proof(self, from, txid)?
+            }
+
             IncomingBitVMXApiMessages::DispatchTransactionName(id, tx) => {
                 BitVMXApi::dispatch_transaction_name(self, id, &tx)?
             }
@@ -1067,9 +1084,6 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::ProofReady(id) => BitVMXApi::proof_ready(self, from, id)?,
             IncomingBitVMXApiMessages::GetZKPExecutionResult(id) => {
                 BitVMXApi::get_zkp_execution_result(self, from, id)?
-            }
-            IncomingBitVMXApiMessages::GetSPVProof(txid) => {
-                BitVMXApi::get_spv_proof(self, from, txid)?
             }
         }
 
