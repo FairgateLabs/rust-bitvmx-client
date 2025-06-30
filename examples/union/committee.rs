@@ -142,6 +142,7 @@ impl Committee {
                 accept_pegin_sighash.as_slice(),
             )
         })?;
+
         Ok(())
     }
 
@@ -174,6 +175,7 @@ impl Committee {
         amount: u64,
         from: Option<&str>,
     ) -> Result<PartialUtxo> {
+        // info!("Funding address: {:?} with: {}", public_key, amount);
         // info!("Funding address: {:?} with: {}", public_key, amount);
         let txid = wallet.fund_address(
             WALLET_NAME,
