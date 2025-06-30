@@ -140,6 +140,9 @@ pub enum BitVMXError {
 
     #[error("Insufficient amount to send the transaction")]
     InsufficientAmount,
+
+    #[error("Transaction not found in block")]
+    TransactionNotFoundInBlock,
 }
 
 #[derive(Error, Debug)]

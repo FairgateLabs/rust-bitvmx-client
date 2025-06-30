@@ -8,12 +8,12 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 /// Number of blocks to mine initially to ensure sufficient coin maturity
-const INITIAL_BLOCK_COUNT: u64 = 101;
-const WALLET_NAME: &str = "wallet";
-const FUNDING_ID: &str = "fund_1";
+pub const INITIAL_BLOCK_COUNT: u64 = 101;
+pub const WALLET_NAME: &str = "wallet";
+pub const FUNDING_ID: &str = "fund_1";
 
 /// Helper function to clear database directories
-fn clear_db(path: &str) {
+pub fn clear_db(path: &str) {
     let _ = std::fs::remove_dir_all(path);
 }
 
@@ -45,25 +45,28 @@ fn config_trace() {
 
 pub fn stop_existing_bitcoind() -> Result<()> {
     info!("Checking for existing bitcoind instance...");
-    
+
     let config = Config::new(Some("config/op_1.yaml".to_string()))?;
-    
+
     // Create a temporary Bitcoind instance to check if one is running and stop it
     let temp_bitcoind = Bitcoind::new(
         "bitcoin-regtest",
         "ruimarinho/bitcoin-core",
         config.bitcoin.clone(),
     );
-    
+
     // Attempt to stop any existing instance
     match temp_bitcoind.stop() {
         Ok(_) => info!("Successfully stopped existing bitcoind instance"),
         Err(e) => {
             // This is expected if no instance was running
-            info!("No existing bitcoind instance found or error stopping: {}", e);
+            info!(
+                "No existing bitcoind instance found or error stopping: {}",
+                e
+            );
         }
     }
-    
+
     Ok(())
 }
 
@@ -109,20 +112,20 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
 fn main() -> Result<()> {
     // Initialize logging
     config_trace();
-    
+
     info!("Starting Bitcoin preparation script...");
-    
+
     // Prepare Bitcoin setup
     let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
-    
+
     info!("Bitcoin setup completed successfully!");
     info!("Bitcoin client initialized");
     info!("Bitcoind container started");
     info!("Wallet created and funded");
-    
+
     // You can add additional logic here to use the bitcoin_client, bitcoind, and wallet
-    
+
     info!("Script completed successfully");
-    
+
     Ok(())
 }

@@ -25,6 +25,7 @@ use bitcoin_coordinator::{
     AckMonitorNews, MonitorNews, TypesToMonitor,
 };
 
+use crate::spv_proof::get_spv_proof;
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
     channel::channel::LocalChannel,
@@ -44,7 +45,6 @@ use std::{
     time::Duration,
 };
 use storage_backend::storage::{KeyValueStore, Storage};
-
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -817,6 +817,37 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
+    fn get_spv_proof(&mut self, from: u32, txid: Txid) -> Result<(), BitVMXError> {
+        let tx_info = self
+            .program_context
+            .bitcoin_coordinator
+            .get_transaction(txid);
+
+        match tx_info {
+            Ok(utx) => {
+                let proof = get_spv_proof(txid, utx.block_info.unwrap())?;
+
+                self.program_context.broker_channel.send(
+                    from,
+                    serde_json::to_string(&OutgoingBitVMXApiMessages::SPVProof(txid, Some(proof)))?,
+                )?;
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to retrieve transaction info for txid {}: {:?}",
+                    txid, e
+                );
+
+                self.program_context.broker_channel.send(
+                    from,
+                    serde_json::to_string(&OutgoingBitVMXApiMessages::SPVProof(txid, None))?,
+                )?;
+            }
+        };
+
+        Ok(())
+    }
+
     fn handle_message(&mut self, msg: String, from: u32) -> Result<(), BitVMXError> {
         if from == EMULATOR_ID {
             let result_message = ResultMessage::from_str(&msg)?;
@@ -837,7 +868,7 @@ impl BitVMXApi for BitVMX {
         }
 
         let decoded: IncomingBitVMXApiMessages = serde_json::from_str(&msg)?;
-        info!("< {:?}", decoded);
+        debug!("< {:?}", decoded);
 
         match decoded {
             IncomingBitVMXApiMessages::GetHashedMessage(id, name, vout, leaf) => {
@@ -863,11 +894,11 @@ impl BitVMXApi for BitVMX {
             }
             IncomingBitVMXApiMessages::Ping() => BitVMXApi::ping(self, from)?,
             IncomingBitVMXApiMessages::SetVar(uuid, key, value) => {
-                info!("Setting variable {}: {:?}", key, value);
+                debug!("Setting variable {}: {:?}", key, value);
                 self.program_context.globals.set_var(&uuid, &key, value)?;
             }
             IncomingBitVMXApiMessages::SetWitness(uuid, key, value) => {
-                info!("Setting witness {}: {:?}", key, value);
+                debug!("Setting witness {}: {:?}", key, value);
                 self.program_context
                     .witness
                     .set_witness(&uuid, &key, value)?;
@@ -927,26 +958,29 @@ impl BitVMXApi for BitVMX {
                 //RETURN PK
                 //TODO: Revisit this as it might be insecure
             }
-            IncomingBitVMXApiMessages::GetPubKey(id, new) => {
-                if new {
-                    todo!()
-                } else {
-                    let collaboration = self
-                        .get_collaboration(&id)?
-                        .ok_or(BitVMXError::ProgramNotFound(id))?;
-                    let aggregated = collaboration
-                        .aggregated_key
-                        .ok_or(BitVMXError::ProgramNotFound(id))?;
-                    let pubkey = self
-                        .program_context
-                        .key_chain
-                        .key_manager
-                        .get_pubkey(&aggregated)?;
-                    self.program_context.broker_channel.send(
-                        from,
-                        serde_json::to_string(&OutgoingBitVMXApiMessages::PubKey(id, pubkey))?,
-                    )?;                    
-                }
+            IncomingBitVMXApiMessages::CreateKeyPair(id, index) => {
+                let pubkey = self.program_context.key_chain.key_manager.derive_keypair(index)?;
+                self.program_context.broker_channel.send(
+                    from,
+                    serde_json::to_string(&OutgoingBitVMXApiMessages::PubKey(id, pubkey))?,
+                )?;
+            }
+            IncomingBitVMXApiMessages::GetPubKey(id) => {
+                let collaboration = self
+                    .get_collaboration(&id)?
+                    .ok_or(BitVMXError::ProgramNotFound(id))?;
+                let aggregated = collaboration
+                    .aggregated_key
+                    .ok_or(BitVMXError::ProgramNotFound(id))?;
+                let pubkey = self
+                    .program_context
+                    .key_chain
+                    .key_manager
+                    .get_my_public_key(&aggregated)?;
+                self.program_context.broker_channel.send(
+                    from,
+                    serde_json::to_string(&OutgoingBitVMXApiMessages::PubKey(id, pubkey))?,
+                )?;
             }
             IncomingBitVMXApiMessages::GetAggregatedPubkey(id) => {
                 BitVMXApi::get_aggregated_pubkey(self, from, id)?

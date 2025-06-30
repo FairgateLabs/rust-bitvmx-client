@@ -16,6 +16,7 @@ use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 
 use bitvmx_wallet::wallet::Wallet;
+use console::style;
 use emulator::{
     decision::challenge::{ForceChallenge, ForceCondition},
     executor::utils::FailConfiguration,
@@ -33,6 +34,7 @@ pub enum ForcedChallenges {
     EntryPoint(ParticipantRole),
     ProgramCounter(ParticipantRole),
     No,
+    Execution,
 }
 
 pub fn prepare_dispute(
@@ -167,7 +169,10 @@ pub fn execute_dispute(
     );
     if fake {
         let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
-        info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
+        info!(
+            "Observerd: {:?}",
+            style(msgs[0].transaction().unwrap().2).green()
+        );
         return Ok(());
     }
 
@@ -226,14 +231,23 @@ pub fn execute_dispute(
 
     //wait for claim start
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
-    info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
+    info!(
+        "Observed: {:?}",
+        style(msgs[0].transaction().unwrap().2).green()
+    );
     //success wait
     wallet.mine(10)?;
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
-    info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
+    info!(
+        "Observed: {:?}",
+        style(msgs[0].transaction().unwrap().2).green()
+    );
     //action wait
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
-    info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
+    info!(
+        "Observed: {:?}",
+        style(msgs[0].transaction().unwrap().2).green()
+    );
 
     Ok(())
 }
@@ -321,5 +335,6 @@ pub fn get_fail_force_config(
             ForceCondition::ValidInputWrongStepOrHash,
         ),
         ForcedChallenges::No => (None, None, ForceChallenge::No, ForceCondition::No),
+        ForcedChallenges::Execution => (None, None, ForceChallenge::No, ForceCondition::Allways),
     }
 }

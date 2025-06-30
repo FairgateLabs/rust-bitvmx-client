@@ -1,11 +1,13 @@
 use std::str::FromStr;
 
+use crate::spv_proof::BtcTxSPVProof;
 use bitcoin::{PrivateKey, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{types::BitcoinCoordinatorType, TransactionStatus};
 use bitvmx_broker::{broker_storage::BrokerStorage, channel::channel::LocalChannel};
 use chrono::{DateTime, Utc};
 use p2p_handler::P2pHandler;
 use serde::{Deserialize, Serialize};
+
 use uuid::Uuid;
 
 use crate::{
@@ -105,7 +107,8 @@ pub enum IncomingBitVMXApiMessages {
     SetupKey(Uuid, Vec<P2PAddress>, u16),
     GetAggregatedPubkey(Uuid),
     GetKeyPair(Uuid),
-    GetPubKey(Uuid, bool),
+    GetPubKey(Uuid),
+    CreateKeyPair(Uuid, u32),
     GenerateZKP(Uuid, Vec<u8>),
     ProofReady(Uuid),
     ExecuteZKP(),
@@ -148,6 +151,7 @@ pub enum OutgoingBitVMXApiMessages {
     HashedMessage(Uuid, String, u32, u32, String),
     ProofReady(Uuid),
     ProofNotReady(Uuid),
+    SPVProof(Txid, Option<BtcTxSPVProof>),
 }
 
 impl OutgoingBitVMXApiMessages {
@@ -242,6 +246,7 @@ pub const PROGRAM_TYPE_DRP: &str = "drp";
 pub const PROGRAM_TYPE_SLOT: &str = "slot";
 pub const PROGRAM_TYPE_TRANSFER: &str = "transfer";
 pub const PROGRAM_TYPE_TAKE: &str = "take";
+pub const PROGRAM_TYPE_INIT: &str = "init";
 pub const PROGRAM_TYPE_DISPUTE_CORE: &str = "dispute_core";
 pub const PROGRAM_TYPE_PAIRWISE_PENALIZATION: &str = "pairwise_penalization";
 pub const PROGRAM_TYPE_MULTIPARTY_PENALIZATION: &str = "multiparty_penalization";

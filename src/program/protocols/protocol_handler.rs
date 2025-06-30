@@ -2,6 +2,7 @@ use bitcoin::script::read_scriptint;
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_scriptexec::scriptint_vec;
+use console::style;
 use enum_dispatch::enum_dispatch;
 use key_manager::winternitz::{message_bytes_length, WinternitzType};
 use protocol_builder::scripts::ProtocolScript;
@@ -17,16 +18,18 @@ use uuid::Uuid;
 use crate::errors::BitVMXError;
 use crate::keychain::KeyChain;
 
-use crate::program::protocols::union::dispute_core::DisputeCoreProtocol;
+use crate::program::protocols::union::init::InitProtocol;
+// use crate::program::protocols::union::dispute_core::DisputeCoreProtocol;
 use crate::program::protocols::union::multiparty_penalization::MultipartyPenalizationProtocol;
 use crate::program::protocols::union::pairwise_penalization::PairwisePenalizationProtocol;
 use crate::program::protocols::union::take::TakeProtocol;
 use crate::program::variables::WitnessTypes;
 use crate::program::{variables::VariableTypes, witness};
 use crate::types::{
-    ProgramContext, PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_DRP, PROGRAM_TYPE_LOCK,
-    PROGRAM_TYPE_MULTIPARTY_PENALIZATION, PROGRAM_TYPE_PACKET, PROGRAM_TYPE_PAIRWISE_PENALIZATION,
-    PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TAKE, PROGRAM_TYPE_TRANSFER,
+    ProgramContext, PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_DRP, PROGRAM_TYPE_INIT,
+    PROGRAM_TYPE_LOCK, PROGRAM_TYPE_MULTIPARTY_PENALIZATION, PROGRAM_TYPE_PACKET,
+    PROGRAM_TYPE_PAIRWISE_PENALIZATION, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TAKE,
+    PROGRAM_TYPE_TRANSFER,
 };
 
 use super::super::participant::ParticipantKeys;
@@ -147,7 +150,7 @@ pub trait ProtocolHandler {
         second_leaf_index: usize,
     ) -> Result<Transaction, BitVMXError> {
         let protocol = self.load_protocol()?;
-        info!("Getting signed tx for {}", name);
+        info!("Getting signed tx for {}", style(name).green());
 
         //TODO: Control that the variables sizes correspond with the keys
         //avoid invalid sig checks
@@ -165,7 +168,10 @@ pub trait ProtocolHandler {
                 .unwrap()
                 .input()?;
 
-            info!("Signigng message: {}", hex::encode(message.clone()));
+            info!(
+                "Signigng message: {}",
+                style(hex::encode(message.clone())).yellow()
+            );
             info!("With key: {:?}", k);
 
             let winternitz_signature = context.key_chain.key_manager.sign_winternitz_message(
@@ -304,7 +310,8 @@ pub enum ProtocolType {
     SlotProtocol,
     TransferProtocol,
     TakeProtocol,
-    DisputeCoreProtocol,
+    InitProtocol,
+    // DisputeCoreProtocol,
     PairwisePenalizationProtocol,
     MultipartyPenalizationProtocol,
 }
@@ -326,9 +333,10 @@ pub fn new_protocol_type(
         PROGRAM_TYPE_SLOT => Ok(ProtocolType::SlotProtocol(SlotProtocol::new(ctx))),
         PROGRAM_TYPE_TRANSFER => Ok(ProtocolType::TransferProtocol(TransferProtocol::new(ctx))),
         PROGRAM_TYPE_TAKE => Ok(ProtocolType::TakeProtocol(TakeProtocol::new(ctx))),
-        PROGRAM_TYPE_DISPUTE_CORE => Ok(ProtocolType::DisputeCoreProtocol(
-            DisputeCoreProtocol::new(ctx),
-        )),
+        PROGRAM_TYPE_INIT => Ok(ProtocolType::InitProtocol(InitProtocol::new(ctx))),
+        // PROGRAM_TYPE_DISPUTE_CORE => Ok(ProtocolType::DisputeCoreProtocol(
+        //     DisputeCoreProtocol::new(ctx),
+        // )),
         PROGRAM_TYPE_PAIRWISE_PENALIZATION => Ok(ProtocolType::PairwisePenalizationProtocol(
             PairwisePenalizationProtocol::new(ctx),
         )),

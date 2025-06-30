@@ -1,7 +1,6 @@
+use crate::{errors::BitVMXError, program::participant::P2PAddress};
 use bitcoin::{Transaction, Txid};
 use uuid::Uuid;
-
-use crate::{errors::BitVMXError, program::participant::P2PAddress};
 
 pub trait BitVMXApi {
     fn ping(&mut self, from: u32) -> Result<(), BitVMXError>;
@@ -56,4 +55,6 @@ pub trait BitVMXApi {
     fn get_witness(&mut self, from: u32, id: Uuid, key: &str) -> Result<(), BitVMXError>;
 
     fn handle_prover_message(&mut self, msg: String) -> Result<(), BitVMXError>;
+
+    fn get_spv_proof(&mut self, from: u32, txid: Txid) -> Result<(), BitVMXError>;
 }
