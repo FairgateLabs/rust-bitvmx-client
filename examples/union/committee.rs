@@ -14,8 +14,8 @@ use bitvmx_client::{
 use bitcoin::{Amount, Network, PublicKey, ScriptBuf};
 use bitvmx_wallet::wallet::Wallet;
 use protocol_builder::types::OutputType;
-use std::collections::HashMap;
 use std::thread;
+use std::{collections::HashMap, time::Duration};
 use tracing::{info, info_span};
 use uuid::Uuid;
 
@@ -44,7 +44,6 @@ struct Bitcoin {
 
 pub struct Committee {
     members: Vec<Member>,
-    // TODO come up with a better name for aggregation ids
     take_aggregation_id: Uuid,
     dispute_aggregation_id: Uuid,
     bitcoin: Bitcoin,
@@ -80,7 +79,7 @@ impl Committee {
         // create members pubkeys
         let keys = self.all(|op| op.make_keys())?;
 
-        // setup keys
+        // collect members keys
         let members_take_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.0).collect();
         let members_dispute_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.1).collect();
         let members_communication_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.2).collect();
@@ -130,8 +129,6 @@ impl Committee {
             );
         }
 
-        // setup covenants
-
         // build a map of communication pubkeys to addresses
         let mut members_addresses = HashMap::new();
         for member in &members {
@@ -141,7 +138,7 @@ impl Committee {
             );
         }
 
-        // build a map of pairwise keys to addresses
+        // setup covenants
         let init_covenant_id = Uuid::new_v4();
         self.all(|op| {
             op.setup_covenants(
@@ -201,6 +198,9 @@ impl Committee {
                 .map(|m| {
                     let f = f.clone();
                     let span = info_span!("member", id = %m.id);
+
+                    thread::sleep(Duration::from_millis(2000)); // Simulate some delay for each member
+
                     s.spawn(move || span.in_scope(|| f(m)))
                 })
                 .collect::<Vec<_>>()
@@ -213,13 +213,13 @@ impl Committee {
 
 #[derive(Clone)]
 struct DrpCovenant {
-    covenant_id: Uuid,
-    counterparty: P2PAddress,
+    _covenant_id: Uuid,
+    _counterparty: P2PAddress,
 }
 
 #[derive(Clone)]
 struct Covenants {
-    drp_covenants: Vec<DrpCovenant>,
+    _drp_covenants: Vec<DrpCovenant>,
     // TODO: Add other covenant types here as needed
     // packet_covenants: Vec<PacketCovenant>,
     // dispute_core_covenants: Vec<DisputeCoreCovenant>,
@@ -231,6 +231,8 @@ struct Covenants {
 struct Keyring {
     take_pubkey: Option<PublicKey>,
     dispute_pubkey: Option<PublicKey>,
+    take_aggregated_key: Option<PublicKey>,
+    dispute_aggregated_key: Option<PublicKey>,
     communication_pubkey: Option<PublicKey>,
     pairwise_keys: HashMap<P2PAddress, PublicKey>,
 }
@@ -242,7 +244,7 @@ struct Member {
     bitvmx: BitVMXClient,
     address: Option<P2PAddress>,
     keyring: Keyring,
-    covenants: Covenants,
+    _covenants: Covenants,
 }
 
 impl Member {
@@ -258,11 +260,13 @@ impl Member {
             keyring: Keyring {
                 take_pubkey: None,
                 dispute_pubkey: None,
+                take_aggregated_key: None,
+                dispute_aggregated_key: None,
                 communication_pubkey: None,
                 pairwise_keys: HashMap::new(),
             },
-            covenants: Covenants {
-                drp_covenants: Vec::new(),
+            _covenants: Covenants {
+                _drp_covenants: Vec::new(),
             },
         })
     }
@@ -280,17 +284,17 @@ impl Member {
         let id = Uuid::new_v4();
         self.bitvmx.create_key_pair(id, 0)?;
         let take_pubkey = expect_msg!(self, PubKey(_, key) => key)?;
-        info!(id = self.id, take_pubkey = ?take_pubkey, "Take pubkey");
+        // info!(id = self.id, take_pubkey = ?take_pubkey, "Take pubkey");
 
         let id = Uuid::new_v4();
         self.bitvmx.create_key_pair(id, 1)?;
         let dispute_pubkey = expect_msg!(self, PubKey(_, key) => key)?;
-        info!(id = self.id, dispute_pubkey = ?dispute_pubkey, "Dispute pubkey");
+        // info!(id = self.id, dispute_pubkey = ?dispute_pubkey, "Dispute pubkey");
 
         let id = Uuid::new_v4();
         self.bitvmx.create_key_pair(id, 2)?;
         let communication_pubkey = expect_msg!(self, PubKey(_, key) => key)?;
-        info!(id = self.id, communication_pubkey = ?communication_pubkey, "Communication pubkey");
+        // info!(id = self.id, communication_pubkey = ?communication_pubkey, "Communication pubkey");
 
         self.keyring.take_pubkey = Some(take_pubkey);
         self.keyring.dispute_pubkey = Some(dispute_pubkey);
@@ -307,7 +311,14 @@ impl Member {
         members_take_pubkeys: &[PublicKey],
         members_dispute_pubkeys: &[PublicKey],
     ) -> Result<()> {
-        self.make_pairwise_keys(members, take_aggregation_id)?;
+        self.make_aggregated_keys(
+            members,
+            members_take_pubkeys,
+            members_dispute_pubkeys,
+            take_aggregation_id,
+            dispute_aggregation_id,
+        )?;
+        // self.make_pairwise_keys(members, take_aggregation_id)?;
 
         Ok(())
     }
@@ -372,20 +383,29 @@ impl Member {
     //     Ok(())
     // }
 
-    // fn make_aggregated_keys(
-    //     &mut self,
-    //     take_aggregation_id: Uuid,
-    //     dispute_aggregation_id: Uuid,
-    //     addresses: &Vec<P2PAddress>,
-    // ) -> Result<()> {
-    //     let take_aggregated_key = self.setup_key(take_aggregation_id, addresses)?;
-    //     self.keyring.take_aggregated_key = Some(take_aggregated_key);
+    fn make_aggregated_keys(
+        &mut self,
+        members: &[Member],
+        members_take_pubkeys: &[PublicKey],
+        members_dispute_pubkeys: &[PublicKey],
+        take_aggregation_id: Uuid,
+        dispute_aggregation_id: Uuid,
+    ) -> Result<()> {
+        let addresses = self.get_addresses(members);
 
-    //     let dispute_aggregated_key = self.setup_key(dispute_aggregation_id, addresses)?;
-    //     self.keyring.dispute_aggregated_key = Some(dispute_aggregated_key);
+        let take_aggregated_key =
+            self.setup_key(take_aggregation_id, &addresses, Some(members_take_pubkeys))?;
+        self.keyring.take_aggregated_key = Some(take_aggregated_key);
 
-    //     Ok(())
-    // }
+        let dispute_aggregated_key = self.setup_key(
+            dispute_aggregation_id,
+            &addresses,
+            Some(members_dispute_pubkeys),
+        )?;
+        self.keyring.dispute_aggregated_key = Some(dispute_aggregated_key);
+
+        Ok(())
+    }
 
     fn make_pairwise_keys(&mut self, members: &[Member], session_id: Uuid) -> Result<()> {
         let my_address = self.address()?.clone();
@@ -430,7 +450,7 @@ impl Member {
                     //     aggregation_id = ?aggregation_id,
                     //     "aggregation id"
                     // );
-                    let pairwise_key = self.setup_key(aggregation_id, &participants)?;
+                    let pairwise_key = self.setup_key(aggregation_id, &participants, None)?;
 
                     let other_address = self.get_counterparty_address(member1, member2)?;
 
@@ -445,9 +465,18 @@ impl Member {
         Ok(())
     }
 
-    fn setup_key(&mut self, aggregation_id: Uuid, addresses: &[P2PAddress]) -> Result<PublicKey> {
-        self.bitvmx
-            .setup_key(aggregation_id, addresses.to_vec(), 0)?;
+    fn setup_key(
+        &mut self,
+        aggregation_id: Uuid,
+        addresses: &[P2PAddress],
+        public_keys: Option<&[PublicKey]>,
+    ) -> Result<PublicKey> {
+        self.bitvmx.setup_key(
+            aggregation_id,
+            addresses.to_vec(),
+            public_keys.map(|keys| keys.to_vec()),
+            0,
+        )?;
 
         let aggregated_key = expect_msg!(self, AggregatedPubkey(_, key) => key)?;
         // info!(aggregated_key = ?aggregated_key.inner, "Key setup complete");

@@ -152,6 +152,9 @@ pub enum BitVMXError {
 
     #[error("Problem creating directory {0}: {1}")]
     DirectoryCreationError(String, std::io::Error),
+
+    #[error("Peer id {0} not found in the list of participants")]
+    InvalidParticipant(String),
 }
 
 #[derive(Error, Debug)]

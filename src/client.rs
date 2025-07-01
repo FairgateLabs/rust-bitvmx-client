@@ -7,7 +7,7 @@ use crate::{
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
 use anyhow::Result;
-use bitcoin::{Transaction, Txid};
+use bitcoin::{PublicKey, Transaction, Txid};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -57,11 +57,13 @@ impl BitVMXClient {
         &self,
         id: Uuid,
         participants: Vec<P2PAddress>,
+        participants_keys: Option<Vec<PublicKey>>,
         leader_idx: u16,
     ) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::SetupKey(
             id,
             participants,
+            participants_keys,
             leader_idx,
         ))
     }

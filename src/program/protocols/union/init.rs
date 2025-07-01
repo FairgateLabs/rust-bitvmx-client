@@ -4,7 +4,7 @@ use crate::{
         participant::{ParticipantKeys, ParticipantRole, PublicKeyType},
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
-            union::events::MembersSelected,
+            union::{events::MembersSelected, take},
         },
         variables::PartialUtxo,
     },
@@ -12,6 +12,7 @@ use crate::{
 };
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
+use core::panic;
 use protocol_builder::{
     scripts::{self, SignMode},
     types::{
@@ -60,16 +61,16 @@ impl ProtocolHandler for InitProtocol {
         &self,
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
-        let members = self.members(&program_context)?;
+        // let members = self.members(&program_context)?;
 
-        let take_aggregated_key = program_context
-            .key_chain
-            .new_musig2_session(members.take_pubkeys.clone(), members.my_take_pubkey.clone())?;
+        // let take_aggregated_key = program_context
+        //     .key_chain
+        //     .new_musig2_session(members.take_pubkeys.clone(), members.my_take_pubkey.clone())?;
 
-        let dispute_aggregated_key = program_context.key_chain.new_musig2_session(
-            members.dispute_pubkeys.clone(),
-            members.my_dispute_pubkey.clone(),
-        )?;
+        // let dispute_aggregated_key = program_context.key_chain.new_musig2_session(
+        //     members.dispute_pubkeys.clone(),
+        //     members.my_dispute_pubkey.clone(),
+        // )?;
 
         let mut keys = vec![];
         if self.prover(program_context)? {
@@ -87,20 +88,20 @@ impl ProtocolHandler for InitProtocol {
             ));
         }
 
-        keys.push((
-            "take_aggregated_key".to_string(),
-            PublicKeyType::Public(take_aggregated_key.clone()),
-        ));
-        keys.push((
-            "dispute_aggregated_key".to_string(),
-            PublicKeyType::Public(dispute_aggregated_key.clone()),
-        ));
+        // keys.push((
+        //     "take_aggregated_key".to_string(),
+        //     PublicKeyType::Public(take_aggregated_key.clone()),
+        // ));
+        // keys.push((
+        //     "dispute_aggregated_key".to_string(),
+        //     PublicKeyType::Public(dispute_aggregated_key.clone()),
+        // ));
 
         Ok(ParticipantKeys::new(
             keys,
             vec![
-                "take_aggregated_key".to_string(),
-                "dispute_aggregated_key".to_string(),
+                // "take_aggregated_key".to_string(),
+                // "dispute_aggregated_key".to_string(),
             ],
         ))
     }
@@ -158,25 +159,19 @@ impl ProtocolHandler for InitProtocol {
                 None,
             )?;
 
+            //TODO recover take_aggregated_key and dispute_aggregated_key
+
             // Add the REIMBURSEMENT_KICKOFF_TX outputs
             // Take enable output
             protocol.add_transaction_output(
                 REIMBURSEMENT_KICKOFF_TX,
-                &OutputType::taproot(
-                    DUST_VALUE,
-                    computed_aggregated.get("take_aggregated_key").unwrap(),
-                    &vec![],
-                )?,
+                &OutputType::taproot(DUST_VALUE, &take_aggregated_key, &vec![])?,
             )?;
 
             // Take output
             protocol.add_transaction_output(
                 REIMBURSEMENT_KICKOFF_TX,
-                &OutputType::taproot(
-                    DUST_VALUE,
-                    computed_aggregated.get("take_aggregated_key").unwrap(),
-                    &vec![],
-                )?,
+                &OutputType::taproot(DUST_VALUE, &computed_aggregated_key, &vec![])?,
             )?;
 
             // Next enabler output
