@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use bitcoin::{Amount, PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
-    builder::ProtocolBuilder,
     errors::ProtocolBuilderError,
     scripts::SignMode,
     types::{
@@ -20,6 +19,7 @@ use crate::{
     program::{
         participant::ParticipantKeys,
         protocols::protocol_handler::{ProtocolContext, ProtocolHandler},
+        variables::PartialUtxo,
     },
     types::ProgramContext,
 };
@@ -64,23 +64,9 @@ impl ProtocolHandler for TakeProtocol {
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let accept_peg_in_utxo = context
-            .globals
-            .get_var(&self.ctx.id, "accept_peg_in_utxo")?
-            .unwrap()
-            .utxo()?;
-
-        let fee = context
-            .globals
-            .get_var(&self.ctx.id, "FEE")?
-            .unwrap()
-            .number()? as u64;
-
-        let user_pubkey = context
-            .globals
-            .get_var(&self.ctx.id, "user_pubkey")?
-            .unwrap()
-            .pubkey()?;
+        let accept_peg_in_utxo = self.utxo("accept_peg_in_utxo", context)?;
+        let fee = self.number("fee", context)? as u64;
+        let user_pubkey = self.pubkey("user_pubkey", context)?;
 
         //create the protocol
         let mut protocol = self.load_or_create_protocol();
@@ -198,5 +184,25 @@ impl TakeProtocol {
 
         self.load_protocol()?
             .transaction_to_send(OPERATOR_WON_TX, &[args])
+    }
+
+    fn utxo(&self, name: &str, context: &ProgramContext) -> Result<PartialUtxo, BitVMXError> {
+        context.globals.get_var(&self.ctx.id, name)?.unwrap().utxo()
+    }
+
+    fn number(&self, name: &str, context: &ProgramContext) -> Result<u32, BitVMXError> {
+        context
+            .globals
+            .get_var(&self.ctx.id, name)?
+            .unwrap()
+            .number()
+    }
+
+    fn pubkey(&self, name: &str, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+        context
+            .globals
+            .get_var(&self.ctx.id, name)?
+            .unwrap()
+            .pubkey()
     }
 }
