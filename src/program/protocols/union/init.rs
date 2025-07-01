@@ -4,19 +4,19 @@ use crate::{
         participant::{ParticipantKeys, ParticipantRole, PublicKeyType},
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
-            union::events::events::MembersSelected,
+            union::events::MembersSelected,
         },
         variables::PartialUtxo,
     },
     types::ProgramContext,
 };
-use bitcoin::{psbt::Output, Amount, PublicKey, ScriptBuf, Transaction, Txid, WScriptHash};
+use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     scripts::{self, SignMode},
     types::{
-        connection::{InputSpec, OutputSpec},
-        input::{self, SighashType, SpendMode},
+        connection::InputSpec,
+        input::{SighashType, SpendMode},
         OutputType,
     },
 };
@@ -33,6 +33,7 @@ pub const REIMBURSEMENT_KICKOFF_TX: &str = "REIMBURSEMENT_KICKOFF_TX";
 
 pub const DISPUTE_OPENER_VALUE: u64 = 1000;
 pub const START_ENABLER_VALUE: u64 = 1000;
+pub const DUST_VALUE: u64 = 546;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct InitProtocol {
@@ -107,7 +108,7 @@ impl ProtocolHandler for InitProtocol {
     fn build(
         &self,
         keys: Vec<ParticipantKeys>,
-        _computed_aggregated: HashMap<String, PublicKey>,
+        computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         let members = self.members(context)?;
@@ -117,11 +118,11 @@ impl ProtocolHandler for InitProtocol {
         if self.prover(context)? {
             let op_funding_utxo = self.utxo("op_funding_utxo", context)?;
 
-            // Declare the external op_funding transaction
+            // External OPERATOR_FUNDING_TX transaction
             protocol.add_external_transaction(OPERATOR_FUNDING_TX)?;
             protocol.add_transaction_output(OPERATOR_FUNDING_TX, &op_funding_utxo.3.unwrap())?;
 
-            // Connect the operator initial deposit transaction with the op_funding transaction
+            // Connect with OPERATOR_INITIAL_DEPOSIT_TX
             protocol.add_connection(
                 "initial_op_deposit",
                 OPERATOR_FUNDING_TX,
@@ -132,13 +133,13 @@ impl ProtocolHandler for InitProtocol {
                 Some(op_funding_utxo.0),
             )?;
 
-            // Connect the operator reimbursement kickoff transaction with the initial deposit transaction
+            // Connect with REIMBURSEMENT_KICKOFF_TX
             let participant = &keys[self.ctx.my_idx];
 
             let pegout_id_pubkey = participant.get_winternitz("ot_pegout_id")?;
             let bit0_pubkey = participant.get_winternitz("ot_bit0")?;
             let bit1_pubkey = participant.get_winternitz("ot_bit1")?;
-            let my_dispute_pubkey = self.members(context)?.my_dispute_pubkey.clone();
+            let my_dispute_pubkey = members.my_dispute_pubkey.clone();
 
             let script = scripts::start_dispute_core(
                 my_dispute_pubkey,
@@ -147,31 +148,75 @@ impl ProtocolHandler for InitProtocol {
                 bit1_pubkey,
             )?;
 
-            let output = OutputType::SegwitScript {
-                value: Amount::from_sat(DISPUTE_OPENER_VALUE),
-                script_pubkey: ScriptBuf::new_p2wsh(&WScriptHash::from(
-                    script.get_script().clone(),
-                )),
-                script,
-            };
-
             protocol.add_connection(
                 "initial_op_deposit",
                 OPERATOR_INITIAL_DEPOSIT_TX,
-                OutputSpec::Auto(output),
+                OutputType::segwit_script(DISPUTE_OPENER_VALUE, &script)?.into(),
                 REIMBURSEMENT_KICKOFF_TX,
                 InputSpec::Auto(SighashType::ecdsa_all(), SpendMode::Segwit),
                 None,
                 None,
             )?;
+
+            // Add the REIMBURSEMENT_KICKOFF_TX outputs
+            // Take enable output
+            protocol.add_transaction_output(
+                REIMBURSEMENT_KICKOFF_TX,
+                &OutputType::taproot(
+                    DUST_VALUE,
+                    computed_aggregated.get("take_aggregated_key").unwrap(),
+                    &vec![],
+                )?,
+            )?;
+
+            // Take output
+            protocol.add_transaction_output(
+                REIMBURSEMENT_KICKOFF_TX,
+                &OutputType::taproot(
+                    DUST_VALUE,
+                    computed_aggregated.get("take_aggregated_key").unwrap(),
+                    &vec![],
+                )?,
+            )?;
+
+            // Next enabler output
+            protocol.add_transaction_output(
+                REIMBURSEMENT_KICKOFF_TX,
+                &OutputType::taproot(
+                    DUST_VALUE,
+                    computed_aggregated.get("dispute_aggregated_key").unwrap(),
+                    &vec![],
+                )?,
+            )?;
+
+            // No dispute opened output
+            protocol.add_transaction_output(
+                REIMBURSEMENT_KICKOFF_TX,
+                &OutputType::taproot(
+                    DUST_VALUE,
+                    computed_aggregated.get("dispute_aggregated_key").unwrap(),
+                    &vec![],
+                )?,
+            )?;
+
+            // Next dispute core output
+            protocol.add_transaction_output(
+                REIMBURSEMENT_KICKOFF_TX,
+                &OutputType::taproot(
+                    DUST_VALUE,
+                    computed_aggregated.get("dispute_aggregated_key").unwrap(),
+                    &vec![],
+                )?,
+            )?;
         }
 
         let wt_funding_utxo = self.utxo("wt_funding_utxo", context)?;
 
-        // Declare the external op_funding transaction
+        // External WATCHTOWER_FUNDING_TX transaction
         protocol.add_external_transaction(WATCHTOWER_FUNDING_TX)?;
         protocol.add_transaction_output(WATCHTOWER_FUNDING_TX, &wt_funding_utxo.3.unwrap())?;
 
+        // Connect with WATCHTOWER_FUNDING_TX
         protocol.add_connection(
             "initial_wt_deposit",
             WATCHTOWER_FUNDING_TX,
@@ -186,19 +231,13 @@ impl ProtocolHandler for InitProtocol {
         for participant in keys.iter() {
             match participant.get_winternitz("ot_pegout_id") {
                 Ok(_) => {
-                    let my_dispute_pubkey = self.members(context)?.my_dispute_pubkey.clone();
+                    let my_dispute_pubkey = members.my_dispute_pubkey.clone();
 
                     let script = scripts::verify_signature(&my_dispute_pubkey, SignMode::Single)?;
 
                     protocol.add_transaction_output(
                         WATCHTOWER_INITIAL_DEPOSIT_TX,
-                        &OutputType::SegwitScript {
-                            value: Amount::from_sat(START_ENABLER_VALUE),
-                            script_pubkey: ScriptBuf::new_p2wsh(&WScriptHash::from(
-                                script.get_script().clone(),
-                            )),
-                            script,
-                        },
+                        &OutputType::segwit_script(START_ENABLER_VALUE, &script)?,
                     )?;
 
                     operators_found += 1;

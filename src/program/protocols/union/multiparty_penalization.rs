@@ -30,14 +30,14 @@ impl ProtocolHandler for MultipartyPenalizationProtocol {
 
     fn get_pregenerated_aggregated_keys(
         &self,
-        context: &ProgramContext,
+        _context: &ProgramContext,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
         todo!()
     }
 
     fn generate_keys(
         &self,
-        program_context: &mut ProgramContext,
+        _program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
         todo!()
     }
@@ -61,12 +61,12 @@ impl ProtocolHandler for MultipartyPenalizationProtocol {
 
     fn notify_news(
         &self,
-        tx_id: Txid,
-        vout: Option<u32>,
-        tx_status: TransactionStatus,
-        context: String,
-        program_context: &ProgramContext,
-        participant_keys: Vec<&ParticipantKeys>,
+        _tx_id: Txid,
+        _vout: Option<u32>,
+        _tx_status: TransactionStatus,
+        _context: String,
+        _program_context: &ProgramContext,
+        _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         todo!()
     }
