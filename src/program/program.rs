@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashMap, rc::Rc};
 use storage_backend::storage::{KeyValueStore, Storage};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use super::{
@@ -332,6 +332,10 @@ impl Program {
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         if !self.state.should_handle_msg(&msg_type) {
+            error!(
+                "{}. Ignoring message {:?} {:?}",
+                self.my_idx, msg_type, self.state
+            );
             if self.state.should_answer_ack(self.im_leader(), &msg_type) {
                 self.send_ack(program_context, &peer_id, P2PMessageType::KeysAck)?;
             }

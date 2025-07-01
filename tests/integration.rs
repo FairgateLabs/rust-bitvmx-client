@@ -46,7 +46,8 @@ pub fn test_drp() -> Result<()> {
 
     let aggregation_id = Uuid::new_v4();
     let command =
-        IncomingBitVMXApiMessages::SetupKey(aggregation_id, participants.clone(), 0).to_string()?;
+        IncomingBitVMXApiMessages::SetupKey(aggregation_id, participants.clone(), None, 0)
+            .to_string()?;
     send_all(&channels, &command)?;
 
     let msgs = get_all(&channels, &mut instances, false)?;
@@ -131,6 +132,7 @@ pub fn test_aggregation() -> Result<()> {
     let command = IncomingBitVMXApiMessages::SetupKey(
         aggregation_id,
         vec![addres_1.clone(), addres_2.clone(), addres_3.clone()],
+        None,
         0,
     )
     .to_string()?;

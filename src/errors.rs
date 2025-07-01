@@ -143,6 +143,9 @@ pub enum BitVMXError {
 
     #[error("Transaction not found in block")]
     TransactionNotFoundInBlock,
+
+    #[error("Peer id {0} not found in the list of participants")]
+    InvalidParticipant(String),
 }
 
 #[derive(Error, Debug)]

@@ -63,8 +63,8 @@ pub fn test_slot() -> Result<()> {
 
     //ask the peers to generate the aggregated public key
     let aggregation_id = Uuid::new_v4();
-    let command =
-        IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), 0).to_string()?;
+    let command = IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), None, 0)
+        .to_string()?;
     send_all(&channels, &command)?;
     let msgs = get_all(&channels, &mut instances, false)?;
     let aggregated_pub_key = msgs[0].aggregated_pub_key().unwrap();
@@ -74,7 +74,8 @@ pub fn test_slot() -> Result<()> {
     let sub_channel = vec![channels[0].clone(), channels[1].clone()];
     let aggregation_id = Uuid::new_v4();
     let command =
-        IncomingBitVMXApiMessages::SetupKey(aggregation_id, participants.clone(), 0).to_string()?;
+        IncomingBitVMXApiMessages::SetupKey(aggregation_id, participants.clone(), None, 0)
+            .to_string()?;
     send_all(&sub_channel, &command)?;
     let msgs = get_all(&sub_channel, &mut instances, false)?;
     let pair_aggregated_pub_key = msgs[0].aggregated_pub_key().unwrap();
