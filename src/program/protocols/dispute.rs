@@ -28,6 +28,7 @@ use protocol_builder::{
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
+        output::SpeedupData,
         OutputType,
     },
 };
@@ -296,14 +297,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         Ok(ParticipantKeys::new(keys, vec!["aggregated_1".to_string()]))
     }
 
-    fn get_transaction_name(
+    fn get_transaction_by_name(
         &self,
         name: &str,
         context: &ProgramContext,
-    ) -> Result<Transaction, BitVMXError> {
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         match name {
-            START_CH => Ok(self.start_challenge(context)?),
-            INPUT_1 => Ok(self.input_1_tx(context)?),
+            START_CH => Ok((self.start_challenge(context)?, None)),
+            INPUT_1 => Ok((self.input_1_tx(context)?, None)),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
     }

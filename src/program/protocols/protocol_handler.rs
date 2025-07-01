@@ -1,14 +1,13 @@
 use bitcoin::script::read_scriptint;
 use bitcoin::{PublicKey, Transaction, Txid};
-use bitcoin_coordinator::coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi};
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_scriptexec::scriptint_vec;
-use bitvmx_bitcoin_rpc::types::BlockHeight;
 use console::style;
 use enum_dispatch::enum_dispatch;
 use key_manager::winternitz::{message_bytes_length, WinternitzType};
 use protocol_builder::scripts::ProtocolScript;
-use protocol_builder::types::{InputArgs, OutputType, Utxo};
+use protocol_builder::types::output::SpeedupData;
+use protocol_builder::types::{InputArgs, OutputType};
 use protocol_builder::{builder::Protocol, errors::ProtocolBuilderError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -119,11 +118,11 @@ pub trait ProtocolHandler {
         Ok(())
     }
 
-    fn get_transaction_name(
+    fn get_transaction_by_name(
         &self,
         name: &str,
         context: &ProgramContext,
-    ) -> Result<Transaction, BitVMXError>;
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError>;
 
     fn notify_news(
         &self,
@@ -383,28 +382,4 @@ pub fn external_fund_tx(
         internal_key,
         &spending_scripts,
     )?)
-}
-
-pub type SpeedupData = (u32, PublicKey);
-
-pub fn dispatch_transaction(
-    bitcoin_coordinator: &BitcoinCoordinator,
-    tx: Transaction,
-    speedup: Option<SpeedupData>,
-    context: String,
-    block_height: Option<BlockHeight>,
-) -> Result<(), BitVMXError> {
-    let tmp_utxo = if let Some((vout, public_key)) = speedup {
-        Some(Utxo::new(
-            tx.compute_txid(),
-            vout,
-            tx.output[vout as usize].value.to_sat(),
-            &public_key,
-        ))
-    } else {
-        None
-    };
-
-    bitcoin_coordinator.dispatch(tx, tmp_utxo, context, block_height)?;
-    Ok(())
 }

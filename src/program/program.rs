@@ -716,7 +716,10 @@ impl Program {
         program_context: &ProgramContext,
         name: &str,
     ) -> Result<Transaction, BitVMXError> {
-        self.protocol.get_transaction_name(name, program_context)
+        Ok(self
+            .protocol
+            .get_transaction_by_name(name, program_context)?
+            .0)
     }
 
     pub fn dispatch_transaction_name(
@@ -725,7 +728,9 @@ impl Program {
         name: &str,
     ) -> Result<(), BitVMXError> {
         //TODO: Get transactions by identification
-        let tx_to_dispatch = self.protocol.get_transaction_name(name, program_context)?;
+        let (tx_to_dispatch, speedup) = self
+            .protocol
+            .get_transaction_by_name(name, program_context)?;
 
         let context = Context::ProgramId(self.program_id);
 
@@ -733,10 +738,11 @@ impl Program {
 
         program_context.bitcoin_coordinator.dispatch(
             tx_to_dispatch,
-            None,
+            speedup,
             context.to_string()?,
             None,
         )?;
+
         Ok(())
     }
 
