@@ -527,7 +527,11 @@ fn test_zkp() -> Result<()> {
 
     let _ = helper.channels[0].send(
         BITVMX_ID,
-        IncomingBitVMXApiMessages::GenerateZKP(id, vec![1, 2, 3, 4]).to_string()?,
+        IncomingBitVMXApiMessages::GenerateZKP(
+            id, 
+            vec![1, 2, 3, 4], 
+            "../rust-bitvmx-zk-proof/target/riscv-guest/methods/bitvmx/riscv32im-risc0-zkvm-elf/release/bitvmx.bin".to_string()
+        ).to_string()?,
     );
 
     let msg = helper.wait_msg(0)?;
