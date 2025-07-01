@@ -110,7 +110,7 @@ pub enum IncomingBitVMXApiMessages {
     GetAggregatedPubkey(Uuid),
     GetKeyPair(Uuid),
     GetPubKey(Uuid, bool),
-    GenerateZKP(Uuid, Vec<u8>),
+    GenerateZKP(Uuid, Vec<u8>, String),
     ProofReady(Uuid),
     GetZKPExecutionResult(Uuid),
 }

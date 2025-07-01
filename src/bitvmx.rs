@@ -642,7 +642,7 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn generate_zkp(&mut self, from: u32, id: Uuid, input: Vec<u8>) -> Result<(), BitVMXError> {
+    fn generate_zkp(&mut self, from: u32, id: Uuid, input: Vec<u8>, elf_file_path:String) -> Result<(), BitVMXError> {
         info!("Generating ZKP for input: {:?}", input);
 
         // Store the 'from' parameter
@@ -653,7 +653,7 @@ impl BitVMXApi for BitVMX {
             job_id: id.to_string(),
             job_type: ProverJobType::Prove(
                 input,
-                "./a.elf".to_string(),
+                elf_file_path,
                 format!("./zkp-jobs/{}", id),
             ),
         })?;
@@ -1055,8 +1055,8 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::GetAggregatedPubkey(id) => {
                 BitVMXApi::get_aggregated_pubkey(self, from, id)?
             }
-            IncomingBitVMXApiMessages::GenerateZKP(id, input) => {
-                BitVMXApi::generate_zkp(self, from, id, input)?
+            IncomingBitVMXApiMessages::GenerateZKP(id, input, elf_file_path) => {
+                BitVMXApi::generate_zkp(self, from, id, input, elf_file_path)?
             }
             IncomingBitVMXApiMessages::ProofReady(id) => BitVMXApi::proof_ready(self, from, id)?,
             IncomingBitVMXApiMessages::GetZKPExecutionResult(id) => {
