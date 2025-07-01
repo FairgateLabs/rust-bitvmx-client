@@ -53,6 +53,7 @@ impl Committee {
         let keys = self.all(|op| op.setup_member_keys())?;
 
         // collect members keys
+        // collect members keys
         let members_take_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.0).collect();
         let members_dispute_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.1).collect();
         let _members_communication_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.2).collect();
@@ -212,6 +213,8 @@ impl Committee {
                 .map(|m| {
                     let f = f.clone();
                     let span = info_span!("member", id = %m.id);
+
+                    thread::sleep(Duration::from_millis(2000)); // Simulate some delay for each member
 
                     thread::sleep(Duration::from_millis(2000)); // Simulate some delay for each member
 

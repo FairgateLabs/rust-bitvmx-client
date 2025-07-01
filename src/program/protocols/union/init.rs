@@ -11,6 +11,7 @@ use crate::{
 };
 use bitcoin::{Amount, PublicKey, ScriptBuf, Transaction, Txid, WScriptHash};
 use bitcoin_coordinator::TransactionStatus;
+use core::panic;
 use protocol_builder::{
     scripts::{self, SignMode},
     types::{
@@ -109,20 +110,20 @@ impl ProtocolHandler for InitProtocol {
             ));
         }
 
-        keys.push((
-            "take_aggregated_key".to_string(),
-            PublicKeyType::Public(take_aggregated_key.clone()),
-        ));
-        keys.push((
-            "dispute_aggregated_key".to_string(),
-            PublicKeyType::Public(dispute_aggregated_key.clone()),
-        ));
+        // keys.push((
+        //     "take_aggregated_key".to_string(),
+        //     PublicKeyType::Public(take_aggregated_key.clone()),
+        // ));
+        // keys.push((
+        //     "dispute_aggregated_key".to_string(),
+        //     PublicKeyType::Public(dispute_aggregated_key.clone()),
+        // ));
 
         Ok(ParticipantKeys::new(
             keys,
             vec![
-                "take_aggregated_key".to_string(),
-                "dispute_aggregated_key".to_string(),
+                // "take_aggregated_key".to_string(),
+                // "dispute_aggregated_key".to_string(),
             ],
         ))
     }
