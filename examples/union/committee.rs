@@ -181,6 +181,7 @@ impl Committee {
             WALLET_NAME,
             from.unwrap_or(funding_id),
             *public_key,
+            *public_key,
             &vec![amount],
             FEE,
             false,

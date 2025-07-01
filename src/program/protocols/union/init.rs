@@ -15,6 +15,8 @@ use protocol_builder::{
     scripts::{self, SignMode},
     types::{
         connection::InputSpec,
+        connection::InputSpec,
+        input::{SighashType, SpendMode},
         input::{SighashType, SpendMode},
         OutputType,
     },
@@ -30,6 +32,7 @@ pub const WATCHTOWER_START_ENABLER_TX: &str = "WATCHTOWER_START_ENABLER_TX";
 
 pub const DISPUTE_OPENER_VALUE: u64 = 1000;
 pub const START_ENABLER_VALUE: u64 = 1000;
+pub const DUST_VALUE: u64 = 546;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct InitProtocol {
@@ -127,7 +130,7 @@ impl ProtocolHandler for InitProtocol {
     fn build(
         &self,
         keys: Vec<ParticipantKeys>,
-        _computed_aggregated: HashMap<String, PublicKey>,
+        computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         let members_selected = context
@@ -155,7 +158,7 @@ impl ProtocolHandler for InitProtocol {
                 .unwrap()
                 .utxo()?;
 
-            // Declare the external op_funding transaction
+            // External OPERATOR_FUNDING_TX transaction
             protocol.add_external_transaction(OPERATOR_FUNDING_TX)?;
             protocol.add_transaction_output(OPERATOR_FUNDING_TX, &op_funding_utxo.3.unwrap())?;
 
@@ -177,10 +180,11 @@ impl ProtocolHandler for InitProtocol {
             .unwrap()
             .utxo()?;
 
-        // Declare the external op_funding transaction
+        // External WATCHTOWER_FUNDING_TX transaction
         protocol.add_external_transaction(WATCHTOWER_FUNDING_TX)?;
         protocol.add_transaction_output(WATCHTOWER_FUNDING_TX, &wt_funding_utxo.3.unwrap())?;
 
+        // Connect with WATCHTOWER_FUNDING_TX
         protocol.add_connection(
             "initial_wt_deposit",
             WATCHTOWER_FUNDING_TX,

@@ -74,3 +74,14 @@ pub fn accept_pegin() -> Result<()> {
     committee.accept_pegin()?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::pegin;
+
+    #[test]
+    fn test_union_pegin() {
+        pegin().expect("Failed to run peg-in");
+        //thread::sleep(Duration::from_secs(10));
+    }
+}
