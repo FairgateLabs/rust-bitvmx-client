@@ -5,7 +5,7 @@ use bitvmx_client::{
     config::Config,
     program::{
         participant::{P2PAddress, ParticipantRole},
-        protocols::union::events::events::MembersSelected,
+        protocols::union::events::MembersSelected,
         variables::{PartialUtxo, VariableTypes},
     },
     types::{OutgoingBitVMXApiMessages::*, L2_ID, PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_INIT},
@@ -136,7 +136,7 @@ impl Committee {
         let mut members_addresses = HashMap::new();
         for member in &members {
             members_addresses.insert(
-                member.keyring.communication_pubkey.clone().unwrap(),
+                member.keyring.communication_pubkey.unwrap(),
                 member.address.clone().unwrap(),
             );
         }
@@ -170,7 +170,7 @@ impl Committee {
         let txid = wallet.fund_address(
             WALLET_NAME,
             from.unwrap_or(funding_id),
-            public_key.clone(),
+            *public_key,
             &vec![amount],
             FEE,
             false,
@@ -303,22 +303,23 @@ impl Member {
         &mut self,
         take_aggregation_id: Uuid,
         dispute_aggregation_id: Uuid,
-        members: &Vec<Member>,
-        members_take_pubkeys: &Vec<PublicKey>,
-        members_dispute_pubkeys: &Vec<PublicKey>,
+        members: &[Member],
+        members_take_pubkeys: &[PublicKey],
+        members_dispute_pubkeys: &[PublicKey],
     ) -> Result<()> {
         self.make_pairwise_keys(members, take_aggregation_id)?;
 
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn setup_covenants(
         &mut self,
         id: Uuid,
-        members: &Vec<Member>,
+        members: &[Member],
         members_addresses: &HashMap<PublicKey, P2PAddress>,
-        members_take_pubkeys: &Vec<PublicKey>,
-        members_dispute_pubkeys: &Vec<PublicKey>,
+        members_take_pubkeys: &[PublicKey],
+        members_dispute_pubkeys: &[PublicKey],
         op_funding_utxos: &HashMap<String, PartialUtxo>,
         wt_funding_utxos: &HashMap<String, PartialUtxo>,
     ) -> Result<()> {
@@ -386,11 +387,11 @@ impl Member {
     //     Ok(())
     // }
 
-    fn make_pairwise_keys(&mut self, members: &Vec<Member>, session_id: Uuid) -> Result<()> {
+    fn make_pairwise_keys(&mut self, members: &[Member], session_id: Uuid) -> Result<()> {
         let my_address = self.address()?.clone();
 
         // Create a sorted list of members to have a canonical order of pairs.
-        let mut sorted_members = members.clone();
+        let mut sorted_members = members.to_vec();
         sorted_members.sort_by(|a, b| a.address.cmp(&b.address));
 
         for i in 0..sorted_members.len() {
@@ -444,13 +445,9 @@ impl Member {
         Ok(())
     }
 
-    fn setup_key(
-        &mut self,
-        aggregation_id: Uuid,
-        addresses: &Vec<P2PAddress>,
-    ) -> Result<PublicKey> {
+    fn setup_key(&mut self, aggregation_id: Uuid, addresses: &[P2PAddress]) -> Result<PublicKey> {
         self.bitvmx
-            .setup_key(aggregation_id, addresses.clone(), 0)?;
+            .setup_key(aggregation_id, addresses.to_vec(), 0)?;
 
         let aggregated_key = expect_msg!(self, AggregatedPubkey(_, key) => key)?;
         // info!(aggregated_key = ?aggregated_key.inner, "Key setup complete");
@@ -458,13 +455,14 @@ impl Member {
         Ok(aggregated_key)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn setup_init_covenant(
         &mut self,
         id: Uuid,
-        members: &Vec<Member>,
+        members: &[Member],
         members_addresses: &HashMap<PublicKey, P2PAddress>,
-        members_take_pubkeys: &Vec<PublicKey>,
-        members_dispute_pubkeys: &Vec<PublicKey>,
+        members_take_pubkeys: &[PublicKey],
+        members_dispute_pubkeys: &[PublicKey],
         op_funding_utxos: &HashMap<String, PartialUtxo>,
         wt_funding_utxos: &HashMap<String, PartialUtxo>,
     ) -> Result<()> {
@@ -472,10 +470,10 @@ impl Member {
 
         self.prepare_init_covenant(
             id,
-            &members,
+            members,
             members_addresses,
-            &members_take_pubkeys,
-            &members_dispute_pubkeys,
+            members_take_pubkeys,
+            members_dispute_pubkeys,
             op_funding_utxos,
             wt_funding_utxos,
         )?;
@@ -487,7 +485,7 @@ impl Member {
         Ok(())
     }
 
-    fn setup_dispute_core_covenant(&mut self, members: &Vec<Member>) -> Result<()> {
+    fn setup_dispute_core_covenant(&mut self, members: &[Member]) -> Result<()> {
         let id = Uuid::new_v4();
         let addresses = self.get_addresses(members);
 
@@ -701,13 +699,14 @@ impl Member {
     //     Ok(())
     // }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare_init_covenant(
         &mut self,
         covenant_id: Uuid,
-        members: &Vec<Member>,
+        members: &[Member],
         members_addresses: &HashMap<PublicKey, P2PAddress>,
-        members_take_pubkeys: &Vec<PublicKey>,
-        members_dispute_pubkeys: &Vec<PublicKey>,
+        members_take_pubkeys: &[PublicKey],
+        members_dispute_pubkeys: &[PublicKey],
         op_funding_utxos: &HashMap<String, PartialUtxo>,
         wt_funding_utxos: &HashMap<String, PartialUtxo>,
         // dispute_aggregation_id: Uuid,
@@ -719,10 +718,10 @@ impl Member {
 
         let members_selected = MembersSelected {
             my_role: self.role.clone(),
-            my_take_pubkey: self.keyring.take_pubkey.clone().unwrap(),
-            my_dispute_pubkey: self.keyring.dispute_pubkey.clone().unwrap(),
-            take_pubkeys: members_take_pubkeys.clone(),
-            dispute_pubkeys: members_dispute_pubkeys.clone(),
+            my_take_pubkey: self.keyring.take_pubkey.unwrap(),
+            my_dispute_pubkey: self.keyring.dispute_pubkey.unwrap(),
+            take_pubkeys: members_take_pubkeys.to_vec(),
+            dispute_pubkeys: members_dispute_pubkeys.to_vec(),
             addresses: members_addresses.clone(),
             operator_count: self.operator_count(members)?,
             watchtower_count: self.watchtower_count(members)?,
@@ -759,7 +758,7 @@ impl Member {
     }
 
     /// Get all addresses from a list of members
-    fn get_addresses(&self, members: &Vec<Member>) -> Vec<P2PAddress> {
+    fn get_addresses(&self, members: &[Member]) -> Vec<P2PAddress> {
         members.iter().filter_map(|m| m.address.clone()).collect()
     }
 
@@ -782,14 +781,14 @@ impl Member {
         Ok(counterparty_address.clone())
     }
 
-    fn operator_count(&self, members: &Vec<Member>) -> Result<u32> {
+    fn operator_count(&self, members: &[Member]) -> Result<u32> {
         Ok(members
             .iter()
             .filter(|m| m.role == ParticipantRole::Prover)
             .count() as u32)
     }
 
-    fn watchtower_count(&self, members: &Vec<Member>) -> Result<u32> {
+    fn watchtower_count(&self, members: &[Member]) -> Result<u32> {
         Ok(members
             .iter()
             .filter(|m| m.role == ParticipantRole::Verifier)
