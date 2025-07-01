@@ -106,7 +106,7 @@ pub enum IncomingBitVMXApiMessages {
     SubscribeUTXO(),
     DispatchTransaction(Uuid, Transaction),
     DispatchTransactionName(Uuid, String),
-    SetupKey(Uuid, Vec<P2PAddress>, u16),
+    SetupKey(Uuid, Vec<P2PAddress>, Option<Vec<PublicKey>>, u16),
     GetAggregatedPubkey(Uuid),
     GetKeyPair(Uuid),
     GetPubKey(Uuid, bool),

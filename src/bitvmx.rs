@@ -1,3 +1,4 @@
+use crate::program::participant;
 use crate::program::protocols::protocol_handler::ProtocolHandler;
 use crate::types::{EMULATOR_ID, PROVER_ID};
 use crate::{
@@ -17,7 +18,7 @@ use crate::{
         BITVMX_ID, L2_ID,
     },
 };
-use bitcoin::{Transaction, Txid};
+use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_coordinator::{
     coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi},
@@ -605,13 +606,15 @@ impl BitVMXApi for BitVMX {
         from: u32,
         id: Uuid,
         participants: Vec<P2PAddress>,
+        participants_keys: Option<Vec<PublicKey>>,
         leader_idx: u16,
     ) -> Result<(), BitVMXError> {
         info!("Setting up key for program: {:?}", id);
         let leader = participants[leader_idx as usize].clone();
-        let collab = Collaboration::setup_aggregated_signature(
+        let collab = Collaboration::setup_aggregated_key(
             &id,
             participants,
+            participants_keys,
             leader,
             &mut self.program_context,
             from,
@@ -1006,9 +1009,12 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::DispatchTransaction(id, tx) => {
                 BitVMXApi::dispatch_transaction(self, from, id, tx)?
             }
-            IncomingBitVMXApiMessages::SetupKey(id, participants, leader_idx) => {
-                BitVMXApi::setup_key(self, from, id, participants, leader_idx)?
-            }
+            IncomingBitVMXApiMessages::SetupKey(
+                id,
+                participants,
+                participants_keys,
+                leader_idx,
+            ) => BitVMXApi::setup_key(self, from, id, participants, participants_keys, leader_idx)?,
             IncomingBitVMXApiMessages::GetKeyPair(id) => {
                 let collaboration = self
                     .get_collaboration(&id)?

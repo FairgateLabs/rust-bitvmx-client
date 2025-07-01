@@ -129,12 +129,14 @@ impl ClientTest {
         self.prover_client.setup_key(
             self.collaboration_id,
             vec![self.prover.address.clone(), self.verifier.address.clone()],
+            None,
             0,
         )?;
 
         self.verifier_client.setup_key(
             self.collaboration_id,
             vec![self.prover.address.clone(), self.verifier.address.clone()],
+            None,
             0,
         )?;
 
