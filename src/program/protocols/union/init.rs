@@ -4,18 +4,19 @@ use crate::{
         participant::{ParticipantKeys, ParticipantRole, PublicKeyType},
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
-            union::events::events::Event,
+            union::events::events::MembersSelected,
         },
+        variables::PartialUtxo,
     },
     types::ProgramContext,
 };
-use bitcoin::{Amount, PublicKey, ScriptBuf, Transaction, Txid, WScriptHash};
+use bitcoin::{psbt::Output, Amount, PublicKey, ScriptBuf, Transaction, Txid, WScriptHash};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     scripts::{self, SignMode},
     types::{
-        connection::InputSpec,
-        input::{SighashType, SpendMode},
+        connection::{InputSpec, OutputSpec},
+        input::{self, SighashType, SpendMode},
         OutputType,
     },
 };
@@ -25,8 +26,10 @@ use tracing::info;
 
 pub const OPERATOR_FUNDING_TX: &str = "OPERATOR_FUNDING_TX";
 pub const WATCHTOWER_FUNDING_TX: &str = "WATCHTOWER_FUNDING_TX";
-pub const OPERATOR_DISPUTE_OPENER_TX: &str = "OPERATOR_DISPUTE_OPENER_TX";
-pub const WATCHTOWER_START_ENABLER_TX: &str = "WATCHTOWER_START_ENABLER_TX";
+pub const OPERATOR_INITIAL_DEPOSIT_TX: &str = "OPERATOR_INITIAL_DEPOSIT_TX";
+pub const WATCHTOWER_INITIAL_DEPOSIT_TX: &str = "WATCHTOWER_INITIAL_DEPOSIT_TX";
+
+pub const REIMBURSEMENT_KICKOFF_TX: &str = "REIMBURSEMENT_KICKOFF_TX";
 
 pub const DISPUTE_OPENER_VALUE: u64 = 1000;
 pub const START_ENABLER_VALUE: u64 = 1000;
@@ -49,49 +52,26 @@ impl ProtocolHandler for InitProtocol {
         &self,
         _context: &ProgramContext,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
-        todo!()
+        Ok(vec![])
     }
 
     fn generate_keys(
         &self,
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
-        let members_selected = program_context
-            .globals
-            .get_var(&self.ctx.id, "members_selected")?
-            .unwrap()
-            .string()?;
-
-        let members_selected: Event = serde_json::from_str(&members_selected)?;
-        let (my_role, my_take_pubkey, my_dispute_pubkey, take_pubkeys, dispute_pubkeys) =
-            match members_selected {
-                Event::MembersSelected {
-                    my_role,
-                    my_take_pubkey,
-                    my_dispute_pubkey,
-                    take_pubkeys,
-                    dispute_pubkeys,
-                    ..
-                } => (
-                    my_role,
-                    my_take_pubkey,
-                    my_dispute_pubkey,
-                    take_pubkeys,
-                    dispute_pubkeys,
-                ),
-                _ => return Err(BitVMXError::InvalidMessageFormat),
-            };
+        let members = self.members(&program_context)?;
 
         let take_aggregated_key = program_context
             .key_chain
-            .new_musig2_session(take_pubkeys.clone(), my_take_pubkey.clone())?;
+            .new_musig2_session(members.take_pubkeys.clone(), members.my_take_pubkey.clone())?;
 
-        let dispute_aggregated_key = program_context
-            .key_chain
-            .new_musig2_session(dispute_pubkeys.clone(), my_dispute_pubkey.clone())?;
+        let dispute_aggregated_key = program_context.key_chain.new_musig2_session(
+            members.dispute_pubkeys.clone(),
+            members.my_dispute_pubkey.clone(),
+        )?;
 
         let mut keys = vec![];
-        if my_role == ParticipantRole::Prover {
+        if self.prover(program_context)? {
             keys.push((
                 "ot_pegout_id".to_string(),
                 PublicKeyType::Winternitz(program_context.key_chain.derive_winternitz_hash160(20)?),
@@ -130,52 +110,63 @@ impl ProtocolHandler for InitProtocol {
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let members_selected = context
-            .globals
-            .get_var(&self.ctx.id, "members_selected")?
-            .unwrap()
-            .string()?;
-
-        let members_selected: Event = serde_json::from_str(&members_selected)?;
-        let (my_role, operators_count) = match members_selected {
-            Event::MembersSelected {
-                my_role,
-                operator_count,
-                ..
-            } => (my_role, operator_count),
-            _ => return Err(BitVMXError::InvalidMessageFormat),
-        };
+        let members = self.members(context)?;
 
         let mut protocol = self.load_or_create_protocol();
 
-        if my_role == ParticipantRole::Prover {
-            let op_funding_utxo = context
-                .globals
-                .get_var(&self.ctx.id, "op_funding_utxo")?
-                .unwrap()
-                .utxo()?;
+        if self.prover(context)? {
+            let op_funding_utxo = self.utxo("op_funding_utxo", context)?;
 
             // Declare the external op_funding transaction
             protocol.add_external_transaction(OPERATOR_FUNDING_TX)?;
             protocol.add_transaction_output(OPERATOR_FUNDING_TX, &op_funding_utxo.3.unwrap())?;
 
-            // Connect the operator dispute opener transaction with the op_funding transaction
+            // Connect the operator initial deposit transaction with the op_funding transaction
             protocol.add_connection(
                 "initial_op_deposit",
                 OPERATOR_FUNDING_TX,
                 (op_funding_utxo.1 as usize).into(),
-                OPERATOR_DISPUTE_OPENER_TX,
+                OPERATOR_INITIAL_DEPOSIT_TX,
                 InputSpec::Auto(SighashType::ecdsa_all(), SpendMode::Segwit),
                 None,
                 Some(op_funding_utxo.0),
             )?;
+
+            // Connect the operator reimbursement kickoff transaction with the initial deposit transaction
+            let participant = &keys[self.ctx.my_idx];
+
+            let pegout_id_pubkey = participant.get_winternitz("ot_pegout_id")?;
+            let bit0_pubkey = participant.get_winternitz("ot_bit0")?;
+            let bit1_pubkey = participant.get_winternitz("ot_bit1")?;
+            let my_dispute_pubkey = self.members(context)?.my_dispute_pubkey.clone();
+
+            let script = scripts::start_dispute_core(
+                my_dispute_pubkey,
+                pegout_id_pubkey,
+                bit0_pubkey,
+                bit1_pubkey,
+            )?;
+
+            let output = OutputType::SegwitScript {
+                value: Amount::from_sat(DISPUTE_OPENER_VALUE),
+                script_pubkey: ScriptBuf::new_p2wsh(&WScriptHash::from(
+                    script.get_script().clone(),
+                )),
+                script,
+            };
+
+            protocol.add_connection(
+                "initial_op_deposit",
+                OPERATOR_INITIAL_DEPOSIT_TX,
+                OutputSpec::Auto(output),
+                REIMBURSEMENT_KICKOFF_TX,
+                InputSpec::Auto(SighashType::ecdsa_all(), SpendMode::Segwit),
+                None,
+                None,
+            )?;
         }
 
-        let wt_funding_utxo = context
-            .globals
-            .get_var(&self.ctx.id, "wt_funding_utxo")?
-            .unwrap()
-            .utxo()?;
+        let wt_funding_utxo = self.utxo("wt_funding_utxo", context)?;
 
         // Declare the external op_funding transaction
         protocol.add_external_transaction(WATCHTOWER_FUNDING_TX)?;
@@ -185,7 +176,7 @@ impl ProtocolHandler for InitProtocol {
             "initial_wt_deposit",
             WATCHTOWER_FUNDING_TX,
             (wt_funding_utxo.1 as usize).into(),
-            WATCHTOWER_START_ENABLER_TX,
+            WATCHTOWER_INITIAL_DEPOSIT_TX,
             InputSpec::Auto(SighashType::ecdsa_all(), SpendMode::Segwit),
             None,
             Some(wt_funding_utxo.0),
@@ -194,23 +185,21 @@ impl ProtocolHandler for InitProtocol {
         let mut operators_found = 0;
         for participant in keys.iter() {
             match participant.get_winternitz("ot_pegout_id") {
-                Ok(ot_pegout_id) => {
-                    let ot_bit0 = participant.get_winternitz("ot_bit0")?;
-                    let ot_bit1 = participant.get_winternitz("ot_bit1")?;
+                Ok(_) => {
+                    let my_dispute_pubkey = self.members(context)?.my_dispute_pubkey.clone();
 
-                    // let script =
-                    //     scripts::reveal_secret(slot_preimage_bytes, &public_key, SignMode::Single);
-                    // let script_pubkey =
-                    //     ScriptBuf::new_p2wsh(&WScriptHash::from(script.get_script().clone()));
+                    let script = scripts::verify_signature(&my_dispute_pubkey, SignMode::Single)?;
 
-                    // protocol.add_transaction_output(
-                    //     WATCHTOWER_START_ENABLER_TX,
-                    //     &OutputType::SegwitScript {
-                    //         value: Amount::from_sat(START_ENABLER_VALUE),
-                    //         script_pubkey,
-                    //         script,
-                    //     },
-                    // )?;
+                    protocol.add_transaction_output(
+                        WATCHTOWER_INITIAL_DEPOSIT_TX,
+                        &OutputType::SegwitScript {
+                            value: Amount::from_sat(START_ENABLER_VALUE),
+                            script_pubkey: ScriptBuf::new_p2wsh(&WScriptHash::from(
+                                script.get_script().clone(),
+                            )),
+                            script,
+                        },
+                    )?;
 
                     operators_found += 1;
                 }
@@ -221,9 +210,9 @@ impl ProtocolHandler for InitProtocol {
         }
 
         assert!(
-            operators_found == operators_count,
+            operators_found == members.operator_count,
             "Expected {} operators, found {}",
-            operators_count,
+            members.operator_count,
             operators_found
         );
 
@@ -236,10 +225,10 @@ impl ProtocolHandler for InitProtocol {
 
     fn get_transaction_name(
         &self,
-        _name: &str,
+        name: &str,
         _context: &ProgramContext,
     ) -> Result<Transaction, BitVMXError> {
-        todo!()
+        Err(BitVMXError::InvalidTransactionName(name.to_string()))
     }
 
     fn notify_news(
@@ -251,12 +240,33 @@ impl ProtocolHandler for InitProtocol {
         _program_context: &ProgramContext,
         _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
-        todo!()
+        // TODO
+        Ok(())
     }
 }
 
 impl InitProtocol {
     pub fn new(ctx: ProtocolContext) -> Self {
         Self { ctx }
+    }
+
+    fn members(&self, context: &ProgramContext) -> Result<MembersSelected, BitVMXError> {
+        let members_selected = context
+            .globals
+            .get_var(&self.ctx.id, &MembersSelected::name())?
+            .unwrap()
+            .string()?;
+
+        let members_selected: MembersSelected = serde_json::from_str(&members_selected)?;
+        Ok(members_selected)
+    }
+
+    fn prover(&self, context: &ProgramContext) -> Result<bool, BitVMXError> {
+        let members = self.members(context)?;
+        Ok(members.my_role == ParticipantRole::Prover)
+    }
+
+    fn utxo(&self, name: &str, context: &ProgramContext) -> Result<PartialUtxo, BitVMXError> {
+        context.globals.get_var(&self.ctx.id, name)?.unwrap().utxo()
     }
 }

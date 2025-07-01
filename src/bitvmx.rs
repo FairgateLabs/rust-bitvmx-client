@@ -959,7 +959,11 @@ impl BitVMXApi for BitVMX {
                 //TODO: Revisit this as it might be insecure
             }
             IncomingBitVMXApiMessages::CreateKeyPair(id, index) => {
-                let pubkey = self.program_context.key_chain.key_manager.derive_keypair(index)?;
+                let pubkey = self
+                    .program_context
+                    .key_chain
+                    .key_manager
+                    .derive_keypair(index)?;
                 self.program_context.broker_channel.send(
                     from,
                     serde_json::to_string(&OutgoingBitVMXApiMessages::PubKey(id, pubkey))?,

@@ -5,7 +5,7 @@ use bitvmx_client::{
     config::Config,
     program::{
         participant::{P2PAddress, ParticipantRole},
-        protocols::union::events::events::Event,
+        protocols::union::events::events::MembersSelected,
         variables::{PartialUtxo, VariableTypes},
     },
     types::{OutgoingBitVMXApiMessages::*, L2_ID, PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_INIT},
@@ -142,8 +142,10 @@ impl Committee {
             );
         }
 
+        let init_covenant_id = Uuid::new_v4();
         self.all(|op| {
             op.setup_covenants(
+                init_covenant_id,
                 &members,
                 &members_addresses,
                 &members_take_pubkeys,
@@ -312,6 +314,7 @@ impl Member {
 
     fn setup_covenants(
         &mut self,
+        id: Uuid,
         members: &Vec<Member>,
         members_addresses: &HashMap<PublicKey, P2PAddress>,
         members_take_pubkeys: &Vec<PublicKey>,
@@ -320,6 +323,7 @@ impl Member {
         wt_funding_utxos: &HashMap<String, PartialUtxo>,
     ) -> Result<()> {
         self.setup_init_covenant(
+            id,
             members,
             members_addresses,
             members_take_pubkeys,
@@ -456,6 +460,7 @@ impl Member {
 
     fn setup_init_covenant(
         &mut self,
+        id: Uuid,
         members: &Vec<Member>,
         members_addresses: &HashMap<PublicKey, P2PAddress>,
         members_take_pubkeys: &Vec<PublicKey>,
@@ -463,7 +468,6 @@ impl Member {
         op_funding_utxos: &HashMap<String, PartialUtxo>,
         wt_funding_utxos: &HashMap<String, PartialUtxo>,
     ) -> Result<()> {
-        let id = Uuid::new_v4();
         let addresses = self.get_addresses(members);
 
         self.prepare_init_covenant(
@@ -713,7 +717,7 @@ impl Member {
             "Preparing Init covenant {} for {}", covenant_id, self.id
         );
 
-        let event = Event::MembersSelected {
+        let members_selected = MembersSelected {
             my_role: self.role.clone(),
             my_take_pubkey: self.keyring.take_pubkey.clone().unwrap(),
             my_dispute_pubkey: self.keyring.dispute_pubkey.clone().unwrap(),
@@ -726,8 +730,8 @@ impl Member {
 
         self.bitvmx.set_var(
             covenant_id,
-            &event.to_string(),
-            VariableTypes::String(serde_json::to_string(&event)?),
+            &MembersSelected::name(),
+            VariableTypes::String(serde_json::to_string(&members_selected)?),
         )?;
 
         if self.role == ParticipantRole::Prover {

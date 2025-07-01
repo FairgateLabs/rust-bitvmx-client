@@ -1,28 +1,23 @@
 use bitcoin::PublicKey;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt::Display};
+use std::collections::HashMap;
 
 use crate::program::participant::{P2PAddress, ParticipantRole};
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Event {
-    MembersSelected {
-        my_role: ParticipantRole,
-        my_take_pubkey: PublicKey,
-        my_dispute_pubkey: PublicKey,
-        take_pubkeys: Vec<PublicKey>,
-        dispute_pubkeys: Vec<PublicKey>,
-        addresses: HashMap<PublicKey, P2PAddress>,
-        operator_count: u32,
-        watchtower_count: u32,
-    }
+pub struct MembersSelected {
+    pub my_role: ParticipantRole,
+    pub my_take_pubkey: PublicKey,
+    pub my_dispute_pubkey: PublicKey,
+    pub take_pubkeys: Vec<PublicKey>,
+    pub dispute_pubkeys: Vec<PublicKey>,
+    pub addresses: HashMap<PublicKey, P2PAddress>,
+    pub operator_count: u32,
+    pub watchtower_count: u32,
 }
 
-impl Display for Event {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Event::MembersSelected { .. } => write!(f, "members_selected"),
-        }
+impl MembersSelected {
+    pub fn name() -> String {
+        "members_selected".to_string()
     }
 }
