@@ -11,6 +11,7 @@ use protocol_builder::{
     types::{
         connection::InputSpec,
         input::{SighashType, SpendMode},
+        output::SpeedupData,
         InputArgs, OutputType,
     },
 };
@@ -151,11 +152,11 @@ impl ProtocolHandler for DisputeCoreProtocol {
         Ok(())
     }
 
-    fn get_transaction_name(
+    fn get_transaction_by_name(
         &self,
         name: &str,
         _context: &ProgramContext,
-    ) -> Result<Transaction, BitVMXError> {
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         // TODO include only the txs that need to be executed based on a decision from the L2
         if name.starts_with(REIMBURSEMENT_KICKOFF_TX) {
             let op_and_slot: Vec<u32> = name
@@ -164,12 +165,12 @@ impl ProtocolHandler for DisputeCoreProtocol {
                 .split('_')
                 .map(|s| s.parse::<u32>().unwrap())
                 .collect();
-            return Ok(self.reimbursement(op_and_slot[0], op_and_slot[1])?);
+            return Ok((self.reimbursement(op_and_slot[0], op_and_slot[1])?, None));
         }
 
         match name {
-            OPERATOR_DISPUTE_OPENER_TX => Ok(self.dispute_opener()?),
-            WATCHTOWER_START_ENABLER_TX => Ok(self.start_enabler()?),
+            OPERATOR_DISPUTE_OPENER_TX => Ok((self.dispute_opener()?, None)),
+            WATCHTOWER_START_ENABLER_TX => Ok((self.start_enabler()?, None)),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
     }

@@ -9,6 +9,7 @@ use protocol_builder::{
     types::{
         connection::InputSpec,
         input::{SighashType, SpendMode},
+        output::SpeedupData,
         InputArgs, OutputType,
     },
 };
@@ -93,11 +94,11 @@ impl ProtocolHandler for TransferProtocol {
         Ok(ParticipantKeys::new(vec![], vec![]))
     }
 
-    fn get_transaction_name(
+    fn get_transaction_by_name(
         &self,
         name: &str,
         _context: &ProgramContext,
-    ) -> Result<Transaction, BitVMXError> {
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         if name.starts_with(TOO_TX) {
             let op_and_id: Vec<u32> = name
                 .strip_prefix(TOO_TX)
@@ -105,7 +106,7 @@ impl ProtocolHandler for TransferProtocol {
                 .split('_')
                 .map(|s| s.parse::<u32>().unwrap())
                 .collect();
-            return Ok(self.transfer(op_and_id[0], op_and_id[1])?);
+            return Ok((self.transfer(op_and_id[0], op_and_id[1])?, None));
         }
 
         Err(BitVMXError::InvalidTransactionName(name.to_string()))
