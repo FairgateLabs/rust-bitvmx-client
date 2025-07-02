@@ -395,6 +395,7 @@ impl Member {
 
         let take_aggregated_key =
             self.setup_key(take_aggregation_id, &addresses, Some(members_take_pubkeys))?;
+
         self.keyring.take_aggregated_key = Some(take_aggregated_key);
 
         let dispute_aggregated_key = self.setup_key(
@@ -402,6 +403,7 @@ impl Member {
             &addresses,
             Some(members_dispute_pubkeys),
         )?;
+
         self.keyring.dispute_aggregated_key = Some(dispute_aggregated_key);
 
         Ok(())
@@ -774,6 +776,18 @@ impl Member {
             covenant_id,
             "wt_funding_utxo",
             VariableTypes::Utxo(wt_funding_utxos.get(&self.id).unwrap().clone()),
+        )?;
+
+        self.bitvmx.set_var(
+            covenant_id,
+            "take_aggregated_key",
+            VariableTypes::PubKey(self.keyring.take_aggregated_key.clone().unwrap()),
+        )?;
+
+        self.bitvmx.set_var(
+            covenant_id,
+            "dispute_aggregated_key",
+            VariableTypes::PubKey(self.keyring.dispute_aggregated_key.clone().unwrap()),
         )?;
 
         Ok(())
