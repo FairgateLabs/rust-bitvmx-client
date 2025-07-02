@@ -8,7 +8,7 @@ use bitvmx_client::{
         protocols::union::events::MembersSelected,
         variables::{PartialUtxo, VariableTypes},
     },
-    types::{OutgoingBitVMXApiMessages::*, L2_ID, PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_INIT},
+    types::{OutgoingBitVMXApiMessages::*, L2_ID, PROGRAM_TYPE_DISPUTE_CORE},
 };
 
 use bitcoin::{Amount, Network, PublicKey, ScriptBuf};
@@ -139,10 +139,10 @@ impl Committee {
         }
 
         // setup covenants
-        let init_covenant_id = Uuid::new_v4();
+        let dispute_core_covenant_id = Uuid::new_v4();
         self.all(|op| {
             op.setup_covenants(
-                init_covenant_id,
+                dispute_core_covenant_id,
                 &members,
                 &members_addresses,
                 &members_take_pubkeys,
@@ -334,7 +334,7 @@ impl Member {
         op_funding_utxos: &HashMap<String, PartialUtxo>,
         wt_funding_utxos: &HashMap<String, PartialUtxo>,
     ) -> Result<()> {
-        self.setup_init_covenant(
+        self.setup_dispute_core_covenant(
             id,
             members,
             members_addresses,
@@ -345,8 +345,6 @@ impl Member {
         )?;
 
         // TODO: add the rest of the covenants here
-        // self.setup_dispute_core_covenant(members)?;
-        // self.setup_multiparty_penalization_covenant()?;
         // self.setup_pairwise_penalization_covenant()?;
         // self.setup_drp_covenant(members, utxo, take_aggregation_id)?;
 
@@ -487,7 +485,7 @@ impl Member {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn setup_init_covenant(
+    fn setup_dispute_core_covenant(
         &mut self,
         id: Uuid,
         members: &[Member],
@@ -499,7 +497,7 @@ impl Member {
     ) -> Result<()> {
         let addresses = self.get_addresses(members);
 
-        self.prepare_init_covenant(
+        self.prepare_dispute_core_covenant(
             id,
             members,
             members_addresses,
@@ -509,19 +507,9 @@ impl Member {
             wt_funding_utxos,
         )?;
 
-        // TODO rename PROGRAM_TYPE_DISPUTE_CORE to  PROGRAM_TYPE_PACKET_COVENANT
-        self.bitvmx
-            .setup(id, PROGRAM_TYPE_INIT.to_string(), addresses, 0)?;
-
-        Ok(())
-    }
-
-    fn setup_dispute_core_covenant(&mut self, members: &[Member]) -> Result<()> {
-        let id = Uuid::new_v4();
-        let addresses = self.get_addresses(members);
-
         self.bitvmx
             .setup(id, PROGRAM_TYPE_DISPUTE_CORE.to_string(), addresses, 0)?;
+
         Ok(())
     }
 
@@ -731,7 +719,7 @@ impl Member {
     // }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn prepare_init_covenant(
+    pub fn prepare_dispute_core_covenant(
         &mut self,
         covenant_id: Uuid,
         members: &[Member],
@@ -744,7 +732,7 @@ impl Member {
     ) -> Result<()> {
         info!(
             id = self.id,
-            "Preparing Init covenant {} for {}", covenant_id, self.id
+            "Preparing Dispute Core covenant {} for {}", covenant_id, self.id
         );
 
         let members_selected = MembersSelected {

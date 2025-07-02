@@ -4,7 +4,7 @@ use crate::{
         participant::{ParticipantKeys, ParticipantRole, PublicKeyType},
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
-            union::{events::MembersSelected, take},
+            union::events::MembersSelected,
         },
         variables::PartialUtxo,
     },
@@ -12,11 +12,10 @@ use crate::{
 };
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
-use core::panic;
 use protocol_builder::{
     scripts::{self, SignMode},
     types::{
-        connection::InputSpec,
+        connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
         OutputType,
     },
@@ -29,19 +28,26 @@ pub const OPERATOR_FUNDING_TX: &str = "OPERATOR_FUNDING_TX";
 pub const WATCHTOWER_FUNDING_TX: &str = "WATCHTOWER_FUNDING_TX";
 pub const OPERATOR_INITIAL_DEPOSIT_TX: &str = "OPERATOR_INITIAL_DEPOSIT_TX";
 pub const WATCHTOWER_INITIAL_DEPOSIT_TX: &str = "WATCHTOWER_INITIAL_DEPOSIT_TX";
-
 pub const REIMBURSEMENT_KICKOFF_TX: &str = "REIMBURSEMENT_KICKOFF_TX";
+pub const NO_TAKE_TX: &str = "NO_TAKE_TX";
+pub const CHALLENGE_TX: &str = "CHALLENGE_TX";
+pub const YOU_CANT_TAKE_TX: &str = "YOU_CANT_TAKE_TX";
+pub const TRY_MOVE_ON_TX: &str = "TRY_MOVE_ON_TX";
+pub const TRY_TAKE_2_TX: &str = "TRY_TAKE_2_TX";
+pub const NO_DISPUTE_OPENED_TX: &str = "NO_DISPUTE_OPENED_TX";
+
+pub const TAKE_ENABLER_TIMELOCK: u16 = 144;
 
 pub const DISPUTE_OPENER_VALUE: u64 = 1000;
 pub const START_ENABLER_VALUE: u64 = 1000;
 pub const DUST_VALUE: u64 = 546;
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct InitProtocol {
+pub struct DisputeCoreProtocol {
     ctx: ProtocolContext,
 }
 
-impl ProtocolHandler for InitProtocol {
+impl ProtocolHandler for DisputeCoreProtocol {
     fn context(&self) -> &ProtocolContext {
         &self.ctx
     }
@@ -61,17 +67,6 @@ impl ProtocolHandler for InitProtocol {
         &self,
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
-        // let members = self.members(&program_context)?;
-
-        // let take_aggregated_key = program_context
-        //     .key_chain
-        //     .new_musig2_session(members.take_pubkeys.clone(), members.my_take_pubkey.clone())?;
-
-        // let dispute_aggregated_key = program_context.key_chain.new_musig2_session(
-        //     members.dispute_pubkeys.clone(),
-        //     members.my_dispute_pubkey.clone(),
-        // )?;
-
         let mut keys = vec![];
         if self.prover(program_context)? {
             keys.push((
@@ -88,28 +83,13 @@ impl ProtocolHandler for InitProtocol {
             ));
         }
 
-        // keys.push((
-        //     "take_aggregated_key".to_string(),
-        //     PublicKeyType::Public(take_aggregated_key.clone()),
-        // ));
-        // keys.push((
-        //     "dispute_aggregated_key".to_string(),
-        //     PublicKeyType::Public(dispute_aggregated_key.clone()),
-        // ));
-
-        Ok(ParticipantKeys::new(
-            keys,
-            vec![
-                // "take_aggregated_key".to_string(),
-                // "dispute_aggregated_key".to_string(),
-            ],
-        ))
+        Ok(ParticipantKeys::new(keys, vec![]))
     }
 
     fn build(
         &self,
         keys: Vec<ParticipantKeys>,
-        computed_aggregated: HashMap<String, PublicKey>,
+        _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         let members = self.members(context)?;
@@ -170,45 +150,224 @@ impl ProtocolHandler for InitProtocol {
                 )?,
             )?;
 
-            // Take output
-            protocol.add_transaction_output(
+            // Connection to prevent the take transactions to occur (No Take)
+            protocol.add_connection(
+                "no_take_connection",
                 REIMBURSEMENT_KICKOFF_TX,
-                &OutputType::taproot(
+                OutputType::taproot(
                     DUST_VALUE,
                     &self.public_key("take_aggregated_key", context)?,
                     &vec![],
-                )?,
+                )?
+                .into(),
+                NO_TAKE_TX,
+                InputSpec::Auto(
+                    SighashType::taproot_all(),
+                    SpendMode::KeyOnly {
+                        key_path_sign: SignMode::Aggregate,
+                    },
+                ),
+                None,
+                None,
             )?;
 
-            // Next enabler output
-            protocol.add_transaction_output(
+            // Connections to move to the next dispute core (T)
+            // TODO use the correct value of bit 1 and 0 for winternitz
+            let bit0_value: Vec<u8> = vec![0];
+            let bit1_value: Vec<u8> = vec![1];
+
+            let bit_0_script = scripts::verify_bit(
+                self.public_key("take_aggregated_key", context)?,
+                bit1_pubkey,
+                bit0_value,
+            )?;
+
+            let bit_1_script = scripts::verify_bit(
+                self.public_key("take_aggregated_key", context)?,
+                bit1_pubkey,
+                bit1_value,
+            )?;
+
+            // CHALLENGE_TX connection (T)
+            protocol.add_connection(
+                "take_enabler",
                 REIMBURSEMENT_KICKOFF_TX,
-                &OutputType::taproot(
+                OutputType::taproot(
+                    DUST_VALUE,
+                    &self.public_key("take_aggregated_key", context)?,
+                    &vec![bit_0_script, bit_1_script],
+                )?
+                .into(),
+                CHALLENGE_TX,
+                //InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
+                InputSpec::Auto(
+                    SighashType::taproot_all(),
+                    SpendMode::All {
+                        key_path_sign: SignMode::Aggregate,
+                    },
+                ),
+                Some(TAKE_ENABLER_TIMELOCK),
+                None,
+            )?;
+
+            protocol.add_connection(
+                "try_take_2",
+                CHALLENGE_TX,
+                OutputType::taproot(
+                    DUST_VALUE,
+                    &self.public_key("take_aggregated_key", context)?,
+                    &vec![],
+                )?
+                .into(),
+                TRY_TAKE_2_TX,
+                InputSpec::Auto(
+                    SighashType::taproot_all(),
+                    SpendMode::KeyOnly {
+                        key_path_sign: SignMode::Aggregate,
+                    },
+                ),
+                Some(TAKE_ENABLER_TIMELOCK),
+                None,
+            )?;
+
+            protocol.add_connection(
+                "no_dispute_opened",
+                CHALLENGE_TX,
+                OutputType::taproot(
+                    DUST_VALUE,
+                    &self.public_key("take_aggregated_key", context)?,
+                    &vec![],
+                )?
+                .into(),
+                NO_DISPUTE_OPENED_TX,
+                InputSpec::Auto(
+                    SighashType::taproot_all(),
+                    SpendMode::KeyOnly {
+                        key_path_sign: SignMode::Aggregate,
+                    },
+                ),
+                Some(TAKE_ENABLER_TIMELOCK),
+                None,
+            )?;
+
+            // YOU_CANT_TAKE_TX connection
+            protocol.add_connection(
+                "take_enabler",
+                REIMBURSEMENT_KICKOFF_TX,
+                OutputSpec::Index(1),
+                YOU_CANT_TAKE_TX,
+                //InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
+                InputSpec::Auto(
+                    SighashType::taproot_all(),
+                    SpendMode::All {
+                        key_path_sign: SignMode::Aggregate,
+                    },
+                ),
+                Some(TAKE_ENABLER_TIMELOCK / 2),
+                None,
+            )?;
+
+            // Connection to try to move to the next dispute core (Try Move On)
+            protocol.add_connection(
+                "take_enabler",
+                REIMBURSEMENT_KICKOFF_TX,
+                OutputType::taproot(
                     DUST_VALUE,
                     &self.public_key("dispute_aggregated_key", context)?,
                     &vec![],
-                )?,
+                )?
+                .into(),
+                TRY_MOVE_ON_TX,
+                InputSpec::Auto(
+                    SighashType::taproot_all(),
+                    SpendMode::KeyOnly {
+                        key_path_sign: SignMode::Aggregate,
+                    },
+                ),
+                None,
+                None,
             )?;
 
-            // No dispute opened output
-            protocol.add_transaction_output(
+            // Connection to stop moving on to the next dispute core (X)
+            protocol.add_connection(
+                "stop_move_on_enabler",
                 REIMBURSEMENT_KICKOFF_TX,
-                &OutputType::taproot(
+                OutputType::taproot(
                     DUST_VALUE,
                     &self.public_key("dispute_aggregated_key", context)?,
                     &vec![],
-                )?,
+                )?
+                .into(),
+                NO_DISPUTE_OPENED_TX,
+                InputSpec::Auto(
+                    SighashType::taproot_all(),
+                    SpendMode::KeyOnly {
+                        key_path_sign: SignMode::Aggregate,
+                    },
+                ),
+                None,
+                None,
             )?;
 
-            // Next dispute core output
-            protocol.add_transaction_output(
+            // Connection to stop moving on to the next dispute core (Y)
+            protocol.add_connection(
+                "you_cant_take_enabler",
                 REIMBURSEMENT_KICKOFF_TX,
-                &OutputType::taproot(
+                OutputType::taproot(
                     DUST_VALUE,
                     &self.public_key("dispute_aggregated_key", context)?,
                     &vec![],
-                )?,
+                )?
+                .into(),
+                YOU_CANT_TAKE_TX,
+                InputSpec::Auto(
+                    SighashType::taproot_all(),
+                    SpendMode::KeyOnly {
+                        key_path_sign: SignMode::Aggregate,
+                    },
+                ),
+                None,
+                None,
             )?;
+
+            // protocol.add_transaction_output(
+            //     REIMBURSEMENT_KICKOFF_TX,
+            //     &OutputType::taproot(
+            //         DUST_VALUE,
+            //         &self.public_key("take_aggregated_key", context)?,
+            //         &vec![],
+            //     )?,
+            // )?;
+
+            // // Next enabler output
+            // protocol.add_transaction_output(
+            //     REIMBURSEMENT_KICKOFF_TX,
+            //     &OutputType::taproot(
+            //         DUST_VALUE,
+            //         &self.public_key("dispute_aggregated_key", context)?,
+            //         &vec![],
+            //     )?,
+            // )?;
+
+            // // No dispute opened output
+            // protocol.add_transaction_output(
+            //     REIMBURSEMENT_KICKOFF_TX,
+            //     &OutputType::taproot(
+            //         DUST_VALUE,
+            //         &self.public_key("dispute_aggregated_key", context)?,
+            //         &vec![],
+            //     )?,
+            // )?;
+
+            // // Next dispute core output
+            // protocol.add_transaction_output(
+            //     REIMBURSEMENT_KICKOFF_TX,
+            //     &OutputType::taproot(
+            //         DUST_VALUE,
+            //         &self.public_key("dispute_aggregated_key", context)?,
+            //         &vec![],
+            //     )?,
+            // )?;
         }
 
         let wt_funding_utxo = self.utxo("wt_funding_utxo", context)?;
@@ -285,7 +444,7 @@ impl ProtocolHandler for InitProtocol {
     }
 }
 
-impl InitProtocol {
+impl DisputeCoreProtocol {
     pub fn new(ctx: ProtocolContext) -> Self {
         Self { ctx }
     }

@@ -30,7 +30,17 @@ use crate::program::protocols::union::{
 };
 use crate::program::variables::WitnessTypes;
 use crate::program::{variables::VariableTypes, witness};
-use crate::types::*;
+use crate::types::{
+    ProgramContext, PROGRAM_TYPE_DRP, PROGRAM_TYPE_INIT, PROGRAM_TYPE_LOCK,
+    PROGRAM_TYPE_MULTIPARTY_PENALIZATION, PROGRAM_TYPE_PACKET, PROGRAM_TYPE_PAIRWISE_PENALIZATION,
+    PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TAKE, PROGRAM_TYPE_TRANSFER,
+};
+
+use super::super::participant::ParticipantKeys;
+use super::dispute::DisputeResolutionProtocol;
+use super::lock::LockProtocol;
+use super::slot::SlotProtocol;
+use super::transfer::TransferProtocol;
 
 #[enum_dispatch]
 pub trait ProtocolHandler {
@@ -434,7 +444,6 @@ pub enum ProtocolType {
     DisputeCoreProtocol,
     #[cfg(feature = "union")]
     PairwisePenalizationProtocol,
-    #[cfg(feature = "union")]
     MultipartyPenalizationProtocol,
 }
 
