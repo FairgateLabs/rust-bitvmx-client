@@ -908,6 +908,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
 
         self.add_connection_with_scripts(
+            context,
             aggregated,
             &mut protocol,
             TIMELOCK_BLOCKS,
@@ -921,7 +922,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             (&prover_speedup_pub, &verifier_speedup_pub),
         )?;
 
-        self.add_vout_to_monitor(context, START_CH, 0)?;
+        //self.add_vout_to_monitor(context, START_CH, 0)?;
 
         amount = self.checked_sub(amount, fee)?;
         amount = self.checked_sub(amount, speedup_dust)?;
@@ -993,6 +994,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         )?;
 
         self.add_connection_with_scripts(
+            context,
             aggregated,
             &mut protocol,
             TIMELOCK_BLOCKS,
@@ -1018,6 +1020,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 .collect::<Vec<_>>();
 
             self.add_connection_with_scripts(
+                context,
                 aggregated,
                 &mut protocol,
                 TIMELOCK_BLOCKS,
@@ -1043,6 +1046,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             let _bits = nary_def.bits_for_round(i);
 
             self.add_connection_with_scripts(
+                context,
                 aggregated,
                 &mut protocol,
                 TIMELOCK_BLOCKS,
@@ -1076,6 +1080,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             .collect::<Vec<&str>>();
 
         self.add_connection_with_scripts(
+            context,
             aggregated,
             &mut protocol,
             TIMELOCK_BLOCKS,
@@ -1100,6 +1105,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         amount -= speedup_dust;
 
         self.add_connection_with_scripts(
+            context,
             aggregated,
             &mut protocol,
             TIMELOCK_BLOCKS,
@@ -1459,6 +1465,7 @@ impl DisputeResolutionProtocol {
 
     pub fn add_connection_with_scripts(
         &self,
+        context: &ProgramContext,
         aggregated: &PublicKey,
         protocol: &mut Protocol,
         timelock_blocks: u16,
@@ -1554,7 +1561,9 @@ impl DisputeResolutionProtocol {
                 &hardcoded_unspendable(),
                 &leaves_speedup.unwrap(),
             )?;
-            protocol.add_transaction_output(from, &output_type)?;
+            protocol.add_transaction_output(to, &output_type)?;
+            let last = protocol.get_output_count(to)? - 1;
+            self.add_vout_to_monitor(context, to, last)?;
         } else {
             pb.add_speedup_output(protocol, to, amount_speedup, mine_speedup)?;
         }
