@@ -365,8 +365,9 @@ impl ClientTest {
     fn _generate_zkp(&mut self) -> Result<()> {
         let request_id = Uuid::new_v4();
         let input = vec![50, 0, 0, 0];
+        let elf_file_path = "../rust-bitvmx-zk-proof/target/riscv-guest/methods/bitvmx/riscv32im-risc0-zkvm-elf/release/bitvmx.bin".to_string();
 
-        self.prover_client.generate_zkp(request_id, input)?;
+        self.prover_client.generate_zkp(request_id, input, elf_file_path)?;
         self.advance(1);
 
         Ok(())
@@ -376,6 +377,7 @@ impl ClientTest {
     fn proof_ready(&mut self) -> Result<()> {
         let request_id = Uuid::new_v4();
         let input = vec![50, 0, 0, 0];
+        let elf_file_path = "../rust-bitvmx-zk-proof/target/riscv-guest/methods/bitvmx/riscv32im-risc0-zkvm-elf/release/bitvmx.bin".to_string();
 
         // proof was not requested yet
         self.prover_client.proof_ready(request_id)?;
@@ -389,7 +391,7 @@ impl ClientTest {
         ));
 
         // Generate a proof
-        self.prover_client.generate_zkp(request_id, input)?;
+        self.prover_client.generate_zkp(request_id, input, elf_file_path)?;
         self.advance(1);
 
         // while proof is not ready, ask proof_ready and wait for the response

@@ -36,7 +36,6 @@ use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use p2p_handler::{LocalAllowList, P2pHandler, PeerId, ReceiveHandlerChannel};
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::time::Instant;
 use std::{
     collections::{HashSet, VecDeque},
@@ -361,10 +360,23 @@ impl BitVMX {
                     ack_news =
                         AckNews::Coordinator(AckCoordinatorNews::DispatchSpeedUpError(_counter));
                 }
-                CoordinatorNews::FundingNotFound() => {
+                CoordinatorNews::FundingNotFound => {
                     // Complete
                     error!("Funding not found for speed-up transaction. This is a critical error.");
-                    return Err(BitVMXError::InsufficientAmount);
+
+                    ack_news = AckNews::Coordinator(AckCoordinatorNews::FundingNotFound);
+                }
+                CoordinatorNews::EstimateFeerateTooHigh(estimate_fee, max_allowed) => {
+                    // Complete
+                    error!(
+                        "Estimate feerate too high: {:?} {:?}",
+                        estimate_fee, max_allowed
+                    );
+
+                    ack_news = AckNews::Coordinator(AckCoordinatorNews::EstimateFeerateTooHigh(
+                        estimate_fee,
+                        max_allowed,
+                    ));
                 }
             }
 
@@ -630,24 +642,19 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn generate_zkp(&mut self, from: u32, id: Uuid, input: Vec<u8>) -> Result<(), BitVMXError> {
+    fn generate_zkp(&mut self, from: u32, id: Uuid, input: Vec<u8>, elf_file_path:String) -> Result<(), BitVMXError> {
         info!("Generating ZKP for input: {:?}", input);
 
         // Store the 'from' parameter
         self.store
             .set(StoreKey::ZKPFrom(id).get_key(), from, None)?;
 
-        let path = format!("./zkp-jobs/{}", id);
-
-        fs::create_dir_all(&path).map_err(|e| BitVMXError::DirectoryCreationError(path, e))?;
-
         let msg = serde_json::to_string(&DispatcherJob {
             job_id: id.to_string(),
             job_type: ProverJobType::Prove(
                 input,
-                "./a.elf".to_string(),
-                format!("./zkp-jobs/{}/output.json", id),
-                format!("./zkp-jobs/{}/stark-proof.bin", id),
+                elf_file_path,
+                format!("./zkp-jobs/{}", id),
             ),
         })?;
 
@@ -1048,8 +1055,8 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::GetAggregatedPubkey(id) => {
                 BitVMXApi::get_aggregated_pubkey(self, from, id)?
             }
-            IncomingBitVMXApiMessages::GenerateZKP(id, input) => {
-                BitVMXApi::generate_zkp(self, from, id, input)?
+            IncomingBitVMXApiMessages::GenerateZKP(id, input, elf_file_path) => {
+                BitVMXApi::generate_zkp(self, from, id, input, elf_file_path)?
             }
             IncomingBitVMXApiMessages::ProofReady(id) => BitVMXApi::proof_ready(self, from, id)?,
             IncomingBitVMXApiMessages::GetZKPExecutionResult(id) => {
