@@ -1217,7 +1217,7 @@ impl DisputeResolutionProtocol {
         let (program_definitions, _) = self.get_program_definition(context)?;
         let mut program = program_definitions.load_program()?;
 
-        let mut names_and_keys: HashMap<&str, Vec<Vec<(&'static str, &WinternitzPublicKey)>>> =
+        let mut names_and_keys: HashMap<&str, Vec<Vec<(String, &WinternitzPublicKey)>>> =
             HashMap::new();
 
         let iteration_counts = HashMap::from([
@@ -1238,7 +1238,7 @@ impl DisputeResolutionProtocol {
 
         for (challenge_name, subnames) in CHALLENGES.iter() {
             let iterations = *iteration_counts.get(challenge_name).unwrap_or(&1);
-            let mut groups: Vec<Vec<(&'static str, &WinternitzPublicKey)>> =
+            let mut groups: Vec<Vec<(String, &WinternitzPublicKey)>> =
                 Vec::with_capacity(iterations as usize);
 
             for i in 0..iterations {
@@ -1250,9 +1250,8 @@ impl DisputeResolutionProtocol {
                         } else {
                             format!("{}_{}_{}", challenge_name, subname, i)
                         };
-                        let leaked: &'static str = Box::leak(var_name.into_boxed_str()); //TODO: dont use leak
-                        let key = keys.get_winternitz(leaked).unwrap();
-                        (leaked, key)
+                        let key = keys.get_winternitz(&var_name).unwrap();
+                        (var_name, key)
                     })
                     .collect::<Vec<_>>();
                 groups.push(group);
@@ -1260,7 +1259,6 @@ impl DisputeResolutionProtocol {
 
             names_and_keys.insert(challenge_name, groups);
         }
-
         let mut winternitz_check_list = vec![];
 
         for (challenge_name, subnames) in CHALLENGES.iter() {
