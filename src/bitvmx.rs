@@ -111,7 +111,7 @@ impl BitVMX {
             &config.bitcoin,
             store.clone(),
             key_chain.key_manager.clone(),
-            config.coordinator_constants.clone(),
+            config.coordinator_settings.clone(),
         )?;
 
         //TOOD: This could be moved to a simplified helper inside brokerstorage new

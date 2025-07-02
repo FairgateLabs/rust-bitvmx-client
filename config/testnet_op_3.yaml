@@ -22,10 +22,10 @@ p2p:
   peer_id_file: peer_id
   timeout: 5
 
-coordinator_constants:
-  monitor_constants:
+coordinator_settings:
+  monitor_settings:
     confirmation_threshold: 1
-    indexer_constants:
+    indexer_settings:
       checkpoint_height: 4400538
 
 coordinator:
