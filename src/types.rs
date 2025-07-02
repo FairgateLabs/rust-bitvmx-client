@@ -258,7 +258,6 @@ pub const PROGRAM_TYPE_TRANSFER: &str = "transfer";
 pub const PROGRAM_TYPE_ACCEPT_PEGIN: &str = "accept_pegin";
 pub const PROGRAM_TYPE_REQUEST_PEGOUT: &str = "request_pegout";
 pub const PROGRAM_TYPE_TAKE: &str = "take";
-pub const PROGRAM_TYPE_INIT: &str = "init";
 pub const PROGRAM_TYPE_DISPUTE_CORE: &str = "dispute_core";
 pub const PROGRAM_TYPE_PAIRWISE_PENALIZATION: &str = "pairwise_penalization";
 pub const PROGRAM_TYPE_PACKET: &str = "packet";

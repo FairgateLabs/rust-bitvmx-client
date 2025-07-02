@@ -11,7 +11,6 @@ use crate::{
 };
 use bitcoin::{Amount, PublicKey, ScriptBuf, Transaction, Txid, WScriptHash};
 use bitcoin_coordinator::TransactionStatus;
-use core::panic;
 use protocol_builder::{
     scripts::{self, SignMode},
     types::{
@@ -36,11 +35,11 @@ pub const START_ENABLER_VALUE: u64 = 1000;
 pub const DUST_VALUE: u64 = 546;
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct InitProtocol {
+pub struct DisputeCoreProtocol {
     ctx: ProtocolContext,
 }
 
-impl ProtocolHandler for InitProtocol {
+impl ProtocolHandler for DisputeCoreProtocol {
     fn context(&self) -> &ProtocolContext {
         &self.ctx
     }
@@ -110,28 +109,13 @@ impl ProtocolHandler for InitProtocol {
             ));
         }
 
-        // keys.push((
-        //     "take_aggregated_key".to_string(),
-        //     PublicKeyType::Public(take_aggregated_key.clone()),
-        // ));
-        // keys.push((
-        //     "dispute_aggregated_key".to_string(),
-        //     PublicKeyType::Public(dispute_aggregated_key.clone()),
-        // ));
-
-        Ok(ParticipantKeys::new(
-            keys,
-            vec![
-                // "take_aggregated_key".to_string(),
-                // "dispute_aggregated_key".to_string(),
-            ],
-        ))
+        Ok(ParticipantKeys::new(keys, vec![]))
     }
 
     fn build(
         &self,
         keys: Vec<ParticipantKeys>,
-        computed_aggregated: HashMap<String, PublicKey>,
+        _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         let members_selected = context
@@ -261,7 +245,7 @@ impl ProtocolHandler for InitProtocol {
     }
 }
 
-impl InitProtocol {
+impl DisputeCoreProtocol {
     pub fn new(ctx: ProtocolContext) -> Self {
         Self { ctx }
     }
