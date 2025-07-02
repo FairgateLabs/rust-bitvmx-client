@@ -29,7 +29,7 @@ use protocol_builder::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
         output::SpeedupData,
-        OutputType,
+        OutputType, Utxo,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -303,7 +303,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         match name {
-            START_CH => Ok((self.start_challenge(context)?, None)),
+            START_CH => Ok(self.add_speedup_data(name, context, self.start_challenge(context)?)?),
             INPUT_1 => Ok((self.input_1_tx(context)?, None)),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
@@ -312,7 +312,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
     fn notify_news(
         &self,
         tx_id: Txid,
-        _vout: Option<u32>,
+        vout: Option<u32>,
         tx_status: TransactionStatus,
         _context: String,
         program_context: &ProgramContext,
@@ -320,9 +320,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
     ) -> Result<(), BitVMXError> {
         let name = self.get_transaction_name_by_id(tx_id)?;
         info!(
-            "Program {}: Transaction {} has been seen on-chain {}",
+            "Program {}: Transaction {}:{:?} has been seen on-chain {}",
             self.ctx.id,
-            name,
+            style(&name).green(),
+            style(&vout).yellow(),
             self.role()
         );
 
@@ -331,6 +332,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             .get_var(&self.ctx.id, "fail_force_config")?
             .unwrap()
             .fail_configuration()?;
+
+        if name == INPUT_1 && vout.is_some() {
+            //This is the input transaction, we need to decode the witness
+            //if configured with input in speedup, decode witness here
+
+            return Ok(());
+        }
 
         if name == INPUT_1 && self.role() == ParticipantRole::Prover {
             if program_context
@@ -838,7 +846,17 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         let input_in_speedup = false;
         let prover_speedup_pub = keys[0].get_public("speedup")?;
+        context.globals.set_var(
+            &self.ctx.id,
+            "prover_speedup_pub",
+            VariableTypes::PubKey(prover_speedup_pub.clone()),
+        )?;
         let verifier_speedup_pub = keys[1].get_public("speedup")?;
+        context.globals.set_var(
+            &self.ctx.id,
+            "verifier_speedup_pub",
+            VariableTypes::PubKey(verifier_speedup_pub.clone()),
+        )?;
         let aggregated = computed_aggregated.get("aggregated_1").unwrap();
         let (agg_or_prover, agg_or_verifier) = if input_in_speedup {
             (prover_speedup_pub, verifier_speedup_pub)
@@ -867,6 +885,11 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             None,
             Some(utxo.0),
         )?;
+
+        let pb = ProtocolBuilder {};
+        pb.add_speedup_output(&mut protocol, START_CH, speedup_dust, verifier_speedup_pub)?;
+
+        amount = self.checked_sub(amount, speedup_dust)?;
 
         amount = self.checked_sub(amount, fee)?;
 
@@ -897,6 +920,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             false,
             (&prover_speedup_pub, &verifier_speedup_pub),
         )?;
+
+        self.add_vout_to_monitor(context, START_CH, 0)?;
+
         amount = self.checked_sub(amount, fee)?;
         amount = self.checked_sub(amount, speedup_dust)?;
 
@@ -1102,6 +1128,43 @@ impl DisputeResolutionProtocol {
 
     pub fn role(&self) -> ParticipantRole {
         get_role(self.ctx.my_idx)
+    }
+
+    fn get_speedup_key_for(
+        &self,
+        context: &ProgramContext,
+        role: &str,
+    ) -> Result<PublicKey, BitVMXError> {
+        Ok(context
+            .globals
+            .get_var(&self.ctx.id, &format!("{role}_speedup_pub"))?
+            .unwrap()
+            .pubkey()?)
+    }
+
+    fn add_speedup_data(
+        &self,
+        name: &str,
+        context: &ProgramContext,
+        tx: Transaction,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        let txid = tx.compute_txid();
+
+        let (vout, role) = match name {
+            START_CH => (0, "verifier"),
+            _ => todo!("Speedup data not implemented for transaction: {}", name),
+        };
+
+        let amount = tx.output[vout as usize].value.to_sat();
+        Ok((
+            tx,
+            Some(SpeedupData::new(Utxo::new(
+                txid,
+                vout,
+                amount,
+                &self.get_speedup_key_for(context, role)?,
+            ))),
+        ))
     }
 
     pub fn start_challenge(&self, context: &ProgramContext) -> Result<Transaction, BitVMXError> {

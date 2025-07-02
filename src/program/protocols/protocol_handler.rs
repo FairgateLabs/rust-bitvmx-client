@@ -87,8 +87,55 @@ pub trait ProtocolHandler {
         self.load_protocol()?.transaction_by_id(txid).cloned()
     }
 
-    fn get_transaction_ids(&self) -> Result<Vec<Txid>, ProtocolBuilderError> {
-        Ok(self.load_protocol()?.get_transaction_ids())
+    fn add_vout_to_monitor(
+        &self,
+        program_context: &ProgramContext,
+        name: &str,
+        vout: u32,
+    ) -> Result<(), BitVMXError> {
+        let mut tx_names_and_vout = program_context
+            .globals
+            .get_var(&self.context().id, "tx_vouts_to_monitor")?
+            .unwrap_or(VariableTypes::VecStr(vec![]))
+            .vec_string()?;
+        tx_names_and_vout.push(format!("{}:{}", name, vout));
+        program_context.globals.set_var(
+            &self.context().id,
+            "tx_vouts_to_monitor",
+            VariableTypes::VecStr(tx_names_and_vout),
+        )?;
+
+        Ok(())
+    }
+
+    fn get_transactions_to_monitor(
+        &self,
+        program_context: &ProgramContext,
+    ) -> Result<(Vec<Txid>, Vec<(Txid, u32)>), BitVMXError> {
+        let protocol = self.load_protocol()?;
+        let txs = protocol.get_transaction_ids();
+        let tx_names_and_vout = program_context
+            .globals
+            .get_var(&self.context().id, "tx_vouts_to_monitor")?
+            .unwrap_or(VariableTypes::VecStr(vec![]))
+            .vec_string()?;
+        let mut parsed: Vec<(Txid, u32)> = vec![];
+        for name in &tx_names_and_vout {
+            let parts: Vec<&str> = name.split(':').collect();
+            if parts.len() == 2 {
+                parsed.push((
+                    protocol.transaction_by_name(parts[0])?.compute_txid(),
+                    parts[1].parse::<u32>().unwrap_or(0),
+                ));
+            } else {
+                error!("Invalid tx_vouts_to_monitor format: {}", name);
+                return Err(BitVMXError::InvalidVariableType(
+                    "tx_vouts_to_monitor".to_string(),
+                ));
+            }
+        }
+
+        Ok((txs, parsed))
     }
 
     fn get_transaction_name_by_id(&self, txid: Txid) -> Result<String, ProtocolBuilderError> {

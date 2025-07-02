@@ -12,6 +12,7 @@ use crate::{
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus, TypesToMonitor};
 use chrono::Utc;
+use console::style;
 use key_manager::musig2::{types::MessageId, PartialSignature, PubNonce};
 use p2p_handler::PeerId;
 use serde::{Deserialize, Serialize};
@@ -621,7 +622,8 @@ impl Program {
             }
             ProgramState::Monitoring => {
                 // After the program is ready, we need to monitor the transactions
-                let txns_to_monitor = self.get_txs_to_monitor()?;
+                let (txns_to_monitor, vouts_to_monitor) =
+                    self.get_transactions_to_monitor(program_context)?;
 
                 let context = Context::ProgramId(self.program_id);
                 let txs_to_monitor =
@@ -631,11 +633,18 @@ impl Program {
                     .bitcoin_coordinator
                     .monitor(txs_to_monitor)?;
 
-                debug!("Monitoring best block");
-                // Monitor when the best block changes
-                program_context
-                    .bitcoin_coordinator
-                    .monitor(TypesToMonitor::NewBlock)?;
+                for (txid, vout) in vouts_to_monitor {
+                    info!(
+                        "Monitoring vout {} of txid {} for program {}",
+                        vout, txid, self.program_id
+                    );
+                    let vout_to_monitor =
+                        TypesToMonitor::SpendingUTXOTransaction(txid, vout, context.to_string()?);
+
+                    program_context
+                        .bitcoin_coordinator
+                        .monitor(vout_to_monitor)?;
+                }
 
                 self.move_program_to_next_state()?;
 
@@ -734,7 +743,11 @@ impl Program {
 
         let context = Context::ProgramId(self.program_id);
 
-        info!("Dispatching transaction: {}", tx_to_dispatch.compute_txid());
+        info!(
+            "Dispatching transaction: {} and speedup: {:?}",
+            style(tx_to_dispatch.compute_txid()).green(),
+            style(&speedup).yellow(),
+        );
 
         program_context.bitcoin_coordinator.dispatch(
             tx_to_dispatch,
@@ -793,10 +806,11 @@ impl Program {
         Ok(())
     }
 
-    pub fn get_txs_to_monitor(&self) -> Result<Vec<Txid>, BitVMXError> {
-        self.protocol
-            .get_transaction_ids()
-            .map_err(BitVMXError::from)
+    pub fn get_transactions_to_monitor(
+        &self,
+        program_context: &ProgramContext,
+    ) -> Result<(Vec<Txid>, Vec<(Txid, u32)>), BitVMXError> {
+        self.protocol.get_transactions_to_monitor(program_context)
     }
 
     fn get_key(key: StoreKey) -> String {
