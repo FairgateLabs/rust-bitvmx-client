@@ -159,19 +159,25 @@ impl ProtocolHandler for InitProtocol {
                 None,
             )?;
 
-            //TODO recover take_aggregated_key and dispute_aggregated_key
-
             // Add the REIMBURSEMENT_KICKOFF_TX outputs
             // Take enable output
             protocol.add_transaction_output(
                 REIMBURSEMENT_KICKOFF_TX,
-                &OutputType::taproot(DUST_VALUE, &take_aggregated_key, &vec![])?,
+                &OutputType::taproot(
+                    DUST_VALUE,
+                    &self.public_key("take_aggregated_key", context)?,
+                    &vec![],
+                )?,
             )?;
 
             // Take output
             protocol.add_transaction_output(
                 REIMBURSEMENT_KICKOFF_TX,
-                &OutputType::taproot(DUST_VALUE, &computed_aggregated_key, &vec![])?,
+                &OutputType::taproot(
+                    DUST_VALUE,
+                    &self.public_key("take_aggregated_key", context)?,
+                    &vec![],
+                )?,
             )?;
 
             // Next enabler output
@@ -179,7 +185,7 @@ impl ProtocolHandler for InitProtocol {
                 REIMBURSEMENT_KICKOFF_TX,
                 &OutputType::taproot(
                     DUST_VALUE,
-                    computed_aggregated.get("dispute_aggregated_key").unwrap(),
+                    &self.public_key("dispute_aggregated_key", context)?,
                     &vec![],
                 )?,
             )?;
@@ -189,7 +195,7 @@ impl ProtocolHandler for InitProtocol {
                 REIMBURSEMENT_KICKOFF_TX,
                 &OutputType::taproot(
                     DUST_VALUE,
-                    computed_aggregated.get("dispute_aggregated_key").unwrap(),
+                    &self.public_key("dispute_aggregated_key", context)?,
                     &vec![],
                 )?,
             )?;
@@ -199,7 +205,7 @@ impl ProtocolHandler for InitProtocol {
                 REIMBURSEMENT_KICKOFF_TX,
                 &OutputType::taproot(
                     DUST_VALUE,
-                    computed_aggregated.get("dispute_aggregated_key").unwrap(),
+                    &self.public_key("dispute_aggregated_key", context)?,
                     &vec![],
                 )?,
             )?;
@@ -302,5 +308,13 @@ impl InitProtocol {
 
     fn utxo(&self, name: &str, context: &ProgramContext) -> Result<PartialUtxo, BitVMXError> {
         context.globals.get_var(&self.ctx.id, name)?.unwrap().utxo()
+    }
+
+    fn public_key(&self, name: &str, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+        context
+            .globals
+            .get_var(&self.ctx.id, name)?
+            .unwrap()
+            .pubkey()
     }
 }
