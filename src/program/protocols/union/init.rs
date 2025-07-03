@@ -15,9 +15,7 @@ use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     scripts::{self, SignMode},
     types::{
-        connection::{InputSpec, OutputSpec},
-        input::{SighashType, SpendMode},
-        OutputType,
+        connection::{InputSpec, OutputSpec}, input::{SighashType, SpendMode}, output::SpeedupData, OutputType
     },
 };
 use serde::{Deserialize, Serialize};
@@ -422,11 +420,11 @@ impl ProtocolHandler for DisputeCoreProtocol {
         Ok(())
     }
 
-    fn get_transaction_name(
+    fn get_transaction_by_name(
         &self,
         name: &str,
         _context: &ProgramContext,
-    ) -> Result<Transaction, BitVMXError> {
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         Err(BitVMXError::InvalidTransactionName(name.to_string()))
     }
 
