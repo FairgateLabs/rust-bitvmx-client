@@ -755,14 +755,14 @@ impl Member {
         if self.role == ParticipantRole::Prover {
             self.bitvmx.set_var(
                 covenant_id,
-                "op_funding_utxo",
+                "OP_FUNDING_UTXO",
                 VariableTypes::Utxo(op_funding_utxos.get(&self.id).unwrap().clone()),
             )?;
         }
 
         self.bitvmx.set_var(
             covenant_id,
-            "wt_funding_utxo",
+            "WT_FUNDING_UTXO",
             VariableTypes::Utxo(wt_funding_utxos.get(&self.id).unwrap().clone()),
         )?;
 
