@@ -25,8 +25,8 @@ use super::cardinal::{lock::LockProtocol, slot::SlotProtocol, transfer::Transfer
 use super::dispute::DisputeResolutionProtocol;
 #[cfg(feature = "union")]
 use crate::program::protocols::union::{
-    init::DisputeCoreProtocol,
-    pairwise_penalization::PairwisePenalizationProtocol, take::TakeProtocol,
+    dispute_core::DisputeCoreProtocol, pairwise_penalization::PairwisePenalizationProtocol,
+    take::TakeProtocol,
 };
 use crate::program::variables::WitnessTypes;
 use crate::program::{variables::VariableTypes, witness};
