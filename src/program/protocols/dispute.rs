@@ -304,7 +304,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         match name {
             START_CH => Ok(self.add_speedup_data(name, context, self.start_challenge(context)?)?),
-            INPUT_1 => Ok((self.input_1_tx(context)?, None)),
+            INPUT_1 => Ok(self.input_1_tx(context)?),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
     }
@@ -917,12 +917,15 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             START_CH,
             INPUT_1,
             None,
-            Self::winternitz_check(agg_or_prover, &keys[0], &input_vars_slice)?,
-            false,
+            Self::winternitz_check(
+                prover_speedup_pub,
+                SignMode::Single,
+                &keys[0],
+                &input_vars_slice,
+            )?,
+            true,
             (&prover_speedup_pub, &verifier_speedup_pub),
         )?;
-
-        //self.add_vout_to_monitor(context, START_CH, 0)?;
 
         amount = self.checked_sub(amount, fee)?;
         amount = self.checked_sub(amount, speedup_dust)?;
@@ -1003,7 +1006,12 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             INPUT_1,
             COMMITMENT,
             Some(&claim_verifier),
-            Self::winternitz_check(agg_or_prover, &keys[0], &vec!["last_step", "last_hash"])?,
+            Self::winternitz_check(
+                agg_or_prover,
+                SignMode::Aggregate,
+                &keys[0],
+                &vec!["last_step", "last_hash"],
+            )?,
             false,
             (&prover_speedup_pub, &verifier_speedup_pub),
         )?;
@@ -1031,6 +1039,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 Some(&claim_verifier),
                 Self::winternitz_check(
                     agg_or_prover,
+                    SignMode::Aggregate,
                     &keys[0],
                     &vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
                 )?,
@@ -1057,6 +1066,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 Some(&claim_prover),
                 Self::winternitz_check(
                     agg_or_verifier,
+                    SignMode::Aggregate,
                     &keys[1],
                     &vec![&format!("selection_bits_{}", i)],
                 )?,
@@ -1148,36 +1158,44 @@ impl DisputeResolutionProtocol {
             .pubkey()?)
     }
 
+    fn utxo_from(&self, tx: &Transaction, vout: u32, key: &PublicKey) -> Utxo {
+        let txid = tx.compute_txid();
+        let amount = tx.output[vout as usize].value.to_sat();
+        Utxo::new(txid, vout, amount, key)
+    }
+
+    fn partial_utxo_from(&self, tx: &Transaction, vout: u32) -> (Txid, u32, u64) {
+        let txid = tx.compute_txid();
+        let amount = tx.output[vout as usize].value.to_sat();
+        (txid, vout, amount)
+    }
+
     fn add_speedup_data(
         &self,
         name: &str,
         context: &ProgramContext,
         tx: Transaction,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        let txid = tx.compute_txid();
-
         let (vout, role) = match name {
             START_CH => (0, "verifier"),
+            //INPUT_1 => (0, "prover"),
             _ => todo!("Speedup data not implemented for transaction: {}", name),
         };
 
-        let amount = tx.output[vout as usize].value.to_sat();
-        Ok((
-            tx,
-            Some(SpeedupData::new(Utxo::new(
-                txid,
-                vout,
-                amount,
-                &self.get_speedup_key_for(context, role)?,
-            ))),
-        ))
+        let speedup_data = self
+            .utxo_from(&tx, vout, &self.get_speedup_key_for(context, role)?)
+            .into();
+        Ok((tx, Some(speedup_data)))
     }
 
     pub fn start_challenge(&self, context: &ProgramContext) -> Result<Transaction, BitVMXError> {
         self.get_signed_tx(context, START_CH, 0, 1, false, 0)
     }
 
-    pub fn input_1_tx(&self, context: &ProgramContext) -> Result<Transaction, BitVMXError> {
+    pub fn input_1_tx(
+        &self,
+        context: &ProgramContext,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         //TODO: concatenate all inputs
         let words = context
             .globals
@@ -1202,11 +1220,25 @@ impl DisputeResolutionProtocol {
             )?;
         }
 
-        self.get_signed_tx(context, INPUT_1, 0, 0, true, 0)
+        let tx = self.get_signed_tx(context, INPUT_1, 0, 0, true, 0)?;
+        let protocol = self.load_protocol()?;
+        let (output_type, script) = protocol.get_script_from_output(INPUT_1, 0, 0)?;
+        let wots_sigs = self.get_winternitz_signature_for_script(script, context)?;
+
+        let speedup_data = SpeedupData::new_with_input(
+            self.partial_utxo_from(&tx, 0),
+            output_type,
+            wots_sigs,
+            0,
+            true,
+        );
+
+        Ok((tx, Some(speedup_data)))
     }
 
     fn winternitz_check(
         aggregated: &PublicKey,
+        sign_mode: SignMode,
         keys: &ParticipantKeys,
         var_names: &Vec<&str>,
     ) -> Result<Vec<ProtocolScript>, BitVMXError> {
@@ -1215,11 +1247,8 @@ impl DisputeResolutionProtocol {
             .map(|v| (*v, keys.get_winternitz(v).unwrap()))
             .collect();
 
-        let winternitz_check = scripts::verify_winternitz_signatures(
-            aggregated,
-            &names_and_keys,
-            SignMode::Aggregate,
-        )?;
+        let winternitz_check =
+            scripts::verify_winternitz_signatures(aggregated, &names_and_keys, sign_mode)?;
 
         Ok(vec![winternitz_check])
     }

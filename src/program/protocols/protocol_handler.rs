@@ -4,7 +4,7 @@ use bitcoin_coordinator::TransactionStatus;
 use bitcoin_scriptexec::scriptint_vec;
 use console::style;
 use enum_dispatch::enum_dispatch;
-use key_manager::winternitz::{message_bytes_length, WinternitzType};
+use key_manager::winternitz::{message_bytes_length, WinternitzSignature, WinternitzType};
 use protocol_builder::scripts::ProtocolScript;
 use protocol_builder::types::output::SpeedupData;
 use protocol_builder::types::{InputArgs, OutputType};
@@ -181,6 +181,43 @@ pub trait ProtocolHandler {
         participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError>;
 
+    fn get_winternitz_signature_for_script(
+        &self,
+        protocol_script: &ProtocolScript,
+        program_context: &ProgramContext,
+    ) -> Result<Vec<WinternitzSignature>, BitVMXError> {
+        let mut wots_sigs = vec![];
+
+        for k in protocol_script.get_keys().iter().rev() {
+            let message = program_context
+                .globals
+                .get_var(&self.context().id, k.name())?
+                .unwrap()
+                .input()?;
+
+            info!(
+                "Signigng message: {}",
+                style(hex::encode(message.clone())).yellow()
+            );
+            info!("With key: {:?}", k);
+
+            let winternitz_signature = program_context
+                .key_chain
+                .key_manager
+                .sign_winternitz_message(
+                    &message,
+                    WinternitzType::HASH160,
+                    protocol_script
+                        .get_key(k.name())
+                        .unwrap()
+                        .derivation_index(),
+                )?;
+
+            wots_sigs.push(winternitz_signature);
+        }
+        Ok(wots_sigs)
+    }
+
     fn get_signed_tx(
         &self,
         context: &ProgramContext,
@@ -196,35 +233,18 @@ pub trait ProtocolHandler {
         //TODO: Control that the variables sizes correspond with the keys
         //avoid invalid sig checks
 
+        let mut spending_args = InputArgs::new_taproot_script_args(leaf_index as usize);
+
+        let spend = protocol.get_script_to_spend(name, input_index, leaf_index)?;
+        for sig in self.get_winternitz_signature_for_script(&spend, context)? {
+            spending_args.push_winternitz_signature(sig);
+        }
+
         let signature = protocol
             .input_taproot_script_spend_signature(name, input_index as usize, leaf_index as usize)?
             .unwrap();
-        let spend = protocol.get_script_to_spend(name, input_index, leaf_index)?;
-        let mut spending_args = InputArgs::new_taproot_script_args(leaf_index as usize);
-
-        for k in spend.get_keys().iter().rev() {
-            let message = context
-                .globals
-                .get_var(&self.context().id, k.name())?
-                .unwrap()
-                .input()?;
-
-            info!(
-                "Signigng message: {}",
-                style(hex::encode(message.clone())).yellow()
-            );
-            info!("With key: {:?}", k);
-
-            let winternitz_signature = context.key_chain.key_manager.sign_winternitz_message(
-                &message,
-                WinternitzType::HASH160,
-                spend.get_key(k.name()).unwrap().derivation_index(),
-            )?;
-
-            spending_args.push_winternitz_signature(winternitz_signature);
-        }
-
         spending_args.push_taproot_signature(signature)?;
+
         if leaf_identification {
             spending_args.push_slice(scriptint_vec(leaf_index as i64).as_slice());
         }
