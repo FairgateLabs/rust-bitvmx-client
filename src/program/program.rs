@@ -384,8 +384,9 @@ impl Program {
                 .get_nonces(aggregated, &self.protocol.context().protocol_name);
             if nonces.is_err() {
                 warn!(
-                    "{}. Error geting nonces for aggregated key: {:?}",
-                    self.my_idx, aggregated
+                    "{}. Error geting nonces for aggregated key: {}",
+                    self.my_idx,
+                    aggregated.to_string()
                 );
                 continue;
             }
@@ -401,7 +402,7 @@ impl Program {
         }
 
         self.participants[self.my_idx].nonces = Some(public_nonce_msg);
-        debug!("I'm {} and I'm setting my nonces", self.my_idx);
+        info!("I'm {} and I'm setting my nonces", self.my_idx);
 
         let mut nonces = vec![];
         for other in &self.participants {
@@ -474,6 +475,7 @@ impl Program {
             }
 
             self.move_program_to_next_state()?;
+            info!("{}. All nonces ready", self.my_idx);
         } else {
             info!("{}. Not all nonces ready", self.my_idx);
         }
@@ -504,11 +506,13 @@ impl Program {
                 .get_signatures(aggregated, &self.protocol.context().protocol_name);
             if signatures.is_err() {
                 warn!(
-                    "{}. Error geting partial signature for aggregated key: {:?}",
-                    self.my_idx, aggregated
+                    "{}. Error getting partial signature for aggregated key: {}",
+                    self.my_idx,
+                    aggregated.to_string()
                 );
                 continue;
             }
+
             let my_pub = program_context
                 .key_chain
                 .key_manager
@@ -599,6 +603,7 @@ impl Program {
 
             self.protocol.sign(&program_context.key_chain)?;
             self.move_program_to_next_state()?;
+            info!("{}. All signatures received", self.my_idx);
         }
 
         self.send_ack(
@@ -651,6 +656,8 @@ impl Program {
                 }
 
                 self.move_program_to_next_state()?;
+
+                self.protocol.setup_complete(&program_context)?;
 
                 let result = program_context.broker_channel.send(
                     L2_ID,

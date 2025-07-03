@@ -149,7 +149,7 @@ impl ClaimGate {
             let verify_aggregated_action =
                 scripts::check_aggregated_signature(action, SignMode::Aggregate);
             let output_action =
-                OutputType::taproot(amount_dust, action, &vec![verify_aggregated_action])?;
+                OutputType::taproot(amount_dust, action, &[verify_aggregated_action])?;
 
             protocol.add_transaction_output(&success, &output_action)?;
         }

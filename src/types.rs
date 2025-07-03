@@ -113,6 +113,7 @@ pub enum IncomingBitVMXApiMessages {
     GenerateZKP(Uuid, Vec<u8>, String),
     ProofReady(Uuid),
     GetZKPExecutionResult(Uuid),
+    GetSPVProof(Txid),
 }
 impl IncomingBitVMXApiMessages {
     pub fn to_string(&self) -> Result<String, BitVMXError> {
@@ -254,6 +255,8 @@ pub const PROGRAM_TYPE_LOCK: &str = "lock";
 pub const PROGRAM_TYPE_DRP: &str = "drp";
 pub const PROGRAM_TYPE_SLOT: &str = "slot";
 pub const PROGRAM_TYPE_TRANSFER: &str = "transfer";
+pub const PROGRAM_TYPE_ACCEPT_PEGIN: &str = "accept_pegin";
+pub const PROGRAM_TYPE_REQUEST_PEGOUT: &str = "request_pegout";
 pub const PROGRAM_TYPE_TAKE: &str = "take";
 pub const PROGRAM_TYPE_DISPUTE_CORE: &str = "dispute_core";
 pub const PROGRAM_TYPE_PAIRWISE_PENALIZATION: &str = "pairwise_penalization";

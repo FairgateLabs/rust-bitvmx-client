@@ -3,14 +3,18 @@
 //!
 //! To run this example, use the following commands from the `rust-bitvmx-client` directory:
 //! `cargo run --example union setup_bitcoin_node` - Sets up Bitcoin node
-//! `cargo run --example union pegin` - Runs the peg-in example
-//!
+//! `cargo run --example union committee`          - Setups a new committee
+//! `cargo run --example union accept_pegin`       - Setups the accept peg in protocol
+//! `cargo run --example union pegin`              - Runs the pegin flow
 
 use anyhow::Result;
 use std::env;
 
+use crate::committee::Committee;
+
 mod committee;
-use committee::Committee;
+mod member;
+mod setup;
 
 mod bitcoin;
 mod log;
@@ -23,7 +27,8 @@ pub fn main() -> Result<()> {
 
     match command.map(|s| s.as_str()) {
         Some("setup_bitcoin_node") => setup_bitcoin_node()?,
-        Some("pegin") => pegin()?,
+        Some("accept_pegin") => accept_pegin()?,
+        Some("committee") => committee()?,
         Some(cmd) => {
             eprintln!("Unknown command: {}", cmd);
             print_usage();
@@ -41,7 +46,9 @@ pub fn main() -> Result<()> {
 fn print_usage() {
     println!("Usage:");
     println!("  cargo run --example union setup_bitcoin_node  - Sets up Bitcoin node only");
-    println!("  cargo run --example union pegin               - Runs the peg-in flow");
+    println!("  cargo run --example union committee           - Setups a new committee");
+    println!("  cargo run --example union accept_pegin        - Setups the accept peg in protocol");
+    println!("  cargo run --example union pegin               - Runs the pegin flow");
 }
 
 pub fn setup_bitcoin_node() -> Result<()> {
@@ -51,19 +58,19 @@ pub fn setup_bitcoin_node() -> Result<()> {
     Ok(())
 }
 
-pub fn pegin() -> Result<()> {
-    // 0. A new package is created. A committee is selected. Union client requests the setup of the
+pub fn committee() -> Result<()> {
+    // A new package is created. A committee is selected. Union client requests the setup of the
     // corresponding keys and programs.
-    let _committee = setup()?;
-
-    // Pegin
+    let mut committee = Committee::new()?;
+    committee.setup()?;
 
     Ok(())
 }
 
-pub fn setup() -> Result<Committee> {
+pub fn accept_pegin() -> Result<()> {
+    // A peg-in request is reported by the Union Client. The committee accepts the peg-in request.
     let mut committee = Committee::new()?;
     committee.setup()?;
-
-    Ok(committee)
+    committee.accept_pegin()?;
+    Ok(())
 }
