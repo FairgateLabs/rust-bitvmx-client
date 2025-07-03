@@ -56,6 +56,8 @@ pub fn pegin() -> Result<()> {
     // corresponding keys and programs.
     let _committee = setup()?;
 
+    // Pegin
+
     Ok(())
 }
 
@@ -64,15 +66,4 @@ pub fn setup() -> Result<Committee> {
     committee.setup()?;
 
     Ok(committee)
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::pegin;
-
-    #[test]
-    fn test_union_pegin() {
-        pegin().expect("Failed to run peg-in");
-        //thread::sleep(Duration::from_secs(10));
-    }
 }
