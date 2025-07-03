@@ -334,24 +334,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             .unwrap()
             .fail_configuration()?;
 
-        if name == INPUT_1 && vout.is_some() {
-            //This is the input transaction, we need to decode the witness
-            //if configured with input in speedup, decode witness here
-
-            self.decode_witness_from_speedup(
-                tx_id,
-                vout.unwrap(),
-                &name,
-                program_context,
-                &participant_keys[0],
-                &tx_status.tx,
-                None,
-            )?;
-
-            return Ok(());
-        }
-
-        if name == INPUT_1 && self.role() == ParticipantRole::Prover {
+        /*if name == INPUT_1 && self.role() == ParticipantRole::Prover {
             if program_context
                 .globals
                 .get_var(&self.ctx.id, "FAKE_RUN")?
@@ -368,9 +351,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 )?;
                 return Ok(());
             }
-        }
+        }*/
+
         //TODO: generalize decoding
-        if name == INPUT_1 && self.role() == ParticipantRole::Prover {
+        if name == INPUT_1 && self.role() == ParticipantRole::Prover && vout.is_none() {
             //TODO: Check if the last input
             //only then execute the program.
 
@@ -399,28 +383,26 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             })?;
             program_context.broker_channel.send(EMULATOR_ID, msg)?;
         }
-        if name == INPUT_1 && self.role() == ParticipantRole::Verifier {
-            self.decode_witness_for_tx(
+        if name == INPUT_1 && self.role() == ParticipantRole::Verifier && vout.is_some() {
+            self.decode_witness_from_speedup(
+                tx_id,
+                vout.unwrap(),
                 &name,
-                0,
                 program_context,
                 &participant_keys[0],
                 &tx_status.tx,
-                None,
-                None,
                 None,
             )?;
         }
 
-        if name == COMMITMENT && self.role() == ParticipantRole::Verifier {
-            self.decode_witness_for_tx(
+        if name == COMMITMENT && self.role() == ParticipantRole::Verifier && vout.is_some() {
+            self.decode_witness_from_speedup(
+                tx_id,
+                vout.unwrap(),
                 &name,
-                0,
                 program_context,
                 &participant_keys[0],
                 &tx_status.tx,
-                None,
-                None,
                 None,
             )?;
 
@@ -481,7 +463,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             program_context.broker_channel.send(EMULATOR_ID, msg)?;
         }
 
-        if name == COMMITMENT || name.starts_with("NARY_VERIFIER") {
+        if name == COMMITMENT || name.starts_with("NARY_VERIFIER") && vout.is_some() {
             let mut round = name
                 .strip_prefix("NARY_VERIFIER_")
                 .unwrap_or("0")
@@ -495,14 +477,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 let decision = if name == COMMITMENT {
                     0
                 } else {
-                    self.decode_witness_for_tx(
+                    self.decode_witness_from_speedup(
+                        tx_id,
+                        vout.unwrap(),
                         &name,
-                        0,
                         program_context,
                         &participant_keys[1],
                         &tx_status.tx,
-                        None,
-                        None,
                         None,
                     )?;
 
@@ -570,15 +551,17 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             }
         }
 
-        if (name.starts_with("NARY_PROVER")) && self.role() == ParticipantRole::Verifier {
-            self.decode_witness_for_tx(
+        if (name.starts_with("NARY_PROVER"))
+            && self.role() == ParticipantRole::Verifier
+            && vout.is_some()
+        {
+            self.decode_witness_from_speedup(
+                tx_id,
+                vout.unwrap(),
                 &name,
-                0,
                 program_context,
                 &participant_keys[0],
                 &tx_status.tx,
-                None,
-                None,
                 None,
             )?;
 
@@ -647,15 +630,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             }
         }
 
-        if name == EXECUTE && self.role() == ParticipantRole::Verifier {
-            self.decode_witness_for_tx(
+        if name == EXECUTE && self.role() == ParticipantRole::Verifier && vout.is_some() {
+            self.decode_witness_from_speedup(
+                tx_id,
+                vout.unwrap(),
                 &name,
-                0,
                 program_context,
                 &participant_keys[0],
                 &tx_status.tx,
-                None,
-                None,
                 None,
             )?;
             let (_program_definition, pdf) = self.get_program_definition(program_context)?;
@@ -737,7 +719,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             program_context.broker_channel.send(EMULATOR_ID, msg)?;
         }
 
-        if name == EXECUTE && self.role() == ParticipantRole::Prover {
+        if name == EXECUTE && self.role() == ParticipantRole::Prover && vout.is_some() {
             let tx = self.get_signed_tx(
                 program_context,
                 &ClaimGate::tx_start(PROVER_WINS),
@@ -785,25 +767,20 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             )?;
         }
 
-        if name == CHALLENGE && self.role() == ParticipantRole::Prover {
-            let input_index = 0;
-            self.decode_witness_for_tx(
+        if name == CHALLENGE && self.role() == ParticipantRole::Prover && vout.is_some() {
+            self.decode_witness_from_speedup(
+                tx_id,
+                vout.unwrap(),
                 &name,
-                input_index,
                 program_context,
                 &participant_keys[1],
                 &tx_status.tx,
-                None,
-                None,
                 None,
             )?;
 
             let challenge_idx = program_context
                 .globals
-                .get_var(
-                    &self.ctx.id,
-                    &format!("CHALLENGE_{}_leaf_index", input_index),
-                )?
+                .get_var(&self.ctx.id, &format!("CHALLENGE_{}_leaf_index", 0))?
                 .unwrap()
                 .number()?;
 
@@ -867,7 +844,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             .unwrap()
             .utxo()?;
 
-        let input_in_speedup = false;
+        let input_in_speedup = true;
         let prover_speedup_pub = keys[0].get_public("speedup")?;
         context.globals.set_var(
             &self.ctx.id,
@@ -881,10 +858,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             VariableTypes::PubKey(verifier_speedup_pub.clone()),
         )?;
         let aggregated = computed_aggregated.get("aggregated_1").unwrap();
-        let (agg_or_prover, agg_or_verifier) = if input_in_speedup {
-            (prover_speedup_pub, verifier_speedup_pub)
+        let (agg_or_prover, agg_or_verifier, sign_mode) = if input_in_speedup {
+            (prover_speedup_pub, verifier_speedup_pub, SignMode::Single)
         } else {
-            (aggregated, aggregated)
+            (aggregated, aggregated, SignMode::Aggregate)
         };
 
         let program_def = self.get_program_definition(context)?;
@@ -940,13 +917,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             START_CH,
             INPUT_1,
             None,
-            Self::winternitz_check(
-                prover_speedup_pub,
-                SignMode::Single,
-                &keys[0],
-                &input_vars_slice,
-            )?,
-            true,
+            Self::winternitz_check(agg_or_prover, sign_mode, &keys[0], &input_vars_slice)?,
+            input_in_speedup,
             (&prover_speedup_pub, &verifier_speedup_pub),
         )?;
 
@@ -1031,11 +1003,11 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             Some(&claim_verifier),
             Self::winternitz_check(
                 agg_or_prover,
-                SignMode::Aggregate,
+                sign_mode,
                 &keys[0],
                 &vec!["last_step", "last_hash"],
             )?,
-            false,
+            input_in_speedup,
             (&prover_speedup_pub, &verifier_speedup_pub),
         )?;
         amount = self.checked_sub(amount, fee)?;
@@ -1062,11 +1034,11 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 Some(&claim_verifier),
                 Self::winternitz_check(
                     agg_or_prover,
-                    SignMode::Aggregate,
+                    sign_mode,
                     &keys[0],
                     &vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
                 )?,
-                false,
+                input_in_speedup,
                 (&prover_speedup_pub, &verifier_speedup_pub),
             )?;
             amount = self.checked_sub(amount, fee)?;
@@ -1089,11 +1061,11 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 Some(&claim_prover),
                 Self::winternitz_check(
                     agg_or_verifier,
-                    SignMode::Aggregate,
+                    sign_mode,
                     &keys[1],
                     &vec![&format!("selection_bits_{}", i)],
                 )?,
-                false,
+                input_in_speedup,
                 (&verifier_speedup_pub, &prover_speedup_pub),
             )?;
             amount = self.checked_sub(amount, fee)?;
@@ -1122,8 +1094,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             &prev,
             EXECUTE,
             Some(&claim_verifier),
-            self.execute_script(context, agg_or_prover, &keys[0], &vars)?,
-            false,
+            self.execute_script(context, agg_or_prover, sign_mode, &keys[0], &vars)?,
+            input_in_speedup,
             (&prover_speedup_pub, &verifier_speedup_pub),
         )?;
 
@@ -1147,8 +1119,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             EXECUTE,
             CHALLENGE,
             Some(&claim_prover),
-            self.challenge_scripts(context, agg_or_verifier, &keys[1])?,
-            false,
+            self.challenge_scripts(context, agg_or_verifier, sign_mode, &keys[1])?,
+            input_in_speedup,
             (&verifier_speedup_pub, &prover_speedup_pub),
         )?;
 
@@ -1215,6 +1187,32 @@ impl DisputeResolutionProtocol {
         self.get_signed_tx(context, START_CH, 0, 1, false, 0)
     }
 
+    pub fn get_tx_with_speedup_data(
+        &self,
+        context: &ProgramContext,
+        name: &str,
+        _input_index: u32,
+        leaf_index: u32,
+        leaf_identification: bool,
+    ) -> Result<(Transaction, SpeedupData), BitVMXError> {
+        let tx = self.get_signed_tx(context, name, 0, 0, leaf_identification, 0)?;
+        let protocol = self.load_protocol()?;
+        let (output_type, scripts) = protocol.get_script_from_output(name, 0)?;
+        info!("Scripts length: {}", scripts.len());
+        let wots_sigs =
+            self.get_winternitz_signature_for_script(&scripts[leaf_index as usize], context)?;
+
+        let speedup_data = SpeedupData::new_with_input(
+            self.partial_utxo_from(&tx, 0),
+            output_type,
+            wots_sigs,
+            leaf_index as usize,
+            true,
+        );
+
+        Ok((tx, speedup_data))
+    }
+
     pub fn input_1_tx(
         &self,
         context: &ProgramContext,
@@ -1243,20 +1241,9 @@ impl DisputeResolutionProtocol {
             )?;
         }
 
-        let tx = self.get_signed_tx(context, INPUT_1, 0, 0, true, 0)?;
-        let protocol = self.load_protocol()?;
-        let (output_type, scripts) = protocol.get_script_from_output(INPUT_1, 0)?;
-        let wots_sigs = self.get_winternitz_signature_for_script(&scripts[0], context)?;
+        let (tx, sp) = self.get_tx_with_speedup_data(context, INPUT_1, 0, 0, true)?;
 
-        let speedup_data = SpeedupData::new_with_input(
-            self.partial_utxo_from(&tx, 0),
-            output_type,
-            wots_sigs,
-            0,
-            true,
-        );
-
-        Ok((tx, Some(speedup_data)))
+        Ok((tx, Some(sp)))
     }
 
     fn winternitz_check(
@@ -1280,6 +1267,7 @@ impl DisputeResolutionProtocol {
         &self,
         context: &ProgramContext,
         aggregated: &PublicKey,
+        sign_mode: SignMode,
         keys: &ParticipantKeys,
         var_names: &Vec<&str>,
     ) -> Result<Vec<ProtocolScript>, BitVMXError> {
@@ -1333,7 +1321,7 @@ impl DisputeResolutionProtocol {
             let winternitz_check = scripts::verify_winternitz_signatures_aux(
                 aggregated,
                 &names_and_keys,
-                SignMode::Aggregate,
+                sign_mode,
                 true,
                 Some(vec![
                     reverse_script.clone(),
@@ -1351,6 +1339,7 @@ impl DisputeResolutionProtocol {
         &self,
         context: &ProgramContext,
         aggregated: &PublicKey,
+        sign_mode: SignMode,
         keys: &ParticipantKeys,
     ) -> Result<Vec<ProtocolScript>, BitVMXError> {
         let (program_definitions, _) = self.get_program_definition(context)?;
@@ -1421,7 +1410,7 @@ impl DisputeResolutionProtocol {
                         let winternitz_check = scripts::verify_winternitz_signatures_aux(
                             aggregated,
                             &names_and_keys[challenge_name][i],
-                            SignMode::Aggregate,
+                            sign_mode,
                             true,
                             Some(scripts),
                         )?;
@@ -1534,10 +1523,11 @@ impl DisputeResolutionProtocol {
         // - the prover needs to re-sign any verifier provided input (so the equivocation is possible on reads)
 
         info!(
-            "Adding winternitz check for {} to {}. Amount: {}",
+            "Adding winternitz check for {} to {}. Amount: {}. Leaves {}",
             style(from).green(),
             style(to).green(),
-            style(amount).green()
+            style(amount).green(),
+            style(leaves.len()).yellow()
         );
 
         let (mine_speedup, other_speedup) = speedup_keys;
@@ -1647,9 +1637,10 @@ impl DisputeResolutionProtocol {
 
                 self.set_input_hex(context, "last_hash", last_hash)?;
 
+                let (tx, sp) = self.get_tx_with_speedup_data(context, COMMITMENT, 0, 0, true)?;
                 context.bitcoin_coordinator.dispatch(
-                    self.get_signed_tx(context, COMMITMENT, 0, 0, true, 0)?,
-                    None,
+                    tx,
+                    Some(sp),
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
                 )?;
@@ -1681,9 +1672,16 @@ impl DisputeResolutionProtocol {
                 for (i, h) in hashes.iter().enumerate() {
                     self.set_input_hex(context, &format!("prover_hash_{}_{}", round, i), h)?;
                 }
+                let (tx, sp) = self.get_tx_with_speedup_data(
+                    context,
+                    &format!("NARY_PROVER_{}", round),
+                    0,
+                    0,
+                    true,
+                )?;
                 context.bitcoin_coordinator.dispatch(
-                    self.get_signed_tx(context, &format!("NARY_PROVER_{}", round), 0, 0, true, 0)?,
-                    None,
+                    tx,
+                    Some(sp),
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
                 )?;
@@ -1702,16 +1700,16 @@ impl DisputeResolutionProtocol {
                     *v_decision as u8,
                 )?;
 
+                let (tx, sp) = self.get_tx_with_speedup_data(
+                    context,
+                    &format!("NARY_VERIFIER_{}", round),
+                    0,
+                    0,
+                    true,
+                )?;
                 context.bitcoin_coordinator.dispatch(
-                    self.get_signed_tx(
-                        context,
-                        &format!("NARY_VERIFIER_{}", round),
-                        0,
-                        0,
-                        true,
-                        0,
-                    )?,
-                    None,
+                    tx,
+                    Some(sp),
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
                 )?;
@@ -1786,10 +1784,12 @@ impl DisputeResolutionProtocol {
                 {
                     index = 0;
                 }
+                let (tx, sp) =
+                    self.get_tx_with_speedup_data(context, EXECUTE, 0, index as u32, true)?;
 
                 context.bitcoin_coordinator.dispatch(
-                    self.get_signed_tx(context, EXECUTE, 0, index as u32, true, 0)?,
-                    None,
+                    tx,
+                    Some(sp),
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
                 )?;
@@ -2136,16 +2136,16 @@ impl DisputeResolutionProtocol {
 
                 info!("Leaf index: {}, leaf offset: {}", leaf_index, leaf_offset);
 
+                let (tx, sp) = self.get_tx_with_speedup_data(
+                    context,
+                    CHALLENGE,
+                    0,
+                    (leaf_index + leaf_offset) as u32,
+                    true,
+                )?;
                 context.bitcoin_coordinator.dispatch(
-                    self.get_signed_tx(
-                        context,
-                        CHALLENGE,
-                        0,
-                        (leaf_index + leaf_offset) as u32,
-                        true,
-                        0,
-                    )?,
-                    None,
+                    tx,
+                    Some(sp),
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
                 )?;
