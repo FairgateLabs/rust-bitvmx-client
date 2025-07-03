@@ -320,9 +320,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
     ) -> Result<(), BitVMXError> {
         let name = self.get_transaction_name_by_id(tx_id)?;
         info!(
-            "Program {}: Transaction {}:{:?} has been seen on-chain {}",
+            "Program {}: Transaction name: {}  id: {}:{:?} has been seen on-chain {}",
             self.ctx.id,
-            style(&name).green(),
+            style(&name).blue(),
+            style(&tx_id).green(),
             style(&vout).yellow(),
             self.role()
         );
@@ -336,6 +337,16 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         if name == INPUT_1 && vout.is_some() {
             //This is the input transaction, we need to decode the witness
             //if configured with input in speedup, decode witness here
+
+            self.decode_witness_from_speedup(
+                tx_id,
+                vout.unwrap(),
+                &name,
+                program_context,
+                &participant_keys[0],
+                &tx_status.tx,
+                None,
+            )?;
 
             return Ok(());
         }
@@ -396,6 +407,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &participant_keys[0],
                 &tx_status.tx,
                 None,
+                None,
+                None,
             )?;
         }
 
@@ -406,6 +419,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 program_context,
                 &participant_keys[0],
                 &tx_status.tx,
+                None,
+                None,
                 None,
             )?;
 
@@ -487,6 +502,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                         &participant_keys[1],
                         &tx_status.tx,
                         None,
+                        None,
+                        None,
                     )?;
 
                     let bits = program_context
@@ -560,6 +577,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 program_context,
                 &participant_keys[0],
                 &tx_status.tx,
+                None,
+                None,
                 None,
             )?;
 
@@ -635,6 +654,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 program_context,
                 &participant_keys[0],
                 &tx_status.tx,
+                None,
+                None,
                 None,
             )?;
             let (_program_definition, pdf) = self.get_program_definition(program_context)?;
@@ -772,6 +793,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 program_context,
                 &participant_keys[1],
                 &tx_status.tx,
+                None,
+                None,
                 None,
             )?;
 
@@ -1222,8 +1245,8 @@ impl DisputeResolutionProtocol {
 
         let tx = self.get_signed_tx(context, INPUT_1, 0, 0, true, 0)?;
         let protocol = self.load_protocol()?;
-        let (output_type, script) = protocol.get_script_from_output(INPUT_1, 0, 0)?;
-        let wots_sigs = self.get_winternitz_signature_for_script(script, context)?;
+        let (output_type, scripts) = protocol.get_script_from_output(INPUT_1, 0)?;
+        let wots_sigs = self.get_winternitz_signature_for_script(&scripts[0], context)?;
 
         let speedup_data = SpeedupData::new_with_input(
             self.partial_utxo_from(&tx, 0),

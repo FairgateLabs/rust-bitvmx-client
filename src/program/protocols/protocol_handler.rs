@@ -275,6 +275,8 @@ pub trait ProtocolHandler {
         participant_keys: &ParticipantKeys,
         transaction: &Transaction,
         leaf: Option<u32>,
+        protocol: Option<Protocol>,
+        scripts: Option<Vec<ProtocolScript>>,
     ) -> Result<Vec<String>, BitVMXError> {
         info!(
             "Program {}: Decoding witness for {} with input index {}",
@@ -282,8 +284,9 @@ pub trait ProtocolHandler {
             name,
             input_index
         );
-        let protocol = self.load_protocol()?;
-        let witness = transaction.input[0].witness.clone();
+        let protocol = protocol.unwrap_or(self.load_protocol()?);
+
+        let witness = transaction.input[input_index as usize].witness.clone();
         let leaf = match leaf {
             Some(idx) => idx,
             None => {
@@ -297,7 +300,11 @@ pub trait ProtocolHandler {
             }
         };
 
-        let script = protocol.get_script_to_spend(&name, input_index, leaf)?;
+        let script = if let Some(scripts) = scripts {
+            scripts[leaf as usize].clone()
+        } else {
+            protocol.get_script_to_spend(&name, input_index, leaf)?
+        };
 
         let mut names = vec![];
         let mut sizes = vec![];
@@ -330,6 +337,46 @@ pub trait ProtocolHandler {
             )?;
         }
         Ok(names)
+    }
+
+    fn decode_witness_from_speedup(
+        &self,
+        prev_tx_id: Txid,
+        prev_vout: u32,
+        prev_name: &str,
+        program_context: &ProgramContext,
+        participant_keys: &ParticipantKeys,
+        transaction: &Transaction,
+        leaf: Option<u32>,
+    ) -> Result<Vec<String>, BitVMXError> {
+        let idx = self.find_prevout(prev_tx_id, prev_vout, transaction)?;
+        let protocol = self.load_protocol()?;
+        let scripts = protocol
+            .get_script_from_output(prev_name, prev_vout)?
+            .1
+            .clone();
+
+        self.decode_witness_for_tx(
+            prev_name,
+            idx,
+            program_context,
+            participant_keys,
+            transaction,
+            leaf,
+            Some(protocol),
+            Some(scripts),
+        )
+    }
+
+    fn find_prevout(&self, tx_id: Txid, vout: u32, tx: &Transaction) -> Result<u32, BitVMXError> {
+        for (i, txin) in tx.input.iter().enumerate() {
+            if txin.previous_output.txid == tx_id && txin.previous_output.vout == vout {
+                return Ok(i as u32);
+            }
+        }
+        return Err(BitVMXError::InvalidTransactionName(
+            "The tx did not consume the expected output".to_string(),
+        ));
     }
 
     fn checked_sub(&self, amount: u64, value_to_subtract: u64) -> Result<u64, BitVMXError> {

@@ -164,6 +164,8 @@ impl ProtocolHandler for SlotProtocol {
                 &participant_keys[operator as usize],
                 &tx_status.tx,
                 Some(0),
+                None,
+                None,
             )?;
 
             // after sending the certificate hash, the operator should send the group id
@@ -366,6 +368,8 @@ impl ProtocolHandler for SlotProtocol {
                 &participant_keys[op_and_id[0] as usize],
                 &tx_status.tx,
                 Some(op_and_id[1]),
+                None,
+                None,
             )?;
         }
 
