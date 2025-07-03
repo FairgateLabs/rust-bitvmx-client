@@ -15,11 +15,14 @@ use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     builder::Protocol,
+    builder::Protocol,
     scripts::{self, SignMode},
     types::{
         connection::{InputSpec, OutputSpec},
+        connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
         output::SpeedupData,
+        OutputType,
         OutputType,
     },
 };
@@ -47,7 +50,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
 
     fn get_pregenerated_aggregated_keys(
         &self,
-        context: &ProgramContext,
+        _context: &ProgramContext,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
         Ok(vec![
             (
@@ -92,10 +95,12 @@ impl ProtocolHandler for DisputeCoreProtocol {
         }
 
         Ok(ParticipantKeys::new(keys, vec![]))
+        Ok(ParticipantKeys::new(keys, vec![]))
     }
 
     fn build(
         &self,
+        keys: Vec<ParticipantKeys>,
         keys: Vec<ParticipantKeys>,
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
@@ -123,10 +128,17 @@ impl ProtocolHandler for DisputeCoreProtocol {
         _context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         Err(BitVMXError::InvalidTransactionName(name.to_string()))
+        Err(BitVMXError::InvalidTransactionName(name.to_string()))
     }
 
     fn notify_news(
         &self,
+        _tx_id: Txid,
+        _vout: Option<u32>,
+        _tx_status: TransactionStatus,
+        _context: String,
+        _program_context: &ProgramContext,
+        _participant_keys: Vec<&ParticipantKeys>,
         _tx_id: Txid,
         _vout: Option<u32>,
         _tx_status: TransactionStatus,
