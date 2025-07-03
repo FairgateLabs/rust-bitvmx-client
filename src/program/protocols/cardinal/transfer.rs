@@ -9,6 +9,7 @@ use protocol_builder::{
     types::{
         connection::InputSpec,
         input::{SighashType, SpendMode},
+        output::SpeedupData,
         InputArgs, OutputType,
     },
 };
@@ -19,19 +20,15 @@ use uuid::Uuid;
 use crate::{
     errors::BitVMXError,
     program::{
+        participant::ParticipantKeys,
         protocols::{
+            cardinal::slot::{self},
             claim::ClaimGate,
-            protocol_handler::external_fund_tx,
-            slot::{self},
+            protocol_handler::{external_fund_tx, ProtocolContext, ProtocolHandler},
         },
         variables::PartialUtxo,
     },
     types::{ProgramContext, PROGRAM_TYPE_SLOT},
-};
-
-use super::{
-    super::participant::ParticipantKeys,
-    protocol_handler::{ProtocolContext, ProtocolHandler},
 };
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -97,11 +94,11 @@ impl ProtocolHandler for TransferProtocol {
         Ok(ParticipantKeys::new(vec![], vec![]))
     }
 
-    fn get_transaction_name(
+    fn get_transaction_by_name(
         &self,
         name: &str,
         _context: &ProgramContext,
-    ) -> Result<Transaction, BitVMXError> {
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         if name.starts_with(TOO_TX) {
             let op_and_id: Vec<u32> = name
                 .strip_prefix(TOO_TX)
@@ -109,7 +106,7 @@ impl ProtocolHandler for TransferProtocol {
                 .split('_')
                 .map(|s| s.parse::<u32>().unwrap())
                 .collect();
-            return Ok(self.transfer(op_and_id[0], op_and_id[1])?);
+            return Ok((self.transfer(op_and_id[0], op_and_id[1])?, None));
         }
 
         Err(BitVMXError::InvalidTransactionName(name.to_string()))

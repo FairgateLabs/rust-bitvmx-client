@@ -6,6 +6,7 @@ use console::style;
 use enum_dispatch::enum_dispatch;
 use key_manager::winternitz::{message_bytes_length, WinternitzType};
 use protocol_builder::scripts::ProtocolScript;
+use protocol_builder::types::output::SpeedupData;
 use protocol_builder::types::{InputArgs, OutputType};
 use protocol_builder::{builder::Protocol, errors::ProtocolBuilderError};
 use serde::{Deserialize, Serialize};
@@ -18,23 +19,18 @@ use uuid::Uuid;
 use crate::errors::BitVMXError;
 use crate::keychain::KeyChain;
 
-use crate::program::protocols::union::init::DisputeCoreProtocol;
-// use crate::program::protocols::union::dispute_core::DisputeCoreProtocol;
-use crate::program::protocols::union::pairwise_penalization::PairwisePenalizationProtocol;
-use crate::program::protocols::union::take::TakeProtocol;
+use super::super::participant::ParticipantKeys;
+#[cfg(feature = "cardinal")]
+use super::cardinal::{lock::LockProtocol, slot::SlotProtocol, transfer::TransferProtocol};
+use super::dispute::DisputeResolutionProtocol;
+#[cfg(feature = "union")]
+use crate::program::protocols::union::{
+    init::DisputeCoreProtocol,
+    pairwise_penalization::PairwisePenalizationProtocol, take::TakeProtocol,
+};
 use crate::program::variables::WitnessTypes;
 use crate::program::{variables::VariableTypes, witness};
-use crate::types::{
-    ProgramContext, PROGRAM_TYPE_DRP, PROGRAM_TYPE_LOCK, PROGRAM_TYPE_PACKET,
-    PROGRAM_TYPE_PAIRWISE_PENALIZATION, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TAKE,
-    PROGRAM_TYPE_TRANSFER,
-};
-
-use super::super::participant::ParticipantKeys;
-use super::dispute::DisputeResolutionProtocol;
-use super::lock::LockProtocol;
-use super::slot::SlotProtocol;
-use super::transfer::TransferProtocol;
+use crate::types::*;
 
 #[enum_dispatch]
 pub trait ProtocolHandler {
@@ -91,8 +87,55 @@ pub trait ProtocolHandler {
         self.load_protocol()?.transaction_by_id(txid).cloned()
     }
 
-    fn get_transaction_ids(&self) -> Result<Vec<Txid>, ProtocolBuilderError> {
-        Ok(self.load_protocol()?.get_transaction_ids())
+    fn add_vout_to_monitor(
+        &self,
+        program_context: &ProgramContext,
+        name: &str,
+        vout: u32,
+    ) -> Result<(), BitVMXError> {
+        let mut tx_names_and_vout = program_context
+            .globals
+            .get_var(&self.context().id, "tx_vouts_to_monitor")?
+            .unwrap_or(VariableTypes::VecStr(vec![]))
+            .vec_string()?;
+        tx_names_and_vout.push(format!("{}:{}", name, vout));
+        program_context.globals.set_var(
+            &self.context().id,
+            "tx_vouts_to_monitor",
+            VariableTypes::VecStr(tx_names_and_vout),
+        )?;
+
+        Ok(())
+    }
+
+    fn get_transactions_to_monitor(
+        &self,
+        program_context: &ProgramContext,
+    ) -> Result<(Vec<Txid>, Vec<(Txid, u32)>), BitVMXError> {
+        let protocol = self.load_protocol()?;
+        let txs = protocol.get_transaction_ids();
+        let tx_names_and_vout = program_context
+            .globals
+            .get_var(&self.context().id, "tx_vouts_to_monitor")?
+            .unwrap_or(VariableTypes::VecStr(vec![]))
+            .vec_string()?;
+        let mut parsed: Vec<(Txid, u32)> = vec![];
+        for name in &tx_names_and_vout {
+            let parts: Vec<&str> = name.split(':').collect();
+            if parts.len() == 2 {
+                parsed.push((
+                    protocol.transaction_by_name(parts[0])?.compute_txid(),
+                    parts[1].parse::<u32>().unwrap_or(0),
+                ));
+            } else {
+                error!("Invalid tx_vouts_to_monitor format: {}", name);
+                return Err(BitVMXError::InvalidVariableType(
+                    "tx_vouts_to_monitor".to_string(),
+                ));
+            }
+        }
+
+        Ok((txs, parsed))
     }
 
     fn get_transaction_name_by_id(&self, txid: Txid) -> Result<String, ProtocolBuilderError> {
@@ -122,11 +165,11 @@ pub trait ProtocolHandler {
         Ok(())
     }
 
-    fn get_transaction_name(
+    fn get_transaction_by_name(
         &self,
         name: &str,
         context: &ProgramContext,
-    ) -> Result<Transaction, BitVMXError>;
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError>;
 
     fn notify_news(
         &self,
@@ -278,6 +321,14 @@ pub trait ProtocolHandler {
             }
         }
     }
+
+    fn get_speedup_key(&self, program_context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+        program_context
+            .globals
+            .get_var(&self.context().id, "speedup")?
+            .unwrap()
+            .pubkey()
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -304,11 +355,17 @@ impl ProtocolContext {
 #[derive(Clone, Serialize, Deserialize)]
 pub enum ProtocolType {
     DisputeResolutionProtocol,
+    #[cfg(feature = "cardinal")]
     LockProtocol,
+    #[cfg(feature = "cardinal")]
     SlotProtocol,
+    #[cfg(feature = "cardinal")]
     TransferProtocol,
+    #[cfg(feature = "union")]
     TakeProtocol,
+    #[cfg(feature = "union")]
     DisputeCoreProtocol,
+    #[cfg(feature = "union")]
     PairwisePenalizationProtocol,
 }
 
@@ -325,19 +382,31 @@ pub fn new_protocol_type(
         PROGRAM_TYPE_DRP => Ok(ProtocolType::DisputeResolutionProtocol(
             DisputeResolutionProtocol::new(ctx),
         )),
+        #[cfg(feature = "cardinal")]
         PROGRAM_TYPE_LOCK => Ok(ProtocolType::LockProtocol(LockProtocol::new(ctx))),
+        #[cfg(feature = "cardinal")]
         PROGRAM_TYPE_SLOT => Ok(ProtocolType::SlotProtocol(SlotProtocol::new(ctx))),
+        #[cfg(feature = "cardinal")]
         PROGRAM_TYPE_TRANSFER => Ok(ProtocolType::TransferProtocol(TransferProtocol::new(ctx))),
+        #[cfg(feature = "union")]
         PROGRAM_TYPE_TAKE => Ok(ProtocolType::TakeProtocol(TakeProtocol::new(ctx))),
-        PROGRAM_TYPE_INIT => Ok(ProtocolType::DisputeCoreProtocol(DisputeCoreProtocol::new(
-            ctx,
-        ))),
-        // PROGRAM_TYPE_DISPUTE_CORE => Ok(ProtocolType::DisputeCoreProtocol(
-        //     DisputeCoreProtocol::new(ctx),
-        // )),
+        // #[cfg(feature = "union")]
+        // PROGRAM_TYPE_INIT => Ok(ProtocolType::DisputeCoreProtocol(DisputeCoreProtocol::new(
+        //     ctx,
+        // ))),
+        #[cfg(feature = "union")]
         PROGRAM_TYPE_PAIRWISE_PENALIZATION => Ok(ProtocolType::PairwisePenalizationProtocol(
             PairwisePenalizationProtocol::new(ctx),
         )),
+        #[cfg(feature = "union")]
+        PROGRAM_TYPE_DISPUTE_CORE => Ok(ProtocolType::DisputeCoreProtocol(
+            DisputeCoreProtocol::new(ctx),
+        )),
+        #[cfg(feature = "union")]
+        PROGRAM_TYPE_PAIRWISE_PENALIZATION => Ok(ProtocolType::PairwisePenalizationProtocol(
+            PairwisePenalizationProtocol::new(ctx),
+        )),
+        #[cfg(feature = "union")]
         PROGRAM_TYPE_PACKET => todo!(),
         _ => Err(BitVMXError::NotImplemented(name.to_string())),
     }

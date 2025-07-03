@@ -10,6 +10,7 @@ use protocol_builder::{
     types::{
         connection::InputSpec,
         input::{SighashType, SpendMode},
+        output::SpeedupData,
         InputArgs, OutputType,
     },
 };
@@ -20,19 +21,15 @@ use crate::{
     bitvmx::Context,
     errors::BitVMXError,
     program::{
+        participant::ParticipantKeys,
         protocols::{
             claim::ClaimGate,
             dispute::{START_CH, TIMELOCK_BLOCKS},
-            protocol_handler::external_fund_tx,
+            protocol_handler::{external_fund_tx, ProtocolContext, ProtocolHandler},
         },
         variables::VariableTypes,
     },
     types::ProgramContext,
-};
-
-use super::{
-    super::participant::ParticipantKeys,
-    protocol_handler::{ProtocolContext, ProtocolHandler},
 };
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -111,23 +108,29 @@ impl ProtocolHandler for SlotProtocol {
         Ok(ParticipantKeys::new(keys, vec![]))
     }
 
-    fn get_transaction_name(
+    fn get_transaction_by_name(
         &self,
         name: &str,
         program_context: &ProgramContext,
-    ) -> Result<Transaction, BitVMXError> {
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         //TODO: this is hacky. parametrize get_transaction_name
         if name.starts_with("unsigned_") {
             let name = name.strip_prefix("unsigned_").unwrap();
-            return Ok(self.load_protocol()?.transaction_by_name(name)?.clone());
+            return Ok((
+                self.load_protocol()?.transaction_by_name(name)?.clone(),
+                None,
+            ));
         }
 
         if name.starts_with(CERT_HASH_TX) {
-            return Ok(self.get_signed_tx(program_context, name, 0, 0, false, 0)?);
+            return Ok((
+                self.get_signed_tx(program_context, name, 0, 0, false, 0)?,
+                None,
+            ));
         }
 
         match name {
-            SETUP_TX => Ok(self.setup_tx()?),
+            SETUP_TX => Ok((self.setup_tx()?, None)),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
     }

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
+use protocol_builder::types::output::SpeedupData;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -50,11 +51,11 @@ impl ProtocolHandler for PairwisePenalizationProtocol {
         todo!()
     }
 
-    fn get_transaction_name(
+    fn get_transaction_by_name(
         &self,
         _name: &str,
         _context: &ProgramContext,
-    ) -> Result<Transaction, BitVMXError> {
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         todo!()
     }
 

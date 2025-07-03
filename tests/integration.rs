@@ -1,16 +1,18 @@
 use anyhow::Result;
-use bitvmx_client::{
-    //program::participant::ParticipantRole,
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
-};
+use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID};
 use common::{
     config_trace,
     dispute::{execute_dispute, prepare_dispute, ForcedChallenges},
     get_all, init_bitvmx, init_utxo_new, prepare_bitcoin, send_all, wait_message_from_channel,
 };
-use protocol_builder::scripts::{self, SignMode};
+use protocol_builder::{
+    scripts::{self, SignMode},
+    types::Utxo,
+};
 use tracing::info;
 use uuid::Uuid;
+
+use crate::common::{FEE, FUNDING_ID, WALLET_NAME};
 
 mod common;
 
@@ -37,6 +39,45 @@ pub fn test_drp() -> Result<()> {
             instance.process_bitcoin_updates()?;
         }
     }
+
+    //one time per bitvmx instance, we need to get the public key for the speedup funding utxo
+    let funding_public_id = Uuid::new_v4();
+    let command = IncomingBitVMXApiMessages::GetPubKey(funding_public_id, true).to_string()?;
+    send_all(&channels, &command)?;
+    let msgs = get_all(&channels, &mut instances, false)?;
+    let funding_key_0 = msgs[0].public_key().unwrap().1;
+    let funding_key_1 = msgs[1].public_key().unwrap().1;
+
+    let fund_txid_0 = wallet.fund_address(
+        WALLET_NAME,
+        FUNDING_ID,
+        funding_key_0,
+        &vec![10_000_000],
+        FEE,
+        false,
+        true,
+        None,
+    )?;
+
+    wallet.mine(1)?;
+    let fund_txid_1 = wallet.fund_address(
+        WALLET_NAME,
+        FUNDING_ID,
+        funding_key_1,
+        &vec![10_000_000],
+        FEE,
+        false,
+        true,
+        None,
+    )?;
+    wallet.mine(1)?;
+
+    let funds_utxo_0 = Utxo::new(fund_txid_0, 0, 10_000_000, &funding_key_0);
+    let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
+    channels[0].send(BITVMX_ID, command)?;
+    let funds_utxo_1 = Utxo::new(fund_txid_1, 0, 10_000_000, &funding_key_1);
+    let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_1).to_string()?;
+    channels[1].send(BITVMX_ID, command)?;
 
     let participants = vec![prover_address.clone(), verifier_address.clone()];
     let emulator_channels = vec![

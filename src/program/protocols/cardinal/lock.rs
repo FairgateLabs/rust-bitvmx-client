@@ -8,17 +8,21 @@ use protocol_builder::{
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
+        output::SpeedupData,
         InputArgs, OutputType,
     },
 };
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
-use crate::{errors::BitVMXError, program::variables::VariableTypes, types::ProgramContext};
-
-use super::{
-    super::participant::ParticipantKeys,
-    protocol_handler::{ProtocolContext, ProtocolHandler},
+use crate::{
+    errors::BitVMXError,
+    program::{
+        participant::ParticipantKeys,
+        protocols::protocol_handler::{ProtocolContext, ProtocolHandler},
+        variables::VariableTypes,
+    },
+    types::ProgramContext,
 };
 
 pub const LOCK_REQ_TX: &str = "lock_req_tx";
@@ -74,15 +78,15 @@ impl ProtocolHandler for LockProtocol {
         Ok(ParticipantKeys::new(keys, vec!["aggregated_1".to_string()]))
     }
 
-    fn get_transaction_name(
+    fn get_transaction_by_name(
         &self,
         name: &str,
         context: &ProgramContext,
-    ) -> Result<Transaction, BitVMXError> {
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         match name {
-            LOCK_TX => Ok(self.accept_tx(context)?),
-            PUBLISH_ZKP => Ok(self.publish_zkp(context)?),
-            HAPPY_PATH_TX => Ok(self.happy_path()?),
+            LOCK_TX => Ok((self.accept_tx(context)?, None)),
+            PUBLISH_ZKP => Ok((self.publish_zkp(context)?, None)),
+            HAPPY_PATH_TX => Ok((self.happy_path()?, None)),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
     }

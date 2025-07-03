@@ -8,6 +8,7 @@ use protocol_builder::{
     types::{
         connection::InputSpec,
         input::{SighashType, SpendMode},
+        output::SpeedupData,
         InputArgs, OutputType,
     },
 };
@@ -117,17 +118,17 @@ impl ProtocolHandler for TakeProtocol {
         Ok(())
     }
 
-    fn get_transaction_name(
+    fn get_transaction_by_name(
         &self,
         name: &str,
         _context: &ProgramContext,
-    ) -> Result<Transaction, BitVMXError> {
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         // TODO include only the txs that need to be executed based on a decision from the L2
         match name {
-            ACCEPT_PEG_IN_TX => Ok(self.accept_peg_in()?),
-            USER_TAKE_TX => Ok(self.user_take()?),
-            OPERATOR_TAKE_TX => Ok(self.operator_take()?),
-            OPERATOR_WON_TX => Ok(self.operator_won()?),
+            ACCEPT_PEG_IN_TX => Ok((self.accept_peg_in()?, None)),
+            USER_TAKE_TX => Ok((self.user_take()?, None)),
+            OPERATOR_TAKE_TX => Ok((self.operator_take()?, None)),
+            OPERATOR_WON_TX => Ok((self.operator_won()?, None)),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
     }

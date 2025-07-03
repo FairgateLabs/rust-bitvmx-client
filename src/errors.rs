@@ -138,6 +138,9 @@ pub enum BitVMXError {
     #[error("Challenge with idx {0} not found")]
     ChallengeIdxNotFound(u32),
 
+    #[error("Rom data {0} not found")]
+    RomDataNotFound(u32),
+
     #[error("Insufficient amount to send the transaction")]
     InsufficientAmount,
 
@@ -146,6 +149,12 @@ pub enum BitVMXError {
 
     #[error("Peer id {0} not found in the list of participants")]
     InvalidParticipant(String),
+
+    #[error("Inconsistent data retrieved of ZKP execution result from job {0}")]
+    InconsistentZKPData(Uuid),
+
+    #[error("Problem creating directory {0}: {1}")]
+    DirectoryCreationError(String, std::io::Error),
 }
 
 #[derive(Error, Debug)]

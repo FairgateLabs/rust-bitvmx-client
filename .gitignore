@@ -22,3 +22,4 @@ Cargo.lock
 /runs
 
 .DS_Store
+/zkp-jobs

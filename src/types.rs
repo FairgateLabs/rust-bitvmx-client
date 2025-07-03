@@ -2,10 +2,11 @@ use std::str::FromStr;
 
 use crate::spv_proof::BtcTxSPVProof;
 use bitcoin::{PrivateKey, PublicKey, Transaction, Txid};
-use bitcoin_coordinator::{types::BitcoinCoordinatorType, TransactionStatus};
+use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TransactionStatus};
 use bitvmx_broker::{broker_storage::BrokerStorage, channel::channel::LocalChannel};
 use chrono::{DateTime, Utc};
 use p2p_handler::P2pHandler;
+use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
 
 use uuid::Uuid;
@@ -21,7 +22,7 @@ use crate::{
 pub struct ProgramContext {
     pub key_chain: KeyChain,
     pub comms: P2pHandler,
-    pub bitcoin_coordinator: BitcoinCoordinatorType,
+    pub bitcoin_coordinator: BitcoinCoordinator,
     pub broker_channel: LocalChannel<BrokerStorage>,
     pub globals: Globals,
     pub witness: WitnessVars,
@@ -36,7 +37,7 @@ impl ProgramContext {
     pub fn new(
         comms: P2pHandler,
         key_chain: KeyChain,
-        bitcoin_coordinator: BitcoinCoordinatorType,
+        bitcoin_coordinator: BitcoinCoordinator,
         broker_channel: LocalChannel<BrokerStorage>,
         globals: Globals,
         witness: WitnessVars,
@@ -93,6 +94,7 @@ pub enum IncomingBitVMXApiMessages {
     Ping(),
     SetVar(Uuid, String, VariableTypes),
     SetWitness(Uuid, String, WitnessTypes),
+    SetFundingUtxo(Utxo),
     GetVar(Uuid, String),
     GetWitness(Uuid, String),
     GetCommInfo(),
@@ -107,13 +109,11 @@ pub enum IncomingBitVMXApiMessages {
     SetupKey(Uuid, Vec<P2PAddress>, Option<Vec<PublicKey>>, u16),
     GetAggregatedPubkey(Uuid),
     GetKeyPair(Uuid),
-    GetPubKey(Uuid),
     CreateKeyPair(Uuid, u32),
-    GenerateZKP(Uuid, Vec<u8>),
+    GetPubKey(Uuid, bool),
+    GenerateZKP(Uuid, Vec<u8>, String),
     ProofReady(Uuid),
-    ExecuteZKP(),
-    GetZKPExecutionResult(),
-    Finalize(),
+    GetZKPExecutionResult(Uuid),
 }
 impl IncomingBitVMXApiMessages {
     pub fn to_string(&self) -> Result<String, BitVMXError> {
@@ -140,7 +140,7 @@ pub enum OutgoingBitVMXApiMessages {
     AggregatedPubkey(Uuid, PublicKey),
     AggregatedPubkeyNotReady(Uuid),
     TransactionInfo(Uuid, String, Transaction),
-    ZKPResult(/* Add appropriate type */),
+    ZKPResult(Uuid, Vec<u8>, Vec<u8>),
     ExecutionResult(/* Add appropriate type */),
     CommInfo(P2PAddress),
     KeyPair(Uuid, PrivateKey, PublicKey),
@@ -151,6 +151,7 @@ pub enum OutgoingBitVMXApiMessages {
     HashedMessage(Uuid, String, u32, u32, String),
     ProofReady(Uuid),
     ProofNotReady(Uuid),
+    ProofGenerationError(Uuid, String),
     SPVProof(Txid, Option<BtcTxSPVProof>),
 }
 
@@ -190,6 +191,15 @@ impl OutgoingBitVMXApiMessages {
         match self {
             OutgoingBitVMXApiMessages::KeyPair(uuid, priv_key, pub_key) => {
                 Some((uuid.clone(), priv_key.clone(), pub_key.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn public_key(&self) -> Option<(Uuid, PublicKey)> {
+        match self {
+            OutgoingBitVMXApiMessages::PubKey(uuid, pub_key) => {
+                Some((uuid.clone(), pub_key.clone()))
             }
             _ => None,
         }

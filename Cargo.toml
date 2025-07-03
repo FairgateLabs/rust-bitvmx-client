@@ -65,3 +65,18 @@ bollard = "0.11.0"
 futures-util = "0.3"
 bitcoind = { path = "../rust-bitcoind" }
 bitvmx-wallet = { path = "../rust-bitvmx-wallet" }
+
+[features]
+default = ["cardinal", "union"]
+cardinal = []
+union = []
+
+[[example]]
+name = "union"
+path = "examples/union/main.rs"
+required-features = ["union"]
+
+[[example]]
+name = "cardinal"
+path = "examples/cardinal/main.rs"
+required-features = ["cardinal"]
