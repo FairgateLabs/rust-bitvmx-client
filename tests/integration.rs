@@ -103,7 +103,7 @@ pub fn test_drp() -> Result<()> {
         &wallet,
         &aggregated_pub_key,
         spending_condition.clone(),
-        220_000,
+        20_000,
         None,
     )?;
 
@@ -124,7 +124,7 @@ pub fn test_drp() -> Result<()> {
         initial_out_type,
         prover_win_utxo,
         prover_win_out_type,
-        10_000,
+        500,
         false,
         false,
         ForcedChallenges::Execution,

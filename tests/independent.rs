@@ -19,6 +19,7 @@ use common::dispute::{prepare_dispute, ForcedChallenges};
 use common::{clear_db, init_utxo_new, FUNDING_ID, INITIAL_BLOCK_COUNT, WALLET_NAME};
 use common::{config_trace, send_all};
 use protocol_builder::scripts::{self, SignMode};
+use protocol_builder::types::Utxo;
 use std::sync::mpsc::channel;
 use std::time::Duration;
 use std::{
@@ -390,6 +391,51 @@ pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
     let msgs = helper.wait_all_msg()?;
     let _aggregated_pub_key = msgs[0].aggregated_pub_key().unwrap();
 
+    //one time per bitvmx instance, we need to get the public key for the speedup funding utxo
+    let funding_public_id = Uuid::new_v4();
+    let command = IncomingBitVMXApiMessages::GetPubKey(funding_public_id, true);
+    helper.send_all(command)?;
+    let msgs = helper.wait_all_msg()?;
+    let funding_key_0 = msgs[0].public_key().unwrap().1;
+    let funding_key_1 = msgs[1].public_key().unwrap().1;
+    let _funding_key_2 = msgs[2].public_key().unwrap().1;
+
+    let fund_txid_0 = helper.wallet.fund_address(
+        WALLET_NAME,
+        FUNDING_ID,
+        funding_key_0,
+        &vec![10_000_000],
+        1000,
+        false,
+        true,
+        None,
+    )?;
+
+    helper.wallet.mine(1)?;
+    let fund_txid_1 = helper.wallet.fund_address(
+        WALLET_NAME,
+        FUNDING_ID,
+        funding_key_1,
+        &vec![10_000_000],
+        1000,
+        false,
+        true,
+        None,
+    )?;
+    helper.wallet.mine(1)?;
+
+    let funds_utxo_0 = Utxo::new(fund_txid_0, 0, 10_000_000, &funding_key_0);
+    let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
+    helper.channels[0].send(BITVMX_ID, command)?;
+    let funds_utxo_1 = Utxo::new(fund_txid_1, 0, 10_000_000, &funding_key_1);
+    let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_1).to_string()?;
+    helper.channels[1].send(BITVMX_ID, command)?;
+
+
+
+
+
+
     info!("Generate Aggregated from pair");
     let pair_0_1 = vec![addresses[0].clone(), addresses[1].clone()];
     let pair_0_1_agg_id = Uuid::new_v4();
@@ -399,6 +445,14 @@ pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
     let _msg = helper.wait_msg(0)?;
     let msg = helper.wait_msg(1)?;
     let pair_0_1_agg_pub_key = msg.aggregated_pub_key().unwrap();
+
+
+
+
+
+
+
+
 
     // prepare a second fund available so we don't need 2 blocks to get the UTXO
 
@@ -411,7 +465,7 @@ pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
         &helper.wallet,
         &pair_0_1_agg_pub_key,
         spending_condition.clone(),
-        200_000,
+        20_000,
         None,
     )?;
 
@@ -436,9 +490,9 @@ pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
         initial_out_type,
         prover_win_utxo,
         prover_win_out_type,
-        10_000,
+        500,
         false,
-        true,
+        false,
         ForcedChallenges::Execution,
     )?;
 
