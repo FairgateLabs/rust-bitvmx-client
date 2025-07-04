@@ -465,7 +465,7 @@ pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
         &helper.wallet,
         &pair_0_1_agg_pub_key,
         spending_condition.clone(),
-        200_000,
+        20_000,
         None,
     )?;
 
@@ -490,9 +490,9 @@ pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
         initial_out_type,
         prover_win_utxo,
         prover_win_out_type,
-        10_000,
+        500,
         false,
-        true,
+        false,
         ForcedChallenges::Execution,
     )?;
 
