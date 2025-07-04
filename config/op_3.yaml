@@ -22,10 +22,6 @@ p2p:
   peer_id_file: peer_id
   timeout: 5
 
-monitor:
-  checkpoint_height: 1
-  confirmation_threshold: 6
-
 coordinator:
   throtthle_bitcoin_updates_until_sync: 0
   throtthle_bitcoin_updates: 0
