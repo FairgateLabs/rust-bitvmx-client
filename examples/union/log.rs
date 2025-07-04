@@ -30,4 +30,4 @@ pub fn configure_tracing() {
             .with_env_filter(filter)
             .init();
     });
-} 
+}
