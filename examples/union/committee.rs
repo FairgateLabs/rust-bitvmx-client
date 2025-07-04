@@ -14,7 +14,7 @@ use bitvmx_client::{
 use bitcoin::{Amount, Network, PublicKey, ScriptBuf};
 use bitvmx_wallet::wallet::Wallet;
 use protocol_builder::types::OutputType;
-use std::thread;
+use std::thread::{self, sleep};
 use std::{collections::HashMap, time::Duration};
 use tracing::{info, info_span};
 use uuid::Uuid;
@@ -55,7 +55,7 @@ impl Committee {
             Member::new("op_1", ParticipantRole::Prover)?,
             Member::new("op_2", ParticipantRole::Prover)?,
             Member::new("op_3", ParticipantRole::Prover)?,
-            Member::new("op_4", ParticipantRole::Verifier)?,
+            Member::new("op_4", ParticipantRole::Prover)?,
         ];
 
         let (bitcoin_client, wallet) = get_bitcoin_client()?;
@@ -199,7 +199,7 @@ impl Committee {
                     let f = f.clone();
                     let span = info_span!("member", id = %m.id);
 
-                    thread::sleep(Duration::from_millis(2000)); // Simulate some delay for each member
+                    thread::sleep(Duration::from_millis(1000)); // Simulate some delay for each member
 
                     s.spawn(move || span.in_scope(|| f(m)))
                 })

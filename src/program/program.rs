@@ -509,6 +509,7 @@ impl Program {
                 );
                 continue;
             }
+
             let my_pub = program_context
                 .key_chain
                 .key_manager
