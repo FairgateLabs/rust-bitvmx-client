@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use crate::program::participant::{P2PAddress, ParticipantRole};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MembersSelected {
+pub struct CommitteeCreated {
     pub my_role: ParticipantRole,
     pub my_take_pubkey: PublicKey,
     pub my_dispute_pubkey: PublicKey,
@@ -16,8 +16,8 @@ pub struct MembersSelected {
     pub watchtower_count: u32,
 }
 
-impl MembersSelected {
+impl CommitteeCreated {
     pub fn name() -> String {
-        "members_selected".to_string()
+        "committee_created".to_string()
     }
 }

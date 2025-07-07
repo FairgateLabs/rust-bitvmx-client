@@ -4,7 +4,7 @@ use crate::{
         participant::{ParticipantKeys, ParticipantRole, PublicKeyType},
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
-            union::{constants::*, events::MembersSelected},
+            union::{constants::*, events::CommitteeCreated},
         },
         variables::PartialUtxo,
     },
@@ -87,12 +87,12 @@ impl ProtocolHandler for DisputeCoreProtocol {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         let mut protocol = self.load_or_create_protocol();
-        // self.create_initial_deposit(
-        //     &mut protocol,
-        //     self.members(context)?.my_role,
-        //     &keys,
-        //     context,
-        // )?;
+        self.create_initial_deposit(
+            &mut protocol,
+            self.committee(context)?.my_role,
+            &keys,
+            context,
+        )?;
 
         // TODO repeat slot count times connecting each dispute core to the previous one
         self.create_dispute_core(&mut protocol, &keys, context)?;
@@ -131,19 +131,19 @@ impl DisputeCoreProtocol {
         Self { ctx }
     }
 
-    fn members(&self, context: &ProgramContext) -> Result<MembersSelected, BitVMXError> {
-        let members_selected = context
+    fn committee(&self, context: &ProgramContext) -> Result<CommitteeCreated, BitVMXError> {
+        let committee_created = context
             .globals
-            .get_var(&self.ctx.id, &MembersSelected::name())?
+            .get_var(&self.ctx.id, &CommitteeCreated::name())?
             .unwrap()
             .string()?;
 
-        let members_selected: MembersSelected = serde_json::from_str(&members_selected)?;
-        Ok(members_selected)
+        let committee_created: CommitteeCreated = serde_json::from_str(&committee_created)?;
+        Ok(committee_created)
     }
 
     fn prover(&self, context: &ProgramContext) -> Result<bool, BitVMXError> {
-        let members = self.members(context)?;
+        let members = self.committee(context)?;
         Ok(members.my_role == ParticipantRole::Prover)
     }
 
@@ -205,7 +205,7 @@ impl DisputeCoreProtocol {
             )?;
         }
 
-        let members = self.members(context)?;
+        let members = self.committee(context)?;
 
         let mut operators_found = 0;
         for participant in keys.iter() {
@@ -242,7 +242,7 @@ impl DisputeCoreProtocol {
         keys: &Vec<ParticipantKeys>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let members = self.members(context)?;
+        let members = self.committee(context)?;
 
         // Connect with REIMBURSEMENT_KICKOFF_TX
         let participant = &keys[self.ctx.my_idx];
@@ -259,15 +259,15 @@ impl DisputeCoreProtocol {
             value_1_pubkey,
         )?;
 
-        // protocol.add_connection(
-        //     "dispute_core",
-        //     OP_INITIAL_DEPOSIT_TX,
-        //     OutputType::segwit_script(DISPUTE_OPENER_VALUE, &script)?.into(),
-        //     REIMBURSEMENT_KICKOFF_TX,
-        //     InputSpec::Auto(SighashType::ecdsa_all(), SpendMode::Segwit),
-        //     None,
-        //     None,
-        // )?;
+        protocol.add_connection(
+            "dispute_core",
+            OP_INITIAL_DEPOSIT_TX,
+            OutputType::segwit_script(DISPUTE_OPENER_VALUE, &script)?.into(),
+            REIMBURSEMENT_KICKOFF_TX,
+            InputSpec::Auto(SighashType::ecdsa_all(), SpendMode::Segwit),
+            None,
+            None,
+        )?;
 
         // Add the REIMBURSEMENT_KICKOFF_TX connections
         // Connection to prevent the take transactions to occur (No Take)
@@ -291,164 +291,164 @@ impl DisputeCoreProtocol {
             None,
         )?;
 
-        // // Connections to move to the next dispute core (T)
-        // // TODO use the correct value of bit 1 and 0 for winternitz
-        // let value_0: Vec<u8> = vec![0];
-        // let value_1: Vec<u8> = vec![1];
+        // Connections to move to the next dispute core (T)
+        // TODO use the correct value of bit 1 and 0 for winternitz
+        let value_0: Vec<u8> = vec![0];
+        let value_1: Vec<u8> = vec![1];
 
-        // let value_0_script = scripts::verify_value(
-        //     self.public_key(TAKE_AGGREGATED_KEY, context)?,
-        //     value_0_pubkey,
-        //     value_0,
-        // )?;
+        let value_0_script = scripts::verify_value(
+            self.public_key(TAKE_AGGREGATED_KEY, context)?,
+            value_0_pubkey,
+            value_0,
+        )?;
 
-        // let value_1_script = scripts::verify_value(
-        //     self.public_key(TAKE_AGGREGATED_KEY, context)?,
-        //     value_1_pubkey,
-        //     value_1,
-        // )?;
+        let value_1_script = scripts::verify_value(
+            self.public_key(TAKE_AGGREGATED_KEY, context)?,
+            value_1_pubkey,
+            value_1,
+        )?;
 
-        // // CHALLENGE_TX connection (T)
-        // protocol.add_connection(
-        //     "take_enabler",
-        //     REIMBURSEMENT_KICKOFF_TX,
-        //     OutputType::taproot(
-        //         DUST_VALUE,
-        //         &self.public_key(TAKE_AGGREGATED_KEY, context)?,
-        //         &vec![value_0_script, value_1_script],
-        //     )?
-        //     .into(),
-        //     CHALLENGE_TX,
-        //     //InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
-        //     InputSpec::Auto(
-        //         SighashType::taproot_all(),
-        //         SpendMode::All {
-        //             key_path_sign: SignMode::Aggregate,
-        //         },
-        //     ),
-        //     Some(TAKE_ENABLER_TIMELOCK),
-        //     None,
-        // )?;
+        // CHALLENGE_TX connection (T)
+        protocol.add_connection(
+            "take_enabler",
+            REIMBURSEMENT_KICKOFF_TX,
+            OutputType::taproot(
+                DUST_VALUE,
+                &self.public_key(TAKE_AGGREGATED_KEY, context)?,
+                &vec![value_0_script, value_1_script],
+            )?
+            .into(),
+            CHALLENGE_TX,
+            //InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            Some(TAKE_ENABLER_TIMELOCK),
+            None,
+        )?;
 
-        // protocol.add_connection(
-        //     "try_take_2",
-        //     CHALLENGE_TX,
-        //     OutputType::taproot(
-        //         DUST_VALUE,
-        //         &self.public_key(TAKE_AGGREGATED_KEY, context)?,
-        //         &vec![],
-        //     )?
-        //     .into(),
-        //     TRY_TAKE_2_TX,
-        //     InputSpec::Auto(
-        //         SighashType::taproot_all(),
-        //         SpendMode::KeyOnly {
-        //             key_path_sign: SignMode::Aggregate,
-        //         },
-        //     ),
-        //     Some(TAKE_ENABLER_TIMELOCK),
-        //     None,
-        // )?;
+        protocol.add_connection(
+            "try_take_2",
+            CHALLENGE_TX,
+            OutputType::taproot(
+                DUST_VALUE,
+                &self.public_key(TAKE_AGGREGATED_KEY, context)?,
+                &vec![],
+            )?
+            .into(),
+            TRY_TAKE_2_TX,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::KeyOnly {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            Some(TAKE_ENABLER_TIMELOCK),
+            None,
+        )?;
 
-        // protocol.add_connection(
-        //     "no_dispute_opened",
-        //     CHALLENGE_TX,
-        //     OutputType::taproot(
-        //         DUST_VALUE,
-        //         &self.public_key(TAKE_AGGREGATED_KEY, context)?,
-        //         &vec![],
-        //     )?
-        //     .into(),
-        //     NO_DISPUTE_OPENED_TX,
-        //     InputSpec::Auto(
-        //         SighashType::taproot_all(),
-        //         SpendMode::KeyOnly {
-        //             key_path_sign: SignMode::Aggregate,
-        //         },
-        //     ),
-        //     Some(TAKE_ENABLER_TIMELOCK),
-        //     None,
-        // )?;
+        protocol.add_connection(
+            "no_dispute_opened",
+            CHALLENGE_TX,
+            OutputType::taproot(
+                DUST_VALUE,
+                &self.public_key(TAKE_AGGREGATED_KEY, context)?,
+                &vec![],
+            )?
+            .into(),
+            NO_DISPUTE_OPENED_TX,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::KeyOnly {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            Some(TAKE_ENABLER_TIMELOCK),
+            None,
+        )?;
 
-        // // YOU_CANT_TAKE_TX connection
-        // protocol.add_connection(
-        //     "take_enabler",
-        //     REIMBURSEMENT_KICKOFF_TX,
-        //     OutputSpec::Index(1),
-        //     YOU_CANT_TAKE_TX,
-        //     //InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
-        //     InputSpec::Auto(
-        //         SighashType::taproot_all(),
-        //         SpendMode::All {
-        //             key_path_sign: SignMode::Aggregate,
-        //         },
-        //     ),
-        //     Some(TAKE_ENABLER_TIMELOCK / 2),
-        //     None,
-        // )?;
+        // YOU_CANT_TAKE_TX connection
+        protocol.add_connection(
+            "take_enabler",
+            REIMBURSEMENT_KICKOFF_TX,
+            OutputSpec::Index(1),
+            YOU_CANT_TAKE_TX,
+            //InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            Some(TAKE_ENABLER_TIMELOCK / 2),
+            None,
+        )?;
 
-        // // Connection to try to move to the next dispute core (Try Move On)
-        // protocol.add_connection(
-        //     "take_enabler",
-        //     REIMBURSEMENT_KICKOFF_TX,
-        //     OutputType::taproot(
-        //         DUST_VALUE,
-        //         &self.public_key(DISPUTE_AGGREGATED_KEY, context)?,
-        //         &vec![],
-        //     )?
-        //     .into(),
-        //     TRY_MOVE_ON_TX,
-        //     InputSpec::Auto(
-        //         SighashType::taproot_all(),
-        //         SpendMode::KeyOnly {
-        //             key_path_sign: SignMode::Aggregate,
-        //         },
-        //     ),
-        //     None,
-        //     None,
-        // )?;
+        // Connection to try to move to the next dispute core (Try Move On)
+        protocol.add_connection(
+            "take_enabler",
+            REIMBURSEMENT_KICKOFF_TX,
+            OutputType::taproot(
+                DUST_VALUE,
+                &self.public_key(DISPUTE_AGGREGATED_KEY, context)?,
+                &vec![],
+            )?
+            .into(),
+            TRY_MOVE_ON_TX,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::KeyOnly {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            None,
+        )?;
 
-        // // Connection to stop moving on to the next dispute core (X)
-        // protocol.add_connection(
-        //     "stop_move_on_enabler",
-        //     REIMBURSEMENT_KICKOFF_TX,
-        //     OutputType::taproot(
-        //         DUST_VALUE,
-        //         &self.public_key(DISPUTE_AGGREGATED_KEY, context)?,
-        //         &vec![],
-        //     )?
-        //     .into(),
-        //     NO_DISPUTE_OPENED_TX,
-        //     InputSpec::Auto(
-        //         SighashType::taproot_all(),
-        //         SpendMode::KeyOnly {
-        //             key_path_sign: SignMode::Aggregate,
-        //         },
-        //     ),
-        //     None,
-        //     None,
-        // )?;
+        // Connection to stop moving on to the next dispute core (X)
+        protocol.add_connection(
+            "stop_move_on_enabler",
+            REIMBURSEMENT_KICKOFF_TX,
+            OutputType::taproot(
+                DUST_VALUE,
+                &self.public_key(DISPUTE_AGGREGATED_KEY, context)?,
+                &vec![],
+            )?
+            .into(),
+            NO_DISPUTE_OPENED_TX,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::KeyOnly {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            None,
+        )?;
 
-        // // Connection to stop moving on to the next dispute core (Y)
-        // protocol.add_connection(
-        //     "you_cant_take_enabler",
-        //     REIMBURSEMENT_KICKOFF_TX,
-        //     OutputType::taproot(
-        //         DUST_VALUE,
-        //         &self.public_key(DISPUTE_AGGREGATED_KEY, context)?,
-        //         &vec![],
-        //     )?
-        //     .into(),
-        //     YOU_CANT_TAKE_TX,
-        //     InputSpec::Auto(
-        //         SighashType::taproot_all(),
-        //         SpendMode::KeyOnly {
-        //             key_path_sign: SignMode::Aggregate,
-        //         },
-        //     ),
-        //     None,
-        //     None,
-        // )?;
+        // Connection to stop moving on to the next dispute core (Y)
+        protocol.add_connection(
+            "you_cant_take_enabler",
+            REIMBURSEMENT_KICKOFF_TX,
+            OutputType::taproot(
+                DUST_VALUE,
+                &self.public_key(DISPUTE_AGGREGATED_KEY, context)?,
+                &vec![],
+            )?
+            .into(),
+            YOU_CANT_TAKE_TX,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::KeyOnly {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            None,
+        )?;
 
         Ok(())
     }
