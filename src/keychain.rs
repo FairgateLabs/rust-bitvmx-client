@@ -182,6 +182,7 @@ impl KeyChain {
         self.key_manager
             .aggregate_nonces(aggregated_pubkey, id, nonces_map)
             .map_err(BitVMXError::from)?;
+            .map_err(BitVMXError::from)?;
 
         Ok(())
     }
@@ -194,6 +195,7 @@ impl KeyChain {
     ) -> Result<PublicKey, BitVMXError> {
         self.key_manager
             .new_musig2_session(participant_pubkeys, my_pubkey)
+            .map_err(BitVMXError::from)
             .map_err(BitVMXError::from)
     }
 
@@ -209,6 +211,11 @@ impl KeyChain {
         partial_signature_mapping: HashMap<PublicKey, Vec<(MessageId, PartialSignature)>>,
         id: &str,
     ) -> Result<(), BitVMXError> {
+        self.key_manager.save_partial_signatures_multi(
+            aggregated_pubkey,
+            id,
+            partial_signature_mapping,
+        )?;
         self.key_manager.save_partial_signatures_multi(
             aggregated_pubkey,
             id,
@@ -232,6 +239,9 @@ impl KeyChain {
         message_id: &str,
         id: &str,
     ) -> Result<bitcoin::secp256k1::schnorr::Signature, BitVMXError> {
+        let signature =
+            self.key_manager
+                .get_aggregated_signature(aggregated_pubkey, id, message_id)?;
         let signature =
             self.key_manager
                 .get_aggregated_signature(aggregated_pubkey, id, message_id)?;
