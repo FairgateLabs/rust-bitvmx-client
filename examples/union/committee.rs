@@ -162,7 +162,7 @@ impl Committee {
                     let f = f.clone();
                     let span = info_span!("member", id = %m.id);
 
-                    thread::sleep(Duration::from_millis(1000)); // Simulate some delay for each member
+                    thread::sleep(Duration::from_millis(2000)); // Simulate some delay for each member
 
                     s.spawn(move || span.in_scope(|| f(m)))
                 })

@@ -87,12 +87,12 @@ impl ProtocolHandler for DisputeCoreProtocol {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         let mut protocol = self.load_or_create_protocol();
-        self.create_initial_deposit(
-            &mut protocol,
-            self.committee(context)?.my_role,
-            &keys,
-            context,
-        )?;
+        // self.create_initial_deposit(
+        //     &mut protocol,
+        //     self.committee(context)?.my_role,
+        //     &keys,
+        //     context,
+        // )?;
 
         // TODO repeat slot count times connecting each dispute core to the previous one
         self.create_dispute_core(&mut protocol, &keys, context)?;
@@ -262,9 +262,19 @@ impl DisputeCoreProtocol {
         protocol.add_connection(
             "dispute_core",
             OP_INITIAL_DEPOSIT_TX,
-            OutputType::segwit_script(DISPUTE_OPENER_VALUE, &script)?.into(),
+            OutputType::taproot(
+                DISPUTE_OPENER_VALUE,
+                &self.public_key(TAKE_AGGREGATED_KEY, context)?,
+                &[],
+            )?
+            .into(),
             REIMBURSEMENT_KICKOFF_TX,
-            InputSpec::Auto(SighashType::ecdsa_all(), SpendMode::Segwit),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::KeyOnly {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
             None,
             None,
         )?;
@@ -308,21 +318,22 @@ impl DisputeCoreProtocol {
             value_1,
         )?;
 
-        // CHALLENGE_TX connection (T)
+        //CHALLENGE_TX connection (T)
+        // TODO review the SpendMode
         protocol.add_connection(
             "take_enabler",
             REIMBURSEMENT_KICKOFF_TX,
             OutputType::taproot(
                 DUST_VALUE,
                 &self.public_key(TAKE_AGGREGATED_KEY, context)?,
-                &vec![value_0_script, value_1_script],
+                &vec![], //&vec![value_0_script, value_1_script],
             )?
             .into(),
             CHALLENGE_TX,
             //InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
             InputSpec::Auto(
                 SighashType::taproot_all(),
-                SpendMode::All {
+                SpendMode::KeyOnly {
                     key_path_sign: SignMode::Aggregate,
                 },
             ),
