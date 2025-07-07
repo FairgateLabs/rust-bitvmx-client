@@ -162,7 +162,7 @@ fn run_auto_mine(network: Network, rx: Receiver<()>, tx: Sender<()>, interval: u
         &config.bitcoin.username,
         &config.bitcoin.password,
     )?;
-    let address = bitcoin_client.init_wallet(network, "test_wallet");
+    let address = bitcoin_client.init_wallet("test_wallet");
     let address = address.unwrap();
 
     // Main processing loop

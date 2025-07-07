@@ -58,9 +58,7 @@ pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, Address)> {
         &config.bitcoin.password,
     )?;
 
-    let wallet = bitcoin_client
-        .init_wallet(Network::Regtest, "test_wallet")
-        .unwrap();
+    let wallet = bitcoin_client.init_wallet("test_wallet").unwrap();
 
     info!("Mine 1 blocks to address {:?}", wallet);
     bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
