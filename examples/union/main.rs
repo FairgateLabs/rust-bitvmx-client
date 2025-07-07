@@ -12,6 +12,9 @@ use std::env;
 mod committee;
 use committee::Committee;
 
+mod covenants;
+mod member;
+
 mod bitcoin;
 mod log;
 
@@ -23,7 +26,7 @@ pub fn main() -> Result<()> {
 
     match command.map(|s| s.as_str()) {
         Some("setup_bitcoin_node") => setup_bitcoin_node()?,
-        Some("pegin") => pegin()?,
+        Some("committee") => committee()?,
         Some(cmd) => {
             eprintln!("Unknown command: {}", cmd);
             print_usage();
@@ -41,7 +44,8 @@ pub fn main() -> Result<()> {
 fn print_usage() {
     println!("Usage:");
     println!("  cargo run --example union setup_bitcoin_node  - Sets up Bitcoin node only");
-    println!("  cargo run --example union pegin               - Runs the peg-in flow");
+    println!("  cargo run --example union committee           - Setups a new committee");
+    println!("  cargo run --example union pegin               - Runs the pegin flow");
 }
 
 pub fn setup_bitcoin_node() -> Result<()> {
@@ -51,19 +55,11 @@ pub fn setup_bitcoin_node() -> Result<()> {
     Ok(())
 }
 
-pub fn pegin() -> Result<()> {
+pub fn committee() -> Result<()> {
     // 0. A new package is created. A committee is selected. Union client requests the setup of the
     // corresponding keys and programs.
-    let _committee = setup()?;
-
-    // Pegin
-
-    Ok(())
-}
-
-pub fn setup() -> Result<Committee> {
     let mut committee = Committee::new()?;
     committee.setup()?;
 
-    Ok(committee)
+    Ok(())
 }
