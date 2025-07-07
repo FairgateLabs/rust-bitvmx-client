@@ -379,13 +379,28 @@ impl Program {
             .computed_aggregated
             .values()
         {
+            error!(
+                id = self.my_idx,
+                "PARTICIPANT AGGREGATED KEYS: {}",
+                self.participants[self.my_idx]
+                    .keys
+                    .as_ref()
+                    .unwrap()
+                    .computed_aggregated
+                    .values()
+                    .map(|k| k.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+
             let nonces = program_context
                 .key_chain
                 .get_nonces(aggregated, &self.protocol.context().protocol_name);
             if nonces.is_err() {
                 warn!(
-                    "{}. Error geting nonces for aggregated key: {:?}",
-                    self.my_idx, aggregated
+                    "{}. Error geting nonces for aggregated key: {}",
+                    self.my_idx,
+                    aggregated.to_string()
                 );
                 continue;
             }
@@ -401,7 +416,7 @@ impl Program {
         }
 
         self.participants[self.my_idx].nonces = Some(public_nonce_msg);
-        debug!("I'm {} and I'm setting my nonces", self.my_idx);
+        info!("I'm {} and I'm setting my nonces", self.my_idx);
 
         let mut nonces = vec![];
         for other in &self.participants {
@@ -474,6 +489,7 @@ impl Program {
             }
 
             self.move_program_to_next_state()?;
+            info!("{}. All nonces ready", self.my_idx);
         } else {
             info!("{}. Not all nonces ready", self.my_idx);
         }
@@ -504,8 +520,9 @@ impl Program {
                 .get_signatures(aggregated, &self.protocol.context().protocol_name);
             if signatures.is_err() {
                 warn!(
-                    "{}. Error geting partial signature for aggregated key: {:?}",
-                    self.my_idx, aggregated
+                    "{}. Error getting partial signature for aggregated key: {}",
+                    self.my_idx,
+                    aggregated.to_string()
                 );
                 continue;
             }
@@ -600,6 +617,7 @@ impl Program {
 
             self.protocol.sign(&program_context.key_chain)?;
             self.move_program_to_next_state()?;
+            info!("{}. All signatures received", self.my_idx);
         }
 
         self.send_ack(
@@ -890,6 +908,10 @@ impl Program {
     /// the program's flow
     pub fn move_program_to_next_state(&mut self) -> Result<(), BitVMXError> {
         self.state = self.state.next_state(self.im_leader());
+        info!(
+            id = self.my_idx,
+            "Moving program to next state: {:?}", self.state
+        );
         self.save()?;
         Ok(())
     }
