@@ -1,6 +1,5 @@
 use anyhow::Result;
 
-
 pub fn main() -> Result<()> {
     configure_tracing();
 
@@ -32,7 +31,7 @@ fn configure_tracing() {
             "key_manager=off",
             "memory=off",
         ];
-    
+
         let filter = EnvFilter::builder()
             .parse(default_modules.join(","))
             .expect("Invalid filter");

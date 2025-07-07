@@ -12,7 +12,7 @@ cargo run all
 rm -rf /tmp/broker_p2p_6118*; rm -r /tmp/op_* ; RUST_BACKTRACE=1 cargo run all
 ```
 
-Run a pegin example script:
+Run the committee flow:
 ```bash
-RUST_BACKTRACE=1 cargo run --example union pegin
+RUST_BACKTRACE=1 cargo run --example union committee
 ```
