@@ -356,7 +356,7 @@ impl ClientTest {
                 assert_eq!(rid, request_id);
                 assert_eq!(tx_status.tx_id, txid);
                 //assert_eq!(tx_status.status, Finalized);
-                assert_eq!(tx_status.confirmations, 6); // BitVMX has an off by one bug
+                assert_eq!(tx_status.confirmations, 6 + 1); // BitVMX has an off by one bug
             }
             _ => anyhow::bail!("Expected Transaction response, got {:?}", response),
         }

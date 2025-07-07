@@ -751,7 +751,7 @@ impl Program {
         info!(
             "Dispatching transaction: {} and speedup: {:?}",
             style(tx_to_dispatch.compute_txid()).green(),
-            style(&speedup).yellow(),
+            style(speedup.is_some()).yellow(),
         );
 
         program_context.bitcoin_coordinator.dispatch(
