@@ -213,24 +213,4 @@ impl TakeProtocol {
             .unwrap()
             .pubkey()
     }
-
-    fn utxo(&self, name: &str, context: &ProgramContext) -> Result<PartialUtxo, BitVMXError> {
-        context.globals.get_var(&self.ctx.id, name)?.unwrap().utxo()
-    }
-
-    fn number(&self, name: &str, context: &ProgramContext) -> Result<u32, BitVMXError> {
-        context
-            .globals
-            .get_var(&self.ctx.id, name)?
-            .unwrap()
-            .number()
-    }
-
-    fn pubkey(&self, name: &str, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
-        context
-            .globals
-            .get_var(&self.ctx.id, name)?
-            .unwrap()
-            .pubkey()
-    }
 }

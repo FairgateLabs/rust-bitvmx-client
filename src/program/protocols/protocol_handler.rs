@@ -460,6 +460,8 @@ pub enum ProtocolType {
     #[cfg(feature = "union")]
     AcceptPegInProtocol,
     #[cfg(feature = "union")]
+    AcceptPegInProtocol,
+    #[cfg(feature = "union")]
     TakeProtocol,
     #[cfg(feature = "union")]
     DisputeCoreProtocol,

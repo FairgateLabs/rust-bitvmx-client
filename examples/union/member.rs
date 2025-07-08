@@ -159,6 +159,7 @@ impl Member {
             funding_utxos,
             &self.keyring,
             &self.bitvmx,
+            &self.bitvmx,
         )?;
 
         // TODO: add the rest of the covenants here

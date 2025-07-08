@@ -5,6 +5,7 @@ use crate::{
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::types::*,
+            union::types::*,
         },
         variables::{PartialUtxo, VariableTypes},
     },
@@ -50,15 +51,17 @@ impl ProtocolHandler for DisputeCoreProtocol {
 
     fn get_pregenerated_aggregated_keys(
         &self,
-        _context: &ProgramContext,
+        context: &ProgramContext,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
         Ok(vec![
             (
                 "take_aggregated".to_string(),
                 self.take_aggregated_key(context)?,
+                self.take_aggregated_key(context)?,
             ),
             (
                 "dispute_aggregated".to_string(),
+                self.dispute_aggregated_key(context)?,
                 self.dispute_aggregated_key(context)?,
             ),
         ])
@@ -313,6 +316,8 @@ impl DisputeCoreProtocol {
         let value_0: Vec<u8> = vec![0];
         let value_1: Vec<u8> = vec![1];
 
+        let value_0_script = scripts::verify_value(take_aggregated_key, value_0_pubkey, value_0)?;
+        let value_1_script = scripts::verify_value(take_aggregated_key, value_1_pubkey, value_1)?;
         let value_0_script = scripts::verify_value(take_aggregated_key, value_0_pubkey, value_0)?;
         let value_1_script = scripts::verify_value(take_aggregated_key, value_1_pubkey, value_1)?;
 
