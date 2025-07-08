@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
+use bitcoin::Txid;
 use bitvmx_client::{
     client::BitVMXClient,
     program::{
@@ -28,6 +29,8 @@ impl AcceptPegIn {
         my_id: &str,
         my_role: &ParticipantRole,
         committee: &[Member],
+        request_peg_in_txid: Txid,
+        request_peg_in_amount: u64,
         keyring: &Keyring,
         bitvmx: &BitVMXClient,
     ) -> Result<AcceptPegIn> {
@@ -49,6 +52,8 @@ impl AcceptPegIn {
 
         let peg_in_request = PegInRequest {
             my_role: my_role.clone(),
+            txid: request_peg_in_txid,
+            amount: request_peg_in_amount,
             take_aggregated_key: keyring.take_aggregated_key.clone().unwrap(),
             addresses: comms,
         };

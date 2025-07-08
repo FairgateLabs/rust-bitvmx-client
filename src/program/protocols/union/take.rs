@@ -19,16 +19,14 @@ use crate::{
     errors::BitVMXError,
     program::{
         participant::ParticipantKeys,
-        protocols::protocol_handler::{ProtocolContext, ProtocolHandler},
+        protocols::{
+            protocol_handler::{ProtocolContext, ProtocolHandler},
+            union::types::{ACCEPT_PEG_IN_TX, OPERATOR_TAKE_TX, OPERATOR_WON_TX, USER_TAKE_TX},
+        },
         variables::PartialUtxo,
     },
     types::ProgramContext,
 };
-
-pub const ACCEPT_PEG_IN_TX: &str = "ACCEPT_PEG_IN_TX";
-pub const USER_TAKE_TX: &str = "USER_TAKE_TX";
-pub const OPERATOR_TAKE_TX: &str = "OPERATOR_TAKE_TX";
-pub const OPERATOR_WON_TX: &str = "OPERATOR_WON_TX";
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TakeProtocol {
