@@ -14,7 +14,7 @@ use bitvmx_client::{
 };
 use tracing::{debug, info};
 
-use crate::covenants::dispute_core::DisputeCore;
+use crate::covenants::{accept_pegin::AcceptPegIn, dispute_core::DisputeCore};
 
 macro_rules! expect_msg {
     ($self:expr, $pattern:pat => $expr:expr) => {{
@@ -146,8 +146,6 @@ impl Member {
         &mut self,
         dispute_core_id: Uuid,
         members: &[Member],
-        members_take_pubkeys: &[PublicKey],
-        members_dispute_pubkeys: &[PublicKey],
         op_funding_utxos: &HashMap<String, PartialUtxo>,
         wt_funding_utxos: &HashMap<String, PartialUtxo>,
     ) -> Result<()> {
@@ -157,12 +155,10 @@ impl Member {
             &self.id,
             &self.role,
             members,
-            members_take_pubkeys,
-            members_dispute_pubkeys,
             op_funding_utxos,
             wt_funding_utxos,
             &self.keyring,
-            self.bitvmx.clone(),
+            &self.bitvmx,
         )?;
 
         // TODO: add the rest of the covenants here
@@ -172,6 +168,24 @@ impl Member {
         //     drp_covenants_count = self.covenants.drp_covenants.len(),
         //     "Covenant setup complete"
         // );
+
+        Ok(())
+    }
+
+    pub fn accept_peg_in(
+        &mut self,
+        accept_peg_in_covenant_id: Uuid,
+        members: &[Member],
+    ) -> Result<()> {
+        info!(id = self.id, "Accepting peg-in");
+        AcceptPegIn::setup(
+            accept_peg_in_covenant_id,
+            &self.id,
+            &self.role,
+            members,
+            &self.keyring,
+            &self.bitvmx,
+        )?;
 
         Ok(())
     }

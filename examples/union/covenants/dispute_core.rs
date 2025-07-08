@@ -1,12 +1,11 @@
 use anyhow::Result;
 use std::collections::HashMap;
 
-use bitcoin::PublicKey;
 use bitvmx_client::{
     client::BitVMXClient,
     program::{
         participant::{P2PAddress, ParticipantRole},
-        protocols::union::events::CommitteeCreated,
+        protocols::union::types::CommitteeCreated,
         variables::{PartialUtxo, VariableTypes},
     },
     types::PROGRAM_TYPE_DISPUTE_CORE,
@@ -20,33 +19,31 @@ pub struct DisputeCore {
     pub covenant_id: Uuid,
     pub my_member_id: String,
     pub my_role: ParticipantRole,
-    pub members: Vec<Member>,
+    pub committee: Vec<Member>,
 }
 
 impl DisputeCore {
     #[allow(clippy::too_many_arguments)]
     pub fn setup(
         covenant_id: Uuid,
-        member_id: &str,
-        role: &ParticipantRole,
-        members: &[Member],
-        members_take_pubkeys: &[PublicKey],
-        members_dispute_pubkeys: &[PublicKey],
+        my_id: &str,
+        my_role: &ParticipantRole,
+        committee: &[Member],
         op_funding_utxos: &HashMap<String, PartialUtxo>,
         wt_funding_utxos: &HashMap<String, PartialUtxo>,
         keyring: &Keyring,
-        bitvmx: BitVMXClient,
+        bitvmx: &BitVMXClient,
     ) -> Result<DisputeCore> {
-        let addresses = Self::get_addresses(members);
+        let addresses = Self::get_addresses(committee);
 
         info!(
-            id = member_id,
-            "Preparing Dispute Core covenant {} for {}", covenant_id, member_id
+            id = my_id,
+            "Preparing Dispute Core covenant {} for {}", covenant_id, my_id
         );
 
         // build a map of communication pubkeys to addresses
         let mut comms = HashMap::new();
-        for member in members {
+        for member in committee {
             comms.insert(
                 member.keyring.communication_pubkey.unwrap(),
                 member.address.clone().unwrap(),
@@ -54,14 +51,14 @@ impl DisputeCore {
         }
 
         let committee_created = CommitteeCreated {
-            my_role: role.clone(),
+            my_role: my_role.clone(),
             my_take_pubkey: keyring.take_pubkey.unwrap(),
             my_dispute_pubkey: keyring.dispute_pubkey.unwrap(),
-            take_pubkeys: members_take_pubkeys.to_vec(),
-            dispute_pubkeys: members_dispute_pubkeys.to_vec(),
+            take_aggregated_key: keyring.take_aggregated_key.clone().unwrap(),
+            dispute_aggregated_key: keyring.dispute_aggregated_key.clone().unwrap(),
             addresses: comms,
-            operator_count: Self::operator_count(members)?,
-            watchtower_count: Self::watchtower_count(members)?,
+            operator_count: Self::operator_count(committee)?,
+            watchtower_count: Self::watchtower_count(committee)?,
         };
 
         bitvmx.set_var(
@@ -70,40 +67,18 @@ impl DisputeCore {
             VariableTypes::String(serde_json::to_string(&committee_created)?),
         )?;
 
-        if *role == ParticipantRole::Prover {
+        if *my_role == ParticipantRole::Prover {
             bitvmx.set_var(
                 covenant_id,
                 "OP_FUNDING_UTXO",
-                VariableTypes::Utxo(
-                    op_funding_utxos
-                        .get(&member_id.to_string())
-                        .unwrap()
-                        .clone(),
-                ),
+                VariableTypes::Utxo(op_funding_utxos.get(&my_id.to_string()).unwrap().clone()),
             )?;
         }
 
         bitvmx.set_var(
             covenant_id,
             "WT_FUNDING_UTXO",
-            VariableTypes::Utxo(
-                wt_funding_utxos
-                    .get(&member_id.to_string())
-                    .unwrap()
-                    .clone(),
-            ),
-        )?;
-
-        bitvmx.set_var(
-            covenant_id,
-            "take_aggregated_key",
-            VariableTypes::PubKey(keyring.take_aggregated_key.clone().unwrap()),
-        )?;
-
-        bitvmx.set_var(
-            covenant_id,
-            "dispute_aggregated_key",
-            VariableTypes::PubKey(keyring.dispute_aggregated_key.clone().unwrap()),
+            VariableTypes::Utxo(wt_funding_utxos.get(&my_id.to_string()).unwrap().clone()),
         )?;
 
         bitvmx.setup(
@@ -115,9 +90,9 @@ impl DisputeCore {
 
         Ok(DisputeCore {
             covenant_id,
-            my_member_id: member_id.to_string(),
-            my_role: role.clone(),
-            members: members.to_vec(),
+            my_member_id: my_id.to_string(),
+            my_role: my_role.clone(),
+            committee: committee.to_vec(),
         })
     }
 
