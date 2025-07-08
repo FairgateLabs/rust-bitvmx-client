@@ -30,8 +30,8 @@ impl Committee {
         let members = vec![
             Member::new("op_1", ParticipantRole::Prover)?,
             Member::new("op_2", ParticipantRole::Prover)?,
-            // Member::new("op_3", ParticipantRole::Prover)?,
-            // Member::new("op_4", ParticipantRole::Prover)?,
+            Member::new("op_3", ParticipantRole::Prover)?,
+            Member::new("op_4", ParticipantRole::Prover)?,
         ];
 
         let wallet = init_wallet()?;
@@ -108,12 +108,19 @@ impl Committee {
             op.setup_covenants(
                 dispute_core_covenant_id,
                 &members,
-                &members_take_pubkeys,
-                &members_dispute_pubkeys,
                 &op_funding_utxos,
                 &wt_funding_utxos,
             )
         })?;
+
+        Ok(())
+    }
+
+    pub fn accept_peg_in(&mut self) -> Result<()> {
+        let accept_peg_in_covenant_id = Uuid::new_v4();
+        let members = self.members.clone();
+
+        self.all(|op| op.accept_peg_in(accept_peg_in_covenant_id, &members))?;
 
         Ok(())
     }

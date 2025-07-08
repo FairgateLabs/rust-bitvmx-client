@@ -18,6 +18,8 @@ use uuid::Uuid;
 
 use crate::errors::BitVMXError;
 use crate::keychain::KeyChain;
+#[cfg(feature = "union")]
+use crate::program::protocols::union::accept_pegin::AcceptPegInProtocol;
 
 use super::super::participant::ParticipantKeys;
 #[cfg(feature = "cardinal")]
@@ -429,6 +431,8 @@ pub enum ProtocolType {
     #[cfg(feature = "cardinal")]
     TransferProtocol,
     #[cfg(feature = "union")]
+    AcceptPegInProtocol,
+    #[cfg(feature = "union")]
     TakeProtocol,
     #[cfg(feature = "union")]
     DisputeCoreProtocol,
@@ -456,11 +460,11 @@ pub fn new_protocol_type(
         #[cfg(feature = "cardinal")]
         PROGRAM_TYPE_TRANSFER => Ok(ProtocolType::TransferProtocol(TransferProtocol::new(ctx))),
         #[cfg(feature = "union")]
+        PROGRAM_TYPE_ACCEPT_PEG_IN => Ok(ProtocolType::AcceptPegInProtocol(
+            AcceptPegInProtocol::new(ctx),
+        )),
+        #[cfg(feature = "union")]
         PROGRAM_TYPE_TAKE => Ok(ProtocolType::TakeProtocol(TakeProtocol::new(ctx))),
-        // #[cfg(feature = "union")]
-        // PROGRAM_TYPE_INIT => Ok(ProtocolType::DisputeCoreProtocol(DisputeCoreProtocol::new(
-        //     ctx,
-        // ))),
         #[cfg(feature = "union")]
         PROGRAM_TYPE_PAIRWISE_PENALIZATION => Ok(ProtocolType::PairwisePenalizationProtocol(
             PairwisePenalizationProtocol::new(ctx),
@@ -469,12 +473,6 @@ pub fn new_protocol_type(
         PROGRAM_TYPE_DISPUTE_CORE => Ok(ProtocolType::DisputeCoreProtocol(
             DisputeCoreProtocol::new(ctx),
         )),
-        #[cfg(feature = "union")]
-        PROGRAM_TYPE_PAIRWISE_PENALIZATION => Ok(ProtocolType::PairwisePenalizationProtocol(
-            PairwisePenalizationProtocol::new(ctx),
-        )),
-        #[cfg(feature = "union")]
-        PROGRAM_TYPE_PACKET => todo!(),
         _ => Err(BitVMXError::NotImplemented(name.to_string())),
     }
 }

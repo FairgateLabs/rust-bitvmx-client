@@ -379,7 +379,7 @@ impl Program {
             .computed_aggregated
             .values()
         {
-            error!(
+            info!(
                 id = self.my_idx,
                 "PARTICIPANT AGGREGATED KEYS: {}",
                 self.participants[self.my_idx]
