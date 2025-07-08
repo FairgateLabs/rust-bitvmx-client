@@ -2,7 +2,15 @@ use std::collections::HashMap;
 
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
-use protocol_builder::types::output::SpeedupData;
+use protocol_builder::{
+    scripts::SignMode,
+    types::{
+        connection::InputSpec,
+        input::{SighashType, SpendMode},
+        output::SpeedupData,
+        OutputType,
+    },
+};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -12,7 +20,7 @@ use crate::{
         participant::ParticipantKeys,
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
-            union::types::PegInRequest,
+            union::types::{PegInRequest, ACCEPT_PEG_IN_TX, REQUEST_PEG_IN_TX},
         },
     },
     types::ProgramContext,
@@ -36,9 +44,11 @@ impl ProtocolHandler for AcceptPegInProtocol {
         &self,
         context: &ProgramContext,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
+        let peg_in_request = self.peg_in_request(context)?;
+
         Ok(vec![(
             "take_aggregated".to_string(),
-            self.take_aggregated_key(context)?,
+            peg_in_request.take_aggregated_key,
         )])
     }
 
@@ -55,7 +65,33 @@ impl ProtocolHandler for AcceptPegInProtocol {
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
+        let peg_in_request = self.peg_in_request(context)?;
+        let txid = peg_in_request.txid;
+        let amount = peg_in_request.amount;
+        let take_aggregated_key = peg_in_request.take_aggregated_key;
+
         let mut protocol = self.load_or_create_protocol();
+
+        // External connection from request peg-in to accept peg-in
+        protocol.add_connection(
+            "accept_peg_in_request",
+            REQUEST_PEG_IN_TX,
+            OutputType::taproot(amount, &take_aggregated_key, &[])?.into(),
+            ACCEPT_PEG_IN_TX,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::KeyOnly {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            Some(txid),
+        )?;
+
+        protocol.add_transaction_output(
+            ACCEPT_PEG_IN_TX,
+            &OutputType::taproot(amount, &take_aggregated_key, &[])?,
+        )?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("{}", protocol.visualize()?);
@@ -98,9 +134,5 @@ impl AcceptPegInProtocol {
 
         let peg_in_request: PegInRequest = serde_json::from_str(&peg_in_request)?;
         Ok(peg_in_request)
-    }
-
-    fn take_aggregated_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
-        Ok(self.peg_in_request(context)?.take_aggregated_key.clone())
     }
 }

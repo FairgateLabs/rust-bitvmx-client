@@ -1,4 +1,4 @@
-use bitcoin::PublicKey;
+use bitcoin::{PublicKey, Txid};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -9,7 +9,11 @@ pub const TAKE_AGGREGATED_KEY: &str = "take_aggregated_key";
 pub const DISPUTE_AGGREGATED_KEY: &str = "dispute_aggregated_key";
 
 // Transaction names
+pub const REQUEST_PEG_IN_TX: &str = "REQUEST_PEG_IN_TX";
 pub const ACCEPT_PEG_IN_TX: &str = "ACCEPT_PEG_IN_TX";
+pub const USER_TAKE_TX: &str = "USER_TAKE_TX";
+pub const OPERATOR_TAKE_TX: &str = "OPERATOR_TAKE_TX";
+pub const OPERATOR_WON_TX: &str = "OPERATOR_WON_TX";
 pub const OP_FUNDING_TX: &str = "OP_FUNDING_TX";
 pub const WT_FUNDING_TX: &str = "WT_FUNDING_TX";
 pub const OP_INITIAL_DEPOSIT_TX: &str = "OP_INITIAL_DEPOSIT_TX";
@@ -54,6 +58,8 @@ impl CommitteeCreated {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PegInRequest {
     pub my_role: ParticipantRole,
+    pub txid: Txid,
+    pub amount: u64,
     pub take_aggregated_key: PublicKey,
     pub addresses: HashMap<PublicKey, P2PAddress>,
 }
