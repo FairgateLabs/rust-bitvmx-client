@@ -4,7 +4,7 @@ use crate::{
         participant::{ParticipantKeys, ParticipantRole, PublicKeyType},
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
-            union::{constants::*, events::CommitteeCreated},
+            union::types::*,
         },
         variables::PartialUtxo,
     },
@@ -43,16 +43,16 @@ impl ProtocolHandler for DisputeCoreProtocol {
 
     fn get_pregenerated_aggregated_keys(
         &self,
-        _context: &ProgramContext,
+        context: &ProgramContext,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
         Ok(vec![
             (
                 "take_aggregated".to_string(),
-                self.public_key(TAKE_AGGREGATED_KEY, _context)?,
+                self.take_aggregated_key(context)?,
             ),
             (
                 "dispute_aggregated".to_string(),
-                self.public_key(DISPUTE_AGGREGATED_KEY, _context)?,
+                self.dispute_aggregated_key(context)?,
             ),
         ])
     }
@@ -129,34 +129,6 @@ impl ProtocolHandler for DisputeCoreProtocol {
 impl DisputeCoreProtocol {
     pub fn new(ctx: ProtocolContext) -> Self {
         Self { ctx }
-    }
-
-    fn committee(&self, context: &ProgramContext) -> Result<CommitteeCreated, BitVMXError> {
-        let committee_created = context
-            .globals
-            .get_var(&self.ctx.id, &CommitteeCreated::name())?
-            .unwrap()
-            .string()?;
-
-        let committee_created: CommitteeCreated = serde_json::from_str(&committee_created)?;
-        Ok(committee_created)
-    }
-
-    fn prover(&self, context: &ProgramContext) -> Result<bool, BitVMXError> {
-        let members = self.committee(context)?;
-        Ok(members.my_role == ParticipantRole::Prover)
-    }
-
-    fn utxo(&self, name: &str, context: &ProgramContext) -> Result<PartialUtxo, BitVMXError> {
-        context.globals.get_var(&self.ctx.id, name)?.unwrap().utxo()
-    }
-
-    fn public_key(&self, name: &str, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
-        context
-            .globals
-            .get_var(&self.ctx.id, name)?
-            .unwrap()
-            .pubkey()
     }
 
     fn create_funding_tx(
@@ -243,14 +215,14 @@ impl DisputeCoreProtocol {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         let members = self.committee(context)?;
+        let my_keys = &keys[self.ctx.my_idx];
 
-        // Connect with REIMBURSEMENT_KICKOFF_TX
-        let participant = &keys[self.ctx.my_idx];
-
-        let pegout_id_pubkey = participant.get_winternitz("pegout_id")?;
-        let value_0_pubkey = participant.get_winternitz("value_0")?;
-        let value_1_pubkey = participant.get_winternitz("value_1")?;
+        let pegout_id_pubkey = my_keys.get_winternitz("pegout_id")?;
+        let value_0_pubkey = my_keys.get_winternitz("value_0")?;
+        let value_1_pubkey = my_keys.get_winternitz("value_1")?;
         let my_dispute_pubkey = members.my_dispute_pubkey.clone();
+        let take_aggregated_key = self.take_aggregated_key(context)?;
+        let dispute_aggregated_key = self.dispute_aggregated_key(context)?;
 
         let script = scripts::start_dispute_core(
             my_dispute_pubkey,
@@ -262,12 +234,7 @@ impl DisputeCoreProtocol {
         protocol.add_connection(
             "dispute_core",
             OP_INITIAL_DEPOSIT_TX,
-            OutputType::taproot(
-                DISPUTE_OPENER_VALUE,
-                &self.public_key(TAKE_AGGREGATED_KEY, context)?,
-                &[],
-            )?
-            .into(),
+            OutputType::taproot(DISPUTE_OPENER_VALUE, &take_aggregated_key, &[])?.into(),
             REIMBURSEMENT_KICKOFF_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
@@ -284,12 +251,7 @@ impl DisputeCoreProtocol {
         protocol.add_connection(
             "no_take_connection",
             REIMBURSEMENT_KICKOFF_TX,
-            OutputType::taproot(
-                DUST_VALUE,
-                &self.public_key(TAKE_AGGREGATED_KEY, context)?,
-                &vec![],
-            )?
-            .into(),
+            OutputType::taproot(DUST_VALUE, &take_aggregated_key, &vec![])?.into(),
             NO_TAKE_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
@@ -306,17 +268,8 @@ impl DisputeCoreProtocol {
         let value_0: Vec<u8> = vec![0];
         let value_1: Vec<u8> = vec![1];
 
-        let value_0_script = scripts::verify_value(
-            self.public_key(TAKE_AGGREGATED_KEY, context)?,
-            value_0_pubkey,
-            value_0,
-        )?;
-
-        let value_1_script = scripts::verify_value(
-            self.public_key(TAKE_AGGREGATED_KEY, context)?,
-            value_1_pubkey,
-            value_1,
-        )?;
+        let value_0_script = scripts::verify_value(take_aggregated_key, value_0_pubkey, value_0)?;
+        let value_1_script = scripts::verify_value(take_aggregated_key, value_1_pubkey, value_1)?;
 
         //CHALLENGE_TX connection (T)
         // TODO review the SpendMode
@@ -325,7 +278,7 @@ impl DisputeCoreProtocol {
             REIMBURSEMENT_KICKOFF_TX,
             OutputType::taproot(
                 DUST_VALUE,
-                &self.public_key(TAKE_AGGREGATED_KEY, context)?,
+                &take_aggregated_key,
                 &vec![], //&vec![value_0_script, value_1_script],
             )?
             .into(),
@@ -344,12 +297,7 @@ impl DisputeCoreProtocol {
         protocol.add_connection(
             "try_take_2",
             CHALLENGE_TX,
-            OutputType::taproot(
-                DUST_VALUE,
-                &self.public_key(TAKE_AGGREGATED_KEY, context)?,
-                &vec![],
-            )?
-            .into(),
+            OutputType::taproot(DUST_VALUE, &take_aggregated_key, &vec![])?.into(),
             TRY_TAKE_2_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
@@ -364,12 +312,7 @@ impl DisputeCoreProtocol {
         protocol.add_connection(
             "no_dispute_opened",
             CHALLENGE_TX,
-            OutputType::taproot(
-                DUST_VALUE,
-                &self.public_key(TAKE_AGGREGATED_KEY, context)?,
-                &vec![],
-            )?
-            .into(),
+            OutputType::taproot(DUST_VALUE, &take_aggregated_key, &vec![])?.into(),
             NO_DISPUTE_OPENED_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
@@ -402,12 +345,7 @@ impl DisputeCoreProtocol {
         protocol.add_connection(
             "take_enabler",
             REIMBURSEMENT_KICKOFF_TX,
-            OutputType::taproot(
-                DUST_VALUE,
-                &self.public_key(DISPUTE_AGGREGATED_KEY, context)?,
-                &vec![],
-            )?
-            .into(),
+            OutputType::taproot(DUST_VALUE, &dispute_aggregated_key, &vec![])?.into(),
             TRY_MOVE_ON_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
@@ -423,12 +361,7 @@ impl DisputeCoreProtocol {
         protocol.add_connection(
             "stop_move_on_enabler",
             REIMBURSEMENT_KICKOFF_TX,
-            OutputType::taproot(
-                DUST_VALUE,
-                &self.public_key(DISPUTE_AGGREGATED_KEY, context)?,
-                &vec![],
-            )?
-            .into(),
+            OutputType::taproot(DUST_VALUE, &dispute_aggregated_key, &vec![])?.into(),
             NO_DISPUTE_OPENED_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
@@ -444,12 +377,7 @@ impl DisputeCoreProtocol {
         protocol.add_connection(
             "you_cant_take_enabler",
             REIMBURSEMENT_KICKOFF_TX,
-            OutputType::taproot(
-                DUST_VALUE,
-                &self.public_key(DISPUTE_AGGREGATED_KEY, context)?,
-                &vec![],
-            )?
-            .into(),
+            OutputType::taproot(DUST_VALUE, &dispute_aggregated_key, &vec![])?.into(),
             YOU_CANT_TAKE_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
@@ -462,5 +390,33 @@ impl DisputeCoreProtocol {
         )?;
 
         Ok(())
+    }
+
+    fn committee(&self, context: &ProgramContext) -> Result<CommitteeCreated, BitVMXError> {
+        let committee_created = context
+            .globals
+            .get_var(&self.ctx.id, &CommitteeCreated::name())?
+            .unwrap()
+            .string()?;
+
+        let committee_created: CommitteeCreated = serde_json::from_str(&committee_created)?;
+        Ok(committee_created)
+    }
+
+    fn prover(&self, context: &ProgramContext) -> Result<bool, BitVMXError> {
+        let members = self.committee(context)?;
+        Ok(members.my_role == ParticipantRole::Prover)
+    }
+
+    fn utxo(&self, name: &str, context: &ProgramContext) -> Result<PartialUtxo, BitVMXError> {
+        context.globals.get_var(&self.ctx.id, name)?.unwrap().utxo()
+    }
+
+    fn take_aggregated_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+        Ok(self.committee(context)?.take_aggregated_key.clone())
+    }
+
+    fn dispute_aggregated_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+        Ok(self.committee(context)?.dispute_aggregated_key.clone())
     }
 }
