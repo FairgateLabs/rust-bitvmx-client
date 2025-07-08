@@ -5,7 +5,7 @@ use bitvmx_client::{
     program::{participant::ParticipantRole, variables::PartialUtxo},
 };
 
-use bitcoin::{Amount, Network, PublicKey, ScriptBuf};
+use bitcoin::{hashes::Hash, Amount, Network, PublicKey, ScriptBuf};
 use bitvmx_wallet::wallet::Wallet;
 use protocol_builder::types::OutputType;
 use std::thread::{self};
@@ -120,7 +120,18 @@ impl Committee {
         let accept_peg_in_covenant_id = Uuid::new_v4();
         let members = self.members.clone();
 
-        self.all(|op| op.accept_peg_in(accept_peg_in_covenant_id, &members))?;
+        // TODO replace with actual peg-in request details
+        let request_peg_in_txid = Hash::all_zeros(); // This should be replaced with the actual Txid of the peg-in request
+        let request_peg_in_amount = 10000000; // This should be replaced with the actual amount of the peg-in request
+
+        self.all(|op| {
+            op.accept_peg_in(
+                accept_peg_in_covenant_id,
+                &members,
+                request_peg_in_txid,
+                request_peg_in_amount,
+            )
+        })?;
 
         Ok(())
     }

@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use bitcoin::PublicKey;
+use bitcoin::{PublicKey, Txid};
 use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
@@ -176,6 +176,8 @@ impl Member {
         &mut self,
         accept_peg_in_covenant_id: Uuid,
         members: &[Member],
+        request_peg_in_txid: Txid,
+        request_peg_in_amount: u64,
     ) -> Result<()> {
         info!(id = self.id, "Accepting peg-in");
         AcceptPegIn::setup(
@@ -183,6 +185,8 @@ impl Member {
             &self.id,
             &self.role,
             members,
+            request_peg_in_txid,
+            request_peg_in_amount,
             &self.keyring,
             &self.bitvmx,
         )?;
