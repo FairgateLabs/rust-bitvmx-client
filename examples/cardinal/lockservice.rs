@@ -2,7 +2,7 @@ use anyhow::Result;
 use bitcoin::{
     key::{rand::rngs::OsRng, Parity, Secp256k1},
     secp256k1::{self, All, PublicKey as SecpPublicKey, SecretKey},
-    Address, Amount, Network, PublicKey as BitcoinPubKey, Txid,
+    Address, Amount, PublicKey as BitcoinPubKey, Txid,
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{

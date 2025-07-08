@@ -27,7 +27,7 @@ use emulator::{
     executor::utils::{FailConfiguration, FailExecute, FailOpcode, FailReads, FailWrite},
 };
 use protocol_builder::types::{OutputType, Utxo};
-use tracing::info;
+use tracing::{error, info};
 use uuid::Uuid;
 
 use super::{mine_and_wait, send_all, wait_message_from_channel};
@@ -281,7 +281,11 @@ pub fn process_dispatcher(
             }
         }
         for instance in instances.iter_mut() {
-            instance.tick().unwrap();
+            let ret = instance.tick();
+            if ret.is_err() {
+                error!("Error processing instance: {:?}", ret);
+                return;
+            }
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
     }

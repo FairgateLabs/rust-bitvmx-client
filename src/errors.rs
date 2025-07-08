@@ -25,31 +25,31 @@ pub enum BitVMXError {
     #[error("Error parsing int")]
     ParseIntError(#[from] std::num::ParseIntError),
 
-    #[error("Error when using KeyManager")]
+    #[error("Error when using KeyManager: {0}")]
     KeyManagerError(#[from] KeyManagerError),
 
-    #[error("Error when using Bitcoin client")]
+    #[error("Error when using Bitcoin client: {0}")]
     BitcoinError(#[from] BitcoinClientError),
 
-    #[error("Error when creating unspendable key")]
+    #[error("Error when creating unspendable key: {0}")]
     UnspendableKeyError(#[from] UnspendableKeyError),
 
-    #[error("Error when creating protocol")]
+    #[error("Error when creating protocol: {0}")]
     ProtocolBuilderError(#[from] ProtocolBuilderError),
 
-    #[error("Error decoding hex string {0}")]
+    #[error("Error decoding hex string: {0}")]
     FromHexError(#[from] hex::FromHexError),
 
-    #[error("Error when creating the storagge")]
+    #[error("Error when creating the storagge: {0}")]
     StorageError(#[from] StorageError),
 
     #[error("Cannot find program with id {0}")]
     ProgramNotFound(Uuid),
 
-    #[error("A program error has occurred")]
+    #[error("A program error has occurred: {0}")]
     ProgramError(#[from] ProgramError),
 
-    #[error("Failed to process a Winternitz signature")]
+    #[error("Failed to process a Winternitz signature: {0}")]
     WinternitzError(#[from] WinternitzError),
 
     #[error("Program {0} is not ready to run. Please install it first.")]
@@ -69,7 +69,7 @@ pub enum BitVMXError {
 
     // #[error("Failed to create communications key")]
     // CommunicationsKeyGenerationError(#[from] DecodingError),
-    #[error("Failed to encode P2P data")]
+    #[error("Failed to encode P2P data: {0}")]
     P2PEncodingError(#[from] P2pHandlerError),
 
     #[error("Failed to use P2P layer")]
@@ -78,7 +78,7 @@ pub enum BitVMXError {
     #[error("Keys not found in program {0}")]
     KeysNotFound(Uuid),
 
-    #[error("Failed to use Bitcoin Coordinator")]
+    #[error("Failed to use Bitcoin Coordinator: {0}")]
     BitcoinCoordinatorError(#[from] BitcoinCoordinatorError),
 
     #[error("Broker channel error")]
@@ -146,7 +146,6 @@ pub enum BitVMXError {
 
     #[error("Transaction not found in block")]
     TransactionNotFoundInBlock,
-
 
     #[error("Inconsistent data retrieved of ZKP execution result from job {0}")]
     InconsistentZKPData(Uuid),
