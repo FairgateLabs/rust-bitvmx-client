@@ -387,7 +387,8 @@ impl ProtocolHandler for SlotProtocol {
             .get_var(&self.ctx.id, "FEE")?
             .unwrap()
             .number()? as u64;
-        let protocol_cost = 200_000;
+        //FIX THIS
+        let protocol_cost = 20_000;
         let speedup_dust = 500;
         let gid_max = 8;
 
