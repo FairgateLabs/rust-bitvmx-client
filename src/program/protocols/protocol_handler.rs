@@ -408,6 +408,8 @@ pub trait ProtocolHandler {
             .unwrap()
             .pubkey()
     }
+
+    fn setup_complete(&self, program_context: &ProgramContext) -> Result<(), BitVMXError>;
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -471,7 +473,7 @@ pub fn new_protocol_type(
         #[cfg(feature = "cardinal")]
         PROGRAM_TYPE_TRANSFER => Ok(ProtocolType::TransferProtocol(TransferProtocol::new(ctx))),
         #[cfg(feature = "union")]
-        PROGRAM_TYPE_ACCEPT_PEG_IN => Ok(ProtocolType::AcceptPegInProtocol(
+        PROGRAM_TYPE_ACCEPT_PEGIN => Ok(ProtocolType::AcceptPegInProtocol(
             AcceptPegInProtocol::new(ctx),
         )),
         #[cfg(feature = "union")]

@@ -9,7 +9,7 @@ use bitvmx_client::{
         protocols::union::types::PegInRequest,
         variables::VariableTypes,
     },
-    types::PROGRAM_TYPE_ACCEPT_PEG_IN,
+    types::PROGRAM_TYPE_ACCEPT_PEGIN,
 };
 use tracing::info;
 use uuid::Uuid;
@@ -17,20 +17,21 @@ use uuid::Uuid;
 use crate::member::{Keyring, Member};
 
 pub struct AcceptPegIn {
-    pub covenant_id: Uuid,
-    pub my_member_id: String,
-    pub my_role: ParticipantRole,
-    pub committee: Vec<Member>,
+    pub _covenant_id: Uuid,
+    pub _my_member_id: String,
+    pub _my_role: ParticipantRole,
+    pub _committee: Vec<Member>,
 }
 
 impl AcceptPegIn {
+    #[allow(clippy::too_many_arguments)]
     pub fn setup(
         covenant_id: Uuid,
         my_id: &str,
         my_role: &ParticipantRole,
         committee: &[Member],
-        request_peg_in_txid: Txid,
-        request_peg_in_amount: u64,
+        request_pegin_txid: Txid,
+        request_pegin_amount: u64,
         keyring: &Keyring,
         bitvmx: &BitVMXClient,
     ) -> Result<AcceptPegIn> {
@@ -50,32 +51,32 @@ impl AcceptPegIn {
             );
         }
 
-        let peg_in_request = PegInRequest {
+        let pegin_request = PegInRequest {
             my_role: my_role.clone(),
-            txid: request_peg_in_txid,
-            amount: request_peg_in_amount,
-            take_aggregated_key: keyring.take_aggregated_key.clone().unwrap(),
+            txid: request_pegin_txid,
+            amount: request_pegin_amount,
+            take_aggregated_key: keyring.take_aggregated_key.unwrap(),
             addresses: comms,
         };
 
         bitvmx.set_var(
             covenant_id,
             &PegInRequest::name(),
-            VariableTypes::String(serde_json::to_string(&peg_in_request)?),
+            VariableTypes::String(serde_json::to_string(&pegin_request)?),
         )?;
 
         bitvmx.setup(
             covenant_id,
-            PROGRAM_TYPE_ACCEPT_PEG_IN.to_string(),
+            PROGRAM_TYPE_ACCEPT_PEGIN.to_string(),
             addresses,
             0,
         )?;
 
         Ok(AcceptPegIn {
-            covenant_id,
-            my_member_id: my_id.to_string(),
-            my_role: my_role.clone(),
-            committee: committee.to_vec(),
+            _covenant_id: covenant_id,
+            _my_member_id: my_id.to_string(),
+            _my_role: my_role.clone(),
+            _committee: committee.to_vec(),
         })
     }
 

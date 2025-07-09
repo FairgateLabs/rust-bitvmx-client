@@ -10,7 +10,7 @@ use bitvmx_wallet::wallet::Wallet;
 use protocol_builder::types::OutputType;
 use std::thread::{self};
 use std::{collections::HashMap, time::Duration};
-use tracing::{info, info_span};
+use tracing::info_span;
 use uuid::Uuid;
 
 use crate::{
@@ -55,7 +55,7 @@ impl Committee {
         // collect members keys
         let members_take_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.0).collect();
         let members_dispute_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.1).collect();
-        let members_communication_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.2).collect();
+        let _members_communication_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.2).collect();
 
         let take_aggregation_id = self.take_aggregation_id;
         let dispute_aggregation_id = self.dispute_aggregation_id;
@@ -116,20 +116,20 @@ impl Committee {
         Ok(())
     }
 
-    pub fn accept_peg_in(&mut self) -> Result<()> {
-        let accept_peg_in_covenant_id = Uuid::new_v4();
+    pub fn accept_pegin(&mut self) -> Result<()> {
+        let accept_pegin_covenant_id = Uuid::new_v4();
         let members = self.members.clone();
 
         // TODO replace with actual peg-in request details
-        let request_peg_in_txid = Hash::all_zeros(); // This should be replaced with the actual Txid of the peg-in request
-        let request_peg_in_amount = 10000000; // This should be replaced with the actual amount of the peg-in request
+        let request_pegin_txid = Hash::all_zeros(); // This should be replaced with the actual Txid of the peg-in request
+        let request_pegin_amount = 10000000; // This should be replaced with the actual amount of the peg-in request
 
         self.all(|op| {
-            op.accept_peg_in(
-                accept_peg_in_covenant_id,
+            op.accept_pegin(
+                accept_pegin_covenant_id,
                 &members,
-                request_peg_in_txid,
-                request_peg_in_amount,
+                request_pegin_txid,
+                request_pegin_amount,
             )
         })?;
 

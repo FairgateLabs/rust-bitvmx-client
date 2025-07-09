@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
+use emulator::loader::program;
 use protocol_builder::{
     scripts::SignMode,
     types::{
@@ -20,8 +21,9 @@ use crate::{
         participant::ParticipantKeys,
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
-            union::types::{PegInRequest, ACCEPT_PEG_IN_TX, REQUEST_PEG_IN_TX},
+            union::types::{PegInRequest, ACCEPT_PEGIN_TX, REQUEST_PEGIN_TX},
         },
+        variables::VariableTypes,
     },
     types::ProgramContext,
 };
@@ -44,11 +46,11 @@ impl ProtocolHandler for AcceptPegInProtocol {
         &self,
         context: &ProgramContext,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
-        let peg_in_request = self.peg_in_request(context)?;
+        let pegin_request = self.pegin_request(context)?;
 
         Ok(vec![(
             "take_aggregated".to_string(),
-            peg_in_request.take_aggregated_key,
+            pegin_request.take_aggregated_key,
         )])
     }
 
@@ -65,19 +67,19 @@ impl ProtocolHandler for AcceptPegInProtocol {
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let peg_in_request = self.peg_in_request(context)?;
-        let txid = peg_in_request.txid;
-        let amount = peg_in_request.amount;
-        let take_aggregated_key = peg_in_request.take_aggregated_key;
+        let pegin_request = self.pegin_request(context)?;
+        let txid = pegin_request.txid;
+        let amount = pegin_request.amount;
+        let take_aggregated_key = pegin_request.take_aggregated_key;
 
         let mut protocol = self.load_or_create_protocol();
 
         // External connection from request peg-in to accept peg-in
         protocol.add_connection(
-            "accept_peg_in_request",
-            REQUEST_PEG_IN_TX,
+            "accept_pegin_request",
+            REQUEST_PEGIN_TX,
             OutputType::taproot(amount, &take_aggregated_key, &[])?.into(),
-            ACCEPT_PEG_IN_TX,
+            ACCEPT_PEGIN_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
                 SpendMode::KeyOnly {
@@ -89,13 +91,14 @@ impl ProtocolHandler for AcceptPegInProtocol {
         )?;
 
         protocol.add_transaction_output(
-            ACCEPT_PEG_IN_TX,
+            ACCEPT_PEGIN_TX,
             &OutputType::taproot(amount, &take_aggregated_key, &[])?,
         )?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("{}", protocol.visualize()?);
         self.save_protocol(protocol)?;
+
         Ok(())
     }
 
@@ -118,6 +121,20 @@ impl ProtocolHandler for AcceptPegInProtocol {
     ) -> Result<(), BitVMXError> {
         Ok(())
     }
+
+    fn setup_complete(&self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
+        // This is called after the protocol is built and ready to be used
+        let pegin_request = self.pegin_request(program_context)?;
+        let take_aggregated_key = pegin_request.take_aggregated_key;
+
+        self.set_signing_info_var(&program_context, &take_aggregated_key)?;
+
+        info!(
+            id = self.ctx.my_idx,
+            "AcceptPegInProtocol setup complete for program {}", self.ctx.id
+        );
+        Ok(())
+    }
 }
 
 impl AcceptPegInProtocol {
@@ -125,14 +142,68 @@ impl AcceptPegInProtocol {
         Self { ctx }
     }
 
-    fn peg_in_request(&self, context: &ProgramContext) -> Result<PegInRequest, BitVMXError> {
-        let peg_in_request = context
+    fn pegin_request(&self, context: &ProgramContext) -> Result<PegInRequest, BitVMXError> {
+        let pegin_request = context
             .globals
             .get_var(&self.ctx.id, &PegInRequest::name())?
             .unwrap()
             .string()?;
 
-        let peg_in_request: PegInRequest = serde_json::from_str(&peg_in_request)?;
-        Ok(peg_in_request)
+        let pegin_request: PegInRequest = serde_json::from_str(&pegin_request)?;
+        Ok(pegin_request)
+    }
+
+    fn set_signing_info_var(
+        &self,
+        program_context: &ProgramContext,
+        take_aggregated_key: &PublicKey,
+    ) -> Result<(), BitVMXError> {
+        let nonces = program_context
+            .key_chain
+            .get_nonces(&take_aggregated_key, &self.ctx.protocol_name)?;
+
+        if nonces.is_empty() {
+            return Err(BitVMXError::MissingPublicNonces(
+                take_aggregated_key.to_string(),
+                self.ctx.protocol_name.to_string(),
+            ));
+        }
+
+        assert_eq!(
+            nonces.len(),
+            1,
+            "Expected exactly one nonce for AcceptPegInProtocol, found {}",
+            nonces.len()
+        );
+
+        let signatures = program_context
+            .key_chain
+            .get_signatures(&take_aggregated_key, &self.ctx.protocol_name)?;
+
+        if signatures.is_empty() {
+            return Err(BitVMXError::MissingPartialSignatures(
+                take_aggregated_key.to_string(),
+                self.ctx.protocol_name.to_string(),
+            ));
+        }
+
+        assert_eq!(
+            signatures.len(),
+            1,
+            "Expected exactly one partial signature for AcceptPegInProtocol, found {}",
+            signatures.len()
+        );
+
+        program_context.globals.set_var(
+            &self.ctx.id,
+            &"signing_info",
+            VariableTypes::String(serde_json::to_string(&(
+                take_aggregated_key.clone(),
+                nonces[0].1.clone(),
+                signatures[0].1.clone(),
+            ))?),
+        )?;
+
+        Ok(())
     }
 }

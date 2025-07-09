@@ -155,6 +155,12 @@ pub enum BitVMXError {
 
     #[error("Peer id {0} not found in the list of participants")]
     InvalidParticipant(String),
+
+    #[error("No signatures found for aggregated public key {0} and id {1}")]
+    MissingPartialSignatures(String, String),
+
+    #[error("No public nonces found for aggregated public key {0} and id {1}")]
+    MissingPublicNonces(String, String),
 }
 
 #[derive(Error, Debug)]

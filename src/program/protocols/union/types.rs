@@ -9,8 +9,8 @@ pub const TAKE_AGGREGATED_KEY: &str = "take_aggregated_key";
 pub const DISPUTE_AGGREGATED_KEY: &str = "dispute_aggregated_key";
 
 // Transaction names
-pub const REQUEST_PEG_IN_TX: &str = "REQUEST_PEG_IN_TX";
-pub const ACCEPT_PEG_IN_TX: &str = "ACCEPT_PEG_IN_TX";
+pub const REQUEST_PEGIN_TX: &str = "REQUEST_PEGIN_TX";
+pub const ACCEPT_PEGIN_TX: &str = "ACCEPT_PEGIN_TX";
 pub const USER_TAKE_TX: &str = "USER_TAKE_TX";
 pub const OPERATOR_TAKE_TX: &str = "OPERATOR_TAKE_TX";
 pub const OPERATOR_WON_TX: &str = "OPERATOR_WON_TX";
@@ -66,6 +66,6 @@ pub struct PegInRequest {
 
 impl PegInRequest {
     pub fn name() -> String {
-        "peg_in_request".to_string()
+        "pegin_request".to_string()
     }
 }

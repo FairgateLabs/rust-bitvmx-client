@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use tracing::info;
 
 use crate::p2p_helper::P2PMessageType;
 
