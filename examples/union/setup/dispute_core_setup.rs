@@ -5,7 +5,7 @@ use bitvmx_client::{
     client::BitVMXClient,
     program::{
         participant::{P2PAddress, ParticipantRole},
-        protocols::union::types::CommitteeCreated,
+        protocols::union::types::NewCommittee,
         variables::{PartialUtxo, VariableTypes},
     },
     types::PROGRAM_TYPE_DISPUTE_CORE,
@@ -15,31 +15,33 @@ use uuid::Uuid;
 
 use crate::member::{Keyring, Member};
 
-pub struct DisputeCore {
+pub struct DisputeCoreSetup {
     pub _covenant_id: Uuid,
     pub _my_member_id: String,
     pub _my_role: ParticipantRole,
     pub _committee: Vec<Member>,
 }
 
-impl DisputeCore {
+impl DisputeCoreSetup {
     #[allow(clippy::too_many_arguments)]
     pub fn setup(
         covenant_id: Uuid,
+        member_index: usize,
         my_id: &str,
         my_role: &ParticipantRole,
         committee: &[Member],
-        op_funding_utxos: &HashMap<String, PartialUtxo>,
-        wt_funding_utxos: &HashMap<String, PartialUtxo>,
+        funding_utxos: &[PartialUtxo],
         keyring: &Keyring,
         bitvmx: &BitVMXClient,
-    ) -> Result<DisputeCore> {
-        let addresses = Self::get_addresses(committee);
-
+    ) -> Result<DisputeCoreSetup> {
         info!(
             id = my_id,
-            "Preparing Dispute Core covenant {} for {}", covenant_id, my_id
+            "Setting up the DisputeCore protocol handler {} for {}", covenant_id, my_id
         );
+
+        // gather all operator addresses
+        // in a real scenario, operators should get this from the chain
+        let addresses = Self::get_addresses(committee);
 
         // build a map of communication pubkeys to addresses
         let mut comms = HashMap::new();
@@ -50,10 +52,9 @@ impl DisputeCore {
             );
         }
 
-        let committee_created = CommitteeCreated {
+        let committe = NewCommittee {
+            member_index,
             my_role: my_role.clone(),
-            my_take_pubkey: keyring.take_pubkey.unwrap(),
-            my_dispute_pubkey: keyring.dispute_pubkey.unwrap(),
             take_aggregated_key: keyring.take_aggregated_key.unwrap(),
             dispute_aggregated_key: keyring.dispute_aggregated_key.unwrap(),
             addresses: comms,
@@ -63,23 +64,20 @@ impl DisputeCore {
 
         bitvmx.set_var(
             covenant_id,
-            &CommitteeCreated::name(),
-            VariableTypes::String(serde_json::to_string(&committee_created)?),
+            &NewCommittee::name(),
+            VariableTypes::String(serde_json::to_string(&committe)?),
         )?;
 
-        if *my_role == ParticipantRole::Prover {
+        let funding_names = ["WT_FUNDING_UTXO", "OP_FUNDING_UTXO"];
+        for (i, funding) in funding_utxos.iter().enumerate() {
+            let funding_name = funding_names.get(i).unwrap();
+
             bitvmx.set_var(
                 covenant_id,
-                "OP_FUNDING_UTXO",
-                VariableTypes::Utxo(op_funding_utxos.get(&my_id.to_string()).unwrap().clone()),
+                funding_name,
+                VariableTypes::Utxo(funding.clone()),
             )?;
         }
-
-        bitvmx.set_var(
-            covenant_id,
-            "WT_FUNDING_UTXO",
-            VariableTypes::Utxo(wt_funding_utxos.get(&my_id.to_string()).unwrap().clone()),
-        )?;
 
         bitvmx.setup(
             covenant_id,
@@ -88,7 +86,7 @@ impl DisputeCore {
             0,
         )?;
 
-        Ok(DisputeCore {
+        Ok(DisputeCoreSetup {
             _covenant_id: covenant_id,
             _my_member_id: my_id.to_string(),
             _my_role: my_role.clone(),

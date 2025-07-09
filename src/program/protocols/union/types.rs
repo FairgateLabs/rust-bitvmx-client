@@ -38,10 +38,9 @@ pub const FUNDING_TX_SUFFIX: &str = "_FUNDING_TX";
 pub const INITIAL_DEPOSIT_TX_SUFFIX: &str = "_INITIAL_DEPOSIT_TX";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommitteeCreated {
+pub struct NewCommittee {
+    pub member_index: usize,
     pub my_role: ParticipantRole,
-    pub my_take_pubkey: PublicKey,
-    pub my_dispute_pubkey: PublicKey,
     pub take_aggregated_key: PublicKey,
     pub dispute_aggregated_key: PublicKey,
     pub addresses: HashMap<PublicKey, P2PAddress>,
@@ -49,9 +48,9 @@ pub struct CommitteeCreated {
     pub watchtower_count: u32,
 }
 
-impl CommitteeCreated {
+impl NewCommittee {
     pub fn name() -> String {
-        "committee_created".to_string()
+        "new_committee".to_string()
     }
 }
 
