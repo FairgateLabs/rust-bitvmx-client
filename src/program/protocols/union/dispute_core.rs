@@ -124,6 +124,15 @@ impl ProtocolHandler for DisputeCoreProtocol {
         // TODO
         Ok(())
     }
+
+    fn setup_complete(&self, _program_context: &ProgramContext) -> Result<(), BitVMXError> {
+        // This is called after the protocol is built and ready to be used
+        info!(
+            id = self.ctx.my_idx,
+            "DisputeCoreProtocol setup complete for program {}", self.ctx.id
+        );
+        Ok(())
+    }
 }
 
 impl DisputeCoreProtocol {
@@ -251,7 +260,7 @@ impl DisputeCoreProtocol {
         protocol.add_connection(
             "no_take_connection",
             REIMBURSEMENT_KICKOFF_TX,
-            OutputType::taproot(DUST_VALUE, &take_aggregated_key, &vec![])?.into(),
+            OutputType::taproot(DUST_VALUE, &take_aggregated_key, &[])?.into(),
             NO_TAKE_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
@@ -279,7 +288,7 @@ impl DisputeCoreProtocol {
             OutputType::taproot(
                 DUST_VALUE,
                 &take_aggregated_key,
-                &vec![], //&vec![value_0_script, value_1_script],
+                &[], //&vec![value_0_script, value_1_script],
             )?
             .into(),
             CHALLENGE_TX,
@@ -297,7 +306,7 @@ impl DisputeCoreProtocol {
         protocol.add_connection(
             "try_take_2",
             CHALLENGE_TX,
-            OutputType::taproot(DUST_VALUE, &take_aggregated_key, &vec![])?.into(),
+            OutputType::taproot(DUST_VALUE, &take_aggregated_key, &[])?.into(),
             TRY_TAKE_2_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
@@ -312,7 +321,7 @@ impl DisputeCoreProtocol {
         protocol.add_connection(
             "no_dispute_opened",
             CHALLENGE_TX,
-            OutputType::taproot(DUST_VALUE, &take_aggregated_key, &vec![])?.into(),
+            OutputType::taproot(DUST_VALUE, &take_aggregated_key, &[])?.into(),
             NO_DISPUTE_OPENED_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
@@ -345,7 +354,7 @@ impl DisputeCoreProtocol {
         protocol.add_connection(
             "take_enabler",
             REIMBURSEMENT_KICKOFF_TX,
-            OutputType::taproot(DUST_VALUE, &dispute_aggregated_key, &vec![])?.into(),
+            OutputType::taproot(DUST_VALUE, &dispute_aggregated_key, &[])?.into(),
             TRY_MOVE_ON_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
@@ -361,7 +370,7 @@ impl DisputeCoreProtocol {
         protocol.add_connection(
             "stop_move_on_enabler",
             REIMBURSEMENT_KICKOFF_TX,
-            OutputType::taproot(DUST_VALUE, &dispute_aggregated_key, &vec![])?.into(),
+            OutputType::taproot(DUST_VALUE, &dispute_aggregated_key, &[])?.into(),
             NO_DISPUTE_OPENED_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
@@ -377,7 +386,7 @@ impl DisputeCoreProtocol {
         protocol.add_connection(
             "you_cant_take_enabler",
             REIMBURSEMENT_KICKOFF_TX,
-            OutputType::taproot(DUST_VALUE, &dispute_aggregated_key, &vec![])?.into(),
+            OutputType::taproot(DUST_VALUE, &dispute_aggregated_key, &[])?.into(),
             YOU_CANT_TAKE_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),

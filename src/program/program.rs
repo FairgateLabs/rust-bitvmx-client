@@ -379,20 +379,6 @@ impl Program {
             .computed_aggregated
             .values()
         {
-            info!(
-                id = self.my_idx,
-                "PARTICIPANT AGGREGATED KEYS: {}",
-                self.participants[self.my_idx]
-                    .keys
-                    .as_ref()
-                    .unwrap()
-                    .computed_aggregated
-                    .values()
-                    .map(|k| k.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-
             let nonces = program_context
                 .key_chain
                 .get_nonces(aggregated, &self.protocol.context().protocol_name);
@@ -671,6 +657,8 @@ impl Program {
 
                 self.move_program_to_next_state()?;
 
+                self.protocol.setup_complete(&program_context)?;
+
                 let result = program_context.broker_channel.send(
                     L2_ID,
                     OutgoingBitVMXApiMessages::SetupCompleted(self.program_id).to_string()?,
@@ -908,10 +896,6 @@ impl Program {
     /// the program's flow
     pub fn move_program_to_next_state(&mut self) -> Result<(), BitVMXError> {
         self.state = self.state.next_state(self.im_leader());
-        info!(
-            id = self.my_idx,
-            "Moving program to next state: {:?}", self.state
-        );
         self.save()?;
         Ok(())
     }

@@ -33,13 +33,13 @@ macro_rules! expect_msg {
 }
 
 #[derive(Clone)]
-struct DrpCovenant {
+pub struct DrpCovenant {
     _covenant_id: Uuid,
     _counterparty: P2PAddress,
 }
 
 #[derive(Clone)]
-struct Covenants {
+pub struct Covenants {
     _drp_covenants: Vec<DrpCovenant>,
     // dispute_core_covenants: Vec<DisputeCoreCovenant>,
     // pairwise_penalization_covenants: Vec<PairwisePenalizationCovenant>,
@@ -62,7 +62,7 @@ pub struct Member {
     pub bitvmx: BitVMXClient,
     pub address: Option<P2PAddress>,
     pub keyring: Keyring,
-    pub covenants: Covenants,
+    pub _covenants: Covenants,
 }
 
 impl Member {
@@ -83,7 +83,7 @@ impl Member {
                 communication_pubkey: None,
                 pairwise_keys: HashMap::new(),
             },
-            covenants: Covenants {
+            _covenants: Covenants {
                 _drp_covenants: Vec::new(),
             },
         })
@@ -172,21 +172,21 @@ impl Member {
         Ok(())
     }
 
-    pub fn accept_peg_in(
+    pub fn accept_pegin(
         &mut self,
-        accept_peg_in_covenant_id: Uuid,
+        accept_pegin_covenant_id: Uuid,
         members: &[Member],
-        request_peg_in_txid: Txid,
-        request_peg_in_amount: u64,
+        request_pegin_txid: Txid,
+        request_pegin_amount: u64,
     ) -> Result<()> {
         info!(id = self.id, "Accepting peg-in");
         AcceptPegIn::setup(
-            accept_peg_in_covenant_id,
+            accept_pegin_covenant_id,
             &self.id,
             &self.role,
             members,
-            request_peg_in_txid,
-            request_peg_in_amount,
+            request_pegin_txid,
+            request_pegin_amount,
             &self.keyring,
             &self.bitvmx,
         )?;

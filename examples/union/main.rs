@@ -71,7 +71,7 @@ pub fn accept_pegin() -> Result<()> {
     // A peg-in request is reported by the Union Client. The committee accepts the peg-in request.
     let mut committee = Committee::new()?;
     committee.setup()?;
-    committee.accept_peg_in()?;
+    committee.accept_pegin()?;
 
     Ok(())
 }
