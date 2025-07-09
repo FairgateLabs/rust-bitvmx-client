@@ -10,7 +10,7 @@ use bitvmx_wallet::wallet::Wallet;
 use protocol_builder::types::OutputType;
 use std::thread::{self};
 use std::{collections::HashMap, time::Duration};
-use tracing::info_span;
+use tracing::{info, info_span};
 use uuid::Uuid;
 
 use crate::{
@@ -47,7 +47,7 @@ impl Committee {
     pub fn setup(&mut self) -> Result<()> {
         // gather all operator addresses
         // in a real scenario, operators should get this from the chain
-        let _addresses = self.all(|op| op.get_peer_info())?;
+        self.all(|op| op.get_peer_info())?;
 
         // create members pubkeys
         let keys = self.all(|op| op.setup_member_keys())?;
@@ -71,47 +71,24 @@ impl Committee {
             )
         })?;
 
-        let mut op_funding_utxos: HashMap<String, PartialUtxo> = HashMap::new();
-        let mut wt_funding_utxos: HashMap<String, PartialUtxo> = HashMap::new();
-
-        for member in members.iter() {
-            if member.role == ParticipantRole::Prover {
-                op_funding_utxos.insert(
-                    member.id.clone(),
-                    self.prepare_funding_utxo(
-                        &self.wallet,
-                        "fund_1", //&format!("op_{}_utxo", index),
-                        //TODO we must use a different pub key here, same for the speedup funding
-                        &member.keyring.dispute_pubkey.unwrap(),
-                        10000000,
-                        None,
-                    )?,
-                );
-            }
-
-            wt_funding_utxos.insert(
-                member.id.clone(),
-                self.prepare_funding_utxo(
-                    &self.wallet,
-                    "fund_1", //&format!("wt_{}_utxo", index),
-                    //TODO we must use a different pub key here, same for the speedup funding
-                    &member.keyring.dispute_pubkey.unwrap(),
-                    10000000,
-                    None,
-                )?,
-            );
-        }
-
         // setup covenants
-        let dispute_core_covenant_id = Uuid::new_v4();
-        self.all(|op| {
-            op.setup_covenants(
-                dispute_core_covenant_id,
-                &members,
-                &op_funding_utxos,
-                &wt_funding_utxos,
-            )
-        })?;
+        for (member_index, member) in members.iter().enumerate() {
+            info_span!("member", id = %member.id).in_scope(|| {
+                info!("Setting up covenants for member {}", member.id);
+            });
+
+            let dispute_core_covenant_id = Uuid::new_v4();
+            let funding_utxos = self.get_funding_utxos(member)?;
+
+            self.all(|op| {
+                op.setup_covenants(
+                    dispute_core_covenant_id,
+                    member_index,
+                    &members,
+                    &funding_utxos,
+                )
+            })?;
+        }
 
         Ok(())
     }
@@ -134,6 +111,27 @@ impl Committee {
         })?;
 
         Ok(())
+    }
+
+    fn get_funding_utxos(&self, member: &Member) -> Result<Vec<PartialUtxo>> {
+        let count = match member.role {
+            ParticipantRole::Prover => 2,
+            ParticipantRole::Verifier => 1,
+        };
+
+        let utxos = (0..count)
+            .map(|_| {
+                self.prepare_funding_utxo(
+                    &self.wallet,
+                    "fund_1",
+                    &member.keyring.dispute_pubkey.unwrap(),
+                    10_000_000,
+                    None,
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(utxos)
     }
 
     fn prepare_funding_utxo(

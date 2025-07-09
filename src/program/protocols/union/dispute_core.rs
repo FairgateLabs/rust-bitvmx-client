@@ -86,16 +86,19 @@ impl ProtocolHandler for DisputeCoreProtocol {
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
+        let committee = self.committee(context)?;
         let mut protocol = self.load_or_create_protocol();
-        // self.create_initial_deposit(
-        //     &mut protocol,
-        //     self.committee(context)?.my_role,
-        //     &keys,
-        //     context,
-        // )?;
+        self.create_initial_deposit(
+            &mut protocol,
+            self.committee(context)?.my_role,
+            &keys,
+            context,
+        )?;
+
+        let member_keys = keys[committee.member_index as usize].clone();
 
         // TODO repeat slot count times connecting each dispute core to the previous one
-        self.create_dispute_core(&mut protocol, &keys, context)?;
+        self.create_dispute_core(&mut protocol, &member_keys, context)?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("{}", protocol.visualize()?);
@@ -140,21 +143,6 @@ impl DisputeCoreProtocol {
         Self { ctx }
     }
 
-    fn create_funding_tx(
-        &self,
-        protocol: &mut Protocol,
-        funding_utxo_name: &str,
-        funding_tx_name: &str,
-        context: &ProgramContext,
-    ) -> Result<(), BitVMXError> {
-        // Retrieve the funding UTXO for the operator
-        let funding_utxo = self.utxo(funding_utxo_name, context)?;
-        protocol.add_external_transaction(funding_tx_name)?;
-        protocol.add_transaction_output(funding_tx_name, &funding_utxo.3.unwrap())?;
-
-        Ok(())
-    }
-
     fn create_initial_deposit(
         &self,
         protocol: &mut Protocol,
@@ -162,6 +150,8 @@ impl DisputeCoreProtocol {
         keys: &Vec<ParticipantKeys>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
+        let dispute_aggregated_key = self.dispute_aggregated_key(context)?;
+
         let prefixes = match role {
             ParticipantRole::Prover => vec!["OP", "WT"],
             ParticipantRole::Verifier => vec!["WT"],
@@ -173,27 +163,29 @@ impl DisputeCoreProtocol {
             let initial_deposit_tx_name = format!("{}{}", prefix, INITIAL_DEPOSIT_TX_SUFFIX);
 
             let funding_utxo = self.utxo(&funding_utxo_name, context)?;
-            self.create_funding_tx(protocol, &funding_utxo_name, &funding_tx_name, context)?;
+            protocol.add_external_transaction(&funding_tx_name)?;
+            protocol.add_transaction_output(&funding_tx_name, &funding_utxo.3.unwrap())?;
 
-            protocol.add_connection(
-                "initial_deposit",
-                &funding_tx_name,
-                (funding_utxo.1 as usize).into(),
-                &initial_deposit_tx_name,
-                InputSpec::Auto(SighashType::ecdsa_all(), SpendMode::Segwit),
-                None,
-                Some(funding_utxo.0),
-            )?;
+            // protocol.add_connection(
+            //     "initial_deposit",
+            //     &funding_tx_name,
+            //     (funding_utxo.1 as usize).into(),
+            //     &initial_deposit_tx_name,
+            //     InputSpec::Auto(SighashType::ecdsa_all(), SpendMode::None),
+            //     None,
+            //     Some(funding_utxo.0),
+            // )?;
         }
 
         let members = self.committee(context)?;
 
+        //TODO add one ouput for each operator to the WT initial deposit transaction
         let mut operators_found = 0;
         for participant in keys.iter() {
             match participant.get_winternitz("pegout_id") {
                 Ok(_) => {
                     let script =
-                        scripts::verify_signature(&members.my_dispute_pubkey, SignMode::Single)?;
+                        scripts::verify_signature(&dispute_aggregated_key, SignMode::Aggregate)?;
 
                     protocol.add_transaction_output(
                         &format!("WT{}", INITIAL_DEPOSIT_TX_SUFFIX),
@@ -220,21 +212,17 @@ impl DisputeCoreProtocol {
     fn create_dispute_core(
         &self,
         protocol: &mut Protocol,
-        keys: &Vec<ParticipantKeys>,
+        keys: &ParticipantKeys,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let members = self.committee(context)?;
-        let my_keys = &keys[self.ctx.my_idx];
-
-        let pegout_id_pubkey = my_keys.get_winternitz("pegout_id")?;
-        let value_0_pubkey = my_keys.get_winternitz("value_0")?;
-        let value_1_pubkey = my_keys.get_winternitz("value_1")?;
-        let my_dispute_pubkey = members.my_dispute_pubkey.clone();
+        let pegout_id_pubkey = keys.get_winternitz("pegout_id")?;
+        let value_0_pubkey = keys.get_winternitz("value_0")?;
+        let value_1_pubkey = keys.get_winternitz("value_1")?;
         let take_aggregated_key = self.take_aggregated_key(context)?;
         let dispute_aggregated_key = self.dispute_aggregated_key(context)?;
 
         let script = scripts::start_dispute_core(
-            my_dispute_pubkey,
+            dispute_aggregated_key,
             pegout_id_pubkey,
             value_0_pubkey,
             value_1_pubkey,
@@ -401,15 +389,15 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn committee(&self, context: &ProgramContext) -> Result<CommitteeCreated, BitVMXError> {
-        let committee_created = context
+    fn committee(&self, context: &ProgramContext) -> Result<NewCommittee, BitVMXError> {
+        let committee = context
             .globals
-            .get_var(&self.ctx.id, &CommitteeCreated::name())?
+            .get_var(&self.ctx.id, &NewCommittee::name())?
             .unwrap()
             .string()?;
 
-        let committee_created: CommitteeCreated = serde_json::from_str(&committee_created)?;
-        Ok(committee_created)
+        let committee: NewCommittee = serde_json::from_str(&committee)?;
+        Ok(committee)
     }
 
     fn prover(&self, context: &ProgramContext) -> Result<bool, BitVMXError> {

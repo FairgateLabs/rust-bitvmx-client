@@ -13,8 +13,8 @@ use std::env;
 use crate::committee::Committee;
 
 mod committee;
-mod covenants;
 mod member;
+mod setup;
 
 mod bitcoin;
 mod log;

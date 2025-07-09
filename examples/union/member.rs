@@ -14,7 +14,7 @@ use bitvmx_client::{
 };
 use tracing::{debug, info};
 
-use crate::covenants::{accept_pegin::AcceptPegIn, dispute_core::DisputeCore};
+use crate::setup::{accept_pegin_setup::AcceptPegInSetup, dispute_core_setup::DisputeCoreSetup};
 
 macro_rules! expect_msg {
     ($self:expr, $pattern:pat => $expr:expr) => {{
@@ -145,18 +145,18 @@ impl Member {
     pub fn setup_covenants(
         &mut self,
         dispute_core_id: Uuid,
+        member_index: usize,
         members: &[Member],
-        op_funding_utxos: &HashMap<String, PartialUtxo>,
-        wt_funding_utxos: &HashMap<String, PartialUtxo>,
+        funding_utxos: &[PartialUtxo],
     ) -> Result<()> {
         info!(id = self.id, "Setting up covenants for member {}", self.id);
-        DisputeCore::setup(
+        DisputeCoreSetup::setup(
             dispute_core_id,
+            member_index,
             &self.id,
             &self.role,
             members,
-            op_funding_utxos,
-            wt_funding_utxos,
+            funding_utxos,
             &self.keyring,
             &self.bitvmx,
         )?;
@@ -180,7 +180,7 @@ impl Member {
         request_pegin_amount: u64,
     ) -> Result<()> {
         info!(id = self.id, "Accepting peg-in");
-        AcceptPegIn::setup(
+        AcceptPegInSetup::setup(
             accept_pegin_covenant_id,
             &self.id,
             &self.role,
@@ -264,7 +264,7 @@ impl Member {
                         .pairwise_keys
                         .insert(other_address.clone(), pairwise_key);
 
-                    info!(peer = ?other_address, key = ?pairwise_key, "Generated pairwise key");
+                    info!(peer = ?other_address, key = ?pairwise_key.to_string(), "Generated pairwise key");
                 }
             }
         }
@@ -277,6 +277,12 @@ impl Member {
         addresses: &[P2PAddress],
         public_keys: Option<&[PublicKey]>,
     ) -> Result<PublicKey> {
+        info!(
+            id = self.id,
+            aggregation_id = ?aggregation_id,
+            addresses = ?addresses,
+            "Setting up aggregated key"
+        );
         self.bitvmx.setup_key(
             aggregation_id,
             addresses.to_vec(),
@@ -285,7 +291,11 @@ impl Member {
         )?;
 
         let aggregated_key = expect_msg!(self, AggregatedPubkey(_, key) => key)?;
-        // info!(aggregated_key = ?aggregated_key.inner, "Key setup complete");
+        info!(
+            id = self.id,
+            "Key setup complete {}",
+            aggregated_key.to_string()
+        );
 
         Ok(aggregated_key)
     }
