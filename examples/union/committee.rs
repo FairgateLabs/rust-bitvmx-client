@@ -57,6 +57,7 @@ impl Committee {
         let members_take_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.0).collect();
         let members_dispute_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.1).collect();
         let _members_communication_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.2).collect();
+        let _members_communication_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.2).collect();
 
         let take_aggregation_id = self.take_aggregation_id;
         let dispute_aggregation_id = self.dispute_aggregation_id;
@@ -127,6 +128,8 @@ impl Committee {
 
     pub fn accept_pegin(&mut self) -> Result<()> {
         let accept_pegin_covenant_id = Uuid::new_v4();
+    pub fn accept_pegin(&mut self) -> Result<()> {
+        let accept_pegin_covenant_id = Uuid::new_v4();
         let members = self.members.clone();
 
         // TODO replace with actual peg-in request details
@@ -135,6 +138,8 @@ impl Committee {
         let accept_pegin_sighash = vec![0; 32]; // This should be replaced with the actual sighash of the accept peg-in tx
 
         self.all(|op| {
+            op.accept_pegin(
+                accept_pegin_covenant_id,
             op.accept_pegin(
                 accept_pegin_covenant_id,
                 &members,

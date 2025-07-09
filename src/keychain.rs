@@ -182,7 +182,6 @@ impl KeyChain {
         self.key_manager
             .aggregate_nonces(aggregated_pubkey, id, nonces_map)
             .map_err(BitVMXError::from)?;
-            .map_err(BitVMXError::from)?;
 
         Ok(())
     }
@@ -195,7 +194,6 @@ impl KeyChain {
     ) -> Result<PublicKey, BitVMXError> {
         self.key_manager
             .new_musig2_session(participant_pubkeys, my_pubkey)
-            .map_err(BitVMXError::from)
             .map_err(BitVMXError::from)
     }
 
@@ -211,11 +209,6 @@ impl KeyChain {
         partial_signature_mapping: HashMap<PublicKey, Vec<(MessageId, PartialSignature)>>,
         id: &str,
     ) -> Result<(), BitVMXError> {
-        self.key_manager.save_partial_signatures_multi(
-            aggregated_pubkey,
-            id,
-            partial_signature_mapping,
-        )?;
         self.key_manager.save_partial_signatures_multi(
             aggregated_pubkey,
             id,

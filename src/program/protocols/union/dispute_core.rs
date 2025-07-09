@@ -5,7 +5,6 @@ use crate::{
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::types::*,
-            union::types::*,
         },
         variables::{PartialUtxo, VariableTypes},
     },
@@ -16,14 +15,11 @@ use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     builder::Protocol,
-    builder::Protocol,
     scripts::{self, SignMode},
     types::{
         connection::{InputSpec, OutputSpec},
-        connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
         output::SpeedupData,
-        OutputType,
         OutputType,
     },
 };
@@ -57,11 +53,9 @@ impl ProtocolHandler for DisputeCoreProtocol {
             (
                 "take_aggregated".to_string(),
                 self.take_aggregated_key(context)?,
-                self.take_aggregated_key(context)?,
             ),
             (
                 "dispute_aggregated".to_string(),
-                self.dispute_aggregated_key(context)?,
                 self.dispute_aggregated_key(context)?,
             ),
         ])
@@ -98,12 +92,10 @@ impl ProtocolHandler for DisputeCoreProtocol {
         }
 
         Ok(ParticipantKeys::new(keys, vec![]))
-        Ok(ParticipantKeys::new(keys, vec![]))
     }
 
     fn build(
         &self,
-        keys: Vec<ParticipantKeys>,
         keys: Vec<ParticipantKeys>,
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
@@ -131,17 +123,10 @@ impl ProtocolHandler for DisputeCoreProtocol {
         _context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         Err(BitVMXError::InvalidTransactionName(name.to_string()))
-        Err(BitVMXError::InvalidTransactionName(name.to_string()))
     }
 
     fn notify_news(
         &self,
-        _tx_id: Txid,
-        _vout: Option<u32>,
-        _tx_status: TransactionStatus,
-        _context: String,
-        _program_context: &ProgramContext,
-        _participant_keys: Vec<&ParticipantKeys>,
         _tx_id: Txid,
         _vout: Option<u32>,
         _tx_status: TransactionStatus,
@@ -316,8 +301,6 @@ impl DisputeCoreProtocol {
         let value_0: Vec<u8> = vec![0];
         let value_1: Vec<u8> = vec![1];
 
-        let value_0_script = scripts::verify_value(take_aggregated_key, value_0_pubkey, value_0)?;
-        let value_1_script = scripts::verify_value(take_aggregated_key, value_1_pubkey, value_1)?;
         let value_0_script = scripts::verify_value(take_aggregated_key, value_0_pubkey, value_0)?;
         let value_1_script = scripts::verify_value(take_aggregated_key, value_1_pubkey, value_1)?;
 

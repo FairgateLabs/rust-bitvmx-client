@@ -10,6 +10,7 @@ use bitvmx_client::{
         variables::VariableTypes,
     },
     types::PROGRAM_TYPE_ACCEPT_PEGIN,
+    types::PROGRAM_TYPE_ACCEPT_PEGIN,
 };
 use tracing::info;
 use uuid::Uuid;

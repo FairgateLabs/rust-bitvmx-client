@@ -34,11 +34,13 @@ macro_rules! expect_msg {
 
 #[derive(Clone)]
 pub struct DrpCovenant {
+pub struct DrpCovenant {
     _covenant_id: Uuid,
     _counterparty: P2PAddress,
 }
 
 #[derive(Clone)]
+pub struct Covenants {
 pub struct Covenants {
     _drp_covenants: Vec<DrpCovenant>,
     // dispute_core_covenants: Vec<DisputeCoreCovenant>,
@@ -63,6 +65,7 @@ pub struct Member {
     pub address: Option<P2PAddress>,
     pub keyring: Keyring,
     pub _covenants: Covenants,
+    pub _covenants: Covenants,
 }
 
 impl Member {
@@ -83,6 +86,7 @@ impl Member {
                 communication_pubkey: None,
                 pairwise_keys: HashMap::new(),
             },
+            _covenants: Covenants {
             _covenants: Covenants {
                 _drp_covenants: Vec::new(),
             },
@@ -174,7 +178,9 @@ impl Member {
     }
 
     pub fn accept_pegin(
+    pub fn accept_pegin(
         &mut self,
+        accept_pegin_covenant_id: Uuid,
         accept_pegin_covenant_id: Uuid,
         members: &[Member],
         request_pegin_txid: Txid,
