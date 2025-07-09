@@ -4,6 +4,7 @@ use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::types::output::SpeedupData;
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use crate::{
     errors::BitVMXError,
@@ -69,6 +70,15 @@ impl ProtocolHandler for PairwisePenalizationProtocol {
         _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         todo!()
+    }
+
+    fn setup_complete(&self, _program_context: &ProgramContext) -> Result<(), BitVMXError> {
+        // This is called after the protocol is built and ready to be used
+        info!(
+            id = self.ctx.my_idx,
+            "PairwisePenalizationProtocol setup complete for program {}", self.ctx.id
+        );
+        Ok(())
     }
 }
 

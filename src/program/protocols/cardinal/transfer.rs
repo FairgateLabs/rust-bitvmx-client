@@ -331,6 +331,15 @@ impl ProtocolHandler for TransferProtocol {
         self.save_protocol(protocol)?;
         Ok(())
     }
+
+    fn setup_complete(&self, _program_context: &ProgramContext) -> Result<(), BitVMXError> {
+        // This is called after the protocol is built and ready to be used
+        info!(
+            "TransferProtocol setup complete for program {}",
+            self.ctx.id
+        );
+        Ok(())
+    }
 }
 
 impl TransferProtocol {

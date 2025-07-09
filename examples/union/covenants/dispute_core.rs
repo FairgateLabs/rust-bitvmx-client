@@ -16,10 +16,10 @@ use uuid::Uuid;
 use crate::member::{Keyring, Member};
 
 pub struct DisputeCore {
-    pub covenant_id: Uuid,
-    pub my_member_id: String,
-    pub my_role: ParticipantRole,
-    pub committee: Vec<Member>,
+    pub _covenant_id: Uuid,
+    pub _my_member_id: String,
+    pub _my_role: ParticipantRole,
+    pub _committee: Vec<Member>,
 }
 
 impl DisputeCore {
@@ -54,8 +54,8 @@ impl DisputeCore {
             my_role: my_role.clone(),
             my_take_pubkey: keyring.take_pubkey.unwrap(),
             my_dispute_pubkey: keyring.dispute_pubkey.unwrap(),
-            take_aggregated_key: keyring.take_aggregated_key.clone().unwrap(),
-            dispute_aggregated_key: keyring.dispute_aggregated_key.clone().unwrap(),
+            take_aggregated_key: keyring.take_aggregated_key.unwrap(),
+            dispute_aggregated_key: keyring.dispute_aggregated_key.unwrap(),
             addresses: comms,
             operator_count: Self::operator_count(committee)?,
             watchtower_count: Self::watchtower_count(committee)?,
@@ -89,10 +89,10 @@ impl DisputeCore {
         )?;
 
         Ok(DisputeCore {
-            covenant_id,
-            my_member_id: my_id.to_string(),
-            my_role: my_role.clone(),
-            committee: committee.to_vec(),
+            _covenant_id: covenant_id,
+            _my_member_id: my_id.to_string(),
+            _my_role: my_role.clone(),
+            _committee: committee.to_vec(),
         })
     }
 
