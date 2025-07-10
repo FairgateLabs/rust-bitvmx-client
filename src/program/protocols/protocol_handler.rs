@@ -25,7 +25,6 @@ use super::super::participant::ParticipantKeys;
 #[cfg(feature = "cardinal")]
 use super::cardinal::{lock::LockProtocol, slot::SlotProtocol, transfer::TransferProtocol};
 use super::dispute::DisputeResolutionProtocol;
-use crate::program::protocols::union::operator_take::OperatorTakeProtocol;
 #[cfg(feature = "union")]
 use crate::program::protocols::union::{
     dispute_core::DisputeCoreProtocol, pairwise_penalization::PairwisePenalizationProtocol,
@@ -441,8 +440,6 @@ pub enum ProtocolType {
     DisputeCoreProtocol,
     #[cfg(feature = "union")]
     PairwisePenalizationProtocol,
-    #[cfg(feature = "union")]
-    OperatorTakeProtocol,
 }
 
 pub fn new_protocol_type(
@@ -479,9 +476,6 @@ pub fn new_protocol_type(
             DisputeCoreProtocol::new(ctx),
         )),
         _ => Err(BitVMXError::NotImplemented(name.to_string())),
-        PROGRAM_TYPE_OPERATOR_TAKE => Ok(ProtocolType::OperatorTakeProtocol(
-            OperatorTakeProtocol::new(ctx),
-        )),
     }
 }
 

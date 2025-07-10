@@ -6,7 +6,7 @@ use bitvmx_client::{
     client::BitVMXClient,
     program::{
         participant::{P2PAddress, ParticipantRole},
-        protocols::union::types::PegInRequest,
+        protocols::union::types::{PegInRequest, OPERATOR_TAKE_KEYS},
         variables::VariableTypes,
     },
     types::PROGRAM_TYPE_ACCEPT_PEGIN,
@@ -51,6 +51,13 @@ impl AcceptPegInSetup {
             );
         }
 
+        let mut take_keys = Vec::new();
+        for member in committee {
+            if member.role == ParticipantRole::Prover {
+                take_keys.push(member.keyring.take_pubkey.unwrap());
+            }
+        }
+
         let pegin_request = PegInRequest {
             my_role: my_role.clone(),
             txid: request_pegin_txid,
@@ -63,6 +70,12 @@ impl AcceptPegInSetup {
             covenant_id,
             &PegInRequest::name(),
             VariableTypes::String(serde_json::to_string(&pegin_request)?),
+        )?;
+
+        bitvmx.set_var(
+            covenant_id,
+            OPERATOR_TAKE_KEYS,
+            VariableTypes::String(serde_json::to_string(&take_keys)?),
         )?;
 
         bitvmx.setup(

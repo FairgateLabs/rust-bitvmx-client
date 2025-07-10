@@ -37,6 +37,9 @@ pub const FUNDING_UTXO_SUFFIX: &str = "_FUNDING_UTXO";
 pub const FUNDING_TX_SUFFIX: &str = "_FUNDING_TX";
 pub const INITIAL_DEPOSIT_TX_SUFFIX: &str = "_INITIAL_DEPOSIT_TX";
 
+// Storage names
+pub const OPERATOR_TAKE_KEYS: &str = "operator_take_keys";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewCommittee {
     pub member_index: usize,
