@@ -104,6 +104,7 @@ pub enum IncomingBitVMXApiMessages {
     Setup(ProgramId, String, Vec<P2PAddress>, u16),
     SubscribeToTransaction(Uuid, Txid),
     SubscribeUTXO(),
+    SubscribeToRskPegin(),
     DispatchTransaction(Uuid, Transaction),
     DispatchTransactionName(Uuid, String),
     SetupKey(Uuid, Vec<P2PAddress>, Option<Vec<PublicKey>>, u16),
