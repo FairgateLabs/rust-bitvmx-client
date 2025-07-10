@@ -166,15 +166,15 @@ impl DisputeCoreProtocol {
             protocol.add_external_transaction(&funding_tx_name)?;
             protocol.add_transaction_output(&funding_tx_name, &funding_utxo.3.unwrap())?;
 
-            // protocol.add_connection(
-            //     "initial_deposit",
-            //     &funding_tx_name,
-            //     (funding_utxo.1 as usize).into(),
-            //     &initial_deposit_tx_name,
-            //     InputSpec::Auto(SighashType::ecdsa_all(), SpendMode::None),
-            //     None,
-            //     Some(funding_utxo.0),
-            // )?;
+            protocol.add_connection(
+                "initial_deposit",
+                &funding_tx_name,
+                (funding_utxo.1 as usize).into(),
+                &initial_deposit_tx_name,
+                InputSpec::Auto(SighashType::ecdsa_all(), SpendMode::None),
+                None,
+                Some(funding_utxo.0),
+            )?;
         }
 
         let members = self.committee(context)?;
