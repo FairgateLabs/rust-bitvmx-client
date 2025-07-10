@@ -23,9 +23,7 @@ use crate::{
     program::{
         participant::ParticipantKeys,
         protocols::{
-            claim::ClaimGate,
-            dispute::{START_CH, TIMELOCK_BLOCKS},
-            protocol_handler::{external_fund_tx, ProtocolContext, ProtocolHandler},
+            cardinal::{FEE, FUND_UTXO, GID_MAX, OPERATORS, OPERATORS_AGGREGATED_PUB, PAIR_0_1_AGGREGATED, PROTOCOL_COST, SPEEDUP_DUST, STOPS_CONSUMED, UNSPENDABLE}, claim::ClaimGate, dispute::{START_CH, TIMELOCK_BLOCKS}, protocol_handler::{external_fund_tx, ProtocolContext, ProtocolHandler}
         },
         variables::VariableTypes,
     },
@@ -86,7 +84,7 @@ impl ProtocolHandler for SlotProtocol {
             "pregenerated".to_string(),
             context
                 .globals
-                .get_var(&self.ctx.id, "operators_aggregated_pub")?
+                .get_var(&self.ctx.id, OPERATORS_AGGREGATED_PUB)?
                 .unwrap()
                 .pubkey()?,
         )])
@@ -197,7 +195,7 @@ impl ProtocolHandler for SlotProtocol {
 
                 let total_operators = program_context
                     .globals
-                    .get_var(&self.ctx.id, "operators")?
+                    .get_var(&self.ctx.id, OPERATORS)?
                     .unwrap()
                     .number()?;
 
@@ -249,13 +247,13 @@ impl ProtocolHandler for SlotProtocol {
 
             let total_operators = program_context
                 .globals
-                .get_var(&self.ctx.id, "operators")?
+                .get_var(&self.ctx.id, OPERATORS)?
                 .unwrap()
                 .number()?;
 
             let mut stops_consumed = program_context
                 .globals
-                .get_var(&self.ctx.id, "stops_consumed")?
+                .get_var(&self.ctx.id, STOPS_CONSUMED)?
                 .unwrap_or(VariableTypes::Number(0))
                 .number()?;
 
@@ -263,7 +261,7 @@ impl ProtocolHandler for SlotProtocol {
             if stops_consumed == 0 {
                 program_context.globals.set_var(
                     &self.ctx.id,
-                    "stops_consumed",
+                    STOPS_CONSUMED,
                     VariableTypes::Number(1),
                 )?;
 
@@ -291,7 +289,7 @@ impl ProtocolHandler for SlotProtocol {
                 stops_consumed += 1;
                 program_context.globals.set_var(
                     &self.ctx.id,
-                    "stops_consumed",
+                    STOPS_CONSUMED,
                     VariableTypes::Number(stops_consumed),
                 )?;
 
@@ -384,41 +382,55 @@ impl ProtocolHandler for SlotProtocol {
     ) -> Result<(), BitVMXError> {
         let fee = context
             .globals
-            .get_var(&self.ctx.id, "FEE")?
+            .get_var(&self.ctx.id, FEE)?
             .unwrap()
             .number()? as u64;
-        //FIX THIS
-        let protocol_cost = 20_000;
-        let speedup_dust = 500;
-        let gid_max = 8;
+
+        let protocol_cost = context
+            .globals
+            .get_var(&self.ctx.id, PROTOCOL_COST)?
+            .unwrap()
+            .number()? as u64;
+
+        let speedup_dust = context
+            .globals
+            .get_var(&self.ctx.id, SPEEDUP_DUST)?
+            .unwrap()
+            .number()? as u64;
+
+        let gid_max = context
+            .globals
+            .get_var(&self.ctx.id, GID_MAX)?
+            .unwrap()
+            .number()? as u8;
 
         context.globals.set_var(
             &self.ctx.id,
-            "operators",
+            OPERATORS,
             VariableTypes::Number(keys.len() as u32),
         )?;
 
         let ops_agg_pubkey = context
             .globals
-            .get_var(&self.ctx.id, "operators_aggregated_pub")?
+            .get_var(&self.ctx.id, OPERATORS_AGGREGATED_PUB)?
             .unwrap()
             .pubkey()?;
 
         let pair_0_1_aggregated = context
             .globals
-            .get_var(&self.ctx.id, "pair_0_1_aggregated")?
+            .get_var(&self.ctx.id, PAIR_0_1_AGGREGATED)?
             .unwrap()
             .pubkey()?;
 
         let _unspendable = context
             .globals
-            .get_var(&self.ctx.id, "unspendable")?
+            .get_var(&self.ctx.id, UNSPENDABLE)?
             .unwrap()
             .pubkey()?;
 
         let fund_utxo = context
             .globals
-            .get_var(&self.ctx.id, "fund_utxo")?
+            .get_var(&self.ctx.id, FUND_UTXO)?
             .unwrap()
             .utxo()?;
 

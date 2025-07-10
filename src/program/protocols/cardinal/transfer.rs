@@ -22,7 +22,7 @@ use crate::{
     program::{
         participant::ParticipantKeys,
         protocols::{
-            cardinal::slot::{self},
+            cardinal::{slot::{self}, LOCKED_ASSET_UTXO, OPERATORS_AGGREGATED_PUB, OPERATOR_COUNT, SLOT_PROGRAM_ID, SPEEDUP_DUST, UNSPENDABLE},
             claim::ClaimGate,
             protocol_handler::{external_fund_tx, ProtocolContext, ProtocolHandler},
         },
@@ -81,7 +81,7 @@ impl ProtocolHandler for TransferProtocol {
             "pregenerated".to_string(),
             context
                 .globals
-                .get_var(&self.ctx.id, "operators_aggregated_pub")?
+                .get_var(&self.ctx.id, OPERATORS_AGGREGATED_PUB)?
                 .unwrap()
                 .pubkey()?,
         )])
@@ -130,24 +130,27 @@ impl ProtocolHandler for TransferProtocol {
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        //let fee = context.globals.get_var(&self.ctx.id, "FEE")?.number()? as u64;
-        let speedup_dust = 500;
+        let speedup_dust = context
+            .globals
+            .get_var(&self.ctx.id, SPEEDUP_DUST)?
+            .unwrap()
+            .number()? as u64;
 
         let unspendable = context
             .globals
-            .get_var(&self.ctx.id, "unspendable")?
+            .get_var(&self.ctx.id, UNSPENDABLE)?
             .unwrap()
             .pubkey()?;
 
         let ops_agg_pubkey = context
             .globals
-            .get_var(&self.ctx.id, "operators_aggregated_pub")?
+            .get_var(&self.ctx.id, OPERATORS_AGGREGATED_PUB)?
             .unwrap()
             .pubkey()?;
 
         let operator_count = context
             .globals
-            .get_var(&self.ctx.id, "operator_count")?
+            .get_var(&self.ctx.id, OPERATOR_COUNT)?
             .unwrap()
             .number()?;
 
@@ -167,16 +170,17 @@ impl ProtocolHandler for TransferProtocol {
 
         let locked_asset_utxo = context
             .globals
-            .get_var(&self.ctx.id, "locked_asset_utxo")?
+            .get_var(&self.ctx.id, LOCKED_ASSET_UTXO)?
             .unwrap()
             .utxo()?;
 
         let mut operator_txs = Vec::new();
-        if let Some(var) = context.globals.get_var(&self.ctx.id, "slot_program_id")? {
+        
+        if let Some(var) = context.globals.get_var(&self.ctx.id, SLOT_PROGRAM_ID)? {
             //GET TXS FROM SLOT PROGRAM
             let slot_program_id = var.string()?;
             let slot_uuid = Uuid::parse_str(&slot_program_id).unwrap();
-
+        
             let protocol_name = format!("{}_{}", PROGRAM_TYPE_SLOT, slot_uuid);
             let protocol = Protocol::load(
                 &protocol_name,
@@ -184,30 +188,30 @@ impl ProtocolHandler for TransferProtocol {
             )?
             .unwrap();
             info!("Slot program: {}", protocol_name);
-
+        
             for op in 0..operator_count {
                 //  let gidtxs: Vec<PartialUtxo> = (1..=too_groups)
                 // pub type PartialUtxo = (Txid, u32, Option<u64>, Option<OutputType>);
                 let op_won_tx = protocol
                     .transaction_by_name(&ClaimGate::tx_success(&slot::claim_name(op as usize)))?;
                 let tx_id = op_won_tx.compute_txid();
-
+        
                 let vout = 0;
                 let amount = speedup_dust;
                 let verify_aggregated_action =
                     scripts::check_aggregated_signature(&ops_agg_pubkey, SignMode::Aggregate);
                 let output_action =
                     external_fund_tx(&ops_agg_pubkey, vec![verify_aggregated_action], amount)?;
-
+        
                 let operator_won_tx = (tx_id, vout, Some(amount), Some(output_action));
-
+        
                 let mut gidtxs = vec![];
-
+        
                 for gid in 1..=too_groups {
                     let gittx =
                         protocol.transaction_by_name(&slot::group_id_tx(op as usize, gid as u8))?;
                     let tx_id = gittx.compute_txid();
-
+        
                     let vout = 0;
                     let amount = speedup_dust;
                     let verify_aggregated_action =
@@ -232,14 +236,14 @@ impl ProtocolHandler for TransferProtocol {
                             .unwrap()
                     })
                     .collect();
-
+        
                 let operator_won_tx = context
                     .globals
                     .get_var(&self.ctx.id, &op_won(op))?
                     .unwrap()
                     .utxo()
                     .unwrap();
-
+        
                 operator_txs.push((gidtxs, operator_won_tx));
             }
         }
