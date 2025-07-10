@@ -280,29 +280,11 @@ impl AcceptPegInProtocol {
         // Input All takes enabler
         self.add_all_takes_enabler_input(protocol, operator_take_tx_name)?;
 
-        // Input from enablers with timelock
-        // TODO: Review this settings
-        protocol.add_transaction_input(
-            Hash::all_zeros(),
-            1, // This should be replaced with the actual output index,
-            operator_take_tx_name,
-            Sequence::ENABLE_LOCKTIME_NO_RBF,
-            &SpendMode::Script { leaf: 0 },
-            &SighashType::taproot_all(),
-        )?;
+        // Input from reimbursement kickoff with timelock
+        self.add_reimbursement_kickoff_timelock_input(protocol, operator_take_tx_name)?;
 
         // Operator Output
-        let wpkh = take_pubkey.wpubkey_hash().expect("key is compressed");
-        let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
-
-        protocol.add_transaction_output(
-            operator_take_tx_name,
-            &OutputType::SegwitPublicKey {
-                value: Amount::from_sat(amount),
-                script_pubkey,
-                public_key: *take_pubkey,
-            },
-        )?;
+        self.add_operator_output(protocol, operator_take_tx_name, amount, take_pubkey)?;
         Ok(())
     }
 
@@ -332,30 +314,12 @@ impl AcceptPegInProtocol {
         // Input All takes enabler
         self.add_all_takes_enabler_input(protocol, operator_won_tx_name)?;
 
-        // Input from try take with timelock
-        // TODO: Review this settings
-        protocol.add_transaction_input(
-            Hash::all_zeros(),
-            0, // This should be replaced with the actual output index,
-            operator_won_tx_name,
-            Sequence::ENABLE_LOCKTIME_NO_RBF,
-            &SpendMode::Script { leaf: 0 },
-            &SighashType::taproot_all(),
-        )?;
+        // Input from try take 2 with timelock
+        self.add_try_take_2_timelock_input(protocol, operator_won_tx_name)?;
 
         // Operator Output
-        let wpkh = take_pubkey.wpubkey_hash().expect("key is compressed");
-        let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
-
         // TODO: Modify amount based on Miro
-        protocol.add_transaction_output(
-            operator_won_tx_name,
-            &OutputType::SegwitPublicKey {
-                value: Amount::from_sat(amount),
-                script_pubkey,
-                public_key: *take_pubkey,
-            },
-        )?;
+        self.add_operator_output(protocol, operator_won_tx_name, amount, take_pubkey)?;
 
         Ok(())
     }
@@ -398,6 +362,64 @@ impl AcceptPegInProtocol {
             Sequence::ENABLE_RBF_NO_LOCKTIME,
             &SpendMode::Script { leaf: 0 },
             &SighashType::taproot_all(),
+        )?;
+
+        Ok(())
+    }
+
+    fn add_reimbursement_kickoff_timelock_input(
+        &self,
+        protocol: &mut protocol_builder::builder::Protocol,
+        tx_name: &str,
+    ) -> Result<(), BitVMXError> {
+        // TODO: Replace with actual REIMBURSEMENT_KICKOFF_TX UTXO reference
+        protocol.add_transaction_input(
+            Hash::all_zeros(),
+            1, // Hardcoded output index for reimbursement kickoff
+            tx_name,
+            Sequence::ENABLE_LOCKTIME_NO_RBF,
+            &SpendMode::Script { leaf: 0 },
+            &SighashType::taproot_all(),
+        )?;
+
+        Ok(())
+    }
+
+    fn add_try_take_2_timelock_input(
+        &self,
+        protocol: &mut protocol_builder::builder::Protocol,
+        tx_name: &str,
+    ) -> Result<(), BitVMXError> {
+        // TODO: Replace with actual TRY_TAKE_2_TX UTXO reference
+        protocol.add_transaction_input(
+            Hash::all_zeros(),
+            0, // Hardcoded output index for try take 2
+            tx_name,
+            Sequence::ENABLE_LOCKTIME_NO_RBF,
+            &SpendMode::Script { leaf: 0 },
+            &SighashType::taproot_all(),
+        )?;
+
+        Ok(())
+    }
+
+    fn add_operator_output(
+        &self,
+        protocol: &mut protocol_builder::builder::Protocol,
+        tx_name: &str,
+        amount: u64,
+        take_pubkey: &PublicKey,
+    ) -> Result<(), BitVMXError> {
+        let wpkh = take_pubkey.wpubkey_hash().expect("key is compressed");
+        let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
+
+        protocol.add_transaction_output(
+            tx_name,
+            &OutputType::SegwitPublicKey {
+                value: Amount::from_sat(amount),
+                script_pubkey,
+                public_key: *take_pubkey,
+            },
         )?;
 
         Ok(())
