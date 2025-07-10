@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use bitcoin::{PublicKey, Transaction, Txid};
+use bitcoin::{hashes::Hash, Amount, PublicKey, ScriptBuf, Sequence, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     scripts::SignMode,
@@ -20,7 +20,7 @@ use crate::{
         participant::ParticipantKeys,
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
-            union::types::{PegInRequest, ACCEPT_PEGIN_TX, REQUEST_PEGIN_TX},
+            union::types::{PegInRequest, ACCEPT_PEGIN_TX, OPERATOR_TAKE_KEYS, REQUEST_PEGIN_TX},
         },
         variables::VariableTypes,
     },
@@ -70,6 +70,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
         let txid = pegin_request.txid;
         let amount = pegin_request.amount;
         let take_aggregated_key = pegin_request.take_aggregated_key;
+        let take_pubkeys = self.take_pubkeys(context)?;
 
         let mut protocol = self.load_or_create_protocol();
 
@@ -94,7 +95,30 @@ impl ProtocolHandler for AcceptPegInProtocol {
             &OutputType::taproot(amount, &take_aggregated_key, &[])?,
         )?;
 
+        // Operator take transactions
+        // Loop over operators and create take 1 and take 2 transactions
+        for (index, take_pubkey) in take_pubkeys.iter().enumerate() {
+            self.create_operator_take_transaction(
+                &mut protocol,
+                index as u32,
+                amount,
+                &take_aggregated_key,
+                take_pubkey,
+                txid,
+            )?;
+
+            self.create_operator_won_transaction(
+                &mut protocol,
+                index as u32,
+                amount,
+                &take_aggregated_key,
+                take_pubkey,
+                txid,
+            )?;
+        }
+
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
+
         info!("{}", protocol.visualize()?);
         self.save_protocol(protocol)?;
 
@@ -150,6 +174,17 @@ impl AcceptPegInProtocol {
 
         let pegin_request: PegInRequest = serde_json::from_str(&pegin_request)?;
         Ok(pegin_request)
+    }
+
+    fn take_pubkeys(&self, context: &ProgramContext) -> Result<Vec<PublicKey>, BitVMXError> {
+        let take_keys_json = context
+            .globals
+            .get_var(&self.ctx.id, OPERATOR_TAKE_KEYS)?
+            .unwrap()
+            .string()?;
+
+        let take_keys: Vec<PublicKey> = serde_json::from_str(&take_keys_json)?;
+        Ok(take_keys)
     }
 
     fn send_signing_info(
@@ -217,6 +252,154 @@ impl AcceptPegInProtocol {
         //         signatures[0].1.clone(),
         //     ))?),
         // )?;
+
+        Ok(())
+    }
+
+    fn create_operator_take_transaction(
+        &self,
+        protocol: &mut protocol_builder::builder::Protocol,
+        index: u32,
+        amount: u64,
+        take_aggregated_key: &PublicKey,
+        take_pubkey: &PublicKey,
+        pegin_txid: Txid,
+    ) -> Result<(), BitVMXError> {
+        let operator_take_tx_name = &format!("operator_take_{}", index);
+        protocol.add_transaction(operator_take_tx_name)?;
+
+        // Pegin input
+        self.add_accept_pegin_connection(
+            protocol,
+            format!("operator_take_{}_connection", index),
+            operator_take_tx_name,
+            amount,
+            take_aggregated_key,
+            pegin_txid,
+        )?;
+
+        // Input All takes enabler
+        self.add_all_takes_enabler_input(protocol, operator_take_tx_name)?;
+
+        // Input from enablers with timelock
+        // TODO: Review this settings
+        protocol.add_transaction_input(
+            Hash::all_zeros(),
+            1, // This should be replaced with the actual output index,
+            operator_take_tx_name,
+            Sequence::ENABLE_LOCKTIME_NO_RBF,
+            &SpendMode::Script { leaf: 0 },
+            &SighashType::taproot_all(),
+        )?;
+
+        // Operator Output
+        let wpkh = take_pubkey.wpubkey_hash().expect("key is compressed");
+        let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
+
+        protocol.add_transaction_output(
+            operator_take_tx_name,
+            &OutputType::SegwitPublicKey {
+                value: Amount::from_sat(amount),
+                script_pubkey,
+                public_key: *take_pubkey,
+            },
+        )?;
+        Ok(())
+    }
+
+    fn create_operator_won_transaction(
+        &self,
+        protocol: &mut protocol_builder::builder::Protocol,
+        index: u32,
+        amount: u64,
+        take_aggregated_key: &PublicKey,
+        take_pubkey: &PublicKey,
+        pegin_txid: Txid,
+    ) -> Result<(), BitVMXError> {
+        // Operator won transaction
+        let operator_won_tx_name = &format!("operator_won_{}", index);
+        protocol.add_transaction(operator_won_tx_name)?;
+
+        // Pegin input
+        self.add_accept_pegin_connection(
+            protocol,
+            format!("operator_take_{}_connection", index),
+            operator_won_tx_name,
+            amount,
+            take_aggregated_key,
+            pegin_txid,
+        )?;
+
+        // Input All takes enabler
+        self.add_all_takes_enabler_input(protocol, operator_won_tx_name)?;
+
+        // Input from try take with timelock
+        // TODO: Review this settings
+        protocol.add_transaction_input(
+            Hash::all_zeros(),
+            0, // This should be replaced with the actual output index,
+            operator_won_tx_name,
+            Sequence::ENABLE_LOCKTIME_NO_RBF,
+            &SpendMode::Script { leaf: 0 },
+            &SighashType::taproot_all(),
+        )?;
+
+        // Operator Output
+        let wpkh = take_pubkey.wpubkey_hash().expect("key is compressed");
+        let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
+
+        // TODO: Modify amount based on Miro
+        protocol.add_transaction_output(
+            operator_won_tx_name,
+            &OutputType::SegwitPublicKey {
+                value: Amount::from_sat(amount),
+                script_pubkey,
+                public_key: *take_pubkey,
+            },
+        )?;
+
+        Ok(())
+    }
+
+    fn add_accept_pegin_connection(
+        &self,
+        protocol: &mut protocol_builder::builder::Protocol,
+        connection_name: String,
+        operator_take_tx_name: &str,
+        amount: u64,
+        take_aggregated_key: &PublicKey,
+        pegin_txid: Txid,
+    ) -> Result<(), BitVMXError> {
+        protocol.add_connection(
+            &connection_name,
+            ACCEPT_PEGIN_TX,
+            OutputType::taproot(amount, &take_aggregated_key, &[])?.into(),
+            operator_take_tx_name,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::KeyOnly {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            Some(pegin_txid),
+        )?;
+        Ok(())
+    }
+
+    fn add_all_takes_enabler_input(
+        &self,
+        protocol: &mut protocol_builder::builder::Protocol,
+        tx_name: &str,
+    ) -> Result<(), BitVMXError> {
+        protocol.add_transaction_input(
+            Hash::all_zeros(),
+            0, // This should be replaced with the actual output index,
+            tx_name,
+            Sequence::ENABLE_RBF_NO_LOCKTIME,
+            &SpendMode::Script { leaf: 0 },
+            &SighashType::taproot_all(),
+        )?;
 
         Ok(())
     }

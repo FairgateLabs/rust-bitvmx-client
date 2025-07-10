@@ -262,4 +262,3 @@ pub const PROGRAM_TYPE_TAKE: &str = "take";
 pub const PROGRAM_TYPE_DISPUTE_CORE: &str = "dispute_core";
 pub const PROGRAM_TYPE_PAIRWISE_PENALIZATION: &str = "pairwise_penalization";
 pub const PROGRAM_TYPE_PACKET: &str = "packet";
-pub const PROGRAM_TYPE_OPERATOR_TAKE: &str = "operator_take";
