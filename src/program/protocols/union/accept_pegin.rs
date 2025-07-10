@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
-use emulator::loader::program;
 use protocol_builder::{
     scripts::SignMode,
     types::{
