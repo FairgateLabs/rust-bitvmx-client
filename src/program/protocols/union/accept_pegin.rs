@@ -25,7 +25,7 @@ use crate::{
         },
         variables::VariableTypes,
     },
-    types::ProgramContext,
+    types::{OutgoingBitVMXApiMessages, ProgramContext, L2_ID},
 };
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -127,7 +127,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
         let pegin_request = self.pegin_request(program_context)?;
         let take_aggregated_key = pegin_request.take_aggregated_key;
 
-        self.set_signing_info_var(&program_context, &take_aggregated_key)?;
+        self.send_signing_info(&program_context, &take_aggregated_key)?;
 
         info!(
             id = self.ctx.my_idx,
@@ -153,7 +153,7 @@ impl AcceptPegInProtocol {
         Ok(pegin_request)
     }
 
-    fn set_signing_info_var(
+    fn send_signing_info(
         &self,
         program_context: &ProgramContext,
         take_aggregated_key: &PublicKey,
@@ -194,15 +194,29 @@ impl AcceptPegInProtocol {
             signatures.len()
         );
 
-        program_context.globals.set_var(
-            &self.ctx.id,
-            &"signing_info",
+        let data = serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(
+            self.ctx.id,
+            "signing_info".to_string(),
             VariableTypes::String(serde_json::to_string(&(
                 take_aggregated_key.clone(),
                 nonces[0].1.clone(),
                 signatures[0].1.clone(),
             ))?),
-        )?;
+        ))?;
+
+        program_context.broker_channel.send(L2_ID, data)?;
+
+        // program_context.globals.set_var(
+        //     &self.ctx.id,
+        //     &"signing_info",
+        //     VariableTypes::String(serde_json::to_string(&(
+        //         &self.ctx.id,
+        //         &"signing_info",
+        //         take_aggregated_key.clone(),
+        //         nonces[0].1.clone(),
+        //         signatures[0].1.clone(),
+        //     ))?),
+        // )?;
 
         Ok(())
     }
