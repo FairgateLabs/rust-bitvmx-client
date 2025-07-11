@@ -1012,8 +1012,6 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::SubscribeUTXO() => BitVMXApi::subscribe_utxo(self)?,
 
             IncomingBitVMXApiMessages::SubscribeToRskPegin() => BitVMXApi::subscribe_to_rsk_pegin(self)?,
-
-            IncomingBitVMXApiMessages::GetSPVProof(txid) => BitVMXApi::get_spv_proof(self, from, txid)?,
             
             IncomingBitVMXApiMessages::DispatchTransactionName(id, tx) => {
                 BitVMXApi::dispatch_transaction_name(self, id, &tx)?
