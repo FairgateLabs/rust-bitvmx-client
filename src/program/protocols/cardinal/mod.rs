@@ -1,3 +1,18 @@
 pub mod lock;
 pub mod slot;
 pub mod transfer;
+
+pub const OPERATORS: &str = "operators";
+pub const STOPS_CONSUMED: &str = "stops_consumed";
+pub const OPERATORS_AGGREGATED_PUB: &str = "operators_aggregated_pub";
+pub const FEE: &str = "FEE";
+pub const PAIR_0_1_AGGREGATED: &str = "pair_0_1_aggregated";
+pub const UNSPENDABLE: &str = "unspendable";
+pub const FUND_UTXO: &str = "fund_utxo";
+pub const OPERATOR_COUNT: &str = "operator_count";
+pub const SLOT_PROGRAM_ID: &str = "slot_program_id";
+pub const LOCKED_ASSET_UTXO: &str = "locked_asset_utxo";
+pub const EOL_TIMELOCK_DURATION: &str = "eol_timelock_duration";
+pub const PROTOCOL_COST: &str = "protocol_cost";
+pub const SPEEDUP_DUST: &str = "speedup_dust";
+pub const GID_MAX: &str = "gid_max";

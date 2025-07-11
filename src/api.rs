@@ -34,7 +34,13 @@ pub trait BitVMXApi {
 
     fn get_aggregated_pubkey(&mut self, from: u32, id: Uuid) -> Result<(), BitVMXError>;
 
-    fn generate_zkp(&mut self, from: u32, id: Uuid, input: Vec<u8>, elf_file_path: String) -> Result<(), BitVMXError>;
+    fn generate_zkp(
+        &mut self,
+        from: u32,
+        id: Uuid,
+        input: Vec<u8>,
+        elf_file_path: String,
+    ) -> Result<(), BitVMXError>;
 
     fn proof_ready(&mut self, from: u32, id: Uuid) -> Result<(), BitVMXError>;
 

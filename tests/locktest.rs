@@ -12,6 +12,10 @@ use bitvmx_client::{
     config::Config,
     program::{
         self,
+        protocols::cardinal::{
+            EOL_TIMELOCK_DURATION, FEE, GID_MAX, OPERATORS_AGGREGATED_PUB, PROTOCOL_COST,
+            SPEEDUP_DUST, UNSPENDABLE,
+        },
         variables::{VariableTypes, WitnessTypes},
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_LOCK},
@@ -177,14 +181,14 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     // SETUP LOCK BEGIN
 
     let program_id = Uuid::new_v4();
-    let set_fee = VariableTypes::Number(3000).set_msg(program_id, "FEE")?;
+    let set_fee = VariableTypes::Number(3000).set_msg(program_id, FEE)?;
     send_all(&channels, &set_fee)?;
 
     let set_fee = VariableTypes::Number(10000).set_msg(program_id, "FEE_ZKP")?;
     send_all(&channels, &set_fee)?;
 
-    let set_ops_aggregated = VariableTypes::PubKey(aggregated_pub_key)
-        .set_msg(program_id, "operators_aggregated_pub")?;
+    let set_ops_aggregated =
+        VariableTypes::PubKey(aggregated_pub_key).set_msg(program_id, OPERATORS_AGGREGATED_PUB)?;
     send_all(&channels, &set_ops_aggregated)?;
 
     let set_ops_aggregated_hp = VariableTypes::PubKey(aggregated_happy_path)
@@ -192,7 +196,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     send_all(&channels, &set_ops_aggregated_hp)?;
 
     let set_unspendable = VariableTypes::PubKey(fixtures::hardcoded_unspendable().into())
-        .set_msg(program_id, "unspendable")?;
+        .set_msg(program_id, UNSPENDABLE)?;
     send_all(&channels, &set_unspendable)?;
 
     let set_secret = VariableTypes::Secret(hash).set_msg(program_id, "secret")?;
@@ -209,6 +213,19 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     let set_user_pubkey = VariableTypes::PubKey(bitcoin::PublicKey::from(pubuser))
         .set_msg(program_id, "user_pubkey")?;
     send_all(&channels, &set_user_pubkey)?;
+
+    let eol_timelock_duration =
+        VariableTypes::Number(100).set_msg(program_id, EOL_TIMELOCK_DURATION)?;
+    send_all(&channels, &eol_timelock_duration)?;
+
+    let protocol_cost = VariableTypes::Number(20_000).set_msg(program_id, PROTOCOL_COST)?;
+    send_all(&channels, &protocol_cost)?;
+
+    let speedup_dust = VariableTypes::Number(500).set_msg(program_id, SPEEDUP_DUST)?;
+    send_all(&channels, &speedup_dust)?;
+
+    let gid_max = VariableTypes::Number(8).set_msg(program_id, GID_MAX)?;
+    send_all(&channels, &gid_max)?;
 
     let setup_msg =
         IncomingBitVMXApiMessages::Setup(program_id, PROGRAM_TYPE_LOCK.to_string(), addresses, 0)

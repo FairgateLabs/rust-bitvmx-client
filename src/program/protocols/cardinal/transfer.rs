@@ -22,7 +22,11 @@ use crate::{
     program::{
         participant::ParticipantKeys,
         protocols::{
-            cardinal::slot::{self},
+            cardinal::{
+                slot::{self},
+                LOCKED_ASSET_UTXO, OPERATORS_AGGREGATED_PUB, OPERATOR_COUNT, SLOT_PROGRAM_ID,
+                SPEEDUP_DUST, UNSPENDABLE,
+            },
             claim::ClaimGate,
             protocol_handler::{external_fund_tx, ProtocolContext, ProtocolHandler},
         },
@@ -81,7 +85,7 @@ impl ProtocolHandler for TransferProtocol {
             "pregenerated".to_string(),
             context
                 .globals
-                .get_var(&self.ctx.id, "operators_aggregated_pub")?
+                .get_var(&self.ctx.id, OPERATORS_AGGREGATED_PUB)?
                 .unwrap()
                 .pubkey()?,
         )])
@@ -130,24 +134,27 @@ impl ProtocolHandler for TransferProtocol {
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        //let fee = context.globals.get_var(&self.ctx.id, "FEE")?.number()? as u64;
-        let speedup_dust = 500;
+        let speedup_dust = context
+            .globals
+            .get_var(&self.ctx.id, SPEEDUP_DUST)?
+            .unwrap()
+            .number()? as u64;
 
         let unspendable = context
             .globals
-            .get_var(&self.ctx.id, "unspendable")?
+            .get_var(&self.ctx.id, UNSPENDABLE)?
             .unwrap()
             .pubkey()?;
 
         let ops_agg_pubkey = context
             .globals
-            .get_var(&self.ctx.id, "operators_aggregated_pub")?
+            .get_var(&self.ctx.id, OPERATORS_AGGREGATED_PUB)?
             .unwrap()
             .pubkey()?;
 
         let operator_count = context
             .globals
-            .get_var(&self.ctx.id, "operator_count")?
+            .get_var(&self.ctx.id, OPERATOR_COUNT)?
             .unwrap()
             .number()?;
 
@@ -167,12 +174,13 @@ impl ProtocolHandler for TransferProtocol {
 
         let locked_asset_utxo = context
             .globals
-            .get_var(&self.ctx.id, "locked_asset_utxo")?
+            .get_var(&self.ctx.id, LOCKED_ASSET_UTXO)?
             .unwrap()
             .utxo()?;
 
         let mut operator_txs = Vec::new();
-        if let Some(var) = context.globals.get_var(&self.ctx.id, "slot_program_id")? {
+
+        if let Some(var) = context.globals.get_var(&self.ctx.id, SLOT_PROGRAM_ID)? {
             //GET TXS FROM SLOT PROGRAM
             let slot_program_id = var.string()?;
             let slot_uuid = Uuid::parse_str(&slot_program_id).unwrap();

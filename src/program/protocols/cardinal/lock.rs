@@ -19,7 +19,10 @@ use crate::{
     errors::BitVMXError,
     program::{
         participant::ParticipantKeys,
-        protocols::protocol_handler::{ProtocolContext, ProtocolHandler},
+        protocols::{
+            cardinal::EOL_TIMELOCK_DURATION,
+            protocol_handler::{ProtocolContext, ProtocolHandler},
+        },
         variables::VariableTypes,
     },
     types::ProgramContext,
@@ -224,7 +227,11 @@ impl ProtocolHandler for LockProtocol {
 
         // START DEFINING THE OUTPUTS OF THE LOCK_TX
 
-        let eol_timelock_duration = 100; // TODO: get this from config
+        let eol_timelock_duration = context
+            .globals
+            .get_var(&self.ctx.id, EOL_TIMELOCK_DURATION)?
+            .unwrap()
+            .number()? as u16;
 
         // The following script is the output that user timeout could use as input
         let taproot_script_eol_timelock_expired_tx_lock =

@@ -367,7 +367,8 @@ impl ClientTest {
         let input = vec![50, 0, 0, 0];
         let elf_file_path = "../rust-bitvmx-zk-proof/target/riscv-guest/methods/bitvmx/riscv32im-risc0-zkvm-elf/release/bitvmx.bin".to_string();
 
-        self.prover_client.generate_zkp(request_id, input, elf_file_path)?;
+        self.prover_client
+            .generate_zkp(request_id, input, elf_file_path)?;
         self.advance(1);
 
         Ok(())
@@ -391,7 +392,8 @@ impl ClientTest {
         ));
 
         // Generate a proof
-        self.prover_client.generate_zkp(request_id, input, elf_file_path)?;
+        self.prover_client
+            .generate_zkp(request_id, input, elf_file_path)?;
         self.advance(1);
 
         // while proof is not ready, ask proof_ready and wait for the response

@@ -60,6 +60,7 @@ pub const PROVER_WINS: &str = "PROVER_WINS";
 pub const VERIFIER_WINS: &str = "VERIFIER_WINS";
 pub const ACTION_PROVER_WINS: &str = "ACTION_PROVER_WINS";
 pub const CHALLENGE: &str = "CHALLENGE";
+pub const TIMELOCK_BLOCKS_KEY: &str = "TIMELOCK_BLOCKS";
 
 pub const TRACE_VARS: [(&str, usize); 16] = [
     ("write_address", 4 as usize),
@@ -740,6 +741,12 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         if name == ClaimGate::tx_start(PROVER_WINS) && self.role() == ParticipantRole::Prover {
             info!("Prover wins SUCCESS dispatch");
+            let timelock_blocks = program_context
+                .globals
+                .get_var(&self.ctx.id, "TIMELOCK_BLOCKS")?
+                .unwrap()
+                .number()?;
+
             program_context.bitcoin_coordinator.dispatch(
                 self.get_signed_tx(
                     program_context,
@@ -751,7 +758,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 )?,
                 None,
                 Context::ProgramId(self.ctx.id).to_string()?,
-                Some(tx_status.block_info.as_ref().unwrap().height + TIMELOCK_BLOCKS as u32),
+                Some(tx_status.block_info.as_ref().unwrap().height +timelock_blocks),
             )?;
         }
 
@@ -907,11 +914,17 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
         amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
 
+        let timelock_blocks = context
+            .globals
+            .get_var(&self.ctx.id, TIMELOCK_BLOCKS_KEY)?
+            .unwrap()
+            .number()? as u16;
+
         self.add_connection_with_scripts(
             context,
             aggregated,
             &mut protocol,
-            TIMELOCK_BLOCKS,
+            timelock_blocks,
             amount,
             speedup_dust,
             START_CH,
@@ -934,7 +947,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             speedup_dust,
             1,
             None,
-            TIMELOCK_BLOCKS,
+            timelock_blocks,
             vec![aggregated],
         )?;
 
@@ -987,7 +1000,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             speedup_dust,
             1,
             None,
-            TIMELOCK_BLOCKS,
+            timelock_blocks,
             vec![aggregated],
         )?;
 
@@ -995,7 +1008,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             context,
             aggregated,
             &mut protocol,
-            TIMELOCK_BLOCKS,
+            timelock_blocks,
             amount,
             speedup_dust,
             INPUT_1,
@@ -1026,7 +1039,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 context,
                 aggregated,
                 &mut protocol,
-                TIMELOCK_BLOCKS,
+                timelock_blocks,
                 amount,
                 speedup_dust,
                 &prev,
@@ -1053,7 +1066,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 context,
                 aggregated,
                 &mut protocol,
-                TIMELOCK_BLOCKS,
+                timelock_blocks,
                 amount,
                 speedup_dust,
                 &prev,
@@ -1088,7 +1101,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             context,
             aggregated,
             &mut protocol,
-            TIMELOCK_BLOCKS,
+            timelock_blocks,
             amount,
             speedup_dust,
             &prev,
@@ -1113,7 +1126,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             context,
             aggregated,
             &mut protocol,
-            TIMELOCK_BLOCKS,
+            timelock_blocks,
             amount,
             speedup_dust,
             EXECUTE,
