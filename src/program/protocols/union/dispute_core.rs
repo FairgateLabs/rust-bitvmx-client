@@ -19,7 +19,7 @@ use protocol_builder::{
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
-        output::SpeedupData,
+        output::{self, SpeedupData},
         OutputType,
     },
 };
@@ -97,8 +97,9 @@ impl ProtocolHandler for DisputeCoreProtocol {
 
         let member_keys = keys[committee.member_index as usize].clone();
 
-        // TODO repeat slot count times connecting each dispute core to the previous one
-        self.create_dispute_core(&mut protocol, &member_keys, context)?;
+        for i in 0..100 {
+            self.create_dispute_core(i, &mut protocol, &member_keys, context)?;
+        }
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("{}", protocol.visualize()?);
@@ -212,13 +213,17 @@ impl DisputeCoreProtocol {
 
     fn create_dispute_core(
         &self,
+        dispute_core_index: usize,
         protocol: &mut Protocol,
         keys: &ParticipantKeys,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
+        // TODO select the proper winternitz keys based on the dispute core index
         let pegout_id_pubkey = keys.get_winternitz("pegout_id")?;
         let value_0_pubkey = keys.get_winternitz("value_0")?;
         let value_1_pubkey = keys.get_winternitz("value_1")?;
+        // END TOOD
+
         let take_aggregated_key = self.take_aggregated_key(context)?;
         let dispute_aggregated_key = self.dispute_aggregated_key(context)?;
 
@@ -229,16 +234,36 @@ impl DisputeCoreProtocol {
             value_1_pubkey,
         )?;
 
-        protocol.add_connection(
-            "dispute_core",
-            OP_INITIAL_DEPOSIT_TX,
-            OutputType::taproot(
+        let reimbursement_kickoff_tx =
+            format!("{}_{}", REIMBURSEMENT_KICKOFF_TX, dispute_core_index);
+        let no_take_tx = format!("{}_{}", NO_TAKE_TX, dispute_core_index);
+        let challenge_tx = format!("{}_{}", CHALLENGE_TX, dispute_core_index);
+        let try_take_2_tx = format!("{}_{}", TRY_TAKE_2_TX, dispute_core_index);
+        let no_dispute_opened_tx = format!("{}_{}", NO_DISPUTE_OPENED_TX, dispute_core_index);
+        let you_cant_take_tx = format!("{}_{}", YOU_CANT_TAKE_TX, dispute_core_index);
+        let op_self_disabler_tx = format!("{}_{}", OP_SELF_DISABLER_TX, dispute_core_index);
+        let no_challenge_tx = format!("{}_{}", NO_CHALLENGE_TX, dispute_core_index);
+
+        let (initial_connection, output_spec) = if dispute_core_index == 0 {
+            let output_spec = OutputType::taproot(
                 DISPUTE_OPENER_VALUE,
                 &take_aggregated_key,
                 &[start_dispute_core],
             )?
-            .into(),
-            REIMBURSEMENT_KICKOFF_TX,
+            .into();
+            (OP_INITIAL_DEPOSIT_TX.to_string(), output_spec)
+        } else {
+            let initial_connection =
+                format!("{}_{}", REIMBURSEMENT_KICKOFF_TX, dispute_core_index - 1);
+            let output_spec = OutputSpec::Index(2);
+            (initial_connection, output_spec)
+        };
+
+        protocol.add_connection(
+            "dispute_core",
+            &initial_connection,
+            output_spec,
+            &reimbursement_kickoff_tx,
             InputSpec::Auto(
                 SighashType::taproot_all(),
                 SpendMode::KeyOnly {
@@ -253,9 +278,9 @@ impl DisputeCoreProtocol {
         // Connection to prevent the take transactions to occur (No Take)
         protocol.add_connection(
             "no_take_connection",
-            REIMBURSEMENT_KICKOFF_TX,
+            &reimbursement_kickoff_tx,
             OutputType::taproot(DUST_VALUE, &take_aggregated_key, &[])?.into(),
-            NO_TAKE_TX,
+            &no_take_tx,
             InputSpec::Auto(
                 SighashType::taproot_all(),
                 SpendMode::KeyOnly {
@@ -277,14 +302,14 @@ impl DisputeCoreProtocol {
         //CHALLENGE_TX connection (T)
         protocol.add_connection(
             "take_enabler",
-            REIMBURSEMENT_KICKOFF_TX,
+            &reimbursement_kickoff_tx,
             OutputType::taproot(
                 DUST_VALUE,
                 &take_aggregated_key,
                 &vec![value_0_script, value_1_script],
             )?
             .into(),
-            CHALLENGE_TX,
+            &challenge_tx,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
             Some(TAKE_ENABLER_TIMELOCK),
             None,
@@ -292,9 +317,9 @@ impl DisputeCoreProtocol {
 
         protocol.add_connection(
             "try_take_2",
-            CHALLENGE_TX,
+            &challenge_tx,
             OutputType::taproot(DUST_VALUE, &take_aggregated_key, &[])?.into(),
-            TRY_TAKE_2_TX,
+            &try_take_2_tx,
             InputSpec::Auto(
                 SighashType::taproot_all(),
                 SpendMode::KeyOnly {
@@ -307,9 +332,9 @@ impl DisputeCoreProtocol {
 
         protocol.add_connection(
             "no_dispute_opened",
-            CHALLENGE_TX,
+            &challenge_tx,
             OutputType::taproot(DUST_VALUE, &take_aggregated_key, &[])?.into(),
-            NO_DISPUTE_OPENED_TX,
+            &no_dispute_opened_tx,
             InputSpec::Auto(
                 SighashType::taproot_all(),
                 SpendMode::KeyOnly {
@@ -323,20 +348,21 @@ impl DisputeCoreProtocol {
         // YOU_CANT_TAKE_TX connection
         protocol.add_connection(
             "take_enabler",
-            REIMBURSEMENT_KICKOFF_TX,
+            &reimbursement_kickoff_tx,
             OutputSpec::Index(1),
-            YOU_CANT_TAKE_TX,
+            &you_cant_take_tx,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
             Some(TAKE_ENABLER_TIMELOCK / 2),
             None,
         )?;
 
         // Connection to try to move to the next dispute core (Try Move On)
+        // TODO this output must include the same taptree as the Operator initial deposit tx, plus the key spend
         protocol.add_connection(
             "take_enabler",
-            REIMBURSEMENT_KICKOFF_TX,
+            &reimbursement_kickoff_tx,
             OutputType::taproot(DUST_VALUE, &dispute_aggregated_key, &[])?.into(),
-            OP_SELF_DISABLER_TX,
+            &op_self_disabler_tx,
             InputSpec::Auto(
                 SighashType::taproot_all(),
                 SpendMode::KeyOnly {
@@ -350,9 +376,9 @@ impl DisputeCoreProtocol {
         // Connection to stop moving on to the next dispute core (X)
         protocol.add_connection(
             "stop_move_on_enabler",
-            REIMBURSEMENT_KICKOFF_TX,
+            &reimbursement_kickoff_tx,
             OutputType::taproot(DUST_VALUE, &dispute_aggregated_key, &[])?.into(),
-            NO_DISPUTE_OPENED_TX,
+            &no_dispute_opened_tx,
             InputSpec::Auto(
                 SighashType::taproot_all(),
                 SpendMode::KeyOnly {
@@ -366,9 +392,9 @@ impl DisputeCoreProtocol {
         // YOU_CANT_TAKE_TX connection
         protocol.add_connection(
             "take_enabler",
-            REIMBURSEMENT_KICKOFF_TX,
+            &reimbursement_kickoff_tx,
             OutputSpec::Index(2),
-            YOU_CANT_TAKE_TX,
+            &you_cant_take_tx,
             InputSpec::Auto(
                 SighashType::taproot_all(),
                 SpendMode::KeyOnly {
@@ -381,9 +407,9 @@ impl DisputeCoreProtocol {
 
         protocol.add_connection(
             "take_enabler",
-            REIMBURSEMENT_KICKOFF_TX,
+            &reimbursement_kickoff_tx,
             OutputSpec::Index(1),
-            NO_CHALLENGE_TX,
+            &no_challenge_tx,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
             Some(TAKE_ENABLER_TIMELOCK / 2),
             None,
@@ -391,9 +417,9 @@ impl DisputeCoreProtocol {
 
         protocol.add_connection(
             "take_enabler",
-            REIMBURSEMENT_KICKOFF_TX,
+            &reimbursement_kickoff_tx,
             OutputSpec::Index(3),
-            NO_CHALLENGE_TX,
+            &no_challenge_tx,
             InputSpec::Auto(
                 SighashType::taproot_all(),
                 SpendMode::KeyOnly {
