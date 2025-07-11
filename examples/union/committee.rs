@@ -9,7 +9,7 @@ use bitcoin::{hashes::Hash, Amount, Network, PublicKey, ScriptBuf};
 use bitvmx_wallet::wallet::Wallet;
 use protocol_builder::types::OutputType;
 use std::thread::{self};
-use std::{collections::HashMap, time::Duration};
+use std::time::Duration;
 use tracing::{info, info_span};
 use uuid::Uuid;
 
@@ -30,8 +30,8 @@ impl Committee {
         let members = vec![
             Member::new("op_1", ParticipantRole::Prover)?,
             Member::new("op_2", ParticipantRole::Prover)?,
-            Member::new("op_3", ParticipantRole::Prover)?,
-            Member::new("op_4", ParticipantRole::Prover)?,
+            // Member::new("op_3", ParticipantRole::Prover)?,
+            // Member::new("op_4", ParticipantRole::Prover)?,
         ];
 
         let wallet = init_wallet()?;
@@ -100,6 +100,7 @@ impl Committee {
         // TODO replace with actual peg-in request details
         let request_pegin_txid = Hash::all_zeros(); // This should be replaced with the actual Txid of the peg-in request
         let request_pegin_amount = 10000000; // This should be replaced with the actual amount of the peg-in request
+        let accept_pegin_sighash = vec![0; 32]; // This should be replaced with the actual sighash of the accept peg-in tx
 
         self.all(|op| {
             op.accept_pegin(
@@ -107,6 +108,7 @@ impl Committee {
                 &members,
                 request_pegin_txid,
                 request_pegin_amount,
+                accept_pegin_sighash.as_slice(),
             )
         })?;
 

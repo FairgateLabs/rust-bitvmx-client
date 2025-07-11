@@ -187,6 +187,7 @@ impl DisputeCoreProtocol {
                     let script =
                         scripts::verify_signature(&dispute_aggregated_key, SignMode::Aggregate)?;
 
+                    // TODO change the output from segwit to taproot
                     protocol.add_transaction_output(
                         &format!("WT{}", INITIAL_DEPOSIT_TX_SUFFIX),
                         &OutputType::segwit_script(START_ENABLER_VALUE, &script)?,
@@ -221,7 +222,7 @@ impl DisputeCoreProtocol {
         let take_aggregated_key = self.take_aggregated_key(context)?;
         let dispute_aggregated_key = self.dispute_aggregated_key(context)?;
 
-        let script = scripts::start_dispute_core(
+        let start_dispute_core = scripts::start_dispute_core(
             dispute_aggregated_key,
             pegout_id_pubkey,
             value_0_pubkey,
@@ -231,7 +232,12 @@ impl DisputeCoreProtocol {
         protocol.add_connection(
             "dispute_core",
             OP_INITIAL_DEPOSIT_TX,
-            OutputType::taproot(DISPUTE_OPENER_VALUE, &take_aggregated_key, &[])?.into(),
+            OutputType::taproot(
+                DISPUTE_OPENER_VALUE,
+                &take_aggregated_key,
+                &[start_dispute_core],
+            )?
+            .into(),
             REIMBURSEMENT_KICKOFF_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
@@ -269,24 +275,17 @@ impl DisputeCoreProtocol {
         let value_1_script = scripts::verify_value(take_aggregated_key, value_1_pubkey, value_1)?;
 
         //CHALLENGE_TX connection (T)
-        // TODO review the SpendMode
         protocol.add_connection(
             "take_enabler",
             REIMBURSEMENT_KICKOFF_TX,
             OutputType::taproot(
                 DUST_VALUE,
                 &take_aggregated_key,
-                &[], //&vec![value_0_script, value_1_script],
+                &vec![value_0_script, value_1_script],
             )?
             .into(),
             CHALLENGE_TX,
-            //InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
-            InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::KeyOnly {
-                    key_path_sign: SignMode::Aggregate,
-                },
-            ),
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
             Some(TAKE_ENABLER_TIMELOCK),
             None,
         )?;
@@ -327,13 +326,7 @@ impl DisputeCoreProtocol {
             REIMBURSEMENT_KICKOFF_TX,
             OutputSpec::Index(1),
             YOU_CANT_TAKE_TX,
-            //InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
-            InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::All {
-                    key_path_sign: SignMode::Aggregate,
-                },
-            ),
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
             Some(TAKE_ENABLER_TIMELOCK / 2),
             None,
         )?;
@@ -343,7 +336,7 @@ impl DisputeCoreProtocol {
             "take_enabler",
             REIMBURSEMENT_KICKOFF_TX,
             OutputType::taproot(DUST_VALUE, &dispute_aggregated_key, &[])?.into(),
-            TRY_MOVE_ON_TX,
+            OP_SELF_DISABLER_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
                 SpendMode::KeyOnly {
@@ -370,12 +363,37 @@ impl DisputeCoreProtocol {
             None,
         )?;
 
-        // Connection to stop moving on to the next dispute core (Y)
+        // YOU_CANT_TAKE_TX connection
         protocol.add_connection(
-            "you_cant_take_enabler",
+            "take_enabler",
             REIMBURSEMENT_KICKOFF_TX,
-            OutputType::taproot(DUST_VALUE, &dispute_aggregated_key, &[])?.into(),
+            OutputSpec::Index(2),
             YOU_CANT_TAKE_TX,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::KeyOnly {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            None,
+        )?;
+
+        protocol.add_connection(
+            "take_enabler",
+            REIMBURSEMENT_KICKOFF_TX,
+            OutputSpec::Index(1),
+            NO_CHALLENGE_TX,
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
+            Some(TAKE_ENABLER_TIMELOCK / 2),
+            None,
+        )?;
+
+        protocol.add_connection(
+            "take_enabler",
+            REIMBURSEMENT_KICKOFF_TX,
+            OutputSpec::Index(3),
+            NO_CHALLENGE_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
                 SpendMode::KeyOnly {
