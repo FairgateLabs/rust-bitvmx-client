@@ -47,6 +47,7 @@ pub struct NewCommittee {
     pub addresses: HashMap<PublicKey, P2PAddress>,
     pub operator_count: u32,
     pub watchtower_count: u32,
+    pub packet_size: u32,
 }
 
 impl NewCommittee {
