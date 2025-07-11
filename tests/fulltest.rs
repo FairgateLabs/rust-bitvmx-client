@@ -16,7 +16,7 @@ use bitvmx_client::{
                 FUND_UTXO, GID_MAX, OPERATORS_AGGREGATED_PUB, PAIR_0_1_AGGREGATED, PROTOCOL_COST,
                 SPEEDUP_DUST, UNSPENDABLE,
             },
-            dispute::TIMELOCK_BLOCKS,
+            dispute::{TIMELOCK_BLOCKS, TIMELOCK_BLOCKS_KEY},
             protocol_handler::external_fund_tx,
         },
         variables::{VariableTypes, WitnessTypes},
@@ -206,6 +206,10 @@ pub fn test_full() -> Result<()> {
     let gid_max = VariableTypes::Number(8).set_msg(slot_program_id, GID_MAX)?;
     send_all(&channels, &gid_max)?;
 
+    let timelock_blocks = VariableTypes::Number(TIMELOCK_BLOCKS.into())
+        .set_msg(slot_program_id, TIMELOCK_BLOCKS_KEY)?;
+    send_all(&channels, &timelock_blocks)?;
+
     let setup_msg = IncomingBitVMXApiMessages::Setup(
         slot_program_id,
         PROGRAM_TYPE_SLOT.to_string(),
@@ -368,6 +372,10 @@ pub fn test_full() -> Result<()> {
         .set_msg(lock_program_id, "user_pubkey")?;
     send_all(&channels, &set_user_pubkey)?;
 
+    let eol_timelock_duration =
+        VariableTypes::Number(100).set_msg(lock_program_id, EOL_TIMELOCK_DURATION)?;
+    send_all(&channels, &eol_timelock_duration)?;
+
     let setup_msg = IncomingBitVMXApiMessages::Setup(
         lock_program_id,
         PROGRAM_TYPE_LOCK.to_string(),
@@ -503,6 +511,9 @@ pub fn test_full() -> Result<()> {
     let set_slot_program_id = VariableTypes::String(slot_program_id.to_string())
         .set_msg(transfer_program_id, "slot_program_id")?;
     send_all(&channels, &set_slot_program_id)?;
+
+    let speedup_dust = VariableTypes::Number(500).set_msg(transfer_program_id, SPEEDUP_DUST)?;
+    send_all(&channels, &speedup_dust)?;
 
     let setup_msg = IncomingBitVMXApiMessages::Setup(
         transfer_program_id,

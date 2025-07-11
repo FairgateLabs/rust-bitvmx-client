@@ -129,7 +129,8 @@ pub fn test_slot() -> Result<()> {
     let gid_max = VariableTypes::Number(8).set_msg(program_id, GID_MAX)?;
     send_all(&channels, &gid_max)?;
 
-    let timelock_blocks = VariableTypes::Number(1).set_msg(program_id, TIMELOCK_BLOCKS_KEY)?;
+    let timelock_blocks =
+        VariableTypes::Number(TIMELOCK_BLOCKS.into()).set_msg(program_id, TIMELOCK_BLOCKS_KEY)?;
     send_all(&channels, &timelock_blocks)?;
 
     let setup_msg =

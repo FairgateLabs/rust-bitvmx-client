@@ -7,7 +7,7 @@ use bitvmx_client::{
     program::{
         self,
         participant::{P2PAddress, ParticipantRole},
-        protocols::dispute::{EXECUTE, TIMELOCK_BLOCKS},
+        protocols::dispute::{EXECUTE, TIMELOCK_BLOCKS, TIMELOCK_BLOCKS_KEY},
         variables::VariableTypes,
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_DRP},
@@ -115,9 +115,17 @@ pub fn prepare_dispute(
         .set_msg(program_id, "program_definition")?;
     send_all(&channels, &set_program)?;
 
-    let setup_msg =
-        IncomingBitVMXApiMessages::Setup(program_id, PROGRAM_TYPE_DRP.to_string(), participants, TIMELOCK_BLOCKS)
-            .to_string()?;
+    let timelock_blocks =
+        VariableTypes::Number(TIMELOCK_BLOCKS.into()).set_msg(program_id, TIMELOCK_BLOCKS_KEY)?;
+    send_all(&channels, &timelock_blocks)?;
+
+    let setup_msg = IncomingBitVMXApiMessages::Setup(
+        program_id,
+        PROGRAM_TYPE_DRP.to_string(),
+        participants,
+        TIMELOCK_BLOCKS,
+    )
+    .to_string()?;
     send_all(&channels, &setup_msg)?;
 
     info!("Waiting for setup messages...");
