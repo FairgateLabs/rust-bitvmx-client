@@ -1,0 +1,33 @@
+x-logging:
+  &default-logging
+  options:
+    max-size: '12m'
+    max-file: '5'
+  driver: json-file
+
+services:
+  bitcoind:
+    image: ruimarinho/bitcoin-core:24
+    command: -regtest=1 -rpcport=${BITCOIND_RPC_PORT} -rpcuser=${BITCOIND_RPC_USER} -rpcpassword=${BITCOIND_RPC_PASSWORD} -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0
+    ports:
+      - "${BITCOIND_RPC_PORT}:18443"
+    expose:
+      - "${BITCOIND_RPC_PORT}"
+
+  bitvmx-client:
+    container_name: ${BITVMX_CLIENT_CONTAINER_NAME}
+    build:
+      context: ./
+      dockerfile: docker/Dockerfile
+      ssh:
+        - default
+    logging: *default-logging
+    restart: unless-stopped
+    entrypoint: ["./run.sh"]
+    environment:
+      BITCOIND_URL: ${BITCOIND_URL}
+      CLIENT_OP: ${CLIENT_OP}
+      BITCOIND_RPC_USER: ${BITCOIND_RPC_USER}
+      BITCOIND_RPC_PASSWORD: ${BITCOIND_RPC_PASSWORD}
+    depends_on:
+      - bitcoind
