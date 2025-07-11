@@ -30,8 +30,8 @@ impl Committee {
         let members = vec![
             Member::new("op_1", ParticipantRole::Prover)?,
             Member::new("op_2", ParticipantRole::Prover)?,
-            Member::new("op_3", ParticipantRole::Prover)?,
-            Member::new("op_4", ParticipantRole::Prover)?,
+            // Member::new("op_3", ParticipantRole::Prover)?,
+            // Member::new("op_4", ParticipantRole::Prover)?,
         ];
 
         let wallet = init_wallet()?;

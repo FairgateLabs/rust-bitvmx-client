@@ -1,4 +1,3 @@
-use crate::program::participant;
 use crate::program::protocols::protocol_handler::ProtocolHandler;
 use crate::types::{EMULATOR_ID, PROVER_ID};
 use crate::{
