@@ -4,7 +4,11 @@ use anyhow::Result;
 use bitvmx_client::{
     program::{
         self,
-        protocols::cardinal::transfer::{op_gid, op_won, pub_too_group},
+        protocols::cardinal::{
+            transfer::{op_gid, op_won, pub_too_group},
+            EOL_TIMELOCK_DURATION, GID_MAX, OPERATORS_AGGREGATED_PUB, PROTOCOL_COST, SPEEDUP_DUST,
+            UNSPENDABLE,
+        },
         variables::VariableTypes,
     },
     types::{
@@ -104,15 +108,28 @@ pub fn test_transfer() -> Result<()> {
     let program_id = Uuid::new_v4();
 
     let set_unspendable = VariableTypes::PubKey(fixtures::hardcoded_unspendable().into())
-        .set_msg(program_id, "unspendable")?;
+        .set_msg(program_id, UNSPENDABLE)?;
     send_all(&channels, &set_unspendable)?;
 
-    let set_ops_aggregated = VariableTypes::PubKey(aggregated_pub_key)
-        .set_msg(program_id, "operators_aggregated_pub")?;
+    let set_ops_aggregated =
+        VariableTypes::PubKey(aggregated_pub_key).set_msg(program_id, OPERATORS_AGGREGATED_PUB)?;
     send_all(&channels, &set_ops_aggregated)?;
 
     let set_operators_count = VariableTypes::Number(3).set_msg(program_id, "operator_count")?;
     send_all(&channels, &set_operators_count)?;
+
+    let eol_timelock_duration =
+        VariableTypes::Number(100).set_msg(program_id, EOL_TIMELOCK_DURATION)?;
+    send_all(&channels, &eol_timelock_duration)?;
+
+    let protocol_cost = VariableTypes::Number(20_000).set_msg(program_id, PROTOCOL_COST)?;
+    send_all(&channels, &protocol_cost)?;
+
+    let speedup_dust = VariableTypes::Number(500).set_msg(program_id, SPEEDUP_DUST)?;
+    send_all(&channels, &speedup_dust)?;
+
+    let gid_max = VariableTypes::Number(8).set_msg(program_id, GID_MAX)?;
+    send_all(&channels, &gid_max)?;
 
     for gid in 1..=7 {
         let set_pub_too = VariableTypes::PubKey(fixtures::hardcoded_unspendable().into())

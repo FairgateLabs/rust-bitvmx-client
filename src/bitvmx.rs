@@ -641,7 +641,13 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn generate_zkp(&mut self, from: u32, id: Uuid, input: Vec<u8>, elf_file_path:String) -> Result<(), BitVMXError> {
+    fn generate_zkp(
+        &mut self,
+        from: u32,
+        id: Uuid,
+        input: Vec<u8>,
+        elf_file_path: String,
+    ) -> Result<(), BitVMXError> {
         info!("Generating ZKP for input: {:?}", input);
 
         // Store the 'from' parameter
@@ -650,11 +656,7 @@ impl BitVMXApi for BitVMX {
 
         let msg = serde_json::to_string(&DispatcherJob {
             job_id: id.to_string(),
-            job_type: ProverJobType::Prove(
-                input,
-                elf_file_path,
-                format!("./zkp-jobs/{}", id),
-            ),
+            job_type: ProverJobType::Prove(input, elf_file_path, format!("./zkp-jobs/{}", id)),
         })?;
 
         info!("Sending dispatcher job message: {}", msg);

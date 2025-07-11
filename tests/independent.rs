@@ -431,11 +431,6 @@ pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_1).to_string()?;
     helper.channels[1].send(BITVMX_ID, command)?;
 
-
-
-
-
-
     info!("Generate Aggregated from pair");
     let pair_0_1 = vec![addresses[0].clone(), addresses[1].clone()];
     let pair_0_1_agg_id = Uuid::new_v4();
@@ -445,14 +440,6 @@ pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
     let _msg = helper.wait_msg(0)?;
     let msg = helper.wait_msg(1)?;
     let pair_0_1_agg_pub_key = msg.aggregated_pub_key().unwrap();
-
-
-
-
-
-
-
-
 
     // prepare a second fund available so we don't need 2 blocks to get the UTXO
 
@@ -582,8 +569,8 @@ fn test_zkp() -> Result<()> {
     let _ = helper.channels[0].send(
         BITVMX_ID,
         IncomingBitVMXApiMessages::GenerateZKP(
-            id, 
-            vec![1, 2, 3, 4], 
+            id,
+            vec![1, 2, 3, 4],
             "../rust-bitvmx-zk-proof/target/riscv-guest/methods/bitvmx/riscv32im-risc0-zkvm-elf/release/bitvmx.bin".to_string()
         ).to_string()?,
     );

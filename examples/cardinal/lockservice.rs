@@ -13,17 +13,12 @@ use bitvmx_broker::{
 use bitvmx_client::{
     config::Config,
     program::{
-        self, 
+        self,
         protocols::cardinal::{
-            EOL_TIMELOCK_DURATION, 
-            FEE, 
-            GID_MAX, 
-            OPERATORS_AGGREGATED_PUB, 
-            PROTOCOL_COST, 
-            SPEEDUP_DUST, 
-            UNSPENDABLE
-        }, 
-        variables::{VariableTypes, WitnessTypes}
+            EOL_TIMELOCK_DURATION, FEE, GID_MAX, OPERATORS_AGGREGATED_PUB, PROTOCOL_COST,
+            SPEEDUP_DUST, UNSPENDABLE,
+        },
+        variables::{VariableTypes, WitnessTypes},
     },
     types::{
         IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID, PROGRAM_TYPE_LOCK,
@@ -282,20 +277,17 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
             .set_msg(program_id, "user_pubkey")?;
         send_all(&channels, &set_user_pubkey)?;
 
-        let eol_timelock_duration = VariableTypes::Number(100)
-            .set_msg(program_id, EOL_TIMELOCK_DURATION)?;
+        let eol_timelock_duration =
+            VariableTypes::Number(100).set_msg(program_id, EOL_TIMELOCK_DURATION)?;
         send_all(&channels, &eol_timelock_duration)?;
 
-        let protocol_cost = VariableTypes::Number(20_000)
-            .set_msg(program_id, PROTOCOL_COST)?;
+        let protocol_cost = VariableTypes::Number(20_000).set_msg(program_id, PROTOCOL_COST)?;
         send_all(&channels, &protocol_cost)?;
 
-        let speedup_dust = VariableTypes::Number(500)
-            .set_msg(program_id, SPEEDUP_DUST)?;
+        let speedup_dust = VariableTypes::Number(500).set_msg(program_id, SPEEDUP_DUST)?;
         send_all(&channels, &speedup_dust)?;
 
-        let gid_max = VariableTypes::Number(8)
-            .set_msg(program_id, GID_MAX)?;
+        let gid_max = VariableTypes::Number(8).set_msg(program_id, GID_MAX)?;
         send_all(&channels, &gid_max)?;
 
         let setup_msg = IncomingBitVMXApiMessages::Setup(

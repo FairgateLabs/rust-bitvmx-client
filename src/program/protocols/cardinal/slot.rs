@@ -23,7 +23,13 @@ use crate::{
     program::{
         participant::ParticipantKeys,
         protocols::{
-            cardinal::{FEE, FUND_UTXO, GID_MAX, OPERATORS, OPERATORS_AGGREGATED_PUB, PAIR_0_1_AGGREGATED, PROTOCOL_COST, SPEEDUP_DUST, STOPS_CONSUMED, UNSPENDABLE}, claim::ClaimGate, dispute::{START_CH, TIMELOCK_BLOCKS}, protocol_handler::{external_fund_tx, ProtocolContext, ProtocolHandler}
+            cardinal::{
+                FEE, FUND_UTXO, GID_MAX, OPERATORS, OPERATORS_AGGREGATED_PUB, PAIR_0_1_AGGREGATED,
+                PROTOCOL_COST, SPEEDUP_DUST, STOPS_CONSUMED, UNSPENDABLE,
+            },
+            claim::ClaimGate,
+            dispute::{START_CH, TIMELOCK_BLOCKS},
+            protocol_handler::{external_fund_tx, ProtocolContext, ProtocolHandler},
         },
         variables::VariableTypes,
     },

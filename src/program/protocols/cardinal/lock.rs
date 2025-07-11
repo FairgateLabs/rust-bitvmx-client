@@ -19,7 +19,10 @@ use crate::{
     errors::BitVMXError,
     program::{
         participant::ParticipantKeys,
-        protocols::{cardinal::EOL_TIMELOCK_DURATION, protocol_handler::{ProtocolContext, ProtocolHandler}},
+        protocols::{
+            cardinal::EOL_TIMELOCK_DURATION,
+            protocol_handler::{ProtocolContext, ProtocolHandler},
+        },
         variables::VariableTypes,
     },
     types::ProgramContext,

@@ -11,7 +11,12 @@ use bitvmx_client::{
         self,
         participant::ParticipantRole,
         protocols::{
-            cardinal::slot::group_id, cardinal::transfer::pub_too_group, dispute::TIMELOCK_BLOCKS,
+            cardinal::{
+                slot::group_id, transfer::pub_too_group, EOL_TIMELOCK_DURATION, FEE as FEE_STR,
+                FUND_UTXO, GID_MAX, OPERATORS_AGGREGATED_PUB, PAIR_0_1_AGGREGATED, PROTOCOL_COST,
+                SPEEDUP_DUST, UNSPENDABLE,
+            },
+            dispute::TIMELOCK_BLOCKS,
             protocol_handler::external_fund_tx,
         },
         variables::{VariableTypes, WitnessTypes},
@@ -169,24 +174,37 @@ pub fn test_full() -> Result<()> {
     // SETUP SLOT BEGIN
     //======================================================
     let slot_program_id = Uuid::new_v4();
-    let set_fee = VariableTypes::Number(10_000).set_msg(slot_program_id, "FEE")?;
+    let set_fee = VariableTypes::Number(10_000).set_msg(slot_program_id, FEE_STR)?;
     send_all(&channels, &set_fee)?;
 
     let set_fund_utxo = VariableTypes::Utxo((utxo.txid, utxo.vout, Some(fund_value), None))
-        .set_msg(slot_program_id, "fund_utxo")?;
+        .set_msg(slot_program_id, FUND_UTXO)?;
     send_all(&channels, &set_fund_utxo)?;
 
     let set_ops_aggregated = VariableTypes::PubKey(aggregated_pub_key)
-        .set_msg(slot_program_id, "operators_aggregated_pub")?;
+        .set_msg(slot_program_id, OPERATORS_AGGREGATED_PUB)?;
     send_all(&channels, &set_ops_aggregated)?;
 
     let set_ops_aggregated = VariableTypes::PubKey(pair_aggregated_pub_key)
-        .set_msg(slot_program_id, "pair_0_1_aggregated")?;
+        .set_msg(slot_program_id, PAIR_0_1_AGGREGATED)?;
     send_all(&channels, &set_ops_aggregated)?;
 
     let set_unspendable = VariableTypes::PubKey(fixtures::hardcoded_unspendable().into())
-        .set_msg(slot_program_id, "unspendable")?;
+        .set_msg(slot_program_id, UNSPENDABLE)?;
     send_all(&channels, &set_unspendable)?;
+
+    let eol_timelock_duration =
+        VariableTypes::Number(100).set_msg(slot_program_id, EOL_TIMELOCK_DURATION)?;
+    send_all(&channels, &eol_timelock_duration)?;
+
+    let protocol_cost = VariableTypes::Number(20_000).set_msg(slot_program_id, PROTOCOL_COST)?;
+    send_all(&channels, &protocol_cost)?;
+
+    let speedup_dust = VariableTypes::Number(500).set_msg(slot_program_id, SPEEDUP_DUST)?;
+    send_all(&channels, &speedup_dust)?;
+
+    let gid_max = VariableTypes::Number(8).set_msg(slot_program_id, GID_MAX)?;
+    send_all(&channels, &gid_max)?;
 
     let setup_msg = IncomingBitVMXApiMessages::Setup(
         slot_program_id,
