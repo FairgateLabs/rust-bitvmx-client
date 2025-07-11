@@ -72,6 +72,5 @@ pub fn accept_pegin() -> Result<()> {
     let mut committee = Committee::new()?;
     committee.setup()?;
     committee.accept_pegin()?;
-
     Ok(())
 }
