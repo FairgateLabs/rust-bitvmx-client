@@ -101,15 +101,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
         )?;
 
         // FIXME: This should be created in the dispute core protocol. It was created here just to reference it.
-        protocol.add_transaction(REIMBURSEMENT_KICKOFF_TX)?;
-        protocol.add_transaction_output(
-            REIMBURSEMENT_KICKOFF_TX,
-            &OutputType::taproot(
-                DUST_VALUE,
-                &take_aggregated_key,
-                &[], //&vec![value_0_script, value_1_script],
-            )?,
-        )?;
+        self.create_reimbursement_kickoff_tx_tmp(&mut protocol, take_aggregated_key)?;
 
         // Operator take transactions
         // Loop over operators and create take 1 and take 2 transactions
@@ -316,7 +308,7 @@ impl AcceptPegInProtocol {
         )?;
 
         // // Input from reimbursement kickoff with timelock
-        // self.add_reimbursement_kickoff_timelock_input(protocol, operator_take_tx_name)?;
+        self.add_reimbursement_kickoff_timelock_input(protocol, operator_take_tx_name)?;
 
         // // Operator Output
         // self.add_operator_output(protocol, operator_take_tx_name, amount, take_pubkey)?;
@@ -420,7 +412,7 @@ impl AcceptPegInProtocol {
         protocol.add_connection(
             "reimbursement_kickoff_timelock_connection",
             REIMBURSEMENT_KICKOFF_TX,
-            OutputSpec::Index(1),
+            1.into(),
             tx_name,
             InputSpec::Auto(
                 SighashType::taproot_all(),
@@ -471,6 +463,37 @@ impl AcceptPegInProtocol {
             },
         )?;
 
+        Ok(())
+    }
+
+    pub fn create_reimbursement_kickoff_tx_tmp(
+        &self,
+        protocol: &mut protocol_builder::builder::Protocol,
+        take_aggregated_key: &PublicKey,
+    ) -> Result<(), BitVMXError> {
+        protocol.add_transaction(REIMBURSEMENT_KICKOFF_TX)?;
+
+        // Add the REIMBURSEMENT_KICKOFF_TX connections
+        // Connection to prevent the take transactions to occur (No Take)
+        protocol.add_transaction_output(
+            REIMBURSEMENT_KICKOFF_TX,
+            &OutputType::taproot(
+                DUST_VALUE,
+                &take_aggregated_key,
+                &[], //&vec![value_0_script, value_1_script],
+            )?,
+        )?;
+
+        //CHALLENGE_TX connection (T)
+        // TODO review the SpendMode
+        protocol.add_transaction_output(
+            REIMBURSEMENT_KICKOFF_TX,
+            &OutputType::taproot(
+                DUST_VALUE,
+                &take_aggregated_key,
+                &[], //&vec![value_0_script, value_1_script],
+            )?,
+        )?;
         Ok(())
     }
 }
