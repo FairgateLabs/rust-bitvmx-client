@@ -19,6 +19,7 @@ use crate::committee::Committee;
 
 mod committee;
 mod member;
+mod request_pegin;
 mod setup;
 
 mod bitcoin;
@@ -32,9 +33,9 @@ pub fn main() -> Result<()> {
 
     match command.map(|s| s.as_str()) {
         Some("setup_bitcoin_node") => setup_bitcoin_node()?,
-        Some("accept_pegin") => accept_pegin()?,
-        Some("accept_pegin") => accept_pegin()?,
         Some("committee") => committee()?,
+        Some("request_pegin") => request_pegin()?,
+        Some("accept_pegin") => accept_pegin()?,
         Some(cmd) => {
             eprintln!("Unknown command: {}", cmd);
             print_usage();
@@ -53,7 +54,7 @@ fn print_usage() {
     println!("Usage:");
     println!("  cargo run --example union setup_bitcoin_node  - Sets up Bitcoin node only");
     println!("  cargo run --example union committee           - Setups a new committee");
-    println!("  cargo run --example union accept_pegin        - Setups the accept peg in protocol");
+    println!("  cargo run --example union request_pegin       - Setups a rerquest pegin");
     println!("  cargo run --example union accept_pegin        - Setups the accept peg in protocol");
     println!("  cargo run --example union pegin               - Runs the pegin flow");
 }
@@ -75,10 +76,20 @@ pub fn committee() -> Result<()> {
     Ok(())
 }
 
+pub fn request_pegin() -> Result<()> {
+    // A peg-in request is reported by the Union Client.
+    let mut committee = Committee::new()?;
+    committee.setup()?;
+    committee.request_pegin()?;
+
+    Ok(())
+}
+
 pub fn accept_pegin() -> Result<()> {
     // A peg-in request is reported by the Union Client. The committee accepts the peg-in request.
     let mut committee = Committee::new()?;
     committee.setup()?;
+    committee.request_pegin()?;
     committee.accept_pegin()?;
     Ok(())
 }
