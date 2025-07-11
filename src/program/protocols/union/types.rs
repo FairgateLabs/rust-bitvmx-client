@@ -22,9 +22,10 @@ pub const REIMBURSEMENT_KICKOFF_TX: &str = "REIMBURSEMENT_KICKOFF_TX";
 pub const NO_TAKE_TX: &str = "NO_TAKE_TX";
 pub const CHALLENGE_TX: &str = "CHALLENGE_TX";
 pub const YOU_CANT_TAKE_TX: &str = "YOU_CANT_TAKE_TX";
-pub const TRY_MOVE_ON_TX: &str = "TRY_MOVE_ON_TX";
+pub const OP_SELF_DISABLER_TX: &str = "OP_SELF_DISABLER_TX";
 pub const TRY_TAKE_2_TX: &str = "TRY_TAKE_2_TX";
 pub const NO_DISPUTE_OPENED_TX: &str = "NO_DISPUTE_OPENED_TX";
+pub const NO_CHALLENGE_TX: &str = "NO_CHALLENGE_TX";
 
 // Parameters
 pub const TAKE_ENABLER_TIMELOCK: u16 = 144;
@@ -59,6 +60,7 @@ pub struct PegInRequest {
     pub my_role: ParticipantRole,
     pub txid: Txid,
     pub amount: u64,
+    pub accept_pegin_sighash: Vec<u8>,
     pub take_aggregated_key: PublicKey,
     pub addresses: HashMap<PublicKey, P2PAddress>,
 }

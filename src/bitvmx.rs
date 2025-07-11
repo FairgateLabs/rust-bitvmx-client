@@ -1,4 +1,3 @@
-use crate::program::participant;
 use crate::program::protocols::protocol_handler::ProtocolHandler;
 use crate::types::{EMULATOR_ID, PROVER_ID};
 use crate::{
@@ -644,7 +643,13 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn generate_zkp(&mut self, from: u32, id: Uuid, input: Vec<u8>, elf_file_path:String) -> Result<(), BitVMXError> {
+    fn generate_zkp(
+        &mut self,
+        from: u32,
+        id: Uuid,
+        input: Vec<u8>,
+        elf_file_path: String,
+    ) -> Result<(), BitVMXError> {
         info!("Generating ZKP for input: {:?}", input);
 
         // Store the 'from' parameter
@@ -653,11 +658,7 @@ impl BitVMXApi for BitVMX {
 
         let msg = serde_json::to_string(&DispatcherJob {
             job_id: id.to_string(),
-            job_type: ProverJobType::Prove(
-                input,
-                elf_file_path,
-                format!("./zkp-jobs/{}", id),
-            ),
+            job_type: ProverJobType::Prove(input, elf_file_path, format!("./zkp-jobs/{}", id)),
         })?;
 
         info!("Sending dispatcher job message: {}", msg);
@@ -1077,6 +1078,9 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::ProofReady(id) => BitVMXApi::proof_ready(self, from, id)?,
             IncomingBitVMXApiMessages::GetZKPExecutionResult(id) => {
                 BitVMXApi::get_zkp_execution_result(self, from, id)?
+            }
+            IncomingBitVMXApiMessages::GetSPVProof(txid) => {
+                BitVMXApi::get_spv_proof(self, from, txid)?
             }
         }
 

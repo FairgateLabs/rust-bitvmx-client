@@ -32,6 +32,7 @@ impl AcceptPegInSetup {
         committee: &[Member],
         request_pegin_txid: Txid,
         request_pegin_amount: u64,
+        accept_pegin_sighash: &[u8],
         keyring: &Keyring,
         bitvmx: &BitVMXClient,
     ) -> Result<AcceptPegInSetup> {
@@ -55,6 +56,7 @@ impl AcceptPegInSetup {
             my_role: my_role.clone(),
             txid: request_pegin_txid,
             amount: request_pegin_amount,
+            accept_pegin_sighash: accept_pegin_sighash.to_vec(),
             take_aggregated_key: keyring.take_aggregated_key.unwrap(),
             addresses: comms,
         };
