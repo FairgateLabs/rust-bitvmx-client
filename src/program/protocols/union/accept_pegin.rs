@@ -311,7 +311,7 @@ impl AcceptPegInProtocol {
         self.add_reimbursement_kickoff_timelock_input(protocol, operator_take_tx_name)?;
 
         // // Operator Output
-        // self.add_operator_output(protocol, operator_take_tx_name, amount, take_pubkey)?;
+        self.add_operator_output(protocol, operator_take_tx_name, amount, take_pubkey)?;
         Ok(())
     }
 
