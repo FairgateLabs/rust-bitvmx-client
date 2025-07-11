@@ -100,6 +100,7 @@ impl Committee {
         // TODO replace with actual peg-in request details
         let request_pegin_txid = Hash::all_zeros(); // This should be replaced with the actual Txid of the peg-in request
         let reinbursement_kickoff_txid = Hash::all_zeros(); // This should be replaced with the actual Txid of the reimbursement kickoff
+        let try_take_2_txid = Hash::all_zeros(); // This should be replaced with the actual Txid of the try take 2 transaction
         let request_pegin_amount = 10000000; // This should be replaced with the actual amount of the peg-in request
         let accept_pegin_sighash = vec![0; 32]; // This should be replaced with the actual sighash of the accept peg-in tx
 
@@ -111,6 +112,7 @@ impl Committee {
                 request_pegin_amount,
                 accept_pegin_sighash.as_slice(),
                 reinbursement_kickoff_txid,
+                try_take_2_txid,
             )
         })?;
 
