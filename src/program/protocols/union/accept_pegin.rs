@@ -198,6 +198,7 @@ impl AcceptPegInProtocol {
             "signing_info".to_string(),
             VariableTypes::String(serde_json::to_string(&(
                 take_aggregated_key.clone(),
+                // TODO send sighash of the transaction
                 nonces[0].1.clone(),
                 signatures[0].1.clone(),
             ))?),
