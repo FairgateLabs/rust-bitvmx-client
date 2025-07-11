@@ -93,6 +93,12 @@ impl Committee {
         Ok(())
     }
 
+    pub fn request_pegin(&mut self) -> Result<()> {
+        // Make a member send the user request pegin bitcoin transaction
+        self.members[0].request_pegin()?;
+        Ok(())
+    }
+
     pub fn accept_pegin(&mut self) -> Result<()> {
         let accept_pegin_covenant_id = Uuid::new_v4();
         let members = self.members.clone();
