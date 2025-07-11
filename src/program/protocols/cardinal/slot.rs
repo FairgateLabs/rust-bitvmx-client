@@ -28,7 +28,7 @@ use crate::{
                 PROTOCOL_COST, SPEEDUP_DUST, STOPS_CONSUMED, UNSPENDABLE,
             },
             claim::ClaimGate,
-            dispute::{START_CH, TIMELOCK_BLOCKS},
+            dispute::{START_CH, TIMELOCK_BLOCKS_KEY},
             protocol_handler::{external_fund_tx, ProtocolContext, ProtocolHandler},
         },
         variables::VariableTypes,
@@ -340,6 +340,12 @@ impl ProtocolHandler for SlotProtocol {
                 return Ok(());
             }
 
+            let timelock_blocks = program_context
+                .globals
+                .get_var(&self.ctx.id, TIMELOCK_BLOCKS_KEY)?
+                .unwrap()
+                .number()?;
+
             info!("Prover sending SUCCESS tx");
             program_context.bitcoin_coordinator.dispatch(
                 self.get_signed_tx(
@@ -352,7 +358,7 @@ impl ProtocolHandler for SlotProtocol {
                 )?,
                 None,
                 Context::ProgramId(self.ctx.id).to_string()?,
-                Some(tx_status.block_info.unwrap().height + TIMELOCK_BLOCKS as u32),
+                Some(tx_status.block_info.unwrap().height + timelock_blocks),
             )?;
         }
 
@@ -529,7 +535,12 @@ impl ProtocolHandler for SlotProtocol {
             let mut leaves: Vec<ProtocolScript> = (1..=gid_max)
                 .map(|gid| winternitz_equality(key, &ops_agg_pubkey, &key_name, gid).unwrap())
                 .collect();
-            let timelock_script = timelock(TIMELOCK_BLOCKS, &ops_agg_pubkey, SignMode::Aggregate);
+            let timelock_blocks = context
+                .globals
+                .get_var(&self.ctx.id, TIMELOCK_BLOCKS_KEY)?
+                .unwrap()
+                .number()? as u16;
+            let timelock_script = timelock(timelock_blocks, &ops_agg_pubkey, SignMode::Aggregate);
             leaves.insert(0, timelock_script);
             //put timelock as zero so the index matches the gid
 
@@ -592,7 +603,7 @@ impl ProtocolHandler for SlotProtocol {
                 Hash::all_zeros(),
                 0,
                 &gidtotx,
-                Sequence::from_height(TIMELOCK_BLOCKS),
+                Sequence::from_height(timelock_blocks),
                 &SpendMode::Script { leaf: 0 },
                 &SighashType::taproot_all(),
             )?;
@@ -625,7 +636,7 @@ impl ProtocolHandler for SlotProtocol {
                 speedup_dust,
                 stop_count,
                 Some(stop_pubkeys),
-                TIMELOCK_BLOCKS,
+                timelock_blocks,
                 vec![&ops_agg_pubkey],
             )?;
 
@@ -637,7 +648,7 @@ impl ProtocolHandler for SlotProtocol {
             //TODO: define properly the input utxo leafs
             //TODO: in this case we need to use a timelock to restrict the prover the take by timeout the start chhalenge
             let ops_agg_check =
-                scripts::timelock(TIMELOCK_BLOCKS, &ops_agg_pubkey, SignMode::Aggregate);
+                scripts::timelock(timelock_blocks, &ops_agg_pubkey, SignMode::Aggregate);
             let pair_agg_check =
                 scripts::check_aggregated_signature(&pair_0_1_aggregated, SignMode::Aggregate);
             let start_challenge = OutputType::taproot(
@@ -658,7 +669,7 @@ impl ProtocolHandler for SlotProtocol {
                         start_challenge.clone().into(),
                         &tx_name,
                         InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
-                        Some(TIMELOCK_BLOCKS),
+                        Some(timelock_blocks),
                         None,
                     )?;
 
