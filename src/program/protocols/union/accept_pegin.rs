@@ -5,7 +5,7 @@ use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     scripts::SignMode,
     types::{
-        connection::InputSpec,
+        connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
         output::SpeedupData,
         OutputType,
@@ -107,14 +107,14 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 txid,
             )?;
 
-            self.create_operator_won_transaction(
-                &mut protocol,
-                index as u32,
-                amount,
-                &take_aggregated_key,
-                take_pubkey,
-                txid,
-            )?;
+            // self.create_operator_won_transaction(
+            //     &mut protocol,
+            //     index as u32,
+            //     amount,
+            //     &take_aggregated_key,
+            //     take_pubkey,
+            //     txid,
+            // )?;
         }
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
@@ -266,26 +266,26 @@ impl AcceptPegInProtocol {
         pegin_txid: Txid,
     ) -> Result<(), BitVMXError> {
         let operator_take_tx_name = &format!("operator_take_{}", index);
-        protocol.add_transaction(operator_take_tx_name)?;
+        // protocol.add_transaction(operator_take_tx_name)?;
 
         // Pegin input
         self.add_accept_pegin_connection(
             protocol,
-            format!("operator_take_{}_connection", index),
+            format!("from_accept_pegin_output"),
             operator_take_tx_name,
             amount,
             take_aggregated_key,
             pegin_txid,
         )?;
 
-        // Input All takes enabler
-        self.add_all_takes_enabler_input(protocol, operator_take_tx_name)?;
+        // // Input All takes enabler
+        // self.add_all_takes_enabler_input(protocol, operator_take_tx_name)?;
 
-        // Input from reimbursement kickoff with timelock
-        self.add_reimbursement_kickoff_timelock_input(protocol, operator_take_tx_name)?;
+        // // Input from reimbursement kickoff with timelock
+        // self.add_reimbursement_kickoff_timelock_input(protocol, operator_take_tx_name)?;
 
-        // Operator Output
-        self.add_operator_output(protocol, operator_take_tx_name, amount, take_pubkey)?;
+        // // Operator Output
+        // self.add_operator_output(protocol, operator_take_tx_name, amount, take_pubkey)?;
         Ok(())
     }
 
@@ -300,12 +300,12 @@ impl AcceptPegInProtocol {
     ) -> Result<(), BitVMXError> {
         // Operator won transaction
         let operator_won_tx_name = &format!("operator_won_{}", index);
-        protocol.add_transaction(operator_won_tx_name)?;
+        // protocol.add_transaction(operator_won_tx_name)?;
 
         // Pegin input
         self.add_accept_pegin_connection(
             protocol,
-            format!("operator_take_{}_connection", index),
+            format!("operator_won_{}_connection", index),
             operator_won_tx_name,
             amount,
             take_aggregated_key,
@@ -337,7 +337,7 @@ impl AcceptPegInProtocol {
         protocol.add_connection(
             &connection_name,
             ACCEPT_PEGIN_TX,
-            OutputType::taproot(amount, &take_aggregated_key, &[])?.into(),
+            OutputSpec::Index(0),
             operator_take_tx_name,
             InputSpec::Auto(
                 SighashType::taproot_all(),
