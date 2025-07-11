@@ -12,6 +12,7 @@ use protocol_builder::{
     },
 };
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use tracing::info;
 
 use crate::{
@@ -20,7 +21,10 @@ use crate::{
         participant::ParticipantKeys,
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
-            union::types::{PegInRequest, ACCEPT_PEGIN_TX, OPERATOR_TAKE_KEYS, REQUEST_PEGIN_TX},
+            union::types::{
+                PegInRequest, ACCEPT_PEGIN_TX, DUST_VALUE, OPERATOR_TAKE_KEYS,
+                REIMBURSEMENT_KICKOFF_TX, REIMBURSEMENT_KICKOFF_TXID, REQUEST_PEGIN_TX,
+            },
         },
         variables::VariableTypes,
     },
@@ -67,10 +71,11 @@ impl ProtocolHandler for AcceptPegInProtocol {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         let pegin_request = self.pegin_request(context)?;
-        let txid = pegin_request.txid;
+        let pegin_request_txid = pegin_request.txid;
         let amount = pegin_request.amount;
-        let take_aggregated_key = pegin_request.take_aggregated_key;
+        let take_aggregated_key = &pegin_request.take_aggregated_key;
         let take_pubkeys = self.take_pubkeys(context)?;
+        let reimbursement_kickoff_txid = self.reimbursement_kickoff_txid(context)?;
 
         let mut protocol = self.load_or_create_protocol();
 
@@ -87,12 +92,23 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 },
             ),
             None,
-            Some(txid),
+            Some(pegin_request_txid),
         )?;
 
         protocol.add_transaction_output(
             ACCEPT_PEGIN_TX,
             &OutputType::taproot(amount, &take_aggregated_key, &[])?,
+        )?;
+
+        // FIXME: This should be created in the dispute core protocol. It was created here just to reference it.
+        protocol.add_transaction(REIMBURSEMENT_KICKOFF_TX)?;
+        protocol.add_transaction_output(
+            REIMBURSEMENT_KICKOFF_TX,
+            &OutputType::taproot(
+                DUST_VALUE,
+                &take_aggregated_key,
+                &[], //&vec![value_0_script, value_1_script],
+            )?,
         )?;
 
         // Operator take transactions
@@ -102,18 +118,19 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 &mut protocol,
                 index as u32,
                 amount,
-                &take_aggregated_key,
                 take_pubkey,
-                txid,
+                take_aggregated_key,
+                pegin_request_txid,
+                reimbursement_kickoff_txid,
             )?;
 
             // self.create_operator_won_transaction(
             //     &mut protocol,
             //     index as u32,
             //     amount,
-            //     &take_aggregated_key,
             //     take_pubkey,
-            //     txid,
+            //     pegin_request_txid,
+            // reimbursement_kickoff_tx
             // )?;
         }
 
@@ -185,6 +202,19 @@ impl AcceptPegInProtocol {
 
         let take_keys: Vec<PublicKey> = serde_json::from_str(&take_keys_json)?;
         Ok(take_keys)
+    }
+
+    fn reimbursement_kickoff_txid(&self, context: &ProgramContext) -> Result<Txid, BitVMXError> {
+        let txid_str = context
+            .globals
+            .get_var(&self.ctx.id, REIMBURSEMENT_KICKOFF_TXID)?
+            .unwrap()
+            .string()?;
+
+        // TODO: Fix this error handling
+        let txid = Txid::from_str(&txid_str)
+            .map_err(|e| BitVMXError::InvalidVariableType(format!("Invalid Txid: {e}")))?;
+        Ok(txid)
     }
 
     fn send_signing_info(
@@ -261,9 +291,10 @@ impl AcceptPegInProtocol {
         protocol: &mut protocol_builder::builder::Protocol,
         index: u32,
         amount: u64,
-        take_aggregated_key: &PublicKey,
         take_pubkey: &PublicKey,
+        take_aggregated_key: &PublicKey,
         pegin_txid: Txid,
+        reimbursement_kickoff_tx: Txid,
     ) -> Result<(), BitVMXError> {
         let operator_take_tx_name = &format!("operator_take_{}", index);
         // protocol.add_transaction(operator_take_tx_name)?;
@@ -273,13 +304,16 @@ impl AcceptPegInProtocol {
             protocol,
             format!("from_accept_pegin_output"),
             operator_take_tx_name,
-            amount,
-            take_aggregated_key,
             pegin_txid,
         )?;
 
-        // // Input All takes enabler
-        // self.add_all_takes_enabler_input(protocol, operator_take_tx_name)?;
+        // Input All takes enabler
+        self.add_all_takes_enabler_input(
+            protocol,
+            take_aggregated_key,
+            operator_take_tx_name,
+            reimbursement_kickoff_tx,
+        )?;
 
         // // Input from reimbursement kickoff with timelock
         // self.add_reimbursement_kickoff_timelock_input(protocol, operator_take_tx_name)?;
@@ -294,9 +328,10 @@ impl AcceptPegInProtocol {
         protocol: &mut protocol_builder::builder::Protocol,
         index: u32,
         amount: u64,
-        take_aggregated_key: &PublicKey,
         take_pubkey: &PublicKey,
+        take_aggregated_key: &PublicKey,
         pegin_txid: Txid,
+        reimbursement_kickoff_txid: Txid,
     ) -> Result<(), BitVMXError> {
         // Operator won transaction
         let operator_won_tx_name = &format!("operator_won_{}", index);
@@ -307,13 +342,16 @@ impl AcceptPegInProtocol {
             protocol,
             format!("operator_won_{}_connection", index),
             operator_won_tx_name,
-            amount,
-            take_aggregated_key,
             pegin_txid,
         )?;
 
         // Input All takes enabler
-        self.add_all_takes_enabler_input(protocol, operator_won_tx_name)?;
+        self.add_all_takes_enabler_input(
+            protocol,
+            take_aggregated_key,
+            operator_won_tx_name,
+            reimbursement_kickoff_txid,
+        )?;
 
         // Input from try take 2 with timelock
         self.add_try_take_2_timelock_input(protocol, operator_won_tx_name)?;
@@ -330,8 +368,6 @@ impl AcceptPegInProtocol {
         protocol: &mut protocol_builder::builder::Protocol,
         connection_name: String,
         operator_take_tx_name: &str,
-        amount: u64,
-        take_aggregated_key: &PublicKey,
         pegin_txid: Txid,
     ) -> Result<(), BitVMXError> {
         protocol.add_connection(
@@ -354,17 +390,24 @@ impl AcceptPegInProtocol {
     fn add_all_takes_enabler_input(
         &self,
         protocol: &mut protocol_builder::builder::Protocol,
+        take_aggregated_key: &PublicKey,
         tx_name: &str,
+        reimbursement_kickoff_txid: Txid,
     ) -> Result<(), BitVMXError> {
-        protocol.add_transaction_input(
-            Hash::all_zeros(),
-            0, // This should be replaced with the actual output index,
+        protocol.add_connection(
+            "reimbursement_kickoff_all_takes_enabler",
+            REIMBURSEMENT_KICKOFF_TX,
+            0.into(),
             tx_name,
-            Sequence::ENABLE_RBF_NO_LOCKTIME,
-            &SpendMode::Script { leaf: 0 },
-            &SighashType::taproot_all(),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::KeyOnly {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            Some(reimbursement_kickoff_txid),
         )?;
-
         Ok(())
     }
 
@@ -374,15 +417,20 @@ impl AcceptPegInProtocol {
         tx_name: &str,
     ) -> Result<(), BitVMXError> {
         // TODO: Replace with actual REIMBURSEMENT_KICKOFF_TX UTXO reference
-        protocol.add_transaction_input(
-            Hash::all_zeros(),
-            1, // Hardcoded output index for reimbursement kickoff
+        protocol.add_connection(
+            "reimbursement_kickoff_timelock_connection",
+            REIMBURSEMENT_KICKOFF_TX,
+            OutputSpec::Index(1),
             tx_name,
-            Sequence::ENABLE_LOCKTIME_NO_RBF,
-            &SpendMode::Script { leaf: 0 },
-            &SighashType::taproot_all(),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::KeyOnly {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            None,
         )?;
-
         Ok(())
     }
 

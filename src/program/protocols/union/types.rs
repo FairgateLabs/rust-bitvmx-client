@@ -40,6 +40,7 @@ pub const INITIAL_DEPOSIT_TX_SUFFIX: &str = "_INITIAL_DEPOSIT_TX";
 
 // Storage names
 pub const OPERATOR_TAKE_KEYS: &str = "operator_take_keys";
+pub const REIMBURSEMENT_KICKOFF_TXID: &str = "reimbursement_kickoff_txid";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewCommittee {

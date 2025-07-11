@@ -179,6 +179,7 @@ impl Member {
         request_pegin_txid: Txid,
         request_pegin_amount: u64,
         accept_pegin_sighash: &[u8],
+        reimbursement_kickoff_txid: Txid,
     ) -> Result<()> {
         info!(id = self.id, "Accepting peg-in");
         AcceptPegInSetup::setup(
@@ -191,6 +192,7 @@ impl Member {
             accept_pegin_sighash,
             &self.keyring,
             &self.bitvmx,
+            reimbursement_kickoff_txid,
         )?;
 
         Ok(())

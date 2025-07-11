@@ -195,6 +195,9 @@ impl DisputeCoreProtocol {
             )?;
         }
 
+        let members = self.committee(context)?;
+
+        //TODO add one output for each operator to the WT initial deposit transaction
         let mut operators_found = 0;
         for participant in keys.iter() {
             match participant.get_winternitz("pegout_id_0") {
