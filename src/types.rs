@@ -105,6 +105,7 @@ pub enum IncomingBitVMXApiMessages {
     SubscribeToTransaction(Uuid, Txid),
     SubscribeUTXO(),
     SubscribeToRskPegin(),
+    GetSPVProof(Txid),
     DispatchTransaction(Uuid, Transaction),
     DispatchTransactionName(Uuid, String),
     SetupKey(Uuid, Vec<P2PAddress>, Option<Vec<PublicKey>>, u16),

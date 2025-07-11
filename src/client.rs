@@ -114,6 +114,10 @@ impl BitVMXClient {
         self.send_message(IncomingBitVMXApiMessages::SubscribeToRskPegin())
     }
 
+    pub fn get_spv_proof(&self, txid: Txid) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetSPVProof(txid))
+    }
+
     pub fn set_var(&self, program_id: Uuid, key: &str, value: VariableTypes) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::SetVar(
             program_id,
