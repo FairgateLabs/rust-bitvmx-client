@@ -116,14 +116,15 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 reimbursement_kickoff_txid,
             )?;
 
-            // self.create_operator_won_transaction(
-            //     &mut protocol,
-            //     index as u32,
-            //     amount,
-            //     take_pubkey,
-            //     pegin_request_txid,
-            // reimbursement_kickoff_tx
-            // )?;
+            self.create_operator_won_transaction(
+                &mut protocol,
+                index as u32,
+                amount,
+                take_pubkey,
+                take_aggregated_key,
+                pegin_request_txid,
+                reimbursement_kickoff_txid,
+            )?;
         }
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
@@ -332,21 +333,21 @@ impl AcceptPegInProtocol {
         // Pegin input
         self.add_accept_pegin_connection(
             protocol,
-            format!("operator_won_{}_connection", index),
+            format!("operator_won_connection"),
             operator_won_tx_name,
             pegin_txid,
         )?;
 
-        // Input All takes enabler
-        self.add_all_takes_enabler_input(
-            protocol,
-            take_aggregated_key,
-            operator_won_tx_name,
-            reimbursement_kickoff_txid,
-        )?;
+        // // Input All takes enabler
+        // self.add_all_takes_enabler_input(
+        //     protocol,
+        //     take_aggregated_key,
+        //     operator_won_tx_name,
+        //     reimbursement_kickoff_txid,
+        // )?;
 
-        // Input from try take 2 with timelock
-        self.add_try_take_2_timelock_input(protocol, operator_won_tx_name)?;
+        // // Input from try take 2 with timelock
+        // self.add_try_take_2_timelock_input(protocol, operator_won_tx_name)?;
 
         // Operator Output
         // TODO: Modify amount based on Miro
@@ -359,14 +360,14 @@ impl AcceptPegInProtocol {
         &self,
         protocol: &mut protocol_builder::builder::Protocol,
         connection_name: String,
-        operator_take_tx_name: &str,
+        tx_name: &str,
         pegin_txid: Txid,
     ) -> Result<(), BitVMXError> {
         protocol.add_connection(
             &connection_name,
             ACCEPT_PEGIN_TX,
             OutputSpec::Index(0),
-            operator_take_tx_name,
+            tx_name,
             InputSpec::Auto(
                 SighashType::taproot_all(),
                 SpendMode::KeyOnly {
