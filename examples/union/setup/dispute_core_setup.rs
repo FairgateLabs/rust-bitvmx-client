@@ -60,6 +60,7 @@ impl DisputeCoreSetup {
             addresses: comms,
             operator_count: Self::operator_count(committee)?,
             watchtower_count: Self::watchtower_count(committee)?,
+            packet_size: 10,
         };
 
         bitvmx.set_var(
