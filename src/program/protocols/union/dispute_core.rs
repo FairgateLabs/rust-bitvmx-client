@@ -19,13 +19,17 @@ use protocol_builder::{
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
-        output::{self, SpeedupData},
+        output::SpeedupData,
         OutputType,
     },
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::info;
+
+const PEGOUT_ID_KEY: &str = "pegout_id";
+const VALUE_0_KEY: &str = "value_0";
+const VALUE_1_KEY: &str = "value_1";
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DisputeCoreProtocol {
@@ -61,20 +65,30 @@ impl ProtocolHandler for DisputeCoreProtocol {
         &self,
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
+        let packet_size = self.committee(program_context)?.packet_size;
         let mut keys = vec![];
+
         if self.prover(program_context)? {
-            keys.push((
-                "pegout_id".to_string(),
-                PublicKeyType::Winternitz(program_context.key_chain.derive_winternitz_hash160(20)?),
-            ));
-            keys.push((
-                "value_0".to_string(),
-                PublicKeyType::Winternitz(program_context.key_chain.derive_winternitz_hash160(1)?),
-            ));
-            keys.push((
-                "value_1".to_string(),
-                PublicKeyType::Winternitz(program_context.key_chain.derive_winternitz_hash160(1)?),
-            ));
+            for i in 0..packet_size + 1 {
+                keys.push((
+                    format!("{}_{}", PEGOUT_ID_KEY, i),
+                    PublicKeyType::Winternitz(
+                        program_context.key_chain.derive_winternitz_hash160(20)?,
+                    ),
+                ));
+                keys.push((
+                    format!("{}_{}", VALUE_0_KEY, i),
+                    PublicKeyType::Winternitz(
+                        program_context.key_chain.derive_winternitz_hash160(1)?,
+                    ),
+                ));
+                keys.push((
+                    format!("{}_{}", VALUE_1_KEY, i),
+                    PublicKeyType::Winternitz(
+                        program_context.key_chain.derive_winternitz_hash160(1)?,
+                    ),
+                ));
+            }
         }
 
         Ok(ParticipantKeys::new(keys, vec![]))
@@ -87,18 +101,20 @@ impl ProtocolHandler for DisputeCoreProtocol {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         let committee = self.committee(context)?;
+        let member_keys = keys[committee.member_index as usize].clone();
+
         let mut protocol = self.load_or_create_protocol();
+
         self.create_initial_deposit(
             &mut protocol,
             self.committee(context)?.my_role,
+            committee.operator_count,
             &keys,
             context,
         )?;
 
-        let member_keys = keys[committee.member_index as usize].clone();
-
-        for i in 0..100 {
-            self.create_dispute_core(i, &mut protocol, &member_keys, context)?;
+        for i in 0..committee.packet_size as usize {
+            self.create_dispute_core(&mut protocol, i, &member_keys, context)?;
         }
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
@@ -148,6 +164,7 @@ impl DisputeCoreProtocol {
         &self,
         protocol: &mut Protocol,
         role: ParticipantRole,
+        operator_count: u32,
         keys: &Vec<ParticipantKeys>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
@@ -178,12 +195,9 @@ impl DisputeCoreProtocol {
             )?;
         }
 
-        let members = self.committee(context)?;
-
-        //TODO add one ouput for each operator to the WT initial deposit transaction
         let mut operators_found = 0;
         for participant in keys.iter() {
-            match participant.get_winternitz("pegout_id") {
+            match participant.get_winternitz("pegout_id_0") {
                 Ok(_) => {
                     let script =
                         scripts::verify_signature(&dispute_aggregated_key, SignMode::Aggregate)?;
@@ -203,9 +217,9 @@ impl DisputeCoreProtocol {
         }
 
         assert_eq!(
-            operators_found, members.operator_count,
+            operators_found, operator_count,
             "Expected {} operators, found {}",
-            members.operator_count, operators_found
+            operator_count, operators_found
         );
 
         Ok(())
@@ -213,38 +227,34 @@ impl DisputeCoreProtocol {
 
     fn create_dispute_core(
         &self,
-        dispute_core_index: usize,
         protocol: &mut Protocol,
+        dispute_core_index: usize,
         keys: &ParticipantKeys,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        // TODO select the proper winternitz keys based on the dispute core index
-        let pegout_id_pubkey = keys.get_winternitz("pegout_id")?;
-        let value_0_pubkey = keys.get_winternitz("value_0")?;
-        let value_1_pubkey = keys.get_winternitz("value_1")?;
-        // END TOOD
-
         let take_aggregated_key = self.take_aggregated_key(context)?;
         let dispute_aggregated_key = self.dispute_aggregated_key(context)?;
+        let pegout_id_pubkey = keys.get_winternitz(&key_name(PEGOUT_ID_KEY, dispute_core_index))?;
+        let value_0_pubkey = keys.get_winternitz(&key_name(VALUE_0_KEY, dispute_core_index))?;
+        let value_1_pubkey = keys.get_winternitz(&key_name(VALUE_1_KEY, dispute_core_index))?;
 
-        let start_dispute_core = scripts::start_dispute_core(
-            dispute_aggregated_key,
-            pegout_id_pubkey,
-            value_0_pubkey,
-            value_1_pubkey,
-        )?;
-
-        let reimbursement_kickoff_tx =
-            format!("{}_{}", REIMBURSEMENT_KICKOFF_TX, dispute_core_index);
-        let no_take_tx = format!("{}_{}", NO_TAKE_TX, dispute_core_index);
-        let challenge_tx = format!("{}_{}", CHALLENGE_TX, dispute_core_index);
-        let try_take_2_tx = format!("{}_{}", TRY_TAKE_2_TX, dispute_core_index);
-        let no_dispute_opened_tx = format!("{}_{}", NO_DISPUTE_OPENED_TX, dispute_core_index);
-        let you_cant_take_tx = format!("{}_{}", YOU_CANT_TAKE_TX, dispute_core_index);
-        let op_self_disabler_tx = format!("{}_{}", OP_SELF_DISABLER_TX, dispute_core_index);
-        let no_challenge_tx = format!("{}_{}", NO_CHALLENGE_TX, dispute_core_index);
+        let reimbursement_kickoff_tx = tx_name(REIMBURSEMENT_KICKOFF_TX, dispute_core_index);
+        let no_take_tx = tx_name(NO_TAKE_TX, dispute_core_index);
+        let challenge_tx = tx_name(CHALLENGE_TX, dispute_core_index);
+        let try_take_2_tx = tx_name(TRY_TAKE_2_TX, dispute_core_index);
+        let no_dispute_opened_tx = tx_name(NO_DISPUTE_OPENED_TX, dispute_core_index);
+        let you_cant_take_tx = tx_name(YOU_CANT_TAKE_TX, dispute_core_index);
+        let op_self_disabler_tx = tx_name(OP_SELF_DISABLER_TX, dispute_core_index);
+        let no_challenge_tx = tx_name(NO_CHALLENGE_TX, dispute_core_index);
 
         let (initial_connection, output_spec) = if dispute_core_index == 0 {
+            let start_dispute_core = scripts::start_dispute_core(
+                dispute_aggregated_key,
+                pegout_id_pubkey,
+                value_0_pubkey,
+                value_1_pubkey,
+            )?;
+
             let output_spec = OutputType::taproot(
                 DISPUTE_OPENER_VALUE,
                 &take_aggregated_key,
@@ -253,8 +263,7 @@ impl DisputeCoreProtocol {
             .into();
             (OP_INITIAL_DEPOSIT_TX.to_string(), output_spec)
         } else {
-            let initial_connection =
-                format!("{}_{}", REIMBURSEMENT_KICKOFF_TX, dispute_core_index - 1);
+            let initial_connection = tx_name(REIMBURSEMENT_KICKOFF_TX, dispute_core_index - 1);
             let output_spec = OutputSpec::Index(2);
             (initial_connection, output_spec)
         };
@@ -347,7 +356,7 @@ impl DisputeCoreProtocol {
 
         // YOU_CANT_TAKE_TX connection
         protocol.add_connection(
-            "take_enabler",
+            "disable_take_enabler",
             &reimbursement_kickoff_tx,
             OutputSpec::Index(1),
             &you_cant_take_tx,
@@ -358,10 +367,21 @@ impl DisputeCoreProtocol {
 
         // Connection to try to move to the next dispute core (Try Move On)
         // TODO this output must include the same taptree as the Operator initial deposit tx, plus the key spend
+        let next_dispute_core = dispute_core_index + 1;
+        let pegout_id_key = keys.get_winternitz(&key_name(PEGOUT_ID_KEY, next_dispute_core))?;
+        let value_0_key = keys.get_winternitz(&key_name(VALUE_0_KEY, next_dispute_core))?;
+        let value_1_key = keys.get_winternitz(&key_name(VALUE_1_KEY, next_dispute_core))?;
+
+        let next_dispute_core = scripts::start_dispute_core(
+            dispute_aggregated_key,
+            pegout_id_key,
+            value_0_key,
+            value_1_key,
+        )?;
         protocol.add_connection(
-            "take_enabler",
+            "self_disable",
             &reimbursement_kickoff_tx,
-            OutputType::taproot(DUST_VALUE, &dispute_aggregated_key, &[])?.into(),
+            OutputType::taproot(DUST_VALUE, &dispute_aggregated_key, &[next_dispute_core])?.into(),
             &op_self_disabler_tx,
             InputSpec::Auto(
                 SighashType::taproot_all(),
@@ -375,7 +395,7 @@ impl DisputeCoreProtocol {
 
         // Connection to stop moving on to the next dispute core (X)
         protocol.add_connection(
-            "stop_move_on_enabler",
+            "penalize_no_challenge",
             &reimbursement_kickoff_tx,
             OutputType::taproot(DUST_VALUE, &dispute_aggregated_key, &[])?.into(),
             &no_dispute_opened_tx,
@@ -391,7 +411,7 @@ impl DisputeCoreProtocol {
 
         // YOU_CANT_TAKE_TX connection
         protocol.add_connection(
-            "take_enabler",
+            "disable_next_dispute_core",
             &reimbursement_kickoff_tx,
             OutputSpec::Index(2),
             &you_cant_take_tx,
@@ -406,7 +426,7 @@ impl DisputeCoreProtocol {
         )?;
 
         protocol.add_connection(
-            "take_enabler",
+            "disable_challenge",
             &reimbursement_kickoff_tx,
             OutputSpec::Index(1),
             &no_challenge_tx,
@@ -415,8 +435,9 @@ impl DisputeCoreProtocol {
             None,
         )?;
 
+        // This output shouldn't be spent since it prevents to move to the next dispute core
         protocol.add_connection(
-            "take_enabler",
+            "disable_next_dispute_core",
             &reimbursement_kickoff_tx,
             OutputSpec::Index(3),
             &no_challenge_tx,
@@ -460,4 +481,12 @@ impl DisputeCoreProtocol {
     fn dispute_aggregated_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
         Ok(self.committee(context)?.dispute_aggregated_key.clone())
     }
+}
+
+fn tx_name(prefix: &str, index: usize) -> String {
+    format!("{}_{}", prefix, index)
+}
+
+fn key_name(prefix: &str, index: usize) -> String {
+    format!("{}_{}", prefix, index)
 }
