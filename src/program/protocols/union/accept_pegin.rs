@@ -24,6 +24,7 @@ use crate::{
             union::types::{
                 PegInRequest, ACCEPT_PEGIN_TX, DUST_VALUE, OPERATOR_TAKE_KEYS,
                 REIMBURSEMENT_KICKOFF_TX, REIMBURSEMENT_KICKOFF_TXID, REQUEST_PEGIN_TX,
+                TRY_TAKE_2_TX, TRY_TAKE_2_TXID,
             },
         },
         variables::VariableTypes,
@@ -76,6 +77,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
         let take_aggregated_key = &pegin_request.take_aggregated_key;
         let take_pubkeys = self.take_pubkeys(context)?;
         let reimbursement_kickoff_txid = self.reimbursement_kickoff_txid(context)?;
+        let try_take_2_txid = self.try_take_2_txid(context)?;
 
         let mut protocol = self.load_or_create_protocol();
 
@@ -100,8 +102,9 @@ impl ProtocolHandler for AcceptPegInProtocol {
             &OutputType::taproot(amount, &take_aggregated_key, &[])?,
         )?;
 
-        // FIXME: This should be created in the dispute core protocol. It was created here just to reference it.
+        // FIXME: These should be created in the dispute core protocol. It was created here just to reference it.
         self.create_reimbursement_kickoff_tx_tmp(&mut protocol, take_aggregated_key)?;
+        self.create_try_take_2_tx_tmp(&mut protocol, take_aggregated_key)?;
 
         // Operator take transactions
         // Loop over operators and create take 1 and take 2 transactions
@@ -124,6 +127,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 take_aggregated_key,
                 pegin_request_txid,
                 reimbursement_kickoff_txid,
+                try_take_2_txid,
             )?;
         }
 
@@ -201,6 +205,19 @@ impl AcceptPegInProtocol {
         let txid_str = context
             .globals
             .get_var(&self.ctx.id, REIMBURSEMENT_KICKOFF_TXID)?
+            .unwrap()
+            .string()?;
+
+        // TODO: Fix this error handling
+        let txid = Txid::from_str(&txid_str)
+            .map_err(|e| BitVMXError::InvalidVariableType(format!("Invalid Txid: {e}")))?;
+        Ok(txid)
+    }
+
+    fn try_take_2_txid(&self, context: &ProgramContext) -> Result<Txid, BitVMXError> {
+        let txid_str = context
+            .globals
+            .get_var(&self.ctx.id, TRY_TAKE_2_TXID)?
             .unwrap()
             .string()?;
 
@@ -325,6 +342,7 @@ impl AcceptPegInProtocol {
         take_aggregated_key: &PublicKey,
         pegin_txid: Txid,
         reimbursement_kickoff_txid: Txid,
+        try_take_2_txid: Txid,
     ) -> Result<(), BitVMXError> {
         // Operator won transaction
         let operator_won_tx_name = &format!("operator_won_{}", index);
@@ -338,16 +356,16 @@ impl AcceptPegInProtocol {
             pegin_txid,
         )?;
 
-        // // Input All takes enabler
-        // self.add_all_takes_enabler_input(
-        //     protocol,
-        //     take_aggregated_key,
-        //     operator_won_tx_name,
-        //     reimbursement_kickoff_txid,
-        // )?;
+        // Input All takes enabler
+        self.add_all_takes_enabler_input(
+            protocol,
+            take_aggregated_key,
+            operator_won_tx_name,
+            reimbursement_kickoff_txid,
+        )?;
 
-        // // Input from try take 2 with timelock
-        // self.add_try_take_2_timelock_input(protocol, operator_won_tx_name)?;
+        // Input from try take 2 with timelock
+        self.add_try_take_2_timelock_input(protocol, operator_won_tx_name, try_take_2_txid)?;
 
         // Operator Output
         // TODO: Modify amount based on Miro
@@ -431,15 +449,22 @@ impl AcceptPegInProtocol {
         &self,
         protocol: &mut protocol_builder::builder::Protocol,
         tx_name: &str,
+        try_take_2_txid: Txid,
     ) -> Result<(), BitVMXError> {
         // TODO: Replace with actual TRY_TAKE_2_TX UTXO reference
-        protocol.add_transaction_input(
-            Hash::all_zeros(),
-            0, // Hardcoded output index for try take 2
+        protocol.add_connection(
+            "try_take_2",
+            TRY_TAKE_2_TX,
+            0.into(),
             tx_name,
-            Sequence::ENABLE_LOCKTIME_NO_RBF,
-            &SpendMode::Script { leaf: 0 },
-            &SighashType::taproot_all(),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::KeyOnly {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            Some(try_take_2_txid),
         )?;
 
         Ok(())
@@ -495,6 +520,27 @@ impl AcceptPegInProtocol {
                 &[], //&vec![value_0_script, value_1_script],
             )?,
         )?;
+        Ok(())
+    }
+
+    pub fn create_try_take_2_tx_tmp(
+        &self,
+        protocol: &mut protocol_builder::builder::Protocol,
+        take_aggregated_key: &PublicKey,
+    ) -> Result<(), BitVMXError> {
+        protocol.add_transaction(TRY_TAKE_2_TX)?;
+
+        // Add the REIMBURSEMENT_KICKOFF_TX connections
+        // Connection to prevent the take transactions to occur (No Take)
+        protocol.add_transaction_output(
+            TRY_TAKE_2_TX,
+            &OutputType::taproot(
+                DUST_VALUE,
+                &take_aggregated_key,
+                &[], //&vec![value_0_script, value_1_script],
+            )?,
+        )?;
+
         Ok(())
     }
 }

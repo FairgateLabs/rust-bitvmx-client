@@ -6,7 +6,9 @@ use bitvmx_client::{
     client::BitVMXClient,
     program::{
         participant::{P2PAddress, ParticipantRole},
-        protocols::union::types::{PegInRequest, OPERATOR_TAKE_KEYS, REIMBURSEMENT_KICKOFF_TXID},
+        protocols::union::types::{
+            PegInRequest, OPERATOR_TAKE_KEYS, REIMBURSEMENT_KICKOFF_TXID, TRY_TAKE_2_TXID,
+        },
         variables::VariableTypes,
     },
     types::PROGRAM_TYPE_ACCEPT_PEGIN,
@@ -36,6 +38,7 @@ impl AcceptPegInSetup {
         keyring: &Keyring,
         bitvmx: &BitVMXClient,
         reimbursement_kickoff_txid: Txid,
+        try_take_2_txid: Txid,
     ) -> Result<AcceptPegInSetup> {
         let addresses = Self::get_addresses(committee);
 
@@ -85,6 +88,12 @@ impl AcceptPegInSetup {
             covenant_id,
             REIMBURSEMENT_KICKOFF_TXID,
             VariableTypes::String(reimbursement_kickoff_txid.to_string()),
+        )?;
+
+        bitvmx.set_var(
+            covenant_id,
+            TRY_TAKE_2_TXID,
+            VariableTypes::String(try_take_2_txid.to_string()),
         )?;
 
         bitvmx.setup(
