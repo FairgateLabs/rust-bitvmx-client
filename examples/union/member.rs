@@ -12,6 +12,7 @@ use bitvmx_client::{
     },
     types::{OutgoingBitVMXApiMessages::*, L2_ID},
 };
+
 use tracing::{debug, info};
 
 use crate::{request_pegin::RequestPegin, setup::{accept_pegin_setup::AcceptPegInSetup, dispute_core_setup::DisputeCoreSetup}};
@@ -168,6 +169,10 @@ impl Member {
             &self.bitvmx,
         )?;
 
+        // Wait for the dispute core setup to complete
+        let program_id = expect_msg!(self, SetupCompleted(program_id) => program_id)?;
+        info!(id = self.id, program_id = ?program_id, "Dispute core setup completed");
+
         // TODO: add the rest of the covenants here
 
         // info!(
@@ -185,7 +190,7 @@ impl Member {
         info!(id = self.id, "Requesting pegin");
         // Enable RSK pegin monitoring using the public API
         self.bitvmx.subscribe_to_rsk_pegin()?;
-        //self.bitvmx.advance(1);
+        info!("Subscribed to RSK pegin");
 
         // Create a proper RSK pegin transaction and send it as if it was a user transaction
         let mut request_pegin = RequestPegin::new(&self.config)?;
@@ -193,11 +198,10 @@ impl Member {
         let packet_number = 0;
         let rsk_address = "7ac5496aee77c1ba1f0854206a26dda82a81d6d8";
         let request_pegin_txid = request_pegin.create_and_send_transaction(self.keyring.take_aggregated_key.unwrap(), stream_value, packet_number, rsk_address)?;
-        
-        // Advance BitVMX to process the transaction
-        //self.advance(5);
-        
+        info!("Sent RSK pegin transaction to bitcoind");
+
         // Wait for Bitvmx news PeginTransactionFound message
+        info!("Waiting for RSK pegin transaction to be found");
         let (found_txid, tx_status) = expect_msg!(self, PeginTransactionFound(txid, tx_status) => (txid, tx_status))?;
         assert_eq!(found_txid, request_pegin_txid, "Request Pegin Transaction not found");
         assert!(tx_status.confirmations > 0, "Request Pegin Transaction not confirmed");
