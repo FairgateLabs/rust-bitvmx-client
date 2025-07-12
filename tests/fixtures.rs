@@ -8,7 +8,7 @@ use protocol_builder::scripts::{
     build_taproot_spend_info, reveal_secret, timelock, op_return_script, ProtocolScript, SignMode
 };
 use sha2::{Digest, Sha256};
-use tracing::{info};
+use tracing::info;
 
 pub fn sha256(data: Vec<u8>) -> Vec<u8> {
     let mut hasher = Sha256::new();
@@ -216,7 +216,7 @@ pub fn create_rsk_request_pegin_transaction(
     };
 
     let signed_transaction = sign_p2wpkh_transaction_single_input(&secp, network, &mut request_pegin_transaction, &user_pubkey, user_sk, total_amount)?;
-    info!("Signed RSK request pegin transaction: {:#?}", signed_transaction);
+    tracing::debug!("Signed RSK request pegin transaction: {:#?}", signed_transaction);
 
     let signed_transaction_txid = bitcoin_client.send_transaction(&signed_transaction).unwrap();
     Ok(signed_transaction_txid)
@@ -232,7 +232,7 @@ pub fn build_taptree_for_lockreq_tx_outputs(
     /* NOTE: we want to force the script path spend, so we will finalize with an un-spendable key */
     let (internal_key_for_taptree_xonly, _parity) = unspendable_pub_key.x_only_public_key();
     // println!("Unspendable key: {}", unspendable_pub_key);
-    info!(
+    tracing::debug!(
         "X only Unspendable key: {:?} parity: {:?}",
         internal_key_for_taptree_xonly,
         _parity
@@ -283,11 +283,11 @@ pub fn create_lockreq_ready(
     let protocol_fees_txout = funding_tx_protocol_fees.output[vout_protocol_fees as usize].clone();
 
     let ordinal_outpoint = OutPoint::new(funding_tx_ordinal.compute_txid(), vout_ordinal);
-    info!("Ordinal outpoint: {:?}", ordinal_outpoint);
+    tracing::debug!("Ordinal outpoint: {:?}", ordinal_outpoint);
 
     let protocol_fees_outpoint =
         OutPoint::new(funding_tx_protocol_fees.compute_txid(), vout_protocol_fees);
-    info!("Protocol fees outpoint: {:?}", protocol_fees_outpoint);
+    tracing::debug!("Protocol fees outpoint: {:?}", protocol_fees_outpoint);
 
     let protocol_fee = Amount::from_sat(1_000_000);
 
@@ -312,7 +312,7 @@ pub fn create_lockreq_ready(
         unspendable,
     );
 
-    info!("Signed lockreq transaction: {:#?}", signed_lockreq_tx);
+    tracing::debug!("Signed lockreq transaction: {:#?}", signed_lockreq_tx);
 
     let lockreq_txid = bitcoin_client.send_transaction(&signed_lockreq_tx).unwrap();
 
