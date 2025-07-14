@@ -53,7 +53,6 @@ impl DisputeCoreSetup {
         }
 
         let committe = NewCommittee {
-            member_index,
             my_role: my_role.clone(),
             take_aggregated_key: keyring.take_aggregated_key.unwrap(),
             dispute_aggregated_key: keyring.dispute_aggregated_key.unwrap(),
@@ -67,6 +66,12 @@ impl DisputeCoreSetup {
             covenant_id,
             &NewCommittee::name(),
             VariableTypes::String(serde_json::to_string(&committe)?),
+        )?;
+
+        bitvmx.set_var(
+            covenant_id,
+            "member_index",
+            VariableTypes::Number(member_index as u32),
         )?;
 
         let funding_names = ["WT_FUNDING_UTXO", "OP_FUNDING_UTXO"];
