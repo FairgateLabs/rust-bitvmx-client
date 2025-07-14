@@ -28,7 +28,8 @@ pub const NO_DISPUTE_OPENED_TX: &str = "NO_DISPUTE_OPENED_TX";
 pub const NO_CHALLENGE_TX: &str = "NO_CHALLENGE_TX";
 
 // Parameters
-pub const TAKE_ENABLER_TIMELOCK: u16 = 144;
+pub const DISPUTE_CORE_SHORT_TIMELOCK: u16 = 3;
+pub const DISPUTE_CORE_LONG_TIMELOCK: u16 = 6;
 pub const DISPUTE_OPENER_VALUE: u64 = 1000;
 pub const START_ENABLER_VALUE: u64 = 1000;
 pub const DUST_VALUE: u64 = 546;
@@ -38,9 +39,13 @@ pub const FUNDING_UTXO_SUFFIX: &str = "_FUNDING_UTXO";
 pub const FUNDING_TX_SUFFIX: &str = "_FUNDING_TX";
 pub const INITIAL_DEPOSIT_TX_SUFFIX: &str = "_INITIAL_DEPOSIT_TX";
 
+// UTXOs
+pub const OPERATOR_TAKE_ENABLER: &str = "operator_take_enabler";
+pub const OPERATOR_WON_ENABLER: &str = "operator_won_enabler";
+pub const CHALLENGE_ENABLER: &str = "challenge_enabler";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewCommittee {
-    pub member_index: usize,
     pub my_role: ParticipantRole,
     pub take_aggregated_key: PublicKey,
     pub dispute_aggregated_key: PublicKey,
