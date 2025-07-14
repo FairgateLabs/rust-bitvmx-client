@@ -6,7 +6,7 @@ use crate::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::types::*,
         },
-        variables::PartialUtxo,
+        variables::{PartialUtxo, VariableTypes},
     },
     types::ProgramContext,
 };
@@ -100,27 +100,20 @@ impl ProtocolHandler for DisputeCoreProtocol {
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let committee = self.committee(context)?;
-        let member_keys = keys[committee.member_index as usize].clone();
-
         let mut protocol = self.load_or_create_protocol();
+        let committee = self.committee(context)?;
 
-        self.create_initial_deposit(
-            &mut protocol,
-            self.committee(context)?.my_role,
-            committee.operator_count,
-            &keys,
-            context,
-        )?;
+        self.create_initial_deposit(&mut protocol, &committee, &keys, context)?;
 
         for i in 0..committee.packet_size as usize {
-            self.create_dispute_core(&mut protocol, i, &member_keys, context)?;
+            self.create_dispute_core(&mut protocol, &committee, i, &keys, context)?;
         }
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("{}", protocol.visualize()?);
         self.save_protocol(protocol)?;
 
+        self.set_utxos(context)?;
         Ok(())
     }
 
@@ -163,14 +156,15 @@ impl DisputeCoreProtocol {
     fn create_initial_deposit(
         &self,
         protocol: &mut Protocol,
-        role: ParticipantRole,
-        operator_count: u32,
+        committee: &NewCommittee,
         keys: &Vec<ParticipantKeys>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
+        let operator_count = committee.operator_count;
+
         let dispute_aggregated_key = self.dispute_aggregated_key(context)?;
 
-        let prefixes = match role {
+        let prefixes = match committee.my_role {
             ParticipantRole::Prover => vec!["OP", "WT"],
             ParticipantRole::Verifier => vec!["WT"],
         };
@@ -228,24 +222,26 @@ impl DisputeCoreProtocol {
     fn create_dispute_core(
         &self,
         protocol: &mut Protocol,
+        _committee: &NewCommittee,
         dispute_core_index: usize,
-        keys: &ParticipantKeys,
+        keys: &Vec<ParticipantKeys>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
+        let keys = keys[self.member_index(context)?].clone();
+
         let take_aggregated_key = self.take_aggregated_key(context)?;
         let dispute_aggregated_key = self.dispute_aggregated_key(context)?;
-        let pegout_id_pubkey = keys.get_winternitz(&key_name(PEGOUT_ID_KEY, dispute_core_index))?;
-        let value_0_pubkey = keys.get_winternitz(&key_name(VALUE_0_KEY, dispute_core_index))?;
-        let value_1_pubkey = keys.get_winternitz(&key_name(VALUE_1_KEY, dispute_core_index))?;
+        let pegout_id_pubkey = keys.get_winternitz(&var_name(PEGOUT_ID_KEY, dispute_core_index))?;
+        let value_0_pubkey = keys.get_winternitz(&var_name(VALUE_0_KEY, dispute_core_index))?;
+        let value_1_pubkey = keys.get_winternitz(&var_name(VALUE_1_KEY, dispute_core_index))?;
 
-        let reimbursement_kickoff_tx = tx_name(REIMBURSEMENT_KICKOFF_TX, dispute_core_index);
-        let no_take_tx = tx_name(NO_TAKE_TX, dispute_core_index);
-        let challenge_tx = tx_name(CHALLENGE_TX, dispute_core_index);
-        let try_take_2_tx = tx_name(TRY_TAKE_2_TX, dispute_core_index);
-        let no_dispute_opened_tx = tx_name(NO_DISPUTE_OPENED_TX, dispute_core_index);
-        let you_cant_take_tx = tx_name(YOU_CANT_TAKE_TX, dispute_core_index);
-        let op_self_disabler_tx = tx_name(OP_SELF_DISABLER_TX, dispute_core_index);
-        let no_challenge_tx = tx_name(NO_CHALLENGE_TX, dispute_core_index);
+        let reimbursement_kickoff_tx = var_name(REIMBURSEMENT_KICKOFF_TX, dispute_core_index);
+        let no_take_tx = var_name(NO_TAKE_TX, dispute_core_index);
+        let challenge_tx = var_name(CHALLENGE_TX, dispute_core_index);
+        let try_take_2_tx = var_name(TRY_TAKE_2_TX, dispute_core_index);
+        let no_dispute_opened_tx = var_name(NO_DISPUTE_OPENED_TX, dispute_core_index);
+        let you_cant_take_tx = var_name(YOU_CANT_TAKE_TX, dispute_core_index);
+        let op_self_disabler_tx = var_name(OP_SELF_DISABLER_TX, dispute_core_index);
 
         let (initial_connection, output_spec) = if dispute_core_index == 0 {
             let start_dispute_core = scripts::start_dispute_core(
@@ -263,7 +259,7 @@ impl DisputeCoreProtocol {
             .into();
             (OP_INITIAL_DEPOSIT_TX.to_string(), output_spec)
         } else {
-            let initial_connection = tx_name(REIMBURSEMENT_KICKOFF_TX, dispute_core_index - 1);
+            let initial_connection = var_name(REIMBURSEMENT_KICKOFF_TX, dispute_core_index - 1);
             let output_spec = OutputSpec::Index(2);
             (initial_connection, output_spec)
         };
@@ -296,7 +292,7 @@ impl DisputeCoreProtocol {
                     key_path_sign: SignMode::Aggregate,
                 },
             ),
-            None,
+            Some(DISPUTE_CORE_SHORT_TIMELOCK),
             None,
         )?;
 
@@ -320,7 +316,7 @@ impl DisputeCoreProtocol {
             .into(),
             &challenge_tx,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
-            Some(TAKE_ENABLER_TIMELOCK),
+            Some(DISPUTE_CORE_LONG_TIMELOCK),
             None,
         )?;
 
@@ -335,7 +331,7 @@ impl DisputeCoreProtocol {
                     key_path_sign: SignMode::Aggregate,
                 },
             ),
-            Some(TAKE_ENABLER_TIMELOCK),
+            None,
             None,
         )?;
 
@@ -350,7 +346,7 @@ impl DisputeCoreProtocol {
                     key_path_sign: SignMode::Aggregate,
                 },
             ),
-            Some(TAKE_ENABLER_TIMELOCK),
+            Some(DISPUTE_CORE_LONG_TIMELOCK),
             None,
         )?;
 
@@ -361,16 +357,16 @@ impl DisputeCoreProtocol {
             OutputSpec::Index(1),
             &you_cant_take_tx,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
-            Some(TAKE_ENABLER_TIMELOCK / 2),
+            Some(DISPUTE_CORE_LONG_TIMELOCK / 2),
             None,
         )?;
 
         // Connection to try to move to the next dispute core (Try Move On)
         // TODO this output must include the same taptree as the Operator initial deposit tx, plus the key spend
         let next_dispute_core = dispute_core_index + 1;
-        let pegout_id_key = keys.get_winternitz(&key_name(PEGOUT_ID_KEY, next_dispute_core))?;
-        let value_0_key = keys.get_winternitz(&key_name(VALUE_0_KEY, next_dispute_core))?;
-        let value_1_key = keys.get_winternitz(&key_name(VALUE_1_KEY, next_dispute_core))?;
+        let pegout_id_key = keys.get_winternitz(&var_name(PEGOUT_ID_KEY, next_dispute_core))?;
+        let value_0_key = keys.get_winternitz(&var_name(VALUE_0_KEY, next_dispute_core))?;
+        let value_1_key = keys.get_winternitz(&var_name(VALUE_1_KEY, next_dispute_core))?;
 
         let next_dispute_core = scripts::start_dispute_core(
             dispute_aggregated_key,
@@ -425,31 +421,83 @@ impl DisputeCoreProtocol {
             None,
         )?;
 
-        protocol.add_connection(
-            "disable_challenge",
-            &reimbursement_kickoff_tx,
-            OutputSpec::Index(1),
-            &no_challenge_tx,
-            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
-            Some(TAKE_ENABLER_TIMELOCK / 2),
-            None,
-        )?;
+        Ok(())
+    }
 
-        // This output shouldn't be spent since it prevents to move to the next dispute core
-        protocol.add_connection(
-            "disable_next_dispute_core",
-            &reimbursement_kickoff_tx,
-            OutputSpec::Index(3),
-            &no_challenge_tx,
-            InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::KeyOnly {
-                    key_path_sign: SignMode::Aggregate,
-                },
-            ),
-            None,
-            None,
-        )?;
+    fn set_utxos(&self, context: &ProgramContext) -> Result<(), BitVMXError> {
+        let committee = self.committee(context)?;
+        let take_key = &self.take_aggregated_key(context)?;
+        let protocol = self.load_or_create_protocol();
+
+        let mut utxos_for_take = vec![];
+
+        for i in 0..committee.packet_size as usize {
+            let name = var_name(REIMBURSEMENT_KICKOFF_TX, i);
+            let reimbursement_kickoff_tx = protocol.transaction_by_name(&name)?;
+            let reimbursement_kickoff_txid = reimbursement_kickoff_tx.compute_txid();
+            let take_enabler_output = OutputType::taproot(DUST_VALUE, &take_key, &[])?;
+            let challenge_enabler_output = OutputType::taproot(DUST_VALUE, &take_key, &[])?;
+
+            let operator_take_enabler = (
+                reimbursement_kickoff_txid,
+                0,
+                Some(DUST_VALUE),
+                Some(take_enabler_output),
+            );
+            let challenge_enabler = (
+                reimbursement_kickoff_txid,
+                1,
+                Some(DUST_VALUE),
+                Some(challenge_enabler_output),
+            );
+
+            let name = var_name(TRY_TAKE_2_TX, i);
+            let try_take_2_tx = protocol.transaction_by_name(&name)?;
+            let try_take_2_output = OutputType::taproot(DUST_VALUE, &take_key, &[])?;
+
+            let operator_won_enabler = (
+                try_take_2_tx.compute_txid(),
+                0,
+                Some(DUST_VALUE),
+                Some(try_take_2_output),
+            );
+
+            context.globals.set_var(
+                &self.ctx.id,
+                &var_name(OPERATOR_TAKE_ENABLER, i),
+                VariableTypes::Utxo(operator_take_enabler.clone()),
+            )?;
+
+            context.globals.set_var(
+                &self.ctx.id,
+                &var_name(OPERATOR_WON_ENABLER, i),
+                VariableTypes::Utxo(operator_won_enabler.clone()),
+            )?;
+
+            context.globals.set_var(
+                &self.ctx.id,
+                &var_name(CHALLENGE_ENABLER, i),
+                VariableTypes::Utxo(challenge_enabler.clone()),
+            )?;
+
+            utxos_for_take.push((
+                operator_take_enabler,
+                challenge_enabler,
+                operator_won_enabler,
+            ));
+        }
+
+        // TODO: decide if we want to send the utxos for the take txs to the L2 client
+        // let data = serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(
+        //     self.ctx.id,
+        //     "utxos_for_take".to_string(),
+        //     VariableTypes::String(serde_json::to_string(&(
+        //         &self.ctx.protocol_name,
+        //         &utxos_for_take,
+        //     ))?),
+        // ))?;
+
+        // context.broker_channel.send(L2_ID, data)?;
 
         Ok(())
     }
@@ -463,6 +511,15 @@ impl DisputeCoreProtocol {
 
         let committee: NewCommittee = serde_json::from_str(&committee)?;
         Ok(committee)
+    }
+
+    fn member_index(&self, context: &ProgramContext) -> Result<usize, BitVMXError> {
+        let member_index = context
+            .globals
+            .get_var(&self.ctx.id, "member_index")?
+            .unwrap()
+            .number()?;
+        Ok(member_index as usize)
     }
 
     fn prover(&self, context: &ProgramContext) -> Result<bool, BitVMXError> {
@@ -483,10 +540,6 @@ impl DisputeCoreProtocol {
     }
 }
 
-fn tx_name(prefix: &str, index: usize) -> String {
-    format!("{}_{}", prefix, index)
-}
-
-fn key_name(prefix: &str, index: usize) -> String {
+fn var_name(prefix: &str, index: usize) -> String {
     format!("{}_{}", prefix, index)
 }
