@@ -72,10 +72,6 @@ impl BitVMXClient {
         self.send_message(IncomingBitVMXApiMessages::GetAggregatedPubkey(id))
     }
 
-    pub fn create_key_pair(&self, id: Uuid, index: u32) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::CreateKeyPair(id, index))
-    }
-
     pub fn get_pubkey(&self, id: Uuid, new: bool) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::GetPubKey(id, new))
     }

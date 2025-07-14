@@ -56,7 +56,7 @@ impl ProtocolHandler for PairwisePenalizationProtocol {
         &self,
         _name: &str,
         _context: &ProgramContext,
-    ) -> Result<Transaction, BitVMXError> {
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         todo!()
     }
 

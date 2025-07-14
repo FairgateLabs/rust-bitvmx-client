@@ -16,34 +16,28 @@ use storage_backend::storage::Storage;
 use tracing::{error, info};
 use uuid::Uuid;
 
+use super::super::participant::ParticipantKeys;
 use crate::errors::BitVMXError;
 use crate::keychain::KeyChain;
 use crate::program::participant::ParticipantKeysExt;
-#[cfg(feature = "union")]
-use crate::program::protocols::union::accept_pegin::AcceptPegInProtocol;
 
-use super::super::participant::ParticipantKeys;
 #[cfg(feature = "cardinal")]
 use super::cardinal::{lock::LockProtocol, slot::SlotProtocol, transfer::TransferProtocol};
 use super::dispute::DisputeResolutionProtocol;
+
 #[cfg(feature = "union")]
 use crate::program::protocols::union::{
-    dispute_core::DisputeCoreProtocol, multiparty_penalization::MultipartyPenalizationProtocol,
+    accept_pegin::AcceptPegInProtocol, dispute_core::DisputeCoreProtocol,
     pairwise_penalization::PairwisePenalizationProtocol, take::TakeProtocol,
 };
+
 use crate::program::variables::WitnessTypes;
 use crate::program::{variables::VariableTypes, witness};
 use crate::types::{
-    ProgramContext, PROGRAM_TYPE_DRP, PROGRAM_TYPE_INIT, PROGRAM_TYPE_LOCK,
-    PROGRAM_TYPE_MULTIPARTY_PENALIZATION, PROGRAM_TYPE_PACKET, PROGRAM_TYPE_PAIRWISE_PENALIZATION,
-    PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TAKE, PROGRAM_TYPE_TRANSFER,
+    ProgramContext, PROGRAM_TYPE_ACCEPT_PEGIN, PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_DRP,
+    PROGRAM_TYPE_LOCK, PROGRAM_TYPE_PAIRWISE_PENALIZATION, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TAKE,
+    PROGRAM_TYPE_TRANSFER,
 };
-
-use super::super::participant::ParticipantKeys;
-use super::dispute::DisputeResolutionProtocol;
-use super::lock::LockProtocol;
-use super::slot::SlotProtocol;
-use super::transfer::TransferProtocol;
 
 #[enum_dispatch]
 pub trait ProtocolHandler {
@@ -471,7 +465,6 @@ pub enum ProtocolType {
     DisputeCoreProtocol,
     #[cfg(feature = "union")]
     PairwisePenalizationProtocol,
-    MultipartyPenalizationProtocol,
 }
 
 pub fn new_protocol_type(

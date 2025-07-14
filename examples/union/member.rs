@@ -100,17 +100,17 @@ impl Member {
     pub fn setup_member_keys(&mut self) -> Result<(PublicKey, PublicKey, PublicKey)> {
         // TODO what id should we use for these keys?
         let id = Uuid::new_v4();
-        self.bitvmx.create_key_pair(id, 0)?;
+        self.bitvmx.get_pubkey(id, true)?;
         let take_pubkey = expect_msg!(self, PubKey(_, key) => key)?;
         debug!(id = self.id, take_pubkey = ?take_pubkey, "Take pubkey");
 
         let id = Uuid::new_v4();
-        self.bitvmx.create_key_pair(id, 1)?;
+        self.bitvmx.get_pubkey(id, true)?;
         let dispute_pubkey = expect_msg!(self, PubKey(_, key) => key)?;
         debug!(id = self.id, dispute_pubkey = ?dispute_pubkey, "Dispute pubkey");
 
         let id = Uuid::new_v4();
-        self.bitvmx.create_key_pair(id, 2)?;
+        self.bitvmx.get_pubkey(id, true)?;
         let communication_pubkey = expect_msg!(self, PubKey(_, key) => key)?;
         debug!(id = self.id, communication_pubkey = ?communication_pubkey, "Communication pubkey");
 
