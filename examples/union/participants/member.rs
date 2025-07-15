@@ -12,36 +12,20 @@ use bitvmx_client::{
     },
     types::{OutgoingBitVMXApiMessages::*, L2_ID},
 };
-
 use tracing::{debug, info};
 
-use crate::{request_pegin::RequestPegin, setup::{accept_pegin_setup::AcceptPegInSetup, dispute_core_setup::DisputeCoreSetup}};
-
-macro_rules! expect_msg {
-    ($self:expr, $pattern:pat => $expr:expr) => {{
-        let msg = $self.bitvmx.wait_message(None, None)?;
-
-        if let $pattern = msg {
-            Ok($expr)
-        } else {
-            Err(anyhow::anyhow!(
-                "Expected `{}` but got `{:?}`",
-                stringify!($pattern),
-                msg
-            ))
-        }
-    }};
-}
+use crate::{
+    expect_msg,
+    setup::{accept_pegin_setup::AcceptPegInSetup, dispute_core_setup::DisputeCoreSetup},
+};
 
 #[derive(Clone)]
-pub struct DrpCovenant {
 pub struct DrpCovenant {
     _covenant_id: Uuid,
     _counterparty: P2PAddress,
 }
 
 #[derive(Clone)]
-pub struct Covenants {
 pub struct Covenants {
     _drp_covenants: Vec<DrpCovenant>,
     // dispute_core_covenants: Vec<DisputeCoreCovenant>,
@@ -60,13 +44,11 @@ pub struct Keyring {
 
 #[derive(Clone)]
 pub struct Member {
-    pub config: Config,
     pub id: String,
     pub role: ParticipantRole,
     pub bitvmx: BitVMXClient,
     pub address: Option<P2PAddress>,
     pub keyring: Keyring,
-    pub _covenants: Covenants,
     pub _covenants: Covenants,
 }
 
@@ -76,7 +58,6 @@ impl Member {
         let bitvmx = BitVMXClient::new(config.broker_port, L2_ID);
 
         Ok(Self {
-            config,
             id: id.to_string(),
             role,
             address: None,
@@ -89,7 +70,6 @@ impl Member {
                 communication_pubkey: None,
                 pairwise_keys: HashMap::new(),
             },
-            _covenants: Covenants {
             _covenants: Covenants {
                 _drp_covenants: Vec::new(),
             },
@@ -166,7 +146,6 @@ impl Member {
             funding_utxos,
             &self.keyring,
             &self.bitvmx,
-            &self.bitvmx,
         )?;
 
         // Wait for the dispute core setup to complete
@@ -184,45 +163,8 @@ impl Member {
         Ok(())
     }
 
-    pub fn request_pegin(
-        &mut self,
-    ) -> Result<()> {
-        info!(id = self.id, "Requesting pegin");
-        // Enable RSK pegin monitoring using the public API
-        self.bitvmx.subscribe_to_rsk_pegin()?;
-        info!("Subscribed to RSK pegin");
-
-        // Create a proper RSK pegin transaction and send it as if it was a user transaction
-        let mut request_pegin = RequestPegin::new(&self.config)?;
-        let stream_value = 100_000;
-        let packet_number = 0;
-        let rsk_address = "7ac5496aee77c1ba1f0854206a26dda82a81d6d8";
-        let request_pegin_txid = request_pegin.create_and_send_transaction(self.keyring.take_aggregated_key.unwrap(), stream_value, packet_number, rsk_address)?;
-        info!("Sent RSK pegin transaction to bitcoind");
-
-        // Wait for Bitvmx news PeginTransactionFound message
-        info!("Waiting for RSK pegin transaction to be found");
-        let (found_txid, tx_status) = expect_msg!(self, PeginTransactionFound(txid, tx_status) => (txid, tx_status))?;
-        assert_eq!(found_txid, request_pegin_txid, "Request Pegin Transaction not found");
-        assert!(tx_status.confirmations > 0, "Request Pegin Transaction not confirmed");
-        info!("RSK pegin transaction test completed successfully");
-        info!("Transaction ID: {}", request_pegin_txid);
-
-        // Get the SPV proof, this should be used by the union client to present to the smart contract
-        self.bitvmx.get_spv_proof(found_txid)?;
-        let spv_proof = expect_msg!(self, SPVProof(_, Some(spv_proof)) => spv_proof)?;
-        info!("SPV proof: {:?}", spv_proof);
-
-        // Union client calls the smart contract PegManager.requestPegin(spv_proof)
-        // Smart contracts emits the  PeginRequested event
-
-        Ok(())
-    }
-
-    pub fn accept_pegin(
     pub fn accept_pegin(
         &mut self,
-        accept_pegin_covenant_id: Uuid,
         accept_pegin_covenant_id: Uuid,
         members: &[Member],
         request_pegin_txid: Txid,
