@@ -82,8 +82,8 @@ pub const TRACE_VARS: [(&str, usize); 16] = [
 ];
 
 pub const ENTRY_POINT_CHALLENGE: [(&str, usize); 3] = [
-    ("prover_write_pc", 4),
-    ("prover_write_micro", 1),
+    ("prover_read_pc_address", 4),
+    ("prover_read_pc_micro", 1),
     ("prover_step_number", 8),
 ];
 pub const PROGRAM_COUNTER_CHALLENGE: [(&str, usize); 8] = [
@@ -116,7 +116,7 @@ pub const TRACE_HASH_ZERO_CHALLENGE: [(&str, usize); 5] = [
     ("prover_write_value", 4),
     ("prover_write_pc", 4),
     ("prover_write_micro", 1),
-    ("prover_last_hash", 20),
+    ("verifier_step_hash", 20), //TODO: this should be from prover translation keys
 ];
 
 pub const INPUT_CHALLENGE: [(&str, usize); 7] = [
@@ -1822,74 +1822,48 @@ impl DisputeResolutionProtocol {
                 };
 
                 match challenge {
-                    ChallengeType::EntryPoint(trace_read_pc, prover_trace_step, _entrypoint) => {
+                    ChallengeType::EntryPoint(_trace_read_pc, _prover_trace_step, _entrypoint) => {
                         name = "entry_point";
                         info!("Verifier chose {name} challenge");
-
-                        self.set_input_u32(
-                            context,
-                            &format!("{name}_provided_pc"),
-                            trace_read_pc.pc.get_address(),
-                        )?;
-                        self.set_input_u8(
-                            context,
-                            &format!("{name}_provided_micro"),
-                            trace_read_pc.pc.get_micro(),
-                        )?;
-                        self.set_input_u64(
-                            context,
-                            &format!("{name}_provided_step"),
-                            *prover_trace_step,
-                        )?;
                     }
 
                     ChallengeType::ProgramCounter(
                         pre_pre_hash,
                         pre_step,
                         prover_step_hash,
-                        prover_pc_read,
+                        _prover_pc_read,
                     ) => {
                         name = "program_counter";
                         info!("Verifier chose {name} challenge");
 
                         self.set_input_hex(
                             context,
-                            &format!("{name}_prev_prev_hash"),
+                            &format!("verifier_prev_prev_hash"),
                             &pre_pre_hash,
                         )?;
                         self.set_input_u32(
                             context,
-                            &format!("{name}_prev_write_add"),
+                            &format!("verifier_prev_write_add"),
                             pre_step.get_write().address,
                         )?;
                         self.set_input_u32(
                             context,
-                            &format!("{name}_prev_write_data"),
+                            &format!("verifier_prev_write_data"),
                             pre_step.get_write().value,
                         )?;
                         self.set_input_u32(
                             context,
-                            &format!("{name}_prev_write_pc"),
+                            &format!("verifier_prev_write_pc"),
                             pre_step.get_pc().get_address(),
                         )?;
                         self.set_input_u8(
                             context,
-                            &format!("{name}_prev_write_micro"),
+                            &format!("verifier_prev_write_micro"),
                             pre_step.get_pc().get_micro(),
-                        )?;
-                        self.set_input_u32(
-                            context,
-                            &format!("{name}_prover_read_pc"),
-                            prover_pc_read.pc.get_address(),
-                        )?;
-                        self.set_input_u8(
-                            context,
-                            &format!("{name}_prover_read_micro"),
-                            prover_pc_read.pc.get_micro(),
                         )?;
                         self.set_input_hex(
                             context,
-                            &format!("{name}_prover_prev_hash"),
+                            &format!("verifier_prev_hash"), //TODO: fix
                             &prover_step_hash,
                         )?;
                     }
@@ -1902,137 +1876,37 @@ impl DisputeResolutionProtocol {
                         name = "trace_hash";
                         info!("Verifier chose {name} challenge");
 
-                        /*self.set_input_hex(context, &format!("{name}_hash"), &prover_step_hash)?;
-                        self.set_input_u8(
-                            context,
-                            &format!("{name}_write_micro"),
-                            prover_trace_step.get_pc().get_micro(),
-                        )?;
-                        self.set_input_u32(
-                            context,
-                            &format!("{name}_write_pc"),
-                            prover_trace_step.get_pc().get_address(),
-                        )?;
-                        self.set_input_u32(
-                            context,
-                            &format!("{name}_write_data"),
-                            prover_trace_step.get_write().value,
-                        )?;
-                        self.set_input_u32(
-                            context,
-                            &format!("{name}_write_add"),
-                            prover_trace_step.get_write().address,
-                        )?;*/
+                        //TODO: fix
                         self.set_input_hex(context, "verifier_prev_hash", &prover_prev_hash)?;
                     }
 
-                    ChallengeType::TraceHashZero(prover_trace_step, prover_step_hash) => {
+                    ChallengeType::TraceHashZero(_prover_trace_step, prover_step_hash) => {
                         name = "trace_hash_zero";
                         info!("Verifier chose {name} challenge");
-
-                        self.set_input_u32(
-                            context,
-                            &format!("{name}_write_add"),
-                            prover_trace_step.get_write().address,
-                        )?;
-                        self.set_input_u32(
-                            context,
-                            &format!("{name}_write_data"),
-                            prover_trace_step.get_write().value,
-                        )?;
-                        self.set_input_u8(
-                            context,
-                            &format!("{name}_write_micro"),
-                            prover_trace_step.get_pc().get_micro(),
-                        )?;
-                        self.set_input_u32(
-                            context,
-                            &format!("{name}_write_pc"),
-                            prover_trace_step.get_pc().get_address(),
-                        )?;
-                        self.set_input_hex(context, &format!("{name}_hash"), &prover_step_hash)?;
+                        self.set_input_hex(context, "verifier_step_hash", &prover_step_hash)?;
                     }
 
-                    ChallengeType::InputData(read_1, read_2, address, input_for_address) => {
+                    ChallengeType::InputData(_read_1, _read_2, address, _input_for_address) => {
                         name = "input";
                         info!("Verifier chose {name} challenge");
 
                         let base_addr = program.find_section_by_name(".input").unwrap().start;
                         dynamic_offset = (address - base_addr) / 4; //TODO: get 4 from context
-
-                        let suffix = if input_words > 1 {
-                            format!("_{dynamic_offset}")
-                        } else {
-                            String::new()
-                        };
-
-                        self.set_input_u32(
-                            context,
-                            &format!("{name}_prover_input{suffix}"),
-                            *input_for_address,
-                        )?;
-                        self.set_input_u32(
-                            context,
-                            &format!("{name}_prover_read_add_1{suffix}"),
-                            read_1.address,
-                        )?;
-                        self.set_input_u32(
-                            context,
-                            &format!("{name}_prover_read_value_1{suffix}"),
-                            read_1.value,
-                        )?;
-                        self.set_input_u64(
-                            context,
-                            &format!("{name}_prover_last_step_1{suffix}"),
-                            read_1.last_step,
-                        )?;
-                        self.set_input_u32(
-                            context,
-                            &format!("{name}_prover_read_add_2{suffix}"),
-                            read_2.address,
-                        )?;
-                        self.set_input_u32(
-                            context,
-                            &format!("{name}_prover_read_value_2{suffix}"),
-                            read_2.value,
-                        )?;
-                        self.set_input_u64(
-                            context,
-                            &format!("{name}_prover_last_step_2{suffix}"),
-                            read_2.last_step,
-                        )?;
                     }
 
-                    ChallengeType::Opcode(pc_read, chunk_index, _chunk_base, _opcodes_chunk) => {
+                    ChallengeType::Opcode(_pc_read, chunk_index, _chunk_base, _opcodes_chunk) => {
                         name = "opcode";
                         info!("Verifier chose {name} challenge");
 
                         dynamic_offset = *chunk_index;
-
-                        let suffix = if opcode_chunks > 1 {
-                            format!("_{dynamic_offset}")
-                        } else {
-                            String::new()
-                        };
-
-                        self.set_input_u32(
-                            context,
-                            &format!("{name}_prover_pc{suffix}"),
-                            pc_read.pc.get_address(),
-                        )?;
-                        self.set_input_u32(
-                            context,
-                            &format!("{name}_prover_opcode{suffix}"),
-                            pc_read.opcode,
-                        )?;
                     }
 
                     ChallengeType::AddressesSections(
-                        read_1,
-                        read_2,
-                        write,
-                        memory_witness,
-                        program_counter,
+                        _read_1,
+                        _read_2,
+                        _write,
+                        _memory_witness,
+                        _program_counter,
                         _,
                         _,
                         _,
@@ -2040,77 +1914,14 @@ impl DisputeResolutionProtocol {
                     ) => {
                         name = "addresses_sections";
                         info!("Verifier chose {name} challenge");
-
-                        self.set_input_u32(
-                            context,
-                            &format!("{name}_read_1_address"),
-                            read_1.address,
-                        )?;
-                        self.set_input_u32(
-                            context,
-                            &format!("{name}_read_2_address"),
-                            read_2.address,
-                        )?;
-                        self.set_input_u32(
-                            context,
-                            &format!("{name}_write_address"),
-                            write.address,
-                        )?;
-                        self.set_input_u8(
-                            context,
-                            &format!("{name}_memory_witness"),
-                            memory_witness.byte(),
-                        )?;
-                        self.set_input_u32(
-                            context,
-                            &format!("{name}_pc_address"),
-                            program_counter.get_address(),
-                        )?;
                     }
 
-                    ChallengeType::RomData(read_1, read_2, address, _input_for_address) => {
+                    ChallengeType::RomData(_read_1, _read_2, address, _input_for_address) => {
                         name = "rom";
                         info!("Verifier chose {name} challenge");
 
                         let base_addr = program.find_section_by_name(".rodata").unwrap().start;
                         dynamic_offset = address - base_addr;
-
-                        let suffix = if rodata_len > 1 {
-                            format!("_{}", dynamic_offset)
-                        } else {
-                            String::new()
-                        };
-
-                        self.set_input_u32(
-                            context,
-                            &format!("{name}_prover_read_add_1{suffix}"),
-                            read_1.address,
-                        )?;
-                        self.set_input_u32(
-                            context,
-                            &format!("{name}_prover_read_value_1{suffix}"),
-                            read_1.value,
-                        )?;
-                        self.set_input_u64(
-                            context,
-                            &format!("{name}_prover_last_step_1{suffix}"),
-                            read_1.last_step,
-                        )?;
-                        self.set_input_u32(
-                            context,
-                            &format!("{name}_prover_read_add_2{suffix}"),
-                            read_2.address,
-                        )?;
-                        self.set_input_u32(
-                            context,
-                            &format!("{name}_prover_read_value_2{suffix}"),
-                            read_2.value,
-                        )?;
-                        self.set_input_u64(
-                            context,
-                            &format!("{name}_prover_last_step_2{suffix}"),
-                            read_2.last_step,
-                        )?;
                     }
                     ChallengeType::No => {
                         name = "";
