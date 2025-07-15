@@ -1,13 +1,18 @@
 use anyhow::Result;
 use bitcoin::{
-    absolute, hex::FromHex, key::{rand::rngs::OsRng, Parity, Secp256k1}, secp256k1::{self, All, Message, PublicKey as SecpPublicKey, SecretKey}, sighash::SighashCache, transaction, Address as BitcoinAddress, Amount, Network, OutPoint, PrivateKey as BitcoinPrivKey, PublicKey, PublicKey as BitcoinPubKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness, XOnlyPublicKey
+    absolute,
+    hex::FromHex,
+    key::{rand::rngs::OsRng, Parity, Secp256k1},
+    secp256k1::{self, All, Message, PublicKey as SecpPublicKey, SecretKey},
+    sighash::SighashCache,
+    transaction, Address as BitcoinAddress, Amount, Network, OutPoint,
+    PrivateKey as BitcoinPrivKey, PublicKey, PublicKey as BitcoinPubKey, ScriptBuf, Sequence,
+    Transaction, TxIn, TxOut, Txid, Witness, XOnlyPublicKey,
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_client::config::Config;
-use protocol_builder::scripts::{
-    build_taproot_spend_info, timelock, op_return_script, SignMode
-};
-use tracing::{info};
+use protocol_builder::scripts::{build_taproot_spend_info, op_return_script, timelock, SignMode};
+use tracing::info;
 
 pub struct RequestPegin {
     pub bitcoin_client: BitcoinClient,
@@ -28,7 +33,8 @@ impl RequestPegin {
         let network = Network::Regtest;
         // Locally created user keypair
         let secp = Secp256k1::new();
-        let (user_address, user_pubkey, user_sk) = RequestPegin::emulated_user_keypair(&secp, &bitcoin_client, network)?;
+        let (user_address, user_pubkey, user_sk) =
+            RequestPegin::emulated_user_keypair(&secp, &bitcoin_client, network)?;
 
         Ok(Self {
             bitcoin_client,
@@ -48,8 +54,16 @@ impl RequestPegin {
         rsk_address: &str,
     ) -> Result<Txid> {
         // We'll create a transaction that will be detected as RSK pegin by the transaction monitor.
-        let signed_transaction = self.create_rsk_request_pegin_transaction(aggregated_pubkey, stream_value, packet_number, rsk_address)?;
-        let txid = self.bitcoin_client.send_transaction(&signed_transaction).unwrap();
+        let signed_transaction = self.create_rsk_request_pegin_transaction(
+            aggregated_pubkey,
+            stream_value,
+            packet_number,
+            rsk_address,
+        )?;
+        let txid = self
+            .bitcoin_client
+            .send_transaction(&signed_transaction)
+            .unwrap();
 
         // Get the transaction and verify it was created
         let request_pegin_tx = self.bitcoin_client.get_transaction(&txid)?.unwrap();
@@ -79,9 +93,9 @@ impl RequestPegin {
         let op_return_fee = OP_RETURN_FEE;
         let total_amount = value + fee + op_return_fee;
 
-
         // Fund the user address with enough to cover the taproot output + fees
-        let (funding_tx, vout) = self.bitcoin_client
+        let (funding_tx, vout) = self
+            .bitcoin_client
             .fund_address(&self.user_address, Amount::from_sat(total_amount))
             .unwrap();
 
@@ -100,7 +114,7 @@ impl RequestPegin {
 
         // Outputs
         // Taproot output
-        let op_data = vec![ rootstock_address.as_slice(), value.to_be_bytes().as_slice()].concat();
+        let op_data = [rootstock_address.as_slice(), value.to_be_bytes().as_slice()].concat();
         let script_op_return = op_return_script(op_data)?;
         let script_timelock = timelock(TIMELOCK_BLOCKS, &self.user_pubkey, SignMode::Single);
 
@@ -122,25 +136,32 @@ impl RequestPegin {
         };
 
         // OP_RETURN output
-        let op_return_data = RequestPegin::request_pegin_op_return_data(packet_number, rootstock_address, reimbursement_xpk)?;
+        let op_return_data = RequestPegin::request_pegin_op_return_data(
+            packet_number,
+            rootstock_address,
+            reimbursement_xpk,
+        )?;
         let op_return_output = TxOut {
             value: Amount::from_sat(0), // OP_RETURN outputs should have 0 value
             script_pubkey: op_return_script(op_return_data)?.get_script().clone(),
         };
 
-        let mut request_pegin_transaction  = Transaction {
+        let mut request_pegin_transaction = Transaction {
             version: transaction::Version::TWO,  // Post BIP-68.
             lock_time: absolute::LockTime::ZERO, // Ignore the transaction lvl absolute locktime.
             input: vec![funds_input],
             output: vec![taproot_output, op_return_output],
         };
 
-        let signed_transaction = self.sign_p2wpkh_transaction_single_input(&mut request_pegin_transaction, total_amount)?;
-        info!("Signed RSK request pegin transaction: {:#?}", signed_transaction);
+        let signed_transaction = self
+            .sign_p2wpkh_transaction_single_input(&mut request_pegin_transaction, total_amount)?;
+        info!(
+            "Signed RSK request pegin transaction: {:#?}",
+            signed_transaction
+        );
 
         Ok(signed_transaction)
     }
-
 
     fn request_pegin_op_return_data(
         packet_number: u64,
@@ -161,7 +182,6 @@ impl RequestPegin {
         Ok(user_data.to_vec())
     }
 
-
     // This method changes the parity of a keypair to be even, this is needed for Taproot.
     fn adjust_parity(
         secp: &Secp256k1<All>,
@@ -171,12 +191,11 @@ impl RequestPegin {
         let (_, parity) = pubkey.x_only_public_key();
 
         if parity == Parity::Odd {
-            (pubkey.negate(&secp), seckey.negate())
+            (pubkey.negate(secp), seckey.negate())
         } else {
             (pubkey, seckey)
         }
     }
-
 
     fn emulated_user_keypair(
         secp: &Secp256k1<All>,
@@ -187,8 +206,8 @@ impl RequestPegin {
 
         // emulate the user keypair
         let user_sk = SecretKey::new(&mut rng);
-        let user_pk = SecpPublicKey::from_secret_key(&secp, &user_sk);
-        let (user_pk, user_sk) = RequestPegin::adjust_parity(&secp, user_pk, user_sk);
+        let user_pk = SecpPublicKey::from_secret_key(secp, &user_sk);
+        let (user_pk, user_sk) = RequestPegin::adjust_parity(secp, user_pk, user_sk);
         let user_pubkey = BitcoinPubKey {
             compressed: true,
             inner: user_pk,
@@ -204,14 +223,9 @@ impl RequestPegin {
 
     fn address_to_bytes(address: &str) -> Result<[u8; 20]> {
         let mut address_bytes = [0u8; 20];
-        address_bytes.copy_from_slice(
-            Vec::from_hex(address)
-                .unwrap()
-                .as_slice(),
-        );
+        address_bytes.copy_from_slice(Vec::from_hex(address).unwrap().as_slice());
         Ok(address_bytes)
     }
-
 
     fn sign_p2wpkh_transaction_single_input(
         &mut self,
@@ -225,13 +239,15 @@ impl RequestPegin {
         };
 
         let user_comp_pubkey =
-            bitcoin::CompressedPublicKey::from_private_key(&self.secp, &user_bitcoin_privkey).unwrap();
-        let uncompressed_pk = secp256k1::PublicKey::from_slice(&user_comp_pubkey.to_bytes()).unwrap();
+            bitcoin::CompressedPublicKey::from_private_key(&self.secp, &user_bitcoin_privkey)
+                .unwrap();
+        let uncompressed_pk =
+            secp256k1::PublicKey::from_slice(&user_comp_pubkey.to_bytes()).unwrap();
 
         // Sign the transactions inputs
         let wpkh = self.user_pubkey.wpubkey_hash().expect("key is compressed");
         let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
-        let mut sighasher = SighashCache::new( transaction);
+        let mut sighasher = SighashCache::new(transaction);
 
         let input_index = 0;
         let sighash_type = bitcoin::EcdsaSighashType::All;
@@ -246,7 +262,7 @@ impl RequestPegin {
 
         let signature = bitcoin::ecdsa::Signature {
             signature: self.secp.sign_ecdsa(&Message::from(sighash), &self.user_sk),
-            sighash_type: sighash_type,
+            sighash_type,
         };
 
         *sighasher.witness_mut(input_index).unwrap() =
@@ -256,6 +272,4 @@ impl RequestPegin {
         let signed_transaction = sighasher.into_transaction().to_owned();
         Ok(signed_transaction)
     }
-
-
 }

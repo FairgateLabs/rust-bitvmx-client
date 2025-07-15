@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
-use emulator::loader::program;
 use protocol_builder::{
     scripts::SignMode,
     types::{
@@ -47,7 +46,6 @@ impl ProtocolHandler for AcceptPegInProtocol {
         context: &ProgramContext,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
         let pegin_request = self.pegin_request(context)?;
-        let pegin_request = self.pegin_request(context)?;
 
         Ok(vec![(
             "take_aggregated".to_string(),
@@ -68,10 +66,6 @@ impl ProtocolHandler for AcceptPegInProtocol {
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let pegin_request = self.pegin_request(context)?;
-        let txid = pegin_request.txid;
-        let amount = pegin_request.amount;
-        let take_aggregated_key = pegin_request.take_aggregated_key;
         let pegin_request = self.pegin_request(context)?;
         let txid = pegin_request.txid;
         let amount = pegin_request.amount;

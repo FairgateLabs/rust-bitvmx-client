@@ -235,9 +235,6 @@ impl KeyChain {
         let signature =
             self.key_manager
                 .get_aggregated_signature(aggregated_pubkey, id, message_id)?;
-        let signature =
-            self.key_manager
-                .get_aggregated_signature(aggregated_pubkey, id, message_id)?;
 
         Ok(signature)
     }

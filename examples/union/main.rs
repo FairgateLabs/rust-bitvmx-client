@@ -6,14 +6,9 @@
 //! `cargo run --example union committee`          - Setups a new committee
 //! `cargo run --example union accept_pegin`       - Setups the accept peg in protocol
 //! `cargo run --example union pegin`              - Runs the pegin flow
-//! `cargo run --example union committee`          - Setups a new committee
-//! `cargo run --example union accept_pegin`       - Setups the accept peg in protocol
-//! `cargo run --example union pegin`              - Runs the pegin flow
 
 use anyhow::Result;
 use std::env;
-
-use crate::committee::Committee;
 
 use crate::committee::Committee;
 

@@ -8,8 +8,11 @@ use bitvmx_client::{
 use bitcoin::{hashes::Hash, Amount, Network, PublicKey, ScriptBuf};
 use bitvmx_wallet::wallet::Wallet;
 use protocol_builder::types::OutputType;
-use std::thread::{self};
 use std::time::Duration;
+use std::{
+    collections::HashMap,
+    thread::{self},
+};
 use tracing::{info, info_span};
 use uuid::Uuid;
 
@@ -53,10 +56,8 @@ impl Committee {
         let keys = self.all(|op| op.setup_member_keys())?;
 
         // collect members keys
-        // collect members keys
         let members_take_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.0).collect();
         let members_dispute_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.1).collect();
-        let _members_communication_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.2).collect();
         let _members_communication_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.2).collect();
 
         let take_aggregation_id = self.take_aggregation_id;
@@ -76,12 +77,12 @@ impl Committee {
         let mut op_funding_utxos: HashMap<String, PartialUtxo> = HashMap::new();
         let mut wt_funding_utxos: HashMap<String, PartialUtxo> = HashMap::new();
 
-        for (index, member) in members.iter().enumerate() {
+        for member in members.iter() {
             if member.role == ParticipantRole::Prover {
                 op_funding_utxos.insert(
                     member.id.clone(),
                     self.prepare_funding_utxo(
-                        &self.bitcoin.wallet,
+                        &self.wallet,
                         "fund_1", //&format!("op_{}_utxo", index),
                         //TODO we must use a different pub key here, same for the speedup funding
                         &member.keyring.dispute_pubkey.unwrap(),
@@ -94,7 +95,7 @@ impl Committee {
             wt_funding_utxos.insert(
                 member.id.clone(),
                 self.prepare_funding_utxo(
-                    &self.bitcoin.wallet,
+                    &self.wallet,
                     "fund_1", //&format!("wt_{}_utxo", index),
                     //TODO we must use a different pub key here, same for the speedup funding
                     &member.keyring.dispute_pubkey.unwrap(),
@@ -134,8 +135,6 @@ impl Committee {
 
     pub fn accept_pegin(&mut self) -> Result<()> {
         let accept_pegin_covenant_id = Uuid::new_v4();
-    pub fn accept_pegin(&mut self) -> Result<()> {
-        let accept_pegin_covenant_id = Uuid::new_v4();
         let members = self.members.clone();
 
         // TODO replace with actual peg-in request details
@@ -144,8 +143,6 @@ impl Committee {
         let accept_pegin_sighash = vec![0; 32]; // This should be replaced with the actual sighash of the accept peg-in tx
 
         self.all(|op| {
-            op.accept_pegin(
-                accept_pegin_covenant_id,
             op.accept_pegin(
                 accept_pegin_covenant_id,
                 &members,
@@ -192,7 +189,6 @@ impl Committee {
         let txid = wallet.fund_address(
             WALLET_NAME,
             from.unwrap_or(funding_id),
-            *public_key,
             *public_key,
             &vec![amount],
             FEE,
