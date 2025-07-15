@@ -196,7 +196,7 @@ pub fn execute_dispute(
 
     let _ = channels[1].send(
         BITVMX_ID,
-        IncomingBitVMXApiMessages::GetWitness(program_id, "program_input_0".to_string())
+        IncomingBitVMXApiMessages::GetWitness(program_id, "prover_program_input_0".to_string())
             .to_string()?,
     )?;
 

@@ -1,8 +1,9 @@
 use bitcoin::PublicKey;
-use key_manager::winternitz::WinternitzPublicKey;
+use key_manager::winternitz::{message_bytes_length, WinternitzPublicKey};
 use p2p_handler::PeerId;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt};
+use uuid::Uuid;
 
 use crate::{
     errors::BitVMXError,
@@ -116,6 +117,26 @@ impl ParticipantKeys {
 
     pub fn speedup(&self) -> &PublicKey {
         self.get_public("speedup").unwrap()
+    }
+}
+pub trait ParticipantKeysExt {
+    fn get_key_size(&self, name: &str) -> Result<usize, BitVMXError>;
+}
+
+//It might be inneficient to iterate over all keys. It would be better to store the information in the keys struct.
+impl ParticipantKeysExt for &Vec<&ParticipantKeys> {
+    fn get_key_size(&self, name: &str) -> Result<usize, BitVMXError> {
+        for keys in self.iter() {
+            if let Some(key) = keys.mapping.get(name) {
+                return match key {
+                    PublicKeyType::Winternitz(winternitz_key) => {
+                        Ok(message_bytes_length(winternitz_key.message_size()?))
+                    }
+                    _ => return Err(BitVMXError::KeysNotFound(Uuid::default())),
+                };
+            }
+        }
+        Err(BitVMXError::InvalidMessageFormat)
     }
 }
 

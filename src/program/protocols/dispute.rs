@@ -63,89 +63,90 @@ pub const CHALLENGE: &str = "CHALLENGE";
 pub const TIMELOCK_BLOCKS_KEY: &str = "TIMELOCK_BLOCKS";
 
 pub const TRACE_VARS: [(&str, usize); 16] = [
-    ("write_address", 4 as usize),
-    ("write_value", 4),
-    ("write_pc", 4),
-    ("write_micro", 1),
-    ("mem_witness", 1),
-    ("read_1_address", 4),
-    ("read_1_value", 4),
-    ("read_1_last_step", 8),
-    ("read_2_address", 4),
-    ("read_2_value", 4),
-    ("read_2_last_step", 8),
-    ("read_pc_address", 4),
-    ("read_pc_micro", 1),
-    ("read_pc_opcode", 4),
-    ("step_number", 8),
-    ("witness", 4),
+    ("prover_write_address", 4 as usize),
+    ("prover_write_value", 4),
+    ("prover_write_pc", 4),
+    ("prover_write_micro", 1),
+    ("prover_mem_witness", 1),
+    ("prover_read_1_address", 4),
+    ("prover_read_1_value", 4),
+    ("prover_read_1_last_step", 8),
+    ("prover_read_2_address", 4),
+    ("prover_read_2_value", 4),
+    ("prover_read_2_last_step", 8),
+    ("prover_read_pc_address", 4),
+    ("prover_read_pc_micro", 1),
+    ("prover_read_pc_opcode", 4),
+    ("prover_step_number", 8),
+    ("prover_witness", 4),
 ];
 
 pub const ENTRY_POINT_CHALLENGE: [(&str, usize); 3] = [
-    ("provided_pc", 4),
-    ("provided_micro", 1),
-    ("provided_step", 8),
+    ("prover_write_pc", 4),
+    ("prover_write_micro", 1),
+    ("prover_step_number", 8),
 ];
 pub const PROGRAM_COUNTER_CHALLENGE: [(&str, usize); 8] = [
-    ("prev_prev_hash", 20),
-    ("prev_write_add", 4),
-    ("prev_write_data", 4),
-    ("prev_write_pc", 4),
-    ("prev_write_micro", 1),
-    ("prover_read_pc", 4),
-    ("prover_read_micro", 1),
-    ("prover_prev_hash", 20),
+    ("verifier_prev_prev_hash", 20), //TODO: These could be unsinged
+    ("verifier_prev_write_add", 4),
+    ("verifier_prev_write_data", 4),
+    ("verifier_prev_write_pc", 4),
+    ("verifier_prev_write_micro", 1),
+    ("prover_read_pc_address", 4),
+    ("prover_read_pc_micro", 1),
+    ("verifier_prev_hash", 20), //TODO: Fix, this hash is from prover translation keys
 ];
 pub const HALT_CHALLENGE: [(&str, usize); 5] = [
-    ("final_step", 8),
-    ("trace_step", 8),
-    ("read_value_1", 4),
-    ("read_value_2", 4),
-    ("opcode", 4),
+    ("prover_last_step", 8),
+    ("prover_step_number", 8),
+    ("prover_read_1_value", 4),
+    ("prover_read_2_value", 4),
+    ("prover_read_pc_opcode", 4),
 ];
 pub const TRACE_HASH_CHALLENGE: [(&str, usize); 6] = [
-    ("prev_hash", 20),
-    ("write_add", 4),
-    ("write_data", 4),
-    ("write_pc", 4),
-    ("write_micro", 1),
-    ("hash", 20),
+    ("verifier_prev_hash", 20), //TODO: this should be from prover translation keys
+    ("prover_write_address", 4),
+    ("prover_write_value", 4),
+    ("prover_write_pc", 4),
+    ("prover_write_micro", 1),
+    ("prover_last_hash", 20),
 ];
 pub const TRACE_HASH_ZERO_CHALLENGE: [(&str, usize); 5] = [
-    ("write_add", 4),
-    ("write_data", 4),
-    ("write_pc", 4),
-    ("write_micro", 1),
-    ("hash", 20),
+    ("prover_write_address", 4),
+    ("prover_write_value", 4),
+    ("prover_write_pc", 4),
+    ("prover_write_micro", 1),
+    ("prover_last_hash", 20),
 ];
 
 pub const INPUT_CHALLENGE: [(&str, usize); 7] = [
-    ("prover_input", 4),
-    ("prover_read_add_1", 4),
-    ("prover_read_value_1", 4),
-    ("prover_last_step_1", 8),
-    ("prover_read_add_2", 4),
-    ("prover_read_value_2", 4),
-    ("prover_last_step_2", 8),
+    ("prover_program_input", 4),
+    ("prover_read_1_address", 4),
+    ("prover_read_1_value", 4),
+    ("prover_read_1_last_step", 8),
+    ("prover_read_2_address", 4),
+    ("prover_read_2_value", 4),
+    ("prover_read_2_last_step", 8),
 ];
 
-pub const OPCODE_CHALLENGE: [(&str, usize); 2] = [("prover_pc", 4), ("prover_opcode", 4)];
+pub const OPCODE_CHALLENGE: [(&str, usize); 2] =
+    [("prover_read_pc_address", 4), ("prover_read_pc_opcode", 4)];
 
 pub const ADDRESSES_SECTIONS_CHALLENGE: [(&str, usize); 5] = [
-    ("read_1_address", 4),
-    ("read_2_address", 4),
-    ("write_address", 4),
-    ("memory_witness", 1),
-    ("pc_address", 4),
+    ("prover_read_1_address", 4),
+    ("prover_read_2_address", 4),
+    ("prover_write_address", 4),
+    ("prover_mem_witness", 1),
+    ("prover_read_pc_address", 4),
 ];
 
 pub const ROM_CHALLENGE: [(&str, usize); 6] = [
-    ("prover_read_add_1", 4),
-    ("prover_read_value_1", 4),
-    ("prover_last_step_1", 8),
-    ("prover_read_add_2", 4),
-    ("prover_read_value_2", 4),
-    ("prover_last_step_2", 8),
+    ("prover_read_1_address", 4),
+    ("prover_read_1_value", 4),
+    ("prover_read_1_last_step", 8),
+    ("prover_read_2_address", 4),
+    ("prover_read_2_value", 4),
+    ("prover_read_2_last_step", 8),
 ];
 
 pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 9] = [
@@ -223,7 +224,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             if self.role() == ParticipantRole::Prover {
                 for i in 0..words_needed {
                     let key = key_chain.derive_winternitz_hash160(4)?;
-                    keys.push((format!("program_input_{}", i), key.into()));
+                    keys.push((format!("prover_program_input_{}", i), key.into()));
                 }
             }
             program_context.globals.set_var(
@@ -235,44 +236,26 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         if self.role() == ParticipantRole::Prover {
             let last_step = key_chain.derive_winternitz_hash160(8)?;
-            keys.push(("last_step".to_string(), last_step.into()));
+            keys.push(("prover_last_step".to_string(), last_step.into()));
 
             let last_hash = key_chain.derive_winternitz_hash160(20)?;
-            keys.push(("last_hash".to_string(), last_hash.into()));
+            keys.push(("prover_last_hash".to_string(), last_hash.into()));
 
             for (name, size) in TRACE_VARS {
                 let key = key_chain.derive_winternitz_hash160(size)?;
                 keys.push((name.to_string(), key.into()));
             }
-        } else {
-            for (challenge_name, challenge) in CHALLENGES.iter() {
-                // Determine how many iterations for the challenge
-                let iterations = match *challenge_name {
-                    "opcode" => program_def.load_program()?.get_chunk_count(CODE_CHUNK_SIZE),
-                    "input" => program_context
-                        .globals
-                        .get_var(&self.ctx.id, "input_words")?
-                        .unwrap()
-                        .number()?,
-                    "rom" => program_def
-                        .load_program()?
-                        .find_section_by_name(".rodata")
-                        .unwrap()
-                        .data
-                        .len() as u32,
-                    _ => 1,
-                };
+        }
 
-                for i in 0..iterations {
-                    for (name, size) in challenge.iter() {
-                        let key = key_chain.derive_winternitz_hash160(*size)?;
-                        let formatted_name = if iterations == 1 {
-                            format!("{}_{}", challenge_name, name)
-                        } else {
-                            format!("{}_{}_{}", challenge_name, name, i)
-                        };
-                        keys.push((formatted_name, key.into()));
+        if self.role() == ParticipantRole::Verifier {
+            for (_challenge_name, challenge) in CHALLENGES.iter() {
+                for (name, size) in challenge.iter() {
+                    if name.starts_with("prover") {
+                        continue;
                     }
+                    let key = key_chain.derive_winternitz_hash160(*size)?;
+                    info!("getting winternitz key for: {}", name);
+                    keys.push((name.to_string(), key.into()));
                 }
             }
         }
@@ -390,7 +373,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 vout.unwrap(),
                 &name,
                 program_context,
-                &participant_keys[0],
+                &participant_keys,
                 &tx_status.tx,
                 None,
             )?;
@@ -402,7 +385,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 vout.unwrap(),
                 &name,
                 program_context,
-                &participant_keys[0],
+                &participant_keys,
                 &tx_status.tx,
                 None,
             )?;
@@ -425,7 +408,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             for i in 0..words {
                 let input = program_context
                     .witness
-                    .get_witness(&self.ctx.id, &format!("program_input_{}", i))?
+                    .get_witness(&self.ctx.id, &format!("prover_program_input_{}", i))?
                     .unwrap()
                     .winternitz()?
                     .message_bytes();
@@ -434,14 +417,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
             let last_hash = program_context
                 .witness
-                .get_witness(&self.ctx.id, "last_hash")?
+                .get_witness(&self.ctx.id, "prover_last_hash")?
                 .unwrap()
                 .winternitz()?
                 .message_bytes();
 
             let last_step = program_context
                 .witness
-                .get_witness(&self.ctx.id, "last_step")?
+                .get_witness(&self.ctx.id, "prover_last_step")?
                 .unwrap()
                 .winternitz()?
                 .message_bytes();
@@ -483,7 +466,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                         vout.unwrap(),
                         &name,
                         program_context,
-                        &participant_keys[1],
+                        &participant_keys,
                         &tx_status.tx,
                         None,
                     )?;
@@ -561,7 +544,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 vout.unwrap(),
                 &name,
                 program_context,
-                &participant_keys[0],
+                &participant_keys,
                 &tx_status.tx,
                 None,
             )?;
@@ -637,7 +620,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 vout.unwrap(),
                 &name,
                 program_context,
-                &participant_keys[0],
+                &participant_keys,
                 &tx_status.tx,
                 None,
             )?;
@@ -647,19 +630,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             let mut values = std::collections::HashMap::new();
 
             for (name, _) in TRACE_VARS.iter() {
-                if *name == "witness" {
+                if *name == "prover_witness" {
                     continue;
                 }
-
-                let value = program_context
-                    .witness
-                    .get_witness(&self.ctx.id, name)
-                    .unwrap()
-                    .unwrap()
-                    .winternitz()
-                    .unwrap()
-                    .message_bytes();
-                values.insert(*name, value);
+                if let Some(value) = program_context.witness.get_witness(&self.ctx.id, name)? {
+                    values.insert(*name, value.winternitz().unwrap().message_bytes());
+                } else {
+                    return Err(BitVMXError::VariableNotFound(self.ctx.id, name.to_string()));
+                }
             }
             fn to_u8(bytes: &[u8]) -> u8 {
                 u8::from_be_bytes(bytes.try_into().expect("Expected 1 byte for u8"))
@@ -671,31 +649,34 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 u64::from_be_bytes(bytes.try_into().expect("Expected 8 bytes for u64"))
             }
 
-            let step_number = to_u64(&values["step_number"]);
+            let step_number = to_u64(&values["prover_step_number"]);
             let trace_read1 = TraceRead::new(
-                to_u32(&values["read_1_address"]),
-                to_u32(&values["read_1_value"]),
-                to_u64(&values["read_1_last_step"]),
+                to_u32(&values["prover_read_1_address"]),
+                to_u32(&values["prover_read_1_value"]),
+                to_u64(&values["prover_read_1_last_step"]),
             );
             let trace_read2 = TraceRead::new(
-                to_u32(&values["read_2_address"]),
-                to_u32(&values["read_2_value"]),
-                to_u64(&values["read_2_last_step"]),
+                to_u32(&values["prover_read_2_address"]),
+                to_u32(&values["prover_read_2_value"]),
+                to_u64(&values["prover_read_2_last_step"]),
             );
             let program_counter = ProgramCounter::new(
-                to_u32(&values["read_pc_address"]),
-                to_u8(&values["read_pc_micro"]),
+                to_u32(&values["prover_read_pc_address"]),
+                to_u8(&values["prover_read_pc_micro"]),
             );
-            let read_pc = TraceReadPC::new(program_counter, to_u32(&values["read_pc_opcode"]));
+            let read_pc =
+                TraceReadPC::new(program_counter, to_u32(&values["prover_read_pc_opcode"]));
             let trace_write = TraceWrite::new(
-                to_u32(&values["write_address"]),
-                to_u32(&values["write_value"]),
+                to_u32(&values["prover_write_address"]),
+                to_u32(&values["prover_write_value"]),
             );
-            let program_counter =
-                ProgramCounter::new(to_u32(&values["write_pc"]), to_u8(&values["write_micro"]));
+            let program_counter = ProgramCounter::new(
+                to_u32(&values["prover_write_pc"]),
+                to_u8(&values["prover_write_micro"]),
+            );
             let trace_step = TraceStep::new(trace_write, program_counter);
             let witness = None; //TODO: get the witness from the context?
-            let mem_witness = MemoryWitness::from_byte(to_u8(&values["mem_witness"]));
+            let mem_witness = MemoryWitness::from_byte(to_u8(&values["prover_mem_witness"]));
 
             let final_trace = TraceRWStep::new(
                 step_number,
@@ -758,7 +739,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 )?,
                 None,
                 Context::ProgramId(self.ctx.id).to_string()?,
-                Some(tx_status.block_info.as_ref().unwrap().height +timelock_blocks),
+                Some(tx_status.block_info.as_ref().unwrap().height + timelock_blocks),
             )?;
         }
 
@@ -780,7 +761,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 vout.unwrap(),
                 &name,
                 program_context,
-                &participant_keys[1],
+                &participant_keys,
                 &tx_status.tx,
                 None,
             )?;
@@ -797,27 +778,24 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 .ok_or(BitVMXError::ChallengeIdxNotFound(real_idx))?;
 
             let mut values = HashMap::with_capacity(subchallenges.len());
-            for (subname, _) in *subchallenges {
-                let full_name = match sub_idx {
-                    Some(idx) => {
-                        format!("{}_{}_{}", challenge_name, subname, idx)
-                    }
-                    None => {
-                        format!("{}_{}", challenge_name, subname)
-                    }
+            for (var_name, _) in *subchallenges {
+                let var_name = if *var_name == "prover_program_input" {
+                    format!("{}_{}", var_name, sub_idx.unwrap_or(0))
+                } else {
+                    var_name.to_string()
                 };
                 let value = program_context
                     .witness
-                    .get_witness(&self.ctx.id, &full_name)?
+                    .get_witness(&self.ctx.id, &var_name)?
                     .unwrap()
                     .winternitz()?
                     .message_bytes();
-                values.insert(full_name, value);
+                values.insert(var_name, value);
             }
 
             info!(
-                "Prover decoded challenge {} with values: {:?}",
-                challenge_name, values
+                "Prover decoded challenge {} with values: {:?} idx: {:?}",
+                challenge_name, values, sub_idx
             );
             //TODO: continue challenge for some challenges
         }
@@ -907,9 +885,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             .number()?;
 
         let input_vars = (0..words)
-            .map(|i| format!("program_input_{}", i))
+            .map(|i| format!("prover_program_input_{}", i))
             .collect::<Vec<_>>();
-        let input_vars_slice = input_vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
 
         amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
         amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
@@ -930,7 +907,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             START_CH,
             INPUT_1,
             None,
-            Self::winternitz_check(agg_or_prover, sign_mode, &keys[0], &input_vars_slice)?,
+            Self::winternitz_check(agg_or_prover, sign_mode, &keys[0], &input_vars)?,
             input_in_speedup,
             (&prover_speedup_pub, &verifier_speedup_pub),
         )?;
@@ -1018,7 +995,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 agg_or_prover,
                 sign_mode,
                 &keys[0],
-                &vec!["last_step", "last_hash"],
+                &vec!["prover_last_step", "prover_last_hash"],
             )?,
             input_in_speedup,
             (&prover_speedup_pub, &verifier_speedup_pub),
@@ -1132,7 +1109,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             EXECUTE,
             CHALLENGE,
             Some(&claim_prover),
-            self.challenge_scripts(context, agg_or_verifier, sign_mode, &keys[1])?,
+            self.challenge_scripts(context, agg_or_verifier, sign_mode, &keys)?,
             input_in_speedup,
             (&verifier_speedup_pub, &prover_speedup_pub),
         )?;
@@ -1249,7 +1226,7 @@ impl DisputeResolutionProtocol {
                 .unwrap();
             context.globals.set_var(
                 &self.ctx.id,
-                &format!("program_input_{}", i),
+                &format!("prover_program_input_{}", i),
                 VariableTypes::Input(partial_input.to_vec()),
             )?;
         }
@@ -1259,15 +1236,16 @@ impl DisputeResolutionProtocol {
         Ok((tx, Some(sp)))
     }
 
-    fn winternitz_check(
+    fn winternitz_check<T: AsRef<str> + std::fmt::Debug>(
         aggregated: &PublicKey,
         sign_mode: SignMode,
         keys: &ParticipantKeys,
-        var_names: &Vec<&str>,
+        var_names: &Vec<T>,
     ) -> Result<Vec<ProtocolScript>, BitVMXError> {
+        info!("Winternitz check for variables: {:?}", &var_names);
         let names_and_keys = var_names
             .iter()
-            .map(|v| (*v, keys.get_winternitz(v).unwrap()))
+            .map(|v| (v, keys.get_winternitz(v.as_ref()).unwrap()))
             .collect();
 
         let winternitz_check =
@@ -1308,15 +1286,15 @@ impl DisputeResolutionProtocol {
         for (name, size) in TRACE_VARS.iter().take(TRACE_VARS.len() - 1) {
             stackvars.insert(*name, stack.define((size * 2) as u32, name));
         }
-        let step_n = stack.move_var(stackvars["step_number"]);
+        let step_n = stack.move_var(stackvars["prover_step_number"]);
         stack.drop(step_n);
-        let stripped = stack.move_var_sub_n(stackvars["write_micro"], 0);
+        let stripped = stack.move_var_sub_n(stackvars["prover_write_micro"], 0);
         stack.drop(stripped);
-        let stripped = stack.move_var_sub_n(stackvars["read_pc_micro"], 0);
+        let stripped = stack.move_var_sub_n(stackvars["prover_read_pc_micro"], 0);
         stack.drop(stripped);
-        let last_step_1 = stack.move_var(stackvars["read_1_last_step"]);
+        let last_step_1 = stack.move_var(stackvars["prover_read_1_last_step"]);
         stack.drop(last_step_1);
-        let last_step_2 = stack.move_var(stackvars["read_2_last_step"]);
+        let last_step_2 = stack.move_var(stackvars["prover_read_2_last_step"]);
         stack.drop(last_step_2);
         let strip_script = stack.get_script();
 
@@ -1353,7 +1331,7 @@ impl DisputeResolutionProtocol {
         context: &ProgramContext,
         aggregated: &PublicKey,
         sign_mode: SignMode,
-        keys: &ParticipantKeys,
+        keys: &Vec<ParticipantKeys>,
     ) -> Result<Vec<ProtocolScript>, BitVMXError> {
         let (program_definitions, _) = self.get_program_definition(context)?;
         let mut program = program_definitions.load_program()?;
@@ -1377,21 +1355,23 @@ impl DisputeResolutionProtocol {
             ),
         ]);
 
-        for (challenge_name, subnames) in CHALLENGES.iter() {
+        for (challenge_name, var_names) in CHALLENGES.iter() {
             let iterations = *iteration_counts.get(challenge_name).unwrap_or(&1);
             let mut groups: Vec<Vec<(String, &WinternitzPublicKey)>> =
                 Vec::with_capacity(iterations as usize);
 
             for i in 0..iterations {
-                let group = subnames
+                let group = var_names
                     .iter()
-                    .map(|(subname, _)| {
-                        let var_name = if iterations == 1 {
-                            format!("{}_{}", challenge_name, subname)
+                    .map(|(var_name, _)| {
+                        let idx = if var_name.starts_with("prover") { 0 } else { 1 };
+                        let var_name = if *var_name == "prover_program_input" {
+                            format!("{}_{}", var_name, i)
                         } else {
-                            format!("{}_{}_{}", challenge_name, subname, i)
+                            var_name.to_string()
                         };
-                        let key = keys.get_winternitz(&var_name).unwrap();
+                        info!("getting winternitz key for: {}, idx: {}", var_name, idx);
+                        let key = keys[idx].get_winternitz(&var_name).unwrap();
                         (var_name, key)
                     })
                     .collect::<Vec<_>>();
@@ -1442,7 +1422,7 @@ impl DisputeResolutionProtocol {
                         let winternitz_check = scripts::verify_winternitz_signatures_aux(
                             aggregated,
                             &names_and_keys[challenge_name][i as usize],
-                            SignMode::Aggregate,
+                            sign_mode,
                             true,
                             Some(scripts),
                         )?;
@@ -1463,7 +1443,7 @@ impl DisputeResolutionProtocol {
                         let winternitz_check = scripts::verify_winternitz_signatures_aux(
                             aggregated,
                             &names_and_keys[challenge_name][i as usize],
-                            SignMode::Aggregate,
+                            sign_mode,
                             true,
                             Some(scripts),
                         )?;
@@ -1503,7 +1483,7 @@ impl DisputeResolutionProtocol {
                     let winternitz_check = scripts::verify_winternitz_signatures_aux(
                         aggregated,
                         &names_and_keys[challenge_name][0],
-                        SignMode::Aggregate,
+                        sign_mode,
                         true,
                         Some(scripts),
                     )?;
@@ -1646,9 +1626,9 @@ impl DisputeResolutionProtocol {
                 info!("Last hash: {:?}", last_hash);
                 info!("halt: {:?}", halt);
                 //TODO: chef if it's halt 0 before commiting the transaction
-                self.set_input_u64(context, "last_step", *last_step)?;
+                self.set_input_u64(context, "prover_last_step", *last_step)?;
 
-                self.set_input_hex(context, "last_hash", last_hash)?;
+                self.set_input_hex(context, "prover_last_hash", last_hash)?;
 
                 let (tx, sp) = self.get_tx_with_speedup_data(context, COMMITMENT, 0, 0, true)?;
                 context.bitcoin_coordinator.dispatch(
@@ -1732,44 +1712,60 @@ impl DisputeResolutionProtocol {
 
                 self.set_input_u32(
                     context,
-                    "write_address",
+                    "prover_write_address",
                     final_trace.trace_step.get_write().address,
                 )?;
                 self.set_input_u32(
                     context,
-                    "write_value",
+                    "prover_write_value",
                     final_trace.trace_step.get_write().value,
                 )?;
                 self.set_input_u32(
                     context,
-                    "write_pc",
+                    "prover_write_pc",
                     final_trace.trace_step.get_pc().get_address(),
                 )?;
                 self.set_input_u8(
                     context,
-                    "write_micro",
+                    "prover_write_micro",
                     final_trace.trace_step.get_pc().get_micro(),
                 )?;
 
-                self.set_input_u8(context, "mem_witness", final_trace.mem_witness.byte())?;
+                self.set_input_u8(
+                    context,
+                    "prover_mem_witness",
+                    final_trace.mem_witness.byte(),
+                )?;
 
-                self.set_input_u32(context, "read_1_address", final_trace.read_1.address)?;
-                self.set_input_u32(context, "read_1_value", final_trace.read_1.value)?;
-                self.set_input_u64(context, "read_1_last_step", final_trace.read_1.last_step)?;
-                self.set_input_u32(context, "read_2_address", final_trace.read_2.address)?;
-                self.set_input_u32(context, "read_2_value", final_trace.read_2.value)?;
-                self.set_input_u64(context, "read_2_last_step", final_trace.read_2.last_step)?;
+                self.set_input_u32(context, "prover_read_1_address", final_trace.read_1.address)?;
+                self.set_input_u32(context, "prover_read_1_value", final_trace.read_1.value)?;
+                self.set_input_u64(
+                    context,
+                    "prover_read_1_last_step",
+                    final_trace.read_1.last_step,
+                )?;
+                self.set_input_u32(context, "prover_read_2_address", final_trace.read_2.address)?;
+                self.set_input_u32(context, "prover_read_2_value", final_trace.read_2.value)?;
+                self.set_input_u64(
+                    context,
+                    "prover_read_2_last_step",
+                    final_trace.read_2.last_step,
+                )?;
 
                 self.set_input_u32(
                     context,
-                    "read_pc_address",
+                    "prover_read_pc_address",
                     final_trace.read_pc.pc.get_address(),
                 )?;
-                self.set_input_u8(context, "read_pc_micro", final_trace.read_pc.pc.get_micro())?;
-                self.set_input_u32(context, "read_pc_opcode", final_trace.read_pc.opcode)?;
-                self.set_input_u64(context, "step_number", final_trace.step_number)?;
+                self.set_input_u8(
+                    context,
+                    "prover_read_pc_micro",
+                    final_trace.read_pc.pc.get_micro(),
+                )?;
+                self.set_input_u32(context, "prover_read_pc_opcode", final_trace.read_pc.opcode)?;
+                self.set_input_u64(context, "prover_step_number", final_trace.step_number)?;
                 if let Some(witness) = final_trace.witness {
-                    self.set_input_u32(context, "witness", witness)?;
+                    self.set_input_u32(context, "prover_witness", witness)?;
                 }
                 let instruction = get_key_from_opcode(
                     final_trace.read_pc.opcode,
@@ -1900,13 +1896,13 @@ impl DisputeResolutionProtocol {
 
                     ChallengeType::TraceHash(
                         prover_prev_hash,
-                        prover_trace_step,
-                        prover_step_hash,
+                        _prover_trace_step,
+                        _prover_step_hash,
                     ) => {
                         name = "trace_hash";
                         info!("Verifier chose {name} challenge");
 
-                        self.set_input_hex(context, &format!("{name}_hash"), &prover_step_hash)?;
+                        /*self.set_input_hex(context, &format!("{name}_hash"), &prover_step_hash)?;
                         self.set_input_u8(
                             context,
                             &format!("{name}_write_micro"),
@@ -1926,12 +1922,8 @@ impl DisputeResolutionProtocol {
                             context,
                             &format!("{name}_write_add"),
                             prover_trace_step.get_write().address,
-                        )?;
-                        self.set_input_hex(
-                            context,
-                            &format!("{name}_prev_hash"),
-                            &prover_prev_hash,
-                        )?;
+                        )?;*/
+                        self.set_input_hex(context, "verifier_prev_hash", &prover_prev_hash)?;
                     }
 
                     ChallengeType::TraceHashZero(prover_trace_step, prover_step_hash) => {

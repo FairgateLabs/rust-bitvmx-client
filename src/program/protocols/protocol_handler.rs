@@ -4,7 +4,7 @@ use bitcoin_coordinator::TransactionStatus;
 use bitcoin_scriptexec::scriptint_vec;
 use console::style;
 use enum_dispatch::enum_dispatch;
-use key_manager::winternitz::{message_bytes_length, WinternitzSignature, WinternitzType};
+use key_manager::winternitz::{WinternitzSignature, WinternitzType};
 use protocol_builder::scripts::ProtocolScript;
 use protocol_builder::types::output::SpeedupData;
 use protocol_builder::types::{InputArgs, OutputType};
@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 use crate::errors::BitVMXError;
 use crate::keychain::KeyChain;
+use crate::program::participant::ParticipantKeysExt;
 
 use super::super::participant::ParticipantKeys;
 #[cfg(feature = "cardinal")]
@@ -189,31 +190,48 @@ pub trait ProtocolHandler {
         let mut wots_sigs = vec![];
 
         for k in protocol_script.get_keys().iter().rev() {
-            let message = program_context
+            info!("Getting winternitz signature for key: {}", k.name());
+            if let Some(var) = program_context
                 .globals
                 .get_var(&self.context().id, k.name())?
-                .unwrap()
-                .input()?;
+            {
+                let message = var.input()?;
 
-            info!(
-                "Signigng message: {}",
-                style(hex::encode(message.clone())).yellow()
-            );
-            info!("With key: {:?}", k);
+                info!(
+                    "Signigng message: {}",
+                    style(hex::encode(message.clone())).yellow()
+                );
+                info!("With key: {:?}", k);
 
-            let winternitz_signature = program_context
-                .key_chain
-                .key_manager
-                .sign_winternitz_message(
-                    &message,
-                    WinternitzType::HASH160,
-                    protocol_script
-                        .get_key(k.name())
-                        .unwrap()
-                        .derivation_index(),
-                )?;
+                let winternitz_signature = program_context
+                    .key_chain
+                    .key_manager
+                    .sign_winternitz_message(
+                        &message,
+                        WinternitzType::HASH160,
+                        protocol_script
+                            .get_key(k.name())
+                            .unwrap()
+                            .derivation_index(),
+                    )?;
 
-            wots_sigs.push(winternitz_signature);
+                wots_sigs.push(winternitz_signature);
+            } else {
+                if let Some(witness) = program_context
+                    .witness
+                    .get_witness(&self.context().id, k.name())?
+                {
+                    let sigs = witness.winternitz()?;
+                    info!(
+                        "Winternitz signature found in witness for key: {}",
+                        k.name()
+                    );
+                    wots_sigs.push(sigs);
+                } else {
+                    error!("No winternitz signature found for key: {}", k.name());
+                    return Err(BitVMXError::KeysNotFound(self.context().id));
+                }
+            }
         }
         Ok(wots_sigs)
     }
@@ -272,7 +290,7 @@ pub trait ProtocolHandler {
         name: &str,
         input_index: u32,
         program_context: &ProgramContext,
-        participant_keys: &ParticipantKeys,
+        participant_keys: &Vec<&ParticipantKeys>,
         transaction: &Transaction,
         leaf: Option<u32>,
         protocol: Option<Protocol>,
@@ -310,13 +328,16 @@ pub trait ProtocolHandler {
         let mut sizes = vec![];
         script.get_keys().iter().rev().for_each(|k| {
             names.push(k.name().to_string());
-            sizes.push(message_bytes_length(
-                participant_keys
-                    .get_winternitz(k.name())
-                    .unwrap()
-                    .message_size()
-                    .unwrap(),
-            ));
+            let size = participant_keys.get_key_size(k.name());
+            if size.is_err() {
+                error!(
+                    "Failed to get key size for {}: {}",
+                    k.name(),
+                    size.err().unwrap()
+                );
+                return;
+            }
+            sizes.push(size.unwrap());
         });
         info!("Decoding data for {}", name);
         info!("Names: {:?}", names);
@@ -345,7 +366,7 @@ pub trait ProtocolHandler {
         prev_vout: u32,
         prev_name: &str,
         program_context: &ProgramContext,
-        participant_keys: &ParticipantKeys,
+        participant_keys: &Vec<&ParticipantKeys>,
         transaction: &Transaction,
         leaf: Option<u32>,
     ) -> Result<Vec<String>, BitVMXError> {

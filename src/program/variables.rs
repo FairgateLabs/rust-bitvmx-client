@@ -121,12 +121,12 @@ impl Globals {
     }
 
     pub fn set_var(&self, uuid: &Uuid, key: &str, value: VariableTypes) -> Result<(), BitVMXError> {
-        let key = format!("{}:{}", uuid, key);
+        let key = format!("{}:var:{}", uuid, key);
         Ok(self.storage.set(&key, value, None)?)
     }
 
     pub fn get_var(&self, uuid: &Uuid, key: &str) -> Result<Option<VariableTypes>, BitVMXError> {
-        let key = format!("{}:{}", uuid, key);
+        let key = format!("{}:var:{}", uuid, key);
         let value: Option<VariableTypes> = self.storage.get(&key)?;
         Ok(value)
     }
@@ -168,12 +168,12 @@ impl WitnessVars {
         key: &str,
         value: WitnessTypes,
     ) -> Result<(), BitVMXError> {
-        let key = format!("{}:{}", uuid, key);
+        let key = format!("{}:witness:{}", uuid, key);
         Ok(self.storage.set(&key, value, None)?)
     }
 
     pub fn get_witness(&self, uuid: &Uuid, key: &str) -> Result<Option<WitnessTypes>, BitVMXError> {
-        let key = format!("{}:{}", uuid, key);
+        let key = format!("{}:witness:{}", uuid, key);
         let value = self.storage.get(&key)?;
         Ok(value)
     }
