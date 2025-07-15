@@ -32,6 +32,8 @@ use protocol_builder::{
 use tracing::info;
 use uuid::Uuid;
 
+use crate::common::{FUNDING_ID, WALLET_NAME};
+
 mod common;
 mod fixtures;
 //mod integration;
@@ -41,8 +43,8 @@ mod fixtures;
 pub fn test_slot() -> Result<()> {
     config_trace();
 
-    let fake_drp = true;
-    let fake_instruction = true;
+    let fake_drp = false;
+    let fake_instruction = false;
 
     //const NETWORK: Network = Network::Regtest;
 
@@ -71,6 +73,67 @@ pub fn test_slot() -> Result<()> {
         .map(|msg| msg.comm_info().unwrap())
         .collect::<Vec<_>>();
 
+    //==================================================
+    //       SETUP FUNDING ADDRESS FOR SPEEDUP
+    //==================================================
+    //one time per bitvmx instance, we need to get the public key for the speedup funding utxo
+    let funding_public_id = Uuid::new_v4();
+    let command = IncomingBitVMXApiMessages::GetPubKey(funding_public_id, true).to_string()?;
+    send_all(&channels, &command)?;
+    let msgs = get_all(&channels, &mut instances, false)?;
+    let funding_key_0 = msgs[0].public_key().unwrap().1;
+    let funding_key_1 = msgs[1].public_key().unwrap().1;
+    let funding_key_2 = msgs[2].public_key().unwrap().1;
+
+    let fund_txid_0 = wallet.fund_address(
+        WALLET_NAME,
+        FUNDING_ID,
+        funding_key_0,
+        &vec![10_000_000],
+        500,
+        false,
+        true,
+        None,
+    )?;
+
+    wallet.mine(1)?;
+
+    let fund_txid_1 = wallet.fund_address(
+        WALLET_NAME,
+        FUNDING_ID,
+        funding_key_1,
+        &vec![10_000_000],
+        500,
+        false,
+        true,
+        None,
+    )?;
+    wallet.mine(1)?;
+
+    let fund_txid_2 = wallet.fund_address(
+        WALLET_NAME,
+        FUNDING_ID,
+        funding_key_2,
+        &vec![10_000_000],
+        500,
+        false,
+        true,
+        None,
+    )?;
+    wallet.mine(1)?;
+    let funds_utxo_0 = Utxo::new(fund_txid_0, 0, 10_000_000, &funding_key_0);
+    let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
+    channels[0].send(BITVMX_ID, command)?;
+
+    let funds_utxo_1 = Utxo::new(fund_txid_1, 0, 10_000_000, &funding_key_1);
+    let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_1).to_string()?;
+    channels[1].send(BITVMX_ID, command)?;
+
+    let funds_utxo_2 = Utxo::new(fund_txid_2, 0, 10_000_000, &funding_key_2);
+    let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_2).to_string()?;
+    channels[2].send(BITVMX_ID, command)?;
+
+    //==================================================
     //ask the peers to generate the aggregated public key
     let aggregation_id = Uuid::new_v4();
     let command =
@@ -167,8 +230,7 @@ pub fn test_slot() -> Result<()> {
 
     //=====================================
 
-    let tx_fee = 10_000;
-    let initial_utxo = Utxo::new(txid, 4, 200_000, &pair_aggregated_pub_key);
+    let initial_utxo = Utxo::new(txid, 4, 20_000, &pair_aggregated_pub_key);
     let prover_win_utxo = Utxo::new(txid, 2, 10_500, &pair_aggregated_pub_key);
     let emulator_channels = vec![emulator_1.unwrap(), emulator_2.unwrap()];
 
@@ -177,7 +239,7 @@ pub fn test_slot() -> Result<()> {
         scripts::check_aggregated_signature(&pair_aggregated_pub_key, SignMode::Aggregate),
     ];
     let initial_output_type =
-        external_fund_tx(&aggregated_pub_key, initial_spending_condition, 200_000)?;
+        external_fund_tx(&aggregated_pub_key, initial_spending_condition, 20_000)?;
 
     let prover_win_spending_condition = vec![
         scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate), //convert to timelock
@@ -195,12 +257,12 @@ pub fn test_slot() -> Result<()> {
         initial_output_type,
         prover_win_utxo,
         prover_win_output_type,
-        tx_fee as u32,
+        500,
         fake_drp,
         fake_instruction,
         ForcedChallenges::TraceHash(ParticipantRole::Prover),
     )?;
-    let _msgs = get_all(&channels, &mut instances, false)?;
+    let _msgs = get_all(&sub_channel.clone(), &mut instances, false)?;
     info!("Dispute setup done");
 
     // ==========================
