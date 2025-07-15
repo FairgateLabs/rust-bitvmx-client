@@ -12,7 +12,7 @@ use bitvmx_client::{
     },
     types::{OutgoingBitVMXApiMessages::*, L2_ID},
 };
-
+use std::time::Duration;
 use tracing::{debug, info};
 
 use crate::{
@@ -22,7 +22,7 @@ use crate::{
 
 macro_rules! expect_msg {
     ($self:expr, $pattern:pat => $expr:expr) => {{
-        let msg = $self.bitvmx.wait_message(None, None)?;
+        let msg = $self.bitvmx.wait_message(Some(Duration::from_secs(20)), None)?;
 
         if let $pattern = msg {
             Ok($expr)
