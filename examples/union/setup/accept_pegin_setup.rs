@@ -14,8 +14,7 @@ use bitvmx_client::{
 use tracing::info;
 use uuid::Uuid;
 
-use crate::member::{Keyring, Member};
-
+use crate::participants::member::{Keyring, Member};
 pub struct AcceptPegInSetup {
     pub _covenant_id: Uuid,
     pub _my_member_id: String,

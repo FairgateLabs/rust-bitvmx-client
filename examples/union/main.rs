@@ -10,10 +10,10 @@
 use anyhow::Result;
 use std::env;
 
-use crate::committee::Committee;
+use crate::participants::{committee::Committee, user::User};
 
-mod committee;
-mod member;
+mod macros;
+mod participants;
 mod request_pegin;
 mod setup;
 
@@ -73,8 +73,10 @@ pub fn committee() -> Result<()> {
 pub fn request_pegin() -> Result<()> {
     // A peg-in request is reported by the Union Client.
     let mut committee = Committee::new()?;
-    committee.setup()?;
-    committee.request_pegin()?;
+    let committee_public_key = committee.setup()?;
+
+    let mut user = User::new("user_1")?;
+    user.request_pegin(&committee_public_key)?;
 
     Ok(())
 }
@@ -82,8 +84,11 @@ pub fn request_pegin() -> Result<()> {
 pub fn accept_pegin() -> Result<()> {
     // A peg-in request is reported by the Union Client. The committee accepts the peg-in request.
     let mut committee = Committee::new()?;
-    committee.setup()?;
-    committee.request_pegin()?;
+    let committee_public_key = committee.setup()?;
+
+    let mut user = User::new("user_1")?;
+    user.request_pegin(&committee_public_key)?;
+
     committee.accept_pegin()?;
     Ok(())
 }

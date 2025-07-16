@@ -1,11 +1,7 @@
 use anyhow::Result;
-use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
-use bitvmx_client::{
-    config::Config,
-    program::{participant::ParticipantRole, variables::PartialUtxo},
-};
+use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtxo};
 
-use bitcoin::{hashes::Hash, Amount, Network, PublicKey, ScriptBuf};
+use bitcoin::{hashes::Hash, Amount, PublicKey, ScriptBuf};
 use bitvmx_wallet::wallet::Wallet;
 use protocol_builder::types::OutputType;
 use std::time::Duration;
@@ -16,10 +12,8 @@ use std::{
 use tracing::{info, info_span};
 use uuid::Uuid;
 
-use crate::{
-    bitcoin::{clear_db, FEE, FUNDING_ID, INITIAL_BLOCK_COUNT, WALLET_NAME},
-    member::Member,
-};
+use crate::bitcoin::{init_wallet, FEE, WALLET_NAME};
+use crate::participants::member::Member;
 
 pub struct Committee {
     members: Vec<Member>,
@@ -47,7 +41,7 @@ impl Committee {
         })
     }
 
-    pub fn setup(&mut self) -> Result<()> {
+    pub fn setup(&mut self) -> Result<PublicKey> {
         // gather all operator addresses
         // in a real scenario, operators should get this from the chain
         self.all(|op| op.get_peer_info())?;
@@ -124,14 +118,14 @@ impl Committee {
             })?;
         }
 
-        Ok(())
+        Ok(self.public_key()?)
     }
 
-    pub fn request_pegin(&mut self) -> Result<()> {
-        // Make a member send the user request pegin bitcoin transaction
-        self.members[0].request_pegin()?;
-        Ok(())
-    }
+    // pub fn request_pegin(&mut self) -> Result<()> {
+    //     // Make a member send the user request pegin bitcoin transaction
+    //     self.members[0].request_pegin()?;
+    //     Ok(())
+    // }
 
     pub fn accept_pegin(&mut self) -> Result<()> {
         let accept_pegin_covenant_id = Uuid::new_v4();
@@ -153,6 +147,13 @@ impl Committee {
         })?;
 
         Ok(())
+    }
+
+    pub fn public_key(&self) -> Result<PublicKey> {
+        if self.members.is_empty() {
+            return Err(anyhow::anyhow!("No members in the committee"));
+        }
+        Ok(self.members[0].keyring.take_aggregated_key.unwrap())
     }
 
     fn get_funding_utxos(&self, member: &Member) -> Result<Vec<PartialUtxo>> {
@@ -233,36 +234,4 @@ impl Committee {
                 .collect()
         })
     }
-}
-
-fn init_wallet() -> Result<Wallet> {
-    let config = Config::new(Some("config/op_1.yaml".to_string()))?;
-
-    let wallet_config = match config.bitcoin.network {
-        Network::Regtest => "config/wallet_regtest.yaml",
-        Network::Testnet => "config/wallet_testnet.yaml",
-        _ => panic!("Not supported network {}", config.bitcoin.network),
-    };
-
-    let wallet_config = bitvmx_settings::settings::load_config_file::<
-        bitvmx_wallet::config::WalletConfig,
-    >(Some(wallet_config.to_string()))?;
-    if config.bitcoin.network == Network::Regtest {
-        clear_db(&wallet_config.storage.path);
-        clear_db(&wallet_config.key_storage.path);
-    }
-
-    let wallet = Wallet::new(wallet_config, true)?;
-    wallet.mine(INITIAL_BLOCK_COUNT)?;
-
-    wallet.create_wallet(WALLET_NAME)?;
-    wallet.regtest_fund(WALLET_NAME, FUNDING_ID, 100_000_000)?;
-
-    let _bitcoin_client = BitcoinClient::new(
-        &config.bitcoin.url,
-        &config.bitcoin.username,
-        &config.bitcoin.password,
-    )?;
-
-    Ok(wallet)
 }
