@@ -8,9 +8,9 @@ use bitvmx_client::{
         participant::ParticipantRole,
         protocols::{
             cardinal::{
-                slot::group_id, EOL_TIMELOCK_DURATION, FEE, FUND_UTXO, GID_MAX,
-                OPERATORS_AGGREGATED_PUB, PAIR_0_1_AGGREGATED, PROTOCOL_COST, SPEEDUP_DUST,
-                UNSPENDABLE,
+                slot::{certificate_hash, group_id},
+                EOL_TIMELOCK_DURATION, FEE, FUND_UTXO, GID_MAX, OPERATORS_AGGREGATED_PUB,
+                PAIR_0_1_AGGREGATED, PROTOCOL_COST, SPEEDUP_DUST, UNSPENDABLE,
             },
             dispute::{TIMELOCK_BLOCKS, TIMELOCK_BLOCKS_KEY},
             protocol_handler::external_fund_tx,
@@ -282,11 +282,12 @@ pub fn test_slot() -> Result<()> {
     // one operator decide to put a certificate hash to start the transfer
     let cert_hash = "33".repeat(20);
     let set_cert_hash = VariableTypes::Input(hex::decode(cert_hash).unwrap())
-        .set_msg(program_id, "certificate_hash_0")?;
+        .set_msg(program_id, &certificate_hash(0))?;
     let _ = channels[0].send(BITVMX_ID, set_cert_hash)?;
 
-    let selected_gid = 4;
-    let set_gid = VariableTypes::Input(vec![selected_gid]).set_msg(program_id, &group_id(0))?;
+    let selected_gid: u32 = 4;
+    let set_gid = VariableTypes::Input(selected_gid.to_be_bytes().to_vec())
+        .set_msg(program_id, &group_id(0))?;
     let _ = channels[0].send(BITVMX_ID, set_gid)?;
 
     // send the tx

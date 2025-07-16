@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use bitcoin::{PublicKey, Txid};
 use emulator::executor::utils::FailConfiguration;
-use key_manager::winternitz::WinternitzSignature;
+use key_manager::winternitz::{WinternitzPublicKey, WinternitzSignature};
 use protocol_builder::types::OutputType;
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::{KeyValueStore, Storage};
@@ -23,6 +23,7 @@ pub type PartialUtxo = (Txid, u32, Option<u64>, Option<OutputType>);
 pub enum VariableTypes {
     Secret(Vec<u8>),
     PubKey(PublicKey),
+    WinternitzPubKey(WinternitzPublicKey),
     Utxo(PartialUtxo),
     Number(u32),
     String(String),
@@ -50,6 +51,12 @@ impl VariableTypes {
     pub fn pubkey(&self) -> Result<PublicKey, BitVMXError> {
         match self {
             VariableTypes::PubKey(key) => Ok(key.clone()),
+            _ => Err(BitVMXError::InvalidVariableType(self.err())),
+        }
+    }
+    pub fn wots_pubkey(&self) -> Result<WinternitzPublicKey, BitVMXError> {
+        match self {
+            VariableTypes::WinternitzPubKey(key) => Ok(key.clone()),
             _ => Err(BitVMXError::InvalidVariableType(self.err())),
         }
     }
