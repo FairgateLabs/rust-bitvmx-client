@@ -63,7 +63,6 @@ pub fn setup_bitcoin_node() -> Result<()> {
 
 pub fn committee() -> Result<()> {
     // A new package is created. A committee is selected. Union client requests the setup of the
-    // A new package is created. A committee is selected. Union client requests the setup of the
     // corresponding keys and programs.
     let mut committee = Committee::new()?;
     committee.setup()?;
