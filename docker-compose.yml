@@ -31,3 +31,17 @@ services:
       BITCOIND_RPC_PASSWORD: ${BITCOIND_RPC_PASSWORD}
     depends_on:
       - bitcoind
+  bitvmx-emulator:
+    container_name: bitvmx-emulator
+    build:
+      context: ./
+      dockerfile: docker/Dockerfile.emulator
+      ssh:
+        - default
+    logging: *default-logging
+    restart: unless-stopped
+    entrypoint: ["/app/bitvmx-workspace-root/rust-bitvmx-job-dispatcher/target/release/bitvmx-emulator-dispatcher"]
+    ports:
+      - "7070:7070"
+    depends_on:
+      - bitvmx-client

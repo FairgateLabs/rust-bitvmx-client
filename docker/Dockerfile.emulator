@@ -1,0 +1,24 @@
+FROM rust:latest
+
+RUN apt-get update && \
+    apt-get install -y wget build-essential git pkg-config libssl-dev clang
+
+RUN mkdir -p /root/.ssh && \
+    ssh-keyscan github.com >> /root/.ssh/known_hosts && \
+    chmod 600 /root/.ssh/known_hosts
+
+WORKDIR /app/bitvmx-workspace-root
+
+RUN --mount=type=ssh git clone git@github.com:FairgateLabs/rust-bitvmx-job-dispatcher.git
+RUN --mount=type=ssh git clone git@github.com:FairgateLabs/rust-bitvmx-broker.git
+RUN --mount=type=ssh git clone git@github.com:FairgateLabs/BitVMX-CPU.git
+RUN --mount=type=ssh git clone git@github.com:FairgateLabs/rust-bitvmx-zk-proof.git
+
+WORKDIR /app/bitvmx-workspace-root/rust-bitvmx-job-dispatcher
+RUN --mount=type=ssh git submodule update --init --recursive --remote
+
+RUN cargo build --release
+
+WORKDIR /app/bitvmx-workspace-root/BitVMX-CPU
+RUN cargo build --release
+
