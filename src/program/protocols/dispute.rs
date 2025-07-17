@@ -858,7 +858,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         let output_type = utxo.3.unwrap();
 
         protocol.add_external_transaction(EXTERNAL_START)?;
-        protocol.add_unkwnoun_outputs(EXTERNAL_START, utxo.1)?;
+        protocol.add_unknown_outputs(EXTERNAL_START, utxo.1)?;
         protocol.add_transaction_output(EXTERNAL_START, &output_type)?;
 
         protocol.add_connection(
@@ -950,7 +950,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         //let prover_win_amount = utxo_prover_win_action.2.unwrap();
         let output_type = utxo_prover_win_action.3.unwrap();
         protocol.add_external_transaction(EXTERNAL_ACTION)?;
-        protocol.add_unkwnoun_outputs(EXTERNAL_ACTION, utxo_prover_win_action.1)?;
+        protocol.add_unknown_outputs(EXTERNAL_ACTION, utxo_prover_win_action.1)?;
         protocol.add_transaction_output(EXTERNAL_ACTION, &output_type)?;
         protocol.add_connection(
             "EXTERNAL_ACTION__PROVER_WINS",

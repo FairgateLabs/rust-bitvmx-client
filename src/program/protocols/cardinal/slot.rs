@@ -457,7 +457,7 @@ impl ProtocolHandler for SlotProtocol {
         let output_type = external_fund_tx(&ops_agg_pubkey, spending, amount)?;
 
         protocol.add_external_transaction(FUND_SLOT)?;
-        protocol.add_unkwnoun_outputs(FUND_SLOT, fund_utxo.1)?;
+        protocol.add_unknown_outputs(FUND_SLOT, fund_utxo.1)?;
 
         protocol.add_connection(
             &format!("{}__{}", FUND_SLOT, SETUP_TX),

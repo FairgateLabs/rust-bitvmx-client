@@ -312,7 +312,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
 
         let _ = channels[1].send(
             BITVMX_ID,
-            IncomingBitVMXApiMessages::GetTransactionInofByName(
+            IncomingBitVMXApiMessages::GetTransactionInfoByName(
                 program_id,
                 program::protocols::cardinal::lock::LOCK_TX.to_string(),
             )
