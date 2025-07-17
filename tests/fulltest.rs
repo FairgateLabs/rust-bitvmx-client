@@ -271,7 +271,10 @@ pub fn test_full() -> Result<()> {
         external_fund_tx(&aggregated_pub_key, prover_win_spending_condition, 10_500)?;
 
     info!("Dispute setup");
-    let dispute_id = prepare_dispute(
+
+    let dispute_id = Uuid::new_v4();
+    prepare_dispute(
+        dispute_id,
         participants,
         sub_channel.clone(),
         &pair_aggregated_pub_key,
@@ -283,6 +286,7 @@ pub fn test_full() -> Result<()> {
         fake_drp,
         fake_instruction,
         ForcedChallenges::TraceHash(ParticipantRole::Prover),
+        None,
     )?;
 
     //WAIT SETUP READY
