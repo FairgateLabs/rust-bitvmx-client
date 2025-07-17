@@ -258,7 +258,7 @@ impl ProtocolHandler for TransferProtocol {
         let pb = ProtocolBuilder {};
 
         protocol.add_external_transaction(ASSET_TX)?;
-        protocol.add_unkwnoun_outputs(ASSET_TX, locked_asset_utxo.1)?;
+        protocol.add_unknown_outputs(ASSET_TX, locked_asset_utxo.1)?;
         protocol.add_transaction_output(ASSET_TX, locked_asset_utxo.3.as_ref().unwrap())?;
 
         for op in 0..operator_count {
@@ -266,7 +266,7 @@ impl ProtocolHandler for TransferProtocol {
 
             let operator_won_tx_name_str = operator_won_tx_name(op);
             protocol.add_external_transaction(&operator_won_tx_name_str)?;
-            protocol.add_unkwnoun_outputs(&operator_won_tx_name_str, operator_won_tx.1)?;
+            protocol.add_unknown_outputs(&operator_won_tx_name_str, operator_won_tx.1)?;
             protocol.add_transaction_output(
                 &operator_won_tx_name_str,
                 operator_won_tx.3.as_ref().unwrap(),
@@ -277,7 +277,7 @@ impl ProtocolHandler for TransferProtocol {
 
                 let gid_tx_name = gid_tx(op, gid + 1);
                 protocol.add_external_transaction(&gid_tx_name)?;
-                protocol.add_unkwnoun_outputs(&gid_tx_name, gidtx.1)?;
+                protocol.add_unknown_outputs(&gid_tx_name, gidtx.1)?;
 
                 let txname = too_tx(op, gid + 1);
 

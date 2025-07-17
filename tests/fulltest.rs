@@ -229,7 +229,7 @@ pub fn test_full() -> Result<()> {
     // this should be done for all operators, but for now just setup one dispute
     let _ = channels[0].send(
         BITVMX_ID,
-        IncomingBitVMXApiMessages::GetTransactionInofByName(
+        IncomingBitVMXApiMessages::GetTransactionInfoByName(
             slot_program_id,
             format!(
                 "unsigned_{}",
@@ -399,7 +399,7 @@ pub fn test_full() -> Result<()> {
 
     let _ = channels[1].send(
         BITVMX_ID,
-        IncomingBitVMXApiMessages::GetTransactionInofByName(
+        IncomingBitVMXApiMessages::GetTransactionInfoByName(
             lock_program_id,
             program::protocols::cardinal::lock::LOCK_TX.to_string(),
         )

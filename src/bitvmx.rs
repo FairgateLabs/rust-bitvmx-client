@@ -982,7 +982,7 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::GetTransaction(id, txid) => {
                 BitVMXApi::get_transaction(self, from, id, txid)?
             }
-            IncomingBitVMXApiMessages::GetTransactionInofByName(id, name) => {
+            IncomingBitVMXApiMessages::GetTransactionInfoByName(id, name) => {
                 let tx = self
                     .load_program(&id)?
                     .get_transaction_by_name(&self.program_context, &name)?;
