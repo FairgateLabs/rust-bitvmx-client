@@ -52,15 +52,16 @@ impl Collaboration {
         }
     }
 
-    pub fn setup_aggregated_signature(
+    pub fn setup_aggregated_key(
         id: &Uuid,
         peers: Vec<P2PAddress>,
+        public_keys: Option<Vec<PublicKey>>,
         leader: P2PAddress,
         program_context: &mut ProgramContext,
         request_from: u32,
     ) -> Result<Self, BitVMXError> {
         let im_leader = program_context.comms.get_peer_id() == leader.peer_id;
-        let my_key = program_context.key_chain.derive_keypair()?;
+        let my_key = Self::get_or_create_my_key(program_context, peers.clone(), public_keys)?;
         let keys = vec![(
             program_context.comms.get_peer_id(),
             ParticipantKeys::new(vec![(id.to_string(), my_key.clone().into())], vec![]),
@@ -207,5 +208,30 @@ impl Collaboration {
             }
         }
         Ok(())
+    }
+
+    fn get_or_create_my_key(
+        program_context: &mut ProgramContext,
+        peers: Vec<P2PAddress>,
+        public_keys: Option<Vec<PublicKey>>,
+    ) -> Result<PublicKey, BitVMXError> {
+        let my_key = if public_keys.is_some() {
+            // find my position in the peers list
+            let my_peer_id = program_context.comms.get_peer_id();
+            let my_position = peers
+                .iter()
+                .position(|p| p.peer_id == my_peer_id)
+                .ok_or(BitVMXError::InvalidParticipant(my_peer_id.to_string()))?;
+
+            public_keys
+                .unwrap()
+                .get(my_position)
+                .cloned()
+                .ok_or(BitVMXError::InvalidParticipant(my_peer_id.to_string()))?
+        } else {
+            program_context.key_chain.derive_keypair()?
+        };
+
+        Ok(my_key)
     }
 }

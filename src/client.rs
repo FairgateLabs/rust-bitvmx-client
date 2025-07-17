@@ -7,7 +7,7 @@ use crate::{
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
 use anyhow::Result;
-use bitcoin::{Transaction, Txid};
+use bitcoin::{PublicKey, Transaction, Txid};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -57,17 +57,23 @@ impl BitVMXClient {
         &self,
         id: Uuid,
         participants: Vec<P2PAddress>,
+        participants_keys: Option<Vec<PublicKey>>,
         leader_idx: u16,
     ) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::SetupKey(
             id,
             participants,
+            participants_keys,
             leader_idx,
         ))
     }
 
     pub fn get_aggregated_pubkey(&self, id: Uuid) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::GetAggregatedPubkey(id))
+    }
+
+    pub fn get_pubkey(&self, id: Uuid, new: bool) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetPubKey(id, new))
     }
 
     pub fn get_comm_info(&self) -> Result<()> {
@@ -102,6 +108,14 @@ impl BitVMXClient {
 
     pub fn subscribe_utxo(&self) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::SubscribeUTXO())
+    }
+
+    pub fn subscribe_to_rsk_pegin(&self) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SubscribeToRskPegin())
+    }
+
+    pub fn get_spv_proof(&self, txid: Txid) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetSPVProof(txid))
     }
 
     pub fn set_var(&self, program_id: Uuid, key: &str, value: VariableTypes) -> Result<()> {

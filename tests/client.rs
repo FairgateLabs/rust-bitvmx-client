@@ -14,6 +14,7 @@ use bitcoin::{
     Address,
     Network::{self, Regtest},
     PublicKey,
+    Transaction,
 };
 mod common;
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
@@ -129,12 +130,14 @@ impl ClientTest {
         self.prover_client.setup_key(
             self.collaboration_id,
             vec![self.prover.address.clone(), self.verifier.address.clone()],
+            None,
             0,
         )?;
 
         self.verifier_client.setup_key(
             self.collaboration_id,
             vec![self.prover.address.clone(), self.verifier.address.clone()],
+            None,
             0,
         )?;
 
@@ -414,6 +417,50 @@ impl ClientTest {
         Ok(())
     }
 
+    fn test_rsk_request_pegin_transaction(&mut self) -> Result<()> {
+        // Enable RSK pegin monitoring using the public API
+        self.prover_client.subscribe_to_rsk_pegin()?;
+        self.advance(1);
+
+        // Create a proper RSK pegin transaction
+        let request_pegin_tx = self.create_rsk_request_pegin_transaction()?;
+        let request_pegin_txid = request_pegin_tx.compute_txid();
+
+        // Mine blocks to include the transaction
+        self.bitcoin_client
+            .mine_blocks_to_address(1, &self.miner_address)?;
+
+        // Advance BitVMX to process the transaction
+        self.advance(5);
+
+        // Wait for the PeginTransactionFound message
+        let response = self.prover_client.wait_message(None, None).unwrap();
+        match response {
+            OutgoingBitVMXApiMessages::PeginTransactionFound(found_txid, tx_status) => {
+                assert_eq!(found_txid, request_pegin_txid);
+                assert_eq!(tx_status.tx_id, request_pegin_txid);
+                assert!(tx_status.confirmations > 0);
+                info!("RSK pegin transaction test completed successfully");
+                info!("Transaction ID: {}", request_pegin_txid);
+            }
+            _ => anyhow::bail!("Expected PeginTransactionFound response, got {:?}", response),
+        }
+
+        Ok(())
+    }
+
+
+    fn create_rsk_request_pegin_transaction(&mut self) -> Result<Transaction> {
+        // We'll create a transaction that will be detected as RSK pegin by the transaction monitor.
+        let aggregated_pubkey = self.get_aggregated_pubkey()?;
+        let txid = fixtures::create_rsk_request_pegin_transaction(aggregated_pubkey, Network::Regtest, &self.bitcoin_client)?;
+
+        // Get the transaction and verify it was created
+        let tx = self.bitcoin_client.get_transaction(&txid)?.unwrap();
+        
+        Ok(tx)
+    }
+
     // fn dispatch_transaction(&mut self) -> Result<()> {
     //     info!("Dispatching transaction: {:?}", self.fixtures.lockreq_tx.clone().compute_txid());
     //     let request_id = Uuid::new_v4();
@@ -599,5 +646,10 @@ pub fn test_client() -> Result<()> {
     // test.dispatch_transaction()?;
     // test.get_transaction()?;
 
+    // Test RSK pegin transaction processing
+    test.test_rsk_request_pegin_transaction()?;
+
     Ok(())
 }
+
+

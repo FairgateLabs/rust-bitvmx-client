@@ -4,6 +4,7 @@ use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::types::output::SpeedupData;
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use crate::{
     errors::BitVMXError,
@@ -30,14 +31,14 @@ impl ProtocolHandler for PairwisePenalizationProtocol {
 
     fn get_pregenerated_aggregated_keys(
         &self,
-        context: &ProgramContext,
+        _context: &ProgramContext,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
         todo!()
     }
 
     fn generate_keys(
         &self,
-        program_context: &mut ProgramContext,
+        _program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
         todo!()
     }
@@ -53,22 +54,31 @@ impl ProtocolHandler for PairwisePenalizationProtocol {
 
     fn get_transaction_by_name(
         &self,
-        name: &str,
-        context: &ProgramContext,
+        _name: &str,
+        _context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         todo!()
     }
 
     fn notify_news(
         &self,
-        tx_id: Txid,
-        vout: Option<u32>,
-        tx_status: TransactionStatus,
-        context: String,
-        program_context: &ProgramContext,
-        participant_keys: Vec<&ParticipantKeys>,
+        _tx_id: Txid,
+        _vout: Option<u32>,
+        _tx_status: TransactionStatus,
+        _context: String,
+        _program_context: &ProgramContext,
+        _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         todo!()
+    }
+
+    fn setup_complete(&self, _program_context: &ProgramContext) -> Result<(), BitVMXError> {
+        // This is called after the protocol is built and ready to be used
+        info!(
+            id = self.ctx.my_idx,
+            "PairwisePenalizationProtocol setup complete for program {}", self.ctx.id
+        );
+        Ok(())
     }
 }
 

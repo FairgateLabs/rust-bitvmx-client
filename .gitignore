@@ -21,3 +21,6 @@ Cargo.lock
 #.idea/
 /runs
 /zkp-jobs
+logs
+.DS_Store
+
