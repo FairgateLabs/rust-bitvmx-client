@@ -176,6 +176,7 @@ impl WitnessVars {
         value: WitnessTypes,
     ) -> Result<(), BitVMXError> {
         let key = format!("{}:witness:{}", uuid, key);
+        tracing::info!("Setting witness for {}: {} value: {:?} ", uuid, key, value);
         Ok(self.storage.set(&key, value, None)?)
     }
 

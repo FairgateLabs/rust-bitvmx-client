@@ -117,7 +117,9 @@ pub fn test_drp() -> Result<()> {
         None,
     )?;
 
-    let prog_id = prepare_dispute(
+    let prog_id = Uuid::new_v4();
+    prepare_dispute(
+        prog_id,
         participants,
         channels.clone(),
         &aggregated_pub_key,
@@ -129,6 +131,7 @@ pub fn test_drp() -> Result<()> {
         false,
         false,
         ForcedChallenges::Execution,
+        None,
     )?;
     let _msgs = get_all(&channels, &mut instances, false)?;
 
