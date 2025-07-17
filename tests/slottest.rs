@@ -146,7 +146,7 @@ pub fn test_slot() -> Result<()> {
     // this should be done for all operators, but for now just setup one dispute
     let _ = channels[0].send(
         BITVMX_ID,
-        IncomingBitVMXApiMessages::GetTransactionInofByName(
+        IncomingBitVMXApiMessages::GetTransactionInfoByName(
             program_id,
             format!(
                 "unsigned_{}",

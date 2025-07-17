@@ -99,7 +99,7 @@ pub enum IncomingBitVMXApiMessages {
     GetWitness(Uuid, String),
     GetCommInfo(),
     GetTransaction(Uuid, Txid),
-    GetTransactionInofByName(Uuid, String),
+    GetTransactionInfoByName(Uuid, String),
     GetHashedMessage(Uuid, String, u32, u32),
     Setup(ProgramId, String, Vec<P2PAddress>, u16),
     SubscribeToTransaction(Uuid, Txid),
