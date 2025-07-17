@@ -17,7 +17,7 @@ use crate::{
         BITVMX_ID, L2_ID,
     },
 };
-use bitcoin::{Transaction, Txid};
+use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_coordinator::{
     coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi},
@@ -605,13 +605,15 @@ impl BitVMXApi for BitVMX {
         from: u32,
         id: Uuid,
         participants: Vec<P2PAddress>,
+        participants_keys: Option<Vec<PublicKey>>,
         leader_idx: u16,
     ) -> Result<(), BitVMXError> {
         info!("Setting up key for program: {:?}", id);
         let leader = participants[leader_idx as usize].clone();
-        let collab = Collaboration::setup_aggregated_signature(
+        let collab = Collaboration::setup_aggregated_key(
             &id,
             participants,
+            participants_keys,
             leader,
             &mut self.program_context,
             from,
@@ -743,6 +745,14 @@ impl BitVMXApi for BitVMX {
     }
 
     fn subscribe_utxo(&mut self) -> Result<(), BitVMXError> {
+        Ok(())
+    }
+
+    fn subscribe_to_rsk_pegin(&mut self) -> Result<(), BitVMXError> {
+        // Enable RSK pegin transaction monitoring
+        self.program_context
+            .bitcoin_coordinator
+            .monitor(TypesToMonitor::RskPeginTransaction)?;
         Ok(())
     }
 
@@ -1000,15 +1010,27 @@ impl BitVMXApi for BitVMX {
                 BitVMXApi::subscribe_to_tx(self, from, uuid, txid)?
             }
             IncomingBitVMXApiMessages::SubscribeUTXO() => BitVMXApi::subscribe_utxo(self)?,
+
+            IncomingBitVMXApiMessages::SubscribeToRskPegin() => {
+                BitVMXApi::subscribe_to_rsk_pegin(self)?
+            }
+
+            IncomingBitVMXApiMessages::GetSPVProof(txid) => {
+                BitVMXApi::get_spv_proof(self, from, txid)?
+            }
+
             IncomingBitVMXApiMessages::DispatchTransactionName(id, tx) => {
                 BitVMXApi::dispatch_transaction_name(self, id, &tx)?
             }
             IncomingBitVMXApiMessages::DispatchTransaction(id, tx) => {
                 BitVMXApi::dispatch_transaction(self, from, id, tx)?
             }
-            IncomingBitVMXApiMessages::SetupKey(id, participants, leader_idx) => {
-                BitVMXApi::setup_key(self, from, id, participants, leader_idx)?
-            }
+            IncomingBitVMXApiMessages::SetupKey(
+                id,
+                participants,
+                participants_keys,
+                leader_idx,
+            ) => BitVMXApi::setup_key(self, from, id, participants, participants_keys, leader_idx)?,
             IncomingBitVMXApiMessages::GetKeyPair(id) => {
                 let collaboration = self
                     .get_collaboration(&id)?

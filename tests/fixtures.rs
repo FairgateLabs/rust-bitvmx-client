@@ -1,16 +1,11 @@
 #![allow(dead_code)]
 use anyhow::Result;
 use bitcoin::{
-    absolute,
-    key::{rand::rngs::OsRng, Parity, Secp256k1},
-    secp256k1::{self, All, Message, PublicKey as SecpPublicKey, SecretKey},
-    sighash::SighashCache,
-    transaction, Amount, Network, OutPoint, PrivateKey as BitcoinPrivKey, PublicKey,
-    PublicKey as BitcoinPubKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness,
+    absolute, hex::FromHex, key::{rand::rngs::OsRng, Parity, Secp256k1}, secp256k1::{self, All, Message, PublicKey as SecpPublicKey, SecretKey}, sighash::SighashCache, transaction, Amount, Network, OutPoint, PrivateKey as BitcoinPrivKey, PublicKey, PublicKey as BitcoinPubKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness, XOnlyPublicKey
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use protocol_builder::scripts::{
-    build_taproot_spend_info, reveal_secret, timelock, ProtocolScript, SignMode,
+    build_taproot_spend_info, reveal_secret, timelock, op_return_script, ProtocolScript, SignMode
 };
 use sha2::{Digest, Sha256};
 use tracing::info;
@@ -44,6 +39,190 @@ pub fn adjust_parity(
     }
 }
 
+
+pub fn emulated_user_keypair(secp: &Secp256k1<All>, bitcoin_client: &BitcoinClient, network: Network) -> Result<(bitcoin::Address, BitcoinPubKey, SecretKey)> {
+    let mut rng = OsRng;
+
+    // emulate the user keypair
+    let user_sk = SecretKey::new(&mut rng);
+    let user_pk = SecpPublicKey::from_secret_key(&secp, &user_sk);
+    let (user_pk, user_sk) = adjust_parity(&secp, user_pk, user_sk);
+    let user_pubkey = BitcoinPubKey {
+        compressed: true,
+        inner: user_pk,
+    };
+    let user_address: bitcoin::Address = bitcoin_client.get_new_address(user_pubkey, network);
+    info!(
+        "User Address({}): {:?}",
+        user_address.address_type().unwrap(),
+        user_address
+    );
+    Ok((user_address, user_pubkey, user_sk))
+}
+
+pub fn address_to_bytes(address: &str) -> Result<[u8; 20]> {
+    let mut address_bytes = [0u8; 20];
+    address_bytes.copy_from_slice(
+        Vec::from_hex(address)
+            .unwrap()
+            .as_slice(),
+    );
+    Ok(address_bytes)
+}
+
+
+pub fn sign_p2wpkh_transaction_single_input(
+    secp: &Secp256k1<All>,
+    network: Network,
+    transaction: &mut Transaction,
+    user_pubkey: &BitcoinPubKey,
+    user_sk: SecretKey,
+    value: u64,
+) -> Result<Transaction> {
+    let user_bitcoin_privkey = BitcoinPrivKey {
+        compressed: true,
+        network: network.into(),
+        inner: user_sk,
+    };
+
+    let user_comp_pubkey =
+        bitcoin::CompressedPublicKey::from_private_key(&secp, &user_bitcoin_privkey).unwrap();
+    let uncompressed_pk = secp256k1::PublicKey::from_slice(&user_comp_pubkey.to_bytes()).unwrap();
+
+    // Sign the transactions inputs
+    let wpkh = user_pubkey.wpubkey_hash().expect("key is compressed");
+    let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
+    let mut sighasher = SighashCache::new( transaction);
+
+    let input_index = 0;
+    let sighash_type = bitcoin::EcdsaSighashType::All;
+    let sighash = sighasher
+        .p2wpkh_signature_hash(
+            input_index,
+            &script_pubkey,
+            Amount::from_sat(value),
+            sighash_type,
+        )
+        .expect("failed to create rsk request pegin input sighash");
+
+    let signature = bitcoin::ecdsa::Signature {
+        signature: secp.sign_ecdsa(&Message::from(sighash), &user_sk),
+        sighash_type: sighash_type,
+    };
+
+    *sighasher.witness_mut(input_index).unwrap() =
+        Witness::p2wpkh(&signature, &uncompressed_pk);
+
+    // Now the transaction is signed
+    let signed_transaction = sighasher.into_transaction().to_owned();
+    Ok(signed_transaction)
+}
+
+// ======= RSK Pegin Functions =======
+
+pub fn request_pegin_op_return_data(
+    packet_number: u64,
+    rootstock_address: [u8; 20],
+    reimbursement_xpk: XOnlyPublicKey,
+) -> Result<Vec<u8>> {
+    let mut user_data = [0u8; 69];
+    user_data.copy_from_slice(
+        [
+            b"RSK_PEGIN".as_slice(),
+            &packet_number.to_be_bytes(),
+            &rootstock_address,
+            &reimbursement_xpk.serialize(),
+        ]
+        .concat()
+        .as_slice(),
+    );
+    Ok(user_data.to_vec())
+}
+
+pub fn create_rsk_request_pegin_transaction(
+    aggregated_key: PublicKey,
+    network: Network,
+    bitcoin_client: &BitcoinClient
+) -> Result<Txid> {
+    let secp = secp256k1::Secp256k1::new();
+    // RSK Pegin constants
+    pub const STREAM_VALUE: u64 = 100_000;
+    pub const KEY_SPEND_FEE: u64 = 335;
+    pub const OP_RETURN_FEE: u64 = 300;
+    pub const SPEED_UP_AMOUNT: u64 = 300;
+    pub const TIMELOCK_BLOCKS: u16 = 1;
+
+    let value = STREAM_VALUE;
+    let fee = KEY_SPEND_FEE;
+    let op_return_fee = OP_RETURN_FEE;
+    let total_amount = value + fee + op_return_fee;
+
+    // Locally created user keypair
+    let (user_address, user_pubkey, user_sk) = emulated_user_keypair(&secp, bitcoin_client, network)?;
+    // Fund the user address with enough to cover the taproot output + fees
+    let (funding_tx, vout) = bitcoin_client
+        .fund_address(&user_address, Amount::from_sat(total_amount))
+        .unwrap();
+
+    // RSK Pegin values
+    let packet_number: u64 = 0;
+    let rootstock_address = address_to_bytes("7ac5496aee77c1ba1f0854206a26dda82a81d6d8")?;
+    let reimbursement_xpk = user_pubkey.into();
+
+    // Create the Request pegin transaction
+    // Inputs
+    let funds_input = TxIn {
+        previous_output: OutPoint::new(funding_tx.compute_txid(), vout),
+        script_sig: ScriptBuf::default(), // For a p2wpkh script_sig is empty.
+        sequence: Sequence::ENABLE_RBF_NO_LOCKTIME, // we want to be able to replace this transaction
+        witness: Witness::default(),                // Filled in after, at signing time.
+    };
+
+    // Outputs
+    // Taproot output
+    let op_data = vec![ rootstock_address.as_slice(), value.to_be_bytes().as_slice()].concat();
+    let script_op_return = op_return_script(op_data)?;
+    let script_timelock = timelock(TIMELOCK_BLOCKS, &user_pubkey, SignMode::Single);
+
+    let taproot_spend_info = build_taproot_spend_info(
+        &secp,
+        &aggregated_key.into(),
+        &[script_timelock, script_op_return],
+    )?;
+
+    let taproot_script_pubkey = ScriptBuf::new_p2tr(
+        &secp,
+        taproot_spend_info.internal_key(),
+        taproot_spend_info.merkle_root(),
+    );
+
+    let taproot_output = TxOut {
+        value: Amount::from_sat(value),
+        script_pubkey: taproot_script_pubkey,
+    };
+
+    // OP_RETURN output
+    let op_return_data = request_pegin_op_return_data(packet_number, rootstock_address, reimbursement_xpk)?;
+    let op_return_output = TxOut {
+        value: Amount::from_sat(0), // OP_RETURN outputs should have 0 value
+        script_pubkey: op_return_script(op_return_data)?.get_script().clone(),
+    };
+
+    let mut request_pegin_transaction  = Transaction {
+        version: transaction::Version::TWO,  // Post BIP-68.
+        lock_time: absolute::LockTime::ZERO, // Ignore the transaction lvl absolute locktime.
+        input: vec![funds_input],
+        output: vec![taproot_output, op_return_output],
+    };
+
+    let signed_transaction = sign_p2wpkh_transaction_single_input(&secp, network, &mut request_pegin_transaction, &user_pubkey, user_sk, total_amount)?;
+    tracing::debug!("Signed RSK request pegin transaction: {:#?}", signed_transaction);
+
+    let signed_transaction_txid = bitcoin_client.send_transaction(&signed_transaction).unwrap();
+    Ok(signed_transaction_txid)
+}
+
+// ======= Cardinal Functions =======
 pub fn build_taptree_for_lockreq_tx_outputs(
     secp: &secp256k1::Secp256k1<secp256k1::All>,
     unspendable_pub_key: SecpPublicKey,
@@ -74,27 +253,13 @@ pub fn create_lockreq_ready(
     bitcoin_client: &BitcoinClient,
 ) -> Result<(Txid, SecpPublicKey, Amount, Amount)> {
     //PublicKey user, txid, 0 :amount-ordinal, 1: amount-fees
-
     let secp = secp256k1::Secp256k1::new();
-    let mut rng = OsRng;
 
     // hardcoded unspendable
     let unspendable = hardcoded_unspendable();
 
     // emulate the user keypair
-    let user_sk = SecretKey::new(&mut rng);
-    let user_pk = SecpPublicKey::from_secret_key(&secp, &user_sk);
-    let (user_pk, user_sk) = adjust_parity(&secp, user_pk, user_sk);
-    let user_pubkey = BitcoinPubKey {
-        compressed: true,
-        inner: user_pk,
-    };
-    let user_address: bitcoin::Address = bitcoin_client.get_new_address(user_pubkey, network);
-    info!(
-        "User Address({}): {:?}",
-        user_address.address_type().unwrap(),
-        user_address
-    );
+    let (user_address, user_pubkey, user_sk) = emulated_user_keypair(&secp, bitcoin_client, network)?;
 
     const ONE_BTC: Amount = Amount::from_sat(10_000_000);
 
@@ -151,7 +316,7 @@ pub fn create_lockreq_ready(
 
     let lockreq_txid = bitcoin_client.send_transaction(&signed_lockreq_tx).unwrap();
 
-    Ok((lockreq_txid, user_pk, funding_amount_ordinal, protocol_fee))
+    Ok((lockreq_txid, user_pubkey.inner, funding_amount_ordinal, protocol_fee))
 }
 
 pub fn create_lockreq_tx_and_sign(

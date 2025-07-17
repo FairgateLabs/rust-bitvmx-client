@@ -775,6 +775,12 @@ impl ProtocolHandler for SlotProtocol {
         self.save_protocol(protocol)?;
         Ok(())
     }
+
+    fn setup_complete(&self, _program_context: &ProgramContext) -> Result<(), BitVMXError> {
+        // This is called after the protocol is built and ready to be used
+        info!("SlotProtocol setup complete for program {}", self.ctx.id);
+        Ok(())
+    }
 }
 
 impl SlotProtocol {
