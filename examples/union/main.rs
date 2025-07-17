@@ -89,7 +89,7 @@ pub fn accept_pegin() -> Result<()> {
     let mut user = User::new("user_1")?;
     user.request_pegin(&committee_public_key)?;
 
-    committee.accept_pegin()?;
+    committee.accept_pegin(committee.committee_id())?;
     Ok(())
 }
 

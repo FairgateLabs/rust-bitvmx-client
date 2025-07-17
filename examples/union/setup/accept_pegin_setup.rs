@@ -6,7 +6,9 @@ use bitvmx_client::{
     client::BitVMXClient,
     program::{
         participant::{P2PAddress, ParticipantRole},
-        protocols::union::types::PegInRequest,
+        protocols::union::types::{
+            PegInRequest, DISPUTE_PROTOCOL_SEED, OPERATOR_TAKE_KEYS, SLOT_INDEX,
+        },
         variables::VariableTypes,
     },
     types::PROGRAM_TYPE_ACCEPT_PEGIN,
@@ -34,6 +36,8 @@ impl AcceptPegInSetup {
         accept_pegin_sighash: &[u8],
         keyring: &Keyring,
         bitvmx: &BitVMXClient,
+        dispute_core_covenant_seed: Uuid,
+        slot_index: u32,
     ) -> Result<AcceptPegInSetup> {
         let addresses = Self::get_addresses(committee);
 
@@ -51,6 +55,11 @@ impl AcceptPegInSetup {
             );
         }
 
+        let mut take_keys = Vec::new();
+        for member in committee {
+            take_keys.push((member.role.clone(), member.keyring.take_pubkey.unwrap()));
+        }
+
         let pegin_request = PegInRequest {
             my_role: my_role.clone(),
             txid: request_pegin_txid,
@@ -65,6 +74,20 @@ impl AcceptPegInSetup {
             &PegInRequest::name(),
             VariableTypes::String(serde_json::to_string(&pegin_request)?),
         )?;
+
+        bitvmx.set_var(
+            covenant_id,
+            OPERATOR_TAKE_KEYS,
+            VariableTypes::String(serde_json::to_string(&take_keys)?),
+        )?;
+
+        bitvmx.set_var(
+            covenant_id,
+            DISPUTE_PROTOCOL_SEED,
+            VariableTypes::Uuid(dispute_core_covenant_seed),
+        )?;
+
+        bitvmx.set_var(covenant_id, SLOT_INDEX, VariableTypes::Number(slot_index))?;
 
         bitvmx.setup(
             covenant_id,
