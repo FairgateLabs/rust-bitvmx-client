@@ -66,32 +66,28 @@ impl KeyChain {
 
     pub fn get_new_ecdsa_index(&self) -> Result<Index, BitVMXError> {
         let key = KeyChainStorageKeys::EcdsaIndex.get_key();
-        let index: Option<Index> = self.store.get(&key).map_err(BitVMXError::from)?;
+        let index: Option<Index> = self.store.get(&key)?;
 
         let next_index = match index {
             Some(current_index) => current_index + 1,
             None => 0,
         };
 
-        self.store
-            .set(&key, next_index, None)
-            .map_err(BitVMXError::from)?;
+        self.store.set(&key, next_index, None)?;
 
         Ok(next_index)
     }
 
     pub fn get_new_winternitz_index(&self) -> Result<Index, BitVMXError> {
         let key = KeyChainStorageKeys::WinternitzIndex.get_key();
-        let index: Option<Index> = self.store.get(&key).map_err(BitVMXError::from)?;
+        let index: Option<Index> = self.store.get(&key)?;
 
         let next_index = match index {
             Some(current_index) => current_index + 1,
             None => 0,
         };
 
-        self.store
-            .set(&key, next_index, None)
-            .map_err(BitVMXError::from)?;
+        self.store.set(&key, next_index, None)?;
 
         Ok(next_index)
     }
@@ -99,9 +95,7 @@ impl KeyChain {
     pub fn derive_keypair(&mut self) -> Result<PublicKey, BitVMXError> {
         let index = self.get_new_ecdsa_index()?;
 
-        self.key_manager
-            .derive_keypair(index)
-            .map_err(BitVMXError::from)
+        Ok(self.key_manager.derive_keypair(index)?)
     }
 
     pub fn derive_winternitz_hash160(
@@ -110,9 +104,9 @@ impl KeyChain {
     ) -> Result<WinternitzPublicKey, BitVMXError> {
         let index = self.get_new_winternitz_index()?;
 
-        self.key_manager
-            .derive_winternitz(message_bytes, WinternitzType::HASH160, index)
-            .map_err(BitVMXError::from)
+        Ok(self
+            .key_manager
+            .derive_winternitz(message_bytes, WinternitzType::HASH160, index)?)
     }
 
     pub fn derive_winternitz_sha256(
@@ -121,9 +115,9 @@ impl KeyChain {
     ) -> Result<WinternitzPublicKey, BitVMXError> {
         let index = self.get_new_winternitz_index()?;
 
-        self.key_manager
-            .derive_winternitz(message_bytes, WinternitzType::SHA256, index)
-            .map_err(BitVMXError::from)
+        Ok(self
+            .key_manager
+            .derive_winternitz(message_bytes, WinternitzType::SHA256, index)?)
     }
 
     pub fn derive_winternitz_sha256_keys(
@@ -180,8 +174,7 @@ impl KeyChain {
         //let mut pubkey_nonce_map = HashMap::new();
         //pubkey_nonce_map.insert(participant_pubkey, nonces);
         self.key_manager
-            .aggregate_nonces(aggregated_pubkey, id, nonces_map)
-            .map_err(BitVMXError::from)?;
+            .aggregate_nonces(aggregated_pubkey, id, nonces_map)?;
 
         Ok(())
     }
@@ -192,9 +185,9 @@ impl KeyChain {
         participant_pubkeys: Vec<PublicKey>,
         my_pubkey: PublicKey,
     ) -> Result<PublicKey, BitVMXError> {
-        self.key_manager
-            .new_musig2_session(participant_pubkeys, my_pubkey)
-            .map_err(BitVMXError::from)
+        Ok(self
+            .key_manager
+            .new_musig2_session(participant_pubkeys, my_pubkey)?)
     }
 
     /*pub fn get_aggregated_pubkey(&self, program_id: uuid::Uuid) -> Result<PublicKey, BitVMXError> {
@@ -232,21 +225,9 @@ impl KeyChain {
         message_id: &str,
         id: &str,
     ) -> Result<bitcoin::secp256k1::schnorr::Signature, BitVMXError> {
-        let signature =
-            self.key_manager
-                .get_aggregated_signature(aggregated_pubkey, id, message_id)?;
-
-        Ok(signature)
-    }
-
-    pub fn get_pub_nonces(
-        &self,
-        aggregated_pubkey: &PublicKey,
-        id: &str,
-    ) -> Result<(), BitVMXError> {
-        self.key_manager.get_my_pub_nonces(aggregated_pubkey, id)?;
-        self.key_manager.get_my_pub_nonces(aggregated_pubkey, id)?;
-        Ok(())
+        Ok(self
+            .key_manager
+            .get_aggregated_signature(aggregated_pubkey, id, message_id)?)
     }
 
     pub fn get_signatures(
