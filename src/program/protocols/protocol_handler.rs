@@ -16,22 +16,28 @@ use storage_backend::storage::Storage;
 use tracing::{error, info};
 use uuid::Uuid;
 
+use super::super::participant::ParticipantKeys;
 use crate::errors::BitVMXError;
 use crate::keychain::KeyChain;
 use crate::program::participant::ParticipantKeysExt;
 
-use super::super::participant::ParticipantKeys;
 #[cfg(feature = "cardinal")]
 use super::cardinal::{lock::LockProtocol, slot::SlotProtocol, transfer::TransferProtocol};
 use super::dispute::DisputeResolutionProtocol;
+
 #[cfg(feature = "union")]
 use crate::program::protocols::union::{
-    dispute_core::DisputeCoreProtocol, multiparty_penalization::MultipartyPenalizationProtocol,
+    accept_pegin::AcceptPegInProtocol, dispute_core::DisputeCoreProtocol,
     pairwise_penalization::PairwisePenalizationProtocol, take::TakeProtocol,
 };
+
 use crate::program::variables::WitnessTypes;
 use crate::program::{variables::VariableTypes, witness};
-use crate::types::*;
+use crate::types::{
+    ProgramContext, PROGRAM_TYPE_ACCEPT_PEGIN, PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_DRP,
+    PROGRAM_TYPE_LOCK, PROGRAM_TYPE_PAIRWISE_PENALIZATION, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TAKE,
+    PROGRAM_TYPE_TRANSFER,
+};
 
 #[enum_dispatch]
 pub trait ProtocolHandler {
@@ -417,6 +423,8 @@ pub trait ProtocolHandler {
             .unwrap()
             .pubkey()
     }
+
+    fn setup_complete(&self, program_context: &ProgramContext) -> Result<(), BitVMXError>;
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -450,13 +458,13 @@ pub enum ProtocolType {
     #[cfg(feature = "cardinal")]
     TransferProtocol,
     #[cfg(feature = "union")]
+    AcceptPegInProtocol,
+    #[cfg(feature = "union")]
     TakeProtocol,
     #[cfg(feature = "union")]
     DisputeCoreProtocol,
     #[cfg(feature = "union")]
     PairwisePenalizationProtocol,
-    #[cfg(feature = "union")]
-    MultipartyPenalizationProtocol,
 }
 
 pub fn new_protocol_type(
@@ -479,21 +487,19 @@ pub fn new_protocol_type(
         #[cfg(feature = "cardinal")]
         PROGRAM_TYPE_TRANSFER => Ok(ProtocolType::TransferProtocol(TransferProtocol::new(ctx))),
         #[cfg(feature = "union")]
-        PROGRAM_TYPE_TAKE => Ok(ProtocolType::TakeProtocol(TakeProtocol::new(ctx))),
-        #[cfg(feature = "union")]
-        PROGRAM_TYPE_DISPUTE_CORE => Ok(ProtocolType::DisputeCoreProtocol(
-            DisputeCoreProtocol::new(ctx),
+        PROGRAM_TYPE_ACCEPT_PEGIN => Ok(ProtocolType::AcceptPegInProtocol(
+            AcceptPegInProtocol::new(ctx),
         )),
+        #[cfg(feature = "union")]
+        PROGRAM_TYPE_TAKE => Ok(ProtocolType::TakeProtocol(TakeProtocol::new(ctx))),
         #[cfg(feature = "union")]
         PROGRAM_TYPE_PAIRWISE_PENALIZATION => Ok(ProtocolType::PairwisePenalizationProtocol(
             PairwisePenalizationProtocol::new(ctx),
         )),
         #[cfg(feature = "union")]
-        PROGRAM_TYPE_MULTIPARTY_PENALIZATION => Ok(ProtocolType::MultipartyPenalizationProtocol(
-            MultipartyPenalizationProtocol::new(ctx),
+        PROGRAM_TYPE_DISPUTE_CORE => Ok(ProtocolType::DisputeCoreProtocol(
+            DisputeCoreProtocol::new(ctx),
         )),
-        #[cfg(feature = "union")]
-        PROGRAM_TYPE_PACKET => todo!(),
         _ => Err(BitVMXError::NotImplemented(name.to_string())),
     }
 }

@@ -1,5 +1,5 @@
 use crate::{errors::BitVMXError, program::participant::P2PAddress};
-use bitcoin::{Transaction, Txid};
+use bitcoin::{PublicKey, Transaction, Txid};
 use uuid::Uuid;
 
 pub trait BitVMXApi {
@@ -10,6 +10,7 @@ pub trait BitVMXApi {
         from: u32,
         id: Uuid,
         participants: Vec<P2PAddress>,
+        participants_keys: Option<Vec<PublicKey>>,
         leader_idx: u16,
     ) -> Result<(), BitVMXError>;
 
@@ -51,6 +52,8 @@ pub trait BitVMXApi {
     fn subscribe_to_tx(&mut self, from: u32, id: Uuid, txid: Txid) -> Result<(), BitVMXError>;
 
     fn subscribe_utxo(&mut self) -> Result<(), BitVMXError>;
+
+    fn subscribe_to_rsk_pegin(&mut self) -> Result<(), BitVMXError>;
 
     fn get_var(&mut self, from: u32, id: Uuid, key: &str) -> Result<(), BitVMXError>;
 

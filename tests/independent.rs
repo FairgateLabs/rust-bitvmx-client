@@ -386,7 +386,7 @@ pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
 
     info!("Waiting for AggregatedPubkey message from all channels");
     let aggregation_id = Uuid::new_v4();
-    let command = IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), 0);
+    let command = IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), None, 0);
     helper.send_all(command)?;
     let msgs = helper.wait_all_msg()?;
     let _aggregated_pub_key = msgs[0].aggregated_pub_key().unwrap();
@@ -434,7 +434,7 @@ pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
     info!("Generate Aggregated from pair");
     let pair_0_1 = vec![addresses[0].clone(), addresses[1].clone()];
     let pair_0_1_agg_id = Uuid::new_v4();
-    let command = IncomingBitVMXApiMessages::SetupKey(pair_0_1_agg_id, pair_0_1.clone(), 0);
+    let command = IncomingBitVMXApiMessages::SetupKey(pair_0_1_agg_id, pair_0_1.clone(), None, 0);
     helper.channels[0].send(BITVMX_ID, command.to_string()?)?;
     helper.channels[1].send(BITVMX_ID, command.to_string()?)?;
     let _msg = helper.wait_msg(0)?;
