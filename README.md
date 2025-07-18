@@ -1,6 +1,12 @@
 # BitVMX Client
 The BitVMX Client provides the core functionality for interacting with BitVMX protocol and the Bitcoin blockchain.
 
+## ⚠️ Disclaimer
+
+This library is currently under development and may not be fully stable.
+It is not production-ready, has not been audited, and future updates may introduce breaking changes without preserving backward compatibility.
+
+
 ## Installation
 Clone the repository and initialize the submodules:
 ```bash
