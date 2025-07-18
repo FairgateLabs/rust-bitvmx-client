@@ -168,7 +168,7 @@ impl Member {
         request_pegin_txid: Txid,
         request_pegin_amount: u64,
         accept_pegin_sighash: &[u8],
-        dispute_core_covenant_seed: Uuid,
+        committee_id: Uuid,
         slot_index: u32,
     ) -> Result<()> {
         info!(id = self.id, "Accepting peg-in");
@@ -182,7 +182,7 @@ impl Member {
             accept_pegin_sighash,
             &self.keyring,
             &self.bitvmx,
-            dispute_core_covenant_seed,
+            committee_id,
             slot_index,
         )?;
 

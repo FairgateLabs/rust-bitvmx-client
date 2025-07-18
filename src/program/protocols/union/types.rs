@@ -71,7 +71,7 @@ pub struct PegInRequest {
     pub addresses: HashMap<PublicKey, P2PAddress>,
     pub members: Vec<MemberData>,
     pub slot_index: u32,
-    pub dispute_core_covenant_seed: uuid::Uuid,
+    pub committee_id: uuid::Uuid,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,7 +1,8 @@
 use anyhow::Result;
+use bitcoin::Txid;
 use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtxo};
 
-use bitcoin::{hashes::Hash, Amount, PublicKey, ScriptBuf};
+use bitcoin::{Amount, PublicKey, ScriptBuf};
 use bitvmx_wallet::wallet::Wallet;
 use protocol_builder::types::OutputType;
 use std::thread::{self};
@@ -85,24 +86,25 @@ impl Committee {
         Ok(self.public_key()?)
     }
 
-    pub fn accept_pegin(&mut self, dispute_core_covenant_seed: Uuid) -> Result<()> {
+    pub fn accept_pegin(
+        &mut self,
+        committee_id: Uuid,
+        request_pegin_txid: Txid,
+        amount: u64,
+        accept_pegin_sighash: Vec<u8>,
+        slot_index: u32,
+    ) -> Result<()> {
         let accept_pegin_covenant_id = Uuid::new_v4();
         let members = self.members.clone();
-
-        // TODO replace with actual peg-in request details
-        let request_pegin_txid = Hash::all_zeros(); // This should be replaced with the actual Txid of the peg-in request
-        let request_pegin_amount = 10000000; // This should be replaced with the actual amount of the peg-in request
-        let accept_pegin_sighash = vec![0; 32]; // This should be replaced with the actual sighash of the accept peg-in tx
-        let slot_index = 0; // This should be replaced with the actual slot index
 
         self.all(|op| {
             op.accept_pegin(
                 accept_pegin_covenant_id,
                 &members,
                 request_pegin_txid,
-                request_pegin_amount,
+                amount,
                 accept_pegin_sighash.as_slice(),
-                dispute_core_covenant_seed,
+                committee_id,
                 slot_index,
             )
         })?;

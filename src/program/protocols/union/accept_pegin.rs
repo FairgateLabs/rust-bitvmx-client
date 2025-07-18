@@ -101,7 +101,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
             &OutputType::taproot(amount, &take_aggregated_key, &[])?,
         )?;
 
-        let mut seed = pegin_request.dispute_core_covenant_seed;
+        let mut seed = pegin_request.committee_id;
         let slot_index = pegin_request.slot_index as usize;
 
         // Operator take transactions

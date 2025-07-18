@@ -34,7 +34,7 @@ impl AcceptPegInSetup {
         accept_pegin_sighash: &[u8],
         keyring: &Keyring,
         bitvmx: &BitVMXClient,
-        dispute_core_covenant_seed: Uuid,
+        committee_id: Uuid,
         slot_index: u32,
     ) -> Result<AcceptPegInSetup> {
         let addresses = Self::get_addresses(committee);
@@ -70,7 +70,7 @@ impl AcceptPegInSetup {
             addresses: comms,
             members: members_data,
             slot_index: slot_index,
-            dispute_core_covenant_seed: dispute_core_covenant_seed,
+            committee_id: committee_id,
         };
 
         bitvmx.set_var(
