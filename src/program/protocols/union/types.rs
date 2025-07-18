@@ -44,11 +44,6 @@ pub const OPERATOR_TAKE_ENABLER: &str = "operator_take_enabler";
 pub const OPERATOR_WON_ENABLER: &str = "operator_won_enabler";
 pub const CHALLENGE_ENABLER: &str = "challenge_enabler";
 
-// Storage names
-pub const OPERATOR_TAKE_KEYS: &str = "operator_take_keys";
-pub const SLOT_INDEX: &str = "slot_index";
-pub const DISPUTE_PROTOCOL_SEED: &str = "dispute_protocol_seed";
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewCommittee {
     pub my_role: ParticipantRole,
@@ -74,6 +69,15 @@ pub struct PegInRequest {
     pub accept_pegin_sighash: Vec<u8>,
     pub take_aggregated_key: PublicKey,
     pub addresses: HashMap<PublicKey, P2PAddress>,
+    pub members: Vec<MemberData>,
+    pub slot_index: u32,
+    pub dispute_core_covenant_seed: uuid::Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemberData {
+    pub role: ParticipantRole,
+    pub take_key: PublicKey,
 }
 
 impl PegInRequest {

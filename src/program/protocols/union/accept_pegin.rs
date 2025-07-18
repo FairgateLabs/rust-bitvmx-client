@@ -24,9 +24,8 @@ use crate::{
             union::{
                 common::get_next_uuid,
                 types::{
-                    PegInRequest, ACCEPT_PEGIN_TX, CHALLENGE_ENABLER, DISPUTE_PROTOCOL_SEED,
-                    OPERATOR_TAKE_ENABLER, OPERATOR_TAKE_KEYS, OPERATOR_WON_ENABLER,
-                    REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, SLOT_INDEX,
+                    PegInRequest, ACCEPT_PEGIN_TX, CHALLENGE_ENABLER, OPERATOR_TAKE_ENABLER,
+                    OPERATOR_WON_ENABLER, REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX,
                 },
             },
         },
@@ -78,9 +77,6 @@ impl ProtocolHandler for AcceptPegInProtocol {
         let pegin_request_txid = pegin_request.txid;
         let amount = pegin_request.amount;
         let take_aggregated_key = &pegin_request.take_aggregated_key;
-        let take_pubkeys = self.take_pubkeys(context)?;
-
-        let slot_index = self.slot_index(context)? as usize;
 
         let mut protocol = self.load_or_create_protocol();
 
@@ -105,14 +101,15 @@ impl ProtocolHandler for AcceptPegInProtocol {
             &OutputType::taproot(amount, &take_aggregated_key, &[])?,
         )?;
 
-        let mut seed = self.dispute_protocol_seed(context)?;
+        let mut seed = pegin_request.dispute_core_covenant_seed;
+        let slot_index = pegin_request.slot_index as usize;
 
         // Operator take transactions
         // Loop over operators and create take 1 and take 2 transactions
-        for (index, item) in take_pubkeys.iter().enumerate() {
+        for (index, member) in pegin_request.members.iter().enumerate() {
             let dispute_protocol_id = get_next_uuid(seed);
 
-            if item.0 == ParticipantRole::Prover {
+            if member.role == ParticipantRole::Prover {
                 let challenge_enabler =
                     self.challenge_enabler(context, dispute_protocol_id, slot_index)?;
                 let operator_take_enabler =
@@ -141,7 +138,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
                     &mut protocol,
                     index as u32,
                     amount,
-                    &item.1,
+                    &member.take_key,
                     pegin_request_txid,
                     kickoff_tx_name,
                     operator_take_enabler.clone(),
@@ -152,7 +149,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
                     &mut protocol,
                     index as u32,
                     amount,
-                    &item.1,
+                    &member.take_key,
                     pegin_request_txid,
                     kickoff_tx_name,
                     operator_take_enabler.clone(),
@@ -222,36 +219,6 @@ impl AcceptPegInProtocol {
 
         let pegin_request: PegInRequest = serde_json::from_str(&pegin_request)?;
         Ok(pegin_request)
-    }
-
-    fn take_pubkeys(
-        &self,
-        context: &ProgramContext,
-    ) -> Result<Vec<(ParticipantRole, PublicKey)>, BitVMXError> {
-        let take_keys_json = context
-            .globals
-            .get_var(&self.ctx.id, OPERATOR_TAKE_KEYS)?
-            .unwrap()
-            .string()?;
-
-        let take_keys: Vec<(ParticipantRole, PublicKey)> = serde_json::from_str(&take_keys_json)?;
-        Ok(take_keys)
-    }
-
-    fn slot_index(&self, context: &ProgramContext) -> Result<u32, BitVMXError> {
-        Ok(context
-            .globals
-            .get_var(&self.ctx.id, SLOT_INDEX)?
-            .unwrap()
-            .number()?)
-    }
-
-    fn dispute_protocol_seed(&self, context: &ProgramContext) -> Result<Uuid, BitVMXError> {
-        Ok(context
-            .globals
-            .get_var(&self.ctx.id, DISPUTE_PROTOCOL_SEED)?
-            .unwrap()
-            .uuid()?)
     }
 
     fn operator_take_enabler(
@@ -552,7 +519,7 @@ impl AcceptPegInProtocol {
         for utxo in utxos {
             // If there is a gap in the indices, add unknown outputs
             if utxo.1 > last_index + 1 {
-                protocol.add_unkwnoun_outputs(tx_name, utxo.1 - last_index)?;
+                protocol.add_unknown_outputs(tx_name, utxo.1 - last_index)?;
             }
 
             // Add the UTXO as an output
