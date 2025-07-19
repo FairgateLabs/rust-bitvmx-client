@@ -57,7 +57,7 @@ impl KeyChain {
         // TODO: hardcoded communications key to be on allowed list
         let privk = config.p2p_key();
         let communications_key =
-            Keypair::from_protobuf_encoding(&hex::decode(privk.as_bytes()).unwrap()).unwrap();
+            Keypair::from_protobuf_encoding(&hex::decode("080112406e52d71640c7c226a09da3d4f4299eadd636cb375037e34fcbbe2c8e93577ea82550385621b3f807ba79dc93725f50bca4dc2eee215e95dc9ef863dcfcf4bc1b".as_bytes()).unwrap()).unwrap();
         //TODO: move to key manager and use PEM key pair for communications_key
         // It uses pkcs8 format for the private key
         let keypair = RcgenKeyPair::from_pem_and_sign_algo(privk, &PKCS_RSA_SHA256).unwrap();
@@ -281,5 +281,58 @@ impl KeyChain {
           let decrypted = rsa_priv.decrypt(Pkcs1v15Encrypt, &message).unwrap();
 
           Ok(decrypted)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::rc::Rc;
+
+    #[test]
+    fn test_encrypt_and_decrypt_messages() -> Result<(), BitVMXError> {
+        // Create a test certificate with RSA key directly
+        let keypair = RcgenKeyPair::generate(&PKCS_RSA_SHA256)?;
+        let mut params = CertificateParams::default();
+        params.key_pair = Some(keypair);
+        params.alg = &PKCS_RSA_SHA256;
+        let cert = Certificate::from_params(params)?;
+
+        // Create config and storage for testing
+        let config = Config::new(Some("config/development.yaml".to_string()))?;
+        let store = Rc::new(Storage::new(&config.storage)?);
+
+        // Create KeyChain with our test certificate
+        let keychain = KeyChain {
+            key_manager: Rc::new(key_manager::create_key_manager_from_config(
+                &config.key_manager,
+                key_manager::key_store::KeyStore::new(Rc::new(Storage::new(&config.key_storage)?)),
+                store.clone(),
+            )?),
+            communications_key: p2p_handler::Keypair::from_protobuf_encoding(&hex::decode("080112406e52d71640c7c226a09da3d4f4299eadd636cb375037e34fcbbe2c8e93577ea82550385621b3f807ba79dc93725f50bca4dc2eee215e95dc9ef863dcfcf4bc1b".as_bytes()).unwrap()).unwrap(),
+            store,
+            cert,
+        };
+
+        // Test message
+        let original_message = b"Hello, this is a test message for encryption!".to_vec();
+        
+        // Get the public key from the certificate for encryption
+        let public_key_der = keychain.cert.get_key_pair().public_key_der();
+        
+        // Encrypt the message
+        let encrypted_message = keychain.encrypt_messages(original_message.clone(), public_key_der)?;
+        
+        // Verify encryption changed the data
+        assert_ne!(original_message, encrypted_message);
+        assert!(!encrypted_message.is_empty());
+        
+        // Decrypt the message
+        let decrypted_message = keychain.decrypt_messages(encrypted_message)?;
+        
+        // Verify decryption restored the original message
+        assert_eq!(original_message, decrypted_message);
+        
+        Ok(())
     }
 }

@@ -5,14 +5,6 @@ bitcoin:
   password: rpcpassword
   wallet: test_wallet
 
-builder:
-  protocol_amount: 2450000
-  speedup_amount: 2450000
-  locked_amount: 95000000
-  locked_blocks: 200
-  ecdsa_sighash_type: SIGHASH_ALL
-  taproot_sighash_type: SIGHASH_ALL
-
 key_manager:
   network: regtest
   key_derivation_path: m/101/1/0/0/
@@ -28,7 +20,29 @@ storage:
 
 p2p:
   address: /ip4/127.0.0.1/tcp/61182
-  key: 080112406e52d71640c7c226a09da3d4f4299eadd636cb375037e34fcbbe2c8e93577ea82550385621b3f807ba79dc93725f50bca4dc2eee215e95dc9ef863dcfcf4bc1b
+  key: |
+    -----BEGIN PRIVATE KEY-----
+    MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC7VJTUt9Us8cKB
+    VzVVDyqFgxBPjH5TmOj/0zFfqKv0up5ZSeW3EQHymF+DNc09mHKWqM69jJ0WfPWm
+    /AAJxLJ6Woa+ugqCobdDjf1i0q2+xJqCNnyNp0qNZB5Wzb4Up2WUyT6w9jq21qMc
+    6oMcPcol281kNmY/YtB6aUrocxcaljlYHLVk40GaagjAWT3hC3RuiT11l3As6jHL
+    RzMiR8iBJOjtdTrj4K4l3FMcF2wqAB4LbLlMWicQJ1ZQ+VgQ5Z8zKQoxClNyoGP8
+    aFf3Fym6c0wBf1Q7jDGpybfe+s3tdmK/r+cahtzJ2R48UaDzUDBBkMrkzAgMBAAEC
+    ggEBAKTmjaS6tkK8BlPXClTQ2vpz/N6uxDeS35mXpqasqskVlaUidURgDPpCkXQx
+    r08bBmFzr7SEtX/t0fTc4u7pggq9dUZ6O2Qp1NabDmvM9lH2uoKsWC6S2WFwpkNu
+    A0aQoGSmxifb9bfqM/L2fOMLf9TljI9CzgUHYWnCpZvzDvnDz4Kb/MH0kMFC2siJ
+    2LFjUTol7TpWkMW+XL4t50B/KYL7oF9wLgFrXyUQ5QdR9Q4vxhdQ19X4ftLwqhK7
+    mYZr6tKnC8RPZ+uvz35AwpXmcRZ6TPVtJ3BQlXvgl+66ZzFm2D13M2VoPKFiM5L+
+    A2jM1xS6J1CS3ZmJvhwt6yUYQc5I5BwJvXwWzvLqUp3tleoW6xW+zBqqmPxw4aFz
+    N6VTJM7X+JQeqQ9bK1DPqpk5Z7ZtqgCcjN0DkpM7vyqZE+JkFQJBAN0uSJkHF+cn
+    4j8jcgaSfunq/OKPLF6A68jKmDuGW1OK3Wko5M2TdxmNNkzJm9nykPGlL4JfPZb/
+    nndgqC4YJR05UQJBAMvfYXJW8PjDyyV29uegZNKu6jyMjtVAd9G2qG4L3ZPxssrK
+    VuJ41PqAoA4rtyglVa6bEvWJ4f9wHDj0CXDYF8crQJBAId5kjp1prF6LPGcIzlVN
+    JI+R9n0y3X2WX4b81fkIemJcjV1+qjM4Yjz3qWt8uPUXqXqo4ueSJqXwXjWk4tsu
+    qQJBAI5j6F7gTKtND3GCHjf0Rfj0St1jXibj0wLNe3gg6D5uy1c2iK6CQJaUwVF3
+    8qjC4f2ueaXwYwzl4+V0+741LjJCeUQJBAOGaBAgyUVAxGvUw/HcMhx/t7K6Jw1t
+    Cg1dG4ecdVg2P9wqDp5owtm+OEIGfQ2/AHV5o8HqXHK5NnuIRvrCp/erQ8B8
+    -----END PRIVATE KEY-----
   peer_id_file: peer_id
   timeout: 5
 
@@ -40,3 +54,7 @@ broker_storage:
   path: /tmp/development/broker.db
   
 broker_port: 11111
+
+client:
+  retry: 1
+  retry_delay: 1000
