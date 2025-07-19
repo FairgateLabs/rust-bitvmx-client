@@ -1,7 +1,7 @@
 use std::{collections::HashMap, rc::Rc};
 
 use bitcoin::{
-    secp256k1::{self},
+    secp256k1::{rand::thread_rng},
     PublicKey, XOnlyPublicKey,
 };
 use key_manager::{
@@ -12,6 +12,8 @@ use key_manager::{
     winternitz::{WinternitzPublicKey, WinternitzType},
 };
 use p2p_handler::Keypair;
+use rcgen::{CertificateParams, Certificate, KeyPair as RcgenKeyPair, PKCS_RSA_SHA256};
+use rsa::{pkcs8::{DecodePrivateKey, DecodePublicKey}, Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey};
 
 use protocol_builder::unspendable::unspendable_key;
 use storage_backend::storage::{KeyValueStore, Storage};
@@ -22,6 +24,8 @@ pub struct KeyChain {
     pub key_manager: Rc<KeyManager>,
     pub communications_key: Keypair,
     pub store: Rc<Storage>,
+    //TODO: move cert and communications_key to key manager
+    pub cert: Certificate,
 }
 
 pub type Index = u32;
@@ -54,6 +58,13 @@ impl KeyChain {
         let privk = config.p2p_key();
         let communications_key =
             Keypair::from_protobuf_encoding(&hex::decode(privk.as_bytes()).unwrap()).unwrap();
+        //TODO: move to key manager and use PEM key pair for communications_key
+        // It uses pkcs8 format for the private key
+        let keypair = RcgenKeyPair::from_pem_and_sign_algo(privk, &PKCS_RSA_SHA256).unwrap();
+        let mut params = CertificateParams::default();
+        params.key_pair = Some(keypair);
+        params.alg = &PKCS_RSA_SHA256;
+        let cert = Certificate::from_params(params).unwrap();
 
         let key_manager = Rc::new(key_manager);
 
@@ -61,6 +72,7 @@ impl KeyChain {
             key_manager,
             communications_key,
             store,
+            cert,
         })
     }
 
@@ -137,7 +149,7 @@ impl KeyChain {
     }
 
     pub fn unspendable_key(&self) -> Result<XOnlyPublicKey, BitVMXError> {
-        let mut rng = secp256k1::rand::thread_rng();
+        let mut rng = thread_rng();
         Ok(XOnlyPublicKey::from(unspendable_key(&mut rng)?))
     }
 
@@ -246,4 +258,28 @@ impl KeyChain {
     //         .map_err(BitVMXError::MuSig2SignerError)?;
     //     Ok(())
     // }
+
+    pub fn encrypt_messages(&self, message: Vec<u8>, public_key: Vec<u8>) -> Result<Vec<u8>, BitVMXError> {
+        // 2. Parse the pkcs8public key with rsa crate
+        let rsa_pub = RsaPublicKey::from_public_key_der(&public_key).unwrap();
+
+        // 3. Encrypt data with public key
+        let mut rng = thread_rng();
+        let enc_data = rsa_pub.encrypt(&mut rng, Pkcs1v15Encrypt, &message).unwrap();
+
+        Ok(enc_data)
+    }
+
+    pub fn decrypt_messages(&self, message: Vec<u8>) -> Result<Vec<u8>, BitVMXError> {
+          // 1. Extract pkcs8 private key PEMs
+          let privkey_der = self.cert.get_key_pair().serialize_der();
+  
+          // 2. Parse keys with rsa crate
+          let rsa_priv = RsaPrivateKey::from_pkcs8_der(&privkey_der).unwrap();
+
+          // 3. Decrypt data with private key
+          let decrypted = rsa_priv.decrypt(Pkcs1v15Encrypt, &message).unwrap();
+
+          Ok(decrypted)
+    }
 }

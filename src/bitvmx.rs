@@ -1085,6 +1085,20 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::GetZKPExecutionResult(id) => {
                 BitVMXApi::get_zkp_execution_result(self, from, id)?
             }
+            IncomingBitVMXApiMessages::Encrypt(id, message, public_key) => {
+                let encrypted = self.program_context.key_chain.encrypt_messages(message, public_key)?;
+                self.program_context.broker_channel.send(
+                    from,
+                    serde_json::to_string(&OutgoingBitVMXApiMessages::Encrypted(id, encrypted))?,
+                )?;
+            }
+            IncomingBitVMXApiMessages::Decrypt(id, message) => {
+                let decrypted = self.program_context.key_chain.decrypt_messages(message)?;
+                self.program_context.broker_channel.send(
+                    from,
+                    serde_json::to_string(&OutgoingBitVMXApiMessages::Decrypted(id, decrypted))?,
+                )?;
+            }
         }
 
         Ok(())
