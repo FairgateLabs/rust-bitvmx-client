@@ -20,7 +20,11 @@ use bitvmx_cpu_definitions::{
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use console::style;
-use emulator::{constants::REGISTERS_BASE_ADDRESS, loader::program_definition::ProgramDefinition};
+use emulator::{
+    constants::REGISTERS_BASE_ADDRESS,
+    decision::challenge::{ForceChallenge, ForceCondition},
+    loader::program_definition::ProgramDefinition,
+};
 use key_manager::winternitz::WinternitzPublicKey;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
@@ -315,7 +319,12 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         let (fail_config_prover, fail_config_verifier, force, force_condition) = program_context
             .globals
             .get_var(&self.ctx.id, "fail_force_config")?
-            .unwrap()
+            .unwrap_or(VariableTypes::FailConfiguration(
+                None,
+                None,
+                ForceChallenge::No,
+                ForceCondition::No,
+            ))
             .fail_configuration()?;
 
         /*if name == INPUT_1 && self.role() == ParticipantRole::Prover {
