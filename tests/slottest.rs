@@ -154,13 +154,15 @@ pub fn test_slot() -> Result<()> {
     let pair_aggregated_pub_key = msgs[0].aggregated_pub_key().unwrap();
 
     // Protocol fees funding
-    const ONE_BTC: Amount = Amount::from_sat(10_000_000);
-    let fund_value = ONE_BTC;
+    let fund_value = Amount::from_sat(300_000);
     let utxo = init_utxo(&wallet, aggregated_pub_key, None, fund_value.to_sat())?;
 
     // SETUP SLOT BEGIN
+    let slot_fee_tx = 1000;
+    let slot_speedup_dust = 500;
+
     let program_id = Uuid::new_v4();
-    let set_fee = VariableTypes::Number(10_000).set_msg(program_id, FEE)?;
+    let set_fee = VariableTypes::Number(slot_fee_tx).set_msg(program_id, FEE)?;
     send_all(&channels, &set_fee)?;
 
     let set_fund_utxo =
@@ -187,7 +189,8 @@ pub fn test_slot() -> Result<()> {
     let protocol_cost = VariableTypes::Number(20_000).set_msg(program_id, PROTOCOL_COST)?;
     send_all(&channels, &protocol_cost)?;
 
-    let speedup_dust = VariableTypes::Number(500).set_msg(program_id, SPEEDUP_DUST)?;
+    let speedup_dust =
+        VariableTypes::Number(slot_speedup_dust).set_msg(program_id, SPEEDUP_DUST)?;
     send_all(&channels, &speedup_dust)?;
 
     let gid_max = VariableTypes::Number(8).set_msg(program_id, GID_MAX)?;
@@ -232,7 +235,8 @@ pub fn test_slot() -> Result<()> {
     //=====================================
 
     let initial_utxo = Utxo::new(txid, 4, 20_000, &pair_aggregated_pub_key);
-    let prover_win_utxo = Utxo::new(txid, 2, 10_500, &pair_aggregated_pub_key);
+    let prover_win_utxo_value = (slot_fee_tx + slot_speedup_dust) as u64;
+    let prover_win_utxo = Utxo::new(txid, 2, prover_win_utxo_value, &pair_aggregated_pub_key);
     let emulator_channels = vec![emulator_1.unwrap(), emulator_2.unwrap()];
 
     let initial_spending_condition = vec![
@@ -246,8 +250,11 @@ pub fn test_slot() -> Result<()> {
         scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate), //convert to timelock
         scripts::check_aggregated_signature(&pair_aggregated_pub_key, SignMode::Aggregate),
     ];
-    let prover_win_output_type =
-        external_fund_tx(&aggregated_pub_key, prover_win_spending_condition, 10_500)?;
+    let prover_win_output_type = external_fund_tx(
+        &aggregated_pub_key,
+        prover_win_spending_condition,
+        prover_win_utxo_value,
+    )?;
 
     info!("Dispute setup");
     let dispute_id = prepare_dispute(
