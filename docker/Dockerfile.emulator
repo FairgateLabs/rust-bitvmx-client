@@ -22,3 +22,10 @@ RUN cargo build --release
 WORKDIR /app/bitvmx-workspace-root/BitVMX-CPU
 RUN cargo build --release
 
+WORKDIR /app/bitvmx-workspace-root
+COPY docker/run_emulator.sh ./
+RUN chmod +x ./run_emulator.sh
+
+ENTRYPOINT ["./run_emulator.sh"]
+
+
