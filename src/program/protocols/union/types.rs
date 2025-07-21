@@ -69,6 +69,15 @@ pub struct PegInRequest {
     pub accept_pegin_sighash: Vec<u8>,
     pub take_aggregated_key: PublicKey,
     pub addresses: HashMap<PublicKey, P2PAddress>,
+    pub members: Vec<MemberData>,
+    pub slot_index: u32,
+    pub committee_id: uuid::Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemberData {
+    pub role: ParticipantRole,
+    pub take_key: PublicKey,
 }
 
 impl PegInRequest {

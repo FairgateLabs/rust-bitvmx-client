@@ -1,15 +1,13 @@
 use anyhow::Result;
+use bitcoin::Txid;
 use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtxo};
 
-use bitcoin::{hashes::Hash, Amount, PublicKey, ScriptBuf};
+use bitcoin::{Amount, PublicKey, ScriptBuf};
 use bitvmx_wallet::wallet::Wallet;
 use protocol_builder::types::OutputType;
+use std::thread::{self};
 use std::time::Duration;
-use std::{
-    collections::HashMap,
-    thread::{self},
-};
-use tracing::{info, info_span};
+use tracing::info_span;
 use uuid::Uuid;
 
 use crate::bitcoin::{init_wallet, FEE, WALLET_NAME};
@@ -19,6 +17,7 @@ pub struct Committee {
     members: Vec<Member>,
     take_aggregation_id: Uuid,
     dispute_aggregation_id: Uuid,
+    committee_id: Uuid,
     wallet: Wallet,
 }
 
@@ -28,7 +27,7 @@ impl Committee {
             Member::new("op_1", ParticipantRole::Prover)?,
             Member::new("op_2", ParticipantRole::Prover)?,
             // Member::new("op_3", ParticipantRole::Prover)?,
-            // Member::new("op_4", ParticipantRole::Prover)?,
+            // Member::new("op_4", ParticipantRole::Verifier)?,
         ];
 
         let wallet = init_wallet()?;
@@ -37,8 +36,13 @@ impl Committee {
             members,
             take_aggregation_id: Uuid::new_v4(),
             dispute_aggregation_id: Uuid::new_v4(),
+            committee_id: Uuid::new_v4(),
             wallet,
         })
+    }
+
+    pub fn committee_id(&self) -> Uuid {
+        self.committee_id
     }
 
     pub fn setup(&mut self) -> Result<PublicKey> {
@@ -68,81 +72,40 @@ impl Committee {
             )
         })?;
 
-        let mut op_funding_utxos: HashMap<String, PartialUtxo> = HashMap::new();
-        let mut wt_funding_utxos: HashMap<String, PartialUtxo> = HashMap::new();
+        let seed = self.committee_id;
 
-        for member in members.iter() {
-            if member.role == ParticipantRole::Prover {
-                op_funding_utxos.insert(
-                    member.id.clone(),
-                    self.prepare_funding_utxo(
-                        &self.wallet,
-                        "fund_1", //&format!("op_{}_utxo", index),
-                        //TODO we must use a different pub key here, same for the speedup funding
-                        &member.keyring.dispute_pubkey.unwrap(),
-                        10000000,
-                        None,
-                    )?,
-                );
-            }
-
-            wt_funding_utxos.insert(
-                member.id.clone(),
-                self.prepare_funding_utxo(
-                    &self.wallet,
-                    "fund_1", //&format!("wt_{}_utxo", index),
-                    //TODO we must use a different pub key here, same for the speedup funding
-                    &member.keyring.dispute_pubkey.unwrap(),
-                    10000000,
-                    None,
-                )?,
-            );
+        let mut funding_utxos_per_member: Vec<Vec<PartialUtxo>> = Vec::new();
+        for member in &self.members {
+            let funding_utxos = self.get_funding_utxos(member)?;
+            funding_utxos_per_member.push(funding_utxos);
         }
 
         // setup covenants
-        for (member_index, member) in members.iter().enumerate() {
-            info_span!("member", id = %member.id).in_scope(|| {
-                info!("Setting up covenants for member {}", member.id);
-            });
-
-            let dispute_core_covenant_id = Uuid::new_v4();
-            let funding_utxos = self.get_funding_utxos(member)?;
-
-            self.all(|op| {
-                op.setup_covenants(
-                    dispute_core_covenant_id,
-                    member_index,
-                    &members,
-                    &funding_utxos,
-                )
-            })?;
-        }
+        self.all(|op| op.setup_covenants(seed, &members, &funding_utxos_per_member))?;
 
         Ok(self.public_key()?)
     }
 
-    // pub fn request_pegin(&mut self) -> Result<()> {
-    //     // Make a member send the user request pegin bitcoin transaction
-    //     self.members[0].request_pegin()?;
-    //     Ok(())
-    // }
-
-    pub fn accept_pegin(&mut self) -> Result<()> {
+    pub fn accept_pegin(
+        &mut self,
+        committee_id: Uuid,
+        request_pegin_txid: Txid,
+        amount: u64,
+        accept_pegin_sighash: Vec<u8>,
+        slot_index: u32,
+    ) -> Result<()> {
         let accept_pegin_covenant_id = Uuid::new_v4();
         let members = self.members.clone();
-
-        // TODO replace with actual peg-in request details
-        let request_pegin_txid = Hash::all_zeros(); // This should be replaced with the actual Txid of the peg-in request
-        let request_pegin_amount = 10000000; // This should be replaced with the actual amount of the peg-in request
-        let accept_pegin_sighash = vec![0; 32]; // This should be replaced with the actual sighash of the accept peg-in tx
 
         self.all(|op| {
             op.accept_pegin(
                 accept_pegin_covenant_id,
                 &members,
                 request_pegin_txid,
-                request_pegin_amount,
+                amount,
                 accept_pegin_sighash.as_slice(),
+                committee_id,
+                slot_index,
             )
         })?;
 
