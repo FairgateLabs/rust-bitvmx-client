@@ -29,6 +29,7 @@ pub enum VariableTypes {
     String(String),
     VecStr(Vec<String>),
     Input(Vec<u8>),
+    Uuid(Uuid),
     FailConfiguration(
         Option<FailConfiguration>,
         Option<FailConfiguration>,
@@ -87,6 +88,12 @@ impl VariableTypes {
     pub fn input(&self) -> Result<Vec<u8>, BitVMXError> {
         match self {
             VariableTypes::Input(input) => Ok(input.clone()),
+            _ => Err(BitVMXError::InvalidVariableType(self.err())),
+        }
+    }
+    pub fn uuid(&self) -> Result<Uuid, BitVMXError> {
+        match self {
+            VariableTypes::Uuid(id) => Ok(id.clone()),
             _ => Err(BitVMXError::InvalidVariableType(self.err())),
         }
     }
