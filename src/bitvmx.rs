@@ -101,10 +101,9 @@ impl BitVMX {
     pub fn new(config: Config) -> Result<Self, BitVMXError> {
         let store = Rc::new(Storage::new(&config.storage)?);
         let key_chain = KeyChain::new(&config, store.clone())?;
-        let communications_key = key_chain.communications_key.clone();
         let comms = P2pHandler::new::<LocalAllowList>(
             config.p2p_address().to_string(),
-            communications_key,
+            key_chain.communications_key.to_vec(),
         )?;
 
         let bitcoin_coordinator = BitcoinCoordinator::new_with_paths(
