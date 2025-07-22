@@ -24,6 +24,7 @@ use emulator::{constants::REGISTERS_BASE_ADDRESS, loader::program_definition::Pr
 use key_manager::winternitz::WinternitzPublicKey;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
+    graph::graph::GraphOptions,
     scripts::{self, ProtocolScript, SignMode},
     types::{
         connection::{InputSpec, OutputSpec},
@@ -1115,7 +1116,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         )?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
-        info!("{}", protocol.visualize()?);
+        info!(
+            "\n{}",
+            protocol.visualize(&GraphOptions {
+                edge_arrows: Some(true),
+                ..Default::default()
+            })?
+        );
         self.save_protocol(protocol)?;
 
         Ok(())

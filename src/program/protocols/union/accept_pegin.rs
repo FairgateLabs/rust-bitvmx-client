@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use bitcoin::{Amount, PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
+    graph::graph::GraphOptions,
     scripts::SignMode,
     types::{
         connection::{InputSpec, OutputSpec},
@@ -163,8 +164,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
         }
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
-
-        info!("\n{}", protocol.visualize()?);
+        info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
         self.save_protocol(protocol)?;
 
         Ok(())

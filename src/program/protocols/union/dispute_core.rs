@@ -15,6 +15,7 @@ use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     builder::Protocol,
+    graph::graph::GraphOptions,
     scripts::{self, SignMode},
     types::{
         connection::{InputSpec, OutputSpec},
@@ -110,7 +111,13 @@ impl ProtocolHandler for DisputeCoreProtocol {
         }
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
-        info!("{}", protocol.visualize()?);
+        info!(
+            "\n{}",
+            protocol.visualize(&GraphOptions {
+                edge_arrows: Some(true),
+                ..Default::default()
+            })?
+        );
         self.save_protocol(protocol)?;
 
         self.set_utxos(context)?;
