@@ -111,13 +111,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
         }
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
-        info!(
-            "\n{}",
-            protocol.visualize(&GraphOptions {
-                edge_arrows: Some(true),
-                ..Default::default()
-            })?
-        );
+        info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
         self.save_protocol(protocol)?;
 
         self.set_utxos(context)?;
