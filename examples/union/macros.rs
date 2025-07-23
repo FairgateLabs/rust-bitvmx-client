@@ -1,9 +1,7 @@
 #[macro_export]
 macro_rules! expect_msg {
-    ($self:expr, $pattern:pat => $expr:expr) => {{
-        let msg = $self
-            .bitvmx
-            .wait_message(Some(std::time::Duration::from_secs(20)), None)?;
+    ($bitvmx:expr, $pattern:pat => $expr:expr) => {{
+        let msg = $bitvmx.wait_message(Some(std::time::Duration::from_secs(20)), None)?;
 
         if let $pattern = msg {
             Ok($expr)

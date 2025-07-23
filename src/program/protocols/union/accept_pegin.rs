@@ -97,10 +97,8 @@ impl ProtocolHandler for AcceptPegInProtocol {
             Some(pegin_request_txid),
         )?;
 
-        protocol.add_transaction_output(
-            ACCEPT_PEGIN_TX,
-            &OutputType::taproot(amount, &take_aggregated_key, &[])?,
-        )?;
+        let accept_pegin_output = OutputType::taproot(amount, &take_aggregated_key, &[])?;
+        protocol.add_transaction_output(ACCEPT_PEGIN_TX, &accept_pegin_output)?;
 
         let mut seed = pegin_request.committee_id;
         let slot_index = pegin_request.slot_index as usize;
@@ -164,6 +162,23 @@ impl ProtocolHandler for AcceptPegInProtocol {
         }
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
+
+        let tx = protocol.transaction_by_name(ACCEPT_PEGIN_TX)?;
+        let txid = tx.compute_txid();
+        let output_index = 0;
+
+        // Save Accept Pegin transaction under committee_id to be used in user take
+        context.globals.set_var(
+            &pegin_request.committee_id,
+            &format!("{}_{}", ACCEPT_PEGIN_TX, slot_index).to_string(),
+            VariableTypes::Utxo((
+                txid,
+                output_index,
+                Some(tx.output.get(output_index as usize).unwrap().value.to_sat()),
+                Some(accept_pegin_output),
+            )),
+        )?;
+
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
         self.save_protocol(protocol)?;
 

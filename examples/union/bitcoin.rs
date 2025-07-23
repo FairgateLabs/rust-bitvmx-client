@@ -1,7 +1,12 @@
 use anyhow::Result;
-use bitcoin::Network;
+use bitcoin::{
+    key::{rand::rngs::OsRng, Parity, Secp256k1},
+    secp256k1::{All, PublicKey as SecpPublicKey, SecretKey},
+    Network, PublicKey as BitcoinPubKey,
+};
 use bitcoind::bitcoind::Bitcoind;
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
+use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
 use bitvmx_client::config::Config;
 use bitvmx_wallet::wallet::Wallet;
 use tracing::info;
@@ -113,4 +118,43 @@ pub fn init_wallet() -> Result<Wallet> {
     )?;
 
     Ok(wallet)
+}
+
+// This method changes the parity of a keypair to be even, this is needed for Taproot.
+fn adjust_parity(
+    secp: &Secp256k1<All>,
+    pubkey: SecpPublicKey,
+    seckey: SecretKey,
+) -> (SecpPublicKey, SecretKey) {
+    let (_, parity) = pubkey.x_only_public_key();
+
+    if parity == Parity::Odd {
+        (pubkey.negate(secp), seckey.negate())
+    } else {
+        (pubkey, seckey)
+    }
+}
+
+pub fn emulated_user_keypair(
+    secp: &Secp256k1<All>,
+    bitcoin_client: &BitcoinClient,
+    network: Network,
+) -> Result<(bitcoin::Address, BitcoinPubKey, SecretKey)> {
+    let mut rng = OsRng;
+
+    // emulate the user keypair
+    let user_sk = SecretKey::new(&mut rng);
+    let user_pk = SecpPublicKey::from_secret_key(secp, &user_sk);
+    let (user_pk, user_sk) = adjust_parity(secp, user_pk, user_sk);
+    let user_pubkey = BitcoinPubKey {
+        compressed: true,
+        inner: user_pk,
+    };
+    let user_address: bitcoin::Address = bitcoin_client.get_new_address(user_pubkey, network);
+    info!(
+        "User Address({}): {:?}",
+        user_address.address_type().unwrap(),
+        user_address
+    );
+    Ok((user_address, user_pubkey, user_sk))
 }
