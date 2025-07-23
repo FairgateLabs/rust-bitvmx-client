@@ -1,7 +1,7 @@
 FROM rust:latest
 
 RUN apt-get update && \
-    apt-get install -y wget build-essential git pkg-config libssl-dev clang
+    apt-get install -y wget build-essential git pkg-config libssl-dev clang netcat-openbsd
 
 RUN mkdir -p /root/.ssh && \
     ssh-keyscan github.com >> /root/.ssh/known_hosts && \
@@ -23,9 +23,10 @@ WORKDIR /app/bitvmx-workspace-root/BitVMX-CPU
 RUN cargo build --release
 
 WORKDIR /app/bitvmx-workspace-root
+
+COPY config/ ./config/
+
 COPY docker/run_emulator.sh ./
 RUN chmod +x ./run_emulator.sh
 
 ENTRYPOINT ["./run_emulator.sh"]
-
-
