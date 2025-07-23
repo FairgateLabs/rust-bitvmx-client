@@ -28,7 +28,7 @@ use super::dispute::DisputeResolutionProtocol;
 #[cfg(feature = "union")]
 use crate::program::protocols::union::{
     accept_pegin::AcceptPegInProtocol, dispute_core::DisputeCoreProtocol,
-    pairwise_penalization::PairwisePenalizationProtocol, take::TakeProtocol,
+    pairwise_penalization::PairwisePenalizationProtocol, user_take::UserTakeProtocol,
 };
 
 #[cfg(feature = "union")]
@@ -44,6 +44,11 @@ use crate::types::{ProgramContext, PROGRAM_TYPE_DRP};
 
 use crate::program::variables::WitnessTypes;
 use crate::program::{variables::VariableTypes, witness};
+use crate::types::{
+    ProgramContext, PROGRAM_TYPE_ACCEPT_PEGIN, PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_DRP,
+    PROGRAM_TYPE_LOCK, PROGRAM_TYPE_PAIRWISE_PENALIZATION, PROGRAM_TYPE_SLOT,
+    PROGRAM_TYPE_TRANSFER, PROGRAM_TYPE_USER_TAKE,
+};
 
 #[enum_dispatch]
 pub trait ProtocolHandler {
@@ -466,7 +471,7 @@ pub enum ProtocolType {
     #[cfg(feature = "union")]
     AcceptPegInProtocol,
     #[cfg(feature = "union")]
-    TakeProtocol,
+    UserTakeProtocol,
     #[cfg(feature = "union")]
     DisputeCoreProtocol,
     #[cfg(feature = "union")]
@@ -497,7 +502,7 @@ pub fn new_protocol_type(
             AcceptPegInProtocol::new(ctx),
         )),
         #[cfg(feature = "union")]
-        PROGRAM_TYPE_TAKE => Ok(ProtocolType::TakeProtocol(TakeProtocol::new(ctx))),
+        PROGRAM_TYPE_USER_TAKE => Ok(ProtocolType::UserTakeProtocol(UserTakeProtocol::new(ctx))),
         #[cfg(feature = "union")]
         PROGRAM_TYPE_PAIRWISE_PENALIZATION => Ok(ProtocolType::PairwisePenalizationProtocol(
             PairwisePenalizationProtocol::new(ctx),

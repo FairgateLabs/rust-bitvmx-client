@@ -16,7 +16,10 @@ use tracing::{debug, info};
 
 use crate::{
     expect_msg,
-    setup::{accept_pegin_setup::AcceptPegInSetup, dispute_core_setup::DisputeCoreSetup},
+    setup::{
+        accept_pegin_setup::AcceptPegInSetup, dispute_core_setup::DisputeCoreSetup,
+        user_take_setup::UserTakeSetup,
+    },
 };
 
 #[derive(Clone)]
@@ -78,7 +81,7 @@ impl Member {
 
     pub fn get_peer_info(&mut self) -> Result<P2PAddress> {
         self.bitvmx.get_comm_info()?;
-        let addr = expect_msg!(self, CommInfo(addr) => addr)?;
+        let addr = expect_msg!(self.bitvmx, CommInfo(addr) => addr)?;
 
         self.address = Some(addr.clone());
         Ok(addr)
@@ -88,17 +91,17 @@ impl Member {
         // TODO what id should we use for these keys?
         let id = Uuid::new_v4();
         self.bitvmx.get_pubkey(id, true)?;
-        let take_pubkey = expect_msg!(self, PubKey(_, key) => key)?;
+        let take_pubkey = expect_msg!(self.bitvmx, PubKey(_, key) => key)?;
         debug!(id = self.id, take_pubkey = ?take_pubkey, "Take pubkey");
 
         let id = Uuid::new_v4();
         self.bitvmx.get_pubkey(id, true)?;
-        let dispute_pubkey = expect_msg!(self, PubKey(_, key) => key)?;
+        let dispute_pubkey = expect_msg!(self.bitvmx, PubKey(_, key) => key)?;
         debug!(id = self.id, dispute_pubkey = ?dispute_pubkey, "Dispute pubkey");
 
         let id = Uuid::new_v4();
         self.bitvmx.get_pubkey(id, true)?;
-        let communication_pubkey = expect_msg!(self, PubKey(_, key) => key)?;
+        let communication_pubkey = expect_msg!(self.bitvmx, PubKey(_, key) => key)?;
         debug!(id = self.id, communication_pubkey = ?communication_pubkey, "Communication pubkey");
 
         self.keyring.take_pubkey = Some(take_pubkey);
@@ -147,7 +150,7 @@ impl Member {
         )?;
 
         // Wait for the dispute core setup to complete
-        let program_id = expect_msg!(self, SetupCompleted(program_id) => program_id)?;
+        let program_id = expect_msg!(self.bitvmx, SetupCompleted(program_id) => program_id)?;
         info!(id = self.id, program_id = ?program_id, "Dispute core setup completed");
 
         // TODO: add the rest of the covenants here
@@ -184,6 +187,30 @@ impl Member {
             &self.bitvmx,
             committee_id,
             slot_index,
+        )?;
+
+        Ok(())
+    }
+
+    pub fn request_pegout(
+        &mut self,
+        protocol_id: Uuid,
+        committee_id: Uuid,
+        user_pubkey: PublicKey,
+        slot_id: u32,
+        fee: u64,
+        members: &[Member],
+    ) -> Result<()> {
+        UserTakeSetup::setup(
+            protocol_id,
+            committee_id,
+            &self.id,
+            members,
+            user_pubkey,
+            slot_id,
+            fee,
+            &self.bitvmx,
+            self.keyring.take_aggregated_key.unwrap(),
         )?;
 
         Ok(())
@@ -285,7 +312,7 @@ impl Member {
             0,
         )?;
 
-        let aggregated_key = expect_msg!(self, AggregatedPubkey(_, key) => key)?;
+        let aggregated_key = expect_msg!(self.bitvmx, AggregatedPubkey(_, key) => key)?;
         info!(
             id = self.id,
             "Key setup complete {}",

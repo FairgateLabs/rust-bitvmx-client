@@ -112,6 +112,25 @@ impl Committee {
         Ok(())
     }
 
+    pub fn request_pegout(&mut self, user_pubkey: PublicKey, slot_id: u32, fee: u64) -> Result<()> {
+        let members = self.members.clone();
+        let committee_id = self.committee_id.clone();
+        let protocol_id = Uuid::new_v4();
+
+        self.all(|op| {
+            op.request_pegout(
+                protocol_id,
+                committee_id,
+                user_pubkey,
+                slot_id,
+                fee,
+                &members,
+            )
+        })?;
+
+        Ok(())
+    }
+
     pub fn public_key(&self) -> Result<PublicKey> {
         if self.members.is_empty() {
             return Err(anyhow::anyhow!("No members in the committee"));

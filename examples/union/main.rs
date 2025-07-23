@@ -14,7 +14,6 @@ use crate::participants::{committee::Committee, user::User};
 
 mod macros;
 mod participants;
-mod request_pegin;
 mod setup;
 
 mod bitcoin;
@@ -31,6 +30,7 @@ pub fn main() -> Result<()> {
         Some("committee") => committee()?,
         Some("request_pegin") => request_pegin()?,
         Some("accept_pegin") => accept_pegin()?,
+        Some("request_pegout") => request_pegout()?,
         Some(cmd) => {
             eprintln!("Unknown command: {}", cmd);
             print_usage();
@@ -51,7 +51,9 @@ fn print_usage() {
     println!("  cargo run --example union committee           - Setups a new committee");
     println!("  cargo run --example union request_pegin       - Setups a rerquest pegin");
     println!("  cargo run --example union accept_pegin        - Setups the accept peg in protocol");
-    println!("  cargo run --example union pegin               - Runs the pegin flow");
+    println!(
+        "  cargo run --example union request_pegout      - Setups the request peg out in protocol"
+    );
 }
 
 pub fn setup_bitcoin_node() -> Result<()> {
@@ -103,6 +105,36 @@ pub fn accept_pegin() -> Result<()> {
         accept_pegin_sighash,
         slot_index,
     )?;
+    Ok(())
+}
+
+pub fn request_pegout() -> Result<()> {
+    // A peg-in request is reported by the Union Client. The committee accepts the peg-in request.
+    let mut committee = Committee::new()?;
+    let committee_public_key = committee.setup()?;
+
+    let mut user = User::new("user_1")?;
+    let amount = 100_000; // This should be replaced with the actual amount of the peg-in request
+
+    let request_pegin_txid = user.request_pegin(&committee_public_key, amount)?;
+
+    // This came from the contracts
+    let accept_pegin_sighash = vec![0; 32]; // This should be replaced with the actual sighash of the accept peg-in tx
+    let slot_index = 0; // This should be replaced with the actual slot index
+
+    committee.accept_pegin(
+        committee.committee_id(),
+        request_pegin_txid,
+        amount,
+        accept_pegin_sighash,
+        slot_index,
+    )?;
+
+    let user_pubkey = user.public_key()?;
+    let fee = 1000; // This should be the fee for the peg-out
+
+    committee.request_pegout(user_pubkey, slot_index, fee)?;
+
     Ok(())
 }
 

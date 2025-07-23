@@ -1,6 +1,7 @@
 use bitcoin::{PublicKey, Txid};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use uuid::Uuid;
 
 use crate::program::participant::{P2PAddress, ParticipantRole};
 
@@ -83,5 +84,20 @@ pub struct MemberData {
 impl PegInRequest {
     pub fn name() -> String {
         "pegin_request".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PegOutRequest {
+    pub committee_id: Uuid,
+    pub slot_id: u32,
+    pub fee: u64,
+    pub user_pubkey: PublicKey,
+    pub take_aggregated_key: PublicKey,
+}
+
+impl PegOutRequest {
+    pub fn name() -> String {
+        "pegout_request".to_string()
     }
 }

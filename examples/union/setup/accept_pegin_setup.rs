@@ -25,7 +25,7 @@ pub struct AcceptPegInSetup {
 impl AcceptPegInSetup {
     #[allow(clippy::too_many_arguments)]
     pub fn setup(
-        covenant_id: Uuid,
+        protocol_id: Uuid,
         my_id: &str,
         my_role: &ParticipantRole,
         committee: &[Member],
@@ -41,7 +41,7 @@ impl AcceptPegInSetup {
 
         info!(
             id = my_id,
-            "Setting up the AcceptPegIn protocol handler {} for {}", covenant_id, my_id
+            "Setting up the AcceptPegIn protocol handler {} for {}", protocol_id, my_id
         );
 
         // build a map of communication pubkeys to addresses
@@ -74,20 +74,34 @@ impl AcceptPegInSetup {
         };
 
         bitvmx.set_var(
-            covenant_id,
+            protocol_id,
             &PegInRequest::name(),
             VariableTypes::String(serde_json::to_string(&pegin_request)?),
         )?;
 
         bitvmx.setup(
-            covenant_id,
+            protocol_id,
             PROGRAM_TYPE_ACCEPT_PEGIN.to_string(),
             addresses,
             0,
         )?;
 
+        // let program_id = expect_msg!(bitvmx, SetupCompleted(program_id) => program_id)?;
+        // info!(id = "AcceptPegInSetup", program_id = ?program_id, "Dispute core setup completed");
+
+        // bitvmx.get_transaction_by_name(covenant_id, ACCEPT_PEGIN_TX.to_string())?;
+        // let tx = expect_msg!(bitvmx, TransactionInfo(_, _, tx) => tx)?;
+
+        // bitvmx.dispatch_transaction(covenant_id, tx)?;
+        // let status = expect_msg!(bitvmx, Transaction(_, status, _) => status)?;
+
+        // info!(
+        //     "AcceptPegIn protocol handler {} for {} send accept pegin transaction with status: {:?}",
+        //     covenant_id, my_id, status
+        // );
+
         Ok(AcceptPegInSetup {
-            _covenant_id: covenant_id,
+            _covenant_id: protocol_id,
             _my_member_id: my_id.to_string(),
             _my_role: my_role.clone(),
             _committee: committee.to_vec(),
