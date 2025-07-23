@@ -49,6 +49,7 @@ pub const CHALLENGE_ENABLER: &str = "challenge_enabler";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewCommittee {
     pub my_role: ParticipantRole,
+    pub member_index: usize,
     pub take_aggregated_key: PublicKey,
     pub dispute_aggregated_key: PublicKey,
     pub addresses: HashMap<PublicKey, P2PAddress>,
@@ -71,15 +72,9 @@ pub struct PegInRequest {
     pub accept_pegin_sighash: Vec<u8>,
     pub take_aggregated_key: PublicKey,
     pub addresses: HashMap<PublicKey, P2PAddress>,
-    pub members: Vec<MemberData>,
+    pub operators_take_key: Vec<PublicKey>,
     pub slot_index: u32,
     pub committee_id: uuid::Uuid,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MemberData {
-    pub role: ParticipantRole,
-    pub take_key: PublicKey,
 }
 
 impl PegInRequest {

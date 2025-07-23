@@ -225,12 +225,12 @@ impl DisputeCoreProtocol {
     fn create_dispute_core(
         &self,
         protocol: &mut Protocol,
-        _committee: &NewCommittee,
+        committee: &NewCommittee,
         dispute_core_index: usize,
         keys: &Vec<ParticipantKeys>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let keys = keys[self.member_index(context)?].clone();
+        let keys = keys[committee.member_index].clone();
 
         let take_aggregated_key = self.take_aggregated_key(context)?;
         let dispute_aggregated_key = self.dispute_aggregated_key(context)?;
@@ -515,15 +515,6 @@ impl DisputeCoreProtocol {
 
         let committee: NewCommittee = serde_json::from_str(&committee)?;
         Ok(committee)
-    }
-
-    fn member_index(&self, context: &ProgramContext) -> Result<usize, BitVMXError> {
-        let member_index = context
-            .globals
-            .get_var(&self.ctx.id, "member_index")?
-            .unwrap()
-            .number()?;
-        Ok(member_index as usize)
     }
 
     fn prover(&self, context: &ProgramContext) -> Result<bool, BitVMXError> {

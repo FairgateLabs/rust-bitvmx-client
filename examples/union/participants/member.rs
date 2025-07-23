@@ -136,7 +136,7 @@ impl Member {
         &mut self,
         committee_id: Uuid,
         members: &[Member],
-        funding_utxos_per_member: &Vec<Vec<PartialUtxo>>,
+        funding_utxos_per_member: &HashMap<PublicKey, Vec<PartialUtxo>>,
     ) -> Result<()> {
         info!(id = self.id, "Setting up covenants for member {}", self.id);
         DisputeCoreSetup::setup(
