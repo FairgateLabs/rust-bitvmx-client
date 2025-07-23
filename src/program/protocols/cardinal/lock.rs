@@ -4,6 +4,7 @@ use bitcoin::{PublicKey, Transaction, Txid, XOnlyPublicKey};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
+    graph::graph::GraphOptions,
     scripts::{self, reveal_secret, timelock, SignMode},
     types::{
         connection::{InputSpec, OutputSpec},
@@ -304,7 +305,7 @@ impl ProtocolHandler for LockProtocol {
         pb.add_speedup_output(&mut protocol, HAPPY_PATH_TX, SPEEDUP_DUST, aggregated)?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
-        info!("{}", protocol.visualize()?);
+        info!("{}", protocol.visualize(GraphOptions::Default)?);
         self.save_protocol(protocol)?;
 
         Ok(())

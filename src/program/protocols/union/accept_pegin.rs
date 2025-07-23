@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
-use bitcoin::{PublicKey, Transaction, Txid};
+use bitcoin::{Amount, PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
+    graph::graph::GraphOptions,
     scripts::SignMode,
     types::{
-        connection::InputSpec,
+        connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
         output::SpeedupData,
         OutputType,
@@ -13,16 +14,23 @@ use protocol_builder::{
 };
 use serde::{Deserialize, Serialize};
 use tracing::info;
+use uuid::Uuid;
 
 use crate::{
     errors::BitVMXError,
     program::{
-        participant::ParticipantKeys,
+        participant::{ParticipantKeys, ParticipantRole},
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
-            union::types::{PegInRequest, ACCEPT_PEGIN_TX, REQUEST_PEGIN_TX},
+            union::{
+                common::get_next_uuid,
+                types::{
+                    PegInRequest, ACCEPT_PEGIN_TX, CHALLENGE_ENABLER, OPERATOR_TAKE_ENABLER,
+                    OPERATOR_WON_ENABLER, REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX,
+                },
+            },
         },
-        variables::VariableTypes,
+        variables::{PartialUtxo, VariableTypes},
     },
     types::{OutgoingBitVMXApiMessages, ProgramContext, L2_ID},
 };
@@ -67,9 +75,9 @@ impl ProtocolHandler for AcceptPegInProtocol {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         let pegin_request = self.pegin_request(context)?;
-        let txid = pegin_request.txid;
+        let pegin_request_txid = pegin_request.txid;
         let amount = pegin_request.amount;
-        let take_aggregated_key = pegin_request.take_aggregated_key;
+        let take_aggregated_key = &pegin_request.take_aggregated_key;
 
         let mut protocol = self.load_or_create_protocol();
 
@@ -86,7 +94,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 },
             ),
             None,
-            Some(txid),
+            Some(pegin_request_txid),
         )?;
 
         protocol.add_transaction_output(
@@ -94,8 +102,69 @@ impl ProtocolHandler for AcceptPegInProtocol {
             &OutputType::taproot(amount, &take_aggregated_key, &[])?,
         )?;
 
+        let mut seed = pegin_request.committee_id;
+        let slot_index = pegin_request.slot_index as usize;
+
+        // Operator take transactions
+        // Loop over operators and create take 1 and take 2 transactions
+        for (index, member) in pegin_request.members.iter().enumerate() {
+            let dispute_protocol_id = get_next_uuid(seed);
+
+            if member.role == ParticipantRole::Prover {
+                let challenge_enabler =
+                    self.challenge_enabler(context, dispute_protocol_id, slot_index)?;
+                let operator_take_enabler =
+                    self.operator_take_enabler(context, dispute_protocol_id, slot_index)?;
+                let operator_won_enabler =
+                    self.operator_won_enabler(context, dispute_protocol_id, slot_index)?;
+
+                let kickoff_tx_name = &format!("{}_OP_{}", REIMBURSEMENT_KICKOFF_TX, index);
+                let try_take2_tx_name = &format!("TRY_TAKE2_TX_OP_{}", index);
+
+                // Create kickoff transaction reference
+                self.create_transaction_reference(
+                    &mut protocol,
+                    kickoff_tx_name,
+                    &mut vec![operator_take_enabler.clone(), challenge_enabler.clone()],
+                )?;
+
+                // Create won enabler transaction reference
+                self.create_transaction_reference(
+                    &mut protocol,
+                    try_take2_tx_name,
+                    &mut vec![operator_won_enabler.clone()],
+                )?;
+
+                self.create_operator_take_transaction(
+                    &mut protocol,
+                    index as u32,
+                    amount,
+                    &member.take_key,
+                    pegin_request_txid,
+                    kickoff_tx_name,
+                    operator_take_enabler.clone(),
+                    challenge_enabler.clone(),
+                )?;
+
+                self.create_operator_won_transaction(
+                    &mut protocol,
+                    index as u32,
+                    amount,
+                    &member.take_key,
+                    pegin_request_txid,
+                    kickoff_tx_name,
+                    operator_take_enabler.clone(),
+                    try_take2_tx_name,
+                    operator_won_enabler.clone(),
+                )?;
+            }
+
+            // Update seed
+            seed = dispute_protocol_id;
+        }
+
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
-        info!("{}", protocol.visualize()?);
+        info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
         self.save_protocol(protocol)?;
 
         Ok(())
@@ -152,6 +221,48 @@ impl AcceptPegInProtocol {
         Ok(pegin_request)
     }
 
+    fn operator_take_enabler(
+        &self,
+        context: &ProgramContext,
+        dispute_protocol_id: Uuid,
+        index: usize,
+    ) -> Result<PartialUtxo, BitVMXError> {
+        Ok(context
+            .globals
+            .get_var(
+                &dispute_protocol_id,
+                &var_name(OPERATOR_TAKE_ENABLER, index),
+            )?
+            .unwrap()
+            .utxo()?)
+    }
+
+    fn operator_won_enabler(
+        &self,
+        context: &ProgramContext,
+        dispute_protocol_id: Uuid,
+        index: usize,
+    ) -> Result<PartialUtxo, BitVMXError> {
+        Ok(context
+            .globals
+            .get_var(&dispute_protocol_id, &var_name(OPERATOR_WON_ENABLER, index))?
+            .unwrap()
+            .utxo()?)
+    }
+
+    fn challenge_enabler(
+        &self,
+        context: &ProgramContext,
+        dispute_protocol_id: Uuid,
+        index: usize,
+    ) -> Result<PartialUtxo, BitVMXError> {
+        Ok(context
+            .globals
+            .get_var(&dispute_protocol_id, &var_name(CHALLENGE_ENABLER, index))?
+            .unwrap()
+            .utxo()?)
+    }
+
     fn send_signing_info(
         &self,
         program_context: &ProgramContext,
@@ -168,12 +279,16 @@ impl AcceptPegInProtocol {
             ));
         }
 
-        assert_eq!(
-            nonces.len(),
-            1,
-            "Expected exactly one nonce for AcceptPegInProtocol, found {}",
-            nonces.len()
-        );
+        // TODO: Check if we want this assertion
+        // We expect nonces for: ACCEPT_PEGIN_TX + 4 operator_take + 4 operator_won + 4 per try_take_2 = 9 total
+        // let expected_nonces = 13;
+        // assert_eq!(
+        //     nonces.len(),
+        //     expected_nonces,
+        //     "Expected exactly {} nonces for AcceptPegInProtocol, found {}",
+        //     expected_nonces,
+        //     nonces.len()
+        // );
 
         let signatures = program_context
             .key_chain
@@ -186,12 +301,13 @@ impl AcceptPegInProtocol {
             ));
         }
 
-        assert_eq!(
-            signatures.len(),
-            1,
-            "Expected exactly one partial signature for AcceptPegInProtocol, found {}",
-            signatures.len()
-        );
+        // FIXME: Do we want this assertion?
+        // assert_eq!(
+        //     signatures.len(),
+        //     1,
+        //     "Expected exactly one partial signature for AcceptPegInProtocol, found {}",
+        //     signatures.len()
+        // );
 
         let data = serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(
             self.ctx.id,
@@ -221,4 +337,202 @@ impl AcceptPegInProtocol {
 
         Ok(())
     }
+
+    fn create_operator_take_transaction(
+        &self,
+        protocol: &mut protocol_builder::builder::Protocol,
+        index: u32,
+        amount: u64,
+        take_pubkey: &PublicKey,
+        pegin_txid: Txid,
+        kickoff_tx_name: &str,
+        take_enabler: PartialUtxo,
+        challenge_enabler: PartialUtxo,
+    ) -> Result<(), BitVMXError> {
+        let operator_take_tx_name = &format!("OPERATOR_TAKE_TX_OP_{}", index);
+        // protocol.add_transaction(operator_take_tx_name)?;
+
+        // Pegin input
+        self.add_accept_pegin_connection(protocol, operator_take_tx_name, pegin_txid)?;
+
+        // Input All takes enabler
+        self.add_all_takes_enabler_input(
+            protocol,
+            operator_take_tx_name,
+            kickoff_tx_name,
+            take_enabler,
+        )?;
+
+        // Input from reimbursement kickoff with timelock
+        protocol.add_connection(
+            "challenge_enabler_conn",
+            kickoff_tx_name,
+            OutputSpec::Index(challenge_enabler.1 as usize),
+            operator_take_tx_name,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::KeyOnly {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            Some(challenge_enabler.0),
+        )?;
+
+        // // Operator Output
+        self.add_operator_output(protocol, operator_take_tx_name, amount, take_pubkey)?;
+        Ok(())
+    }
+
+    fn create_operator_won_transaction(
+        &self,
+        protocol: &mut protocol_builder::builder::Protocol,
+        index: u32,
+        amount: u64,
+        take_pubkey: &PublicKey,
+        pegin_txid: Txid,
+        kickoff_tx_name: &str,
+        take_enabler: PartialUtxo,
+        try_take2_tx_name: &str,
+        won_enabler: PartialUtxo,
+    ) -> Result<(), BitVMXError> {
+        // Operator won transaction
+        let operator_won_tx_name = &format!("OPERATOR_WON_TX_OP_{}", index);
+        // protocol.add_transaction(operator_won_tx_name)?;
+
+        // Pegin input
+        self.add_accept_pegin_connection(protocol, operator_won_tx_name, pegin_txid)?;
+
+        // Input All takes enabler
+        self.add_all_takes_enabler_input(
+            protocol,
+            operator_won_tx_name,
+            kickoff_tx_name,
+            take_enabler,
+        )?;
+
+        // Input from try take 2 with timelock
+        protocol.add_connection(
+            "try_take2_conn",
+            try_take2_tx_name,
+            OutputSpec::Index(won_enabler.1 as usize),
+            operator_won_tx_name,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::KeyOnly {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            Some(won_enabler.0),
+        )?;
+
+        // Operator Output
+        // TODO: Modify amount based on Miro
+        self.add_operator_output(protocol, operator_won_tx_name, amount, take_pubkey)?;
+
+        Ok(())
+    }
+
+    fn add_accept_pegin_connection(
+        &self,
+        protocol: &mut protocol_builder::builder::Protocol,
+        tx_name: &str,
+        pegin_txid: Txid,
+    ) -> Result<(), BitVMXError> {
+        protocol.add_connection(
+            "accept_pegin_conn",
+            ACCEPT_PEGIN_TX,
+            OutputSpec::Index(0),
+            tx_name,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::KeyOnly {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            Some(pegin_txid),
+        )?;
+        Ok(())
+    }
+
+    fn add_all_takes_enabler_input(
+        &self,
+        protocol: &mut protocol_builder::builder::Protocol,
+        tx_name: &str,
+        kickoff_tx_name: &str,
+        take_enabler: PartialUtxo,
+    ) -> Result<(), BitVMXError> {
+        protocol.add_connection(
+            "take_enabler_conn",
+            kickoff_tx_name,
+            OutputSpec::Index(take_enabler.1 as usize),
+            tx_name,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::KeyOnly {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            Some(take_enabler.0),
+        )?;
+        Ok(())
+    }
+
+    fn add_operator_output(
+        &self,
+        protocol: &mut protocol_builder::builder::Protocol,
+        tx_name: &str,
+        amount: u64,
+        take_pubkey: &PublicKey,
+    ) -> Result<(), BitVMXError> {
+        let wpkh = take_pubkey.wpubkey_hash().expect("key is compressed");
+        let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
+
+        protocol.add_transaction_output(
+            tx_name,
+            &OutputType::SegwitPublicKey {
+                value: Amount::from_sat(amount),
+                script_pubkey,
+                public_key: *take_pubkey,
+            },
+        )?;
+
+        Ok(())
+    }
+
+    fn create_transaction_reference(
+        &self,
+        protocol: &mut protocol_builder::builder::Protocol,
+        tx_name: &str,
+        utxos: &mut Vec<PartialUtxo>,
+    ) -> Result<(), BitVMXError> {
+        // Create transaction
+        protocol.add_transaction(tx_name)?;
+
+        // Sort UTXOs by index
+        utxos.sort_by_key(|utxo| utxo.1);
+        let mut last_index = 0;
+
+        for utxo in utxos {
+            // If there is a gap in the indices, add unknown outputs
+            if utxo.1 > last_index + 1 {
+                protocol.add_unknown_outputs(tx_name, utxo.1 - last_index)?;
+            }
+
+            // Add the UTXO as an output
+            protocol.add_transaction_output(tx_name, &utxo.clone().3.unwrap())?;
+            last_index = utxo.1;
+        }
+
+        Ok(())
+    }
+}
+
+// This should be imported from a common utility module
+// This same function is used in `dispute_core.rs` and `accept_pegin.rs`
+fn var_name(prefix: &str, index: usize) -> String {
+    format!("{}_{}", prefix, index)
 }

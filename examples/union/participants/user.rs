@@ -1,6 +1,6 @@
 use crate::{expect_msg, request_pegin::RequestPegin};
 use anyhow::Result;
-use bitcoin::PublicKey;
+use bitcoin::{PublicKey, Txid};
 use tracing::info;
 
 use bitvmx_client::{
@@ -27,7 +27,11 @@ impl User {
         })
     }
 
-    pub fn request_pegin(&mut self, committee_public_key: &PublicKey) -> Result<()> {
+    pub fn request_pegin(
+        &mut self,
+        committee_public_key: &PublicKey,
+        stream_value: u64,
+    ) -> Result<Txid> {
         info!(id = self.id, "Requesting pegin");
         // Enable RSK pegin monitoring using the public API
         self.bitvmx.subscribe_to_rsk_pegin()?;
@@ -35,7 +39,6 @@ impl User {
 
         // Create a proper RSK pegin transaction and send it as if it was a user transaction
         let mut request_pegin = RequestPegin::new(&self.config)?;
-        let stream_value = 100_000;
         let packet_number = 0;
         let rsk_address = "7ac5496aee77c1ba1f0854206a26dda82a81d6d8";
         let request_pegin_txid = request_pegin.create_and_send_transaction(
@@ -69,6 +72,6 @@ impl User {
         // Union client calls the smart contract PegManager.requestPegin(spv_proof)
         // Smart contracts emits the  PeginRequested event
 
-        Ok(())
+        Ok(request_pegin_txid)
     }
 }

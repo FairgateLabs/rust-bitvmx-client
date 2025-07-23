@@ -7,6 +7,7 @@ use console::style;
 use protocol_builder::{
     builder::ProtocolBuilder,
     errors::ProtocolBuilderError,
+    graph::graph::GraphOptions,
     scripts::{self, timelock, ProtocolScript, SignMode},
     types::{
         connection::InputSpec,
@@ -771,7 +772,7 @@ impl ProtocolHandler for SlotProtocol {
         pb.add_speedup_output(&mut protocol, SETUP_TX, amount, &ops_agg_pubkey)?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
-        info!("{}", protocol.visualize()?);
+        info!("{}", protocol.visualize(GraphOptions::Default)?);
         self.save_protocol(protocol)?;
         Ok(())
     }

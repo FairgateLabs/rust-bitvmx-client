@@ -4,6 +4,7 @@ use bitcoin::{Amount, PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     errors::ProtocolBuilderError,
+    graph::graph::GraphOptions,
     scripts::SignMode,
     types::{
         connection::InputSpec,
@@ -111,7 +112,7 @@ impl ProtocolHandler for TakeProtocol {
         // TODO connect the operator won transaction with the accept peg-in transaction
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
-        info!("{}", protocol.visualize()?);
+        info!("{}", protocol.visualize(GraphOptions::Default)?);
         self.save_protocol(protocol)?;
         Ok(())
     }

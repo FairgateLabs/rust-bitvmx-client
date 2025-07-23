@@ -76,7 +76,8 @@ pub fn request_pegin() -> Result<()> {
     let committee_public_key = committee.setup()?;
 
     let mut user = User::new("user_1")?;
-    user.request_pegin(&committee_public_key)?;
+    let amount: u64 = 100_000; // This should be replaced with the actual amount of the peg-in request
+    user.request_pegin(&committee_public_key, amount)?;
 
     Ok(())
 }
@@ -87,9 +88,21 @@ pub fn accept_pegin() -> Result<()> {
     let committee_public_key = committee.setup()?;
 
     let mut user = User::new("user_1")?;
-    user.request_pegin(&committee_public_key)?;
+    let amount = 100_000; // This should be replaced with the actual amount of the peg-in request
 
-    committee.accept_pegin()?;
+    let request_pegin_txid = user.request_pegin(&committee_public_key, amount)?;
+
+    // This came from the contracts
+    let accept_pegin_sighash = vec![0; 32]; // This should be replaced with the actual sighash of the accept peg-in tx
+    let slot_index = 0; // This should be replaced with the actual slot index
+
+    committee.accept_pegin(
+        committee.committee_id(),
+        request_pegin_txid,
+        amount,
+        accept_pegin_sighash,
+        slot_index,
+    )?;
     Ok(())
 }
 

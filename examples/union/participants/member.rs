@@ -131,21 +131,19 @@ impl Member {
     #[allow(clippy::too_many_arguments)]
     pub fn setup_covenants(
         &mut self,
-        dispute_core_id: Uuid,
-        member_index: usize,
+        committee_id: Uuid,
         members: &[Member],
-        funding_utxos: &[PartialUtxo],
+        funding_utxos_per_member: &Vec<Vec<PartialUtxo>>,
     ) -> Result<()> {
         info!(id = self.id, "Setting up covenants for member {}", self.id);
         DisputeCoreSetup::setup(
-            dispute_core_id,
-            member_index,
+            committee_id,
             &self.id,
             &self.role,
             members,
-            funding_utxos,
             &self.keyring,
             &self.bitvmx,
+            funding_utxos_per_member,
         )?;
 
         // Wait for the dispute core setup to complete
@@ -170,6 +168,8 @@ impl Member {
         request_pegin_txid: Txid,
         request_pegin_amount: u64,
         accept_pegin_sighash: &[u8],
+        committee_id: Uuid,
+        slot_index: u32,
     ) -> Result<()> {
         info!(id = self.id, "Accepting peg-in");
         AcceptPegInSetup::setup(
@@ -182,6 +182,8 @@ impl Member {
             accept_pegin_sighash,
             &self.keyring,
             &self.bitvmx,
+            committee_id,
+            slot_index,
         )?;
 
         Ok(())
