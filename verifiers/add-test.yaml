@@ -1,0 +1,8 @@
+elf: add-test.elf
+nary_search: 8
+max_steps: 50
+input_section_name: .input
+inputs:
+  - size: 12 
+    owner: prover
+    
