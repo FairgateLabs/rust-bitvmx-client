@@ -23,7 +23,7 @@ use crate::{
         participant::ParticipantKeys,
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
-            union::types::{PegOutRequest, ACCEPT_PEGIN_TX, DUST_VALUE, USER_TAKE_TX},
+            union::types::{PegOutRequest, ACCEPT_PEGIN_TX, SPEED_UP_VALUE, USER_TAKE_TX},
         },
         variables::PartialUtxo,
     },
@@ -105,7 +105,7 @@ impl ProtocolHandler for UserTakeProtocol {
         // Add the user output to the user take transaction
         let mut amount = accept_pegin_utxo.2.unwrap();
         amount = self.checked_sub(amount, fee)?;
-        amount = self.checked_sub(amount, DUST_VALUE)?;
+        amount = self.checked_sub(amount, SPEED_UP_VALUE)?;
 
         let wpkh = user_pubkey.wpubkey_hash().expect("key is compressed");
         let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
@@ -123,7 +123,7 @@ impl ProtocolHandler for UserTakeProtocol {
         protocol.add_transaction_output(
             USER_TAKE_TX,
             &OutputType::SegwitPublicKey {
-                value: Amount::from_sat(DUST_VALUE),
+                value: Amount::from_sat(SPEED_UP_VALUE),
                 script_pubkey: script_pubkey.clone(),
                 public_key: user_pubkey,
             },

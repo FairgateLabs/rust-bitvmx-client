@@ -34,6 +34,7 @@ pub const DISPUTE_CORE_LONG_TIMELOCK: u16 = 6;
 pub const DISPUTE_OPENER_VALUE: u64 = 1000;
 pub const START_ENABLER_VALUE: u64 = 1000;
 pub const DUST_VALUE: u64 = 546;
+pub const SPEED_UP_VALUE: u64 = 546;
 
 // Suffixes
 pub const FUNDING_UTXO_SUFFIX: &str = "_FUNDING_UTXO";
