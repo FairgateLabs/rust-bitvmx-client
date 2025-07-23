@@ -270,8 +270,6 @@ pub fn execute_dispute(
     Ok(())
 }
 
-pub fn connect_slot_with_dispute(slot_id: &Uuid, dispute_id: &Uuid) {}
-
 pub fn process_dispatcher(
     dispatchers: &mut Vec<DispatcherHandler<EmulatorJobType>>,
     instances: &mut Vec<BitVMX>,
