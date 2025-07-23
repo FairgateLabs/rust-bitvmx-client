@@ -159,7 +159,7 @@ pub enum OutgoingBitVMXApiMessages {
     SPVProof(Txid, Option<BtcTxSPVProof>),
     Encrypted(Uuid, Vec<u8>),
     Decrypted(Uuid, Vec<u8>),
-    BackupSuccess(String),
+    BackupResult(bool, String),
 }
 
 impl OutgoingBitVMXApiMessages {
