@@ -100,6 +100,12 @@ impl BitVMXClient {
         self.send_message(IncomingBitVMXApiMessages::GetTransaction(request_id, txid))
     }
 
+    pub fn get_transaction_by_name(&self, request_id: Uuid, name: String) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetTransactionInfoByName(
+            request_id, name,
+        ))
+    }
+
     pub fn subscribe_to_transaction(&self, request_id: Uuid, txid: Txid) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::SubscribeToTransaction(
             request_id, txid,

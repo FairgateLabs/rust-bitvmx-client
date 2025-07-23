@@ -1,11 +1,12 @@
 use anyhow::Result;
+use bitcoin::PublicKey;
 use std::collections::HashMap;
 
 use bitvmx_client::{
     client::BitVMXClient,
     program::{
         participant::{P2PAddress, ParticipantRole},
-        protocols::union::{common::get_covenant_id_by_index, types::NewCommittee},
+        protocols::union::{common::get_dispute_core_id, types::NewCommittee},
         variables::{PartialUtxo, VariableTypes},
     },
     types::PROGRAM_TYPE_DISPUTE_CORE,
@@ -31,68 +32,63 @@ impl DisputeCoreSetup {
         committee: &[Member],
         keyring: &Keyring,
         bitvmx: &BitVMXClient,
-        funding_utxos_per_member: &Vec<Vec<PartialUtxo>>,
+        funding_utxos_per_member: &HashMap<PublicKey, Vec<PartialUtxo>>,
     ) -> Result<DisputeCoreSetup> {
+        // gather all operator addresses
+        // in a real scenario, operators should get this from the chain
+        let addresses = Self::get_addresses(committee);
+
+        // build a map of communication pubkeys to addresses
+        let mut comms = HashMap::new();
+        for member in committee {
+            comms.insert(
+                member.keyring.communication_pubkey.unwrap(),
+                member.address.clone().unwrap(),
+            );
+        }
+
         for (member_index, member) in committee.iter().enumerate() {
             if member.role == ParticipantRole::Prover {
-                let covenant_id = get_covenant_id_by_index(committee_id, member_index);
-                let funding_utxos = funding_utxos_per_member[member_index].clone();
+                let pubkey = member.keyring.take_pubkey.unwrap();
+                let protocol_id = get_dispute_core_id(committee_id, &pubkey);
+                let funding_utxos = funding_utxos_per_member[&pubkey].clone();
 
                 info!(
                     id = my_id,
-                    "Setting up the DisputeCore protocol handler {} for {}", covenant_id, my_id
+                    "Setting up the DisputeCore protocol handler {} for {}", protocol_id, my_id
                 );
 
-                // gather all operator addresses
-                // in a real scenario, operators should get this from the chain
-                let addresses = Self::get_addresses(committee);
-
-                // build a map of communication pubkeys to addresses
-                let mut comms = HashMap::new();
-                for member in committee {
-                    comms.insert(
-                        member.keyring.communication_pubkey.unwrap(),
-                        member.address.clone().unwrap(),
-                    );
-                }
-
-                let committe = NewCommittee {
+                let new_committe = NewCommittee {
                     my_role: my_role.clone(),
                     take_aggregated_key: keyring.take_aggregated_key.unwrap(),
                     dispute_aggregated_key: keyring.dispute_aggregated_key.unwrap(),
-                    addresses: comms,
+                    addresses: comms.clone(),
                     operator_count: Self::operator_count(committee)?,
                     watchtower_count: Self::watchtower_count(committee)?,
                     packet_size: 10,
+                    member_index: member_index,
                 };
 
                 bitvmx.set_var(
-                    covenant_id,
+                    protocol_id,
                     &NewCommittee::name(),
-                    VariableTypes::String(serde_json::to_string(&committe)?),
-                )?;
-
-                bitvmx.set_var(
-                    covenant_id,
-                    "member_index",
-                    VariableTypes::Number(member_index as u32),
+                    VariableTypes::String(serde_json::to_string(&new_committe)?),
                 )?;
 
                 let funding_names = ["WT_FUNDING_UTXO", "OP_FUNDING_UTXO"];
                 for (i, funding) in funding_utxos.iter().enumerate() {
                     let funding_name = funding_names.get(i).unwrap();
-
                     bitvmx.set_var(
-                        covenant_id,
+                        protocol_id,
                         funding_name,
                         VariableTypes::Utxo(funding.clone()),
                     )?;
                 }
 
                 bitvmx.setup(
-                    covenant_id,
+                    protocol_id,
                     PROGRAM_TYPE_DISPUTE_CORE.to_string(),
-                    addresses,
+                    addresses.clone(),
                     0,
                 )?;
             }

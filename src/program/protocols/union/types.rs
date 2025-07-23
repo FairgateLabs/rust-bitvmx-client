@@ -1,6 +1,7 @@
 use bitcoin::{PublicKey, Txid};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use uuid::Uuid;
 
 use crate::program::participant::{P2PAddress, ParticipantRole};
 
@@ -33,6 +34,7 @@ pub const DISPUTE_CORE_LONG_TIMELOCK: u16 = 6;
 pub const DISPUTE_OPENER_VALUE: u64 = 1000;
 pub const START_ENABLER_VALUE: u64 = 1000;
 pub const DUST_VALUE: u64 = 546;
+pub const SPEED_UP_VALUE: u64 = 546;
 
 // Suffixes
 pub const FUNDING_UTXO_SUFFIX: &str = "_FUNDING_UTXO";
@@ -47,6 +49,7 @@ pub const CHALLENGE_ENABLER: &str = "challenge_enabler";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewCommittee {
     pub my_role: ParticipantRole,
+    pub member_index: usize,
     pub take_aggregated_key: PublicKey,
     pub dispute_aggregated_key: PublicKey,
     pub addresses: HashMap<PublicKey, P2PAddress>,
@@ -69,19 +72,28 @@ pub struct PegInRequest {
     pub accept_pegin_sighash: Vec<u8>,
     pub take_aggregated_key: PublicKey,
     pub addresses: HashMap<PublicKey, P2PAddress>,
-    pub members: Vec<MemberData>,
+    pub operators_take_key: Vec<PublicKey>,
     pub slot_index: u32,
     pub committee_id: uuid::Uuid,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MemberData {
-    pub role: ParticipantRole,
-    pub take_key: PublicKey,
 }
 
 impl PegInRequest {
     pub fn name() -> String {
         "pegin_request".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PegOutRequest {
+    pub committee_id: Uuid,
+    pub slot_id: u32,
+    pub fee: u64,
+    pub user_pubkey: PublicKey,
+    pub take_aggregated_key: PublicKey,
+}
+
+impl PegOutRequest {
+    pub fn name() -> String {
+        "pegout_request".to_string()
     }
 }

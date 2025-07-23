@@ -19,11 +19,11 @@ use uuid::Uuid;
 use crate::{
     errors::BitVMXError,
     program::{
-        participant::{ParticipantKeys, ParticipantRole},
+        participant::ParticipantKeys,
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
-                common::get_next_uuid,
+                common::get_dispute_core_id,
                 types::{
                     PegInRequest, ACCEPT_PEGIN_TX, CHALLENGE_ENABLER, OPERATOR_TAKE_ENABLER,
                     OPERATOR_WON_ENABLER, REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX,
@@ -97,73 +97,82 @@ impl ProtocolHandler for AcceptPegInProtocol {
             Some(pegin_request_txid),
         )?;
 
-        protocol.add_transaction_output(
-            ACCEPT_PEGIN_TX,
-            &OutputType::taproot(amount, &take_aggregated_key, &[])?,
-        )?;
+        let accept_pegin_output = OutputType::taproot(amount, &take_aggregated_key, &[])?;
+        protocol.add_transaction_output(ACCEPT_PEGIN_TX, &accept_pegin_output)?;
 
-        let mut seed = pegin_request.committee_id;
         let slot_index = pegin_request.slot_index as usize;
 
         // Operator take transactions
         // Loop over operators and create take 1 and take 2 transactions
-        for (index, member) in pegin_request.members.iter().enumerate() {
-            let dispute_protocol_id = get_next_uuid(seed);
+        for (index, take_key) in pegin_request.operators_take_key.iter().enumerate() {
+            let dispute_protocol_id = get_dispute_core_id(pegin_request.committee_id, take_key);
 
-            if member.role == ParticipantRole::Prover {
-                let challenge_enabler =
-                    self.challenge_enabler(context, dispute_protocol_id, slot_index)?;
-                let operator_take_enabler =
-                    self.operator_take_enabler(context, dispute_protocol_id, slot_index)?;
-                let operator_won_enabler =
-                    self.operator_won_enabler(context, dispute_protocol_id, slot_index)?;
+            let challenge_enabler =
+                self.challenge_enabler(context, dispute_protocol_id, slot_index)?;
+            let operator_take_enabler =
+                self.operator_take_enabler(context, dispute_protocol_id, slot_index)?;
+            let operator_won_enabler =
+                self.operator_won_enabler(context, dispute_protocol_id, slot_index)?;
 
-                let kickoff_tx_name = &format!("{}_OP_{}", REIMBURSEMENT_KICKOFF_TX, index);
-                let try_take2_tx_name = &format!("TRY_TAKE2_TX_OP_{}", index);
+            let kickoff_tx_name = &format!("{}_OP_{}", REIMBURSEMENT_KICKOFF_TX, index);
+            let try_take2_tx_name = &format!("TRY_TAKE2_TX_OP_{}", index);
 
-                // Create kickoff transaction reference
-                self.create_transaction_reference(
-                    &mut protocol,
-                    kickoff_tx_name,
-                    &mut vec![operator_take_enabler.clone(), challenge_enabler.clone()],
-                )?;
+            // Create kickoff transaction reference
+            self.create_transaction_reference(
+                &mut protocol,
+                kickoff_tx_name,
+                &mut vec![operator_take_enabler.clone(), challenge_enabler.clone()],
+            )?;
 
-                // Create won enabler transaction reference
-                self.create_transaction_reference(
-                    &mut protocol,
-                    try_take2_tx_name,
-                    &mut vec![operator_won_enabler.clone()],
-                )?;
+            // Create won enabler transaction reference
+            self.create_transaction_reference(
+                &mut protocol,
+                try_take2_tx_name,
+                &mut vec![operator_won_enabler.clone()],
+            )?;
 
-                self.create_operator_take_transaction(
-                    &mut protocol,
-                    index as u32,
-                    amount,
-                    &member.take_key,
-                    pegin_request_txid,
-                    kickoff_tx_name,
-                    operator_take_enabler.clone(),
-                    challenge_enabler.clone(),
-                )?;
+            self.create_operator_take_transaction(
+                &mut protocol,
+                index as u32,
+                amount,
+                take_key,
+                pegin_request_txid,
+                kickoff_tx_name,
+                operator_take_enabler.clone(),
+                challenge_enabler.clone(),
+            )?;
 
-                self.create_operator_won_transaction(
-                    &mut protocol,
-                    index as u32,
-                    amount,
-                    &member.take_key,
-                    pegin_request_txid,
-                    kickoff_tx_name,
-                    operator_take_enabler.clone(),
-                    try_take2_tx_name,
-                    operator_won_enabler.clone(),
-                )?;
-            }
-
-            // Update seed
-            seed = dispute_protocol_id;
+            self.create_operator_won_transaction(
+                &mut protocol,
+                index as u32,
+                amount,
+                take_key,
+                pegin_request_txid,
+                kickoff_tx_name,
+                operator_take_enabler.clone(),
+                try_take2_tx_name,
+                operator_won_enabler.clone(),
+            )?;
         }
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
+
+        let tx = protocol.transaction_by_name(ACCEPT_PEGIN_TX)?;
+        let txid = tx.compute_txid();
+        let output_index = 0;
+
+        // Save Accept Pegin transaction under committee_id to be used in user take
+        context.globals.set_var(
+            &pegin_request.committee_id,
+            &format!("{}_{}", ACCEPT_PEGIN_TX, slot_index).to_string(),
+            VariableTypes::Utxo((
+                txid,
+                output_index,
+                Some(tx.output.get(output_index as usize).unwrap().value.to_sat()),
+                Some(accept_pegin_output),
+            )),
+        )?;
+
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
         self.save_protocol(protocol)?;
 

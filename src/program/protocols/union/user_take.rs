@@ -15,6 +15,7 @@ use protocol_builder::{
 };
 use serde::{Deserialize, Serialize};
 use tracing::info;
+use uuid::Uuid;
 
 use crate::{
     errors::BitVMXError,
@@ -22,7 +23,7 @@ use crate::{
         participant::ParticipantKeys,
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
-            union::types::{ACCEPT_PEGIN_TX, OPERATOR_TAKE_TX, OPERATOR_WON_TX, USER_TAKE_TX},
+            union::types::{PegOutRequest, ACCEPT_PEGIN_TX, SPEED_UP_VALUE, USER_TAKE_TX},
         },
         variables::PartialUtxo,
     },
@@ -30,11 +31,11 @@ use crate::{
 };
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct TakeProtocol {
+pub struct UserTakeProtocol {
     ctx: ProtocolContext,
 }
 
-impl ProtocolHandler for TakeProtocol {
+impl ProtocolHandler for UserTakeProtocol {
     fn context(&self) -> &ProtocolContext {
         &self.ctx
     }
@@ -45,10 +46,12 @@ impl ProtocolHandler for TakeProtocol {
 
     fn get_pregenerated_aggregated_keys(
         &self,
-        _context: &ProgramContext,
+        context: &ProgramContext,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
-        // Predefined aggregated keys for this protocol
-        todo!()
+        Ok(vec![(
+            "take_aggregated".to_string(),
+            self.take_aggregated_key(context)?,
+        )])
     }
 
     fn generate_keys(
@@ -64,16 +67,24 @@ impl ProtocolHandler for TakeProtocol {
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let accept_pegin_utxo = self.utxo("accept_pegin_utxo", context)?;
-        let fee = self.number("fee", context)? as u64;
-        let user_pubkey = self.pubkey("user_pubkey", context)?;
+        let pegout_request = self.pegout_request(context)?;
+        let accept_pegin_utxo = self.accept_pegin_utxo(
+            context,
+            &pegout_request.committee_id,
+            pegout_request.slot_id,
+        )?;
+        let user_pubkey = pegout_request.user_pubkey;
+        let fee = pegout_request.fee;
 
         //create the protocol
         let mut protocol = self.load_or_create_protocol();
 
         // Declare the external accept peg-in transaction
-        protocol.add_external_transaction(ACCEPT_PEGIN_TX)?;
-        protocol.add_transaction_output(ACCEPT_PEGIN_TX, &accept_pegin_utxo.3.unwrap())?;
+        self.create_transaction_reference(
+            &mut protocol,
+            ACCEPT_PEGIN_TX,
+            &mut vec![accept_pegin_utxo.clone()],
+        )?;
 
         // Connect the user take transaction with the accept peg-in transaction
         protocol.add_connection(
@@ -94,6 +105,7 @@ impl ProtocolHandler for TakeProtocol {
         // Add the user output to the user take transaction
         let mut amount = accept_pegin_utxo.2.unwrap();
         amount = self.checked_sub(amount, fee)?;
+        amount = self.checked_sub(amount, SPEED_UP_VALUE)?;
 
         let wpkh = user_pubkey.wpubkey_hash().expect("key is compressed");
         let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
@@ -102,17 +114,23 @@ impl ProtocolHandler for TakeProtocol {
             USER_TAKE_TX,
             &OutputType::SegwitPublicKey {
                 value: Amount::from_sat(amount),
-                script_pubkey,
+                script_pubkey: script_pubkey.clone(),
                 public_key: user_pubkey,
             },
         )?;
 
-        // TODO review if we should add an speedup output to the user take transaction
-        // TODO connect the operator take transaction with the accept peg-in transaction
-        // TODO connect the operator won transaction with the accept peg-in transaction
+        // Speed up transaction
+        protocol.add_transaction_output(
+            USER_TAKE_TX,
+            &OutputType::SegwitPublicKey {
+                value: Amount::from_sat(SPEED_UP_VALUE),
+                script_pubkey: script_pubkey.clone(),
+                public_key: user_pubkey,
+            },
+        )?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
-        info!("{}", protocol.visualize(GraphOptions::Default)?);
+        info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
         self.save_protocol(protocol)?;
         Ok(())
     }
@@ -124,10 +142,7 @@ impl ProtocolHandler for TakeProtocol {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         // TODO include only the txs that need to be executed based on a decision from the L2
         match name {
-            ACCEPT_PEGIN_TX => Ok((self.accept_pegin()?, None)),
             USER_TAKE_TX => Ok((self.user_take()?, None)),
-            OPERATOR_TAKE_TX => Ok((self.operator_take()?, None)),
-            OPERATOR_WON_TX => Ok((self.operator_won()?, None)),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
     }
@@ -148,24 +163,46 @@ impl ProtocolHandler for TakeProtocol {
         // This is called after the protocol is built and ready to be used
         info!(
             id = self.ctx.my_idx,
-            "TakeProtocol setup complete for program {}", self.ctx.id
+            "UserTakeProtocol setup complete for program {}", self.ctx.id
         );
         Ok(())
     }
 }
 
-impl TakeProtocol {
+impl UserTakeProtocol {
     pub fn new(ctx: ProtocolContext) -> Self {
         Self { ctx }
     }
 
-    pub fn accept_pegin(&self) -> Result<Transaction, ProtocolBuilderError> {
-        let args = InputArgs::new_taproot_key_args();
+    fn pegout_request(&self, context: &ProgramContext) -> Result<PegOutRequest, BitVMXError> {
+        let pegout_request = context
+            .globals
+            .get_var(&self.ctx.id, &PegOutRequest::name())?
+            .unwrap()
+            .string()?;
 
-        // TODO add the necessary arguments to args
+        let pegout_request: PegOutRequest = serde_json::from_str(&pegout_request)?;
+        Ok(pegout_request)
+    }
 
-        self.load_protocol()?
-            .transaction_to_send(ACCEPT_PEGIN_TX, &[args])
+    fn take_aggregated_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+        Ok(self.pegout_request(context)?.take_aggregated_key)
+    }
+
+    fn accept_pegin_utxo(
+        &self,
+        context: &ProgramContext,
+        committee_id: &Uuid,
+        slot_index: u32,
+    ) -> Result<PartialUtxo, BitVMXError> {
+        Ok(context
+            .globals
+            .get_var(
+                committee_id,
+                &format!("{}_{}", ACCEPT_PEGIN_TX, slot_index).to_string(),
+            )?
+            .unwrap()
+            .utxo()?)
     }
 
     pub fn user_take(&self) -> Result<Transaction, ProtocolBuilderError> {
@@ -177,41 +214,30 @@ impl TakeProtocol {
             .transaction_to_send(USER_TAKE_TX, &[args])
     }
 
-    pub fn operator_take(&self) -> Result<Transaction, ProtocolBuilderError> {
-        let args = InputArgs::new_taproot_key_args();
+    fn create_transaction_reference(
+        &self,
+        protocol: &mut protocol_builder::builder::Protocol,
+        tx_name: &str,
+        utxos: &mut Vec<PartialUtxo>,
+    ) -> Result<(), BitVMXError> {
+        // Create transaction
+        protocol.add_transaction(tx_name)?;
 
-        // TODO add the necessary arguments to args
+        // Sort UTXOs by index
+        utxos.sort_by_key(|utxo| utxo.1);
+        let mut last_index = 0;
 
-        self.load_protocol()?
-            .transaction_to_send(OPERATOR_TAKE_TX, &[args])
-    }
+        for utxo in utxos {
+            // If there is a gap in the indices, add unknown outputs
+            if utxo.1 > last_index + 1 {
+                protocol.add_unknown_outputs(tx_name, utxo.1 - last_index)?;
+            }
 
-    pub fn operator_won(&self) -> Result<Transaction, ProtocolBuilderError> {
-        let args = InputArgs::new_taproot_key_args();
+            // Add the UTXO as an output
+            protocol.add_transaction_output(tx_name, &utxo.clone().3.unwrap())?;
+            last_index = utxo.1;
+        }
 
-        // TODO add the necessary arguments to args
-
-        self.load_protocol()?
-            .transaction_to_send(OPERATOR_WON_TX, &[args])
-    }
-
-    fn utxo(&self, name: &str, context: &ProgramContext) -> Result<PartialUtxo, BitVMXError> {
-        context.globals.get_var(&self.ctx.id, name)?.unwrap().utxo()
-    }
-
-    fn number(&self, name: &str, context: &ProgramContext) -> Result<u32, BitVMXError> {
-        context
-            .globals
-            .get_var(&self.ctx.id, name)?
-            .unwrap()
-            .number()
-    }
-
-    fn pubkey(&self, name: &str, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
-        context
-            .globals
-            .get_var(&self.ctx.id, name)?
-            .unwrap()
-            .pubkey()
+        Ok(())
     }
 }

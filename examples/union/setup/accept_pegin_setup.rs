@@ -6,7 +6,7 @@ use bitvmx_client::{
     client::BitVMXClient,
     program::{
         participant::{P2PAddress, ParticipantRole},
-        protocols::union::types::{MemberData, PegInRequest},
+        protocols::union::types::PegInRequest,
         variables::VariableTypes,
     },
     types::PROGRAM_TYPE_ACCEPT_PEGIN,
@@ -25,7 +25,7 @@ pub struct AcceptPegInSetup {
 impl AcceptPegInSetup {
     #[allow(clippy::too_many_arguments)]
     pub fn setup(
-        covenant_id: Uuid,
+        protocol_id: Uuid,
         my_id: &str,
         my_role: &ParticipantRole,
         committee: &[Member],
@@ -41,7 +41,7 @@ impl AcceptPegInSetup {
 
         info!(
             id = my_id,
-            "Setting up the AcceptPegIn protocol handler {} for {}", covenant_id, my_id
+            "Setting up the AcceptPegIn protocol handler {} for {}", protocol_id, my_id
         );
 
         // build a map of communication pubkeys to addresses
@@ -53,12 +53,11 @@ impl AcceptPegInSetup {
             );
         }
 
-        let mut members_data = Vec::new();
+        let mut operators_take_key = Vec::new();
         for member in committee {
-            members_data.push(MemberData {
-                role: member.role.clone(),
-                take_key: member.keyring.take_pubkey.unwrap(),
-            });
+            if member.role == ParticipantRole::Prover {
+                operators_take_key.push(member.keyring.take_pubkey.unwrap());
+            }
         }
 
         let pegin_request = PegInRequest {
@@ -68,26 +67,41 @@ impl AcceptPegInSetup {
             accept_pegin_sighash: accept_pegin_sighash.to_vec(),
             take_aggregated_key: keyring.take_aggregated_key.unwrap(),
             addresses: comms,
-            members: members_data,
+            operators_take_key,
             slot_index: slot_index,
             committee_id: committee_id,
         };
 
         bitvmx.set_var(
-            covenant_id,
+            protocol_id,
             &PegInRequest::name(),
             VariableTypes::String(serde_json::to_string(&pegin_request)?),
         )?;
 
         bitvmx.setup(
-            covenant_id,
+            protocol_id,
             PROGRAM_TYPE_ACCEPT_PEGIN.to_string(),
             addresses,
             0,
         )?;
 
+        // FIXME: This code will be uncommented soon to broadcast the accept peg-in transaction.
+        // let program_id = expect_msg!(bitvmx, SetupCompleted(program_id) => program_id)?;
+        // info!(id = "AcceptPegInSetup", program_id = ?program_id, "Dispute core setup completed");
+
+        // bitvmx.get_transaction_by_name(covenant_id, ACCEPT_PEGIN_TX.to_string())?;
+        // let tx = expect_msg!(bitvmx, TransactionInfo(_, _, tx) => tx)?;
+
+        // bitvmx.dispatch_transaction(covenant_id, tx)?;
+        // let status = expect_msg!(bitvmx, Transaction(_, status, _) => status)?;
+
+        // info!(
+        //     "AcceptPegIn protocol handler {} for {} send accept pegin transaction with status: {:?}",
+        //     covenant_id, my_id, status
+        // );
+
         Ok(AcceptPegInSetup {
-            _covenant_id: covenant_id,
+            _covenant_id: protocol_id,
             _my_member_id: my_id.to_string(),
             _my_role: my_role.clone(),
             _committee: committee.to_vec(),

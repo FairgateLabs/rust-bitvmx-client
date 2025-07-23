@@ -5,6 +5,7 @@ use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtx
 use bitcoin::{Amount, PublicKey, ScriptBuf};
 use bitvmx_wallet::wallet::Wallet;
 use protocol_builder::types::OutputType;
+use std::collections::HashMap;
 use std::thread::{self};
 use std::time::Duration;
 use tracing::info_span;
@@ -74,10 +75,10 @@ impl Committee {
 
         let seed = self.committee_id;
 
-        let mut funding_utxos_per_member: Vec<Vec<PartialUtxo>> = Vec::new();
+        let mut funding_utxos_per_member: HashMap<PublicKey, Vec<PartialUtxo>> = HashMap::new();
         for member in &self.members {
             let funding_utxos = self.get_funding_utxos(member)?;
-            funding_utxos_per_member.push(funding_utxos);
+            funding_utxos_per_member.insert(member.keyring.take_pubkey.unwrap(), funding_utxos);
         }
 
         // setup covenants
@@ -106,6 +107,25 @@ impl Committee {
                 accept_pegin_sighash.as_slice(),
                 committee_id,
                 slot_index,
+            )
+        })?;
+
+        Ok(())
+    }
+
+    pub fn request_pegout(&mut self, user_pubkey: PublicKey, slot_id: u32, fee: u64) -> Result<()> {
+        let members = self.members.clone();
+        let committee_id = self.committee_id.clone();
+        let protocol_id = Uuid::new_v4();
+
+        self.all(|op| {
+            op.request_pegout(
+                protocol_id,
+                committee_id,
+                user_pubkey,
+                slot_id,
+                fee,
+                &members,
             )
         })?;
 
