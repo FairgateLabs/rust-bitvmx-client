@@ -179,6 +179,7 @@ pub fn test_full() -> Result<()> {
     let slot_program_id = Uuid::new_v4();
     let slot_fee = 1000;
     let slot_speedup_dust = 500;
+    let protocol_cost = 20_000;
     let set_fee = VariableTypes::Number(slot_fee).set_msg(slot_program_id, FEE_STR)?;
     send_all(&channels, &set_fee)?;
 
@@ -202,8 +203,9 @@ pub fn test_full() -> Result<()> {
         VariableTypes::Number(100).set_msg(slot_program_id, EOL_TIMELOCK_DURATION)?;
     send_all(&channels, &eol_timelock_duration)?;
 
-    let protocol_cost = VariableTypes::Number(20_000).set_msg(slot_program_id, PROTOCOL_COST)?;
-    send_all(&channels, &protocol_cost)?;
+    let protocol_cost_msg =
+        VariableTypes::Number(protocol_cost).set_msg(slot_program_id, PROTOCOL_COST)?;
+    send_all(&channels, &protocol_cost_msg)?;
 
     let speedup_dust =
         VariableTypes::Number(slot_speedup_dust).set_msg(slot_program_id, SPEEDUP_DUST)?;
@@ -256,7 +258,7 @@ pub fn test_full() -> Result<()> {
     // SETUP DISPUTE CHANNEL 0-1
     //======================================================
 
-    let initial_utxo = Utxo::new(txid, 4, 20_000, &pair_aggregated_pub_key);
+    let initial_utxo = Utxo::new(txid, 4, protocol_cost as u64, &pair_aggregated_pub_key);
     let prover_win_value = (slot_fee + slot_speedup_dust) as u64;
     let prover_win_utxo = Utxo::new(txid, 2, prover_win_value, &pair_aggregated_pub_key);
     let emulator_channels = vec![emulator_1.unwrap(), emulator_2.unwrap()];
@@ -265,8 +267,11 @@ pub fn test_full() -> Result<()> {
         scripts::timelock(TIMELOCK_BLOCKS, &aggregated_pub_key, SignMode::Aggregate), //convert to timelock
         scripts::check_aggregated_signature(&pair_aggregated_pub_key, SignMode::Aggregate),
     ];
-    let initial_output_type =
-        external_fund_tx(&aggregated_pub_key, initial_spending_condition, 20_000)?;
+    let initial_output_type = external_fund_tx(
+        &aggregated_pub_key,
+        initial_spending_condition,
+        protocol_cost as u64,
+    )?;
 
     let prover_win_spending_condition = vec![
         scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate), //convert to timelock
