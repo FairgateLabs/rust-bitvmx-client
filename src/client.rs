@@ -182,6 +182,30 @@ impl BitVMXClient {
         }
     }
 
+    /// Encrypt a message for a given public key
+    ///
+    /// # Arguments
+    /// * `id` - The ID of the message
+    /// * `messages` - The messages to encrypt as bytes
+    /// * `public_key` - The public key to encrypt the messages with as pkcs8 DER bytes
+    pub fn encrypt(
+        &self,
+        id: Uuid,
+        messages: Vec<u8>,
+        public_key: Vec<u8>,
+    ) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::Encrypt(id, messages, public_key))
+    }
+
+    /// Decrypt a message with the client's private key
+    ///
+    /// # Arguments
+    /// * `id` - The ID of the message
+    /// * `messages` - The messages to decrypt as bytes
+    pub fn decrypt(&self, id: Uuid, messages: Vec<u8>) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::Decrypt(id, messages))
+    }
+
     fn serialize_key(s: &str) -> String {
         s.to_string()
     }

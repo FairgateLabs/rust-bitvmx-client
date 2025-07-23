@@ -115,6 +115,8 @@ pub enum IncomingBitVMXApiMessages {
     GenerateZKP(Uuid, Vec<u8>, String),
     ProofReady(Uuid),
     GetZKPExecutionResult(Uuid),
+    Encrypt(Uuid, Vec<u8>, Vec<u8>),
+    Decrypt(Uuid, Vec<u8>),
 }
 impl IncomingBitVMXApiMessages {
     pub fn to_string(&self) -> Result<String, BitVMXError> {
@@ -154,6 +156,8 @@ pub enum OutgoingBitVMXApiMessages {
     ProofNotReady(Uuid),
     ProofGenerationError(Uuid, String),
     SPVProof(Txid, Option<BtcTxSPVProof>),
+    Encrypted(Uuid, Vec<u8>),
+    Decrypted(Uuid, Vec<u8>)
 }
 
 impl OutgoingBitVMXApiMessages {
@@ -228,6 +232,24 @@ impl OutgoingBitVMXApiMessages {
         match self {
             OutgoingBitVMXApiMessages::Witness(uuid, name, witness) => {
                 Some((uuid.clone(), name.clone(), witness.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn encrypted(&self) -> Option<(Uuid, Vec<u8>)> {
+        match self {
+            OutgoingBitVMXApiMessages::Encrypted(uuid, encrypted) => {
+                Some((uuid.clone(), encrypted.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn decrypted(&self) -> Option<(Uuid, Vec<u8>)> {
+        match self {
+            OutgoingBitVMXApiMessages::Decrypted(uuid, decrypted) => {
+                Some((uuid.clone(), decrypted.clone()))
             }
             _ => None,
         }

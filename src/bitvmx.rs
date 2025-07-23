@@ -101,10 +101,9 @@ impl BitVMX {
     pub fn new(config: Config) -> Result<Self, BitVMXError> {
         let store = Rc::new(Storage::new(&config.storage)?);
         let key_chain = KeyChain::new(&config, store.clone())?;
-        let communications_key = key_chain.communications_key.clone();
         let comms = P2pHandler::new::<LocalAllowList>(
             config.p2p_address().to_string(),
-            communications_key,
+            key_chain.communications_key.to_vec(),
         )?;
 
         let bitcoin_coordinator = BitcoinCoordinator::new_with_paths(
@@ -1084,6 +1083,20 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::ProofReady(id) => BitVMXApi::proof_ready(self, from, id)?,
             IncomingBitVMXApiMessages::GetZKPExecutionResult(id) => {
                 BitVMXApi::get_zkp_execution_result(self, from, id)?
+            }
+            IncomingBitVMXApiMessages::Encrypt(id, message, public_key) => {
+                let encrypted = self.program_context.key_chain.encrypt_messages(message, public_key)?;
+                self.program_context.broker_channel.send(
+                    from,
+                    serde_json::to_string(&OutgoingBitVMXApiMessages::Encrypted(id, encrypted))?,
+                )?;
+            }
+            IncomingBitVMXApiMessages::Decrypt(id, message) => {
+                let decrypted = self.program_context.key_chain.decrypt_messages(message)?;
+                self.program_context.broker_channel.send(
+                    from,
+                    serde_json::to_string(&OutgoingBitVMXApiMessages::Decrypted(id, decrypted))?,
+                )?;
             }
         }
 
