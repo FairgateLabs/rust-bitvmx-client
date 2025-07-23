@@ -117,6 +117,7 @@ pub enum IncomingBitVMXApiMessages {
     GetZKPExecutionResult(Uuid),
     Encrypt(Uuid, Vec<u8>, Vec<u8>),
     Decrypt(Uuid, Vec<u8>),
+    Backup(String),
 }
 impl IncomingBitVMXApiMessages {
     pub fn to_string(&self) -> Result<String, BitVMXError> {
@@ -157,7 +158,8 @@ pub enum OutgoingBitVMXApiMessages {
     ProofGenerationError(Uuid, String),
     SPVProof(Txid, Option<BtcTxSPVProof>),
     Encrypted(Uuid, Vec<u8>),
-    Decrypted(Uuid, Vec<u8>)
+    Decrypted(Uuid, Vec<u8>),
+    BackupSuccess(String),
 }
 
 impl OutgoingBitVMXApiMessages {

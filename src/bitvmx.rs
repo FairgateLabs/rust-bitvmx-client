@@ -1098,6 +1098,13 @@ impl BitVMXApi for BitVMX {
                     serde_json::to_string(&OutgoingBitVMXApiMessages::Decrypted(id, decrypted))?,
                 )?;
             }
+            IncomingBitVMXApiMessages::Backup(path) => {
+                self.store.backup(&path)?;
+                self.program_context.broker_channel.send(
+                    from,
+                    serde_json::to_string(&OutgoingBitVMXApiMessages::BackupSuccess(path))?,
+                )?;
+            }
         }
 
         Ok(())
