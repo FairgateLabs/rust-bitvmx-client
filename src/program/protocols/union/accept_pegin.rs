@@ -179,7 +179,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
             )),
         )?;
 
-        info!("\n{}", protocol.visualize()?);
+        info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
         self.save_protocol(protocol)?;
 
         Ok(())

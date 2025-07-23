@@ -34,7 +34,7 @@ use crate::program::protocols::union::{
 #[cfg(feature = "union")]
 use crate::types::{
     PROGRAM_TYPE_ACCEPT_PEGIN, PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_PAIRWISE_PENALIZATION,
-    PROGRAM_TYPE_TAKE,
+    PROGRAM_TYPE_USER_TAKE,
 };
 
 #[cfg(feature = "cardinal")]
@@ -44,11 +44,6 @@ use crate::types::{ProgramContext, PROGRAM_TYPE_DRP};
 
 use crate::program::variables::WitnessTypes;
 use crate::program::{variables::VariableTypes, witness};
-use crate::types::{
-    ProgramContext, PROGRAM_TYPE_ACCEPT_PEGIN, PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_DRP,
-    PROGRAM_TYPE_LOCK, PROGRAM_TYPE_PAIRWISE_PENALIZATION, PROGRAM_TYPE_SLOT,
-    PROGRAM_TYPE_TRANSFER, PROGRAM_TYPE_USER_TAKE,
-};
 
 #[enum_dispatch]
 pub trait ProtocolHandler {
