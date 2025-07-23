@@ -131,7 +131,7 @@ pub fn request_pegout() -> Result<()> {
     )?;
 
     let user_pubkey = user.public_key()?;
-    let fee = 1000; // This should be the fee for the peg-out
+    let fee = 335; // This should be the fee for the peg-out. It should be same value that it's as constant in the contracts.
 
     committee.request_pegout(user_pubkey, slot_index, fee)?;
 

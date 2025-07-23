@@ -86,6 +86,7 @@ impl AcceptPegInSetup {
             0,
         )?;
 
+        // FIXME: This code will be uncommented soon to broadcast the accept peg-in transaction.
         // let program_id = expect_msg!(bitvmx, SetupCompleted(program_id) => program_id)?;
         // info!(id = "AcceptPegInSetup", program_id = ?program_id, "Dispute core setup completed");
 

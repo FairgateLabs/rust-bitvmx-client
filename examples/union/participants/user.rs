@@ -71,7 +71,7 @@ impl User {
         // Create a proper RSK pegin transaction and send it as if it was a user transaction
         let packet_number = 0;
         let rsk_address = "7ac5496aee77c1ba1f0854206a26dda82a81d6d8";
-        let request_pegin_txid = self.create_and_send_transaction(
+        let request_pegin_txid = self.create_and_send_request_pegin_tx(
             *committee_public_key,
             stream_value,
             packet_number,
@@ -109,7 +109,7 @@ impl User {
         Ok(self.public_key)
     }
 
-    pub fn create_and_send_transaction(
+    pub fn create_and_send_request_pegin_tx(
         &mut self,
         aggregated_pubkey: PublicKey,
         stream_value: u64,
