@@ -471,10 +471,9 @@ pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
     let pair_0_1_channels = vec![helper.channels[0].clone(), helper.channels[1].clone()];
     let prog_id = Uuid::new_v4();
 
-    let result_const = "00000003";
-    let const_input =
-        VariableTypes::Input(hex::decode(result_const).unwrap()).set_msg(prog_id, "const_var_1")?;
-    send_all(&pair_0_1_channels, &const_input);
+    //let result_const = "00000003";
+    //let const_input = VariableTypes::Input(hex::decode(result_const).unwrap()).set_msg(prog_id, "const_var_1")?;
+    //let _ = send_all(&pair_0_1_channels, &const_input);
 
     prepare_dispute(
         prog_id,
@@ -489,8 +488,9 @@ pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
         false,
         false,
         ForcedChallenges::Execution,
-        Some("./verifiers/add-test-with-const.yaml".to_string()),
+        //Some("./verifiers/add-test-with-const.yaml".to_string()),
         //Some("./verifiers/add-test.yaml".to_string()),
+        None,
     )?;
 
     let msg = helper.wait_msg(0)?;
