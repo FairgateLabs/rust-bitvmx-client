@@ -13,9 +13,10 @@ services:
       - "${BITCOIND_RPC_PORT}:18443"
     expose:
       - "${BITCOIND_RPC_PORT}"
+    profiles:
+      - bitcoind
 
   bitvmx-client:
-    container_name: ${BITVMX_CLIENT_CONTAINER_NAME}
     build:
       context: ./
       dockerfile: docker/Dockerfile
@@ -39,11 +40,10 @@ services:
       - "${BROKER_PORT}:${BROKER_PORT}"
     expose:
       - "${BROKER_PORT}"
-    depends_on:
-      - bitcoind
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   bitvmx-emulator:
-    container_name: bitvmx-emulator-${CLIENT_OP}
     build:
       context: ./
       dockerfile: docker/Dockerfile.emulator
@@ -54,7 +54,7 @@ services:
     entrypoint: ["./run_emulator.sh"]
     environment:
       CLIENT_OP: ${CLIENT_OP}
-    network_mode: "container:${BITVMX_CLIENT_CONTAINER_NAME}"
+    network_mode: "service:bitvmx-client"
     depends_on:
       bitvmx-client:
         condition: service_healthy
