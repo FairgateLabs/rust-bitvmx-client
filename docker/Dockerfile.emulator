@@ -1,7 +1,7 @@
 FROM rust:latest
 
 RUN apt-get update && \
-    apt-get install -y wget build-essential git pkg-config libssl-dev clang netcat-openbsd
+    apt-get install -y wget build-essential git pkg-config libssl-dev clang netcat-openbsd dos2unix
 
 RUN mkdir -p /root/.ssh && \
     ssh-keyscan github.com >> /root/.ssh/known_hosts && \
@@ -27,6 +27,7 @@ WORKDIR /app/bitvmx-workspace-root
 COPY config/ ./config/
 
 COPY docker/run_emulator.sh ./
+RUN dos2unix ./run_emulator.sh
 RUN chmod +x ./run_emulator.sh
 
 ENTRYPOINT ["./run_emulator.sh"]
