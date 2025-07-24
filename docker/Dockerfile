@@ -11,14 +11,20 @@ RUN mkdir -p /app/data
 
 WORKDIR /app
 
-RUN --mount=type=ssh git clone git@github.com:FairgateLabs/rust-bitvmx-workspace.git
-RUN --mount=type=ssh cd rust-bitvmx-workspace && git submodule update --init --recursive --remote
+#RUN --mount=type=ssh git clone git@github.com:FairgateLabs/rust-bitvmx-workspace.git
+#RUN --mount=type=ssh cd rust-bitvmx-workspace && git submodule update --init --recursive --remote
+
+WORKDIR /app/rust-bitvmx-workspace/
+
+COPY . .
 
 WORKDIR /app/rust-bitvmx-workspace/rust-bitvmx-client
 
-COPY docker/run.sh ./
+COPY /rust-bitvmx-client/docker/run.sh .
 RUN chmod +x ./run.sh
 
-RUN cargo build --release
+RUN cargo fetch
+RUN cargo check --frozen --verbose
+RUN cargo build --frozen
 
 ENTRYPOINT ["./run.sh"]

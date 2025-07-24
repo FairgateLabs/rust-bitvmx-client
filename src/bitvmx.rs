@@ -36,6 +36,7 @@ use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use p2p_handler::{LocalAllowList, P2pHandler, PeerId, ReceiveHandlerChannel};
 use serde::{Deserialize, Serialize};
+use std::net::{IpAddr, Ipv4Addr};
 use std::time::Instant;
 use std::{
     collections::{HashSet, VecDeque},
@@ -119,7 +120,7 @@ impl BitVMX {
         let broker_backend = Storage::new(&config.broker_storage)?;
         let broker_backend = Arc::new(Mutex::new(broker_backend));
         let broker_storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
-        let broker_config = BrokerConfig::new(config.broker_port, None);
+        let broker_config = BrokerConfig::new(config.broker_port, Some(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))));
         let broker = BrokerSync::new(&broker_config, broker_storage.clone());
 
         //TODO: A channel that talks directly with the broker without going through localhost loopback could be implemented
@@ -196,6 +197,7 @@ impl BitVMX {
         }
 
         let (peer, msg) = self.pending_messages.pop_front().unwrap();
+        info!("Processing pending message from {}: {:?}", peer, msg);
         self.process_msg(peer, msg, false)?;
         Ok(())
     }
@@ -208,17 +210,17 @@ impl BitVMX {
         }
 
         let message = message.unwrap();
-
         //TODO: handle priority
         // let _priority = self.comms.check_piority();
 
         match message {
             ReceiveHandlerChannel::Msg(peer_id, msg) => {
+                info!("Received message from {}: {:?}", peer_id, msg);
                 self.process_msg(peer_id, msg, true)?;
                 return Ok(());
             }
             ReceiveHandlerChannel::Error(e) => {
-                info!("Error receiving message {}", e);
+                error!("Error receiving message {}", e);
             } //TODO: handle error
         }
 
@@ -389,6 +391,7 @@ impl BitVMX {
 
     pub fn process_api_messages(&mut self) -> Result<(), BitVMXError> {
         if let Some((msg, from)) = self.program_context.broker_channel.recv()? {
+            info!("Received message from {}: {}", from, msg);
             BitVMXApi::handle_message(self, msg, from)?;
         }
 

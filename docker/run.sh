@@ -8,4 +8,4 @@ if [ -n "$BITCOIND_URL" ]; then
 fi
 
 echo "Starting bitvmx-client with $OPERATOR..."
-exec /app/rust-bitvmx-workspace/rust-bitvmx-client/target/release/bitvmx-client "$OPERATOR"
+exec env RUST_BACKTRACE=1 /app/rust-bitvmx-workspace/rust-bitvmx-client/target/debug/bitvmx-client "$OPERATOR"

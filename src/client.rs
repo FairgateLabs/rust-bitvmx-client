@@ -9,7 +9,7 @@ use crate::{
 use anyhow::Result;
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
-use std::thread;
+use std::{net::IpAddr, thread};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -20,8 +20,8 @@ pub struct BitVMXClient {
 }
 
 impl BitVMXClient {
-    pub fn new(broker_port: u16, client_id: u32) -> Self {
-        let config = BrokerConfig::new(broker_port, None);
+    pub fn new(broker_port: u16, client_id: u32, ip: Option<IpAddr>) -> Self {
+        let config = BrokerConfig::new(broker_port, ip);
         let channel = DualChannel::new(&config, client_id);
 
         Self {
