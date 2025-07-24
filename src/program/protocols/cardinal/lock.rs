@@ -15,7 +15,7 @@ use protocol_builder::{
     },
 };
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::{
@@ -52,9 +52,11 @@ pub struct LockProtocolConfiguration {
     pub eol_timelock_duration: u16, //end of life timelock duration in blocks
 }
 
-pub const MIN_RELAY_FEE: u64 = 2;
-pub const LOCK_PROTOCOL_DUST_COST: u64 = 3500 * MIN_RELAY_FEE;
+pub const MIN_RELAY_FEE: u64 = 1;
 pub const DUST: u64 = 500 * MIN_RELAY_FEE;
+pub fn lock_protocol_dust_cost(participants: u8) -> u64 {
+    DUST * (participants as u64 + 3)
+}
 
 impl LockProtocolConfiguration {
     pub fn new(
@@ -215,16 +217,7 @@ impl ProtocolHandler for LockProtocol {
             VariableTypes::PubKey(speedup.clone()),
         )?;
 
-        let mut keys = vec![("speedup".to_string(), speedup.into())];
-
-        //TODO: get from a variable the number of bytes required to encode the too_id
-        let start_id = program_context.key_chain.derive_winternitz_hash160(1)?;
-        keys.push((format!("too_id_{}", self.ctx.my_idx), start_id.into()));
-
-        if self.ctx.my_idx == 0 {
-            let start_id = program_context.key_chain.derive_winternitz_hash160(128)?;
-            keys.push(("zkp".to_string(), start_id.into()));
-        }
+        let keys = vec![("speedup".to_string(), speedup.into())];
 
         Ok(ParticipantKeys::new(keys, vec![]))
     }
@@ -499,7 +492,7 @@ impl LockProtocol {
             .pubkey()?;
         let speedup_utxo = Utxo::new(txid, 2 + self.ctx.my_idx as u32, DUST, &speedup);
 
-        info!("Transaction to send: {:?}", tx);
+        debug!("Transaction to send: {:?}", tx);
         Ok((tx, Some(speedup_utxo.into())))
     }
 
@@ -522,7 +515,7 @@ impl LockProtocol {
             .load_protocol()?
             .transaction_to_send(HAPPY_PATH_TX, &[taproot_arg_0, taproot_arg_1])?;
 
-        info!("Transaction to send: {:?}", tx);
+        debug!("Transaction to send: {:?}", tx);
         Ok(tx)
     }
 

@@ -4,15 +4,15 @@ use anyhow::Result;
 use bitcoin::{
     key::rand::rngs::OsRng,
     secp256k1::{self, PublicKey as SecpPublicKey, SecretKey},
-    Amount, Network, OutPoint, PublicKey, PublicKey as BitcoinPubKey, Transaction, Txid,
+    Network, PublicKey as BitcoinPubKey,
 };
-use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
+use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_client::{
     bitvmx::BitVMX,
     config::Config,
     program::{
         self,
-        protocols::cardinal::lock::{LockProtocolConfiguration, LOCK_PROTOCOL_DUST_COST},
+        protocols::cardinal::lock::{lock_protocol_dust_cost, LockProtocolConfiguration},
         variables::WitnessTypes,
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
@@ -27,7 +27,7 @@ use protocol_builder::scripts::{build_taproot_spend_info, ProtocolScript};
 use tracing::info;
 use uuid::Uuid;
 
-use crate::common::set_speedup_funding;
+use crate::{common::set_speedup_funding, fixtures::create_lockreq_ready};
 
 mod common;
 mod fixtures;
@@ -181,11 +181,11 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     let preimage = "top_secret".to_string();
     let hash = fixtures::sha256(preimage.as_bytes().to_vec());
 
-    let (txid, pubuser, ordinal_fee) = fixtures::create_lockreq_ready(
+    let (txid, pubuser, ordinal_fee) = create_lockreq_ready(
         aggregated_pub_key,
         hash.clone(),
         NETWORK,
-        LOCK_PROTOCOL_DUST_COST,
+        lock_protocol_dust_cost(4),
         &bitcoin_client,
     )?;
 
@@ -206,7 +206,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         user_pubkey: pubuser.into(),
         secret: hash,
         ordinal_utxo: (txid, 0, Some(ordinal_fee.to_sat()), None),
-        protocol_utxo: (txid, 1, Some(LOCK_PROTOCOL_DUST_COST), None),
+        protocol_utxo: (txid, 1, Some(lock_protocol_dust_cost(4)), None),
         timelock_blocks: 10,
         eol_timelock_duration: 100,
     };
@@ -338,91 +338,6 @@ pub fn hardcoded_unspendable() -> SecpPublicKey {
     SecpPublicKey::from_slice(&key_bytes).expect("Invalid public key")
 }
 
-pub fn create_lockreq_ready(
-    aggregated_operators: PublicKey,
-    secret_hash: Vec<u8>,
-    network: Network,
-    bitcoin_client: &BitcoinClient,
-) -> Result<(Txid, SecpPublicKey, Amount, Amount)> {
-    //PublicKey user, txid, 0 :amount-ordinal, 1: amount-fees
-
-    let secp = secp256k1::Secp256k1::new();
-    let mut rng = OsRng;
-
-    // hardcoded unspendable
-    let unspendable = hardcoded_unspendable();
-
-    // emulate the user keypair
-    let user_sk = SecretKey::new(&mut rng);
-    let user_pk = SecpPublicKey::from_secret_key(&secp, &user_sk);
-    let (user_pk, user_sk) = fixtures::adjust_parity(&secp, user_pk, user_sk);
-    let user_pubkey = BitcoinPubKey {
-        compressed: true,
-        inner: user_pk,
-    };
-    let user_address: bitcoin::Address = bitcoin_client.get_new_address(user_pubkey, network);
-    info!(
-        "User Address({}): {:?}",
-        user_address.address_type().unwrap(),
-        user_address
-    );
-
-    // Ordinal funding
-    const ORDINAL_AMOUNT: Amount = Amount::from_sat(10_000);
-    let funding_amount_ordinal = ORDINAL_AMOUNT;
-    let funding_tx_ordinal: Transaction;
-    let vout_ordinal: u32;
-    (funding_tx_ordinal, vout_ordinal) = bitcoin_client
-        .fund_address(&user_address, funding_amount_ordinal)
-        .unwrap();
-    let ordinal_txout = funding_tx_ordinal.output[vout_ordinal as usize].clone();
-
-    // Protocol fees funding
-    let funding_amount_used_for_protocol_fees = Amount::from_sat(LOCK_PROTOCOL_DUST_COST);
-    let funding_tx_protocol_fees: Transaction;
-    let vout_protocol_fees: u32;
-    (funding_tx_protocol_fees, vout_protocol_fees) = bitcoin_client
-        .fund_address(&user_address, funding_amount_used_for_protocol_fees)
-        .unwrap();
-    let protocol_fees_txout = funding_tx_protocol_fees.output[vout_protocol_fees as usize].clone();
-
-    let ordinal_outpoint = OutPoint::new(funding_tx_ordinal.compute_txid(), vout_ordinal);
-    tracing::debug!("Ordinal outpoint: {:?}", ordinal_outpoint);
-
-    let protocol_fees_outpoint =
-        OutPoint::new(funding_tx_protocol_fees.compute_txid(), vout_protocol_fees);
-    tracing::debug!("Protocol fees outpoint: {:?}", protocol_fees_outpoint);
-
-    let protocol_fee = Amount::from_sat(1_000_000);
-
-    const MINER_FEE: Amount = Amount::from_sat(355_000);
-
-    let signed_lockreq_tx = fixtures::create_lockreq_tx_and_sign(
-        &secp,
-        funding_amount_ordinal,
-        ordinal_outpoint,
-        ordinal_txout,
-        10,
-        funding_amount_used_for_protocol_fees,
-        protocol_fee,
-        protocol_fees_outpoint,
-        protocol_fees_txout,
-        &aggregated_operators,
-        &user_sk,
-        &user_pubkey,
-        &user_address,
-        MINER_FEE,
-        secret_hash,
-        unspendable,
-    );
-
-    tracing::debug!("Signed lockreq transaction: {:#?}", signed_lockreq_tx);
-
-    let lockreq_txid = bitcoin_client.send_transaction(&signed_lockreq_tx).unwrap();
-
-    Ok((lockreq_txid, user_pk, funding_amount_ordinal, protocol_fee))
-}
-
 #[ignore]
 #[test]
 pub fn test_send_lockreq_tx() -> Result<()> {
@@ -450,7 +365,7 @@ pub fn test_send_lockreq_tx() -> Result<()> {
         ops_agg_pubkey,
         hash,
         Network::Regtest,
-        LOCK_PROTOCOL_DUST_COST,
+        lock_protocol_dust_cost(4),
         &bitcoin_client,
     )?;
 

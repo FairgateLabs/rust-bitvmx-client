@@ -27,7 +27,7 @@ use bitvmx_client::{
     config::Config,
     program::{
         participant::P2PAddress,
-        protocols::cardinal::lock::LOCK_PROTOCOL_DUST_COST,
+        protocols::cardinal::lock::lock_protocol_dust_cost,
         variables::{VariableTypes, WitnessTypes},
     },
     types::{
@@ -203,7 +203,7 @@ impl ClientTest {
             pubkey,
             secret,
             Network::Regtest,
-            LOCK_PROTOCOL_DUST_COST,
+            lock_protocol_dust_cost(3),
             &self.bitcoin_client,
         )?;
 
@@ -218,7 +218,7 @@ impl ClientTest {
         self.prover_client.set_var(
             self.program_id,
             "protocol_utxo",
-            VariableTypes::Utxo((txid, 1, Some(LOCK_PROTOCOL_DUST_COST), None)),
+            VariableTypes::Utxo((txid, 1, Some(lock_protocol_dust_cost(3)), None)),
         )?;
 
         // Set user public key
@@ -345,7 +345,7 @@ impl ClientTest {
             pubkey,
             secret,
             Network::Regtest,
-            LOCK_PROTOCOL_DUST_COST,
+            lock_protocol_dust_cost(3),
             &self.bitcoin_client,
         )?;
 

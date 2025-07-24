@@ -235,18 +235,6 @@ pub fn init_utxo_new(
     amount: u64,
     from: Option<&str>,
 ) -> Result<(Utxo, OutputType)> {
-    /*let secp = secp256k1::Secp256k1::new();
-    let untweaked_key = XOnlyPublicKey::from(*internal_key);
-
-    let taproot_spend_info =
-        scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
-    let p2tr_address = Address::p2tr(
-        &secp,
-        untweaked_key,
-        taproot_spend_info.merkle_root(),
-        KnownHrp::Regtest,
-    );*/
-
     info!("Funding address: {:?} with: {}", internal_key, amount);
     let txid = wallet.fund_address(
         WALLET_NAME,
@@ -274,9 +262,6 @@ pub fn init_utxo(
     secret: Option<Vec<u8>>,
     amount: u64,
 ) -> Result<Utxo> {
-    /*let secp = secp256k1::Secp256k1::new();
-    let untweaked_key = XOnlyPublicKey::from(aggregated_pub_key);*/
-
     let spending_scripts = if secret.is_some() {
         vec![scripts::reveal_secret(
             secret.unwrap(),
@@ -290,14 +275,6 @@ pub fn init_utxo(
         )]
     };
 
-    /*let taproot_spend_info =
-        scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
-    let p2tr_address = Address::p2tr(
-        &secp,
-        untweaked_key,
-        taproot_spend_info.merkle_root(),
-        KnownHrp::Regtest,
-    );*/
     let txid = wallet.fund_address(
         WALLET_NAME,
         FUNDING_ID,

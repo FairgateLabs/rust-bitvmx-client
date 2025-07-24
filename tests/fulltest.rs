@@ -12,7 +12,7 @@ use bitvmx_client::{
         participant::ParticipantRole,
         protocols::{
             cardinal::{
-                lock::LOCK_PROTOCOL_DUST_COST,
+                lock::lock_protocol_dust_cost,
                 slot::{certificate_hash, group_id},
                 transfer::pub_too_group,
                 EOL_TIMELOCK_DURATION, FEE as FEE_STR, FUND_UTXO, GID_MAX,
@@ -354,7 +354,7 @@ pub fn test_full() -> Result<()> {
         aggregated_pub_key,
         hash.clone(),
         NETWORK,
-        LOCK_PROTOCOL_DUST_COST,
+        lock_protocol_dust_cost(3),
         &bitcoin_client,
     )?;
 
@@ -390,7 +390,7 @@ pub fn test_full() -> Result<()> {
         .set_msg(lock_program_id, "ordinal_utxo")?;
     send_all(&channels, &set_ordinal_utxo)?;
 
-    let set_protocol_fee = VariableTypes::Utxo((txid, 1, Some(LOCK_PROTOCOL_DUST_COST), None))
+    let set_protocol_fee = VariableTypes::Utxo((txid, 1, Some(lock_protocol_dust_cost(3)), None))
         .set_msg(lock_program_id, "protocol_utxo")?;
     send_all(&channels, &set_protocol_fee)?;
 
