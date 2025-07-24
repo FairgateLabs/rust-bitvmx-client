@@ -1,4 +1,5 @@
 pub mod lock;
+pub mod lock_config;
 pub mod slot;
 pub mod transfer;
 

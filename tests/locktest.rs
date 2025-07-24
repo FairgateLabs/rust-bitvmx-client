@@ -12,7 +12,9 @@ use bitvmx_client::{
     config::Config,
     program::{
         self,
-        protocols::cardinal::lock::{lock_protocol_dust_cost, LockProtocolConfiguration},
+        protocols::cardinal::{
+            lock::lock_protocol_dust_cost, lock_config::LockProtocolConfiguration,
+        },
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
