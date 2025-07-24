@@ -13,8 +13,10 @@ use bitvmx_client::{
     program::{
         self,
         protocols::cardinal::{
-            lock::lock_protocol_dust_cost, lock_config::LockProtocolConfiguration,
+            lock::{lock_protocol_dust_cost, LOCK_TX},
+            lock_config::LockProtocolConfiguration,
         },
+        variables::WitnessTypes,
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
@@ -220,10 +222,24 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     get_all(&channels, &mut instances, false)?;
 
     //Bridge send signal to send the kickoff message
-    LockProtocolConfiguration::lock(program_id, preimage.as_bytes().to_vec(), &channels[1])?;
+    let op = 1;
+    //Bridge send signal to send the kickoff message
+    let witness_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetWitness(
+        program_id,
+        "secret".to_string(),
+        WitnessTypes::Secret(preimage.as_bytes().to_vec()),
+    ))?;
+
+    channels[op].send(BITVMX_ID, witness_msg.clone())?;
+
+    let _ = channels[op].send(
+        BITVMX_ID,
+        IncomingBitVMXApiMessages::GetTransactionInfoByName(program_id, LOCK_TX.to_string())
+            .to_string()?,
+    );
 
     let mut mutinstances = instances.iter_mut().collect::<Vec<_>>();
-    let msg = wait_message_from_channel(&channels[1], &mut mutinstances, false)?;
+    let msg = wait_message_from_channel(&channels[op], &mut mutinstances, false)?;
     let (_id, name, tx) = OutgoingBitVMXApiMessages::from_string(&msg.0)?
         .transaction_info()
         .unwrap();
@@ -233,7 +249,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         hex::encode(tx.input[0].witness[0].to_vec())
     );
 
-    let _ = channels[1].send(
+    let _ = channels[op].send(
         BITVMX_ID,
         IncomingBitVMXApiMessages::GetHashedMessage(
             program_id,
@@ -244,7 +260,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         .to_string()?,
     );
 
-    let msg = wait_message_from_channel(&channels[1], &mut mutinstances, false)?;
+    let msg = wait_message_from_channel(&channels[op], &mut mutinstances, false)?;
     let (_uuid, _name, _vout, _leaf, hashed) = OutgoingBitVMXApiMessages::from_string(&msg.0)?
         .hashed_message()
         .unwrap();
@@ -262,7 +278,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
 
     drop(mutinstances);
 
-    let _ = channels[1].send(
+    let _ = channels[op].send(
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
@@ -275,7 +291,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
 
     //EVENTUALY L2 DECIDED TO SEND THE HAPPY PATH
     //TODO: It should actually be signed in this moment and not before (could be signed but not shared the partials)
-    let _ = channels[1].send(
+    let _ = channels[op].send(
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,

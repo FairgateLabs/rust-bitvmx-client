@@ -148,26 +148,4 @@ impl LockProtocolConfiguration {
         channel.send(BITVMX_ID, setup_msg)?;
         Ok(())
     }
-
-    pub fn lock(
-        program_id: Uuid,
-        secret: Vec<u8>,
-        channel: &DualChannel,
-    ) -> Result<(), BitVMXError> {
-        //Bridge send signal to send the kickoff message
-        let witness_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetWitness(
-            program_id,
-            "secret".to_string(),
-            WitnessTypes::Secret(secret),
-        ))?;
-
-        channel.send(BITVMX_ID, witness_msg.clone())?;
-
-        let _ = channel.send(
-            BITVMX_ID,
-            IncomingBitVMXApiMessages::GetTransactionInfoByName(program_id, LOCK_TX.to_string())
-                .to_string()?,
-        );
-        Ok(())
-    }
 }
