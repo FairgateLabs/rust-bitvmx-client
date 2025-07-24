@@ -40,7 +40,17 @@ mod fixtures;
 
 #[ignore]
 #[test]
-pub fn test_slot() -> Result<()> {
+pub fn test_slot_and_drp() -> Result<()> {
+    test_slot(true)
+}
+
+#[ignore]
+#[test]
+pub fn test_slot_only() -> Result<()> {
+    test_slot(false)
+}
+
+pub fn test_slot(and_drp: bool) -> Result<()> {
     config_trace();
 
     let fake_drp = false;
@@ -189,48 +199,54 @@ pub fn test_slot() -> Result<()> {
 
     //=====================================
 
-    let initial_utxo = Utxo::new(txid, 4, 20_000, &pair_aggregated_pub_key);
-    let prover_win_utxo_value = (slot_fee_tx + slot_speedup_dust) as u64;
-    let prover_win_utxo = Utxo::new(txid, 2, prover_win_utxo_value, &pair_aggregated_pub_key);
-    let emulator_channels = vec![emulator_1.unwrap(), emulator_2.unwrap()];
+    let (emulator_channels, dispute_id) = if and_drp {
+        let initial_utxo = Utxo::new(txid, 4, 20_000, &pair_aggregated_pub_key);
+        let prover_win_utxo_value = (slot_fee_tx + slot_speedup_dust) as u64;
+        let prover_win_utxo = Utxo::new(txid, 2, prover_win_utxo_value, &pair_aggregated_pub_key);
+        let emulator_channels = vec![emulator_1.unwrap(), emulator_2.unwrap()];
 
-    let initial_spending_condition = vec![
-        scripts::timelock(TIMELOCK_BLOCKS, &aggregated_pub_key, SignMode::Aggregate), //convert to timelock
-        scripts::check_aggregated_signature(&pair_aggregated_pub_key, SignMode::Aggregate),
-    ];
-    let initial_output_type =
-        external_fund_tx(&aggregated_pub_key, initial_spending_condition, 20_000)?;
+        let initial_spending_condition = vec![
+            scripts::timelock(TIMELOCK_BLOCKS, &aggregated_pub_key, SignMode::Aggregate), //convert to timelock
+            scripts::check_aggregated_signature(&pair_aggregated_pub_key, SignMode::Aggregate),
+        ];
+        let initial_output_type =
+            external_fund_tx(&aggregated_pub_key, initial_spending_condition, 20_000)?;
 
-    let prover_win_spending_condition = vec![
-        scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate), //convert to timelock
-        scripts::check_aggregated_signature(&pair_aggregated_pub_key, SignMode::Aggregate),
-    ];
-    let prover_win_output_type = external_fund_tx(
-        &aggregated_pub_key,
-        prover_win_spending_condition,
-        prover_win_utxo_value,
-    )?;
+        let prover_win_spending_condition = vec![
+            scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate), //convert to timelock
+            scripts::check_aggregated_signature(&pair_aggregated_pub_key, SignMode::Aggregate),
+        ];
+        let prover_win_output_type = external_fund_tx(
+            &aggregated_pub_key,
+            prover_win_spending_condition,
+            prover_win_utxo_value,
+        )?;
 
-    info!("Dispute setup");
+        info!("Dispute setup");
 
-    let dispute_id = Uuid::new_v4();
-    prepare_dispute(
-        dispute_id,
-        participants,
-        sub_channel.clone(),
-        &pair_aggregated_pub_key,
-        initial_utxo,
-        initial_output_type,
-        prover_win_utxo,
-        prover_win_output_type,
-        500,
-        fake_drp,
-        fake_instruction,
-        ForcedChallenges::TraceHash(ParticipantRole::Prover),
-        None,
-    )?;
-    let _msgs = get_all(&sub_channel.clone(), &mut instances, false)?;
-    info!("Dispute setup done");
+        let dispute_id = Uuid::new_v4();
+        prepare_dispute(
+            dispute_id,
+            participants,
+            sub_channel.clone(),
+            &pair_aggregated_pub_key,
+            initial_utxo,
+            initial_output_type,
+            prover_win_utxo,
+            prover_win_output_type,
+            500,
+            fake_drp,
+            fake_instruction,
+            ForcedChallenges::TraceHash(ParticipantRole::Prover),
+            None,
+        )?;
+        let _msgs = get_all(&sub_channel.clone(), &mut instances, false)?;
+        info!("Dispute setup done");
+        (emulator_channels, dispute_id)
+    } else {
+        info!("Skipping DRP execution");
+        (vec![], Uuid::nil())
+    };
 
     // ==========================
 
@@ -274,26 +290,28 @@ pub fn test_slot() -> Result<()> {
     let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
     // one operator disagrees with the gid and challenges
-    execute_dispute(
-        sub_channel,
-        &mut instances,
-        emulator_channels,
-        &bitcoin_client,
-        &wallet,
-        dispute_id,
-        fake_drp,
-    )?;
+    if and_drp {
+        execute_dispute(
+            sub_channel,
+            &mut instances,
+            emulator_channels,
+            &bitcoin_client,
+            &wallet,
+            dispute_id,
+            fake_drp,
+        )?;
 
-    //Consume other stops through timeout
-    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
-    info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
-    //Win start
-    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
-    info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
-    //success wait
-    wallet.mine(10)?;
-    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
-    info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
+        //Consume other stops through timeout
+        let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+        info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
+        //Win start
+        let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+        info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
+        //success wait
+        wallet.mine(10)?;
+        let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+        info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
+    }
 
     bitcoind.stop()?;
     Ok(())
