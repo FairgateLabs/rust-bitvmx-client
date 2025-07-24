@@ -21,12 +21,12 @@
 
 ### Build the Docker images:
 ```bash
-# Build all images for operator 1
-./start.sh op_1 build
+# Build all images
+./start.sh build
 
 # Or build specific service
-./start.sh op_1 build bitvmx-client
-./start.sh op_1 build bitvmx-emulator
+./start.sh build bitvmx-client
+./start.sh build bitvmx-emulator
 ```
 
 ## Starting Services
