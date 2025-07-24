@@ -13,8 +13,7 @@ use anyhow::Result;
 use bitcoin::{
     Address,
     Network::{self, Regtest},
-    PublicKey,
-    Transaction,
+    PublicKey, Transaction,
 };
 mod common;
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
@@ -28,6 +27,7 @@ use bitvmx_client::{
     config::Config,
     program::{
         participant::P2PAddress,
+        protocols::cardinal::lock::LOCK_PROTOCOL_DUST_COST,
         variables::{VariableTypes, WitnessTypes},
     },
     types::{
@@ -199,8 +199,13 @@ impl ClientTest {
         )?;
 
         // Create lock request transaction
-        let (txid, pubuser, ordinal_fee, protocol_fee) =
-            fixtures::create_lockreq_ready(pubkey, secret, Network::Regtest, &self.bitcoin_client)?;
+        let (txid, pubuser, ordinal_fee) = fixtures::create_lockreq_ready(
+            pubkey,
+            secret,
+            Network::Regtest,
+            LOCK_PROTOCOL_DUST_COST,
+            &self.bitcoin_client,
+        )?;
 
         // Set ordinal UTXO
         self.prover_client.set_var(
@@ -213,7 +218,7 @@ impl ClientTest {
         self.prover_client.set_var(
             self.program_id,
             "protocol_utxo",
-            VariableTypes::Utxo((txid, 1, Some(protocol_fee.to_sat()), None)),
+            VariableTypes::Utxo((txid, 1, Some(LOCK_PROTOCOL_DUST_COST), None)),
         )?;
 
         // Set user public key
@@ -336,8 +341,13 @@ impl ClientTest {
 
     fn subscribe_to_transaction(&mut self, pubkey: PublicKey, secret: Vec<u8>) -> Result<()> {
         // Create and send lock request transaction
-        let (txid, _pubuser, _ordinal_fee, _protocol_fee) =
-            fixtures::create_lockreq_ready(pubkey, secret, Network::Regtest, &self.bitcoin_client)?;
+        let (txid, _pubuser, _ordinal_fee) = fixtures::create_lockreq_ready(
+            pubkey,
+            secret,
+            Network::Regtest,
+            LOCK_PROTOCOL_DUST_COST,
+            &self.bitcoin_client,
+        )?;
 
         // Subscribe to the transaction
         let request_id = Uuid::new_v4();
@@ -443,21 +453,27 @@ impl ClientTest {
                 info!("RSK pegin transaction test completed successfully");
                 info!("Transaction ID: {}", request_pegin_txid);
             }
-            _ => anyhow::bail!("Expected PeginTransactionFound response, got {:?}", response),
+            _ => anyhow::bail!(
+                "Expected PeginTransactionFound response, got {:?}",
+                response
+            ),
         }
 
         Ok(())
     }
 
-
     fn create_rsk_request_pegin_transaction(&mut self) -> Result<Transaction> {
         // We'll create a transaction that will be detected as RSK pegin by the transaction monitor.
         let aggregated_pubkey = self.get_aggregated_pubkey()?;
-        let txid = fixtures::create_rsk_request_pegin_transaction(aggregated_pubkey, Network::Regtest, &self.bitcoin_client)?;
+        let txid = fixtures::create_rsk_request_pegin_transaction(
+            aggregated_pubkey,
+            Network::Regtest,
+            &self.bitcoin_client,
+        )?;
 
         // Get the transaction and verify it was created
         let tx = self.bitcoin_client.get_transaction(&txid)?.unwrap();
-        
+
         Ok(tx)
     }
 
@@ -651,5 +667,3 @@ pub fn test_client() -> Result<()> {
 
     Ok(())
 }
-
-

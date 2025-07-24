@@ -12,6 +12,7 @@ use bitvmx_client::{
         participant::ParticipantRole,
         protocols::{
             cardinal::{
+                lock::LOCK_PROTOCOL_DUST_COST,
                 slot::{certificate_hash, group_id},
                 transfer::pub_too_group,
                 EOL_TIMELOCK_DURATION, FEE as FEE_STR, FUND_UTXO, GID_MAX,
@@ -349,8 +350,13 @@ pub fn test_full() -> Result<()> {
     let preimage = "top_secret".to_string();
     let hash = fixtures::sha256(preimage.as_bytes().to_vec());
 
-    let (txid, pubuser, ordinal_fee, protocol_fee) =
-        fixtures::create_lockreq_ready(aggregated_pub_key, hash.clone(), NETWORK, &bitcoin_client)?;
+    let (txid, pubuser, ordinal_fee) = fixtures::create_lockreq_ready(
+        aggregated_pub_key,
+        hash.clone(),
+        NETWORK,
+        LOCK_PROTOCOL_DUST_COST,
+        &bitcoin_client,
+    )?;
 
     // OPERATORS WAITS FOR LOCKREQ TX
     let lockreqtx_on_chain = Uuid::new_v4();
@@ -384,7 +390,7 @@ pub fn test_full() -> Result<()> {
         .set_msg(lock_program_id, "ordinal_utxo")?;
     send_all(&channels, &set_ordinal_utxo)?;
 
-    let set_protocol_fee = VariableTypes::Utxo((txid, 1, Some(protocol_fee.to_sat()), None))
+    let set_protocol_fee = VariableTypes::Utxo((txid, 1, Some(LOCK_PROTOCOL_DUST_COST), None))
         .set_msg(lock_program_id, "protocol_utxo")?;
     send_all(&channels, &set_protocol_fee)?;
 

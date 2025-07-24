@@ -5,14 +5,14 @@ pub mod dispute;
 
 use anyhow::Result;
 use bitcoin::{Network, PublicKey};
-use bitcoind::bitcoind::Bitcoind;
+use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use bitvmx_client::{
     bitvmx::BitVMX,
     config::Config,
     program::{participant::P2PAddress, protocols::protocol_handler::external_fund_tx},
-    types::{OutgoingBitVMXApiMessages, BITVMX_ID, EMULATOR_ID, L2_ID},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, EMULATOR_ID, L2_ID},
 };
 use bitvmx_wallet::wallet::Wallet;
 use p2p_handler::PeerId;
@@ -101,10 +101,16 @@ pub const FEE: u64 = 500;
 pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
     let config = Config::new(Some("config/op_1.yaml".to_string()))?;
 
-    let bitcoind = Bitcoind::new(
+    let bitcoind = Bitcoind::new_with_flags(
         "bitcoin-regtest",
         "ruimarinho/bitcoin-core",
         config.bitcoin.clone(),
+        BitcoindFlags {
+            min_relay_tx_fee: 0.00001,
+            block_min_tx_fee: 0.00001,
+            debug: 1,
+            fallback_fee: 0.0002,
+        },
     );
     info!("Starting bitcoind");
     bitcoind.start()?;
@@ -309,4 +315,29 @@ pub fn init_utxo(
     info!("UTXO: {:?}", utxo);
 
     Ok(utxo)
+}
+
+pub fn set_speedup_funding(
+    amount: u64,
+    pub_key: &PublicKey,
+    channel: &DualChannel,
+    wallet: &Wallet,
+) -> Result<()> {
+    let fund_txid = wallet.fund_address(
+        WALLET_NAME,
+        FUNDING_ID,
+        *pub_key,
+        &vec![amount],
+        FEE,
+        false,
+        true,
+        None,
+    )?;
+
+    wallet.mine(1)?;
+
+    let funds_utxo_0 = Utxo::new(fund_txid, 0, amount, pub_key);
+    let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
+    channel.send(BITVMX_ID, command)?;
+    Ok(())
 }

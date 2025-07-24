@@ -328,12 +328,16 @@ impl BitVMX {
                     let data =
                         OutgoingBitVMXApiMessages::SpeedUpProgramNoFunds(tx_id).to_string()?;
 
-                    info!("Sending funds request to broker");
+                    info!(
+                        "Sending funds request to broker: {} available {} required {}",
+                        tx_id, _available, _required
+                    );
                     self.program_context.broker_channel.send(L2_ID, data)?;
                     ack_news = AckNews::Coordinator(AckCoordinatorNews::InsufficientFunds(tx_id));
                 }
                 CoordinatorNews::NewSpeedUp(_tx_id, _context_data, _counter) => {
                     // Complete
+                    info!("New speed-up transaction: {:?} {}", _tx_id, _counter);
 
                     ack_news = AckNews::Coordinator(AckCoordinatorNews::NewSpeedUp(_tx_id));
                 }
@@ -1085,7 +1089,10 @@ impl BitVMXApi for BitVMX {
                 BitVMXApi::get_zkp_execution_result(self, from, id)?
             }
             IncomingBitVMXApiMessages::Encrypt(id, message, public_key) => {
-                let encrypted = self.program_context.key_chain.encrypt_messages(message, public_key)?;
+                let encrypted = self
+                    .program_context
+                    .key_chain
+                    .encrypt_messages(message, public_key)?;
                 self.program_context.broker_channel.send(
                     from,
                     serde_json::to_string(&OutgoingBitVMXApiMessages::Encrypted(id, encrypted))?,
@@ -1099,15 +1106,17 @@ impl BitVMXApi for BitVMX {
                 )?;
             }
             IncomingBitVMXApiMessages::Backup(path) => {
-                let message = match  self.store.backup(&path) {
-                    Ok(_) => OutgoingBitVMXApiMessages::BackupResult(true, "Backup successful".to_string()),
+                let message = match self.store.backup(&path) {
+                    Ok(_) => OutgoingBitVMXApiMessages::BackupResult(
+                        true,
+                        "Backup successful".to_string(),
+                    ),
                     Err(e) => OutgoingBitVMXApiMessages::BackupResult(false, e.to_string()),
                 };
 
-                self.program_context.broker_channel.send(
-                    from,
-                    serde_json::to_string(&message)?,
-                )?;
+                self.program_context
+                    .broker_channel
+                    .send(from, serde_json::to_string(&message)?)?;
             }
         }
 
