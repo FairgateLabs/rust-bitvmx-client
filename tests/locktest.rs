@@ -13,7 +13,6 @@ use bitvmx_client::{
     program::{
         self,
         protocols::cardinal::lock::{lock_protocol_dust_cost, LockProtocolConfiguration},
-        variables::WitnessTypes,
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
@@ -199,40 +198,27 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     // SETUP LOCK BEGIN
 
     let program_id = Uuid::new_v4();
-    let lock_protocol_configuration = LockProtocolConfiguration {
-        operators_aggregated_pub: aggregated_pub_key,
-        operators_aggregated_pub_happy_path: aggregated_happy_path,
-        unspendable: fixtures::hardcoded_unspendable().into(),
-        user_pubkey: pubuser.into(),
-        secret: hash,
-        ordinal_utxo: (txid, 0, Some(ordinal_fee.to_sat()), None),
-        protocol_utxo: (txid, 1, Some(lock_protocol_dust_cost(4)), None),
-        timelock_blocks: 10,
-        eol_timelock_duration: 100,
-    };
+    let lock_protocol_configuration = LockProtocolConfiguration::new(
+        program_id,
+        aggregated_pub_key,
+        aggregated_happy_path,
+        fixtures::hardcoded_unspendable().into(),
+        pubuser.into(),
+        hash,
+        (txid, 0, Some(ordinal_fee.to_sat()), None),
+        (txid, 1, Some(lock_protocol_dust_cost(4)), None),
+        10,
+        100,
+    );
 
     for c in &channels {
-        lock_protocol_configuration.setup(program_id, &c, addresses.clone(), 0)?;
+        lock_protocol_configuration.setup(&c, addresses.clone(), 0)?;
     }
 
     get_all(&channels, &mut instances, false)?;
 
     //Bridge send signal to send the kickoff message
-    let witness_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetWitness(
-        program_id,
-        "secret".to_string(),
-        WitnessTypes::Secret(preimage.as_bytes().to_vec()),
-    ))?;
-    channels[1].send(BITVMX_ID, witness_msg.clone())?;
-
-    let _ = channels[1].send(
-        BITVMX_ID,
-        IncomingBitVMXApiMessages::GetTransactionInfoByName(
-            program_id,
-            program::protocols::cardinal::lock::LOCK_TX.to_string(),
-        )
-        .to_string()?,
-    );
+    LockProtocolConfiguration::lock(program_id, preimage.as_bytes().to_vec(), &channels[1])?;
 
     let mut mutinstances = instances.iter_mut().collect::<Vec<_>>();
     let msg = wait_message_from_channel(&channels[1], &mut mutinstances, false)?;

@@ -26,7 +26,7 @@ use crate::{
             cardinal::EOL_TIMELOCK_DURATION,
             protocol_handler::{ProtocolContext, ProtocolHandler},
         },
-        variables::{Globals, PartialUtxo, VariableTypes},
+        variables::{Globals, PartialUtxo, VariableTypes, WitnessTypes},
     },
     types::{IncomingBitVMXApiMessages, ProgramContext, BITVMX_ID, PROGRAM_TYPE_LOCK},
 };
@@ -41,6 +41,7 @@ pub struct LockProtocol {
 }
 
 pub struct LockProtocolConfiguration {
+    pub id: Uuid,
     pub operators_aggregated_pub: PublicKey,
     pub operators_aggregated_pub_happy_path: PublicKey,
     pub unspendable: PublicKey,
@@ -60,6 +61,7 @@ pub fn lock_protocol_dust_cost(participants: u8) -> u64 {
 
 impl LockProtocolConfiguration {
     pub fn new(
+        program_id: Uuid,
         operators_aggregated_pub: PublicKey,
         operators_aggregated_pub_happy_path: PublicKey,
         unspendable: PublicKey,
@@ -71,6 +73,7 @@ impl LockProtocolConfiguration {
         eol_timelock_duration: u16,
     ) -> Self {
         Self {
+            id: program_id,
             operators_aggregated_pub,
             operators_aggregated_pub_happy_path,
             unspendable,
@@ -104,6 +107,7 @@ impl LockProtocolConfiguration {
             .number()? as u16;
 
         Ok(Self::new(
+            id,
             operators_aggregated_pub,
             ops_agg_happy_path,
             unspendable,
@@ -116,46 +120,46 @@ impl LockProtocolConfiguration {
         ))
     }
 
-    pub fn send(&self, program_id: Uuid, channel: &DualChannel) -> Result<(), BitVMXError> {
+    pub fn send(&self, channel: &DualChannel) -> Result<(), BitVMXError> {
         channel.send(
             BITVMX_ID,
             VariableTypes::PubKey(self.operators_aggregated_pub.clone())
-                .set_msg(program_id, "operators_aggregated_pub")?,
+                .set_msg(self.id, "operators_aggregated_pub")?,
         )?;
         channel.send(
             BITVMX_ID,
             VariableTypes::PubKey(self.operators_aggregated_pub_happy_path.clone())
-                .set_msg(program_id, "operators_aggregated_happy_path")?,
+                .set_msg(self.id, "operators_aggregated_happy_path")?,
         )?;
         channel.send(
             BITVMX_ID,
-            VariableTypes::PubKey(self.unspendable.clone()).set_msg(program_id, "unspendable")?,
+            VariableTypes::PubKey(self.unspendable.clone()).set_msg(self.id, "unspendable")?,
         )?;
         channel.send(
             BITVMX_ID,
-            VariableTypes::PubKey(self.user_pubkey.clone()).set_msg(program_id, "user_pubkey")?,
+            VariableTypes::PubKey(self.user_pubkey.clone()).set_msg(self.id, "user_pubkey")?,
         )?;
         channel.send(
             BITVMX_ID,
-            VariableTypes::Secret(self.secret.clone()).set_msg(program_id, "secret")?,
+            VariableTypes::Secret(self.secret.clone()).set_msg(self.id, "secret")?,
         )?;
         channel.send(
             BITVMX_ID,
-            VariableTypes::Utxo(self.ordinal_utxo.clone()).set_msg(program_id, "ordinal_utxo")?,
+            VariableTypes::Utxo(self.ordinal_utxo.clone()).set_msg(self.id, "ordinal_utxo")?,
         )?;
         channel.send(
             BITVMX_ID,
-            VariableTypes::Utxo(self.protocol_utxo.clone()).set_msg(program_id, "protocol_utxo")?,
+            VariableTypes::Utxo(self.protocol_utxo.clone()).set_msg(self.id, "protocol_utxo")?,
         )?;
         channel.send(
             BITVMX_ID,
             VariableTypes::Number(self.timelock_blocks as u32)
-                .set_msg(program_id, "timelock_blocks")?,
+                .set_msg(self.id, "timelock_blocks")?,
         )?;
         channel.send(
             BITVMX_ID,
             VariableTypes::Number(self.eol_timelock_duration as u32)
-                .set_msg(program_id, EOL_TIMELOCK_DURATION)?,
+                .set_msg(self.id, EOL_TIMELOCK_DURATION)?,
         )?;
 
         Ok(())
@@ -163,21 +167,42 @@ impl LockProtocolConfiguration {
 
     pub fn setup(
         &self,
-        program_id: Uuid,
         channel: &DualChannel,
         addresses: Vec<crate::program::participant::P2PAddress>,
         leader: u16,
     ) -> Result<(), BitVMXError> {
-        self.send(program_id, channel)?;
+        self.send(channel)?;
 
         let setup_msg = IncomingBitVMXApiMessages::Setup(
-            program_id,
+            self.id,
             PROGRAM_TYPE_LOCK.to_string(),
             addresses,
             leader,
         )
         .to_string()?;
         channel.send(BITVMX_ID, setup_msg)?;
+        Ok(())
+    }
+
+    pub fn lock(
+        program_id: Uuid,
+        secret: Vec<u8>,
+        channel: &DualChannel,
+    ) -> Result<(), BitVMXError> {
+        //Bridge send signal to send the kickoff message
+        let witness_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetWitness(
+            program_id,
+            "secret".to_string(),
+            WitnessTypes::Secret(secret),
+        ))?;
+
+        channel.send(BITVMX_ID, witness_msg.clone())?;
+
+        let _ = channel.send(
+            BITVMX_ID,
+            IncomingBitVMXApiMessages::GetTransactionInfoByName(program_id, LOCK_TX.to_string())
+                .to_string()?,
+        );
         Ok(())
     }
 }
@@ -276,6 +301,7 @@ impl ProtocolHandler for LockProtocol {
             protocol_utxo,
             timelock_blocks,
             eol_timelock_duration,
+            ..
         } = LockProtocolConfiguration::new_from_globals(self.ctx.id, &context.globals)?;
 
         warn!(
