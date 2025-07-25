@@ -7,7 +7,7 @@ use enum_dispatch::enum_dispatch;
 use key_manager::winternitz::{WinternitzSignature, WinternitzType};
 use protocol_builder::scripts::ProtocolScript;
 use protocol_builder::types::output::SpeedupData;
-use protocol_builder::types::{InputArgs, OutputType};
+use protocol_builder::types::{InputArgs, OutputType, Utxo};
 use protocol_builder::{builder::Protocol, errors::ProtocolBuilderError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -428,6 +428,24 @@ pub trait ProtocolHandler {
             .get_var(&self.context().id, "speedup")?
             .unwrap()
             .pubkey()
+    }
+
+    fn get_speedup_data_from_tx(
+        &self,
+        tx: &Transaction,
+        program_context: &ProgramContext,
+        vout: Option<u32>,
+    ) -> Result<SpeedupData, BitVMXError> {
+        let txid = tx.compute_txid();
+        let speedup = self.get_speedup_key(program_context)?;
+        let vout = vout.unwrap_or(tx.output.len() as u32 - 1);
+        let speedup_utxo = Utxo::new(
+            txid,
+            vout,
+            tx.output[vout as usize].value.to_sat(),
+            &speedup,
+        );
+        Ok(speedup_utxo.into())
     }
 
     fn setup_complete(&self, program_context: &ProgramContext) -> Result<(), BitVMXError>;

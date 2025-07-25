@@ -5,8 +5,8 @@ use uuid::Uuid;
 use crate::{
     errors::BitVMXError,
     program::{
-        protocols::cardinal::{lock::LOCK_TX, EOL_TIMELOCK_DURATION},
-        variables::{Globals, PartialUtxo, VariableTypes, WitnessTypes},
+        protocols::cardinal::EOL_TIMELOCK_DURATION,
+        variables::{Globals, PartialUtxo, VariableTypes},
     },
     types::{IncomingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_LOCK},
 };

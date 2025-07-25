@@ -1,6 +1,7 @@
 pub mod lock;
 pub mod lock_config;
 pub mod slot;
+pub mod slot_config;
 pub mod transfer;
 
 pub const OPERATORS: &str = "operators";

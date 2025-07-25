@@ -171,6 +171,10 @@ pub struct DisputeResolutionProtocol {
     ctx: ProtocolContext,
 }
 
+pub fn protocol_cost() -> u64 {
+    20_000 // This is a placeholder value, adjust as needed
+}
+
 fn get_role(my_idx: usize) -> ParticipantRole {
     if my_idx == 0 {
         ParticipantRole::Prover

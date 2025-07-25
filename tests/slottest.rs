@@ -5,29 +5,23 @@ use bitcoin::Amount;
 use bitvmx_client::{
     program::{
         self,
-        participant::ParticipantRole,
+        //participant::ParticipantRole,
         protocols::{
             cardinal::{
-                slot::{certificate_hash, group_id},
-                EOL_TIMELOCK_DURATION, FEE, FUND_UTXO, GID_MAX, OPERATORS_AGGREGATED_PUB,
-                PAIR_0_1_AGGREGATED, PROTOCOL_COST, SPEEDUP_DUST, UNSPENDABLE,
+                slot::{certificate_hash, group_id, slot_protocol_dust_cost},
+                slot_config::SlotProtocolConfiguration,
             },
-            dispute::{TIMELOCK_BLOCKS, TIMELOCK_BLOCKS_KEY},
-            protocol_handler::external_fund_tx,
+            dispute::TIMELOCK_BLOCKS,
         },
         variables::VariableTypes,
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_SLOT},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
 use common::{
     config_trace,
     dispute::{execute_dispute, prepare_dispute, ForcedChallenges},
     get_all, init_bitvmx, init_utxo, mine_and_wait, prepare_bitcoin, send_all,
     wait_message_from_channel,
-};
-use protocol_builder::{
-    scripts::{self, SignMode},
-    types::Utxo,
 };
 use tracing::info;
 use uuid::Uuid;
@@ -119,56 +113,22 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
     let pair_aggregated_pub_key = msgs[0].aggregated_pub_key().unwrap();
 
     // Protocol fees funding
-    let fund_value = Amount::from_sat(300_000);
+    let fund_value = Amount::from_sat(slot_protocol_dust_cost(3));
     let utxo = init_utxo(&wallet, aggregated_pub_key, None, fund_value.to_sat())?;
 
-    // SETUP SLOT BEGIN
-    let slot_fee_tx = 1000;
-    let slot_speedup_dust = 500;
-
     let program_id = Uuid::new_v4();
-    let set_fee = VariableTypes::Number(slot_fee_tx).set_msg(program_id, FEE)?;
-    send_all(&channels, &set_fee)?;
+    let slot_protocol_configuration = SlotProtocolConfiguration::new(
+        program_id,
+        3, //operators
+        aggregated_pub_key,
+        vec![pair_aggregated_pub_key],
+        (utxo.txid, utxo.vout, Some(fund_value.to_sat()), None),
+        TIMELOCK_BLOCKS as u16,
+    );
 
-    let set_fund_utxo =
-        VariableTypes::Utxo((utxo.txid, utxo.vout, Some(fund_value.to_sat()), None))
-            .set_msg(program_id, FUND_UTXO)?;
-    send_all(&channels, &set_fund_utxo)?;
-
-    let set_ops_aggregated =
-        VariableTypes::PubKey(aggregated_pub_key).set_msg(program_id, OPERATORS_AGGREGATED_PUB)?;
-    send_all(&channels, &set_ops_aggregated)?;
-
-    let set_ops_aggregated =
-        VariableTypes::PubKey(pair_aggregated_pub_key).set_msg(program_id, PAIR_0_1_AGGREGATED)?;
-    send_all(&channels, &set_ops_aggregated)?;
-
-    let set_unspendable = VariableTypes::PubKey(fixtures::hardcoded_unspendable().into())
-        .set_msg(program_id, UNSPENDABLE)?;
-    send_all(&channels, &set_unspendable)?;
-
-    let eol_timelock_duration =
-        VariableTypes::Number(100).set_msg(program_id, EOL_TIMELOCK_DURATION)?;
-    send_all(&channels, &eol_timelock_duration)?;
-
-    let protocol_cost = VariableTypes::Number(20_000).set_msg(program_id, PROTOCOL_COST)?;
-    send_all(&channels, &protocol_cost)?;
-
-    let speedup_dust =
-        VariableTypes::Number(slot_speedup_dust).set_msg(program_id, SPEEDUP_DUST)?;
-    send_all(&channels, &speedup_dust)?;
-
-    let gid_max = VariableTypes::Number(8).set_msg(program_id, GID_MAX)?;
-    send_all(&channels, &gid_max)?;
-
-    let timelock_blocks =
-        VariableTypes::Number(TIMELOCK_BLOCKS.into()).set_msg(program_id, TIMELOCK_BLOCKS_KEY)?;
-    send_all(&channels, &timelock_blocks)?;
-
-    let setup_msg =
-        IncomingBitVMXApiMessages::Setup(program_id, PROGRAM_TYPE_SLOT.to_string(), addresses, 0)
-            .to_string()?;
-    send_all(&channels, &setup_msg)?;
+    for channel in channels.iter() {
+        slot_protocol_configuration.setup(channel, addresses.clone(), 0)?;
+    }
 
     //wait setup complete
     let _msg = get_all(&channels, &mut instances, false)?;
@@ -200,27 +160,15 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
     //=====================================
 
     let (emulator_channels, dispute_id) = if and_drp {
-        let initial_utxo = Utxo::new(txid, 4, 20_000, &pair_aggregated_pub_key);
-        let prover_win_utxo_value = (slot_fee_tx + slot_speedup_dust) as u64;
-        let prover_win_utxo = Utxo::new(txid, 2, prover_win_utxo_value, &pair_aggregated_pub_key);
         let emulator_channels = vec![emulator_1.unwrap(), emulator_2.unwrap()];
 
-        let initial_spending_condition = vec![
-            scripts::timelock(TIMELOCK_BLOCKS, &aggregated_pub_key, SignMode::Aggregate), //convert to timelock
-            scripts::check_aggregated_signature(&pair_aggregated_pub_key, SignMode::Aggregate),
-        ];
-        let initial_output_type =
-            external_fund_tx(&aggregated_pub_key, initial_spending_condition, 20_000)?;
-
-        let prover_win_spending_condition = vec![
-            scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate), //convert to timelock
-            scripts::check_aggregated_signature(&pair_aggregated_pub_key, SignMode::Aggregate),
-        ];
-        let prover_win_output_type = external_fund_tx(
-            &aggregated_pub_key,
-            prover_win_spending_condition,
-            prover_win_utxo_value,
-        )?;
+        let (
+            initial_utxo,
+            initial_output_type,
+            prover_win_utxo,
+            prover_win_output_type,
+            pair_aggregated_pub_key,
+        ) = slot_protocol_configuration.dispute_connection(txid, 0, 1)?;
 
         info!("Dispute setup");
 
@@ -237,7 +185,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
             500,
             fake_drp,
             fake_instruction,
-            ForcedChallenges::TraceHash(ParticipantRole::Prover),
+            ForcedChallenges::No,
             None,
         )?;
         let _msgs = get_all(&sub_channel.clone(), &mut instances, false)?;
