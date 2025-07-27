@@ -637,7 +637,7 @@ impl ProtocolHandler for SlotProtocol {
                     key.get_public("speedup")?
                 );
                 if n != i {
-                    let tx_name = start_challenge_to(i, n);
+                    let tx_name = start_challenge_to(i, count);
 
                     protocol.add_connection(
                         &format!("{}__{}_TL", certhashtx, tx_name),

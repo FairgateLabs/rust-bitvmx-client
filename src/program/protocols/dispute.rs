@@ -263,7 +263,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                         continue;
                     }
                     let key = key_chain.derive_winternitz_hash160(*size)?;
-                    info!("getting winternitz key for: {}", name);
+                    //info!("getting winternitz key for: {}", name);
                     keys.push((name.to_string(), key.into()));
                 }
             }
@@ -1393,7 +1393,7 @@ impl DisputeResolutionProtocol {
                         } else {
                             var_name.to_string()
                         };
-                        info!("getting winternitz key for: {}, idx: {}", var_name, idx);
+                        //info!("getting winternitz key for: {}, idx: {}", var_name, idx);
                         let key = keys[idx].get_winternitz(&var_name).unwrap();
                         (var_name, key)
                     })

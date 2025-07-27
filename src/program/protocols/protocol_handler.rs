@@ -202,7 +202,7 @@ pub trait ProtocolHandler {
         let mut wots_sigs = vec![];
 
         for k in protocol_script.get_keys().iter().rev() {
-            info!("Getting winternitz signature for key: {}", k.name());
+            //info!("Getting winternitz signature for key: {}", k.name());
             if let Some(var) = program_context
                 .globals
                 .get_var(&self.context().id, k.name())?
