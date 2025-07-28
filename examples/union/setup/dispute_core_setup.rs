@@ -30,6 +30,7 @@ impl DisputeCoreSetup {
         funding_utxos_per_member: &HashMap<PublicKey, Vec<PartialUtxo>>,
     ) -> Result<()> {
         let mut committee = Committee {
+            committee_id,
             my_role: my_role.clone(),
             take_aggregated_key: keyring.take_aggregated_key.unwrap(),
             dispute_aggregated_key: keyring.dispute_aggregated_key.unwrap(),

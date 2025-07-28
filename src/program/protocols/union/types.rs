@@ -48,6 +48,7 @@ pub const CHALLENGE_ENABLER: &str = "challenge_enabler";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Committee {
+    pub committee_id: Uuid,
     pub my_role: ParticipantRole,
     pub member_index: usize,
     pub take_aggregated_key: PublicKey,
