@@ -1,9 +1,9 @@
 use bitcoin::{PublicKey, Txid};
+use musig2::{secp::MaybeScalar, PubNonce};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::program::participant::{P2PAddress, ParticipantRole};
+use crate::program::participant::ParticipantRole;
 
 // Key names
 pub const TAKE_AGGREGATED_KEY: &str = "take_aggregated_key";
@@ -47,31 +47,28 @@ pub const OPERATOR_WON_ENABLER: &str = "operator_won_enabler";
 pub const CHALLENGE_ENABLER: &str = "challenge_enabler";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NewCommittee {
+pub struct Committee {
     pub my_role: ParticipantRole,
     pub member_index: usize,
     pub take_aggregated_key: PublicKey,
     pub dispute_aggregated_key: PublicKey,
-    pub addresses: HashMap<PublicKey, P2PAddress>,
     pub operator_count: u32,
     pub watchtower_count: u32,
     pub packet_size: u32,
 }
 
-impl NewCommittee {
+impl Committee {
     pub fn name() -> String {
-        "new_committee".to_string()
+        "committee".to_string()
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PegInRequest {
-    pub my_role: ParticipantRole,
     pub txid: Txid,
     pub amount: u64,
     pub accept_pegin_sighash: Vec<u8>,
     pub take_aggregated_key: PublicKey,
-    pub addresses: HashMap<PublicKey, P2PAddress>,
     pub operators_take_key: Vec<PublicKey>,
     pub slot_index: u32,
     pub committee_id: uuid::Uuid,
@@ -81,6 +78,15 @@ impl PegInRequest {
     pub fn name() -> String {
         "pegin_request".to_string()
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PegInAccepted {
+    pub operator_take_sighash: Vec<u8>,
+    pub operator_won_sighash: Vec<u8>,
+    pub take_aggregated_key: PublicKey,
+    pub accept_pegin_nonce: PubNonce,
+    pub accept_pegin_signature: MaybeScalar,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
