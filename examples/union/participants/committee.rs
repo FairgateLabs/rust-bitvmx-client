@@ -15,7 +15,7 @@ use crate::bitcoin::{init_wallet, FEE, WALLET_NAME};
 use crate::participants::member::Member;
 
 pub struct Committee {
-    members: Vec<Member>,
+    pub members: Vec<Member>,
     take_aggregation_id: Uuid,
     dispute_aggregation_id: Uuid,
     committee_id: Uuid,
@@ -81,8 +81,7 @@ impl Committee {
             funding_utxos_per_member.insert(member.keyring.take_pubkey.unwrap(), funding_utxos);
         }
 
-        // setup covenants
-        self.all(|op| op.setup_covenants(seed, &members, &funding_utxos_per_member))?;
+        self.all(|op| op.setup_dispute_protocols(seed, &members, &funding_utxos_per_member))?;
 
         Ok(self.public_key()?)
     }
@@ -95,12 +94,12 @@ impl Committee {
         accept_pegin_sighash: Vec<u8>,
         slot_index: u32,
     ) -> Result<()> {
-        let accept_pegin_covenant_id = Uuid::new_v4();
+        let protocol_id = Uuid::new_v4();
         let members = self.members.clone();
 
         self.all(|op| {
             op.accept_pegin(
-                accept_pegin_covenant_id,
+                protocol_id,
                 &members,
                 request_pegin_txid,
                 amount,
@@ -128,6 +127,26 @@ impl Committee {
                 &members,
             )
         })?;
+
+        Ok(())
+    }
+
+    pub fn advance_funds(
+        &mut self,
+        committee_id: Uuid,
+        slot_id: usize,
+        user_public_key: PublicKey,
+        pegout_id: Vec<u8>,
+        operator_id: usize,
+    ) -> Result<()> {
+        // self.all(|op| {
+        self.members[operator_id].advance_funds(
+            committee_id,
+            slot_id,
+            user_public_key,
+            pegout_id.clone(),
+        )?;
+        // })?;
 
         Ok(())
     }

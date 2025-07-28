@@ -157,7 +157,7 @@ impl DisputeCoreProtocol {
     fn create_initial_deposit(
         &self,
         protocol: &mut Protocol,
-        committee: &NewCommittee,
+        committee: &Committee,
         keys: &Vec<ParticipantKeys>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
@@ -225,7 +225,7 @@ impl DisputeCoreProtocol {
     fn create_dispute_core(
         &self,
         protocol: &mut Protocol,
-        committee: &NewCommittee,
+        committee: &Committee,
         dispute_core_index: usize,
         keys: &Vec<ParticipantKeys>,
         context: &ProgramContext,
@@ -409,7 +409,6 @@ impl DisputeCoreProtocol {
         )?;
 
         // YOU_CANT_TAKE_TX connection
-        // YOU_CANT_TAKE_TX connection
         protocol.add_connection(
             "disable_next_dispute_core",
             &reimbursement_kickoff_tx,
@@ -491,29 +490,22 @@ impl DisputeCoreProtocol {
             ));
         }
 
-        // TODO: decide if we want to send the utxos for the take txs to the L2 client
-        // let data = serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(
-        //     self.ctx.id,
-        //     "utxos_for_take".to_string(),
-        //     VariableTypes::String(serde_json::to_string(&(
-        //         &self.ctx.protocol_name,
-        //         &utxos_for_take,
-        //     ))?),
-        // ))?;
-
-        // context.broker_channel.send(L2_ID, data)?;
-
         Ok(())
     }
 
-    fn committee(&self, context: &ProgramContext) -> Result<NewCommittee, BitVMXError> {
+    fn committee(&self, context: &ProgramContext) -> Result<Committee, BitVMXError> {
+        info!(
+            id = &self.ctx.my_idx,
+            "Getting committee data for DisputeCore protocol {}", self.ctx.id
+        );
+
         let committee = context
             .globals
-            .get_var(&self.ctx.id, &NewCommittee::name())?
+            .get_var(&self.ctx.id, &Committee::name())?
             .unwrap()
             .string()?;
 
-        let committee: NewCommittee = serde_json::from_str(&committee)?;
+        let committee: Committee = serde_json::from_str(&committee)?;
         Ok(committee)
     }
 
