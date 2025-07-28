@@ -40,21 +40,23 @@ impl ClaimGate {
         protocol: &mut Protocol,
         from: &str,
         claim_name: &str,
+        claimer: (&PublicKey, SignMode),
         aggregated: &PublicKey,
         amount_fee: u64,
         amount_dust: u64,
-        stop_count: u8,
-        stop_aggregated: Option<Vec<&PublicKey>>,
+        stoppers_pub: Vec<&PublicKey>,
+        subset_cov: Option<Vec<&PublicKey>>,
         timelock_blocks: u16,
         actions: Vec<&PublicKey>,
     ) -> Result<Self, BitVMXError> {
-        //TODO: this script should check a claimer secret (or be signed only by the claimer)
-        let verify_aggregated =
-            scripts::check_aggregated_signature(&aggregated, SignMode::Aggregate);
+        // Add the claim start transaction
+        // This transaction will verify onlye the claimer's signature
+        // as the claimer is the one who will be able to spend it
+        let claim_start_check = scripts::check_signature(claimer.0, claimer.1);
         let claim_start = OutputType::taproot(
             amount_fee + amount_fee + ((2 + actions.len() as u64) * amount_dust),
             aggregated,
-            &vec![verify_aggregated.clone()],
+            &vec![claim_start_check],
         )?;
 
         let vout_idx = protocol.transaction_by_name(from)?.output.len();
@@ -64,17 +66,16 @@ impl ClaimGate {
             from,
             claim_start.clone().into(),
             &stx,
-            InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::All {
-                    //TODO: check proper signing
-                    key_path_sign: SignMode::Aggregate,
-                },
-            ),
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
             None,
             None,
         )?;
 
+        // Add the output to the claim transaction that contains two leaves:
+        // 1. The aggregated signature for the stoppers
+        // 2. The timelock script that will be used by the claimer if he succeeds the claim
+        let verify_aggregated =
+            scripts::check_aggregated_signature(&aggregated, SignMode::Aggregate);
         let timeout = scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
 
         let start_tx_output = OutputType::taproot(
@@ -86,20 +87,20 @@ impl ClaimGate {
 
         let pb = ProtocolBuilder {};
 
-        for i in 0..stop_count {
-            let mut leaves_claim_stop = vec![verify_aggregated.clone()];
-            if let Some(stop_conditions) = &stop_aggregated {
-                let verify_special = scripts::check_aggregated_signature(
-                    &stop_conditions[i as usize],
-                    SignMode::Aggregate,
-                );
-                leaves_claim_stop.push(verify_special);
+        // add stoppers transactions consuming the stop vout in the origin transaction and the output on the start tx
+        // to penalize the claimer if he tries to start the claim before winning (consuming all the stops)
+        for (i, stopper_pub) in stoppers_pub.iter().enumerate() {
+            let mut leaves = vec![verify_aggregated.clone()];
+            // if a covenant of the subset is provided, add the signature check for the subset
+            if let Some(subset_cov) = &subset_cov {
+                if let Some(subset_pub) = subset_cov.get(i) {
+                    leaves.push(scripts::check_signature(subset_pub, SignMode::Aggregate));
+                }
             }
 
-            let claim_stop =
-                OutputType::taproot(amount_fee + amount_dust, aggregated, &leaves_claim_stop)?;
+            let claim_stop = OutputType::taproot(amount_fee + amount_dust, aggregated, &leaves)?;
 
-            let stopname = Self::tx_stop(claim_name, i);
+            let stopname = Self::tx_stop(claim_name, i as u8);
             protocol.add_connection(
                 &format!("{}__{}", from, &stopname),
                 from,
@@ -111,7 +112,7 @@ impl ClaimGate {
             )?;
 
             protocol.add_connection(
-                &format!("CANCEL_CLAIM_{}_BY_{}", claim_name, i),
+                &format!("CANCEL_CLAIM_{}_BY_{}", claim_name, i as u8),
                 &stx,
                 0.into(),
                 &stopname,
@@ -125,26 +126,22 @@ impl ClaimGate {
                 None,
             )?;
 
-            pb.add_speedup_output(protocol, &stopname, amount_dust, aggregated)?;
+            pb.add_speedup_output(protocol, &stopname, amount_dust, &stopper_pub)?;
         }
 
+        // add the claimer success tx that is able to fullfill the claim is he was not stopped after TL
         let success = Self::tx_success(claim_name);
         protocol.add_connection(
             &format!("{}_TL_{}", from, &success),
             &stx,
             OutputSpec::Last,
             &success,
-            InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::All {
-                    //TODO: check proper signing
-                    key_path_sign: SignMode::Aggregate,
-                },
-            ),
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
             Some(timelock_blocks),
             None,
         )?;
 
+        // add action/enablers as the vouts in the success transaction
         for action in &actions {
             let verify_aggregated_action =
                 scripts::check_aggregated_signature(action, SignMode::Aggregate);
@@ -154,16 +151,24 @@ impl ClaimGate {
             protocol.add_transaction_output(&success, &output_action)?;
         }
 
-        pb.add_speedup_output(protocol, &success, amount_dust, aggregated)?;
-        pb.add_speedup_output(protocol, &stx, amount_dust, aggregated)?;
+        // claimer speedup output for the claim success transaction
+        pb.add_speedup_output(protocol, &success, amount_dust, claimer.0)?;
 
-        let cost = Self::cost(amount_fee, amount_dust, stop_count, actions.len());
+        // claimer speedup output for the claim start transaction
+        pb.add_speedup_output(protocol, &stx, amount_dust, claimer.0)?;
+
+        let cost = Self::cost(
+            amount_fee,
+            amount_dust,
+            stoppers_pub.len() as u8,
+            actions.len(),
+        );
 
         Ok(Self {
             name: claim_name.to_string(),
             from: from.to_string(),
             vout: vout_idx,
-            stop_count,
+            stop_count: stoppers_pub.len() as u8,
             cost,
         })
     }
@@ -180,7 +185,6 @@ impl ClaimGate {
                 to,
                 Sequence::ENABLE_RBF_NO_LOCKTIME,
                 &SpendMode::All {
-                    //TODO: check proper signing
                     key_path_sign: SignMode::Aggregate,
                 },
                 &SighashType::taproot_all(),

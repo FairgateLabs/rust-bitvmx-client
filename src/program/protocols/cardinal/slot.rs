@@ -344,16 +344,20 @@ impl ProtocolHandler for SlotProtocol {
                 for i in 0..total_operators - 1 {
                     if i != vout.unwrap() - 2 {
                         info!("Sending tx to consume the stop for {}", i);
+
+                        let tx = self.get_signed_tx(
+                            program_context,
+                            &start_challenge_to(operator as usize, i as usize),
+                            0,
+                            0,
+                            false,
+                            0,
+                        )?;
+                        let speedup_data =
+                            self.get_speedup_data_from_tx(&tx, program_context, None)?;
                         program_context.bitcoin_coordinator.dispatch(
-                            self.get_signed_tx(
-                                program_context,
-                                &start_challenge_to(operator as usize, i as usize),
-                                0,
-                                0,
-                                false,
-                                0,
-                            )?,
-                            None,
+                            tx,
+                            Some(speedup_data),
                             Context::ProgramId(self.ctx.id).to_string()?,
                             None,
                         )?;
@@ -387,9 +391,10 @@ impl ProtocolHandler for SlotProtocol {
                         &ClaimGate::tx_start(&claim_name(operator as usize)),
                         &tx
                     );
+                    let speedup_data = self.get_speedup_data_from_tx(&tx, program_context, None)?;
                     program_context.bitcoin_coordinator.dispatch(
                         tx,
-                        None,
+                        Some(speedup_data),
                         Context::ProgramId(self.ctx.id).to_string()?,
                         None,
                     )?;
@@ -417,16 +422,19 @@ impl ProtocolHandler for SlotProtocol {
                 .number()?;
 
             info!("Prover sending SUCCESS tx");
+
+            let tx = self.get_signed_tx(
+                program_context,
+                &ClaimGate::tx_success(&claim_name(operator as usize)),
+                0,
+                1,
+                false,
+                0,
+            )?;
+            let speedup_data = self.get_speedup_data_from_tx(&tx, program_context, None)?;
             program_context.bitcoin_coordinator.dispatch(
-                self.get_signed_tx(
-                    program_context,
-                    &ClaimGate::tx_success(&claim_name(operator as usize)),
-                    0,
-                    0,
-                    false,
-                    0,
-                )?,
-                None,
+                tx,
+                Some(speedup_data),
                 Context::ProgramId(self.ctx.id).to_string()?,
                 Some(tx_status.block_info.unwrap().height + timelock_blocks),
             )?;
@@ -521,6 +529,11 @@ impl ProtocolHandler for SlotProtocol {
             Some(fund_utxo.0),
         )?;
 
+        let speedup_keys = keys
+            .iter()
+            .map(|k| k.get_public("speedup"))
+            .collect::<Result<Vec<_>, _>>()?;
+
         //====================================
         //CREATES THE SLOTS FOR EACH OPERATOR
         //CERT HASH TX:
@@ -530,11 +543,7 @@ impl ProtocolHandler for SlotProtocol {
         // (vout2+operators-1).. (vout2+operators-1+operators-1)= start_challenge  [for 3 operators 4,5]
         for (i, key) in keys.iter().enumerate() {
             //create the certificate hash tx
-            info!(
-                "Creating certificate hash tx for operator {} with key {}",
-                i,
-                key.get_public("speedup")?
-            );
+            info!("Creating certificate hash tx for operator {}", i);
             let certhashtx = self.add_cert_hash_tx(
                 i,
                 key,
@@ -590,20 +599,27 @@ impl ProtocolHandler for SlotProtocol {
             // ADD THE CLAIM GATE THAT THE OPERATOR WINS
             // IF CONTAINS ALSO THE STOP OUTPUTS THAT IF THE OPERATOR WINS CHALLENGE NEEDS TO CONSUME
             //TODO: set the proper pair aggregated for the stop output
-            let stop_count = keys.len() as u8 - 1;
-            let mut stop_pubkeys = vec![];
-            for _ in 0..stop_count {
-                stop_pubkeys.push(&operators_pairs[0]);
+            let mut stopper_keys = speedup_keys.clone();
+            let claimer = stopper_keys.remove(i);
+            let mut subset_cov = vec![];
+            for _ in 0..operators - 1 {
+                subset_cov.push(&operators_pairs[0]);
             }
+            let claimer_sign = if self.ctx.my_idx == i {
+                SignMode::Single
+            } else {
+                SignMode::Skip
+            };
             let claim_gate = ClaimGate::new(
                 &mut protocol,
                 &certhashtx,
                 &claim_name(i),
+                (claimer, claimer_sign),
                 &operators_aggregated_pub,
                 DUST,
                 DUST,
-                stop_count,
-                Some(stop_pubkeys),
+                stopper_keys,
+                Some(subset_cov),
                 timelock_blocks,
                 vec![&operators_aggregated_pub],
             )?;

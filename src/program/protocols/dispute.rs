@@ -171,6 +171,9 @@ pub struct DisputeResolutionProtocol {
     ctx: ProtocolContext,
 }
 
+const MIN_RELAY_FEE: u64 = 1;
+const DUST: u64 = 500 * MIN_RELAY_FEE;
+
 pub fn protocol_cost() -> u64 {
     20_000 // This is a placeholder value, adjust as needed
 }
@@ -742,16 +745,19 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 .unwrap()
                 .number()?;
 
+            let prover_wins_tx = self.get_signed_tx(
+                program_context,
+                &ClaimGate::tx_success(PROVER_WINS),
+                0,
+                1,
+                false,
+                0,
+            )?;
+            let speedup_data =
+                self.get_speedup_data_from_tx(&prover_wins_tx, program_context, None)?;
             program_context.bitcoin_coordinator.dispatch(
-                self.get_signed_tx(
-                    program_context,
-                    &ClaimGate::tx_success(PROVER_WINS),
-                    0,
-                    0,
-                    false,
-                    0,
-                )?,
-                None,
+                prover_wins_tx,
+                Some(speedup_data),
                 Context::ProgramId(self.ctx.id).to_string()?,
                 Some(tx_status.block_info.as_ref().unwrap().height + timelock_blocks),
             )?;
@@ -761,9 +767,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             //Execute actions.
             //Could execute more than one
             info!("Prover. Execute Action");
+            let prover_wins_action_tx =
+                self.get_signed_tx(program_context, ACTION_PROVER_WINS, 0, 0, false, 1)?;
+            let speedup_data =
+                self.get_speedup_data_from_tx(&prover_wins_action_tx, program_context, None)?;
+
             program_context.bitcoin_coordinator.dispatch(
-                self.get_signed_tx(program_context, ACTION_PROVER_WINS, 0, 0, false, 1)?,
-                None,
+                prover_wins_action_tx,
+                Some(speedup_data),
                 Context::ProgramId(self.ctx.id).to_string()?,
                 None,
             )?;
@@ -824,12 +835,15 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         // TODO get this from config, all values expressed in satoshis
-        let fee = context
-            .globals
-            .get_var(&self.ctx.id, "FEE")?
-            .unwrap()
-            .number()? as u64;
-        let speedup_dust = 500;
+
+        let speedup_dust = DUST;
+        let fee = DUST;
+
+        let (prover_signs, verifier_signs) = if self.role() == ParticipantRole::Prover {
+            (SignMode::Single, SignMode::Skip)
+        } else {
+            (SignMode::Skip, SignMode::Single)
+        };
 
         let utxo = context
             .globals
@@ -933,10 +947,11 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             &mut protocol,
             START_CH,
             PROVER_WINS,
+            (prover_speedup_pub, prover_signs),
             aggregated,
             fee,
             speedup_dust,
-            1,
+            vec![verifier_speedup_pub],
             None,
             timelock_blocks,
             vec![aggregated],
@@ -980,16 +995,22 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         )?;
 
         let pb = ProtocolBuilder {};
-        pb.add_speedup_output(&mut protocol, ACTION_PROVER_WINS, speedup_dust, aggregated)?;
+        pb.add_speedup_output(
+            &mut protocol,
+            ACTION_PROVER_WINS,
+            speedup_dust,
+            &prover_speedup_pub,
+        )?;
 
         let claim_verifier = ClaimGate::new(
             &mut protocol,
             START_CH,
             VERIFIER_WINS,
+            (verifier_speedup_pub, verifier_signs),
             aggregated,
             fee,
             speedup_dust,
-            1,
+            vec![prover_speedup_pub],
             None,
             timelock_blocks,
             vec![aggregated],
