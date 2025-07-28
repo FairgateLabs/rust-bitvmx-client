@@ -25,8 +25,9 @@ use crate::{
             union::{
                 common::get_dispute_core_id,
                 types::{
-                    PegInRequest, ACCEPT_PEGIN_TX, CHALLENGE_ENABLER, OPERATOR_TAKE_ENABLER,
-                    OPERATOR_WON_ENABLER, REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX,
+                    PegInAccepted, PegInRequest, ACCEPT_PEGIN_TX, CHALLENGE_ENABLER,
+                    OPERATOR_TAKE_ENABLER, OPERATOR_WON_ENABLER, REIMBURSEMENT_KICKOFF_TX,
+                    REQUEST_PEGIN_TX,
                 },
             },
         },
@@ -318,31 +319,42 @@ impl AcceptPegInProtocol {
         //     signatures.len()
         // );
 
+        let mut protocol = self.load_protocol()?;
+        let operator_take_tx_name = &format!("OPERATOR_TAKE_TX_OP_{}", self.ctx.my_idx);
+        let operator_take_sighash = protocol
+            .get_hashed_message(operator_take_tx_name, 0, 0)?
+            .unwrap()
+            .as_ref()
+            .to_vec();
+
+        let operator_won_tx_name = &format!("OPERATOR_WON_TX_OP_{}", self.ctx.my_idx);
+        let operator_won_sighash = protocol
+            .get_hashed_message(operator_won_tx_name, 0, 0)?
+            .unwrap()
+            .as_ref()
+            .to_vec();
+
+        let pegin_accepted = PegInAccepted {
+            operator_take_sighash,
+            operator_won_sighash,
+            take_aggregated_key: take_aggregated_key.clone(),
+            accept_pegin_nonce: nonces[0].1.clone(),
+            accept_pegin_signature: signatures[0].1.clone(),
+        };
+
         let data = serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(
             self.ctx.id,
-            "signing_info".to_string(),
-            VariableTypes::String(serde_json::to_string(&(
-                &self.ctx.protocol_name,
-                take_aggregated_key.clone(),
-                // TODO send sighash of the transaction
-                nonces[0].1.clone(),
-                signatures[0].1.clone(),
-            ))?),
+            "pegin_accepted".to_string(),
+            VariableTypes::String(serde_json::to_string(&pegin_accepted)?),
         ))?;
 
-        program_context.broker_channel.send(L2_ID, data)?;
+        info!(
+            id = self.ctx.my_idx,
+            "Sending pegin accepted data for AcceptPegInProtocol: {}", data
+        );
 
-        // program_context.globals.set_var(
-        //     &self.ctx.id,
-        //     &"signing_info",
-        //     VariableTypes::String(serde_json::to_string(&(
-        //         &self.ctx.id,
-        //         &"signing_info",
-        //         take_aggregated_key.clone(),
-        //         nonces[0].1.clone(),
-        //         signatures[0].1.clone(),
-        //     ))?),
-        // )?;
+        // Send the pegin accepted data to the broker channel
+        program_context.broker_channel.send(L2_ID, data)?;
 
         Ok(())
     }

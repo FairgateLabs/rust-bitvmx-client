@@ -8,32 +8,24 @@ use bitvmx_client::{
     config::Config,
     program::{
         participant::{P2PAddress, ParticipantRole},
-        variables::PartialUtxo,
+        protocols::union::types::ACCEPT_PEGIN_TX,
+        variables::{PartialUtxo, VariableTypes},
     },
     types::{OutgoingBitVMXApiMessages::*, L2_ID},
 };
+
 use tracing::{debug, info};
 
 use crate::{
     expect_msg,
     setup::{
-        accept_pegin_setup::AcceptPegInSetup, dispute_core_setup::DisputeCoreSetup,
-        user_take_setup::UserTakeSetup,
+        accept_pegin_setup::AcceptPegInSetup, advance_funds_setup::AdvanceFunds,
+        dispute_core_setup::DisputeCoreSetup, user_take_setup::UserTakeSetup,
     },
+    wait_until_msg,
 };
 
-#[derive(Clone)]
-pub struct DrpCovenant {
-    _covenant_id: Uuid,
-    _counterparty: P2PAddress,
-}
-
-#[derive(Clone)]
-pub struct Covenants {
-    _drp_covenants: Vec<DrpCovenant>,
-    // dispute_core_covenants: Vec<DisputeCoreCovenant>,
-    // pairwise_penalization_covenants: Vec<PairwisePenalizationCovenant>,
-}
+use crate::macros::wait_for_message_blocking;
 
 #[derive(Clone)]
 pub struct Keyring {
@@ -49,10 +41,10 @@ pub struct Keyring {
 pub struct Member {
     pub id: String,
     pub role: ParticipantRole,
-    pub bitvmx: BitVMXClient,
+    pub config: Config,
     pub address: Option<P2PAddress>,
+    pub bitvmx: BitVMXClient,
     pub keyring: Keyring,
-    pub _covenants: Covenants,
 }
 
 impl Member {
@@ -63,6 +55,7 @@ impl Member {
         Ok(Self {
             id: id.to_string(),
             role,
+            config,
             address: None,
             bitvmx,
             keyring: Keyring {
@@ -72,9 +65,6 @@ impl Member {
                 dispute_aggregated_key: None,
                 communication_pubkey: None,
                 pairwise_keys: HashMap::new(),
-            },
-            _covenants: Covenants {
-                _drp_covenants: Vec::new(),
             },
         })
     }
@@ -131,14 +121,16 @@ impl Member {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn setup_covenants(
+    pub fn setup_dispute_protocols(
         &mut self,
         committee_id: Uuid,
         members: &[Member],
         funding_utxos_per_member: &HashMap<PublicKey, Vec<PartialUtxo>>,
     ) -> Result<()> {
-        info!(id = self.id, "Setting up covenants for member {}", self.id);
+        info!(
+            id = self.id,
+            "Setting up dispute protocols for member {}", self.id
+        );
         DisputeCoreSetup::setup(
             committee_id,
             &self.id,
@@ -153,20 +145,14 @@ impl Member {
         let program_id = expect_msg!(self.bitvmx, SetupCompleted(program_id) => program_id)?;
         info!(id = self.id, program_id = ?program_id, "Dispute core setup completed");
 
-        // TODO: add the rest of the covenants here
-
-        // info!(
-        //     id = self.id,
-        //     drp_covenants_count = self.covenants.drp_covenants.len(),
-        //     "Covenant setup complete"
-        // );
+        // TODO: add the dispute channeles here
 
         Ok(())
     }
 
     pub fn accept_pegin(
         &mut self,
-        accept_pegin_covenant_id: Uuid,
+        protocol_id: Uuid,
         members: &[Member],
         request_pegin_txid: Txid,
         request_pegin_amount: u64,
@@ -176,7 +162,7 @@ impl Member {
     ) -> Result<()> {
         info!(id = self.id, "Accepting peg-in");
         AcceptPegInSetup::setup(
-            accept_pegin_covenant_id,
+            protocol_id,
             &self.id,
             &self.role,
             members,
@@ -211,6 +197,42 @@ impl Member {
             fee,
             &self.bitvmx,
             self.keyring.take_aggregated_key.unwrap(),
+        )?;
+
+        Ok(())
+    }
+
+    pub fn advance_funds(
+        &mut self,
+        committee_id: Uuid,
+        slot_id: usize,
+        user_public_key: PublicKey,
+        pegout_id: Vec<u8>,
+    ) -> Result<()> {
+        if self.role != ParticipantRole::Prover {
+            return Err(anyhow::anyhow!("Committee member is not a Prover"));
+        }
+
+        self.bitvmx
+            .get_var(committee_id, format!("{}_{}", ACCEPT_PEGIN_TX, slot_id))?;
+
+        let utxo =
+            wait_until_msg!(&self.bitvmx, Variable(_, _, VariableTypes::Utxo(_utxo)) => _utxo);
+
+        info!(
+            id = self.id,
+            "Advancing {} to user public key {}",
+            utxo.2.unwrap(),
+            user_public_key.to_string()
+        );
+
+        // Create the advance funds transaction and send it as if it was a transaction from and operator
+        let mut advance_funds = AdvanceFunds::new(&self.config)?;
+        advance_funds.create_and_send_tx(
+            user_public_key,
+            utxo.2.unwrap(),
+            pegout_id,
+            &self.bitvmx,
         )?;
 
         Ok(())
