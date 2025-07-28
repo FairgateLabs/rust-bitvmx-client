@@ -58,7 +58,7 @@ pub struct Member {
 impl Member {
     pub fn new(id: &str, role: ParticipantRole) -> Result<Self> {
         let config = Config::new(Some(format!("config/{}.yaml", id)))?;
-        let bitvmx = BitVMXClient::new(config.broker_port, L2_ID);
+        let bitvmx = BitVMXClient::new(config.broker_port, L2_ID, None);
 
         Ok(Self {
             id: id.to_string(),

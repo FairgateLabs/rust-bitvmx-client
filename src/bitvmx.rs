@@ -36,13 +36,13 @@ use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use p2p_handler::{LocalAllowList, P2pHandler, PeerId, ReceiveHandlerChannel};
 use serde::{Deserialize, Serialize};
-use std::time::Instant;
 use std::{
+    net::{IpAddr},
     collections::{HashSet, VecDeque},
     rc::Rc,
     sync::{Arc, Mutex},
     thread::sleep,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use storage_backend::storage::{KeyValueStore, Storage};
 use tracing::{debug, error, info, warn};
@@ -118,7 +118,7 @@ impl BitVMX {
         let broker_backend = Storage::new(&config.broker_storage)?;
         let broker_backend = Arc::new(Mutex::new(broker_backend));
         let broker_storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
-        let broker_config = BrokerConfig::new(config.broker_port, None);
+        let broker_config = BrokerConfig::new(config.broker_port, Some(IpAddr::from([0, 0, 0, 0])));
         let broker = BrokerSync::new(&broker_config, broker_storage.clone());
 
         //TODO: A channel that talks directly with the broker without going through localhost loopback could be implemented
@@ -217,7 +217,7 @@ impl BitVMX {
                 return Ok(());
             }
             ReceiveHandlerChannel::Error(e) => {
-                info!("Error receiving message {}", e);
+                error!("Error receiving message {}", e);
             } //TODO: handle error
         }
 
