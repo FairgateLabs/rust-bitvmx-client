@@ -39,7 +39,6 @@ use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use std::{
     collections::{HashSet, VecDeque},
-    rc::Rc,
     sync::{Arc, Mutex},
     thread::sleep,
     time::Duration,
@@ -59,7 +58,7 @@ struct BitcoinUpdateState {
 pub struct BitVMX {
     config: Config,
     program_context: ProgramContext,
-    store: Rc<Storage>,
+    store: Arc<Storage>,
     broker: BrokerSync,
     count: u32,
     pending_messages: VecDeque<(PeerId, Vec<u8>)>,
@@ -99,7 +98,7 @@ impl StoreKey {
 
 impl BitVMX {
     pub fn new(config: Config) -> Result<Self, BitVMXError> {
-        let store = Rc::new(Storage::new(&config.storage)?);
+        let store = Arc::new(Storage::new(&config.storage)?);
         let key_chain = KeyChain::new(&config, store.clone())?;
         let comms = P2pHandler::new::<LocalAllowList>(
             config.p2p_address().to_string(),
