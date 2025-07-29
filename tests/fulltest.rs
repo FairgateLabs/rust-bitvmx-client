@@ -18,7 +18,6 @@ use bitvmx_client::{
                 transfer_config::TransferConfig,
             },
             dispute::TIMELOCK_BLOCKS,
-            protocol_handler::external_fund_tx,
         },
         variables::{VariableTypes, WitnessTypes},
     },
@@ -31,7 +30,6 @@ use common::{
     wait_message_from_channel,
 };
 use key_manager::verifier::SignatureVerifier;
-use protocol_builder::scripts::{self, SignMode};
 use tracing::info;
 use uuid::Uuid;
 
@@ -369,30 +367,11 @@ pub fn test_full() -> Result<()> {
     info!("================================================");
     info!("Setting TRANSFER OF OWNERSHIP");
     info!("================================================");
-    let eol_timelock_duration = 100; // TODO: get this from config
-    let taproot_script_eol_timelock_expired_tx_lock = scripts::timelock(
-        eol_timelock_duration,
-        &bitcoin::PublicKey::from(pubuser),
-        SignMode::Skip,
-    );
-
-    //this should be another aggregated to be signed later
-    let taproot_script_all_sign_tx_lock =
-        scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate);
-
-    let asset_spending_condition = vec![
-        taproot_script_eol_timelock_expired_tx_lock.clone(),
-        taproot_script_all_sign_tx_lock.clone(),
-    ];
-
-    let asset_output_type = external_fund_tx(
-        &fixtures::hardcoded_unspendable().into(),
-        asset_spending_condition,
-        10_000,
-    )?;
 
     // SETUP TRANSFER BEGIN
     let transfer_program_id = Uuid::new_v4();
+
+    let asset_utxo = lock_protocol_configuration.get_asset_utxo(&locktx_id)?;
 
     let groups_pub_keys: Vec<BitcoinPubKey> = (1..=7)
         .map(|_gid| fixtures::hardcoded_unspendable().into())
@@ -402,7 +381,7 @@ pub fn test_full() -> Result<()> {
         fixtures::hardcoded_unspendable().into(),
         aggregated_pub_key.clone(),
         3, // operator count
-        (locktx_id, 0, Some(10_000), Some(asset_output_type)),
+        asset_utxo,
         groups_pub_keys,
         None,
         Some(slot_program_id),

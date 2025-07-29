@@ -1,11 +1,12 @@
-use bitcoin::PublicKey;
+use bitcoin::{PublicKey, Txid};
 use bitvmx_broker::channel::channel::DualChannel;
+use protocol_builder::scripts::{self, SignMode};
 use uuid::Uuid;
 
 use crate::{
     errors::BitVMXError,
     program::{
-        protocols::cardinal::EOL_TIMELOCK_DURATION,
+        protocols::{cardinal::EOL_TIMELOCK_DURATION, protocol_handler::external_fund_tx},
         variables::{Globals, PartialUtxo, VariableTypes},
     },
     types::{IncomingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_LOCK},
@@ -147,5 +148,30 @@ impl LockProtocolConfiguration {
         .to_string()?;
         channel.send(BITVMX_ID, setup_msg)?;
         Ok(())
+    }
+
+    pub fn get_asset_utxo(&self, txid: &Txid) -> Result<PartialUtxo, BitVMXError> {
+        let taproot_script_eol_timelock_expired_tx_lock = scripts::timelock(
+            self.eol_timelock_duration,
+            &bitcoin::PublicKey::from(self.user_pubkey),
+            SignMode::Skip,
+        );
+
+        //this should be another aggregated to be signed later
+        let taproot_script_all_sign_tx_lock = scripts::check_aggregated_signature(
+            &self.operators_aggregated_pub,
+            SignMode::Aggregate,
+        );
+
+        let asset_spending_condition = vec![
+            taproot_script_eol_timelock_expired_tx_lock.clone(),
+            taproot_script_all_sign_tx_lock.clone(),
+        ];
+
+        let asset_value = self.ordinal_utxo.2.unwrap();
+        let asset_output_type =
+            external_fund_tx(&self.unspendable, asset_spending_condition, asset_value)?;
+
+        Ok((txid.clone(), 0, Some(asset_value), Some(asset_output_type)))
     }
 }
