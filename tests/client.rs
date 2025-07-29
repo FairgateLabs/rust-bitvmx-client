@@ -1,12 +1,12 @@
 use std::{
-    net::IpAddr,
+    //net::IpAddr,
     str::FromStr,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
-    thread::JoinHandle,
-    time::Duration,
+    // sync::{
+    //     atomic::{AtomicBool, Ordering},
+    //     Arc, Mutex,
+    // },
+    // thread::JoinHandle,
+    // time::Duration,
 };
 
 use anyhow::Result;
@@ -17,10 +17,10 @@ use bitcoin::{
 };
 mod common;
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
-use bitvmx_broker::{
-    broker_memstorage::MemStorage,
-    rpc::{sync_server::BrokerSync, BrokerConfig},
-};
+// use bitvmx_broker::{
+//     broker_memstorage::MemStorage,
+//     rpc::{sync_server::BrokerSync, BrokerConfig},
+// };
 use bitvmx_client::{
     bitvmx::{BitVMX, THROTTLE_TICKS},
     client::BitVMXClient,
@@ -31,13 +31,13 @@ use bitvmx_client::{
         variables::{VariableTypes, WitnessTypes},
     },
     types::{
-        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, L2_ID, PROGRAM_TYPE_LOCK, PROVER_ID,
+        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, L2_ID, PROGRAM_TYPE_LOCK,// PROVER_ID,
     },
 };
-use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
+// use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use common::{clear_db, prepare_bitcoin, INITIAL_BLOCK_COUNT};
 use p2p_handler::PeerId;
-use tracing::{error, info};
+use tracing::{info};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 mod fixtures;
@@ -51,9 +51,9 @@ struct ClientTest {
     verifier_client: BitVMXClient,
     bitcoin_client: BitcoinClient,
     miner_address: Address,
-    broker: BrokerSync,
-    job_dispatcher_handle: Option<JoinHandle<()>>,
-    running: Arc<AtomicBool>,
+    // broker: BrokerSync,
+    // job_dispatcher_handle: Option<JoinHandle<()>>,
+    // running: Arc<AtomicBool>,
 }
 
 impl ClientTest {
@@ -68,27 +68,27 @@ impl ClientTest {
         let prover = Operator::new(prover_config.clone())?;
         let verifier = Operator::new(verifier_config.clone())?;
 
-        // Start broker server
-        // let broker_config = BrokerConfig::new(10000, Some(IpAddr::from([127, 0, 0, 1])));
-        let broker_config = BrokerConfig::new(22222, Some(IpAddr::from([127, 0, 0, 1])));
-        let broker_storage = Arc::new(Mutex::new(MemStorage::new()));
-        let broker = BrokerSync::new(&broker_config, broker_storage);
+        // // Start broker server
+        // // let broker_config = BrokerConfig::new(10000, Some(IpAddr::from([127, 0, 0, 1])));
+        // let broker_config = BrokerConfig::new(22222, Some(IpAddr::from([127, 0, 0, 1])));
+        // let broker_storage = Arc::new(Mutex::new(MemStorage::new()));
+        // let broker = BrokerSync::new(&broker_config, broker_storage);
 
-        // Start job dispatcher in a separate thread
-        let running = Arc::new(AtomicBool::new(true));
-        let running_clone = running.clone();
-        let job_dispatcher_handle = std::thread::spawn(move || {
-            use bitvmx_broker::channel::channel::DualChannel;
-            let channel = DualChannel::new(&broker_config, PROVER_ID);
-            let check_interval = Duration::from_secs(1);
-            if let Err(e) = bitvmx_job_dispatcher::dispatcher_loop::<ProverJobType>(
-                channel,
-                check_interval,
-                running_clone,
-            ) {
-                error!("Job dispatcher error: {}", e);
-            }
-        });
+        // // Start job dispatcher in a separate thread
+        // let running = Arc::new(AtomicBool::new(true));
+        // let running_clone = running.clone();
+        // let job_dispatcher_handle = std::thread::spawn(move || {
+        //     use bitvmx_broker::channel::channel::DualChannel;
+        //     let channel = DualChannel::new(&broker_config, PROVER_ID);
+        //     let check_interval = Duration::from_secs(1);
+        //     if let Err(e) = bitvmx_job_dispatcher::dispatcher_loop::<ProverJobType>(
+        //         channel,
+        //         check_interval,
+        //         running_clone,
+        //     ) {
+        //         error!("Job dispatcher error: {}", e);
+        //     }
+        // });
 
         Ok(Self {
             program_id: Uuid::new_v4(),
@@ -100,9 +100,9 @@ impl ClientTest {
             bitcoin_client,
             miner_address: Address::from_str("bcrt1q6uv2aekfwz20gpddpuzmw9pe8c9fzf87h9k0fq")?
                 .require_network(Regtest)?,
-            broker,
-            job_dispatcher_handle: Some(job_dispatcher_handle),
-            running,
+            // broker,
+            // job_dispatcher_handle: Some(job_dispatcher_handle),
+            // running,
         })
     }
 
@@ -570,20 +570,20 @@ impl ClientTest {
     }
 }
 
-impl Drop for ClientTest {
-    fn drop(&mut self) {
-        // Signal job dispatcher to stop
-        self.running.store(false, Ordering::SeqCst);
+// impl Drop for ClientTest {
+//     fn drop(&mut self) {
+//         // Signal job dispatcher to stop
+//         self.running.store(false, Ordering::SeqCst);
 
-        // Close broker
-        self.broker.close();
+//         // Close broker
+//         self.broker.close();
 
-        // Wait for job dispatcher to finish
-        if let Some(handle) = self.job_dispatcher_handle.take() {
-            let _ = handle.join();
-        }
-    }
-}
+//         // Wait for job dispatcher to finish
+//         if let Some(handle) = self.job_dispatcher_handle.take() {
+//             let _ = handle.join();
+//         }
+//     }
+// }
 
 fn configure_logging() {
     let default_modules = [
