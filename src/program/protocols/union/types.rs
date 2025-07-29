@@ -23,6 +23,8 @@ pub const WT_INITIAL_DEPOSIT_TX: &str = "WT_INITIAL_DEPOSIT_TX";
 pub const REIMBURSEMENT_KICKOFF_TX: &str = "REIMBURSEMENT_KICKOFF_TX";
 pub const NO_TAKE_TX: &str = "NO_TAKE_TX";
 pub const CHALLENGE_TX: &str = "CHALLENGE_TX";
+pub const REVEAL_SECRET_TX: &str = "REVEAL_SECRET_TX";
+pub const INPUT_NOT_REVEALED_TX: &str = "INPUT_NOT_REVEALED_TX";
 pub const YOU_CANT_TAKE_TX: &str = "YOU_CANT_TAKE_TX";
 pub const OP_SELF_DISABLER_TX: &str = "OP_SELF_DISABLER_TX";
 pub const TRY_TAKE_2_TX: &str = "TRY_TAKE_2_TX";
@@ -46,6 +48,10 @@ pub const INITIAL_DEPOSIT_TX_SUFFIX: &str = "_INITIAL_DEPOSIT_TX";
 pub const OPERATOR_TAKE_ENABLER: &str = "operator_take_enabler";
 pub const OPERATOR_WON_ENABLER: &str = "operator_won_enabler";
 pub const CHALLENGE_ENABLER: &str = "challenge_enabler";
+
+// Roles
+pub const OPERATOR: &str = "OP";
+pub const WATCHTOWER: &str = "WT";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Committee {
