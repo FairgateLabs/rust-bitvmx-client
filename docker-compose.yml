@@ -32,10 +32,10 @@ services:
       BITCOIND_RPC_PASSWORD: ${BITCOIND_RPC_PASSWORD}
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "${BROKER_PORT}"]
-      interval: 2s
+      interval: 5s
       timeout: 5s
-      retries: 5
-      start_period: 5s
+      retries: 3
+      start_period: 10s
     ports:
       - "${BROKER_PORT}:${BROKER_PORT}"
     expose:
@@ -58,3 +58,29 @@ services:
     depends_on:
       bitvmx-client:
         condition: service_healthy
+
+  bitvmx-zkp:
+    build:
+      context: ./
+      dockerfile: docker/Dockerfile.zkp
+      ssh:
+        - default
+    logging: *default-logging
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - docker-cache:/var/lib/docker
+    entrypoint: ["./run_zkp.sh"]
+    environment:
+      CLIENT_OP: ${CLIENT_OP}
+      DOCKER_HOST: unix:///var/run/docker.sock
+    network_mode: "service:bitvmx-client"
+    depends_on:
+      bitvmx-client:
+        condition: service_healthy
+    profiles:
+      - zkp
+
+volumes:
+  docker-cache:
