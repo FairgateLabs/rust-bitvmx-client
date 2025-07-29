@@ -1,21 +1,5 @@
 use std::collections::HashMap;
 
-use bitcoin::{Amount, PublicKey, ScriptBuf, Transaction, Txid};
-use bitcoin_coordinator::TransactionStatus;
-use protocol_builder::{
-    graph::graph::GraphOptions,
-    scripts::SignMode,
-    types::{
-        connection::{InputSpec, OutputSpec},
-        input::{SighashType, SpendMode},
-        output::SpeedupData,
-        OutputType,
-    },
-};
-use serde::{Deserialize, Serialize};
-use tracing::info;
-use uuid::Uuid;
-
 use crate::{
     errors::BitVMXError,
     program::{
@@ -25,9 +9,9 @@ use crate::{
             union::{
                 common::get_dispute_core_id,
                 types::{
-                    PegInAccepted, PegInRequest, ACCEPT_PEGIN_TX, CHALLENGE_ENABLER,
-                    OPERATOR_TAKE_ENABLER, OPERATOR_WON_ENABLER, REIMBURSEMENT_KICKOFF_TX,
-                    REQUEST_PEGIN_TX,
+                    PegInAccepted, PegInRequest, ACCEPT_PEGIN_TX, CHALLENGE_ENABLER, DUST_VALUE,
+                    OPERATOR_TAKE_ENABLER, OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX,
+                    REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX,
                 },
             },
         },
@@ -35,6 +19,22 @@ use crate::{
     },
     types::{OutgoingBitVMXApiMessages, ProgramContext, L2_ID},
 };
+use bitcoin::{hex::FromHex, Amount, PublicKey, ScriptBuf, Transaction, Txid};
+use bitcoin_coordinator::TransactionStatus;
+use protocol_builder::{
+    errors::ProtocolBuilderError,
+    graph::graph::GraphOptions,
+    scripts::{op_return_script, timelock, ProtocolScript, SignMode},
+    types::{
+        connection::{InputSpec, OutputSpec},
+        input::{SighashType, SpendMode},
+        output::SpeedupData,
+        InputArgs, OutputType,
+    },
+};
+use serde::{Deserialize, Serialize};
+use tracing::info;
+use uuid::Uuid;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct AcceptPegInProtocol {
@@ -77,16 +77,23 @@ impl ProtocolHandler for AcceptPegInProtocol {
     ) -> Result<(), BitVMXError> {
         let pegin_request = self.pegin_request(context)?;
         let pegin_request_txid = pegin_request.txid;
-        let amount = pegin_request.amount;
+        // FIXME: Use network fee or speed up output
+        let amount = self.checked_sub(pegin_request.amount, DUST_VALUE)?;
         let take_aggregated_key = &pegin_request.take_aggregated_key;
 
         let mut protocol = self.load_or_create_protocol();
+
+        let leaves = self.request_pegin_leaves(
+            pegin_request.amount,
+            pegin_request.rootstock_address,
+            pegin_request.reimbursement_pubkey,
+        )?;
 
         // External connection from request peg-in to accept peg-in
         protocol.add_connection(
             "accept_pegin_request",
             REQUEST_PEGIN_TX,
-            OutputType::taproot(amount, &take_aggregated_key, &[])?.into(),
+            OutputType::taproot(pegin_request.amount, &take_aggregated_key, &leaves)?.into(),
             ACCEPT_PEGIN_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
@@ -185,7 +192,12 @@ impl ProtocolHandler for AcceptPegInProtocol {
         name: &str,
         _context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        Err(BitVMXError::InvalidTransactionName(name.to_string()))
+        match name {
+            ACCEPT_PEGIN_TX => Ok((self.accept_pegin_tx()?, None)),
+            OPERATOR_TAKE_TX => Ok((self.operator_take_tx()?, None)),
+            OPERATOR_WON_TX => Ok((self.operator_won_tx()?, None)),
+            _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
+        }
     }
 
     fn notify_news(
@@ -549,6 +561,71 @@ impl AcceptPegInProtocol {
         }
 
         Ok(())
+    }
+
+    pub fn accept_pegin_tx(&self) -> Result<Transaction, ProtocolBuilderError> {
+        info!(
+            id = self.ctx.my_idx,
+            "Loading AcceptPegIn transaction for AcceptPegInProtocol"
+        );
+
+        // FIXME:
+        let signature = self
+            .load_protocol()?
+            .input_taproot_key_spend_signature(ACCEPT_PEGIN_TX, 0)?
+            .unwrap();
+        let mut taproot_arg = InputArgs::new_taproot_key_args();
+        taproot_arg.push_taproot_signature(signature)?;
+
+        self.load_protocol()?
+            .transaction_to_send(ACCEPT_PEGIN_TX, &[taproot_arg])
+    }
+
+    pub fn operator_take_tx(&self) -> Result<Transaction, ProtocolBuilderError> {
+        info!(
+            id = self.ctx.my_idx,
+            "Loading OperatorTake transaction for AcceptPegInProtocol"
+        );
+        let args = InputArgs::new_taproot_key_args();
+        // TODO: add the necessary arguments to args
+        self.load_protocol()?
+            .transaction_to_send(OPERATOR_TAKE_TX, &[args])
+    }
+
+    pub fn operator_won_tx(&self) -> Result<Transaction, ProtocolBuilderError> {
+        info!(
+            id = self.ctx.my_idx,
+            "Loading OperatorWon transaction for AcceptPegInProtocol"
+        );
+        let args = InputArgs::new_taproot_key_args();
+        // TODO: add the necessary arguments to args
+        self.load_protocol()?
+            .transaction_to_send(OPERATOR_WON_TX, &[args])
+    }
+
+    pub fn request_pegin_leaves(
+        &self,
+        amount: u64,
+        rootstock_address: String,
+        reimbursement_pubkey: PublicKey,
+    ) -> Result<Vec<ProtocolScript>, BitVMXError> {
+        pub const TIMELOCK_BLOCKS: u16 = 1;
+
+        let mut address_bytes = [0u8; 20];
+        address_bytes.copy_from_slice(
+            Vec::from_hex(&rootstock_address.to_string())
+                .unwrap()
+                .as_slice(),
+        );
+
+        // // Taproot output
+        let op_data = [address_bytes.as_slice(), amount.to_be_bytes().as_slice()].concat();
+        let script_op_return = op_return_script(op_data)?;
+        let script_timelock = timelock(TIMELOCK_BLOCKS, &reimbursement_pubkey, SignMode::Single);
+
+        let leaves = vec![script_timelock, script_op_return];
+
+        Ok(leaves)
     }
 }
 

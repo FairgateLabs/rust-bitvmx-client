@@ -1,7 +1,10 @@
-use std::collections::HashMap;
-
+use crate::{
+    macros::wait_for_message_blocking,
+    participants::member::{Keyring, Member},
+    wait_until_msg,
+};
 use anyhow::Result;
-use bitcoin::Txid;
+use bitcoin::{PublicKey, Txid};
 use bitvmx_client::{
     client::BitVMXClient,
     program::{
@@ -9,12 +12,11 @@ use bitvmx_client::{
         protocols::union::types::PegInRequest,
         variables::VariableTypes,
     },
-    types::PROGRAM_TYPE_ACCEPT_PEGIN,
+    types::{OutgoingBitVMXApiMessages::SetupCompleted, PROGRAM_TYPE_ACCEPT_PEGIN},
 };
+use std::collections::HashMap;
 use tracing::info;
 use uuid::Uuid;
-
-use crate::participants::member::{Keyring, Member};
 
 pub struct AcceptPegInSetup {}
 
@@ -32,6 +34,8 @@ impl AcceptPegInSetup {
         bitvmx: &BitVMXClient,
         committee_id: Uuid,
         slot_index: u32,
+        rootstock_address: String,
+        reimbursement_pubkey: PublicKey,
     ) -> Result<()> {
         let addresses = Self::get_addresses(committee);
 
@@ -64,6 +68,8 @@ impl AcceptPegInSetup {
             operators_take_key,
             slot_index: slot_index,
             committee_id: committee_id,
+            rootstock_address,
+            reimbursement_pubkey,
         };
 
         bitvmx.set_var(
@@ -79,20 +85,8 @@ impl AcceptPegInSetup {
             0,
         )?;
 
-        // FIXME: This code will be uncommented soon to broadcast the accept peg-in transaction.
-        // let program_id = expect_msg!(bitvmx, SetupCompleted(program_id) => program_id)?;
-        // info!(id = "AcceptPegInSetup", program_id = ?program_id, "Dispute core setup completed");
-
-        // bitvmx.get_transaction_by_name(protocol_id, ACCEPT_PEGIN_TX.to_string())?;
-        // let tx = expect_msg!(bitvmx, TransactionInfo(_, _, tx) => tx)?;
-
-        // bitvmx.dispatch_transaction(protocol_id, tx)?;
-        // let status = expect_msg!(bitvmx, Transaction(_, status, _) => status)?;
-
-        // info!(
-        //     "AcceptPegIn protocol handler {} for {} send accept pegin transaction with status: {:?}",
-        //     protocol_id, my_id, status
-        // );
+        let program_id = wait_until_msg!(bitvmx, SetupCompleted(_program_id) => _program_id);
+        info!(id = "AcceptPegInSetup", program_id = ?program_id, "Accept pegin setup completed (from setup)");
 
         Ok(())
     }
