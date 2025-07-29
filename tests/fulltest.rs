@@ -264,6 +264,7 @@ pub fn test_full() -> Result<()> {
         NETWORK,
         lock_protocol_dust_cost(3),
         &bitcoin_client,
+        2000,
     )?;
 
     // OPERATORS WAITS FOR LOCKREQ TX

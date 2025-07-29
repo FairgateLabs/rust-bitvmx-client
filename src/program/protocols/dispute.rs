@@ -728,9 +728,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 0,
             )?;
             info!("PROVER_WINS_TX: {:?}", tx);
+            let speedup_data = self.get_speedup_data_from_tx(&tx, program_context, None)?;
             program_context.bitcoin_coordinator.dispatch(
                 tx,
-                None,
+                Some(speedup_data),
                 //prover-win-start is input 1
                 Context::ProgramId(self.ctx.id).to_string()?,
                 None,

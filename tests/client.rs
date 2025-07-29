@@ -205,6 +205,7 @@ impl ClientTest {
             Network::Regtest,
             lock_protocol_dust_cost(3),
             &self.bitcoin_client,
+            1000,
         )?;
 
         // Set ordinal UTXO
@@ -347,6 +348,7 @@ impl ClientTest {
             Network::Regtest,
             lock_protocol_dust_cost(3),
             &self.bitcoin_client,
+            1000,
         )?;
 
         // Subscribe to the transaction

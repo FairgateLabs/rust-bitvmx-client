@@ -184,12 +184,17 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     let preimage = "top_secret".to_string();
     let hash = fixtures::sha256(preimage.as_bytes().to_vec());
 
+    info!("==========================");
+    info!("Preparing lockreq");
+    info!("==========================");
+
     let (txid, pubuser, ordinal_fee) = create_lockreq_ready(
         aggregated_pub_key,
         hash.clone(),
         NETWORK,
         lock_protocol_dust_cost(4),
         &bitcoin_client,
+        4000,
     )?;
 
     // OPERATORS WAITS FOR LOCKREQ TX
@@ -200,6 +205,9 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
     // SETUP LOCK BEGIN
+    info!("==========================");
+    info!("Setup lock");
+    info!("==========================");
 
     let program_id = Uuid::new_v4();
     let lock_protocol_configuration = LockProtocolConfiguration::new(
@@ -278,6 +286,9 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
 
     drop(mutinstances);
 
+    info!("==========================");
+    info!("Going to send the lock tx");
+    info!("==========================");
     let _ = channels[op].send(
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
@@ -371,6 +382,7 @@ pub fn test_send_lockreq_tx() -> Result<()> {
         Network::Regtest,
         lock_protocol_dust_cost(4),
         &bitcoin_client,
+        1000,
     )?;
 
     info!("Lockreq txid: {:?}", txid);
