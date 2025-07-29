@@ -9,24 +9,20 @@ use bitcoin::{
 use bitvmx_client::{
     program::{
         self,
-        participant::ParticipantRole,
         protocols::{
             cardinal::{
                 lock::lock_protocol_dust_cost,
                 lock_config::LockProtocolConfiguration,
                 slot::{certificate_hash, group_id, slot_protocol_dust_cost},
                 slot_config::SlotProtocolConfiguration,
-                transfer::pub_too_group,
-                SPEEDUP_DUST,
+                transfer_config::TransferConfig,
             },
             dispute::TIMELOCK_BLOCKS,
             protocol_handler::external_fund_tx,
         },
         variables::{VariableTypes, WitnessTypes},
     },
-    types::{
-        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_TRANSFER,
-    },
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
 use common::{
     config_trace,
@@ -395,54 +391,26 @@ pub fn test_full() -> Result<()> {
         10_000,
     )?;
 
-    //emulate asset
-    /*let asset_utxo = init_utxo_new(
-        &bitcoin_client,
-        &fixtures::hardcoded_unspendable().into(),
-        asset_spending_condition.clone(),
-        10_000,
-    )?;*/
-
     // SETUP TRANSFER BEGIN
     let transfer_program_id = Uuid::new_v4();
 
-    let set_unspendable = VariableTypes::PubKey(fixtures::hardcoded_unspendable().into())
-        .set_msg(transfer_program_id, "unspendable")?;
-    send_all(&channels, &set_unspendable)?;
-
-    let set_ops_aggregated = VariableTypes::PubKey(aggregated_pub_key)
-        .set_msg(transfer_program_id, "operators_aggregated_pub")?;
-    send_all(&channels, &set_ops_aggregated)?;
-
-    let set_operators_count =
-        VariableTypes::Number(3).set_msg(transfer_program_id, "operator_count")?;
-    send_all(&channels, &set_operators_count)?;
-
-    for gid in 1..=7 {
-        let set_pub_too = VariableTypes::PubKey(fixtures::hardcoded_unspendable().into())
-            .set_msg(transfer_program_id, &pub_too_group(gid))?;
-        send_all(&channels, &set_pub_too)?;
-    }
-
-    let set_asset_utxo = VariableTypes::Utxo((locktx_id, 0, Some(10_000), Some(asset_output_type)))
-        .set_msg(transfer_program_id, "locked_asset_utxo")?;
-    send_all(&channels, &set_asset_utxo)?;
-
-    let set_slot_program_id = VariableTypes::String(slot_program_id.to_string())
-        .set_msg(transfer_program_id, "slot_program_id")?;
-    send_all(&channels, &set_slot_program_id)?;
-
-    let speedup_dust = VariableTypes::Number(500).set_msg(transfer_program_id, SPEEDUP_DUST)?;
-    send_all(&channels, &speedup_dust)?;
-
-    let setup_msg = IncomingBitVMXApiMessages::Setup(
+    let groups_pub_keys: Vec<BitcoinPubKey> = (1..=7)
+        .map(|_gid| fixtures::hardcoded_unspendable().into())
+        .collect();
+    let transfer_config = TransferConfig::new(
         transfer_program_id,
-        PROGRAM_TYPE_TRANSFER.to_string(),
-        addresses.clone(),
-        0,
-    )
-    .to_string()?;
-    send_all(&channels, &setup_msg)?;
+        fixtures::hardcoded_unspendable().into(),
+        aggregated_pub_key.clone(),
+        3, // operator count
+        (locktx_id, 0, Some(10_000), Some(asset_output_type)),
+        groups_pub_keys,
+        None,
+        Some(slot_program_id),
+    );
+
+    for channel in channels.iter() {
+        transfer_config.setup(channel, addresses.clone(), 0)?;
+    }
 
     //wait setup complete
     let msg = get_all(&channels, &mut instances, false)?;

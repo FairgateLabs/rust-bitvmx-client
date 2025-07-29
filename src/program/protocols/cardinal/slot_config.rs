@@ -82,7 +82,7 @@ impl SlotProtocolConfiguration {
         ))
     }
 
-    pub fn send(&self, channel: &DualChannel) -> Result<(), BitVMXError> {
+    fn send(&self, channel: &DualChannel) -> Result<(), BitVMXError> {
         channel.send(
             BITVMX_ID,
             VariableTypes::Number(self.operators as u32).set_msg(self.id, OPERATORS)?,
