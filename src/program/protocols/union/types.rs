@@ -72,6 +72,8 @@ pub struct PegInRequest {
     pub operators_take_key: Vec<PublicKey>,
     pub slot_index: u32,
     pub committee_id: uuid::Uuid,
+    pub rootstock_address: String,
+    pub reimbursement_pubkey: PublicKey,
 }
 
 impl PegInRequest {
