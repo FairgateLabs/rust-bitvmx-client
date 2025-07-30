@@ -142,6 +142,9 @@ pub fn request_pegout() -> Result<()> {
         reimbursement_pubkey.clone(),
     )?;
 
+    // Wait some time to ensure the accept peg-in is processed
+    thread::sleep(Duration::from_secs(5));
+
     let user_pubkey = user.public_key()?;
     let fee = 335; // This should be the fee for the peg-out. It should be same value that it's as constant in the contracts.
 

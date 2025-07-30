@@ -46,11 +46,10 @@ impl UserTakeSetup {
             VariableTypes::String(serde_json::to_string(&pegout_request)?),
         )?;
 
-        let addresses = Self::get_addresses(members);
         bitvmx.setup(
             protocol_id,
             PROGRAM_TYPE_USER_TAKE.to_string(),
-            addresses,
+            Self::get_addresses(members),
             0,
         )?;
 
