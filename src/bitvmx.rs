@@ -64,6 +64,7 @@ pub struct BitVMX {
     count: u32,
     pending_messages: VecDeque<(PeerId, Vec<u8>)>,
     notified_request: HashSet<(Uuid, (Txid, Option<u32>))>,
+    notified_rsk_pegin: HashSet<Txid>, //workaround for RSK pegin transactions because ack seems to be not working
     bitcoin_update: BitcoinUpdateState,
 }
 
@@ -143,6 +144,7 @@ impl BitVMX {
             count: 0,
             pending_messages: VecDeque::new(),
             notified_request: HashSet::new(),
+            notified_rsk_pegin: HashSet::new(),
             bitcoin_update: BitcoinUpdateState {
                 last_update: Instant::now(),
                 was_synced: false,
@@ -304,8 +306,10 @@ impl BitVMX {
                     let data = serde_json::to_string(
                         &OutgoingBitVMXApiMessages::PeginTransactionFound(tx_id, tx_status),
                     )?;
-
-                    self.program_context.broker_channel.send(L2_ID, data)?;
+                    if !self.notified_rsk_pegin.contains(&tx_id) {
+                        self.program_context.broker_channel.send(L2_ID, data)?;
+                        self.notified_rsk_pegin.insert(tx_id);
+                    }
                     ack_news = AckNews::Monitor(AckMonitorNews::RskPeginTransaction(tx_id));
                 }
                 MonitorNews::NewBlock(block_id, block_height) => {
