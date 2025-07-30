@@ -108,50 +108,45 @@ impl TransferConfig {
         })
     }
 
-    fn send(&self, channel: &DualChannel) -> Result<(), BitVMXError> {
-        channel.send(
-            BITVMX_ID,
-            VariableTypes::PubKey(self.unspendable).set_msg(self.id, UNSPENDABLE)?,
-        )?;
-        channel.send(
-            BITVMX_ID,
+    pub fn get_setup_messages(
+        &self,
+        addresses: Vec<crate::program::participant::P2PAddress>,
+        leader: u16,
+    ) -> Result<Vec<String>, BitVMXError> {
+        let mut config_vec = vec![
+            VariableTypes::PubKey(self.unspendable.clone()).set_msg(self.id, UNSPENDABLE)?,
             VariableTypes::PubKey(self.aggregated_pub.clone())
                 .set_msg(self.id, OPERATORS_AGGREGATED_PUB)?,
-        )?;
-        channel.send(
-            BITVMX_ID,
-            VariableTypes::Number(self.operator_count as u32).set_msg(self.id, OPERATOR_COUNT)?,
-        )?;
-        channel.send(
-            BITVMX_ID,
+            VariableTypes::Number(self.operator_count).set_msg(self.id, OPERATOR_COUNT)?,
             VariableTypes::Utxo(self.locked_asset_utxo.clone())
                 .set_msg(self.id, LOCKED_ASSET_UTXO)?,
-        )?;
+        ];
+
         for gid in 1..=self.too_groups {
-            channel.send(
-                BITVMX_ID,
+            config_vec.push(
                 VariableTypes::PubKey(self.groups_pub_keys[gid as usize - 1].clone())
                     .set_msg(self.id, &pub_too_group(gid))?,
-            )?;
+            );
         }
         if let Some((utxo_0, utxo_1)) = &self.sample_utxos {
-            channel.send(
-                BITVMX_ID,
-                VariableTypes::Utxo(utxo_0.clone()).set_msg(self.id, "op_won")?,
-            )?;
-            channel.send(
-                BITVMX_ID,
-                VariableTypes::Utxo(utxo_1.clone()).set_msg(self.id, "op_gid")?,
-            )?;
+            config_vec.push(VariableTypes::Utxo(utxo_0.clone()).set_msg(self.id, "op_won")?);
+            config_vec.push(VariableTypes::Utxo(utxo_1.clone()).set_msg(self.id, "op_gid")?);
         }
         if let Some(slot_id) = self.slot_id {
-            channel.send(
-                BITVMX_ID,
-                VariableTypes::Uuid(slot_id).set_msg(self.id, "slot_program_id")?,
-            )?;
+            config_vec.push(VariableTypes::Uuid(slot_id).set_msg(self.id, "slot_program_id")?);
         }
 
-        Ok(())
+        config_vec.push(
+            IncomingBitVMXApiMessages::Setup(
+                self.id,
+                PROGRAM_TYPE_TRANSFER.to_string(),
+                addresses,
+                leader,
+            )
+            .to_string()?,
+        );
+
+        Ok(config_vec)
     }
 
     pub fn setup(
@@ -160,16 +155,9 @@ impl TransferConfig {
         addresses: Vec<crate::program::participant::P2PAddress>,
         leader: u16,
     ) -> Result<(), BitVMXError> {
-        self.send(channel)?;
-
-        let setup_msg = IncomingBitVMXApiMessages::Setup(
-            self.id,
-            PROGRAM_TYPE_TRANSFER.to_string(),
-            addresses,
-            leader,
-        )
-        .to_string()?;
-        channel.send(BITVMX_ID, setup_msg)?;
+        for msg in self.get_setup_messages(addresses, leader)? {
+            channel.send(BITVMX_ID, msg)?;
+        }
         Ok(())
     }
 

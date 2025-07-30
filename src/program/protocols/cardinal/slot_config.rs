@@ -82,36 +82,28 @@ impl SlotProtocolConfiguration {
         ))
     }
 
-    fn send(&self, channel: &DualChannel) -> Result<(), BitVMXError> {
-        channel.send(
-            BITVMX_ID,
+    pub fn get_setup_messages(
+        &self,
+        addresses: Vec<crate::program::participant::P2PAddress>,
+        leader: u16,
+    ) -> Result<Vec<String>, BitVMXError> {
+        Ok(vec![
             VariableTypes::Number(self.operators as u32).set_msg(self.id, OPERATORS)?,
-        )?;
-
-        channel.send(
-            BITVMX_ID,
             VariableTypes::PubKey(self.operators_aggregated_pub.clone())
                 .set_msg(self.id, OPERATORS_AGGREGATED_PUB)?,
-        )?;
-
-        channel.send(
-            BITVMX_ID,
             VariableTypes::PubKey(self.operators_pairs[0].clone())
                 .set_msg(self.id, PAIR_0_1_AGGREGATED)?,
-        )?;
-
-        channel.send(
-            BITVMX_ID,
             VariableTypes::Utxo(self.fund_utxo.clone()).set_msg(self.id, FUND_UTXO)?,
-        )?;
-
-        channel.send(
-            BITVMX_ID,
             VariableTypes::Number(self.timelock_blocks as u32)
                 .set_msg(self.id, TIMELOCK_BLOCKS_KEY)?,
-        )?;
-
-        Ok(())
+            IncomingBitVMXApiMessages::Setup(
+                self.id,
+                PROGRAM_TYPE_SLOT.to_string(),
+                addresses,
+                leader,
+            )
+            .to_string()?,
+        ])
     }
 
     pub fn setup(
@@ -120,16 +112,9 @@ impl SlotProtocolConfiguration {
         addresses: Vec<crate::program::participant::P2PAddress>,
         leader: u16,
     ) -> Result<(), BitVMXError> {
-        self.send(channel)?;
-
-        let setup_msg = IncomingBitVMXApiMessages::Setup(
-            self.id,
-            PROGRAM_TYPE_SLOT.to_string(),
-            addresses,
-            leader,
-        )
-        .to_string()?;
-        channel.send(BITVMX_ID, setup_msg)?;
+        for msg in self.get_setup_messages(addresses, leader)? {
+            channel.send(BITVMX_ID, msg)?;
+        }
         Ok(())
     }
 
