@@ -569,7 +569,6 @@ impl AcceptPegInProtocol {
             "Loading AcceptPegIn transaction for AcceptPegInProtocol"
         );
 
-        // FIXME:
         let signature = self
             .load_protocol()?
             .input_taproot_key_spend_signature(ACCEPT_PEGIN_TX, 0)?
