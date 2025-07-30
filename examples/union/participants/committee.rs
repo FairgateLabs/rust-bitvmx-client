@@ -1,6 +1,8 @@
 use anyhow::Result;
 use bitcoin::Txid;
+use bitvmx_client::program::protocols::union::types::ACCEPT_PEGIN_TX;
 use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtxo};
+use bitvmx_client::types::OutgoingBitVMXApiMessages::{SPVProof, Transaction, TransactionInfo};
 
 use bitcoin::{Amount, PublicKey, ScriptBuf};
 use bitvmx_wallet::wallet::Wallet;
@@ -8,11 +10,13 @@ use protocol_builder::types::OutputType;
 use std::collections::HashMap;
 use std::thread::{self};
 use std::time::Duration;
-use tracing::info_span;
+use tracing::{info, info_span};
 use uuid::Uuid;
 
 use crate::bitcoin::{init_wallet, FEE, WALLET_NAME};
+use crate::macros::wait_for_message_blocking;
 use crate::participants::member::Member;
+use crate::wait_until_msg;
 
 pub struct Committee {
     pub members: Vec<Member>,
@@ -93,6 +97,8 @@ impl Committee {
         amount: u64,
         accept_pegin_sighash: Vec<u8>,
         slot_index: u32,
+        rootstock_address: String,
+        reimbursement_pubkey: PublicKey,
     ) -> Result<()> {
         let protocol_id = Uuid::new_v4();
         let members = self.members.clone();
@@ -106,8 +112,38 @@ impl Committee {
                 accept_pegin_sighash.as_slice(),
                 committee_id,
                 slot_index,
+                rootstock_address.clone(),
+                reimbursement_pubkey.clone(),
             )
         })?;
+
+        let bitvmx = &self.members[0].bitvmx;
+        let _ = bitvmx.get_transaction_by_name(protocol_id, ACCEPT_PEGIN_TX.to_string());
+        thread::sleep(std::time::Duration::from_secs(1));
+        let tx = wait_until_msg!(bitvmx, TransactionInfo(_, _, _tx) => _tx);
+        let accept_pegin_txid = tx.compute_txid();
+        info!(
+            "AcceptPegIn protocol handler {} dispatching accept pegin transaction: {:?}",
+            protocol_id, tx
+        );
+        bitvmx.dispatch_transaction(protocol_id, tx)?;
+        thread::sleep(std::time::Duration::from_secs(1));
+        self.wallet.mine(1)?;
+
+        let status = wait_until_msg!(bitvmx, Transaction(_, _status, _) => _status);
+
+        info!(
+            "AcceptPegIn protocol handler {} send accept pegin transaction with status: {:?}",
+            protocol_id, status
+        );
+
+        info!("Waiting for SPV proof for accept pegin transaction...");
+        let _ = bitvmx.get_spv_proof(accept_pegin_txid);
+        let spv_proof = wait_until_msg!(
+            bitvmx,
+            SPVProof(_, Some(_spv_proof)) => _spv_proof
+        );
+        info!("AcceptPegin SPV proof: {:?}", spv_proof);
 
         Ok(())
     }

@@ -18,14 +18,13 @@ use tracing::{debug, info};
 
 use crate::{
     expect_msg,
+    macros::wait_for_message_blocking,
     setup::{
         accept_pegin_setup::AcceptPegInSetup, advance_funds_setup::AdvanceFunds,
         dispute_core_setup::DisputeCoreSetup, user_take_setup::UserTakeSetup,
     },
     wait_until_msg,
 };
-
-use crate::macros::wait_for_message_blocking;
 
 #[derive(Clone)]
 pub struct Keyring {
@@ -159,6 +158,8 @@ impl Member {
         accept_pegin_sighash: &[u8],
         committee_id: Uuid,
         slot_index: u32,
+        rootstock_address: String,
+        reimbursement_pubkey: PublicKey,
     ) -> Result<()> {
         info!(id = self.id, "Accepting peg-in");
         AcceptPegInSetup::setup(
@@ -173,7 +174,13 @@ impl Member {
             &self.bitvmx,
             committee_id,
             slot_index,
+            rootstock_address,
+            reimbursement_pubkey,
         )?;
+
+        // Wait for the dispute core setup to complete
+        let program_id = wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
+        info!(id = self.id, program_id = ?program_id, "Accept pegin setup completed (from member)");
 
         Ok(())
     }

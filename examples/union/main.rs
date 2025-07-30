@@ -97,6 +97,8 @@ pub fn accept_pegin() -> Result<()> {
     let amount = 100_000; // This should be replaced with the actual amount of the peg-in request
 
     let request_pegin_txid = user.request_pegin(&committee_public_key, amount)?;
+    let rootstock_address = user.get_rsk_address();
+    let reimbursement_pubkey = user.public_key()?;
 
     // This came from the contracts
     let accept_pegin_sighash = vec![0; 32]; // This should be replaced with the actual sighash of the accept peg-in tx
@@ -108,6 +110,8 @@ pub fn accept_pegin() -> Result<()> {
         amount,
         accept_pegin_sighash,
         slot_index,
+        rootstock_address.clone(),
+        reimbursement_pubkey.clone(),
     )?;
     Ok(())
 }
@@ -121,6 +125,8 @@ pub fn request_pegout() -> Result<()> {
     let amount = 100_000; // This should be replaced with the actual amount of the peg-in request
 
     let request_pegin_txid = user.request_pegin(&committee_public_key, amount)?;
+    let rootstock_address = user.get_rsk_address();
+    let reimbursement_pubkey = user.public_key()?;
 
     // This came from the contracts
     let accept_pegin_sighash = vec![0; 32]; // This should be replaced with the actual sighash of the accept peg-in tx
@@ -132,6 +138,8 @@ pub fn request_pegout() -> Result<()> {
         amount,
         accept_pegin_sighash,
         slot_index,
+        rootstock_address.clone(),
+        reimbursement_pubkey.clone(),
     )?;
 
     let user_pubkey = user.public_key()?;
@@ -153,6 +161,8 @@ pub fn advance_funds() -> Result<()> {
     let request_pegin_txid = user.request_pegin(&committee_public_key, amount)?;
 
     // This came from the contracts
+    let rootstock_address = user.get_rsk_address();
+    let reimbursement_pubkey = user.public_key()?;
     let accept_pegin_sighash = vec![0; 32]; // This should be replaced with the actual sighash of the accept peg-in tx
     let slot_index = 0; // This should be replaced with the actual slot index
 
@@ -162,6 +172,8 @@ pub fn advance_funds() -> Result<()> {
         amount,
         accept_pegin_sighash,
         slot_index,
+        rootstock_address.clone(),
+        reimbursement_pubkey.clone(),
     )?;
 
     // After some time, a peg-out request is not successfully processed and an operator is selected to advance funds.
