@@ -4,6 +4,7 @@ use protocol_builder::{
     scripts::{self, SignMode},
     types::{OutputType, Utxo},
 };
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
@@ -22,6 +23,7 @@ use crate::{
     types::{IncomingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_SLOT},
 };
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SlotProtocolConfiguration {
     pub id: Uuid,
     pub gid_max: u8,
