@@ -110,33 +110,20 @@ impl ProtocolHandler for AcceptPegInProtocol {
 
         let slot_index = pegin_request.slot_index as usize;
 
-        // Operator take transactions
         // Loop over operators and create take 1 and take 2 transactions
         for (index, take_key) in pegin_request.operators_take_key.iter().enumerate() {
             let dispute_protocol_id = get_dispute_core_id(pegin_request.committee_id, take_key);
 
-            let challenge_enabler =
-                self.challenge_enabler(context, dispute_protocol_id, slot_index)?;
+            // Operator take transaction data
             let operator_take_enabler =
                 self.operator_take_enabler(context, dispute_protocol_id, slot_index)?;
-            let operator_won_enabler =
-                self.operator_won_enabler(context, dispute_protocol_id, slot_index)?;
-
             let kickoff_tx_name = &format!("{}_OP_{}", REIMBURSEMENT_KICKOFF_TX, index);
-            let try_take2_tx_name = &format!("TRY_TAKE2_TX_OP_{}", index);
 
             // Create kickoff transaction reference
             self.create_transaction_reference(
                 &mut protocol,
                 kickoff_tx_name,
-                &mut vec![operator_take_enabler.clone(), challenge_enabler.clone()],
-            )?;
-
-            // Create won enabler transaction reference
-            self.create_transaction_reference(
-                &mut protocol,
-                try_take2_tx_name,
-                &mut vec![operator_won_enabler.clone()],
+                &mut vec![operator_take_enabler.clone()],
             )?;
 
             self.create_operator_take_transaction(
@@ -147,7 +134,18 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 pegin_request_txid,
                 kickoff_tx_name,
                 operator_take_enabler.clone(),
-                challenge_enabler.clone(),
+            )?;
+
+            // Operator won transaction data
+            let operator_won_enabler =
+                self.operator_won_enabler(context, dispute_protocol_id, slot_index)?;
+            let reveal_tx_name = &format!("REVEAL_TX_OP_{}", index);
+
+            // Create won enabler transaction reference
+            self.create_transaction_reference(
+                &mut protocol,
+                reveal_tx_name,
+                &mut vec![operator_won_enabler.clone()],
             )?;
 
             self.create_operator_won_transaction(
@@ -156,9 +154,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 amount,
                 take_key,
                 pegin_request_txid,
-                kickoff_tx_name,
-                operator_take_enabler.clone(),
-                try_take2_tx_name,
+                reveal_tx_name,
                 operator_won_enabler.clone(),
             )?;
         }
@@ -380,7 +376,6 @@ impl AcceptPegInProtocol {
         pegin_txid: Txid,
         kickoff_tx_name: &str,
         take_enabler: PartialUtxo,
-        challenge_enabler: PartialUtxo,
     ) -> Result<(), BitVMXError> {
         let operator_take_tx_name = &format!("OPERATOR_TAKE_TX_OP_{}", index);
         // protocol.add_transaction(operator_take_tx_name)?;
@@ -396,22 +391,6 @@ impl AcceptPegInProtocol {
             take_enabler,
         )?;
 
-        // Input from reimbursement kickoff with timelock
-        protocol.add_connection(
-            "challenge_enabler_conn",
-            kickoff_tx_name,
-            OutputSpec::Index(challenge_enabler.1 as usize),
-            operator_take_tx_name,
-            InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::KeyOnly {
-                    key_path_sign: SignMode::Aggregate,
-                },
-            ),
-            None,
-            Some(challenge_enabler.0),
-        )?;
-
         // // Operator Output
         self.add_operator_output(protocol, operator_take_tx_name, amount, take_pubkey)?;
         Ok(())
@@ -424,30 +403,19 @@ impl AcceptPegInProtocol {
         amount: u64,
         take_pubkey: &PublicKey,
         pegin_txid: Txid,
-        kickoff_tx_name: &str,
-        take_enabler: PartialUtxo,
-        try_take2_tx_name: &str,
+        reveal_tx_name: &str,
         won_enabler: PartialUtxo,
     ) -> Result<(), BitVMXError> {
         // Operator won transaction
         let operator_won_tx_name = &format!("OPERATOR_WON_TX_OP_{}", index);
-        // protocol.add_transaction(operator_won_tx_name)?;
 
         // Pegin input
         self.add_accept_pegin_connection(protocol, operator_won_tx_name, pegin_txid)?;
 
-        // Input All takes enabler
-        self.add_all_takes_enabler_input(
-            protocol,
-            operator_won_tx_name,
-            kickoff_tx_name,
-            take_enabler,
-        )?;
-
         // Input from try take 2 with timelock
         protocol.add_connection(
-            "try_take2_conn",
-            try_take2_tx_name,
+            "reveal_conn",
+            reveal_tx_name,
             OutputSpec::Index(won_enabler.1 as usize),
             operator_won_tx_name,
             InputSpec::Auto(
