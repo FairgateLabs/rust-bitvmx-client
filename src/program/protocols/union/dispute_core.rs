@@ -138,7 +138,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
     ) -> Result<(), BitVMXError> {
         let transaction_name = self.get_transaction_name_by_id(tx_id)?;
         // Route to appropriate handler based on transaction type
-        if transaction_name.starts_with("REIMBURSEMENT_KICKOFF_TX_") {
+        if transaction_name.starts_with(REIMBURSEMENT_KICKOFF_TX) {
             self.handle_reimbursement_kickoff_transaction(tx_id, &tx_status, &context, program_context)?;
         }
         // TODO: Add more transaction type handlers here as needed
@@ -541,10 +541,25 @@ impl DisputeCoreProtocol {
     }
 
     fn extract_slot_id_from_context(&self, context: &str) -> Result<usize, BitVMXError> {
-        if let Some(suffix) = context.strip_prefix("REIMBURSEMENT_KICKOFF_TX_") {
+        let prefix = format!("{}_", REIMBURSEMENT_KICKOFF_TX);
+        if let Some(suffix) = context.strip_prefix(&prefix) {
             suffix.parse::<usize>().map_err(|_| BitVMXError::InvalidTransactionName(context.to_string()))
         } else {
             Err(BitVMXError::InvalidTransactionName(context.to_string()))
+        }
+    }
+
+    fn get_selected_operator_key(
+        &self,
+        slot_id: usize,
+        program_context: &ProgramContext,
+    ) -> Result<Option<PublicKey>, BitVMXError> {
+        let committee_id = self.committee_id(program_context)?;
+        let selected_operator_key_name = format!("{}_{}", SELECTED_OPERATOR_PUBKEY, slot_id);
+
+        match program_context.globals.get_var(&committee_id, &selected_operator_key_name)? {
+            Some(selected_operator_var) => Ok(Some(selected_operator_var.pubkey()?)),
+            None => Ok(None),
         }
     }
 
@@ -590,16 +605,9 @@ impl DisputeCoreProtocol {
         // Extract slot_id from the context
         let slot_id = self.extract_slot_id_from_context(context)?;
 
-        // Get the committee_id to look up the selected operator key
-        let committee_id = self.committee_id(program_context)?;
-
         // Get the selected operator's key for this slot
-        let selected_operator_key_name = format!("SELECTED_OPERATOR_PUBKEY_{}", slot_id);
-
-        match program_context.globals.get_var(&committee_id, &selected_operator_key_name)? {
-            Some(selected_operator_var) => {
-                let selected_operator_key = selected_operator_var.pubkey()?;
-
+        match self.get_selected_operator_key(slot_id, program_context)? {
+            Some(selected_operator_key) => {
                 // Validate transaction signature against selected operator's key
                 let is_valid = self.validate_transaction_signature(tx_id, tx_status, selected_operator_key)?;
 
@@ -611,9 +619,9 @@ impl DisputeCoreProtocol {
                 }
             }
             None => {
-                info!("No selected operator key found for slot {}, allowing transaction", slot_id);
-                // If no selected operator key is set, we allow the transaction
-                // This handles cases where the variable hasn't been set yet
+                info!("No selected operator key found for slot {}", slot_id);
+                // If no selected operator key is set, it means that someone triggered a reimbursment kickoff transaction but there was no advances of funds
+                self.dispatch_op_disabler_tx(slot_id, program_context)?;
             }
         }
 
