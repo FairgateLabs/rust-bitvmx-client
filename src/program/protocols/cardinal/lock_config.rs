@@ -1,6 +1,7 @@
 use bitcoin::{PublicKey, Txid};
 use bitvmx_broker::channel::channel::DualChannel;
 use protocol_builder::scripts::{self, SignMode};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
@@ -12,6 +13,7 @@ use crate::{
     types::{IncomingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_LOCK},
 };
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LockProtocolConfiguration {
     pub id: Uuid,
     pub operators_aggregated_pub: PublicKey,
