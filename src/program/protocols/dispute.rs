@@ -44,7 +44,9 @@ use crate::{
     bitvmx::Context,
     errors::BitVMXError,
     program::{
-        participant::ParticipantRole, protocols::claim::ClaimGate, variables::VariableTypes,
+        participant::ParticipantRole,
+        protocols::{claim::ClaimGate, input_handler::get_required_keys},
+        variables::VariableTypes,
     },
     types::{ProgramContext, EMULATOR_ID},
 };
@@ -214,11 +216,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
         let program_def = self.get_program_definition(&program_context)?.0;
-        let key_chain = &mut program_context.key_chain;
 
-        let aggregated_1 = key_chain.derive_keypair()?;
+        let aggregated_1 = program_context.key_chain.derive_keypair()?;
 
-        let speedup = key_chain.derive_keypair()?;
+        let speedup = program_context.key_chain.derive_keypair()?;
 
         program_context
             .globals
@@ -229,22 +230,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             ("speedup".to_string(), speedup.into()),
         ];
 
-        for inputs in program_def.inputs.iter() {
-            //TODO: handle more inputs, owners and counter-sign
-            assert!(inputs.size % 4 == 0);
-            let words_needed = inputs.size / 4;
-            if self.role() == ParticipantRole::Prover {
-                for i in 0..words_needed {
-                    let key = key_chain.derive_winternitz_hash160(4)?;
-                    keys.push((format!("prover_program_input_{}", i), key.into()));
-                }
-            }
-            program_context.globals.set_var(
-                &self.ctx.id,
-                "input_words",
-                VariableTypes::Number(words_needed as u32),
-            )?;
+        for required_input in
+            get_required_keys(&self.ctx.id, &program_def, program_context, &self.role())?
+        {
+            let key = program_context.key_chain.derive_winternitz_hash160(4)?;
+            keys.push((required_input, key.into()));
         }
+
+        let key_chain = &mut program_context.key_chain;
 
         if self.role() == ParticipantRole::Prover {
             let last_step = key_chain.derive_winternitz_hash160(8)?;
