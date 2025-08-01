@@ -62,7 +62,7 @@ use super::{
 pub const EXTERNAL_START: &str = "EXTERNAL_START";
 pub const EXTERNAL_ACTION: &str = "EXTERNAL_ACTION";
 pub const START_CH: &str = "START_CHALLENGE";
-pub const INPUT_1: &str = "INPUT_0";
+pub const INPUT_TX: &str = "INPUT_";
 pub const COMMITMENT: &str = "COMMITMENT";
 pub const EXECUTE: &str = "EXECUTE";
 pub const TIMELOCK_BLOCKS: u16 = 1;
@@ -191,6 +191,13 @@ fn get_role(my_idx: usize) -> ParticipantRole {
     }
 }
 
+pub fn input_tx_name(index: u32) -> String {
+    format!("INPUT_{}", index)
+}
+pub fn program_input(index: u32) -> String {
+    format!("program_input_{}", index)
+}
+
 impl ProtocolHandler for DisputeResolutionProtocol {
     fn context(&self) -> &ProtocolContext {
         &self.ctx
@@ -294,9 +301,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         name: &str,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        if name.starts_with(INPUT_TX) {
+            let index = name.strip_prefix(INPUT_TX).unwrap().parse::<u32>()?;
+            return self.input_tx(index, context);
+        }
+
         match name {
             START_CH => Ok(self.add_speedup_data(name, context, self.start_challenge(context)?)?),
-            INPUT_1 => Ok(self.input_1_tx(context)?),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
     }
@@ -350,7 +361,31 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             }
         }*/
 
-        //TODO: generalize decoding
+        if name.starts_with(INPUT_TX) && vout.is_some() {
+            let idx = name.strip_prefix(INPUT_TX).unwrap().parse::<u32>()?;
+
+            let (input_txs, input_txs_sizes, input_txs_offsets) =
+                get_txs_configuration(&self.ctx.id, program_context)?;
+
+            let owner = input_txs[idx as usize].as_str();
+
+            if owner == self.role().to_string() {
+                //if I'm the prover and it's the last input
+                if self.role() == ParticipantRole::Prover && idx == input_txs.len() as u32 - 1 {}
+            } else {
+                //if it's not my input, decode the witness
+                self.decode_witness_from_speedup(
+                    tx_id,
+                    vout.unwrap(),
+                    &name,
+                    program_context,
+                    &participant_keys,
+                    &tx_status.tx,
+                    None,
+                )?;
+            }
+        }
+
         if name == INPUT_1 && self.role() == ParticipantRole::Prover && vout.is_none() {
             //TODO: Check if the last input
             //only then execute the program.
@@ -1264,22 +1299,22 @@ impl DisputeResolutionProtocol {
         Ok((tx, speedup_data))
     }
 
-    pub fn input_1_tx(
+    pub fn input_tx(
         &self,
+        idx: u32,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        //TODO: concatenate all inputs
-        let words = context
-            .globals
-            .get_var(&self.ctx.id, "input_words")?
-            .unwrap()
-            .number()?;
+        let (input_txs, input_txs_sizes, input_txs_offsets) =
+            get_txs_configuration(&self.ctx.id, context)?;
 
         let full_input = context
             .globals
-            .get_var(&self.ctx.id, "program_input")?
+            .get_var(&self.ctx.id, &program_input(idx))?
             .unwrap()
             .input()?;
+        let words = input_txs_sizes[idx as usize];
+        let owner = input_txs[idx as usize].as_str();
+        let offset = input_txs_offsets[idx as usize];
 
         for i in 0..words {
             let partial_input = full_input
@@ -1287,12 +1322,12 @@ impl DisputeResolutionProtocol {
                 .unwrap();
             context.globals.set_var(
                 &self.ctx.id,
-                &format!("prover_program_input_{}", i),
+                &format!("{}_program_input_{}", owner, i + offset),
                 VariableTypes::Input(partial_input.to_vec()),
             )?;
         }
 
-        let (tx, sp) = self.get_tx_with_speedup_data(context, INPUT_1, 0, 0, true)?;
+        let (tx, sp) = self.get_tx_with_speedup_data(context, &input_tx_name(idx), 0, 0, true)?;
 
         Ok((tx, Some(sp)))
     }
