@@ -28,6 +28,7 @@ pub enum VariableTypes {
     Number(u32),
     String(String),
     VecStr(Vec<String>),
+    VecNumber(Vec<u32>),
     Input(Vec<u8>),
     Uuid(Uuid),
     FailConfiguration(
@@ -82,6 +83,12 @@ impl VariableTypes {
     pub fn vec_string(&self) -> Result<Vec<String>, BitVMXError> {
         match self {
             VariableTypes::VecStr(v) => Ok(v.clone()),
+            _ => Err(BitVMXError::InvalidVariableType(self.err())),
+        }
+    }
+    pub fn vec_number(&self) -> Result<Vec<u32>, BitVMXError> {
+        match self {
+            VariableTypes::VecNumber(v) => Ok(v.clone()),
             _ => Err(BitVMXError::InvalidVariableType(self.err())),
         }
     }
