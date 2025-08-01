@@ -45,7 +45,10 @@ use crate::{
     errors::BitVMXError,
     program::{
         participant::ParticipantRole,
-        protocols::{claim::ClaimGate, input_handler::get_required_keys},
+        protocols::{
+            claim::ClaimGate,
+            input_handler::{get_required_keys, get_txs_configuration},
+        },
         variables::VariableTypes,
     },
     types::{ProgramContext, EMULATOR_ID},
@@ -59,7 +62,7 @@ use super::{
 pub const EXTERNAL_START: &str = "EXTERNAL_START";
 pub const EXTERNAL_ACTION: &str = "EXTERNAL_ACTION";
 pub const START_CH: &str = "START_CHALLENGE";
-pub const INPUT_1: &str = "INPUT_1";
+pub const INPUT_1: &str = "INPUT_0";
 pub const COMMITMENT: &str = "COMMITMENT";
 pub const EXECUTE: &str = "EXECUTE";
 pub const TIMELOCK_BLOCKS: u16 = 1;
@@ -900,16 +903,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         amount = self.checked_sub(amount, fee)?;
 
-        let words = context
-            .globals
-            .get_var(&self.ctx.id, "input_words")?
-            .unwrap()
-            .number()?;
-
-        let input_vars = (0..words)
-            .map(|i| format!("prover_program_input_{}", i))
-            .collect::<Vec<_>>();
-
         amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
         amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
 
@@ -919,23 +912,53 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             .unwrap()
             .number()? as u16;
 
-        self.add_connection_with_scripts(
-            context,
-            aggregated,
-            &mut protocol,
-            timelock_blocks,
-            amount,
-            speedup_dust,
-            START_CH,
-            INPUT_1,
-            None,
-            Self::winternitz_check(agg_or_prover, sign_mode, &keys[0], &input_vars)?,
-            input_in_speedup,
-            (&prover_speedup_pub, &verifier_speedup_pub),
-        )?;
+        let mut prev_tx = START_CH.to_string();
+        let mut input_tx = String::new();
 
-        amount = self.checked_sub(amount, fee)?;
-        amount = self.checked_sub(amount, speedup_dust)?;
+        let (input_txs, input_txs_sizes, input_txs_offsets) =
+            get_txs_configuration(&self.ctx.id, context)?;
+
+        //TODO: remove this
+        context.globals.set_var(
+            &self.ctx.id,
+            "input_words",
+            VariableTypes::Number(input_txs_sizes[0]),
+        )?;
+        for (idx, tx_owner) in input_txs.iter().enumerate() {
+            input_tx = format!("INPUT_{}", idx);
+
+            let words = input_txs_sizes[idx];
+            let offset = input_txs_offsets[idx];
+
+            let owner = if tx_owner == "verifier" {
+                "verifier"
+            } else {
+                "prover"
+            };
+
+            let input_vars = (offset..offset + words)
+                .map(|i| format!("{}_program_input_{}", owner, i))
+                .collect::<Vec<_>>();
+            //TODO: Handle prover cosigning (in the script check and automatic reply to news)
+            self.add_connection_with_scripts(
+                context,
+                aggregated,
+                &mut protocol,
+                timelock_blocks,
+                amount,
+                speedup_dust,
+                &prev_tx,
+                &input_tx,
+                None,
+                Self::winternitz_check(agg_or_prover, sign_mode, &keys[0], &input_vars)?,
+                input_in_speedup,
+                (&prover_speedup_pub, &verifier_speedup_pub),
+            )?;
+
+            amount = self.checked_sub(amount, fee)?;
+            amount = self.checked_sub(amount, speedup_dust)?;
+            prev_tx = input_tx.clone();
+        }
 
         let claim_prover = ClaimGate::new(
             &mut protocol,
@@ -1017,7 +1040,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             timelock_blocks,
             amount,
             speedup_dust,
-            INPUT_1,
+            &input_tx,
             COMMITMENT,
             Some(&claim_verifier),
             Self::winternitz_check(

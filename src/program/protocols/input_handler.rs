@@ -66,10 +66,18 @@ pub fn get_required_keys(
     program_context
         .globals
         .set_var(id, "input_words", VariableTypes::Number(total_words))?;
+
+    let mut input_txs = vec![];
+    let mut input_txs_sizes = vec![];
+    let mut input_txs_offsets = vec![];
+
     for input in input_mapping.iter() {
         match input {
             // if the input is owned by the prover it's the only one that needs to be set
             ProgramInputType::Prover(words, offset) => {
+                input_txs.push("prover".to_string());
+                input_txs_sizes.push(*words);
+                input_txs_offsets.push(*offset);
                 if participant_role.is_prover() {
                     for i in 0..*words {
                         required_keys.push(format!("prover_program_input_{}", offset + i));
@@ -78,6 +86,12 @@ pub fn get_required_keys(
             }
             // if the input is owned by the verifier then the prover needs to cosign it
             ProgramInputType::Verifier(words, offset) => {
+                input_txs.push("verifier".to_string());
+                input_txs.push("prover_cosign".to_string());
+                input_txs_sizes.push(*words);
+                input_txs_sizes.push(*words);
+                input_txs_offsets.push(*offset);
+                input_txs_offsets.push(*offset);
                 for i in 0..*words {
                     required_keys.push(format!(
                         "{}_program_input_{}",
@@ -90,5 +104,47 @@ pub fn get_required_keys(
         }
     }
 
+    program_context
+        .globals
+        .set_var(id, "input_txs", VariableTypes::VecStr(input_txs))?;
+    program_context.globals.set_var(
+        id,
+        "input_txs_sizes",
+        VariableTypes::VecNumber(input_txs_sizes),
+    )?;
+    program_context.globals.set_var(
+        id,
+        "input_txs_offsets",
+        VariableTypes::VecNumber(input_txs_offsets),
+    )?;
+
     Ok(required_keys)
+}
+
+pub fn get_txs_configuration(
+    id: &Uuid,
+    program_context: &ProgramContext,
+) -> Result<(Vec<String>, Vec<u32>, Vec<u32>), BitVMXError> {
+    let input_txs = program_context
+        .globals
+        .get_var(id, "input_txs")?
+        .unwrap()
+        .vec_string()?;
+    let input_txs_sizes = program_context
+        .globals
+        .get_var(id, "input_txs_sizes")?
+        .unwrap()
+        .vec_number()?;
+    let input_txs_offsets = program_context
+        .globals
+        .get_var(id, "input_txs_offsets")?
+        .unwrap()
+        .vec_number()?;
+
+    if input_txs.len() != input_txs_sizes.len() || input_txs.len() != input_txs_offsets.len() {
+        return Err(BitVMXError::DisputeResolutionProtocolSetup(
+            "Input txs configuration is not valid".to_string(),
+        ));
+    }
+    Ok((input_txs, input_txs_sizes, input_txs_offsets))
 }
