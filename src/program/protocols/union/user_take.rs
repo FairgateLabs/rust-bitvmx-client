@@ -7,7 +7,7 @@ use protocol_builder::{
     graph::graph::GraphOptions,
     scripts::SignMode,
     types::{
-        connection::InputSpec,
+        connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
         output::SpeedupData,
         InputArgs, OutputType,
@@ -79,18 +79,11 @@ impl ProtocolHandler for UserTakeProtocol {
         //create the protocol
         let mut protocol = self.load_or_create_protocol();
 
-        // Declare the external accept peg-in transaction
-        self.create_transaction_reference(
-            &mut protocol,
-            ACCEPT_PEGIN_TX,
-            &mut vec![accept_pegin_utxo.clone()],
-        )?;
-
         // Connect the user take transaction with the accept peg-in transaction
         protocol.add_connection(
             "user_take",
             ACCEPT_PEGIN_TX,
-            (accept_pegin_utxo.1 as usize).into(),
+            OutputSpec::Auto(accept_pegin_utxo.3.unwrap()),
             USER_TAKE_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
@@ -140,9 +133,8 @@ impl ProtocolHandler for UserTakeProtocol {
         name: &str,
         _context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        // TODO include only the txs that need to be executed based on a decision from the L2
         match name {
-            USER_TAKE_TX => Ok((self.user_take()?, None)),
+            USER_TAKE_TX => Ok((self.user_take_tx()?, None)),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
     }
@@ -205,39 +197,15 @@ impl UserTakeProtocol {
             .utxo()?)
     }
 
-    pub fn user_take(&self) -> Result<Transaction, ProtocolBuilderError> {
-        let args = InputArgs::new_taproot_key_args();
-
-        // TODO add the necessary arguments to args
+    pub fn user_take_tx(&self) -> Result<Transaction, ProtocolBuilderError> {
+        let signature = self
+            .load_protocol()?
+            .input_taproot_key_spend_signature(USER_TAKE_TX, 0)?
+            .unwrap();
+        let mut taproot_arg = InputArgs::new_taproot_key_args();
+        taproot_arg.push_taproot_signature(signature)?;
 
         self.load_protocol()?
-            .transaction_to_send(USER_TAKE_TX, &[args])
-    }
-
-    fn create_transaction_reference(
-        &self,
-        protocol: &mut protocol_builder::builder::Protocol,
-        tx_name: &str,
-        utxos: &mut Vec<PartialUtxo>,
-    ) -> Result<(), BitVMXError> {
-        // Create transaction
-        protocol.add_transaction(tx_name)?;
-
-        // Sort UTXOs by index
-        utxos.sort_by_key(|utxo| utxo.1);
-        let mut last_index = 0;
-
-        for utxo in utxos {
-            // If there is a gap in the indices, add unknown outputs
-            if utxo.1 > last_index + 1 {
-                protocol.add_unknown_outputs(tx_name, utxo.1 - last_index)?;
-            }
-
-            // Add the UTXO as an output
-            protocol.add_transaction_output(tx_name, &utxo.clone().3.unwrap())?;
-            last_index = utxo.1;
-        }
-
-        Ok(())
+            .transaction_to_send(USER_TAKE_TX, &[taproot_arg])
     }
 }

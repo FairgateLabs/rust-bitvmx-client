@@ -1,6 +1,6 @@
 use anyhow::Result;
 use bitcoin::Txid;
-use bitvmx_client::program::protocols::union::types::ACCEPT_PEGIN_TX;
+use bitvmx_client::program::protocols::union::types::{ACCEPT_PEGIN_TX, USER_TAKE_TX};
 use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtxo};
 use bitvmx_client::types::OutgoingBitVMXApiMessages::{SPVProof, Transaction, TransactionInfo};
 
@@ -117,14 +117,26 @@ impl Committee {
             )
         })?;
 
+        self.dispatch_transaction_and_wait_for_spv_proof(protocol_id, ACCEPT_PEGIN_TX.to_string())?;
+
+        Ok(())
+    }
+
+    fn dispatch_transaction_and_wait_for_spv_proof(
+        &self,
+        protocol_id: Uuid,
+        tx_name: String,
+    ) -> Result<()> {
         let bitvmx = &self.members[0].bitvmx;
-        let _ = bitvmx.get_transaction_by_name(protocol_id, ACCEPT_PEGIN_TX.to_string());
+        let _ = bitvmx.get_transaction_by_name(protocol_id, tx_name.clone());
         thread::sleep(std::time::Duration::from_secs(1));
         let tx = wait_until_msg!(bitvmx, TransactionInfo(_, _, _tx) => _tx);
-        let accept_pegin_txid = tx.compute_txid();
+        let txid = tx.compute_txid();
         info!(
-            "AcceptPegIn protocol handler {} dispatching accept pegin transaction: {:?}",
-            protocol_id, tx
+            "Protocol handler {} dispatching {} transaction: {:?}",
+            protocol_id,
+            tx_name.clone(),
+            tx
         );
         bitvmx.dispatch_transaction(protocol_id, tx)?;
         thread::sleep(std::time::Duration::from_secs(1));
@@ -133,18 +145,22 @@ impl Committee {
         let status = wait_until_msg!(bitvmx, Transaction(_, _status, _) => _status);
 
         info!(
-            "AcceptPegIn protocol handler {} send accept pegin transaction with status: {:?}",
-            protocol_id, status
+            "Protocol handler {} sent {} transaction with status: {:?}",
+            protocol_id,
+            tx_name.clone(),
+            status
         );
 
-        info!("Waiting for SPV proof for accept pegin transaction...");
-        let _ = bitvmx.get_spv_proof(accept_pegin_txid);
+        info!(
+            "Waiting for SPV proof for {} transaction...",
+            tx_name.clone()
+        );
+        let _ = bitvmx.get_spv_proof(txid);
         let spv_proof = wait_until_msg!(
             bitvmx,
             SPVProof(_, Some(_spv_proof)) => _spv_proof
         );
-        info!("AcceptPegin SPV proof: {:?}", spv_proof);
-
+        info!("{} SPV proof: {:?}", tx_name.clone(), spv_proof);
         Ok(())
     }
 
@@ -163,6 +179,8 @@ impl Committee {
                 &members,
             )
         })?;
+
+        self.dispatch_transaction_and_wait_for_spv_proof(protocol_id, USER_TAKE_TX.to_string())?;
 
         Ok(())
     }

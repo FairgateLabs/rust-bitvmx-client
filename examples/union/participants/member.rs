@@ -178,9 +178,9 @@ impl Member {
             reimbursement_pubkey,
         )?;
 
-        // Wait for the dispute core setup to complete
+        // Wait for the AcceptPegin setup to complete
         let program_id = wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
-        info!(id = self.id, program_id = ?program_id, "Accept pegin setup completed (from member)");
+        info!(id = self.id, program_id = ?program_id, "AcceptPegin setup completed (from member)");
 
         Ok(())
     }
@@ -205,6 +205,10 @@ impl Member {
             &self.bitvmx,
             self.keyring.take_aggregated_key.unwrap(),
         )?;
+
+        // Wait for the UserTake setup to complete
+        let program_id = wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
+        info!(id = self.id, program_id = ?program_id, "UserTake setup completed (from member)");
 
         Ok(())
     }
