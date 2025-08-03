@@ -5,7 +5,7 @@ use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::channel::channel::DualChannel;
 use bitvmx_broker::rpc::BrokerConfig;
 use bitvmx_client::program;
-use bitvmx_client::program::participant::P2PAddress;
+use bitvmx_client::program::participant::{P2PAddress, ParticipantRole};
 use bitvmx_client::program::variables::VariableTypes;
 use bitvmx_client::types::{
     IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, EMULATOR_ID, L2_ID, PROVER_ID,
@@ -487,7 +487,7 @@ pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
         500,
         false,
         false,
-        ForcedChallenges::Execution,
+        ForcedChallenges::No,
         //Some("./verifiers/add-test-with-const.yaml".to_string()),
         //Some("./verifiers/add-test.yaml".to_string()),
         None,

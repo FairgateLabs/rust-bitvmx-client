@@ -44,7 +44,12 @@ use crate::{
     bitvmx::Context,
     errors::BitVMXError,
     program::{
-        participant::ParticipantRole, protocols::claim::ClaimGate, variables::VariableTypes,
+        participant::ParticipantRole,
+        protocols::{
+            claim::ClaimGate,
+            input_handler::{get_required_keys, get_txs_configuration},
+        },
+        variables::VariableTypes,
     },
     types::{ProgramContext, EMULATOR_ID},
 };
@@ -57,7 +62,7 @@ use super::{
 pub const EXTERNAL_START: &str = "EXTERNAL_START";
 pub const EXTERNAL_ACTION: &str = "EXTERNAL_ACTION";
 pub const START_CH: &str = "START_CHALLENGE";
-pub const INPUT_1: &str = "INPUT_1";
+pub const INPUT_TX: &str = "INPUT_";
 pub const COMMITMENT: &str = "COMMITMENT";
 pub const EXECUTE: &str = "EXECUTE";
 pub const TIMELOCK_BLOCKS: u16 = 1;
@@ -186,6 +191,13 @@ fn get_role(my_idx: usize) -> ParticipantRole {
     }
 }
 
+pub fn input_tx_name(index: u32) -> String {
+    format!("INPUT_{}", index)
+}
+pub fn program_input(index: u32) -> String {
+    format!("program_input_{}", index)
+}
+
 impl ProtocolHandler for DisputeResolutionProtocol {
     fn context(&self) -> &ProtocolContext {
         &self.ctx
@@ -214,11 +226,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
         let program_def = self.get_program_definition(&program_context)?.0;
-        let key_chain = &mut program_context.key_chain;
 
-        let aggregated_1 = key_chain.derive_keypair()?;
+        let aggregated_1 = program_context.key_chain.derive_keypair()?;
 
-        let speedup = key_chain.derive_keypair()?;
+        let speedup = program_context.key_chain.derive_keypair()?;
 
         program_context
             .globals
@@ -229,22 +240,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             ("speedup".to_string(), speedup.into()),
         ];
 
-        for inputs in program_def.inputs.iter() {
-            //TODO: handle more inputs, owners and counter-sign
-            assert!(inputs.size % 4 == 0);
-            let words_needed = inputs.size / 4;
-            if self.role() == ParticipantRole::Prover {
-                for i in 0..words_needed {
-                    let key = key_chain.derive_winternitz_hash160(4)?;
-                    keys.push((format!("prover_program_input_{}", i), key.into()));
-                }
-            }
-            program_context.globals.set_var(
-                &self.ctx.id,
-                "input_words",
-                VariableTypes::Number(words_needed as u32),
-            )?;
+        for required_input in
+            get_required_keys(&self.ctx.id, &program_def, program_context, &self.role())?
+        {
+            let key = program_context.key_chain.derive_winternitz_hash160(4)?;
+            keys.push((required_input, key.into()));
         }
+
+        let key_chain = &mut program_context.key_chain;
 
         if self.role() == ParticipantRole::Prover {
             let last_step = key_chain.derive_winternitz_hash160(8)?;
@@ -298,9 +301,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         name: &str,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        if name.starts_with(INPUT_TX) {
+            let index = name.strip_prefix(INPUT_TX).unwrap().parse::<u32>()?;
+            return self.input_tx(index, context);
+        }
+
         match name {
             START_CH => Ok(self.add_speedup_data(name, context, self.start_challenge(context)?)?),
-            INPUT_1 => Ok(self.input_1_tx(context)?),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
     }
@@ -354,7 +361,31 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             }
         }*/
 
-        //TODO: generalize decoding
+        if name.starts_with(INPUT_TX) && vout.is_some() {
+            let idx = name.strip_prefix(INPUT_TX).unwrap().parse::<u32>()?;
+
+            let (input_txs, input_txs_sizes, input_txs_offsets) =
+                get_txs_configuration(&self.ctx.id, program_context)?;
+
+            let owner = input_txs[idx as usize].as_str();
+
+            if owner == self.role().to_string() {
+                //if I'm the prover and it's the last input
+                if self.role() == ParticipantRole::Prover && idx == input_txs.len() as u32 - 1 {}
+            } else {
+                //if it's not my input, decode the witness
+                self.decode_witness_from_speedup(
+                    tx_id,
+                    vout.unwrap(),
+                    &name,
+                    program_context,
+                    &participant_keys,
+                    &tx_status.tx,
+                    None,
+                )?;
+            }
+        }
+
         if name == INPUT_1 && self.role() == ParticipantRole::Prover && vout.is_none() {
             //TODO: Check if the last input
             //only then execute the program.
@@ -907,16 +938,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         amount = self.checked_sub(amount, fee)?;
 
-        let words = context
-            .globals
-            .get_var(&self.ctx.id, "input_words")?
-            .unwrap()
-            .number()?;
-
-        let input_vars = (0..words)
-            .map(|i| format!("prover_program_input_{}", i))
-            .collect::<Vec<_>>();
-
         amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
         amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
 
@@ -926,23 +947,53 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             .unwrap()
             .number()? as u16;
 
-        self.add_connection_with_scripts(
-            context,
-            aggregated,
-            &mut protocol,
-            timelock_blocks,
-            amount,
-            speedup_dust,
-            START_CH,
-            INPUT_1,
-            None,
-            Self::winternitz_check(agg_or_prover, sign_mode, &keys[0], &input_vars)?,
-            input_in_speedup,
-            (&prover_speedup_pub, &verifier_speedup_pub),
-        )?;
+        let mut prev_tx = START_CH.to_string();
+        let mut input_tx = String::new();
 
-        amount = self.checked_sub(amount, fee)?;
-        amount = self.checked_sub(amount, speedup_dust)?;
+        let (input_txs, input_txs_sizes, input_txs_offsets) =
+            get_txs_configuration(&self.ctx.id, context)?;
+
+        //TODO: remove this
+        context.globals.set_var(
+            &self.ctx.id,
+            "input_words",
+            VariableTypes::Number(input_txs_sizes[0]),
+        )?;
+        for (idx, tx_owner) in input_txs.iter().enumerate() {
+            input_tx = format!("INPUT_{}", idx);
+
+            let words = input_txs_sizes[idx];
+            let offset = input_txs_offsets[idx];
+
+            let owner = if tx_owner == "verifier" {
+                "verifier"
+            } else {
+                "prover"
+            };
+
+            let input_vars = (offset..offset + words)
+                .map(|i| format!("{}_program_input_{}", owner, i))
+                .collect::<Vec<_>>();
+            //TODO: Handle prover cosigning (in the script check and automatic reply to news)
+            self.add_connection_with_scripts(
+                context,
+                aggregated,
+                &mut protocol,
+                timelock_blocks,
+                amount,
+                speedup_dust,
+                &prev_tx,
+                &input_tx,
+                None,
+                Self::winternitz_check(agg_or_prover, sign_mode, &keys[0], &input_vars)?,
+                input_in_speedup,
+                (&prover_speedup_pub, &verifier_speedup_pub),
+            )?;
+
+            amount = self.checked_sub(amount, fee)?;
+            amount = self.checked_sub(amount, speedup_dust)?;
+            prev_tx = input_tx.clone();
+        }
 
         let claim_prover = ClaimGate::new(
             &mut protocol,
@@ -1024,7 +1075,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             timelock_blocks,
             amount,
             speedup_dust,
-            INPUT_1,
+            &input_tx,
             COMMITMENT,
             Some(&claim_verifier),
             Self::winternitz_check(
@@ -1248,22 +1299,22 @@ impl DisputeResolutionProtocol {
         Ok((tx, speedup_data))
     }
 
-    pub fn input_1_tx(
+    pub fn input_tx(
         &self,
+        idx: u32,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        //TODO: concatenate all inputs
-        let words = context
-            .globals
-            .get_var(&self.ctx.id, "input_words")?
-            .unwrap()
-            .number()?;
+        let (input_txs, input_txs_sizes, input_txs_offsets) =
+            get_txs_configuration(&self.ctx.id, context)?;
 
         let full_input = context
             .globals
-            .get_var(&self.ctx.id, "program_input")?
+            .get_var(&self.ctx.id, &program_input(idx))?
             .unwrap()
             .input()?;
+        let words = input_txs_sizes[idx as usize];
+        let owner = input_txs[idx as usize].as_str();
+        let offset = input_txs_offsets[idx as usize];
 
         for i in 0..words {
             let partial_input = full_input
@@ -1271,12 +1322,12 @@ impl DisputeResolutionProtocol {
                 .unwrap();
             context.globals.set_var(
                 &self.ctx.id,
-                &format!("prover_program_input_{}", i),
+                &format!("{}_program_input_{}", owner, i + offset),
                 VariableTypes::Input(partial_input.to_vec()),
             )?;
         }
 
-        let (tx, sp) = self.get_tx_with_speedup_data(context, INPUT_1, 0, 0, true)?;
+        let (tx, sp) = self.get_tx_with_speedup_data(context, &input_tx_name(idx), 0, 0, true)?;
 
         Ok((tx, Some(sp)))
     }
