@@ -161,7 +161,9 @@ pub trait ProtocolHandler {
             self.context().storage.clone().unwrap(),
         )? {
             Some(protocol) => Ok(protocol),
-            None => Err(ProtocolBuilderError::MissingProtocol),
+            None => Err(ProtocolBuilderError::MissingProtocol(
+                self.context().protocol_name.clone(),
+            )),
         }
     }
 
