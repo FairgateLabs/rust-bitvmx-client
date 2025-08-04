@@ -1,9 +1,12 @@
 use emulator::loader::program_definition::ProgramDefinition;
+use tracing::info;
 use uuid::Uuid;
 
 use crate::{
     errors::BitVMXError,
-    program::{participant::ParticipantRole, variables::VariableTypes},
+    program::{
+        participant::ParticipantRole, protocols::dispute::program_input, variables::VariableTypes,
+    },
     types::ProgramContext,
 };
 
@@ -70,6 +73,7 @@ pub fn get_required_keys(
     let mut input_txs = vec![];
     let mut input_txs_sizes = vec![];
     let mut input_txs_offsets = vec![];
+    //let mut drp_txs = 0;
 
     for input in input_mapping.iter() {
         match input {
@@ -100,10 +104,26 @@ pub fn get_required_keys(
                     ));
                 }
             }
+            /*ProgramInputType::Const(words, offset)
+            | ProgramInputType::ProverPrev(words, offset) => {
+                input_txs.push("skip".to_string());
+                input_txs_sizes.push(*words);
+                input_txs_offsets.push(*offset);
+            }*/
             _ => {}
         }
     }
 
+    //info!("DRP txs: {}", drp_txs);
+    info!("Input txs: {:?}", input_txs);
+    info!("Input txs sizes: {:?}", input_txs_sizes);
+    info!("Input txs offsets: {:?}", input_txs_offsets);
+    info!("Required keys: {:?}", required_keys);
+    info!("Total words: {}", total_words);
+
+    /*program_context
+    .globals
+    .set_var(id, "drp_txs", VariableTypes::Number(drp_txs))?;*/
     program_context
         .globals
         .set_var(id, "input_txs", VariableTypes::VecStr(input_txs))?;
@@ -147,4 +167,57 @@ pub fn get_txs_configuration(
         ));
     }
     Ok((input_txs, input_txs_sizes, input_txs_offsets))
+}
+
+pub fn unify_witnesses(
+    id: &Uuid,
+    program_context: &ProgramContext,
+    idx: usize,
+) -> Result<(), BitVMXError> {
+    let (input_txs, input_txs_sizes, input_txs_offsets) =
+        get_txs_configuration(&id, program_context)?;
+    let owner = &input_txs[idx];
+    let offset = input_txs_offsets[idx];
+    let size = input_txs_sizes[idx];
+
+    let mut input_for_tx = vec![];
+    for i in 0..size {
+        let key = format!("{}_program_input_{}", owner, offset + i);
+        let input = program_context
+            .witness
+            .get_witness(id, &key)?
+            .unwrap()
+            .winternitz()?
+            .message_bytes();
+        info!("Unifying input for tx {}: {}", idx, hex::encode(&input));
+        input_for_tx.extend_from_slice(&input);
+    }
+    program_context.globals.set_var(
+        id,
+        &program_input(idx as u32),
+        VariableTypes::Input(input_for_tx),
+    )?;
+
+    Ok(())
+}
+
+pub fn unify_inputs(
+    id: &Uuid,
+    program_context: &ProgramContext,
+    program_def: &ProgramDefinition,
+) -> Result<Vec<u8>, BitVMXError> {
+    //let (input_txs, _, _) = get_txs_configuration(&id, program_context)?;
+
+    let mut full_input = vec![];
+    for idx in 0..program_def.inputs.len() {
+        let key = &program_input(idx as u32);
+        full_input.extend_from_slice(&program_context.globals.get_var(id, key)?.unwrap().input()?);
+        info!(
+            "Unifying input from tx {}: {}",
+            key,
+            hex::encode(&full_input)
+        );
+    }
+
+    Ok(full_input)
 }

@@ -5,7 +5,8 @@ use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::channel::channel::DualChannel;
 use bitvmx_broker::rpc::BrokerConfig;
 use bitvmx_client::program;
-use bitvmx_client::program::participant::{P2PAddress, ParticipantRole};
+use bitvmx_client::program::participant::P2PAddress;
+use bitvmx_client::program::protocols::dispute::{input_tx_name, program_input};
 use bitvmx_client::program::variables::VariableTypes;
 use bitvmx_client::types::{
     IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, EMULATOR_ID, L2_ID, PROVER_ID,
@@ -471,9 +472,10 @@ pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
     let pair_0_1_channels = vec![helper.channels[0].clone(), helper.channels[1].clone()];
     let prog_id = Uuid::new_v4();
 
-    //let result_const = "00000003";
-    //let const_input = VariableTypes::Input(hex::decode(result_const).unwrap()).set_msg(prog_id, "const_var_1")?;
-    //let _ = send_all(&pair_0_1_channels, &const_input);
+    let result_const = "00000003";
+    let const_input = VariableTypes::Input(hex::decode(result_const).unwrap())
+        .set_msg(prog_id, &program_input(1))?;
+    let _ = send_all(&pair_0_1_channels, &const_input);
 
     prepare_dispute(
         prog_id,
@@ -488,9 +490,9 @@ pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
         false,
         false,
         ForcedChallenges::No,
-        //Some("./verifiers/add-test-with-const.yaml".to_string()),
+        Some("./verifiers/add-test-with-const.yaml".to_string()),
         //Some("./verifiers/add-test.yaml".to_string()),
-        None,
+        //None,
     )?;
 
     let msg = helper.wait_msg(0)?;
@@ -515,17 +517,14 @@ pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
 
     let data = "0000000100000002";
     let set_input_1 =
-        VariableTypes::Input(hex::decode(data).unwrap()).set_msg(prog_id, "program_input")?;
+        VariableTypes::Input(hex::decode(data).unwrap()).set_msg(prog_id, &program_input(0))?;
     let _ = helper.channels[0].send(BITVMX_ID, set_input_1)?;
 
     // send the tx
     let _ = helper.channels[0].send(
         BITVMX_ID,
-        IncomingBitVMXApiMessages::DispatchTransactionName(
-            prog_id,
-            program::protocols::dispute::INPUT_1.to_string(),
-        )
-        .to_string()?,
+        IncomingBitVMXApiMessages::DispatchTransactionName(prog_id, input_tx_name(0))
+            .to_string()?,
     );
 
     helper.wait_tx_name(1, program::protocols::dispute::ACTION_PROVER_WINS)?;

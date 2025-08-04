@@ -7,7 +7,9 @@ use bitvmx_client::{
     program::{
         self,
         participant::{P2PAddress, ParticipantRole},
-        protocols::dispute::{EXECUTE, TIMELOCK_BLOCKS, TIMELOCK_BLOCKS_KEY},
+        protocols::dispute::{
+            input_tx_name, program_input, EXECUTE, TIMELOCK_BLOCKS, TIMELOCK_BLOCKS_KEY,
+        },
         variables::VariableTypes,
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_DRP},
@@ -165,26 +167,20 @@ pub fn execute_dispute(
     //let data = "010000007bd5d42e4057965ff389683ef2304190d5e902f10190dba2887d46cccdd3389de95b00b98b086eb81f86988b252c704455eadff8f52710189e9c7d6c29b02a1ce355dcc4b00d84572a8a3414d40ecc209e5cea4e34b119b84e7455877726d3185c2847d1f4bcae30a0cd1b2da4bb3b85fa59b41dee6d9fea0258ced1e9a17c93";
     let data = "11111111";
     let set_input_1 =
-        VariableTypes::Input(hex::decode(data).unwrap()).set_msg(program_id, "program_input")?;
+        VariableTypes::Input(hex::decode(data).unwrap()).set_msg(program_id, &program_input(0))?;
     let _ = channels[0].send(BITVMX_ID, set_input_1)?;
 
     // send the tx
     let _ = channels[0].send(
         BITVMX_ID,
-        IncomingBitVMXApiMessages::DispatchTransactionName(
-            program_id,
-            program::protocols::dispute::INPUT_1.to_string(),
-        )
-        .to_string()?,
+        IncomingBitVMXApiMessages::DispatchTransactionName(program_id, input_tx_name(0))
+            .to_string()?,
     );
 
     // VERIFIER DETECTS THE INPUT
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
     let (_uuid, _txid, name) = msgs[1].transaction().unwrap();
-    assert_eq!(
-        name.unwrap_or_default(),
-        program::protocols::dispute::INPUT_1.to_string()
-    );
+    assert_eq!(name.unwrap_or_default(), input_tx_name(0));
     if fake {
         let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
         info!(

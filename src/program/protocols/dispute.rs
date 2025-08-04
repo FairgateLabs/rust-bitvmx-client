@@ -47,7 +47,9 @@ use crate::{
         participant::ParticipantRole,
         protocols::{
             claim::ClaimGate,
-            input_handler::{get_required_keys, get_txs_configuration},
+            input_handler::{
+                get_required_keys, get_txs_configuration, unify_inputs, unify_witnesses,
+            },
         },
         variables::VariableTypes,
     },
@@ -364,14 +366,30 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         if name.starts_with(INPUT_TX) && vout.is_some() {
             let idx = name.strip_prefix(INPUT_TX).unwrap().parse::<u32>()?;
 
-            let (input_txs, input_txs_sizes, input_txs_offsets) =
+            let (input_txs, _input_txs_sizes, _input_txs_offsets) =
                 get_txs_configuration(&self.ctx.id, program_context)?;
 
             let owner = input_txs[idx as usize].as_str();
 
             if owner == self.role().to_string() {
                 //if I'm the prover and it's the last input
-                if self.role() == ParticipantRole::Prover && idx == input_txs.len() as u32 - 1 {}
+                if self.role() == ParticipantRole::Prover && idx == input_txs.len() as u32 - 1 {
+                    let (def, program_definition) = self.get_program_definition(program_context)?;
+                    let full_input = unify_inputs(&self.ctx.id, program_context, &def)?;
+
+                    let execution_path = self.get_execution_path()?;
+                    let msg = serde_json::to_string(&DispatcherJob {
+                        job_id: self.ctx.id.to_string(),
+                        job_type: EmulatorJobType::ProverExecute(
+                            program_definition,
+                            full_input,
+                            execution_path.clone(),
+                            format!("{}/{}", execution_path, "execution.json").to_string(),
+                            fail_config_prover.clone(),
+                        ),
+                    })?;
+                    program_context.broker_channel.send(EMULATOR_ID, msg)?;
+                }
             } else {
                 //if it's not my input, decode the witness
                 self.decode_witness_from_speedup(
@@ -383,48 +401,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     &tx_status.tx,
                     None,
                 )?;
+
+                unify_witnesses(&self.ctx.id, program_context, idx as usize)?;
             }
-        }
-
-        if name == INPUT_1 && self.role() == ParticipantRole::Prover && vout.is_none() {
-            //TODO: Check if the last input
-            //only then execute the program.
-
-            let program_definition = program_context
-                .globals
-                .get_var(&self.ctx.id, "program_definition")?
-                .unwrap()
-                .string()?;
-
-            let input_program = program_context
-                .globals
-                .get_var(&self.ctx.id, "program_input")?
-                .unwrap()
-                .input()?;
-
-            let execution_path = self.get_execution_path()?;
-            let msg = serde_json::to_string(&DispatcherJob {
-                job_id: self.ctx.id.to_string(),
-                job_type: EmulatorJobType::ProverExecute(
-                    program_definition,
-                    input_program,
-                    execution_path.clone(),
-                    format!("{}/{}", execution_path, "execution.json").to_string(),
-                    fail_config_prover.clone(),
-                ),
-            })?;
-            program_context.broker_channel.send(EMULATOR_ID, msg)?;
-        }
-        if name == INPUT_1 && self.role() == ParticipantRole::Verifier && vout.is_some() {
-            self.decode_witness_from_speedup(
-                tx_id,
-                vout.unwrap(),
-                &name,
-                program_context,
-                &participant_keys,
-                &tx_status.tx,
-                None,
-            )?;
         }
 
         if name == COMMITMENT && self.role() == ParticipantRole::Verifier && vout.is_some() {
@@ -438,30 +417,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 None,
             )?;
 
-            let program_definition = program_context
-                .globals
-                .get_var(&self.ctx.id, "program_definition")?
-                .unwrap()
-                .string()?;
-
             let execution_path = self.get_execution_path()?;
-            let words = program_context
-                .globals
-                .get_var(&self.ctx.id, "input_words")?
-                .unwrap()
-                .number()?;
 
-            let mut input_program = Vec::new();
-
-            for i in 0..words {
-                let input = program_context
-                    .witness
-                    .get_witness(&self.ctx.id, &format!("prover_program_input_{}", i))?
-                    .unwrap()
-                    .winternitz()?
-                    .message_bytes();
-                input_program.extend_from_slice(&input);
-            }
+            let (def, program_definition) = self.get_program_definition(program_context)?;
+            let input_program = unify_inputs(&self.ctx.id, program_context, &def)?;
 
             let last_hash = program_context
                 .witness
@@ -1251,6 +1210,7 @@ impl DisputeResolutionProtocol {
         (txid, vout, amount)
     }
 
+    //TODO: unify with the speedup in  protocol_handler
     fn add_speedup_data(
         &self,
         name: &str,
@@ -1259,7 +1219,6 @@ impl DisputeResolutionProtocol {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         let (vout, role) = match name {
             START_CH => (0, "verifier"),
-            //INPUT_1 => (0, "prover"),
             _ => todo!("Speedup data not implemented for transaction: {}", name),
         };
 
@@ -1507,7 +1466,10 @@ impl DisputeResolutionProtocol {
                     }
                 }
                 "input" => {
-                    let base_addr = program.find_section_by_name(".input").unwrap().start;
+                    let base_addr = program
+                        .find_section_by_name(&program_definitions.input_section_name)
+                        .unwrap()
+                        .start;
                     let words = iteration_counts.get(challenge_name).unwrap();
                     for i in 0..*words {
                         let address = base_addr + i * 4; //TODO: get 4 from context
