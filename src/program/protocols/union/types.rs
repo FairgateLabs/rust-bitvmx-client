@@ -3,7 +3,7 @@ use musig2::{secp::MaybeScalar, PubNonce};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::program::participant::ParticipantRole;
+use crate::program::{participant::ParticipantRole, variables::PartialUtxo};
 
 // Key names
 pub const TAKE_AGGREGATED_KEY: &str = "take_aggregated_key";
@@ -54,20 +54,38 @@ pub const OPERATOR: &str = "OP";
 pub const WATCHTOWER: &str = "WT";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemberData {
+    pub role: ParticipantRole,
+    pub take_key: PublicKey,
+    pub dispute_key: PublicKey,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Committee {
-    pub committee_id: Uuid,
-    pub my_role: ParticipantRole,
-    pub member_index: usize,
+    pub members: Vec<MemberData>,
     pub take_aggregated_key: PublicKey,
     pub dispute_aggregated_key: PublicKey,
     pub operator_count: u32,
-    pub watchtower_count: u32,
+    pub member_count: u32,
     pub packet_size: u32,
 }
 
 impl Committee {
     pub fn name() -> String {
         "committee".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DisputeCoreData {
+    pub committee_id: Uuid,
+    pub operator_index: usize,
+    pub operator_utxo: PartialUtxo,
+}
+
+impl DisputeCoreData {
+    pub fn name() -> String {
+        "dispute_core_data".to_string()
     }
 }
 
