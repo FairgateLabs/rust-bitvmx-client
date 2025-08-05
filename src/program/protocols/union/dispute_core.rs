@@ -495,7 +495,7 @@ impl DisputeCoreProtocol {
     }
 
     fn committee_id(&self, context: &ProgramContext) -> Result<Uuid, BitVMXError> {
-        Ok(self.committee(context)?.committee_id)
+        Ok(self.dispute_core_data(context)?.committee_id)
     }
 
     fn extract_slot_id_from_context(&self, context: &str) -> Result<usize, BitVMXError> {
