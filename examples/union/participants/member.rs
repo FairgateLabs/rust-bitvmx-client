@@ -8,7 +8,7 @@ use bitvmx_client::{
     config::Config,
     program::{
         participant::{P2PAddress, ParticipantRole},
-        protocols::union::types::ACCEPT_PEGIN_TX,
+        protocols::union::types::{ACCEPT_PEGIN_TX, SELECTED_OPERATOR_PUBKEY},
         variables::{PartialUtxo, VariableTypes},
     },
     types::{OutgoingBitVMXApiMessages::*, L2_ID},
@@ -219,7 +219,18 @@ impl Member {
         slot_id: usize,
         user_public_key: PublicKey,
         pegout_id: Vec<u8>,
+        selected_operator_pubkey: PublicKey,
     ) -> Result<()> {
+        // Store the selected operator's public key for this slot
+        let selected_operator_key_name = format!("{}_{}", SELECTED_OPERATOR_PUBKEY, slot_id);
+        self.bitvmx.set_var(committee_id, &selected_operator_key_name, VariableTypes::PubKey(selected_operator_pubkey))?;
+
+        // Check if this member is the selected operator for advance funds
+        let my_take_pubkey = self.keyring.take_pubkey.unwrap();
+        if my_take_pubkey != selected_operator_pubkey {
+            return Ok(());
+        }
+
         if self.role != ParticipantRole::Prover {
             return Err(anyhow::anyhow!("Committee member is not a Prover"));
         }

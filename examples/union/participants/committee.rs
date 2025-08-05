@@ -191,16 +191,17 @@ impl Committee {
         slot_id: usize,
         user_public_key: PublicKey,
         pegout_id: Vec<u8>,
-        operator_id: usize,
+        selected_operator_pubkey: PublicKey,
     ) -> Result<()> {
-        // self.all(|op| {
-        self.members[operator_id].advance_funds(
-            committee_id,
-            slot_id,
-            user_public_key,
-            pegout_id.clone(),
-        )?;
-        // })?;
+        self.all(|op| {
+            op.advance_funds(
+                committee_id,
+                slot_id,
+                user_public_key,
+                pegout_id.clone(),
+                selected_operator_pubkey,
+            )
+        })?;
 
         Ok(())
     }

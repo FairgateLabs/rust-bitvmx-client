@@ -8,6 +8,7 @@ use crate::program::participant::ParticipantRole;
 // Key names
 pub const TAKE_AGGREGATED_KEY: &str = "take_aggregated_key";
 pub const DISPUTE_AGGREGATED_KEY: &str = "dispute_aggregated_key";
+pub const SELECTED_OPERATOR_PUBKEY: &str = "selected_operator_pubkey";
 
 // Transaction names
 pub const REQUEST_PEGIN_TX: &str = "REQUEST_PEGIN_TX";
@@ -48,6 +49,7 @@ pub const CHALLENGE_ENABLER: &str = "challenge_enabler";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Committee {
+    pub committee_id: Uuid,
     pub my_role: ParticipantRole,
     pub member_index: usize,
     pub take_aggregated_key: PublicKey,

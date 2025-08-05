@@ -13,6 +13,7 @@ use crate::{
 
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
+use uuid::Uuid;
 use protocol_builder::{
     builder::Protocol,
     graph::graph::GraphOptions,
@@ -128,14 +129,23 @@ impl ProtocolHandler for DisputeCoreProtocol {
 
     fn notify_news(
         &self,
-        _tx_id: Txid,
+        tx_id: Txid,
         _vout: Option<u32>,
-        _tx_status: TransactionStatus,
-        _context: String,
-        _program_context: &ProgramContext,
+        tx_status: TransactionStatus,
+        context: String,
+        program_context: &ProgramContext,
         _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
-        // TODO
+        let transaction_name = self.get_transaction_name_by_id(tx_id)?;
+        // Route to appropriate handler based on transaction type
+        if transaction_name.starts_with(REIMBURSEMENT_KICKOFF_TX) {
+            self.handle_reimbursement_kickoff_transaction(tx_id, &tx_status, &context, program_context)?;
+        }
+        // TODO: Add more transaction type handlers here as needed
+
+        // let a = AckNews::Monitor(AckMonitorNews::RskPeginTransaction(txid));
+        // _program_context.bitcoin_coordinator.ack_news(a);
+
         Ok(())
     }
 
@@ -524,6 +534,98 @@ impl DisputeCoreProtocol {
 
     fn dispute_aggregated_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
         Ok(self.committee(context)?.dispute_aggregated_key.clone())
+    }
+
+    fn committee_id(&self, context: &ProgramContext) -> Result<Uuid, BitVMXError> {
+        Ok(self.committee(context)?.committee_id)
+    }
+
+    fn extract_slot_id_from_context(&self, context: &str) -> Result<usize, BitVMXError> {
+        let prefix = format!("{}_", REIMBURSEMENT_KICKOFF_TX);
+        if let Some(suffix) = context.strip_prefix(&prefix) {
+            suffix.parse::<usize>().map_err(|_| BitVMXError::InvalidTransactionName(context.to_string()))
+        } else {
+            Err(BitVMXError::InvalidTransactionName(context.to_string()))
+        }
+    }
+
+    fn get_selected_operator_key(
+        &self,
+        slot_id: usize,
+        program_context: &ProgramContext,
+    ) -> Result<Option<PublicKey>, BitVMXError> {
+        let committee_id = self.committee_id(program_context)?;
+        let selected_operator_key_name = format!("{}_{}", SELECTED_OPERATOR_PUBKEY, slot_id);
+
+        match program_context.globals.get_var(&committee_id, &selected_operator_key_name)? {
+            Some(selected_operator_var) => Ok(Some(selected_operator_var.pubkey()?)),
+            None => Ok(None),
+        }
+    }
+
+    fn validate_transaction_signature(
+        &self,
+        _tx_id: Txid,
+        _tx_status: &TransactionStatus,
+        _expected_pubkey: PublicKey,
+    ) -> Result<bool, BitVMXError> {
+        // TODO: Implement actual signature validation
+        // For now, return true as placeholder
+        // In real implementation, this would:
+        // 1. Extract the transaction from tx_status
+        // 2. Verify the signature against expected_pubkey
+        // 3. Return true if signature is valid, false otherwise
+        info!("Validating transaction signature - placeholder implementation");
+        Ok(true)
+    }
+
+    fn dispatch_op_disabler_tx(
+        &self,
+        slot_id: usize,
+        _context: &ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        // TODO: Implement OP Disabler transaction dispatch
+        info!("Dispatching OP Disabler Tx for slot_id: {}", slot_id);
+        // In real implementation, this would:
+        // 1. Create the OP Disabler transaction
+        // 2. Submit it to the Bitcoin network
+        // 3. Handle any necessary coordination
+        Ok(())
+    }
+
+    fn handle_reimbursement_kickoff_transaction(
+        &self,
+        tx_id: Txid,
+        tx_status: &TransactionStatus,
+        context: &str,
+        program_context: &ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        info!("Detected reimbursement kickoff transaction: {} with context: {}", tx_id, context);
+
+        // Extract slot_id from the context
+        let slot_id = self.extract_slot_id_from_context(context)?;
+
+        // Get the selected operator's key for this slot
+        match self.get_selected_operator_key(slot_id, program_context)? {
+            Some(selected_operator_key) => {
+                // Validate transaction signature against selected operator's key
+                let is_valid = self.validate_transaction_signature(tx_id, tx_status, selected_operator_key)?;
+
+                if !is_valid {
+                    info!("Invalid signature detected for slot {}, dispatching OP Disabler Tx", slot_id);
+                    self.dispatch_op_disabler_tx(slot_id, program_context)?;
+                } else {
+                    info!("Valid signature confirmed for slot {}", slot_id);
+                }
+            }
+            None => {
+                info!("No selected operator key found for slot {}", slot_id);
+                // If no selected operator key is set, it means that someone triggered a reimbursment kickoff transaction but there was no advances of funds
+                self.dispatch_op_disabler_tx(slot_id, program_context)?;
+            }
+        }
+
+        Ok(())
     }
 }
 
