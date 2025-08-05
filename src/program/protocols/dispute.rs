@@ -1383,7 +1383,7 @@ impl DisputeResolutionProtocol {
         for (challenge_name, subnames) in CHALLENGES.iter() {
             let total_len = subnames.iter().map(|(_, size)| *size).sum::<usize>() as u32 * 2;
 
-            let names_and_keys = if challenge_name.starts_with("input") {
+            let names_and_keys = if *challenge_name == "input" {
                 vec![]
             } else {
                 subnames
@@ -1435,6 +1435,23 @@ impl DisputeResolutionProtocol {
                             ProgramInputType::Verifier(words, offset)
                             | ProgramInputType::Prover(words, offset) => {
                                 for j in *offset..*offset + *words {
+                                    let names_and_keys = subnames
+                                        .iter()
+                                        .map(|(var_name, _)| {
+                                            let var_name = if *var_name == "prover_program_input" {
+                                                format!("{}_{}", var_name, j)
+                                            } else {
+                                                var_name.to_string()
+                                            };
+                                            let idx =
+                                                if var_name.starts_with("prover") { 0 } else { 1 };
+                                            (
+                                                var_name.clone(),
+                                                keys[idx].get_winternitz(&var_name).unwrap(),
+                                            )
+                                        })
+                                        .collect::<Vec<_>>();
+
                                     let address = base_addr + j * 4;
                                     let mut scripts = vec![reverse_script.clone()];
                                     stack = StackTracker::new();
