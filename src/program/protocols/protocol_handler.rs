@@ -312,9 +312,9 @@ pub trait ProtocolHandler {
     ) -> Result<Vec<String>, BitVMXError> {
         info!(
             "Program {}: Decoding witness for {} with input index {}",
-            self.context().id,
-            name,
-            input_index
+            style(self.context().protocol_name.clone()).blue(),
+            style(name).green(),
+            style(input_index).yellow()
         );
         let protocol = protocol.unwrap_or(self.load_protocol()?);
 
@@ -328,6 +328,11 @@ pub trait ProtocolHandler {
                     &format!("{}_{}_leaf_index", name, input_index),
                     VariableTypes::Number(leaf),
                 )?;
+                info!(
+                    "Leaf index for {}: {}",
+                    style(name).green(),
+                    style(leaf).yellow()
+                );
                 leaf
             }
         };

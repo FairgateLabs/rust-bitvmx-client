@@ -19,6 +19,8 @@ use bitvmx_wallet::wallet::Wallet;
 use common::dispute::{prepare_dispute, ForcedChallenges};
 use common::{clear_db, init_utxo_new, FUNDING_ID, INITIAL_BLOCK_COUNT, WALLET_NAME};
 use common::{config_trace, send_all};
+use emulator::decision::challenge::{ForceChallenge, ForceCondition};
+use emulator::executor::utils::{FailConfiguration, FailReads};
 use protocol_builder::scripts::{self, SignMode};
 use protocol_builder::types::Utxo;
 use std::sync::mpsc::channel;
@@ -376,6 +378,12 @@ pub fn test_all_aux(
     network: Network,
     program: Option<String>,
     inputs: Option<(&str, u32, &str, u32)>,
+    fail_data: Option<(
+        Option<FailConfiguration>,
+        Option<FailConfiguration>,
+        ForceChallenge,
+        ForceCondition,
+    )>,
 ) -> Result<()> {
     config_trace();
 
@@ -496,6 +504,7 @@ pub fn test_all_aux(
         false,
         false,
         ForcedChallenges::No,
+        fail_data,
         program,
     )?;
 
@@ -558,20 +567,20 @@ fn wait_enter(independent: bool) {
 #[ignore]
 #[test]
 fn test_independent_testnet() -> Result<()> {
-    test_all_aux(true, Network::Testnet, None, None)?;
+    test_all_aux(true, Network::Testnet, None, None, None)?;
     Ok(())
 }
 #[ignore]
 #[test]
 fn test_independent_regtest() -> Result<()> {
-    test_all_aux(true, Network::Regtest, None, None)?;
+    test_all_aux(true, Network::Regtest, None, None, None)?;
     Ok(())
 }
 
 #[ignore]
 #[test]
 fn test_all() -> Result<()> {
-    test_all_aux(false, Network::Regtest, None, None)?;
+    test_all_aux(false, Network::Regtest, None, None, None)?;
     Ok(())
 }
 
@@ -583,6 +592,7 @@ fn test_const() -> Result<()> {
         Network::Regtest,
         Some("./verifiers/add-test-with-const-pre.yaml".to_string()),
         Some(("0000000100000002", 0, "00000003", 1)),
+        None,
     )?;
 
     test_all_aux(
@@ -590,6 +600,45 @@ fn test_const() -> Result<()> {
         Network::Regtest,
         Some("./verifiers/add-test-with-const-post.yaml".to_string()),
         Some(("0000000200000003", 1, "00000001", 0)),
+        None,
+    )?;
+
+    Ok(())
+}
+
+#[ignore]
+#[test]
+fn test_const_fail_input() -> Result<()> {
+    let fail_config = (
+        Some(FailConfiguration::new_fail_reads(FailReads::new(
+            None,
+            Some(&vec![
+                "16".to_string(),
+                "0xaa000000".to_string(),
+                "0x00000002".to_string(),
+                "0xaa000000".to_string(),
+                "0xffffffffffffffff".to_string(),
+            ]),
+        ))),
+        None,
+        ForceChallenge::No,
+        ForceCondition::ValidInputWrongStepOrHash,
+    );
+
+    test_all_aux(
+        false,
+        Network::Regtest,
+        Some("./verifiers/add-test-with-const-post.yaml".to_string()),
+        Some(("0000000200000004", 1, "00000001", 0)),
+        Some(fail_config.clone()),
+    )?;
+
+    test_all_aux(
+        false,
+        Network::Regtest,
+        Some("./verifiers/add-test-with-const-pre.yaml".to_string()),
+        Some(("0000000100000002", 0, "00000004", 1)),
+        Some(fail_config),
     )?;
 
     Ok(())

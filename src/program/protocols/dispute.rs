@@ -161,7 +161,7 @@ pub const ROM_CHALLENGE: [(&str, usize); 6] = [
     ("prover_read_2_last_step", 8),
 ];
 
-pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 10] = [
+pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 9] = [
     ("entry_point", &ENTRY_POINT_CHALLENGE),
     ("program_counter", &PROGRAM_COUNTER_CHALLENGE),
     ("halt", &HALT_CHALLENGE),
@@ -169,7 +169,6 @@ pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 10] = [
     ("trace_hash_zero", &TRACE_HASH_ZERO_CHALLENGE),
     ("addresses_sections", &ADDRESSES_SECTIONS_CHALLENGE),
     ("input", &INPUT_CHALLENGE),
-    ("input_const", &ROM_CHALLENGE),
     ("opcode", &OPCODE_CHALLENGE),
     ("rom", &ROM_CHALLENGE),
 ];
@@ -786,39 +785,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &tx_status.tx,
                 None,
             )?;
-
-            let challenge_idx = program_context
-                .globals
-                .get_var(&self.ctx.id, &format!("CHALLENGE_{}_leaf_index", 0))?
-                .unwrap()
-                .number()?;
-
-            let (real_idx, sub_idx) = self.resolve_challenge_idx(challenge_idx, program_context)?;
-            let (challenge_name, subchallenges) = CHALLENGES
-                .get(real_idx as usize)
-                .ok_or(BitVMXError::ChallengeIdxNotFound(real_idx))?;
-
-            let mut values = HashMap::with_capacity(subchallenges.len());
-            for (var_name, _) in *subchallenges {
-                let var_name = if *var_name == "prover_program_input" {
-                    format!("{}_{}", var_name, sub_idx.unwrap_or(0))
-                } else {
-                    var_name.to_string()
-                };
-                let value = program_context
-                    .witness
-                    .get_witness(&self.ctx.id, &var_name)?
-                    .unwrap()
-                    .winternitz()?
-                    .message_bytes();
-                values.insert(var_name, value);
-            }
-
-            info!(
-                "Prover decoded challenge {} with values: {:?} idx: {:?}",
-                challenge_name, values, sub_idx
-            );
-            //TODO: continue challenge for some challenges
+            //TODO: if the verifier is able to execute the challenge, the prover can react only to the read challenge nary search
         }
 
         Ok(())
@@ -1380,29 +1347,47 @@ impl DisputeResolutionProtocol {
 
         let mut challenge_leaf_script = vec![];
 
+        let mut challenge_current_leaf = 0;
+
         for (challenge_name, subnames) in CHALLENGES.iter() {
             let total_len = subnames.iter().map(|(_, size)| *size).sum::<usize>() as u32 * 2;
 
-            let names_and_keys = if *challenge_name == "input" {
-                vec![]
+            let (names_and_keys, alternate_reverse) = if *challenge_name == "input" {
+                //for constant inputs we don't need the input var
+                let mut stack = StackTracker::new();
+                let total_len = total_len - INPUT_CHALLENGE[0].1 as u32 * 2;
+                let all = stack.define(total_len, "all");
+                for i in 1..total_len {
+                    stack.move_var_sub_n(all, total_len - i - 1);
+                }
+                let reverse_script = stack.get_script();
+                (vec![], Some(reverse_script))
             } else {
-                subnames
-                    .iter()
-                    .map(|(var_name, _)| {
-                        let idx = if var_name.starts_with("prover") { 0 } else { 1 };
-                        (var_name, keys[idx].get_winternitz(var_name).unwrap())
-                    })
-                    .collect::<Vec<_>>()
+                (
+                    subnames
+                        .iter()
+                        .map(|(var_name, _)| {
+                            let idx = if var_name.starts_with("prover") { 0 } else { 1 };
+                            (var_name, keys[idx].get_winternitz(var_name).unwrap())
+                        })
+                        .collect::<Vec<_>>(),
+                    None,
+                )
             };
 
+            //TODO: This is a workaround to reverse the order of the stack
             let mut stack = StackTracker::new();
             let all = stack.define(total_len, "all");
-
-            //TODO: This is a workaround to remove one nibble from the micro instructions
             for i in 1..total_len {
                 stack.move_var_sub_n(all, total_len - i - 1);
             }
             let reverse_script = stack.get_script();
+
+            context.globals.set_var(
+                &self.ctx.id,
+                &format!("challenge_leaf_start_{}", challenge_name),
+                VariableTypes::Number(challenge_current_leaf),
+            )?;
 
             match *challenge_name {
                 "opcode" => {
@@ -1421,15 +1406,23 @@ impl DisputeResolutionProtocol {
                         )?;
                         challenge_leaf_script.push(winternitz_check);
                     }
+                    challenge_current_leaf += chunks.len() as u32;
                 }
-                "input_const" | "input" => {
+                "input" => {
                     let base_addr = program
                         .find_section_by_name(&program_definitions.input_section_name)
                         .unwrap()
                         .start;
 
                     let (inputs, _) = generate_input_owner_list(&program_definitions)?;
-
+                    let const_names_and_keys = subnames
+                        .iter()
+                        .skip(1)
+                        .map(|(var_name, _)| {
+                            let idx = if var_name.starts_with("prover") { 0 } else { 1 };
+                            (var_name, keys[idx].get_winternitz(&var_name).unwrap())
+                        })
+                        .collect::<Vec<_>>();
                     for (idx, input) in inputs.iter().enumerate() {
                         match input {
                             ProgramInputType::Verifier(words, offset)
@@ -1467,12 +1460,14 @@ impl DisputeResolutionProtocol {
                                         )?;
                                     challenge_leaf_script.push(winternitz_check);
                                 }
+                                challenge_current_leaf += *words as u32;
                             }
 
                             ProgramInputType::Const(words, offset) => {
                                 for j in *offset..*offset + *words {
                                     let address = base_addr + j * 4;
-                                    let mut scripts = vec![reverse_script.clone()];
+                                    let mut scripts =
+                                        vec![alternate_reverse.as_ref().unwrap().clone()];
                                     stack = StackTracker::new();
 
                                     let key = program_input_word(idx as u32, j);
@@ -1489,13 +1484,14 @@ impl DisputeResolutionProtocol {
                                     let winternitz_check =
                                         scripts::verify_winternitz_signatures_aux(
                                             aggregated,
-                                            &names_and_keys,
+                                            &const_names_and_keys,
                                             sign_mode,
                                             true,
                                             Some(scripts),
                                         )?;
                                     challenge_leaf_script.push(winternitz_check);
                                 }
+                                challenge_current_leaf += *words as u32;
                             }
                             _ => {}
                         }
@@ -1503,8 +1499,9 @@ impl DisputeResolutionProtocol {
                 }
                 "rom" => {
                     let rodata = program.find_section_by_name(".rodata").unwrap();
+                    let rodata_words = rodata.data.len() as u32;
                     let base_addr = rodata.start;
-                    for i in 0..program.find_section_by_name(".rodata").unwrap().data.len() as u32 {
+                    for i in 0..rodata_words {
                         let address = base_addr + i;
                         let value = program.read_mem(address).unwrap();
                         let mut scripts = vec![reverse_script.clone()];
@@ -1520,8 +1517,10 @@ impl DisputeResolutionProtocol {
                         )?;
                         challenge_leaf_script.push(winternitz_check);
                     }
+                    challenge_current_leaf += rodata_words;
                 }
                 _ => {
+                    challenge_current_leaf += 1;
                     let mut scripts = vec![reverse_script.clone()];
                     stack = StackTracker::new();
 
@@ -1876,21 +1875,11 @@ impl DisputeResolutionProtocol {
             }
             EmulatorResultType::VerifierChooseChallengeResult { challenge } => {
                 info!("Verifier choose challenge result: {:?}", challenge);
-                let leaf_index: usize;
                 let name: &str;
                 let mut dynamic_offset: u32 = 0; // For offset inside a specific challenge
 
-                let (mut program, opcode_chunks, input_words, rodata_len) = {
-                    let mut program = self.get_program_definition(&context)?.0.load_program()?;
-                    let opcode_chunks = program.get_chunk_count(CODE_CHUNK_SIZE) as usize;
-                    let input_words = context
-                        .globals
-                        .get_var(&self.ctx.id, "input_words")?
-                        .unwrap()
-                        .number()? as usize;
-                    let rodata_len = program.find_section_by_name(".rodata").unwrap().data.len();
-                    (program, opcode_chunks, input_words, rodata_len)
-                };
+                let program_definitions = self.get_program_definition(context)?;
+                let mut program = program_definitions.0.load_program()?;
 
                 match challenge {
                     ChallengeType::EntryPoint(_trace_read_pc, _prover_trace_step, _entrypoint) => {
@@ -1961,8 +1950,11 @@ impl DisputeResolutionProtocol {
                         name = "input";
                         info!("Verifier chose {name} challenge");
 
-                        let base_addr = program.find_section_by_name(".input").unwrap().start;
-                        dynamic_offset = (address - base_addr) / 4; //TODO: get 4 from context
+                        let base_addr = program
+                            .find_section_by_name(&program_definitions.0.input_section_name)
+                            .unwrap()
+                            .start;
+                        dynamic_offset = (address - base_addr) / 4;
                     }
 
                     ChallengeType::Opcode(_pc_read, chunk_index, _chunk_base, _opcodes_chunk) => {
@@ -2004,30 +1996,22 @@ impl DisputeResolutionProtocol {
                     return Ok(());
                 }
 
-                // Determine offset
-                let passed_input = matches!(
-                    challenge,
-                    ChallengeType::Opcode(..) | ChallengeType::RomData(..)
+                let leaf_start = context
+                    .globals
+                    .get_var(&self.ctx.id, &format!("challenge_leaf_start_{}", name))?
+                    .unwrap()
+                    .number()? as u32;
+
+                info!(
+                    "Leaf start: {}, leaf offset: {}",
+                    leaf_start, dynamic_offset
                 );
-                let passed_opcode = matches!(challenge, ChallengeType::RomData(..));
-                let passed_rom = false; // matches!(challenge,);  TODO: add next challenges that pass rom
-
-                let leaf_offset = (if passed_input { input_words - 1 } else { 0 })
-                    + (if passed_opcode { opcode_chunks - 1 } else { 0 })
-                    + (if passed_rom { rodata_len - 1 } else { 0 })
-                    + dynamic_offset as usize;
-                leaf_index = CHALLENGES
-                    .iter()
-                    .position(|(n, _)| *n == name)
-                    .ok_or_else(|| BitVMXError::ChallengeNotFound(name.to_string()))?;
-
-                info!("Leaf index: {}, leaf offset: {}", leaf_index, leaf_offset);
 
                 let (tx, sp) = self.get_tx_with_speedup_data(
                     context,
                     CHALLENGE,
                     0,
-                    (leaf_index + leaf_offset) as u32,
+                    (leaf_start + dynamic_offset) as u32,
                     true,
                 )?;
                 context.bitcoin_coordinator.dispatch(
@@ -2039,65 +2023,6 @@ impl DisputeResolutionProtocol {
             }
         }
         Ok(())
-    }
-
-    fn resolve_challenge_idx(
-        &self,
-        challenge_idx: u32,
-        program_context: &ProgramContext,
-    ) -> Result<(u32, Option<u32>), BitVMXError> {
-        let mut program = self
-            .get_program_definition(program_context)?
-            .0
-            .load_program()?;
-
-        let input_idx = Self::get_challenge_index("input");
-        let opcode_idx = Self::get_challenge_index("opcode");
-        let rom_idx = Self::get_challenge_index("rom");
-
-        let input_words = program_context
-            .globals
-            .get_var(&self.ctx.id, "input_words")?
-            .unwrap()
-            .number()?;
-        let opcode_words = program.get_chunk_count(CODE_CHUNK_SIZE);
-        let rom_words = program.find_section_by_name(".rodata").unwrap().data.len() as u32;
-
-        let input_start = input_idx;
-        let input_end = input_start + input_words;
-
-        let opcode_start = input_end;
-        let opcode_end = opcode_start + opcode_words;
-
-        let rom_start = opcode_end;
-        let rom_end = rom_start + rom_words;
-
-        let (real_idx, sub_idx) = if challenge_idx < input_start {
-            (challenge_idx, None) // simple fixed challenge
-        } else if challenge_idx < input_end {
-            let sub = challenge_idx - input_start;
-            let idx = if input_words == 1 { None } else { Some(sub) };
-            (input_idx, idx) // inside input
-        } else if challenge_idx < opcode_end {
-            let sub = challenge_idx - opcode_start;
-            let idx = if opcode_words == 1 { None } else { Some(sub) };
-            (opcode_idx, idx) // inside opcode
-        } else if challenge_idx < rom_end {
-            let sub = challenge_idx - rom_start;
-            let idx = if rom_words == 1 { None } else { Some(sub) };
-            (rom_idx, idx) // inside rom
-        } else {
-            return Err(BitVMXError::ChallengeIdxNotFound(challenge_idx));
-        };
-
-        Ok((real_idx, sub_idx))
-    }
-
-    fn get_challenge_index(name: &str) -> u32 {
-        CHALLENGES
-            .iter()
-            .position(|(n, _)| *n == name)
-            .expect("challenge not found") as u32
     }
 
     fn get_execution_path(&self) -> Result<String, BitVMXError> {

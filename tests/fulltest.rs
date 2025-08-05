@@ -209,6 +209,7 @@ pub fn test_full() -> Result<()> {
         fake_instruction,
         ForcedChallenges::No,
         None,
+        None,
     )?;
 
     //WAIT SETUP READY

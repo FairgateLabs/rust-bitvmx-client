@@ -62,10 +62,16 @@ pub fn prepare_dispute(
     fake: bool,
     fake_instruction: bool,
     fail_force_config: ForcedChallenges,
+    fail_data: Option<(
+        Option<FailConfiguration>,
+        Option<FailConfiguration>,
+        ForceChallenge,
+        ForceCondition,
+    )>,
     program_path: Option<String>,
 ) -> Result<()> {
     let (fail_config_prover, fail_config_verifier, force, force_condition) =
-        get_fail_force_config(fail_force_config);
+        fail_data.unwrap_or(get_fail_force_config(fail_force_config));
 
     let set_fail_force_config = VariableTypes::FailConfiguration(
         fail_config_prover,

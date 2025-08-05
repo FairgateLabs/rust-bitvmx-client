@@ -130,7 +130,8 @@ pub fn test_drp() -> Result<()> {
         500,
         false,
         false,
-        ForcedChallenges::No, //EntryPoint(ParticipantRole::Prover),
+        ForcedChallenges::No,
+        None,
         None,
     )?;
     let _msgs = get_all(&channels, &mut instances, false)?;

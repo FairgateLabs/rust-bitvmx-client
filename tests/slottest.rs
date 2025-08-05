@@ -187,6 +187,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
             fake_instruction,
             ForcedChallenges::No,
             None,
+            None,
         )?;
         let _msgs = get_all(&sub_channel.clone(), &mut instances, false)?;
         info!("Dispute setup done");
