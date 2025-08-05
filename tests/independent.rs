@@ -371,7 +371,12 @@ impl TestHelper {
     }
 }
 
-pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
+pub fn test_all_aux(
+    independent: bool,
+    network: Network,
+    program: Option<String>,
+    inputs: Option<(&str, u32, &str, u32)>,
+) -> Result<()> {
     config_trace();
 
     let mut helper = TestHelper::new(network, independent, Some(1000))?;
@@ -472,10 +477,11 @@ pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
     let pair_0_1_channels = vec![helper.channels[0].clone(), helper.channels[1].clone()];
     let prog_id = Uuid::new_v4();
 
-    let result_const = "00000003";
-    let const_input = VariableTypes::Input(hex::decode(result_const).unwrap())
-        .set_msg(prog_id, &program_input(1))?;
-    let _ = send_all(&pair_0_1_channels, &const_input);
+    if let Some(input) = inputs {
+        let const_input = VariableTypes::Input(hex::decode(input.0).unwrap())
+            .set_msg(prog_id, &program_input(input.1))?;
+        let _ = send_all(&pair_0_1_channels, &const_input);
+    }
 
     prepare_dispute(
         prog_id,
@@ -490,9 +496,7 @@ pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
         false,
         false,
         ForcedChallenges::No,
-        Some("./verifiers/add-test-with-const.yaml".to_string()),
-        //Some("./verifiers/add-test.yaml".to_string()),
-        //None,
+        program,
     )?;
 
     let msg = helper.wait_msg(0)?;
@@ -515,15 +519,20 @@ pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
 
     helper.wait_tx_name(1, program::protocols::dispute::START_CH)?;
 
-    let data = "0000000100000002";
+    let (data, idx) = if let Some(input) = inputs {
+        (input.2, input.3)
+    } else {
+        ("11111111", 0)
+    };
+
     let set_input_1 =
-        VariableTypes::Input(hex::decode(data).unwrap()).set_msg(prog_id, &program_input(0))?;
+        VariableTypes::Input(hex::decode(data).unwrap()).set_msg(prog_id, &program_input(idx))?;
     let _ = helper.channels[0].send(BITVMX_ID, set_input_1)?;
 
     // send the tx
     let _ = helper.channels[0].send(
         BITVMX_ID,
-        IncomingBitVMXApiMessages::DispatchTransactionName(prog_id, input_tx_name(0))
+        IncomingBitVMXApiMessages::DispatchTransactionName(prog_id, input_tx_name(idx))
             .to_string()?,
     );
 
@@ -549,20 +558,40 @@ fn wait_enter(independent: bool) {
 #[ignore]
 #[test]
 fn test_independent_testnet() -> Result<()> {
-    test_all_aux(true, Network::Testnet)?;
+    test_all_aux(true, Network::Testnet, None, None)?;
     Ok(())
 }
 #[ignore]
 #[test]
 fn test_independent_regtest() -> Result<()> {
-    test_all_aux(true, Network::Regtest)?;
+    test_all_aux(true, Network::Regtest, None, None)?;
     Ok(())
 }
 
 #[ignore]
 #[test]
 fn test_all() -> Result<()> {
-    test_all_aux(false, Network::Regtest)?;
+    test_all_aux(false, Network::Regtest, None, None)?;
+    Ok(())
+}
+
+#[ignore]
+#[test]
+fn test_const() -> Result<()> {
+    test_all_aux(
+        false,
+        Network::Regtest,
+        Some("./verifiers/add-test-with-const-pre.yaml".to_string()),
+        Some(("0000000100000002", 0, "00000003", 1)),
+    )?;
+
+    test_all_aux(
+        false,
+        Network::Regtest,
+        Some("./verifiers/add-test-with-const-post.yaml".to_string()),
+        Some(("0000000200000003", 1, "00000001", 0)),
+    )?;
+
     Ok(())
 }
 

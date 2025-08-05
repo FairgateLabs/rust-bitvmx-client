@@ -5,7 +5,9 @@ use uuid::Uuid;
 use crate::{
     errors::BitVMXError,
     program::{
-        participant::ParticipantRole, protocols::dispute::program_input, variables::VariableTypes,
+        participant::ParticipantRole,
+        protocols::dispute::{program_input, program_input_word},
+        variables::VariableTypes,
     },
     types::ProgramContext,
 };
@@ -75,7 +77,9 @@ pub fn get_required_keys(
     let mut input_txs_offsets = vec![];
     //let mut drp_txs = 0;
 
-    for input in input_mapping.iter() {
+    let mut last_tx_id = 0;
+
+    for (idx, input) in input_mapping.iter().enumerate() {
         match input {
             // if the input is owned by the prover it's the only one that needs to be set
             ProgramInputType::Prover(words, offset) => {
@@ -87,6 +91,7 @@ pub fn get_required_keys(
                         required_keys.push(format!("prover_program_input_{}", offset + i));
                     }
                 }
+                last_tx_id = input_txs.len();
             }
             // if the input is owned by the verifier then the prover needs to cosign it
             ProgramInputType::Verifier(words, offset) => {
@@ -103,27 +108,50 @@ pub fn get_required_keys(
                         offset + i
                     ));
                 }
+                last_tx_id = input_txs.len();
             }
-            /*ProgramInputType::Const(words, offset)
-            | ProgramInputType::ProverPrev(words, offset) => {
+            ProgramInputType::Const(words, offset) => {
+                //similar to split_input
+                let full_input = program_context
+                    .globals
+                    .get_var(id, &program_input(idx as u32))?
+                    .unwrap()
+                    .input()?;
+
+                for i in 0..*words {
+                    let partial_input = full_input
+                        .get((i * 4) as usize..((i + 1) * 4) as usize)
+                        .unwrap();
+                    program_context.globals.set_var(
+                        id,
+                        &program_input_word(idx as u32, i + offset),
+                        VariableTypes::Input(partial_input.to_vec()),
+                    )?;
+                }
                 input_txs.push("skip".to_string());
                 input_txs_sizes.push(*words);
                 input_txs_offsets.push(*offset);
-            }*/
-            _ => {}
+            }
+
+            ProgramInputType::ProverPrev(words, offset) => {
+                input_txs.push("skip".to_string());
+                input_txs_sizes.push(*words);
+                input_txs_offsets.push(*offset);
+            }
         }
     }
 
-    //info!("DRP txs: {}", drp_txs);
     info!("Input txs: {:?}", input_txs);
     info!("Input txs sizes: {:?}", input_txs_sizes);
     info!("Input txs offsets: {:?}", input_txs_offsets);
     info!("Required keys: {:?}", required_keys);
     info!("Total words: {}", total_words);
 
-    /*program_context
-    .globals
-    .set_var(id, "drp_txs", VariableTypes::Number(drp_txs))?;*/
+    program_context.globals.set_var(
+        id,
+        "last_tx_id",
+        VariableTypes::Number(last_tx_id as u32 - 1),
+    )?;
     program_context
         .globals
         .set_var(id, "input_txs", VariableTypes::VecStr(input_txs))?;
@@ -141,10 +169,40 @@ pub fn get_required_keys(
     Ok(required_keys)
 }
 
+pub fn split_input(
+    id: &Uuid,
+    idx: u32,
+    program_context: &ProgramContext,
+) -> Result<(), BitVMXError> {
+    let (input_txs, input_txs_sizes, input_txs_offsets, _) =
+        get_txs_configuration(id, program_context)?;
+
+    let full_input = program_context
+        .globals
+        .get_var(id, &program_input(idx))?
+        .unwrap()
+        .input()?;
+    let words = input_txs_sizes[idx as usize];
+    let owner = input_txs[idx as usize].as_str();
+    let offset = input_txs_offsets[idx as usize];
+
+    for i in 0..words {
+        let partial_input = full_input
+            .get((i * 4) as usize..((i + 1) * 4) as usize)
+            .unwrap();
+        program_context.globals.set_var(
+            id,
+            &format!("{}_program_input_{}", owner, i + offset),
+            VariableTypes::Input(partial_input.to_vec()),
+        )?;
+    }
+    Ok(())
+}
+
 pub fn get_txs_configuration(
     id: &Uuid,
     program_context: &ProgramContext,
-) -> Result<(Vec<String>, Vec<u32>, Vec<u32>), BitVMXError> {
+) -> Result<(Vec<String>, Vec<u32>, Vec<u32>, u32), BitVMXError> {
     let input_txs = program_context
         .globals
         .get_var(id, "input_txs")?
@@ -160,13 +218,18 @@ pub fn get_txs_configuration(
         .get_var(id, "input_txs_offsets")?
         .unwrap()
         .vec_number()?;
+    let last_tx_id = program_context
+        .globals
+        .get_var(id, "last_tx_id")?
+        .unwrap()
+        .number()?;
 
     if input_txs.len() != input_txs_sizes.len() || input_txs.len() != input_txs_offsets.len() {
         return Err(BitVMXError::DisputeResolutionProtocolSetup(
             "Input txs configuration is not valid".to_string(),
         ));
     }
-    Ok((input_txs, input_txs_sizes, input_txs_offsets))
+    Ok((input_txs, input_txs_sizes, input_txs_offsets, last_tx_id))
 }
 
 pub fn unify_witnesses(
@@ -174,7 +237,7 @@ pub fn unify_witnesses(
     program_context: &ProgramContext,
     idx: usize,
 ) -> Result<(), BitVMXError> {
-    let (input_txs, input_txs_sizes, input_txs_offsets) =
+    let (input_txs, input_txs_sizes, input_txs_offsets, _) =
         get_txs_configuration(&id, program_context)?;
     let owner = &input_txs[idx];
     let offset = input_txs_offsets[idx];

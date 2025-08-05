@@ -25,7 +25,6 @@ use emulator::{
     decision::challenge::{ForceChallenge, ForceCondition},
     loader::program_definition::ProgramDefinition,
 };
-use key_manager::winternitz::WinternitzPublicKey;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
     graph::graph::GraphOptions,
@@ -48,7 +47,8 @@ use crate::{
         protocols::{
             claim::ClaimGate,
             input_handler::{
-                get_required_keys, get_txs_configuration, unify_inputs, unify_witnesses,
+                generate_input_owner_list, get_required_keys, get_txs_configuration, split_input,
+                unify_inputs, unify_witnesses, ProgramInputType,
             },
         },
         variables::VariableTypes,
@@ -161,7 +161,7 @@ pub const ROM_CHALLENGE: [(&str, usize); 6] = [
     ("prover_read_2_last_step", 8),
 ];
 
-pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 9] = [
+pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 10] = [
     ("entry_point", &ENTRY_POINT_CHALLENGE),
     ("program_counter", &PROGRAM_COUNTER_CHALLENGE),
     ("halt", &HALT_CHALLENGE),
@@ -169,6 +169,7 @@ pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 9] = [
     ("trace_hash_zero", &TRACE_HASH_ZERO_CHALLENGE),
     ("addresses_sections", &ADDRESSES_SECTIONS_CHALLENGE),
     ("input", &INPUT_CHALLENGE),
+    ("input_const", &ROM_CHALLENGE),
     ("opcode", &OPCODE_CHALLENGE),
     ("rom", &ROM_CHALLENGE),
 ];
@@ -198,6 +199,10 @@ pub fn input_tx_name(index: u32) -> String {
 }
 pub fn program_input(index: u32) -> String {
     format!("program_input_{}", index)
+}
+
+pub fn program_input_word(index: u32, word: u32) -> String {
+    format!("program_input_{}_{}", index, word)
 }
 
 impl ProtocolHandler for DisputeResolutionProtocol {
@@ -366,14 +371,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         if name.starts_with(INPUT_TX) && vout.is_some() {
             let idx = name.strip_prefix(INPUT_TX).unwrap().parse::<u32>()?;
 
-            let (input_txs, _input_txs_sizes, _input_txs_offsets) =
+            let (input_txs, _input_txs_sizes, _input_txs_offsets, last_tx_id) =
                 get_txs_configuration(&self.ctx.id, program_context)?;
 
             let owner = input_txs[idx as usize].as_str();
 
             if owner == self.role().to_string() {
                 //if I'm the prover and it's the last input
-                if self.role() == ParticipantRole::Prover && idx == input_txs.len() as u32 - 1 {
+                if self.role() == ParticipantRole::Prover && idx == last_tx_id {
                     let (def, program_definition) = self.get_program_definition(program_context)?;
                     let full_input = unify_inputs(&self.ctx.id, program_context, &def)?;
 
@@ -909,7 +914,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         let mut prev_tx = START_CH.to_string();
         let mut input_tx = String::new();
 
-        let (input_txs, input_txs_sizes, input_txs_offsets) =
+        let (input_txs, input_txs_sizes, input_txs_offsets, _) =
             get_txs_configuration(&self.ctx.id, context)?;
 
         //TODO: remove this
@@ -919,6 +924,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             VariableTypes::Number(input_txs_sizes[0]),
         )?;
         for (idx, tx_owner) in input_txs.iter().enumerate() {
+            if tx_owner == "skip" {
+                continue;
+            }
             input_tx = format!("INPUT_{}", idx);
 
             let words = input_txs_sizes[idx];
@@ -1263,28 +1271,7 @@ impl DisputeResolutionProtocol {
         idx: u32,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        let (input_txs, input_txs_sizes, input_txs_offsets) =
-            get_txs_configuration(&self.ctx.id, context)?;
-
-        let full_input = context
-            .globals
-            .get_var(&self.ctx.id, &program_input(idx))?
-            .unwrap()
-            .input()?;
-        let words = input_txs_sizes[idx as usize];
-        let owner = input_txs[idx as usize].as_str();
-        let offset = input_txs_offsets[idx as usize];
-
-        for i in 0..words {
-            let partial_input = full_input
-                .get((i * 4) as usize..((i + 1) * 4) as usize)
-                .unwrap();
-            context.globals.set_var(
-                &self.ctx.id,
-                &format!("{}_program_input_{}", owner, i + offset),
-                VariableTypes::Input(partial_input.to_vec()),
-            )?;
-        }
+        split_input(&self.ctx.id, idx, context)?;
 
         let (tx, sp) = self.get_tx_with_speedup_data(context, &input_tx_name(idx), 0, 0, true)?;
 
@@ -1391,107 +1378,116 @@ impl DisputeResolutionProtocol {
         let (program_definitions, _) = self.get_program_definition(context)?;
         let mut program = program_definitions.load_program()?;
 
-        let mut names_and_keys: HashMap<&str, Vec<Vec<(String, &WinternitzPublicKey)>>> =
-            HashMap::new();
-
-        let iteration_counts = HashMap::from([
-            ("opcode", program.get_chunk_count(CODE_CHUNK_SIZE)),
-            (
-                "input",
-                context
-                    .globals
-                    .get_var(&self.ctx.id, "input_words")?
-                    .unwrap()
-                    .number()?,
-            ),
-            (
-                "rom",
-                program.find_section_by_name(".rodata").unwrap().data.len() as u32,
-            ),
-        ]);
-
-        for (challenge_name, var_names) in CHALLENGES.iter() {
-            let iterations = *iteration_counts.get(challenge_name).unwrap_or(&1);
-            let mut groups: Vec<Vec<(String, &WinternitzPublicKey)>> =
-                Vec::with_capacity(iterations as usize);
-
-            for i in 0..iterations {
-                let group = var_names
-                    .iter()
-                    .map(|(var_name, _)| {
-                        let idx = if var_name.starts_with("prover") { 0 } else { 1 };
-                        let var_name = if *var_name == "prover_program_input" {
-                            format!("{}_{}", var_name, i)
-                        } else {
-                            var_name.to_string()
-                        };
-                        //info!("getting winternitz key for: {}, idx: {}", var_name, idx);
-                        let key = keys[idx].get_winternitz(&var_name).unwrap();
-                        (var_name, key)
-                    })
-                    .collect::<Vec<_>>();
-                groups.push(group);
-            }
-
-            names_and_keys.insert(challenge_name, groups);
-        }
-        let mut winternitz_check_list = vec![];
+        let mut challenge_leaf_script = vec![];
 
         for (challenge_name, subnames) in CHALLENGES.iter() {
             let total_len = subnames.iter().map(|(_, size)| *size).sum::<usize>() as u32 * 2;
 
+            let names_and_keys = if challenge_name.starts_with("input") {
+                vec![]
+            } else {
+                subnames
+                    .iter()
+                    .map(|(var_name, _)| {
+                        let idx = if var_name.starts_with("prover") { 0 } else { 1 };
+                        (var_name, keys[idx].get_winternitz(var_name).unwrap())
+                    })
+                    .collect::<Vec<_>>()
+            };
+
             let mut stack = StackTracker::new();
             let all = stack.define(total_len, "all");
+
             //TODO: This is a workaround to remove one nibble from the micro instructions
             for i in 1..total_len {
                 stack.move_var_sub_n(all, total_len - i - 1);
             }
             let reverse_script = stack.get_script();
+
             match *challenge_name {
                 "opcode" => {
                     let chunks = program.get_chunks(CODE_CHUNK_SIZE);
-                    for (i, (chunk_base, opcodes_chunk)) in chunks.iter().enumerate() {
+                    for (chunk_base, opcodes_chunk) in chunks.iter() {
                         let mut scripts = vec![reverse_script.clone()];
                         stack = StackTracker::new();
                         opcode_challenge(&mut stack, *chunk_base, &opcodes_chunk);
                         scripts.push(stack.get_script());
                         let winternitz_check = scripts::verify_winternitz_signatures_aux(
                             aggregated,
-                            &names_and_keys[challenge_name][i],
+                            &names_and_keys,
                             sign_mode,
                             true,
                             Some(scripts),
                         )?;
-                        winternitz_check_list.push(winternitz_check);
+                        challenge_leaf_script.push(winternitz_check);
                     }
                 }
-                "input" => {
+                "input_const" | "input" => {
                     let base_addr = program
                         .find_section_by_name(&program_definitions.input_section_name)
                         .unwrap()
                         .start;
-                    let words = iteration_counts.get(challenge_name).unwrap();
-                    for i in 0..*words {
-                        let address = base_addr + i * 4; //TODO: get 4 from context
-                        let mut scripts = vec![reverse_script.clone()];
-                        stack = StackTracker::new();
-                        input_challenge(&mut stack, address);
-                        scripts.push(stack.get_script());
-                        let winternitz_check = scripts::verify_winternitz_signatures_aux(
-                            aggregated,
-                            &names_and_keys[challenge_name][i as usize],
-                            sign_mode,
-                            true,
-                            Some(scripts),
-                        )?;
-                        winternitz_check_list.push(winternitz_check);
+
+                    let (inputs, _) = generate_input_owner_list(&program_definitions)?;
+
+                    for (idx, input) in inputs.iter().enumerate() {
+                        match input {
+                            ProgramInputType::Verifier(words, offset)
+                            | ProgramInputType::Prover(words, offset) => {
+                                for j in *offset..*offset + *words {
+                                    let address = base_addr + j * 4;
+                                    let mut scripts = vec![reverse_script.clone()];
+                                    stack = StackTracker::new();
+                                    input_challenge(&mut stack, address);
+                                    scripts.push(stack.get_script());
+                                    let winternitz_check =
+                                        scripts::verify_winternitz_signatures_aux(
+                                            aggregated,
+                                            &names_and_keys,
+                                            sign_mode,
+                                            true,
+                                            Some(scripts),
+                                        )?;
+                                    challenge_leaf_script.push(winternitz_check);
+                                }
+                            }
+
+                            ProgramInputType::Const(words, offset) => {
+                                for j in *offset..*offset + *words {
+                                    let address = base_addr + j * 4;
+                                    let mut scripts = vec![reverse_script.clone()];
+                                    stack = StackTracker::new();
+
+                                    let key = program_input_word(idx as u32, j);
+                                    let value = context
+                                        .globals
+                                        .get_var(&self.ctx.id, &key)?
+                                        .unwrap()
+                                        .input()?;
+                                    let value =
+                                        u32::from_be_bytes(value.as_slice().try_into().unwrap());
+
+                                    rom_challenge(&mut stack, address, value);
+                                    scripts.push(stack.get_script());
+                                    let winternitz_check =
+                                        scripts::verify_winternitz_signatures_aux(
+                                            aggregated,
+                                            &names_and_keys,
+                                            sign_mode,
+                                            true,
+                                            Some(scripts),
+                                        )?;
+                                    challenge_leaf_script.push(winternitz_check);
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 "rom" => {
                     let rodata = program.find_section_by_name(".rodata").unwrap();
                     let base_addr = rodata.start;
-                    let words = iteration_counts.get(challenge_name).unwrap();
-                    for i in 0..*words {
+                    for i in 0..program.find_section_by_name(".rodata").unwrap().data.len() as u32 {
                         let address = base_addr + i;
                         let value = program.read_mem(address).unwrap();
                         let mut scripts = vec![reverse_script.clone()];
@@ -1500,12 +1496,12 @@ impl DisputeResolutionProtocol {
                         scripts.push(stack.get_script());
                         let winternitz_check = scripts::verify_winternitz_signatures_aux(
                             aggregated,
-                            &names_and_keys[challenge_name][i as usize],
+                            &names_and_keys,
                             sign_mode,
                             true,
                             Some(scripts),
                         )?;
-                        winternitz_check_list.push(winternitz_check);
+                        challenge_leaf_script.push(winternitz_check);
                     }
                 }
                 _ => {
@@ -1540,17 +1536,17 @@ impl DisputeResolutionProtocol {
                     scripts.push(stack.get_script());
                     let winternitz_check = scripts::verify_winternitz_signatures_aux(
                         aggregated,
-                        &names_and_keys[challenge_name][0],
+                        &names_and_keys,
                         sign_mode,
                         true,
                         Some(scripts),
                     )?;
 
-                    winternitz_check_list.push(winternitz_check);
+                    challenge_leaf_script.push(winternitz_check);
                 }
             }
         }
-        Ok(winternitz_check_list)
+        Ok(challenge_leaf_script)
     }
 
     pub fn add_connection_with_scripts(
