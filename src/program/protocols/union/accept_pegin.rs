@@ -11,7 +11,7 @@ use crate::{
                 types::{
                     PegInAccepted, PegInRequest, ACCEPT_PEGIN_TX, CHALLENGE_ENABLER, DUST_VALUE,
                     OPERATOR_TAKE_ENABLER, OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX,
-                    REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX,
+                    REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, SPEED_UP_VALUE,
                 },
             },
         },
@@ -22,6 +22,7 @@ use crate::{
 use bitcoin::{hex::FromHex, Amount, PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
+    builder::ProtocolBuilder,
     errors::ProtocolBuilderError,
     graph::graph::GraphOptions,
     scripts::{op_return_script, timelock, ProtocolScript, SignMode},
@@ -378,7 +379,6 @@ impl AcceptPegInProtocol {
         take_enabler: PartialUtxo,
     ) -> Result<(), BitVMXError> {
         let operator_take_tx_name = &format!("OPERATOR_TAKE_TX_OP_{}", index);
-        // protocol.add_transaction(operator_take_tx_name)?;
 
         // Pegin input
         self.add_accept_pegin_connection(protocol, operator_take_tx_name, pegin_txid)?;
@@ -391,8 +391,25 @@ impl AcceptPegInProtocol {
             take_enabler,
         )?;
 
-        // // Operator Output
-        self.add_operator_output(protocol, operator_take_tx_name, amount, take_pubkey)?;
+        let operator_amount = self.checked_sub(amount, SPEED_UP_VALUE)?;
+
+        // Operator Output
+        self.add_operator_output(
+            protocol,
+            operator_take_tx_name,
+            operator_amount,
+            take_pubkey,
+        )?;
+
+        // Speed up transaction (Operator pay for it)
+        let pb = ProtocolBuilder {};
+        pb.add_speedup_output(
+            protocol,
+            operator_take_tx_name,
+            SPEED_UP_VALUE,
+            &take_pubkey,
+        )?;
+
         Ok(())
     }
 
@@ -428,9 +445,14 @@ impl AcceptPegInProtocol {
             Some(won_enabler.0),
         )?;
 
+        let operator_amount = self.checked_sub(amount, SPEED_UP_VALUE)?;
+
         // Operator Output
-        // TODO: Modify amount based on Miro
-        self.add_operator_output(protocol, operator_won_tx_name, amount, take_pubkey)?;
+        self.add_operator_output(protocol, operator_won_tx_name, operator_amount, take_pubkey)?;
+
+        // Speed up transaction (Operator pay for it)
+        let pb = ProtocolBuilder {};
+        pb.add_speedup_output(protocol, operator_won_tx_name, SPEED_UP_VALUE, &take_pubkey)?;
 
         Ok(())
     }

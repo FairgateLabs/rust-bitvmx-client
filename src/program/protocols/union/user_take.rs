@@ -23,7 +23,7 @@ use crate::{
         participant::ParticipantKeys,
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
-            union::types::{PegOutRequest, ACCEPT_PEGIN_TX, SPEED_UP_VALUE, USER_TAKE_TX},
+            union::types::{PegOutRequest, ACCEPT_PEGIN_TX, USER_TAKE_TX},
         },
         variables::PartialUtxo,
     },
@@ -74,7 +74,6 @@ impl ProtocolHandler for UserTakeProtocol {
             pegout_request.slot_id,
         )?;
         let user_pubkey = pegout_request.user_pubkey;
-        let fee = pegout_request.fee;
 
         //create the protocol
         let mut protocol = self.load_or_create_protocol();
@@ -96,9 +95,7 @@ impl ProtocolHandler for UserTakeProtocol {
         )?;
 
         // Add the user output to the user take transaction
-        let mut amount = accept_pegin_utxo.2.unwrap();
-        amount = self.checked_sub(amount, fee)?;
-        amount = self.checked_sub(amount, SPEED_UP_VALUE)?;
+        let user_amount = self.checked_sub(accept_pegin_utxo.2.unwrap(), pegout_request.fee)?;
 
         let wpkh = user_pubkey.wpubkey_hash().expect("key is compressed");
         let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
@@ -106,21 +103,12 @@ impl ProtocolHandler for UserTakeProtocol {
         protocol.add_transaction_output(
             USER_TAKE_TX,
             &OutputType::SegwitPublicKey {
-                value: Amount::from_sat(amount),
+                value: Amount::from_sat(user_amount),
                 script_pubkey: script_pubkey.clone(),
                 public_key: user_pubkey,
             },
         )?;
-
-        // Speed up transaction
-        protocol.add_transaction_output(
-            USER_TAKE_TX,
-            &OutputType::SegwitPublicKey {
-                value: Amount::from_sat(SPEED_UP_VALUE),
-                script_pubkey: script_pubkey.clone(),
-                public_key: user_pubkey,
-            },
-        )?;
+        // NOTE: No speed up output needed here, user could use the same output to speed up the transaction later
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
