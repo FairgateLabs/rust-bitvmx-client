@@ -1,7 +1,7 @@
 use crate::{
     errors::BitVMXError,
     program::{
-        participant::{ParticipantKeys, PublicKeyType},
+        participant::{ParticipantKeys, ParticipantRole, PublicKeyType},
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{self, types::*},
@@ -33,6 +33,8 @@ const PEGOUT_ID_KEY: &str = "pegout_id";
 const SECRET_KEY: &str = "secret";
 const CHALLENGE_KEY: &str = "challenge_pubkey";
 const REVEAL_KEY: &str = "reveal_pubkey";
+const TAKE_KEY: &str = "take_key";
+const DISPUTE_KEY: &str = "dispute_key";
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DisputeCoreProtocol {
@@ -54,11 +56,11 @@ impl ProtocolHandler for DisputeCoreProtocol {
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
         Ok(vec![
             (
-                "take_aggregated".to_string(),
+                TAKE_AGGREGATED_KEY.to_string(),
                 self.take_aggregated_key(context)?,
             ),
             (
-                "dispute_aggregated".to_string(),
+                DISPUTE_AGGREGATED_KEY.to_string(),
                 self.dispute_aggregated_key(context)?,
             ),
         ])
@@ -69,21 +71,42 @@ impl ProtocolHandler for DisputeCoreProtocol {
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
         let packet_size = self.committee(program_context)?.packet_size;
+
         let mut keys = vec![];
 
-        self.add_key(CHALLENGE_KEY, &mut keys, program_context)?;
+        keys.push((
+            TAKE_KEY.to_string(),
+            PublicKeyType::Public(self.my_take_key(program_context)?),
+        ));
+        keys.push((
+            DISPUTE_KEY.to_string(),
+            PublicKeyType::Public(self.my_dispute_key(program_context)?),
+        ));
+        keys.push((
+            CHALLENGE_KEY.to_string(),
+            PublicKeyType::Public(program_context.key_chain.derive_keypair()?),
+        ));
 
         if self.prover(program_context)? {
-            self.add_key(REVEAL_KEY, &mut keys, program_context)?;
+            keys.push((
+                REVEAL_KEY.to_string(),
+                PublicKeyType::Public(program_context.key_chain.derive_keypair()?),
+            ));
 
             for i in 0..packet_size as usize {
-                self.add_ot_key(
-                    &indexed_name(PEGOUT_ID_KEY, i),
-                    20,
-                    &mut keys,
-                    program_context,
-                )?;
-                self.add_ot_key(&indexed_name(SECRET_KEY, i), 1, &mut keys, program_context)?;
+                keys.push((
+                    indexed_name(PEGOUT_ID_KEY, i).to_string(),
+                    PublicKeyType::Winternitz(
+                        program_context.key_chain.derive_winternitz_hash160(20)?,
+                    ),
+                ));
+
+                keys.push((
+                    indexed_name(SECRET_KEY, i).to_string(),
+                    PublicKeyType::Winternitz(
+                        program_context.key_chain.derive_winternitz_hash160(1)?,
+                    ),
+                ));
             }
         }
 
@@ -338,11 +361,10 @@ impl DisputeCoreProtocol {
     }
 
     fn prover(&self, context: &ProgramContext) -> Result<bool, BitVMXError> {
-        // let members = self.committee(context)?;
-        // Ok(members.my_role == ParticipantRole::Prover)
-
-        //TODO fix
-        Ok(true)
+        match self.committee(context)?.members[self.ctx.my_idx].role {
+            ParticipantRole::Prover => Ok(true),
+            _ => Ok(false),
+        }
     }
 
     fn take_aggregated_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
@@ -351,6 +373,18 @@ impl DisputeCoreProtocol {
 
     fn dispute_aggregated_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
         Ok(self.committee(context)?.dispute_aggregated_key.clone())
+    }
+
+    fn my_take_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+        let my_index = self.ctx.my_idx;
+        let committee = self.committee(context)?;
+        Ok(committee.members[my_index].take_key.clone())
+    }
+
+    fn my_dispute_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+        let my_index = self.ctx.my_idx;
+        let committee = self.committee(context)?;
+        Ok(committee.members[my_index].dispute_key.clone())
     }
 
     fn committee_id(&self, context: &ProgramContext) -> Result<Uuid, BitVMXError> {
@@ -497,35 +531,6 @@ impl DisputeCoreProtocol {
                 VariableTypes::Utxo(operator_won_utxo.clone()),
             )?;
         }
-
-        Ok(())
-    }
-
-    fn add_key(
-        &self,
-        name: &str,
-        keys: &mut Vec<(String, PublicKeyType)>,
-        context: &mut ProgramContext,
-    ) -> Result<(), BitVMXError> {
-        keys.push((
-            name.to_string(),
-            PublicKeyType::Public(context.key_chain.derive_keypair()?),
-        ));
-
-        Ok(())
-    }
-
-    fn add_ot_key(
-        &self,
-        name: &str,
-        bytes: usize,
-        keys: &mut Vec<(String, PublicKeyType)>,
-        context: &mut ProgramContext,
-    ) -> Result<(), BitVMXError> {
-        keys.push((
-            name.to_string(),
-            PublicKeyType::Winternitz(context.key_chain.derive_winternitz_hash160(bytes)?),
-        ));
 
         Ok(())
     }
