@@ -43,7 +43,6 @@ impl DisputeCoreSetup {
             take_aggregated_key: keyring.take_aggregated_key.unwrap(),
             dispute_aggregated_key: keyring.dispute_aggregated_key.unwrap(),
             operator_count: Self::operator_count(members)?,
-            member_count: members.len() as u32,
             packet_size: 10,
         };
 

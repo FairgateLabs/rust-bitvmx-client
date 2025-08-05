@@ -68,7 +68,6 @@ pub struct Committee {
     pub take_aggregated_key: PublicKey,
     pub dispute_aggregated_key: PublicKey,
     pub operator_count: u32,
-    pub member_count: u32,
     pub packet_size: u32,
 }
 

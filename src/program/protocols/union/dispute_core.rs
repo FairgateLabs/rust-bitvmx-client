@@ -313,7 +313,7 @@ impl DisputeCoreProtocol {
         )?;
 
         let mut challenge_requests = vec![];
-        for i in 0..committee.member_count as usize {
+        for i in 0..keys.len() {
             // If this is my dispute_core I need to disable me from performing a challenge request to myself.
             if i == dispute_core_data.operator_index {
                 challenge_requests.push(scripts::op_return_script("skip".as_bytes().to_vec())?);
@@ -385,13 +385,7 @@ impl DisputeCoreProtocol {
             protocol,
             keys,
             dispute_core_index,
-            &initial_deposit,
-            &reimbursement_kickoff,
-            &challenge,
-            &reveal_input,
-            &input_not_revealed,
             &operator_dispute_key,
-            committee.member_count as usize,
             committee.packet_size as usize,
         )?;
 
@@ -403,15 +397,15 @@ impl DisputeCoreProtocol {
         protocol: &mut Protocol,
         keys: &Vec<ParticipantKeys>,
         dispute_core_index: usize,
-        initial_deposit: &str,
-        reimbursement_kickoff: &str,
-        challenge: &str,
-        reveal_input: &str,
-        input_not_revealed: &str,
         operator_dispute_key: &PublicKey,
-        committee_member_count: usize,
         packet_size: usize,
     ) -> Result<(), BitVMXError> {
+        let initial_deposit = format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX);
+        let reimbursement_kickoff = indexed_name(REIMBURSEMENT_KICKOFF_TX, dispute_core_index);
+        let challenge = indexed_name(CHALLENGE_TX, dispute_core_index);
+        let reveal_input = indexed_name(REVEAL_INPUT_TX, dispute_core_index);
+        let input_not_revealed = indexed_name(INPUT_NOT_REVEALED_TX, dispute_core_index);
+
         // Add a speedup output to the initial_deposit transaction after the last reimbursement output.
         if dispute_core_index == packet_size - 1 {
             protocol.add_transaction_output(
@@ -427,11 +421,11 @@ impl DisputeCoreProtocol {
         )?;
 
         // Add one speedup ouput per committee member to the challenge and input_not_revealed transactions.
-        for i in 0..committee_member_count {
+        for i in 0..keys.len() {
             let speedup_output =
                 OutputType::segwit_key(SPEED_UP_VALUE, keys[i].get_public(DISPUTE_KEY)?)?;
-            protocol.add_transaction_output(challenge, &speedup_output)?;
-            protocol.add_transaction_output(input_not_revealed, &speedup_output)?;
+            protocol.add_transaction_output(&challenge, &speedup_output)?;
+            protocol.add_transaction_output(&input_not_revealed, &speedup_output)?;
         }
 
         // Add a speedup output to the reveal_input transaction.
