@@ -32,7 +32,8 @@ use uuid::Uuid;
 const PEGOUT_ID_KEY: &str = "pegout_id";
 const SECRET_KEY: &str = "secret";
 const CHALLENGE_KEY: &str = "challenge_pubkey";
-const REVEAL_KEY: &str = "reveal_pubkey";
+const REVEAL_INPUT_KEY: &str = "reveal_pubkey";
+const REVEAL_TAKE_PRIVKEY: &str = "reveal_take_private_key";
 const TAKE_KEY: &str = "take_key";
 const DISPUTE_KEY: &str = "dispute_key";
 
@@ -89,8 +90,12 @@ impl ProtocolHandler for DisputeCoreProtocol {
 
         if self.prover(program_context)? {
             keys.push((
-                REVEAL_KEY.to_string(),
+                REVEAL_INPUT_KEY.to_string(),
                 PublicKeyType::Public(program_context.key_chain.derive_keypair()?),
+            ));
+            keys.push((
+                REVEAL_TAKE_PRIVKEY.to_string(),
+                PublicKeyType::Winternitz(program_context.key_chain.derive_winternitz_hash160(32)?),
             ));
 
             for i in 0..packet_size as usize {
@@ -122,8 +127,9 @@ impl ProtocolHandler for DisputeCoreProtocol {
         let mut protocol = self.load_or_create_protocol();
         let dispute_core_data = self.dispute_core_data(context)?;
         let committee = self.committee(context)?;
+        let operator_keys = keys[dispute_core_data.operator_index].clone();
 
-        self.create_initial_deposits(&mut protocol, &dispute_core_data)?;
+        self.create_initial_deposit(&mut protocol, &operator_keys, &dispute_core_data)?;
 
         for i in 0..committee.packet_size as usize {
             self.create_dispute_core(
@@ -138,8 +144,8 @@ impl ProtocolHandler for DisputeCoreProtocol {
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
-        self.save_protocol(protocol)?;
 
+        self.save_protocol(protocol)?;
         self.save_take_utxos(context)?;
 
         Ok(())
@@ -196,29 +202,63 @@ impl DisputeCoreProtocol {
         Self { ctx }
     }
 
-    fn create_initial_deposits(
+    fn create_initial_deposit(
         &self,
         protocol: &mut Protocol,
+        operator_keys: &ParticipantKeys,
         dispute_core_data: &DisputeCoreData,
     ) -> Result<(), BitVMXError> {
         let operator_utxo = dispute_core_data.operator_utxo.clone();
+        let operator_dispute_key = operator_keys.get_public(DISPUTE_KEY)?;
+        let reveal_take_private_key = operator_keys.get_winternitz(REVEAL_TAKE_PRIVKEY)?.clone();
 
-        // Connect the initial deposit transaction to the operator funding tx.
+        // Connect the setup transaction to the operator funding transaction.
         let funding = format!("{}{}", OPERATOR, FUNDING_TX_SUFFIX);
+        let setup = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
         let initial_deposit = format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX);
+        let self_disabler = format!("{}{}", OPERATOR, SELF_DISABLER_TX_SUFFIX);
 
         protocol.add_external_transaction(&funding)?;
         protocol.add_transaction_output(&funding, &operator_utxo.3.unwrap())?;
 
-        // TODO: Change the spend mode the one required by the operator_utxo
+        // The operator_utxo must be of type P2WPKH
         protocol.add_connection(
-            "initial_deposit",
+            "setup",
             &funding,
             (operator_utxo.1 as usize).into(),
-            &initial_deposit,
+            &setup,
             InputSpec::Auto(SighashType::ecdsa_all(), SpendMode::None),
             None,
             Some(operator_utxo.0),
+        )?;
+
+        // Connect the initial deposit transaction to the setup transaction.
+        protocol.add_connection(
+            "initial_deposit",
+            &setup,
+            OutputSpec::Auto(OutputType::taproot(
+                operator_utxo.2.unwrap(),
+                operator_dispute_key,
+                &[union::scripts::reveal_take_private_key(
+                    operator_dispute_key,
+                    &reveal_take_private_key,
+                )?],
+            )?),
+            &initial_deposit,
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
+            None,
+            None,
+        )?;
+
+        // Connect the self-disabler (recover funds) transaction.
+        protocol.add_connection(
+            "self_disabler",
+            &setup,
+            OutputSpec::Index(0),
+            &self_disabler,
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
+            None,
+            None,
         )?;
 
         Ok(())
@@ -236,28 +276,33 @@ impl DisputeCoreProtocol {
         let pegout_id_name = indexed_name(PEGOUT_ID_KEY, dispute_core_index);
         let secret_name = indexed_name(SECRET_KEY, dispute_core_index);
 
-        let member_keys = keys[dispute_core_data.operator_index].clone();
+        let operator_keys = keys[dispute_core_data.operator_index].clone();
 
+        let operator_dispute_key = operator_keys.get_public(DISPUTE_KEY)?;
         let take_aggregated_key = self.take_aggregated_key(context)?;
-        let pegout_id_key = member_keys.get_winternitz(&pegout_id_name)?;
-        let secret_key = member_keys.get_winternitz(&secret_name)?;
+        let dispute_aggregated_key = &self.dispute_aggregated_key(context)?;
+        let pegout_id_key = operator_keys.get_winternitz(&pegout_id_name)?;
+        let secret_key = operator_keys.get_winternitz(&secret_name)?;
 
         let initial_deposit = format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX);
         let reimbursement_kickoff = indexed_name(REIMBURSEMENT_KICKOFF_TX, dispute_core_index);
         let challenge = indexed_name(CHALLENGE_TX, dispute_core_index);
-        let reveal_secret = indexed_name(REVEAL_SECRET_TX, dispute_core_index);
+        let reveal_input = indexed_name(REVEAL_INPUT_TX, dispute_core_index);
         let input_not_revealed = indexed_name(INPUT_NOT_REVEALED_TX, dispute_core_index);
 
-        let start_reimbursement =
-            union::scripts::start_reimbursement(take_aggregated_key, pegout_id_key)?;
+        let start_reimbursement = union::scripts::start_reimbursement(
+            &take_aggregated_key,
+            operator_dispute_key,
+            pegout_id_key,
+        )?;
 
-        // TODO: Review the internal key, maybe we don't need an aggregated key here
+        // We use the operator's dispute key as internal key to use the key spend path for self disablement.
         protocol.add_connection(
             "start_dispute_core",
             &initial_deposit,
             OutputType::taproot(
                 DISPUTE_OPENER_VALUE,
-                &take_aggregated_key,
+                &operator_dispute_key,
                 &[start_reimbursement],
             )?
             .into(),
@@ -269,13 +314,17 @@ impl DisputeCoreProtocol {
 
         let mut challenge_requests = vec![];
         for i in 0..committee.member_count as usize {
+            // If this is my dispute_core I need to disable me from performing a challenge request to myself.
+            if i == dispute_core_data.operator_index {
+                challenge_requests.push(scripts::op_return_script("skip".as_bytes().to_vec())?);
+            }
+
             challenge_requests.push(scripts::verify_signature(
                 keys[i].get_public(CHALLENGE_KEY)?,
                 SignMode::Single,
             )?);
         }
 
-        // TODO: Review the internal key, maybe we don't need an aggregated key here
         protocol.add_connection(
             "challenge",
             &reimbursement_kickoff,
@@ -292,24 +341,23 @@ impl DisputeCoreProtocol {
         )?;
 
         let secret = scripts::verify_winternitz_signature(
-            member_keys.get_public(REVEAL_KEY)?,
+            operator_keys.get_public(REVEAL_INPUT_KEY)?,
             secret_key,
             SignMode::Skip,
         )?;
 
-        // TODO: Review the internal key, maybe we don't need an aggregated key here
         protocol.add_connection(
             "reveal_input",
             &challenge,
-            OutputType::taproot(DISPUTE_OPENER_VALUE, &take_aggregated_key, &[secret])?.into(),
-            &reveal_secret,
+            OutputType::taproot(DISPUTE_OPENER_VALUE, &dispute_aggregated_key, &[secret])?.into(),
+            &reveal_input,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
             None,
             None,
         )?;
 
         protocol.add_transaction_output(
-            &reveal_secret,
+            &reveal_input,
             &OutputType::taproot(DUST_VALUE, &take_aggregated_key, &[])?,
         )?;
 
@@ -331,6 +379,65 @@ impl DisputeCoreProtocol {
         protocol.add_transaction_output(
             &input_not_revealed,
             &OutputType::taproot(DUST_VALUE, &take_aggregated_key, &[])?,
+        )?;
+
+        self.add_speedup_outputs(
+            protocol,
+            keys,
+            dispute_core_index,
+            &initial_deposit,
+            &reimbursement_kickoff,
+            &challenge,
+            &reveal_input,
+            &input_not_revealed,
+            &operator_dispute_key,
+            committee.member_count as usize,
+            committee.packet_size as usize,
+        )?;
+
+        Ok(())
+    }
+
+    fn add_speedup_outputs(
+        &self,
+        protocol: &mut Protocol,
+        keys: &Vec<ParticipantKeys>,
+        dispute_core_index: usize,
+        initial_deposit: &str,
+        reimbursement_kickoff: &str,
+        challenge: &str,
+        reveal_input: &str,
+        input_not_revealed: &str,
+        operator_dispute_key: &PublicKey,
+        committee_member_count: usize,
+        packet_size: usize,
+    ) -> Result<(), BitVMXError> {
+        // Add a speedup output to the initial_deposit transaction after the last reimbursement output.
+        if dispute_core_index == packet_size - 1 {
+            protocol.add_transaction_output(
+                &initial_deposit,
+                &OutputType::segwit_key(SPEED_UP_VALUE, operator_dispute_key)?,
+            )?;
+        }
+
+        // Add a speedup output to the reimbursement_kickoff transaction.
+        protocol.add_transaction_output(
+            &reimbursement_kickoff,
+            &OutputType::segwit_key(SPEED_UP_VALUE, operator_dispute_key)?,
+        )?;
+
+        // Add one speedup ouput per committee member to the challenge and input_not_revealed transactions.
+        for i in 0..committee_member_count {
+            let speedup_output =
+                OutputType::segwit_key(SPEED_UP_VALUE, keys[i].get_public(DISPUTE_KEY)?)?;
+            protocol.add_transaction_output(challenge, &speedup_output)?;
+            protocol.add_transaction_output(input_not_revealed, &speedup_output)?;
+        }
+
+        // Add a speedup output to the reveal_input transaction.
+        protocol.add_transaction_output(
+            &reveal_input,
+            &OutputType::segwit_key(SPEED_UP_VALUE, operator_dispute_key)?,
         )?;
 
         Ok(())
@@ -508,12 +615,12 @@ impl DisputeCoreProtocol {
                 Some(operator_take_output),
             );
 
-            let name = indexed_name(REVEAL_SECRET_TX, i);
-            let reveal_secret_tx = protocol.transaction_by_name(&name)?;
+            let name = indexed_name(REVEAL_INPUT_TX, i);
+            let reveal_input_tx = protocol.transaction_by_name(&name)?;
             let operator_won_output = OutputType::taproot(DUST_VALUE, &take_key, &[])?;
 
             let operator_won_utxo = (
-                reveal_secret_tx.compute_txid(),
+                reveal_input_tx.compute_txid(),
                 0,
                 Some(DUST_VALUE),
                 Some(operator_won_output),

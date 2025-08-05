@@ -52,7 +52,7 @@ fn print_usage() {
     println!("Usage:");
     println!("  cargo run --example union setup_bitcoin_node  - Sets up Bitcoin node only");
     println!("  cargo run --example union committee           - Setups a new committee");
-    println!("  cargo run --example union request_pegin       - Setups a rerquest pegin");
+    println!("  cargo run --example union request_pegin       - Setups a request pegin");
     println!("  cargo run --example union accept_pegin        - Setups the accept peg in protocol");
     println!(
         "  cargo run --example union request_pegout      - Setups the request peg out in protocol"

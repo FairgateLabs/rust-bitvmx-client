@@ -23,7 +23,7 @@ pub const WT_INITIAL_DEPOSIT_TX: &str = "WT_INITIAL_DEPOSIT_TX";
 pub const REIMBURSEMENT_KICKOFF_TX: &str = "REIMBURSEMENT_KICKOFF_TX";
 pub const NO_TAKE_TX: &str = "NO_TAKE_TX";
 pub const CHALLENGE_TX: &str = "CHALLENGE_TX";
-pub const REVEAL_SECRET_TX: &str = "REVEAL_SECRET_TX";
+pub const REVEAL_INPUT_TX: &str = "REVEAL_INPUT_TX";
 pub const INPUT_NOT_REVEALED_TX: &str = "INPUT_NOT_REVEALED_TX";
 pub const YOU_CANT_TAKE_TX: &str = "YOU_CANT_TAKE_TX";
 pub const OP_SELF_DISABLER_TX: &str = "OP_SELF_DISABLER_TX";
@@ -42,7 +42,9 @@ pub const SPEED_UP_VALUE: u64 = 546;
 // Suffixes
 pub const FUNDING_UTXO_SUFFIX: &str = "_FUNDING_UTXO";
 pub const FUNDING_TX_SUFFIX: &str = "_FUNDING_TX";
+pub const SETUP_TX_SUFFIX: &str = "_SETUP_TX";
 pub const INITIAL_DEPOSIT_TX_SUFFIX: &str = "_INITIAL_DEPOSIT_TX";
+pub const SELF_DISABLER_TX_SUFFIX: &str = "_SELF_DISABLER_TX";
 
 // UTXOs
 pub const OPERATOR_TAKE_ENABLER: &str = "operator_take_enabler";
