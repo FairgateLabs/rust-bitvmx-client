@@ -124,7 +124,7 @@ impl Member {
         &mut self,
         committee_id: Uuid,
         members: &[Member],
-        funding_utxos_per_member: &HashMap<PublicKey, Vec<PartialUtxo>>,
+        funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
     ) -> Result<()> {
         info!(
             id = self.id,
@@ -133,7 +133,6 @@ impl Member {
         DisputeCoreSetup::setup(
             committee_id,
             &self.id,
-            &self.role,
             members,
             &self.keyring,
             &self.bitvmx,

@@ -3,7 +3,7 @@ use musig2::{secp::MaybeScalar, PubNonce};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::program::participant::ParticipantRole;
+use crate::program::{participant::ParticipantRole, variables::PartialUtxo};
 
 // Key names
 pub const TAKE_AGGREGATED_KEY: &str = "take_aggregated_key";
@@ -23,6 +23,8 @@ pub const WT_INITIAL_DEPOSIT_TX: &str = "WT_INITIAL_DEPOSIT_TX";
 pub const REIMBURSEMENT_KICKOFF_TX: &str = "REIMBURSEMENT_KICKOFF_TX";
 pub const NO_TAKE_TX: &str = "NO_TAKE_TX";
 pub const CHALLENGE_TX: &str = "CHALLENGE_TX";
+pub const REVEAL_INPUT_TX: &str = "REVEAL_INPUT_TX";
+pub const INPUT_NOT_REVEALED_TX: &str = "INPUT_NOT_REVEALED_TX";
 pub const YOU_CANT_TAKE_TX: &str = "YOU_CANT_TAKE_TX";
 pub const OP_SELF_DISABLER_TX: &str = "OP_SELF_DISABLER_TX";
 pub const TRY_TAKE_2_TX: &str = "TRY_TAKE_2_TX";
@@ -40,28 +42,51 @@ pub const SPEED_UP_VALUE: u64 = 546;
 // Suffixes
 pub const FUNDING_UTXO_SUFFIX: &str = "_FUNDING_UTXO";
 pub const FUNDING_TX_SUFFIX: &str = "_FUNDING_TX";
+pub const SETUP_TX_SUFFIX: &str = "_SETUP_TX";
 pub const INITIAL_DEPOSIT_TX_SUFFIX: &str = "_INITIAL_DEPOSIT_TX";
+pub const SELF_DISABLER_TX_SUFFIX: &str = "_SELF_DISABLER_TX";
 
 // UTXOs
 pub const OPERATOR_TAKE_ENABLER: &str = "operator_take_enabler";
 pub const OPERATOR_WON_ENABLER: &str = "operator_won_enabler";
 pub const CHALLENGE_ENABLER: &str = "challenge_enabler";
 
+// Roles
+pub const OPERATOR: &str = "OP";
+pub const WATCHTOWER: &str = "WT";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemberData {
+    pub role: ParticipantRole,
+    pub take_key: PublicKey,
+    pub dispute_key: PublicKey,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Committee {
-    pub committee_id: Uuid,
-    pub my_role: ParticipantRole,
-    pub member_index: usize,
+    pub members: Vec<MemberData>,
     pub take_aggregated_key: PublicKey,
     pub dispute_aggregated_key: PublicKey,
     pub operator_count: u32,
-    pub watchtower_count: u32,
     pub packet_size: u32,
 }
 
 impl Committee {
     pub fn name() -> String {
         "committee".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DisputeCoreData {
+    pub committee_id: Uuid,
+    pub operator_index: usize,
+    pub operator_utxo: PartialUtxo,
+}
+
+impl DisputeCoreData {
+    pub fn name() -> String {
+        "dispute_core_data".to_string()
     }
 }
 
