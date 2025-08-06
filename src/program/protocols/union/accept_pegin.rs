@@ -9,8 +9,8 @@ use crate::{
             union::{
                 common::get_dispute_core_id,
                 types::{
-                    PegInAccepted, PegInRequest, ACCEPT_PEGIN_TX, DUST_VALUE,
-                    OPERATOR_TAKE_ENABLER, OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX,
+                    PegInAccepted, PegInRequest, ACCEPT_PEGIN_TX, OPERATOR_TAKE_ENABLER,
+                    OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX, P2TR_FEE,
                     REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, SPEED_UP_VALUE,
                 },
             },
@@ -76,10 +76,11 @@ impl ProtocolHandler for AcceptPegInProtocol {
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let pegin_request = self.pegin_request(context)?;
+        let pegin_request: PegInRequest = self.pegin_request(context)?;
         let pegin_request_txid = pegin_request.txid;
-        // FIXME: Use network fee or speed up output
-        let amount = self.checked_sub(pegin_request.amount, DUST_VALUE)?;
+        let mut amount = self.checked_sub(pegin_request.amount, P2TR_FEE)?;
+        amount = self.checked_sub(amount, SPEED_UP_VALUE)?;
+
         let take_aggregated_key = &pegin_request.take_aggregated_key;
 
         let mut protocol = self.load_or_create_protocol();
@@ -108,6 +109,15 @@ impl ProtocolHandler for AcceptPegInProtocol {
 
         let accept_pegin_output = OutputType::taproot(amount, &take_aggregated_key, &[])?;
         protocol.add_transaction_output(ACCEPT_PEGIN_TX, &accept_pegin_output)?;
+
+        // Speed up transaction (User pay for it)
+        let pb = ProtocolBuilder {};
+        pb.add_speedup_output(
+            &mut protocol,
+            ACCEPT_PEGIN_TX,
+            SPEED_UP_VALUE,
+            &pegin_request.reimbursement_pubkey,
+        )?;
 
         let slot_index = pegin_request.slot_index as usize;
 
@@ -285,17 +295,6 @@ impl AcceptPegInProtocol {
             ));
         }
 
-        // TODO: Check if we want this assertion
-        // We expect nonces for: ACCEPT_PEGIN_TX + 4 operator_take + 4 operator_won + 4 per try_take_2 = 9 total
-        // let expected_nonces = 13;
-        // assert_eq!(
-        //     nonces.len(),
-        //     expected_nonces,
-        //     "Expected exactly {} nonces for AcceptPegInProtocol, found {}",
-        //     expected_nonces,
-        //     nonces.len()
-        // );
-
         let signatures = program_context
             .key_chain
             .get_signatures(&take_aggregated_key, &self.ctx.protocol_name)?;
@@ -306,14 +305,6 @@ impl AcceptPegInProtocol {
                 self.ctx.protocol_name.to_string(),
             ));
         }
-
-        // FIXME: Do we want this assertion?
-        // assert_eq!(
-        //     signatures.len(),
-        //     1,
-        //     "Expected exactly one partial signature for AcceptPegInProtocol, found {}",
-        //     signatures.len()
-        // );
 
         let mut protocol = self.load_protocol()?;
         let operator_take_tx_name = &format!("OPERATOR_TAKE_TX_OP_{}", self.ctx.my_idx);

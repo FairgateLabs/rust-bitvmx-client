@@ -38,6 +38,7 @@ pub const DISPUTE_OPENER_VALUE: u64 = 1000;
 pub const START_ENABLER_VALUE: u64 = 1000;
 pub const DUST_VALUE: u64 = 546;
 pub const SPEED_UP_VALUE: u64 = 546;
+pub const P2TR_FEE: u64 = 355; // This should match the value P2TR_FEE in Union Smart contracts
 
 // Suffixes
 pub const FUNDING_UTXO_SUFFIX: &str = "_FUNDING_UTXO";
