@@ -49,7 +49,6 @@ pub const SELF_DISABLER_TX_SUFFIX: &str = "_SELF_DISABLER_TX";
 // UTXOs
 pub const OPERATOR_TAKE_ENABLER: &str = "operator_take_enabler";
 pub const OPERATOR_WON_ENABLER: &str = "operator_won_enabler";
-pub const CHALLENGE_ENABLER: &str = "challenge_enabler";
 
 // Roles
 pub const OPERATOR: &str = "OP";

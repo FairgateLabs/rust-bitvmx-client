@@ -9,7 +9,7 @@ use crate::{
             union::{
                 common::get_dispute_core_id,
                 types::{
-                    PegInAccepted, PegInRequest, ACCEPT_PEGIN_TX, CHALLENGE_ENABLER, DUST_VALUE,
+                    PegInAccepted, PegInRequest, ACCEPT_PEGIN_TX, DUST_VALUE,
                     OPERATOR_TAKE_ENABLER, OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX,
                     REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, SPEED_UP_VALUE,
                 },
@@ -265,19 +265,6 @@ impl AcceptPegInProtocol {
         Ok(context
             .globals
             .get_var(&dispute_protocol_id, &var_name(OPERATOR_WON_ENABLER, index))?
-            .unwrap()
-            .utxo()?)
-    }
-
-    fn challenge_enabler(
-        &self,
-        context: &ProgramContext,
-        dispute_protocol_id: Uuid,
-        index: usize,
-    ) -> Result<PartialUtxo, BitVMXError> {
-        Ok(context
-            .globals
-            .get_var(&dispute_protocol_id, &var_name(CHALLENGE_ENABLER, index))?
             .unwrap()
             .utxo()?)
     }
