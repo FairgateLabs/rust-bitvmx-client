@@ -449,7 +449,7 @@ impl DisputeCoreProtocol {
     }
 
     fn committee(&self, context: &ProgramContext) -> Result<Committee, BitVMXError> {
-        let committee_id = self.dispute_core_data(context)?.committee_id;
+        let committee_id = self.committee_id(context)?;
 
         let committee = context
             .globals

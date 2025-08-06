@@ -25,9 +25,9 @@ use crate::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::types::{PegOutRequest, ACCEPT_PEGIN_TX, USER_TAKE_TX},
         },
-        variables::PartialUtxo,
+        variables::{PartialUtxo, VariableTypes},
     },
-    types::ProgramContext,
+    types::{OutgoingBitVMXApiMessages, ProgramContext, L2_ID},
 };
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -145,6 +145,10 @@ impl ProtocolHandler for UserTakeProtocol {
             id = self.ctx.my_idx,
             "UserTakeProtocol setup complete for program {}", self.ctx.id
         );
+
+        // TODO: send the signing info to union
+        //self.send_signing_info(&program_context, &take_aggregated_key)?;
+
         Ok(())
     }
 }
@@ -195,5 +199,66 @@ impl UserTakeProtocol {
 
         self.load_protocol()?
             .transaction_to_send(USER_TAKE_TX, &[taproot_arg])
+    }
+
+    pub fn send_pegin_accepted(
+        &self,
+        program_context: &ProgramContext,
+        take_aggregated_key: &PublicKey,
+    ) -> Result<(), BitVMXError> {
+        let pegout_request = self.pegout_request(program_context)?;
+
+        let nonces = program_context
+            .key_chain
+            .get_nonces(&take_aggregated_key, &self.ctx.protocol_name)?;
+
+        if nonces.is_empty() {
+            return Err(BitVMXError::MissingPublicNonces(
+                take_aggregated_key.to_string(),
+                self.ctx.protocol_name.to_string(),
+            ));
+        }
+
+        let signatures = program_context
+            .key_chain
+            .get_signatures(&take_aggregated_key, &self.ctx.protocol_name)?;
+
+        if signatures.is_empty() {
+            return Err(BitVMXError::MissingPartialSignatures(
+                take_aggregated_key.to_string(),
+                self.ctx.protocol_name.to_string(),
+            ));
+        }
+
+        let mut protocol = self.load_protocol()?;
+        let user_take_sighash = protocol
+            .get_hashed_message(USER_TAKE_TX, 0, 0)?
+            .unwrap()
+            .as_ref()
+            .to_vec();
+
+        // TODO: verify that the signature we are getting from the array of signatures is the proper one
+        let pegout_accepted = PegOutAccepted {
+            committee_id: pegout_request.committee_id,
+            user_take_sighash,
+            user_take_nonce: nonces[0].1.clone(),
+            user_take_signature: signatures[0].1.clone(),
+        };
+
+        let data = serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(
+            self.ctx.id,
+            "pegout_accepted".to_string(),
+            VariableTypes::String(serde_json::to_string(&pegout_accepted)?),
+        ))?;
+
+        info!(
+            id = self.ctx.my_idx,
+            "Sending pegout accepted data for UserTakeProtocol: {}", data
+        );
+
+        // Send the pegout accepted data to the broker channel
+        program_context.broker_channel.send(L2_ID, data)?;
+
+        Ok(())
     }
 }

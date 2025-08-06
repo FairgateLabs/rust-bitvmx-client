@@ -224,7 +224,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
         let pegin_request = self.pegin_request(program_context)?;
         let take_aggregated_key = pegin_request.take_aggregated_key;
 
-        self.send_signing_info(&program_context, &take_aggregated_key)?;
+        self.send_pegin_accepted(&program_context, &take_aggregated_key)?;
 
         info!(
             id = self.ctx.my_idx,
@@ -279,11 +279,13 @@ impl AcceptPegInProtocol {
             .utxo()?)
     }
 
-    fn send_signing_info(
+    fn send_pegin_accepted(
         &self,
         program_context: &ProgramContext,
         take_aggregated_key: &PublicKey,
     ) -> Result<(), BitVMXError> {
+        let pegin_request = self.pegin_request(program_context)?;
+
         let nonces = program_context
             .key_chain
             .get_nonces(&take_aggregated_key, &self.ctx.protocol_name)?;
@@ -321,10 +323,11 @@ impl AcceptPegInProtocol {
             .as_ref()
             .to_vec();
 
+        // TODO: verify that the signature we are getting from the array of signatures is the proper one
         let pegin_accepted = PegInAccepted {
+            committee_id: pegin_request.committee_id,
             operator_take_sighash,
             operator_won_sighash,
-            take_aggregated_key: take_aggregated_key.clone(),
             accept_pegin_nonce: nonces[0].1.clone(),
             accept_pegin_signature: signatures[0].1.clone(),
         };

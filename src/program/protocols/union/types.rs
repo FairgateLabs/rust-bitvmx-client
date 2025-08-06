@@ -111,9 +111,9 @@ impl PegInRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PegInAccepted {
+    pub committee_id: Uuid,
     pub operator_take_sighash: Vec<u8>,
     pub operator_won_sighash: Vec<u8>,
-    pub take_aggregated_key: PublicKey,
     pub accept_pegin_nonce: PubNonce,
     pub accept_pegin_signature: MaybeScalar,
 }
@@ -131,4 +131,12 @@ impl PegOutRequest {
     pub fn name() -> String {
         "pegout_request".to_string()
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PegOutAccepted {
+    pub committee_id: Uuid,
+    pub user_take_sighash: Vec<u8>,
+    pub user_take_nonce: PubNonce,
+    pub user_take_signature: MaybeScalar,
 }
