@@ -1,0 +1,26 @@
+x-logging:
+  &default-logging
+  options:
+    max-size: '12m'
+    max-file: '5'
+  driver: json-file
+
+services:
+  bitcoind:
+    container_name: bitcoind
+    build:
+      context: ./
+      args:
+        BITCOIND_RPC_PORT: ${BITCOIND_RPC_PORT}
+        BITCOIND_RPC_USERNAME: ${BITCOIND_RPC_USERNAME}
+        BITCOIND_RPC_PASSWORD: ${BITCOIND_RPC_PASSWORD}
+        BITCOIND_RPC_NETWORK: regtest
+    logging: *default-logging
+    ports:
+      - "${BITCOIND_RPC_PORT}:${BITCOIND_RPC_PORT}"
+    healthcheck:
+      test: ["CMD", "wget", "--user", "${BITCOIND_RPC_USERNAME}", "--password", "${BITCOIND_RPC_PASSWORD}", "--post-data", '{"jsonrpc": "1.0", "id": "healthcheck", "method": "getblockchaininfo", "params": []}', "http://localhost:${BITCOIND_RPC_PORT}", "-O", "-"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped

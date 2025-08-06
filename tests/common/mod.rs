@@ -101,19 +101,26 @@ pub const FEE: u64 = 500;
 pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
     let config = Config::new(Some("config/op_1.yaml".to_string()))?;
 
-    let bitcoind = Bitcoind::new_with_flags(
-        "bitcoin-regtest",
-        "ruimarinho/bitcoin-core",
-        config.bitcoin.clone(),
-        BitcoindFlags {
-            min_relay_tx_fee: 0.00001,
-            block_min_tx_fee: 0.00008,
-            debug: 1,
-            fallback_fee: 0.0002,
-        },
-    );
-    info!("Starting bitcoind");
-    bitcoind.start()?;
+    let is_ci = std::env::var("GITHUB_ACTIONS").is_ok();
+
+    let bitcoind = if is_ci {
+        anyhow::bail!("Running in CI - bitcoind startup is required for tests");
+    } else {
+        info!("Running locally - starting bitcoind");
+        let bitcoind = Bitcoind::new_with_flags(
+            "bitcoin-regtest",
+            "ruimarinho/bitcoin-core",
+            config.bitcoin.clone(),
+            BitcoindFlags {
+                min_relay_tx_fee: 0.00001,
+                block_min_tx_fee: 0.00008,
+                debug: 1,
+                fallback_fee: 0.0002,
+            },
+        );
+        bitcoind.start()?;
+        bitcoind
+    };
 
     let wallet_config = match config.bitcoin.network {
         Network::Regtest => "config/wallet_regtest.yaml",
