@@ -177,10 +177,6 @@ impl Member {
             reimbursement_pubkey,
         )?;
 
-        // Wait for the AcceptPegin setup to complete
-        let program_id = wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
-        info!(id = self.id, program_id = ?program_id, "AcceptPegin setup completed (from member)");
-
         Ok(())
     }
 
@@ -222,7 +218,11 @@ impl Member {
     ) -> Result<()> {
         // Store the selected operator's public key for this slot
         let selected_operator_key_name = format!("{}_{}", SELECTED_OPERATOR_PUBKEY, slot_id);
-        self.bitvmx.set_var(committee_id, &selected_operator_key_name, VariableTypes::PubKey(selected_operator_pubkey))?;
+        self.bitvmx.set_var(
+            committee_id,
+            &selected_operator_key_name,
+            VariableTypes::PubKey(selected_operator_pubkey),
+        )?;
 
         // Check if this member is the selected operator for advance funds
         let my_take_pubkey = self.keyring.take_pubkey.unwrap();

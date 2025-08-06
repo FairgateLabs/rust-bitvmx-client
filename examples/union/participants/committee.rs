@@ -105,7 +105,7 @@ impl Committee {
         let protocol_id = Uuid::new_v4();
         let members = self.members.clone();
 
-        self.all(|op| {
+        self.all(|op: &mut Member| {
             op.accept_pegin(
                 protocol_id,
                 &members,

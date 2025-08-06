@@ -33,7 +33,7 @@ where
             msg
         );
         thread::sleep(Duration::from_millis(10));
-        msg = bitvmx.wait_message(Some(Duration::from_secs(20)), None)?;
+        msg = bitvmx.wait_message(Some(Duration::from_secs(60)), None)?;
     }
     Ok(msg)
 }
