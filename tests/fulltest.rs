@@ -33,7 +33,7 @@ use key_manager::verifier::SignatureVerifier;
 use tracing::info;
 use uuid::Uuid;
 
-use crate::common::{set_speedup_funding, FEE};
+use crate::common::set_speedup_funding;
 
 mod common;
 mod fixtures;
@@ -204,7 +204,6 @@ pub fn test_full() -> Result<()> {
         initial_output_type,
         prover_win_utxo,
         prover_win_output_type,
-        FEE as u32,
         fake_drp,
         fake_instruction,
         ForcedChallenges::No,

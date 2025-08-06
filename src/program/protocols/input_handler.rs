@@ -6,7 +6,10 @@ use crate::{
     errors::BitVMXError,
     program::{
         participant::ParticipantRole,
-        protocols::dispute::{program_input, program_input_word},
+        protocols::dispute::{
+            program_input, program_input_prev_prefix, program_input_prev_protocol,
+            program_input_word,
+        },
         variables::VariableTypes,
     },
     types::ProgramContext,
@@ -14,7 +17,7 @@ use crate::{
 
 pub enum ProgramInputType {
     Prover(u32, u32),
-    Verifier(u32, u32),
+    //Verifier(u32, u32), // Not yet supported
     ProverPrev(u32, u32),
     //VerifierPrev(u32, u32), // Not yet supported
     Const(u32, u32),
@@ -38,9 +41,9 @@ pub fn generate_input_owner_list(
             "prover" => {
                 input_mapping.push(ProgramInputType::Prover(words, total_words));
             }
-            "verifier" => {
+            /*"verifier" => {
                 input_mapping.push(ProgramInputType::Verifier(words, total_words));
-            }
+            }*/
             "prover_prev" => {
                 input_mapping.push(ProgramInputType::ProverPrev(words, total_words));
             }
@@ -94,7 +97,7 @@ pub fn get_required_keys(
                 last_tx_id = input_txs.len();
             }
             // if the input is owned by the verifier then the prover needs to cosign it
-            ProgramInputType::Verifier(words, offset) => {
+            /*ProgramInputType::Verifier(words, offset) => {
                 input_txs.push("verifier".to_string());
                 input_txs.push("prover_cosign".to_string());
                 input_txs_sizes.push(*words);
@@ -109,7 +112,7 @@ pub fn get_required_keys(
                     ));
                 }
                 last_tx_id = input_txs.len();
-            }
+            }*/
             ProgramInputType::Const(words, offset) => {
                 //similar to split_input
                 let full_input = program_context
@@ -134,7 +137,7 @@ pub fn get_required_keys(
             }
 
             ProgramInputType::ProverPrev(words, offset) => {
-                input_txs.push("skip".to_string());
+                input_txs.push("prover_prev".to_string());
                 input_txs_sizes.push(*words);
                 input_txs_offsets.push(*offset);
             }
@@ -269,10 +272,47 @@ pub fn unify_inputs(
     program_context: &ProgramContext,
     program_def: &ProgramDefinition,
 ) -> Result<Vec<u8>, BitVMXError> {
-    //let (input_txs, _, _) = get_txs_configuration(&id, program_context)?;
+    let (input_txs, input_txs_sizes, _, _) = get_txs_configuration(&id, program_context)?;
 
     let mut full_input = vec![];
     for idx in 0..program_def.inputs.len() {
+        if input_txs[idx] == "prover_prev" {
+            let previous_protocol = program_context
+                .globals
+                .get_var(id, &program_input_prev_protocol(idx as u32))?
+                .unwrap()
+                .uuid()?;
+            let previous_prefix = program_context
+                .globals
+                .get_var(id, &program_input_prev_prefix(idx as u32))?
+                .unwrap()
+                .string()?;
+
+            info!(
+                "Will get previous input from protocol {} and prefix: {}",
+                previous_protocol, previous_prefix
+            );
+
+            for word in 0..input_txs_sizes[idx] {
+                let key = format!("{}{}", previous_prefix, word);
+                info!(
+                    "Getting witness from protocol {} and key: {}",
+                    previous_protocol, key
+                );
+                let signature = &program_context
+                    .witness
+                    .get_witness(&previous_protocol, &key)?
+                    .unwrap()
+                    .winternitz()?;
+                //copy the witness to the current program so the when needed it can be used to sign txs
+                program_context
+                    .witness
+                    .copy_witness(&previous_protocol, &id, &key)?;
+                full_input.extend_from_slice(&signature.message_bytes());
+            }
+            continue;
+        }
+
         let key = &program_input(idx as u32);
         full_input.extend_from_slice(&program_context.globals.get_var(id, key)?.unwrap().input()?);
         info!(

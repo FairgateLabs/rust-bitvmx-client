@@ -200,6 +200,14 @@ pub fn program_input(index: u32) -> String {
     format!("program_input_{}", index)
 }
 
+pub fn program_input_prev_protocol(index: u32) -> String {
+    format!("program_input_prev_protocol_{}", index)
+}
+
+pub fn program_input_prev_prefix(index: u32) -> String {
+    format!("program_input_prev_prefix_{}", index)
+}
+
 pub fn program_input_word(index: u32, word: u32) -> String {
     format!("program_input_{}_{}", index, word)
 }
@@ -891,7 +899,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             VariableTypes::Number(input_txs_sizes[0]),
         )?;
         for (idx, tx_owner) in input_txs.iter().enumerate() {
-            if tx_owner == "skip" {
+            if tx_owner == "skip" || tx_owner == "prover_prev" {
                 continue;
             }
             input_tx = format!("INPUT_{}", idx);
@@ -1420,13 +1428,14 @@ impl DisputeResolutionProtocol {
                         .skip(1)
                         .map(|(var_name, _)| {
                             let idx = if var_name.starts_with("prover") { 0 } else { 1 };
-                            (var_name, keys[idx].get_winternitz(&var_name).unwrap())
+                            (*var_name, keys[idx].get_winternitz(&var_name).unwrap())
                         })
                         .collect::<Vec<_>>();
+
                     for (idx, input) in inputs.iter().enumerate() {
                         match input {
-                            ProgramInputType::Verifier(words, offset)
-                            | ProgramInputType::Prover(words, offset) => {
+                            //ProgramInputType::Verifier(words, offset)
+                            ProgramInputType::Prover(words, offset) => {
                                 for j in *offset..*offset + *words {
                                     let names_and_keys = subnames
                                         .iter()
@@ -1463,6 +1472,67 @@ impl DisputeResolutionProtocol {
                                 challenge_current_leaf += *words as u32;
                             }
 
+                            ProgramInputType::ProverPrev(words, offset) => {
+                                let previous_protocol = context
+                                    .globals
+                                    .get_var(
+                                        &self.ctx.id,
+                                        &program_input_prev_protocol(idx as u32),
+                                    )?
+                                    .unwrap()
+                                    .uuid()?;
+                                let previous_prefix = context
+                                    .globals
+                                    .get_var(&self.ctx.id, &program_input_prev_prefix(idx as u32))?
+                                    .unwrap()
+                                    .string()?;
+
+                                for j in 0..*words {
+                                    let mut temp_keys = vec![];
+                                    let mut names_and_keys = vec![];
+                                    let key = format!("{}{}", previous_prefix, j);
+                                    info!(
+                                        "Getting wots_pubkeys from protocol {} and key: {}",
+                                        previous_protocol, key
+                                    );
+                                    let pubkey = context
+                                        .globals
+                                        .get_var(&previous_protocol, &key)
+                                        .unwrap()
+                                        .unwrap()
+                                        .wots_pubkey()
+                                        .unwrap();
+                                    //we copy the var so the prover is able to decode it when it sees the challenge tx
+                                    if self.role() == ParticipantRole::Prover {
+                                        context.globals.copy_var(
+                                            &previous_protocol,
+                                            &self.ctx.id,
+                                            &key,
+                                        )?;
+                                    }
+                                    temp_keys.push(pubkey.clone());
+                                    let temp_key = &temp_keys[temp_keys.len() - 1];
+                                    names_and_keys.push((key.as_str(), temp_key));
+                                    names_and_keys
+                                        .extend_from_slice(const_names_and_keys.as_slice());
+
+                                    let address = base_addr + (j + offset) * 4;
+                                    let mut scripts = vec![reverse_script.clone()];
+                                    stack = StackTracker::new();
+                                    input_challenge(&mut stack, address);
+                                    scripts.push(stack.get_script());
+                                    let winternitz_check =
+                                        scripts::verify_winternitz_signatures_aux(
+                                            aggregated,
+                                            &names_and_keys,
+                                            sign_mode,
+                                            true,
+                                            Some(scripts),
+                                        )?;
+                                    challenge_leaf_script.push(winternitz_check);
+                                }
+                                challenge_current_leaf += *words as u32;
+                            }
                             ProgramInputType::Const(words, offset) => {
                                 for j in *offset..*offset + *words {
                                     let address = base_addr + j * 4;
@@ -1493,7 +1563,6 @@ impl DisputeResolutionProtocol {
                                 }
                                 challenge_current_leaf += *words as u32;
                             }
-                            _ => {}
                         }
                     }
                 }

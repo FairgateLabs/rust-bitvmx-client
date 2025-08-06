@@ -4,7 +4,7 @@ use bitcoin_coordinator::TransactionStatus;
 use bitcoin_scriptexec::scriptint_vec;
 use console::style;
 use enum_dispatch::enum_dispatch;
-use key_manager::winternitz::{WinternitzSignature, WinternitzType};
+use key_manager::winternitz::{message_bytes_length, WinternitzSignature, WinternitzType};
 use protocol_builder::scripts::ProtocolScript;
 use protocol_builder::types::output::SpeedupData;
 use protocol_builder::types::{InputArgs, OutputType, Utxo};
@@ -345,18 +345,27 @@ pub trait ProtocolHandler {
 
         let mut names = vec![];
         let mut sizes = vec![];
+        //TODO: make the script save the size so we don't need to get it from participant keys or variables
         script.get_keys().iter().rev().for_each(|k| {
             names.push(k.name().to_string());
             let size = participant_keys.get_key_size(k.name());
-            if size.is_err() {
-                error!(
-                    "Failed to get key size for {}: {}",
-                    k.name(),
-                    size.err().unwrap()
-                );
-                return;
+            if size.is_err()  {
+                info!("Could not get the key from participant keys: {}. Trying to get from variables.", k.name());
+                let var = program_context.globals.get_var(&self.context().id, k.name());
+                if var.is_err() || var.as_ref().unwrap().is_none() {
+                    error!(
+                        "Failed to get key size for {}: {}",
+                        k.name(),
+                        size.err().unwrap()
+                    );
+                    return;
+                } else {
+                    sizes.push(message_bytes_length( var.unwrap().unwrap().wots_pubkey().unwrap().message_size().unwrap()));
+                }
+
+            } else {
+                sizes.push(size.unwrap());
             }
-            sizes.push(size.unwrap());
         });
         info!("Decoding data for {}", name);
         info!("Names: {:?}", names);

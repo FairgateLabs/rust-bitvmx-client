@@ -173,6 +173,11 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
         info!("Dispute setup");
 
         let dispute_id = Uuid::new_v4();
+
+        for msg in slot_protocol_configuration.program_input_connection(&dispute_id, 0)? {
+            send_all(&sub_channel, &msg)?;
+        }
+
         prepare_dispute(
             dispute_id,
             participants,
@@ -182,7 +187,6 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
             initial_output_type,
             prover_win_utxo,
             prover_win_output_type,
-            500,
             fake_drp,
             fake_instruction,
             ForcedChallenges::No,

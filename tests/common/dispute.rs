@@ -58,7 +58,6 @@ pub fn prepare_dispute(
     initial_output_type: OutputType,
     prover_win_utxo: Utxo,
     prover_win_output_type: OutputType,
-    fee: u32,
     fake: bool,
     fake_instruction: bool,
     fail_force_config: ForcedChallenges,
@@ -92,9 +91,6 @@ pub fn prepare_dispute(
         send_all(&channels, &set_fake)?;
     }
 
-    let set_fee = VariableTypes::Number(fee).set_msg(program_id, "FEE")?;
-    send_all(&channels, &set_fee)?;
-
     let set_aggregated_msg =
         VariableTypes::PubKey(*aggregated_pub_key).set_msg(program_id, "aggregated")?;
     send_all(&channels, &set_aggregated_msg)?;
@@ -127,13 +123,9 @@ pub fn prepare_dispute(
         VariableTypes::Number(TIMELOCK_BLOCKS.into()).set_msg(program_id, TIMELOCK_BLOCKS_KEY)?;
     send_all(&channels, &timelock_blocks)?;
 
-    let setup_msg = IncomingBitVMXApiMessages::Setup(
-        program_id,
-        PROGRAM_TYPE_DRP.to_string(),
-        participants,
-        TIMELOCK_BLOCKS,
-    )
-    .to_string()?;
+    let setup_msg =
+        IncomingBitVMXApiMessages::Setup(program_id, PROGRAM_TYPE_DRP.to_string(), participants, 1)
+            .to_string()?;
     send_all(&channels, &setup_msg)?;
 
     info!("Waiting for setup messages...");

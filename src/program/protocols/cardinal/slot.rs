@@ -82,12 +82,20 @@ pub fn certificate_hash(n: usize) -> String {
     format!("certificate_hash_{}", n)
 }
 
-pub fn certificate_hash_sub(n: usize, sub: u8) -> String {
-    format!("certificate_hash_{}_{}", n, sub)
+pub fn certificate_hash_sub(op: usize, word: u8) -> String {
+    format!("certificate_hash_{}_{}", op, word)
+}
+
+pub fn certificate_hash_prefix(op: usize) -> String {
+    format!("certificate_hash_{}_", op)
 }
 
 pub fn group_id(op: usize) -> String {
-    format!("group_id_{}", op)
+    format!("group_id_{}_0", op) //add 0 as it only requires one word but the connection with the dispute is made with prefixes
+}
+
+pub fn group_id_prefix(op: usize) -> String {
+    format!("group_id_{}_", op)
 }
 
 pub fn group_id_pubkey(op: usize) -> String {

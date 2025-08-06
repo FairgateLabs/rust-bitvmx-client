@@ -6,8 +6,10 @@ use bitvmx_broker::channel::channel::DualChannel;
 use bitvmx_broker::rpc::BrokerConfig;
 use bitvmx_client::program;
 use bitvmx_client::program::participant::P2PAddress;
-use bitvmx_client::program::protocols::dispute::{input_tx_name, program_input};
-use bitvmx_client::program::variables::VariableTypes;
+use bitvmx_client::program::protocols::dispute::{
+    input_tx_name, program_input, program_input_prev_prefix, program_input_prev_protocol,
+};
+use bitvmx_client::program::variables::{VariableTypes, WitnessTypes};
 use bitvmx_client::types::{
     IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, EMULATOR_ID, L2_ID, PROVER_ID,
 };
@@ -21,6 +23,10 @@ use common::{clear_db, init_utxo_new, FUNDING_ID, INITIAL_BLOCK_COUNT, WALLET_NA
 use common::{config_trace, send_all};
 use emulator::decision::challenge::{ForceChallenge, ForceCondition};
 use emulator::executor::utils::{FailConfiguration, FailReads};
+use key_manager::winternitz::{
+    self, checksum_length, to_checksummed_message, WinternitzPublicKey, WinternitzSignature,
+    WinternitzType,
+};
 use protocol_builder::scripts::{self, SignMode};
 use protocol_builder::types::Utxo;
 use std::sync::mpsc::channel;
@@ -485,6 +491,24 @@ pub fn test_all_aux(
     let pair_0_1_channels = vec![helper.channels[0].clone(), helper.channels[1].clone()];
     let prog_id = Uuid::new_v4();
 
+    //simulate a protocol with a prover previous input
+    let previous_protocol = Uuid::new_v4();
+    let pub_key = derive_winternitz(4, 0);
+    let signature = sign_winternitz_message(&hex::decode("00000001").unwrap(), 0);
+    let set_pub_key =
+        VariableTypes::WinternitzPubKey(pub_key).set_msg(previous_protocol, "previous_input_0")?;
+    let set_witness =
+        WitnessTypes::Winternitz(signature).set_msg(previous_protocol, "previous_input_0")?;
+    send_all(&pair_0_1_channels, &set_pub_key)?;
+
+    //configure the dispute so is able to retrive the data
+    let prev_protocol =
+        VariableTypes::Uuid(previous_protocol).set_msg(prog_id, &program_input_prev_protocol(0))?;
+    let prev_prefix = VariableTypes::String("previous_input_".to_string())
+        .set_msg(prog_id, &program_input_prev_prefix(0))?;
+    send_all(&pair_0_1_channels, &prev_protocol)?;
+    send_all(&pair_0_1_channels, &prev_prefix)?;
+
     if let Some(input) = inputs {
         let const_input = VariableTypes::Input(hex::decode(input.0).unwrap())
             .set_msg(prog_id, &program_input(input.1))?;
@@ -494,13 +518,12 @@ pub fn test_all_aux(
     prepare_dispute(
         prog_id,
         pair_0_1,
-        pair_0_1_channels,
+        pair_0_1_channels.clone(),
         &pair_0_1_agg_pub_key,
         utxo,
         initial_out_type,
         prover_win_utxo,
         prover_win_out_type,
-        500,
         false,
         false,
         ForcedChallenges::No,
@@ -516,6 +539,9 @@ pub fn test_all_aux(
     // wait input from command line
     info!("Waiting for funding ready");
     wait_enter(independent);
+
+    //the witness is observed and then the challenge is sent
+    send_all(&pair_0_1_channels, &set_witness)?;
 
     let _ = helper.channels[1].send(
         BITVMX_ID,
@@ -562,6 +588,58 @@ fn wait_enter(independent: bool) {
     std::io::stdin()
         .read_line(&mut input)
         .expect("Failed to read line");
+}
+
+pub fn derive_winternitz(message_size_in_bytes: usize, index: u32) -> WinternitzPublicKey {
+    let message_digits_length = winternitz::message_digits_length(message_size_in_bytes);
+    let checksum_size = checksum_length(message_digits_length);
+
+    let winternitz = winternitz::Winternitz::new();
+    let master_secret = vec![
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+        0x0f,
+    ];
+
+    let public_key = winternitz
+        .generate_public_key(
+            &master_secret,
+            WinternitzType::HASH160,
+            message_digits_length,
+            checksum_size,
+            index,
+        )
+        .unwrap();
+
+    public_key
+}
+
+pub fn sign_winternitz_message(message_bytes: &[u8], index: u32) -> WinternitzSignature {
+    let message_digits_length = winternitz::message_digits_length(message_bytes.len());
+    let checksummed_message = to_checksummed_message(message_bytes);
+    let checksum_size = checksum_length(message_digits_length);
+    let message_size = checksummed_message.len() - checksum_size;
+
+    assert!(message_size == message_digits_length);
+
+    let master_secret = vec![
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+        0x0f,
+    ];
+    let winternitz = winternitz::Winternitz::new();
+    let private_key = winternitz
+        .generate_private_key(
+            &master_secret,
+            WinternitzType::HASH160,
+            message_size,
+            checksum_size,
+            index,
+        )
+        .unwrap();
+
+    let signature =
+        winternitz.sign_message(message_digits_length, &checksummed_message, &private_key);
+
+    signature
 }
 
 #[ignore]
@@ -628,6 +706,14 @@ fn test_const_fail_input() -> Result<()> {
     test_all_aux(
         false,
         Network::Regtest,
+        Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
+        Some(("00000002", 1, "00000003", 2)),
+        Some(fail_config.clone()),
+    )?;
+
+    test_all_aux(
+        false,
+        Network::Regtest,
         Some("./verifiers/add-test-with-const-post.yaml".to_string()),
         Some(("0000000200000004", 1, "00000001", 0)),
         Some(fail_config.clone()),
@@ -639,6 +725,20 @@ fn test_const_fail_input() -> Result<()> {
         Some("./verifiers/add-test-with-const-pre.yaml".to_string()),
         Some(("0000000100000002", 0, "00000004", 1)),
         Some(fail_config),
+    )?;
+
+    Ok(())
+}
+
+#[ignore]
+#[test]
+fn test_previous_input() -> Result<()> {
+    test_all_aux(
+        false,
+        Network::Regtest,
+        Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
+        Some(("00000002", 1, "00000003", 2)),
+        None,
     )?;
 
     Ok(())
