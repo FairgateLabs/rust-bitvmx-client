@@ -151,7 +151,9 @@ pub fn test_drp() -> Result<()> {
     //TODO: allow fake and true job dispatcher execution and responses so we can test the whole flow
 
     info!("Stopping bitcoind");
-    bitcoind.stop()?;
+    if let Some(ref bitcoind_instance) = bitcoind {
+        bitcoind_instance.stop()?;
+    }
 
     Ok(())
 }
@@ -196,6 +198,8 @@ pub fn test_aggregation() -> Result<()> {
         _ => panic!("Expected AggregatedPubkey message"),
     };
 
-    bitcoind.stop()?;
+    if let Some(ref bitcoind_instance) = bitcoind {
+        bitcoind_instance.stop()?;
+    }
     Ok(())
 }

@@ -98,13 +98,17 @@ pub const WALLET_NAME: &str = "wallet";
 pub const FUNDING_ID: &str = "fund_1";
 pub const FEE: u64 = 500;
 
-pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
+pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
     let config = Config::new(Some("config/op_1.yaml".to_string()))?;
 
     let is_ci = std::env::var("GITHUB_ACTIONS").is_ok();
 
     let bitcoind = if is_ci {
-        anyhow::bail!("Running in CI - bitcoind startup is required for tests");
+        info!("Running in CI - using external bitcoind from docker-compose");
+        // En CI, no levantamos bitcoind internamente porque ya está corriendo via docker-compose
+        // Esperamos un momento para que esté completamente iniciado
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        None
     } else {
         info!("Running locally - starting bitcoind");
         let bitcoind = Bitcoind::new_with_flags(
@@ -119,7 +123,7 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
             },
         );
         bitcoind.start()?;
-        bitcoind
+        Some(bitcoind)
     };
 
     let wallet_config = match config.bitcoin.network {
