@@ -169,6 +169,9 @@ pub fn test_transfer() -> Result<()> {
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
     info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
 
-    bitcoind.stop()?;
+    info!("Stopping bitcoind");
+    if let Some(ref bitcoind_instance) = bitcoind {
+        bitcoind_instance.stop()?;
+    }
     Ok(())
 }

@@ -316,9 +316,9 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     info!("happy path secret: {}", fake_secret);
     info!("happy path public: {}", aggregated_happy_path);
 
-    if bitcoind.is_some() {
-        bitcoind.unwrap().stop()?;
-    }
+    // if bitcoind.is_some() {
+    //     bitcoind.unwrap().stop()?;
+    // }
     Ok(())
 }
 
@@ -392,7 +392,10 @@ pub fn test_send_lockreq_tx() -> Result<()> {
     // Mine 1 block to confirm transaction
     wallet.mine(1)?;
 
-    bitcoind.stop()?;
+    info!("Stopping bitcoind");
+    if let Some(ref bitcoind_instance) = bitcoind {
+        bitcoind_instance.stop()?;
+    }
 
     Ok(())
 }
