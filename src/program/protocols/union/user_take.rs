@@ -23,7 +23,7 @@ use crate::{
         participant::ParticipantKeys,
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
-            union::types::{PegOutRequest, ACCEPT_PEGIN_TX, USER_TAKE_TX},
+            union::types::{PegOutAccepted, PegOutRequest, ACCEPT_PEGIN_TX, USER_TAKE_TX},
         },
         variables::{PartialUtxo, VariableTypes},
     },
@@ -139,15 +139,13 @@ impl ProtocolHandler for UserTakeProtocol {
         Ok(())
     }
 
-    fn setup_complete(&self, _program_context: &ProgramContext) -> Result<(), BitVMXError> {
-        // This is called after the protocol is built and ready to be used
+    fn setup_complete(&self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
         info!(
             id = self.ctx.my_idx,
             "UserTakeProtocol setup complete for program {}", self.ctx.id
         );
 
-        // TODO: send the signing info to union
-        //self.send_signing_info(&program_context, &take_aggregated_key)?;
+        self.send_pegout_accepted(&program_context)?;
 
         Ok(())
     }
@@ -201,12 +199,12 @@ impl UserTakeProtocol {
             .transaction_to_send(USER_TAKE_TX, &[taproot_arg])
     }
 
-    pub fn send_pegin_accepted(
+    pub fn send_pegout_accepted(
         &self,
         program_context: &ProgramContext,
-        take_aggregated_key: &PublicKey,
     ) -> Result<(), BitVMXError> {
         let pegout_request = self.pegout_request(program_context)?;
+        let take_aggregated_key = pegout_request.take_aggregated_key;
 
         let nonces = program_context
             .key_chain
