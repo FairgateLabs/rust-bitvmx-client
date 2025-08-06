@@ -87,8 +87,8 @@ impl User {
 
         // Wait for Bitvmx news PeginTransactionFound message
         info!("Waiting for RSK pegin transaction to be found");
-        let (found_txid, tx_status) = wait_until_msg!(&self.bitvmx, PeginTransactionFound(_txid, _tx_status) => (_txid, _tx_status));
 
+        let (found_txid, tx_status) = wait_until_msg!(&self.bitvmx, PeginTransactionFound(_txid, _tx_status) => (_txid, _tx_status));
         assert_eq!(
             found_txid, request_pegin_txid,
             "Request Pegin Transaction not found"
