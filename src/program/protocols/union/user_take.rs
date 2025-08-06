@@ -245,7 +245,7 @@ impl UserTakeProtocol {
 
         let data = serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(
             self.ctx.id,
-            "pegout_accepted".to_string(),
+            PegOutAccepted::name(),
             VariableTypes::String(serde_json::to_string(&pegout_accepted)?),
         ))?;
 

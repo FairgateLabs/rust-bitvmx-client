@@ -140,3 +140,9 @@ pub struct PegOutAccepted {
     pub user_take_nonce: PubNonce,
     pub user_take_signature: MaybeScalar,
 }
+
+impl PegOutAccepted {
+    pub fn name() -> String {
+        "pegout_accepted".to_string()
+    }
+}
