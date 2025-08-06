@@ -323,13 +323,18 @@ impl AcceptPegInProtocol {
             .as_ref()
             .to_vec();
 
+        let accept_pegin_txid = protocol
+            .transaction_by_name(ACCEPT_PEGIN_TX)?
+            .compute_txid();
+
         // TODO: verify that the signature we are getting from the array of signatures is the proper one
         let pegin_accepted = PegInAccepted {
             committee_id: pegin_request.committee_id,
-            operator_take_sighash,
-            operator_won_sighash,
+            accept_pegin_txid,
             accept_pegin_nonce: nonces[0].1.clone(),
             accept_pegin_signature: signatures[0].1.clone(),
+            operator_take_sighash,
+            operator_won_sighash,
         };
 
         let data = serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(

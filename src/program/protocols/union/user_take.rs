@@ -235,8 +235,11 @@ impl UserTakeProtocol {
             .as_ref()
             .to_vec();
 
+        let user_take_txid = protocol.transaction_by_name(USER_TAKE_TX)?.compute_txid();
+
         // TODO: verify that the signature we are getting from the array of signatures is the proper one
         let pegout_accepted = PegOutAccepted {
+            user_take_txid,
             committee_id: pegout_request.committee_id,
             user_take_sighash,
             user_take_nonce: nonces[0].1.clone(),

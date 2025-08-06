@@ -112,10 +112,11 @@ impl PegInRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PegInAccepted {
     pub committee_id: Uuid,
-    pub operator_take_sighash: Vec<u8>,
-    pub operator_won_sighash: Vec<u8>,
+    pub accept_pegin_txid: Txid,
     pub accept_pegin_nonce: PubNonce,
     pub accept_pegin_signature: MaybeScalar,
+    pub operator_take_sighash: Vec<u8>,
+    pub operator_won_sighash: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -136,6 +137,7 @@ impl PegOutRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PegOutAccepted {
     pub committee_id: Uuid,
+    pub user_take_txid: Txid,
     pub user_take_sighash: Vec<u8>,
     pub user_take_nonce: PubNonce,
     pub user_take_signature: MaybeScalar,
