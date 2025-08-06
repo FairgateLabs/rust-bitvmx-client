@@ -16,8 +16,6 @@ use crate::common::{FEE, FUNDING_ID, WALLET_NAME};
 
 mod common;
 
-//cargo test --release  -- test_drp --ignored
-//#[ignore]
 #[test]
 pub fn test_drp() -> Result<()> {
     config_trace();
