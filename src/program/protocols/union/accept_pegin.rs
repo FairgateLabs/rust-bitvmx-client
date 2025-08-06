@@ -9,9 +9,9 @@ use crate::{
             union::{
                 common::get_dispute_core_id,
                 types::{
-                    PegInAccepted, PegInRequest, ACCEPT_PEGIN_TX, CHALLENGE_ENABLER, DUST_VALUE,
-                    OPERATOR_TAKE_ENABLER, OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX,
-                    REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX,
+                    PegInAccepted, PegInRequest, ACCEPT_PEGIN_TX, OPERATOR_TAKE_ENABLER,
+                    OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX, P2TR_FEE,
+                    REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, SPEED_UP_VALUE,
                 },
             },
         },
@@ -22,6 +22,7 @@ use crate::{
 use bitcoin::{hex::FromHex, Amount, PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
+    builder::ProtocolBuilder,
     errors::ProtocolBuilderError,
     graph::graph::GraphOptions,
     scripts::{op_return_script, timelock, ProtocolScript, SignMode},
@@ -75,10 +76,11 @@ impl ProtocolHandler for AcceptPegInProtocol {
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let pegin_request = self.pegin_request(context)?;
+        let pegin_request: PegInRequest = self.pegin_request(context)?;
         let pegin_request_txid = pegin_request.txid;
-        // FIXME: Use network fee or speed up output
-        let amount = self.checked_sub(pegin_request.amount, DUST_VALUE)?;
+        let mut amount = self.checked_sub(pegin_request.amount, P2TR_FEE)?;
+        amount = self.checked_sub(amount, SPEED_UP_VALUE)?;
+
         let take_aggregated_key = &pegin_request.take_aggregated_key;
 
         let mut protocol = self.load_or_create_protocol();
@@ -108,35 +110,31 @@ impl ProtocolHandler for AcceptPegInProtocol {
         let accept_pegin_output = OutputType::taproot(amount, &take_aggregated_key, &[])?;
         protocol.add_transaction_output(ACCEPT_PEGIN_TX, &accept_pegin_output)?;
 
+        // Speed up transaction (User pay for it)
+        let pb = ProtocolBuilder {};
+        pb.add_speedup_output(
+            &mut protocol,
+            ACCEPT_PEGIN_TX,
+            SPEED_UP_VALUE,
+            &pegin_request.reimbursement_pubkey,
+        )?;
+
         let slot_index = pegin_request.slot_index as usize;
 
-        // Operator take transactions
         // Loop over operators and create take 1 and take 2 transactions
         for (index, take_key) in pegin_request.operators_take_key.iter().enumerate() {
             let dispute_protocol_id = get_dispute_core_id(pegin_request.committee_id, take_key);
 
-            let challenge_enabler =
-                self.challenge_enabler(context, dispute_protocol_id, slot_index)?;
+            // Operator take transaction data
             let operator_take_enabler =
                 self.operator_take_enabler(context, dispute_protocol_id, slot_index)?;
-            let operator_won_enabler =
-                self.operator_won_enabler(context, dispute_protocol_id, slot_index)?;
-
             let kickoff_tx_name = &format!("{}_OP_{}", REIMBURSEMENT_KICKOFF_TX, index);
-            let try_take2_tx_name = &format!("TRY_TAKE2_TX_OP_{}", index);
 
             // Create kickoff transaction reference
             self.create_transaction_reference(
                 &mut protocol,
                 kickoff_tx_name,
-                &mut vec![operator_take_enabler.clone(), challenge_enabler.clone()],
-            )?;
-
-            // Create won enabler transaction reference
-            self.create_transaction_reference(
-                &mut protocol,
-                try_take2_tx_name,
-                &mut vec![operator_won_enabler.clone()],
+                &mut vec![operator_take_enabler.clone()],
             )?;
 
             self.create_operator_take_transaction(
@@ -147,7 +145,18 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 pegin_request_txid,
                 kickoff_tx_name,
                 operator_take_enabler.clone(),
-                challenge_enabler.clone(),
+            )?;
+
+            // Operator won transaction data
+            let operator_won_enabler =
+                self.operator_won_enabler(context, dispute_protocol_id, slot_index)?;
+            let reveal_tx_name = &format!("REVEAL_TX_OP_{}", index);
+
+            // Create won enabler transaction reference
+            self.create_transaction_reference(
+                &mut protocol,
+                reveal_tx_name,
+                &mut vec![operator_won_enabler.clone()],
             )?;
 
             self.create_operator_won_transaction(
@@ -156,9 +165,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 amount,
                 take_key,
                 pegin_request_txid,
-                kickoff_tx_name,
-                operator_take_enabler.clone(),
-                try_take2_tx_name,
+                reveal_tx_name,
                 operator_won_enabler.clone(),
             )?;
         }
@@ -272,19 +279,6 @@ impl AcceptPegInProtocol {
             .utxo()?)
     }
 
-    fn challenge_enabler(
-        &self,
-        context: &ProgramContext,
-        dispute_protocol_id: Uuid,
-        index: usize,
-    ) -> Result<PartialUtxo, BitVMXError> {
-        Ok(context
-            .globals
-            .get_var(&dispute_protocol_id, &var_name(CHALLENGE_ENABLER, index))?
-            .unwrap()
-            .utxo()?)
-    }
-
     fn send_signing_info(
         &self,
         program_context: &ProgramContext,
@@ -301,17 +295,6 @@ impl AcceptPegInProtocol {
             ));
         }
 
-        // TODO: Check if we want this assertion
-        // We expect nonces for: ACCEPT_PEGIN_TX + 4 operator_take + 4 operator_won + 4 per try_take_2 = 9 total
-        // let expected_nonces = 13;
-        // assert_eq!(
-        //     nonces.len(),
-        //     expected_nonces,
-        //     "Expected exactly {} nonces for AcceptPegInProtocol, found {}",
-        //     expected_nonces,
-        //     nonces.len()
-        // );
-
         let signatures = program_context
             .key_chain
             .get_signatures(&take_aggregated_key, &self.ctx.protocol_name)?;
@@ -322,14 +305,6 @@ impl AcceptPegInProtocol {
                 self.ctx.protocol_name.to_string(),
             ));
         }
-
-        // FIXME: Do we want this assertion?
-        // assert_eq!(
-        //     signatures.len(),
-        //     1,
-        //     "Expected exactly one partial signature for AcceptPegInProtocol, found {}",
-        //     signatures.len()
-        // );
 
         let mut protocol = self.load_protocol()?;
         let operator_take_tx_name = &format!("OPERATOR_TAKE_TX_OP_{}", self.ctx.my_idx);
@@ -380,10 +355,8 @@ impl AcceptPegInProtocol {
         pegin_txid: Txid,
         kickoff_tx_name: &str,
         take_enabler: PartialUtxo,
-        challenge_enabler: PartialUtxo,
     ) -> Result<(), BitVMXError> {
         let operator_take_tx_name = &format!("OPERATOR_TAKE_TX_OP_{}", index);
-        // protocol.add_transaction(operator_take_tx_name)?;
 
         // Pegin input
         self.add_accept_pegin_connection(protocol, operator_take_tx_name, pegin_txid)?;
@@ -396,24 +369,25 @@ impl AcceptPegInProtocol {
             take_enabler,
         )?;
 
-        // Input from reimbursement kickoff with timelock
-        protocol.add_connection(
-            "challenge_enabler_conn",
-            kickoff_tx_name,
-            OutputSpec::Index(challenge_enabler.1 as usize),
+        let operator_amount = self.checked_sub(amount, SPEED_UP_VALUE)?;
+
+        // Operator Output
+        self.add_operator_output(
+            protocol,
             operator_take_tx_name,
-            InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::KeyOnly {
-                    key_path_sign: SignMode::Aggregate,
-                },
-            ),
-            None,
-            Some(challenge_enabler.0),
+            operator_amount,
+            take_pubkey,
         )?;
 
-        // // Operator Output
-        self.add_operator_output(protocol, operator_take_tx_name, amount, take_pubkey)?;
+        // Speed up transaction (Operator pay for it)
+        let pb = ProtocolBuilder {};
+        pb.add_speedup_output(
+            protocol,
+            operator_take_tx_name,
+            SPEED_UP_VALUE,
+            &take_pubkey,
+        )?;
+
         Ok(())
     }
 
@@ -424,30 +398,19 @@ impl AcceptPegInProtocol {
         amount: u64,
         take_pubkey: &PublicKey,
         pegin_txid: Txid,
-        kickoff_tx_name: &str,
-        take_enabler: PartialUtxo,
-        try_take2_tx_name: &str,
+        reveal_tx_name: &str,
         won_enabler: PartialUtxo,
     ) -> Result<(), BitVMXError> {
         // Operator won transaction
         let operator_won_tx_name = &format!("OPERATOR_WON_TX_OP_{}", index);
-        // protocol.add_transaction(operator_won_tx_name)?;
 
         // Pegin input
         self.add_accept_pegin_connection(protocol, operator_won_tx_name, pegin_txid)?;
 
-        // Input All takes enabler
-        self.add_all_takes_enabler_input(
-            protocol,
-            operator_won_tx_name,
-            kickoff_tx_name,
-            take_enabler,
-        )?;
-
         // Input from try take 2 with timelock
         protocol.add_connection(
-            "try_take2_conn",
-            try_take2_tx_name,
+            "reveal_conn",
+            reveal_tx_name,
             OutputSpec::Index(won_enabler.1 as usize),
             operator_won_tx_name,
             InputSpec::Auto(
@@ -460,9 +423,14 @@ impl AcceptPegInProtocol {
             Some(won_enabler.0),
         )?;
 
+        let operator_amount = self.checked_sub(amount, SPEED_UP_VALUE)?;
+
         // Operator Output
-        // TODO: Modify amount based on Miro
-        self.add_operator_output(protocol, operator_won_tx_name, amount, take_pubkey)?;
+        self.add_operator_output(protocol, operator_won_tx_name, operator_amount, take_pubkey)?;
+
+        // Speed up transaction (Operator pay for it)
+        let pb = ProtocolBuilder {};
+        pb.add_speedup_output(protocol, operator_won_tx_name, SPEED_UP_VALUE, &take_pubkey)?;
 
         Ok(())
     }
