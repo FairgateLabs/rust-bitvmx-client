@@ -279,6 +279,9 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
         info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
     }
 
-    bitcoind.stop()?;
+    info!("Stopping bitcoind");
+    if let Some(ref bitcoind_instance) = bitcoind {
+        bitcoind_instance.stop()?;
+    }
     Ok(())
 }

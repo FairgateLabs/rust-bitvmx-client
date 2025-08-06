@@ -512,6 +512,8 @@ pub fn test_full() -> Result<()> {
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
     info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
 
-    bitcoind.stop()?;
+    if let Some(ref bitcoind_instance) = bitcoind {
+        bitcoind_instance.stop()?;
+    }
     Ok(())
 }
