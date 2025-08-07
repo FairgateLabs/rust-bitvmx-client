@@ -6,7 +6,6 @@ use std::{
     //     Arc, Mutex,
     // },
     // thread::JoinHandle,
-    time::Duration,
 };
 
 use anyhow::Result;
@@ -31,13 +30,16 @@ use bitvmx_client::{
         variables::{VariableTypes, WitnessTypes},
     },
     types::{
-        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, L2_ID, PROGRAM_TYPE_LOCK,// PROVER_ID,
+        IncomingBitVMXApiMessages,
+        OutgoingBitVMXApiMessages,
+        L2_ID,
+        PROGRAM_TYPE_LOCK, // PROVER_ID,
     },
 };
 // use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use common::{clear_db, prepare_bitcoin, INITIAL_BLOCK_COUNT};
 use p2p_handler::PeerId;
-use tracing::{info};
+use tracing::info;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 mod fixtures;
