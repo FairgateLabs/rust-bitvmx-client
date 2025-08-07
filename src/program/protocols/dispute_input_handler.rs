@@ -324,3 +324,51 @@ pub fn unify_inputs(
 
     Ok(full_input)
 }
+
+pub fn set_input_u8(
+    id: &Uuid,
+    context: &ProgramContext,
+    name: &str,
+    value: u8,
+) -> Result<(), BitVMXError> {
+    set_input(id, context, name, vec![value])
+}
+
+pub fn set_input_u32(
+    id: &Uuid,
+    context: &ProgramContext,
+    name: &str,
+    value: u32,
+) -> Result<(), BitVMXError> {
+    set_input(id, context, name, value.to_be_bytes().to_vec())
+}
+
+pub fn set_input_u64(
+    id: &Uuid,
+    context: &ProgramContext,
+    name: &str,
+    value: u64,
+) -> Result<(), BitVMXError> {
+    set_input(id, context, name, value.to_be_bytes().to_vec())
+}
+
+pub fn set_input_hex(
+    id: &Uuid,
+    context: &ProgramContext,
+    name: &str,
+    value: &str,
+) -> Result<(), BitVMXError> {
+    set_input(id, context, name, hex::decode(value)?)
+}
+
+pub fn set_input(
+    id: &Uuid,
+    context: &ProgramContext,
+    name: &str,
+    value: Vec<u8>,
+) -> Result<(), BitVMXError> {
+    context
+        .globals
+        .set_var(id, name, VariableTypes::Input(value))?;
+    Ok(())
+}
