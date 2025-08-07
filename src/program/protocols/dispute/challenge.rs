@@ -12,11 +12,11 @@ use crate::{
     program::{
         participant::{ParticipantKeys, ParticipantRole},
         protocols::{
-            dispute::{program_input_prev_prefix, program_input_prev_protocol, program_input_word},
-            dispute_input_handler::{
+            dispute::input_handler::{
                 generate_input_owner_list, set_input_hex, set_input_u32, set_input_u8,
                 ProgramInputType,
             },
+            dispute::{program_input_prev_prefix, program_input_prev_protocol, program_input_word},
         },
         variables::VariableTypes,
     },
