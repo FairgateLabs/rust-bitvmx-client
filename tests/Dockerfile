@@ -33,7 +33,7 @@ RUN tar -xvf bitcoin-${VERSION}-${ARCH}.tar.gz
 RUN cp /app/bitcoin-${VERSION}/bin/bitcoind /usr/local/bin/
 RUN cp /app/bitcoin-${VERSION}/bin/bitcoin-cli /usr/local/bin/
 
-COPY op_1.conf entrypoint.sh cleanup.sh /app/
+COPY tests/op_1.conf tests/entrypoint.sh tests/cleanup.sh /app/
 RUN chmod 400 ./*.conf
 
 EXPOSE ${BITCOIND_RPC_PORT}
