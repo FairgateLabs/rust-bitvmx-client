@@ -9,6 +9,7 @@ use crate::program::{participant::ParticipantRole, variables::PartialUtxo};
 pub const TAKE_AGGREGATED_KEY: &str = "take_aggregated_key";
 pub const DISPUTE_AGGREGATED_KEY: &str = "dispute_aggregated_key";
 pub const SELECTED_OPERATOR_PUBKEY: &str = "selected_operator_pubkey";
+pub const MONITORED_OPERATOR_KEY: &str = "monitored_operator_key";
 
 // Transaction names
 pub const REQUEST_PEGIN_TX: &str = "REQUEST_PEGIN_TX";
