@@ -11,7 +11,7 @@ use bitvmx_client::{
                 slot::{certificate_hash, group_id, slot_protocol_dust_cost},
                 slot_config::SlotProtocolConfiguration,
             },
-            dispute::TIMELOCK_BLOCKS,
+            dispute::{program_input, TIMELOCK_BLOCKS},
         },
         variables::VariableTypes,
     },
@@ -175,8 +175,19 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
         let dispute_id = Uuid::new_v4();
 
         for msg in slot_protocol_configuration.program_input_connection(&dispute_id, 0)? {
+            tracing::warn!("Sending program input: {}", msg);
             send_all(&sub_channel, &msg)?;
         }
+
+        // Set the constant input data for the dispute
+        // 4 bytes for the success flag (01000000) and 32 bytes for the lock transaction hash
+        // this needs to be set before the dispute is prepared
+        let success = "01000000";
+        let lock_tx = "90531051d96babfc1fd5973ef01e5d69746be907654c0b99cf1a853206647906";
+        let const_input_data = format!("{}{}", success, lock_tx);
+        let const_input = VariableTypes::Input(hex::decode(const_input_data).unwrap())
+            .set_msg(dispute_id, &program_input(0))?;
+        let _ = send_all(&sub_channel, &const_input);
 
         prepare_dispute(
             dispute_id,
@@ -191,7 +202,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
             fake_instruction,
             ForcedChallenges::No,
             None,
-            None,
+            Some("./verifiers/cardinal-verifier.yaml".to_string()),
         )?;
         let _msgs = get_all(&sub_channel.clone(), &mut instances, false)?;
         info!("Dispute setup done");
@@ -216,13 +227,13 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
     let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
     // one operator decide to put a certificate hash to start the transfer
-    let cert_hash = "33".repeat(20);
+    let cert_hash = "966c3c1b3b93d12206202b8c685df7554d3df6c72b5cee973de94c45e3f37a0a";
     let set_cert_hash = VariableTypes::Input(hex::decode(cert_hash).unwrap())
         .set_msg(program_id, &certificate_hash(0))?;
     let _ = channels[0].send(BITVMX_ID, set_cert_hash)?;
 
-    let selected_gid: u32 = 4;
-    let set_gid = VariableTypes::Input(selected_gid.to_be_bytes().to_vec())
+    let selected_gid: u32 = 7;
+    let set_gid = VariableTypes::Input(selected_gid.to_le_bytes().to_vec())
         .set_msg(program_id, &group_id(0))?;
     let _ = channels[0].send(BITVMX_ID, set_gid)?;
 
@@ -244,6 +255,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
 
     // one operator disagrees with the gid and challenges
     if and_drp {
+        let gorth16proof = "b75f20d1aee5a1a0908edd107a25189ccc38b6d20c5dc33362a066157a6ee60350a09cfbfebe38c8d9f04a6dafe46ae2e30f6638f3eb93c1d2aeff2d52d66d0dcd68bf7f8fc07485dd04a573d233df3663d63e71568bc035ef82e8ab3525f025b487aaa4456aaf93be3141b210cda5165a714225d9fd63163f59d741bdaa8b93".to_string();
         execute_dispute(
             sub_channel,
             &mut instances,
@@ -252,6 +264,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
             &wallet,
             dispute_id,
             fake_drp,
+            Some((gorth16proof, 3)),
         )?;
 
         //Consume other stops through timeout

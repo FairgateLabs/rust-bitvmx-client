@@ -141,6 +141,7 @@ pub fn execute_dispute(
     wallet: &Wallet,
     program_id: Uuid,
     fake: bool,
+    input: Option<(String, u32)>,
 ) -> Result<()> {
     //CHALLENGERS STARTS CHALLENGE
     let _ = channels[1].send(
@@ -163,22 +164,22 @@ pub fn execute_dispute(
 
     // set input value
     //let data = "010000007bd5d42e4057965ff389683ef2304190d5e902f10190dba2887d46cccdd3389de95b00b98b086eb81f86988b252c704455eadff8f52710189e9c7d6c29b02a1ce355dcc4b00d84572a8a3414d40ecc209e5cea4e34b119b84e7455877726d3185c2847d1f4bcae30a0cd1b2da4bb3b85fa59b41dee6d9fea0258ced1e9a17c93";
-    let data = "11111111";
-    let set_input_1 =
-        VariableTypes::Input(hex::decode(data).unwrap()).set_msg(program_id, &program_input(0))?;
+    let (data, input_pos) = input.unwrap_or(("11111111".to_string(), 0));
+    let set_input_1 = VariableTypes::Input(hex::decode(data).unwrap())
+        .set_msg(program_id, &program_input(input_pos))?;
     let _ = channels[0].send(BITVMX_ID, set_input_1)?;
 
     // send the tx
     let _ = channels[0].send(
         BITVMX_ID,
-        IncomingBitVMXApiMessages::DispatchTransactionName(program_id, input_tx_name(0))
+        IncomingBitVMXApiMessages::DispatchTransactionName(program_id, input_tx_name(input_pos))
             .to_string()?,
     );
 
     // VERIFIER DETECTS THE INPUT
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
     let (_uuid, _txid, name) = msgs[1].transaction().unwrap();
-    assert_eq!(name.unwrap_or_default(), input_tx_name(0));
+    assert_eq!(name.unwrap_or_default(), input_tx_name(input_pos));
     if fake {
         let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
         info!(
@@ -190,17 +191,16 @@ pub fn execute_dispute(
 
     let _ = channels[1].send(
         BITVMX_ID,
-        IncomingBitVMXApiMessages::GetWitness(program_id, "prover_program_input_0".to_string())
-            .to_string()?,
+        IncomingBitVMXApiMessages::GetVar(program_id, program_input(input_pos)).to_string()?,
     )?;
 
     let mut mutinstances = instances.iter_mut().collect::<Vec<_>>();
     let msg = wait_message_from_channel(&channels[1], &mut mutinstances, false)?;
-    let (_uuid, _name, witness) = OutgoingBitVMXApiMessages::from_string(&msg.0)?
-        .witness()
+    let (_uuid, _name, var_type) = OutgoingBitVMXApiMessages::from_string(&msg.0)?
+        .variable()
         .unwrap();
 
-    let input1 = &witness.winternitz().unwrap().message_bytes();
+    let input1 = &var_type.input()?;
     info!("Verifier observed Input 1: {:?}", input1);
 
     let prover_dispatcher = bitvmx_job_dispatcher::DispatcherHandler::<EmulatorJobType>::new(

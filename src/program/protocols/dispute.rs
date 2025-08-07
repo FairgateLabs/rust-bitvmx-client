@@ -182,7 +182,7 @@ const MIN_RELAY_FEE: u64 = 1;
 const DUST: u64 = 500 * MIN_RELAY_FEE;
 
 pub fn protocol_cost() -> u64 {
-    20_000 // This is a placeholder value, adjust as needed
+    32_000 // This is a placeholder value, adjust as needed
 }
 
 fn get_role(my_idx: usize) -> ParticipantRole {
@@ -1567,26 +1567,27 @@ impl DisputeResolutionProtocol {
                     }
                 }
                 "rom" => {
-                    let rodata = program.find_section_by_name(".rodata").unwrap();
-                    let rodata_words = rodata.data.len() as u32;
-                    let base_addr = rodata.start;
-                    for i in 0..rodata_words {
-                        let address = base_addr + i;
-                        let value = program.read_mem(address).unwrap();
-                        let mut scripts = vec![reverse_script.clone()];
-                        stack = StackTracker::new();
-                        rom_challenge(&mut stack, address, value);
-                        scripts.push(stack.get_script());
-                        let winternitz_check = scripts::verify_winternitz_signatures_aux(
-                            aggregated,
-                            &names_and_keys,
-                            sign_mode,
-                            true,
-                            Some(scripts),
-                        )?;
-                        challenge_leaf_script.push(winternitz_check);
+                    if let Some(rodata) = program.find_section_by_name(".rodata") {
+                        let rodata_words = rodata.data.len() as u32;
+                        let base_addr = rodata.start;
+                        for i in 0..rodata_words {
+                            let address = base_addr + i;
+                            let value = program.read_mem(address).unwrap();
+                            let mut scripts = vec![reverse_script.clone()];
+                            stack = StackTracker::new();
+                            rom_challenge(&mut stack, address, value);
+                            scripts.push(stack.get_script());
+                            let winternitz_check = scripts::verify_winternitz_signatures_aux(
+                                aggregated,
+                                &names_and_keys,
+                                sign_mode,
+                                true,
+                                Some(scripts),
+                            )?;
+                            challenge_leaf_script.push(winternitz_check);
+                        }
+                        challenge_current_leaf += rodata_words;
                     }
-                    challenge_current_leaf += rodata_words;
                 }
                 _ => {
                     challenge_current_leaf += 1;

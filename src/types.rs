@@ -239,6 +239,15 @@ impl OutgoingBitVMXApiMessages {
         }
     }
 
+    pub fn variable(&self) -> Option<(Uuid, String, VariableTypes)> {
+        match self {
+            OutgoingBitVMXApiMessages::Variable(uuid, name, var_type) => {
+                Some((uuid.clone(), name.clone(), var_type.clone()))
+            }
+            _ => None,
+        }
+    }
+
     pub fn encrypted(&self) -> Option<(Uuid, Vec<u8>)> {
         match self {
             OutgoingBitVMXApiMessages::Encrypted(uuid, encrypted) => {

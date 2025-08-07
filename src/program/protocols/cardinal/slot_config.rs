@@ -173,8 +173,8 @@ impl SlotProtocolConfiguration {
         dispute_id: &Uuid,
         prover_id: usize,
     ) -> Result<Vec<String>, BitVMXError> {
-        let input_idx_cert_hash = 0;
-        let input_idx_group_id = 1;
+        let input_idx_cert_hash = 1;
+        let input_idx_group_id = 2;
         let msgs = vec![
             VariableTypes::Uuid(self.id).set_msg(
                 *dispute_id,

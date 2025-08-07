@@ -479,6 +479,7 @@ pub fn test_full() -> Result<()> {
         &wallet,
         dispute_id,
         fake_drp,
+        None,
     )?;
 
     //Consume other stops through timeout

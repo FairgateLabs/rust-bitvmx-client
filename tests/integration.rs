@@ -143,6 +143,7 @@ pub fn test_drp() -> Result<()> {
         &wallet,
         prog_id,
         false,
+        None,
     )?;
 
     //prover final trace
