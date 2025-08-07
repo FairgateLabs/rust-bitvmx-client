@@ -12,15 +12,15 @@ services:
       context: ..
       dockerfile: tests/Dockerfile
       args:
-        BITCOIND_RPC_PORT: ${BITCOIND_RPC_PORT}
-        BITCOIND_RPC_USERNAME: ${BITCOIND_RPC_USERNAME}
-        BITCOIND_RPC_PASSWORD: ${BITCOIND_RPC_PASSWORD}
+        BITCOIND_RPC_PORT: 18443
+        BITCOIND_RPC_USERNAME: foo
+        BITCOIND_RPC_PASSWORD: rpcpassword
         BITCOIND_RPC_NETWORK: regtest
     logging: *default-logging
     ports:
-      - "${BITCOIND_RPC_PORT}:${BITCOIND_RPC_PORT}"
+      - "18443:18443"
     healthcheck:
-      test: ["CMD", "wget", "--user", "${BITCOIND_RPC_USERNAME}", "--password", "${BITCOIND_RPC_PASSWORD}", "--post-data", '{"jsonrpc": "1.0", "id": "healthcheck", "method": "getblockchaininfo", "params": []}', "http://localhost:${BITCOIND_RPC_PORT}", "-O", "-"]
+      test: ["CMD", "wget", "--user", "foo", "--password", "rpcpassword", "--post-data", '{"jsonrpc": "1.0", "id": "healthcheck", "method": "getblockchaininfo", "params": []}', "http://localhost:18443", "-O", "-"]
       interval: 10s
       timeout: 5s
       retries: 10
