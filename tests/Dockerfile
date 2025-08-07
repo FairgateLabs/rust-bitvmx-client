@@ -39,3 +39,4 @@ RUN chmod 400 ./*.conf
 EXPOSE ${BITCOIND_RPC_PORT}
 
 ENTRYPOINT ["./entrypoint.sh"]
+
