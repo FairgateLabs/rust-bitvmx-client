@@ -35,7 +35,6 @@ RUN cp /app/bitcoin-${VERSION}/bin/bitcoind /usr/local/bin/
 RUN cp /app/bitcoin-${VERSION}/bin/bitcoin-cli /usr/local/bin/
 
 COPY tests/entrypoint.sh tests/cleanup.sh /app/
-RUN chmod 400 ./*.conf
 
 EXPOSE 18443
 
