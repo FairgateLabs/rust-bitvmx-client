@@ -46,7 +46,7 @@ use crate::{
         participant::ParticipantRole,
         protocols::{
             claim::ClaimGate,
-            input_handler::{
+            dispute_input_handler::{
                 generate_input_owner_list, get_required_keys, get_txs_configuration, split_input,
                 unify_inputs, unify_witnesses, ProgramInputType,
             },
