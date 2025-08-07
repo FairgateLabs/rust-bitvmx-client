@@ -18,21 +18,29 @@ storage:
 
 p2p:
   address: /ip4/127.0.0.1/tcp/61182
-  key: 0801124098a7c8db342852696d63dd2be8db3d46d16180fd10429f8bdcdc25e299e44223cb449d3daa2efcb84541670187d2163d76cfd0e8f1c3fdad34163882ee0f2240
+  key: config/keys/op_3.key
   peer_id_file: peer_id
   timeout: 5
 
 coordinator_settings:
+  max_unconfirmed_speedups: 10
+  max_tx_weight: 400000
+  max_rbf_attempts: 10
+  min_funding_amount_sats: 10000
+  rbf_fee_percentage: 1.5
+  max_feerate_sat_vb: 1000
+  min_blocks_before_resend_speedup: 1
   monitor_settings:
-    confirmation_threshold: 1
+    max_monitoring_confirmations: 100
+    confirmation_threshold: 2
     indexer_settings:
-      checkpoint_height: 4400538
+      checkpoint_height: 4626057
 
 coordinator:
   throtthle_bitcoin_updates_until_sync: 1
   throtthle_bitcoin_updates: 10
-  
-broker_storage: 
+
+broker_storage:
   path: /tmp/op_3/broker.db
 broker_port: 44444
 
