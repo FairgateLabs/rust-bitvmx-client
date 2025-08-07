@@ -12,10 +12,11 @@ ARG BITCOIND_RPC_PORT
 ARG BITCOIND_RPC_USERNAME
 ARG BITCOIND_RPC_PASSWORD
 
-ENV BITCOIND_RPC_NETWORK=${BITCOIND_RPC_NETWORK}
-ENV BITCOIND_RPC_PORT=${BITCOIND_RPC_PORT}
-ENV BITCOIND_RPC_USERNAME=${BITCOIND_RPC_USERNAME}
-ENV BITCOIND_RPC_PASSWORD=${BITCOIND_RPC_PASSWORD}
+# Hardcoded values instead of using ARGs
+ENV BITCOIND_RPC_NETWORK=regtest
+ENV BITCOIND_RPC_PORT=18443
+ENV BITCOIND_RPC_USERNAME=foo
+ENV BITCOIND_RPC_PASSWORD=rpcpassword
 
 RUN apt update
 RUN apt install -y wget
@@ -33,10 +34,9 @@ RUN tar -xvf bitcoin-${VERSION}-${ARCH}.tar.gz
 RUN cp /app/bitcoin-${VERSION}/bin/bitcoind /usr/local/bin/
 RUN cp /app/bitcoin-${VERSION}/bin/bitcoin-cli /usr/local/bin/
 
-COPY tests/op_1.conf tests/entrypoint.sh tests/cleanup.sh /app/
+COPY tests/entrypoint.sh tests/cleanup.sh /app/
 RUN chmod 400 ./*.conf
 
-EXPOSE ${BITCOIND_RPC_PORT}
+EXPOSE 18443
 
 ENTRYPOINT ["./entrypoint.sh"]
-
