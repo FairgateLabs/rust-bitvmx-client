@@ -8,9 +8,10 @@ use crate::common::get_bitcoin_client;
 
 pub fn main() -> Result<()> {
     let _bitcoin_client = get_bitcoin_client()?;
-
-    let channel = DualChannel::new(&BrokerConfig::new(54321, None), 2);
-    channel.send(1, "burn".to_string())?;
+    let port = 54322;
+    let (broker_config, identifier, _) = BrokerConfig::new_only_address(54321, None)?;
+    let (channel, _) = DualChannel::new_simple(&broker_config, 2, port)?;
+    channel.send(identifier, "burn".to_string())?;
 
     let happy_txid: Txid;
     let secret_key: String;

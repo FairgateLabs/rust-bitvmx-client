@@ -17,6 +17,7 @@ use tracing::{error, info};
 use uuid::Uuid;
 
 use super::super::participant::ParticipantKeys;
+use crate::config::ComponentsConfig;
 use crate::errors::BitVMXError;
 use crate::keychain::KeyChain;
 use crate::program::participant::ParticipantKeysExt;
@@ -440,15 +441,23 @@ pub struct ProtocolContext {
     pub my_idx: usize,
     #[serde(skip)]
     pub storage: Option<Rc<Storage>>,
+    pub components_config: ComponentsConfig,
 }
 
 impl ProtocolContext {
-    pub fn new(id: Uuid, name: &str, my_idx: usize, storage: Rc<Storage>) -> Self {
+    pub fn new(
+        id: Uuid,
+        name: &str,
+        my_idx: usize,
+        storage: Rc<Storage>,
+        components_config: &ComponentsConfig,
+    ) -> Self {
         Self {
             id,
             protocol_name: name.to_string(),
             my_idx,
             storage: Some(storage),
+            components_config: components_config.clone(),
         }
     }
 }
@@ -478,9 +487,10 @@ pub fn new_protocol_type(
     name: &str,
     my_idx: usize,
     storage: Rc<Storage>,
+    component_config: &ComponentsConfig,
 ) -> Result<ProtocolType, BitVMXError> {
     let protocol_name = format!("{}_{}", name, id);
-    let ctx = ProtocolContext::new(id, &protocol_name, my_idx, storage);
+    let ctx = ProtocolContext::new(id, &protocol_name, my_idx, storage, component_config);
 
     match name {
         PROGRAM_TYPE_DRP => Ok(ProtocolType::DisputeResolutionProtocol(

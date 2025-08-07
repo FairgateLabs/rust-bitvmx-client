@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use bitcoin::PublicKey;
-use p2p_handler::PeerId;
+use bitvmx_broker::identification::identifier::Identifier;
+use p2p_handler::p2p_handler::PubKeyHash;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{debug, info, warn};
@@ -21,10 +22,10 @@ pub struct Collaboration {
     pub participants: Vec<P2PAddress>,
     pub leader: P2PAddress,
     pub im_leader: bool,
-    pub keys: HashMap<PeerId, PublicKey>,
+    pub keys: HashMap<PubKeyHash, PublicKey>,
     pub my_key: PublicKey,
     pub aggregated_key: Option<PublicKey>,
-    pub request_from: u32,
+    pub request_from: Identifier,
     pub state: bool,
     pub completed: bool,
 }
@@ -36,7 +37,7 @@ impl Collaboration {
         leader: P2PAddress,
         im_leader: bool,
         my_key: PublicKey,
-        request_from: u32,
+        request_from: Identifier,
     ) -> Self {
         Self {
             collaboration_id: collaboration_id.clone(),
@@ -58,12 +59,12 @@ impl Collaboration {
         public_keys: Option<Vec<PublicKey>>,
         leader: P2PAddress,
         program_context: &mut ProgramContext,
-        request_from: u32,
+        request_from: Identifier,
     ) -> Result<Self, BitVMXError> {
-        let im_leader = program_context.comms.get_peer_id() == leader.peer_id;
+        let im_leader = program_context.comms.get_pubk_hash()? == leader.pubkey_hash;
         let my_key = Self::get_or_create_my_key(program_context, peers.clone(), public_keys)?;
         let keys = vec![(
-            program_context.comms.get_peer_id(),
+            program_context.comms.get_pubk_hash()?,
             ParticipantKeys::new(vec![(id.to_string(), my_key.clone().into())], vec![]),
         )];
         if !im_leader {
@@ -80,7 +81,7 @@ impl Collaboration {
         if im_leader {
             collaboration
                 .keys
-                .insert(program_context.comms.get_peer_id(), my_key);
+                .insert(program_context.comms.get_pubk_hash()?, my_key);
         }
         Ok(collaboration)
     }
@@ -88,25 +89,25 @@ impl Collaboration {
     pub fn tick(&mut self, program_context: &ProgramContext) -> Result<bool, BitVMXError> {
         if self.state && self.im_leader {
             debug!("Send keys to peers");
-            //collect all the keys from the participants in a vec (peeer_id,key)
-            let all_keys: Vec<(String, PublicKeyType)> = self
+            //collect all the keys from the participants in a vec (pubkey_hash, key)
+            let all_keys: Vec<(PubKeyHash, PublicKeyType)> = self
                 .keys
                 .clone()
                 .into_iter()
-                .map(|(p, k)| (p.to_base58(), k.into()))
+                .map(|(p, k)| (p, k.into()))
                 .collect::<Vec<_>>();
 
-            let peerid = program_context.comms.get_peer_id();
-            let keys = vec![(peerid, ParticipantKeys::new(all_keys, vec![]))];
+            let pubk_hash = program_context.comms.get_pubk_hash()?;
+            let keys = vec![(pubk_hash, ParticipantKeys::new(all_keys, vec![]))];
             for peer in &self.participants {
-                if peer.peer_id == self.leader.peer_id {
+                if peer.pubkey_hash == self.leader.pubkey_hash {
                     continue;
                 }
                 //TODO: Serialize the rest of the keys so the other peers can use them
                 //use the peerid as key
                 debug!(
                     "Collaboration id: {}: Sending keys to peer: {}",
-                    self.collaboration_id, peer.peer_id
+                    self.collaboration_id, peer.pubkey_hash
                 );
                 request(
                     &program_context.comms,
@@ -124,11 +125,12 @@ impl Collaboration {
 
     pub fn process_p2p_message(
         &mut self,
-        peer_id: PeerId, //TODO: validate positions
+        p2p_address: P2PAddress, //TODO: validate positions
         msg_type: P2PMessageType,
         data: Value,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
+        let pubkey_hash = p2p_address.pubkey_hash.clone();
         match msg_type {
             P2PMessageType::Keys => {
                 if self.im_leader {
@@ -139,7 +141,7 @@ impl Collaboration {
                         .1
                         .clone();
                     let key = keys.get_public(&self.collaboration_id.to_string())?;
-                    self.keys.insert(peer_id.clone(), *key);
+                    self.keys.insert(pubkey_hash.clone(), *key);
                     debug!("Got keys {:?}", self.keys);
 
                     if self.keys.len() == self.participants.len() {
@@ -159,13 +161,14 @@ impl Collaboration {
                         .1
                         .clone();
 
-                    keys.mapping.iter().for_each(|(peer_id, key)| {
-                        let peer_id: PeerId =
-                            peer_id.parse().unwrap_or(self.leader.peer_id.clone()); //TODO: Handle the unwrap better
+                    keys.mapping.iter().for_each(|(pubkey_hash, key)| {
+                        let pubkey_hash: PubKeyHash = pubkey_hash
+                            .parse()
+                            .unwrap_or(self.leader.pubkey_hash.clone()); //TODO: Handle the unwrap better
                         if let Some(key) = key.public() {
-                            self.keys.insert(peer_id, *key);
+                            self.keys.insert(pubkey_hash, *key);
                         } else {
-                            warn!("Key not found for peer: {}", peer_id);
+                            warn!("Key not found for peer: {}", pubkey_hash);
                         }
                     });
 
@@ -180,7 +183,7 @@ impl Collaboration {
                 if self.aggregated_key.is_some() {
                     info!("Aggregated generated ({})", self.im_leader);
                     program_context.broker_channel.send(
-                        self.request_from,
+                        self.request_from.clone(),
                         OutgoingBitVMXApiMessages::AggregatedPubkey(
                             self.collaboration_id,
                             self.aggregated_key.unwrap().clone(),
@@ -192,7 +195,7 @@ impl Collaboration {
                 response(
                     &program_context.comms,
                     &self.collaboration_id,
-                    peer_id.clone(),
+                    p2p_address,
                     P2PMessageType::KeysAck,
                     (),
                 )?;
@@ -200,7 +203,7 @@ impl Collaboration {
             P2PMessageType::KeysAck => {
                 debug!(
                     "Collaboration id: {}: KeysAck received by {}",
-                    self.collaboration_id, peer_id
+                    self.collaboration_id, pubkey_hash
                 );
             }
             _ => {
@@ -217,17 +220,17 @@ impl Collaboration {
     ) -> Result<PublicKey, BitVMXError> {
         let my_key = if public_keys.is_some() {
             // find my position in the peers list
-            let my_peer_id = program_context.comms.get_peer_id();
+            let my_pubkey_hash = program_context.comms.get_pubk_hash()?;
             let my_position = peers
                 .iter()
-                .position(|p| p.peer_id == my_peer_id)
-                .ok_or(BitVMXError::InvalidParticipant(my_peer_id.to_string()))?;
+                .position(|p| p.pubkey_hash == my_pubkey_hash)
+                .ok_or(BitVMXError::InvalidParticipant(my_pubkey_hash.to_string()))?;
 
             public_keys
                 .unwrap()
                 .get(my_position)
                 .cloned()
-                .ok_or(BitVMXError::InvalidParticipant(my_peer_id.to_string()))?
+                .ok_or(BitVMXError::InvalidParticipant(my_pubkey_hash.to_string()))?
         } else {
             program_context.key_chain.derive_keypair()?
         };

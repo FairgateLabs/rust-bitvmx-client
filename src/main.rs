@@ -32,7 +32,7 @@ fn init_bitvmx(opn: &str) -> Result<BitVMX> {
 
     clear_db(&config.storage.path);
     clear_db(&config.key_storage.path);
-    clear_db(&config.broker_storage.path);
+    clear_db(&config.broker.storage.path);
 
     info!("config: {:?}", config.storage.path);
 
@@ -64,7 +64,7 @@ fn run_bitvmx(opn: &str, rx: Receiver<()>, tx: Option<Sender<()>>) -> Result<()>
     info!("BitVMX instance initialized");
     for bitvmx in &instances {
         info!("P2P Address: {}", bitvmx.address());
-        info!("Peer ID: {}", bitvmx.peer_id());
+        info!("Peer Public Key Hash: {}", bitvmx.pubkey_hash()?);
     }
 
     let mut ready = false;

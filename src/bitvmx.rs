@@ -1,5 +1,5 @@
+use crate::config::ComponentsConfig;
 use crate::program::protocols::protocol_handler::ProtocolHandler;
-use crate::types::{EMULATOR_ID, PROVER_ID};
 use crate::{
     api::BitVMXApi,
     collaborate::Collaboration,
@@ -12,10 +12,7 @@ use crate::{
         program::Program,
         variables::{Globals, WitnessVars},
     },
-    types::{
-        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus,
-        BITVMX_ID, L2_ID,
-    },
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus},
 };
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
@@ -23,6 +20,11 @@ use bitcoin_coordinator::{
     coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi},
     types::{AckCoordinatorNews, AckNews, CoordinatorNews},
     AckMonitorNews, MonitorNews, TypesToMonitor,
+};
+use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
+use p2p_handler::{
+    helper::ReceiveHandlerChannel,
+    p2p_handler::{AllowList, P2pHandler, PubKeyHash, RoutingTable},
 };
 
 use crate::spv_proof::get_spv_proof;
@@ -34,15 +36,15 @@ use bitvmx_broker::{
 use bitvmx_cpu_definitions::challenge::EmulatorResultType;
 use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
-use p2p_handler::{LocalAllowList, P2pHandler, PeerId, ReceiveHandlerChannel};
 use serde::{Deserialize, Serialize};
-use std::time::Instant;
 use std::{
     collections::{HashSet, VecDeque},
+    net::SocketAddr,
     rc::Rc,
     sync::{Arc, Mutex},
     thread::sleep,
     time::Duration,
+    time::Instant,
 };
 use storage_backend::storage::{KeyValueStore, Storage};
 use tracing::{debug, error, info, warn};
@@ -62,7 +64,7 @@ pub struct BitVMX {
     store: Rc<Storage>,
     broker: BrokerSync,
     count: u32,
-    pending_messages: VecDeque<(PeerId, Vec<u8>)>,
+    pending_messages: VecDeque<(PubKeyHash, Vec<u8>)>,
     notified_request: HashSet<(Uuid, (Txid, Option<u32>))>,
     bitcoin_update: BitcoinUpdateState,
 }
@@ -101,9 +103,13 @@ impl BitVMX {
     pub fn new(config: Config) -> Result<Self, BitVMXError> {
         let store = Rc::new(Storage::new(&config.storage)?);
         let key_chain = KeyChain::new(&config, store.clone())?;
-        let comms = P2pHandler::new::<LocalAllowList>(
-            config.p2p_address().to_string(),
-            key_chain.communications_key.to_vec(),
+        let allow_list = AllowList::from_file(&config.broker.allow_list)?;
+        let routing_table = RoutingTable::load_from_file(&config.broker.routing_table)?;
+        let comms = P2pHandler::new(
+            config.p2p.address,
+            &config.p2p.priv_key,
+            allow_list.clone(),
+            routing_table.clone(),
         )?;
 
         let bitcoin_coordinator = BitcoinCoordinator::new_with_paths(
@@ -113,16 +119,31 @@ impl BitVMX {
             config.coordinator_settings.clone(),
         )?;
 
-        //TOOD: This could be moved to a simplified helper inside brokerstorage new
+        //TODO: This could be moved to a simplified helper inside brokerstorage new
         //Also the broker could be run independently if needed
-        let broker_backend = Storage::new(&config.broker_storage)?;
+        let broker_backend = Storage::new(&config.broker.storage)?;
         let broker_backend = Arc::new(Mutex::new(broker_backend));
         let broker_storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
-        let broker_config = BrokerConfig::new(config.broker_port, None);
-        let broker = BrokerSync::new(&broker_config, broker_storage.clone());
+        let cert = Cert::from_key_file(&config.broker.priv_key)?;
+        let broker_config = BrokerConfig::new(
+            config.broker.port,
+            Some(config.broker.ip),
+            config.broker.get_pubk_hash()?,
+            Some(config.broker.id),
+        )?;
+        let broker = BrokerSync::new(
+            &broker_config,
+            broker_storage.clone(),
+            cert,
+            allow_list,
+            routing_table,
+        );
 
         //TODO: A channel that talks directly with the broker without going through localhost loopback could be implemented
-        let broker_channel = LocalChannel::new(BITVMX_ID, broker_storage.clone());
+        let broker_channel = LocalChannel::new(
+            config.components.get_bitvmx_identifier()?,
+            broker_storage.clone(),
+        );
 
         bitcoin_coordinator.monitor(TypesToMonitor::NewBlock)?;
 
@@ -150,12 +171,16 @@ impl BitVMX {
         })
     }
 
-    pub fn address(&self) -> String {
+    pub fn address(&self) -> SocketAddr {
         self.program_context.comms.get_address()
     }
 
-    pub fn peer_id(&self) -> String {
-        self.program_context.comms.get_peer_id().to_string()
+    pub fn pubkey_hash(&self) -> Result<String, BitVMXError> {
+        Ok(self.program_context.comms.get_pubk_hash()?)
+    }
+
+    pub fn get_components_config(&self) -> &ComponentsConfig {
+        &self.config.components
     }
 
     pub fn load_program(&self, program_id: &Uuid) -> Result<Program, BitVMXError> {
@@ -165,24 +190,31 @@ impl BitVMX {
 
     pub fn process_msg(
         &mut self,
-        peer: PeerId,
+        p2p_address: P2PAddress,
         msg: Vec<u8>,
         pend_to_back: bool,
     ) -> Result<(), BitVMXError> {
         let (_version, msg_type, program_id, data) = deserialize_msg(msg.clone())?;
 
         if let Some(mut program) = self.load_program(&program_id).ok() {
-            program.process_p2p_message(peer, msg_type, data, &self.program_context)?;
+            program.process_p2p_message(p2p_address, msg_type, data, &self.program_context)?;
         } else if let Some(mut collaboration) = self.get_collaboration(&program_id)? {
-            collaboration.process_p2p_message(peer, msg_type, data, &self.program_context)?;
+            collaboration.process_p2p_message(
+                p2p_address,
+                msg_type,
+                data,
+                &self.program_context,
+            )?;
             self.save_collaboration(&collaboration)?;
         } else {
             if pend_to_back {
                 info!("Pending message to back: {:?}", msg_type);
-                self.pending_messages.push_back((peer, msg));
+                self.pending_messages
+                    .push_back((p2p_address.to_string(), msg));
             } else {
                 info!("Pending message to front: {:?}", msg_type);
-                self.pending_messages.push_front((peer, msg));
+                self.pending_messages
+                    .push_front((p2p_address.to_string(), msg));
             }
         }
 
@@ -194,8 +226,11 @@ impl BitVMX {
             return Ok(());
         }
 
-        let (peer, msg) = self.pending_messages.pop_front().unwrap();
-        self.process_msg(peer, msg, false)?;
+        let (p2p_address, msg) = self.pending_messages.pop_front().unwrap();
+        let p2p_address = p2p_address
+            .parse()
+            .map_err(|_| BitVMXError::InvalidP2PAddress(p2p_address))?;
+        self.process_msg(p2p_address, msg, false)?;
         Ok(())
     }
 
@@ -207,13 +242,10 @@ impl BitVMX {
         }
 
         let message = message.unwrap();
-
-        //TODO: handle priority
-        // let _priority = self.comms.check_piority();
-
         match message {
-            ReceiveHandlerChannel::Msg(peer_id, msg) => {
-                self.process_msg(peer_id, msg, true)?;
+            ReceiveHandlerChannel::Msg(identifier, msg) => {
+                let p2p_address = P2PAddress::new(identifier.address, identifier.pubkey_hash);
+                self.process_msg(p2p_address, msg, true)?;
                 return Ok(());
             }
             ReceiveHandlerChannel::Error(e) => {
@@ -237,10 +269,13 @@ impl BitVMX {
             tx_id, tx_status, context
         );
 
-        match context {
+        match &context {
             Context::ProgramId(program_id) => {
-                if !self.notified_request.contains(&(program_id, (tx_id, vout))) {
-                    let program = self.load_program(&program_id)?;
+                if !self
+                    .notified_request
+                    .contains(&(*program_id, (tx_id, vout)))
+                {
+                    let program = self.load_program(program_id)?;
 
                     program.notify_news(
                         tx_id,
@@ -249,18 +284,21 @@ impl BitVMX {
                         context_data,
                         &self.program_context,
                     )?;
-                    self.notified_request.insert((program_id, (tx_id, vout)));
+                    self.notified_request.insert((*program_id, (tx_id, vout)));
                 }
             }
             Context::RequestId(request_id, from) => {
-                if !self.notified_request.contains(&(request_id, (tx_id, vout))) {
+                if !self
+                    .notified_request
+                    .contains(&(*request_id, (tx_id, vout)))
+                {
                     info!("Sending News: {:?} for context: {:?}", tx_id, context);
                     self.program_context.broker_channel.send(
-                        from,
-                        OutgoingBitVMXApiMessages::Transaction(request_id, tx_status, None)
+                        from.clone(),
+                        OutgoingBitVMXApiMessages::Transaction(*request_id, tx_status, None)
                             .to_string()?,
                     )?;
-                    self.notified_request.insert((request_id, (tx_id, vout)));
+                    self.notified_request.insert((*request_id, (tx_id, vout)));
                 }
             }
         }
@@ -305,7 +343,9 @@ impl BitVMX {
                         &OutgoingBitVMXApiMessages::PeginTransactionFound(tx_id, tx_status),
                     )?;
 
-                    self.program_context.broker_channel.send(L2_ID, data)?;
+                    self.program_context
+                        .broker_channel
+                        .send(self.config.components.get_l2_identifier()?, data)?;
                     ack_news = AckNews::Monitor(AckMonitorNews::RskPeginTransaction(tx_id));
                 }
                 MonitorNews::NewBlock(block_id, block_height) => {
@@ -329,7 +369,9 @@ impl BitVMX {
                         OutgoingBitVMXApiMessages::SpeedUpProgramNoFunds(tx_id).to_string()?;
 
                     info!("Sending funds request to broker");
-                    self.program_context.broker_channel.send(L2_ID, data)?;
+                    self.program_context
+                        .broker_channel
+                        .send(self.config.components.get_l2_identifier()?, data)?;
                     ack_news = AckNews::Coordinator(AckCoordinatorNews::InsufficientFunds(tx_id));
                 }
                 CoordinatorNews::NewSpeedUp(_tx_id, _context_data, _counter) => {
@@ -559,7 +601,7 @@ impl BitVMX {
 }
 
 impl BitVMXApi for BitVMX {
-    fn ping(&mut self, from: u32) -> Result<(), BitVMXError> {
+    fn ping(&mut self, from: Identifier) -> Result<(), BitVMXError> {
         self.program_context.broker_channel.send(
             from,
             serde_json::to_string(&OutgoingBitVMXApiMessages::Pong())?,
@@ -568,7 +610,7 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn get_var(&mut self, from: u32, id: Uuid, key: &str) -> Result<(), BitVMXError> {
+    fn get_var(&mut self, from: Identifier, id: Uuid, key: &str) -> Result<(), BitVMXError> {
         info!("Getting variable {}", key);
         let value = self.program_context.globals.get_var(&id, key)?;
 
@@ -583,7 +625,7 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn get_witness(&mut self, from: u32, id: Uuid, key: &str) -> Result<(), BitVMXError> {
+    fn get_witness(&mut self, from: Identifier, id: Uuid, key: &str) -> Result<(), BitVMXError> {
         info!("Getting witness {}", key);
         let value = self.program_context.witness.get_witness(&id, key)?;
 
@@ -601,7 +643,7 @@ impl BitVMXApi for BitVMX {
 
     fn setup_key(
         &mut self,
-        from: u32,
+        from: Identifier,
         id: Uuid,
         participants: Vec<P2PAddress>,
         participants_keys: Option<Vec<PublicKey>>,
@@ -622,7 +664,7 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn get_aggregated_pubkey(&mut self, from: u32, id: Uuid) -> Result<(), BitVMXError> {
+    fn get_aggregated_pubkey(&mut self, from: Identifier, id: Uuid) -> Result<(), BitVMXError> {
         info!("Getting aggregated pubkey for collaboration: {:?}", id);
 
         let response = if let Some(collaboration) = self.get_collaboration(&id)? {
@@ -644,7 +686,7 @@ impl BitVMXApi for BitVMX {
 
     fn generate_zkp(
         &mut self,
-        from: u32,
+        from: Identifier,
         id: Uuid,
         input: Vec<u8>,
         elf_file_path: String,
@@ -661,12 +703,14 @@ impl BitVMXApi for BitVMX {
         })?;
 
         info!("Sending dispatcher job message: {}", msg);
-        self.program_context.broker_channel.send(PROVER_ID, msg)?;
+        self.program_context
+            .broker_channel
+            .send(self.config.components.get_prover_identifier()?, msg)?;
 
         Ok(())
     }
 
-    fn proof_ready(&mut self, from: u32, id: Uuid) -> Result<(), BitVMXError> {
+    fn proof_ready(&mut self, from: Identifier, id: Uuid) -> Result<(), BitVMXError> {
         info!("Checking if proof is ready for job: {}", id);
 
         // Get the status from storage
@@ -691,7 +735,7 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn get_zkp_execution_result(&mut self, from: u32, id: Uuid) -> Result<(), BitVMXError> {
+    fn get_zkp_execution_result(&mut self, from: Identifier, id: Uuid) -> Result<(), BitVMXError> {
         // Check if the proof is ready
         info!("Checking if {} ZKP job is ready", id);
         let status_key = StoreKey::ZKPStatus(id).get_key();
@@ -728,7 +772,12 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn subscribe_to_tx(&mut self, from: u32, id: Uuid, txid: Txid) -> Result<(), BitVMXError> {
+    fn subscribe_to_tx(
+        &mut self,
+        from: Identifier,
+        id: Uuid,
+        txid: Txid,
+    ) -> Result<(), BitVMXError> {
         info!(
             "Subscribing to transaction: {:?} from: {} id: {}",
             txid, from, id
@@ -776,17 +825,23 @@ impl BitVMXApi for BitVMX {
             &mut self.program_context,
             self.store.clone(),
             &self.config.client,
+            &self.config.components,
         )?;
         self.add_new_program(&id)?;
         info!(
             "Program Setup Finished {}",
-            self.program_context.comms.get_peer_id()
+            self.program_context.comms.get_pubk_hash()?
         );
 
         Ok(())
     }
 
-    fn get_transaction(&mut self, from: u32, id: Uuid, txid: Txid) -> Result<(), BitVMXError> {
+    fn get_transaction(
+        &mut self,
+        from: Identifier,
+        id: Uuid,
+        txid: Txid,
+    ) -> Result<(), BitVMXError> {
         let tx_status = self
             .program_context
             .bitcoin_coordinator
@@ -801,7 +856,7 @@ impl BitVMXApi for BitVMX {
 
     fn dispatch_transaction(
         &mut self,
-        from: u32,
+        from: Identifier,
         id: Uuid,
         tx: Transaction,
     ) -> Result<(), BitVMXError> {
@@ -879,7 +934,7 @@ impl BitVMXApi for BitVMX {
         self.store.commit_transaction(transaction_id)?;
 
         // Get the stored 'from' parameter
-        let from: u32 = self
+        let from: Identifier = self
             .store
             .get(StoreKey::ZKPFrom(id).get_key())?
             .ok_or_else(|| {
@@ -891,7 +946,7 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn get_spv_proof(&mut self, from: u32, txid: Txid) -> Result<(), BitVMXError> {
+    fn get_spv_proof(&mut self, from: Identifier, txid: Txid) -> Result<(), BitVMXError> {
         let tx_info = self
             .program_context
             .bitcoin_coordinator
@@ -922,8 +977,8 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn handle_message(&mut self, msg: String, from: u32) -> Result<(), BitVMXError> {
-        if from == EMULATOR_ID {
+    fn handle_message(&mut self, msg: String, from: Identifier) -> Result<(), BitVMXError> {
+        if from == self.config.components.get_emulator_identifier()? {
             let result_message = ResultMessage::from_str(&msg)?;
             let value = result_message.result_as_value()?;
             let decoded = EmulatorResultType::from_value(value)?;
@@ -936,7 +991,7 @@ impl BitVMXApi for BitVMX {
             return Ok(());
         }
 
-        if from == PROVER_ID {
+        if from == self.config.components.get_prover_identifier()? {
             self.handle_prover_message(msg)?;
             return Ok(());
         }
@@ -960,7 +1015,7 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::GetCommInfo() => {
                 let comm_info = OutgoingBitVMXApiMessages::CommInfo(P2PAddress {
                     address: self.program_context.comms.get_address(),
-                    peer_id: self.program_context.comms.get_peer_id(),
+                    pubkey_hash: self.program_context.comms.get_pubk_hash()?,
                 });
                 self.program_context
                     .broker_channel
@@ -1084,30 +1139,40 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::GetZKPExecutionResult(id) => {
                 BitVMXApi::get_zkp_execution_result(self, from, id)?
             }
-            IncomingBitVMXApiMessages::Encrypt(id, message, public_key) => {
-                let encrypted = self.program_context.key_chain.encrypt_messages(message, public_key)?;
+            IncomingBitVMXApiMessages::Encrypt(id, message, pub_key) => {
+                let encrypted = self
+                    .program_context
+                    .key_chain
+                    .key_manager
+                    .encrypt_rsa_message(&message, pub_key)?;
                 self.program_context.broker_channel.send(
                     from,
                     serde_json::to_string(&OutgoingBitVMXApiMessages::Encrypted(id, encrypted))?,
                 )?;
             }
             IncomingBitVMXApiMessages::Decrypt(id, message) => {
-                let decrypted = self.program_context.key_chain.decrypt_messages(message)?;
+                let decrypted = self
+                    .program_context
+                    .key_chain
+                    .key_manager
+                    .decrypt_rsa_message(&message, 0)?; // TODO: index may not be 0 if more than one RSA key is used
                 self.program_context.broker_channel.send(
                     from,
                     serde_json::to_string(&OutgoingBitVMXApiMessages::Decrypted(id, decrypted))?,
                 )?;
             }
             IncomingBitVMXApiMessages::Backup(path) => {
-                let message = match  self.store.backup(&path) {
-                    Ok(_) => OutgoingBitVMXApiMessages::BackupResult(true, "Backup successful".to_string()),
+                let message = match self.store.backup(&path) {
+                    Ok(_) => OutgoingBitVMXApiMessages::BackupResult(
+                        true,
+                        "Backup successful".to_string(),
+                    ),
                     Err(e) => OutgoingBitVMXApiMessages::BackupResult(false, e.to_string()),
                 };
 
-                self.program_context.broker_channel.send(
-                    from,
-                    serde_json::to_string(&message)?,
-                )?;
+                self.program_context
+                    .broker_channel
+                    .send(from, serde_json::to_string(&message)?)?;
             }
         }
 
@@ -1118,7 +1183,7 @@ impl BitVMXApi for BitVMX {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Context {
     ProgramId(Uuid),
-    RequestId(Uuid, u32),
+    RequestId(Uuid, Identifier),
 }
 
 impl Context {

@@ -8,7 +8,8 @@ use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
     channel::channel::{DualChannel, LocalChannel},
-    rpc::{sync_server::BrokerSync, BrokerConfig},
+    identification::identifier::Identifier,
+    rpc::{sync_server::BrokerSync, tls_helper::Cert, BrokerConfig},
 };
 use bitvmx_client::{
     config::Config,
@@ -20,11 +21,10 @@ use bitvmx_client::{
         },
         variables::{VariableTypes, WitnessTypes},
     },
-    types::{
-        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID, PROGRAM_TYPE_LOCK,
-    },
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, PROGRAM_TYPE_LOCK},
 };
 
+use p2p_handler::p2p_handler::AllowList;
 use storage_backend::{storage::Storage, storage_config::StorageConfig};
 use tracing::info;
 use uuid::Uuid;
@@ -34,7 +34,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-pub fn wait_message_from_channel(channel: &DualChannel) -> Result<(String, u32)> {
+use crate::common::ParticipantChannel;
+
+pub fn wait_message_from_channel(channel: &DualChannel) -> Result<(String, Identifier)> {
     //loop to timeout
     let mut i = 0;
     loop {
@@ -70,14 +72,16 @@ pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, Address)> {
     Ok((bitcoin_client, wallet))
 }
 
-pub fn send_all(channels: &Vec<DualChannel>, msg: &str) -> Result<()> {
-    for channel in channels {
-        channel.send(BITVMX_ID, msg.to_string())?;
+pub fn send_all(id_channel_pairs: &Vec<ParticipantChannel>, msg: &str) -> Result<()> {
+    for id_channel_pair in id_channel_pairs {
+        id_channel_pair
+            .channel
+            .send(id_channel_pair.id.clone(), msg.to_string())?;
     }
     Ok(())
 }
 
-pub fn get_all(channels: &Vec<DualChannel>) -> Result<Vec<(String, u32)>> {
+pub fn get_all(channels: &Vec<DualChannel>) -> Result<Vec<(String, Identifier)>> {
     let mut ret = vec![];
     for channel in channels {
         let msg = wait_message_from_channel(&channel)?;
@@ -86,11 +90,27 @@ pub fn get_all(channels: &Vec<DualChannel>) -> Result<Vec<(String, u32)>> {
     Ok(ret)
 }
 
-pub fn init_broker(role: &str) -> Result<DualChannel> {
+pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
     let config = Config::new(Some(format!("config/{}.yaml", role)))?;
-    let broker_config = BrokerConfig::new(config.broker_port, None);
-    let bridge_client = DualChannel::new(&broker_config, L2_ID);
-    Ok(bridge_client)
+    let allow_list = AllowList::from_file(&config.broker.allow_list)?;
+    let broker_config = BrokerConfig::new(
+        config.broker.port,
+        None,
+        config.broker.get_pubk_hash()?,
+        Some(config.broker.id),
+    )?;
+    let bridge_client = DualChannel::new(
+        &broker_config,
+        Cert::from_key_file(&config.components.l2.priv_key)?,
+        Some(config.components.l2.id),
+        config.components.l2.address,
+        allow_list.clone(),
+    )?;
+    let particiant_channel = ParticipantChannel {
+        id: config.components.get_bitvmx_identifier()?,
+        channel: bridge_client,
+    };
+    Ok(particiant_channel)
 }
 
 pub fn main() -> Result<()> {
@@ -99,19 +119,24 @@ pub fn main() -> Result<()> {
     let broker_backend = Storage::new(&config)?;
     let broker_backend = Arc::new(Mutex::new(broker_backend));
     let broker_storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
-    let broker_config = BrokerConfig::new(54321, None);
-    let mut broker = BrokerSync::new(&broker_config, broker_storage.clone());
 
-    let broker_channel = LocalChannel::new(1, broker_storage.clone());
+    let (server_config, server_identifier, cert) = BrokerConfig::new_only_address(54321, None)?;
+    let mut broker = BrokerSync::new_simple(&server_config, broker_storage.clone(), cert);
 
-    lockservice(broker_channel)?;
+    let broker_channel =
+        LocalChannel::new_simple("local".to_string(), 54321, broker_storage.clone());
+
+    lockservice(broker_channel, server_identifier)?;
 
     broker.close();
 
     Ok(())
 }
 
-pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
+pub fn lockservice(
+    channel: LocalChannel<BrokerStorage>,
+    server_identifier: Identifier,
+) -> Result<()> {
     let (bitcoin_client, wallet) = prepare_bitcoin_running()?;
 
     //TODO: A channel that talks directly with the broker without going through localhost loopback could be implemented
@@ -121,10 +146,14 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
     let bridge_3 = init_broker("op_3")?;
     let bridge_4 = init_broker("op_4")?;
 
-    let channels = vec![bridge_1, bridge_2, bridge_3, bridge_4];
+    let id_channel_pairs = vec![bridge_1, bridge_2, bridge_3, bridge_4];
+    let channels = id_channel_pairs
+        .iter()
+        .map(|p| p.channel.clone())
+        .collect::<Vec<_>>();
 
     let command = IncomingBitVMXApiMessages::GetCommInfo().to_string()?;
-    send_all(&channels, &command)?;
+    send_all(&id_channel_pairs, &command)?;
     let msgs = get_all(&channels)?;
     let addresses = msgs
         .iter()
@@ -143,7 +172,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
         .to_string()?;
 
     info!("Command to all: {:?}", command);
-    send_all(&channels, &command)?;
+    send_all(&id_channel_pairs, &command)?;
     info!("Waiting for AggregatedPubkey message from all channels");
     let msgs = get_all(&channels)?;
     info!("Received AggregatedPubkey message from all channels");
@@ -189,7 +218,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
             let command =
                 IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), None, 0)
                     .to_string()?;
-            send_all(&channels, &command)?;
+            send_all(&id_channel_pairs, &command)?;
             let msgs = get_all(&channels)?;
             info!("Received AggregatedPubkey message from all channels");
             let msg = OutgoingBitVMXApiMessages::from_string(&msgs[0].0)?;
@@ -202,7 +231,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
 
             // get keypair to share with the user for happy path too
             let command = IncomingBitVMXApiMessages::GetKeyPair(aggregation_id).to_string()?;
-            send_all(&channels, &command)?;
+            send_all(&id_channel_pairs, &command)?;
             let msgs = get_all(&channels)?;
             info!("Received keypair message from all channels");
             let msg = OutgoingBitVMXApiMessages::from_string(&msgs[0].0)?;
@@ -220,7 +249,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
             if let Some(msg) = msg {
                 if msg.0 == "get_aggregated" {
                     info!("Ask for aggregated. Sending.");
-                    channel.send(2, aggregated_pub_key.to_string())?;
+                    channel.send(server_identifier.clone(), aggregated_pub_key.to_string())?;
                 } else {
                     info!("Received message from channel: {:?}", msg);
                     (txid, pubuser, ordinal_fee, protocol_fee, preimage, hash) =
@@ -239,57 +268,57 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
         let lockreqtx_on_chain = Uuid::new_v4();
         let command = IncomingBitVMXApiMessages::SubscribeToTransaction(lockreqtx_on_chain, txid)
             .to_string()?;
-        send_all(&channels, &command)?;
+        send_all(&id_channel_pairs, &command)?;
 
         bitcoin_client.mine_blocks_to_address(10, &wallet)?;
         std::thread::sleep(std::time::Duration::from_millis(1000));
         get_all(&channels)?;
 
         let set_fee = VariableTypes::Number(3000).set_msg(program_id, FEE)?;
-        send_all(&channels, &set_fee)?;
+        send_all(&id_channel_pairs, &set_fee)?;
 
         let set_fee_zkp = VariableTypes::Number(10000).set_msg(program_id, "FEE_ZKP")?;
-        send_all(&channels, &set_fee_zkp)?;
+        send_all(&id_channel_pairs, &set_fee_zkp)?;
 
         let set_ops_aggregated = VariableTypes::PubKey(aggregated_pub_key)
             .set_msg(program_id, OPERATORS_AGGREGATED_PUB)?;
-        send_all(&channels, &set_ops_aggregated)?;
+        send_all(&id_channel_pairs, &set_ops_aggregated)?;
 
         let set_ops_aggregated_hp = VariableTypes::PubKey(aggregated_happy_path)
             .set_msg(program_id, "operators_aggregated_happy_path")?;
-        send_all(&channels, &set_ops_aggregated_hp)?;
+        send_all(&id_channel_pairs, &set_ops_aggregated_hp)?;
 
         let set_unspendable = VariableTypes::PubKey(hardcoded_unspendable().into())
             .set_msg(program_id, UNSPENDABLE)?;
-        send_all(&channels, &set_unspendable)?;
+        send_all(&id_channel_pairs, &set_unspendable)?;
 
         let set_secret = VariableTypes::Secret(hash).set_msg(program_id, "secret")?;
-        send_all(&channels, &set_secret)?;
+        send_all(&id_channel_pairs, &set_secret)?;
 
         let set_ordinal_utxo = VariableTypes::Utxo((txid, 0, Some(ordinal_fee.to_sat()), None))
             .set_msg(program_id, "ordinal_utxo")?;
-        send_all(&channels, &set_ordinal_utxo)?;
+        send_all(&id_channel_pairs, &set_ordinal_utxo)?;
 
         let set_protocol_fee = VariableTypes::Utxo((txid, 1, Some(protocol_fee.to_sat()), None))
             .set_msg(program_id, "protocol_utxo")?;
-        send_all(&channels, &set_protocol_fee)?;
+        send_all(&id_channel_pairs, &set_protocol_fee)?;
 
         let set_user_pubkey = VariableTypes::PubKey(bitcoin::PublicKey::from(pubuser))
             .set_msg(program_id, "user_pubkey")?;
-        send_all(&channels, &set_user_pubkey)?;
+        send_all(&id_channel_pairs, &set_user_pubkey)?;
 
         let eol_timelock_duration =
             VariableTypes::Number(100).set_msg(program_id, EOL_TIMELOCK_DURATION)?;
-        send_all(&channels, &eol_timelock_duration)?;
+        send_all(&id_channel_pairs, &eol_timelock_duration)?;
 
         let protocol_cost = VariableTypes::Number(20_000).set_msg(program_id, PROTOCOL_COST)?;
-        send_all(&channels, &protocol_cost)?;
+        send_all(&id_channel_pairs, &protocol_cost)?;
 
         let speedup_dust = VariableTypes::Number(500).set_msg(program_id, SPEEDUP_DUST)?;
-        send_all(&channels, &speedup_dust)?;
+        send_all(&id_channel_pairs, &speedup_dust)?;
 
         let gid_max = VariableTypes::Number(8).set_msg(program_id, GID_MAX)?;
-        send_all(&channels, &gid_max)?;
+        send_all(&id_channel_pairs, &gid_max)?;
 
         let setup_msg = IncomingBitVMXApiMessages::Setup(
             program_id,
@@ -298,7 +327,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
             0,
         )
         .to_string()?;
-        send_all(&channels, &setup_msg)?;
+        send_all(&id_channel_pairs, &setup_msg)?;
 
         get_all(&channels)?;
 
@@ -308,10 +337,10 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
             "secret".to_string(),
             WitnessTypes::Secret(preimage.as_bytes().to_vec()),
         ))?;
-        channels[1].send(BITVMX_ID, witness_msg.clone())?;
+        channels[1].send(id_channel_pairs[1].id.clone(), witness_msg.clone())?;
 
         let _ = channels[1].send(
-            BITVMX_ID,
+            id_channel_pairs[1].id.clone(),
             IncomingBitVMXApiMessages::GetTransactionInfoByName(
                 program_id,
                 program::protocols::cardinal::lock::LOCK_TX.to_string(),
@@ -333,7 +362,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
         );
 
         let _ = channels[1].send(
-            BITVMX_ID,
+            id_channel_pairs[1].id.clone(),
             IncomingBitVMXApiMessages::GetHashedMessage(
                 program_id,
                 program::protocols::cardinal::lock::LOCK_TX.to_string(),
@@ -353,7 +382,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
         info!("AGGREGATED PUB: ====> {}", aggregated_pub_key);
 
         let _ = channels[1].send(
-            BITVMX_ID,
+            id_channel_pairs[1].id.clone(),
             IncomingBitVMXApiMessages::DispatchTransactionName(
                 program_id,
                 program::protocols::cardinal::lock::LOCK_TX.to_string(),
@@ -388,10 +417,10 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
 
         let zkp = "b75f20d1aee5a1a0908edd107a25189ccc38b6d20c5dc33362a066157a6ee60350a09cfbfebe38c8d9f04a6dafe46ae2e30f6638f3eb93c1d2aeff2d52d66d0dcd68bf7f8fc07485dd04a573d233df3663d63e71568bc035ef82e8ab3525f025b487aaa4456aaf93be3141b210cda5165a714225d9fd63163f59d741bdaa8b93";
         let set_zkp = VariableTypes::Input(hex::decode(zkp)?).set_msg(program_id, "zkp")?;
-        send_all(&channels, &set_zkp)?;
+        send_all(&id_channel_pairs, &set_zkp)?;
 
         let _ = channels[0].send(
-            BITVMX_ID,
+            id_channel_pairs[0].id.clone(),
             IncomingBitVMXApiMessages::DispatchTransactionName(
                 program_id,
                 program::protocols::cardinal::lock::PUBLISH_ZKP.to_string(),
@@ -412,7 +441,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
         info!("Transaction observed: {:?} {:?}", status.tx_id, name);
 
         let _ = channels[1].send(
-            BITVMX_ID,
+            id_channel_pairs[1].id.clone(),
             IncomingBitVMXApiMessages::DispatchTransactionName(
                 program_id,
                 program::protocols::cardinal::lock::HAPPY_PATH_TX.to_string(),
@@ -437,7 +466,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
         info!("happy path public: {}", aggregated_happy_path);
 
         let msg = serde_json::to_string(&(status.tx_id, fake_secret))?;
-        channel.send(2, msg)?;
+        channel.send(server_identifier.clone(), msg)?;
     }
 
     //Ok(())

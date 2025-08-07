@@ -21,7 +21,6 @@ storage:
 p2p:
   address: /ip4/127.0.0.1/tcp/61182
   key: config/keys/op_1.key
-  peer_id_file: peer_id
   timeout: 5
 
 coordinator:

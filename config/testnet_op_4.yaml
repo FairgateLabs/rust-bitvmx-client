@@ -19,7 +19,6 @@ storage:
 p2p:
   address: /ip4/127.0.0.1/tcp/61183
   key: 08011240fe31227bdbfe5555501e9724e32cf705d1852fc02accdee893ee5c1fcac93f9da8c8dc95334fde96b323decafe3261b7e657ce62630ed1e54a34409e8915a73a
-  peer_id_file: peer_id
   timeout: 5
 
 coordinator_settings:

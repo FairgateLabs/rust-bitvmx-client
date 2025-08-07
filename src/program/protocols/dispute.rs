@@ -46,7 +46,7 @@ use crate::{
     program::{
         participant::ParticipantRole, protocols::claim::ClaimGate, variables::VariableTypes,
     },
-    types::{ProgramContext, EMULATOR_ID},
+    types::ProgramContext,
 };
 
 use super::{
@@ -375,7 +375,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     fail_config_prover.clone(),
                 ),
             })?;
-            program_context.broker_channel.send(EMULATOR_ID, msg)?;
+            program_context
+                .broker_channel
+                .send(self.ctx.components_config.get_emulator_identifier()?, msg)?;
         }
         if name == INPUT_1 && self.role() == ParticipantRole::Verifier && vout.is_some() {
             self.decode_witness_from_speedup(
@@ -454,7 +456,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 ),
             })?;
 
-            program_context.broker_channel.send(EMULATOR_ID, msg)?;
+            program_context
+                .broker_channel
+                .send(self.ctx.components_config.get_emulator_identifier()?, msg)?;
         }
 
         if name == COMMITMENT || name.starts_with("NARY_VERIFIER") && vout.is_some() {
@@ -513,7 +517,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                             fail_config_prover.clone(),
                         ),
                     })?;
-                    program_context.broker_channel.send(EMULATOR_ID, msg)?;
+                    program_context
+                        .broker_channel
+                        .send(self.ctx.components_config.get_emulator_identifier()?, msg)?;
                 } else {
                     let msg = serde_json::to_string(&DispatcherJob {
                         job_id: self.ctx.id.to_string(),
@@ -525,7 +531,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                             fail_config_prover.clone(),
                         ),
                     })?;
-                    program_context.broker_channel.send(EMULATOR_ID, msg)?;
+                    program_context
+                        .broker_channel
+                        .send(self.ctx.components_config.get_emulator_identifier()?, msg)?;
                 }
             } else {
                 if round == nary.total_rounds() as u32 {
@@ -605,14 +613,18 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             })?;
 
             if round > 1 {
-                program_context.broker_channel.send(EMULATOR_ID, msg)?;
+                program_context
+                    .broker_channel
+                    .send(self.ctx.components_config.get_emulator_identifier()?, msg)?;
             } else {
                 if let Some(_ready) = program_context
                     .globals
                     .get_var(&self.ctx.id, "execution-check-ready")?
                 {
                     info!("The execution is ready. Sending the choose segment message");
-                    program_context.broker_channel.send(EMULATOR_ID, msg)?;
+                    program_context
+                        .broker_channel
+                        .send(self.ctx.components_config.get_emulator_identifier()?, msg)?;
                 } else {
                     info!("The execution is not ready. Saving the message.");
                     program_context.globals.set_var(
@@ -708,7 +720,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     force,
                 ),
             })?;
-            program_context.broker_channel.send(EMULATOR_ID, msg)?;
+            program_context
+                .broker_channel
+                .send(self.ctx.components_config.get_emulator_identifier()?, msg)?;
         }
 
         if name == EXECUTE && self.role() == ParticipantRole::Prover && vout.is_some() {
@@ -1669,7 +1683,10 @@ impl DisputeResolutionProtocol {
                     .get_var(&self.ctx.id, "choose-segment-msg")?
                 {
                     info!("The msg to choose segment was ready. Sending it");
-                    context.broker_channel.send(EMULATOR_ID, msg.string()?)?;
+                    context.broker_channel.send(
+                        self.ctx.components_config.get_emulator_identifier()?,
+                        msg.string()?,
+                    )?;
                 } else {
                     info!("The msg to choose segment was not ready");
                 }

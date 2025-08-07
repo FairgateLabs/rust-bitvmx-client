@@ -1,20 +1,20 @@
 use crate::{
     bitvmx::Context,
-    config::ClientConfig,
+    config::{ClientConfig, ComponentsConfig},
     errors::{BitVMXError, ProgramError},
     helper::{
         parse_keys, parse_nonces, parse_signatures, PartialSignatureMessage, PubNonceMessage,
     },
     p2p_helper::{request, response, P2PMessageType},
     program::{participant::ParticipantKeys, protocols::protocol_handler::new_protocol_type},
-    types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramRequestInfo, L2_ID},
+    types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramRequestInfo},
 };
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus, TypesToMonitor};
 use chrono::Utc;
 use console::style;
 use key_manager::musig2::{types::MessageId, PartialSignature, PubNonce};
-use p2p_handler::PeerId;
+use p2p_handler::p2p_handler::PubKeyHash;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashMap, rc::Rc};
@@ -36,11 +36,13 @@ pub enum StoreKey {
     Program(Uuid),
 }
 
-pub fn get_other_index_by_peer_id(peer_id: &PeerId, others: &Vec<ParticipantData>) -> usize {
+pub fn get_other_index_by_pubkey_hash(
+    pubkey_hash: &PubKeyHash,
+    others: &Vec<ParticipantData>,
+) -> Option<usize> {
     others
         .iter()
-        .position(|participant| &participant.p2p_address.peer_id == peer_id)
-        .unwrap() //TODO: handle
+        .position(|participant| &participant.p2p_address.pubkey_hash == pubkey_hash)
 }
 
 pub fn all_keys_ready(others: &Vec<ParticipantData>) -> bool {
@@ -93,6 +95,7 @@ pub struct Program {
     #[serde(skip)]
     storage: Option<Rc<Storage>>,
     config: ClientConfig,
+    components_config: ComponentsConfig,
 }
 
 impl Program {
@@ -124,6 +127,7 @@ impl Program {
         program_context: &mut ProgramContext,
         storage: Rc<Storage>,
         config: &ClientConfig,
+        components_config: &ComponentsConfig,
     ) -> Result<Self, BitVMXError> {
         // Generate my keys.
         if leader >= peers.len() {
@@ -131,20 +135,26 @@ impl Program {
         }
 
         let p2p_address = P2PAddress::new(
-            &program_context.comms.get_address(),
-            program_context.comms.get_peer_id(),
+            program_context.comms.get_address(),
+            program_context.comms.get_pubk_hash()?,
         );
 
         //FIX EXCPECT WITH PROPER ERROR (invalid message as I'm not in the list)
         let my_idx = peers
             .iter()
-            .position(|peer| peer.peer_id == p2p_address.peer_id)
+            .position(|peer| peer.pubkey_hash == p2p_address.pubkey_hash)
             .expect("Peer not found in the list");
 
         info!("my_pos: {}", my_idx);
         info!("Leader pos: {}", leader);
 
-        let protocol = new_protocol_type(*id, protocol_type, my_idx, storage.clone())?;
+        let protocol = new_protocol_type(
+            *id,
+            protocol_type,
+            my_idx,
+            storage.clone(),
+            components_config,
+        )?;
         let my_keys = protocol.generate_keys(program_context)?;
 
         //Creates space for the participants
@@ -165,6 +175,7 @@ impl Program {
             state: ProgramState::New,
             storage: Some(storage),
             config: config.clone(),
+            components_config: components_config.clone(),
         };
 
         program.save()?;
@@ -251,9 +262,12 @@ impl Program {
         Ok(())
     }
 
-    pub fn get_address_from_peer_id(&self, peer_id: &PeerId) -> Result<P2PAddress, BitVMXError> {
+    pub fn get_address_from_pubkey_hash(
+        &self,
+        pubkey_hash: &PubKeyHash,
+    ) -> Result<P2PAddress, BitVMXError> {
         for p in &self.participants {
-            if &p.p2p_address.peer_id == peer_id {
+            if &p.p2p_address.pubkey_hash == pubkey_hash {
                 return Ok(p.p2p_address.clone());
             }
         }
@@ -263,24 +277,24 @@ impl Program {
     pub fn request_helper<T>(
         &mut self,
         program_context: &ProgramContext,
-        to_send: Vec<(PeerId, T)>,
+        to_send: Vec<(PubKeyHash, T)>,
         msg_type: P2PMessageType,
     ) -> Result<(), BitVMXError>
     where
         T: Serialize + Clone,
     {
-        let my_peer_id = &program_context.comms.get_peer_id();
+        let my_pubkey_hash = &program_context.comms.get_pubk_hash()?;
         for (other, _) in to_send.iter() {
-            if self.leader != self.my_idx || other != my_peer_id {
+            if self.leader != self.my_idx || other != my_pubkey_hash {
                 let dest = if self.leader != self.my_idx {
                     self.participants[self.leader].p2p_address.clone()
                 } else {
-                    self.get_address_from_peer_id(other)?
+                    self.get_address_from_pubkey_hash(other)?
                 };
 
                 debug!(
                     "Sending message {:?} from {} to {}",
-                    &msg_type, self.my_idx, dest.peer_id
+                    &msg_type, self.my_idx, dest.pubkey_hash
                 );
 
                 request(
@@ -308,14 +322,17 @@ impl Program {
             let mut keys = vec![];
             for other in &self.participants {
                 keys.push((
-                    other.p2p_address.peer_id.clone(),
+                    other.p2p_address.pubkey_hash.clone(),
                     other.keys.clone().unwrap(),
                 ));
             }
             keys
         } else {
             vec![(
-                self.participants[self.my_idx].p2p_address.peer_id.clone(),
+                self.participants[self.my_idx]
+                    .p2p_address
+                    .pubkey_hash
+                    .clone(),
                 self.participants[self.my_idx].keys.clone().unwrap(),
             )]
         };
@@ -327,7 +344,7 @@ impl Program {
 
     pub fn receive_keys(
         &mut self,
-        peer_id: PeerId,
+        p2p_address: P2PAddress,
         msg_type: P2PMessageType,
         data: Value,
         program_context: &ProgramContext,
@@ -338,21 +355,24 @@ impl Program {
                 self.my_idx, msg_type, self.state
             );
             if self.state.should_answer_ack(self.im_leader(), &msg_type) {
-                self.send_ack(program_context, &peer_id, P2PMessageType::KeysAck)?;
+                self.send_ack(program_context, p2p_address, P2PMessageType::KeysAck)?;
             }
             return Ok(());
         }
 
         // Parse the keys received
-        for (peer_id, keys) in parse_keys(data).map_err(|_| BitVMXError::InvalidMessageFormat)? {
-            let other_pos = get_other_index_by_peer_id(&peer_id, &self.participants);
+        for (pubkey_hash, keys) in
+            parse_keys(data).map_err(|_| BitVMXError::InvalidMessageFormat)?
+        {
+            let other_pos = get_other_index_by_pubkey_hash(&pubkey_hash, &self.participants)
+                .ok_or(BitVMXError::InvalidParticipant(pubkey_hash))?;
             self.participants[other_pos].keys = Some(keys);
         }
 
         self.save()?;
 
         // Send ack to the other party
-        self.send_ack(program_context, &peer_id, P2PMessageType::KeysAck)?;
+        self.send_ack(program_context, p2p_address, P2PMessageType::KeysAck)?;
 
         if all_keys_ready(&self.participants) {
             // Build the protocol
@@ -408,7 +428,7 @@ impl Program {
         for other in &self.participants {
             if other.nonces.is_some() {
                 nonces.push((
-                    other.p2p_address.peer_id.clone(),
+                    other.p2p_address.pubkey_hash.clone(),
                     other.nonces.clone().unwrap(),
                 ));
             }
@@ -422,14 +442,18 @@ impl Program {
 
     pub fn receive_nonces(
         &mut self,
-        peer_id: PeerId,
+        p2p_address: P2PAddress,
         msg_type: P2PMessageType,
         data: Value,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         if !self.state.should_handle_msg(&msg_type) {
             if self.state.should_answer_ack(self.im_leader(), &msg_type) {
-                self.send_ack(program_context, &peer_id, P2PMessageType::PublicNoncesAck)?;
+                self.send_ack(
+                    program_context,
+                    p2p_address,
+                    P2PMessageType::PublicNoncesAck,
+                )?;
             }
             return Ok(());
         }
@@ -437,8 +461,9 @@ impl Program {
         //TODO: Santitize pariticipant_pub_key with message origin
         let nonces_msg = parse_nonces(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
-        for (peer_id, particpant_nonces) in nonces_msg {
-            let other_pos = get_other_index_by_peer_id(&peer_id, &self.participants);
+        for (pubkey_hash, particpant_nonces) in nonces_msg {
+            let other_pos = get_other_index_by_pubkey_hash(&pubkey_hash, &self.participants)
+                .ok_or(BitVMXError::InvalidParticipant(pubkey_hash))?;
             debug!("{}. Got nonces for pos: {}", self.my_idx, other_pos);
             self.participants[other_pos].nonces = Some(particpant_nonces);
         }
@@ -480,7 +505,11 @@ impl Program {
             info!("{}. Not all nonces ready", self.my_idx);
         }
 
-        self.send_ack(&program_context, &peer_id, P2PMessageType::PublicNoncesAck)?;
+        self.send_ack(
+            &program_context,
+            p2p_address,
+            P2PMessageType::PublicNoncesAck,
+        )?;
         Ok(())
     }
 
@@ -531,7 +560,7 @@ impl Program {
         for other in &self.participants {
             if other.partial.is_some() {
                 partials.push((
-                    other.p2p_address.peer_id.clone(),
+                    other.p2p_address.pubkey_hash.clone(),
                     other.partial.clone().unwrap(),
                 ));
             }
@@ -545,7 +574,7 @@ impl Program {
 
     pub fn receive_signatures(
         &mut self,
-        peer_id: PeerId,
+        p2p_address: P2PAddress,
         msg_type: P2PMessageType,
         data: Value,
         program_context: &ProgramContext,
@@ -554,7 +583,7 @@ impl Program {
             if self.state.should_answer_ack(self.im_leader(), &msg_type) {
                 self.send_ack(
                     program_context,
-                    &peer_id,
+                    p2p_address,
                     P2PMessageType::PartialSignaturesAck,
                 )?;
             }
@@ -562,8 +591,9 @@ impl Program {
         }
 
         let partial_msg = parse_signatures(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
-        for (peer_id, particpant_partials) in partial_msg {
-            let other_pos = get_other_index_by_peer_id(&peer_id, &self.participants);
+        for (pubkey_hash, particpant_partials) in partial_msg {
+            let other_pos = get_other_index_by_pubkey_hash(&pubkey_hash, &self.participants)
+                .ok_or(BitVMXError::InvalidParticipant(pubkey_hash))?;
             debug!("{}. Got partials for pos: {}", self.my_idx, other_pos);
             self.participants[other_pos].partial = Some(particpant_partials);
         }
@@ -608,7 +638,7 @@ impl Program {
 
         self.send_ack(
             program_context,
-            &peer_id,
+            p2p_address,
             P2PMessageType::PartialSignaturesAck,
         )?;
         Ok(())
@@ -660,7 +690,7 @@ impl Program {
                 self.protocol.setup_complete(&program_context)?;
 
                 let result = program_context.broker_channel.send(
-                    L2_ID,
+                    self.components_config.get_l2_identifier()?,
                     OutgoingBitVMXApiMessages::SetupCompleted(self.program_id).to_string()?,
                 );
                 if let Err(e) = result {
@@ -676,7 +706,7 @@ impl Program {
 
     pub fn process_p2p_message(
         &mut self,
-        peer_id: PeerId,
+        p2p_address: P2PAddress,
         msg_type: P2PMessageType,
         data: Value,
         program_context: &ProgramContext,
@@ -685,13 +715,13 @@ impl Program {
 
         match msg_type {
             P2PMessageType::Keys => {
-                self.receive_keys(peer_id, msg_type, data, program_context)?;
+                self.receive_keys(p2p_address, msg_type, data, program_context)?;
             }
             P2PMessageType::PublicNonces => {
-                self.receive_nonces(peer_id, msg_type, data, program_context)?;
+                self.receive_nonces(p2p_address, msg_type, data, program_context)?;
             }
             P2PMessageType::PartialSignatures => {
-                self.receive_signatures(peer_id, msg_type, data, program_context)?;
+                self.receive_signatures(p2p_address, msg_type, data, program_context)?;
             }
             P2PMessageType::KeysAck
             | P2PMessageType::PublicNoncesAck
@@ -714,7 +744,7 @@ impl Program {
     pub fn send_ack(
         &self,
         program_context: &ProgramContext,
-        peer_id: &PeerId,
+        p2p_address: P2PAddress,
         msg_type: P2PMessageType,
     ) -> Result<(), BitVMXError> {
         debug!("{}. Sending {:?}", self.my_idx, msg_type);
@@ -722,8 +752,7 @@ impl Program {
         response(
             &program_context.comms,
             &self.program_id,
-            //self.others[0].p2p_address.peer_id.clone(),
-            peer_id.clone(),
+            p2p_address,
             msg_type,
             (),
         )?;
@@ -808,7 +837,7 @@ impl Program {
             )?;*/
         } else {
             program_context.broker_channel.send(
-                L2_ID,
+                self.components_config.get_l2_identifier()?,
                 OutgoingBitVMXApiMessages::Transaction(self.program_id, tx_status, Some(name))
                     .to_string()?,
             )?;

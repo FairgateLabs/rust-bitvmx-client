@@ -1,4 +1,5 @@
 use anyhow::Result;
+use p2p_handler::p2p_handler::AllowList;
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -10,7 +11,7 @@ use bitvmx_client::{
         participant::{P2PAddress, ParticipantRole},
         variables::PartialUtxo,
     },
-    types::{OutgoingBitVMXApiMessages::*, L2_ID},
+    types::OutgoingBitVMXApiMessages::*,
 };
 use tracing::{debug, info};
 
@@ -58,7 +59,13 @@ pub struct Member {
 impl Member {
     pub fn new(id: &str, role: ParticipantRole) -> Result<Self> {
         let config = Config::new(Some(format!("config/{}.yaml", id)))?;
-        let bitvmx = BitVMXClient::new(config.broker_port, L2_ID);
+        let allow_list = AllowList::from_file(&config.broker.allow_list)?;
+        let bitvmx = BitVMXClient::new(
+            &config.components,
+            &config.broker,
+            &config.components.l2,
+            allow_list,
+        )?;
 
         Ok(Self {
             id: id.to_string(),

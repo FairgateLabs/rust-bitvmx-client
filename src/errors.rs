@@ -1,7 +1,7 @@
 use bitcoin::{consensus::encode::FromHexError, network::ParseNetworkError};
 use bitcoin_coordinator::errors::BitcoinCoordinatorError;
 use bitcoincore_rpc::bitcoin::{key::ParsePublicKeyError, sighash::SighashTypeParseError};
-use bitvmx_broker::rpc::errors::BrokerError;
+use bitvmx_broker::{identification::errors::IdentificationError, rpc::errors::BrokerError};
 use bitvmx_cpu_definitions::challenge::EmulatorResultError;
 use bitvmx_job_dispatcher::dispatcher_error::DispatcherError;
 use config as settings;
@@ -10,7 +10,7 @@ use key_manager::{
     errors::{KeyManagerError, WinternitzError},
     musig2::errors::Musig2SignerError,
 };
-use p2p_handler::P2pHandlerError;
+use p2p_handler::helper::P2pHandlerError;
 use protocol_builder::errors::{ProtocolBuilderError, ScriptError, UnspendableKeyError};
 use std::time::Duration;
 use storage_backend::error::StorageError;
@@ -74,6 +74,9 @@ pub enum BitVMXError {
 
     #[error("Failed to use P2P layer")]
     P2PCommunicationError,
+
+    #[error("Invalid P2P address: {0}")]
+    InvalidP2PAddress(String),
 
     #[error("Keys not found in program {0}")]
     KeysNotFound(Uuid),
@@ -161,6 +164,12 @@ pub enum BitVMXError {
 
     #[error("No public nonces found for aggregated public key {0} and id {1}")]
     MissingPublicNonces(String, String),
+
+    #[error("Invalid List: {0}")]
+    InvalidList(String),
+
+    #[error("Identification error: {0}")]
+    IdentificationError(#[from] IdentificationError),
 }
 
 #[derive(Error, Debug)]
@@ -194,6 +203,12 @@ pub enum ConfigError {
 
     #[error("Invalid configuration from file")]
     ConfigurationError(#[from] bitvmx_settings::errors::ConfigError),
+
+    #[error("Invalid private key {0}")]
+    InvalidPrivateKey(String),
+
+    #[error("Broker error: {0}")]
+    BrokerError(#[from] BrokerError),
 }
 
 #[derive(Error, Debug)]

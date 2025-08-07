@@ -1,11 +1,11 @@
 use std::str::FromStr;
 
 use crate::spv_proof::BtcTxSPVProof;
+use ::p2p_handler::p2p_handler::P2pHandler;
 use bitcoin::{PrivateKey, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TransactionStatus};
 use bitvmx_broker::{broker_storage::BrokerStorage, channel::channel::LocalChannel};
 use chrono::{DateTime, Utc};
-use p2p_handler::P2pHandler;
 use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
 
@@ -28,10 +28,10 @@ pub struct ProgramContext {
     pub witness: WitnessVars,
 }
 
-pub const BITVMX_ID: u32 = 1;
-pub const L2_ID: u32 = 100;
-pub const EMULATOR_ID: u32 = 1000;
-pub const PROVER_ID: u32 = 2000;
+// pub const BITVMX_ID: u8 = 1;
+// pub const L2_ID: u8 = 100;
+// pub const EMULATOR_ID: u8 = 1000;
+// pub const PROVER_ID: u8 = 2000;
 
 impl ProgramContext {
     pub fn new(
@@ -115,7 +115,7 @@ pub enum IncomingBitVMXApiMessages {
     GenerateZKP(Uuid, Vec<u8>, String),
     ProofReady(Uuid),
     GetZKPExecutionResult(Uuid),
-    Encrypt(Uuid, Vec<u8>, Vec<u8>),
+    Encrypt(Uuid, Vec<u8>, String),
     Decrypt(Uuid, Vec<u8>),
     Backup(String),
 }

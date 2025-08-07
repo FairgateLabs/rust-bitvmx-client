@@ -11,14 +11,11 @@ use bitcoin::{
     Transaction, TxIn, TxOut, Txid, Witness, XOnlyPublicKey,
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
+use p2p_handler::p2p_handler::AllowList;
 use protocol_builder::scripts::{build_taproot_spend_info, op_return_script, timelock, SignMode};
 use tracing::info;
 
-use bitvmx_client::{
-    client::BitVMXClient,
-    config::Config,
-    types::{OutgoingBitVMXApiMessages::*, L2_ID},
-};
+use bitvmx_client::{client::BitVMXClient, config::Config, types::OutgoingBitVMXApiMessages::*};
 
 pub struct User {
     pub id: String,
@@ -34,7 +31,13 @@ pub struct User {
 impl User {
     pub fn new(id: &str) -> Result<Self> {
         let config = Config::new(Some(format!("config/{}.yaml", id)))?;
-        let bitvmx = BitVMXClient::new(config.broker_port, L2_ID);
+        let allow_list = AllowList::from_file(&config.broker.allow_list)?;
+        let bitvmx = BitVMXClient::new(
+            &config.components,
+            &config.broker,
+            &config.components.l2,
+            allow_list,
+        )?;
         let bitcoin_client = BitcoinClient::new(
             &config.bitcoin.url,
             &config.bitcoin.username,

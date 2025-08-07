@@ -1,5 +1,5 @@
 use crate::{errors::BitVMXError, program::participant::P2PAddress};
-use p2p_handler::{P2pHandler, PeerId};
+use p2p_handler::p2p_handler::P2pHandler;
 use serde::Serialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -16,7 +16,7 @@ pub fn request<T: Serialize>(
 ) -> Result<(), BitVMXError> {
     let serialize_msg = serialize_msg(msg_type, program_id, msg)?;
     comms
-        .request(p2p_address.peer_id, p2p_address.address, serialize_msg)
+        .send(&p2p_address.pubkey_hash, p2p_address.address, serialize_msg)
         .unwrap();
     Ok(())
 }
@@ -24,12 +24,14 @@ pub fn request<T: Serialize>(
 pub fn response<T: Serialize>(
     comms: &P2pHandler,
     program_id: &Uuid,
-    peer_id: PeerId,
+    p2p_address: P2PAddress,
     msg_type: P2PMessageType,
     msg: T,
 ) -> Result<(), BitVMXError> {
     let serialize_msg = serialize_msg(msg_type, program_id, msg)?;
-    comms.response(peer_id, serialize_msg).unwrap();
+    comms
+        .send(&p2p_address.pubkey_hash, p2p_address.address, serialize_msg)
+        .unwrap();
     Ok(())
 }
 

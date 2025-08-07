@@ -17,13 +17,13 @@ use bitvmx_client::{
         },
         variables::VariableTypes,
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_SLOT},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, PROGRAM_TYPE_SLOT},
 };
 use common::{
     config_trace,
     dispute::{execute_dispute, prepare_dispute, ForcedChallenges},
     get_all, init_bitvmx, init_utxo, mine_and_wait, prepare_bitcoin, send_all,
-    wait_message_from_channel,
+    wait_message_from_channel, ParticipantChannel, FUNDING_ID, WALLET_NAME,
 };
 use protocol_builder::{
     scripts::{self, SignMode},
@@ -31,8 +31,6 @@ use protocol_builder::{
 };
 use tracing::info;
 use uuid::Uuid;
-
-use crate::common::{FUNDING_ID, WALLET_NAME};
 
 mod common;
 mod fixtures;
@@ -56,6 +54,28 @@ pub fn test_slot() -> Result<()> {
     //let (bitvmx_4, _addres_4, bridge_4, _) = init_bitvmx("op_4", false)?;
     let mut instances = vec![bitvmx_1, bitvmx_2, bitvmx_3]; //, bitvmx_4];
     let channels = vec![bridge_1, bridge_2, bridge_3]; // , bridge_4];
+    let identifiers = [
+        instances[0]
+            .get_components_config()
+            .get_bitvmx_identifier()?,
+        instances[1]
+            .get_components_config()
+            .get_bitvmx_identifier()?,
+        instances[2]
+            .get_components_config()
+            .get_bitvmx_identifier()?,
+        //instances[3].get_components_config().get_bitvmx_identifier()?,
+    ];
+
+    let id_channel_pairs: Vec<ParticipantChannel> = identifiers
+        .clone()
+        .into_iter()
+        .zip(channels.clone().into_iter())
+        .map(|(identifier, channel)| ParticipantChannel {
+            id: identifier,
+            channel,
+        })
+        .collect();
 
     //get to the top of the blockchain
     for _ in 0..101 {
@@ -66,7 +86,7 @@ pub fn test_slot() -> Result<()> {
 
     //get addresses
     let command = IncomingBitVMXApiMessages::GetCommInfo().to_string()?;
-    send_all(&channels, &command)?;
+    send_all(&id_channel_pairs, &command)?;
     let comm_info: Vec<OutgoingBitVMXApiMessages> = get_all(&channels, &mut instances, false)?;
     let addresses = comm_info
         .iter()
@@ -79,7 +99,7 @@ pub fn test_slot() -> Result<()> {
     //one time per bitvmx instance, we need to get the public key for the speedup funding utxo
     let funding_public_id = Uuid::new_v4();
     let command = IncomingBitVMXApiMessages::GetPubKey(funding_public_id, true).to_string()?;
-    send_all(&channels, &command)?;
+    send_all(&id_channel_pairs, &command)?;
     let msgs = get_all(&channels, &mut instances, false)?;
     let funding_key_0 = msgs[0].public_key().unwrap().1;
     let funding_key_1 = msgs[1].public_key().unwrap().1;
@@ -123,33 +143,34 @@ pub fn test_slot() -> Result<()> {
     wallet.mine(1)?;
     let funds_utxo_0 = Utxo::new(fund_txid_0, 0, 10_000_000, &funding_key_0);
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
-    channels[0].send(BITVMX_ID, command)?;
+    channels[0].send(id_channel_pairs[0].id.clone(), command)?;
 
     let funds_utxo_1 = Utxo::new(fund_txid_1, 0, 10_000_000, &funding_key_1);
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_1).to_string()?;
-    channels[1].send(BITVMX_ID, command)?;
+    channels[1].send(id_channel_pairs[1].id.clone(), command)?;
 
     let funds_utxo_2 = Utxo::new(fund_txid_2, 0, 10_000_000, &funding_key_2);
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_2).to_string()?;
-    channels[2].send(BITVMX_ID, command)?;
+    channels[2].send(id_channel_pairs[2].id.clone(), command)?;
 
     //==================================================
     //ask the peers to generate the aggregated public key
     let aggregation_id = Uuid::new_v4();
     let command = IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), None, 0)
         .to_string()?;
-    send_all(&channels, &command)?;
+    send_all(&id_channel_pairs, &command)?;
     let msgs = get_all(&channels, &mut instances, false)?;
     let aggregated_pub_key = msgs[0].aggregated_pub_key().unwrap();
 
     //ask the peers to generate the aggregated public key
     let participants = vec![address_1, address_2];
     let sub_channel = vec![channels[0].clone(), channels[1].clone()];
+    let sub_id_channel_pairs = vec![id_channel_pairs[0].clone(), id_channel_pairs[1].clone()];
     let aggregation_id = Uuid::new_v4();
     let command =
         IncomingBitVMXApiMessages::SetupKey(aggregation_id, participants.clone(), None, 0)
             .to_string()?;
-    send_all(&sub_channel, &command)?;
+    send_all(&sub_id_channel_pairs, &command)?;
     let msgs = get_all(&sub_channel, &mut instances, false)?;
     let pair_aggregated_pub_key = msgs[0].aggregated_pub_key().unwrap();
 
@@ -163,47 +184,47 @@ pub fn test_slot() -> Result<()> {
 
     let program_id = Uuid::new_v4();
     let set_fee = VariableTypes::Number(slot_fee_tx).set_msg(program_id, FEE)?;
-    send_all(&channels, &set_fee)?;
+    send_all(&id_channel_pairs, &set_fee)?;
 
     let set_fund_utxo =
         VariableTypes::Utxo((utxo.txid, utxo.vout, Some(fund_value.to_sat()), None))
             .set_msg(program_id, FUND_UTXO)?;
-    send_all(&channels, &set_fund_utxo)?;
+    send_all(&id_channel_pairs, &set_fund_utxo)?;
 
     let set_ops_aggregated =
         VariableTypes::PubKey(aggregated_pub_key).set_msg(program_id, OPERATORS_AGGREGATED_PUB)?;
-    send_all(&channels, &set_ops_aggregated)?;
+    send_all(&id_channel_pairs, &set_ops_aggregated)?;
 
     let set_ops_aggregated =
         VariableTypes::PubKey(pair_aggregated_pub_key).set_msg(program_id, PAIR_0_1_AGGREGATED)?;
-    send_all(&channels, &set_ops_aggregated)?;
+    send_all(&id_channel_pairs, &set_ops_aggregated)?;
 
     let set_unspendable = VariableTypes::PubKey(fixtures::hardcoded_unspendable().into())
         .set_msg(program_id, UNSPENDABLE)?;
-    send_all(&channels, &set_unspendable)?;
+    send_all(&id_channel_pairs, &set_unspendable)?;
 
     let eol_timelock_duration =
         VariableTypes::Number(100).set_msg(program_id, EOL_TIMELOCK_DURATION)?;
-    send_all(&channels, &eol_timelock_duration)?;
+    send_all(&id_channel_pairs, &eol_timelock_duration)?;
 
     let protocol_cost = VariableTypes::Number(20_000).set_msg(program_id, PROTOCOL_COST)?;
-    send_all(&channels, &protocol_cost)?;
+    send_all(&id_channel_pairs, &protocol_cost)?;
 
     let speedup_dust =
         VariableTypes::Number(slot_speedup_dust).set_msg(program_id, SPEEDUP_DUST)?;
-    send_all(&channels, &speedup_dust)?;
+    send_all(&id_channel_pairs, &speedup_dust)?;
 
     let gid_max = VariableTypes::Number(8).set_msg(program_id, GID_MAX)?;
-    send_all(&channels, &gid_max)?;
+    send_all(&id_channel_pairs, &gid_max)?;
 
     let timelock_blocks =
         VariableTypes::Number(TIMELOCK_BLOCKS.into()).set_msg(program_id, TIMELOCK_BLOCKS_KEY)?;
-    send_all(&channels, &timelock_blocks)?;
+    send_all(&id_channel_pairs, &timelock_blocks)?;
 
     let setup_msg =
         IncomingBitVMXApiMessages::Setup(program_id, PROGRAM_TYPE_SLOT.to_string(), addresses, 0)
             .to_string()?;
-    send_all(&channels, &setup_msg)?;
+    send_all(&id_channel_pairs, &setup_msg)?;
 
     //wait setup complete
     let _msg = get_all(&channels, &mut instances, false)?;
@@ -212,7 +233,7 @@ pub fn test_slot() -> Result<()> {
 
     // this should be done for all operators, but for now just setup one dispute
     let _ = channels[0].send(
-        BITVMX_ID,
+        id_channel_pairs[0].id.clone(),
         IncomingBitVMXApiMessages::GetTransactionInfoByName(
             program_id,
             format!(
@@ -262,7 +283,7 @@ pub fn test_slot() -> Result<()> {
     prepare_dispute(
         dispute_id,
         participants,
-        sub_channel.clone(),
+        sub_id_channel_pairs.clone(),
         &pair_aggregated_pub_key,
         initial_utxo,
         initial_output_type,
@@ -280,7 +301,7 @@ pub fn test_slot() -> Result<()> {
     // ==========================
 
     let _ = channels[1].send(
-        BITVMX_ID,
+        id_channel_pairs[1].id.clone(),
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
             program::protocols::cardinal::slot::SETUP_TX.to_string(),
@@ -295,16 +316,16 @@ pub fn test_slot() -> Result<()> {
     let cert_hash = "33".repeat(20);
     let set_cert_hash = VariableTypes::Input(hex::decode(cert_hash).unwrap())
         .set_msg(program_id, &certificate_hash(0))?;
-    let _ = channels[0].send(BITVMX_ID, set_cert_hash)?;
+    let _ = channels[0].send(id_channel_pairs[0].id.clone(), set_cert_hash)?;
 
     let selected_gid: u32 = 4;
     let set_gid = VariableTypes::Input(selected_gid.to_be_bytes().to_vec())
         .set_msg(program_id, &group_id(0))?;
-    let _ = channels[0].send(BITVMX_ID, set_gid)?;
+    let _ = channels[0].send(id_channel_pairs[0].id.clone(), set_gid)?;
 
     // send the tx
     let _ = channels[0].send(
-        BITVMX_ID,
+        id_channel_pairs[0].id.clone(),
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
             program::protocols::cardinal::slot::cert_hash_tx_op(0),
@@ -320,7 +341,7 @@ pub fn test_slot() -> Result<()> {
 
     // one operator disagrees with the gid and challenges
     execute_dispute(
-        sub_channel,
+        sub_id_channel_pairs,
         &mut instances,
         emulator_channels,
         &bitcoin_client,

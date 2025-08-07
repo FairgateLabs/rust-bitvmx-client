@@ -23,8 +23,10 @@ pub fn main() -> Result<()> {
     let preimage = "top_secret".to_string();
     let hash = sha256(preimage.as_bytes().to_vec());
 
-    let channel = DualChannel::new(&BrokerConfig::new(54321, None), 2);
-    channel.send(1, "get_aggregated".to_string())?;
+    let port = 54322;
+    let (broker_config, identifier, _) = BrokerConfig::new_only_address(54321, None)?;
+    let (channel, _) = DualChannel::new_simple(&broker_config, 2, port)?;
+    channel.send(identifier.clone(), "burn".to_string())?;
 
     let aggregated_pub_key: PublicKey;
     loop {
@@ -47,7 +49,7 @@ pub fn main() -> Result<()> {
 
     let msg_req =
         serde_json::to_string(&(txid, pubuser, ordinal_fee, protocol_fee, preimage, hash))?;
-    channel.send(1, msg_req)?;
+    channel.send(identifier, msg_req)?;
 
     Ok(())
 }
