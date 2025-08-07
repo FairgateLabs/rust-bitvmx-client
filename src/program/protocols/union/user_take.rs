@@ -23,11 +23,11 @@ use crate::{
         participant::ParticipantKeys,
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
-            union::types::{PegOutRequest, ACCEPT_PEGIN_TX, SPEED_UP_VALUE, USER_TAKE_TX},
+            union::types::{PegOutAccepted, PegOutRequest, ACCEPT_PEGIN_TX, USER_TAKE_TX},
         },
-        variables::PartialUtxo,
+        variables::{PartialUtxo, VariableTypes},
     },
-    types::ProgramContext,
+    types::{OutgoingBitVMXApiMessages, ProgramContext, L2_ID},
 };
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -74,7 +74,6 @@ impl ProtocolHandler for UserTakeProtocol {
             pegout_request.slot_id,
         )?;
         let user_pubkey = pegout_request.user_pubkey;
-        let fee = pegout_request.fee;
 
         //create the protocol
         let mut protocol = self.load_or_create_protocol();
@@ -96,9 +95,7 @@ impl ProtocolHandler for UserTakeProtocol {
         )?;
 
         // Add the user output to the user take transaction
-        let mut amount = accept_pegin_utxo.2.unwrap();
-        amount = self.checked_sub(amount, fee)?;
-        amount = self.checked_sub(amount, SPEED_UP_VALUE)?;
+        let user_amount = self.checked_sub(accept_pegin_utxo.2.unwrap(), pegout_request.fee)?;
 
         let wpkh = user_pubkey.wpubkey_hash().expect("key is compressed");
         let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
@@ -106,21 +103,12 @@ impl ProtocolHandler for UserTakeProtocol {
         protocol.add_transaction_output(
             USER_TAKE_TX,
             &OutputType::SegwitPublicKey {
-                value: Amount::from_sat(amount),
+                value: Amount::from_sat(user_amount),
                 script_pubkey: script_pubkey.clone(),
                 public_key: user_pubkey,
             },
         )?;
-
-        // Speed up transaction
-        protocol.add_transaction_output(
-            USER_TAKE_TX,
-            &OutputType::SegwitPublicKey {
-                value: Amount::from_sat(SPEED_UP_VALUE),
-                script_pubkey: script_pubkey.clone(),
-                public_key: user_pubkey,
-            },
-        )?;
+        // NOTE: No speed up output needed here, user could use the same output to speed up the transaction later
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
@@ -151,12 +139,14 @@ impl ProtocolHandler for UserTakeProtocol {
         Ok(())
     }
 
-    fn setup_complete(&self, _program_context: &ProgramContext) -> Result<(), BitVMXError> {
-        // This is called after the protocol is built and ready to be used
+    fn setup_complete(&self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
         info!(
             id = self.ctx.my_idx,
             "UserTakeProtocol setup complete for program {}", self.ctx.id
         );
+
+        self.send_pegout_accepted(&program_context)?;
+
         Ok(())
     }
 }
@@ -207,5 +197,69 @@ impl UserTakeProtocol {
 
         self.load_protocol()?
             .transaction_to_send(USER_TAKE_TX, &[taproot_arg])
+    }
+
+    pub fn send_pegout_accepted(
+        &self,
+        program_context: &ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        let pegout_request = self.pegout_request(program_context)?;
+        let take_aggregated_key = pegout_request.take_aggregated_key;
+
+        let nonces = program_context
+            .key_chain
+            .get_nonces(&take_aggregated_key, &self.ctx.protocol_name)?;
+
+        if nonces.is_empty() {
+            return Err(BitVMXError::MissingPublicNonces(
+                take_aggregated_key.to_string(),
+                self.ctx.protocol_name.to_string(),
+            ));
+        }
+
+        let signatures = program_context
+            .key_chain
+            .get_signatures(&take_aggregated_key, &self.ctx.protocol_name)?;
+
+        if signatures.is_empty() {
+            return Err(BitVMXError::MissingPartialSignatures(
+                take_aggregated_key.to_string(),
+                self.ctx.protocol_name.to_string(),
+            ));
+        }
+
+        let mut protocol = self.load_protocol()?;
+        let user_take_sighash = protocol
+            .get_hashed_message(USER_TAKE_TX, 0, 0)?
+            .unwrap()
+            .as_ref()
+            .to_vec();
+
+        let user_take_txid = protocol.transaction_by_name(USER_TAKE_TX)?.compute_txid();
+
+        // TODO: verify that the signature we are getting from the array of signatures is the proper one
+        let pegout_accepted = PegOutAccepted {
+            user_take_txid,
+            committee_id: pegout_request.committee_id,
+            user_take_sighash,
+            user_take_nonce: nonces[0].1.clone(),
+            user_take_signature: signatures[0].1.clone(),
+        };
+
+        let data = serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(
+            self.ctx.id,
+            PegOutAccepted::name(),
+            VariableTypes::String(serde_json::to_string(&pegout_accepted)?),
+        ))?;
+
+        info!(
+            id = self.ctx.my_idx,
+            "Sending pegout accepted data for UserTakeProtocol: {}", data
+        );
+
+        // Send the pegout accepted data to the broker channel
+        program_context.broker_channel.send(L2_ID, data)?;
+
+        Ok(())
     }
 }

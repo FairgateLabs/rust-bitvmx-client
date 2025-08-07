@@ -79,10 +79,12 @@ impl Committee {
 
         let seed = self.committee_id;
 
-        let mut funding_utxos_per_member: HashMap<PublicKey, Vec<PartialUtxo>> = HashMap::new();
+        let mut funding_utxos_per_member: HashMap<PublicKey, PartialUtxo> = HashMap::new();
         for member in &self.members {
-            let funding_utxos = self.get_funding_utxos(member)?;
-            funding_utxos_per_member.insert(member.keyring.take_pubkey.unwrap(), funding_utxos);
+            funding_utxos_per_member.insert(
+                member.keyring.take_pubkey.unwrap(),
+                self.get_funding_utxo(member)?,
+            );
         }
 
         self.all(|op| op.setup_dispute_protocols(seed, &members, &funding_utxos_per_member))?;
@@ -103,7 +105,7 @@ impl Committee {
         let protocol_id = Uuid::new_v4();
         let members = self.members.clone();
 
-        self.all(|op| {
+        self.all(|op: &mut Member| {
             op.accept_pegin(
                 protocol_id,
                 &members,
@@ -191,16 +193,17 @@ impl Committee {
         slot_id: usize,
         user_public_key: PublicKey,
         pegout_id: Vec<u8>,
-        operator_id: usize,
+        selected_operator_pubkey: PublicKey,
     ) -> Result<()> {
-        // self.all(|op| {
-        self.members[operator_id].advance_funds(
-            committee_id,
-            slot_id,
-            user_public_key,
-            pegout_id.clone(),
-        )?;
-        // })?;
+        self.all(|op| {
+            op.advance_funds(
+                committee_id,
+                slot_id,
+                user_public_key,
+                pegout_id.clone(),
+                selected_operator_pubkey,
+            )
+        })?;
 
         Ok(())
     }
@@ -212,25 +215,14 @@ impl Committee {
         Ok(self.members[0].keyring.take_aggregated_key.unwrap())
     }
 
-    fn get_funding_utxos(&self, member: &Member) -> Result<Vec<PartialUtxo>> {
-        let count = match member.role {
-            ParticipantRole::Prover => 2,
-            ParticipantRole::Verifier => 1,
-        };
-
-        let utxos = (0..count)
-            .map(|_| {
-                self.prepare_funding_utxo(
-                    &self.wallet,
-                    "fund_1",
-                    &member.keyring.dispute_pubkey.unwrap(),
-                    10_000_000,
-                    None,
-                )
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        Ok(utxos)
+    fn get_funding_utxo(&self, member: &Member) -> Result<PartialUtxo> {
+        self.prepare_funding_utxo(
+            &self.wallet,
+            "fund_1",
+            &member.keyring.dispute_pubkey.unwrap(),
+            10_000_000,
+            None,
+        )
     }
 
     fn prepare_funding_utxo(
@@ -241,8 +233,6 @@ impl Committee {
         amount: u64,
         from: Option<&str>,
     ) -> Result<PartialUtxo> {
-        // info!("Funding address: {:?} with: {}", public_key, amount);
-        // info!("Funding address: {:?} with: {}", public_key, amount);
         let txid = wallet.fund_address(
             WALLET_NAME,
             from.unwrap_or(funding_id),

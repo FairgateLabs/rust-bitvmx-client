@@ -8,7 +8,7 @@ use bitvmx_client::{
     config::Config,
     program::{
         participant::{P2PAddress, ParticipantRole},
-        protocols::union::types::ACCEPT_PEGIN_TX,
+        protocols::union::types::{ACCEPT_PEGIN_TX, SELECTED_OPERATOR_PUBKEY},
         variables::{PartialUtxo, VariableTypes},
     },
     types::{OutgoingBitVMXApiMessages::*, L2_ID},
@@ -124,7 +124,7 @@ impl Member {
         &mut self,
         committee_id: Uuid,
         members: &[Member],
-        funding_utxos_per_member: &HashMap<PublicKey, Vec<PartialUtxo>>,
+        funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
     ) -> Result<()> {
         info!(
             id = self.id,
@@ -133,7 +133,6 @@ impl Member {
         DisputeCoreSetup::setup(
             committee_id,
             &self.id,
-            &self.role,
             members,
             &self.keyring,
             &self.bitvmx,
@@ -178,10 +177,6 @@ impl Member {
             reimbursement_pubkey,
         )?;
 
-        // Wait for the AcceptPegin setup to complete
-        let program_id = wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
-        info!(id = self.id, program_id = ?program_id, "AcceptPegin setup completed (from member)");
-
         Ok(())
     }
 
@@ -219,7 +214,22 @@ impl Member {
         slot_id: usize,
         user_public_key: PublicKey,
         pegout_id: Vec<u8>,
+        selected_operator_pubkey: PublicKey,
     ) -> Result<()> {
+        // Store the selected operator's public key for this slot
+        let selected_operator_key_name = format!("{}_{}", SELECTED_OPERATOR_PUBKEY, slot_id);
+        self.bitvmx.set_var(
+            committee_id,
+            &selected_operator_key_name,
+            VariableTypes::PubKey(selected_operator_pubkey),
+        )?;
+
+        // Check if this member is the selected operator for advance funds
+        let my_take_pubkey = self.keyring.take_pubkey.unwrap();
+        if my_take_pubkey != selected_operator_pubkey {
+            return Ok(());
+        }
+
         if self.role != ParticipantRole::Prover {
             return Err(anyhow::anyhow!("Committee member is not a Prover"));
         }
