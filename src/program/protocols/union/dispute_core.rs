@@ -4,7 +4,7 @@ use crate::{
         participant::{ParticipantKeys, ParticipantRole, PublicKeyType},
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
-            union::{self, types::*},
+            union::{self, common::indexed_name, types::*},
         },
         variables::VariableTypes,
     },
@@ -635,8 +635,4 @@ impl DisputeCoreProtocol {
 
         Ok(())
     }
-}
-
-fn indexed_name(prefix: &str, index: usize) -> String {
-    format!("{}_{}", prefix, index)
 }

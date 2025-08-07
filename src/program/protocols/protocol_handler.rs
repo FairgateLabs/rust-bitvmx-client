@@ -27,14 +27,15 @@ use super::dispute::DisputeResolutionProtocol;
 
 #[cfg(feature = "union")]
 use crate::program::protocols::union::{
-    accept_pegin::AcceptPegInProtocol, dispute_core::DisputeCoreProtocol,
-    pairwise_penalization::PairwisePenalizationProtocol, user_take::UserTakeProtocol,
+    accept_pegin::AcceptPegInProtocol, advance_funds::AdvanceFundsProtocol,
+    dispute_core::DisputeCoreProtocol, pairwise_penalization::PairwisePenalizationProtocol,
+    user_take::UserTakeProtocol,
 };
 
 #[cfg(feature = "union")]
 use crate::types::{
-    PROGRAM_TYPE_ACCEPT_PEGIN, PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_PAIRWISE_PENALIZATION,
-    PROGRAM_TYPE_USER_TAKE,
+    PROGRAM_TYPE_ACCEPT_PEGIN, PROGRAM_TYPE_ADVANCE_FUNDS, PROGRAM_TYPE_DISPUTE_CORE,
+    PROGRAM_TYPE_PAIRWISE_PENALIZATION, PROGRAM_TYPE_USER_TAKE,
 };
 
 #[cfg(feature = "cardinal")]
@@ -488,6 +489,8 @@ pub enum ProtocolType {
     #[cfg(feature = "union")]
     UserTakeProtocol,
     #[cfg(feature = "union")]
+    AdvanceFundsProtocol,
+    #[cfg(feature = "union")]
     DisputeCoreProtocol,
     #[cfg(feature = "union")]
     PairwisePenalizationProtocol,
@@ -518,6 +521,10 @@ pub fn new_protocol_type(
         )),
         #[cfg(feature = "union")]
         PROGRAM_TYPE_USER_TAKE => Ok(ProtocolType::UserTakeProtocol(UserTakeProtocol::new(ctx))),
+        #[cfg(feature = "union")]
+        PROGRAM_TYPE_ADVANCE_FUNDS => Ok(ProtocolType::AdvanceFundsProtocol(
+            AdvanceFundsProtocol::new(ctx),
+        )),
         #[cfg(feature = "union")]
         PROGRAM_TYPE_PAIRWISE_PENALIZATION => Ok(ProtocolType::PairwisePenalizationProtocol(
             PairwisePenalizationProtocol::new(ctx),

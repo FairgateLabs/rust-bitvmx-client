@@ -7,7 +7,7 @@ use crate::{
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
-                common::get_dispute_core_id,
+                common::{create_transaction_reference, get_dispute_core_id},
                 types::{
                     PegInAccepted, PegInRequest, ACCEPT_PEGIN_TX, OPERATOR_TAKE_ENABLER,
                     OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX, P2TR_FEE,
@@ -131,7 +131,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
             let kickoff_tx_name = &format!("{}_OP_{}", REIMBURSEMENT_KICKOFF_TX, index);
 
             // Create kickoff transaction reference
-            self.create_transaction_reference(
+            create_transaction_reference(
                 &mut protocol,
                 kickoff_tx_name,
                 &mut vec![operator_take_enabler.clone()],
@@ -153,7 +153,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
             let reveal_tx_name = &format!("REVEAL_TX_OP_{}", index);
 
             // Create won enabler transaction reference
-            self.create_transaction_reference(
+            create_transaction_reference(
                 &mut protocol,
                 reveal_tx_name,
                 &mut vec![operator_won_enabler.clone()],
@@ -508,33 +508,6 @@ impl AcceptPegInProtocol {
                 public_key: *take_pubkey,
             },
         )?;
-
-        Ok(())
-    }
-
-    fn create_transaction_reference(
-        &self,
-        protocol: &mut protocol_builder::builder::Protocol,
-        tx_name: &str,
-        utxos: &mut Vec<PartialUtxo>,
-    ) -> Result<(), BitVMXError> {
-        // Create transaction
-        protocol.add_transaction(tx_name)?;
-
-        // Sort UTXOs by index
-        utxos.sort_by_key(|utxo| utxo.1);
-        let mut last_index = 0;
-
-        for utxo in utxos {
-            // If there is a gap in the indices, add unknown outputs
-            if utxo.1 > last_index + 1 {
-                protocol.add_unknown_outputs(tx_name, utxo.1 - last_index)?;
-            }
-
-            // Add the UTXO as an output
-            protocol.add_transaction_output(tx_name, &utxo.clone().3.unwrap())?;
-            last_index = utxo.1;
-        }
 
         Ok(())
     }
