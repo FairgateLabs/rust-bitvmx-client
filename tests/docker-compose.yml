@@ -9,7 +9,8 @@ services:
   bitcoind:
     container_name: bitcoind
     build:
-      context: ./
+      context: ..
+      dockerfile: tests/Dockerfile
       args:
         BITCOIND_RPC_PORT: ${BITCOIND_RPC_PORT}
         BITCOIND_RPC_USERNAME: ${BITCOIND_RPC_USERNAME}
