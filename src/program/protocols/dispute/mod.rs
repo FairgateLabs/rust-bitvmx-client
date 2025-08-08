@@ -1,12 +1,11 @@
 pub mod challenge;
+pub mod execution;
 pub mod input_handler;
 use std::{collections::HashMap, vec};
 
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
-use bitcoin_script_riscv::riscv::instruction_mapping::{
-    create_verification_script_mapping, get_key_from_opcode,
-};
+use bitcoin_script_riscv::riscv::instruction_mapping::create_verification_script_mapping;
 use bitcoin_script_stack::stack::StackTracker;
 use bitvmx_cpu_definitions::{
     challenge::EmulatorResultType,
@@ -43,10 +42,11 @@ use crate::{
         protocols::{
             claim::ClaimGate,
             dispute::{
-                challenge::{challenge_scripts, get_challenge_leaf, get_verifier_keys},
+                challenge::{challenge_scripts, get_verifier_keys},
+                execution::execution_result,
                 input_handler::{
-                    get_required_keys, get_txs_configuration, set_input_hex, set_input_u32,
-                    set_input_u64, set_input_u8, split_input, unify_inputs, unify_witnesses,
+                    get_required_keys, get_txs_configuration, split_input, unify_inputs,
+                    unify_witnesses,
                 },
             },
             protocol_handler::{ProtocolContext, ProtocolHandler},
@@ -1369,245 +1369,7 @@ impl DisputeResolutionProtocol {
         result: &EmulatorResultType,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let id = &self.ctx.id;
-        match result {
-            EmulatorResultType::ProverExecuteResult {
-                last_step,
-                last_hash,
-                halt,
-            } => {
-                info!("Last step: {:?}", last_step);
-                info!("Last hash: {:?}", last_hash);
-                info!("halt: {:?}", halt);
-                //TODO: chef if it's halt 0 before commiting the transaction
-                set_input_u64(id, context, "prover_last_step", *last_step)?;
-
-                set_input_hex(id, context, "prover_last_hash", last_hash)?;
-
-                let (tx, sp) = self.get_tx_with_speedup_data(context, COMMITMENT, 0, 0, true)?;
-                context.bitcoin_coordinator.dispatch(
-                    tx,
-                    Some(sp),
-                    Context::ProgramId(self.ctx.id).to_string()?,
-                    None,
-                )?;
-            }
-            EmulatorResultType::VerifierCheckExecutionResult { step } => {
-                info!("Verifier execution result: Step: {:?}", step);
-                context.globals.set_var(
-                    &self.ctx.id,
-                    "execution-check-ready",
-                    VariableTypes::Number(1),
-                )?;
-                if let Some(msg) = context
-                    .globals
-                    .get_var(&self.ctx.id, "choose-segment-msg")?
-                {
-                    info!("The msg to choose segment was ready. Sending it");
-                    context.broker_channel.send(EMULATOR_ID, msg.string()?)?;
-                } else {
-                    info!("The msg to choose segment was not ready");
-                }
-            }
-            EmulatorResultType::ProverGetHashesForRoundResult { hashes, round } => {
-                let save_round = context
-                    .globals
-                    .get_var(&self.ctx.id, "current_round")?
-                    .unwrap()
-                    .number()? as u8;
-                assert_eq!(save_round, *round);
-                for (i, h) in hashes.iter().enumerate() {
-                    set_input_hex(id, context, &format!("prover_hash_{}_{}", round, i), h)?;
-                }
-                let (tx, sp) = self.get_tx_with_speedup_data(
-                    context,
-                    &format!("NARY_PROVER_{}", round),
-                    0,
-                    0,
-                    true,
-                )?;
-                context.bitcoin_coordinator.dispatch(
-                    tx,
-                    Some(sp),
-                    Context::ProgramId(self.ctx.id).to_string()?,
-                    None,
-                )?;
-            }
-            EmulatorResultType::VerifierChooseSegmentResult { v_decision, round } => {
-                let save_round = context
-                    .globals
-                    .get_var(&self.ctx.id, "current_round")?
-                    .unwrap()
-                    .number()? as u8;
-                assert_eq!(save_round, *round);
-
-                set_input_u8(
-                    id,
-                    context,
-                    &format!("selection_bits_{}", round),
-                    *v_decision as u8,
-                )?;
-
-                let (tx, sp) = self.get_tx_with_speedup_data(
-                    context,
-                    &format!("NARY_VERIFIER_{}", round),
-                    0,
-                    0,
-                    true,
-                )?;
-                context.bitcoin_coordinator.dispatch(
-                    tx,
-                    Some(sp),
-                    Context::ProgramId(self.ctx.id).to_string()?,
-                    None,
-                )?;
-            }
-            EmulatorResultType::ProverFinalTraceResult { final_trace } => {
-                info!("Final trace: {:?}", final_trace);
-
-                set_input_u32(
-                    id,
-                    context,
-                    "prover_write_address",
-                    final_trace.trace_step.get_write().address,
-                )?;
-                set_input_u32(
-                    id,
-                    context,
-                    "prover_write_value",
-                    final_trace.trace_step.get_write().value,
-                )?;
-                set_input_u32(
-                    id,
-                    context,
-                    "prover_write_pc",
-                    final_trace.trace_step.get_pc().get_address(),
-                )?;
-                set_input_u8(
-                    id,
-                    context,
-                    "prover_write_micro",
-                    final_trace.trace_step.get_pc().get_micro(),
-                )?;
-
-                set_input_u8(
-                    id,
-                    context,
-                    "prover_mem_witness",
-                    final_trace.mem_witness.byte(),
-                )?;
-
-                set_input_u32(
-                    id,
-                    context,
-                    "prover_read_1_address",
-                    final_trace.read_1.address,
-                )?;
-                set_input_u32(id, context, "prover_read_1_value", final_trace.read_1.value)?;
-                set_input_u64(
-                    id,
-                    context,
-                    "prover_read_1_last_step",
-                    final_trace.read_1.last_step,
-                )?;
-                set_input_u32(
-                    id,
-                    context,
-                    "prover_read_2_address",
-                    final_trace.read_2.address,
-                )?;
-                set_input_u32(id, context, "prover_read_2_value", final_trace.read_2.value)?;
-                set_input_u64(
-                    id,
-                    context,
-                    "prover_read_2_last_step",
-                    final_trace.read_2.last_step,
-                )?;
-
-                set_input_u32(
-                    id,
-                    context,
-                    "prover_read_pc_address",
-                    final_trace.read_pc.pc.get_address(),
-                )?;
-                set_input_u8(
-                    id,
-                    context,
-                    "prover_read_pc_micro",
-                    final_trace.read_pc.pc.get_micro(),
-                )?;
-                set_input_u32(
-                    id,
-                    context,
-                    "prover_read_pc_opcode",
-                    final_trace.read_pc.opcode,
-                )?;
-                set_input_u64(id, context, "prover_step_number", final_trace.step_number)?;
-                if let Some(witness) = final_trace.witness {
-                    set_input_u32(id, context, "prover_witness", witness)?;
-                }
-                let instruction = get_key_from_opcode(
-                    final_trace.read_pc.opcode,
-                    final_trace.read_pc.pc.get_micro(),
-                )
-                .ok_or_else(|| {
-                    BitVMXError::InstructionNotFound(format!(
-                        "{}_{}",
-                        final_trace.read_pc.opcode,
-                        final_trace.read_pc.pc.get_micro()
-                    ))
-                })?;
-                let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
-                let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
-                instruction_names.sort();
-                let mut index = instruction_names
-                    .iter()
-                    .position(|i| i == &instruction)
-                    .ok_or_else(|| BitVMXError::InstructionNotFound(instruction.to_string()))?;
-
-                if context
-                    .globals
-                    .get_var(&self.ctx.id, "FAKE_INSTRUCTION")?
-                    .is_some()
-                {
-                    index = 0;
-                }
-                let (tx, sp) =
-                    self.get_tx_with_speedup_data(context, EXECUTE, 0, index as u32, true)?;
-
-                context.bitcoin_coordinator.dispatch(
-                    tx,
-                    Some(sp),
-                    Context::ProgramId(self.ctx.id).to_string()?,
-                    None,
-                )?;
-            }
-            EmulatorResultType::VerifierChooseChallengeResult { challenge } => {
-                info!("Verifier choose challenge result: {:?}", challenge);
-
-                let program_definitions = self.get_program_definition(context)?;
-                let leaf =
-                    get_challenge_leaf(&self.ctx.id, context, &program_definitions.0, challenge)?;
-                if leaf.is_none() {
-                    return Ok(());
-                }
-
-                let (tx, sp) = self.get_tx_with_speedup_data(
-                    context,
-                    CHALLENGE,
-                    0,
-                    leaf.unwrap() as u32,
-                    true,
-                )?;
-                context.bitcoin_coordinator.dispatch(
-                    tx,
-                    Some(sp),
-                    Context::ProgramId(self.ctx.id).to_string()?,
-                    None,
-                )?;
-            }
-        }
-        Ok(())
+        execution_result(&self.ctx.id, &self, result, context)
     }
 
     fn get_execution_path(&self) -> Result<String, BitVMXError> {
