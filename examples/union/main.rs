@@ -181,7 +181,7 @@ pub fn advance_funds() -> Result<()> {
     )?;
 
     // After some time, a peg-out request is not successfully processed and an operator is selected to advance funds.
-    thread::sleep(Duration::from_secs(30));
+    thread::sleep(Duration::from_secs(10));
 
     let user_public_key = "026e14224899cf9c780fef5dd200f92a28cc67f71c0af6fe30b5657ffc943f08f4"; // Placeholder for the actual user public key
     let pegout_id = vec![0; 32]; // Placeholder for the actual peg-out ID
@@ -192,7 +192,6 @@ pub fn advance_funds() -> Result<()> {
     let selected_operator_pubkey = committee.members[operator_id].keyring.take_pubkey.unwrap();
 
     committee.advance_funds(
-        committee.committee_id(),
         slot_id,
         user_public_key.parse::<PublicKey>().unwrap(),
         pegout_id,

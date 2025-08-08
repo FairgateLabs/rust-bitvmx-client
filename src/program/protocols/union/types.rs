@@ -14,6 +14,7 @@ pub const SELECTED_OPERATOR_PUBKEY: &str = "selected_operator_pubkey";
 pub const REQUEST_PEGIN_TX: &str = "REQUEST_PEGIN_TX";
 pub const ACCEPT_PEGIN_TX: &str = "ACCEPT_PEGIN_TX";
 pub const USER_TAKE_TX: &str = "USER_TAKE_TX";
+pub const ADVANCE_FUNDS_TX: &str = "ADVANCE_FUNDS_TX";
 pub const OPERATOR_TAKE_TX: &str = "OPERATOR_TAKE_TX";
 pub const OPERATOR_WON_TX: &str = "OPERATOR_WON_TX";
 pub const OP_FUNDING_TX: &str = "OP_FUNDING_TX";
@@ -50,6 +51,7 @@ pub const SELF_DISABLER_TX_SUFFIX: &str = "_SELF_DISABLER_TX";
 // UTXOs
 pub const OPERATOR_TAKE_ENABLER: &str = "operator_take_enabler";
 pub const OPERATOR_WON_ENABLER: &str = "operator_won_enabler";
+pub const ADVANCE_FUNDS_INPUT: &str = "advance_funds_input";
 
 // Roles
 pub const OPERATOR: &str = "OP";
@@ -146,5 +148,22 @@ pub struct PegOutAccepted {
 impl PegOutAccepted {
     pub fn name() -> String {
         "pegout_accepted".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdvanceFundsRequest {
+    pub committee_id: Uuid,
+    pub slot_id: usize,
+    pub pegout_id: Vec<u8>,
+    pub fee: u64,
+    pub operator_pubkey: PublicKey,
+    pub user_pubkey: PublicKey,
+    pub my_take_pubkey: PublicKey,
+}
+
+impl AdvanceFundsRequest {
+    pub fn name() -> String {
+        "advance_funds_request".to_string()
     }
 }

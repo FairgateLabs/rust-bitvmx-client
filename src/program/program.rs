@@ -156,7 +156,7 @@ impl Program {
         // save my pos in the others list to have the complete message ready
         others[my_idx] = ParticipantData::new(&p2p_address, Some(my_keys));
 
-        let program = Self {
+        let mut program = Self {
             program_id: *id,
             my_idx,
             participants: others,
@@ -167,6 +167,11 @@ impl Program {
             config: config.clone(),
         };
 
+        // This is for those protocols that only has one participant
+        if peers.len() == 1 {
+            program.build_protocol(program_context)?;
+            program.state = ProgramState::Monitoring
+        }
         program.save()?;
 
         Ok(program)
