@@ -1,4 +1,4 @@
-use bitcoin_coordinator::config::CoordinatorSettings;
+use bitcoin_coordinator::config::CoordinatorSettingsConfig;
 use bitvmx_bitcoin_rpc::rpc_config::RpcConfig;
 use key_manager::config::KeyManagerConfig;
 use serde::{Deserialize, Serialize};
@@ -48,7 +48,7 @@ pub struct Config {
     pub broker_storage: StorageConfig,
     pub broker_port: u16,
     pub client: ClientConfig,
-    pub coordinator_settings: Option<CoordinatorSettings>,
+    pub coordinator_settings: Option<CoordinatorSettingsConfig>,
     pub coordinator: ThrotthleUpdate,
 }
 
