@@ -20,7 +20,7 @@ use protocol_builder::{
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
-        output::SpeedupData,
+        output::{SpeedupData, AUTO_AMOUNT, RECOVER_AMOUNT},
         OutputType,
     },
 };
@@ -237,7 +237,7 @@ impl DisputeCoreProtocol {
             "initial_deposit",
             &setup,
             OutputSpec::Auto(OutputType::taproot(
-                operator_utxo.2.unwrap(),
+                AUTO_AMOUNT,
                 operator_dispute_key,
                 &[union::scripts::reveal_take_private_key(
                     operator_dispute_key,
@@ -259,6 +259,11 @@ impl DisputeCoreProtocol {
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
             None,
             None,
+        )?;
+
+        protocol.add_transaction_output(
+            &self_disabler,
+            &OutputType::segwit_key(RECOVER_AMOUNT, operator_dispute_key)?,
         )?;
 
         Ok(())
@@ -300,12 +305,7 @@ impl DisputeCoreProtocol {
         protocol.add_connection(
             "start_dispute_core",
             &initial_deposit,
-            OutputType::taproot(
-                DISPUTE_OPENER_VALUE,
-                &operator_dispute_key,
-                &[start_reimbursement],
-            )?
-            .into(),
+            OutputType::taproot(AUTO_AMOUNT, &operator_dispute_key, &[start_reimbursement])?.into(),
             &reimbursement_kickoff,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
             None,
@@ -329,7 +329,7 @@ impl DisputeCoreProtocol {
             "challenge",
             &reimbursement_kickoff,
             OutputType::taproot(
-                DISPUTE_OPENER_VALUE,
+                AUTO_AMOUNT,
                 &take_aggregated_key,
                 challenge_requests.as_slice(),
             )?
@@ -349,7 +349,7 @@ impl DisputeCoreProtocol {
         protocol.add_connection(
             "reveal_input",
             &challenge,
-            OutputType::taproot(DISPUTE_OPENER_VALUE, &dispute_aggregated_key, &[secret])?.into(),
+            OutputType::taproot(AUTO_AMOUNT, &dispute_aggregated_key, &[secret])?.into(),
             &reveal_input,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
             None,
@@ -358,7 +358,7 @@ impl DisputeCoreProtocol {
 
         protocol.add_transaction_output(
             &reveal_input,
-            &OutputType::taproot(DUST_VALUE, &take_aggregated_key, &[])?,
+            &OutputType::taproot(AUTO_AMOUNT, &take_aggregated_key, &[])?,
         )?;
 
         protocol.add_connection(
@@ -378,7 +378,7 @@ impl DisputeCoreProtocol {
 
         protocol.add_transaction_output(
             &input_not_revealed,
-            &OutputType::taproot(DUST_VALUE, &take_aggregated_key, &[])?,
+            &OutputType::taproot(AUTO_AMOUNT, &take_aggregated_key, &[])?,
         )?;
 
         self.add_speedup_outputs(
@@ -410,20 +410,20 @@ impl DisputeCoreProtocol {
         if dispute_core_index == packet_size - 1 {
             protocol.add_transaction_output(
                 &initial_deposit,
-                &OutputType::segwit_key(SPEED_UP_VALUE, operator_dispute_key)?,
+                &OutputType::segwit_key(AUTO_AMOUNT, operator_dispute_key)?,
             )?;
         }
 
         // Add a speedup output to the reimbursement_kickoff transaction.
         protocol.add_transaction_output(
             &reimbursement_kickoff,
-            &OutputType::segwit_key(SPEED_UP_VALUE, operator_dispute_key)?,
+            &OutputType::segwit_key(AUTO_AMOUNT, operator_dispute_key)?,
         )?;
 
         // Add one speedup ouput per committee member to the challenge and input_not_revealed transactions.
         for i in 0..keys.len() {
             let speedup_output =
-                OutputType::segwit_key(SPEED_UP_VALUE, keys[i].get_public(DISPUTE_KEY)?)?;
+                OutputType::segwit_key(AUTO_AMOUNT, keys[i].get_public(DISPUTE_KEY)?)?;
             protocol.add_transaction_output(&challenge, &speedup_output)?;
             protocol.add_transaction_output(&input_not_revealed, &speedup_output)?;
         }
@@ -431,7 +431,7 @@ impl DisputeCoreProtocol {
         // Add a speedup output to the reveal_input transaction.
         protocol.add_transaction_output(
             &reveal_input,
-            &OutputType::segwit_key(SPEED_UP_VALUE, operator_dispute_key)?,
+            &OutputType::segwit_key(AUTO_AMOUNT, operator_dispute_key)?,
         )?;
 
         Ok(())
@@ -600,23 +600,23 @@ impl DisputeCoreProtocol {
         for i in 0..committee.packet_size as usize {
             let name = indexed_name(REIMBURSEMENT_KICKOFF_TX, i);
             let reimbursement_kickoff_tx = protocol.transaction_by_name(&name)?;
-            let operator_take_output = OutputType::taproot(DUST_VALUE, &take_key, &[])?;
+            let operator_take_output = OutputType::taproot(AUTO_AMOUNT, &take_key, &[])?;
 
             let operator_take_utxo = (
                 reimbursement_kickoff_tx.compute_txid(),
                 0,
-                Some(DUST_VALUE),
+                Some(AUTO_AMOUNT),
                 Some(operator_take_output),
             );
 
             let name = indexed_name(REVEAL_INPUT_TX, i);
             let reveal_input_tx = protocol.transaction_by_name(&name)?;
-            let operator_won_output = OutputType::taproot(DUST_VALUE, &take_key, &[])?;
+            let operator_won_output = OutputType::taproot(AUTO_AMOUNT, &take_key, &[])?;
 
             let operator_won_utxo = (
                 reveal_input_tx.compute_txid(),
                 0,
-                Some(DUST_VALUE),
+                Some(AUTO_AMOUNT),
                 Some(operator_won_output),
             );
 
