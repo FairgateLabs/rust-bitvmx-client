@@ -14,10 +14,13 @@ use crate::{
     },
     types::{
         IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus,
-        BITVMX_ID, L2_ID,
+        BITVMX_ID, L2_ID, SignedPublicKey,
     },
 };
 use bitcoin::{PublicKey, Transaction, Txid};
+use bitcoin::hashes::{Hash, sha256::Hash as Sha256Hash};
+use secp256k1::{Message, ecdsa::RecoverableSignature};
+use tiny_keccak::{Hasher, Keccak};
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_coordinator::{
     coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi},
@@ -946,7 +949,7 @@ impl BitVMXApi for BitVMX {
         }
 
         let decoded: IncomingBitVMXApiMessages = serde_json::from_str(&msg)?;
-        debug!("< {:?}", decoded);
+        info!("< {:?}", decoded);
 
         match decoded {
             IncomingBitVMXApiMessages::GetHashedMessage(id, name, vout, leaf) => {
@@ -1077,6 +1080,57 @@ impl BitVMXApi for BitVMX {
                         serde_json::to_string(&OutgoingBitVMXApiMessages::PubKey(id, pubkey))?,
                     )?;
                 }
+            }
+            IncomingBitVMXApiMessages::GetSignedPubKey(id, new) => {
+                let public_key = if new {
+                    self.program_context.key_chain.derive_keypair()?
+                } else {
+                    let collaboration = self
+                        .get_collaboration(&id)?
+                        .ok_or(BitVMXError::ProgramNotFound(id))?;
+                    let aggregated = collaboration
+                        .aggregated_key
+                        .ok_or(BitVMXError::ProgramNotFound(id))?;
+                    self.program_context
+                        .key_chain
+                        .key_manager
+                        .get_my_public_key(&aggregated)?
+                };
+
+                // Create the message to sign (keccak256(abi.encode(publicKeyX, publicKeyY)))
+                let uncompressed = public_key.inner.serialize_uncompressed(); // [0x04 | X(32) | Y(32)]
+                let x = &uncompressed[1..33];
+                let y = &uncompressed[33..65];
+                
+                // Create the message as Solidity would: keccak256(abi.encode(x, y))
+                let mut message_bytes = Vec::new();
+                message_bytes.extend_from_slice(x);
+                message_bytes.extend_from_slice(y);
+                
+                let mut keccak = Keccak::v256();
+                let mut message_hash = [0u8; 32];
+                keccak.update(&message_bytes);
+                keccak.finalize(&mut message_hash);
+                
+                let message = Message::from_slice(&message_hash)?;
+                
+                // Get the private key and sign
+                let private_key = self.program_context.key_chain.key_manager.export_secret(&public_key)?;
+                let secp = secp256k1::Secp256k1::new();
+                let signature = secp.sign_ecdsa_recoverable(&message, &private_key.inner);
+                let (recovery_id, signature_bytes) = signature.serialize_compact();
+                
+                let signed_pubkey = SignedPublicKey {
+                    public_key,
+                    signature_r: signature_bytes[0..32].try_into().unwrap(),
+                    signature_s: signature_bytes[32..64].try_into().unwrap(),
+                    recovery_id: recovery_id.to_i32() as u8,
+                };
+
+                self.program_context.broker_channel.send(
+                    from,
+                    serde_json::to_string(&OutgoingBitVMXApiMessages::SignedPubKey(id, signed_pubkey))?,
+                )?;
             }
             IncomingBitVMXApiMessages::GetAggregatedPubkey(id) => {
                 BitVMXApi::get_aggregated_pubkey(self, from, id)?

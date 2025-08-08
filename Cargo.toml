@@ -23,6 +23,7 @@ url = { version = "2.5.4" }
 chrono = "0.4.31"
 tokio = { version = "1.40.0", features = ["sync"] }
 sha2 = "0.10"
+tiny-keccak = { version = "2.0", features = ["keccak"] }
 enum_dispatch = { version = "0.3.13" }
 ctrlc = "3.2.5"
 rsa = "0.9.8"

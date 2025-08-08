@@ -19,6 +19,15 @@ use crate::{
         variables::{Globals, VariableTypes, WitnessTypes, WitnessVars},
     },
 };
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct SignedPublicKey {
+    pub public_key: PublicKey,
+    pub signature_r: [u8; 32],
+    pub signature_s: [u8; 32],
+    pub recovery_id: u8,
+}
+
 pub struct ProgramContext {
     pub key_chain: KeyChain,
     pub comms: P2pHandler,
@@ -112,6 +121,7 @@ pub enum IncomingBitVMXApiMessages {
     GetAggregatedPubkey(Uuid),
     GetKeyPair(Uuid),
     GetPubKey(Uuid, bool),
+    GetSignedPubKey(Uuid, bool),
     GenerateZKP(Uuid, Vec<u8>, String),
     ProofReady(Uuid),
     GetZKPExecutionResult(Uuid),
@@ -149,6 +159,7 @@ pub enum OutgoingBitVMXApiMessages {
     CommInfo(P2PAddress),
     KeyPair(Uuid, PrivateKey, PublicKey),
     PubKey(Uuid, PublicKey),
+    SignedPubKey(Uuid, SignedPublicKey),
     Variable(Uuid, String, VariableTypes),
     Witness(Uuid, String, WitnessTypes),
     NotFound(Uuid, String),
