@@ -14,6 +14,8 @@ use bitcoin::{
     Network::{self, Regtest},
     PublicKey, Transaction,
 };
+#[cfg(target_os = "linux")]
+use std::time::Duration;
 mod common;
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 // use bitvmx_broker::{
