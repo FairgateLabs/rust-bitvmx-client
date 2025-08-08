@@ -35,8 +35,6 @@ pub const NO_CHALLENGE_TX: &str = "NO_CHALLENGE_TX";
 // Parameters
 pub const DISPUTE_CORE_SHORT_TIMELOCK: u16 = 3;
 pub const DISPUTE_CORE_LONG_TIMELOCK: u16 = 6;
-pub const DISPUTE_OPENER_VALUE: u64 = 1000;
-pub const START_ENABLER_VALUE: u64 = 1000;
 pub const DUST_VALUE: u64 = 546;
 pub const SPEED_UP_VALUE: u64 = 546;
 pub const P2TR_FEE: u64 = 355; // This should match the value P2TR_FEE in Union Smart contracts
