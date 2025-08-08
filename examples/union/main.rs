@@ -35,6 +35,7 @@ pub fn main() -> Result<()> {
         Some("accept_pegin") => accept_pegin()?,
         Some("request_pegout") => request_pegout()?,
         Some("advance_funds") => advance_funds()?,
+        Some("dispatch_chain") => dispatch_chain()?,
         Some(cmd) => {
             eprintln!("Unknown command: {}", cmd);
             print_usage();
@@ -59,6 +60,7 @@ fn print_usage() {
         "  cargo run --example union request_pegout      - Setups the request peg out protocol"
     );
     println!("  cargo run --example union advance_funds       - Performs an advancement of funds");
+    println!("  cargo run --example union dispatch_chain      - Tests dispute transaction chain dispatch");
 }
 
 pub fn setup_bitcoin_node() -> Result<()> {
@@ -210,6 +212,43 @@ pub fn advance_funds() -> Result<()> {
         pegout_id,
         selected_operator_pubkey,
     )?;
+
+    Ok(())
+}
+
+pub fn dispatch_chain() -> Result<()> {
+    // Chain: OP_FUNDING_TX -> OP_SETUP_TX -> OP_INITIAL_DEPOSIT_TX -> REIMBURSEMENT_KICKOFF_TX_0
+
+    let mut committee = Committee::new()?;
+    let committee_public_key = committee.setup()?;
+
+    let mut user = User::new("user_1")?;
+    let amount = 100_000;
+
+    let request_pegin_txid = user.request_pegin(&committee_public_key, amount)?;
+    let rootstock_address = user.get_rsk_address();
+    let reimbursement_pubkey = user.public_key()?;
+
+    let accept_pegin_sighash = vec![0; 32];
+    let slot_index = 0;
+
+    committee.accept_pegin(
+        committee.committee_id(),
+        request_pegin_txid,
+        amount,
+        accept_pegin_sighash,
+        slot_index,
+        rootstock_address.clone(),
+        reimbursement_pubkey.clone(),
+    )?;
+
+    println!("Accept pegin completed, starting dispute transaction chain test");
+
+    // Step 1: Dispatch OP_SETUP_TX
+    committee.dispatch_op_setup_tx()?;
+
+    // TODO: Step 2: Dispatch OP_INITIAL_DEPOSIT_TX
+    // TODO: Step 3: Dispatch REIMBURSEMENT_KICKOFF_TX_0
 
     Ok(())
 }

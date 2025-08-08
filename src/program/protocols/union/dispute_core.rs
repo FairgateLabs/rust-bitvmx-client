@@ -21,7 +21,7 @@ use protocol_builder::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
         output::{SpeedupData, AUTO_AMOUNT, RECOVER_AMOUNT},
-        OutputType,
+        InputArgs, OutputType,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -156,7 +156,18 @@ impl ProtocolHandler for DisputeCoreProtocol {
         name: &str,
         _context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        Err(BitVMXError::InvalidTransactionName(name.to_string()))
+        let setup_tx_name = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
+
+        match name {
+            name if name == setup_tx_name => Ok((self.setup_tx(_context)?, None)),
+            _ => {
+                // For other transactions, fallback to unsigned transaction
+                Ok((
+                    self.load_protocol()?.transaction_by_name(name)?.clone(),
+                    None,
+                ))
+            }
+        }
     }
 
     fn notify_news(
@@ -200,6 +211,23 @@ impl ProtocolHandler for DisputeCoreProtocol {
 impl DisputeCoreProtocol {
     pub fn new(ctx: ProtocolContext) -> Self {
         Self { ctx }
+    }
+
+    fn setup_tx(&self, context: &ProgramContext) -> Result<Transaction, BitVMXError> {
+        let setup_tx_name = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
+
+        let mut protocol = self.load_protocol()?;
+        protocol.sign_input(
+            &setup_tx_name,
+            0,
+            None,
+            &context.key_chain.key_manager,
+            &self.ctx.protocol_name
+        )?;
+
+        protocol.transaction_by_name(&setup_tx_name)
+            .map(|tx| tx.clone())
+            .map_err(|e| BitVMXError::ProtocolBuilderError(e))
     }
 
     fn create_initial_deposit(
