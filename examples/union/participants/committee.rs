@@ -213,21 +213,6 @@ impl Committee {
         Ok(())
     }
 
-    pub fn dispatch_op_setup_tx(&mut self) -> Result<()> {
-        println!("Dispatching OP_SETUP_TX transaction");
-
-        // Use the first member (index 0) which we know is an operator
-        let first_member = &self.members[0];
-        first_member.dispatch_op_setup_tx(self.committee_id)?;
-
-        // Mine a block to confirm the transaction
-        thread::sleep(Duration::from_secs(1));
-        self.wallet.mine(1)?;
-
-        println!("OP_SETUP_TX dispatched and confirmed");
-
-        Ok(())
-    }
 
     pub fn public_key(&self) -> Result<PublicKey> {
         if self.members.is_empty() {

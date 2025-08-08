@@ -332,47 +332,6 @@ impl Member {
         Ok(())
     }
 
-    pub fn dispatch_op_setup_tx(&self, committee_id: Uuid) -> Result<()> {
-        info!(
-            id = self.id,
-            "Dispatching OP_SETUP_TX transaction for committee {}",
-            committee_id
-        );
-
-        // Get the dispute core protocol ID using the committee ID and this member's take pubkey
-        let my_take_pubkey = self.keyring.take_pubkey.unwrap();
-        let dispute_core_protocol_id = get_dispute_core_id(committee_id, &my_take_pubkey);
-
-        // Create the transaction name using the constants
-        let tx_name = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
-
-        info!(
-            id = self.id,
-            "Using dispute core protocol ID: {} for transaction: {}",
-            dispute_core_protocol_id, tx_name
-        );
-
-        // Get and dispatch the OP_SETUP_TX transaction
-        self.bitvmx.get_transaction_by_name(dispute_core_protocol_id, tx_name.clone())?;
-
-        let tx = wait_until_msg!(&self.bitvmx, TransactionInfo(_, _, _tx) => _tx);
-
-        info!(
-            id = self.id,
-            "Got OP_SETUP_TX transaction: {}",
-            tx.compute_txid()
-        );
-
-        self.bitvmx.dispatch_transaction(dispute_core_protocol_id, tx.clone())?;
-
-        info!(
-            id = self.id,
-            "Dispatched OP_SETUP_TX transaction with txid: {}",
-            tx.compute_txid()
-        );
-
-        Ok(())
-    }
 
     fn make_aggregated_keys(
         &mut self,

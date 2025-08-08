@@ -12,7 +12,7 @@ use crate::{
 };
 
 use bitcoin::{PublicKey, Transaction, Txid};
-use bitcoin_coordinator::TransactionStatus;
+use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use protocol_builder::{
     builder::Protocol,
     graph::graph::GraphOptions,
@@ -197,11 +197,38 @@ impl ProtocolHandler for DisputeCoreProtocol {
         Ok(())
     }
 
-    fn setup_complete(&self, _program_context: &ProgramContext) -> Result<(), BitVMXError> {
+    fn setup_complete(&self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
         // This is called after the protocol is built and ready to be used
         info!(
             id = self.ctx.my_idx,
             "DisputeCore {} setup complete", self.ctx.id
+        );
+
+        // Automatically get and dispatch the OP_SETUP_TX transaction
+        let setup_tx_name = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
+        
+        // Get the signed transaction
+        let setup_tx = self.setup_tx(program_context)?;
+        let setup_txid = setup_tx.compute_txid();
+        
+        info!(
+            id = self.ctx.my_idx,
+            "Auto-dispatching OP_SETUP_TX transaction: {}", 
+            setup_txid
+        );
+
+        // Dispatch the transaction through the bitcoin coordinator
+        program_context.bitcoin_coordinator.dispatch(
+            setup_tx,
+            None,  // No speedup data
+            format!("dispute_core_setup_{}", self.ctx.id),  // Context string
+            None   // Dispatch immediately
+        )?;
+
+        info!(
+            id = self.ctx.my_idx,
+            "OP_SETUP_TX dispatched successfully with txid: {}", 
+            setup_txid
         );
 
         Ok(())
