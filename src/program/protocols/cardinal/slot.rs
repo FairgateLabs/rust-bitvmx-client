@@ -215,7 +215,14 @@ impl ProtocolHandler for SlotProtocol {
         _context: String,
         program_context: &ProgramContext,
         participant_keys: Vec<&ParticipantKeys>,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<bool, BitVMXError> {
+        //filter confirmations
+        if tx_status.confirmations != 1 {
+            return Ok(false);
+        }
+        // decide if vouts will be informed
+        let inform_l2 = vout.is_none();
+
         let name = self.get_transaction_name_by_id(tx_id)?;
         info!(
             "Program {}: Transaction {}:{:?} has been seen on-chain {}",
@@ -326,7 +333,7 @@ impl ProtocolHandler for SlotProtocol {
                 .unwrap_or("")
                 .parse::<u32>()?;
             if operator != self.ctx.my_idx as u32 {
-                return Ok(());
+                return Ok(inform_l2);
             }
 
             let total_operators = program_context
@@ -420,7 +427,7 @@ impl ProtocolHandler for SlotProtocol {
             info!("Operator {} has sent a claim win", operator);
             if operator != self.ctx.my_idx as u32 {
                 //TOOD: Others should react sending the stop tx
-                return Ok(());
+                return Ok(inform_l2);
             }
 
             let timelock_blocks = program_context
@@ -469,7 +476,7 @@ impl ProtocolHandler for SlotProtocol {
             )?;
         }
 
-        Ok(())
+        Ok(inform_l2)
     }
 
     fn build(

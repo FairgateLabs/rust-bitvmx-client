@@ -784,7 +784,7 @@ impl Program {
             .map(|p| p.keys.as_ref().unwrap())
             .collect::<Vec<_>>();
 
-        self.protocol.notify_news(
+        let send_to_l2 = self.protocol.notify_news(
             tx_id,
             vout,
             tx_status.clone(),
@@ -793,25 +793,26 @@ impl Program {
             participant_keys,
         )?;
 
-        let name = self.protocol.get_transaction_name_by_id(tx_id)?;
-        if vout.is_some() {
-            /* DON'T SEND AUTOMATICALLY FOR NOW
-            program_context.broker_channel.send(
-                L2_ID,
-                OutgoingBitVMXApiMessages::SpendingUTXOTransactionFound(
-                    self.program_id,
-                    tx_id,
-                    vout.unwrap(),
-                    tx_status.clone(),
-                )
-                .to_string()?,
-            )?;*/
-        } else {
-            program_context.broker_channel.send(
-                L2_ID,
-                OutgoingBitVMXApiMessages::Transaction(self.program_id, tx_status, Some(name))
+        if send_to_l2 {
+            if vout.is_some() {
+                program_context.broker_channel.send(
+                    L2_ID,
+                    OutgoingBitVMXApiMessages::SpendingUTXOTransactionFound(
+                        self.program_id,
+                        tx_id,
+                        vout.unwrap(),
+                        tx_status.clone(),
+                    )
                     .to_string()?,
-            )?;
+                )?;
+            } else {
+                let name = self.protocol.get_transaction_name_by_id(tx_id)?;
+                program_context.broker_channel.send(
+                    L2_ID,
+                    OutgoingBitVMXApiMessages::Transaction(self.program_id, tx_status, Some(name))
+                        .to_string()?,
+                )?;
+            }
         }
 
         Ok(())

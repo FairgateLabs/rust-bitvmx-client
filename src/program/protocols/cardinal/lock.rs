@@ -98,20 +98,25 @@ impl ProtocolHandler for LockProtocol {
     fn notify_news(
         &self,
         tx_id: Txid,
-        _vout: Option<u32>,
+        vout: Option<u32>,
         tx_status: TransactionStatus,
         _context: String,
         _program_context: &ProgramContext,
         _participant_keys: Vec<&ParticipantKeys>,
-    ) -> Result<(), BitVMXError> {
-        let name = self.get_transaction_name_by_id(tx_id)?;
-        if tx_status.confirmations == 1 {
-            info!(
-                "Program {}: Transaction {} has been seen on-chain",
-                self.ctx.id, name
-            );
+    ) -> Result<bool, BitVMXError> {
+        //filter confirmations
+        if tx_status.confirmations != 1 {
+            return Ok(false);
         }
-        if name == LOCK_TX && tx_status.confirmations == 1 {
+        // decide if vouts will be informed
+        let inform_l2 = vout.is_none();
+
+        let name = self.get_transaction_name_by_id(tx_id)?;
+        info!(
+            "Program {}: Transaction {} has been seen on-chain",
+            self.ctx.id, name
+        );
+        if name == LOCK_TX {
             let witness = tx_status.tx.input[0].witness.clone();
             info!(
                 "secret witness {:?}",
@@ -119,7 +124,7 @@ impl ProtocolHandler for LockProtocol {
                     .map_err(|_| BitVMXError::InvalidMessageFormat)?
             );
         }
-        Ok(())
+        Ok(inform_l2)
     }
 
     fn build(

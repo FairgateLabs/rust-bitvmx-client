@@ -249,7 +249,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         _context: String,
         program_context: &ProgramContext,
         participant_keys: Vec<&ParticipantKeys>,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<bool, BitVMXError> {
+        if tx_status.confirmations != 1 {
+            return Ok(false);
+        }
+        // decide if vouts will be informed
+        let inform_l2 = vout.is_none();
+
         let name = self.get_transaction_name_by_id(tx_id)?;
         info!(
             "Program {}: Transaction name: {}  id: {}:{:?} has been seen on-chain {}",
@@ -692,7 +698,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             //TODO: if the verifier is able to execute the challenge, the prover can react only to the read challenge nary search
         }
 
-        Ok(())
+        Ok(inform_l2)
     }
 
     fn build(

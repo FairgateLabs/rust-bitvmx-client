@@ -63,13 +63,20 @@ impl ProtocolHandler for PairwisePenalizationProtocol {
     fn notify_news(
         &self,
         _tx_id: Txid,
-        _vout: Option<u32>,
-        _tx_status: TransactionStatus,
+        vout: Option<u32>,
+        tx_status: TransactionStatus,
         _context: String,
         _program_context: &ProgramContext,
         _participant_keys: Vec<&ParticipantKeys>,
-    ) -> Result<(), BitVMXError> {
-        todo!()
+    ) -> Result<bool, BitVMXError> {
+        //filter confirmations
+        if tx_status.confirmations != 1 {
+            return Ok(false);
+        }
+        // decide if vouts will be informed
+        let inform_l2 = vout.is_none();
+
+        Ok(inform_l2)
     }
 
     fn setup_complete(&self, _program_context: &ProgramContext) -> Result<(), BitVMXError> {

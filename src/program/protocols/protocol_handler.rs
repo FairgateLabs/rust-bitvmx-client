@@ -194,7 +194,7 @@ pub trait ProtocolHandler {
         context: String,
         program_context: &ProgramContext,
         participant_keys: Vec<&ParticipantKeys>,
-    ) -> Result<(), BitVMXError>;
+    ) -> Result<bool, BitVMXError>;
 
     fn get_winternitz_signature_for_script(
         &self,

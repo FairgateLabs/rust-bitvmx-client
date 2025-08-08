@@ -162,12 +162,19 @@ impl ProtocolHandler for DisputeCoreProtocol {
     fn notify_news(
         &self,
         tx_id: Txid,
-        _vout: Option<u32>,
+        vout: Option<u32>,
         tx_status: TransactionStatus,
         context: String,
         program_context: &ProgramContext,
         _participant_keys: Vec<&ParticipantKeys>,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<bool, BitVMXError> {
+        //filter confirmations
+        if tx_status.confirmations != 1 {
+            return Ok(false);
+        }
+        // decide if vouts will be informed
+        let inform_l2 = vout.is_none();
+
         let transaction_name = self.get_transaction_name_by_id(tx_id)?;
         // Route to appropriate handler based on transaction type
         if transaction_name.starts_with(REIMBURSEMENT_KICKOFF_TX) {
@@ -183,7 +190,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
         // let a = AckNews::Monitor(AckMonitorNews::RskPeginTransaction(txid));
         // _program_context.bitcoin_coordinator.ack_news(a);
 
-        Ok(())
+        Ok(inform_l2)
     }
 
     fn setup_complete(&self, _program_context: &ProgramContext) -> Result<(), BitVMXError> {

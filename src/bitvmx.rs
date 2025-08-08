@@ -241,18 +241,9 @@ impl BitVMX {
 
         match context {
             Context::ProgramId(program_id) => {
-                if !self.notified_request.contains(&(program_id, (tx_id, vout))) {
-                    let program = self.load_program(&program_id)?;
+                let program = self.load_program(&program_id)?;
 
-                    program.notify_news(
-                        tx_id,
-                        vout,
-                        tx_status,
-                        context_data,
-                        &self.program_context,
-                    )?;
-                    self.notified_request.insert((program_id, (tx_id, vout)));
-                }
+                program.notify_news(tx_id, vout, tx_status, context_data, &self.program_context)?;
             }
             Context::RequestId(request_id, from) => {
                 if !self.notified_request.contains(&(request_id, (tx_id, vout))) {
