@@ -111,7 +111,7 @@ pub struct PegInRequest {
     pub accept_pegin_sighash: Vec<u8>,
     pub take_aggregated_key: PublicKey,
     pub operators_take_key: Vec<PublicKey>,
-    pub slot_index: usize,
+    pub slot_index: u64,
     pub committee_id: uuid::Uuid,
     pub rootstock_address: String,
     pub reimbursement_pubkey: PublicKey,

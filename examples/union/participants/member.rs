@@ -9,9 +9,12 @@ use bitvmx_client::{
     program::{
         participant::{P2PAddress, ParticipantRole},
         protocols::union::{
-            common::{indexed_name, get_dispute_core_pid},
+            common::{get_dispute_core_pid, indexed_name},
             dispute_core::PEGOUT_ID,
-            types::{ADVANCE_FUNDS_INPUT, ADVANCE_FUNDS_TX, REIMBURSEMENT_KICKOFF_TX, OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX},
+            types::{
+                ADVANCE_FUNDS_INPUT, ADVANCE_FUNDS_TX, INITIAL_DEPOSIT_TX_SUFFIX, OPERATOR,
+                REIMBURSEMENT_KICKOFF_TX,
+            },
         },
         variables::{PartialUtxo, VariableTypes},
     },
@@ -177,7 +180,7 @@ impl Member {
         request_pegin_amount: u64,
         accept_pegin_sighash: &[u8],
         committee_id: Uuid,
-        slot_index: usize,
+        slot_index: u64,
         rootstock_address: String,
         reimbursement_pubkey: PublicKey,
     ) -> Result<()> {
@@ -486,7 +489,11 @@ impl Member {
         Ok(counterparty_address.clone())
     }
 
-    pub fn dispatch_reimbursement_flow(&mut self, committee_id: Uuid, slot_id: usize) -> Result<()> {
+    pub fn dispatch_reimbursement_flow(
+        &mut self,
+        committee_id: Uuid,
+        slot_id: usize,
+    ) -> Result<()> {
         // Get the dispute core protocol ID for this member
         let member_take_pubkey = self.keyring.take_pubkey.unwrap();
         let dispute_protocol_id = get_dispute_core_pid(committee_id, &member_take_pubkey);
@@ -494,7 +501,8 @@ impl Member {
         info!(
             id = self.id,
             "Starting reimbursement flow for slot {} from dispute protocol {}",
-            slot_id, dispute_protocol_id
+            slot_id,
+            dispute_protocol_id
         );
 
         // Step 1: Set up required variables
@@ -507,10 +515,7 @@ impl Member {
         thread::sleep(std::time::Duration::from_secs(1));
         self.dispatch_reimbursement_tx(dispute_protocol_id, slot_id)?;
 
-        info!(
-            id = self.id,
-            "Reimbursement flow completed successfully"
-        );
+        info!(id = self.id, "Reimbursement flow completed successfully");
 
         Ok(())
     }
@@ -527,7 +532,7 @@ impl Member {
         self.bitvmx.set_var(
             dispute_protocol_id,
             &pegout_id_key,
-            VariableTypes::Input(pegout_id)
+            VariableTypes::Input(pegout_id),
         )?;
 
         Ok(())
@@ -541,7 +546,9 @@ impl Member {
             "Dispatching operator initial deposit transaction {}", tx_name
         );
 
-        let _ = self.bitvmx.get_transaction_by_name(dispute_protocol_id, tx_name.clone());
+        let _ = self
+            .bitvmx
+            .get_transaction_by_name(dispute_protocol_id, tx_name.clone());
         thread::sleep(std::time::Duration::from_secs(1));
 
         let tx = wait_until_msg!(&self.bitvmx, TransactionInfo(_, _, _tx) => _tx);
@@ -562,7 +569,11 @@ impl Member {
         Ok(())
     }
 
-    fn dispatch_reimbursement_tx(&mut self, dispute_protocol_id: Uuid, slot_id: usize) -> Result<()> {
+    fn dispatch_reimbursement_tx(
+        &mut self,
+        dispute_protocol_id: Uuid,
+        slot_id: usize,
+    ) -> Result<()> {
         let tx_name = indexed_name(REIMBURSEMENT_KICKOFF_TX, slot_id);
 
         info!(
@@ -570,7 +581,9 @@ impl Member {
             "Dispatching reimbursement transaction {} for slot {}", tx_name, slot_id
         );
 
-        let _ = self.bitvmx.get_transaction_by_name(dispute_protocol_id, tx_name.clone());
+        let _ = self
+            .bitvmx
+            .get_transaction_by_name(dispute_protocol_id, tx_name.clone());
         thread::sleep(std::time::Duration::from_secs(1));
 
         let tx = wait_until_msg!(&self.bitvmx, TransactionInfo(_, _, _tx) => _tx);

@@ -101,7 +101,7 @@ impl Committee {
         request_pegin_txid: Txid,
         amount: u64,
         accept_pegin_sighash: Vec<u8>,
-        slot_index: usize,
+        slot_index: u64,
         rootstock_address: String,
         reimbursement_pubkey: PublicKey,
     ) -> Result<()> {
