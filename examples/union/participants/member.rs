@@ -10,7 +10,7 @@ use bitvmx_client::{
         participant::{P2PAddress, ParticipantRole},
         protocols::union::{
             common::indexed_name,
-            types::{ACCEPT_PEGIN_TX, SELECTED_OPERATOR_PUBKEY, OPERATOR, SETUP_TX_SUFFIX, ADVANCE_FUNDS_INPUT, ADVANCE_FUNDS_TX},
+            types::{ADVANCE_FUNDS_INPUT, ADVANCE_FUNDS_TX},
         },
         variables::{PartialUtxo, VariableTypes},
     },
@@ -30,8 +30,6 @@ use crate::{
     },
     wait_until_msg,
 };
-
-use bitvmx_client::program::protocols::union::common::get_dispute_core_id;
 
 #[derive(Clone)]
 pub struct Keyring {
@@ -103,6 +101,14 @@ impl Member {
         self.keyring.take_pubkey = Some(take_pubkey);
         self.keyring.dispute_pubkey = Some(dispute_pubkey);
         self.keyring.communication_pubkey = Some(communication_pubkey);
+
+        info!(
+            id = self.id,
+            "Member keys setup complete: take_pubkey: {}, dispute_pubkey: {}, communication_pubkey: {}",
+            take_pubkey.to_string(),
+            dispute_pubkey.to_string(),
+            communication_pubkey.to_string()
+        );
 
         Ok((take_pubkey, dispute_pubkey, communication_pubkey))
     }
@@ -331,7 +337,6 @@ impl Member {
 
         Ok(())
     }
-
 
     fn make_aggregated_keys(
         &mut self,
