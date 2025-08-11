@@ -4,7 +4,11 @@ use crate::{
         participant::{ParticipantKeys, ParticipantRole, PublicKeyType},
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
-            union::{self, common::indexed_name, types::*},
+            union::{
+                self,
+                common::{create_transaction_reference, indexed_name},
+                types::*,
+            },
         },
         variables::VariableTypes,
     },
@@ -205,31 +209,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
         );
 
         // Automatically get and dispatch the OP_SETUP_TX transaction
-        let setup_tx_name = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
-        
-        // Get the signed transaction
-        let setup_tx = self.setup_tx(program_context)?;
-        let setup_txid = setup_tx.compute_txid();
-        
-        info!(
-            id = self.ctx.my_idx,
-            "Auto-dispatching OP_SETUP_TX transaction: {}", 
-            setup_txid
-        );
-
-        // Dispatch the transaction through the bitcoin coordinator
-        program_context.bitcoin_coordinator.dispatch(
-            setup_tx,
-            None,  // No speedup data
-            format!("dispute_core_setup_{}", self.ctx.id),  // Context string
-            None   // Dispatch immediately
-        )?;
-
-        info!(
-            id = self.ctx.my_idx,
-            "OP_SETUP_TX dispatched successfully with txid: {}", 
-            setup_txid
-        );
+        self.dispatch_setup_tx(program_context)?;
 
         Ok(())
     }
@@ -240,23 +220,6 @@ impl DisputeCoreProtocol {
         Self { ctx }
     }
 
-    fn setup_tx(&self, context: &ProgramContext) -> Result<Transaction, BitVMXError> {
-        let setup_tx_name = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
-
-        let mut protocol = self.load_protocol()?;
-        protocol.sign_input(
-            &setup_tx_name,
-            0,
-            None,
-            &context.key_chain.key_manager,
-            &self.ctx.protocol_name
-        )?;
-
-        protocol.transaction_by_name(&setup_tx_name)
-            .map(|tx| tx.clone())
-            .map_err(|e| BitVMXError::ProtocolBuilderError(e))
-    }
-
     fn create_initial_deposit(
         &self,
         protocol: &mut Protocol,
@@ -264,6 +227,8 @@ impl DisputeCoreProtocol {
         dispute_core_data: &DisputeCoreData,
     ) -> Result<(), BitVMXError> {
         let operator_utxo = dispute_core_data.operator_utxo.clone();
+        let funding_amount = dispute_core_data.operator_utxo.2.unwrap();
+        let setup_fees = 1000; //TODO: replace with actual fee calculation or make it configurable
         let operator_dispute_key = operator_keys.get_public(DISPUTE_KEY)?;
         let reveal_take_private_key = operator_keys.get_winternitz(REVEAL_TAKE_PRIVKEY)?.clone();
 
@@ -273,8 +238,8 @@ impl DisputeCoreProtocol {
         let initial_deposit = format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX);
         let self_disabler = format!("{}{}", OPERATOR, SELF_DISABLER_TX_SUFFIX);
 
-        protocol.add_external_transaction(&funding)?;
-        protocol.add_transaction_output(&funding, &operator_utxo.3.unwrap())?;
+        // Create the funding transaction reference
+        create_transaction_reference(protocol, &funding, &mut [operator_utxo.clone()].to_vec())?;
 
         // The operator_utxo must be of type P2WPKH
         protocol.add_connection(
@@ -319,6 +284,21 @@ impl DisputeCoreProtocol {
         protocol.add_transaction_output(
             &self_disabler,
             &OutputType::segwit_key(RECOVER_AMOUNT, operator_dispute_key)?,
+        )?;
+
+        // Add a change output to the setup transaction
+        protocol.compute_minimum_output_values()?;
+
+        let setup_amount = protocol.transaction_by_name(&setup)?.output[0]
+            .value
+            .to_sat();
+
+        protocol.add_transaction_output(
+            &setup,
+            &OutputType::segwit_key(
+                funding_amount - setup_amount - setup_fees,
+                operator_dispute_key,
+            )?,
         )?;
 
         Ok(())
@@ -492,6 +472,31 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
+    fn setup_tx(&self, context: &ProgramContext) -> Result<Transaction, BitVMXError> {
+        let setup_tx_name = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
+
+        let mut protocol = self.load_protocol()?;
+        protocol.sign_input(
+            &setup_tx_name,
+            0,
+            None,
+            &context.key_chain.key_manager,
+            &self.ctx.protocol_name,
+        )?;
+
+        let ecdsa_signature = protocol.input_ecdsa_signature(&setup_tx_name, 0)?.unwrap();
+
+        let mut input_args = InputArgs::new_segwit_args();
+        input_args.push_ecdsa_signature(ecdsa_signature)?;
+
+        let setup_tx = protocol.transaction_to_send(&setup_tx_name, &[input_args])?;
+        Ok(setup_tx)
+        // protocol
+        //     .transaction_by_name(&setup_tx_name)
+        //     .map(|tx| tx.clone())
+        //     .map_err(|e| BitVMXError::ProtocolBuilderError(e))
+    }
+
     fn dispute_core_data(&self, context: &ProgramContext) -> Result<DisputeCoreData, BitVMXError> {
         let data = context
             .globals
@@ -589,6 +594,47 @@ impl DisputeCoreProtocol {
         // 3. Return true if signature is valid, false otherwise
         info!("Validating transaction signature - placeholder implementation");
         Ok(true)
+    }
+
+    fn dispatch_setup_tx(&self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
+        let setup_tx_name = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
+
+        if self.dispute_core_data(program_context)?.operator_index != self.ctx.my_idx {
+            info!(
+                id = self.ctx.my_idx,
+                "Not my dispute_core, skipping dispatch of {} transaction", setup_tx_name
+            );
+            return Ok(());
+        }
+
+        info!(
+            id = self.ctx.my_idx,
+            "Dispatching {} transaction from protocol {}", setup_tx_name, self.ctx.id
+        );
+
+        // Get the signed transaction
+        let setup_tx = self.setup_tx(program_context)?;
+        let setup_txid = setup_tx.compute_txid();
+
+        info!(
+            id = self.ctx.my_idx,
+            "Auto-dispatching OP_SETUP_TX transaction: {}", setup_txid
+        );
+
+        // Dispatch the transaction through the bitcoin coordinator
+        program_context.bitcoin_coordinator.dispatch(
+            setup_tx,
+            None,                                          // No speedup data
+            format!("dispute_core_setup_{}", self.ctx.id), // Context string
+            None,                                          // Dispatch immediately
+        )?;
+
+        info!(
+            id = self.ctx.my_idx,
+            "OP_SETUP_TX dispatched successfully with txid: {}", setup_txid
+        );
+
+        Ok(())
     }
 
     fn dispatch_op_disabler_tx(
