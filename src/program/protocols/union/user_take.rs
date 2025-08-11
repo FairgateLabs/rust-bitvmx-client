@@ -95,7 +95,9 @@ impl ProtocolHandler for UserTakeProtocol {
         )?;
 
         // Add the user output to the user take transaction
-        let user_amount = self.checked_sub(accept_pegin_utxo.2.unwrap(), pegout_request.fee)?;
+        // TODO: This should be the fee for the peg-out. It should be same value that it's as constant in the contracts.
+        let fee = 335;
+        let user_amount = self.checked_sub(accept_pegin_utxo.2.unwrap(), fee)?;
 
         let wpkh = user_pubkey.wpubkey_hash().expect("key is compressed");
         let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);

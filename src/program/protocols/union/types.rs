@@ -127,7 +127,6 @@ pub struct PegOutRequest {
     pub stream_id: u64,
     pub packet_number: u64,
     pub slot_id: u64,
-    pub fee: u64,
     pub amount: u64,
     pub pegout_id: Vec<u8>,
     pub pegout_signature_hash: Vec<u8>,

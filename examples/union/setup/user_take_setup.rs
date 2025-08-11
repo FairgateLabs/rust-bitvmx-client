@@ -28,7 +28,6 @@ impl UserTakeSetup {
         pegout_signature_message: Vec<u8>,
         user_pubkey: PublicKey,
         take_aggregated_key: PublicKey,
-        fee: u64,
         my_id: &str,
         members: &[Member],
         bitvmx: &BitVMXClient,
@@ -49,7 +48,6 @@ impl UserTakeSetup {
             pegout_signature_message,
             user_pubkey: user_pubkey.clone(),
             take_aggregated_key,
-            fee,
         };
 
         bitvmx.set_var(

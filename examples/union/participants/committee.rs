@@ -170,7 +170,6 @@ impl Committee {
         &mut self,
         user_pubkey: PublicKey,
         slot_id: u64,
-        fee: u64,
         stream_id: u64,
         packet_number: u64,
         amount: u64,
@@ -194,7 +193,6 @@ impl Committee {
                 pegout_signature_hash.clone(),
                 pegout_signature_message.clone(),
                 user_pubkey,
-                fee,
                 &members,
             )
         })?;

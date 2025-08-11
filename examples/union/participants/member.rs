@@ -207,7 +207,6 @@ impl Member {
         pegout_signature_hash: Vec<u8>,
         pegout_signature_message: Vec<u8>,
         user_pubkey: PublicKey,
-        fee: u64,
         members: &[Member],
     ) -> Result<()> {
         UserTakeSetup::setup(
@@ -222,7 +221,6 @@ impl Member {
             pegout_signature_message,
             user_pubkey,
             self.keyring.take_aggregated_key.unwrap(),
-            fee,
             &self.id,
             members,
             &self.bitvmx,

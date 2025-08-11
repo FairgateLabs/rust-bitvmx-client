@@ -147,7 +147,6 @@ pub fn request_pegout() -> Result<()> {
     thread::sleep(Duration::from_secs(5));
 
     let user_pubkey = user.public_key()?;
-    let fee = 335; // This should be the fee for the peg-out. It should be same value that it's as constant in the contracts.
     let stream_id = 0; // This should be replaced with the actual stream ID
     let packet_number = 0; // This should be replaced with the actual packet number
     let pegout_id = vec![0; 32]; // This should be replaced with the actual peg-out ID
@@ -157,7 +156,6 @@ pub fn request_pegout() -> Result<()> {
     committee.request_pegout(
         user_pubkey,
         slot_index,
-        fee,
         stream_id,
         packet_number,
         amount,
