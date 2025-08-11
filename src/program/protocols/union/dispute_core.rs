@@ -476,25 +476,14 @@ impl DisputeCoreProtocol {
         let setup_tx_name = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
 
         let mut protocol = self.load_protocol()?;
-        protocol.sign_input(
-            &setup_tx_name,
-            0,
-            None,
-            &context.key_chain.key_manager,
-            &self.ctx.protocol_name,
-        )?;
-
-        let ecdsa_signature = protocol.input_ecdsa_signature(&setup_tx_name, 0)?.unwrap();
+        let signature =
+            protocol.sign_ecdsa_input(&setup_tx_name, 0, &context.key_chain.key_manager)?;
 
         let mut input_args = InputArgs::new_segwit_args();
-        input_args.push_ecdsa_signature(ecdsa_signature)?;
+        input_args.push_ecdsa_signature(signature)?;
 
         let setup_tx = protocol.transaction_to_send(&setup_tx_name, &[input_args])?;
         Ok(setup_tx)
-        // protocol
-        //     .transaction_by_name(&setup_tx_name)
-        //     .map(|tx| tx.clone())
-        //     .map_err(|e| BitVMXError::ProtocolBuilderError(e))
     }
 
     fn dispute_core_data(&self, context: &ProgramContext) -> Result<DisputeCoreData, BitVMXError> {
