@@ -146,6 +146,8 @@ impl ProtocolHandler for DisputeCoreProtocol {
             )?;
         }
 
+        self.add_funding_change(&mut protocol, &operator_keys, &dispute_core_data)?;
+
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
 
@@ -227,8 +229,6 @@ impl DisputeCoreProtocol {
         dispute_core_data: &DisputeCoreData,
     ) -> Result<(), BitVMXError> {
         let operator_utxo = dispute_core_data.operator_utxo.clone();
-        let funding_amount = dispute_core_data.operator_utxo.2.unwrap();
-        let setup_fees = 1000; //TODO: replace with actual fee calculation or make it configurable
         let operator_dispute_key = operator_keys.get_public(DISPUTE_KEY)?;
         let reveal_take_private_key = operator_keys.get_winternitz(REVEAL_TAKE_PRIVKEY)?.clone();
 
@@ -284,21 +284,6 @@ impl DisputeCoreProtocol {
         protocol.add_transaction_output(
             &self_disabler,
             &OutputType::segwit_key(RECOVER_AMOUNT, operator_dispute_key)?,
-        )?;
-
-        // Add a change output to the setup transaction
-        protocol.compute_minimum_output_values()?;
-
-        let setup_amount = protocol.transaction_by_name(&setup)?.output[0]
-            .value
-            .to_sat();
-
-        protocol.add_transaction_output(
-            &setup,
-            &OutputType::segwit_key(
-                funding_amount - setup_amount - setup_fees,
-                operator_dispute_key,
-            )?,
         )?;
 
         Ok(())
@@ -469,6 +454,36 @@ impl DisputeCoreProtocol {
             &OutputType::segwit_key(AUTO_AMOUNT, operator_dispute_key)?,
         )?;
 
+        Ok(())
+    }
+
+    fn add_funding_change(
+        &self,
+        protocol: &mut Protocol,
+        operator_keys: &ParticipantKeys,
+        dispute_core_data: &DisputeCoreData,
+    ) -> Result<(), BitVMXError> {
+        // Add a change output to the setup transaction
+        protocol.compute_minimum_output_values()?;
+
+        let funding_amount = dispute_core_data.operator_utxo.2.unwrap();
+        let setup_fees = 1000; //TODO: replace with actual fee calculation or make it configurable
+        let operator_dispute_key = operator_keys.get_public(DISPUTE_KEY)?;
+        let setup = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
+
+        let setup_amount = protocol.transaction_by_name(&setup)?.output[0]
+            .value
+            .to_sat();
+
+        protocol
+            .add_transaction_output(
+                &setup,
+                &OutputType::segwit_key(
+                    funding_amount - setup_amount - setup_fees,
+                    operator_dispute_key,
+                )?,
+            )
+            .map_err(|e| BitVMXError::ProtocolBuilderError(e))?;
         Ok(())
     }
 
