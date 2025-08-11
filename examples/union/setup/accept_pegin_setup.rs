@@ -28,7 +28,7 @@ impl AcceptPegInSetup {
         keyring: &Keyring,
         bitvmx: &BitVMXClient,
         committee_id: Uuid,
-        slot_index: usize,
+        slot_index: u64,
         rootstock_address: String,
         reimbursement_pubkey: PublicKey,
     ) -> Result<()> {

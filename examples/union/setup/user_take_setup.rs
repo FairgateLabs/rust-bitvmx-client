@@ -19,13 +19,18 @@ impl UserTakeSetup {
     pub fn setup(
         protocol_id: Uuid,
         committee_id: Uuid,
+        stream_id: u64,
+        packet_number: u64,
+        slot_id: u64,
+        amount: u64,
+        pegout_id: Vec<u8>,
+        pegout_signature_hash: Vec<u8>,
+        pegout_signature_message: Vec<u8>,
+        user_pubkey: PublicKey,
+        take_aggregated_key: PublicKey,
         my_id: &str,
         members: &[Member],
-        user_pubkey: PublicKey,
-        slot_id: usize,
-        fee: u64,
         bitvmx: &BitVMXClient,
-        take_aggregated_key: PublicKey,
     ) -> Result<()> {
         info!(
             id = my_id,
@@ -34,8 +39,13 @@ impl UserTakeSetup {
 
         let pegout_request = PegOutRequest {
             committee_id,
+            stream_id,
+            packet_number,
             slot_id,
-            fee,
+            amount,
+            pegout_id,
+            pegout_signature_hash,
+            pegout_signature_message,
             user_pubkey: user_pubkey.clone(),
             take_aggregated_key,
         };

@@ -111,7 +111,7 @@ pub struct PegInRequest {
     pub accept_pegin_sighash: Vec<u8>,
     pub take_aggregated_key: PublicKey,
     pub operators_take_key: Vec<PublicKey>,
-    pub slot_index: usize,
+    pub slot_index: u64,
     pub committee_id: uuid::Uuid,
     pub rootstock_address: String,
     pub reimbursement_pubkey: PublicKey,
@@ -136,8 +136,13 @@ pub struct PegInAccepted {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PegOutRequest {
     pub committee_id: Uuid,
-    pub slot_id: usize,
-    pub fee: u64,
+    pub stream_id: u64,
+    pub packet_number: u64,
+    pub slot_id: u64,
+    pub amount: u64,
+    pub pegout_id: Vec<u8>,
+    pub pegout_signature_hash: Vec<u8>,
+    pub pegout_signature_message: Vec<u8>,
     pub user_pubkey: PublicKey,
     pub take_aggregated_key: PublicKey,
 }

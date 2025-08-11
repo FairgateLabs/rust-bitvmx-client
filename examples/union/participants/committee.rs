@@ -101,7 +101,7 @@ impl Committee {
         request_pegin_txid: Txid,
         amount: u64,
         accept_pegin_sighash: Vec<u8>,
-        slot_index: usize,
+        slot_index: u64,
         rootstock_address: String,
         reimbursement_pubkey: PublicKey,
     ) -> Result<()> {
@@ -172,8 +172,13 @@ impl Committee {
     pub fn request_pegout(
         &mut self,
         user_pubkey: PublicKey,
-        slot_id: usize,
-        fee: u64,
+        slot_id: u64,
+        stream_id: u64,
+        packet_number: u64,
+        amount: u64,
+        pegout_id: Vec<u8>,
+        pegout_signature_hash: Vec<u8>,
+        pegout_signature_message: Vec<u8>,
     ) -> Result<()> {
         let members = self.members.clone();
         let committee_id = self.committee_id.clone();
@@ -183,9 +188,14 @@ impl Committee {
             op.request_pegout(
                 protocol_id,
                 committee_id,
-                user_pubkey,
+                stream_id,
+                packet_number,
                 slot_id,
-                fee,
+                amount,
+                pegout_id.clone(),
+                pegout_signature_hash.clone(),
+                pegout_signature_message.clone(),
+                user_pubkey,
                 &members,
             )
         })?;
