@@ -131,7 +131,7 @@ pub fn request_pegout() -> Result<()> {
 
     // This came from the contracts
     let accept_pegin_sighash = vec![0; 32]; // This should be replaced with the actual sighash of the accept peg-in tx
-    let slot_index = 0; // This should be replaced with the actual slot index
+    let slot_index = 0u64; // This should be replaced with the actual slot index
 
     committee.accept_pegin(
         committee.committee_id(),
@@ -148,8 +148,23 @@ pub fn request_pegout() -> Result<()> {
 
     let user_pubkey = user.public_key()?;
     let fee = 335; // This should be the fee for the peg-out. It should be same value that it's as constant in the contracts.
+    let stream_id = 0; // This should be replaced with the actual stream ID
+    let packet_number = 0; // This should be replaced with the actual packet number
+    let pegout_id = vec![0; 32]; // This should be replaced with the actual peg-out ID
+    let pegout_signature_hash = vec![0; 32]; // This should be replaced with the actual peg-out signature hash
+    let pegout_signature_message = vec![0; 32]; // This should be replaced with the actual peg-out signature message
 
-    committee.request_pegout(user_pubkey, slot_index, fee)?;
+    committee.request_pegout(
+        user_pubkey,
+        slot_index,
+        fee,
+        stream_id,
+        packet_number,
+        amount,
+        pegout_id,
+        pegout_signature_hash,
+        pegout_signature_message,
+    )?;
 
     Ok(())
 }

@@ -175,7 +175,7 @@ impl UserTakeProtocol {
         &self,
         context: &ProgramContext,
         committee_id: &Uuid,
-        slot_index: u32,
+        slot_index: u64,
     ) -> Result<PartialUtxo, BitVMXError> {
         Ok(context
             .globals
