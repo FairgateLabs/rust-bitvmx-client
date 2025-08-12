@@ -207,8 +207,8 @@ impl ProtocolHandler for AdvanceFundsProtocol {
                 request.slot_index,
             )?;
 
-            info!("Sleeping for 10 seconds to allow the initial deposit tx to be processed");
-            thread::sleep(std::time::Duration::from_secs(10));
+            info!("Sleeping for 1 second to allow the initial deposit tx to be processed");
+            thread::sleep(std::time::Duration::from_secs(1));
             self.dispatch_reimbursement_tx(context, dispute_protocol_id, request.slot_index)?;
         }
 
