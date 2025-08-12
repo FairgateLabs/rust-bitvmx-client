@@ -35,6 +35,19 @@ pub fn start_reimbursement(
     protocol_script.add_stack_item(StackItem::new_schnorr_sig(true));
     protocol_script.add_stack_item(StackItem::new_winternitz_sig(&pegout_id_pubkey));
 
+    protocol_script.add_stack_item(StackItem::SchnorrSig {
+        non_default_sighash: true,
+    });
+
+    protocol_script.add_stack_item(StackItem::SchnorrSig {
+        non_default_sighash: true,
+    });
+
+    let extra_data = pegout_id_pubkey.extra_data().unwrap();
+    protocol_script.add_stack_item(StackItem::WinternitzSig {
+        size: extra_data.message_size() + extra_data.checksum_size(),
+    });
+
     Ok(protocol_script)
 }
 
