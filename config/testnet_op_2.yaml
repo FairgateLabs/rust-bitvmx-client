@@ -1,43 +1,33 @@
 bitcoin:
   network: testnet
-  url: "https://distinguished-intensive-frost.btc-testnet.quiknode.pro/38d0f064dc8e72fe44d8a9a762d448bc64c54619/"
-  username: ""
-  password: ""
+  url: https://distinguished-intensive-frost.btc-testnet.quiknode.pro/38d0f064dc8e72fe44d8a9a762d448bc64c54619/
+  username: ''
+  password: ''
   wallet: test_wallet
-
 key_manager:
   network: testnet
   key_derivation_path: m/101/1/0/0/
-
 key_storage:
   password: secret_password_3
   path: /tmp/op_2/keys.db
-
 storage:
   path: /tmp/op_2/storage.db
-
 p2p:
   address: /ip4/127.0.0.1/tcp/61181
-  key: 080112406e52d71640c7c226a09da3d4f4299eadd636cb375037e34fcbbe2c8e93577ea82550385621b3f807ba79dc93725f50bca4dc2eee215e95dc9ef863dcfcf4bc1b
+  key: config/keys/op_2.key
   peer_id_file: peer_id
   timeout: 5
-
 coordinator_settings:
+  max_feerate_sat_vb: 2
   monitor_settings:
-    confirmation_threshold: 1
     indexer_settings:
-      checkpoint_height: 4400538
-
+      checkpoint_height: 4631677
 coordinator:
   throtthle_bitcoin_updates_until_sync: 1
-  throtthle_bitcoin_updates: 10
-
-broker_storage: 
+  throtthle_bitcoin_updates: 1
+broker_storage:
   path: /tmp/op_2/broker.db
 broker_port: 33333
-
 client:
-  # Number of retries for requests
   retry: 1
-  # Delay between retries in milliseconds
   retry_delay: 1000
