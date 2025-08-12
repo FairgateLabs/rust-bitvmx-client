@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, thread};
 
 use bitcoin::{Amount, PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
@@ -207,6 +207,8 @@ impl ProtocolHandler for AdvanceFundsProtocol {
                 request.slot_index,
             )?;
 
+            info!("Sleeping for 10 seconds to allow the initial deposit tx to be processed");
+            thread::sleep(std::time::Duration::from_secs(10));
             self.dispatch_reimbursement_tx(context, dispute_protocol_id, request.slot_index)?;
         }
 
