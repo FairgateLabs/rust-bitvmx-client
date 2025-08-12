@@ -16,23 +16,24 @@ pub fn start_reimbursement(
         { XOnlyPublicKey::from(committee_key.clone()).serialize().to_vec() }
         OP_CHECKSIGVERIFY
 
-        { XOnlyPublicKey::from(operator_key.clone()).serialize().to_vec() }
-        OP_CHECKSIGVERIFY
+        // { XOnlyPublicKey::from(operator_key.clone()).serialize().to_vec() }
+        // OP_CHECKSIGVERIFY
 
-        { ots_checksig(pegout_id_pubkey, false)? }
+        // { ots_checksig(pegout_id_pubkey, false)? }
+        OP_PUSHNUM_1
     );
 
     let mut protocol_script = ProtocolScript::new(script, &committee_key, SignMode::Aggregate);
 
     //TODO: bogus derivation index 0, the only pks that need derivation index are the winternitz keys. Consider making the derivation index optional.
-    protocol_script.add_key("operator_key", 0, KeyType::XOnlyKey, 0)?;
+    // protocol_script.add_key("operator_key", 0, KeyType::XOnlyKey, 0)?;
 
-    protocol_script.add_key(
-        "pegout_id",
-        pegout_id_pubkey.derivation_index()?,
-        KeyType::WinternitzKey(pegout_id_pubkey.key_type()),
-        1,
-    )?;
+    // protocol_script.add_key(
+    //     "pegout_id",
+    //     pegout_id_pubkey.derivation_index()?,
+    //     KeyType::WinternitzKey(pegout_id_pubkey.key_type()),
+    //     1,
+    // )?;
 
     Ok(protocol_script)
 }

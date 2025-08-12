@@ -189,12 +189,16 @@ impl ProtocolHandler for DisputeCoreProtocol {
         program_context: &ProgramContext,
         _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
-        info!(
-            "Dispute core protocol received news of transaction: {} with status {:#?}",
-            tx_id, tx_status
-        );
-
+        // info!(
+        //     "Dispute core protocol received news of transaction: {} with status {:#?}",
+        //     tx_id, tx_status
+        // );
         let transaction_name = self.get_transaction_name_by_id(tx_id)?;
+
+        info!(
+            "Transaction {} with id {} has been processed in context Dispute core protocol",
+            transaction_name, tx_id
+        );
 
         match transaction_name.as_str() {
             t if t.starts_with(REIMBURSEMENT_KICKOFF_TX) => {
@@ -513,6 +517,7 @@ impl DisputeCoreProtocol {
         let setup_tx_name = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
 
         let mut protocol = self.load_protocol()?;
+
         let signature =
             protocol.sign_ecdsa_input(&setup_tx_name, 0, &context.key_chain.key_manager)?;
 
@@ -532,9 +537,16 @@ impl DisputeCoreProtocol {
         let pegout_id_key = self.pegout_id_key(context, slot_index)?;
         let dispute_key = self.my_dispute_key(&context)?;
 
+        let protocol = self.load_protocol()?;
+
         // Prepare signatures
         let slot_index_digest = sha256::Hash::hash(slot_index.to_be_bytes().as_slice());
         let slot_index_message = Message::from_digest(slot_index_digest.to_byte_array());
+
+        let committee_signature = protocol
+            .input_taproot_script_spend_signature(name, slot_index, 0)?
+            .unwrap();
+
         let slot_index_signature = bitcoin::ecdsa::Signature {
             signature: context
                 .key_chain
@@ -551,12 +563,12 @@ impl DisputeCoreProtocol {
 
         // Create input arguments
         let mut input_args = InputArgs::new_taproot_script_args(0);
-        input_args.push_ecdsa_signature(slot_index_signature)?;
-        input_args.push_winternitz_signature(pegout_id_signature);
+        // input_args.push_winternitz_signature(pegout_id_signature);
+        // input_args.push_ecdsa_signature(slot_index_signature)?;
+        input_args.push_taproot_signature(committee_signature)?;
 
-        let reimbursement_tx = self
-            .load_protocol()?
-            .transaction_to_send(&name, &[input_args])?;
+        let reimbursement_tx = protocol.transaction_to_send(&name, &[input_args])?;
+
         info!(
             "Reimbursement kickoff transaction for slot {}: {:#?}",
             slot_index, reimbursement_tx
