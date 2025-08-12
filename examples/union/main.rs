@@ -12,6 +12,7 @@
 use ::bitcoin::PublicKey;
 use anyhow::Result;
 use std::{env, thread, time::Duration};
+use tracing::info;
 
 use crate::participants::{committee::Committee, user::User};
 
@@ -73,6 +74,13 @@ pub fn committee() -> Result<()> {
     // corresponding keys and programs.
     let mut committee = Committee::new()?;
     committee.setup()?;
+
+    info!("Waiting some time to ensure all setup messages are processed...");
+    thread::sleep(Duration::from_secs(2));
+    info!("Mining 1 block and wait...");
+    committee.wallet.mine(1)?;
+    thread::sleep(Duration::from_secs(2));
+    info!("Committee setup complete.");
 
     Ok(())
 }
@@ -213,7 +221,6 @@ pub fn advance_funds() -> Result<()> {
 
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {

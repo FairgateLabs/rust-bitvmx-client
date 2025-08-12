@@ -49,6 +49,9 @@ pub enum BitVMXError {
     #[error("Cannot find program with id {0}")]
     ProgramNotFound(Uuid),
 
+    #[error("Cannot find protocol with name {0}")]
+    ProtocolNotFound(String),
+
     #[error("A program error has occurred: {0}")]
     ProgramError(#[from] ProgramError),
 

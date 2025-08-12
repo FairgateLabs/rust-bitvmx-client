@@ -9,6 +9,7 @@ use crate::program::{participant::ParticipantRole, variables::PartialUtxo};
 pub const TAKE_AGGREGATED_KEY: &str = "take_aggregated_key";
 pub const DISPUTE_AGGREGATED_KEY: &str = "dispute_aggregated_key";
 pub const SELECTED_OPERATOR_PUBKEY: &str = "selected_operator_pubkey";
+pub const OP_INITIAL_DEPOSIT_FLAG: &str = "op_initial_deposit_flag";
 
 // Transaction names
 pub const REQUEST_PEGIN_TX: &str = "REQUEST_PEGIN_TX";
@@ -157,10 +158,9 @@ impl PegOutAccepted {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdvanceFundsRequest {
     pub committee_id: Uuid,
-    pub slot_id: usize,
+    pub slot_index: usize,
     pub pegout_id: Vec<u8>,
     pub fee: u64,
-    pub operator_pubkey: PublicKey,
     pub user_pubkey: PublicKey,
     pub my_take_pubkey: PublicKey,
 }
