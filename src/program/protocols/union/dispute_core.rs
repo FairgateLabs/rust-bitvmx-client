@@ -191,8 +191,8 @@ impl ProtocolHandler for DisputeCoreProtocol {
     ) -> Result<(), BitVMXError> {
         let transaction_name = self.get_transaction_name_by_id(tx_id)?;
         info!(
-            "Dispute core protocol received news of transaction: {}, txid: {} with status {:#?}",
-            transaction_name, tx_id, tx_status
+            "Dispute core protocol received news of transaction: {}, txid: {} with {} confirmations",
+            transaction_name, tx_id, tx_status.confirmations
         );
 
         // match transaction_name.as_str() {
