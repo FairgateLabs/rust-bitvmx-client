@@ -22,6 +22,9 @@ pub fn start_reimbursement(
 
     let mut protocol_script = ProtocolScript::new(script, &committee_key, SignMode::Aggregate);
 
+    //TODO: bogus derivation index 0, the only pks that need derivation index are the winternitz keys. Consider making the derivation index optional.
+    protocol_script.add_key("operator_key", 0, KeyType::XOnlyKey, 0)?;
+
     protocol_script.add_key(
         pegout_id_pubkey_name,
         pegout_id_pubkey.derivation_index()?,
