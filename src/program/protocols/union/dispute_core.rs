@@ -185,34 +185,29 @@ impl ProtocolHandler for DisputeCoreProtocol {
         tx_id: Txid,
         _vout: Option<u32>,
         tx_status: TransactionStatus,
-        context: String,
-        program_context: &ProgramContext,
+        _context: String,
+        _program_context: &ProgramContext,
         _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
-        // info!(
-        //     "Dispute core protocol received news of transaction: {} with status {:#?}",
-        //     tx_id, tx_status
-        // );
         let transaction_name = self.get_transaction_name_by_id(tx_id)?;
-
         info!(
-            "Transaction {} with id {} has been processed in context Dispute core protocol",
-            transaction_name, tx_id
+            "Dispute core protocol received news of transaction: {}, txid: {} with status {:#?}",
+            transaction_name, tx_id, tx_status
         );
 
-        match transaction_name.as_str() {
-            t if t.starts_with(REIMBURSEMENT_KICKOFF_TX) => {
-                self.handle_reimbursement_kickoff_transaction(
-                    tx_id,
-                    &tx_status,
-                    &context,
-                    program_context,
-                )?;
-            }
-            _ => {
-                // Optional: handle default / unknown transaction types here
-            }
-        }
+        // match transaction_name.as_str() {
+        //     t if t.starts_with(REIMBURSEMENT_KICKOFF_TX) => {
+        //         self.handle_reimbursement_kickoff_transaction(
+        //             tx_id,
+        //             &tx_status,
+        //             &context,
+        //             program_context,
+        //         )?;
+        //     }
+        //     _ => {
+        //         // Optional: handle default / unknown transaction types here
+        //     }
+        // }
 
         // TODO: Add more transaction type handlers here as needed
         Ok(())
@@ -227,9 +222,6 @@ impl ProtocolHandler for DisputeCoreProtocol {
 
         // Automatically get and dispatch the OP_SETUP_TX transaction
         self.dispatch_setup_tx(program_context)?;
-
-        // FIXME: REMOVE
-        // self.dispatch_op_initial_deposit_tx(program_context)?;
 
         Ok(())
     }
@@ -563,9 +555,12 @@ impl DisputeCoreProtocol {
 
         // Create input arguments
         let mut input_args = InputArgs::new_taproot_script_args(0);
+
         // input_args.push_winternitz_signature(pegout_id_signature);
-        // input_args.push_ecdsa_signature(slot_index_signature)?;
         input_args.push_taproot_signature(committee_signature)?;
+
+        // NOTE: (in ProtocolBuilder) Allowed TaprootScript inputs to have ECDSA signatures
+        // input_args.push_ecdsa_signature(slot_index_signature)?;
 
         let reimbursement_tx = protocol.transaction_to_send(&name, &[input_args])?;
 
@@ -631,16 +626,16 @@ impl DisputeCoreProtocol {
         Ok(self.dispute_core_data(context)?.committee_id)
     }
 
-    fn extract_slot_index_from_context(&self, context: &str) -> Result<usize, BitVMXError> {
-        let prefix = format!("{}_", REIMBURSEMENT_KICKOFF_TX);
-        if let Some(suffix) = context.strip_prefix(&prefix) {
-            suffix
-                .parse::<usize>()
-                .map_err(|_| BitVMXError::InvalidTransactionName(context.to_string()))
-        } else {
-            Err(BitVMXError::InvalidTransactionName(context.to_string()))
-        }
-    }
+    // fn extract_slot_index_from_context(&self, context: &str) -> Result<usize, BitVMXError> {
+    //     let prefix = format!("{}_", REIMBURSEMENT_KICKOFF_TX);
+    //     if let Some(suffix) = context.strip_prefix(&prefix) {
+    //         suffix
+    //             .parse::<usize>()
+    //             .map_err(|_| BitVMXError::InvalidTransactionName(context.to_string()))
+    //     } else {
+    //         Err(BitVMXError::InvalidTransactionName(context.to_string()))
+    //     }
+    // }
 
     fn extract_slot_index(&self, tx_name: &str, tx_prefix: &str) -> Result<usize, BitVMXError> {
         let prefix = format!("{}_", tx_prefix);
@@ -667,69 +662,38 @@ impl DisputeCoreProtocol {
         Ok(slot_index)
     }
 
-    // fn dispatch_op_initial_deposit_tx(&self, context: &ProgramContext) -> Result<(), BitVMXError> {
-    //     if self.dispute_core_data(context)?.operator_index != self.ctx.my_idx {
-    //         info!(
-    //             id = self.ctx.my_idx,
-    //             "Not my dispute_core, skipping dispatch of {} transaction",
-    //             INITIAL_DEPOSIT_TX_SUFFIX
-    //         );
-    //         return Ok(());
+    // fn get_selected_operator_key(
+    //     &self,
+    //     slot_index: usize,
+    //     program_context: &ProgramContext,
+    // ) -> Result<Option<PublicKey>, BitVMXError> {
+    //     let committee_id = self.committee_id(program_context)?;
+    //     let selected_operator_key_name = format!("{}_{}", SELECTED_OPERATOR_PUBKEY, slot_index);
+
+    //     match program_context
+    //         .globals
+    //         .get_var(&committee_id, &selected_operator_key_name)?
+    //     {
+    //         Some(selected_operator_var) => Ok(Some(selected_operator_var.pubkey()?)),
+    //         None => Ok(None),
     //     }
-
-    //     let tx = self.op_initial_deposit_tx(
-    //         &format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX),
-    //         context,
-    //     )?;
-    //     let txid = tx.compute_txid();
-
-    //     // Dispatch the transaction through the bitcoin coordinator
-    //     context.bitcoin_coordinator.dispatch(
-    //         tx,
-    //         None,                                          // No speedup data
-    //         format!("dispute_core_setup_{}", self.ctx.id), // Context string
-    //         None,                                          // Dispatch immediately
-    //     )?;
-
-    //     info!(
-    //         id = self.ctx.my_idx,
-    //         "INITIAL_DEPOSIT_TX_SUFFIX dispatched successfully with txid: {}", txid
-    //     );
-    //     Ok(())
     // }
 
-    fn get_selected_operator_key(
-        &self,
-        slot_index: usize,
-        program_context: &ProgramContext,
-    ) -> Result<Option<PublicKey>, BitVMXError> {
-        let committee_id = self.committee_id(program_context)?;
-        let selected_operator_key_name = format!("{}_{}", SELECTED_OPERATOR_PUBKEY, slot_index);
-
-        match program_context
-            .globals
-            .get_var(&committee_id, &selected_operator_key_name)?
-        {
-            Some(selected_operator_var) => Ok(Some(selected_operator_var.pubkey()?)),
-            None => Ok(None),
-        }
-    }
-
-    fn validate_transaction_signature(
-        &self,
-        _tx_id: Txid,
-        _tx_status: &TransactionStatus,
-        _expected_pubkey: PublicKey,
-    ) -> Result<bool, BitVMXError> {
-        // TODO: Implement actual signature validation
-        // For now, return true as placeholder
-        // In real implementation, this would:
-        // 1. Extract the transaction from tx_status
-        // 2. Verify the signature against expected_pubkey
-        // 3. Return true if signature is valid, false otherwise
-        info!("Validating transaction signature - placeholder implementation");
-        Ok(true)
-    }
+    // fn validate_transaction_signature(
+    //     &self,
+    //     _tx_id: Txid,
+    //     _tx_status: &TransactionStatus,
+    //     _expected_pubkey: PublicKey,
+    // ) -> Result<bool, BitVMXError> {
+    //     // TODO: Implement actual signature validation
+    //     // For now, return true as placeholder
+    //     // In real implementation, this would:
+    //     // 1. Extract the transaction from tx_status
+    //     // 2. Verify the signature against expected_pubkey
+    //     // 3. Return true if signature is valid, false otherwise
+    //     info!("Validating transaction signature - placeholder implementation");
+    //     Ok(true)
+    // }
 
     fn dispatch_setup_tx(&self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
         let setup_tx_name = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
@@ -772,61 +736,61 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn dispatch_op_disabler_tx(
-        &self,
-        slot_index: usize,
-        _context: &ProgramContext,
-    ) -> Result<(), BitVMXError> {
-        // TODO: Implement OP Disabler transaction dispatch
-        info!("Dispatching OP Disabler Tx for slot_index: {}", slot_index);
-        // In real implementation, this would:
-        // 1. Create the OP Disabler transaction
-        // 2. Submit it to the Bitcoin network
-        // 3. Handle any necessary coordination
-        Ok(())
-    }
+    // fn dispatch_op_disabler_tx(
+    //     &self,
+    //     slot_index: usize,
+    //     _context: &ProgramContext,
+    // ) -> Result<(), BitVMXError> {
+    //     // TODO: Implement OP Disabler transaction dispatch
+    //     info!("Dispatching OP Disabler Tx for slot_index: {}", slot_index);
+    //     // In real implementation, this would:
+    //     // 1. Create the OP Disabler transaction
+    //     // 2. Submit it to the Bitcoin network
+    //     // 3. Handle any necessary coordination
+    //     Ok(())
+    // }
 
-    fn handle_reimbursement_kickoff_transaction(
-        &self,
-        tx_id: Txid,
-        tx_status: &TransactionStatus,
-        context: &str,
-        program_context: &ProgramContext,
-    ) -> Result<(), BitVMXError> {
-        info!(
-            "Detected reimbursement kickoff transaction: {} with context: {}",
-            tx_id, context
-        );
+    // fn handle_reimbursement_kickoff_transaction(
+    //     &self,
+    //     tx_id: Txid,
+    //     _tx_status: &TransactionStatus,
+    //     context: &str,
+    //     _context: &ProgramContext,
+    // ) -> Result<(), BitVMXError> {
+    //     info!(
+    //         "Detected reimbursement kickoff transaction: {} with context: {}",
+    //         tx_id, context
+    //     );
 
-        // Extract slot_index from the context
-        let slot_index = self.extract_slot_index_from_context(context)?;
+    // Extract slot_index from the context
+    // let slot_index = self.extract_slot_index_from_context(context)?;
 
-        // Get the selected operator's key for this slot
-        match self.get_selected_operator_key(slot_index, program_context)? {
-            Some(selected_operator_key) => {
-                // Validate transaction signature against selected operator's key
-                let is_valid =
-                    self.validate_transaction_signature(tx_id, tx_status, selected_operator_key)?;
+    // // Get the selected operator's key for this slot
+    // match self.get_selected_operator_key(slot_index, program_context)? {
+    //     Some(selected_operator_key) => {
+    //         // Validate transaction signature against selected operator's key
+    //         let is_valid =
+    //             self.validate_transaction_signature(tx_id, tx_status, selected_operator_key)?;
 
-                if !is_valid {
-                    info!(
-                        "Invalid signature detected for slot {}, dispatching OP Disabler Tx",
-                        slot_index
-                    );
-                    self.dispatch_op_disabler_tx(slot_index, program_context)?;
-                } else {
-                    info!("Valid signature confirmed for slot {}", slot_index);
-                }
-            }
-            None => {
-                info!("No selected operator key found for slot {}", slot_index);
-                // If no selected operator key is set, it means that someone triggered a reimbursment kickoff transaction but there was no advances of funds
-                self.dispatch_op_disabler_tx(slot_index, program_context)?;
-            }
-        }
+    //         if !is_valid {
+    //             info!(
+    //                 "Invalid signature detected for slot {}, dispatching OP Disabler Tx",
+    //                 slot_index
+    //             );
+    //             self.dispatch_op_disabler_tx(slot_index, program_context)?;
+    //         } else {
+    //             info!("Valid signature confirmed for slot {}", slot_index);
+    //         }
+    //     }
+    //     None => {
+    //         info!("No selected operator key found for slot {}", slot_index);
+    //         // If no selected operator key is set, it means that someone triggered a reimbursment kickoff transaction but there was no advances of funds
+    //         self.dispatch_op_disabler_tx(slot_index, program_context)?;
+    //     }
+    // }
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
     fn save_take_utxos(&self, context: &ProgramContext) -> Result<(), BitVMXError> {
         let committee = self.committee(context)?;
