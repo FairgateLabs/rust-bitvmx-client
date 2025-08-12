@@ -2,7 +2,7 @@ use bitcoin::{PublicKey, XOnlyPublicKey};
 use key_manager::winternitz::WinternitzPublicKey;
 use protocol_builder::{
     errors::ScriptError,
-    scripts::{ots_checksig, KeyType, ProtocolScript, SignMode},
+    scripts::{ots_checksig, KeyType, ProtocolScript, SignMode, StackItem},
 };
 
 use bitcoin_scriptexec::treepp::*;
@@ -34,6 +34,19 @@ pub fn start_reimbursement(
         KeyType::winternitz(pegout_id_pubkey)?,
         1,
     )?;
+
+    protocol_script.add_stack_item(StackItem::SchnorrSig {
+        non_default_sighash: true,
+    });
+
+    protocol_script.add_stack_item(StackItem::SchnorrSig {
+        non_default_sighash: true,
+    });
+
+    let extra_data = pegout_id_pubkey.extra_data().unwrap();
+    protocol_script.add_stack_item(StackItem::WinternitzSig {
+        size: extra_data.message_size() + extra_data.checksum_size(),
+    });
 
     Ok(protocol_script)
 }
@@ -67,6 +80,20 @@ pub fn operator_pegout_id(
         1,
     )?;
 
+    protocol_script.add_stack_item(StackItem::SchnorrSig {
+        non_default_sighash: true,
+    });
+
+    let extra_data = pegout_id_key.extra_data().unwrap();
+    protocol_script.add_stack_item(StackItem::WinternitzSig {
+        size: extra_data.message_size() + extra_data.checksum_size(),
+    });
+
+    let extra_data = secret_key.extra_data().unwrap();
+    protocol_script.add_stack_item(StackItem::WinternitzSig {
+        size: extra_data.message_size() + extra_data.checksum_size(),
+    });
+
     Ok(protocol_script)
 }
 
@@ -89,6 +116,15 @@ pub fn reveal_take_private_key(
         KeyType::winternitz(take_private_key)?,
         0,
     )?;
+
+    protocol_script.add_stack_item(StackItem::SchnorrSig {
+        non_default_sighash: true,
+    });
+
+    let extra_data = take_private_key.extra_data().unwrap();
+    protocol_script.add_stack_item(StackItem::WinternitzSig {
+        size: extra_data.message_size() + extra_data.checksum_size(),
+    });
 
     Ok(protocol_script)
 }
