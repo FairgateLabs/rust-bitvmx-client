@@ -12,10 +12,13 @@ use crate::{
     program::{
         protocols::{
             cardinal::{
-                slot::dust_claim_stop, FUND_UTXO, OPERATORS, OPERATORS_AGGREGATED_PUB,
-                PAIR_0_1_AGGREGATED,
+                slot::{certificate_hash_prefix, dust_claim_stop, group_id_prefix},
+                FUND_UTXO, OPERATORS, OPERATORS_AGGREGATED_PUB, PAIR_0_1_AGGREGATED,
             },
-            dispute::{protocol_cost, TIMELOCK_BLOCKS, TIMELOCK_BLOCKS_KEY},
+            dispute::{
+                program_input_prev_prefix, program_input_prev_protocol, protocol_cost,
+                TIMELOCK_BLOCKS, TIMELOCK_BLOCKS_KEY,
+            },
             protocol_handler::external_fund_tx,
         },
         variables::{Globals, PartialUtxo, VariableTypes},
@@ -165,5 +168,29 @@ impl SlotProtocolConfiguration {
             prover_win_output_type,
             pair_aggregated_pub_key,
         ))
+    }
+
+    pub fn program_input_connection(
+        &self,
+        dispute_id: &Uuid,
+        prover_id: usize,
+    ) -> Result<Vec<String>, BitVMXError> {
+        let input_idx_cert_hash = 1;
+        let input_idx_group_id = 2;
+        let msgs = vec![
+            VariableTypes::Uuid(self.id).set_msg(
+                *dispute_id,
+                &program_input_prev_protocol(input_idx_cert_hash),
+            )?,
+            VariableTypes::String(certificate_hash_prefix(prover_id))
+                .set_msg(*dispute_id, &program_input_prev_prefix(input_idx_cert_hash))?,
+            VariableTypes::Uuid(self.id).set_msg(
+                *dispute_id,
+                &program_input_prev_protocol(input_idx_group_id),
+            )?,
+            VariableTypes::String(group_id_prefix(prover_id))
+                .set_msg(*dispute_id, &program_input_prev_prefix(input_idx_group_id))?,
+        ];
+        Ok(msgs)
     }
 }

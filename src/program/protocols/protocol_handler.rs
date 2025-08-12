@@ -4,7 +4,7 @@ use bitcoin_coordinator::TransactionStatus;
 use bitcoin_scriptexec::scriptint_vec;
 use console::style;
 use enum_dispatch::enum_dispatch;
-use key_manager::winternitz::{WinternitzSignature, WinternitzType};
+use key_manager::winternitz::{message_bytes_length, WinternitzSignature, WinternitzType};
 use protocol_builder::scripts::ProtocolScript;
 use protocol_builder::types::output::SpeedupData;
 use protocol_builder::types::{InputArgs, OutputType, Utxo};
@@ -161,7 +161,9 @@ pub trait ProtocolHandler {
             self.context().storage.clone().unwrap(),
         )? {
             Some(protocol) => Ok(protocol),
-            None => Err(ProtocolBuilderError::MissingProtocol),
+            None => Err(ProtocolBuilderError::MissingProtocol(
+                self.context().protocol_name.clone(),
+            )),
         }
     }
 
@@ -310,9 +312,9 @@ pub trait ProtocolHandler {
     ) -> Result<Vec<String>, BitVMXError> {
         info!(
             "Program {}: Decoding witness for {} with input index {}",
-            self.context().id,
-            name,
-            input_index
+            style(self.context().protocol_name.clone()).blue(),
+            style(name).green(),
+            style(input_index).yellow()
         );
         let protocol = protocol.unwrap_or(self.load_protocol()?);
 
@@ -326,6 +328,11 @@ pub trait ProtocolHandler {
                     &format!("{}_{}_leaf_index", name, input_index),
                     VariableTypes::Number(leaf),
                 )?;
+                info!(
+                    "Leaf index for {}: {}",
+                    style(name).green(),
+                    style(leaf).yellow()
+                );
                 leaf
             }
         };
@@ -338,18 +345,27 @@ pub trait ProtocolHandler {
 
         let mut names = vec![];
         let mut sizes = vec![];
+        //TODO: make the script save the size so we don't need to get it from participant keys or variables
         script.get_keys().iter().rev().for_each(|k| {
             names.push(k.name().to_string());
             let size = participant_keys.get_key_size(k.name());
-            if size.is_err() {
-                error!(
-                    "Failed to get key size for {}: {}",
-                    k.name(),
-                    size.err().unwrap()
-                );
-                return;
+            if size.is_err()  {
+                info!("Could not get the key from participant keys: {}. Trying to get from variables.", k.name());
+                let var = program_context.globals.get_var(&self.context().id, k.name());
+                if var.is_err() || var.as_ref().unwrap().is_none() {
+                    error!(
+                        "Failed to get key size for {}: {}",
+                        k.name(),
+                        size.err().unwrap()
+                    );
+                    return;
+                } else {
+                    sizes.push(message_bytes_length( var.unwrap().unwrap().wots_pubkey().unwrap().message_size().unwrap()));
+                }
+
+            } else {
+                sizes.push(size.unwrap());
             }
-            sizes.push(size.unwrap());
         });
         info!("Decoding data for {}", name);
         info!("Names: {:?}", names);

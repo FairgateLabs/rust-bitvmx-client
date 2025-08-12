@@ -3,8 +3,9 @@ nary_search: 8
 max_steps: 50
 input_section_name: .input
 inputs:
-  - size: 8 
-    owner: prover
   - size: 4
-    owner: const_var_1
-    
+    owner: prover_prev
+  - size: 4 
+    owner: const
+  - size: 4 
+    owner: prover

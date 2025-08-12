@@ -6,6 +6,7 @@
 //! `cargo run --example union committee`          - Setups a new committee
 //! `cargo run --example union request_pegin`      - Performs a request peg in
 //! `cargo run --example union accept_pegin`       - Setups the accept peg in protocol
+//! `cargo run --example union request_pegout`     - Setups the request peg out protocol
 //! `cargo run --example union advance_funds`      - Performs an advancement of funds
 
 use ::bitcoin::PublicKey;
@@ -52,10 +53,10 @@ fn print_usage() {
     println!("Usage:");
     println!("  cargo run --example union setup_bitcoin_node  - Sets up Bitcoin node only");
     println!("  cargo run --example union committee           - Setups a new committee");
-    println!("  cargo run --example union request_pegin       - Setups a rerquest pegin");
+    println!("  cargo run --example union request_pegin       - Setups a request pegin");
     println!("  cargo run --example union accept_pegin        - Setups the accept peg in protocol");
     println!(
-        "  cargo run --example union request_pegout      - Setups the request peg out in protocol"
+        "  cargo run --example union request_pegout      - Setups the request peg out protocol"
     );
     println!("  cargo run --example union advance_funds       - Performs an advancement of funds");
 }
@@ -142,6 +143,9 @@ pub fn request_pegout() -> Result<()> {
         reimbursement_pubkey.clone(),
     )?;
 
+    // Wait some time to ensure the accept peg-in is processed
+    thread::sleep(Duration::from_secs(5));
+
     let user_pubkey = user.public_key()?;
     let fee = 335; // This should be the fee for the peg-out. It should be same value that it's as constant in the contracts.
 
@@ -184,12 +188,15 @@ pub fn advance_funds() -> Result<()> {
     let slot_id = 0; // Placeholder for the slot ID
     let operator_id = 0; // Placeholder for the actual operator ID
 
+    // Get the selected operator's take public key (simulating what Union Client would provide)
+    let selected_operator_pubkey = committee.members[operator_id].keyring.take_pubkey.unwrap();
+
     committee.advance_funds(
         committee.committee_id(),
         slot_id,
         user_public_key.parse::<PublicKey>().unwrap(),
         pegout_id,
-        operator_id,
+        selected_operator_pubkey,
     )?;
 
     Ok(())

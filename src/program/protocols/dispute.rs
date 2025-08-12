@@ -25,7 +25,6 @@ use emulator::{
     decision::challenge::{ForceChallenge, ForceCondition},
     loader::program_definition::ProgramDefinition,
 };
-use key_manager::winternitz::WinternitzPublicKey;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
     graph::graph::GraphOptions,
@@ -44,7 +43,15 @@ use crate::{
     bitvmx::Context,
     errors::BitVMXError,
     program::{
-        participant::ParticipantRole, protocols::claim::ClaimGate, variables::VariableTypes,
+        participant::ParticipantRole,
+        protocols::{
+            claim::ClaimGate,
+            input_handler::{
+                generate_input_owner_list, get_required_keys, get_txs_configuration, split_input,
+                unify_inputs, unify_witnesses, ProgramInputType,
+            },
+        },
+        variables::VariableTypes,
     },
     types::{ProgramContext, EMULATOR_ID},
 };
@@ -57,7 +64,7 @@ use super::{
 pub const EXTERNAL_START: &str = "EXTERNAL_START";
 pub const EXTERNAL_ACTION: &str = "EXTERNAL_ACTION";
 pub const START_CH: &str = "START_CHALLENGE";
-pub const INPUT_1: &str = "INPUT_1";
+pub const INPUT_TX: &str = "INPUT_";
 pub const COMMITMENT: &str = "COMMITMENT";
 pub const EXECUTE: &str = "EXECUTE";
 pub const TIMELOCK_BLOCKS: u16 = 1;
@@ -175,7 +182,7 @@ const MIN_RELAY_FEE: u64 = 1;
 const DUST: u64 = 500 * MIN_RELAY_FEE;
 
 pub fn protocol_cost() -> u64 {
-    20_000 // This is a placeholder value, adjust as needed
+    32_000 // This is a placeholder value, adjust as needed
 }
 
 fn get_role(my_idx: usize) -> ParticipantRole {
@@ -184,6 +191,25 @@ fn get_role(my_idx: usize) -> ParticipantRole {
     } else {
         ParticipantRole::Verifier
     }
+}
+
+pub fn input_tx_name(index: u32) -> String {
+    format!("INPUT_{}", index)
+}
+pub fn program_input(index: u32) -> String {
+    format!("program_input_{}", index)
+}
+
+pub fn program_input_prev_protocol(index: u32) -> String {
+    format!("program_input_prev_protocol_{}", index)
+}
+
+pub fn program_input_prev_prefix(index: u32) -> String {
+    format!("program_input_prev_prefix_{}", index)
+}
+
+pub fn program_input_word(index: u32, word: u32) -> String {
+    format!("program_input_{}_{}", index, word)
 }
 
 impl ProtocolHandler for DisputeResolutionProtocol {
@@ -214,11 +240,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
         let program_def = self.get_program_definition(&program_context)?.0;
-        let key_chain = &mut program_context.key_chain;
 
-        let aggregated_1 = key_chain.derive_keypair()?;
+        let aggregated_1 = program_context.key_chain.derive_keypair()?;
 
-        let speedup = key_chain.derive_keypair()?;
+        let speedup = program_context.key_chain.derive_keypair()?;
 
         program_context
             .globals
@@ -229,22 +254,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             ("speedup".to_string(), speedup.into()),
         ];
 
-        for inputs in program_def.inputs.iter() {
-            //TODO: handle more inputs, owners and counter-sign
-            assert!(inputs.size % 4 == 0);
-            let words_needed = inputs.size / 4;
-            if self.role() == ParticipantRole::Prover {
-                for i in 0..words_needed {
-                    let key = key_chain.derive_winternitz_hash160(4)?;
-                    keys.push((format!("prover_program_input_{}", i), key.into()));
-                }
-            }
-            program_context.globals.set_var(
-                &self.ctx.id,
-                "input_words",
-                VariableTypes::Number(words_needed as u32),
-            )?;
+        for required_input in
+            get_required_keys(&self.ctx.id, &program_def, program_context, &self.role())?
+        {
+            let key = program_context.key_chain.derive_winternitz_hash160(4)?;
+            keys.push((required_input, key.into()));
         }
+
+        let key_chain = &mut program_context.key_chain;
 
         if self.role() == ParticipantRole::Prover {
             let last_step = key_chain.derive_winternitz_hash160(8)?;
@@ -298,9 +315,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         name: &str,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        if name.starts_with(INPUT_TX) {
+            let index = name.strip_prefix(INPUT_TX).unwrap().parse::<u32>()?;
+            return self.input_tx(index, context);
+        }
+
         match name {
             START_CH => Ok(self.add_speedup_data(name, context, self.start_challenge(context)?)?),
-            INPUT_1 => Ok(self.input_1_tx(context)?),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
     }
@@ -354,46 +375,47 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             }
         }*/
 
-        //TODO: generalize decoding
-        if name == INPUT_1 && self.role() == ParticipantRole::Prover && vout.is_none() {
-            //TODO: Check if the last input
-            //only then execute the program.
+        if name.starts_with(INPUT_TX) && vout.is_some() {
+            let idx = name.strip_prefix(INPUT_TX).unwrap().parse::<u32>()?;
 
-            let program_definition = program_context
-                .globals
-                .get_var(&self.ctx.id, "program_definition")?
-                .unwrap()
-                .string()?;
+            let (input_txs, _input_txs_sizes, _input_txs_offsets, last_tx_id) =
+                get_txs_configuration(&self.ctx.id, program_context)?;
 
-            let input_program = program_context
-                .globals
-                .get_var(&self.ctx.id, "program_input")?
-                .unwrap()
-                .input()?;
+            let owner = input_txs[idx as usize].as_str();
 
-            let execution_path = self.get_execution_path()?;
-            let msg = serde_json::to_string(&DispatcherJob {
-                job_id: self.ctx.id.to_string(),
-                job_type: EmulatorJobType::ProverExecute(
-                    program_definition,
-                    input_program,
-                    execution_path.clone(),
-                    format!("{}/{}", execution_path, "execution.json").to_string(),
-                    fail_config_prover.clone(),
-                ),
-            })?;
-            program_context.broker_channel.send(EMULATOR_ID, msg)?;
-        }
-        if name == INPUT_1 && self.role() == ParticipantRole::Verifier && vout.is_some() {
-            self.decode_witness_from_speedup(
-                tx_id,
-                vout.unwrap(),
-                &name,
-                program_context,
-                &participant_keys,
-                &tx_status.tx,
-                None,
-            )?;
+            if owner == self.role().to_string() {
+                //if I'm the prover and it's the last input
+                if self.role() == ParticipantRole::Prover && idx == last_tx_id {
+                    let (def, program_definition) = self.get_program_definition(program_context)?;
+                    let full_input = unify_inputs(&self.ctx.id, program_context, &def)?;
+
+                    let execution_path = self.get_execution_path()?;
+                    let msg = serde_json::to_string(&DispatcherJob {
+                        job_id: self.ctx.id.to_string(),
+                        job_type: EmulatorJobType::ProverExecute(
+                            program_definition,
+                            full_input,
+                            execution_path.clone(),
+                            format!("{}/{}", execution_path, "execution.json").to_string(),
+                            fail_config_prover.clone(),
+                        ),
+                    })?;
+                    program_context.broker_channel.send(EMULATOR_ID, msg)?;
+                }
+            } else {
+                //if it's not my input, decode the witness
+                self.decode_witness_from_speedup(
+                    tx_id,
+                    vout.unwrap(),
+                    &name,
+                    program_context,
+                    &participant_keys,
+                    &tx_status.tx,
+                    None,
+                )?;
+
+                unify_witnesses(&self.ctx.id, program_context, idx as usize)?;
+            }
         }
 
         if name == COMMITMENT && self.role() == ParticipantRole::Verifier && vout.is_some() {
@@ -407,30 +429,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 None,
             )?;
 
-            let program_definition = program_context
-                .globals
-                .get_var(&self.ctx.id, "program_definition")?
-                .unwrap()
-                .string()?;
-
             let execution_path = self.get_execution_path()?;
-            let words = program_context
-                .globals
-                .get_var(&self.ctx.id, "input_words")?
-                .unwrap()
-                .number()?;
 
-            let mut input_program = Vec::new();
-
-            for i in 0..words {
-                let input = program_context
-                    .witness
-                    .get_witness(&self.ctx.id, &format!("prover_program_input_{}", i))?
-                    .unwrap()
-                    .winternitz()?
-                    .message_bytes();
-                input_program.extend_from_slice(&input);
-            }
+            let (def, program_definition) = self.get_program_definition(program_context)?;
+            let input_program = unify_inputs(&self.ctx.id, program_context, &def)?;
 
             let last_hash = program_context
                 .witness
@@ -791,39 +793,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &tx_status.tx,
                 None,
             )?;
-
-            let challenge_idx = program_context
-                .globals
-                .get_var(&self.ctx.id, &format!("CHALLENGE_{}_leaf_index", 0))?
-                .unwrap()
-                .number()?;
-
-            let (real_idx, sub_idx) = self.resolve_challenge_idx(challenge_idx, program_context)?;
-            let (challenge_name, subchallenges) = CHALLENGES
-                .get(real_idx as usize)
-                .ok_or(BitVMXError::ChallengeIdxNotFound(real_idx))?;
-
-            let mut values = HashMap::with_capacity(subchallenges.len());
-            for (var_name, _) in *subchallenges {
-                let var_name = if *var_name == "prover_program_input" {
-                    format!("{}_{}", var_name, sub_idx.unwrap_or(0))
-                } else {
-                    var_name.to_string()
-                };
-                let value = program_context
-                    .witness
-                    .get_witness(&self.ctx.id, &var_name)?
-                    .unwrap()
-                    .winternitz()?
-                    .message_bytes();
-                values.insert(var_name, value);
-            }
-
-            info!(
-                "Prover decoded challenge {} with values: {:?} idx: {:?}",
-                challenge_name, values, sub_idx
-            );
-            //TODO: continue challenge for some challenges
+            //TODO: if the verifier is able to execute the challenge, the prover can react only to the read challenge nary search
         }
 
         Ok(())
@@ -907,16 +877,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         amount = self.checked_sub(amount, fee)?;
 
-        let words = context
-            .globals
-            .get_var(&self.ctx.id, "input_words")?
-            .unwrap()
-            .number()?;
-
-        let input_vars = (0..words)
-            .map(|i| format!("prover_program_input_{}", i))
-            .collect::<Vec<_>>();
-
         amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
         amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
 
@@ -926,23 +886,56 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             .unwrap()
             .number()? as u16;
 
-        self.add_connection_with_scripts(
-            context,
-            aggregated,
-            &mut protocol,
-            timelock_blocks,
-            amount,
-            speedup_dust,
-            START_CH,
-            INPUT_1,
-            None,
-            Self::winternitz_check(agg_or_prover, sign_mode, &keys[0], &input_vars)?,
-            input_in_speedup,
-            (&prover_speedup_pub, &verifier_speedup_pub),
-        )?;
+        let mut prev_tx = START_CH.to_string();
+        let mut input_tx = String::new();
 
-        amount = self.checked_sub(amount, fee)?;
-        amount = self.checked_sub(amount, speedup_dust)?;
+        let (input_txs, input_txs_sizes, input_txs_offsets, _) =
+            get_txs_configuration(&self.ctx.id, context)?;
+
+        //TODO: remove this
+        context.globals.set_var(
+            &self.ctx.id,
+            "input_words",
+            VariableTypes::Number(input_txs_sizes[0]),
+        )?;
+        for (idx, tx_owner) in input_txs.iter().enumerate() {
+            if tx_owner == "skip" || tx_owner == "prover_prev" {
+                continue;
+            }
+            input_tx = format!("INPUT_{}", idx);
+
+            let words = input_txs_sizes[idx];
+            let offset = input_txs_offsets[idx];
+
+            let owner = if tx_owner == "verifier" {
+                "verifier"
+            } else {
+                "prover"
+            };
+
+            let input_vars = (offset..offset + words)
+                .map(|i| format!("{}_program_input_{}", owner, i))
+                .collect::<Vec<_>>();
+            //TODO: Handle prover cosigning (in the script check and automatic reply to news)
+            self.add_connection_with_scripts(
+                context,
+                aggregated,
+                &mut protocol,
+                timelock_blocks,
+                amount,
+                speedup_dust,
+                &prev_tx,
+                &input_tx,
+                None,
+                Self::winternitz_check(agg_or_prover, sign_mode, &keys[0], &input_vars)?,
+                input_in_speedup,
+                (&prover_speedup_pub, &verifier_speedup_pub),
+            )?;
+
+            amount = self.checked_sub(amount, fee)?;
+            amount = self.checked_sub(amount, speedup_dust)?;
+            prev_tx = input_tx.clone();
+        }
 
         let claim_prover = ClaimGate::new(
             &mut protocol,
@@ -1024,7 +1017,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             timelock_blocks,
             amount,
             speedup_dust,
-            INPUT_1,
+            &input_tx,
             COMMITMENT,
             Some(&claim_verifier),
             Self::winternitz_check(
@@ -1200,6 +1193,7 @@ impl DisputeResolutionProtocol {
         (txid, vout, amount)
     }
 
+    //TODO: unify with the speedup in  protocol_handler
     fn add_speedup_data(
         &self,
         name: &str,
@@ -1208,7 +1202,6 @@ impl DisputeResolutionProtocol {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         let (vout, role) = match name {
             START_CH => (0, "verifier"),
-            //INPUT_1 => (0, "prover"),
             _ => todo!("Speedup data not implemented for transaction: {}", name),
         };
 
@@ -1248,35 +1241,14 @@ impl DisputeResolutionProtocol {
         Ok((tx, speedup_data))
     }
 
-    pub fn input_1_tx(
+    pub fn input_tx(
         &self,
+        idx: u32,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        //TODO: concatenate all inputs
-        let words = context
-            .globals
-            .get_var(&self.ctx.id, "input_words")?
-            .unwrap()
-            .number()?;
+        split_input(&self.ctx.id, idx, context)?;
 
-        let full_input = context
-            .globals
-            .get_var(&self.ctx.id, "program_input")?
-            .unwrap()
-            .input()?;
-
-        for i in 0..words {
-            let partial_input = full_input
-                .get((i * 4) as usize..((i + 1) * 4) as usize)
-                .unwrap();
-            context.globals.set_var(
-                &self.ctx.id,
-                &format!("prover_program_input_{}", i),
-                VariableTypes::Input(partial_input.to_vec()),
-            )?;
-        }
-
-        let (tx, sp) = self.get_tx_with_speedup_data(context, INPUT_1, 0, 0, true)?;
+        let (tx, sp) = self.get_tx_with_speedup_data(context, &input_tx_name(idx), 0, 0, true)?;
 
         Ok((tx, Some(sp)))
     }
@@ -1381,121 +1353,244 @@ impl DisputeResolutionProtocol {
         let (program_definitions, _) = self.get_program_definition(context)?;
         let mut program = program_definitions.load_program()?;
 
-        let mut names_and_keys: HashMap<&str, Vec<Vec<(String, &WinternitzPublicKey)>>> =
-            HashMap::new();
+        let mut challenge_leaf_script = vec![];
 
-        let iteration_counts = HashMap::from([
-            ("opcode", program.get_chunk_count(CODE_CHUNK_SIZE)),
-            (
-                "input",
-                context
-                    .globals
-                    .get_var(&self.ctx.id, "input_words")?
-                    .unwrap()
-                    .number()?,
-            ),
-            (
-                "rom",
-                program.find_section_by_name(".rodata").unwrap().data.len() as u32,
-            ),
-        ]);
-
-        for (challenge_name, var_names) in CHALLENGES.iter() {
-            let iterations = *iteration_counts.get(challenge_name).unwrap_or(&1);
-            let mut groups: Vec<Vec<(String, &WinternitzPublicKey)>> =
-                Vec::with_capacity(iterations as usize);
-
-            for i in 0..iterations {
-                let group = var_names
-                    .iter()
-                    .map(|(var_name, _)| {
-                        let idx = if var_name.starts_with("prover") { 0 } else { 1 };
-                        let var_name = if *var_name == "prover_program_input" {
-                            format!("{}_{}", var_name, i)
-                        } else {
-                            var_name.to_string()
-                        };
-                        //info!("getting winternitz key for: {}, idx: {}", var_name, idx);
-                        let key = keys[idx].get_winternitz(&var_name).unwrap();
-                        (var_name, key)
-                    })
-                    .collect::<Vec<_>>();
-                groups.push(group);
-            }
-
-            names_and_keys.insert(challenge_name, groups);
-        }
-        let mut winternitz_check_list = vec![];
+        let mut challenge_current_leaf = 0;
 
         for (challenge_name, subnames) in CHALLENGES.iter() {
             let total_len = subnames.iter().map(|(_, size)| *size).sum::<usize>() as u32 * 2;
 
+            let (names_and_keys, alternate_reverse) = if *challenge_name == "input" {
+                //for constant inputs we don't need the input var
+                let mut stack = StackTracker::new();
+                let total_len = total_len - INPUT_CHALLENGE[0].1 as u32 * 2;
+                let all = stack.define(total_len, "all");
+                for i in 1..total_len {
+                    stack.move_var_sub_n(all, total_len - i - 1);
+                }
+                let reverse_script = stack.get_script();
+                (vec![], Some(reverse_script))
+            } else {
+                (
+                    subnames
+                        .iter()
+                        .map(|(var_name, _)| {
+                            let idx = if var_name.starts_with("prover") { 0 } else { 1 };
+                            (var_name, keys[idx].get_winternitz(var_name).unwrap())
+                        })
+                        .collect::<Vec<_>>(),
+                    None,
+                )
+            };
+
+            //TODO: This is a workaround to reverse the order of the stack
             let mut stack = StackTracker::new();
             let all = stack.define(total_len, "all");
-            //TODO: This is a workaround to remove one nibble from the micro instructions
             for i in 1..total_len {
                 stack.move_var_sub_n(all, total_len - i - 1);
             }
             let reverse_script = stack.get_script();
+
+            context.globals.set_var(
+                &self.ctx.id,
+                &format!("challenge_leaf_start_{}", challenge_name),
+                VariableTypes::Number(challenge_current_leaf),
+            )?;
+
             match *challenge_name {
                 "opcode" => {
                     let chunks = program.get_chunks(CODE_CHUNK_SIZE);
-                    for (i, (chunk_base, opcodes_chunk)) in chunks.iter().enumerate() {
+                    for (chunk_base, opcodes_chunk) in chunks.iter() {
                         let mut scripts = vec![reverse_script.clone()];
                         stack = StackTracker::new();
                         opcode_challenge(&mut stack, *chunk_base, &opcodes_chunk);
                         scripts.push(stack.get_script());
                         let winternitz_check = scripts::verify_winternitz_signatures_aux(
                             aggregated,
-                            &names_and_keys[challenge_name][i],
+                            &names_and_keys,
                             sign_mode,
                             true,
                             Some(scripts),
                         )?;
-                        winternitz_check_list.push(winternitz_check);
+                        challenge_leaf_script.push(winternitz_check);
                     }
+                    challenge_current_leaf += chunks.len() as u32;
                 }
                 "input" => {
-                    let base_addr = program.find_section_by_name(".input").unwrap().start;
-                    let words = iteration_counts.get(challenge_name).unwrap();
-                    for i in 0..*words {
-                        let address = base_addr + i * 4; //TODO: get 4 from context
-                        let mut scripts = vec![reverse_script.clone()];
-                        stack = StackTracker::new();
-                        input_challenge(&mut stack, address);
-                        scripts.push(stack.get_script());
-                        let winternitz_check = scripts::verify_winternitz_signatures_aux(
-                            aggregated,
-                            &names_and_keys[challenge_name][i as usize],
-                            sign_mode,
-                            true,
-                            Some(scripts),
-                        )?;
-                        winternitz_check_list.push(winternitz_check);
+                    let base_addr = program
+                        .find_section_by_name(&program_definitions.input_section_name)
+                        .unwrap()
+                        .start;
+
+                    let (inputs, _) = generate_input_owner_list(&program_definitions)?;
+                    let const_names_and_keys = subnames
+                        .iter()
+                        .skip(1)
+                        .map(|(var_name, _)| {
+                            let idx = if var_name.starts_with("prover") { 0 } else { 1 };
+                            (*var_name, keys[idx].get_winternitz(&var_name).unwrap())
+                        })
+                        .collect::<Vec<_>>();
+
+                    for (idx, input) in inputs.iter().enumerate() {
+                        match input {
+                            //ProgramInputType::Verifier(words, offset)
+                            ProgramInputType::Prover(words, offset) => {
+                                for j in *offset..*offset + *words {
+                                    let names_and_keys = subnames
+                                        .iter()
+                                        .map(|(var_name, _)| {
+                                            let var_name = if *var_name == "prover_program_input" {
+                                                format!("{}_{}", var_name, j)
+                                            } else {
+                                                var_name.to_string()
+                                            };
+                                            let idx =
+                                                if var_name.starts_with("prover") { 0 } else { 1 };
+                                            (
+                                                var_name.clone(),
+                                                keys[idx].get_winternitz(&var_name).unwrap(),
+                                            )
+                                        })
+                                        .collect::<Vec<_>>();
+
+                                    let address = base_addr + j * 4;
+                                    let mut scripts = vec![reverse_script.clone()];
+                                    stack = StackTracker::new();
+                                    input_challenge(&mut stack, address);
+                                    scripts.push(stack.get_script());
+                                    let winternitz_check =
+                                        scripts::verify_winternitz_signatures_aux(
+                                            aggregated,
+                                            &names_and_keys,
+                                            sign_mode,
+                                            true,
+                                            Some(scripts),
+                                        )?;
+                                    challenge_leaf_script.push(winternitz_check);
+                                }
+                                challenge_current_leaf += *words as u32;
+                            }
+
+                            ProgramInputType::ProverPrev(words, offset) => {
+                                let previous_protocol = context
+                                    .globals
+                                    .get_var(
+                                        &self.ctx.id,
+                                        &program_input_prev_protocol(idx as u32),
+                                    )?
+                                    .unwrap()
+                                    .uuid()?;
+                                let previous_prefix = context
+                                    .globals
+                                    .get_var(&self.ctx.id, &program_input_prev_prefix(idx as u32))?
+                                    .unwrap()
+                                    .string()?;
+
+                                for j in 0..*words {
+                                    let mut temp_keys = vec![];
+                                    let mut names_and_keys = vec![];
+                                    let key = format!("{}{}", previous_prefix, j);
+                                    info!(
+                                        "Getting wots_pubkeys from protocol {} and key: {}",
+                                        previous_protocol, key
+                                    );
+                                    let pubkey = context
+                                        .globals
+                                        .get_var(&previous_protocol, &key)
+                                        .unwrap()
+                                        .unwrap()
+                                        .wots_pubkey()
+                                        .unwrap();
+                                    //we copy the var so the prover is able to decode it when it sees the challenge tx
+                                    if self.role() == ParticipantRole::Prover {
+                                        context.globals.copy_var(
+                                            &previous_protocol,
+                                            &self.ctx.id,
+                                            &key,
+                                        )?;
+                                    }
+                                    temp_keys.push(pubkey.clone());
+                                    let temp_key = &temp_keys[temp_keys.len() - 1];
+                                    names_and_keys.push((key.as_str(), temp_key));
+                                    names_and_keys
+                                        .extend_from_slice(const_names_and_keys.as_slice());
+
+                                    let address = base_addr + (j + offset) * 4;
+                                    let mut scripts = vec![reverse_script.clone()];
+                                    stack = StackTracker::new();
+                                    input_challenge(&mut stack, address);
+                                    scripts.push(stack.get_script());
+                                    let winternitz_check =
+                                        scripts::verify_winternitz_signatures_aux(
+                                            aggregated,
+                                            &names_and_keys,
+                                            sign_mode,
+                                            true,
+                                            Some(scripts),
+                                        )?;
+                                    challenge_leaf_script.push(winternitz_check);
+                                }
+                                challenge_current_leaf += *words as u32;
+                            }
+                            ProgramInputType::Const(words, offset) => {
+                                for j in *offset..*offset + *words {
+                                    let address = base_addr + j * 4;
+                                    let mut scripts =
+                                        vec![alternate_reverse.as_ref().unwrap().clone()];
+                                    stack = StackTracker::new();
+
+                                    let key = program_input_word(idx as u32, j);
+                                    let value = context
+                                        .globals
+                                        .get_var(&self.ctx.id, &key)?
+                                        .unwrap()
+                                        .input()?;
+                                    let value =
+                                        u32::from_be_bytes(value.as_slice().try_into().unwrap());
+
+                                    rom_challenge(&mut stack, address, value);
+                                    scripts.push(stack.get_script());
+                                    let winternitz_check =
+                                        scripts::verify_winternitz_signatures_aux(
+                                            aggregated,
+                                            &const_names_and_keys,
+                                            sign_mode,
+                                            true,
+                                            Some(scripts),
+                                        )?;
+                                    challenge_leaf_script.push(winternitz_check);
+                                }
+                                challenge_current_leaf += *words as u32;
+                            }
+                        }
                     }
                 }
                 "rom" => {
-                    let rodata = program.find_section_by_name(".rodata").unwrap();
-                    let base_addr = rodata.start;
-                    let words = iteration_counts.get(challenge_name).unwrap();
-                    for i in 0..*words {
-                        let address = base_addr + i;
-                        let value = program.read_mem(address).unwrap();
-                        let mut scripts = vec![reverse_script.clone()];
-                        stack = StackTracker::new();
-                        rom_challenge(&mut stack, address, value);
-                        scripts.push(stack.get_script());
-                        let winternitz_check = scripts::verify_winternitz_signatures_aux(
-                            aggregated,
-                            &names_and_keys[challenge_name][i as usize],
-                            sign_mode,
-                            true,
-                            Some(scripts),
-                        )?;
-                        winternitz_check_list.push(winternitz_check);
+                    if let Some(rodata) = program.find_section_by_name(".rodata") {
+                        let rodata_words = rodata.data.len() as u32;
+                        let base_addr = rodata.start;
+                        for i in 0..rodata_words {
+                            let address = base_addr + i;
+                            let value = program.read_mem(address).unwrap();
+                            let mut scripts = vec![reverse_script.clone()];
+                            stack = StackTracker::new();
+                            rom_challenge(&mut stack, address, value);
+                            scripts.push(stack.get_script());
+                            let winternitz_check = scripts::verify_winternitz_signatures_aux(
+                                aggregated,
+                                &names_and_keys,
+                                sign_mode,
+                                true,
+                                Some(scripts),
+                            )?;
+                            challenge_leaf_script.push(winternitz_check);
+                        }
+                        challenge_current_leaf += rodata_words;
                     }
                 }
                 _ => {
+                    challenge_current_leaf += 1;
                     let mut scripts = vec![reverse_script.clone()];
                     stack = StackTracker::new();
 
@@ -1527,17 +1622,17 @@ impl DisputeResolutionProtocol {
                     scripts.push(stack.get_script());
                     let winternitz_check = scripts::verify_winternitz_signatures_aux(
                         aggregated,
-                        &names_and_keys[challenge_name][0],
+                        &names_and_keys,
                         sign_mode,
                         true,
                         Some(scripts),
                     )?;
 
-                    winternitz_check_list.push(winternitz_check);
+                    challenge_leaf_script.push(winternitz_check);
                 }
             }
         }
-        Ok(winternitz_check_list)
+        Ok(challenge_leaf_script)
     }
 
     pub fn add_connection_with_scripts(
@@ -1850,21 +1945,11 @@ impl DisputeResolutionProtocol {
             }
             EmulatorResultType::VerifierChooseChallengeResult { challenge } => {
                 info!("Verifier choose challenge result: {:?}", challenge);
-                let leaf_index: usize;
                 let name: &str;
                 let mut dynamic_offset: u32 = 0; // For offset inside a specific challenge
 
-                let (mut program, opcode_chunks, input_words, rodata_len) = {
-                    let mut program = self.get_program_definition(&context)?.0.load_program()?;
-                    let opcode_chunks = program.get_chunk_count(CODE_CHUNK_SIZE) as usize;
-                    let input_words = context
-                        .globals
-                        .get_var(&self.ctx.id, "input_words")?
-                        .unwrap()
-                        .number()? as usize;
-                    let rodata_len = program.find_section_by_name(".rodata").unwrap().data.len();
-                    (program, opcode_chunks, input_words, rodata_len)
-                };
+                let program_definitions = self.get_program_definition(context)?;
+                let mut program = program_definitions.0.load_program()?;
 
                 match challenge {
                     ChallengeType::EntryPoint(_trace_read_pc, _prover_trace_step, _entrypoint) => {
@@ -1935,8 +2020,11 @@ impl DisputeResolutionProtocol {
                         name = "input";
                         info!("Verifier chose {name} challenge");
 
-                        let base_addr = program.find_section_by_name(".input").unwrap().start;
-                        dynamic_offset = (address - base_addr) / 4; //TODO: get 4 from context
+                        let base_addr = program
+                            .find_section_by_name(&program_definitions.0.input_section_name)
+                            .unwrap()
+                            .start;
+                        dynamic_offset = (address - base_addr) / 4;
                     }
 
                     ChallengeType::Opcode(_pc_read, chunk_index, _chunk_base, _opcodes_chunk) => {
@@ -1978,30 +2066,22 @@ impl DisputeResolutionProtocol {
                     return Ok(());
                 }
 
-                // Determine offset
-                let passed_input = matches!(
-                    challenge,
-                    ChallengeType::Opcode(..) | ChallengeType::RomData(..)
+                let leaf_start = context
+                    .globals
+                    .get_var(&self.ctx.id, &format!("challenge_leaf_start_{}", name))?
+                    .unwrap()
+                    .number()? as u32;
+
+                info!(
+                    "Leaf start: {}, leaf offset: {}",
+                    leaf_start, dynamic_offset
                 );
-                let passed_opcode = matches!(challenge, ChallengeType::RomData(..));
-                let passed_rom = false; // matches!(challenge,);  TODO: add next challenges that pass rom
-
-                let leaf_offset = (if passed_input { input_words - 1 } else { 0 })
-                    + (if passed_opcode { opcode_chunks - 1 } else { 0 })
-                    + (if passed_rom { rodata_len - 1 } else { 0 })
-                    + dynamic_offset as usize;
-                leaf_index = CHALLENGES
-                    .iter()
-                    .position(|(n, _)| *n == name)
-                    .ok_or_else(|| BitVMXError::ChallengeNotFound(name.to_string()))?;
-
-                info!("Leaf index: {}, leaf offset: {}", leaf_index, leaf_offset);
 
                 let (tx, sp) = self.get_tx_with_speedup_data(
                     context,
                     CHALLENGE,
                     0,
-                    (leaf_index + leaf_offset) as u32,
+                    (leaf_start + dynamic_offset) as u32,
                     true,
                 )?;
                 context.bitcoin_coordinator.dispatch(
@@ -2013,65 +2093,6 @@ impl DisputeResolutionProtocol {
             }
         }
         Ok(())
-    }
-
-    fn resolve_challenge_idx(
-        &self,
-        challenge_idx: u32,
-        program_context: &ProgramContext,
-    ) -> Result<(u32, Option<u32>), BitVMXError> {
-        let mut program = self
-            .get_program_definition(program_context)?
-            .0
-            .load_program()?;
-
-        let input_idx = Self::get_challenge_index("input");
-        let opcode_idx = Self::get_challenge_index("opcode");
-        let rom_idx = Self::get_challenge_index("rom");
-
-        let input_words = program_context
-            .globals
-            .get_var(&self.ctx.id, "input_words")?
-            .unwrap()
-            .number()?;
-        let opcode_words = program.get_chunk_count(CODE_CHUNK_SIZE);
-        let rom_words = program.find_section_by_name(".rodata").unwrap().data.len() as u32;
-
-        let input_start = input_idx;
-        let input_end = input_start + input_words;
-
-        let opcode_start = input_end;
-        let opcode_end = opcode_start + opcode_words;
-
-        let rom_start = opcode_end;
-        let rom_end = rom_start + rom_words;
-
-        let (real_idx, sub_idx) = if challenge_idx < input_start {
-            (challenge_idx, None) // simple fixed challenge
-        } else if challenge_idx < input_end {
-            let sub = challenge_idx - input_start;
-            let idx = if input_words == 1 { None } else { Some(sub) };
-            (input_idx, idx) // inside input
-        } else if challenge_idx < opcode_end {
-            let sub = challenge_idx - opcode_start;
-            let idx = if opcode_words == 1 { None } else { Some(sub) };
-            (opcode_idx, idx) // inside opcode
-        } else if challenge_idx < rom_end {
-            let sub = challenge_idx - rom_start;
-            let idx = if rom_words == 1 { None } else { Some(sub) };
-            (rom_idx, idx) // inside rom
-        } else {
-            return Err(BitVMXError::ChallengeIdxNotFound(challenge_idx));
-        };
-
-        Ok((real_idx, sub_idx))
-    }
-
-    fn get_challenge_index(name: &str) -> u32 {
-        CHALLENGES
-            .iter()
-            .position(|(n, _)| *n == name)
-            .expect("challenge not found") as u32
     }
 
     fn get_execution_path(&self) -> Result<String, BitVMXError> {

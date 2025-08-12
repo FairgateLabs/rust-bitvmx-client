@@ -1,4 +1,6 @@
-use crate::{bitcoin::emulated_user_keypair, expect_msg};
+use crate::{
+    bitcoin::emulated_user_keypair, expect_msg, macros::wait_for_message_blocking, wait_until_msg,
+};
 use anyhow::Result;
 use bitcoin::{
     absolute,
@@ -85,8 +87,8 @@ impl User {
 
         // Wait for Bitvmx news PeginTransactionFound message
         info!("Waiting for RSK pegin transaction to be found");
-        let (found_txid, tx_status) =
-            expect_msg!(self.bitvmx, PeginTransactionFound(txid, tx_status) => (txid, tx_status))?;
+
+        let (found_txid, tx_status) = wait_until_msg!(&self.bitvmx, PeginTransactionFound(_txid, _tx_status) => (_txid, _tx_status));
         assert_eq!(
             found_txid, request_pegin_txid,
             "Request Pegin Transaction not found"
@@ -99,7 +101,7 @@ impl User {
         info!("Transaction ID: {}", request_pegin_txid);
 
         // Get the SPV proof, this should be used by the union client to present to the smart contract
-        self.bitvmx.get_spv_proof(found_txid)?;
+        self.bitvmx.get_spv_proof(request_pegin_txid)?;
         let spv_proof = expect_msg!(self.bitvmx, SPVProof(_, Some(spv_proof)) => spv_proof)?;
         info!("SPV proof: {:?}", spv_proof);
 

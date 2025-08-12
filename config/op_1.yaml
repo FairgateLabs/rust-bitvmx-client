@@ -25,6 +25,7 @@ p2p:
 coordinator:
   throtthle_bitcoin_updates_until_sync: 0
   throtthle_bitcoin_updates: 0
+#  estimate_fee: 8
 
 broker_storage: 
   path: /tmp/op_1/broker.db

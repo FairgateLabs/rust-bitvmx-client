@@ -1,9 +1,6 @@
 use std::{collections::HashMap, rc::Rc};
 
-use bitcoin::{
-    secp256k1::{rand::thread_rng},
-    PublicKey, XOnlyPublicKey,
-};
+use bitcoin::{secp256k1::rand::thread_rng, PublicKey, XOnlyPublicKey};
 use key_manager::{
     create_key_manager_from_config,
     key_manager::KeyManager,
@@ -11,8 +8,11 @@ use key_manager::{
     musig2::{types::MessageId, PartialSignature, PubNonce},
     winternitz::{WinternitzPublicKey, WinternitzType},
 };
-use rcgen::{CertificateParams, Certificate, KeyPair, PKCS_RSA_SHA256};
-use rsa::{pkcs8::{DecodePrivateKey, DecodePublicKey}, Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey};
+use rcgen::{Certificate, CertificateParams, KeyPair, PKCS_RSA_SHA256};
+use rsa::{
+    pkcs8::{DecodePrivateKey, DecodePublicKey},
+    Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey,
+};
 
 use protocol_builder::unspendable::unspendable_key;
 use storage_backend::storage::{KeyValueStore, Storage};
@@ -262,28 +262,34 @@ impl KeyChain {
     //     Ok(())
     // }
 
-    pub fn encrypt_messages(&self, message: Vec<u8>, public_key: Vec<u8>) -> Result<Vec<u8>, BitVMXError> {
+    pub fn encrypt_messages(
+        &self,
+        message: Vec<u8>,
+        public_key: Vec<u8>,
+    ) -> Result<Vec<u8>, BitVMXError> {
         // 2. Parse the pkcs8public key with rsa crate
         let rsa_pub = RsaPublicKey::from_public_key_der(&public_key).unwrap();
 
         // 3. Encrypt data with public key
         let mut rng = thread_rng();
-        let enc_data = rsa_pub.encrypt(&mut rng, Pkcs1v15Encrypt, &message).unwrap();
+        let enc_data = rsa_pub
+            .encrypt(&mut rng, Pkcs1v15Encrypt, &message)
+            .unwrap();
 
         Ok(enc_data)
     }
 
     pub fn decrypt_messages(&self, message: Vec<u8>) -> Result<Vec<u8>, BitVMXError> {
-          // 1. Extract pkcs8 private key PEMs
-          let privkey_der = self.cert.get_key_pair().serialize_der();
-  
-          // 2. Parse keys with rsa crate
-          let rsa_priv = RsaPrivateKey::from_pkcs8_der(&privkey_der).unwrap();
+        // 1. Extract pkcs8 private key PEMs
+        let privkey_der = self.cert.get_key_pair().serialize_der();
 
-          // 3. Decrypt data with private key
-          let decrypted = rsa_priv.decrypt(Pkcs1v15Encrypt, &message).unwrap();
+        // 2. Parse keys with rsa crate
+        let rsa_priv = RsaPrivateKey::from_pkcs8_der(&privkey_der).unwrap();
 
-          Ok(decrypted)
+        // 3. Decrypt data with private key
+        let decrypted = rsa_priv.decrypt(Pkcs1v15Encrypt, &message).unwrap();
+
+        Ok(decrypted)
     }
 }
 
@@ -337,23 +343,24 @@ mod tests {
 
         // Test message
         let original_message = b"Hello, this is a test message for encryption!".to_vec();
-        
+
         // Get the public key from the certificate for encryption
         let public_key_der = keychain.cert.get_key_pair().public_key_der();
 
         // Encrypt the message
-        let encrypted_message = keychain.encrypt_messages(original_message.clone(), public_key_der)?;
-        
+        let encrypted_message =
+            keychain.encrypt_messages(original_message.clone(), public_key_der)?;
+
         // Verify encryption changed the data
         assert_ne!(original_message, encrypted_message);
         assert!(!encrypted_message.is_empty());
-        
+
         // Decrypt the message
         let decrypted_message = keychain.decrypt_messages(encrypted_message)?;
-        
+
         // Verify decryption restored the original message
         assert_eq!(original_message, decrypted_message);
-        
+
         Ok(())
     }
 }

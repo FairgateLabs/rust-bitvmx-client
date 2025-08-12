@@ -1,6 +1,6 @@
 use anyhow::Result;
 use bitcoin::Txid;
-use bitvmx_client::program::protocols::union::types::ACCEPT_PEGIN_TX;
+use bitvmx_client::program::protocols::union::types::{ACCEPT_PEGIN_TX, USER_TAKE_TX};
 use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtxo};
 use bitvmx_client::types::OutgoingBitVMXApiMessages::{SPVProof, Transaction, TransactionInfo};
 
@@ -79,10 +79,12 @@ impl Committee {
 
         let seed = self.committee_id;
 
-        let mut funding_utxos_per_member: HashMap<PublicKey, Vec<PartialUtxo>> = HashMap::new();
+        let mut funding_utxos_per_member: HashMap<PublicKey, PartialUtxo> = HashMap::new();
         for member in &self.members {
-            let funding_utxos = self.get_funding_utxos(member)?;
-            funding_utxos_per_member.insert(member.keyring.take_pubkey.unwrap(), funding_utxos);
+            funding_utxos_per_member.insert(
+                member.keyring.take_pubkey.unwrap(),
+                self.get_funding_utxo(member)?,
+            );
         }
 
         self.all(|op| op.setup_dispute_protocols(seed, &members, &funding_utxos_per_member))?;
@@ -103,7 +105,7 @@ impl Committee {
         let protocol_id = Uuid::new_v4();
         let members = self.members.clone();
 
-        self.all(|op| {
+        self.all(|op: &mut Member| {
             op.accept_pegin(
                 protocol_id,
                 &members,
@@ -117,14 +119,26 @@ impl Committee {
             )
         })?;
 
+        self.dispatch_transaction_and_wait_for_spv_proof(protocol_id, ACCEPT_PEGIN_TX.to_string())?;
+
+        Ok(())
+    }
+
+    fn dispatch_transaction_and_wait_for_spv_proof(
+        &self,
+        protocol_id: Uuid,
+        tx_name: String,
+    ) -> Result<()> {
         let bitvmx = &self.members[0].bitvmx;
-        let _ = bitvmx.get_transaction_by_name(protocol_id, ACCEPT_PEGIN_TX.to_string());
+        let _ = bitvmx.get_transaction_by_name(protocol_id, tx_name.clone());
         thread::sleep(std::time::Duration::from_secs(1));
         let tx = wait_until_msg!(bitvmx, TransactionInfo(_, _, _tx) => _tx);
-        let accept_pegin_txid = tx.compute_txid();
+        let txid = tx.compute_txid();
         info!(
-            "AcceptPegIn protocol handler {} dispatching accept pegin transaction: {:?}",
-            protocol_id, tx
+            "Protocol handler {} dispatching {} transaction: {:?}",
+            protocol_id,
+            tx_name.clone(),
+            tx
         );
         bitvmx.dispatch_transaction(protocol_id, tx)?;
         thread::sleep(std::time::Duration::from_secs(1));
@@ -133,18 +147,22 @@ impl Committee {
         let status = wait_until_msg!(bitvmx, Transaction(_, _status, _) => _status);
 
         info!(
-            "AcceptPegIn protocol handler {} send accept pegin transaction with status: {:?}",
-            protocol_id, status
+            "Protocol handler {} sent {} transaction with status: {:?}",
+            protocol_id,
+            tx_name.clone(),
+            status
         );
 
-        info!("Waiting for SPV proof for accept pegin transaction...");
-        let _ = bitvmx.get_spv_proof(accept_pegin_txid);
+        info!(
+            "Waiting for SPV proof for {} transaction...",
+            tx_name.clone()
+        );
+        let _ = bitvmx.get_spv_proof(txid);
         let spv_proof = wait_until_msg!(
             bitvmx,
             SPVProof(_, Some(_spv_proof)) => _spv_proof
         );
-        info!("AcceptPegin SPV proof: {:?}", spv_proof);
-
+        info!("{} SPV proof: {:?}", tx_name.clone(), spv_proof);
         Ok(())
     }
 
@@ -164,6 +182,8 @@ impl Committee {
             )
         })?;
 
+        self.dispatch_transaction_and_wait_for_spv_proof(protocol_id, USER_TAKE_TX.to_string())?;
+
         Ok(())
     }
 
@@ -173,16 +193,17 @@ impl Committee {
         slot_id: usize,
         user_public_key: PublicKey,
         pegout_id: Vec<u8>,
-        operator_id: usize,
+        selected_operator_pubkey: PublicKey,
     ) -> Result<()> {
-        // self.all(|op| {
-        self.members[operator_id].advance_funds(
-            committee_id,
-            slot_id,
-            user_public_key,
-            pegout_id.clone(),
-        )?;
-        // })?;
+        self.all(|op| {
+            op.advance_funds(
+                committee_id,
+                slot_id,
+                user_public_key,
+                pegout_id.clone(),
+                selected_operator_pubkey,
+            )
+        })?;
 
         Ok(())
     }
@@ -194,25 +215,14 @@ impl Committee {
         Ok(self.members[0].keyring.take_aggregated_key.unwrap())
     }
 
-    fn get_funding_utxos(&self, member: &Member) -> Result<Vec<PartialUtxo>> {
-        let count = match member.role {
-            ParticipantRole::Prover => 2,
-            ParticipantRole::Verifier => 1,
-        };
-
-        let utxos = (0..count)
-            .map(|_| {
-                self.prepare_funding_utxo(
-                    &self.wallet,
-                    "fund_1",
-                    &member.keyring.dispute_pubkey.unwrap(),
-                    10_000_000,
-                    None,
-                )
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        Ok(utxos)
+    fn get_funding_utxo(&self, member: &Member) -> Result<PartialUtxo> {
+        self.prepare_funding_utxo(
+            &self.wallet,
+            "fund_1",
+            &member.keyring.dispute_pubkey.unwrap(),
+            10_000_000,
+            None,
+        )
     }
 
     fn prepare_funding_utxo(
@@ -223,8 +233,6 @@ impl Committee {
         amount: u64,
         from: Option<&str>,
     ) -> Result<PartialUtxo> {
-        // info!("Funding address: {:?} with: {}", public_key, amount);
-        // info!("Funding address: {:?} with: {}", public_key, amount);
         let txid = wallet.fund_address(
             WALLET_NAME,
             from.unwrap_or(funding_id),
