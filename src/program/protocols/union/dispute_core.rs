@@ -19,6 +19,7 @@ use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use protocol_builder::{
     builder::Protocol,
+    errors::ProtocolBuilderError,
     graph::graph::GraphOptions,
     scripts::{self, SignMode},
     types::{
@@ -160,19 +161,14 @@ impl ProtocolHandler for DisputeCoreProtocol {
     fn get_transaction_by_name(
         &self,
         name: &str,
-        _context: &ProgramContext,
+        context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        let setup_tx_name = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
-
-        match name {
-            name if name == setup_tx_name => Ok((self.setup_tx(_context)?, None)),
-            _ => {
-                // For other transactions, fallback to unsigned transaction
-                Ok((
-                    self.load_protocol()?.transaction_by_name(name)?.clone(),
-                    None,
-                ))
-            }
+        if name == format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX) {
+            Ok((self.op_initial_deposit_tx(name, context)?, None))
+        } else if name == format!("{}{}", OPERATOR, SETUP_TX_SUFFIX) {
+            Ok((self.setup_tx(context)?, None))
+        } else {
+            Err(BitVMXError::InvalidTransactionName(name.to_string()))
         }
     }
 
@@ -195,11 +191,8 @@ impl ProtocolHandler for DisputeCoreProtocol {
                 program_context,
             )?;
         }
+
         // TODO: Add more transaction type handlers here as needed
-
-        // let a = AckNews::Monitor(AckMonitorNews::RskPeginTransaction(txid));
-        // _program_context.bitcoin_coordinator.ack_news(a);
-
         Ok(())
     }
 
@@ -409,6 +402,36 @@ impl DisputeCoreProtocol {
             committee.packet_size as usize,
         )?;
 
+        Ok(())
+    }
+
+    fn add_funding_change(
+        &self,
+        protocol: &mut Protocol,
+        operator_keys: &ParticipantKeys,
+        dispute_core_data: &DisputeCoreData,
+    ) -> Result<(), BitVMXError> {
+        // Add a change output to the setup transaction
+        protocol.compute_minimum_output_values()?;
+
+        let funding_amount = dispute_core_data.operator_utxo.2.unwrap();
+        let setup_fees = 1000; //TODO: replace with actual fee calculation or make it configurable
+        let operator_dispute_key = operator_keys.get_public(DISPUTE_KEY)?;
+        let setup = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
+
+        let setup_amount = protocol.transaction_by_name(&setup)?.output[0]
+            .value
+            .to_sat();
+
+        protocol
+            .add_transaction_output(
+                &setup,
+                &OutputType::segwit_key(
+                    funding_amount - setup_amount - setup_fees,
+                    operator_dispute_key,
+                )?,
+            )
+            .map_err(|e| BitVMXError::ProtocolBuilderError(e))?;
         Ok(())
     }
 
@@ -739,5 +762,50 @@ impl DisputeCoreProtocol {
         }
 
         Ok(())
+    }
+
+    pub fn op_initial_deposit_tx(
+        &self,
+        tx_name: &str,
+        context: &ProgramContext,
+    ) -> Result<Transaction, ProtocolBuilderError> {
+        info!(
+            id = self.ctx.my_idx,
+            "Loading OP Initial Deposit transaction for DisputeCore"
+        );
+
+        let dispute_core_data: DisputeCoreData = self
+            .dispute_core_data(context)
+            .map_err(|_e| ProtocolBuilderError::MissingSignature)?;
+
+        if dispute_core_data.operator_index != self.ctx.my_idx {
+            info!(
+                id = self.ctx.my_idx,
+                "Not my dispute_core, skipping dispatch of {} transaction", tx_name
+            );
+            return Err(ProtocolBuilderError::MissingSignature);
+        }
+
+        let mut protocol: Protocol = self.load_protocol()?;
+        let signatures = protocol.sign_taproot_input(
+            tx_name,
+            0,
+            &SpendMode::KeyOnly {
+                key_path_sign: SignMode::Single,
+            },
+            context.key_chain.key_manager.as_ref(),
+            "",
+        )?;
+
+        let mut input_args = InputArgs::new_taproot_key_args();
+        for signature in signatures {
+            if signature.is_some() {
+                input_args.push_taproot_signature(signature.unwrap())?;
+            }
+        }
+
+        info!("Op initial deposit tx signatures: {:?}", input_args);
+
+        protocol.transaction_to_send(&tx_name, &[input_args])
     }
 }

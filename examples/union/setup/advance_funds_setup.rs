@@ -66,10 +66,9 @@ impl AdvanceFunds {
 
         let request = AdvanceFundsRequest {
             committee_id,
-            slot_id,
+            slot_index: slot_id,
             pegout_id,
             fee: 355, // This will be set later
-            operator_pubkey,
             user_pubkey,
             my_take_pubkey,
         };

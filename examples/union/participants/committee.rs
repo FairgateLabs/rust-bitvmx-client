@@ -23,7 +23,7 @@ pub struct Committee {
     take_aggregation_id: Uuid,
     dispute_aggregation_id: Uuid,
     committee_id: Uuid,
-    wallet: Wallet,
+    pub wallet: Wallet,
 }
 
 impl Committee {
@@ -87,7 +87,9 @@ impl Committee {
             );
         }
 
-        self.all(|op| op.setup_dispute_protocols(seed, &members, &funding_utxos_per_member))?;
+        self.all(|op: &mut Member| {
+            op.setup_dispute_protocols(seed, &members, &funding_utxos_per_member)
+        })?;
 
         Ok(self.public_key()?)
     }
@@ -212,7 +214,6 @@ impl Committee {
 
         Ok(())
     }
-
 
     pub fn public_key(&self) -> Result<PublicKey> {
         if self.members.is_empty() {
