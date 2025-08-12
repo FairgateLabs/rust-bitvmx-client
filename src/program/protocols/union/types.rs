@@ -14,6 +14,7 @@ pub const SELECTED_OPERATOR_PUBKEY: &str = "selected_operator_pubkey";
 pub const REQUEST_PEGIN_TX: &str = "REQUEST_PEGIN_TX";
 pub const ACCEPT_PEGIN_TX: &str = "ACCEPT_PEGIN_TX";
 pub const USER_TAKE_TX: &str = "USER_TAKE_TX";
+pub const ADVANCE_FUNDS_TX: &str = "ADVANCE_FUNDS_TX";
 pub const OPERATOR_TAKE_TX: &str = "OPERATOR_TAKE_TX";
 pub const OPERATOR_WON_TX: &str = "OPERATOR_WON_TX";
 pub const OP_FUNDING_TX: &str = "OP_FUNDING_TX";
@@ -50,6 +51,7 @@ pub const SELF_DISABLER_TX_SUFFIX: &str = "_SELF_DISABLER_TX";
 // UTXOs
 pub const OPERATOR_TAKE_ENABLER: &str = "operator_take_enabler";
 pub const OPERATOR_WON_ENABLER: &str = "operator_won_enabler";
+pub const ADVANCE_FUNDS_INPUT: &str = "advance_funds_input";
 
 // Roles
 pub const OPERATOR: &str = "OP";
@@ -97,7 +99,7 @@ pub struct PegInRequest {
     pub accept_pegin_sighash: Vec<u8>,
     pub take_aggregated_key: PublicKey,
     pub operators_take_key: Vec<PublicKey>,
-    pub slot_index: u32,
+    pub slot_index: u64,
     pub committee_id: uuid::Uuid,
     pub rootstock_address: String,
     pub reimbursement_pubkey: PublicKey,
@@ -122,8 +124,13 @@ pub struct PegInAccepted {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PegOutRequest {
     pub committee_id: Uuid,
-    pub slot_id: u32,
-    pub fee: u64,
+    pub stream_id: u64,
+    pub packet_number: u64,
+    pub slot_id: u64,
+    pub amount: u64,
+    pub pegout_id: Vec<u8>,
+    pub pegout_signature_hash: Vec<u8>,
+    pub pegout_signature_message: Vec<u8>,
     pub user_pubkey: PublicKey,
     pub take_aggregated_key: PublicKey,
 }
@@ -146,5 +153,22 @@ pub struct PegOutAccepted {
 impl PegOutAccepted {
     pub fn name() -> String {
         "pegout_accepted".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdvanceFundsRequest {
+    pub committee_id: Uuid,
+    pub slot_id: usize,
+    pub pegout_id: Vec<u8>,
+    pub fee: u64,
+    pub operator_pubkey: PublicKey,
+    pub user_pubkey: PublicKey,
+    pub my_take_pubkey: PublicKey,
+}
+
+impl AdvanceFundsRequest {
+    pub fn name() -> String {
+        "advance_funds_request".to_string()
     }
 }

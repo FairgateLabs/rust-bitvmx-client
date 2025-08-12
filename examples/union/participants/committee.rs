@@ -98,7 +98,7 @@ impl Committee {
         request_pegin_txid: Txid,
         amount: u64,
         accept_pegin_sighash: Vec<u8>,
-        slot_index: u32,
+        slot_index: u64,
         rootstock_address: String,
         reimbursement_pubkey: PublicKey,
     ) -> Result<()> {
@@ -166,7 +166,17 @@ impl Committee {
         Ok(())
     }
 
-    pub fn request_pegout(&mut self, user_pubkey: PublicKey, slot_id: u32, fee: u64) -> Result<()> {
+    pub fn request_pegout(
+        &mut self,
+        user_pubkey: PublicKey,
+        slot_id: u64,
+        stream_id: u64,
+        packet_number: u64,
+        amount: u64,
+        pegout_id: Vec<u8>,
+        pegout_signature_hash: Vec<u8>,
+        pegout_signature_message: Vec<u8>,
+    ) -> Result<()> {
         let members = self.members.clone();
         let committee_id = self.committee_id.clone();
         let protocol_id = Uuid::new_v4();
@@ -175,9 +185,14 @@ impl Committee {
             op.request_pegout(
                 protocol_id,
                 committee_id,
-                user_pubkey,
+                stream_id,
+                packet_number,
                 slot_id,
-                fee,
+                amount,
+                pegout_id.clone(),
+                pegout_signature_hash.clone(),
+                pegout_signature_message.clone(),
+                user_pubkey,
                 &members,
             )
         })?;
@@ -189,19 +204,24 @@ impl Committee {
 
     pub fn advance_funds(
         &mut self,
-        committee_id: Uuid,
         slot_id: usize,
         user_public_key: PublicKey,
         pegout_id: Vec<u8>,
         selected_operator_pubkey: PublicKey,
     ) -> Result<()> {
-        self.all(|op| {
+        let protocol_id = Uuid::new_v4();
+        let committee_id = self.committee_id.clone();
+        let members = self.members.clone();
+
+        self.all(|op: &mut Member| {
             op.advance_funds(
+                protocol_id,
                 committee_id,
                 slot_id,
                 user_public_key,
                 pegout_id.clone(),
                 selected_operator_pubkey,
+                &members,
             )
         })?;
 

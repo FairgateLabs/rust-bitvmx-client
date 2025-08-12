@@ -1,8 +1,4 @@
-use crate::{
-    macros::wait_for_message_blocking,
-    participants::member::{Keyring, Member},
-    wait_until_msg,
-};
+use crate::participants::member::{Keyring, Member};
 use anyhow::Result;
 use bitcoin::{PublicKey, Txid};
 use bitvmx_client::{
@@ -12,9 +8,8 @@ use bitvmx_client::{
         protocols::union::types::PegInRequest,
         variables::VariableTypes,
     },
-    types::{OutgoingBitVMXApiMessages::SetupCompleted, PROGRAM_TYPE_ACCEPT_PEGIN},
+    types::PROGRAM_TYPE_ACCEPT_PEGIN,
 };
-use std::collections::HashMap;
 use tracing::info;
 use uuid::Uuid;
 
@@ -33,7 +28,7 @@ impl AcceptPegInSetup {
         keyring: &Keyring,
         bitvmx: &BitVMXClient,
         committee_id: Uuid,
-        slot_index: u32,
+        slot_index: u64,
         rootstock_address: String,
         reimbursement_pubkey: PublicKey,
     ) -> Result<()> {
@@ -43,15 +38,6 @@ impl AcceptPegInSetup {
             id = my_id,
             "Setting up the AcceptPegIn protocol handler {} for {}", protocol_id, my_id
         );
-
-        // build a map of communication pubkeys to addresses
-        let mut comms = HashMap::new();
-        for member in committee {
-            comms.insert(
-                member.keyring.communication_pubkey.unwrap(),
-                member.address.clone().unwrap(),
-            );
-        }
 
         let mut operators_take_key = Vec::new();
         for member in committee {
@@ -84,9 +70,6 @@ impl AcceptPegInSetup {
             addresses,
             0,
         )?;
-
-        let program_id = wait_until_msg!(bitvmx, SetupCompleted(_program_id) => _program_id);
-        info!(id = "AcceptPegInSetup", program_id = ?program_id, "Accept pegin setup completed (from setup)");
 
         Ok(())
     }
