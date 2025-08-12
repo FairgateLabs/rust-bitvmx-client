@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use bitcoin::{Amount, PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use protocol_builder::{
-    builder::Protocol,
     errors::ProtocolBuilderError,
     graph::graph::GraphOptions,
     scripts::op_return_script,
@@ -23,14 +22,15 @@ use crate::{
     program::{
         participant::ParticipantKeys,
         protocols::{
-            protocol_handler::{ProtocolContext, ProtocolHandler}, union::{
+            protocol_handler::{ProtocolContext, ProtocolHandler},
+            union::{
                 common::{create_transaction_reference, get_dispute_core_id, indexed_name},
+                dispute_core::PEGOUT_ID,
                 types::{
                     AdvanceFundsRequest, ACCEPT_PEGIN_TX, ADVANCE_FUNDS_INPUT, ADVANCE_FUNDS_TX,
                     DUST_VALUE, INITIAL_DEPOSIT_TX_SUFFIX, OPERATOR, OP_INITIAL_DEPOSIT_FLAG,
                     REIMBURSEMENT_KICKOFF_TX,
                 },
-                dispute_core::PEGOUT_ID,
             },
         },
         variables::{PartialUtxo, VariableTypes},
@@ -182,6 +182,10 @@ impl ProtocolHandler for AdvanceFundsProtocol {
         _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         let transaction_name = self.get_transaction_name_by_id(tx_id)?;
+        info!(
+            "Transaction {} with id {} has been processed in context AdvanceFundsProtocol",
+            transaction_name, tx_id
+        );
 
         if transaction_name == ADVANCE_FUNDS_TX {
             let request: AdvanceFundsRequest = self.advance_funds_request(context)?;
@@ -193,7 +197,8 @@ impl ProtocolHandler for AdvanceFundsProtocol {
                 )?;
             }
 
-            let dispute_protocol_id = get_dispute_core_id(request.committee_id, &request.my_take_pubkey);
+            let dispute_protocol_id =
+                get_dispute_core_id(request.committee_id, &request.my_take_pubkey);
 
             self.save_pegout_id(
                 context,
@@ -202,11 +207,7 @@ impl ProtocolHandler for AdvanceFundsProtocol {
                 request.slot_index,
             )?;
 
-            self.dispatch_reimbursement_tx(
-                context,
-                dispute_protocol_id,
-                request.slot_index,
-            )?;
+            self.dispatch_reimbursement_tx(context, dispute_protocol_id, request.slot_index)?;
         }
 
         Ok(())
@@ -302,15 +303,12 @@ impl AdvanceFundsProtocol {
     ) -> Result<(), BitVMXError> {
         let dispute_protocol_id = get_dispute_core_id(*committee_id, pubkey);
 
-        let dispute_core: Protocol =
+        let dispute_core =
             self.load_protocol_by_name(PROGRAM_TYPE_DISPUTE_CORE, dispute_protocol_id)?;
 
         let tx_name = format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX);
-        let tx = dispute_core.transaction_by_name(&tx_name)?;
-
+        let (tx, _) = dispute_core.get_transaction_by_name(&tx_name, context)?;
         let txid = tx.compute_txid();
-
-        // Dispatch the transaction through the bitcoin coordinator
 
         context.bitcoin_coordinator.dispatch(
             tx.clone(),
@@ -339,13 +337,19 @@ impl AdvanceFundsProtocol {
         dispute_protocol_id: Uuid,
         slot_index: usize,
     ) -> Result<(), BitVMXError> {
+        info!(
+            "Dispatching reimbursement kickoff transaction for slot index {} in dispute protocol {}",
+            slot_index, dispute_protocol_id
+        );
 
-        let dispute_core: Protocol =
+        let dispute_core =
             self.load_protocol_by_name(PROGRAM_TYPE_DISPUTE_CORE, dispute_protocol_id)?;
 
         let tx_name = indexed_name(REIMBURSEMENT_KICKOFF_TX, slot_index);
-        let tx = dispute_core.transaction_by_name(&tx_name)?;
+        let (tx, _) = dispute_core.get_transaction_by_name(&tx_name, context)?;
         let txid = tx.compute_txid();
+
+        info!("Reinbursement kickoff transaction: {:?}", tx);
 
         // Dispatch the transaction through the bitcoin coordinator
         context.bitcoin_coordinator.dispatch(
