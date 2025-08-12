@@ -40,6 +40,8 @@ use uuid::Uuid;
 
 mod common;
 
+const MIN_TX_FEE: f64 = 8.0;
+
 pub fn get_configs(network: Network) -> Result<Vec<Config>> {
     let config_names = match network {
         Network::Regtest => vec!["op_1", "op_2", "op_3"],
@@ -247,7 +249,7 @@ impl TestHelper {
                 wallet_config.bitcoin.clone(),
                 BitcoindFlags {
                     min_relay_tx_fee: 0.00001,
-                    block_min_tx_fee: 0.00008,
+                    block_min_tx_fee: 0.00001 * MIN_TX_FEE,
                     debug: 1,
                     fallback_fee: 0.0002,
                 },
@@ -449,7 +451,7 @@ pub fn test_all_aux(
     let _funding_key_2 = msgs[2].public_key().unwrap().1;
 
     info!("Creating speedup funds");
-    let speedup_amount = 100_000;
+    let speedup_amount = 100_000 * MIN_TX_FEE as u64;
 
     let fund_txid_0 = helper.wallet.fund_address(
         WALLET_NAME,
