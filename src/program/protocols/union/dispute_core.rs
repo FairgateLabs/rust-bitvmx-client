@@ -15,8 +15,13 @@ use crate::{
     types::ProgramContext,
 };
 
-use bitcoin::{hashes::{sha256, Hash}, secp256k1::Message, EcdsaSighashType, PublicKey, Transaction, Txid};
+use bitcoin::{
+    hashes::{sha256, Hash},
+    secp256k1::Message,
+    EcdsaSighashType, PublicKey, Transaction, Txid,
+};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
+use core::result::Result::Ok;
 use protocol_builder::{
     builder::Protocol,
     errors::ProtocolBuilderError,
@@ -30,7 +35,7 @@ use protocol_builder::{
     },
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, env::set_var};
+use std::collections::HashMap;
 use tracing::info;
 use uuid::Uuid;
 
@@ -184,6 +189,11 @@ impl ProtocolHandler for DisputeCoreProtocol {
         program_context: &ProgramContext,
         _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
+        info!(
+            "Dispute core protocol received news of transaction: {} with status {:#?}",
+            tx_id, tx_status
+        );
+
         let transaction_name = self.get_transaction_name_by_id(tx_id)?;
 
         match transaction_name.as_str() {
@@ -213,6 +223,9 @@ impl ProtocolHandler for DisputeCoreProtocol {
 
         // Automatically get and dispatch the OP_SETUP_TX transaction
         self.dispatch_setup_tx(program_context)?;
+
+        // FIXME: REMOVE
+        // self.dispatch_op_initial_deposit_tx(program_context)?;
 
         Ok(())
     }
@@ -321,7 +334,7 @@ impl DisputeCoreProtocol {
             let pegout_id_name = indexed_name(PEGOUT_ID_KEY, dispute_core_index);
             let pegout_id_key = operator_keys.get_winternitz(&pegout_id_name)?;
             let data = VariableTypes::WinternitzPubKey(pegout_id_key.clone());
-            context.globals.set_var(&self.ctx.id, &pegout_id_name, data);
+            let _ = context.globals.set_var(&self.ctx.id, &pegout_id_name, data);
         }
 
         let start_reimbursement = union::scripts::start_reimbursement(
@@ -510,8 +523,12 @@ impl DisputeCoreProtocol {
         Ok(setup_tx)
     }
 
-    fn reimbursement_kickoff_tx(&self, name: &str, context: &ProgramContext) -> Result<Transaction, BitVMXError> {
-        let slot_index = self.extract_slot_index(name)?;
+    fn reimbursement_kickoff_tx(
+        &self,
+        name: &str,
+        context: &ProgramContext,
+    ) -> Result<Transaction, BitVMXError> {
+        let slot_index = self.extract_slot_index(name, REIMBURSEMENT_KICKOFF_TX)?;
         let pegout_id_key = self.pegout_id_key(context, slot_index)?;
         let dispute_key = self.my_dispute_key(&context)?;
 
@@ -519,18 +536,27 @@ impl DisputeCoreProtocol {
         let slot_index_digest = sha256::Hash::hash(slot_index.to_be_bytes().as_slice());
         let slot_index_message = Message::from_digest(slot_index_digest.to_byte_array());
         let slot_index_signature = bitcoin::ecdsa::Signature {
-            signature: context.key_chain.key_manager.sign_ecdsa_message(&slot_index_message, &dispute_key)?,
+            signature: context
+                .key_chain
+                .key_manager
+                .sign_ecdsa_message(&slot_index_message, &dispute_key)?,
             sighash_type: EcdsaSighashType::All,
         };
 
-        let pegout_id_signature = context.key_chain.key_manager.sign_winternitz_message(self.pegout_id(context, slot_index)?.as_slice(), pegout_id_key.key_type(), pegout_id_key.derivation_index()?)?;
+        let pegout_id_signature = context.key_chain.key_manager.sign_winternitz_message(
+            self.pegout_id(context, slot_index)?.as_slice(),
+            pegout_id_key.key_type(),
+            pegout_id_key.derivation_index()?,
+        )?;
 
         // Create input arguments
         let mut input_args = InputArgs::new_taproot_script_args(0);
         input_args.push_ecdsa_signature(slot_index_signature)?;
         input_args.push_winternitz_signature(pegout_id_signature);
 
-        let reimbursement_tx = self.load_protocol()?.transaction_to_send(&name, &[input_args])?;
+        let reimbursement_tx = self
+            .load_protocol()?
+            .transaction_to_send(&name, &[input_args])?;
         info!(
             "Reimbursement kickoff transaction for slot {}: {:#?}",
             slot_index, reimbursement_tx
@@ -604,26 +630,61 @@ impl DisputeCoreProtocol {
         }
     }
 
-    fn extract_slot_index(&self, transaction_name: &str) -> Result<usize, BitVMXError> {
-        let prefix = format!("{}_", ADVANCE_FUNDS_TX);
-        let slot_index = transaction_name
+    fn extract_slot_index(&self, tx_name: &str, tx_prefix: &str) -> Result<usize, BitVMXError> {
+        let prefix = format!("{}_", tx_prefix);
+        let slot_index = tx_name
             .strip_prefix(&prefix)
-            .ok_or_else(|| BitVMXError::InvalidTransactionName(format!(
-                "Transaction name '{}' does not match expected format '{}{}'",
-                transaction_name, prefix, "{slot_index}"
-            )))?
+            .ok_or_else(|| {
+                BitVMXError::InvalidTransactionName(format!(
+                    "Transaction name '{}' does not match expected format '{}{}'",
+                    tx_name, prefix, "{slot_index}"
+                ))
+            })?
             .parse::<usize>()
-            .map_err(|_| BitVMXError::InvalidTransactionName(format!(
-                "Could not parse slot_index from transaction name: {}",
-                transaction_name
-            )))?;
+            .map_err(|_| {
+                BitVMXError::InvalidTransactionName(format!(
+                    "Could not parse slot_index from transaction name: {}",
+                    tx_name
+                ))
+            })?;
 
         info!(
             "Extracted slot_index {} from transaction name: {}",
-            slot_index, transaction_name
+            slot_index, tx_name
         );
         Ok(slot_index)
     }
+
+    // fn dispatch_op_initial_deposit_tx(&self, context: &ProgramContext) -> Result<(), BitVMXError> {
+    //     if self.dispute_core_data(context)?.operator_index != self.ctx.my_idx {
+    //         info!(
+    //             id = self.ctx.my_idx,
+    //             "Not my dispute_core, skipping dispatch of {} transaction",
+    //             INITIAL_DEPOSIT_TX_SUFFIX
+    //         );
+    //         return Ok(());
+    //     }
+
+    //     let tx = self.op_initial_deposit_tx(
+    //         &format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX),
+    //         context,
+    //     )?;
+    //     let txid = tx.compute_txid();
+
+    //     // Dispatch the transaction through the bitcoin coordinator
+    //     context.bitcoin_coordinator.dispatch(
+    //         tx,
+    //         None,                                          // No speedup data
+    //         format!("dispute_core_setup_{}", self.ctx.id), // Context string
+    //         None,                                          // Dispatch immediately
+    //     )?;
+
+    //     info!(
+    //         id = self.ctx.my_idx,
+    //         "INITIAL_DEPOSIT_TX_SUFFIX dispatched successfully with txid: {}", txid
+    //     );
+    //     Ok(())
+    // }
 
     fn get_selected_operator_key(
         &self,
@@ -835,6 +896,10 @@ impl DisputeCoreProtocol {
         let mut input_args = InputArgs::new_taproot_key_args();
         for signature in signatures {
             if signature.is_some() {
+                info!(
+                    "Adding taproot signature to input args for {}: {:?}",
+                    tx_name, signature
+                );
                 input_args.push_taproot_signature(signature.unwrap())?;
             }
         }
@@ -844,14 +909,24 @@ impl DisputeCoreProtocol {
         protocol.transaction_to_send(&tx_name, &[input_args])
     }
 
-    fn pegout_id_key(&self, context: &ProgramContext, slot_index: usize) -> Result<key_manager::winternitz::WinternitzPublicKey, BitVMXError> {
+    fn pegout_id_key(
+        &self,
+        context: &ProgramContext,
+        slot_index: usize,
+    ) -> Result<key_manager::winternitz::WinternitzPublicKey, BitVMXError> {
         let pegout_id_name = indexed_name(PEGOUT_ID_KEY, slot_index);
-        context.globals.get_var(&self.ctx.id, &pegout_id_name)?
+        context
+            .globals
+            .get_var(&self.ctx.id, &pegout_id_name)?
             .ok_or_else(|| BitVMXError::VariableNotFound(self.ctx.id, pegout_id_name.clone()))?
             .wots_pubkey()
     }
 
-    fn pegout_id(&self, context: &ProgramContext, slot_index: usize) -> Result<Vec<u8>, BitVMXError> {
+    fn pegout_id(
+        &self,
+        context: &ProgramContext,
+        slot_index: usize,
+    ) -> Result<Vec<u8>, BitVMXError> {
         context
             .globals
             .get_var(&self.ctx.id, &indexed_name(PEGOUT_ID, slot_index))?

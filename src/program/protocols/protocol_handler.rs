@@ -457,15 +457,21 @@ pub trait ProtocolHandler {
         &self,
         name: &str,
         protocol_id: Uuid,
-    ) -> Result<Protocol, BitVMXError> {
-        let protocol_name = &get_protocol_name(name, protocol_id);
-        match Protocol::load(
-            protocol_name,
+    ) -> Result<ProtocolType, BitVMXError> {
+        new_protocol_type(
+            protocol_id,
+            name,
+            self.context().my_idx,
             self.context().storage.as_ref().unwrap().clone(),
-        )? {
-            Some(protocol) => Ok(protocol),
-            None => Err(BitVMXError::ProtocolNotFound(protocol_name.clone())),
-        }
+        )
+
+        // match Protocol::load(
+        //     protocol_name,
+        //     self.context().storage.as_ref().unwrap().clone(),
+        // )? {
+        //     Some(protocol) => Ok(protocol),
+        //     None => Err(BitVMXError::ProtocolNotFound(protocol_name.clone())),
+        // }
     }
 
     fn setup_complete(&self, program_context: &ProgramContext) -> Result<(), BitVMXError>;
