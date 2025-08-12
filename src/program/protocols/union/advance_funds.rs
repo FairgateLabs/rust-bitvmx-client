@@ -23,14 +23,14 @@ use crate::{
     program::{
         participant::ParticipantKeys,
         protocols::{
-            protocol_handler::{ProtocolContext, ProtocolHandler},
-            union::{
+            protocol_handler::{ProtocolContext, ProtocolHandler}, union::{
                 common::{create_transaction_reference, get_dispute_core_id, indexed_name},
                 types::{
                     AdvanceFundsRequest, ACCEPT_PEGIN_TX, ADVANCE_FUNDS_INPUT, ADVANCE_FUNDS_TX,
                     DUST_VALUE, INITIAL_DEPOSIT_TX_SUFFIX, OPERATOR, OP_INITIAL_DEPOSIT_FLAG,
                     REIMBURSEMENT_KICKOFF_TX,
                 },
+                dispute_core::PEGOUT_ID,
             },
         },
         variables::{PartialUtxo, VariableTypes},
@@ -193,10 +193,18 @@ impl ProtocolHandler for AdvanceFundsProtocol {
                 )?;
             }
 
+            let dispute_protocol_id = get_dispute_core_id(request.committee_id, &request.my_take_pubkey);
+
+            self.save_pegout_id(
+                context,
+                dispute_protocol_id,
+                request.pegout_id,
+                request.slot_index,
+            )?;
+
             self.dispatch_reimbursement_tx(
                 context,
-                &request.committee_id,
-                &request.my_take_pubkey,
+                dispute_protocol_id,
                 request.slot_index,
             )?;
         }
@@ -328,16 +336,14 @@ impl AdvanceFundsProtocol {
     pub fn dispatch_reimbursement_tx(
         &self,
         context: &ProgramContext,
-        committee_id: &Uuid,
-        pubkey: &PublicKey,
+        dispute_protocol_id: Uuid,
         slot_index: usize,
     ) -> Result<(), BitVMXError> {
-        let dispute_protocol_id = get_dispute_core_id(*committee_id, pubkey);
 
         let dispute_core: Protocol =
             self.load_protocol_by_name(PROGRAM_TYPE_DISPUTE_CORE, dispute_protocol_id)?;
 
-        let tx_name = format!("{}_{}", REIMBURSEMENT_KICKOFF_TX, slot_index);
+        let tx_name = indexed_name(REIMBURSEMENT_KICKOFF_TX, slot_index);
         let tx = dispute_core.transaction_by_name(&tx_name)?;
         let txid = tx.compute_txid();
 
@@ -353,6 +359,21 @@ impl AdvanceFundsProtocol {
             id = self.ctx.my_idx,
             "{} dispatched with txid: {}", tx_name, txid
         );
+        Ok(())
+    }
+
+    fn save_pegout_id(
+        &self,
+        context: &ProgramContext,
+        dispute_protocol_id: Uuid,
+        pegout_id: Vec<u8>,
+        slot_index: usize,
+    ) -> Result<(), BitVMXError> {
+        context.globals.set_var(
+            &dispute_protocol_id,
+            &indexed_name(PEGOUT_ID, slot_index),
+            VariableTypes::Input(pegout_id.clone()),
+        )?;
         Ok(())
     }
 }

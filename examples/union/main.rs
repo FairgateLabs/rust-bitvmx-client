@@ -219,6 +219,13 @@ pub fn advance_funds() -> Result<()> {
         selected_operator_pubkey,
     )?;
 
+    info!("Waiting some time to ensure all advance funds messages are processed...");
+    thread::sleep(Duration::from_secs(2));
+    info!("Mining 1 block and wait...");
+    committee.wallet.mine(1)?;
+    thread::sleep(Duration::from_secs(2));
+    info!("Advance funds complete.");
+
     Ok(())
 }
 
