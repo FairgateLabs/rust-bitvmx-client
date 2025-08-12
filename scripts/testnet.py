@@ -1,6 +1,6 @@
 #pip install requests pyyaml
 import requests
-import yaml 
+import yaml
 
 RPC_URL = "https://distinguished-intensive-frost.btc-testnet.quiknode.pro/38d0f064dc8e72fe44d8a9a762d448bc64c54619/"
 

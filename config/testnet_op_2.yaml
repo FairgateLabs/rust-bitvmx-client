@@ -23,22 +23,23 @@ p2p:
   timeout: 5
 
 coordinator_settings:
-  max_unconfirmed_speedups: 10
-  max_tx_weight: 400000
-  max_rbf_attempts: 10
-  min_funding_amount_sats: 10000
+  max_unconfirmed_speedups: 5
+  max_tx_weight: 4000000
+  max_rbf_attempts: 5
+  min_funding_amount_sats: 1000
   rbf_fee_percentage: 1.5
-  max_feerate_sat_vb: 1000
+  max_feerate_sat_vb: 6
   min_blocks_before_resend_speedup: 1
+  base_fee_multiplier: 1.0
+  bump_fee_percentage: 1.5
   monitor_settings:
+    confirmation_threshold: 6
     max_monitoring_confirmations: 100
-    confirmation_threshold: 2
     indexer_settings:
-      checkpoint_height: 4626057
-
+      checkpoint_height: 4631118
 coordinator:
   throtthle_bitcoin_updates_until_sync: 1
-  throtthle_bitcoin_updates: 10
+  throtthle_bitcoin_updates: 1
 
 broker_storage:
   path: /tmp/op_2/broker.db
