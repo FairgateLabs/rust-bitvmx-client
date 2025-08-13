@@ -339,12 +339,6 @@ impl BitVMX {
                     self.program_context.broker_channel.send(L2_ID, data)?;
                     ack_news = AckNews::Coordinator(AckCoordinatorNews::InsufficientFunds(tx_id));
                 }
-                CoordinatorNews::NewSpeedUp(_tx_id, _context_data, _counter) => {
-                    // Complete
-                    info!("New speed-up transaction: {:?} {}", _tx_id, _counter);
-
-                    ack_news = AckNews::Coordinator(AckCoordinatorNews::NewSpeedUp(_tx_id));
-                }
                 CoordinatorNews::DispatchTransactionError(_tx_id, _context_data, _counter) => {
                     error!(
                         "Dispatch Transaction Error: {:?} {:?} {}",
