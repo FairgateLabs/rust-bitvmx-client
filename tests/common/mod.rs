@@ -105,8 +105,6 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
 
     let bitcoind = if is_ci {
         info!("Running in CI - using external bitcoind from docker-compose");
-        // En CI, no levantamos bitcoind internamente porque ya está corriendo via docker-compose
-        // Esperamos un momento para que esté completamente iniciado
         std::thread::sleep(std::time::Duration::from_secs(2));
         None
     } else {
