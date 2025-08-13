@@ -377,10 +377,28 @@ impl DisputeCoreProtocol {
             None,
         )?;
 
+        let mut challenge_requests = vec![];
+        for i in 0..keys.len() {
+            // If this is my dispute_core I need to disable me from performing a challenge request to myself.
+            if i == dispute_core_data.operator_index {
+                challenge_requests.push(scripts::op_return_script("skip".as_bytes().to_vec())?);
+            }
+
+            challenge_requests.push(scripts::verify_signature(
+                keys[i].get_public(CHALLENGE_KEY)?,
+                SignMode::Single,
+            )?);
+        }
+
         protocol.add_connection(
             "challenge",
             &reimbursement_kickoff,
-            reimbursement_output.into(),
+            OutputType::taproot(
+                AUTO_AMOUNT,
+                &take_aggregated_key,
+                challenge_requests.as_slice(),
+            )?
+            .into(),
             &challenge,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
             Some(DISPUTE_CORE_SHORT_TIMELOCK),
