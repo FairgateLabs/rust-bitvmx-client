@@ -19,7 +19,6 @@ use uuid::Uuid;
 use super::super::participant::ParticipantKeys;
 use crate::errors::BitVMXError;
 use crate::keychain::KeyChain;
-use crate::program::participant::ParticipantKeysExt;
 
 #[cfg(feature = "cardinal")]
 use super::cardinal::{lock::LockProtocol, slot::SlotProtocol, transfer::TransferProtocol};
@@ -305,7 +304,6 @@ pub trait ProtocolHandler {
         name: &str,
         input_index: u32,
         program_context: &ProgramContext,
-        participant_keys: &Vec<&ParticipantKeys>,
         transaction: &Transaction,
         leaf: Option<u32>,
         protocol: Option<Protocol>,
@@ -349,24 +347,16 @@ pub trait ProtocolHandler {
         //TODO: make the script save the size so we don't need to get it from participant keys or variables
         script.get_keys().iter().rev().for_each(|k| {
             names.push(k.name().to_string());
-            let size = participant_keys.get_key_size(k.name());
-            if size.is_err()  {
-                info!("Could not get the key from participant keys: {}. Trying to get from variables.", k.name());
-                let var = program_context.globals.get_var(&self.context().id, k.name());
-                if var.is_err() || var.as_ref().unwrap().is_none() {
-                    error!(
-                        "Failed to get key size for {}: {}",
-                        k.name(),
-                        size.err().unwrap()
-                    );
-                    return;
-                } else {
-                    sizes.push(message_bytes_length( var.unwrap().unwrap().wots_pubkey().unwrap().message_size().unwrap()));
-                }
-
-            } else {
-                sizes.push(size.unwrap());
+            let size = k.key_type().winternitz_message_size();
+            if size.is_err() {
+                error!(
+                    "Failed to get key size for {}: {}",
+                    k.name(),
+                    size.err().unwrap()
+                );
+                return;
             }
+            sizes.push(message_bytes_length(size.unwrap()));
         });
         info!("Decoding data for {}", name);
         info!("Names: {:?}", names);
@@ -395,7 +385,6 @@ pub trait ProtocolHandler {
         prev_vout: u32,
         prev_name: &str,
         program_context: &ProgramContext,
-        participant_keys: &Vec<&ParticipantKeys>,
         transaction: &Transaction,
         leaf: Option<u32>,
     ) -> Result<Vec<String>, BitVMXError> {
@@ -410,7 +399,6 @@ pub trait ProtocolHandler {
             prev_name,
             idx,
             program_context,
-            participant_keys,
             transaction,
             leaf,
             Some(protocol),
@@ -548,15 +536,6 @@ pub fn new_protocol_type(
             DisputeCoreProtocol::new(ctx),
         )),
         _ => Err(BitVMXError::NotImplemented(name.to_string())),
-    }
-}
-
-impl ProtocolType {
-    pub fn dispute(self) -> Result<DisputeResolutionProtocol, BitVMXError> {
-        match self {
-            ProtocolType::DisputeResolutionProtocol(protocol) => Ok(protocol),
-            _ => Err(BitVMXError::InvalidMessageType),
-        }
     }
 }
 

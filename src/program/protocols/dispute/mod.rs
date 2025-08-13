@@ -248,7 +248,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         tx_status: TransactionStatus,
         _context: String,
         program_context: &ProgramContext,
-        participant_keys: Vec<&ParticipantKeys>,
+        _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         let name = self.get_transaction_name_by_id(tx_id)?;
         info!(
@@ -305,7 +305,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     vout.unwrap(),
                     &name,
                     program_context,
-                    &participant_keys,
                     &tx_status.tx,
                     None,
                 )?;
@@ -320,7 +319,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 vout.unwrap(),
                 &name,
                 program_context,
-                &participant_keys,
                 &tx_status.tx,
                 None,
             )?;
@@ -381,7 +379,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                         vout.unwrap(),
                         &name,
                         program_context,
-                        &participant_keys,
                         &tx_status.tx,
                         None,
                     )?;
@@ -459,7 +456,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 vout.unwrap(),
                 &name,
                 program_context,
-                &participant_keys,
                 &tx_status.tx,
                 None,
             )?;
@@ -535,7 +531,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 vout.unwrap(),
                 &name,
                 program_context,
-                &participant_keys,
                 &tx_status.tx,
                 None,
             )?;
@@ -685,7 +680,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 vout.unwrap(),
                 &name,
                 program_context,
-                &participant_keys,
                 &tx_status.tx,
                 None,
             )?;
