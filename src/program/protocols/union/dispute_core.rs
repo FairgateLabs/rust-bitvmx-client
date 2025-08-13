@@ -322,14 +322,6 @@ impl DisputeCoreProtocol {
         let reveal_input = indexed_name(REVEAL_INPUT_TX, dispute_core_index);
         let input_not_revealed = indexed_name(INPUT_NOT_REVEALED_TX, dispute_core_index);
 
-        // If this is my dispute_core I need to store the pegout_id_key in the globals for later use in the reimbursement kickoff dispatch
-        // if dispute_core_data.operator_index == self.ctx.my_idx {
-        //     let pegout_id_name = indexed_name(PEGOUT_ID_KEY, dispute_core_index);
-        //     let pegout_id_key = operator_keys.get_winternitz(&pegout_id_name)?;
-        //     let data = VariableTypes::WinternitzPubKey(pegout_id_key.clone());
-        //     let _ = context.globals.set_var(&self.ctx.id, &pegout_id_name, data);
-        // }
-
         let start_reimbursement = union::scripts::start_reimbursement(
             &take_aggregated_key,
             PEGOUT_ID_KEY,
@@ -347,31 +339,29 @@ impl DisputeCoreProtocol {
             None,
         )?;
 
-        let mut challenge_requests = vec![];
+        let mut timelocks = vec![];
         for i in 0..keys.len() {
-            // If this is my dispute_core I need to disable me from performing a challenge request to myself.
-            if i == dispute_core_data.operator_index {
-                challenge_requests.push(scripts::op_return_script("skip".as_bytes().to_vec())?);
-            }
+            // If this is the operator owning the dispute core, we use a long timelock for the operator take transaction,
+            // otherwise a short one for the challenge transaction.
+            let blocks = if i == dispute_core_data.operator_index {
+                DISPUTE_CORE_LONG_TIMELOCK
+            } else {
+                DISPUTE_CORE_SHORT_TIMELOCK
+            };
 
-            challenge_requests.push(scripts::verify_signature(
-                keys[i].get_public(CHALLENGE_KEY)?,
-                SignMode::Single,
-            )?);
+            let timelock =
+                scripts::timelock(blocks, keys[i].get_public(DISPUTE_KEY)?, SignMode::Skip);
+
+            timelocks.push(timelock);
         }
 
         protocol.add_connection(
             "challenge",
             &reimbursement_kickoff,
-            OutputType::taproot(
-                AUTO_AMOUNT,
-                &take_aggregated_key,
-                challenge_requests.as_slice(),
-            )?
-            .into(),
+            OutputType::taproot(AUTO_AMOUNT, &take_aggregated_key, timelocks.as_slice())?.into(),
             &challenge,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
-            Some(DISPUTE_CORE_LONG_TIMELOCK),
+            Some(DISPUTE_CORE_SHORT_TIMELOCK),
             None,
         )?;
 
@@ -545,9 +535,6 @@ impl DisputeCoreProtocol {
         let mut input_args = InputArgs::new_taproot_script_args(leaf_index);
         input_args.push_winternitz_signature(pegout_id_signature);
         input_args.push_taproot_signature(committee_signature)?;
-
-        // NOTE: (in ProtocolBuilder) Allowed TaprootScript inputs to have ECDSA signatures
-        // input_args.push_ecdsa_signature(slot_index_signature)?;
 
         Ok(protocol.transaction_to_send(&name, &[input_args])?)
     }

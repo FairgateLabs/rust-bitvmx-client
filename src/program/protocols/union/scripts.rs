@@ -26,7 +26,7 @@ pub fn start_reimbursement(
         pegout_id_pubkey_name,
         pegout_id_pubkey.derivation_index()?,
         KeyType::winternitz(pegout_id_pubkey)?,
-        1,
+        0,
     )?;
 
     protocol_script.add_stack_item(StackItem::new_schnorr_sig(true));
