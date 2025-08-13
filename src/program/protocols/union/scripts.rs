@@ -30,7 +30,7 @@ pub fn start_reimbursement(
     protocol_script.add_key(
         "pegout_id",
         pegout_id_pubkey.derivation_index()?,
-        KeyType::WinternitzKey(pegout_id_pubkey.key_type()),
+        KeyType::winternitz(pegout_id_pubkey)?,
         1,
     )?;
 
@@ -55,14 +55,14 @@ pub fn operator_pegout_id(
     protocol_script.add_key(
         "pegout_id",
         pegout_id_key.derivation_index()?,
-        KeyType::WinternitzKey(pegout_id_key.key_type()),
+        KeyType::winternitz(pegout_id_key)?,
         0,
     )?;
 
     protocol_script.add_key(
         "secret_key",
         secret_key.derivation_index()?,
-        KeyType::WinternitzKey(secret_key.key_type()),
+        KeyType::winternitz(secret_key)?,
         1,
     )?;
 
@@ -85,7 +85,7 @@ pub fn reveal_take_private_key(
     protocol_script.add_key(
         "pegout_id",
         take_private_key.derivation_index()?,
-        KeyType::WinternitzKey(take_private_key.key_type()),
+        KeyType::winternitz(take_private_key)?,
         0,
     )?;
 
