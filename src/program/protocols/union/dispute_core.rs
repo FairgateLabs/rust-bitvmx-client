@@ -113,7 +113,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
                 keys.push((
                     indexed_name(PEGOUT_ID_KEY, i).to_string(),
                     PublicKeyType::Winternitz(
-                        program_context.key_chain.derive_winternitz_hash160(20)?,
+                        program_context.key_chain.derive_winternitz_hash160(32)?,
                     ),
                 ));
 
@@ -556,7 +556,7 @@ impl DisputeCoreProtocol {
         // Create input arguments
         let mut input_args = InputArgs::new_taproot_script_args(0);
 
-        // input_args.push_winternitz_signature(pegout_id_signature);
+        input_args.push_winternitz_signature(pegout_id_signature);
         input_args.push_taproot_signature(committee_signature)?;
 
         // NOTE: (in ProtocolBuilder) Allowed TaprootScript inputs to have ECDSA signatures
