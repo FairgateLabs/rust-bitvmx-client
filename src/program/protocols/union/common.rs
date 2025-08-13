@@ -2,7 +2,13 @@ use bitcoin::PublicKey;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::{errors::BitVMXError, program::variables::PartialUtxo};
+use crate::{
+    errors::BitVMXError,
+    program::{
+        protocols::union::types::{OPERATOR_TAKE_TX, OPERATOR_WON_TX},
+        variables::PartialUtxo,
+    },
+};
 
 pub fn get_dispute_core_pid(committee_id: Uuid, pubkey: &PublicKey) -> Uuid {
     let mut hasher = Sha256::new();
@@ -65,4 +71,19 @@ pub fn create_transaction_reference(
 
 pub fn indexed_name(prefix: &str, index: usize) -> String {
     format!("{}_{}", prefix, index)
+}
+
+pub fn postfix_name(prefix: &str, suffix: &str) -> String {
+    format!("{}_{}", prefix, suffix)
+}
+
+pub fn get_operator_take_tx_name(pubkey: &PublicKey) -> String {
+    postfix_name(
+        OPERATOR_TAKE_TX,
+        &pubkey.wpubkey_hash().unwrap().to_string(),
+    )
+}
+
+pub fn get_operator_won_tx_name(pubkey: &PublicKey) -> String {
+    postfix_name(OPERATOR_WON_TX, &pubkey.wpubkey_hash().unwrap().to_string())
 }
