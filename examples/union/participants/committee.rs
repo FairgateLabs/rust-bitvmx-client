@@ -1,5 +1,6 @@
 use anyhow::Result;
 use bitcoin::Txid;
+use bitvmx_client::program::protocols::union::common::get_accept_pegin_pid;
 use bitvmx_client::program::protocols::union::types::{ACCEPT_PEGIN_TX, USER_TAKE_TX};
 use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtxo};
 use bitvmx_client::types::OutgoingBitVMXApiMessages::{SPVProof, Transaction, TransactionInfo};
@@ -100,11 +101,11 @@ impl Committee {
         request_pegin_txid: Txid,
         amount: u64,
         accept_pegin_sighash: Vec<u8>,
-        slot_index: u64,
+        slot_index: usize,
         rootstock_address: String,
         reimbursement_pubkey: PublicKey,
     ) -> Result<()> {
-        let protocol_id = Uuid::new_v4();
+        let protocol_id = get_accept_pegin_pid(committee_id, slot_index);
         let members = self.members.clone();
 
         self.all(|op: &mut Member| {
@@ -183,7 +184,7 @@ impl Committee {
         let committee_id = self.committee_id.clone();
         let protocol_id = Uuid::new_v4();
 
-        self.all(|op| {
+        self.all(|op: &mut Member| {
             op.request_pegout(
                 protocol_id,
                 committee_id,

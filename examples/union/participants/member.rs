@@ -176,7 +176,7 @@ impl Member {
         request_pegin_amount: u64,
         accept_pegin_sighash: &[u8],
         committee_id: Uuid,
-        slot_index: u64,
+        slot_index: usize,
         rootstock_address: String,
         reimbursement_pubkey: PublicKey,
     ) -> Result<()> {

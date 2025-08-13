@@ -464,14 +464,6 @@ pub trait ProtocolHandler {
             self.context().my_idx,
             self.context().storage.as_ref().unwrap().clone(),
         )
-
-        // match Protocol::load(
-        //     protocol_name,
-        //     self.context().storage.as_ref().unwrap().clone(),
-        // )? {
-        //     Some(protocol) => Ok(protocol),
-        //     None => Err(BitVMXError::ProtocolNotFound(protocol_name.clone())),
-        // }
     }
 
     fn setup_complete(&self, program_context: &ProgramContext) -> Result<(), BitVMXError>;
