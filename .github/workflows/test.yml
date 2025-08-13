@@ -19,8 +19,8 @@ jobs:
     with:
       repo: 'FairgateLabs/rust-bitvmx-workspace'
       submodule_path: 'rust-bitvmx-client'
-      # cargo_lock_path: 'rust-bitvmx-client/Cargo.lock'
-      # target_path: 'rust-bitvmx-client/target'
+      cargo_lock_path: 'rust-bitvmx-client/Cargo.lock'
+      target_path: 'rust-bitvmx-client/target'
       docker_required: true
       dockerfile_path: tests/Dockerfile
       docker_compose_path: tests/docker-compose.yml
