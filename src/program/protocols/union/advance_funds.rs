@@ -314,9 +314,9 @@ impl AdvanceFundsProtocol {
 
         context.bitcoin_coordinator.dispatch(
             tx.clone(),
-            None,                                          // TODO: Add speedup data
-            format!("dispute_core_setup_{}", self.ctx.id), // Context string
-            None,                                          // Dispatch immediately
+            None,                                                      // TODO: Add speedup data
+            format!("dispute_core_setup_{}:{}", self.ctx.id, tx_name), // Context string
+            None,                                                      // Dispatch immediately
         )?;
 
         info!(
@@ -351,14 +351,12 @@ impl AdvanceFundsProtocol {
         let (tx, _) = dispute_core.get_transaction_by_name(&tx_name, context)?;
         let txid = tx.compute_txid();
 
-        info!("Reinbursement kickoff transaction: {:?}", tx);
-
         // Dispatch the transaction through the bitcoin coordinator
         context.bitcoin_coordinator.dispatch(
             tx.clone(),
-            None,                                          // TODO: Add speedup data
-            format!("dispute_core_setup_{}", self.ctx.id), // Context string
-            None,                                          // Dispatch immediately
+            None,                                                      // TODO: Add speedup data
+            format!("dispute_core_setup_{}:{}", self.ctx.id, tx_name), // Context string
+            None,                                                      // Dispatch immediately
         )?;
 
         info!(
