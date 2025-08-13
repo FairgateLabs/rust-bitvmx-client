@@ -22,7 +22,7 @@ impl UserTakeSetup {
         my_id: &str,
         members: &[Member],
         user_pubkey: PublicKey,
-        slot_id: u32,
+        slot_id: usize,
         fee: u64,
         bitvmx: &BitVMXClient,
         take_aggregated_key: PublicKey,

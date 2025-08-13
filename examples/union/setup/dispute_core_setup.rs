@@ -7,7 +7,7 @@ use bitvmx_client::{
     program::{
         participant::{P2PAddress, ParticipantRole},
         protocols::union::{
-            common::get_dispute_core_id,
+            common::get_dispute_core_pid,
             types::{Committee, DisputeCoreData, MemberData},
         },
         variables::{PartialUtxo, VariableTypes},
@@ -55,7 +55,7 @@ impl DisputeCoreSetup {
         for (operator_index, member) in members.iter().enumerate() {
             if member.role == ParticipantRole::Prover {
                 let pubkey = member.keyring.take_pubkey.unwrap();
-                let protocol_id = get_dispute_core_id(committee_id, &pubkey);
+                let protocol_id = get_dispute_core_pid(committee_id, &pubkey);
                 let operator_utxo = funding_utxos_per_member[&pubkey].clone();
                 info!(
                     id = my_id,
@@ -69,6 +69,7 @@ impl DisputeCoreSetup {
                         committee_id,
                         operator_index,
                         operator_utxo: operator_utxo,
+                        operator_take_pubkey: pubkey,
                     })?),
                 )?;
 

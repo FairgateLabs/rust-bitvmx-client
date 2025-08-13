@@ -24,7 +24,7 @@ use crate::{
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
-                common::{create_transaction_reference, get_dispute_core_id, indexed_name},
+                common::{create_transaction_reference, get_dispute_core_pid, indexed_name},
                 dispute_core::PEGOUT_ID,
                 types::{
                     AdvanceFundsRequest, ACCEPT_PEGIN_TX, ADVANCE_FUNDS_INPUT, ADVANCE_FUNDS_TX,
@@ -198,7 +198,7 @@ impl ProtocolHandler for AdvanceFundsProtocol {
             }
 
             let dispute_protocol_id =
-                get_dispute_core_id(request.committee_id, &request.my_take_pubkey);
+                get_dispute_core_pid(request.committee_id, &request.my_take_pubkey);
 
             self.save_pegout_id(
                 context,
@@ -303,7 +303,7 @@ impl AdvanceFundsProtocol {
         committee_id: &Uuid,
         pubkey: &PublicKey,
     ) -> Result<(), BitVMXError> {
-        let dispute_protocol_id = get_dispute_core_id(*committee_id, pubkey);
+        let dispute_protocol_id = get_dispute_core_pid(*committee_id, pubkey);
 
         let dispute_core =
             self.load_protocol_by_name(PROGRAM_TYPE_DISPUTE_CORE, dispute_protocol_id)?;
@@ -344,19 +344,19 @@ impl AdvanceFundsProtocol {
             slot_index, dispute_protocol_id
         );
 
-        let dispute_core =
+        let dispute_core_ph =
             self.load_protocol_by_name(PROGRAM_TYPE_DISPUTE_CORE, dispute_protocol_id)?;
 
         let tx_name = indexed_name(REIMBURSEMENT_KICKOFF_TX, slot_index);
-        let (tx, _) = dispute_core.get_transaction_by_name(&tx_name, context)?;
+        let (tx, _) = dispute_core_ph.get_transaction_by_name(&tx_name, context)?;
         let txid = tx.compute_txid();
 
         // Dispatch the transaction through the bitcoin coordinator
         context.bitcoin_coordinator.dispatch(
             tx.clone(),
-            None,                                                      // TODO: Add speedup data
-            format!("dispute_core_setup_{}:{}", self.ctx.id, tx_name), // Context string
-            None,                                                      // Dispatch immediately
+            None,            // TODO: Add speedup data
+            tx_name.clone(), // Context string
+            None,            // Dispatch immediately
         )?;
 
         info!(

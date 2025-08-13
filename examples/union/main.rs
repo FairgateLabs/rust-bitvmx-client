@@ -189,7 +189,7 @@ pub fn advance_funds() -> Result<()> {
     )?;
 
     // After some time, a peg-out request is not successfully processed and an operator is selected to advance funds.
-    thread::sleep(Duration::from_secs(10));
+    thread::sleep(Duration::from_secs(2));
 
     let user_public_key = "026e14224899cf9c780fef5dd200f92a28cc67f71c0af6fe30b5657ffc943f08f4"; // Placeholder for the actual user public key
     let pegout_id = vec![0; 32]; // Placeholder for the actual peg-out ID
@@ -206,11 +206,12 @@ pub fn advance_funds() -> Result<()> {
         selected_operator_pubkey,
     )?;
 
-    info!("Waiting some time to ensure all advance funds messages are processed...");
-    thread::sleep(Duration::from_secs(2));
-    info!("Mining 1 block and wait...");
-    committee.wallet.mine(1)?;
-    thread::sleep(Duration::from_secs(2));
+    info!("Letting the network to run...");
+    for _ in 0..10 {
+        info!("Mining 1 block and wait...");
+        committee.wallet.mine(1)?;
+        thread::sleep(Duration::from_secs(1));
+    }
     info!("Advance funds complete.");
 
     Ok(())

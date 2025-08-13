@@ -10,6 +10,7 @@ pub const TAKE_AGGREGATED_KEY: &str = "take_aggregated_key";
 pub const DISPUTE_AGGREGATED_KEY: &str = "dispute_aggregated_key";
 pub const SELECTED_OPERATOR_PUBKEY: &str = "selected_operator_pubkey";
 pub const OP_INITIAL_DEPOSIT_FLAG: &str = "op_initial_deposit_flag";
+pub const OPERATOR_LEAF_INDEX: &str = "operator_leaf_index";
 
 // Transaction names
 pub const REQUEST_PEGIN_TX: &str = "REQUEST_PEGIN_TX";
@@ -83,6 +84,7 @@ pub struct DisputeCoreData {
     pub committee_id: Uuid,
     pub operator_index: usize,
     pub operator_utxo: PartialUtxo,
+    pub operator_take_pubkey: PublicKey,
 }
 
 impl DisputeCoreData {
@@ -98,7 +100,7 @@ pub struct PegInRequest {
     pub accept_pegin_sighash: Vec<u8>,
     pub take_aggregated_key: PublicKey,
     pub operators_take_key: Vec<PublicKey>,
-    pub slot_index: u32,
+    pub slot_index: usize,
     pub committee_id: uuid::Uuid,
     pub rootstock_address: String,
     pub reimbursement_pubkey: PublicKey,
@@ -123,7 +125,7 @@ pub struct PegInAccepted {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PegOutRequest {
     pub committee_id: Uuid,
-    pub slot_id: u32,
+    pub slot_id: usize,
     pub fee: u64,
     pub user_pubkey: PublicKey,
     pub take_aggregated_key: PublicKey,
