@@ -19,7 +19,7 @@ pub fn start_reimbursement(
         // { XOnlyPublicKey::from(operator_key.clone()).serialize().to_vec() }
         // OP_CHECKSIGVERIFY
 
-        // { ots_checksig(pegout_id_pubkey, false)? }
+        { ots_checksig(pegout_id_pubkey, false)? }
         OP_PUSHNUM_1
     );
 
@@ -28,12 +28,12 @@ pub fn start_reimbursement(
     //TODO: bogus derivation index 0, the only pks that need derivation index are the winternitz keys. Consider making the derivation index optional.
     // protocol_script.add_key("operator_key", 0, KeyType::XOnlyKey, 0)?;
 
-    // protocol_script.add_key(
-    //     "pegout_id",
-    //     pegout_id_pubkey.derivation_index()?,
-    //     KeyType::WinternitzKey(pegout_id_pubkey.key_type()),
-    //     1,
-    // )?;
+    protocol_script.add_key(
+        "pegout_id",
+        pegout_id_pubkey.derivation_index()?,
+        KeyType::WinternitzKey(pegout_id_pubkey.key_type()),
+        1,
+    )?;
 
     protocol_script.add_stack_item(StackItem::SchnorrSig {
         non_default_sighash: true,
@@ -45,7 +45,8 @@ pub fn start_reimbursement(
 
     let extra_data = pegout_id_pubkey.extra_data().unwrap();
     protocol_script.add_stack_item(StackItem::WinternitzSig {
-        size: extra_data.message_size() + extra_data.checksum_size(),
+        // FIXME: signature size estimation
+        size: (extra_data.message_size() + extra_data.checksum_size()) * 20,
     });
 
     Ok(protocol_script)
