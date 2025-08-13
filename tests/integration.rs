@@ -1,10 +1,12 @@
 use anyhow::Result;
-use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages};
+use bitvmx_client::types::{
+    IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel,
+};
 use common::{
     config_trace,
     dispute::{execute_dispute, prepare_dispute, ForcedChallenges},
-    get_all, init_bitvmx, init_utxo_new, prepare_bitcoin, send_all, wait_message_from_channel,
-    ParticipantChannel, FEE, FUNDING_ID, WALLET_NAME,
+    get_all, init_bitvmx, init_utxo_new, prepare_bitcoin, send_all, wait_message_from_channel, FEE,
+    FUNDING_ID, WALLET_NAME,
 };
 use protocol_builder::{
     scripts::{self, SignMode},

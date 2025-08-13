@@ -15,13 +15,13 @@ use bitvmx_client::{
         },
         variables::VariableTypes,
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
 use common::{
     config_trace,
     dispute::{execute_dispute, prepare_dispute, ForcedChallenges},
     get_all, init_bitvmx, init_utxo, mine_and_wait, prepare_bitcoin, send_all,
-    wait_message_from_channel, ParticipantChannel,
+    wait_message_from_channel,
 };
 use tracing::info;
 use uuid::Uuid;
@@ -165,12 +165,9 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
         vec![pair_aggregated_pub_key],
         (utxo.txid, utxo.vout, Some(fund_value.to_sat()), None),
         TIMELOCK_BLOCKS as u16,
-        instances[0].get_components_config().clone(), //ASK: which bitvmx config to use?
     );
 
-    for channel in channels.iter() {
-        slot_protocol_configuration.setup(channel, addresses.clone(), 0)?;
-    }
+    slot_protocol_configuration.setup(&id_channel_pairs, addresses.clone(), 0)?;
 
     //wait setup complete
     let _msg = get_all(&channels, &mut instances, false)?;

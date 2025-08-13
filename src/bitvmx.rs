@@ -417,7 +417,7 @@ impl BitVMX {
                 }
                 CoordinatorNews::EstimateFeerateTooHigh(estimate_fee, max_allowed) => {
                     // Complete
-                    error!(
+                    warn!(
                         "Estimate feerate too high: {:?} {:?}",
                         estimate_fee, max_allowed
                     );
@@ -490,9 +490,16 @@ impl BitVMX {
         };
 
         if should_update {
-            let updated = self.process_bitcoin_updates()?;
+            let updated = self.process_bitcoin_updates();
             self.bitcoin_update.last_update = now;
-            if updated {
+            if updated.is_err() {
+                error!(
+                    "Critical error processing bitcoin updates: {:?}",
+                    updated.err().unwrap()
+                );
+                return Ok(());
+            }
+            if updated.unwrap() {
                 self.bitcoin_update.was_synced = true;
 
                 // info!(

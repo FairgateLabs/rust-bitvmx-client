@@ -18,12 +18,12 @@ use bitvmx_client::{
         },
         variables::WitnessTypes,
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
 use bitvmx_wallet::wallet::Wallet;
 use common::{
     config_trace, get_all, init_bitvmx, init_broker, mine_and_wait, prepare_bitcoin, send_all,
-    wait_message_from_channel, ParticipantChannel,
+    wait_message_from_channel,
 };
 use key_manager::verifier::SignatureVerifier;
 use protocol_builder::scripts::{build_taproot_spend_info, ProtocolScript};
@@ -272,12 +272,9 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         (txid, 1, Some(lock_protocol_dust_cost(4)), None),
         10,
         100,
-        instances[0].get_components_config().clone(), //ASK: which bitvmx config to use?
     );
 
-    for c in &channels {
-        lock_protocol_configuration.setup(&c, addresses.clone(), 0)?;
-    }
+    lock_protocol_configuration.setup(&id_channel_pairs, addresses.clone(), 0)?;
 
     get_all(&channels, &mut instances, false)?;
 

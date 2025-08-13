@@ -16,10 +16,10 @@ use bitvmx_broker::{
     },
 };
 use bitvmx_client::{
-    bitvmx::{self, BitVMX},
+    bitvmx::BitVMX,
     config::{Component, Config},
     program::{participant::P2PAddress, protocols::protocol_handler::external_fund_tx},
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
 use bitvmx_wallet::wallet::Wallet;
 use p2p_handler::p2p_handler::AllowList;
@@ -33,12 +33,6 @@ use tracing_subscriber::EnvFilter;
 
 /// Number of blocks to mine initially in tests to ensure sufficient coin maturity
 pub const INITIAL_BLOCK_COUNT: u64 = 101;
-
-#[derive(Clone, Debug)]
-pub struct ParticipantChannel {
-    pub id: Identifier,
-    pub channel: DualChannel,
-}
 
 pub fn clear_db(path: &str) {
     let _ = std::fs::remove_dir_all(path);
@@ -189,7 +183,7 @@ fn config_trace_aux() {
         "libp2p=off",
         "bitvmx_transaction_monitor=off",
         "bitcoin_indexer=off",
-        "bitcoin_coordinator=off",
+        "bitcoin_coordinator=info",
         "p2p_protocol=off",
         "p2p_handler=off",
         "tarpc=off",

@@ -1,6 +1,6 @@
 use std::net::{IpAddr, SocketAddr};
 
-use bitcoin_coordinator::config::CoordinatorSettings;
+use bitcoin_coordinator::config::CoordinatorSettingsConfig;
 use bitvmx_bitcoin_rpc::rpc_config::RpcConfig;
 use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
 use key_manager::config::KeyManagerConfig;
@@ -138,7 +138,7 @@ pub struct Config {
     pub broker: BrokerConfig,
     pub client: ClientConfig,
     pub components: ComponentsConfig,
-    pub coordinator_settings: Option<CoordinatorSettings>,
+    pub coordinator_settings: Option<CoordinatorSettingsConfig>,
     pub coordinator: ThrotthleUpdate,
 }
 

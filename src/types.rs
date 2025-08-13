@@ -4,7 +4,11 @@ use crate::{config::ComponentsConfig, spv_proof::BtcTxSPVProof};
 use ::p2p_handler::p2p_handler::P2pHandler;
 use bitcoin::{PrivateKey, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TransactionStatus};
-use bitvmx_broker::{broker_storage::BrokerStorage, channel::channel::LocalChannel};
+use bitvmx_broker::{
+    broker_storage::BrokerStorage,
+    channel::channel::{DualChannel, LocalChannel},
+    identification::identifier::Identifier,
+};
 use chrono::{DateTime, Utc};
 use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
@@ -286,6 +290,12 @@ impl RequestId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct ParticipantChannel {
+    pub id: Identifier,
+    pub channel: DualChannel,
 }
 
 pub const PROGRAM_TYPE_LOCK: &str = "lock";

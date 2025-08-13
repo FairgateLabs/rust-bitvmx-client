@@ -1,7 +1,6 @@
 use std::rc::Rc;
 
 use bitcoin::PublicKey;
-use bitvmx_broker::channel::channel::DualChannel;
 use protocol_builder::{
     builder::Protocol,
     scripts::{self, SignMode},
@@ -11,22 +10,22 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::{
-    config::ComponentsConfig,
     errors::BitVMXError,
     program::{
         protocols::{
             cardinal::{
                 slot,
                 transfer::{pub_too_group, DUST},
-                COMPONENTS_CONFIG, LOCKED_ASSET_UTXO, OPERATORS_AGGREGATED_PUB, OPERATOR_COUNT,
-                UNSPENDABLE,
+                LOCKED_ASSET_UTXO, OPERATORS_AGGREGATED_PUB, OPERATOR_COUNT, UNSPENDABLE,
             },
             claim::ClaimGate,
             protocol_handler::external_fund_tx,
         },
         variables::{Globals, PartialUtxo, VariableTypes},
     },
-    types::{IncomingBitVMXApiMessages, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TRANSFER},
+    types::{
+        IncomingBitVMXApiMessages, ParticipantChannel, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TRANSFER,
+    },
 };
 
 pub struct TransferConfig {
@@ -39,7 +38,6 @@ pub struct TransferConfig {
     pub groups_pub_keys: Vec<PublicKey>,
     pub sample_utxos: Option<(PartialUtxo, PartialUtxo)>,
     pub slot_id: Option<Uuid>,
-    pub components_config: ComponentsConfig,
 }
 
 impl TransferConfig {
@@ -52,7 +50,6 @@ impl TransferConfig {
         groups_pub_keys: Vec<PublicKey>,
         sample_utxos: Option<(PartialUtxo, PartialUtxo)>,
         slot_id: Option<Uuid>,
-        components_config: ComponentsConfig,
     ) -> Self {
         let too_groups = 2_u32.pow(operator_count) - 1;
         assert_ne!(
@@ -70,7 +67,6 @@ impl TransferConfig {
             groups_pub_keys,
             sample_utxos,
             slot_id,
-            components_config,
         }
     }
 
@@ -100,11 +96,6 @@ impl TransferConfig {
             .get_var(&id, "slot_program_id")?
             .and_then(|v| Some(v.uuid().unwrap()));
 
-        let components_config = globals
-            .get_var(&id, COMPONENTS_CONFIG)?
-            .unwrap()
-            .components_config()?;
-
         Ok(Self {
             id,
             unspendable,
@@ -115,7 +106,6 @@ impl TransferConfig {
             groups_pub_keys,
             sample_utxos,
             slot_id,
-            components_config,
         })
     }
 
@@ -131,8 +121,6 @@ impl TransferConfig {
             VariableTypes::Number(self.operator_count).set_msg(self.id, OPERATOR_COUNT)?,
             VariableTypes::Utxo(self.locked_asset_utxo.clone())
                 .set_msg(self.id, LOCKED_ASSET_UTXO)?,
-            VariableTypes::ComponentsConfig(self.components_config.clone())
-                .set_msg(self.id, COMPONENTS_CONFIG)?,
         ];
 
         for gid in 1..=self.too_groups {
@@ -164,12 +152,16 @@ impl TransferConfig {
 
     pub fn setup(
         &self,
-        channel: &DualChannel,
+        id_channel_pairs: &Vec<ParticipantChannel>,
         addresses: Vec<crate::program::participant::P2PAddress>,
         leader: u16,
     ) -> Result<(), BitVMXError> {
-        for msg in self.get_setup_messages(addresses, leader)? {
-            channel.send(self.components_config.get_bitvmx_identifier()?, msg)?;
+        for id_channel_pair in id_channel_pairs {
+            for msg in self.get_setup_messages(addresses.clone(), leader)? {
+                id_channel_pair
+                    .channel
+                    .send(id_channel_pair.id.clone(), msg)?;
+            }
         }
         Ok(())
     }

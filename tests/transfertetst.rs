@@ -4,11 +4,10 @@ use anyhow::Result;
 use bitcoin::PublicKey;
 use bitvmx_client::{
     program::{self, protocols::cardinal::transfer_config::TransferConfig},
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
 use common::{
     config_trace, get_all, init_bitvmx, init_utxo_new, mine_and_wait, prepare_bitcoin, send_all,
-    ParticipantChannel,
 };
 use protocol_builder::scripts::{self, SignMode};
 use tracing::info;
@@ -186,12 +185,9 @@ pub fn test_transfer() -> Result<()> {
             ),
         )),
         None,
-        instances[0].get_components_config().clone(), //ASK: which bitvmx config to use?
     );
 
-    for channel in channels.iter() {
-        transfer_config.setup(channel, addresses.clone(), 0)?;
-    }
+    transfer_config.setup(&id_channel_pairs, addresses.clone(), 0)?;
 
     //wait setup complete
     let _msg = get_all(&channels, &mut instances, false)?;

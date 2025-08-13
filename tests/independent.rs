@@ -1,6 +1,6 @@
 use anyhow::Result;
 use bitcoin::Network;
-use bitcoind::bitcoind::Bitcoind;
+use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::channel::channel::DualChannel;
 use bitvmx_broker::rpc::tls_helper::Cert;
@@ -11,7 +11,9 @@ use bitvmx_client::program::protocols::dispute::{
     input_tx_name, program_input, program_input_prev_prefix, program_input_prev_protocol,
 };
 use bitvmx_client::program::variables::{VariableTypes, WitnessTypes};
-use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages};
+use bitvmx_client::types::{
+    IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel,
+};
 use bitvmx_client::{bitvmx::BitVMX, config::Config};
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
@@ -38,9 +40,9 @@ use std::{
 use tracing::{error, info};
 use uuid::Uuid;
 
-use crate::common::ParticipantChannel;
-
 mod common;
+
+const MIN_TX_FEE: f64 = 8.0;
 
 pub fn get_configs(network: Network) -> Result<Vec<Config>> {
     let config_names = match network {
@@ -51,14 +53,22 @@ pub fn get_configs(network: Network) -> Result<Vec<Config>> {
 
     let mut configs = Vec::new();
     for name in config_names {
+        info!("Loading config: {}", name);
         let config = Config::new(Some(format!("config/{}.yaml", name)))?;
+        info!("here?");
         configs.push(config);
     }
     Ok(configs)
 }
 
 fn run_bitvmx(network: Network, independent: bool, rx: Receiver<()>, tx: Sender<()>) -> Result<()> {
-    let configs = get_configs(network)?;
+    let configs = get_configs(network);
+    if configs.is_err() {
+        error!("Failed to load configs: {:?}", configs.err());
+        panic!("Failed to load configs");
+    }
+    let configs = configs.unwrap();
+    info!("Loaded configs");
     if !independent {
         for config in &configs {
             clear_db(&config.storage.path);
@@ -69,8 +79,13 @@ fn run_bitvmx(network: Network, independent: bool, rx: Receiver<()>, tx: Sender<
 
     let mut instances = vec![];
     configs.iter().for_each(|config| {
-        let bitvmx = BitVMX::new(config.clone()).expect("Failed to initialize BitVMX");
-        instances.push(bitvmx);
+        info!("Initializing BitVMX with config: {:?}", config.broker.port);
+        let bitvmx = BitVMX::new(config.clone());
+        if bitvmx.is_err() {
+            error!("Failed to create BitVMX instance: {:?}", bitvmx.err());
+            panic!("Failed to create BitVMX instance");
+        }
+        instances.push(bitvmx.unwrap());
     });
 
     let mut ready = false;
@@ -233,6 +248,10 @@ pub struct TestHelper {
 
 impl TestHelper {
     pub fn new(network: Network, independent: bool, auto_mine: Option<u64>) -> Result<Self> {
+        info!(
+            "Initializing TestHelper for network: {:?} {}",
+            network, independent
+        );
         let wallet_config = match network {
             Network::Regtest => "config/wallet_regtest.yaml",
             Network::Testnet => "config/wallet_testnet.yaml",
@@ -243,6 +262,8 @@ impl TestHelper {
             bitvmx_wallet::config::WalletConfig,
         >(Some(wallet_config.to_string()))?;
 
+        info!("Wallet settings loaded");
+
         let bitcoind = if independent {
             None
         } else {
@@ -250,10 +271,16 @@ impl TestHelper {
             clear_db(&wallet_config.storage.path);
             clear_db(&wallet_config.key_storage.path);
 
-            let bitcoind = Bitcoind::new(
+            let bitcoind = Bitcoind::new_with_flags(
                 "bitcoin-regtest",
                 "ruimarinho/bitcoin-core",
                 wallet_config.bitcoin.clone(),
+                BitcoindFlags {
+                    min_relay_tx_fee: 0.00001,
+                    block_min_tx_fee: 0.00001 * MIN_TX_FEE,
+                    debug: 1,
+                    fallback_fee: 0.0002,
+                },
             );
             bitcoind.start()?;
             Some(bitcoind)
@@ -266,11 +293,14 @@ impl TestHelper {
             wallet.regtest_fund(WALLET_NAME, FUNDING_ID, 100_000_000)?;
         }
 
+        info!("Wallet ready");
+
         let (bitvmx_stop_tx, bitvmx_stop_rx) = channel::<()>();
         let (bitvmx_ready_tx, bitvmx_ready_rx) = channel::<()>();
         let bitvmx_handle = thread::spawn(move || {
             run_bitvmx(network, independent, bitvmx_stop_rx, bitvmx_ready_tx)
         });
+        info!("BitVMX instances started");
 
         while !bitvmx_ready_rx.try_recv().is_ok() {
             thread::sleep(Duration::from_millis(100));
@@ -461,11 +491,14 @@ pub fn test_all_aux(
     let funding_key_1 = msgs[1].public_key().unwrap().1;
     let _funding_key_2 = msgs[2].public_key().unwrap().1;
 
+    info!("Creating speedup funds");
+    let speedup_amount = 100_000 * MIN_TX_FEE as u64;
+
     let fund_txid_0 = helper.wallet.fund_address(
         WALLET_NAME,
         FUNDING_ID,
         funding_key_0,
-        &vec![10_000_000],
+        &vec![speedup_amount],
         1000,
         false,
         true,
@@ -473,24 +506,30 @@ pub fn test_all_aux(
     )?;
 
     helper.wallet.mine(1)?;
+    info!("Wait for the fund for operator 0 speedups");
+
+    wait_enter(independent);
     let fund_txid_1 = helper.wallet.fund_address(
         WALLET_NAME,
         FUNDING_ID,
         funding_key_1,
-        &vec![10_000_000],
+        &vec![speedup_amount],
         1000,
         false,
         true,
         None,
     )?;
     helper.wallet.mine(1)?;
+    info!("Wait for the first funding ready");
+    info!("Wait for the fund for operator 1 speedups");
+    wait_enter(independent);
 
-    let funds_utxo_0 = Utxo::new(fund_txid_0, 0, 10_000_000, &funding_key_0);
+    let funds_utxo_0 = Utxo::new(fund_txid_0, 0, speedup_amount, &funding_key_0);
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
     helper.id_channel_pairs[0]
         .channel
         .send(helper.id_channel_pairs[0].id.clone(), command)?;
-    let funds_utxo_1 = Utxo::new(fund_txid_1, 0, 10_000_000, &funding_key_1);
+    let funds_utxo_1 = Utxo::new(fund_txid_1, 0, speedup_amount, &funding_key_1);
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_1).to_string()?;
     helper.id_channel_pairs[1]
         .channel
@@ -536,6 +575,8 @@ pub fn test_all_aux(
         11_000,
         None,
     )?;
+    info!("Wait for the action utxo ready");
+    wait_enter(independent);
 
     let pair_0_1_channels = vec![
         helper.id_channel_pairs[0].clone(),

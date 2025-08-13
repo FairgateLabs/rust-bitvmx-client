@@ -21,7 +21,7 @@ use bitvmx_client::{
         },
         variables::{VariableTypes, WitnessTypes},
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
 use common::{
     config_trace,
@@ -33,7 +33,7 @@ use key_manager::verifier::SignatureVerifier;
 use tracing::info;
 use uuid::Uuid;
 
-use crate::common::{set_speedup_funding, ParticipantChannel};
+use crate::common::set_speedup_funding;
 
 mod common;
 mod fixtures;
@@ -181,12 +181,9 @@ pub fn test_full() -> Result<()> {
         vec![pair_aggregated_pub_key],
         (utxo.txid, utxo.vout, Some(fund_value), None),
         TIMELOCK_BLOCKS as u16,
-        instances[0].get_components_config().clone(), //ASK: which bitvmx config to use?
     );
 
-    for channel in channels.iter() {
-        slot_protocol_configuration.setup(channel, addresses.clone(), 0)?;
-    }
+    slot_protocol_configuration.setup(&id_channel_pairs, addresses.clone(), 0)?;
 
     //wait setup complete
     let _msg = get_all(&channels, &mut instances, false)?;
@@ -331,12 +328,9 @@ pub fn test_full() -> Result<()> {
         (txid, 1, Some(lock_protocol_dust_cost(3)), None),
         10,
         100,
-        instances[0].get_components_config().clone(), //ASK: which bitvmx config to use?
     );
 
-    for c in &channels {
-        lock_protocol_configuration.setup(&c, addresses.clone(), 0)?;
-    }
+    lock_protocol_configuration.setup(&id_channel_pairs, addresses.clone(), 0)?;
 
     get_all(&channels, &mut instances, false)?;
 
@@ -427,12 +421,9 @@ pub fn test_full() -> Result<()> {
         groups_pub_keys,
         None,
         Some(slot_program_id),
-        instances[0].get_components_config().clone(), //ASK: which bitvmx config to use?
     );
 
-    for channel in channels.iter() {
-        transfer_config.setup(channel, addresses.clone(), 0)?;
-    }
+    transfer_config.setup(&id_channel_pairs, addresses.clone(), 0)?;
 
     //wait setup complete
     let msg = get_all(&channels, &mut instances, false)?;
@@ -481,13 +472,13 @@ pub fn test_full() -> Result<()> {
     info!("Going to send CERTIFICATE HASH and GID");
     info!("================================================");
     // one operator decide to put a certificate hash to start the transfer
-    let cert_hash = "33".repeat(20);
+    let cert_hash = "966c3c1b3b93d12206202b8c685df7554d3df6c72b5cee973de94c45e3f37a0a";
     let set_cert_hash = VariableTypes::Input(hex::decode(cert_hash).unwrap())
         .set_msg(slot_program_id, &certificate_hash(0))?;
     let _ = channels[0].send(identifiers[0].clone().clone(), set_cert_hash)?;
 
-    let selected_gid: u32 = 4;
-    let set_gid = VariableTypes::Input(selected_gid.to_be_bytes().to_vec())
+    let selected_gid: u32 = 7;
+    let set_gid = VariableTypes::Input(selected_gid.to_le_bytes().to_vec())
         .set_msg(slot_program_id, &group_id(0))?;
     let _ = channels[0].send(identifiers[0].clone().clone(), set_gid)?;
 
@@ -545,7 +536,7 @@ pub fn test_full() -> Result<()> {
         id_channel_pairs[0].id.clone(),
         IncomingBitVMXApiMessages::DispatchTransactionName(
             transfer_program_id,
-            program::protocols::cardinal::transfer::too_tx(0, 4),
+            program::protocols::cardinal::transfer::too_tx(0, 7),
         )
         .to_string()?,
     );

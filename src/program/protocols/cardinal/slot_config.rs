@@ -1,5 +1,4 @@
 use bitcoin::{PublicKey, Txid};
-use bitvmx_broker::channel::channel::DualChannel;
 use protocol_builder::{
     scripts::{self, SignMode},
     types::{OutputType, Utxo},
@@ -7,14 +6,12 @@ use protocol_builder::{
 use uuid::Uuid;
 
 use crate::{
-    config::ComponentsConfig,
     errors::BitVMXError,
     program::{
         protocols::{
             cardinal::{
                 slot::{certificate_hash_prefix, dust_claim_stop, group_id_prefix},
-                COMPONENTS_CONFIG, FUND_UTXO, OPERATORS, OPERATORS_AGGREGATED_PUB,
-                PAIR_0_1_AGGREGATED,
+                FUND_UTXO, OPERATORS, OPERATORS_AGGREGATED_PUB, PAIR_0_1_AGGREGATED,
             },
             dispute::{
                 program_input_prev_prefix, program_input_prev_protocol, protocol_cost,
@@ -24,7 +21,7 @@ use crate::{
         },
         variables::{Globals, PartialUtxo, VariableTypes},
     },
-    types::{IncomingBitVMXApiMessages, PROGRAM_TYPE_SLOT},
+    types::{IncomingBitVMXApiMessages, ParticipantChannel, PROGRAM_TYPE_SLOT},
 };
 
 pub struct SlotProtocolConfiguration {
@@ -35,7 +32,6 @@ pub struct SlotProtocolConfiguration {
     pub operators_pairs: Vec<PublicKey>,
     pub fund_utxo: PartialUtxo,
     pub timelock_blocks: u16,
-    pub components_config: ComponentsConfig,
 }
 
 impl SlotProtocolConfiguration {
@@ -46,7 +42,6 @@ impl SlotProtocolConfiguration {
         operators_pairs: Vec<PublicKey>,
         fund_utxo: PartialUtxo,
         timelock_blocks: u16,
-        components_config: ComponentsConfig,
     ) -> Self {
         Self {
             id: program_id,
@@ -56,7 +51,6 @@ impl SlotProtocolConfiguration {
             operators_pairs,
             fund_utxo,
             timelock_blocks,
-            components_config,
         }
     }
 
@@ -80,11 +74,6 @@ impl SlotProtocolConfiguration {
             .unwrap()
             .number()? as u16;
 
-        let components_config = globals
-            .get_var(&id, COMPONENTS_CONFIG)?
-            .unwrap()
-            .components_config()?;
-
         Ok(Self::new(
             id,
             operators,
@@ -92,7 +81,6 @@ impl SlotProtocolConfiguration {
             vec![pair_0_1_aggregated],
             fund_utxo,
             timelock_blocks,
-            components_config,
         ))
     }
 
@@ -117,19 +105,21 @@ impl SlotProtocolConfiguration {
                 leader,
             )
             .to_string()?,
-            VariableTypes::ComponentsConfig(self.components_config.clone())
-                .set_msg(self.id, COMPONENTS_CONFIG)?,
         ])
     }
 
     pub fn setup(
         &self,
-        channel: &DualChannel,
+        id_channel_pairs: &Vec<ParticipantChannel>,
         addresses: Vec<crate::program::participant::P2PAddress>,
         leader: u16,
     ) -> Result<(), BitVMXError> {
-        for msg in self.get_setup_messages(addresses, leader)? {
-            channel.send(self.components_config.get_bitvmx_identifier()?, msg)?;
+        for id_channel_pair in id_channel_pairs {
+            for msg in self.get_setup_messages(addresses.clone(), leader)? {
+                id_channel_pair
+                    .channel
+                    .send(id_channel_pair.id.clone(), msg)?;
+            }
         }
         Ok(())
     }

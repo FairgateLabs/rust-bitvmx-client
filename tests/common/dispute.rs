@@ -12,7 +12,9 @@ use bitvmx_client::{
         },
         variables::VariableTypes,
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, PROGRAM_TYPE_DRP},
+    types::{
+        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel, PROGRAM_TYPE_DRP,
+    },
 };
 use bitvmx_cpu_definitions::{
     constants::LAST_STEP_INIT,
@@ -31,8 +33,6 @@ use emulator::{
 use protocol_builder::types::{OutputType, Utxo};
 use tracing::{error, info};
 use uuid::Uuid;
-
-use crate::common::ParticipantChannel;
 
 use super::{mine_and_wait, send_all, wait_message_from_channel};
 
