@@ -18,7 +18,7 @@ use bitvmx_client::{
         },
         variables::WitnessTypes,
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages},
 };
 use bitvmx_wallet::wallet::Wallet;
 use common::{
@@ -139,16 +139,40 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
 
     let funding_public_id = Uuid::new_v4();
     let command = IncomingBitVMXApiMessages::GetPubKey(funding_public_id, true).to_string()?;
-    send_all(&channels, &command)?;
+    send_all(&id_channel_pairs, &command)?;
     let msgs = get_all(&channels, &mut instances, false)?;
     let funding_key_0 = msgs[0].public_key().unwrap().1;
     let funding_key_1 = msgs[1].public_key().unwrap().1;
     let funding_key_2 = msgs[2].public_key().unwrap().1;
     let funding_key_3 = msgs[3].public_key().unwrap().1;
-    set_speedup_funding(10_000_000, &funding_key_0, &channels[0], &wallet)?;
-    set_speedup_funding(10_000_000, &funding_key_1, &channels[1], &wallet)?;
-    set_speedup_funding(10_000_000, &funding_key_2, &channels[2], &wallet)?;
-    set_speedup_funding(10_000_000, &funding_key_3, &channels[3], &wallet)?;
+    set_speedup_funding(
+        10_000_000,
+        &funding_key_0,
+        &channels[0],
+        &wallet,
+        &instances[0].get_components_config().get_bitvmx_config(),
+    )?;
+    set_speedup_funding(
+        10_000_000,
+        &funding_key_1,
+        &channels[1],
+        &wallet,
+        &instances[1].get_components_config().get_bitvmx_config(),
+    )?;
+    set_speedup_funding(
+        10_000_000,
+        &funding_key_2,
+        &channels[2],
+        &wallet,
+        &instances[2].get_components_config().get_bitvmx_config(),
+    )?;
+    set_speedup_funding(
+        10_000_000,
+        &funding_key_3,
+        &channels[3],
+        &wallet,
+        &instances[3].get_components_config().get_bitvmx_config(),
+    )?;
 
     let command = IncomingBitVMXApiMessages::GetCommInfo().to_string()?;
     send_all(&id_channel_pairs, &command)?;
@@ -248,6 +272,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         (txid, 1, Some(lock_protocol_dust_cost(4)), None),
         10,
         100,
+        instances[0].get_components_config().clone(), //ASK: which bitvmx config to use?
     );
 
     for c in &channels {
@@ -265,10 +290,10 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         WitnessTypes::Secret(preimage.as_bytes().to_vec()),
     ))?;
 
-    channels[op].send(BITVMX_ID, witness_msg.clone())?;
+    channels[op].send(id_channel_pairs[op].id.clone(), witness_msg.clone())?;
 
     let _ = channels[op].send(
-        BITVMX_ID,
+        id_channel_pairs[op].id.clone(),
         IncomingBitVMXApiMessages::GetTransactionInfoByName(program_id, LOCK_TX.to_string())
             .to_string()?,
     );
@@ -285,7 +310,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     );
 
     let _ = channels[op].send(
-        BITVMX_ID,
+        id_channel_pairs[op].id.clone(),
         IncomingBitVMXApiMessages::GetHashedMessage(
             program_id,
             program::protocols::cardinal::lock::LOCK_TX.to_string(),
@@ -317,7 +342,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     info!("Going to send the lock tx");
     info!("==========================");
     let _ = channels[op].send(
-        BITVMX_ID,
+        id_channel_pairs[op].id.clone(),
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
             program::protocols::cardinal::lock::LOCK_TX.to_string(),
@@ -330,7 +355,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     //EVENTUALY L2 DECIDED TO SEND THE HAPPY PATH
     //TODO: It should actually be signed in this moment and not before (could be signed but not shared the partials)
     let _ = channels[op].send(
-        BITVMX_ID,
+        id_channel_pairs[op].id.clone(),
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
             program::protocols::cardinal::lock::HAPPY_PATH_TX.to_string(),

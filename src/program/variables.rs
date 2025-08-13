@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use storage_backend::storage::{KeyValueStore, Storage};
 use uuid::Uuid;
 
-use crate::{errors::BitVMXError, types::IncomingBitVMXApiMessages};
+use crate::{config::ComponentsConfig, errors::BitVMXError, types::IncomingBitVMXApiMessages};
 
 /*
 - winternitz
@@ -37,6 +37,7 @@ pub enum VariableTypes {
         emulator::decision::challenge::ForceChallenge,
         emulator::decision::challenge::ForceCondition,
     ),
+    ComponentsConfig(ComponentsConfig),
 }
 
 impl VariableTypes {
@@ -123,6 +124,13 @@ impl VariableTypes {
                 force.clone(),
                 condition.clone(),
             )),
+            _ => Err(BitVMXError::InvalidVariableType(self.err())),
+        }
+    }
+
+    pub fn components_config(&self) -> Result<ComponentsConfig, BitVMXError> {
+        match self {
+            VariableTypes::ComponentsConfig(config) => Ok(config.clone()),
             _ => Err(BitVMXError::InvalidVariableType(self.err())),
         }
     }

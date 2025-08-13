@@ -19,3 +19,4 @@ pub const EOL_TIMELOCK_DURATION: &str = "eol_timelock_duration";
 pub const PROTOCOL_COST: &str = "protocol_cost";
 pub const SPEEDUP_DUST: &str = "speedup_dust";
 pub const GID_MAX: &str = "gid_max";
+pub const COMPONENTS_CONFIG: &str = "components_config";

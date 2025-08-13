@@ -14,6 +14,7 @@ use bitcoin::{
     Network::{self, Regtest},
     PublicKey, Transaction,
 };
+use p2p_handler::p2p_handler::AllowList;
 #[cfg(target_os = "linux")]
 use std::time::Duration;
 mod common;
@@ -34,13 +35,11 @@ use bitvmx_client::{
     types::{
         IncomingBitVMXApiMessages,
         OutgoingBitVMXApiMessages,
-        L2_ID,
         PROGRAM_TYPE_LOCK, // PROVER_ID,
     },
 };
 // use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use common::{clear_db, prepare_bitcoin, INITIAL_BLOCK_COUNT};
-use p2p_handler::PeerId;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
@@ -94,13 +93,26 @@ impl ClientTest {
         //     }
         // });
 
+        let prover_allow_list = AllowList::from_file(&prover_config.broker.allow_list)?;
+        let verifier_allow_list = AllowList::from_file(&verifier_config.broker.allow_list)?;
+
         Ok(Self {
             program_id: Uuid::new_v4(),
             collaboration_id: Uuid::new_v4(),
             prover,
             verifier,
-            prover_client: BitVMXClient::new(prover_config.broker_port, L2_ID),
-            verifier_client: BitVMXClient::new(verifier_config.broker_port, L2_ID),
+            prover_client: BitVMXClient::new(
+                &prover_config.components,
+                &prover_config.broker,
+                &prover_config.components.l2,
+                prover_allow_list,
+            )?,
+            verifier_client: BitVMXClient::new(
+                &verifier_config.components,
+                &verifier_config.broker,
+                &verifier_config.components.l2,
+                verifier_allow_list,
+            )?,
             bitcoin_client,
             miner_address: Address::from_str("bcrt1q6uv2aekfwz20gpddpuzmw9pe8c9fzf87h9k0fq")?
                 .require_network(Regtest)?,
@@ -629,10 +641,10 @@ impl Operator {
         info!("Clearing previous databases");
         clear_db(&config.storage.path);
         clear_db(&config.key_storage.path);
-        clear_db(&config.broker_storage.path);
+        clear_db(&config.broker.storage.path);
 
         let bitvmx = BitVMX::new(config)?;
-        let address = P2PAddress::new(&bitvmx.address(), PeerId::from_str(&bitvmx.peer_id())?);
+        let address = P2PAddress::new(bitvmx.address(), bitvmx.pubkey_hash()?);
 
         Ok(Self { bitvmx, address })
     }

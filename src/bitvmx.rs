@@ -155,6 +155,7 @@ impl BitVMX {
             broker_channel,
             Globals::new(store.clone()),
             WitnessVars::new(store.clone()),
+            config.components.clone(),
         );
 
         Ok(Self {
@@ -345,7 +346,9 @@ impl BitVMX {
                         &OutgoingBitVMXApiMessages::PeginTransactionFound(tx_id, tx_status),
                     )?;
                     if !self.notified_rsk_pegin.contains(&tx_id) {
-                        self.program_context.broker_channel.send(L2_ID, data)?;
+                        self.program_context
+                            .broker_channel
+                            .send(self.config.components.get_l2_identifier()?, data)?;
                         self.notified_rsk_pegin.insert(tx_id);
                     }
                     ack_news = AckNews::Monitor(AckMonitorNews::RskPeginTransaction(tx_id));
@@ -374,7 +377,9 @@ impl BitVMX {
                         "Sending funds request to broker: {} available {} required {}",
                         tx_id, _available, _required
                     );
-                    self.program_context.broker_channel.send(L2_ID, data)?;
+                    self.program_context
+                        .broker_channel
+                        .send(self.config.components.get_l2_identifier()?, data)?;
                     ack_news = AckNews::Coordinator(AckCoordinatorNews::InsufficientFunds(tx_id));
                 }
                 CoordinatorNews::NewSpeedUp(_tx_id, _context_data, _counter) => {
@@ -1143,11 +1148,12 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::GetZKPExecutionResult(id) => {
                 BitVMXApi::get_zkp_execution_result(self, from, id)?
             }
-            IncomingBitVMXApiMessages::Encrypt(id, message, public_key) => {
+            IncomingBitVMXApiMessages::Encrypt(id, message, pub_key) => {
                 let encrypted = self
                     .program_context
                     .key_chain
-                    .encrypt_messages(message, public_key)?;
+                    .key_manager
+                    .encrypt_rsa_message(&message, pub_key)?;
                 self.program_context.broker_channel.send(
                     from,
                     serde_json::to_string(&OutgoingBitVMXApiMessages::Encrypted(id, encrypted))?,

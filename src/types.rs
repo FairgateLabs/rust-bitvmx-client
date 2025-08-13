@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use crate::spv_proof::BtcTxSPVProof;
+use crate::{config::ComponentsConfig, spv_proof::BtcTxSPVProof};
 use ::p2p_handler::p2p_handler::P2pHandler;
 use bitcoin::{PrivateKey, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TransactionStatus};
@@ -26,6 +26,7 @@ pub struct ProgramContext {
     pub broker_channel: LocalChannel<BrokerStorage>,
     pub globals: Globals,
     pub witness: WitnessVars,
+    pub components_config: ComponentsConfig,
 }
 
 // pub const BITVMX_ID: u8 = 1;
@@ -41,6 +42,7 @@ impl ProgramContext {
         broker_channel: LocalChannel<BrokerStorage>,
         globals: Globals,
         witness: WitnessVars,
+        components_config: ComponentsConfig,
     ) -> Self {
         Self {
             comms,
@@ -49,6 +51,7 @@ impl ProgramContext {
             broker_channel,
             globals,
             witness,
+            components_config,
         }
     }
 }

@@ -275,7 +275,7 @@ pub fn lockservice(
         get_all(&channels)?;
 
         let set_fee = VariableTypes::Number(3000).set_msg(program_id, FEE)?;
-        send_all(&channels, &set_fee)?;
+        send_all(&id_channel_pairs, &set_fee)?;
 
         let set_ops_aggregated = VariableTypes::PubKey(aggregated_pub_key)
             .set_msg(program_id, OPERATORS_AGGREGATED_PUB)?;

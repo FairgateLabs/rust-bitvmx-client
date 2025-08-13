@@ -76,6 +76,13 @@ impl Component {
     pub fn get_address(&self) -> SocketAddr {
         self.address
     }
+    pub fn get_identifier(&self) -> Result<Identifier, ConfigError> {
+        Ok(Identifier::new(
+            self.get_pubk_hash()?,
+            self.id,
+            self.get_address(),
+        ))
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -114,6 +121,9 @@ impl ComponentsConfig {
             self.prover.id,
             self.prover.get_address(),
         ))
+    }
+    pub fn get_bitvmx_config(&self) -> &Component {
+        &self.bitvmx
     }
 }
 

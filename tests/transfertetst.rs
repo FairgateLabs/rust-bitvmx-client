@@ -4,7 +4,7 @@ use anyhow::Result;
 use bitcoin::PublicKey;
 use bitvmx_client::{
     program::{self, protocols::cardinal::transfer_config::TransferConfig},
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages},
 };
 use common::{
     config_trace, get_all, init_bitvmx, init_utxo_new, mine_and_wait, prepare_bitcoin, send_all,
@@ -80,14 +80,32 @@ pub fn test_transfer() -> Result<()> {
     //one time per bitvmx instance, we need to get the public key for the speedup funding utxo
     let funding_public_id = Uuid::new_v4();
     let command = IncomingBitVMXApiMessages::GetPubKey(funding_public_id, true).to_string()?;
-    send_all(&channels, &command)?;
+    send_all(&id_channel_pairs, &command)?;
     let msgs = get_all(&channels, &mut instances, false)?;
     let funding_key_0 = msgs[0].public_key().unwrap().1;
     let funding_key_1 = msgs[1].public_key().unwrap().1;
     let funding_key_2 = msgs[2].public_key().unwrap().1;
-    set_speedup_funding(10_000_000, &funding_key_0, &channels[0], &wallet)?;
-    set_speedup_funding(10_000_000, &funding_key_1, &channels[1], &wallet)?;
-    set_speedup_funding(10_000_000, &funding_key_2, &channels[2], &wallet)?;
+    set_speedup_funding(
+        10_000_000,
+        &funding_key_0,
+        &channels[0],
+        &wallet,
+        &instances[0].get_components_config().get_bitvmx_config(),
+    )?;
+    set_speedup_funding(
+        10_000_000,
+        &funding_key_1,
+        &channels[1],
+        &wallet,
+        &instances[1].get_components_config().get_bitvmx_config(),
+    )?;
+    set_speedup_funding(
+        10_000_000,
+        &funding_key_2,
+        &channels[2],
+        &wallet,
+        &instances[2].get_components_config().get_bitvmx_config(),
+    )?;
 
     //ask the peers to generate the aggregated public key
     let aggregation_id = Uuid::new_v4();
@@ -168,6 +186,7 @@ pub fn test_transfer() -> Result<()> {
             ),
         )),
         None,
+        instances[0].get_components_config().clone(), //ASK: which bitvmx config to use?
     );
 
     for channel in channels.iter() {

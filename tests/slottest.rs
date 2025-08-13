@@ -15,13 +15,13 @@ use bitvmx_client::{
         },
         variables::VariableTypes,
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages},
 };
 use common::{
     config_trace,
     dispute::{execute_dispute, prepare_dispute, ForcedChallenges},
     get_all, init_bitvmx, init_utxo, mine_and_wait, prepare_bitcoin, send_all,
-    wait_message_from_channel, ParticipantChannel, FUNDING_ID, WALLET_NAME,
+    wait_message_from_channel, ParticipantChannel,
 };
 use tracing::info;
 use uuid::Uuid;
@@ -110,9 +110,27 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
     let funding_key_0 = msgs[0].public_key().unwrap().1;
     let funding_key_1 = msgs[1].public_key().unwrap().1;
     let funding_key_2 = msgs[2].public_key().unwrap().1;
-    set_speedup_funding(10_000_000, &funding_key_0, &channels[0], &wallet)?;
-    set_speedup_funding(10_000_000, &funding_key_1, &channels[1], &wallet)?;
-    set_speedup_funding(10_000_000, &funding_key_2, &channels[2], &wallet)?;
+    set_speedup_funding(
+        10_000_000,
+        &funding_key_0,
+        &channels[0],
+        &wallet,
+        &instances[0].get_components_config().get_bitvmx_config(),
+    )?;
+    set_speedup_funding(
+        10_000_000,
+        &funding_key_1,
+        &channels[1],
+        &wallet,
+        &instances[1].get_components_config().get_bitvmx_config(),
+    )?;
+    set_speedup_funding(
+        10_000_000,
+        &funding_key_2,
+        &channels[2],
+        &wallet,
+        &instances[2].get_components_config().get_bitvmx_config(),
+    )?;
 
     //==================================================
     //ask the peers to generate the aggregated public key
@@ -147,6 +165,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
         vec![pair_aggregated_pub_key],
         (utxo.txid, utxo.vout, Some(fund_value.to_sat()), None),
         TIMELOCK_BLOCKS as u16,
+        instances[0].get_components_config().clone(), //ASK: which bitvmx config to use?
     );
 
     for channel in channels.iter() {
@@ -199,7 +218,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
 
         for msg in slot_protocol_configuration.program_input_connection(&dispute_id, 0)? {
             tracing::warn!("Sending program input: {}", msg);
-            send_all(&sub_channel, &msg)?;
+            send_all(&sub_id_channel_pairs, &msg)?;
         }
 
         // Set the constant input data for the dispute
@@ -210,12 +229,12 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
         let const_input_data = format!("{}{}", success, lock_tx);
         let const_input = VariableTypes::Input(hex::decode(const_input_data).unwrap())
             .set_msg(dispute_id, &program_input(0))?;
-        let _ = send_all(&sub_channel, &const_input);
+        let _ = send_all(&sub_id_channel_pairs, &const_input);
 
         prepare_dispute(
             dispute_id,
             participants,
-            sub_channel.clone(),
+            sub_id_channel_pairs.clone(),
             &pair_aggregated_pub_key,
             initial_utxo,
             initial_output_type,
@@ -280,7 +299,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
     if and_drp {
         let gorth16proof = "b75f20d1aee5a1a0908edd107a25189ccc38b6d20c5dc33362a066157a6ee60350a09cfbfebe38c8d9f04a6dafe46ae2e30f6638f3eb93c1d2aeff2d52d66d0dcd68bf7f8fc07485dd04a573d233df3663d63e71568bc035ef82e8ab3525f025b487aaa4456aaf93be3141b210cda5165a714225d9fd63163f59d741bdaa8b93".to_string();
         execute_dispute(
-            sub_channel,
+            sub_id_channel_pairs,
             &mut instances,
             emulator_channels,
             &bitcoin_client,

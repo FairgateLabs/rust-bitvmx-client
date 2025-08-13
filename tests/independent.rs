@@ -11,9 +11,7 @@ use bitvmx_client::program::protocols::dispute::{
     input_tx_name, program_input, program_input_prev_prefix, program_input_prev_protocol,
 };
 use bitvmx_client::program::variables::{VariableTypes, WitnessTypes};
-use bitvmx_client::types::{
-    IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, EMULATOR_ID, L2_ID, PROVER_ID,
-};
+use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages};
 use bitvmx_client::{bitvmx::BitVMX, config::Config};
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
@@ -28,6 +26,7 @@ use key_manager::winternitz::{
     self, checksum_length, to_checksummed_message, WinternitzPublicKey, WinternitzSignature,
     WinternitzType,
 };
+use p2p_handler::p2p_handler::AllowList;
 use protocol_builder::scripts::{self, SignMode};
 use protocol_builder::types::Utxo;
 use std::sync::mpsc::channel;
@@ -38,6 +37,8 @@ use std::{
 };
 use tracing::{error, info};
 use uuid::Uuid;
+
+use crate::common::ParticipantChannel;
 
 mod common;
 
@@ -594,8 +595,8 @@ pub fn test_all_aux(
     //the witness is observed and then the challenge is sent
     send_all(&pair_0_1_channels, &set_witness)?;
 
-    let _ = helper.channels[1].send(
-        BITVMX_ID,
+    let _ = helper.id_channel_pairs[1].channel.send(
+        helper.id_channel_pairs[1].id.clone(),
         IncomingBitVMXApiMessages::DispatchTransactionName(
             prog_id,
             program::protocols::dispute::START_CH.to_string(),
@@ -613,11 +614,13 @@ pub fn test_all_aux(
 
     let set_input_1 =
         VariableTypes::Input(hex::decode(data).unwrap()).set_msg(prog_id, &program_input(idx))?;
-    let _ = helper.channels[0].send(BITVMX_ID, set_input_1)?;
+    let _ = helper.id_channel_pairs[0]
+        .channel
+        .send(helper.id_channel_pairs[0].id.clone(), set_input_1)?;
 
     // send the tx
-    let _ = helper.channels[0].send(
-        BITVMX_ID,
+    let _ = helper.id_channel_pairs[0].channel.send(
+        helper.id_channel_pairs[0].id.clone(),
         IncomingBitVMXApiMessages::DispatchTransactionName(prog_id, input_tx_name(idx))
             .to_string()?,
     );

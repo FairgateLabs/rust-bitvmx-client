@@ -4,12 +4,16 @@ use protocol_builder::scripts::{self, SignMode};
 use uuid::Uuid;
 
 use crate::{
+    config::ComponentsConfig,
     errors::BitVMXError,
     program::{
-        protocols::{cardinal::EOL_TIMELOCK_DURATION, protocol_handler::external_fund_tx},
+        protocols::{
+            cardinal::{COMPONENTS_CONFIG, EOL_TIMELOCK_DURATION},
+            protocol_handler::external_fund_tx,
+        },
         variables::{Globals, PartialUtxo, VariableTypes},
     },
-    types::{IncomingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_LOCK},
+    types::{IncomingBitVMXApiMessages, PROGRAM_TYPE_LOCK},
 };
 
 pub struct LockProtocolConfiguration {
@@ -23,6 +27,7 @@ pub struct LockProtocolConfiguration {
     pub protocol_utxo: PartialUtxo,
     pub timelock_blocks: u16,       //lock request timelock in blocks
     pub eol_timelock_duration: u16, //end of life timelock duration in blocks
+    pub components_config: ComponentsConfig,
 }
 
 impl LockProtocolConfiguration {
@@ -37,6 +42,7 @@ impl LockProtocolConfiguration {
         protocol_utxo: PartialUtxo,
         timelock_blocks: u16,
         eol_timelock_duration: u16,
+        components_config: ComponentsConfig,
     ) -> Self {
         Self {
             id: program_id,
@@ -49,6 +55,7 @@ impl LockProtocolConfiguration {
             protocol_utxo,
             timelock_blocks,
             eol_timelock_duration,
+            components_config,
         }
     }
 
@@ -71,6 +78,10 @@ impl LockProtocolConfiguration {
             .get_var(&id, EOL_TIMELOCK_DURATION)?
             .unwrap()
             .number()? as u16;
+        let components_config = globals
+            .get_var(&id, COMPONENTS_CONFIG)?
+            .unwrap()
+            .components_config()?;
 
         Ok(Self::new(
             id,
@@ -83,6 +94,7 @@ impl LockProtocolConfiguration {
             protocol_utxo,
             timelock_blocks,
             eol_timelock_duration,
+            components_config,
         ))
     }
 
@@ -112,6 +124,8 @@ impl LockProtocolConfiguration {
                 leader,
             )
             .to_string()?,
+            VariableTypes::ComponentsConfig(self.components_config.clone())
+                .set_msg(self.id, COMPONENTS_CONFIG)?,
         ])
     }
 
@@ -122,7 +136,7 @@ impl LockProtocolConfiguration {
         leader: u16,
     ) -> Result<(), BitVMXError> {
         for msg in self.get_setup_messages(addresses, leader)? {
-            channel.send(BITVMX_ID, msg)?;
+            channel.send(self.components_config.get_bitvmx_identifier()?, msg)?;
         }
         Ok(())
     }

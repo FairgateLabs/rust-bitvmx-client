@@ -7,12 +7,14 @@ use protocol_builder::{
 use uuid::Uuid;
 
 use crate::{
+    config::ComponentsConfig,
     errors::BitVMXError,
     program::{
         protocols::{
             cardinal::{
                 slot::{certificate_hash_prefix, dust_claim_stop, group_id_prefix},
-                FUND_UTXO, OPERATORS, OPERATORS_AGGREGATED_PUB, PAIR_0_1_AGGREGATED,
+                COMPONENTS_CONFIG, FUND_UTXO, OPERATORS, OPERATORS_AGGREGATED_PUB,
+                PAIR_0_1_AGGREGATED,
             },
             dispute::{
                 program_input_prev_prefix, program_input_prev_protocol, protocol_cost,
@@ -22,7 +24,7 @@ use crate::{
         },
         variables::{Globals, PartialUtxo, VariableTypes},
     },
-    types::{IncomingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_SLOT},
+    types::{IncomingBitVMXApiMessages, PROGRAM_TYPE_SLOT},
 };
 
 pub struct SlotProtocolConfiguration {
@@ -33,6 +35,7 @@ pub struct SlotProtocolConfiguration {
     pub operators_pairs: Vec<PublicKey>,
     pub fund_utxo: PartialUtxo,
     pub timelock_blocks: u16,
+    pub components_config: ComponentsConfig,
 }
 
 impl SlotProtocolConfiguration {
@@ -43,6 +46,7 @@ impl SlotProtocolConfiguration {
         operators_pairs: Vec<PublicKey>,
         fund_utxo: PartialUtxo,
         timelock_blocks: u16,
+        components_config: ComponentsConfig,
     ) -> Self {
         Self {
             id: program_id,
@@ -52,6 +56,7 @@ impl SlotProtocolConfiguration {
             operators_pairs,
             fund_utxo,
             timelock_blocks,
+            components_config,
         }
     }
 
@@ -75,6 +80,11 @@ impl SlotProtocolConfiguration {
             .unwrap()
             .number()? as u16;
 
+        let components_config = globals
+            .get_var(&id, COMPONENTS_CONFIG)?
+            .unwrap()
+            .components_config()?;
+
         Ok(Self::new(
             id,
             operators,
@@ -82,6 +92,7 @@ impl SlotProtocolConfiguration {
             vec![pair_0_1_aggregated],
             fund_utxo,
             timelock_blocks,
+            components_config,
         ))
     }
 
@@ -106,6 +117,8 @@ impl SlotProtocolConfiguration {
                 leader,
             )
             .to_string()?,
+            VariableTypes::ComponentsConfig(self.components_config.clone())
+                .set_msg(self.id, COMPONENTS_CONFIG)?,
         ])
     }
 
@@ -116,7 +129,7 @@ impl SlotProtocolConfiguration {
         leader: u16,
     ) -> Result<(), BitVMXError> {
         for msg in self.get_setup_messages(addresses, leader)? {
-            channel.send(BITVMX_ID, msg)?;
+            channel.send(self.components_config.get_bitvmx_identifier()?, msg)?;
         }
         Ok(())
     }

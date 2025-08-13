@@ -116,7 +116,7 @@ pub fn prepare_dispute(
     send_all(&id_channel_pairs, &set_prover_win_utxo)?;
 
     //let program_path = "../BitVMX-CPU/docker-riscv32/verifier/build/zkverifier-new-mul.yaml";
-    let hello_world = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
+    let hello_world = "../BitVMX-CPU/bitvmx-docker-riscv32/riscv32/build/hello-world.yaml"; //TODO: fix
     let set_program = VariableTypes::String(program_path.unwrap_or(hello_world.to_string()))
         .set_msg(program_id, "program_definition")?;
     send_all(&id_channel_pairs, &set_program)?;
@@ -128,7 +128,7 @@ pub fn prepare_dispute(
     let setup_msg =
         IncomingBitVMXApiMessages::Setup(program_id, PROGRAM_TYPE_DRP.to_string(), participants, 1)
             .to_string()?;
-    send_all(&channels, &setup_msg)?;
+    send_all(&id_channel_pairs, &setup_msg)?;
 
     info!("Waiting for setup messages...");
 
@@ -173,11 +173,11 @@ pub fn execute_dispute(
     let (data, input_pos) = input.unwrap_or(("11111111".to_string(), 0));
     let set_input_1 = VariableTypes::Input(hex::decode(data).unwrap())
         .set_msg(program_id, &program_input(input_pos))?;
-    let _ = channels[0].send(BITVMX_ID, set_input_1)?;
+    let _ = channels[0].send(id_channel_pairs[0].id.clone(), set_input_1)?;
 
     // send the tx
     let _ = channels[0].send(
-        BITVMX_ID,
+        id_channel_pairs[0].id.clone(),
         IncomingBitVMXApiMessages::DispatchTransactionName(program_id, input_tx_name(input_pos))
             .to_string()?,
     );
@@ -196,7 +196,7 @@ pub fn execute_dispute(
     }
 
     let _ = channels[1].send(
-        BITVMX_ID,
+        id_channel_pairs[1].id.clone(),
         IncomingBitVMXApiMessages::GetVar(program_id, program_input(input_pos)).to_string()?,
     )?;
 

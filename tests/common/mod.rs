@@ -16,10 +16,10 @@ use bitvmx_broker::{
     },
 };
 use bitvmx_client::{
-    bitvmx::BitVMX,
-    config::Config,
+    bitvmx::{self, BitVMX},
+    config::{Component, Config},
     program::{participant::P2PAddress, protocols::protocol_handler::external_fund_tx},
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, EMULATOR_ID, L2_ID},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages},
 };
 use bitvmx_wallet::wallet::Wallet;
 use p2p_handler::p2p_handler::AllowList;
@@ -139,7 +139,7 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
         config.bitcoin.clone(),
         BitcoindFlags {
             min_relay_tx_fee: 0.00001,
-            block_min_tx_fee: 0.00008,
+            block_min_tx_fee: 0.00001,
             debug: 1,
             fallback_fee: 0.0002,
         },
@@ -349,6 +349,7 @@ pub fn set_speedup_funding(
     pub_key: &PublicKey,
     channel: &DualChannel,
     wallet: &Wallet,
+    bitvmx_id: &Component,
 ) -> Result<()> {
     let fund_txid = wallet.fund_address(
         WALLET_NAME,
@@ -365,6 +366,6 @@ pub fn set_speedup_funding(
 
     let funds_utxo_0 = Utxo::new(fund_txid, 0, amount, pub_key);
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
-    channel.send(BITVMX_ID, command)?;
+    channel.send(bitvmx_id.get_identifier()?, command)?;
     Ok(())
 }

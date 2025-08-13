@@ -27,7 +27,7 @@ use crate::{
         },
         variables::{PartialUtxo, VariableTypes},
     },
-    types::{OutgoingBitVMXApiMessages, ProgramContext, L2_ID},
+    types::{OutgoingBitVMXApiMessages, ProgramContext},
 };
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -260,7 +260,9 @@ impl UserTakeProtocol {
         );
 
         // Send the pegout accepted data to the broker channel
-        program_context.broker_channel.send(L2_ID, data)?;
+        program_context
+            .broker_channel
+            .send(self.ctx.components_config.get_l2_identifier()?, data)?;
 
         Ok(())
     }

@@ -21,7 +21,7 @@ use bitvmx_client::{
         },
         variables::{VariableTypes, WitnessTypes},
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages},
 };
 use common::{
     config_trace,
@@ -33,7 +33,7 @@ use key_manager::verifier::SignatureVerifier;
 use tracing::info;
 use uuid::Uuid;
 
-use crate::common::set_speedup_funding;
+use crate::common::{set_speedup_funding, ParticipantChannel};
 
 mod common;
 mod fixtures;
@@ -106,9 +106,27 @@ pub fn test_full() -> Result<()> {
     let funding_key_0 = msgs[0].public_key().unwrap().1;
     let funding_key_1 = msgs[1].public_key().unwrap().1;
     let funding_key_2 = msgs[2].public_key().unwrap().1;
-    set_speedup_funding(10_000_000, &funding_key_0, &channels[0], &wallet)?;
-    set_speedup_funding(10_000_000, &funding_key_1, &channels[1], &wallet)?;
-    set_speedup_funding(10_000_000, &funding_key_2, &channels[2], &wallet)?;
+    set_speedup_funding(
+        10_000_000,
+        &funding_key_0,
+        &channels[0],
+        &wallet,
+        &instances[0].get_components_config().get_bitvmx_config(),
+    )?;
+    set_speedup_funding(
+        10_000_000,
+        &funding_key_1,
+        &channels[1],
+        &wallet,
+        &instances[1].get_components_config().get_bitvmx_config(),
+    )?;
+    set_speedup_funding(
+        10_000_000,
+        &funding_key_2,
+        &channels[2],
+        &wallet,
+        &instances[2].get_components_config().get_bitvmx_config(),
+    )?;
 
     //==================================================
     //       SETUP AGGREGATED PUBLIC KEY
@@ -163,6 +181,7 @@ pub fn test_full() -> Result<()> {
         vec![pair_aggregated_pub_key],
         (utxo.txid, utxo.vout, Some(fund_value), None),
         TIMELOCK_BLOCKS as u16,
+        instances[0].get_components_config().clone(), //ASK: which bitvmx config to use?
     );
 
     for channel in channels.iter() {
@@ -312,6 +331,7 @@ pub fn test_full() -> Result<()> {
         (txid, 1, Some(lock_protocol_dust_cost(3)), None),
         10,
         100,
+        instances[0].get_components_config().clone(), //ASK: which bitvmx config to use?
     );
 
     for c in &channels {
@@ -407,6 +427,7 @@ pub fn test_full() -> Result<()> {
         groups_pub_keys,
         None,
         Some(slot_program_id),
+        instances[0].get_components_config().clone(), //ASK: which bitvmx config to use?
     );
 
     for channel in channels.iter() {
