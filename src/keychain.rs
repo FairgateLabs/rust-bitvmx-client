@@ -1,6 +1,7 @@
 use std::{collections::HashMap, rc::Rc};
 
 use bitcoin::{secp256k1::rand::thread_rng, PublicKey, XOnlyPublicKey};
+use bitcoin::{secp256k1::rand::thread_rng, PublicKey, XOnlyPublicKey};
 use key_manager::{
     create_key_manager_from_config,
     key_manager::KeyManager,

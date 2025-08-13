@@ -5,15 +5,14 @@ use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus}
 use bitcoin_script_stack::stack::StackTracker;
 use console::style;
 use protocol_builder::{
-    builder::ProtocolBuilder,
-    errors::ProtocolBuilderError,
+    builder::{Protocol, ProtocolBuilder},
     graph::graph::GraphOptions,
     scripts::{self, timelock, ProtocolScript, SignMode},
     types::{
         connection::InputSpec,
         input::{SighashType, SpendMode},
         output::SpeedupData,
-        InputArgs, OutputType,
+        InputArgs, OutputType, Utxo,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -26,11 +25,11 @@ use crate::{
         participant::ParticipantKeys,
         protocols::{
             cardinal::{
-                FEE, FUND_UTXO, GID_MAX, OPERATORS, OPERATORS_AGGREGATED_PUB, PAIR_0_1_AGGREGATED,
-                PROTOCOL_COST, SPEEDUP_DUST, STOPS_CONSUMED, UNSPENDABLE,
+                slot_config::SlotProtocolConfiguration, OPERATORS, OPERATORS_AGGREGATED_PUB,
+                STOPS_CONSUMED,
             },
             claim::ClaimGate,
-            dispute::{START_CH, TIMELOCK_BLOCKS_KEY},
+            dispute::{self, START_CH, TIMELOCK_BLOCKS_KEY},
             protocol_handler::{external_fund_tx, ProtocolContext, ProtocolHandler},
         },
         variables::VariableTypes,
@@ -49,6 +48,28 @@ pub const CERT_HASH_TX: &str = "CERT_HASH_TX_";
 pub const GID_TX: &str = "GID_TX_";
 pub const OP_WINS: &str = "OP_WINS_";
 
+pub const MIN_RELAY_FEE: u64 = 1;
+pub const DUST: u64 = 500 * MIN_RELAY_FEE;
+
+pub fn slot_protocol_dust_cost(participants: u8) -> u64 {
+    participants as u64 * (amount_for_operator(participants) + DUST) + DUST
+}
+
+pub fn amount_for_operator(operators: u8) -> u64 {
+    let protocol_cost = dispute::protocol_cost();
+    let claim_gate_cost = ClaimGate::cost(DUST, DUST, operators as u8 - 1, 1);
+    let amount_for_operator = DUST
+        + DUST
+        + (DUST * 8) // sending the cert hash tx
+        + claim_gate_cost
+        + (operators -1) as u64 * protocol_cost;
+    amount_for_operator
+}
+
+pub fn dust_claim_stop() -> u64 {
+    2 * DUST
+}
+
 pub fn claim_name(op: usize) -> String {
     format!("{}{}", OP_WINS, op)
 }
@@ -61,17 +82,25 @@ pub fn certificate_hash(n: usize) -> String {
     format!("certificate_hash_{}", n)
 }
 
-pub fn certificate_hash_sub(n: usize, sub: u8) -> String {
-    format!("certificate_hash_{}_{}", n, sub)
+pub fn certificate_hash_sub(op: usize, word: u8) -> String {
+    format!("certificate_hash_{}_{}", op, word)
+}
+
+pub fn certificate_hash_prefix(op: usize) -> String {
+    format!("certificate_hash_{}_", op)
 }
 
 pub fn group_id(op: usize) -> String {
-    format!("group_id_{}", op)
+    format!("group_id_{}_0", op) //add 0 as it only requires one word but the connection with the dispute is made with prefixes
 }
 
-pub fn group_id_pubkey(op: usize) -> String {
-    format!("group_id_pubkey_{}", op)
+pub fn group_id_prefix(op: usize) -> String {
+    format!("group_id_{}_", op)
 }
+
+/*pub fn group_id_pubkey(op: usize) -> String {
+    format!("group_id_pubkey_{}", op)
+}*/
 
 pub fn group_id_tx(op: usize, gid: u8) -> String {
     format!("{}{}_{}", GID_TX, op, gid)
@@ -112,10 +141,19 @@ impl ProtocolHandler for SlotProtocol {
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
         let key_chain = &mut program_context.key_chain;
-        let mut keys = vec![];
 
-        // we need 5*4 = 20 bytes, so we can challenge the word size input
-        for i in 0..5 {
+        let speedup = key_chain.derive_keypair()?;
+
+        program_context.globals.set_var(
+            &self.ctx.id,
+            "speedup",
+            VariableTypes::PubKey(speedup.clone()),
+        )?;
+
+        let mut keys = vec![("speedup".to_string(), speedup.into())];
+
+        // we need 8*4 = 32 bytes, so we can challenge the word size input
+        for i in 0..8 {
             let cert_hash = key_chain.derive_winternitz_hash160(4)?;
             keys.push((certificate_hash_sub(self.ctx.my_idx, i), cert_hash.into()));
         }
@@ -147,7 +185,7 @@ impl ProtocolHandler for SlotProtocol {
                 .unwrap()
                 .input()?;
 
-            for i in 0..5 {
+            for i in 0..8 {
                 let partial_input = full_hash
                     .get((i * 4) as usize..((i + 1) * 4) as usize)
                     .unwrap();
@@ -157,14 +195,14 @@ impl ProtocolHandler for SlotProtocol {
                     VariableTypes::Input(partial_input.to_vec()),
                 )?;
             }
-            return Ok((
-                self.get_signed_tx(program_context, name, 0, 0, false, 0)?,
-                None,
-            ));
+            let tx = self.get_signed_tx(program_context, name, 0, 0, false, 0)?;
+            let speedup_utxo = self.get_speedup_data_from_tx(&tx, program_context, None)?;
+
+            return Ok((tx, Some(speedup_utxo.into())));
         }
 
         match name {
-            SETUP_TX => Ok((self.setup_tx()?, None)),
+            SETUP_TX => Ok(self.setup_tx(program_context)?),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
     }
@@ -209,7 +247,7 @@ impl ProtocolHandler for SlotProtocol {
                     .get_var(&self.ctx.id, &group_id(operator as usize))?
                     .unwrap()
                     .input()?;
-                let gid = u32::from_be_bytes(
+                let gid = u32::from_le_bytes(
                     gid.try_into()
                         .map_err(|_| BitVMXError::InvalidMessageFormat)?,
                 );
@@ -228,9 +266,13 @@ impl ProtocolHandler for SlotProtocol {
                     gid,
                     style(gid_selection_tx.compute_txid()).green()
                 );
+
+                let speedup_data =
+                    self.get_speedup_data_from_tx(&gid_selection_tx, program_context, None)?;
+
                 program_context.bitcoin_coordinator.dispatch(
                     gid_selection_tx,
-                    None,
+                    Some(speedup_data),
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
                 )?;
@@ -310,16 +352,20 @@ impl ProtocolHandler for SlotProtocol {
                 for i in 0..total_operators - 1 {
                     if i != vout.unwrap() - 2 {
                         info!("Sending tx to consume the stop for {}", i);
+
+                        let tx = self.get_signed_tx(
+                            program_context,
+                            &start_challenge_to(operator as usize, i as usize),
+                            0,
+                            0,
+                            false,
+                            0,
+                        )?;
+                        let speedup_data =
+                            self.get_speedup_data_from_tx(&tx, program_context, None)?;
                         program_context.bitcoin_coordinator.dispatch(
-                            self.get_signed_tx(
-                                program_context,
-                                &start_challenge_to(operator as usize, i as usize),
-                                0,
-                                0,
-                                false,
-                                0,
-                            )?,
-                            None,
+                            tx,
+                            Some(speedup_data),
                             Context::ProgramId(self.ctx.id).to_string()?,
                             None,
                         )?;
@@ -353,9 +399,10 @@ impl ProtocolHandler for SlotProtocol {
                         &ClaimGate::tx_start(&claim_name(operator as usize)),
                         &tx
                     );
+                    let speedup_data = self.get_speedup_data_from_tx(&tx, program_context, None)?;
                     program_context.bitcoin_coordinator.dispatch(
                         tx,
-                        None,
+                        Some(speedup_data),
                         Context::ProgramId(self.ctx.id).to_string()?,
                         None,
                     )?;
@@ -383,16 +430,19 @@ impl ProtocolHandler for SlotProtocol {
                 .number()?;
 
             info!("Prover sending SUCCESS tx");
+
+            let tx = self.get_signed_tx(
+                program_context,
+                &ClaimGate::tx_success(&claim_name(operator as usize)),
+                0,
+                1,
+                false,
+                0,
+            )?;
+            let speedup_data = self.get_speedup_data_from_tx(&tx, program_context, None)?;
             program_context.bitcoin_coordinator.dispatch(
-                self.get_signed_tx(
-                    program_context,
-                    &ClaimGate::tx_success(&claim_name(operator as usize)),
-                    0,
-                    0,
-                    false,
-                    0,
-                )?,
-                None,
+                tx,
+                Some(speedup_data),
                 Context::ProgramId(self.ctx.id).to_string()?,
                 Some(tx_status.block_info.unwrap().height + timelock_blocks),
             )?;
@@ -428,62 +478,19 @@ impl ProtocolHandler for SlotProtocol {
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let fee = context
-            .globals
-            .get_var(&self.ctx.id, FEE)?
-            .unwrap()
-            .number()? as u64;
+        let SlotProtocolConfiguration {
+            operators_aggregated_pub,
+            operators_pairs,
+            fund_utxo,
+            gid_max,
+            timelock_blocks,
+            operators,
+            ..
+        } = SlotProtocolConfiguration::new_from_globals(self.ctx.id, &context.globals)?;
 
-        let protocol_cost = context
-            .globals
-            .get_var(&self.ctx.id, PROTOCOL_COST)?
-            .unwrap()
-            .number()? as u64;
-
-        let speedup_dust = context
-            .globals
-            .get_var(&self.ctx.id, SPEEDUP_DUST)?
-            .unwrap()
-            .number()? as u64;
-
-        let gid_max = context
-            .globals
-            .get_var(&self.ctx.id, GID_MAX)?
-            .unwrap()
-            .number()? as u8;
-
-        context.globals.set_var(
-            &self.ctx.id,
-            OPERATORS,
-            VariableTypes::Number(keys.len() as u32),
-        )?;
-
-        let ops_agg_pubkey = context
-            .globals
-            .get_var(&self.ctx.id, OPERATORS_AGGREGATED_PUB)?
-            .unwrap()
-            .pubkey()?;
-
-        let pair_0_1_aggregated = context
-            .globals
-            .get_var(&self.ctx.id, PAIR_0_1_AGGREGATED)?
-            .unwrap()
-            .pubkey()?;
-
-        let _unspendable = context
-            .globals
-            .get_var(&self.ctx.id, UNSPENDABLE)?
-            .unwrap()
-            .pubkey()?;
-
-        let fund_utxo = context
-            .globals
-            .get_var(&self.ctx.id, FUND_UTXO)?
-            .unwrap()
-            .utxo()?;
-
+        //save participants wots
         for (idx, key) in keys.iter().enumerate() {
-            for sub in 0..5 {
+            for sub in 0..8 {
                 context.globals.set_var(
                     &self.ctx.id,
                     &certificate_hash_sub(idx, sub),
@@ -494,20 +501,23 @@ impl ProtocolHandler for SlotProtocol {
             }
             context.globals.set_var(
                 &self.ctx.id,
-                &group_id_pubkey(idx),
+                &group_id(idx),
                 VariableTypes::WinternitzPubKey(key.get_winternitz(&group_id(idx))?.clone()),
             )?;
         }
 
         //create the protocol
         let mut protocol = self.load_or_create_protocol();
+        let pb = ProtocolBuilder {};
 
-        let mut amount = fund_utxo.2.unwrap();
+        //=======================
+        // Connect the funding tx with the first tx. SETUP_TX
+        let amount = fund_utxo.2.unwrap();
         let spending = vec![scripts::check_aggregated_signature(
-            &ops_agg_pubkey,
+            &operators_aggregated_pub,
             SignMode::Aggregate,
         )];
-        let output_type = external_fund_tx(&ops_agg_pubkey, spending, amount)?;
+        let output_type = external_fund_tx(&operators_aggregated_pub, spending, amount)?;
 
         protocol.add_external_transaction(FUND_SLOT)?;
         protocol.add_unknown_outputs(FUND_SLOT, fund_utxo.1)?;
@@ -527,18 +537,10 @@ impl ProtocolHandler for SlotProtocol {
             Some(fund_utxo.0),
         )?;
 
-        amount = self.checked_sub(amount, fee)?;
-
-        let pb = ProtocolBuilder {};
-
-        let amount_for_publish_gid = fee + speedup_dust + speedup_dust;
-        let claim_gate_cost = ClaimGate::cost(fee, speedup_dust, keys.len() as u8 - 1, 1);
-
-        let amount_for_sequence = fee
-            + speedup_dust
-            + amount_for_publish_gid
-            + claim_gate_cost
-            + keys.len() as u64 * protocol_cost;
+        let speedup_keys = keys
+            .iter()
+            .map(|k| k.get_public("speedup"))
+            .collect::<Result<Vec<_>, _>>()?;
 
         //====================================
         //CREATES THE SLOTS FOR EACH OPERATOR
@@ -548,153 +550,86 @@ impl ProtocolHandler for SlotProtocol {
         // vout2..2+operators-1 = stop_gate    [for 3 operators 2,3]
         // (vout2+operators-1).. (vout2+operators-1+operators-1)= start_challenge  [for 3 operators 4,5]
         for (i, key) in keys.iter().enumerate() {
-            //====================================
-            //EVERY OPERATOR CAN SEND A CERTIFICATE HASH
-            //Verify the winternitz signature
-            let mut names_and_keys = vec![];
-            for sub in 0..5 {
-                let key_name = certificate_hash_sub(i, sub);
-                names_and_keys.push((key_name.clone(), key.get_winternitz(&key_name)?));
-            }
-            let winternitz_check = scripts::verify_winternitz_signatures(
-                &ops_agg_pubkey,
-                &names_and_keys,
-                SignMode::Aggregate,
+            //create the certificate hash tx
+            info!("Creating certificate hash tx for operator {}", i);
+            let certhashtx = self.add_cert_hash_tx(
+                i,
+                key,
+                &operators_aggregated_pub,
+                &mut protocol,
+                amount_for_operator(operators),
+                gid_max,
+                timelock_blocks,
             )?;
 
-            let output_type = OutputType::taproot(
-                amount_for_sequence,
-                &ops_agg_pubkey,
-                &[winternitz_check.clone()],
-            )?;
-
-            let certhashtx = cert_hash_tx_op(i as u32);
-
-            protocol.add_connection(
-                &format!("{}__{}", SETUP_TX, certhashtx),
-                SETUP_TX,
-                output_type.into(),
+            //create group id tx that consumes outputs from the certificate hash tx
+            self.add_group_id_tx(
+                i,
+                key,
                 &certhashtx,
-                InputSpec::Auto(
-                    SighashType::taproot_all(),
-                    SpendMode::All {
-                        key_path_sign: SignMode::Aggregate,
-                    },
-                ),
-                None,
-                None,
+                &operators_aggregated_pub,
+                &mut protocol,
+                gid_max,
             )?;
-
-            //====================================
-            // AFTER SETTING THE CERTIFICATE HASH, THE OPERATOR IS FORCED TO SEND THE GROUP ID
-            //create the group id output
-            let key_name = group_id(i);
-            let mut leaves: Vec<ProtocolScript> = (1..=gid_max)
-                .map(|gid| winternitz_equality(key, &ops_agg_pubkey, &key_name, gid).unwrap())
-                .collect();
-            let timelock_blocks = context
-                .globals
-                .get_var(&self.ctx.id, TIMELOCK_BLOCKS_KEY)?
-                .unwrap()
-                .number()? as u16;
-            let timelock_script = timelock(timelock_blocks, &ops_agg_pubkey, SignMode::Aggregate);
-            leaves.insert(0, timelock_script);
-            //put timelock as zero so the index matches the gid
-
-            let output_type =
-                OutputType::taproot(amount_for_publish_gid, &ops_agg_pubkey, &leaves)?;
-
-            protocol.add_transaction_output(&certhashtx, &output_type)?;
-
-            // create txs that consumes the gid
-            for gid in 1..=gid_max {
-                let gidtx = group_id_tx(i, gid);
-                protocol.add_transaction(&gidtx)?;
-
-                protocol.add_transaction_input(
-                    Hash::all_zeros(),
-                    0,
-                    &gidtx,
-                    Sequence::ENABLE_RBF_NO_LOCKTIME,
-                    &SpendMode::Script { leaf: gid as usize }, //TODO: test with gid
-                    &SighashType::taproot_all(),
-                )?;
-
-                let gid_spend =
-                    scripts::check_aggregated_signature(&ops_agg_pubkey, SignMode::Aggregate);
-
-                protocol.add_transaction_output(
-                    &gidtx,
-                    &OutputType::taproot(speedup_dust, &ops_agg_pubkey, &[gid_spend])?,
-                )?;
-
-                protocol.add_connection(
-                    &format!("{}__{}", certhashtx, gidtx),
-                    &certhashtx,
-                    0.into(),
-                    &gidtx,
-                    0.into(),
-                    None,
-                    None,
-                )?;
-
-                // Add one extra non-spendable output to each challenge response transaction to ensure different txids
-                let differenciator = scripts::op_return_script(vec![gid as u8])?
-                    .get_script()
-                    .clone();
-                protocol.add_transaction_output(
-                    &gidtx,
-                    &OutputType::segwit_unspendable(differenciator)?,
-                )?;
-
-                pb.add_speedup_output(&mut protocol, &gidtx, speedup_dust, &ops_agg_pubkey)?;
-            }
 
             //====================================
             // IF GROUP ID IS NOT SELECTED THE REST OF THE OPERATORS CAN PENALIZE AFTER TIME OUT
             // create the timeout gid tx
             let gidtotx = group_id_to(i);
-            protocol.add_transaction(&gidtotx)?;
-
-            protocol.add_transaction_input(
-                Hash::all_zeros(),
-                0,
-                &gidtotx,
-                Sequence::from_height(timelock_blocks),
-                &SpendMode::Script { leaf: 0 },
-                &SighashType::taproot_all(),
-            )?;
+            info!("Creating timeout gid tx {}", gidtotx);
 
             protocol.add_connection(
                 &format!("{}__{}", certhashtx, gidtotx),
                 &certhashtx,
                 0.into(),
                 &gidtotx,
-                0.into(),
-                None,
+                InputSpec::Auto(
+                    SighashType::taproot_all(),
+                    SpendMode::Script { leaf: 0 }, //we put the timelock on the leaf 0
+                ),
+                Some(timelock_blocks),
                 None,
             )?;
+
+            for (n, other_key) in keys.iter().enumerate() {
+                if n == i {
+                    continue;
+                }
+                pb.add_speedup_output(
+                    &mut protocol,
+                    &gidtotx,
+                    DUST,
+                    other_key.get_public("speedup")?,
+                )?;
+            }
 
             //====================================
             // ADD THE CLAIM GATE THAT THE OPERATOR WINS
             // IF CONTAINS ALSO THE STOP OUTPUTS THAT IF THE OPERATOR WINS CHALLENGE NEEDS TO CONSUME
             //TODO: set the proper pair aggregated for the stop output
-            let stop_count = keys.len() as u8 - 1;
-            let mut stop_pubkeys = vec![];
-            for _ in 0..stop_count {
-                stop_pubkeys.push(&pair_0_1_aggregated);
+            let mut stopper_keys = speedup_keys.clone();
+            let claimer = stopper_keys.remove(i);
+            let mut subset_cov = vec![];
+            for _ in 0..operators - 1 {
+                subset_cov.push(&operators_pairs[0]);
             }
+            let claimer_sign = if self.ctx.my_idx == i {
+                SignMode::Single
+            } else {
+                SignMode::Skip
+            };
             let claim_gate = ClaimGate::new(
                 &mut protocol,
                 &certhashtx,
                 &claim_name(i),
-                &ops_agg_pubkey,
-                fee,
-                speedup_dust,
-                stop_count,
-                Some(stop_pubkeys),
+                (claimer, claimer_sign),
+                &operators_aggregated_pub,
+                DUST,
+                DUST,
+                stopper_keys,
+                Some(subset_cov),
                 timelock_blocks,
-                vec![&ops_agg_pubkey],
+                vec![&operators_aggregated_pub],
             )?;
 
             //====================================
@@ -704,20 +639,28 @@ impl ProtocolHandler for SlotProtocol {
             //this should be another aggregated to be signed later
             //TODO: define properly the input utxo leafs
             //TODO: in this case we need to use a timelock to restrict the prover the take by timeout the start chhalenge
-            let ops_agg_check =
-                scripts::timelock(timelock_blocks, &ops_agg_pubkey, SignMode::Aggregate);
+            let ops_agg_check = scripts::timelock(
+                timelock_blocks,
+                &operators_aggregated_pub,
+                SignMode::Aggregate,
+            );
             let pair_agg_check =
-                scripts::check_aggregated_signature(&pair_0_1_aggregated, SignMode::Aggregate);
+                scripts::check_aggregated_signature(&operators_pairs[0], SignMode::Aggregate);
             let start_challenge = OutputType::taproot(
-                protocol_cost,
-                &ops_agg_pubkey,
+                dispute::protocol_cost(),
+                &operators_aggregated_pub,
                 &[ops_agg_check, pair_agg_check],
             )?;
 
+            // allow the operator to chancel the challenge by timeout
             let mut count = 0;
             for n in 0..keys.len() {
+                info!(
+                    "Creating start challenge tx for operator {} with key {}",
+                    n,
+                    key.get_public("speedup")?
+                );
                 if n != i {
-                    //protocol.add_transaction_output(&certhashtx, &start_challenge.clone())?;
                     let tx_name = start_challenge_to(i, count);
 
                     protocol.add_connection(
@@ -732,47 +675,36 @@ impl ProtocolHandler for SlotProtocol {
 
                     //add the input that consume the stop output of the claim gate
                     count += 1;
-                    let vout = claim_gate.vout + count;
-                    protocol.add_transaction_input(
-                        Hash::all_zeros(),
-                        vout,
-                        &tx_name,
-                        Sequence::ENABLE_RBF_NO_LOCKTIME,
-                        &SpendMode::Script { leaf: 0 },
-                        &SighashType::taproot_all(),
-                    )?;
                     protocol.add_connection(
                         &format!("{}__{}_STOP", certhashtx, tx_name),
                         &certhashtx,
                         (claim_gate.vout + count).into(),
                         &tx_name,
-                        1.into(),
+                        InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
                         None,
                         None,
                     )?;
 
-                    //add an output "speedup" (this is actually tacking the value of the protocol)
-                    //needs to be changed once the speedup is working
                     pb.add_speedup_output(
                         &mut protocol,
                         &tx_name,
-                        protocol_cost - fee,
-                        &ops_agg_pubkey,
+                        DUST,
+                        key.get_public("speedup")?,
                     )?;
                 }
             }
 
-            pb.add_speedup_output(&mut protocol, &gidtotx, speedup_dust, &ops_agg_pubkey)?;
-
-            pb.add_speedup_output(&mut protocol, &certhashtx, speedup_dust, &ops_agg_pubkey)?;
-            amount = self.checked_sub(amount, amount_for_sequence)?;
+            pb.add_speedup_output(&mut protocol, &certhashtx, DUST, key.get_public("speedup")?)?;
         }
 
-        // add one output to test
-        pb.add_speedup_output(&mut protocol, SETUP_TX, amount, &ops_agg_pubkey)?;
+        // Add the speedup output for the SETUP_TX
+        for k in keys {
+            pb.add_speedup_output(&mut protocol, SETUP_TX, DUST, k.get_public("speedup")?)?;
+        }
+        info!("Going to build");
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
-        info!("{}", protocol.visualize(GraphOptions::Default)?);
+        info!("{}", protocol.visualize(GraphOptions::EdgeArrows)?);
         self.save_protocol(protocol)?;
         Ok(())
     }
@@ -789,7 +721,10 @@ impl SlotProtocol {
         Self { ctx: context }
     }
 
-    pub fn setup_tx(&self) -> Result<Transaction, ProtocolBuilderError> {
+    pub fn setup_tx(
+        &self,
+        context: &ProgramContext,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         let signature = self
             .load_protocol()?
             .input_taproot_key_spend_signature(SETUP_TX, 0)?
@@ -797,8 +732,154 @@ impl SlotProtocol {
         let mut taproot_arg = InputArgs::new_taproot_key_args();
         taproot_arg.push_taproot_signature(signature)?;
 
-        self.load_protocol()?
-            .transaction_to_send(SETUP_TX, &[taproot_arg])
+        let tx = self
+            .load_protocol()?
+            .transaction_to_send(SETUP_TX, &[taproot_arg])?;
+
+        let txid = tx.compute_txid();
+        let speedup = context
+            .globals
+            .get_var(&self.ctx.id, "speedup")?
+            .unwrap()
+            .pubkey()?;
+
+        let operators = context
+            .globals
+            .get_var(&self.ctx.id, OPERATORS)?
+            .unwrap()
+            .number()?;
+        let speedup_utxo = Utxo::new(txid, operators + self.ctx.my_idx as u32, DUST, &speedup);
+
+        //debug!("Transaction to send: {:?}", tx);
+        Ok((tx, Some(speedup_utxo.into())))
+    }
+
+    fn add_cert_hash_tx(
+        &self,
+        i: usize,
+        key: &ParticipantKeys,
+        operators_aggregated_pub: &PublicKey,
+        protocol: &mut Protocol,
+        amount_for_sequence: u64,
+        gid_max: u8,
+        timelock_blocks: u16,
+    ) -> Result<String, BitVMXError> {
+        //====================================
+        //EVERY OPERATOR CAN SEND A CERTIFICATE HASH
+        //Verify the winternitz signature
+        let mut names_and_keys = vec![];
+        for sub in 0..8 {
+            let key_name = certificate_hash_sub(i, sub);
+            names_and_keys.push((key_name.clone(), key.get_winternitz(&key_name)?));
+        }
+        let winternitz_check = scripts::verify_winternitz_signatures(
+            &operators_aggregated_pub,
+            &names_and_keys,
+            SignMode::Aggregate,
+        )?;
+
+        let output_type = OutputType::taproot(
+            amount_for_sequence,
+            &operators_aggregated_pub,
+            &[winternitz_check.clone()],
+        )?;
+
+        let certhashtx = cert_hash_tx_op(i as u32);
+
+        protocol.add_connection(
+            &format!("{}__{}", SETUP_TX, certhashtx),
+            SETUP_TX,
+            output_type.into(),
+            &certhashtx,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            None,
+        )?;
+
+        //====================================
+        // AFTER SETTING THE CERTIFICATE HASH, THE OPERATOR IS FORCED TO SEND THE GROUP ID
+        //create the group id output
+        let key_name = group_id(i);
+        let mut leaves: Vec<ProtocolScript> = (1..=gid_max)
+            .map(|gid| winternitz_equality(key, &operators_aggregated_pub, &key_name, gid).unwrap())
+            .collect();
+        let timelock_script = timelock(
+            timelock_blocks,
+            &operators_aggregated_pub,
+            SignMode::Aggregate,
+        );
+        leaves.insert(0, timelock_script);
+        //put timelock as zero so the index matches the gid
+
+        //3 dust, one for the tx, one for the connection output and one for the speedup output
+        let output_type = OutputType::taproot(3 * DUST, &operators_aggregated_pub, &leaves)?;
+
+        protocol.add_transaction_output(&certhashtx, &output_type)?;
+
+        Ok(certhashtx)
+    }
+
+    fn add_group_id_tx(
+        &self,
+        i: usize,
+        key: &ParticipantKeys,
+        certhashtx: &str,
+        operators_aggregated_pub: &PublicKey,
+        protocol: &mut Protocol,
+        gid_max: u8,
+    ) -> Result<(), BitVMXError> {
+        // create txs that consumes the gid
+        // it requires 2 dust
+        for gid in 1..=gid_max {
+            let gidtx = group_id_tx(i, gid);
+
+            protocol.add_transaction(&gidtx)?;
+
+            protocol.add_transaction_input(
+                Hash::all_zeros(),
+                0,
+                &gidtx,
+                Sequence::ENABLE_RBF_NO_LOCKTIME,
+                &SpendMode::Script { leaf: gid as usize }, //TODO: test with gid
+                &SighashType::taproot_all(),
+            )?;
+
+            let gid_spend =
+                scripts::check_aggregated_signature(&operators_aggregated_pub, SignMode::Aggregate);
+
+            protocol.add_transaction_output(
+                &gidtx,
+                &OutputType::taproot(DUST, &operators_aggregated_pub, &[gid_spend])?,
+            )?;
+
+            protocol.add_connection(
+                &format!("{}__{}", certhashtx, gidtx),
+                &certhashtx,
+                0.into(),
+                &gidtx,
+                0.into(),
+                None,
+                None,
+            )?;
+
+            // Add one extra non-spendable output to each challenge response transaction to ensure different txids
+            // this output is zero value
+            let differenciator = scripts::op_return_script(vec![gid as u8])?
+                .get_script()
+                .clone();
+            protocol
+                .add_transaction_output(&gidtx, &OutputType::segwit_unspendable(differenciator)?)?;
+
+            let pb = ProtocolBuilder {};
+            pb.add_speedup_output(protocol, &gidtx, DUST, key.get_public("speedup")?)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -810,7 +891,7 @@ pub fn winternitz_equality(
 ) -> Result<ProtocolScript, BitVMXError> {
     let mut stack = StackTracker::new();
     let provided = stack.define(8, "provided_gid");
-    let real = stack.number_u32(equal as u32);
+    let real = stack.number_u32(u32::from_be_bytes((equal as u32).to_le_bytes()) as u32);
     stack.reverse_u32(real);
     stack.equals(provided, true, real, true);
 

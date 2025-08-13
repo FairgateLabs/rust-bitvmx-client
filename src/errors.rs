@@ -19,6 +19,9 @@ use uuid::Uuid;
 
 #[derive(Error, Debug)]
 pub enum BitVMXError {
+    #[error("Error on dispute resolution protocol setup: {0}")]
+    DisputeResolutionProtocolSetup(String),
+
     #[error("Invalid configuration")]
     ConfigurationError(#[from] ConfigError),
 

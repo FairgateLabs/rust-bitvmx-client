@@ -4,10 +4,10 @@ use bitcoin_coordinator::TransactionStatus;
 use bitcoin_scriptexec::scriptint_vec;
 use console::style;
 use enum_dispatch::enum_dispatch;
-use key_manager::winternitz::{WinternitzSignature, WinternitzType};
+use key_manager::winternitz::{message_bytes_length, WinternitzSignature, WinternitzType};
 use protocol_builder::scripts::ProtocolScript;
 use protocol_builder::types::output::SpeedupData;
-use protocol_builder::types::{InputArgs, OutputType};
+use protocol_builder::types::{InputArgs, OutputType, Utxo};
 use protocol_builder::{builder::Protocol, errors::ProtocolBuilderError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -28,14 +28,15 @@ use super::dispute::DisputeResolutionProtocol;
 
 #[cfg(feature = "union")]
 use crate::program::protocols::union::{
-    accept_pegin::AcceptPegInProtocol, dispute_core::DisputeCoreProtocol,
-    pairwise_penalization::PairwisePenalizationProtocol, user_take::UserTakeProtocol,
+    accept_pegin::AcceptPegInProtocol, advance_funds::AdvanceFundsProtocol,
+    dispute_core::DisputeCoreProtocol, pairwise_penalization::PairwisePenalizationProtocol,
+    user_take::UserTakeProtocol,
 };
 
 #[cfg(feature = "union")]
 use crate::types::{
-    PROGRAM_TYPE_ACCEPT_PEGIN, PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_PAIRWISE_PENALIZATION,
-    PROGRAM_TYPE_USER_TAKE,
+    PROGRAM_TYPE_ACCEPT_PEGIN, PROGRAM_TYPE_ADVANCE_FUNDS, PROGRAM_TYPE_DISPUTE_CORE,
+    PROGRAM_TYPE_PAIRWISE_PENALIZATION, PROGRAM_TYPE_USER_TAKE,
 };
 
 #[cfg(feature = "cardinal")]
@@ -162,7 +163,9 @@ pub trait ProtocolHandler {
             self.context().storage.clone().unwrap(),
         )? {
             Some(protocol) => Ok(protocol),
-            None => Err(ProtocolBuilderError::MissingProtocol),
+            None => Err(ProtocolBuilderError::MissingProtocol(
+                self.context().protocol_name.clone(),
+            )),
         }
     }
 
@@ -203,7 +206,7 @@ pub trait ProtocolHandler {
         let mut wots_sigs = vec![];
 
         for k in protocol_script.get_keys().iter().rev() {
-            info!("Getting winternitz signature for key: {}", k.name());
+            //info!("Getting winternitz signature for key: {}", k.name());
             if let Some(var) = program_context
                 .globals
                 .get_var(&self.context().id, k.name())?
@@ -311,9 +314,9 @@ pub trait ProtocolHandler {
     ) -> Result<Vec<String>, BitVMXError> {
         info!(
             "Program {}: Decoding witness for {} with input index {}",
-            self.context().id,
-            name,
-            input_index
+            style(self.context().protocol_name.clone()).blue(),
+            style(name).green(),
+            style(input_index).yellow()
         );
         let protocol = protocol.unwrap_or(self.load_protocol()?);
 
@@ -327,6 +330,11 @@ pub trait ProtocolHandler {
                     &format!("{}_{}_leaf_index", name, input_index),
                     VariableTypes::Number(leaf),
                 )?;
+                info!(
+                    "Leaf index for {}: {}",
+                    style(name).green(),
+                    style(leaf).yellow()
+                );
                 leaf
             }
         };
@@ -339,18 +347,27 @@ pub trait ProtocolHandler {
 
         let mut names = vec![];
         let mut sizes = vec![];
+        //TODO: make the script save the size so we don't need to get it from participant keys or variables
         script.get_keys().iter().rev().for_each(|k| {
             names.push(k.name().to_string());
             let size = participant_keys.get_key_size(k.name());
-            if size.is_err() {
-                error!(
-                    "Failed to get key size for {}: {}",
-                    k.name(),
-                    size.err().unwrap()
-                );
-                return;
+            if size.is_err()  {
+                info!("Could not get the key from participant keys: {}. Trying to get from variables.", k.name());
+                let var = program_context.globals.get_var(&self.context().id, k.name());
+                if var.is_err() || var.as_ref().unwrap().is_none() {
+                    error!(
+                        "Failed to get key size for {}: {}",
+                        k.name(),
+                        size.err().unwrap()
+                    );
+                    return;
+                } else {
+                    sizes.push(message_bytes_length( var.unwrap().unwrap().wots_pubkey().unwrap().message_size().unwrap()));
+                }
+
+            } else {
+                sizes.push(size.unwrap());
             }
-            sizes.push(size.unwrap());
         });
         info!("Decoding data for {}", name);
         info!("Names: {:?}", names);
@@ -431,6 +448,24 @@ pub trait ProtocolHandler {
             .pubkey()
     }
 
+    fn get_speedup_data_from_tx(
+        &self,
+        tx: &Transaction,
+        program_context: &ProgramContext,
+        vout: Option<u32>,
+    ) -> Result<SpeedupData, BitVMXError> {
+        let txid = tx.compute_txid();
+        let speedup = self.get_speedup_key(program_context)?;
+        let vout = vout.unwrap_or(tx.output.len() as u32 - 1);
+        let speedup_utxo = Utxo::new(
+            txid,
+            vout,
+            tx.output[vout as usize].value.to_sat(),
+            &speedup,
+        );
+        Ok(speedup_utxo.into())
+    }
+
     fn setup_complete(&self, program_context: &ProgramContext) -> Result<(), BitVMXError>;
 }
 
@@ -477,6 +512,8 @@ pub enum ProtocolType {
     #[cfg(feature = "union")]
     UserTakeProtocol,
     #[cfg(feature = "union")]
+    AdvanceFundsProtocol,
+    #[cfg(feature = "union")]
     DisputeCoreProtocol,
     #[cfg(feature = "union")]
     PairwisePenalizationProtocol,
@@ -508,6 +545,10 @@ pub fn new_protocol_type(
         )),
         #[cfg(feature = "union")]
         PROGRAM_TYPE_USER_TAKE => Ok(ProtocolType::UserTakeProtocol(UserTakeProtocol::new(ctx))),
+        #[cfg(feature = "union")]
+        PROGRAM_TYPE_ADVANCE_FUNDS => Ok(ProtocolType::AdvanceFundsProtocol(
+            AdvanceFundsProtocol::new(ctx),
+        )),
         #[cfg(feature = "union")]
         PROGRAM_TYPE_PAIRWISE_PENALIZATION => Ok(ProtocolType::PairwisePenalizationProtocol(
             PairwisePenalizationProtocol::new(ctx),

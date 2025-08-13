@@ -275,10 +275,7 @@ pub fn lockservice(
         get_all(&channels)?;
 
         let set_fee = VariableTypes::Number(3000).set_msg(program_id, FEE)?;
-        send_all(&id_channel_pairs, &set_fee)?;
-
-        let set_fee_zkp = VariableTypes::Number(10000).set_msg(program_id, "FEE_ZKP")?;
-        send_all(&id_channel_pairs, &set_fee_zkp)?;
+        send_all(&channels, &set_fee)?;
 
         let set_ops_aggregated = VariableTypes::PubKey(aggregated_pub_key)
             .set_msg(program_id, OPERATORS_AGGREGATED_PUB)?;
@@ -412,33 +409,6 @@ pub fn lockservice(
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
         }
-
-        //TODO: It should actually be signed in this moment and not before (could be signed but not shared the partials)
-
-        let zkp = "b75f20d1aee5a1a0908edd107a25189ccc38b6d20c5dc33362a066157a6ee60350a09cfbfebe38c8d9f04a6dafe46ae2e30f6638f3eb93c1d2aeff2d52d66d0dcd68bf7f8fc07485dd04a573d233df3663d63e71568bc035ef82e8ab3525f025b487aaa4456aaf93be3141b210cda5165a714225d9fd63163f59d741bdaa8b93";
-        let set_zkp = VariableTypes::Input(hex::decode(zkp)?).set_msg(program_id, "zkp")?;
-        send_all(&id_channel_pairs, &set_zkp)?;
-
-        let _ = channels[0].send(
-            id_channel_pairs[0].id.clone(),
-            IncomingBitVMXApiMessages::DispatchTransactionName(
-                program_id,
-                program::protocols::cardinal::lock::PUBLISH_ZKP.to_string(),
-            )
-            .to_string()?,
-        );
-
-        info!("Sent publish zkp tx");
-        std::thread::sleep(std::time::Duration::from_millis(1000));
-        bitcoin_client.mine_blocks_to_address(10, &wallet)?;
-        info!("Wait for confirmation of zkp");
-        let ret = get_all(&channels)?;
-        let msg = OutgoingBitVMXApiMessages::from_str(&ret[0].0)?;
-        let (_id, status, name) = match msg {
-            OutgoingBitVMXApiMessages::Transaction(id, status, name) => (id, status, name),
-            _ => panic!("Expected Transaction message"),
-        };
-        info!("Transaction observed: {:?} {:?}", status.tx_id, name);
 
         let _ = channels[1].send(
             id_channel_pairs[1].id.clone(),

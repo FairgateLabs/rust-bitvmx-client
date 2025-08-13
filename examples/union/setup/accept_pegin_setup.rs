@@ -1,7 +1,6 @@
-use std::collections::HashMap;
-
+use crate::participants::member::{Keyring, Member};
 use anyhow::Result;
-use bitcoin::Txid;
+use bitcoin::{PublicKey, Txid};
 use bitvmx_client::{
     client::BitVMXClient,
     program::{
@@ -14,20 +13,14 @@ use bitvmx_client::{
 use tracing::info;
 use uuid::Uuid;
 
-use crate::participants::member::{Keyring, Member};
-pub struct AcceptPegInSetup {
-    pub _covenant_id: Uuid,
-    pub _my_member_id: String,
-    pub _my_role: ParticipantRole,
-    pub _committee: Vec<Member>,
-}
+pub struct AcceptPegInSetup {}
 
 impl AcceptPegInSetup {
     #[allow(clippy::too_many_arguments)]
     pub fn setup(
         protocol_id: Uuid,
         my_id: &str,
-        my_role: &ParticipantRole,
+        _my_role: &ParticipantRole,
         committee: &[Member],
         request_pegin_txid: Txid,
         request_pegin_amount: u64,
@@ -35,23 +28,16 @@ impl AcceptPegInSetup {
         keyring: &Keyring,
         bitvmx: &BitVMXClient,
         committee_id: Uuid,
-        slot_index: u32,
-    ) -> Result<AcceptPegInSetup> {
+        slot_index: u64,
+        rootstock_address: String,
+        reimbursement_pubkey: PublicKey,
+    ) -> Result<()> {
         let addresses = Self::get_addresses(committee);
 
         info!(
             id = my_id,
             "Setting up the AcceptPegIn protocol handler {} for {}", protocol_id, my_id
         );
-
-        // build a map of communication pubkeys to addresses
-        let mut comms = HashMap::new();
-        for member in committee {
-            comms.insert(
-                member.keyring.communication_pubkey.unwrap(),
-                member.address.clone().unwrap(),
-            );
-        }
 
         let mut operators_take_key = Vec::new();
         for member in committee {
@@ -61,15 +47,15 @@ impl AcceptPegInSetup {
         }
 
         let pegin_request = PegInRequest {
-            my_role: my_role.clone(),
             txid: request_pegin_txid,
             amount: request_pegin_amount,
             accept_pegin_sighash: accept_pegin_sighash.to_vec(),
             take_aggregated_key: keyring.take_aggregated_key.unwrap(),
-            addresses: comms,
             operators_take_key,
             slot_index: slot_index,
             committee_id: committee_id,
+            rootstock_address,
+            reimbursement_pubkey,
         };
 
         bitvmx.set_var(
@@ -85,27 +71,7 @@ impl AcceptPegInSetup {
             0,
         )?;
 
-        // FIXME: This code will be uncommented soon to broadcast the accept peg-in transaction.
-        // let program_id = expect_msg!(bitvmx, SetupCompleted(program_id) => program_id)?;
-        // info!(id = "AcceptPegInSetup", program_id = ?program_id, "Dispute core setup completed");
-
-        // bitvmx.get_transaction_by_name(covenant_id, ACCEPT_PEGIN_TX.to_string())?;
-        // let tx = expect_msg!(bitvmx, TransactionInfo(_, _, tx) => tx)?;
-
-        // bitvmx.dispatch_transaction(covenant_id, tx)?;
-        // let status = expect_msg!(bitvmx, Transaction(_, status, _) => status)?;
-
-        // info!(
-        //     "AcceptPegIn protocol handler {} for {} send accept pegin transaction with status: {:?}",
-        //     covenant_id, my_id, status
-        // );
-
-        Ok(AcceptPegInSetup {
-            _covenant_id: protocol_id,
-            _my_member_id: my_id.to_string(),
-            _my_role: my_role.clone(),
-            _committee: committee.to_vec(),
-        })
+        Ok(())
     }
 
     fn get_addresses(committee: &[Member]) -> Vec<P2PAddress> {

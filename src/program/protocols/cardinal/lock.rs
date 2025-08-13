@@ -10,18 +10,18 @@ use protocol_builder::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
         output::SpeedupData,
-        InputArgs, OutputType,
+        InputArgs, OutputType, Utxo,
     },
 };
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     errors::BitVMXError,
     program::{
         participant::ParticipantKeys,
         protocols::{
-            cardinal::EOL_TIMELOCK_DURATION,
+            cardinal::lock_config::LockProtocolConfiguration,
             protocol_handler::{ProtocolContext, ProtocolHandler},
         },
         variables::VariableTypes,
@@ -31,12 +31,17 @@ use crate::{
 
 pub const LOCK_REQ_TX: &str = "lock_req_tx";
 pub const LOCK_TX: &str = "lock_tx";
-pub const PUBLISH_ZKP: &str = "publish_zkp";
 pub const HAPPY_PATH_TX: &str = "happy_path_tx";
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct LockProtocol {
     ctx: ProtocolContext,
+}
+
+pub const MIN_RELAY_FEE: u64 = 1;
+pub const DUST: u64 = 500 * MIN_RELAY_FEE;
+pub fn lock_protocol_dust_cost(participants: u8) -> u64 {
+    DUST * ((2 * participants as u64) + 3)
 }
 
 impl ProtocolHandler for LockProtocol {
@@ -66,20 +71,17 @@ impl ProtocolHandler for LockProtocol {
         &self,
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
-        let aggregated_1 = program_context.key_chain.derive_keypair()?;
+        let speedup = program_context.key_chain.derive_keypair()?;
 
-        let mut keys = vec![("aggregated_1".to_string(), aggregated_1.into())];
+        program_context.globals.set_var(
+            &self.ctx.id,
+            "speedup",
+            VariableTypes::PubKey(speedup.clone()),
+        )?;
 
-        //TODO: get from a variable the number of bytes required to encode the too_id
-        let start_id = program_context.key_chain.derive_winternitz_hash160(1)?;
-        keys.push((format!("too_id_{}", self.ctx.my_idx), start_id.into()));
+        let keys = vec![("speedup".to_string(), speedup.into())];
 
-        if self.ctx.my_idx == 0 {
-            let start_id = program_context.key_chain.derive_winternitz_hash160(128)?;
-            keys.push(("zkp".to_string(), start_id.into()));
-        }
-
-        Ok(ParticipantKeys::new(keys, vec!["aggregated_1".to_string()]))
+        Ok(ParticipantKeys::new(keys, vec![]))
     }
 
     fn get_transaction_by_name(
@@ -88,9 +90,8 @@ impl ProtocolHandler for LockProtocol {
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         match name {
-            LOCK_TX => Ok((self.accept_tx(context)?, None)),
-            PUBLISH_ZKP => Ok((self.publish_zkp(context)?, None)),
-            HAPPY_PATH_TX => Ok((self.happy_path()?, None)),
+            LOCK_TX => Ok((self.accept_tx(context))?),
+            HAPPY_PATH_TX => Ok((self.happy_path(context))?),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
     }
@@ -124,51 +125,21 @@ impl ProtocolHandler for LockProtocol {
     fn build(
         &self,
         keys: Vec<ParticipantKeys>,
-        computed_aggregated: HashMap<String, PublicKey>,
+        _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        // TODO get this from config, all values expressed in satoshis
-
-        //let secp = secp256k1::Secp256k1::new();
-
-        let fee = context
-            .globals
-            .get_var(&self.ctx.id, "FEE")?
-            .unwrap()
-            .number()? as u64;
-
-        let ops_agg_pubkey = context
-            .globals
-            .get_var(&self.ctx.id, "operators_aggregated_pub")?
-            .unwrap()
-            .pubkey()?;
-
-        let unspendable = context
-            .globals
-            .get_var(&self.ctx.id, "unspendable")?
-            .unwrap()
-            .pubkey()?;
-
-        let secret = context.globals.get_var(&self.ctx.id, "secret")?.unwrap();
-        let secret = secret.secret()?;
-
-        let ordinal_utxo = context
-            .globals
-            .get_var(&self.ctx.id, "ordinal_utxo")?
-            .unwrap()
-            .utxo()?;
-
-        let protocol_utxo = context
-            .globals
-            .get_var(&self.ctx.id, "protocol_utxo")?
-            .unwrap()
-            .utxo()?;
-
-        let user_pubkey = context
-            .globals
-            .get_var(&self.ctx.id, "user_pubkey")?
-            .unwrap()
-            .pubkey()?;
+        let LockProtocolConfiguration {
+            operators_aggregated_pub,
+            operators_aggregated_pub_happy_path,
+            unspendable,
+            user_pubkey,
+            secret,
+            ordinal_utxo,
+            protocol_utxo,
+            timelock_blocks,
+            eol_timelock_duration,
+            ..
+        } = LockProtocolConfiguration::new_from_globals(self.ctx.id, &context.globals)?;
 
         warn!(
             "Setup with: {:?} {:?} {:?}",
@@ -177,7 +148,7 @@ impl ProtocolHandler for LockProtocol {
 
         warn!(
             "======== Ops_agg_key: {:?} Unspendable: {:?} User_pubkey{:?}",
-            XOnlyPublicKey::from(ops_agg_pubkey).to_string(),
+            XOnlyPublicKey::from(operators_aggregated_pub).to_string(),
             XOnlyPublicKey::from(unspendable).to_string(),
             XOnlyPublicKey::from(user_pubkey).to_string()
         );
@@ -186,10 +157,13 @@ impl ProtocolHandler for LockProtocol {
         //THAT WILL BE SPENT BY THE LOCK_TX
 
         // Mark this script as unsigned script, so the protocol builder wont try to sign it
-        let timelock_script = timelock(10, &user_pubkey, SignMode::Skip);
+        let timelock_script = timelock(timelock_blocks, &user_pubkey, SignMode::Skip);
 
-        let reveal_secret_script =
-            reveal_secret(secret.to_vec(), &ops_agg_pubkey, SignMode::Aggregate);
+        let reveal_secret_script = reveal_secret(
+            secret.to_vec(),
+            &operators_aggregated_pub,
+            SignMode::Aggregate,
+        );
         let leaves = vec![timelock_script.clone(), reveal_secret_script.clone()];
 
         let output_type_ordinal =
@@ -228,19 +202,13 @@ impl ProtocolHandler for LockProtocol {
 
         // START DEFINING THE OUTPUTS OF THE LOCK_TX
 
-        let eol_timelock_duration = context
-            .globals
-            .get_var(&self.ctx.id, EOL_TIMELOCK_DURATION)?
-            .unwrap()
-            .number()? as u16;
-
         // The following script is the output that user timeout could use as input
         let taproot_script_eol_timelock_expired_tx_lock =
             scripts::timelock(eol_timelock_duration, &user_pubkey, SignMode::Skip);
 
         //this should be another aggregated to be signed later
         let taproot_script_all_sign_tx_lock =
-            scripts::check_aggregated_signature(&ops_agg_pubkey, SignMode::Aggregate);
+            scripts::check_aggregated_signature(&operators_aggregated_pub, SignMode::Aggregate);
 
         protocol.add_transaction_output(
             LOCK_TX,
@@ -256,17 +224,9 @@ impl ProtocolHandler for LockProtocol {
 
         //this could be even a different one, but we will use the same for now
         let taproot_script_protocol_fee_addres_signature_in_tx_lock =
-            scripts::check_aggregated_signature(&ops_agg_pubkey, SignMode::Aggregate);
+            scripts::check_aggregated_signature(&operators_aggregated_pub, SignMode::Aggregate);
 
-        const SPEEDUP_DUST: u64 = 500;
-        let fee_zkp = context
-            .globals
-            .get_var(&self.ctx.id, "FEE_ZKP")?
-            .unwrap_or(VariableTypes::Number(0))
-            .number()
-            .unwrap_or(0) as u64;
-
-        let amount = self.checked_sub(protocol_utxo.2.unwrap(), fee + fee_zkp + SPEEDUP_DUST)?;
+        let amount = self.checked_sub(protocol_utxo.2.unwrap(), DUST * (keys.len() as u64 + 1))?;
         // [Protocol fees taproot output]
         // taproot output sending the fee (incentive to bridge) to the fee address
         protocol.add_transaction_output(
@@ -278,31 +238,21 @@ impl ProtocolHandler for LockProtocol {
             )?,
         )?;
 
-        if fee_zkp > 0 {
-            self.add_winternitz_check(
-                &ops_agg_pubkey,
-                &mut protocol,
-                &keys[0],
-                fee_zkp,
-                SPEEDUP_DUST,
-                &vec!["zkp"],
-                LOCK_TX,
-                PUBLISH_ZKP,
-            )?;
-        }
-
+        //compute the speedup outputs of the happy_path
+        let amount = self.checked_sub(amount, keys.len() as u64 * DUST)?;
         self.add_happy_path(
-            context,
             &mut protocol,
+            &operators_aggregated_pub_happy_path,
             &unspendable,
             ordinal_utxo.2.unwrap(),
-            self.checked_sub(amount, fee + SPEEDUP_DUST)?,
+            self.checked_sub(amount, DUST)?,
         )?;
 
-        let aggregated = computed_aggregated.get("aggregated_1").unwrap();
         let pb = ProtocolBuilder {};
-        pb.add_speedup_output(&mut protocol, LOCK_TX, SPEEDUP_DUST, aggregated)?;
-        pb.add_speedup_output(&mut protocol, HAPPY_PATH_TX, SPEEDUP_DUST, aggregated)?;
+        for k in keys {
+            pb.add_speedup_output(&mut protocol, LOCK_TX, DUST, k.get_public("speedup")?)?;
+            pb.add_speedup_output(&mut protocol, HAPPY_PATH_TX, DUST, k.get_public("speedup")?)?;
+        }
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("{}", protocol.visualize(GraphOptions::Default)?);
@@ -325,18 +275,13 @@ impl LockProtocol {
 
     pub fn add_happy_path(
         &self,
-        context: &ProgramContext,
         protocol: &mut Protocol,
+        ops_agg_happy_path: &PublicKey,
         unspendable: &PublicKey,
         amount_ordinal: u64,
         amount_protocol: u64,
     ) -> Result<(), BitVMXError> {
         // START DEFINING THE HAPPY_PATH_TX
-        let ops_agg_happy_path = context
-            .globals
-            .get_var(&self.ctx.id, "operators_aggregated_happy_path")?
-            .unwrap()
-            .pubkey()?;
 
         let happy_path_check =
             scripts::check_aggregated_signature(&ops_agg_happy_path, SignMode::Skip);
@@ -373,7 +318,11 @@ impl LockProtocol {
         Ok(())
     }
 
-    pub fn accept_tx(&self, context: &ProgramContext) -> Result<Transaction, BitVMXError> {
+    pub fn accept_tx(
+        &self,
+        context: &ProgramContext,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        //Gets the
         let secret = context
             .witness
             .get_witness(&self.ctx.id, "secret")?
@@ -401,14 +350,22 @@ impl LockProtocol {
             .load_protocol()?
             .transaction_to_send(LOCK_TX, &[taproot_arg_0, taproot_arg_1])?;
 
-        info!("Transaction to send: {:?}", tx);
-        Ok(tx)
+        let txid = tx.compute_txid();
+        let speedup = context
+            .globals
+            .get_var(&self.ctx.id, "speedup")?
+            .unwrap()
+            .pubkey()?;
+        let speedup_utxo = Utxo::new(txid, 2 + self.ctx.my_idx as u32, DUST, &speedup);
+
+        debug!("Transaction to send: {:?}", tx);
+        Ok((tx, Some(speedup_utxo.into())))
     }
 
-    pub fn publish_zkp(&self, context: &ProgramContext) -> Result<Transaction, BitVMXError> {
-        self.get_signed_tx(context, PUBLISH_ZKP, 0, 0, false, 0)
-    }
-    pub fn happy_path(&self) -> Result<Transaction, BitVMXError> {
+    pub fn happy_path(
+        &self,
+        context: &ProgramContext,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         let signature = self
             .load_protocol()?
             .input_taproot_script_spend_signature(HAPPY_PATH_TX, 0, 1)?
@@ -427,58 +384,15 @@ impl LockProtocol {
             .load_protocol()?
             .transaction_to_send(HAPPY_PATH_TX, &[taproot_arg_0, taproot_arg_1])?;
 
-        info!("Transaction to send: {:?}", tx);
-        Ok(tx)
-    }
+        let txid = tx.compute_txid();
+        let speedup = context
+            .globals
+            .get_var(&self.ctx.id, "speedup")?
+            .unwrap()
+            .pubkey()?;
+        let speedup_utxo = Utxo::new(txid, 2 + self.ctx.my_idx as u32, DUST, &speedup);
 
-    pub fn add_winternitz_check(
-        &self,
-        aggregated: &PublicKey,
-        protocol: &mut Protocol,
-        keys: &ParticipantKeys,
-        amount: u64,
-        amount_speedup: u64,
-        var_names: &Vec<&str>,
-        from: &str,
-        to: &str,
-    ) -> Result<(), BitVMXError> {
-        info!("Adding winternitz check for {} to {}", from, to);
-        info!("Amount: {}", amount);
-        info!("Speedup: {}", amount_speedup);
-        let names_and_keys = var_names
-            .iter()
-            .map(|v| (*v, keys.get_winternitz(v).unwrap()))
-            .collect();
-
-        let winternitz_check = scripts::verify_winternitz_signatures(
-            aggregated,
-            &names_and_keys,
-            SignMode::Aggregate,
-        )?;
-
-        let leaves = [winternitz_check];
-
-        let output_type = OutputType::taproot(amount, aggregated, &leaves)?;
-
-        protocol.add_connection(
-            &format!("{}__{}", from, to),
-            from,
-            output_type.into(),
-            to,
-            InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::All {
-                    key_path_sign: SignMode::Aggregate,
-                },
-            ),
-            None,
-            None,
-        )?;
-
-        let pb = ProtocolBuilder {};
-        //put the amount here as there is no output yet
-        pb.add_speedup_output(protocol, to, amount_speedup, aggregated)?;
-
-        Ok(())
+        debug!("Transaction to send: {:?}", tx);
+        Ok((tx, Some(speedup_utxo.into())))
     }
 }

@@ -34,6 +34,22 @@ pub enum ParticipantRole {
     Prover,
     Verifier,
 }
+impl ParticipantRole {
+    pub fn is_prover(&self) -> bool {
+        matches!(self, ParticipantRole::Prover)
+    }
+
+    pub fn is_verifier(&self) -> bool {
+        matches!(self, ParticipantRole::Verifier)
+    }
+
+    pub fn to_string(&self) -> String {
+        match self {
+            ParticipantRole::Prover => "prover".to_string(),
+            ParticipantRole::Verifier => "verifier".to_string(),
+        }
+    }
+}
 
 impl fmt::Display for ParticipantRole {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

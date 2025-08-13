@@ -66,6 +66,7 @@ pub struct BitVMX {
     count: u32,
     pending_messages: VecDeque<(PubKeyHash, Vec<u8>)>,
     notified_request: HashSet<(Uuid, (Txid, Option<u32>))>,
+    notified_rsk_pegin: HashSet<Txid>, //workaround for RSK pegin transactions because ack seems to be not working
     bitcoin_update: BitcoinUpdateState,
 }
 
@@ -164,6 +165,7 @@ impl BitVMX {
             count: 0,
             pending_messages: VecDeque::new(),
             notified_request: HashSet::new(),
+            notified_rsk_pegin: HashSet::new(),
             bitcoin_update: BitcoinUpdateState {
                 last_update: Instant::now(),
                 was_synced: false,
@@ -342,10 +344,10 @@ impl BitVMX {
                     let data = serde_json::to_string(
                         &OutgoingBitVMXApiMessages::PeginTransactionFound(tx_id, tx_status),
                     )?;
-
-                    self.program_context
-                        .broker_channel
-                        .send(self.config.components.get_l2_identifier()?, data)?;
+                    if !self.notified_rsk_pegin.contains(&tx_id) {
+                        self.program_context.broker_channel.send(L2_ID, data)?;
+                        self.notified_rsk_pegin.insert(tx_id);
+                    }
                     ack_news = AckNews::Monitor(AckMonitorNews::RskPeginTransaction(tx_id));
                 }
                 MonitorNews::NewBlock(block_id, block_height) => {
@@ -368,14 +370,16 @@ impl BitVMX {
                     let data =
                         OutgoingBitVMXApiMessages::SpeedUpProgramNoFunds(tx_id).to_string()?;
 
-                    info!("Sending funds request to broker");
-                    self.program_context
-                        .broker_channel
-                        .send(self.config.components.get_l2_identifier()?, data)?;
+                    info!(
+                        "Sending funds request to broker: {} available {} required {}",
+                        tx_id, _available, _required
+                    );
+                    self.program_context.broker_channel.send(L2_ID, data)?;
                     ack_news = AckNews::Coordinator(AckCoordinatorNews::InsufficientFunds(tx_id));
                 }
                 CoordinatorNews::NewSpeedUp(_tx_id, _context_data, _counter) => {
                     // Complete
+                    info!("New speed-up transaction: {:?} {}", _tx_id, _counter);
 
                     ack_news = AckNews::Coordinator(AckCoordinatorNews::NewSpeedUp(_tx_id));
                 }
@@ -1139,12 +1143,11 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::GetZKPExecutionResult(id) => {
                 BitVMXApi::get_zkp_execution_result(self, from, id)?
             }
-            IncomingBitVMXApiMessages::Encrypt(id, message, pub_key) => {
+            IncomingBitVMXApiMessages::Encrypt(id, message, public_key) => {
                 let encrypted = self
                     .program_context
                     .key_chain
-                    .key_manager
-                    .encrypt_rsa_message(&message, pub_key)?;
+                    .encrypt_messages(message, public_key)?;
                 self.program_context.broker_channel.send(
                     from,
                     serde_json::to_string(&OutgoingBitVMXApiMessages::Encrypted(id, encrypted))?,

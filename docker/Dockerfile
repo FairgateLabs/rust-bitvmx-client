@@ -1,7 +1,7 @@
 FROM rust:latest
 
 RUN apt-get update && \
-    apt-get install -y wget build-essential git pkg-config libssl-dev clang
+    apt-get install -y wget build-essential git pkg-config libssl-dev clang netcat-openbsd
 
 RUN mkdir -p /root/.ssh && \
     ssh-keyscan github.com >> /root/.ssh/known_hosts && \

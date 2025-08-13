@@ -4,21 +4,21 @@ use anyhow::Result;
 use bitcoin::{
     key::rand::rngs::OsRng,
     secp256k1::{self, PublicKey as SecpPublicKey, SecretKey},
-    Amount, Network, OutPoint, PublicKey, PublicKey as BitcoinPubKey, Transaction, Txid,
+    Network, PublicKey as BitcoinPubKey,
 };
-use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
+use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_client::{
     bitvmx::BitVMX,
     config::Config,
     program::{
         self,
         protocols::cardinal::{
-            EOL_TIMELOCK_DURATION, FEE, GID_MAX, OPERATORS_AGGREGATED_PUB, PROTOCOL_COST,
-            SPEEDUP_DUST, UNSPENDABLE,
+            lock::{lock_protocol_dust_cost, LOCK_TX},
+            lock_config::LockProtocolConfiguration,
         },
-        variables::{VariableTypes, WitnessTypes},
+        variables::WitnessTypes,
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, PROGRAM_TYPE_LOCK},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
 use bitvmx_wallet::wallet::Wallet;
 use common::{
@@ -29,6 +29,8 @@ use key_manager::verifier::SignatureVerifier;
 use protocol_builder::scripts::{build_taproot_spend_info, ProtocolScript};
 use tracing::info;
 use uuid::Uuid;
+
+use crate::{common::set_speedup_funding, fixtures::create_lockreq_ready};
 
 mod common;
 mod fixtures;
@@ -135,6 +137,19 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         }
     }
 
+    let funding_public_id = Uuid::new_v4();
+    let command = IncomingBitVMXApiMessages::GetPubKey(funding_public_id, true).to_string()?;
+    send_all(&channels, &command)?;
+    let msgs = get_all(&channels, &mut instances, false)?;
+    let funding_key_0 = msgs[0].public_key().unwrap().1;
+    let funding_key_1 = msgs[1].public_key().unwrap().1;
+    let funding_key_2 = msgs[2].public_key().unwrap().1;
+    let funding_key_3 = msgs[3].public_key().unwrap().1;
+    set_speedup_funding(10_000_000, &funding_key_0, &channels[0], &wallet)?;
+    set_speedup_funding(10_000_000, &funding_key_1, &channels[1], &wallet)?;
+    set_speedup_funding(10_000_000, &funding_key_2, &channels[2], &wallet)?;
+    set_speedup_funding(10_000_000, &funding_key_3, &channels[3], &wallet)?;
+
     let command = IncomingBitVMXApiMessages::GetCommInfo().to_string()?;
     send_all(&id_channel_pairs, &command)?;
     let comm_info: Vec<OutgoingBitVMXApiMessages> = get_all(&channels, &mut instances, false)?;
@@ -196,8 +211,18 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     let preimage = "top_secret".to_string();
     let hash = fixtures::sha256(preimage.as_bytes().to_vec());
 
-    let (txid, pubuser, ordinal_fee, protocol_fee) =
-        fixtures::create_lockreq_ready(aggregated_pub_key, hash.clone(), NETWORK, &bitcoin_client)?;
+    info!("==========================");
+    info!("Preparing lockreq");
+    info!("==========================");
+
+    let (txid, pubuser, ordinal_fee) = create_lockreq_ready(
+        aggregated_pub_key,
+        hash.clone(),
+        NETWORK,
+        lock_protocol_dust_cost(4),
+        &bitcoin_client,
+        4000,
+    )?;
 
     // OPERATORS WAITS FOR LOCKREQ TX
     let lockreqtx_on_chain = Uuid::new_v4();
@@ -207,80 +232,49 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
     // SETUP LOCK BEGIN
+    info!("==========================");
+    info!("Setup lock");
+    info!("==========================");
 
     let program_id = Uuid::new_v4();
-    let set_fee = VariableTypes::Number(3000).set_msg(program_id, FEE)?;
-    send_all(&id_channel_pairs, &set_fee)?;
+    let lock_protocol_configuration = LockProtocolConfiguration::new(
+        program_id,
+        aggregated_pub_key,
+        aggregated_happy_path,
+        fixtures::hardcoded_unspendable().into(),
+        pubuser.into(),
+        hash,
+        (txid, 0, Some(ordinal_fee.to_sat()), None),
+        (txid, 1, Some(lock_protocol_dust_cost(4)), None),
+        10,
+        100,
+    );
 
-    let set_fee = VariableTypes::Number(10000).set_msg(program_id, "FEE_ZKP")?;
-    send_all(&id_channel_pairs, &set_fee)?;
-
-    let set_ops_aggregated =
-        VariableTypes::PubKey(aggregated_pub_key).set_msg(program_id, OPERATORS_AGGREGATED_PUB)?;
-    send_all(&id_channel_pairs, &set_ops_aggregated)?;
-
-    let set_ops_aggregated_hp = VariableTypes::PubKey(aggregated_happy_path)
-        .set_msg(program_id, "operators_aggregated_happy_path")?;
-    send_all(&id_channel_pairs, &set_ops_aggregated_hp)?;
-
-    let set_unspendable = VariableTypes::PubKey(fixtures::hardcoded_unspendable().into())
-        .set_msg(program_id, UNSPENDABLE)?;
-    send_all(&id_channel_pairs, &set_unspendable)?;
-
-    let set_secret = VariableTypes::Secret(hash).set_msg(program_id, "secret")?;
-    send_all(&id_channel_pairs, &set_secret)?;
-
-    let set_ordinal_utxo = VariableTypes::Utxo((txid, 0, Some(ordinal_fee.to_sat()), None))
-        .set_msg(program_id, "ordinal_utxo")?;
-    send_all(&id_channel_pairs, &set_ordinal_utxo)?;
-
-    let set_protocol_fee = VariableTypes::Utxo((txid, 1, Some(protocol_fee.to_sat()), None))
-        .set_msg(program_id, "protocol_utxo")?;
-    send_all(&id_channel_pairs, &set_protocol_fee)?;
-
-    let set_user_pubkey = VariableTypes::PubKey(bitcoin::PublicKey::from(pubuser))
-        .set_msg(program_id, "user_pubkey")?;
-    send_all(&id_channel_pairs, &set_user_pubkey)?;
-
-    let eol_timelock_duration =
-        VariableTypes::Number(100).set_msg(program_id, EOL_TIMELOCK_DURATION)?;
-    send_all(&id_channel_pairs, &eol_timelock_duration)?;
-
-    let protocol_cost = VariableTypes::Number(20_000).set_msg(program_id, PROTOCOL_COST)?;
-    send_all(&id_channel_pairs, &protocol_cost)?;
-
-    let speedup_dust = VariableTypes::Number(500).set_msg(program_id, SPEEDUP_DUST)?;
-    send_all(&id_channel_pairs, &speedup_dust)?;
-
-    let gid_max = VariableTypes::Number(8).set_msg(program_id, GID_MAX)?;
-    send_all(&id_channel_pairs, &gid_max)?;
-
-    let setup_msg =
-        IncomingBitVMXApiMessages::Setup(program_id, PROGRAM_TYPE_LOCK.to_string(), addresses, 0)
-            .to_string()?;
-    send_all(&id_channel_pairs, &setup_msg)?;
+    for c in &channels {
+        lock_protocol_configuration.setup(&c, addresses.clone(), 0)?;
+    }
 
     get_all(&channels, &mut instances, false)?;
 
+    //Bridge send signal to send the kickoff message
+    let op = 1;
     //Bridge send signal to send the kickoff message
     let witness_msg = serde_json::to_string(&IncomingBitVMXApiMessages::SetWitness(
         program_id,
         "secret".to_string(),
         WitnessTypes::Secret(preimage.as_bytes().to_vec()),
     ))?;
-    channels[1].send(id_channel_pairs[1].id.clone(), witness_msg.clone())?;
 
-    let _ = channels[1].send(
-        id_channel_pairs[1].id.clone(),
-        IncomingBitVMXApiMessages::GetTransactionInfoByName(
-            program_id,
-            program::protocols::cardinal::lock::LOCK_TX.to_string(),
-        )
-        .to_string()?,
+    channels[op].send(BITVMX_ID, witness_msg.clone())?;
+
+    let _ = channels[op].send(
+        BITVMX_ID,
+        IncomingBitVMXApiMessages::GetTransactionInfoByName(program_id, LOCK_TX.to_string())
+            .to_string()?,
     );
 
     let mut mutinstances = instances.iter_mut().collect::<Vec<_>>();
-    let msg = wait_message_from_channel(&channels[1], &mut mutinstances, false)?;
+    let msg = wait_message_from_channel(&channels[op], &mut mutinstances, false)?;
     let (_id, name, tx) = OutgoingBitVMXApiMessages::from_string(&msg.0)?
         .transaction_info()
         .unwrap();
@@ -290,8 +284,8 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         hex::encode(tx.input[0].witness[0].to_vec())
     );
 
-    let _ = channels[1].send(
-        id_channel_pairs[1].id.clone(),
+    let _ = channels[op].send(
+        BITVMX_ID,
         IncomingBitVMXApiMessages::GetHashedMessage(
             program_id,
             program::protocols::cardinal::lock::LOCK_TX.to_string(),
@@ -301,7 +295,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         .to_string()?,
     );
 
-    let msg = wait_message_from_channel(&channels[1], &mut mutinstances, false)?;
+    let msg = wait_message_from_channel(&channels[op], &mut mutinstances, false)?;
     let (_uuid, _name, _vout, _leaf, hashed) = OutgoingBitVMXApiMessages::from_string(&msg.0)?
         .hashed_message()
         .unwrap();
@@ -319,8 +313,11 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
 
     drop(mutinstances);
 
-    let _ = channels[1].send(
-        id_channel_pairs[1].id.clone(),
+    info!("==========================");
+    info!("Going to send the lock tx");
+    info!("==========================");
+    let _ = channels[op].send(
+        BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
             program::protocols::cardinal::lock::LOCK_TX.to_string(),
@@ -332,8 +329,8 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
 
     //EVENTUALY L2 DECIDED TO SEND THE HAPPY PATH
     //TODO: It should actually be signed in this moment and not before (could be signed but not shared the partials)
-    let _ = channels[1].send(
-        id_channel_pairs[1].id.clone(),
+    let _ = channels[op].send(
+        BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
             program::protocols::cardinal::lock::HAPPY_PATH_TX.to_string(),
@@ -345,21 +342,6 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
 
     info!("happy path secret: {}", fake_secret);
     info!("happy path public: {}", aggregated_happy_path);
-
-    let zkp = "b75f20d1aee5a1a0908edd107a25189ccc38b6d20c5dc33362a066157a6ee60350a09cfbfebe38c8d9f04a6dafe46ae2e30f6638f3eb93c1d2aeff2d52d66d0dcd68bf7f8fc07485dd04a573d233df3663d63e71568bc035ef82e8ab3525f025b487aaa4456aaf93be3141b210cda5165a714225d9fd63163f59d741bdaa8b93";
-    let set_zkp = VariableTypes::Input(hex::decode(zkp)?).set_msg(program_id, "zkp")?;
-    send_all(&id_channel_pairs, &set_zkp)?;
-
-    let _ = channels[0].send(
-        id_channel_pairs[1].id.clone(),
-        IncomingBitVMXApiMessages::DispatchTransactionName(
-            program_id,
-            program::protocols::cardinal::lock::PUBLISH_ZKP.to_string(),
-        )
-        .to_string()?,
-    );
-
-    mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
     if bitcoind.is_some() {
         bitcoind.unwrap().stop()?;
@@ -398,93 +380,6 @@ pub fn hardcoded_unspendable() -> SecpPublicKey {
     SecpPublicKey::from_slice(&key_bytes).expect("Invalid public key")
 }
 
-pub fn create_lockreq_ready(
-    aggregated_operators: PublicKey,
-    secret_hash: Vec<u8>,
-    network: Network,
-    bitcoin_client: &BitcoinClient,
-) -> Result<(Txid, SecpPublicKey, Amount, Amount)> {
-    //PublicKey user, txid, 0 :amount-ordinal, 1: amount-fees
-
-    let secp = secp256k1::Secp256k1::new();
-    let mut rng = OsRng;
-
-    // hardcoded unspendable
-    let unspendable = hardcoded_unspendable();
-
-    // emulate the user keypair
-    let user_sk = SecretKey::new(&mut rng);
-    let user_pk = SecpPublicKey::from_secret_key(&secp, &user_sk);
-    let (user_pk, user_sk) = fixtures::adjust_parity(&secp, user_pk, user_sk);
-    let user_pubkey = BitcoinPubKey {
-        compressed: true,
-        inner: user_pk,
-    };
-    let user_address: bitcoin::Address = bitcoin_client.get_new_address(user_pubkey, network);
-    info!(
-        "User Address({}): {:?}",
-        user_address.address_type().unwrap(),
-        user_address
-    );
-
-    const ONE_BTC: Amount = Amount::from_sat(10_000_000);
-
-    // Ordinal funding
-    const ORDINAL_AMOUNT: Amount = Amount::from_sat(10_000);
-    let funding_amount_ordinal = ORDINAL_AMOUNT;
-    let funding_tx_ordinal: Transaction;
-    let vout_ordinal: u32;
-    (funding_tx_ordinal, vout_ordinal) = bitcoin_client
-        .fund_address(&user_address, funding_amount_ordinal)
-        .unwrap();
-    let ordinal_txout = funding_tx_ordinal.output[vout_ordinal as usize].clone();
-
-    // Protocol fees funding
-    let funding_amount_used_for_protocol_fees = ONE_BTC;
-    let funding_tx_protocol_fees: Transaction;
-    let vout_protocol_fees: u32;
-    (funding_tx_protocol_fees, vout_protocol_fees) = bitcoin_client
-        .fund_address(&user_address, funding_amount_used_for_protocol_fees)
-        .unwrap();
-    let protocol_fees_txout = funding_tx_protocol_fees.output[vout_protocol_fees as usize].clone();
-
-    let ordinal_outpoint = OutPoint::new(funding_tx_ordinal.compute_txid(), vout_ordinal);
-    tracing::debug!("Ordinal outpoint: {:?}", ordinal_outpoint);
-
-    let protocol_fees_outpoint =
-        OutPoint::new(funding_tx_protocol_fees.compute_txid(), vout_protocol_fees);
-    tracing::debug!("Protocol fees outpoint: {:?}", protocol_fees_outpoint);
-
-    let protocol_fee = Amount::from_sat(1_000_000);
-
-    const MINER_FEE: Amount = Amount::from_sat(355_000);
-
-    let signed_lockreq_tx = fixtures::create_lockreq_tx_and_sign(
-        &secp,
-        funding_amount_ordinal,
-        ordinal_outpoint,
-        ordinal_txout,
-        10,
-        funding_amount_used_for_protocol_fees,
-        protocol_fee,
-        protocol_fees_outpoint,
-        protocol_fees_txout,
-        &aggregated_operators,
-        &user_sk,
-        &user_pubkey,
-        &user_address,
-        MINER_FEE,
-        secret_hash,
-        unspendable,
-    );
-
-    tracing::debug!("Signed lockreq transaction: {:#?}", signed_lockreq_tx);
-
-    let lockreq_txid = bitcoin_client.send_transaction(&signed_lockreq_tx).unwrap();
-
-    Ok((lockreq_txid, user_pk, funding_amount_ordinal, protocol_fee))
-}
-
 #[ignore]
 #[test]
 pub fn test_send_lockreq_tx() -> Result<()> {
@@ -508,12 +403,17 @@ pub fn test_send_lockreq_tx() -> Result<()> {
     let preimage = "top_secret".to_string();
     let hash = fixtures::sha256(preimage.as_bytes().to_vec());
 
-    let (txid, pubuser, ordinal_fee, protocol_fee) =
-        fixtures::create_lockreq_ready(ops_agg_pubkey, hash, Network::Regtest, &bitcoin_client)?;
+    let (txid, pubuser, ordinal_fee) = fixtures::create_lockreq_ready(
+        ops_agg_pubkey,
+        hash,
+        Network::Regtest,
+        lock_protocol_dust_cost(4),
+        &bitcoin_client,
+        1000,
+    )?;
 
     info!("Lockreq txid: {:?}", txid);
     info!("User public key: {:?}", pubuser);
-    info!("Protocol fee: {:?}", protocol_fee);
     info!("Ordinal fee: {:?}", ordinal_fee);
 
     // Mine 1 block to confirm transaction

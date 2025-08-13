@@ -1,19 +1,14 @@
+pub mod challenge;
+pub mod execution;
+pub mod input_handler;
 use std::{collections::HashMap, vec};
 
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
-use bitcoin_script_riscv::riscv::{
-    challenges::{
-        addresses_sections_challenge, entry_point_challenge, halt_challenge, input_challenge,
-        opcode_challenge, program_counter_challenge, rom_challenge, trace_hash_challenge,
-        trace_hash_zero_challenge,
-    },
-    instruction_mapping::{create_verification_script_mapping, get_key_from_opcode},
-};
+use bitcoin_script_riscv::riscv::instruction_mapping::create_verification_script_mapping;
 use bitcoin_script_stack::stack::StackTracker;
 use bitvmx_cpu_definitions::{
-    challenge::{ChallengeType, EmulatorResultType},
-    constants::CODE_CHUNK_SIZE,
+    challenge::EmulatorResultType,
     memory::MemoryWitness,
     trace::{ProgramCounter, TraceRWStep, TraceRead, TraceReadPC, TraceStep, TraceWrite},
 };
@@ -25,7 +20,6 @@ use emulator::{
     decision::challenge::{ForceChallenge, ForceCondition},
     loader::program_definition::ProgramDefinition,
 };
-use key_manager::winternitz::WinternitzPublicKey;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
     graph::graph::GraphOptions,
@@ -44,20 +38,28 @@ use crate::{
     bitvmx::Context,
     errors::BitVMXError,
     program::{
-        participant::ParticipantRole, protocols::claim::ClaimGate, variables::VariableTypes,
+        participant::{ParticipantKeys, ParticipantRole, PublicKeyType},
+        protocols::{
+            claim::ClaimGate,
+            dispute::{
+                challenge::{challenge_scripts, get_verifier_keys},
+                execution::execution_result,
+                input_handler::{
+                    get_required_keys, get_txs_configuration, split_input, unify_inputs,
+                    unify_witnesses,
+                },
+            },
+            protocol_handler::{ProtocolContext, ProtocolHandler},
+        },
+        variables::VariableTypes,
     },
-    types::ProgramContext,
-};
-
-use super::{
-    super::participant::ParticipantKeys,
-    protocol_handler::{ProtocolContext, ProtocolHandler},
+    types::{ProgramContext, EMULATOR_ID},
 };
 
 pub const EXTERNAL_START: &str = "EXTERNAL_START";
 pub const EXTERNAL_ACTION: &str = "EXTERNAL_ACTION";
 pub const START_CH: &str = "START_CHALLENGE";
-pub const INPUT_1: &str = "INPUT_1";
+pub const INPUT_TX: &str = "INPUT_";
 pub const COMMITMENT: &str = "COMMITMENT";
 pub const EXECUTE: &str = "EXECUTE";
 pub const TIMELOCK_BLOCKS: u16 = 1;
@@ -86,89 +88,16 @@ pub const TRACE_VARS: [(&str, usize); 16] = [
     ("prover_witness", 4),
 ];
 
-pub const ENTRY_POINT_CHALLENGE: [(&str, usize); 3] = [
-    ("prover_read_pc_address", 4),
-    ("prover_read_pc_micro", 1),
-    ("prover_step_number", 8),
-];
-pub const PROGRAM_COUNTER_CHALLENGE: [(&str, usize); 8] = [
-    ("verifier_prev_prev_hash", 20), //TODO: These could be unsinged
-    ("verifier_prev_write_add", 4),
-    ("verifier_prev_write_data", 4),
-    ("verifier_prev_write_pc", 4),
-    ("verifier_prev_write_micro", 1),
-    ("prover_read_pc_address", 4),
-    ("prover_read_pc_micro", 1),
-    ("verifier_prev_hash", 20), //TODO: Fix, this hash is from prover translation keys
-];
-pub const HALT_CHALLENGE: [(&str, usize); 5] = [
-    ("prover_last_step", 8),
-    ("prover_step_number", 8),
-    ("prover_read_1_value", 4),
-    ("prover_read_2_value", 4),
-    ("prover_read_pc_opcode", 4),
-];
-pub const TRACE_HASH_CHALLENGE: [(&str, usize); 6] = [
-    ("verifier_prev_hash", 20), //TODO: this should be from prover translation keys
-    ("prover_write_address", 4),
-    ("prover_write_value", 4),
-    ("prover_write_pc", 4),
-    ("prover_write_micro", 1),
-    ("prover_last_hash", 20),
-];
-pub const TRACE_HASH_ZERO_CHALLENGE: [(&str, usize); 5] = [
-    ("prover_write_address", 4),
-    ("prover_write_value", 4),
-    ("prover_write_pc", 4),
-    ("prover_write_micro", 1),
-    ("verifier_step_hash", 20), //TODO: this should be from prover translation keys
-];
-
-pub const INPUT_CHALLENGE: [(&str, usize); 7] = [
-    ("prover_program_input", 4),
-    ("prover_read_1_address", 4),
-    ("prover_read_1_value", 4),
-    ("prover_read_1_last_step", 8),
-    ("prover_read_2_address", 4),
-    ("prover_read_2_value", 4),
-    ("prover_read_2_last_step", 8),
-];
-
-pub const OPCODE_CHALLENGE: [(&str, usize); 2] =
-    [("prover_read_pc_address", 4), ("prover_read_pc_opcode", 4)];
-
-pub const ADDRESSES_SECTIONS_CHALLENGE: [(&str, usize); 5] = [
-    ("prover_read_1_address", 4),
-    ("prover_read_2_address", 4),
-    ("prover_write_address", 4),
-    ("prover_mem_witness", 1),
-    ("prover_read_pc_address", 4),
-];
-
-pub const ROM_CHALLENGE: [(&str, usize); 6] = [
-    ("prover_read_1_address", 4),
-    ("prover_read_1_value", 4),
-    ("prover_read_1_last_step", 8),
-    ("prover_read_2_address", 4),
-    ("prover_read_2_value", 4),
-    ("prover_read_2_last_step", 8),
-];
-
-pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 9] = [
-    ("entry_point", &ENTRY_POINT_CHALLENGE),
-    ("program_counter", &PROGRAM_COUNTER_CHALLENGE),
-    ("halt", &HALT_CHALLENGE),
-    ("trace_hash", &TRACE_HASH_CHALLENGE),
-    ("trace_hash_zero", &TRACE_HASH_ZERO_CHALLENGE),
-    ("addresses_sections", &ADDRESSES_SECTIONS_CHALLENGE),
-    ("input", &INPUT_CHALLENGE),
-    ("opcode", &OPCODE_CHALLENGE),
-    ("rom", &ROM_CHALLENGE),
-];
-
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DisputeResolutionProtocol {
     ctx: ProtocolContext,
+}
+
+const MIN_RELAY_FEE: u64 = 1;
+const DUST: u64 = 500 * MIN_RELAY_FEE;
+
+pub fn protocol_cost() -> u64 {
+    32_000 // This is a placeholder value, adjust as needed
 }
 
 fn get_role(my_idx: usize) -> ParticipantRole {
@@ -177,6 +106,25 @@ fn get_role(my_idx: usize) -> ParticipantRole {
     } else {
         ParticipantRole::Verifier
     }
+}
+
+pub fn input_tx_name(index: u32) -> String {
+    format!("INPUT_{}", index)
+}
+pub fn program_input(index: u32) -> String {
+    format!("program_input_{}", index)
+}
+
+pub fn program_input_prev_protocol(index: u32) -> String {
+    format!("program_input_prev_protocol_{}", index)
+}
+
+pub fn program_input_prev_prefix(index: u32) -> String {
+    format!("program_input_prev_prefix_{}", index)
+}
+
+pub fn program_input_word(index: u32, word: u32) -> String {
+    format!("program_input_{}_{}", index, word)
 }
 
 impl ProtocolHandler for DisputeResolutionProtocol {
@@ -207,11 +155,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
         let program_def = self.get_program_definition(&program_context)?.0;
-        let key_chain = &mut program_context.key_chain;
 
-        let aggregated_1 = key_chain.derive_keypair()?;
+        let aggregated_1 = program_context.key_chain.derive_keypair()?;
 
-        let speedup = key_chain.derive_keypair()?;
+        let speedup = program_context.key_chain.derive_keypair()?;
 
         program_context
             .globals
@@ -222,22 +169,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             ("speedup".to_string(), speedup.into()),
         ];
 
-        for inputs in program_def.inputs.iter() {
-            //TODO: handle more inputs, owners and counter-sign
-            assert!(inputs.size % 4 == 0);
-            let words_needed = inputs.size / 4;
-            if self.role() == ParticipantRole::Prover {
-                for i in 0..words_needed {
-                    let key = key_chain.derive_winternitz_hash160(4)?;
-                    keys.push((format!("prover_program_input_{}", i), key.into()));
-                }
-            }
-            program_context.globals.set_var(
-                &self.ctx.id,
-                "input_words",
-                VariableTypes::Number(words_needed as u32),
-            )?;
+        for required_input in
+            get_required_keys(&self.ctx.id, &program_def, program_context, &self.role())?
+        {
+            let key = program_context.key_chain.derive_winternitz_hash160(4)?;
+            keys.push((required_input, key.into()));
         }
+
+        let key_chain = &mut program_context.key_chain;
 
         if self.role() == ParticipantRole::Prover {
             let last_step = key_chain.derive_winternitz_hash160(8)?;
@@ -253,16 +192,16 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         }
 
         if self.role() == ParticipantRole::Verifier {
-            for (_challenge_name, challenge) in CHALLENGES.iter() {
-                for (name, size) in challenge.iter() {
-                    if name.starts_with("prover") {
-                        continue;
-                    }
-                    let key = key_chain.derive_winternitz_hash160(*size)?;
-                    info!("getting winternitz key for: {}", name);
-                    keys.push((name.to_string(), key.into()));
-                }
-            }
+            keys.extend_from_slice(
+                get_verifier_keys()
+                    .iter()
+                    .map(|(name, size)| {
+                        let key = key_chain.derive_winternitz_hash160(*size).unwrap();
+                        (name.to_string(), PublicKeyType::Winternitz(key))
+                    })
+                    .collect::<Vec<(String, PublicKeyType)>>()
+                    .as_slice(),
+            );
         }
 
         //generate keys for the nary search
@@ -291,9 +230,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         name: &str,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        if name.starts_with(INPUT_TX) {
+            let index = name.strip_prefix(INPUT_TX).unwrap().parse::<u32>()?;
+            return self.input_tx(index, context);
+        }
+
         match name {
             START_CH => Ok(self.add_speedup_data(name, context, self.start_challenge(context)?)?),
-            INPUT_1 => Ok(self.input_1_tx(context)?),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
     }
@@ -328,67 +271,47 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             ))
             .fail_configuration()?;
 
-        /*if name == INPUT_1 && self.role() == ParticipantRole::Prover {
-            if program_context
-                .globals
-                .get_var(&self.ctx.id, "FAKE_RUN")?
-                .is_some()
-            {
-                //Execute actions.
-                //Could execute more than one
-                info!("Prover. Execute Action");
-                program_context.bitcoin_coordinator.dispatch(
-                    self.get_signed_tx(program_context, ACTION_PROVER_WINS, 0, 1, false, 0)?,
-                    None,
-                    Context::ProgramId(self.ctx.id).to_string()?,
+        if name.starts_with(INPUT_TX) && vout.is_some() {
+            let idx = name.strip_prefix(INPUT_TX).unwrap().parse::<u32>()?;
+
+            let (input_txs, _input_txs_sizes, _input_txs_offsets, last_tx_id) =
+                get_txs_configuration(&self.ctx.id, program_context)?;
+
+            let owner = input_txs[idx as usize].as_str();
+
+            if owner == self.role().to_string() {
+                //if I'm the prover and it's the last input
+                if self.role() == ParticipantRole::Prover && idx == last_tx_id {
+                    let (def, program_definition) = self.get_program_definition(program_context)?;
+                    let full_input = unify_inputs(&self.ctx.id, program_context, &def)?;
+
+                    let execution_path = self.get_execution_path()?;
+                    let msg = serde_json::to_string(&DispatcherJob {
+                        job_id: self.ctx.id.to_string(),
+                        job_type: EmulatorJobType::ProverExecute(
+                            program_definition,
+                            full_input,
+                            execution_path.clone(),
+                            format!("{}/{}", execution_path, "execution.json").to_string(),
+                            fail_config_prover.clone(),
+                        ),
+                    })?;
+                    program_context.broker_channel.send(EMULATOR_ID, msg)?;
+                }
+            } else {
+                //if it's not my input, decode the witness
+                self.decode_witness_from_speedup(
+                    tx_id,
+                    vout.unwrap(),
+                    &name,
+                    program_context,
+                    &participant_keys,
+                    &tx_status.tx,
                     None,
                 )?;
-                return Ok(());
+
+                unify_witnesses(&self.ctx.id, program_context, idx as usize)?;
             }
-        }*/
-
-        //TODO: generalize decoding
-        if name == INPUT_1 && self.role() == ParticipantRole::Prover && vout.is_none() {
-            //TODO: Check if the last input
-            //only then execute the program.
-
-            let program_definition = program_context
-                .globals
-                .get_var(&self.ctx.id, "program_definition")?
-                .unwrap()
-                .string()?;
-
-            let input_program = program_context
-                .globals
-                .get_var(&self.ctx.id, "program_input")?
-                .unwrap()
-                .input()?;
-
-            let execution_path = self.get_execution_path()?;
-            let msg = serde_json::to_string(&DispatcherJob {
-                job_id: self.ctx.id.to_string(),
-                job_type: EmulatorJobType::ProverExecute(
-                    program_definition,
-                    input_program,
-                    execution_path.clone(),
-                    format!("{}/{}", execution_path, "execution.json").to_string(),
-                    fail_config_prover.clone(),
-                ),
-            })?;
-            program_context
-                .broker_channel
-                .send(self.ctx.components_config.get_emulator_identifier()?, msg)?;
-        }
-        if name == INPUT_1 && self.role() == ParticipantRole::Verifier && vout.is_some() {
-            self.decode_witness_from_speedup(
-                tx_id,
-                vout.unwrap(),
-                &name,
-                program_context,
-                &participant_keys,
-                &tx_status.tx,
-                None,
-            )?;
         }
 
         if name == COMMITMENT && self.role() == ParticipantRole::Verifier && vout.is_some() {
@@ -402,30 +325,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 None,
             )?;
 
-            let program_definition = program_context
-                .globals
-                .get_var(&self.ctx.id, "program_definition")?
-                .unwrap()
-                .string()?;
-
             let execution_path = self.get_execution_path()?;
-            let words = program_context
-                .globals
-                .get_var(&self.ctx.id, "input_words")?
-                .unwrap()
-                .number()?;
 
-            let mut input_program = Vec::new();
-
-            for i in 0..words {
-                let input = program_context
-                    .witness
-                    .get_witness(&self.ctx.id, &format!("prover_program_input_{}", i))?
-                    .unwrap()
-                    .winternitz()?
-                    .message_bytes();
-                input_program.extend_from_slice(&input);
-            }
+            let (def, program_definition) = self.get_program_definition(program_context)?;
+            let input_program = unify_inputs(&self.ctx.id, program_context, &def)?;
 
             let last_hash = program_context
                 .witness
@@ -456,9 +359,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 ),
             })?;
 
-            program_context
-                .broker_channel
-                .send(self.ctx.components_config.get_emulator_identifier()?, msg)?;
+            program_context.broker_channel.send(EMULATOR_ID, msg)?;
         }
 
         if name == COMMITMENT || name.starts_with("NARY_VERIFIER") && vout.is_some() {
@@ -517,9 +418,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                             fail_config_prover.clone(),
                         ),
                     })?;
-                    program_context
-                        .broker_channel
-                        .send(self.ctx.components_config.get_emulator_identifier()?, msg)?;
+                    program_context.broker_channel.send(EMULATOR_ID, msg)?;
                 } else {
                     let msg = serde_json::to_string(&DispatcherJob {
                         job_id: self.ctx.id.to_string(),
@@ -531,9 +430,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                             fail_config_prover.clone(),
                         ),
                     })?;
-                    program_context
-                        .broker_channel
-                        .send(self.ctx.components_config.get_emulator_identifier()?, msg)?;
+                    program_context.broker_channel.send(EMULATOR_ID, msg)?;
                 }
             } else {
                 if round == nary.total_rounds() as u32 {
@@ -613,18 +510,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             })?;
 
             if round > 1 {
-                program_context
-                    .broker_channel
-                    .send(self.ctx.components_config.get_emulator_identifier()?, msg)?;
+                program_context.broker_channel.send(EMULATOR_ID, msg)?;
             } else {
                 if let Some(_ready) = program_context
                     .globals
                     .get_var(&self.ctx.id, "execution-check-ready")?
                 {
                     info!("The execution is ready. Sending the choose segment message");
-                    program_context
-                        .broker_channel
-                        .send(self.ctx.components_config.get_emulator_identifier()?, msg)?;
+                    program_context.broker_channel.send(EMULATOR_ID, msg)?;
                 } else {
                     info!("The execution is not ready. Saving the message.");
                     program_context.globals.set_var(
@@ -720,9 +613,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     force,
                 ),
             })?;
-            program_context
-                .broker_channel
-                .send(self.ctx.components_config.get_emulator_identifier()?, msg)?;
+            program_context.broker_channel.send(EMULATOR_ID, msg)?;
         }
 
         if name == EXECUTE && self.role() == ParticipantRole::Prover && vout.is_some() {
@@ -735,9 +626,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 0,
             )?;
             info!("PROVER_WINS_TX: {:?}", tx);
+            let speedup_data = self.get_speedup_data_from_tx(&tx, program_context, None)?;
             program_context.bitcoin_coordinator.dispatch(
                 tx,
-                None,
+                Some(speedup_data),
                 //prover-win-start is input 1
                 Context::ProgramId(self.ctx.id).to_string()?,
                 None,
@@ -752,16 +644,19 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 .unwrap()
                 .number()?;
 
+            let prover_wins_tx = self.get_signed_tx(
+                program_context,
+                &ClaimGate::tx_success(PROVER_WINS),
+                0,
+                1,
+                false,
+                0,
+            )?;
+            let speedup_data =
+                self.get_speedup_data_from_tx(&prover_wins_tx, program_context, None)?;
             program_context.bitcoin_coordinator.dispatch(
-                self.get_signed_tx(
-                    program_context,
-                    &ClaimGate::tx_success(PROVER_WINS),
-                    0,
-                    0,
-                    false,
-                    0,
-                )?,
-                None,
+                prover_wins_tx,
+                Some(speedup_data),
                 Context::ProgramId(self.ctx.id).to_string()?,
                 Some(tx_status.block_info.as_ref().unwrap().height + timelock_blocks),
             )?;
@@ -771,9 +666,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             //Execute actions.
             //Could execute more than one
             info!("Prover. Execute Action");
+            let prover_wins_action_tx =
+                self.get_signed_tx(program_context, ACTION_PROVER_WINS, 0, 0, false, 1)?;
+            let speedup_data =
+                self.get_speedup_data_from_tx(&prover_wins_action_tx, program_context, None)?;
+
             program_context.bitcoin_coordinator.dispatch(
-                self.get_signed_tx(program_context, ACTION_PROVER_WINS, 0, 0, false, 1)?,
-                None,
+                prover_wins_action_tx,
+                Some(speedup_data),
                 Context::ProgramId(self.ctx.id).to_string()?,
                 None,
             )?;
@@ -789,39 +689,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &tx_status.tx,
                 None,
             )?;
-
-            let challenge_idx = program_context
-                .globals
-                .get_var(&self.ctx.id, &format!("CHALLENGE_{}_leaf_index", 0))?
-                .unwrap()
-                .number()?;
-
-            let (real_idx, sub_idx) = self.resolve_challenge_idx(challenge_idx, program_context)?;
-            let (challenge_name, subchallenges) = CHALLENGES
-                .get(real_idx as usize)
-                .ok_or(BitVMXError::ChallengeIdxNotFound(real_idx))?;
-
-            let mut values = HashMap::with_capacity(subchallenges.len());
-            for (var_name, _) in *subchallenges {
-                let var_name = if *var_name == "prover_program_input" {
-                    format!("{}_{}", var_name, sub_idx.unwrap_or(0))
-                } else {
-                    var_name.to_string()
-                };
-                let value = program_context
-                    .witness
-                    .get_witness(&self.ctx.id, &var_name)?
-                    .unwrap()
-                    .winternitz()?
-                    .message_bytes();
-                values.insert(var_name, value);
-            }
-
-            info!(
-                "Prover decoded challenge {} with values: {:?} idx: {:?}",
-                challenge_name, values, sub_idx
-            );
-            //TODO: continue challenge for some challenges
+            //TODO: if the verifier is able to execute the challenge, the prover can react only to the read challenge nary search
         }
 
         Ok(())
@@ -834,12 +702,15 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         // TODO get this from config, all values expressed in satoshis
-        let fee = context
-            .globals
-            .get_var(&self.ctx.id, "FEE")?
-            .unwrap()
-            .number()? as u64;
-        let speedup_dust = 500;
+
+        let speedup_dust = DUST;
+        let fee = DUST;
+
+        let (prover_signs, verifier_signs) = if self.role() == ParticipantRole::Prover {
+            (SignMode::Single, SignMode::Skip)
+        } else {
+            (SignMode::Skip, SignMode::Single)
+        };
 
         let utxo = context
             .globals
@@ -902,16 +773,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         amount = self.checked_sub(amount, fee)?;
 
-        let words = context
-            .globals
-            .get_var(&self.ctx.id, "input_words")?
-            .unwrap()
-            .number()?;
-
-        let input_vars = (0..words)
-            .map(|i| format!("prover_program_input_{}", i))
-            .collect::<Vec<_>>();
-
         amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
         amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
 
@@ -921,32 +782,66 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             .unwrap()
             .number()? as u16;
 
-        self.add_connection_with_scripts(
-            context,
-            aggregated,
-            &mut protocol,
-            timelock_blocks,
-            amount,
-            speedup_dust,
-            START_CH,
-            INPUT_1,
-            None,
-            Self::winternitz_check(agg_or_prover, sign_mode, &keys[0], &input_vars)?,
-            input_in_speedup,
-            (&prover_speedup_pub, &verifier_speedup_pub),
-        )?;
+        let mut prev_tx = START_CH.to_string();
+        let mut input_tx = String::new();
 
-        amount = self.checked_sub(amount, fee)?;
-        amount = self.checked_sub(amount, speedup_dust)?;
+        let (input_txs, input_txs_sizes, input_txs_offsets, _) =
+            get_txs_configuration(&self.ctx.id, context)?;
+
+        //TODO: remove this
+        context.globals.set_var(
+            &self.ctx.id,
+            "input_words",
+            VariableTypes::Number(input_txs_sizes[0]),
+        )?;
+        for (idx, tx_owner) in input_txs.iter().enumerate() {
+            if tx_owner == "skip" || tx_owner == "prover_prev" {
+                continue;
+            }
+            input_tx = format!("INPUT_{}", idx);
+
+            let words = input_txs_sizes[idx];
+            let offset = input_txs_offsets[idx];
+
+            let owner = if tx_owner == "verifier" {
+                "verifier"
+            } else {
+                "prover"
+            };
+
+            let input_vars = (offset..offset + words)
+                .map(|i| format!("{}_program_input_{}", owner, i))
+                .collect::<Vec<_>>();
+            //TODO: Handle prover cosigning (in the script check and automatic reply to news)
+            self.add_connection_with_scripts(
+                context,
+                aggregated,
+                &mut protocol,
+                timelock_blocks,
+                amount,
+                speedup_dust,
+                &prev_tx,
+                &input_tx,
+                None,
+                Self::winternitz_check(agg_or_prover, sign_mode, &keys[0], &input_vars)?,
+                input_in_speedup,
+                (&prover_speedup_pub, &verifier_speedup_pub),
+            )?;
+
+            amount = self.checked_sub(amount, fee)?;
+            amount = self.checked_sub(amount, speedup_dust)?;
+            prev_tx = input_tx.clone();
+        }
 
         let claim_prover = ClaimGate::new(
             &mut protocol,
             START_CH,
             PROVER_WINS,
+            (prover_speedup_pub, prover_signs),
             aggregated,
             fee,
             speedup_dust,
-            1,
+            vec![verifier_speedup_pub],
             None,
             timelock_blocks,
             vec![aggregated],
@@ -990,16 +885,22 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         )?;
 
         let pb = ProtocolBuilder {};
-        pb.add_speedup_output(&mut protocol, ACTION_PROVER_WINS, speedup_dust, aggregated)?;
+        pb.add_speedup_output(
+            &mut protocol,
+            ACTION_PROVER_WINS,
+            speedup_dust,
+            &prover_speedup_pub,
+        )?;
 
         let claim_verifier = ClaimGate::new(
             &mut protocol,
             START_CH,
             VERIFIER_WINS,
+            (verifier_speedup_pub, verifier_signs),
             aggregated,
             fee,
             speedup_dust,
-            1,
+            vec![prover_speedup_pub],
             None,
             timelock_blocks,
             vec![aggregated],
@@ -1012,7 +913,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             timelock_blocks,
             amount,
             speedup_dust,
-            INPUT_1,
+            &input_tx,
             COMMITMENT,
             Some(&claim_verifier),
             Self::winternitz_check(
@@ -1123,6 +1024,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         amount -= fee;
         amount -= speedup_dust;
 
+        let (program_def, _) = self.get_program_definition(context)?;
         self.add_connection_with_scripts(
             context,
             aggregated,
@@ -1133,7 +1035,15 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             EXECUTE,
             CHALLENGE,
             Some(&claim_prover),
-            self.challenge_scripts(context, agg_or_verifier, sign_mode, &keys)?,
+            challenge_scripts(
+                &self.ctx.id,
+                self.role(),
+                &program_def,
+                context,
+                agg_or_verifier,
+                sign_mode,
+                &keys,
+            )?,
             input_in_speedup,
             (&verifier_speedup_pub, &prover_speedup_pub),
         )?;
@@ -1188,6 +1098,7 @@ impl DisputeResolutionProtocol {
         (txid, vout, amount)
     }
 
+    //TODO: unify with the speedup in  protocol_handler
     fn add_speedup_data(
         &self,
         name: &str,
@@ -1196,7 +1107,6 @@ impl DisputeResolutionProtocol {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         let (vout, role) = match name {
             START_CH => (0, "verifier"),
-            //INPUT_1 => (0, "prover"),
             _ => todo!("Speedup data not implemented for transaction: {}", name),
         };
 
@@ -1236,35 +1146,14 @@ impl DisputeResolutionProtocol {
         Ok((tx, speedup_data))
     }
 
-    pub fn input_1_tx(
+    pub fn input_tx(
         &self,
+        idx: u32,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        //TODO: concatenate all inputs
-        let words = context
-            .globals
-            .get_var(&self.ctx.id, "input_words")?
-            .unwrap()
-            .number()?;
+        split_input(&self.ctx.id, idx, context)?;
 
-        let full_input = context
-            .globals
-            .get_var(&self.ctx.id, "program_input")?
-            .unwrap()
-            .input()?;
-
-        for i in 0..words {
-            let partial_input = full_input
-                .get((i * 4) as usize..((i + 1) * 4) as usize)
-                .unwrap();
-            context.globals.set_var(
-                &self.ctx.id,
-                &format!("prover_program_input_{}", i),
-                VariableTypes::Input(partial_input.to_vec()),
-            )?;
-        }
-
-        let (tx, sp) = self.get_tx_with_speedup_data(context, INPUT_1, 0, 0, true)?;
+        let (tx, sp) = self.get_tx_with_speedup_data(context, &input_tx_name(idx), 0, 0, true)?;
 
         Ok((tx, Some(sp)))
     }
@@ -1356,175 +1245,6 @@ impl DisputeResolutionProtocol {
             winternitz_check_list.push(winternitz_check);
         }
 
-        Ok(winternitz_check_list)
-    }
-
-    fn challenge_scripts(
-        &self,
-        context: &ProgramContext,
-        aggregated: &PublicKey,
-        sign_mode: SignMode,
-        keys: &Vec<ParticipantKeys>,
-    ) -> Result<Vec<ProtocolScript>, BitVMXError> {
-        let (program_definitions, _) = self.get_program_definition(context)?;
-        let mut program = program_definitions.load_program()?;
-
-        let mut names_and_keys: HashMap<&str, Vec<Vec<(String, &WinternitzPublicKey)>>> =
-            HashMap::new();
-
-        let iteration_counts = HashMap::from([
-            ("opcode", program.get_chunk_count(CODE_CHUNK_SIZE)),
-            (
-                "input",
-                context
-                    .globals
-                    .get_var(&self.ctx.id, "input_words")?
-                    .unwrap()
-                    .number()?,
-            ),
-            (
-                "rom",
-                program.find_section_by_name(".rodata").unwrap().data.len() as u32,
-            ),
-        ]);
-
-        for (challenge_name, var_names) in CHALLENGES.iter() {
-            let iterations = *iteration_counts.get(challenge_name).unwrap_or(&1);
-            let mut groups: Vec<Vec<(String, &WinternitzPublicKey)>> =
-                Vec::with_capacity(iterations as usize);
-
-            for i in 0..iterations {
-                let group = var_names
-                    .iter()
-                    .map(|(var_name, _)| {
-                        let idx = if var_name.starts_with("prover") { 0 } else { 1 };
-                        let var_name = if *var_name == "prover_program_input" {
-                            format!("{}_{}", var_name, i)
-                        } else {
-                            var_name.to_string()
-                        };
-                        info!("getting winternitz key for: {}, idx: {}", var_name, idx);
-                        let key = keys[idx].get_winternitz(&var_name).unwrap();
-                        (var_name, key)
-                    })
-                    .collect::<Vec<_>>();
-                groups.push(group);
-            }
-
-            names_and_keys.insert(challenge_name, groups);
-        }
-        let mut winternitz_check_list = vec![];
-
-        for (challenge_name, subnames) in CHALLENGES.iter() {
-            let total_len = subnames.iter().map(|(_, size)| *size).sum::<usize>() as u32 * 2;
-
-            let mut stack = StackTracker::new();
-            let all = stack.define(total_len, "all");
-            //TODO: This is a workaround to remove one nibble from the micro instructions
-            for i in 1..total_len {
-                stack.move_var_sub_n(all, total_len - i - 1);
-            }
-            let reverse_script = stack.get_script();
-            match *challenge_name {
-                "opcode" => {
-                    let chunks = program.get_chunks(CODE_CHUNK_SIZE);
-                    for (i, (chunk_base, opcodes_chunk)) in chunks.iter().enumerate() {
-                        let mut scripts = vec![reverse_script.clone()];
-                        stack = StackTracker::new();
-                        opcode_challenge(&mut stack, *chunk_base, &opcodes_chunk);
-                        scripts.push(stack.get_script());
-                        let winternitz_check = scripts::verify_winternitz_signatures_aux(
-                            aggregated,
-                            &names_and_keys[challenge_name][i],
-                            sign_mode,
-                            true,
-                            Some(scripts),
-                        )?;
-                        winternitz_check_list.push(winternitz_check);
-                    }
-                }
-                "input" => {
-                    let base_addr = program.find_section_by_name(".input").unwrap().start;
-                    let words = iteration_counts.get(challenge_name).unwrap();
-                    for i in 0..*words {
-                        let address = base_addr + i * 4; //TODO: get 4 from context
-                        let mut scripts = vec![reverse_script.clone()];
-                        stack = StackTracker::new();
-                        input_challenge(&mut stack, address);
-                        scripts.push(stack.get_script());
-                        let winternitz_check = scripts::verify_winternitz_signatures_aux(
-                            aggregated,
-                            &names_and_keys[challenge_name][i as usize],
-                            sign_mode,
-                            true,
-                            Some(scripts),
-                        )?;
-                        winternitz_check_list.push(winternitz_check);
-                    }
-                }
-                "rom" => {
-                    let rodata = program.find_section_by_name(".rodata").unwrap();
-                    let base_addr = rodata.start;
-                    let words = iteration_counts.get(challenge_name).unwrap();
-                    for i in 0..*words {
-                        let address = base_addr + i;
-                        let value = program.read_mem(address).unwrap();
-                        let mut scripts = vec![reverse_script.clone()];
-                        stack = StackTracker::new();
-                        rom_challenge(&mut stack, address, value);
-                        scripts.push(stack.get_script());
-                        let winternitz_check = scripts::verify_winternitz_signatures_aux(
-                            aggregated,
-                            &names_and_keys[challenge_name][i as usize],
-                            sign_mode,
-                            true,
-                            Some(scripts),
-                        )?;
-                        winternitz_check_list.push(winternitz_check);
-                    }
-                }
-                _ => {
-                    let mut scripts = vec![reverse_script.clone()];
-                    stack = StackTracker::new();
-
-                    match *challenge_name {
-                        "entry_point" => {
-                            let entry_point = program.pc.get_address();
-                            entry_point_challenge(&mut stack, entry_point)
-                        }
-                        "program_counter" => program_counter_challenge(&mut stack),
-                        "halt" => halt_challenge(&mut stack),
-                        "trace_hash" => trace_hash_challenge(&mut stack),
-                        "trace_hash_zero" => trace_hash_zero_challenge(&mut stack),
-                        "addresses_sections" => {
-                            let read_write_sections = &program.read_write_sections;
-                            let read_only_sections = &program.read_only_sections;
-                            let register_sections = &program.register_sections;
-                            let code_sections = &program.code_sections;
-
-                            addresses_sections_challenge(
-                                &mut stack,
-                                read_write_sections,
-                                read_only_sections,
-                                register_sections,
-                                code_sections,
-                            );
-                        }
-                        _ => panic!("Unknown challenge name: {}", challenge_name),
-                    };
-                    scripts.push(stack.get_script());
-                    let winternitz_check = scripts::verify_winternitz_signatures_aux(
-                        aggregated,
-                        &names_and_keys[challenge_name][0],
-                        sign_mode,
-                        true,
-                        Some(scripts),
-                    )?;
-
-                    winternitz_check_list.push(winternitz_check);
-                }
-            }
-        }
         Ok(winternitz_check_list)
     }
 
@@ -1649,420 +1369,7 @@ impl DisputeResolutionProtocol {
         result: &EmulatorResultType,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        match result {
-            EmulatorResultType::ProverExecuteResult {
-                last_step,
-                last_hash,
-                halt,
-            } => {
-                info!("Last step: {:?}", last_step);
-                info!("Last hash: {:?}", last_hash);
-                info!("halt: {:?}", halt);
-                //TODO: chef if it's halt 0 before commiting the transaction
-                self.set_input_u64(context, "prover_last_step", *last_step)?;
-
-                self.set_input_hex(context, "prover_last_hash", last_hash)?;
-
-                let (tx, sp) = self.get_tx_with_speedup_data(context, COMMITMENT, 0, 0, true)?;
-                context.bitcoin_coordinator.dispatch(
-                    tx,
-                    Some(sp),
-                    Context::ProgramId(self.ctx.id).to_string()?,
-                    None,
-                )?;
-            }
-            EmulatorResultType::VerifierCheckExecutionResult { step } => {
-                info!("Verifier execution result: Step: {:?}", step);
-                context.globals.set_var(
-                    &self.ctx.id,
-                    "execution-check-ready",
-                    VariableTypes::Number(1),
-                )?;
-                if let Some(msg) = context
-                    .globals
-                    .get_var(&self.ctx.id, "choose-segment-msg")?
-                {
-                    info!("The msg to choose segment was ready. Sending it");
-                    context.broker_channel.send(
-                        self.ctx.components_config.get_emulator_identifier()?,
-                        msg.string()?,
-                    )?;
-                } else {
-                    info!("The msg to choose segment was not ready");
-                }
-            }
-            EmulatorResultType::ProverGetHashesForRoundResult { hashes, round } => {
-                let save_round = context
-                    .globals
-                    .get_var(&self.ctx.id, "current_round")?
-                    .unwrap()
-                    .number()? as u8;
-                assert_eq!(save_round, *round);
-                for (i, h) in hashes.iter().enumerate() {
-                    self.set_input_hex(context, &format!("prover_hash_{}_{}", round, i), h)?;
-                }
-                let (tx, sp) = self.get_tx_with_speedup_data(
-                    context,
-                    &format!("NARY_PROVER_{}", round),
-                    0,
-                    0,
-                    true,
-                )?;
-                context.bitcoin_coordinator.dispatch(
-                    tx,
-                    Some(sp),
-                    Context::ProgramId(self.ctx.id).to_string()?,
-                    None,
-                )?;
-            }
-            EmulatorResultType::VerifierChooseSegmentResult { v_decision, round } => {
-                let save_round = context
-                    .globals
-                    .get_var(&self.ctx.id, "current_round")?
-                    .unwrap()
-                    .number()? as u8;
-                assert_eq!(save_round, *round);
-
-                self.set_input_u8(
-                    context,
-                    &format!("selection_bits_{}", round),
-                    *v_decision as u8,
-                )?;
-
-                let (tx, sp) = self.get_tx_with_speedup_data(
-                    context,
-                    &format!("NARY_VERIFIER_{}", round),
-                    0,
-                    0,
-                    true,
-                )?;
-                context.bitcoin_coordinator.dispatch(
-                    tx,
-                    Some(sp),
-                    Context::ProgramId(self.ctx.id).to_string()?,
-                    None,
-                )?;
-            }
-            EmulatorResultType::ProverFinalTraceResult { final_trace } => {
-                info!("Final trace: {:?}", final_trace);
-
-                self.set_input_u32(
-                    context,
-                    "prover_write_address",
-                    final_trace.trace_step.get_write().address,
-                )?;
-                self.set_input_u32(
-                    context,
-                    "prover_write_value",
-                    final_trace.trace_step.get_write().value,
-                )?;
-                self.set_input_u32(
-                    context,
-                    "prover_write_pc",
-                    final_trace.trace_step.get_pc().get_address(),
-                )?;
-                self.set_input_u8(
-                    context,
-                    "prover_write_micro",
-                    final_trace.trace_step.get_pc().get_micro(),
-                )?;
-
-                self.set_input_u8(
-                    context,
-                    "prover_mem_witness",
-                    final_trace.mem_witness.byte(),
-                )?;
-
-                self.set_input_u32(context, "prover_read_1_address", final_trace.read_1.address)?;
-                self.set_input_u32(context, "prover_read_1_value", final_trace.read_1.value)?;
-                self.set_input_u64(
-                    context,
-                    "prover_read_1_last_step",
-                    final_trace.read_1.last_step,
-                )?;
-                self.set_input_u32(context, "prover_read_2_address", final_trace.read_2.address)?;
-                self.set_input_u32(context, "prover_read_2_value", final_trace.read_2.value)?;
-                self.set_input_u64(
-                    context,
-                    "prover_read_2_last_step",
-                    final_trace.read_2.last_step,
-                )?;
-
-                self.set_input_u32(
-                    context,
-                    "prover_read_pc_address",
-                    final_trace.read_pc.pc.get_address(),
-                )?;
-                self.set_input_u8(
-                    context,
-                    "prover_read_pc_micro",
-                    final_trace.read_pc.pc.get_micro(),
-                )?;
-                self.set_input_u32(context, "prover_read_pc_opcode", final_trace.read_pc.opcode)?;
-                self.set_input_u64(context, "prover_step_number", final_trace.step_number)?;
-                if let Some(witness) = final_trace.witness {
-                    self.set_input_u32(context, "prover_witness", witness)?;
-                }
-                let instruction = get_key_from_opcode(
-                    final_trace.read_pc.opcode,
-                    final_trace.read_pc.pc.get_micro(),
-                )
-                .ok_or_else(|| {
-                    BitVMXError::InstructionNotFound(format!(
-                        "{}_{}",
-                        final_trace.read_pc.opcode,
-                        final_trace.read_pc.pc.get_micro()
-                    ))
-                })?;
-                let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
-                let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
-                instruction_names.sort();
-                let mut index = instruction_names
-                    .iter()
-                    .position(|i| i == &instruction)
-                    .ok_or_else(|| BitVMXError::InstructionNotFound(instruction.to_string()))?;
-
-                if context
-                    .globals
-                    .get_var(&self.ctx.id, "FAKE_INSTRUCTION")?
-                    .is_some()
-                {
-                    index = 0;
-                }
-                let (tx, sp) =
-                    self.get_tx_with_speedup_data(context, EXECUTE, 0, index as u32, true)?;
-
-                context.bitcoin_coordinator.dispatch(
-                    tx,
-                    Some(sp),
-                    Context::ProgramId(self.ctx.id).to_string()?,
-                    None,
-                )?;
-            }
-            EmulatorResultType::VerifierChooseChallengeResult { challenge } => {
-                info!("Verifier choose challenge result: {:?}", challenge);
-                let leaf_index: usize;
-                let name: &str;
-                let mut dynamic_offset: u32 = 0; // For offset inside a specific challenge
-
-                let (mut program, opcode_chunks, input_words, rodata_len) = {
-                    let mut program = self.get_program_definition(&context)?.0.load_program()?;
-                    let opcode_chunks = program.get_chunk_count(CODE_CHUNK_SIZE) as usize;
-                    let input_words = context
-                        .globals
-                        .get_var(&self.ctx.id, "input_words")?
-                        .unwrap()
-                        .number()? as usize;
-                    let rodata_len = program.find_section_by_name(".rodata").unwrap().data.len();
-                    (program, opcode_chunks, input_words, rodata_len)
-                };
-
-                match challenge {
-                    ChallengeType::EntryPoint(_trace_read_pc, _prover_trace_step, _entrypoint) => {
-                        name = "entry_point";
-                        info!("Verifier chose {name} challenge");
-                    }
-
-                    ChallengeType::ProgramCounter(
-                        pre_pre_hash,
-                        pre_step,
-                        prover_step_hash,
-                        _prover_pc_read,
-                    ) => {
-                        name = "program_counter";
-                        info!("Verifier chose {name} challenge");
-
-                        self.set_input_hex(
-                            context,
-                            &format!("verifier_prev_prev_hash"),
-                            &pre_pre_hash,
-                        )?;
-                        self.set_input_u32(
-                            context,
-                            &format!("verifier_prev_write_add"),
-                            pre_step.get_write().address,
-                        )?;
-                        self.set_input_u32(
-                            context,
-                            &format!("verifier_prev_write_data"),
-                            pre_step.get_write().value,
-                        )?;
-                        self.set_input_u32(
-                            context,
-                            &format!("verifier_prev_write_pc"),
-                            pre_step.get_pc().get_address(),
-                        )?;
-                        self.set_input_u8(
-                            context,
-                            &format!("verifier_prev_write_micro"),
-                            pre_step.get_pc().get_micro(),
-                        )?;
-                        self.set_input_hex(
-                            context,
-                            &format!("verifier_prev_hash"), //TODO: fix
-                            &prover_step_hash,
-                        )?;
-                    }
-
-                    ChallengeType::TraceHash(
-                        prover_prev_hash,
-                        _prover_trace_step,
-                        _prover_step_hash,
-                    ) => {
-                        name = "trace_hash";
-                        info!("Verifier chose {name} challenge");
-
-                        //TODO: fix
-                        self.set_input_hex(context, "verifier_prev_hash", &prover_prev_hash)?;
-                    }
-
-                    ChallengeType::TraceHashZero(_prover_trace_step, prover_step_hash) => {
-                        name = "trace_hash_zero";
-                        info!("Verifier chose {name} challenge");
-                        self.set_input_hex(context, "verifier_step_hash", &prover_step_hash)?;
-                    }
-
-                    ChallengeType::InputData(_read_1, _read_2, address, _input_for_address) => {
-                        name = "input";
-                        info!("Verifier chose {name} challenge");
-
-                        let base_addr = program.find_section_by_name(".input").unwrap().start;
-                        dynamic_offset = (address - base_addr) / 4; //TODO: get 4 from context
-                    }
-
-                    ChallengeType::Opcode(_pc_read, chunk_index, _chunk_base, _opcodes_chunk) => {
-                        name = "opcode";
-                        info!("Verifier chose {name} challenge");
-
-                        dynamic_offset = *chunk_index;
-                    }
-
-                    ChallengeType::AddressesSections(
-                        _read_1,
-                        _read_2,
-                        _write,
-                        _memory_witness,
-                        _program_counter,
-                        _,
-                        _,
-                        _,
-                        _,
-                    ) => {
-                        name = "addresses_sections";
-                        info!("Verifier chose {name} challenge");
-                    }
-
-                    ChallengeType::RomData(_read_1, _read_2, address, _input_for_address) => {
-                        name = "rom";
-                        info!("Verifier chose {name} challenge");
-
-                        let base_addr = program.find_section_by_name(".rodata").unwrap().start;
-                        dynamic_offset = address - base_addr;
-                    }
-                    ChallengeType::No => {
-                        name = "";
-                    }
-                }
-
-                if name.is_empty() {
-                    info!("Verifier chose no challenge");
-                    return Ok(());
-                }
-
-                // Determine offset
-                let passed_input = matches!(
-                    challenge,
-                    ChallengeType::Opcode(..) | ChallengeType::RomData(..)
-                );
-                let passed_opcode = matches!(challenge, ChallengeType::RomData(..));
-                let passed_rom = false; // matches!(challenge,);  TODO: add next challenges that pass rom
-
-                let leaf_offset = (if passed_input { input_words - 1 } else { 0 })
-                    + (if passed_opcode { opcode_chunks - 1 } else { 0 })
-                    + (if passed_rom { rodata_len - 1 } else { 0 })
-                    + dynamic_offset as usize;
-                leaf_index = CHALLENGES
-                    .iter()
-                    .position(|(n, _)| *n == name)
-                    .ok_or_else(|| BitVMXError::ChallengeNotFound(name.to_string()))?;
-
-                info!("Leaf index: {}, leaf offset: {}", leaf_index, leaf_offset);
-
-                let (tx, sp) = self.get_tx_with_speedup_data(
-                    context,
-                    CHALLENGE,
-                    0,
-                    (leaf_index + leaf_offset) as u32,
-                    true,
-                )?;
-                context.bitcoin_coordinator.dispatch(
-                    tx,
-                    Some(sp),
-                    Context::ProgramId(self.ctx.id).to_string()?,
-                    None,
-                )?;
-            }
-        }
-        Ok(())
-    }
-
-    fn resolve_challenge_idx(
-        &self,
-        challenge_idx: u32,
-        program_context: &ProgramContext,
-    ) -> Result<(u32, Option<u32>), BitVMXError> {
-        let mut program = self
-            .get_program_definition(program_context)?
-            .0
-            .load_program()?;
-
-        let input_idx = Self::get_challenge_index("input");
-        let opcode_idx = Self::get_challenge_index("opcode");
-        let rom_idx = Self::get_challenge_index("rom");
-
-        let input_words = program_context
-            .globals
-            .get_var(&self.ctx.id, "input_words")?
-            .unwrap()
-            .number()?;
-        let opcode_words = program.get_chunk_count(CODE_CHUNK_SIZE);
-        let rom_words = program.find_section_by_name(".rodata").unwrap().data.len() as u32;
-
-        let input_start = input_idx;
-        let input_end = input_start + input_words;
-
-        let opcode_start = input_end;
-        let opcode_end = opcode_start + opcode_words;
-
-        let rom_start = opcode_end;
-        let rom_end = rom_start + rom_words;
-
-        let (real_idx, sub_idx) = if challenge_idx < input_start {
-            (challenge_idx, None) // simple fixed challenge
-        } else if challenge_idx < input_end {
-            let sub = challenge_idx - input_start;
-            let idx = if input_words == 1 { None } else { Some(sub) };
-            (input_idx, idx) // inside input
-        } else if challenge_idx < opcode_end {
-            let sub = challenge_idx - opcode_start;
-            let idx = if opcode_words == 1 { None } else { Some(sub) };
-            (opcode_idx, idx) // inside opcode
-        } else if challenge_idx < rom_end {
-            let sub = challenge_idx - rom_start;
-            let idx = if rom_words == 1 { None } else { Some(sub) };
-            (rom_idx, idx) // inside rom
-        } else {
-            return Err(BitVMXError::ChallengeIdxNotFound(challenge_idx));
-        };
-
-        Ok((real_idx, sub_idx))
-    }
-
-    fn get_challenge_index(name: &str) -> u32 {
-        CHALLENGES
-            .iter()
-            .position(|(n, _)| *n == name)
-            .expect("challenge not found") as u32
+        execution_result(&self.ctx.id, &self, result, context)
     }
 
     fn get_execution_path(&self) -> Result<String, BitVMXError> {
@@ -2084,54 +1391,6 @@ impl DisputeResolutionProtocol {
             ProgramDefinition::from_config(&program_definition)?,
             program_definition,
         ))
-    }
-
-    fn set_input_u8(
-        &self,
-        context: &ProgramContext,
-        name: &str,
-        value: u8,
-    ) -> Result<(), BitVMXError> {
-        self.set_input(context, name, vec![value])
-    }
-
-    fn set_input_u32(
-        &self,
-        context: &ProgramContext,
-        name: &str,
-        value: u32,
-    ) -> Result<(), BitVMXError> {
-        self.set_input(context, name, value.to_be_bytes().to_vec())
-    }
-
-    fn set_input_u64(
-        &self,
-        context: &ProgramContext,
-        name: &str,
-        value: u64,
-    ) -> Result<(), BitVMXError> {
-        self.set_input(context, name, value.to_be_bytes().to_vec())
-    }
-
-    fn set_input_hex(
-        &self,
-        context: &ProgramContext,
-        name: &str,
-        value: &str,
-    ) -> Result<(), BitVMXError> {
-        self.set_input(context, name, hex::decode(value)?)
-    }
-
-    fn set_input(
-        &self,
-        context: &ProgramContext,
-        name: &str,
-        value: Vec<u8>,
-    ) -> Result<(), BitVMXError> {
-        context
-            .globals
-            .set_var(&self.ctx.id, name, VariableTypes::Input(value))?;
-        Ok(())
     }
 }
 

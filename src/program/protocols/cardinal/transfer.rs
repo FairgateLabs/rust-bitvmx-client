@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
-    builder::{Protocol, ProtocolBuilder},
+    builder::ProtocolBuilder,
     errors::ProtocolBuilderError,
     graph::graph::GraphOptions,
     scripts::{self, SignMode},
@@ -16,30 +16,26 @@ use protocol_builder::{
 };
 use serde::{Deserialize, Serialize};
 use tracing::info;
-use uuid::Uuid;
 
 use crate::{
     errors::BitVMXError,
     program::{
         participant::ParticipantKeys,
         protocols::{
-            cardinal::{
-                slot::{self},
-                LOCKED_ASSET_UTXO, OPERATORS_AGGREGATED_PUB, OPERATOR_COUNT, SLOT_PROGRAM_ID,
-                SPEEDUP_DUST, UNSPENDABLE,
-            },
-            claim::ClaimGate,
-            protocol_handler::{external_fund_tx, ProtocolContext, ProtocolHandler},
+            cardinal::{transfer_config::TransferConfig, OPERATORS_AGGREGATED_PUB},
+            protocol_handler::{ProtocolContext, ProtocolHandler},
         },
-        variables::PartialUtxo,
+        variables::VariableTypes,
     },
-    types::{ProgramContext, PROGRAM_TYPE_SLOT},
+    types::ProgramContext,
 };
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TransferProtocol {
     ctx: ProtocolContext,
 }
+pub const MIN_RELAY_FEE: u64 = 1;
+pub const DUST: u64 = 500 * MIN_RELAY_FEE;
 
 pub const ASSET_TX: &str = "ASSET_TX";
 pub const GID_TX: &str = "GID_TX_";
@@ -94,15 +90,24 @@ impl ProtocolHandler for TransferProtocol {
 
     fn generate_keys(
         &self,
-        _program_context: &mut ProgramContext,
+        program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
-        Ok(ParticipantKeys::new(vec![], vec![]))
+        let speedup = program_context.key_chain.derive_keypair()?;
+
+        program_context.globals.set_var(
+            &self.ctx.id,
+            "speedup",
+            VariableTypes::PubKey(speedup.clone()),
+        )?;
+
+        let keys = vec![("speedup".to_string(), speedup.into())];
+        Ok(ParticipantKeys::new(keys, vec![]))
     }
 
     fn get_transaction_by_name(
         &self,
         name: &str,
-        _context: &ProgramContext,
+        context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         if name.starts_with(TOO_TX) {
             let op_and_id: Vec<u32> = name
@@ -111,7 +116,9 @@ impl ProtocolHandler for TransferProtocol {
                 .split('_')
                 .map(|s| s.parse::<u32>().unwrap())
                 .collect();
-            return Ok((self.transfer(op_and_id[0], op_and_id[1])?, None));
+            let tx = self.transfer(op_and_id[0], op_and_id[1])?;
+            let speedup_data = self.get_speedup_data_from_tx(&tx, context, None)?;
+            return Ok((tx, Some(speedup_data)));
         }
 
         Err(BitVMXError::InvalidTransactionName(name.to_string()))
@@ -131,127 +138,13 @@ impl ProtocolHandler for TransferProtocol {
 
     fn build(
         &self,
-        _keys: Vec<ParticipantKeys>,
+        keys: Vec<ParticipantKeys>,
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let speedup_dust = context
-            .globals
-            .get_var(&self.ctx.id, SPEEDUP_DUST)?
-            .unwrap()
-            .number()? as u64;
+        let tc = TransferConfig::new_from_globals(self.ctx.id, &context.globals)?;
 
-        let unspendable = context
-            .globals
-            .get_var(&self.ctx.id, UNSPENDABLE)?
-            .unwrap()
-            .pubkey()?;
-
-        let ops_agg_pubkey = context
-            .globals
-            .get_var(&self.ctx.id, OPERATORS_AGGREGATED_PUB)?
-            .unwrap()
-            .pubkey()?;
-
-        let operator_count = context
-            .globals
-            .get_var(&self.ctx.id, OPERATOR_COUNT)?
-            .unwrap()
-            .number()?;
-
-        let too_groups = 2_u32.pow(operator_count as u32) - 1;
-
-        let groups_pub_keys: Vec<PublicKey> = (1..=too_groups)
-            .map(|gid| {
-                context
-                    .globals
-                    .get_var(&self.ctx.id, &pub_too_group(gid))
-                    .unwrap()
-                    .unwrap()
-                    .pubkey()
-                    .unwrap()
-            })
-            .collect();
-
-        let locked_asset_utxo = context
-            .globals
-            .get_var(&self.ctx.id, LOCKED_ASSET_UTXO)?
-            .unwrap()
-            .utxo()?;
-
-        let mut operator_txs = Vec::new();
-
-        if let Some(var) = context.globals.get_var(&self.ctx.id, SLOT_PROGRAM_ID)? {
-            //GET TXS FROM SLOT PROGRAM
-            let slot_program_id = var.string()?;
-            let slot_uuid = Uuid::parse_str(&slot_program_id).unwrap();
-
-            let protocol_name = format!("{}_{}", PROGRAM_TYPE_SLOT, slot_uuid);
-            let protocol = Protocol::load(
-                &protocol_name,
-                self.context().storage.as_ref().unwrap().clone(),
-            )?
-            .unwrap();
-            info!("Slot program: {}", protocol_name);
-
-            for op in 0..operator_count {
-                //  let gidtxs: Vec<PartialUtxo> = (1..=too_groups)
-                // pub type PartialUtxo = (Txid, u32, Option<u64>, Option<OutputType>);
-                let op_won_tx = protocol
-                    .transaction_by_name(&ClaimGate::tx_success(&slot::claim_name(op as usize)))?;
-                let tx_id = op_won_tx.compute_txid();
-
-                let vout = 0;
-                let amount = speedup_dust;
-                let verify_aggregated_action =
-                    scripts::check_aggregated_signature(&ops_agg_pubkey, SignMode::Aggregate);
-                let output_action =
-                    external_fund_tx(&ops_agg_pubkey, vec![verify_aggregated_action], amount)?;
-
-                let operator_won_tx = (tx_id, vout, Some(amount), Some(output_action));
-
-                let mut gidtxs = vec![];
-
-                for gid in 1..=too_groups {
-                    let gittx =
-                        protocol.transaction_by_name(&slot::group_id_tx(op as usize, gid as u8))?;
-                    let tx_id = gittx.compute_txid();
-
-                    let vout = 0;
-                    let amount = speedup_dust;
-                    let verify_aggregated_action =
-                        scripts::check_aggregated_signature(&ops_agg_pubkey, SignMode::Aggregate);
-                    let output_action =
-                        external_fund_tx(&ops_agg_pubkey, vec![verify_aggregated_action], amount)?;
-                    gidtxs.push((tx_id, vout, Some(amount), Some(output_action)));
-                }
-                operator_txs.push((gidtxs, operator_won_tx));
-            }
-        } else {
-            //EXTERNALLY SET TXS
-            for op in 0..operator_count {
-                let gidtxs: Vec<PartialUtxo> = (1..=too_groups)
-                    .map(|gid| {
-                        context
-                            .globals
-                            .get_var(&self.ctx.id, &op_gid(op, gid))
-                            .unwrap()
-                            .unwrap()
-                            .utxo()
-                            .unwrap()
-                    })
-                    .collect();
-
-                let operator_won_tx = context
-                    .globals
-                    .get_var(&self.ctx.id, &op_won(op))?
-                    .unwrap()
-                    .utxo()
-                    .unwrap();
-
-                operator_txs.push((gidtxs, operator_won_tx));
-            }
-        }
+        let operator_txs = tc.get_utxos(self.context().storage.as_ref().unwrap().clone())?;
 
         //create the protocol
         let mut protocol = self.load_or_create_protocol();
@@ -259,10 +152,10 @@ impl ProtocolHandler for TransferProtocol {
         let pb = ProtocolBuilder {};
 
         protocol.add_external_transaction(ASSET_TX)?;
-        protocol.add_unknown_outputs(ASSET_TX, locked_asset_utxo.1)?;
-        protocol.add_transaction_output(ASSET_TX, locked_asset_utxo.3.as_ref().unwrap())?;
+        protocol.add_unknown_outputs(ASSET_TX, tc.locked_asset_utxo.1)?;
+        protocol.add_transaction_output(ASSET_TX, tc.locked_asset_utxo.3.as_ref().unwrap())?;
 
-        for op in 0..operator_count {
+        for op in 0..tc.operator_count {
             let (gidtxs, operator_won_tx) = &operator_txs[op as usize];
 
             let operator_won_tx_name_str = operator_won_tx_name(op);
@@ -273,7 +166,7 @@ impl ProtocolHandler for TransferProtocol {
                 operator_won_tx.3.as_ref().unwrap(),
             )?;
 
-            for gid in 0..too_groups {
+            for gid in 0..tc.too_groups {
                 let gidtx = &gidtxs[gid as usize];
 
                 let gid_tx_name = gid_tx(op, gid + 1);
@@ -286,11 +179,11 @@ impl ProtocolHandler for TransferProtocol {
                 protocol.add_connection(
                     &format!("{}__{}", ASSET_TX, &txname),
                     ASSET_TX,
-                    (locked_asset_utxo.1 as usize).into(),
+                    (tc.locked_asset_utxo.1 as usize).into(),
                     &txname,
                     InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
                     None,
-                    Some(locked_asset_utxo.0),
+                    Some(tc.locked_asset_utxo.0),
                 )?;
 
                 //gid enabler
@@ -317,21 +210,22 @@ impl ProtocolHandler for TransferProtocol {
 
                 //asset output to gid pub key
                 let asset_output = scripts::check_aggregated_signature(
-                    &groups_pub_keys[gid as usize],
+                    &tc.groups_pub_keys[gid as usize],
                     SignMode::Skip,
                 );
 
                 protocol.add_transaction_output(
                     &txname,
                     &OutputType::taproot(
-                        locked_asset_utxo.2.unwrap(),
-                        &unspendable,
+                        tc.locked_asset_utxo.2.unwrap(),
+                        &tc.unspendable,
                         &[asset_output],
                     )?, // We do not need prevouts cause the tx is in the graph,
                 )?;
 
                 // add one output to test
-                pb.add_speedup_output(&mut protocol, &txname, speedup_dust, &ops_agg_pubkey)?;
+                let speedup_key = keys[op as usize].get_public("speedup")?;
+                pb.add_speedup_output(&mut protocol, &txname, DUST, speedup_key)?;
             }
         }
 

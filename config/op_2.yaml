@@ -52,6 +52,7 @@ components:
 coordinator:
   throtthle_bitcoin_updates_until_sync: 0
   throtthle_bitcoin_updates: 0
+#  estimate_fee: 8
 
 client: 
   # Number of retries for requests

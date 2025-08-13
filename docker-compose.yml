@@ -13,9 +13,10 @@ services:
       - "${BITCOIND_RPC_PORT}:18443"
     expose:
       - "${BITCOIND_RPC_PORT}"
+    profiles:
+      - bitcoind
 
   bitvmx-client:
-    container_name: ${BITVMX_CLIENT_CONTAINER_NAME}
     build:
       context: ./
       dockerfile: docker/Dockerfile
@@ -29,5 +30,31 @@ services:
       CLIENT_OP: ${CLIENT_OP}
       BITCOIND_RPC_USER: ${BITCOIND_RPC_USER}
       BITCOIND_RPC_PASSWORD: ${BITCOIND_RPC_PASSWORD}
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "${BROKER_PORT}"]
+      interval: 2s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    ports:
+      - "${BROKER_PORT}:${BROKER_PORT}"
+    expose:
+      - "${BROKER_PORT}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  bitvmx-emulator:
+    build:
+      context: ./
+      dockerfile: docker/Dockerfile.emulator
+      ssh:
+        - default
+    logging: *default-logging
+    restart: unless-stopped
+    entrypoint: ["./run_emulator.sh"]
+    environment:
+      CLIENT_OP: ${CLIENT_OP}
+    network_mode: "service:bitvmx-client"
     depends_on:
-      - bitcoind
+      bitvmx-client:
+        condition: service_healthy

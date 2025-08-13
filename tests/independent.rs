@@ -7,19 +7,27 @@ use bitvmx_broker::rpc::tls_helper::Cert;
 use bitvmx_broker::rpc::BrokerConfig;
 use bitvmx_client::program;
 use bitvmx_client::program::participant::P2PAddress;
-use bitvmx_client::program::variables::VariableTypes;
-use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages};
+use bitvmx_client::program::protocols::dispute::{
+    input_tx_name, program_input, program_input_prev_prefix, program_input_prev_protocol,
+};
+use bitvmx_client::program::variables::{VariableTypes, WitnessTypes};
+use bitvmx_client::types::{
+    IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, EMULATOR_ID, L2_ID, PROVER_ID,
+};
 use bitvmx_client::{bitvmx::BitVMX, config::Config};
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use bitvmx_wallet::wallet::Wallet;
 use common::dispute::{prepare_dispute, ForcedChallenges};
-use common::{
-    clear_db, config_trace, init_utxo_new, send_all, ParticipantChannel, FUNDING_ID,
-    INITIAL_BLOCK_COUNT, WALLET_NAME,
+use common::{clear_db, init_utxo_new, FUNDING_ID, INITIAL_BLOCK_COUNT, WALLET_NAME};
+use common::{config_trace, send_all};
+use emulator::decision::challenge::{ForceChallenge, ForceCondition};
+use emulator::executor::utils::{FailConfiguration, FailReads};
+use key_manager::winternitz::{
+    self, checksum_length, to_checksummed_message, WinternitzPublicKey, WinternitzSignature,
+    WinternitzType,
 };
-use p2p_handler::p2p_handler::AllowList;
 use protocol_builder::scripts::{self, SignMode};
 use protocol_builder::types::Utxo;
 use std::sync::mpsc::channel;
@@ -411,7 +419,18 @@ impl TestHelper {
     }
 }
 
-pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
+pub fn test_all_aux(
+    independent: bool,
+    network: Network,
+    program: Option<String>,
+    inputs: Option<(&str, u32, &str, u32)>,
+    fail_data: Option<(
+        Option<FailConfiguration>,
+        Option<FailConfiguration>,
+        ForceChallenge,
+        ForceCondition,
+    )>,
+) -> Result<()> {
     config_trace();
 
     let mut helper = TestHelper::new(network, independent, Some(1000))?;
@@ -523,26 +542,44 @@ pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
     ];
     let prog_id = Uuid::new_v4();
 
-    //let result_const = "00000003";
-    //let const_input = VariableTypes::Input(hex::decode(result_const).unwrap()).set_msg(prog_id, "const_var_1")?;
-    //let _ = send_all(&pair_0_1_channels, &const_input);
+    //simulate a protocol with a prover previous input
+    let previous_protocol = Uuid::new_v4();
+    let pub_key = derive_winternitz(4, 0);
+    let signature = sign_winternitz_message(&hex::decode("00000001").unwrap(), 0);
+    let set_pub_key =
+        VariableTypes::WinternitzPubKey(pub_key).set_msg(previous_protocol, "previous_input_0")?;
+    let set_witness =
+        WitnessTypes::Winternitz(signature).set_msg(previous_protocol, "previous_input_0")?;
+    send_all(&pair_0_1_channels, &set_pub_key)?;
+
+    //configure the dispute so is able to retrive the data
+    let prev_protocol =
+        VariableTypes::Uuid(previous_protocol).set_msg(prog_id, &program_input_prev_protocol(0))?;
+    let prev_prefix = VariableTypes::String("previous_input_".to_string())
+        .set_msg(prog_id, &program_input_prev_prefix(0))?;
+    send_all(&pair_0_1_channels, &prev_protocol)?;
+    send_all(&pair_0_1_channels, &prev_prefix)?;
+
+    if let Some(input) = inputs {
+        let const_input = VariableTypes::Input(hex::decode(input.0).unwrap())
+            .set_msg(prog_id, &program_input(input.1))?;
+        let _ = send_all(&pair_0_1_channels, &const_input);
+    }
 
     prepare_dispute(
         prog_id,
         pair_0_1,
-        pair_0_1_channels,
+        pair_0_1_channels.clone(),
         &pair_0_1_agg_pub_key,
         utxo,
         initial_out_type,
         prover_win_utxo,
         prover_win_out_type,
-        500,
         false,
         false,
-        ForcedChallenges::Execution,
-        //Some("./verifiers/add-test-with-const.yaml".to_string()),
-        //Some("./verifiers/add-test.yaml".to_string()),
-        None,
+        ForcedChallenges::No,
+        fail_data,
+        program,
     )?;
 
     let msg = helper.wait_msg(0)?;
@@ -554,8 +591,11 @@ pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
     info!("Waiting for funding ready");
     wait_enter(independent);
 
-    let _ = helper.id_channel_pairs[1].channel.send(
-        helper.id_channel_pairs[1].id.clone(),
+    //the witness is observed and then the challenge is sent
+    send_all(&pair_0_1_channels, &set_witness)?;
+
+    let _ = helper.channels[1].send(
+        BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             prog_id,
             program::protocols::dispute::START_CH.to_string(),
@@ -565,21 +605,21 @@ pub fn test_all_aux(independent: bool, network: Network) -> Result<()> {
 
     helper.wait_tx_name(1, program::protocols::dispute::START_CH)?;
 
-    let data = "0000000100000002";
+    let (data, idx) = if let Some(input) = inputs {
+        (input.2, input.3)
+    } else {
+        ("11111111", 0)
+    };
+
     let set_input_1 =
-        VariableTypes::Input(hex::decode(data).unwrap()).set_msg(prog_id, "program_input")?;
-    let _ = helper.id_channel_pairs[0]
-        .channel
-        .send(helper.id_channel_pairs[0].id.clone(), set_input_1)?;
+        VariableTypes::Input(hex::decode(data).unwrap()).set_msg(prog_id, &program_input(idx))?;
+    let _ = helper.channels[0].send(BITVMX_ID, set_input_1)?;
 
     // send the tx
-    let _ = helper.id_channel_pairs[0].channel.send(
-        helper.id_channel_pairs[0].id.clone(),
-        IncomingBitVMXApiMessages::DispatchTransactionName(
-            prog_id,
-            program::protocols::dispute::INPUT_1.to_string(),
-        )
-        .to_string()?,
+    let _ = helper.channels[0].send(
+        BITVMX_ID,
+        IncomingBitVMXApiMessages::DispatchTransactionName(prog_id, input_tx_name(idx))
+            .to_string()?,
     );
 
     helper.wait_tx_name(1, program::protocols::dispute::ACTION_PROVER_WINS)?;
@@ -601,23 +641,157 @@ fn wait_enter(independent: bool) {
         .expect("Failed to read line");
 }
 
+pub fn derive_winternitz(message_size_in_bytes: usize, index: u32) -> WinternitzPublicKey {
+    let message_digits_length = winternitz::message_digits_length(message_size_in_bytes);
+    let checksum_size = checksum_length(message_digits_length);
+
+    let winternitz = winternitz::Winternitz::new();
+    let master_secret = vec![
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+        0x0f,
+    ];
+
+    let public_key = winternitz
+        .generate_public_key(
+            &master_secret,
+            WinternitzType::HASH160,
+            message_digits_length,
+            checksum_size,
+            index,
+        )
+        .unwrap();
+
+    public_key
+}
+
+pub fn sign_winternitz_message(message_bytes: &[u8], index: u32) -> WinternitzSignature {
+    let message_digits_length = winternitz::message_digits_length(message_bytes.len());
+    let checksummed_message = to_checksummed_message(message_bytes);
+    let checksum_size = checksum_length(message_digits_length);
+    let message_size = checksummed_message.len() - checksum_size;
+
+    assert!(message_size == message_digits_length);
+
+    let master_secret = vec![
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+        0x0f,
+    ];
+    let winternitz = winternitz::Winternitz::new();
+    let private_key = winternitz
+        .generate_private_key(
+            &master_secret,
+            WinternitzType::HASH160,
+            message_size,
+            checksum_size,
+            index,
+        )
+        .unwrap();
+
+    let signature =
+        winternitz.sign_message(message_digits_length, &checksummed_message, &private_key);
+
+    signature
+}
+
 #[ignore]
 #[test]
 fn test_independent_testnet() -> Result<()> {
-    test_all_aux(true, Network::Testnet)?;
+    test_all_aux(true, Network::Testnet, None, None, None)?;
     Ok(())
 }
 #[ignore]
 #[test]
 fn test_independent_regtest() -> Result<()> {
-    test_all_aux(true, Network::Regtest)?;
+    test_all_aux(true, Network::Regtest, None, None, None)?;
     Ok(())
 }
 
 #[ignore]
 #[test]
 fn test_all() -> Result<()> {
-    test_all_aux(false, Network::Regtest)?;
+    test_all_aux(false, Network::Regtest, None, None, None)?;
+    Ok(())
+}
+
+#[ignore]
+#[test]
+fn test_const() -> Result<()> {
+    test_all_aux(
+        false,
+        Network::Regtest,
+        Some("./verifiers/add-test-with-const-pre.yaml".to_string()),
+        Some(("0000000100000002", 0, "00000003", 1)),
+        None,
+    )?;
+
+    test_all_aux(
+        false,
+        Network::Regtest,
+        Some("./verifiers/add-test-with-const-post.yaml".to_string()),
+        Some(("0000000200000003", 1, "00000001", 0)),
+        None,
+    )?;
+
+    Ok(())
+}
+
+#[ignore]
+#[test]
+fn test_const_fail_input() -> Result<()> {
+    let fail_config = (
+        Some(FailConfiguration::new_fail_reads(FailReads::new(
+            None,
+            Some(&vec![
+                "16".to_string(),
+                "0xaa000000".to_string(),
+                "0x00000002".to_string(),
+                "0xaa000000".to_string(),
+                "0xffffffffffffffff".to_string(),
+            ]),
+        ))),
+        None,
+        ForceChallenge::No,
+        ForceCondition::ValidInputWrongStepOrHash,
+    );
+
+    test_all_aux(
+        false,
+        Network::Regtest,
+        Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
+        Some(("00000002", 1, "00000003", 2)),
+        Some(fail_config.clone()),
+    )?;
+
+    test_all_aux(
+        false,
+        Network::Regtest,
+        Some("./verifiers/add-test-with-const-post.yaml".to_string()),
+        Some(("0000000200000004", 1, "00000001", 0)),
+        Some(fail_config.clone()),
+    )?;
+
+    test_all_aux(
+        false,
+        Network::Regtest,
+        Some("./verifiers/add-test-with-const-pre.yaml".to_string()),
+        Some(("0000000100000002", 0, "00000004", 1)),
+        Some(fail_config),
+    )?;
+
+    Ok(())
+}
+
+#[ignore]
+#[test]
+fn test_previous_input() -> Result<()> {
+    test_all_aux(
+        false,
+        Network::Regtest,
+        Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
+        Some(("00000002", 1, "00000003", 2)),
+        None,
+    )?;
+
     Ok(())
 }
 

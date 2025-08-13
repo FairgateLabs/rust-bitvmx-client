@@ -5,7 +5,7 @@ pub mod dispute;
 
 use anyhow::Result;
 use bitcoin::{Network, PublicKey};
-use bitcoind::bitcoind::Bitcoind;
+use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_broker::{
     channel::channel::DualChannel,
@@ -19,7 +19,7 @@ use bitvmx_client::{
     bitvmx::BitVMX,
     config::Config,
     program::{participant::P2PAddress, protocols::protocol_handler::external_fund_tx},
-    types::OutgoingBitVMXApiMessages,
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, EMULATOR_ID, L2_ID},
 };
 use bitvmx_wallet::wallet::Wallet;
 use p2p_handler::p2p_handler::AllowList;
@@ -133,10 +133,16 @@ pub const FEE: u64 = 500;
 pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
     let config = Config::new(Some("config/op_1.yaml".to_string()))?;
 
-    let bitcoind = Bitcoind::new(
+    let bitcoind = Bitcoind::new_with_flags(
         "bitcoin-regtest",
         "ruimarinho/bitcoin-core",
         config.bitcoin.clone(),
+        BitcoindFlags {
+            min_relay_tx_fee: 0.00001,
+            block_min_tx_fee: 0.00008,
+            debug: 1,
+            fallback_fee: 0.0002,
+        },
     );
     info!("Starting bitcoind");
     bitcoind.start()?;
@@ -279,18 +285,6 @@ pub fn init_utxo_new(
     amount: u64,
     from: Option<&str>,
 ) -> Result<(Utxo, OutputType)> {
-    /*let secp = secp256k1::Secp256k1::new();
-    let untweaked_key = XOnlyPublicKey::from(*internal_key);
-
-    let taproot_spend_info =
-        scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
-    let p2tr_address = Address::p2tr(
-        &secp,
-        untweaked_key,
-        taproot_spend_info.merkle_root(),
-        KnownHrp::Regtest,
-    );*/
-
     info!("Funding address: {:?} with: {}", internal_key, amount);
     let txid = wallet.fund_address(
         WALLET_NAME,
@@ -318,9 +312,6 @@ pub fn init_utxo(
     secret: Option<Vec<u8>>,
     amount: u64,
 ) -> Result<Utxo> {
-    /*let secp = secp256k1::Secp256k1::new();
-    let untweaked_key = XOnlyPublicKey::from(aggregated_pub_key);*/
-
     let spending_scripts = if secret.is_some() {
         vec![scripts::reveal_secret(
             secret.unwrap(),
@@ -334,14 +325,6 @@ pub fn init_utxo(
         )]
     };
 
-    /*let taproot_spend_info =
-        scripts::build_taproot_spend_info(&secp, &untweaked_key, &spending_scripts)?;
-    let p2tr_address = Address::p2tr(
-        &secp,
-        untweaked_key,
-        taproot_spend_info.merkle_root(),
-        KnownHrp::Regtest,
-    );*/
     let txid = wallet.fund_address(
         WALLET_NAME,
         FUNDING_ID,
@@ -359,4 +342,29 @@ pub fn init_utxo(
     info!("UTXO: {:?}", utxo);
 
     Ok(utxo)
+}
+
+pub fn set_speedup_funding(
+    amount: u64,
+    pub_key: &PublicKey,
+    channel: &DualChannel,
+    wallet: &Wallet,
+) -> Result<()> {
+    let fund_txid = wallet.fund_address(
+        WALLET_NAME,
+        FUNDING_ID,
+        *pub_key,
+        &vec![amount],
+        FEE,
+        false,
+        true,
+        None,
+    )?;
+
+    wallet.mine(1)?;
+
+    let funds_utxo_0 = Utxo::new(fund_txid, 0, amount, pub_key);
+    let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
+    channel.send(BITVMX_ID, command)?;
+    Ok(())
 }

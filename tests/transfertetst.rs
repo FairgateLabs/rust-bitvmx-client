@@ -1,17 +1,10 @@
 #![cfg(feature = "cardinal")]
 
 use anyhow::Result;
+use bitcoin::PublicKey;
 use bitvmx_client::{
-    program::{
-        self,
-        protocols::cardinal::{
-            transfer::{op_gid, op_won, pub_too_group},
-            EOL_TIMELOCK_DURATION, GID_MAX, OPERATORS_AGGREGATED_PUB, PROTOCOL_COST, SPEEDUP_DUST,
-            UNSPENDABLE,
-        },
-        variables::VariableTypes,
-    },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, PROGRAM_TYPE_TRANSFER},
+    program::{self, protocols::cardinal::transfer_config::TransferConfig},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
 use common::{
     config_trace, get_all, init_bitvmx, init_utxo_new, mine_and_wait, prepare_bitcoin, send_all,
@@ -20,6 +13,8 @@ use common::{
 use protocol_builder::scripts::{self, SignMode};
 use tracing::info;
 use uuid::Uuid;
+
+use crate::common::set_speedup_funding;
 
 mod common;
 mod fixtures;
@@ -79,6 +74,21 @@ pub fn test_transfer() -> Result<()> {
         .map(|msg| msg.comm_info().unwrap())
         .collect::<Vec<_>>();
 
+    //==================================================
+    //       SETUP FUNDING ADDRESS FOR SPEEDUP
+    //==================================================
+    //one time per bitvmx instance, we need to get the public key for the speedup funding utxo
+    let funding_public_id = Uuid::new_v4();
+    let command = IncomingBitVMXApiMessages::GetPubKey(funding_public_id, true).to_string()?;
+    send_all(&channels, &command)?;
+    let msgs = get_all(&channels, &mut instances, false)?;
+    let funding_key_0 = msgs[0].public_key().unwrap().1;
+    let funding_key_1 = msgs[1].public_key().unwrap().1;
+    let funding_key_2 = msgs[2].public_key().unwrap().1;
+    set_speedup_funding(10_000_000, &funding_key_0, &channels[0], &wallet)?;
+    set_speedup_funding(10_000_000, &funding_key_1, &channels[1], &wallet)?;
+    set_speedup_funding(10_000_000, &funding_key_2, &channels[2], &wallet)?;
+
     //ask the peers to generate the aggregated public key
     let aggregation_id = Uuid::new_v4();
     let command = IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), None, 0)
@@ -128,75 +138,41 @@ pub fn test_transfer() -> Result<()> {
     // SETUP TRANSFER BEGIN
     let program_id = Uuid::new_v4();
 
-    let set_unspendable = VariableTypes::PubKey(fixtures::hardcoded_unspendable().into())
-        .set_msg(program_id, UNSPENDABLE)?;
-    send_all(&id_channel_pairs, &set_unspendable)?;
-
-    let set_ops_aggregated =
-        VariableTypes::PubKey(aggregated_pub_key).set_msg(program_id, OPERATORS_AGGREGATED_PUB)?;
-    send_all(&id_channel_pairs, &set_ops_aggregated)?;
-
-    let set_operators_count = VariableTypes::Number(3).set_msg(program_id, "operator_count")?;
-    send_all(&id_channel_pairs, &set_operators_count)?;
-
-    let eol_timelock_duration =
-        VariableTypes::Number(100).set_msg(program_id, EOL_TIMELOCK_DURATION)?;
-    send_all(&id_channel_pairs, &eol_timelock_duration)?;
-
-    let protocol_cost = VariableTypes::Number(20_000).set_msg(program_id, PROTOCOL_COST)?;
-    send_all(&id_channel_pairs, &protocol_cost)?;
-
-    let speedup_dust = VariableTypes::Number(500).set_msg(program_id, SPEEDUP_DUST)?;
-    send_all(&id_channel_pairs, &speedup_dust)?;
-
-    let gid_max = VariableTypes::Number(8).set_msg(program_id, GID_MAX)?;
-    send_all(&id_channel_pairs, &gid_max)?;
-
-    for gid in 1..=7 {
-        let set_pub_too = VariableTypes::PubKey(fixtures::hardcoded_unspendable().into())
-            .set_msg(program_id, &pub_too_group(gid))?;
-        send_all(&id_channel_pairs, &set_pub_too)?;
-    }
-
-    let set_asset_utxo = VariableTypes::Utxo((
-        asset_utxo.0.txid,
-        asset_utxo.0.vout,
-        Some(asset_utxo.0.amount),
-        Some(asset_utxo.1),
-    ))
-    .set_msg(program_id, "locked_asset_utxo")?;
-    send_all(&id_channel_pairs, &set_asset_utxo)?;
-
-    for op in 0..3 {
-        let set_op_won = VariableTypes::Utxo((
-            op_won_utxo.0.txid,
-            op_won_utxo.0.vout,
-            Some(op_won_utxo.0.amount),
-            Some(op_won_utxo.1.clone()),
-        ))
-        .set_msg(program_id, &op_won(op))?;
-        send_all(&id_channel_pairs, &set_op_won)?;
-
-        for gid in 1..=7 {
-            let set_op_gid = VariableTypes::Utxo((
+    let groups_pub_keys: Vec<PublicKey> = (1..=7)
+        .map(|_gid| fixtures::hardcoded_unspendable().into())
+        .collect();
+    let transfer_config = TransferConfig::new(
+        program_id,
+        fixtures::hardcoded_unspendable().into(),
+        aggregated_pub_key.clone(),
+        3, // operator count
+        (
+            asset_utxo.0.txid,
+            asset_utxo.0.vout,
+            Some(asset_utxo.0.amount),
+            Some(asset_utxo.1),
+        ),
+        groups_pub_keys,
+        Some((
+            (
+                op_won_utxo.0.txid,
+                op_won_utxo.0.vout,
+                Some(op_won_utxo.0.amount),
+                Some(op_won_utxo.1),
+            ),
+            (
                 op_gid_utxo.0.txid,
                 op_gid_utxo.0.vout,
                 Some(op_gid_utxo.0.amount),
-                Some(op_gid_utxo.1.clone()),
-            ))
-            .set_msg(program_id, &op_gid(op, gid))?;
-            send_all(&id_channel_pairs, &set_op_gid)?;
-        }
-    }
+                Some(op_gid_utxo.1),
+            ),
+        )),
+        None,
+    );
 
-    let setup_msg = IncomingBitVMXApiMessages::Setup(
-        program_id,
-        PROGRAM_TYPE_TRANSFER.to_string(),
-        addresses,
-        0,
-    )
-    .to_string()?;
-    send_all(&id_channel_pairs, &setup_msg)?;
+    for channel in channels.iter() {
+        transfer_config.setup(channel, addresses.clone(), 0)?;
+    }
 
     //wait setup complete
     let _msg = get_all(&channels, &mut instances, false)?;
@@ -207,7 +183,7 @@ pub fn test_transfer() -> Result<()> {
         id_channel_pairs[1].id.clone(),
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
-            program::protocols::cardinal::transfer::too_tx(0, 1),
+            program::protocols::cardinal::transfer::too_tx(1, 1),
         )
         .to_string()?,
     );
