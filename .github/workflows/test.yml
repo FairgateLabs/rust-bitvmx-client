@@ -25,3 +25,4 @@ jobs:
       dockerfile_path: tests/Dockerfile
       docker_compose_path: tests/docker-compose.yml
     secrets: inherit
+                       
