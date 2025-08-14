@@ -73,6 +73,8 @@ bitvmx-wallet = { path = "../rust-bitvmx-wallet" }
 default = ["cardinal", "union"]
 cardinal = []
 union = []
+regtest = []
+testnet = []
 
 [[example]]
 name = "union"
