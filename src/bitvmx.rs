@@ -19,7 +19,7 @@ use crate::{
 };
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin::hashes::{Hash, sha256::Hash as Sha256Hash};
-use secp256k1::{Message, ecdsa::RecoverableSignature};
+use bitcoin::secp256k1::Message;
 use tiny_keccak::{Hasher, Keccak};
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_coordinator::{
@@ -615,6 +615,16 @@ impl BitVMXApi for BitVMX {
         leader_idx: u16,
     ) -> Result<(), BitVMXError> {
         info!("Setting up key for program: {:?}", id);
+        
+        // Check if participants vector is empty or leader_idx is out of bounds
+        if participants.is_empty() {
+            return Err(BitVMXError::InvalidMessageFormat);
+        }
+        
+        if leader_idx as usize >= participants.len() {
+            return Err(BitVMXError::InvalidMessageFormat);
+        }
+        
         let leader = participants[leader_idx as usize].clone();
         let collab = Collaboration::setup_aggregated_key(
             &id,
@@ -1082,7 +1092,7 @@ impl BitVMXApi for BitVMX {
                 }
             }
             IncomingBitVMXApiMessages::GetSignedPubKey(id, new) => {
-                let public_key = if new {
+                let mut public_key = if new {
                     self.program_context.key_chain.derive_keypair()?
                 } else {
                     let collaboration = self
@@ -1097,33 +1107,34 @@ impl BitVMXApi for BitVMX {
                         .get_my_public_key(&aggregated)?
                 };
 
-                // Create the message to sign (keccak256(abi.encode(publicKeyX, publicKeyY)))
-                let uncompressed = public_key.inner.serialize_uncompressed(); // [0x04 | X(32) | Y(32)]
-                let x = &uncompressed[1..33];
-                let y = &uncompressed[33..65];
+                // Get uncompressed public key coordinates as in your example
+                public_key.compressed = false;
+                let uncompressed_pub_key = public_key.to_bytes().split_off(1); // Remove the 0x04 prefix
                 
-                // Create the message as Solidity would: keccak256(abi.encode(x, y))
-                let mut message_bytes = Vec::new();
-                message_bytes.extend_from_slice(x);
-                message_bytes.extend_from_slice(y);
-                
+                // Create keccak256 hash of the uncompressed public key
                 let mut keccak = Keccak::v256();
-                let mut message_hash = [0u8; 32];
-                keccak.update(&message_bytes);
-                keccak.finalize(&mut message_hash);
+                let mut pub_key_hash = [0u8; 32];
+                keccak.update(&uncompressed_pub_key);
+                keccak.finalize(&mut pub_key_hash);
+
+                // Create message from the hash
+                // TODO map error to BitVMXError
+                let message = Message::from_digest_slice(&pub_key_hash).unwrap();
+
+                // Set back to compressed for signing
+                public_key.compressed = true;
+
+                // Sign message
+                let recoverable_signature = self.program_context.key_chain.key_manager
+                    .sign_ecdsa_recoverable_message(&message, &public_key)?;
                 
-                let message = Message::from_slice(&message_hash)?;
-                
-                // Get the private key and sign
-                let private_key = self.program_context.key_chain.key_manager.export_secret(&public_key)?;
-                let secp = secp256k1::Secp256k1::new();
-                let signature = secp.sign_ecdsa_recoverable(&message, &private_key.inner);
-                let (recovery_id, signature_bytes) = signature.serialize_compact();
+                let (recovery_id, compact) = recoverable_signature.serialize_compact();
+                let (r_bytes, s_bytes) = compact.split_at(32);
                 
                 let signed_pubkey = SignedPublicKey {
                     public_key,
-                    signature_r: signature_bytes[0..32].try_into().unwrap(),
-                    signature_s: signature_bytes[32..64].try_into().unwrap(),
+                    signature_r: r_bytes.try_into().unwrap(),
+                    signature_s: s_bytes.try_into().unwrap(),
                     recovery_id: recovery_id.to_i32() as u8,
                 };
 
