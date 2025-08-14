@@ -32,13 +32,13 @@ mod common;
 mod fixtures;
 //mod integration;
 
-#[ignore]
+#[cfg(feature = "regtest")]
 #[test]
 pub fn test_slot_and_drp() -> Result<()> {
     test_slot(true)
 }
 
-#[ignore]
+#[cfg(feature = "regtest")]
 #[test]
 pub fn test_slot_only() -> Result<()> {
     test_slot(false)

@@ -58,7 +58,7 @@ pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, Wallet)> {
     Ok((bitcoin_client, wallet))
 }
 
-#[ignore]
+#[cfg(feature = "regtest")]
 #[test]
 pub fn test_lock() -> Result<()> {
     test_lock_aux(false, false)
@@ -353,7 +353,7 @@ pub fn hardcoded_unspendable() -> SecpPublicKey {
     SecpPublicKey::from_slice(&key_bytes).expect("Invalid public key")
 }
 
-#[ignore]
+#[cfg(feature = "regtest")]
 #[test]
 pub fn test_send_lockreq_tx() -> Result<()> {
     common::config_trace();
@@ -400,7 +400,7 @@ pub fn test_send_lockreq_tx() -> Result<()> {
     Ok(())
 }
 
-#[ignore]
+#[cfg(feature = "regtest")]
 #[test]
 pub fn test_prepare_bitcoin() -> Result<()> {
     common::config_trace();

@@ -39,7 +39,7 @@ mod common;
 mod fixtures;
 //mod integration;
 
-#[ignore]
+#[cfg(feature = "regtest")]
 #[test]
 pub fn test_full() -> Result<()> {
     config_trace();
