@@ -6,13 +6,13 @@ use crate::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
                 self,
-                common::{create_transaction_reference, indexed_name},
+                common::{create_transaction_reference, get_accept_pegin_pid, indexed_name},
                 types::*,
             },
         },
         variables::VariableTypes,
     },
-    types::ProgramContext,
+    types::{ProgramContext, PROGRAM_TYPE_ACCEPT_PEGIN},
 };
 
 use bitcoin::{PublicKey, Transaction, Txid};
@@ -21,7 +21,6 @@ use core::result::Result::Ok;
 use key_manager::winternitz::WinternitzType;
 use protocol_builder::{
     builder::Protocol,
-    errors::ProtocolBuilderError,
     graph::graph::GraphOptions,
     scripts::{self, SignMode},
     types::{
@@ -139,6 +138,12 @@ impl ProtocolHandler for DisputeCoreProtocol {
 
         self.create_initial_deposit(&mut protocol, &operator_keys, &dispute_core_data)?;
 
+        let mut reimbursement_output = self.create_reimbursement_output(
+            &dispute_core_data,
+            &self.take_aggregated_key(context)?,
+            &keys,
+        )?;
+
         for i in 0..committee.packet_size as usize {
             self.create_dispute_core(
                 &mut protocol,
@@ -146,17 +151,19 @@ impl ProtocolHandler for DisputeCoreProtocol {
                 &dispute_core_data,
                 i,
                 &keys,
+                reimbursement_output.clone(),
                 context,
             )?;
         }
 
+        protocol.compute_minimum_output_values()?;
         self.add_funding_change(&mut protocol, &operator_keys, &dispute_core_data)?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
 
         self.save_protocol(protocol)?;
-        self.save_take_utxos(context)?;
+        self.save_take_utxos(context, &mut reimbursement_output)?;
 
         Ok(())
     }
@@ -182,31 +189,30 @@ impl ProtocolHandler for DisputeCoreProtocol {
         tx_id: Txid,
         _vout: Option<u32>,
         tx_status: TransactionStatus,
-        _context: String,
-        _program_context: &ProgramContext,
+        context: String,
+        program_context: &ProgramContext,
         _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
-        let transaction_name = self.get_transaction_name_by_id(tx_id)?;
+        let tx_name = self.get_transaction_name_by_id(tx_id)?;
         info!(
             "Dispute core protocol received news of transaction: {}, txid: {} with {} confirmations",
-            transaction_name, tx_id, tx_status.confirmations
+            tx_name, tx_id, tx_status.confirmations
         );
 
-        // match transaction_name.as_str() {
-        //     t if t.starts_with(REIMBURSEMENT_KICKOFF_TX) => {
-        //         self.handle_reimbursement_kickoff_transaction(
-        //             tx_id,
-        //             &tx_status,
-        //             &context,
-        //             program_context,
-        //         )?;
-        //     }
-        //     _ => {
-        //         // Optional: handle default / unknown transaction types here
-        //     }
-        // }
+        info!(
+            "DisputeCoreProtocol::notify_news called with context: {}.",
+            context
+        );
 
-        // TODO: Add more transaction type handlers here as needed
+        if tx_name.starts_with(REIMBURSEMENT_KICKOFF_TX) {
+            self.handle_reimbursement_kickoff_transaction(
+                tx_id,
+                &tx_status,
+                &tx_name,
+                program_context,
+            )?;
+        }
+
         Ok(())
     }
 
@@ -296,6 +302,35 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
+    fn create_reimbursement_output(
+        &self,
+        dispute_core_data: &DisputeCoreData,
+        take_aggregated_key: &PublicKey,
+        keys: &Vec<ParticipantKeys>,
+    ) -> Result<OutputType, BitVMXError> {
+        let mut timelocks = vec![];
+        for i in 0..keys.len() {
+            // If this is the operator owning the dispute core, we use a long timelock for the operator take transaction,
+            // otherwise a short one for the challenge transaction.
+            let blocks = if i == dispute_core_data.operator_index {
+                DISPUTE_CORE_LONG_TIMELOCK
+            } else {
+                DISPUTE_CORE_SHORT_TIMELOCK
+            };
+
+            let timelock =
+                scripts::timelock(blocks, keys[i].get_public(DISPUTE_KEY)?, SignMode::Single);
+
+            timelocks.push(timelock);
+        }
+
+        Ok(OutputType::taproot(
+            AUTO_AMOUNT,
+            &take_aggregated_key,
+            timelocks.as_slice(),
+        )?)
+    }
+
     fn create_dispute_core(
         &self,
         protocol: &mut Protocol,
@@ -303,6 +338,7 @@ impl DisputeCoreProtocol {
         dispute_core_data: &DisputeCoreData,
         dispute_core_index: usize,
         keys: &Vec<ParticipantKeys>,
+        reimbursement_output: OutputType,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         let pegout_id_name = indexed_name(PEGOUT_ID_KEY, dispute_core_index);
@@ -339,26 +375,10 @@ impl DisputeCoreProtocol {
             None,
         )?;
 
-        let mut timelocks = vec![];
-        for i in 0..keys.len() {
-            // If this is the operator owning the dispute core, we use a long timelock for the operator take transaction,
-            // otherwise a short one for the challenge transaction.
-            let blocks = if i == dispute_core_data.operator_index {
-                DISPUTE_CORE_LONG_TIMELOCK
-            } else {
-                DISPUTE_CORE_SHORT_TIMELOCK
-            };
-
-            let timelock =
-                scripts::timelock(blocks, keys[i].get_public(DISPUTE_KEY)?, SignMode::Skip);
-
-            timelocks.push(timelock);
-        }
-
         protocol.add_connection(
             "challenge",
             &reimbursement_kickoff,
-            OutputType::taproot(AUTO_AMOUNT, &take_aggregated_key, timelocks.as_slice())?.into(),
+            reimbursement_output.into(),
             &challenge,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
             Some(DISPUTE_CORE_SHORT_TIMELOCK),
@@ -381,6 +401,7 @@ impl DisputeCoreProtocol {
             None,
         )?;
 
+        // TODO: Add leaves
         protocol.add_transaction_output(
             &reveal_input,
             &OutputType::taproot(AUTO_AMOUNT, &take_aggregated_key, &[])?,
@@ -469,8 +490,6 @@ impl DisputeCoreProtocol {
         dispute_core_data: &DisputeCoreData,
     ) -> Result<(), BitVMXError> {
         // Add a change output to the setup transaction
-        protocol.compute_minimum_output_values()?;
-
         let funding_amount = dispute_core_data.operator_utxo.2.unwrap();
         let setup_fees = 1000; //TODO: replace with actual fee calculation or make it configurable
         let operator_dispute_key = operator_keys.get_public(DISPUTE_KEY)?;
@@ -594,39 +613,25 @@ impl DisputeCoreProtocol {
         Ok(self.dispute_core_data(context)?.committee_id)
     }
 
-    // fn extract_slot_index_from_context(&self, context: &str) -> Result<usize, BitVMXError> {
-    //     let prefix = format!("{}_", REIMBURSEMENT_KICKOFF_TX);
-    //     if let Some(suffix) = context.strip_prefix(&prefix) {
-    //         suffix
-    //             .parse::<usize>()
-    //             .map_err(|_| BitVMXError::InvalidTransactionName(context.to_string()))
-    //     } else {
-    //         Err(BitVMXError::InvalidTransactionName(context.to_string()))
-    //     }
-    // }
-
-    fn extract_slot_index(&self, tx_name: &str, tx_prefix: &str) -> Result<usize, BitVMXError> {
-        let prefix = format!("{}_", tx_prefix);
-        let slot_index = tx_name
+    fn extract_slot_index(&self, full_name: &str, tx_name: &str) -> Result<usize, BitVMXError> {
+        let prefix = format!("{}_", tx_name);
+        let slot_index = full_name
             .strip_prefix(&prefix)
             .ok_or_else(|| {
                 BitVMXError::InvalidTransactionName(format!(
-                    "Transaction name '{}' does not match expected format '{}{}'",
-                    tx_name, prefix, "{slot_index}"
+                    "'{}' does not match expected format '{}{{slot_index}}'",
+                    full_name, prefix
                 ))
             })?
             .parse::<usize>()
             .map_err(|_| {
                 BitVMXError::InvalidTransactionName(format!(
-                    "Could not parse slot_index from transaction name: {}",
-                    tx_name
+                    "Could not parse slot_index from: {}",
+                    full_name
                 ))
             })?;
 
-        info!(
-            "Extracted slot_index {} from transaction name: {}",
-            slot_index, tx_name
-        );
+        info!("Extracted slot_index {} from: {}", slot_index, full_name);
         Ok(slot_index)
     }
 
@@ -666,7 +671,7 @@ impl DisputeCoreProtocol {
     fn dispatch_setup_tx(&self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
         let setup_tx_name = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
 
-        if self.dispute_core_data(program_context)?.operator_index != self.ctx.my_idx {
+        if !self.is_my_dispute_core(program_context)? {
             info!(
                 id = self.ctx.my_idx,
                 "Not my dispute_core, skipping dispatch of {} transaction", setup_tx_name
@@ -718,74 +723,157 @@ impl DisputeCoreProtocol {
     //     Ok(())
     // }
 
-    // fn handle_reimbursement_kickoff_transaction(
-    //     &self,
-    //     tx_id: Txid,
-    //     _tx_status: &TransactionStatus,
-    //     context: &str,
-    //     _context: &ProgramContext,
-    // ) -> Result<(), BitVMXError> {
-    //     info!(
-    //         "Detected reimbursement kickoff transaction: {} with context: {}",
-    //         tx_id, context
-    //     );
+    fn handle_reimbursement_kickoff_transaction(
+        &self,
+        tx_id: Txid,
+        tx_status: &TransactionStatus,
+        tx_name: &str,
+        program_context: &ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        info!(
+            "Detected reimbursement kickoff transaction: {} with full name: {}",
+            tx_id, tx_name
+        );
 
-    // Extract slot_index from the context
-    // let slot_index = self.extract_slot_index_from_context(context)?;
+        // Extract slot_index from the context
+        let slot_index = self.extract_slot_index(tx_name, REIMBURSEMENT_KICKOFF_TX)?;
 
-    // // Get the selected operator's key for this slot
-    // match self.get_selected_operator_key(slot_index, program_context)? {
-    //     Some(selected_operator_key) => {
-    //         // Validate transaction signature against selected operator's key
-    //         let is_valid =
-    //             self.validate_transaction_signature(tx_id, tx_status, selected_operator_key)?;
+        // Get the selected operator's key for this slot
+        // match self.get_selected_operator_key(slot_index, program_context)? {
+        //     Some(selected_operator_key) => {
+        //         // Validate transaction signature against selected operator's key
+        //         let is_valid =
+        //             self.validate_transaction_signature(tx_id, tx_status, selected_operator_key)?;
 
-    //         if !is_valid {
-    //             info!(
-    //                 "Invalid signature detected for slot {}, dispatching OP Disabler Tx",
-    //                 slot_index
-    //             );
-    //             self.dispatch_op_disabler_tx(slot_index, program_context)?;
-    //         } else {
-    //             info!("Valid signature confirmed for slot {}", slot_index);
-    //         }
-    //     }
-    //     None => {
-    //         info!("No selected operator key found for slot {}", slot_index);
-    //         // If no selected operator key is set, it means that someone triggered a reimbursment kickoff transaction but there was no advances of funds
-    //         self.dispatch_op_disabler_tx(slot_index, program_context)?;
-    //     }
-    // }
+        //         if !is_valid {
+        //             info!(
+        //                 "Invalid signature detected for slot {}, dispatching OP Disabler Tx",
+        //                 slot_index
+        //             );
+        //             self.dispatch_op_disabler_tx(slot_index, program_context)?;
+        //         } else {
+        //             info!("Valid signature confirmed for slot {}", slot_index);
+        //         }
+        //     }
+        //     None => {
+        //         info!("No selected operator key found for slot {}", slot_index);
+        //         // If no selected operator key is set, it means that someone triggered a reimbursment kickoff transaction but there was no advances of funds
+        //         self.dispatch_op_disabler_tx(slot_index, program_context)?;
+        //     }
+        // }
 
-    //     Ok(())
-    // }
+        if self.is_my_dispute_core(program_context)? {
+            if tx_status.confirmations == 1 {
+                let block_height = tx_status.block_info.as_ref().unwrap().height
+                    + DISPUTE_CORE_LONG_TIMELOCK as u32
+                    + 1;
+                self.dispatch_operator_take_tx(program_context, slot_index, block_height)?;
+            } else {
+                info!(
+                    id = self.ctx.my_idx,
+                    "Reimbursement kickoff transaction {} has not enough confirmations yet: {}",
+                    tx_id,
+                    tx_status.confirmations
+                );
+            }
+        }
 
-    fn save_take_utxos(&self, context: &ProgramContext) -> Result<(), BitVMXError> {
+        Ok(())
+    }
+
+    fn is_my_dispute_core(&self, program_context: &ProgramContext) -> Result<bool, BitVMXError> {
+        let dispute_core_data = self.dispute_core_data(program_context)?;
+        Ok(dispute_core_data.operator_index == self.ctx.my_idx)
+    }
+
+    fn dispatch_operator_take_tx(
+        &self,
+        context: &ProgramContext,
+        slot_index: usize,
+        block_height: u32,
+    ) -> Result<(), BitVMXError> {
+        info!(
+            id = self.ctx.my_idx,
+            "Dispatching operator take transaction for slot index: {}", slot_index
+        );
+
+        let dispute_core_data: DisputeCoreData = self.dispute_core_data(context)?;
+        let accept_pegin_pid = get_accept_pegin_pid(dispute_core_data.committee_id, slot_index);
+        self.save_operator_leaf_index(context, accept_pegin_pid)?;
+        let protocol = self.load_protocol_by_name(PROGRAM_TYPE_ACCEPT_PEGIN, accept_pegin_pid)?;
+
+        let tx_name = indexed_name(OPERATOR_TAKE_TX, self.ctx.my_idx);
+        let (tx, _) = protocol.get_transaction_by_name(&tx_name, context)?;
+        let txid = tx.compute_txid();
+
+        context.bitcoin_coordinator.dispatch(
+            tx,
+            None,               // No speedup data
+            tx_name.clone(),    // Context string
+            Some(block_height), // Dispatch immediately with input args
+        )?;
+
+        info!(
+            id = self.ctx.my_idx,
+            "Operator take transaction '{}' dispatched for slot index: {} with txid: {}",
+            tx_name,
+            slot_index,
+            txid
+        );
+
+        Ok(())
+    }
+
+    fn save_operator_leaf_index(
+        &self,
+        context: &ProgramContext,
+        accept_pegin_pid: Uuid,
+    ) -> Result<(), BitVMXError> {
+        let leaf_index = self.ctx.my_idx as u32;
+        context.globals.set_var(
+            &accept_pegin_pid,
+            &OPERATOR_LEAF_INDEX,
+            VariableTypes::Number(leaf_index),
+        )?;
+        Ok(())
+    }
+
+    fn save_take_utxos(
+        &self,
+        context: &ProgramContext,
+        reimbursement_output: &mut OutputType,
+    ) -> Result<(), BitVMXError> {
         let committee = self.committee(context)?;
-        let take_key = &self.take_aggregated_key(context)?;
         let protocol = self.load_or_create_protocol();
 
         for i in 0..committee.packet_size as usize {
             let name = indexed_name(REIMBURSEMENT_KICKOFF_TX, i);
-            let reimbursement_kickoff_tx = protocol.transaction_by_name(&name)?;
-            let operator_take_output = OutputType::taproot(AUTO_AMOUNT, &take_key, &[])?;
+            let reimbursement_kickoff_tx: &Transaction = protocol.transaction_by_name(&name)?;
+
+            let reimbursement_output_index = 0;
+            let reimbursement_output_value =
+                reimbursement_kickoff_tx.output[reimbursement_output_index].value;
+            reimbursement_output.set_value(reimbursement_output_value.clone());
 
             let operator_take_utxo = (
                 reimbursement_kickoff_tx.compute_txid(),
                 0,
-                Some(AUTO_AMOUNT),
-                Some(operator_take_output),
+                Some(reimbursement_output_value.to_sat()),
+                Some(reimbursement_output.clone()),
             );
 
             let name = indexed_name(REVEAL_INPUT_TX, i);
-            let reveal_input_tx = protocol.transaction_by_name(&name)?;
-            let operator_won_output = OutputType::taproot(AUTO_AMOUNT, &take_key, &[])?;
+            let reveal_tx = protocol.transaction_by_name(&name)?;
+            let reveal_output_index = 0;
+            let reveal_output_value = reveal_tx.output[reveal_output_index].value;
+            // Reusing reimbursement utxo, it's the same output type
+            reimbursement_output.set_value(reveal_output_value.clone());
 
             let operator_won_utxo = (
-                reveal_input_tx.compute_txid(),
+                reveal_tx.compute_txid(),
                 0,
-                Some(AUTO_AMOUNT),
-                Some(operator_won_output),
+                Some(reveal_output_value.to_sat()),
+                Some(reimbursement_output.clone()),
             );
 
             context.globals.set_var(
@@ -808,22 +896,20 @@ impl DisputeCoreProtocol {
         &self,
         tx_name: &str,
         context: &ProgramContext,
-    ) -> Result<Transaction, ProtocolBuilderError> {
+    ) -> Result<Transaction, BitVMXError> {
         info!(
             id = self.ctx.my_idx,
             "Loading OP Initial Deposit transaction for DisputeCore"
         );
 
-        let dispute_core_data: DisputeCoreData = self
-            .dispute_core_data(context)
-            .map_err(|_e| ProtocolBuilderError::MissingSignature)?;
-
-        if dispute_core_data.operator_index != self.ctx.my_idx {
+        if !self.is_my_dispute_core(context)? {
             info!(
                 id = self.ctx.my_idx,
                 "Not my dispute_core, skipping dispatch of {} transaction", tx_name
             );
-            return Err(ProtocolBuilderError::MissingSignature);
+            return Err(BitVMXError::InvalidParticipant(
+                "Not my dispute_core, skipping dispatch of initial deposit transaction".to_string(),
+            ));
         }
 
         let mut protocol: Protocol = self.load_protocol()?;
@@ -848,9 +934,10 @@ impl DisputeCoreProtocol {
             }
         }
 
-        info!("Op initial deposit tx signatures: {:?}", input_args);
+        info!("{} tx signatures: {:?}", OP_INITIAL_DEPOSIT_TX, input_args);
 
-        protocol.transaction_to_send(&tx_name, &[input_args])
+        let tx = protocol.transaction_to_send(&tx_name, &[input_args])?;
+        Ok(tx)
     }
 
     fn pegout_id(

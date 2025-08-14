@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use bitcoin::{PublicKey, Txid};
 use musig2::{secp::MaybeScalar, PubNonce};
 use serde::{Deserialize, Serialize};
@@ -76,6 +78,14 @@ pub struct Committee {
 impl Committee {
     pub fn name() -> String {
         "committee".to_string()
+    }
+
+    pub fn indexes_map(&self) -> HashMap<PublicKey, usize> {
+        self.members
+            .iter()
+            .enumerate()
+            .map(|(index, member)| (member.take_key, index))
+            .collect()
     }
 }
 

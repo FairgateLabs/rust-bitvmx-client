@@ -207,7 +207,7 @@ pub fn advance_funds() -> Result<()> {
     )?;
 
     info!("Letting the network to run...");
-    for _ in 0..10 {
+    for _ in 0..20 {
         info!("Mining 1 block and wait...");
         committee.wallet.mine(1)?;
         thread::sleep(Duration::from_secs(1));
