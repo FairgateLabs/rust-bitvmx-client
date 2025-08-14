@@ -23,7 +23,10 @@ use crate::{
         participant::ParticipantKeys,
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
-            union::types::{PegOutAccepted, PegOutRequest, ACCEPT_PEGIN_TX, USER_TAKE_TX},
+            union::{
+                common::indexed_name,
+                types::{PegOutAccepted, PegOutRequest, ACCEPT_PEGIN_TX, USER_TAKE_TX},
+            },
         },
         variables::{PartialUtxo, VariableTypes},
     },
@@ -175,14 +178,11 @@ impl UserTakeProtocol {
         &self,
         context: &ProgramContext,
         committee_id: &Uuid,
-        slot_index: u32,
+        slot_index: usize,
     ) -> Result<PartialUtxo, BitVMXError> {
         Ok(context
             .globals
-            .get_var(
-                committee_id,
-                &format!("{}_{}", ACCEPT_PEGIN_TX, slot_index).to_string(),
-            )?
+            .get_var(committee_id, &indexed_name(ACCEPT_PEGIN_TX, slot_index))?
             .unwrap()
             .utxo()?)
     }
