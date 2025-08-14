@@ -74,6 +74,8 @@ default = ["cardinal", "union"]
 cardinal = []
 union = []
 test = []
+regtest = []
+testnet = []
 
 [[example]]
 name = "union"
