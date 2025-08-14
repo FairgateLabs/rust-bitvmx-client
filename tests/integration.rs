@@ -16,8 +16,8 @@ use crate::common::{FEE, FUNDING_ID, WALLET_NAME};
 
 mod common;
 
-//cargo test --release  -- test_drp --ignored
-#[ignore]
+//cargo test --release  -- test_drp --features regtest
+#[cfg(feature = "regtest")]
 #[test]
 pub fn test_drp() -> Result<()> {
     config_trace();
@@ -161,7 +161,7 @@ pub fn test_drp() -> Result<()> {
 }
 
 //Test aggregation with three parts
-#[ignore]
+#[cfg(feature = "regtest")]
 #[test]
 pub fn test_aggregation() -> Result<()> {
     config_trace();
