@@ -8,7 +8,7 @@ use bitvmx_client::{
         participant::{P2PAddress, ParticipantRole},
         protocols::union::{
             common::get_dispute_core_pid,
-            types::{Committee, DisputeCoreData, MemberData},
+            types::{Committee, DisputeCoreData, MemberData, MONITORED_OPERATOR_KEY},
         },
         variables::{PartialUtxo, VariableTypes},
     },
@@ -71,6 +71,13 @@ impl DisputeCoreSetup {
                         operator_utxo: operator_utxo,
                         operator_take_pubkey: pubkey,
                     })?),
+                )?;
+
+                // Save the monitored operator's take key
+                bitvmx.set_var(
+                    protocol_id,
+                    MONITORED_OPERATOR_KEY,
+                    VariableTypes::PubKey(pubkey),
                 )?;
 
                 bitvmx.setup(
