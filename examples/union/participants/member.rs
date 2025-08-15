@@ -9,8 +9,9 @@ use bitvmx_client::{
     program::{
         participant::{P2PAddress, ParticipantRole},
         protocols::union::{
-            common::indexed_name,
-            types::{ADVANCE_FUNDS_INPUT, ADVANCE_FUNDS_TX},
+            common::{indexed_name, get_dispute_core_pid},
+            dispute_core::PEGOUT_ID,
+            types::{ADVANCE_FUNDS_INPUT, ADVANCE_FUNDS_TX, REIMBURSEMENT_KICKOFF_TX, OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX},
         },
         variables::{PartialUtxo, VariableTypes},
     },
@@ -483,5 +484,110 @@ impl Member {
         };
 
         Ok(counterparty_address.clone())
+    }
+
+    pub fn dispatch_reimbursement_flow(&mut self, committee_id: Uuid, slot_id: usize) -> Result<()> {
+        // Get the dispute core protocol ID for this member
+        let member_take_pubkey = self.keyring.take_pubkey.unwrap();
+        let dispute_protocol_id = get_dispute_core_pid(committee_id, &member_take_pubkey);
+
+        info!(
+            id = self.id,
+            "Starting reimbursement flow for slot {} from dispute protocol {}",
+            slot_id, dispute_protocol_id
+        );
+
+        // Step 1: Set up required variables
+        self.setup_pegout_id(dispute_protocol_id, slot_id)?;
+
+        // Step 2: Dispatch initial deposit transaction first
+        self.dispatch_initial_deposit_tx(dispute_protocol_id)?;
+
+        // Step 3: Wait and then dispatch reimbursement transaction
+        thread::sleep(std::time::Duration::from_secs(1));
+        self.dispatch_reimbursement_tx(dispute_protocol_id, slot_id)?;
+
+        info!(
+            id = self.id,
+            "Reimbursement flow completed successfully"
+        );
+
+        Ok(())
+    }
+
+    fn setup_pegout_id(&mut self, dispute_protocol_id: Uuid, slot_id: usize) -> Result<()> {
+        let pegout_id = vec![0u8; 32]; // dummy pegout_id for testing
+        let pegout_id_key = indexed_name(PEGOUT_ID, slot_id);
+
+        info!(
+            id = self.id,
+            "Setting up pegout_id variable {} for slot {}", pegout_id_key, slot_id
+        );
+
+        self.bitvmx.set_var(
+            dispute_protocol_id,
+            &pegout_id_key,
+            VariableTypes::Input(pegout_id)
+        )?;
+
+        Ok(())
+    }
+
+    fn dispatch_initial_deposit_tx(&mut self, dispute_protocol_id: Uuid) -> Result<()> {
+        let tx_name = format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX);
+
+        info!(
+            id = self.id,
+            "Dispatching operator initial deposit transaction {}", tx_name
+        );
+
+        let _ = self.bitvmx.get_transaction_by_name(dispute_protocol_id, tx_name.clone());
+        thread::sleep(std::time::Duration::from_secs(1));
+
+        let tx = wait_until_msg!(&self.bitvmx, TransactionInfo(_, _, _tx) => _tx);
+        let txid = tx.compute_txid();
+
+        info!(
+            id = self.id,
+            "Got initial deposit transaction {} with txid: {}, dispatching...", tx_name, txid
+        );
+
+        self.bitvmx.dispatch_transaction(dispute_protocol_id, tx)?;
+
+        info!(
+            id = self.id,
+            "Initial deposit transaction dispatched successfully"
+        );
+
+        Ok(())
+    }
+
+    fn dispatch_reimbursement_tx(&mut self, dispute_protocol_id: Uuid, slot_id: usize) -> Result<()> {
+        let tx_name = indexed_name(REIMBURSEMENT_KICKOFF_TX, slot_id);
+
+        info!(
+            id = self.id,
+            "Dispatching reimbursement transaction {} for slot {}", tx_name, slot_id
+        );
+
+        let _ = self.bitvmx.get_transaction_by_name(dispute_protocol_id, tx_name.clone());
+        thread::sleep(std::time::Duration::from_secs(1));
+
+        let tx = wait_until_msg!(&self.bitvmx, TransactionInfo(_, _, _tx) => _tx);
+        let txid = tx.compute_txid();
+
+        info!(
+            id = self.id,
+            "Got reimbursement transaction {} with txid: {}, dispatching...", tx_name, txid
+        );
+
+        self.bitvmx.dispatch_transaction(dispute_protocol_id, tx)?;
+
+        info!(
+            id = self.id,
+            "Reimbursement transaction dispatched successfully"
+        );
+
+        Ok(())
     }
 }
