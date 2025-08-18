@@ -256,7 +256,7 @@ pub fn invalid_reimbursement() -> Result<()> {
     member.dispatch_reimbursement_flow(committee_id, slot_index as usize)?;
 
     info!("Starting mining loop to ensure challenge transaction is dispatched...");
-    for _ in 0..10 {
+    for _ in 0..4 {
         info!("Mining 1 block and wait...");
         committee.wallet.mine(1)?;
         thread::sleep(Duration::from_secs(1));
