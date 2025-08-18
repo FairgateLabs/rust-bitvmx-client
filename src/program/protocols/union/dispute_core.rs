@@ -403,7 +403,7 @@ impl DisputeCoreProtocol {
             None,
         )?;
 
-        // TODO: Add leaves
+        // TODO: Add leaves with timelocks for each committee member
         protocol.add_transaction_output(
             &reveal_input,
             &OutputType::taproot(AUTO_AMOUNT, &take_aggregated_key, &[])?,
@@ -575,12 +575,22 @@ impl DisputeCoreProtocol {
 
         let mut protocol = self.load_protocol()?;
 
-        let signatures = protocol.sign_taproot_input(name, 0, &SpendMode::Script { leaf: my_index as usize }, context.key_chain.key_manager.as_ref(), "")?;
+        let signatures = protocol.sign_taproot_input(
+            name,
+            0,
+            &SpendMode::Script {
+                leaf: my_index as usize,
+            },
+            context.key_chain.key_manager.as_ref(),
+            "",
+        )?;
 
         info!(
             id = my_index,
             "Challenge transaction {} for slot {} signed with signatures: {:?}",
-            name, slot_index, signatures
+            name,
+            slot_index,
+            signatures
         );
 
         let mut input_args = InputArgs::new_taproot_script_args(my_index);
@@ -645,9 +655,15 @@ impl DisputeCoreProtocol {
     }
 
     fn monitored_operator_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
-        match context.globals.get_var(&self.ctx.id, MONITORED_OPERATOR_KEY)? {
+        match context
+            .globals
+            .get_var(&self.ctx.id, MONITORED_OPERATOR_KEY)?
+        {
             Some(key_var) => Ok(key_var.pubkey()?),
-            None => Err(BitVMXError::VariableNotFound(self.ctx.id, MONITORED_OPERATOR_KEY.to_string())),
+            None => Err(BitVMXError::VariableNotFound(
+                self.ctx.id,
+                MONITORED_OPERATOR_KEY.to_string(),
+            )),
         }
     }
 
@@ -686,7 +702,8 @@ impl DisputeCoreProtocol {
 
         info!("Getting challenge transaction: {}", challenge_tx_name);
 
-        let (mut challenge_tx, _) = self.get_transaction_by_name(&challenge_tx_name, program_context)?;
+        let (mut challenge_tx, _) =
+            self.get_transaction_by_name(&challenge_tx_name, program_context)?;
         let txid = challenge_tx.compute_txid();
 
         // Connect the challenge transaction to the reimbursement kickoff transaction
@@ -699,9 +716,12 @@ impl DisputeCoreProtocol {
 
         program_context.bitcoin_coordinator.dispatch(
             challenge_tx,
-            None,                                                                                    // No speedup data
-            format!("dispute_core_challenge_{}:{}", self.ctx.id, challenge_tx_name),                 // Context string
-            Some(tx_status.block_info.unwrap().height + DISPUTE_CORE_SHORT_TIMELOCK as u32),    // Dispatch after short timelock
+            None, // No speedup data
+            format!(
+                "dispute_core_challenge_{}:{}",
+                self.ctx.id, challenge_tx_name
+            ), // Context string
+            Some(tx_status.block_info.unwrap().height + DISPUTE_CORE_SHORT_TIMELOCK as u32), // Dispatch after short timelock
         )?;
 
         info!(
@@ -711,7 +731,6 @@ impl DisputeCoreProtocol {
 
         Ok(())
     }
-
 
     fn get_selected_operator_key(
         &self,
@@ -737,7 +756,6 @@ impl DisputeCoreProtocol {
         tx_name: &str,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-
         // Extract slot_index from transaction name
         let slot_index = tx_name
             .strip_prefix(&format!("{}_", REIMBURSEMENT_KICKOFF_TX))
@@ -759,8 +777,7 @@ impl DisputeCoreProtocol {
                     tx_status.confirmations
                 );
             }
-        }
-        else{
+        } else {
             // Handle challenge if needed
             match self.get_selected_operator_key(slot_index, program_context)? {
                 Some(selected_operator_key) => {
@@ -771,8 +788,16 @@ impl DisputeCoreProtocol {
                     let is_valid = selected_operator_key == monitored_operator_key;
 
                     if !is_valid {
-                        info!("Unauthorized operator detected for slot {}, dispatching Challenge Tx", slot_index);
-                        self.dispatch_challenge_tx(slot_index, program_context, tx_id, tx_status.clone())?;
+                        info!(
+                            "Unauthorized operator detected for slot {}, dispatching Challenge Tx",
+                            slot_index
+                        );
+                        self.dispatch_challenge_tx(
+                            slot_index,
+                            program_context,
+                            tx_id,
+                            tx_status.clone(),
+                        )?;
                     } else {
                         info!("Authorized operator confirmed for slot {}", slot_index);
                         // TODO: here we need to validate that the advancement of funds has actually been made
@@ -781,11 +806,15 @@ impl DisputeCoreProtocol {
                 None => {
                     info!("No selected operator key found for slot {}", slot_index);
                     // If no selected operator key is set, it means that someone triggered a reimbursment kickoff transaction but there was no advances of funds
-                    self.dispatch_challenge_tx(slot_index, program_context, tx_id, tx_status.clone())?;
+                    self.dispatch_challenge_tx(
+                        slot_index,
+                        program_context,
+                        tx_id,
+                        tx_status.clone(),
+                    )?;
                 }
             }
         }
-
 
         Ok(())
     }
