@@ -180,7 +180,7 @@ impl Member {
         request_pegin_amount: u64,
         accept_pegin_sighash: &[u8],
         committee_id: Uuid,
-        slot_index: u64,
+        slot_index: usize,
         rootstock_address: String,
         reimbursement_pubkey: PublicKey,
     ) -> Result<()> {
@@ -213,7 +213,7 @@ impl Member {
         committee_id: Uuid,
         stream_id: u64,
         packet_number: u64,
-        slot_id: u64,
+        slot_id: usize,
         amount: u64,
         pegout_id: Vec<u8>,
         pegout_signature_hash: Vec<u8>,

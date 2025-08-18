@@ -141,7 +141,7 @@ pub fn request_pegout() -> Result<()> {
 
     // This came from the contracts
     let accept_pegin_sighash = vec![0; 32]; // This should be replaced with the actual sighash of the accept peg-in tx
-    let slot_index = 0u64; // This should be replaced with the actual slot index
+    let slot_index = 0; // This should be replaced with the actual slot index
 
     committee.accept_pegin(
         committee.committee_id(),

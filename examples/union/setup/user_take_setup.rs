@@ -21,7 +21,7 @@ impl UserTakeSetup {
         committee_id: Uuid,
         stream_id: u64,
         packet_number: u64,
-        slot_id: u64,
+        slot_id: usize,
         amount: u64,
         pegout_id: Vec<u8>,
         pegout_signature_hash: Vec<u8>,

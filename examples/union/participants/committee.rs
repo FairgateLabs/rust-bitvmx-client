@@ -101,7 +101,7 @@ impl Committee {
         request_pegin_txid: Txid,
         amount: u64,
         accept_pegin_sighash: Vec<u8>,
-        slot_index: u64,
+        slot_index: usize,
         rootstock_address: String,
         reimbursement_pubkey: PublicKey,
     ) -> Result<()> {
@@ -172,7 +172,7 @@ impl Committee {
     pub fn request_pegout(
         &mut self,
         user_pubkey: PublicKey,
-        slot_id: u64,
+        slot_id: usize,
         stream_id: u64,
         packet_number: u64,
         amount: u64,

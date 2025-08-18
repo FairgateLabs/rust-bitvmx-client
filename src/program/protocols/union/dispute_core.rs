@@ -393,12 +393,7 @@ impl DisputeCoreProtocol {
         protocol.add_connection(
             "challenge",
             &reimbursement_kickoff,
-            OutputType::taproot(
-                AUTO_AMOUNT,
-                &take_aggregated_key,
-                challenge_requests.as_slice(),
-            )?
-            .into(),
+            reimbursement_output.into(),
             &challenge,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
             Some(DISPUTE_CORE_SHORT_TIMELOCK),
