@@ -3,7 +3,9 @@ use bitcoin::PublicKey;
 use bitvmx_client::{
     client::BitVMXClient,
     program::{
-        participant::P2PAddress, protocols::union::types::PegOutRequest, variables::VariableTypes,
+        participant::P2PAddress,
+        protocols::union::{common::get_user_take_pid, types::PegOutRequest},
+        variables::VariableTypes,
     },
     types::PROGRAM_TYPE_USER_TAKE,
 };
@@ -17,11 +19,10 @@ pub struct UserTakeSetup {}
 impl UserTakeSetup {
     #[allow(clippy::too_many_arguments)]
     pub fn setup(
-        protocol_id: Uuid,
         committee_id: Uuid,
         stream_id: u64,
         packet_number: u64,
-        slot_id: usize,
+        slot_index: usize,
         amount: u64,
         pegout_id: Vec<u8>,
         pegout_signature_hash: Vec<u8>,
@@ -32,6 +33,7 @@ impl UserTakeSetup {
         members: &[Member],
         bitvmx: &BitVMXClient,
     ) -> Result<()> {
+        let protocol_id = get_user_take_pid(committee_id, slot_index);
         info!(
             id = my_id,
             "Setting up the UserTakeSetup protocol handler {} for {}", protocol_id, my_id
@@ -41,7 +43,7 @@ impl UserTakeSetup {
             committee_id,
             stream_id,
             packet_number,
-            slot_id,
+            slot_index,
             amount,
             pegout_id,
             pegout_signature_hash,

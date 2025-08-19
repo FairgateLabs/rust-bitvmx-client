@@ -74,7 +74,7 @@ impl ProtocolHandler for UserTakeProtocol {
         let accept_pegin_utxo = self.accept_pegin_utxo(
             context,
             &pegout_request.committee_id,
-            pegout_request.slot_id,
+            pegout_request.slot_index,
         )?;
         let user_pubkey = pegout_request.user_pubkey;
 
@@ -134,13 +134,19 @@ impl ProtocolHandler for UserTakeProtocol {
 
     fn notify_news(
         &self,
-        _tx_id: Txid,
+        tx_id: Txid,
         _vout: Option<u32>,
-        _tx_status: TransactionStatus,
+        tx_status: TransactionStatus,
         _context: String,
         _program_context: &ProgramContext,
         _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
+        let tx_name = self.get_transaction_name_by_id(tx_id)?;
+        info!(
+            "User Take protocol received news of transaction: {}, txid: {} with {} confirmations",
+            tx_name, tx_id, tx_status.confirmations
+        );
+
         Ok(())
     }
 

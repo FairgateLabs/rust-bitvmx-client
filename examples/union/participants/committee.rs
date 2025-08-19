@@ -1,6 +1,9 @@
 use anyhow::Result;
 use bitcoin::Txid;
-use bitvmx_client::program::protocols::union::common::get_accept_pegin_pid;
+use bitvmx_client::program::protocols::union::common::{
+    get_accept_pegin_pid, get_dispute_aggregated_key_pid, get_take_aggreated_key_pid,
+    get_user_take_pid,
+};
 use bitvmx_client::program::protocols::union::types::{ACCEPT_PEGIN_TX, USER_TAKE_TX};
 use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtxo};
 use bitvmx_client::types::OutgoingBitVMXApiMessages::{SPVProof, Transaction, TransactionInfo};
@@ -37,12 +40,15 @@ impl Committee {
         ];
 
         let wallet = init_wallet()?;
+        let committee_id = Uuid::new_v4();
+        let take_aggregation_id = get_take_aggreated_key_pid(committee_id);
+        let dispute_aggregation_id = get_dispute_aggregated_key_pid(committee_id);
 
         Ok(Self {
             members,
-            take_aggregation_id: Uuid::new_v4(),
-            dispute_aggregation_id: Uuid::new_v4(),
-            committee_id: Uuid::new_v4(),
+            take_aggregation_id,
+            dispute_aggregation_id,
+            committee_id,
             wallet,
         })
     }
@@ -105,12 +111,10 @@ impl Committee {
         rootstock_address: String,
         reimbursement_pubkey: PublicKey,
     ) -> Result<()> {
-        let protocol_id = get_accept_pegin_pid(committee_id, slot_index);
         let members = self.members.clone();
 
         self.all(|op: &mut Member| {
             op.accept_pegin(
-                protocol_id,
                 &members,
                 request_pegin_txid,
                 amount,
@@ -122,6 +126,7 @@ impl Committee {
             )
         })?;
 
+        let protocol_id = get_accept_pegin_pid(committee_id, slot_index);
         self.dispatch_transaction_and_wait_for_spv_proof(protocol_id, ACCEPT_PEGIN_TX.to_string())?;
 
         Ok(())
@@ -172,7 +177,7 @@ impl Committee {
     pub fn request_pegout(
         &mut self,
         user_pubkey: PublicKey,
-        slot_id: usize,
+        slot_index: usize,
         stream_id: u64,
         packet_number: u64,
         amount: u64,
@@ -182,15 +187,13 @@ impl Committee {
     ) -> Result<()> {
         let members = self.members.clone();
         let committee_id = self.committee_id.clone();
-        let protocol_id = Uuid::new_v4();
 
         self.all(|op: &mut Member| {
             op.request_pegout(
-                protocol_id,
                 committee_id,
                 stream_id,
                 packet_number,
-                slot_id,
+                slot_index,
                 amount,
                 pegout_id.clone(),
                 pegout_signature_hash.clone(),
@@ -200,6 +203,7 @@ impl Committee {
             )
         })?;
 
+        let protocol_id = get_user_take_pid(committee_id, slot_index);
         self.dispatch_transaction_and_wait_for_spv_proof(protocol_id, USER_TAKE_TX.to_string())?;
 
         Ok(())
