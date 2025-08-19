@@ -111,8 +111,7 @@ fn generate_unique_wallet_name() -> String {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
-        .as_millis() % 100000;
-    
+        .as_millis() % 100000; 
     let wallet_name = format!("test_{}_{}", test_name, timestamp);
     
     if wallet_name.len() > 50 {
@@ -167,12 +166,6 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
     wallet.create_wallet(WALLET_NAME)?;
     wallet.regtest_fund(WALLET_NAME, FUNDING_ID, 100_000_000)?;
 
-    let bitcoin_client = BitcoinClient::new(
-        &config.bitcoin.url,
-        &config.bitcoin.username,
-        &config.bitcoin.password,
-    )?;
-
     if is_ci {
         info!("🧹 CI cleanup before test...");
         wallet.mine(3)?;
@@ -182,8 +175,21 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
     let unique_wallet_name = generate_unique_wallet_name();
     info!("🎯 Creating unique wallet for test: {}", unique_wallet_name);
     
-    let address = bitcoin_client.init_wallet(&unique_wallet_name)?;
+    let bitcoin_client_base = BitcoinClient::new(
+        &config.bitcoin.url,
+        &config.bitcoin.username,
+        &config.bitcoin.password,
+    )?;
+    
+    let address = bitcoin_client_base.init_wallet(&unique_wallet_name)?;
     info!("✅ Wallet '{}' created with address: {}", unique_wallet_name, address);
+    
+    let bitcoin_client = BitcoinClient::new_with_wallet(
+        &config.bitcoin.url,
+        &config.bitcoin.username,
+        &config.bitcoin.password,
+        &unique_wallet_name,
+    )?;
 
     Ok((bitcoin_client, bitcoind, wallet))
 }
