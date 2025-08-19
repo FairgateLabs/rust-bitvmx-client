@@ -12,6 +12,7 @@
 use ::bitcoin::PublicKey;
 use anyhow::Result;
 use std::{env, thread, time::Duration};
+use tracing::info;
 
 use crate::participants::{committee::Committee, user::User};
 
@@ -35,6 +36,7 @@ pub fn main() -> Result<()> {
         Some("accept_pegin") => accept_pegin()?,
         Some("request_pegout") => request_pegout()?,
         Some("advance_funds") => advance_funds()?,
+        Some("invalid_reimbursement") => invalid_reimbursement()?,
         Some(cmd) => {
             eprintln!("Unknown command: {}", cmd);
             print_usage();
@@ -59,6 +61,7 @@ fn print_usage() {
         "  cargo run --example union request_pegout      - Setups the request peg out protocol"
     );
     println!("  cargo run --example union advance_funds       - Performs an advancement of funds");
+    println!("  cargo run --example union invalid_reimbursement - Forces invalid reimbursement to test challenge tx");
 }
 
 pub fn setup_bitcoin_node() -> Result<()> {
@@ -73,6 +76,13 @@ pub fn committee() -> Result<()> {
     // corresponding keys and programs.
     let mut committee = Committee::new()?;
     committee.setup()?;
+
+    info!("Waiting some time to ensure all setup messages are processed...");
+    thread::sleep(Duration::from_secs(2));
+    info!("Mining 1 block and wait...");
+    committee.wallet.mine(1)?;
+    thread::sleep(Duration::from_secs(2));
+    info!("Committee setup complete.");
 
     Ok(())
 }
@@ -131,7 +141,7 @@ pub fn request_pegout() -> Result<()> {
 
     // This came from the contracts
     let accept_pegin_sighash = vec![0; 32]; // This should be replaced with the actual sighash of the accept peg-in tx
-    let slot_index = 0u64; // This should be replaced with the actual slot index
+    let slot_index = 0; // This should be replaced with the actual slot index
 
     committee.accept_pegin(
         committee.committee_id(),
@@ -194,7 +204,7 @@ pub fn advance_funds() -> Result<()> {
     )?;
 
     // After some time, a peg-out request is not successfully processed and an operator is selected to advance funds.
-    thread::sleep(Duration::from_secs(10));
+    thread::sleep(Duration::from_secs(2));
 
     let user_public_key = "026e14224899cf9c780fef5dd200f92a28cc67f71c0af6fe30b5657ffc943f08f4"; // Placeholder for the actual user public key
     let pegout_id = vec![0; 32]; // Placeholder for the actual peg-out ID
@@ -210,6 +220,61 @@ pub fn advance_funds() -> Result<()> {
         pegout_id,
         selected_operator_pubkey,
     )?;
+
+    info!("Letting the network run...");
+    for _ in 0..20 {
+        info!("Mining 1 block and wait...");
+        committee.wallet.mine(1)?;
+        thread::sleep(Duration::from_secs(1));
+    }
+    info!("Advance funds complete.");
+
+    Ok(())
+}
+
+pub fn invalid_reimbursement() -> Result<()> {
+    // Force an invalid reimbursement dispatch to test challenge mechanism
+    let mut committee = Committee::new()?;
+    let committee_public_key = committee.setup()?;
+
+    let mut user = User::new("user_1")?;
+    let amount = 100_000;
+
+    let request_pegin_txid = user.request_pegin(&committee_public_key, amount)?;
+    let rootstock_address = user.get_rsk_address();
+    let reimbursement_pubkey = user.public_key()?;
+
+    // This came from the contracts
+    let accept_pegin_sighash = vec![0; 32];
+    let slot_index = 0;
+
+    committee.accept_pegin(
+        committee.committee_id(),
+        request_pegin_txid,
+        amount,
+        accept_pegin_sighash,
+        slot_index,
+        rootstock_address.clone(),
+        reimbursement_pubkey.clone(),
+    )?;
+
+    // Wait some time to ensure the accept peg-in is processed
+    thread::sleep(Duration::from_secs(5));
+
+    info!("Forcing member 0 to dispatch invalid reimbursement transaction...");
+
+    // Force member 0 to dispatch reimbursement without proper advancement setup
+    let committee_id = committee.committee_id();
+    let member = &mut committee.members[0];
+    member.dispatch_reimbursement_flow(committee_id, slot_index as usize)?;
+
+    info!("Starting mining loop to ensure challenge transaction is dispatched...");
+    for _ in 0..4 {
+        info!("Mining 1 block and wait...");
+        committee.wallet.mine(1)?;
+        thread::sleep(Duration::from_secs(1));
+    }
+    info!("Invalid reimbursement test complete.");
 
     Ok(())
 }

@@ -31,6 +31,7 @@ pub enum VariableTypes {
     VecNumber(Vec<u32>),
     Input(Vec<u8>),
     Uuid(Uuid),
+    Bool(bool),
     FailConfiguration(
         Option<FailConfiguration>,
         Option<FailConfiguration>,
@@ -101,6 +102,13 @@ impl VariableTypes {
     pub fn uuid(&self) -> Result<Uuid, BitVMXError> {
         match self {
             VariableTypes::Uuid(id) => Ok(id.clone()),
+            _ => Err(BitVMXError::InvalidVariableType(self.err())),
+        }
+    }
+
+    pub fn bool(&self) -> Result<bool, BitVMXError> {
+        match self {
+            VariableTypes::Bool(flag) => Ok(flag.clone()),
             _ => Err(BitVMXError::InvalidVariableType(self.err())),
         }
     }

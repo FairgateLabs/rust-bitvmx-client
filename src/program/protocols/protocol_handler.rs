@@ -453,6 +453,19 @@ pub trait ProtocolHandler {
         Ok(speedup_utxo.into())
     }
 
+    fn load_protocol_by_name(
+        &self,
+        name: &str,
+        protocol_id: Uuid,
+    ) -> Result<ProtocolType, BitVMXError> {
+        new_protocol_type(
+            protocol_id,
+            name,
+            self.context().my_idx,
+            self.context().storage.as_ref().unwrap().clone(),
+        )
+    }
+
     fn setup_complete(&self, program_context: &ProgramContext) -> Result<(), BitVMXError>;
 }
 
@@ -504,7 +517,7 @@ pub fn new_protocol_type(
     my_idx: usize,
     storage: Rc<Storage>,
 ) -> Result<ProtocolType, BitVMXError> {
-    let protocol_name = format!("{}_{}", name, id);
+    let protocol_name = get_protocol_name(name, id);
     let ctx = ProtocolContext::new(id, &protocol_name, my_idx, storage);
 
     match name {
@@ -549,4 +562,8 @@ pub fn external_fund_tx(
         internal_key,
         &spending_scripts,
     )?)
+}
+
+fn get_protocol_name(name: &str, protocol_id: Uuid) -> String {
+    format!("{}_{}", name, protocol_id)
 }

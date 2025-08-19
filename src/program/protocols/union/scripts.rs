@@ -2,37 +2,35 @@ use bitcoin::{PublicKey, XOnlyPublicKey};
 use key_manager::winternitz::WinternitzPublicKey;
 use protocol_builder::{
     errors::ScriptError,
-    scripts::{ots_checksig, KeyType, ProtocolScript, SignMode},
+    scripts::{ots_checksig, KeyType, ProtocolScript, SignMode, StackItem},
 };
 
 use bitcoin_scriptexec::treepp::*;
 
 pub fn start_reimbursement(
     committee_key: &PublicKey,
-    operator_key: &PublicKey,
+    pegout_id_pubkey_name: &str,
     pegout_id_pubkey: &WinternitzPublicKey,
 ) -> Result<ProtocolScript, ScriptError> {
     let script = script!(
         { XOnlyPublicKey::from(committee_key.clone()).serialize().to_vec() }
         OP_CHECKSIGVERIFY
 
-        { XOnlyPublicKey::from(operator_key.clone()).serialize().to_vec() }
-        OP_CHECKSIGVERIFY
-
         { ots_checksig(pegout_id_pubkey, false)? }
+        OP_PUSHNUM_1
     );
 
     let mut protocol_script = ProtocolScript::new(script, &committee_key, SignMode::Aggregate);
 
-    //TODO: bogus derivation index 0, the only pks that need derivation index are the winternitz keys. Consider making the derivation index optional.
-    protocol_script.add_key("operator_key", 0, KeyType::XOnlyKey, 0)?;
-
     protocol_script.add_key(
-        "pegout_id",
+        pegout_id_pubkey_name,
         pegout_id_pubkey.derivation_index()?,
         KeyType::winternitz(pegout_id_pubkey)?,
-        1,
+        0,
     )?;
+
+    protocol_script.add_stack_item(StackItem::new_schnorr_sig(true));
+    protocol_script.add_stack_item(StackItem::new_winternitz_sig(&pegout_id_pubkey));
 
     Ok(protocol_script)
 }
@@ -66,6 +64,20 @@ pub fn operator_pegout_id(
         1,
     )?;
 
+    protocol_script.add_stack_item(StackItem::SchnorrSig {
+        non_default_sighash: true,
+    });
+
+    let extra_data = pegout_id_key.extra_data().unwrap();
+    protocol_script.add_stack_item(StackItem::WinternitzSig {
+        size: extra_data.message_size() + extra_data.checksum_size(),
+    });
+
+    let extra_data = secret_key.extra_data().unwrap();
+    protocol_script.add_stack_item(StackItem::WinternitzSig {
+        size: extra_data.message_size() + extra_data.checksum_size(),
+    });
+
     Ok(protocol_script)
 }
 
@@ -88,6 +100,15 @@ pub fn reveal_take_private_key(
         KeyType::winternitz(take_private_key)?,
         0,
     )?;
+
+    protocol_script.add_stack_item(StackItem::SchnorrSig {
+        non_default_sighash: true,
+    });
+
+    let extra_data = take_private_key.extra_data().unwrap();
+    protocol_script.add_stack_item(StackItem::WinternitzSig {
+        size: extra_data.message_size() + extra_data.checksum_size(),
+    });
 
     Ok(protocol_script)
 }

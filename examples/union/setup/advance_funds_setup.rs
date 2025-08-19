@@ -50,6 +50,7 @@ impl AdvanceFunds {
         my_take_pubkey: PublicKey,
         pegout_id: Vec<u8>,
     ) -> Result<()> {
+        // All members should set up the operator pubkey that should advance the funds
         bitvmx.set_var(
             committee_id,
             &indexed_name(SELECTED_OPERATOR_PUBKEY, slot_id),
@@ -64,12 +65,12 @@ impl AdvanceFunds {
             return Ok(());
         }
 
+        // Only the selected operator will set up the advance funds protocol
         let request = AdvanceFundsRequest {
             committee_id,
-            slot_id,
+            slot_index: slot_id,
             pegout_id,
             fee: 355, // This will be set later
-            operator_pubkey,
             user_pubkey,
             my_take_pubkey,
         };
