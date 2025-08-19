@@ -1,4 +1,5 @@
 use anyhow::Result;
+use core::clone::Clone;
 use std::{collections::HashMap, thread};
 use uuid::Uuid;
 
@@ -12,8 +13,8 @@ use bitvmx_client::{
             common::{get_dispute_core_pid, indexed_name},
             dispute_core::PEGOUT_ID,
             types::{
-                ADVANCE_FUNDS_INPUT, ADVANCE_FUNDS_TX, INITIAL_DEPOSIT_TX_SUFFIX, OPERATOR,
-                REIMBURSEMENT_KICKOFF_TX,
+                MemberData, ADVANCE_FUNDS_INPUT, ADVANCE_FUNDS_TX, INITIAL_DEPOSIT_TX_SUFFIX,
+                OPERATOR, REIMBURSEMENT_KICKOFF_TX,
             },
         },
         variables::{PartialUtxo, VariableTypes},
@@ -140,8 +141,9 @@ impl Member {
     pub fn setup_dispute_protocols(
         &mut self,
         committee_id: Uuid,
-        members: &[Member],
+        members: &Vec<MemberData>,
         funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
+        addresses: &Vec<P2PAddress>,
     ) -> Result<()> {
         info!(
             id = self.id,
@@ -150,10 +152,12 @@ impl Member {
         DisputeCoreSetup::setup(
             committee_id,
             &self.id,
-            members,
-            &self.keyring,
+            &members.clone(),
+            self.keyring.take_aggregated_key.unwrap(),
+            self.keyring.dispute_aggregated_key.unwrap(),
             &self.bitvmx,
             funding_utxos_per_member,
+            addresses,
         )?;
 
         let operator_count = members
@@ -174,7 +178,7 @@ impl Member {
 
     pub fn accept_pegin(
         &mut self,
-        members: &[Member],
+        members: &Vec<MemberData>,
         request_pegin_txid: Txid,
         request_pegin_amount: u64,
         accept_pegin_sighash: &[u8],
@@ -182,6 +186,7 @@ impl Member {
         slot_index: usize,
         rootstock_address: String,
         reimbursement_pubkey: PublicKey,
+        addresses: &Vec<P2PAddress>,
     ) -> Result<()> {
         info!(id = self.id, "Accepting peg-in");
         AcceptPegInSetup::setup(
@@ -191,12 +196,13 @@ impl Member {
             request_pegin_txid,
             request_pegin_amount,
             accept_pegin_sighash,
-            &self.keyring,
+            self.keyring.take_aggregated_key.unwrap(),
             &self.bitvmx,
             committee_id,
             slot_index,
             rootstock_address,
             reimbursement_pubkey,
+            addresses,
         )?;
 
         let program_id = wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
@@ -216,7 +222,7 @@ impl Member {
         pegout_signature_hash: Vec<u8>,
         pegout_signature_message: Vec<u8>,
         user_pubkey: PublicKey,
-        members: &[Member],
+        addresses: &Vec<P2PAddress>,
     ) -> Result<()> {
         UserTakeSetup::setup(
             committee_id,
@@ -230,8 +236,8 @@ impl Member {
             user_pubkey,
             self.keyring.take_aggregated_key.unwrap(),
             &self.id,
-            members,
             &self.bitvmx,
+            addresses,
         )?;
 
         // Wait for the UserTake setup to complete
@@ -249,7 +255,6 @@ impl Member {
         user_pubkey: PublicKey,
         pegout_id: Vec<u8>,
         selected_operator_pubkey: PublicKey,
-        members: &[Member],
     ) -> Result<()> {
         let mut helper = AdvanceFundsHelper::new(&self.config)?;
 
@@ -280,12 +285,12 @@ impl Member {
             &self.bitvmx,
             protocol_id,
             committee_id,
-            &members,
             slot_index,
             user_pubkey,
             selected_operator_pubkey,
             self.keyring.take_pubkey.unwrap(),
             pegout_id.clone(),
+            self.address()?.clone(),
         )?;
 
         if self.keyring.take_pubkey.unwrap() == selected_operator_pubkey {
@@ -356,14 +361,17 @@ impl Member {
     ) -> Result<()> {
         let addresses = self.get_addresses(members);
 
-        let take_aggregated_key =
-            self.setup_key(take_aggregation_id, &addresses, Some(members_take_pubkeys))?;
+        let take_aggregated_key = self.setup_key(
+            take_aggregation_id,
+            &addresses.clone(),
+            Some(members_take_pubkeys),
+        )?;
 
         self.keyring.take_aggregated_key = Some(take_aggregated_key);
 
         let dispute_aggregated_key = self.setup_key(
             dispute_aggregation_id,
-            &addresses,
+            &addresses.clone(),
             Some(members_dispute_pubkeys),
         )?;
 

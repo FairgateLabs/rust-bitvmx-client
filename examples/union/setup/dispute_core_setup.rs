@@ -17,8 +17,6 @@ use bitvmx_client::{
 use tracing::info;
 use uuid::Uuid;
 
-use crate::participants::member::{Keyring, Member};
-
 pub struct DisputeCoreSetup {}
 
 impl DisputeCoreSetup {
@@ -26,23 +24,18 @@ impl DisputeCoreSetup {
     pub fn setup(
         committee_id: Uuid,
         my_id: &str,
-        members: &[Member],
-        keyring: &Keyring,
+        members: &Vec<MemberData>,
+        take_aggregated_key: PublicKey,
+        dispute_aggregated_key: PublicKey,
         bitvmx: &BitVMXClient,
         operator_protocol_funding: &HashMap<PublicKey, PartialUtxo>,
+        addresses: &Vec<P2PAddress>,
     ) -> Result<()> {
         let committee = Committee {
-            members: members
-                .iter()
-                .map(|m| MemberData {
-                    role: m.role.clone(),
-                    take_key: m.keyring.take_pubkey.unwrap(),
-                    dispute_key: m.keyring.dispute_pubkey.unwrap(),
-                })
-                .collect(),
-            take_aggregated_key: keyring.take_aggregated_key.unwrap(),
-            dispute_aggregated_key: keyring.dispute_aggregated_key.unwrap(),
-            operator_count: Self::operator_count(members)?,
+            members: members.clone(),
+            take_aggregated_key,
+            dispute_aggregated_key,
+            operator_count: Self::operator_count(&members.clone())?,
             packet_size: 10,
         };
 
@@ -54,7 +47,7 @@ impl DisputeCoreSetup {
 
         for (operator_index, member) in members.iter().enumerate() {
             if member.role == ParticipantRole::Prover {
-                let pubkey = member.keyring.take_pubkey.unwrap();
+                let pubkey = member.take_key;
                 let protocol_id = get_dispute_core_pid(committee_id, &pubkey);
                 let operator_utxo = operator_protocol_funding[&pubkey].clone();
                 info!(
@@ -83,7 +76,7 @@ impl DisputeCoreSetup {
                 bitvmx.setup(
                     protocol_id,
                     PROGRAM_TYPE_DISPUTE_CORE.to_string(),
-                    Self::get_addresses(members),
+                    addresses.clone(),
                     0,
                 )?;
             }
@@ -92,15 +85,10 @@ impl DisputeCoreSetup {
         Ok(())
     }
 
-    fn operator_count(members: &[Member]) -> Result<u32> {
+    fn operator_count(members: &Vec<MemberData>) -> Result<u32> {
         Ok(members
             .iter()
             .filter(|m| m.role == ParticipantRole::Prover)
             .count() as u32)
-    }
-
-    /// Get all addresses from a list of members
-    fn get_addresses(members: &[Member]) -> Vec<P2PAddress> {
-        members.iter().filter_map(|m| m.address.clone()).collect()
     }
 }
