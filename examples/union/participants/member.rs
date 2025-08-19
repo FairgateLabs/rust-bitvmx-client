@@ -174,7 +174,6 @@ impl Member {
 
     pub fn accept_pegin(
         &mut self,
-        protocol_id: Uuid,
         members: &[Member],
         request_pegin_txid: Txid,
         request_pegin_amount: u64,
@@ -186,7 +185,6 @@ impl Member {
     ) -> Result<()> {
         info!(id = self.id, "Accepting peg-in");
         AcceptPegInSetup::setup(
-            protocol_id,
             &self.id,
             &self.role,
             members,
@@ -209,7 +207,6 @@ impl Member {
 
     pub fn request_pegout(
         &mut self,
-        protocol_id: Uuid,
         committee_id: Uuid,
         stream_id: u64,
         packet_number: u64,
@@ -222,7 +219,6 @@ impl Member {
         members: &[Member],
     ) -> Result<()> {
         UserTakeSetup::setup(
-            protocol_id,
             committee_id,
             stream_id,
             packet_number,
