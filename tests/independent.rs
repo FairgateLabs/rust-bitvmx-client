@@ -688,21 +688,21 @@ fn test_independent_testnet() -> Result<()> {
     test_all_aux(true, Network::Testnet, None, None, None)?;
     Ok(())
 }
-#[cfg(feature = "regtest")]
+#[cfg(feature = "testnet")]
 #[test]
 fn test_independent_regtest() -> Result<()> {
     test_all_aux(true, Network::Regtest, None, None, None)?;
     Ok(())
 }
 
-#[cfg(feature = "regtest")]
+#[cfg(feature = "testnet")]
 #[test]
 fn test_all() -> Result<()> {
     test_all_aux(false, Network::Regtest, None, None, None)?;
     Ok(())
 }
 
-#[cfg(feature = "regtest")]
+#[cfg(feature = "testnet")]
 #[test]
 fn test_const() -> Result<()> {
     test_all_aux(
@@ -724,7 +724,7 @@ fn test_const() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "regtest")]
+#[cfg(feature = "testnet")]
 #[test]
 fn test_const_fail_input() -> Result<()> {
     let fail_config = (
@@ -770,7 +770,7 @@ fn test_const_fail_input() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "regtest")]
+#[cfg(feature = "testnet")]
 #[test]
 fn test_previous_input() -> Result<()> {
     test_all_aux(
@@ -785,7 +785,7 @@ fn test_previous_input() -> Result<()> {
 }
 
 //#[cfg(target_os = "linux")]
-#[cfg(feature = "regtest")]
+#[cfg(feature = "testnet")]
 #[test]
 fn test_zkp() -> Result<()> {
     config_trace();
