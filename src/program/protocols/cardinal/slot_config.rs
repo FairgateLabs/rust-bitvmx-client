@@ -11,10 +11,13 @@ use crate::{
     program::{
         protocols::{
             cardinal::{
-                slot::dust_claim_stop, FUND_UTXO, OPERATORS, OPERATORS_AGGREGATED_PUB,
-                PAIR_0_1_AGGREGATED,
+                slot::{certificate_hash_prefix, dust_claim_stop, group_id_prefix},
+                FUND_UTXO, OPERATORS, OPERATORS_AGGREGATED_PUB, PAIR_0_1_AGGREGATED,
             },
-            dispute::{protocol_cost, TIMELOCK_BLOCKS, TIMELOCK_BLOCKS_KEY},
+            dispute::{
+                program_input_prev_prefix, program_input_prev_protocol, protocol_cost,
+                TIMELOCK_BLOCKS, TIMELOCK_BLOCKS_KEY,
+            },
             protocol_handler::external_fund_tx,
         },
         variables::{Globals, PartialUtxo, VariableTypes},
@@ -82,36 +85,28 @@ impl SlotProtocolConfiguration {
         ))
     }
 
-    pub fn send(&self, channel: &DualChannel) -> Result<(), BitVMXError> {
-        channel.send(
-            BITVMX_ID,
+    pub fn get_setup_messages(
+        &self,
+        addresses: Vec<crate::program::participant::P2PAddress>,
+        leader: u16,
+    ) -> Result<Vec<String>, BitVMXError> {
+        Ok(vec![
             VariableTypes::Number(self.operators as u32).set_msg(self.id, OPERATORS)?,
-        )?;
-
-        channel.send(
-            BITVMX_ID,
             VariableTypes::PubKey(self.operators_aggregated_pub.clone())
                 .set_msg(self.id, OPERATORS_AGGREGATED_PUB)?,
-        )?;
-
-        channel.send(
-            BITVMX_ID,
             VariableTypes::PubKey(self.operators_pairs[0].clone())
                 .set_msg(self.id, PAIR_0_1_AGGREGATED)?,
-        )?;
-
-        channel.send(
-            BITVMX_ID,
             VariableTypes::Utxo(self.fund_utxo.clone()).set_msg(self.id, FUND_UTXO)?,
-        )?;
-
-        channel.send(
-            BITVMX_ID,
             VariableTypes::Number(self.timelock_blocks as u32)
                 .set_msg(self.id, TIMELOCK_BLOCKS_KEY)?,
-        )?;
-
-        Ok(())
+            IncomingBitVMXApiMessages::Setup(
+                self.id,
+                PROGRAM_TYPE_SLOT.to_string(),
+                addresses,
+                leader,
+            )
+            .to_string()?,
+        ])
     }
 
     pub fn setup(
@@ -120,16 +115,9 @@ impl SlotProtocolConfiguration {
         addresses: Vec<crate::program::participant::P2PAddress>,
         leader: u16,
     ) -> Result<(), BitVMXError> {
-        self.send(channel)?;
-
-        let setup_msg = IncomingBitVMXApiMessages::Setup(
-            self.id,
-            PROGRAM_TYPE_SLOT.to_string(),
-            addresses,
-            leader,
-        )
-        .to_string()?;
-        channel.send(BITVMX_ID, setup_msg)?;
+        for msg in self.get_setup_messages(addresses, leader)? {
+            channel.send(BITVMX_ID, msg)?;
+        }
         Ok(())
     }
 
@@ -178,5 +166,29 @@ impl SlotProtocolConfiguration {
             prover_win_output_type,
             pair_aggregated_pub_key,
         ))
+    }
+
+    pub fn program_input_connection(
+        &self,
+        dispute_id: &Uuid,
+        prover_id: usize,
+    ) -> Result<Vec<String>, BitVMXError> {
+        let input_idx_cert_hash = 1;
+        let input_idx_group_id = 2;
+        let msgs = vec![
+            VariableTypes::Uuid(self.id).set_msg(
+                *dispute_id,
+                &program_input_prev_protocol(input_idx_cert_hash),
+            )?,
+            VariableTypes::String(certificate_hash_prefix(prover_id))
+                .set_msg(*dispute_id, &program_input_prev_prefix(input_idx_cert_hash))?,
+            VariableTypes::Uuid(self.id).set_msg(
+                *dispute_id,
+                &program_input_prev_protocol(input_idx_group_id),
+            )?,
+            VariableTypes::String(group_id_prefix(prover_id))
+                .set_msg(*dispute_id, &program_input_prev_prefix(input_idx_group_id))?,
+        ];
+        Ok(msgs)
     }
 }

@@ -1,7 +1,6 @@
-use std::collections::HashMap;
-
+use crate::participants::member::{Keyring, Member};
 use anyhow::Result;
-use bitcoin::Txid;
+use bitcoin::{PublicKey, Txid};
 use bitvmx_client::{
     client::BitVMXClient,
     program::{
@@ -13,8 +12,6 @@ use bitvmx_client::{
 };
 use tracing::info;
 use uuid::Uuid;
-
-use crate::participants::member::{Keyring, Member};
 
 pub struct AcceptPegInSetup {}
 
@@ -31,7 +28,9 @@ impl AcceptPegInSetup {
         keyring: &Keyring,
         bitvmx: &BitVMXClient,
         committee_id: Uuid,
-        slot_index: u32,
+        slot_index: usize,
+        rootstock_address: String,
+        reimbursement_pubkey: PublicKey,
     ) -> Result<()> {
         let addresses = Self::get_addresses(committee);
 
@@ -39,15 +38,6 @@ impl AcceptPegInSetup {
             id = my_id,
             "Setting up the AcceptPegIn protocol handler {} for {}", protocol_id, my_id
         );
-
-        // build a map of communication pubkeys to addresses
-        let mut comms = HashMap::new();
-        for member in committee {
-            comms.insert(
-                member.keyring.communication_pubkey.unwrap(),
-                member.address.clone().unwrap(),
-            );
-        }
 
         let mut operators_take_key = Vec::new();
         for member in committee {
@@ -64,6 +54,8 @@ impl AcceptPegInSetup {
             operators_take_key,
             slot_index: slot_index,
             committee_id: committee_id,
+            rootstock_address,
+            reimbursement_pubkey,
         };
 
         bitvmx.set_var(
@@ -78,21 +70,6 @@ impl AcceptPegInSetup {
             addresses,
             0,
         )?;
-
-        // FIXME: This code will be uncommented soon to broadcast the accept peg-in transaction.
-        // let program_id = expect_msg!(bitvmx, SetupCompleted(program_id) => program_id)?;
-        // info!(id = "AcceptPegInSetup", program_id = ?program_id, "Dispute core setup completed");
-
-        // bitvmx.get_transaction_by_name(protocol_id, ACCEPT_PEGIN_TX.to_string())?;
-        // let tx = expect_msg!(bitvmx, TransactionInfo(_, _, tx) => tx)?;
-
-        // bitvmx.dispatch_transaction(protocol_id, tx)?;
-        // let status = expect_msg!(bitvmx, Transaction(_, status, _) => status)?;
-
-        // info!(
-        //     "AcceptPegIn protocol handler {} for {} send accept pegin transaction with status: {:?}",
-        //     protocol_id, my_id, status
-        // );
 
         Ok(())
     }

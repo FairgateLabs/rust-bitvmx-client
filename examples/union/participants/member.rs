@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::collections::HashMap;
+use std::{collections::HashMap, thread};
 use uuid::Uuid;
 
 use bitcoin::{PublicKey, Txid};
@@ -8,7 +8,14 @@ use bitvmx_client::{
     config::Config,
     program::{
         participant::{P2PAddress, ParticipantRole},
-        protocols::union::types::ACCEPT_PEGIN_TX,
+        protocols::union::{
+            common::{get_dispute_core_pid, indexed_name},
+            dispute_core::PEGOUT_ID,
+            types::{
+                ADVANCE_FUNDS_INPUT, ADVANCE_FUNDS_TX, INITIAL_DEPOSIT_TX_SUFFIX, OPERATOR,
+                REIMBURSEMENT_KICKOFF_TX,
+            },
+        },
         variables::{PartialUtxo, VariableTypes},
     },
     types::{OutgoingBitVMXApiMessages::*, L2_ID},
@@ -18,14 +25,15 @@ use tracing::{debug, info};
 
 use crate::{
     expect_msg,
+    macros::wait_for_message_blocking,
     setup::{
-        accept_pegin_setup::AcceptPegInSetup, advance_funds_setup::AdvanceFunds,
-        dispute_core_setup::DisputeCoreSetup, user_take_setup::UserTakeSetup,
+        accept_pegin_setup::AcceptPegInSetup,
+        advance_funds_setup::{AdvanceFunds, AdvanceFundsHelper},
+        dispute_core_setup::DisputeCoreSetup,
+        user_take_setup::UserTakeSetup,
     },
     wait_until_msg,
 };
-
-use crate::macros::wait_for_message_blocking;
 
 #[derive(Clone)]
 pub struct Keyring {
@@ -98,6 +106,14 @@ impl Member {
         self.keyring.dispute_pubkey = Some(dispute_pubkey);
         self.keyring.communication_pubkey = Some(communication_pubkey);
 
+        info!(
+            id = self.id,
+            "Member keys setup complete: take_pubkey: {}, dispute_pubkey: {}, communication_pubkey: {}",
+            take_pubkey.to_string(),
+            dispute_pubkey.to_string(),
+            communication_pubkey.to_string()
+        );
+
         Ok((take_pubkey, dispute_pubkey, communication_pubkey))
     }
 
@@ -125,7 +141,7 @@ impl Member {
         &mut self,
         committee_id: Uuid,
         members: &[Member],
-        funding_utxos_per_member: &HashMap<PublicKey, Vec<PartialUtxo>>,
+        funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
     ) -> Result<()> {
         info!(
             id = self.id,
@@ -134,16 +150,22 @@ impl Member {
         DisputeCoreSetup::setup(
             committee_id,
             &self.id,
-            &self.role,
             members,
             &self.keyring,
             &self.bitvmx,
             funding_utxos_per_member,
         )?;
 
-        // Wait for the dispute core setup to complete
-        let program_id = expect_msg!(self.bitvmx, SetupCompleted(program_id) => program_id)?;
-        info!(id = self.id, program_id = ?program_id, "Dispute core setup completed");
+        let operator_count = members
+            .iter()
+            .filter(|m| m.role == ParticipantRole::Prover)
+            .count();
+
+        for i in 0..operator_count {
+            // Wait for the dispute core setup to complete
+            let program_id = expect_msg!(self.bitvmx, SetupCompleted(program_id) => program_id)?;
+            info!(id = self.id, program_id = ?program_id, "Dispute core setup completed for operator index {}", i);
+        }
 
         // TODO: add the dispute channeles here
 
@@ -158,7 +180,9 @@ impl Member {
         request_pegin_amount: u64,
         accept_pegin_sighash: &[u8],
         committee_id: Uuid,
-        slot_index: u32,
+        slot_index: usize,
+        rootstock_address: String,
+        reimbursement_pubkey: PublicKey,
     ) -> Result<()> {
         info!(id = self.id, "Accepting peg-in");
         AcceptPegInSetup::setup(
@@ -173,7 +197,12 @@ impl Member {
             &self.bitvmx,
             committee_id,
             slot_index,
+            rootstock_address,
+            reimbursement_pubkey,
         )?;
+
+        let program_id = wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
+        info!(id = "AcceptPegInSetup", program_id = ?program_id, "Accept pegin setup completed (from member)");
 
         Ok(())
     }
@@ -182,58 +211,143 @@ impl Member {
         &mut self,
         protocol_id: Uuid,
         committee_id: Uuid,
+        stream_id: u64,
+        packet_number: u64,
+        slot_id: usize,
+        amount: u64,
+        pegout_id: Vec<u8>,
+        pegout_signature_hash: Vec<u8>,
+        pegout_signature_message: Vec<u8>,
         user_pubkey: PublicKey,
-        slot_id: u32,
-        fee: u64,
         members: &[Member],
     ) -> Result<()> {
         UserTakeSetup::setup(
             protocol_id,
             committee_id,
+            stream_id,
+            packet_number,
+            slot_id,
+            amount,
+            pegout_id,
+            pegout_signature_hash,
+            pegout_signature_message,
+            user_pubkey,
+            self.keyring.take_aggregated_key.unwrap(),
             &self.id,
             members,
-            user_pubkey,
-            slot_id,
-            fee,
             &self.bitvmx,
-            self.keyring.take_aggregated_key.unwrap(),
         )?;
+
+        // Wait for the UserTake setup to complete
+        let program_id = wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
+        info!(id = self.id, program_id = ?program_id, "UserTake setup completed (from member)");
 
         Ok(())
     }
 
     pub fn advance_funds(
         &mut self,
+        protocol_id: Uuid,
         committee_id: Uuid,
         slot_id: usize,
-        user_public_key: PublicKey,
+        user_pubkey: PublicKey,
         pegout_id: Vec<u8>,
+        selected_operator_pubkey: PublicKey,
+        members: &[Member],
     ) -> Result<()> {
-        if self.role != ParticipantRole::Prover {
-            return Err(anyhow::anyhow!("Committee member is not a Prover"));
+        let mut helper = AdvanceFundsHelper::new(&self.config)?;
+
+        // Check if this member is the selected operator for advance funds
+        let mut utxo: Option<PartialUtxo> = None;
+        if self.keyring.take_pubkey.unwrap() == selected_operator_pubkey {
+            // NOTE: This flow will be moved inside bitvmx if we decided to add the operator wallet inside it
+            // Fund operator wallet. This will be replaced with a wallet request in the future.
+            let funded_utxo = helper.fund_operator_wallet(committee_id, slot_id, &self.bitvmx)?;
+            utxo = Some(funded_utxo.clone());
+
+            // Set UTXO. This won't be needed if bitvmx own the wallet.
+            self.bitvmx.set_var(
+                protocol_id,
+                &indexed_name(ADVANCE_FUNDS_INPUT, slot_id),
+                VariableTypes::Utxo(funded_utxo),
+            )?;
         }
-
-        self.bitvmx
-            .get_var(committee_id, format!("{}_{}", ACCEPT_PEGIN_TX, slot_id))?;
-
-        let utxo =
-            wait_until_msg!(&self.bitvmx, Variable(_, _, VariableTypes::Utxo(_utxo)) => _utxo);
 
         info!(
             id = self.id,
-            "Advancing {} to user public key {}",
-            utxo.2.unwrap(),
-            user_public_key.to_string()
+            "Advancing funds to user public key {}",
+            user_pubkey.to_string()
         );
 
-        // Create the advance funds transaction and send it as if it was a transaction from and operator
-        let mut advance_funds = AdvanceFunds::new(&self.config)?;
-        advance_funds.create_and_send_tx(
-            user_public_key,
-            utxo.2.unwrap(),
-            pegout_id,
+        AdvanceFunds::setup(
             &self.bitvmx,
+            protocol_id,
+            committee_id,
+            &members,
+            slot_id,
+            user_pubkey,
+            selected_operator_pubkey,
+            self.keyring.take_pubkey.unwrap(),
+            pegout_id.clone(),
         )?;
+
+        if self.keyring.take_pubkey.unwrap() == selected_operator_pubkey {
+            info!(
+                id = self.id,
+                "Advance funds dispatch for member {}", self.id
+            );
+
+            thread::sleep(std::time::Duration::from_secs(5));
+
+            let program_id =
+                wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
+            info!(id = "AdvanceFundsSetup", program_id = ?program_id, "Advance funds setup completed (from setup)");
+
+            // Sign and dispatch transaction.
+            // NOTE: This is temporary, it will be done all internally by bitvmx in the future.
+            let _ = self
+                .bitvmx
+                .get_transaction_by_name(protocol_id, ADVANCE_FUNDS_TX.to_string());
+            thread::sleep(std::time::Duration::from_secs(1));
+            let mut tx = wait_until_msg!(&self.bitvmx, TransactionInfo(_, _, _tx) => _tx);
+
+            if let Some(ref utxo) = utxo {
+                let signed_tx = helper
+                    .sign_p2wpkh_transaction_single_input(&mut tx, utxo.2.clone().unwrap())?;
+
+                let txid = signed_tx.compute_txid();
+                info!(
+                    id = self.id,
+                    "Dispatching {} transaction: {:?}. Txid: {}", ADVANCE_FUNDS_TX, signed_tx, txid
+                );
+
+                self.bitvmx.dispatch_transaction(protocol_id, signed_tx)?;
+
+                thread::sleep(std::time::Duration::from_secs(1));
+                helper.mine_blocks(1)?;
+
+                let status = wait_until_msg!(
+                    &self.bitvmx,
+                    Transaction(_, _status, _) => _status
+                );
+                info!(
+                    id = self.id,
+                    "Sent {} transaction with status: {:?}", ADVANCE_FUNDS_TX, status
+                );
+
+                // Get the SPV proof, this should be used by the union client to present to the smart contract
+                self.bitvmx.get_spv_proof(txid)?;
+                let spv_proof = wait_until_msg!(
+                    &self.bitvmx,
+                    SPVProof(_, Some(_spv_proof)) => _spv_proof
+                );
+                info!("SPV proof: {:?}", spv_proof);
+            } else {
+                return Err(anyhow::anyhow!(
+                    "UTXO not initialized for signing transaction"
+                ));
+            }
+        }
 
         Ok(())
     }
@@ -373,5 +487,120 @@ impl Member {
         };
 
         Ok(counterparty_address.clone())
+    }
+
+    pub fn dispatch_reimbursement_flow(
+        &mut self,
+        committee_id: Uuid,
+        slot_id: usize,
+    ) -> Result<()> {
+        // Get the dispute core protocol ID for this member
+        let member_take_pubkey = self.keyring.take_pubkey.unwrap();
+        let dispute_protocol_id = get_dispute_core_pid(committee_id, &member_take_pubkey);
+
+        info!(
+            id = self.id,
+            "Starting reimbursement flow for slot {} from dispute protocol {}",
+            slot_id,
+            dispute_protocol_id
+        );
+
+        // Step 1: Set up required variables
+        self.setup_pegout_id(dispute_protocol_id, slot_id)?;
+
+        // Step 2: Dispatch initial deposit transaction first
+        self.dispatch_initial_deposit_tx(dispute_protocol_id)?;
+
+        // Step 3: Wait and then dispatch reimbursement transaction
+        thread::sleep(std::time::Duration::from_secs(1));
+        self.dispatch_reimbursement_tx(dispute_protocol_id, slot_id)?;
+
+        info!(id = self.id, "Reimbursement flow completed successfully");
+
+        Ok(())
+    }
+
+    fn setup_pegout_id(&mut self, dispute_protocol_id: Uuid, slot_id: usize) -> Result<()> {
+        let pegout_id = vec![0u8; 32]; // dummy pegout_id for testing
+        let pegout_id_key = indexed_name(PEGOUT_ID, slot_id);
+
+        info!(
+            id = self.id,
+            "Setting up pegout_id variable {} for slot {}", pegout_id_key, slot_id
+        );
+
+        self.bitvmx.set_var(
+            dispute_protocol_id,
+            &pegout_id_key,
+            VariableTypes::Input(pegout_id),
+        )?;
+
+        Ok(())
+    }
+
+    fn dispatch_initial_deposit_tx(&mut self, dispute_protocol_id: Uuid) -> Result<()> {
+        let tx_name = format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX);
+
+        info!(
+            id = self.id,
+            "Dispatching operator initial deposit transaction {}", tx_name
+        );
+
+        let _ = self
+            .bitvmx
+            .get_transaction_by_name(dispute_protocol_id, tx_name.clone());
+        thread::sleep(std::time::Duration::from_secs(1));
+
+        let tx = wait_until_msg!(&self.bitvmx, TransactionInfo(_, _, _tx) => _tx);
+        let txid = tx.compute_txid();
+
+        info!(
+            id = self.id,
+            "Got initial deposit transaction {} with txid: {}, dispatching...", tx_name, txid
+        );
+
+        self.bitvmx.dispatch_transaction(dispute_protocol_id, tx)?;
+
+        info!(
+            id = self.id,
+            "Initial deposit transaction dispatched successfully"
+        );
+
+        Ok(())
+    }
+
+    fn dispatch_reimbursement_tx(
+        &mut self,
+        dispute_protocol_id: Uuid,
+        slot_id: usize,
+    ) -> Result<()> {
+        let tx_name = indexed_name(REIMBURSEMENT_KICKOFF_TX, slot_id);
+
+        info!(
+            id = self.id,
+            "Dispatching reimbursement transaction {} for slot {}", tx_name, slot_id
+        );
+
+        let _ = self
+            .bitvmx
+            .get_transaction_by_name(dispute_protocol_id, tx_name.clone());
+        thread::sleep(std::time::Duration::from_secs(1));
+
+        let tx = wait_until_msg!(&self.bitvmx, TransactionInfo(_, _, _tx) => _tx);
+        let txid = tx.compute_txid();
+
+        info!(
+            id = self.id,
+            "Got reimbursement transaction {} with txid: {}, dispatching...", tx_name, txid
+        );
+
+        self.bitvmx.dispatch_transaction(dispute_protocol_id, tx)?;
+
+        info!(
+            id = self.id,
+            "Reimbursement transaction dispatched successfully"
+        );
+
+        Ok(())
     }
 }

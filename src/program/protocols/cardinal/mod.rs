@@ -3,6 +3,7 @@ pub mod lock_config;
 pub mod slot;
 pub mod slot_config;
 pub mod transfer;
+pub mod transfer_config;
 
 pub const OPERATORS: &str = "operators";
 pub const STOPS_CONSUMED: &str = "stops_consumed";

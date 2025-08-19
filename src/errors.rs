@@ -19,6 +19,9 @@ use uuid::Uuid;
 
 #[derive(Error, Debug)]
 pub enum BitVMXError {
+    #[error("Error on dispute resolution protocol setup: {0}")]
+    DisputeResolutionProtocolSetup(String),
+
     #[error("Invalid configuration")]
     ConfigurationError(#[from] ConfigError),
 
@@ -45,6 +48,9 @@ pub enum BitVMXError {
 
     #[error("Cannot find program with id {0}")]
     ProgramNotFound(Uuid),
+
+    #[error("Cannot find protocol with name {0}")]
+    ProtocolNotFound(String),
 
     #[error("A program error has occurred: {0}")]
     ProgramError(#[from] ProgramError),

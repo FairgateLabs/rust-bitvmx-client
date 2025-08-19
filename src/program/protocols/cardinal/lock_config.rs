@@ -1,11 +1,12 @@
-use bitcoin::PublicKey;
+use bitcoin::{PublicKey, Txid};
 use bitvmx_broker::channel::channel::DualChannel;
+use protocol_builder::scripts::{self, SignMode};
 use uuid::Uuid;
 
 use crate::{
     errors::BitVMXError,
     program::{
-        protocols::cardinal::EOL_TIMELOCK_DURATION,
+        protocols::{cardinal::EOL_TIMELOCK_DURATION, protocol_handler::external_fund_tx},
         variables::{Globals, PartialUtxo, VariableTypes},
     },
     types::{IncomingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_LOCK},
@@ -85,49 +86,33 @@ impl LockProtocolConfiguration {
         ))
     }
 
-    pub fn send(&self, channel: &DualChannel) -> Result<(), BitVMXError> {
-        channel.send(
-            BITVMX_ID,
+    pub fn get_setup_messages(
+        &self,
+        addresses: Vec<crate::program::participant::P2PAddress>,
+        leader: u16,
+    ) -> Result<Vec<String>, BitVMXError> {
+        Ok(vec![
             VariableTypes::PubKey(self.operators_aggregated_pub.clone())
                 .set_msg(self.id, "operators_aggregated_pub")?,
-        )?;
-        channel.send(
-            BITVMX_ID,
             VariableTypes::PubKey(self.operators_aggregated_pub_happy_path.clone())
                 .set_msg(self.id, "operators_aggregated_happy_path")?,
-        )?;
-        channel.send(
-            BITVMX_ID,
             VariableTypes::PubKey(self.unspendable.clone()).set_msg(self.id, "unspendable")?,
-        )?;
-        channel.send(
-            BITVMX_ID,
             VariableTypes::PubKey(self.user_pubkey.clone()).set_msg(self.id, "user_pubkey")?,
-        )?;
-        channel.send(
-            BITVMX_ID,
             VariableTypes::Secret(self.secret.clone()).set_msg(self.id, "secret")?,
-        )?;
-        channel.send(
-            BITVMX_ID,
             VariableTypes::Utxo(self.ordinal_utxo.clone()).set_msg(self.id, "ordinal_utxo")?,
-        )?;
-        channel.send(
-            BITVMX_ID,
             VariableTypes::Utxo(self.protocol_utxo.clone()).set_msg(self.id, "protocol_utxo")?,
-        )?;
-        channel.send(
-            BITVMX_ID,
             VariableTypes::Number(self.timelock_blocks as u32)
                 .set_msg(self.id, "timelock_blocks")?,
-        )?;
-        channel.send(
-            BITVMX_ID,
             VariableTypes::Number(self.eol_timelock_duration as u32)
                 .set_msg(self.id, EOL_TIMELOCK_DURATION)?,
-        )?;
-
-        Ok(())
+            IncomingBitVMXApiMessages::Setup(
+                self.id,
+                PROGRAM_TYPE_LOCK.to_string(),
+                addresses,
+                leader,
+            )
+            .to_string()?,
+        ])
     }
 
     pub fn setup(
@@ -136,16 +121,34 @@ impl LockProtocolConfiguration {
         addresses: Vec<crate::program::participant::P2PAddress>,
         leader: u16,
     ) -> Result<(), BitVMXError> {
-        self.send(channel)?;
-
-        let setup_msg = IncomingBitVMXApiMessages::Setup(
-            self.id,
-            PROGRAM_TYPE_LOCK.to_string(),
-            addresses,
-            leader,
-        )
-        .to_string()?;
-        channel.send(BITVMX_ID, setup_msg)?;
+        for msg in self.get_setup_messages(addresses, leader)? {
+            channel.send(BITVMX_ID, msg)?;
+        }
         Ok(())
+    }
+
+    pub fn get_asset_utxo(&self, txid: &Txid) -> Result<PartialUtxo, BitVMXError> {
+        let taproot_script_eol_timelock_expired_tx_lock = scripts::timelock(
+            self.eol_timelock_duration,
+            &bitcoin::PublicKey::from(self.user_pubkey),
+            SignMode::Skip,
+        );
+
+        //this should be another aggregated to be signed later
+        let taproot_script_all_sign_tx_lock = scripts::check_aggregated_signature(
+            &self.operators_aggregated_pub,
+            SignMode::Aggregate,
+        );
+
+        let asset_spending_condition = vec![
+            taproot_script_eol_timelock_expired_tx_lock.clone(),
+            taproot_script_all_sign_tx_lock.clone(),
+        ];
+
+        let asset_value = self.ordinal_utxo.2.unwrap();
+        let asset_output_type =
+            external_fund_tx(&self.unspendable, asset_spending_condition, asset_value)?;
+
+        Ok((txid.clone(), 0, Some(asset_value), Some(asset_output_type)))
     }
 }

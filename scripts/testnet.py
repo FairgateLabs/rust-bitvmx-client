@@ -23,8 +23,8 @@ def get_block_height():
 def patch_yaml_height(filepath, height):
     with open(filepath, "r") as f:
         data = yaml.safe_load(f)
-    if "monitor" in data:
-        data["monitor"]["checkpoint_height"] = height
+    data["coordinator_settings"]["monitor_settings"]["indexer_settings"]["checkpoint_height"] = height
+
     if "coordinator" in data:
         data["coordinator"]["throtthle_bitcoin_updates_until_sync"] = SECS_SYNC
         data["coordinator"]["throtthle_bitcoin_updates"] = SECS_UPDATE

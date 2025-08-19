@@ -67,6 +67,7 @@ pub struct BitVMX {
     count: u32,
     pending_messages: VecDeque<(PeerId, Vec<u8>)>,
     notified_request: HashSet<(Uuid, (Txid, Option<u32>))>,
+    notified_rsk_pegin: HashSet<Txid>, //workaround for RSK pegin transactions because ack seems to be not working
     bitcoin_update: BitcoinUpdateState,
 }
 
@@ -146,6 +147,7 @@ impl BitVMX {
             count: 0,
             pending_messages: VecDeque::new(),
             notified_request: HashSet::new(),
+            notified_rsk_pegin: HashSet::new(),
             bitcoin_update: BitcoinUpdateState {
                 last_update: Instant::now(),
                 was_synced: false,
@@ -307,8 +309,10 @@ impl BitVMX {
                     let data = serde_json::to_string(
                         &OutgoingBitVMXApiMessages::PeginTransactionFound(tx_id, tx_status),
                     )?;
-
-                    self.program_context.broker_channel.send(L2_ID, data)?;
+                    if !self.notified_rsk_pegin.contains(&tx_id) {
+                        self.program_context.broker_channel.send(L2_ID, data)?;
+                        self.notified_rsk_pegin.insert(tx_id);
+                    }
                     ack_news = AckNews::Monitor(AckMonitorNews::RskPeginTransaction(tx_id));
                 }
                 MonitorNews::NewBlock(block_id, block_height) => {
@@ -337,12 +341,6 @@ impl BitVMX {
                     );
                     self.program_context.broker_channel.send(L2_ID, data)?;
                     ack_news = AckNews::Coordinator(AckCoordinatorNews::InsufficientFunds(tx_id));
-                }
-                CoordinatorNews::NewSpeedUp(_tx_id, _context_data, _counter) => {
-                    // Complete
-                    info!("New speed-up transaction: {:?} {}", _tx_id, _counter);
-
-                    ack_news = AckNews::Coordinator(AckCoordinatorNews::NewSpeedUp(_tx_id));
                 }
                 CoordinatorNews::DispatchTransactionError(_tx_id, _context_data, _counter) => {
                     error!(
@@ -373,7 +371,7 @@ impl BitVMX {
                 }
                 CoordinatorNews::EstimateFeerateTooHigh(estimate_fee, max_allowed) => {
                     // Complete
-                    error!(
+                    warn!(
                         "Estimate feerate too high: {:?} {:?}",
                         estimate_fee, max_allowed
                     );
@@ -446,9 +444,16 @@ impl BitVMX {
         };
 
         if should_update {
-            let updated = self.process_bitcoin_updates()?;
+            let updated = self.process_bitcoin_updates();
             self.bitcoin_update.last_update = now;
-            if updated {
+            if updated.is_err() {
+                error!(
+                    "Critical error processing bitcoin updates: {:?}",
+                    updated.err().unwrap()
+                );
+                return Ok(());
+            }
+            if updated.unwrap() {
                 self.bitcoin_update.was_synced = true;
 
                 // info!(

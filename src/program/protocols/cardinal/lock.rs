@@ -41,7 +41,7 @@ pub struct LockProtocol {
 pub const MIN_RELAY_FEE: u64 = 1;
 pub const DUST: u64 = 500 * MIN_RELAY_FEE;
 pub fn lock_protocol_dust_cost(participants: u8) -> u64 {
-    DUST * (participants as u64 + 3)
+    DUST * ((2 * participants as u64) + 3)
 }
 
 impl ProtocolHandler for LockProtocol {
@@ -91,7 +91,7 @@ impl ProtocolHandler for LockProtocol {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         match name {
             LOCK_TX => Ok((self.accept_tx(context))?),
-            HAPPY_PATH_TX => Ok((self.happy_path()?, None)),
+            HAPPY_PATH_TX => Ok((self.happy_path(context))?),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
     }
@@ -238,6 +238,8 @@ impl ProtocolHandler for LockProtocol {
             )?,
         )?;
 
+        //compute the speedup outputs of the happy_path
+        let amount = self.checked_sub(amount, keys.len() as u64 * DUST)?;
         self.add_happy_path(
             &mut protocol,
             &operators_aggregated_pub_happy_path,
@@ -249,6 +251,7 @@ impl ProtocolHandler for LockProtocol {
         let pb = ProtocolBuilder {};
         for k in keys {
             pb.add_speedup_output(&mut protocol, LOCK_TX, DUST, k.get_public("speedup")?)?;
+            pb.add_speedup_output(&mut protocol, HAPPY_PATH_TX, DUST, k.get_public("speedup")?)?;
         }
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
@@ -359,7 +362,10 @@ impl LockProtocol {
         Ok((tx, Some(speedup_utxo.into())))
     }
 
-    pub fn happy_path(&self) -> Result<Transaction, BitVMXError> {
+    pub fn happy_path(
+        &self,
+        context: &ProgramContext,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         let signature = self
             .load_protocol()?
             .input_taproot_script_spend_signature(HAPPY_PATH_TX, 0, 1)?
@@ -378,58 +384,15 @@ impl LockProtocol {
             .load_protocol()?
             .transaction_to_send(HAPPY_PATH_TX, &[taproot_arg_0, taproot_arg_1])?;
 
+        let txid = tx.compute_txid();
+        let speedup = context
+            .globals
+            .get_var(&self.ctx.id, "speedup")?
+            .unwrap()
+            .pubkey()?;
+        let speedup_utxo = Utxo::new(txid, 2 + self.ctx.my_idx as u32, DUST, &speedup);
+
         debug!("Transaction to send: {:?}", tx);
-        Ok(tx)
-    }
-
-    pub fn add_winternitz_check(
-        &self,
-        aggregated: &PublicKey,
-        protocol: &mut Protocol,
-        keys: &ParticipantKeys,
-        amount: u64,
-        amount_speedup: u64,
-        var_names: &Vec<&str>,
-        from: &str,
-        to: &str,
-    ) -> Result<(), BitVMXError> {
-        info!("Adding winternitz check for {} to {}", from, to);
-        info!("Amount: {}", amount);
-        info!("Speedup: {}", amount_speedup);
-        let names_and_keys = var_names
-            .iter()
-            .map(|v| (*v, keys.get_winternitz(v).unwrap()))
-            .collect();
-
-        let winternitz_check = scripts::verify_winternitz_signatures(
-            aggregated,
-            &names_and_keys,
-            SignMode::Aggregate,
-        )?;
-
-        let leaves = [winternitz_check];
-
-        let output_type = OutputType::taproot(amount, aggregated, &leaves)?;
-
-        protocol.add_connection(
-            &format!("{}__{}", from, to),
-            from,
-            output_type.into(),
-            to,
-            InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::All {
-                    key_path_sign: SignMode::Aggregate,
-                },
-            ),
-            None,
-            None,
-        )?;
-
-        let pb = ProtocolBuilder {};
-        //put the amount here as there is no output yet
-        pb.add_speedup_output(protocol, to, amount_speedup, aggregated)?;
-
-        Ok(())
+        Ok((tx, Some(speedup_utxo.into())))
     }
 }

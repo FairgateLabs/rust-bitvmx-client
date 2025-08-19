@@ -1,7 +1,7 @@
 #[macro_export]
 macro_rules! expect_msg {
     ($bitvmx:expr, $pattern:pat => $expr:expr) => {{
-        let msg = $bitvmx.wait_message(Some(std::time::Duration::from_secs(30)), None)?;
+        let msg = $bitvmx.wait_message(Some(std::time::Duration::from_secs(60)), None)?;
 
         if let $pattern = msg {
             Ok($expr)
@@ -26,14 +26,14 @@ pub fn wait_for_message_blocking<F>(
 where
     F: Fn(&OutgoingBitVMXApiMessages) -> bool,
 {
-    let mut msg = bitvmx.wait_message(Some(Duration::from_secs(30)), None)?;
+    let mut msg = bitvmx.wait_message(Some(Duration::from_secs(60)), None)?;
     while !matches_fn(&msg) {
         info!(
             "Waiting for another message that match condition. Message received was: {:?}",
             msg
         );
         thread::sleep(Duration::from_millis(10));
-        msg = bitvmx.wait_message(Some(Duration::from_secs(20)), None)?;
+        msg = bitvmx.wait_message(Some(Duration::from_secs(60)), None)?;
     }
     Ok(msg)
 }

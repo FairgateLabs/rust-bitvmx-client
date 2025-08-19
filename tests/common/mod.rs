@@ -107,7 +107,7 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
         config.bitcoin.clone(),
         BitcoindFlags {
             min_relay_tx_fee: 0.00001,
-            block_min_tx_fee: 0.00001,
+            block_min_tx_fee: 0.00008,
             debug: 1,
             fallback_fee: 0.0002,
         },
@@ -157,7 +157,7 @@ fn config_trace_aux() {
         "libp2p=off",
         "bitvmx_transaction_monitor=off",
         "bitcoin_indexer=off",
-        "bitcoin_coordinator=off",
+        "bitcoin_coordinator=info",
         "p2p_protocol=off",
         "p2p_handler=off",
         "tarpc=off",

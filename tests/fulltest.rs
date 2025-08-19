@@ -9,24 +9,19 @@ use bitcoin::{
 use bitvmx_client::{
     program::{
         self,
-        participant::ParticipantRole,
         protocols::{
             cardinal::{
                 lock::lock_protocol_dust_cost,
                 lock_config::LockProtocolConfiguration,
                 slot::{certificate_hash, group_id, slot_protocol_dust_cost},
                 slot_config::SlotProtocolConfiguration,
-                transfer::pub_too_group,
-                SPEEDUP_DUST,
+                transfer_config::TransferConfig,
             },
             dispute::TIMELOCK_BLOCKS,
-            protocol_handler::external_fund_tx,
         },
         variables::{VariableTypes, WitnessTypes},
     },
-    types::{
-        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_TRANSFER,
-    },
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
 use common::{
     config_trace,
@@ -35,11 +30,10 @@ use common::{
     wait_message_from_channel,
 };
 use key_manager::verifier::SignatureVerifier;
-use protocol_builder::scripts::{self, SignMode};
 use tracing::info;
 use uuid::Uuid;
 
-use crate::common::{set_speedup_funding, FEE};
+use crate::common::set_speedup_funding;
 
 mod common;
 mod fixtures;
@@ -210,10 +204,10 @@ pub fn test_full() -> Result<()> {
         initial_output_type,
         prover_win_utxo,
         prover_win_output_type,
-        FEE as u32,
         fake_drp,
         fake_instruction,
         ForcedChallenges::No,
+        None,
         None,
     )?;
 
@@ -270,6 +264,7 @@ pub fn test_full() -> Result<()> {
         NETWORK,
         lock_protocol_dust_cost(3),
         &bitcoin_client,
+        2000,
     )?;
 
     // OPERATORS WAITS FOR LOCKREQ TX
@@ -373,76 +368,29 @@ pub fn test_full() -> Result<()> {
     info!("================================================");
     info!("Setting TRANSFER OF OWNERSHIP");
     info!("================================================");
-    let eol_timelock_duration = 100; // TODO: get this from config
-    let taproot_script_eol_timelock_expired_tx_lock = scripts::timelock(
-        eol_timelock_duration,
-        &bitcoin::PublicKey::from(pubuser),
-        SignMode::Skip,
-    );
-
-    //this should be another aggregated to be signed later
-    let taproot_script_all_sign_tx_lock =
-        scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate);
-
-    let asset_spending_condition = vec![
-        taproot_script_eol_timelock_expired_tx_lock.clone(),
-        taproot_script_all_sign_tx_lock.clone(),
-    ];
-
-    let asset_output_type = external_fund_tx(
-        &fixtures::hardcoded_unspendable().into(),
-        asset_spending_condition,
-        10_000,
-    )?;
-
-    //emulate asset
-    /*let asset_utxo = init_utxo_new(
-        &bitcoin_client,
-        &fixtures::hardcoded_unspendable().into(),
-        asset_spending_condition.clone(),
-        10_000,
-    )?;*/
 
     // SETUP TRANSFER BEGIN
     let transfer_program_id = Uuid::new_v4();
 
-    let set_unspendable = VariableTypes::PubKey(fixtures::hardcoded_unspendable().into())
-        .set_msg(transfer_program_id, "unspendable")?;
-    send_all(&channels, &set_unspendable)?;
+    let asset_utxo = lock_protocol_configuration.get_asset_utxo(&locktx_id)?;
 
-    let set_ops_aggregated = VariableTypes::PubKey(aggregated_pub_key)
-        .set_msg(transfer_program_id, "operators_aggregated_pub")?;
-    send_all(&channels, &set_ops_aggregated)?;
-
-    let set_operators_count =
-        VariableTypes::Number(3).set_msg(transfer_program_id, "operator_count")?;
-    send_all(&channels, &set_operators_count)?;
-
-    for gid in 1..=7 {
-        let set_pub_too = VariableTypes::PubKey(fixtures::hardcoded_unspendable().into())
-            .set_msg(transfer_program_id, &pub_too_group(gid))?;
-        send_all(&channels, &set_pub_too)?;
-    }
-
-    let set_asset_utxo = VariableTypes::Utxo((locktx_id, 0, Some(10_000), Some(asset_output_type)))
-        .set_msg(transfer_program_id, "locked_asset_utxo")?;
-    send_all(&channels, &set_asset_utxo)?;
-
-    let set_slot_program_id = VariableTypes::String(slot_program_id.to_string())
-        .set_msg(transfer_program_id, "slot_program_id")?;
-    send_all(&channels, &set_slot_program_id)?;
-
-    let speedup_dust = VariableTypes::Number(500).set_msg(transfer_program_id, SPEEDUP_DUST)?;
-    send_all(&channels, &speedup_dust)?;
-
-    let setup_msg = IncomingBitVMXApiMessages::Setup(
+    let groups_pub_keys: Vec<BitcoinPubKey> = (1..=7)
+        .map(|_gid| fixtures::hardcoded_unspendable().into())
+        .collect();
+    let transfer_config = TransferConfig::new(
         transfer_program_id,
-        PROGRAM_TYPE_TRANSFER.to_string(),
-        addresses.clone(),
-        0,
-    )
-    .to_string()?;
-    send_all(&channels, &setup_msg)?;
+        fixtures::hardcoded_unspendable().into(),
+        aggregated_pub_key.clone(),
+        3, // operator count
+        asset_utxo,
+        groups_pub_keys,
+        None,
+        Some(slot_program_id),
+    );
+
+    for channel in channels.iter() {
+        transfer_config.setup(channel, addresses.clone(), 0)?;
+    }
 
     //wait setup complete
     let msg = get_all(&channels, &mut instances, false)?;
@@ -491,13 +439,13 @@ pub fn test_full() -> Result<()> {
     info!("Going to send CERTIFICATE HASH and GID");
     info!("================================================");
     // one operator decide to put a certificate hash to start the transfer
-    let cert_hash = "33".repeat(20);
+    let cert_hash = "966c3c1b3b93d12206202b8c685df7554d3df6c72b5cee973de94c45e3f37a0a";
     let set_cert_hash = VariableTypes::Input(hex::decode(cert_hash).unwrap())
         .set_msg(slot_program_id, &certificate_hash(0))?;
     let _ = channels[0].send(BITVMX_ID, set_cert_hash)?;
 
-    let selected_gid: u32 = 4;
-    let set_gid = VariableTypes::Input(selected_gid.to_be_bytes().to_vec())
+    let selected_gid: u32 = 7;
+    let set_gid = VariableTypes::Input(selected_gid.to_le_bytes().to_vec())
         .set_msg(slot_program_id, &group_id(0))?;
     let _ = channels[0].send(BITVMX_ID, set_gid)?;
 
@@ -531,6 +479,7 @@ pub fn test_full() -> Result<()> {
         &wallet,
         dispute_id,
         fake_drp,
+        None,
     )?;
 
     //Consume other stops through timeout
@@ -554,7 +503,7 @@ pub fn test_full() -> Result<()> {
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             transfer_program_id,
-            program::protocols::cardinal::transfer::too_tx(0, 4),
+            program::protocols::cardinal::transfer::too_tx(0, 7),
         )
         .to_string()?,
     );

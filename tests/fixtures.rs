@@ -270,6 +270,7 @@ pub fn create_lockreq_ready(
     network: Network,
     lock_protocol_cost: u64,
     bitcoin_client: &BitcoinClient,
+    fee_for_lockreq: u64,
 ) -> Result<(Txid, SecpPublicKey, Amount)> {
     //PublicKey user, txid, 0 :amount-ordinal, 1: amount-fees
     let secp = secp256k1::Secp256k1::new();
@@ -292,7 +293,8 @@ pub fn create_lockreq_ready(
     let ordinal_txout = funding_tx_ordinal.output[vout_ordinal as usize].clone();
 
     // Protocol fees funding
-    let funding_amount_used_for_protocol_fees = Amount::from_sat(lock_protocol_cost + 1000);
+    let funding_amount_used_for_protocol_fees =
+        Amount::from_sat(lock_protocol_cost + fee_for_lockreq);
     let funding_tx_protocol_fees: Transaction;
     let vout_protocol_fees: u32;
     (funding_tx_protocol_fees, vout_protocol_fees) = bitcoin_client
@@ -307,7 +309,7 @@ pub fn create_lockreq_ready(
         OutPoint::new(funding_tx_protocol_fees.compute_txid(), vout_protocol_fees);
     tracing::debug!("Protocol fees outpoint: {:?}", protocol_fees_outpoint);
 
-    const MINER_FEE: Amount = Amount::from_sat(1_000);
+    let miner_fee: Amount = Amount::from_sat(fee_for_lockreq);
 
     let signed_lockreq_tx = create_lockreq_tx_and_sign(
         &secp,
@@ -323,7 +325,7 @@ pub fn create_lockreq_ready(
         &user_sk,
         &user_pubkey,
         &user_address,
-        MINER_FEE,
+        miner_fee,
         secret_hash,
         unspendable,
     );

@@ -28,8 +28,10 @@ pub enum VariableTypes {
     Number(u32),
     String(String),
     VecStr(Vec<String>),
+    VecNumber(Vec<u32>),
     Input(Vec<u8>),
     Uuid(Uuid),
+    Bool(bool),
     FailConfiguration(
         Option<FailConfiguration>,
         Option<FailConfiguration>,
@@ -85,6 +87,12 @@ impl VariableTypes {
             _ => Err(BitVMXError::InvalidVariableType(self.err())),
         }
     }
+    pub fn vec_number(&self) -> Result<Vec<u32>, BitVMXError> {
+        match self {
+            VariableTypes::VecNumber(v) => Ok(v.clone()),
+            _ => Err(BitVMXError::InvalidVariableType(self.err())),
+        }
+    }
     pub fn input(&self) -> Result<Vec<u8>, BitVMXError> {
         match self {
             VariableTypes::Input(input) => Ok(input.clone()),
@@ -94,6 +102,13 @@ impl VariableTypes {
     pub fn uuid(&self) -> Result<Uuid, BitVMXError> {
         match self {
             VariableTypes::Uuid(id) => Ok(id.clone()),
+            _ => Err(BitVMXError::InvalidVariableType(self.err())),
+        }
+    }
+
+    pub fn bool(&self) -> Result<bool, BitVMXError> {
+        match self {
+            VariableTypes::Bool(flag) => Ok(flag.clone()),
             _ => Err(BitVMXError::InvalidVariableType(self.err())),
         }
     }
@@ -144,6 +159,16 @@ impl Globals {
         let value: Option<VariableTypes> = self.storage.get(&key)?;
         Ok(value)
     }
+
+    pub fn copy_var(&self, from: &Uuid, to: &Uuid, key: &str) -> Result<(), BitVMXError> {
+        let value = self.get_var(from, key)?;
+        if let Some(value) = value {
+            self.set_var(to, key, value)?;
+        } else {
+            return Err(BitVMXError::VariableNotFound(from.clone(), key.to_string()));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
@@ -165,6 +190,11 @@ impl WitnessTypes {
             WitnessTypes::Winternitz(winternitz) => Ok(winternitz.clone()),
             _ => Err(BitVMXError::InvalidWitnessType),
         }
+    }
+
+    pub fn set_msg(self, id: Uuid, key: &str) -> Result<String, BitVMXError> {
+        let msg = IncomingBitVMXApiMessages::SetWitness(id, key.to_string(), self).to_string()?;
+        Ok(msg)
     }
 }
 pub struct WitnessVars {
@@ -190,5 +220,15 @@ impl WitnessVars {
         let key = format!("{}:witness:{}", uuid, key);
         let value = self.storage.get(&key)?;
         Ok(value)
+    }
+
+    pub fn copy_witness(&self, from: &Uuid, to: &Uuid, key: &str) -> Result<(), BitVMXError> {
+        let value = self.get_witness(from, key)?;
+        if let Some(value) = value {
+            self.set_witness(to, key, value)?;
+        } else {
+            return Err(BitVMXError::VariableNotFound(from.clone(), key.to_string()));
+        }
+        Ok(())
     }
 }

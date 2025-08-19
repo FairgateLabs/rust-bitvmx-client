@@ -60,7 +60,7 @@ pub fn amount_for_operator(operators: u8) -> u64 {
     let claim_gate_cost = ClaimGate::cost(DUST, DUST, operators as u8 - 1, 1);
     let amount_for_operator = DUST
         + DUST
-        + (DUST * 6) // sending the cert hash tx
+        + (DUST * 8) // sending the cert hash tx
         + claim_gate_cost
         + (operators -1) as u64 * protocol_cost;
     amount_for_operator
@@ -82,17 +82,25 @@ pub fn certificate_hash(n: usize) -> String {
     format!("certificate_hash_{}", n)
 }
 
-pub fn certificate_hash_sub(n: usize, sub: u8) -> String {
-    format!("certificate_hash_{}_{}", n, sub)
+pub fn certificate_hash_sub(op: usize, word: u8) -> String {
+    format!("certificate_hash_{}_{}", op, word)
+}
+
+pub fn certificate_hash_prefix(op: usize) -> String {
+    format!("certificate_hash_{}_", op)
 }
 
 pub fn group_id(op: usize) -> String {
-    format!("group_id_{}", op)
+    format!("group_id_{}_0", op) //add 0 as it only requires one word but the connection with the dispute is made with prefixes
 }
 
-pub fn group_id_pubkey(op: usize) -> String {
-    format!("group_id_pubkey_{}", op)
+pub fn group_id_prefix(op: usize) -> String {
+    format!("group_id_{}_", op)
 }
+
+/*pub fn group_id_pubkey(op: usize) -> String {
+    format!("group_id_pubkey_{}", op)
+}*/
 
 pub fn group_id_tx(op: usize, gid: u8) -> String {
     format!("{}{}_{}", GID_TX, op, gid)
@@ -144,8 +152,8 @@ impl ProtocolHandler for SlotProtocol {
 
         let mut keys = vec![("speedup".to_string(), speedup.into())];
 
-        // we need 5*4 = 20 bytes, so we can challenge the word size input
-        for i in 0..5 {
+        // we need 8*4 = 32 bytes, so we can challenge the word size input
+        for i in 0..8 {
             let cert_hash = key_chain.derive_winternitz_hash160(4)?;
             keys.push((certificate_hash_sub(self.ctx.my_idx, i), cert_hash.into()));
         }
@@ -177,7 +185,7 @@ impl ProtocolHandler for SlotProtocol {
                 .unwrap()
                 .input()?;
 
-            for i in 0..5 {
+            for i in 0..8 {
                 let partial_input = full_hash
                     .get((i * 4) as usize..((i + 1) * 4) as usize)
                     .unwrap();
@@ -206,7 +214,7 @@ impl ProtocolHandler for SlotProtocol {
         tx_status: TransactionStatus,
         _context: String,
         program_context: &ProgramContext,
-        participant_keys: Vec<&ParticipantKeys>,
+        _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         let name = self.get_transaction_name_by_id(tx_id)?;
         info!(
@@ -225,7 +233,6 @@ impl ProtocolHandler for SlotProtocol {
                 &name,
                 0,
                 program_context,
-                &participant_keys,
                 &tx_status.tx,
                 Some(0),
                 None,
@@ -239,7 +246,7 @@ impl ProtocolHandler for SlotProtocol {
                     .get_var(&self.ctx.id, &group_id(operator as usize))?
                     .unwrap()
                     .input()?;
-                let gid = u32::from_be_bytes(
+                let gid = u32::from_le_bytes(
                     gid.try_into()
                         .map_err(|_| BitVMXError::InvalidMessageFormat)?,
                 );
@@ -453,7 +460,6 @@ impl ProtocolHandler for SlotProtocol {
                 &name,
                 0,
                 program_context,
-                &participant_keys,
                 &tx_status.tx,
                 Some(op_and_id[1]),
                 None,
@@ -482,7 +488,7 @@ impl ProtocolHandler for SlotProtocol {
 
         //save participants wots
         for (idx, key) in keys.iter().enumerate() {
-            for sub in 0..5 {
+            for sub in 0..8 {
                 context.globals.set_var(
                     &self.ctx.id,
                     &certificate_hash_sub(idx, sub),
@@ -493,7 +499,7 @@ impl ProtocolHandler for SlotProtocol {
             }
             context.globals.set_var(
                 &self.ctx.id,
-                &group_id_pubkey(idx),
+                &group_id(idx),
                 VariableTypes::WinternitzPubKey(key.get_winternitz(&group_id(idx))?.clone()),
             )?;
         }
@@ -760,7 +766,7 @@ impl SlotProtocol {
         //EVERY OPERATOR CAN SEND A CERTIFICATE HASH
         //Verify the winternitz signature
         let mut names_and_keys = vec![];
-        for sub in 0..5 {
+        for sub in 0..8 {
             let key_name = certificate_hash_sub(i, sub);
             names_and_keys.push((key_name.clone(), key.get_winternitz(&key_name)?));
         }
@@ -883,7 +889,7 @@ pub fn winternitz_equality(
 ) -> Result<ProtocolScript, BitVMXError> {
     let mut stack = StackTracker::new();
     let provided = stack.define(8, "provided_gid");
-    let real = stack.number_u32(equal as u32);
+    let real = stack.number_u32(u32::from_be_bytes((equal as u32).to_le_bytes()) as u32);
     stack.reverse_u32(real);
     stack.equals(provided, true, real, true);
 

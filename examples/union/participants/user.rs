@@ -1,4 +1,6 @@
-use crate::{bitcoin::emulated_user_keypair, expect_msg};
+use crate::{
+    bitcoin::emulated_user_keypair, expect_msg, macros::wait_for_message_blocking, wait_until_msg,
+};
 use anyhow::Result;
 use bitcoin::{
     absolute,
@@ -29,6 +31,7 @@ pub struct User {
     secret_key: SecretKey,
     pub network: Network,
     pub secp: Secp256k1<All>,
+    pub rsk_address: &'static str, // This is a placeholder, should be replaced with actual RSK address
 }
 
 impl User {
@@ -55,7 +58,12 @@ impl User {
             secret_key: user_sk,
             network,
             secp,
+            rsk_address: "7ac5496aee77c1ba1f0854206a26dda82a81d6d8",
         })
+    }
+
+    pub fn get_rsk_address(&self) -> String {
+        self.rsk_address.to_string()
     }
 
     pub fn request_pegin(
@@ -70,19 +78,17 @@ impl User {
 
         // Create a proper RSK pegin transaction and send it as if it was a user transaction
         let packet_number = 0;
-        let rsk_address = "7ac5496aee77c1ba1f0854206a26dda82a81d6d8";
         let request_pegin_txid = self.create_and_send_request_pegin_tx(
             *committee_public_key,
             stream_value,
             packet_number,
-            rsk_address,
         )?;
         info!("Sent RSK pegin transaction to bitcoind");
 
         // Wait for Bitvmx news PeginTransactionFound message
         info!("Waiting for RSK pegin transaction to be found");
-        let (found_txid, tx_status) =
-            expect_msg!(self.bitvmx, PeginTransactionFound(txid, tx_status) => (txid, tx_status))?;
+
+        let (found_txid, tx_status) = wait_until_msg!(&self.bitvmx, PeginTransactionFound(_txid, _tx_status) => (_txid, _tx_status));
         assert_eq!(
             found_txid, request_pegin_txid,
             "Request Pegin Transaction not found"
@@ -95,7 +101,7 @@ impl User {
         info!("Transaction ID: {}", request_pegin_txid);
 
         // Get the SPV proof, this should be used by the union client to present to the smart contract
-        self.bitvmx.get_spv_proof(found_txid)?;
+        self.bitvmx.get_spv_proof(request_pegin_txid)?;
         let spv_proof = expect_msg!(self.bitvmx, SPVProof(_, Some(spv_proof)) => spv_proof)?;
         info!("SPV proof: {:?}", spv_proof);
 
@@ -114,14 +120,12 @@ impl User {
         aggregated_pubkey: PublicKey,
         stream_value: u64,
         packet_number: u64,
-        rsk_address: &str,
     ) -> Result<Txid> {
         // We'll create a transaction that will be detected as RSK pegin by the transaction monitor.
         let signed_transaction = self.create_rsk_request_pegin_transaction(
             aggregated_pubkey,
             stream_value,
             packet_number,
-            rsk_address,
         )?;
         let txid = self
             .bitcoin_client
@@ -144,7 +148,6 @@ impl User {
         aggregated_key: PublicKey,
         stream_value: u64,
         packet_number: u64,
-        rsk_address: &str,
     ) -> Result<Transaction> {
         // RSK Pegin constants
         pub const KEY_SPEND_FEE: u64 = 335;
@@ -163,7 +166,7 @@ impl User {
             .unwrap();
 
         // RSK Pegin values
-        let rootstock_address = self.address_to_bytes(rsk_address)?;
+        let rootstock_address = self.address_to_bytes(self.rsk_address)?;
         let reimbursement_xpk = self.public_key.into();
 
         // Create the Request pegin transaction
