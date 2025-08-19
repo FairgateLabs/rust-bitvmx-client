@@ -176,7 +176,7 @@ impl Committee {
     pub fn request_pegout(
         &mut self,
         user_pubkey: PublicKey,
-        slot_id: usize,
+        slot_index: usize,
         stream_id: u64,
         packet_number: u64,
         amount: u64,
@@ -192,7 +192,7 @@ impl Committee {
                 committee_id,
                 stream_id,
                 packet_number,
-                slot_id,
+                slot_index,
                 amount,
                 pegout_id.clone(),
                 pegout_signature_hash.clone(),

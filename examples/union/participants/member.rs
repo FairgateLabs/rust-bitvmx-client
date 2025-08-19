@@ -210,7 +210,7 @@ impl Member {
         committee_id: Uuid,
         stream_id: u64,
         packet_number: u64,
-        slot_id: usize,
+        slot_index: usize,
         amount: u64,
         pegout_id: Vec<u8>,
         pegout_signature_hash: Vec<u8>,
@@ -222,7 +222,7 @@ impl Member {
             committee_id,
             stream_id,
             packet_number,
-            slot_id,
+            slot_index,
             amount,
             pegout_id,
             pegout_signature_hash,
@@ -245,7 +245,7 @@ impl Member {
         &mut self,
         protocol_id: Uuid,
         committee_id: Uuid,
-        slot_id: usize,
+        slot_index: usize,
         user_pubkey: PublicKey,
         pegout_id: Vec<u8>,
         selected_operator_pubkey: PublicKey,
@@ -258,13 +258,14 @@ impl Member {
         if self.keyring.take_pubkey.unwrap() == selected_operator_pubkey {
             // NOTE: This flow will be moved inside bitvmx if we decided to add the operator wallet inside it
             // Fund operator wallet. This will be replaced with a wallet request in the future.
-            let funded_utxo = helper.fund_operator_wallet(committee_id, slot_id, &self.bitvmx)?;
+            let funded_utxo =
+                helper.fund_operator_wallet(committee_id, slot_index, &self.bitvmx)?;
             utxo = Some(funded_utxo.clone());
 
             // Set UTXO. This won't be needed if bitvmx own the wallet.
             self.bitvmx.set_var(
                 protocol_id,
-                &indexed_name(ADVANCE_FUNDS_INPUT, slot_id),
+                &indexed_name(ADVANCE_FUNDS_INPUT, slot_index),
                 VariableTypes::Utxo(funded_utxo),
             )?;
         }
@@ -280,7 +281,7 @@ impl Member {
             protocol_id,
             committee_id,
             &members,
-            slot_id,
+            slot_index,
             user_pubkey,
             selected_operator_pubkey,
             self.keyring.take_pubkey.unwrap(),
@@ -488,7 +489,7 @@ impl Member {
     pub fn dispatch_reimbursement_flow(
         &mut self,
         committee_id: Uuid,
-        slot_id: usize,
+        slot_index: usize,
     ) -> Result<()> {
         // Get the dispute core protocol ID for this member
         let member_take_pubkey = self.keyring.take_pubkey.unwrap();
@@ -497,32 +498,32 @@ impl Member {
         info!(
             id = self.id,
             "Starting reimbursement flow for slot {} from dispute protocol {}",
-            slot_id,
+            slot_index,
             dispute_protocol_id
         );
 
         // Step 1: Set up required variables
-        self.setup_pegout_id(dispute_protocol_id, slot_id)?;
+        self.setup_pegout_id(dispute_protocol_id, slot_index)?;
 
         // Step 2: Dispatch initial deposit transaction first
         self.dispatch_initial_deposit_tx(dispute_protocol_id)?;
 
         // Step 3: Wait and then dispatch reimbursement transaction
         thread::sleep(std::time::Duration::from_secs(1));
-        self.dispatch_reimbursement_tx(dispute_protocol_id, slot_id)?;
+        self.dispatch_reimbursement_tx(dispute_protocol_id, slot_index)?;
 
         info!(id = self.id, "Reimbursement flow completed successfully");
 
         Ok(())
     }
 
-    fn setup_pegout_id(&mut self, dispute_protocol_id: Uuid, slot_id: usize) -> Result<()> {
+    fn setup_pegout_id(&mut self, dispute_protocol_id: Uuid, slot_index: usize) -> Result<()> {
         let pegout_id = vec![0u8; 32]; // dummy pegout_id for testing
-        let pegout_id_key = indexed_name(PEGOUT_ID, slot_id);
+        let pegout_id_key = indexed_name(PEGOUT_ID, slot_index);
 
         info!(
             id = self.id,
-            "Setting up pegout_id variable {} for slot {}", pegout_id_key, slot_id
+            "Setting up pegout_id variable {} for slot {}", pegout_id_key, slot_index
         );
 
         self.bitvmx.set_var(
@@ -568,13 +569,13 @@ impl Member {
     fn dispatch_reimbursement_tx(
         &mut self,
         dispute_protocol_id: Uuid,
-        slot_id: usize,
+        slot_index: usize,
     ) -> Result<()> {
-        let tx_name = indexed_name(REIMBURSEMENT_KICKOFF_TX, slot_id);
+        let tx_name = indexed_name(REIMBURSEMENT_KICKOFF_TX, slot_index);
 
         info!(
             id = self.id,
-            "Dispatching reimbursement transaction {} for slot {}", tx_name, slot_id
+            "Dispatching reimbursement transaction {} for slot {}", tx_name, slot_index
         );
 
         let _ = self

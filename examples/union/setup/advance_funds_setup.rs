@@ -44,7 +44,7 @@ impl AdvanceFunds {
         protocol_id: Uuid,
         committee_id: Uuid,
         committee: &[Member],
-        slot_id: usize,
+        slot_index: usize,
         user_pubkey: PublicKey,
         operator_pubkey: PublicKey,
         my_take_pubkey: PublicKey,
@@ -53,7 +53,7 @@ impl AdvanceFunds {
         // All members should set up the operator pubkey that should advance the funds
         bitvmx.set_var(
             committee_id,
-            &indexed_name(SELECTED_OPERATOR_PUBKEY, slot_id),
+            &indexed_name(SELECTED_OPERATOR_PUBKEY, slot_index),
             VariableTypes::PubKey(operator_pubkey),
         )?;
 
@@ -68,7 +68,7 @@ impl AdvanceFunds {
         // Only the selected operator will set up the advance funds protocol
         let request = AdvanceFundsRequest {
             committee_id,
-            slot_index: slot_id,
+            slot_index,
             pegout_id,
             fee: 355, // This will be set later
             user_pubkey,
@@ -132,10 +132,10 @@ impl AdvanceFundsHelper {
     pub fn fund_operator_wallet(
         &mut self,
         committee_id: Uuid,
-        slot_id: usize,
+        slot_index: usize,
         bitvmx: &BitVMXClient,
     ) -> Result<PartialUtxo> {
-        bitvmx.get_var(committee_id, format!("{}_{}", ACCEPT_PEGIN_TX, slot_id))?;
+        bitvmx.get_var(committee_id, format!("{}_{}", ACCEPT_PEGIN_TX, slot_index))?;
 
         let utxo = wait_until_msg!(&bitvmx, Variable(_, _, VariableTypes::Utxo(_utxo)) => _utxo);
 

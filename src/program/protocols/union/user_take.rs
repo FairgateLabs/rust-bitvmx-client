@@ -74,7 +74,7 @@ impl ProtocolHandler for UserTakeProtocol {
         let accept_pegin_utxo = self.accept_pegin_utxo(
             context,
             &pegout_request.committee_id,
-            pegout_request.slot_id,
+            pegout_request.slot_index,
         )?;
         let user_pubkey = pegout_request.user_pubkey;
 
