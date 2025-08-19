@@ -323,7 +323,7 @@ impl Member {
                 thread::sleep(std::time::Duration::from_secs(1));
                 helper.mine_blocks(1)?;
 
-                let status = wait_until_msg!(
+                let _status = wait_until_msg!(
                     &self.bitvmx,
                     Transaction(_, _status, _) => _status
                 );
@@ -331,7 +331,7 @@ impl Member {
 
                 // Get the SPV proof, this should be used by the union client to present to the smart contract
                 self.bitvmx.get_spv_proof(txid)?;
-                let spv_proof = wait_until_msg!(
+                let _spv_proof = wait_until_msg!(
                     &self.bitvmx,
                     SPVProof(_, Some(_spv_proof)) => _spv_proof
                 );
