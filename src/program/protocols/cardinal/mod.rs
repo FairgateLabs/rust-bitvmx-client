@@ -1,5 +1,3 @@
-use bitvmx_broker::{channel::channel::DualChannel, identification::identifier::Identifier};
-
 pub mod lock;
 pub mod lock_config;
 pub mod slot;

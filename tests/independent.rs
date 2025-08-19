@@ -55,7 +55,6 @@ pub fn get_configs(network: Network) -> Result<Vec<Config>> {
     for name in config_names {
         info!("Loading config: {}", name);
         let config = Config::new(Some(format!("config/{}.yaml", name)))?;
-        info!("here?");
         configs.push(config);
     }
     Ok(configs)

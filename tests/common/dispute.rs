@@ -116,7 +116,7 @@ pub fn prepare_dispute(
     send_all(&id_channel_pairs, &set_prover_win_utxo)?;
 
     //let program_path = "../BitVMX-CPU/docker-riscv32/verifier/build/zkverifier-new-mul.yaml";
-    let hello_world = "../BitVMX-CPU/bitvmx-docker-riscv32/riscv32/build/hello-world.yaml"; //TODO: fix
+    let hello_world = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
     let set_program = VariableTypes::String(program_path.unwrap_or(hello_world.to_string()))
         .set_msg(program_id, "program_definition")?;
     send_all(&id_channel_pairs, &set_program)?;

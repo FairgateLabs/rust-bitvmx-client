@@ -13,9 +13,8 @@ key_storage:
 storage:
   path: /tmp/op_1/storage.db
 p2p:
-  address: /ip4/127.0.0.1/tcp/61180
+  address: 127.0.0.1:61180
   key: config/keys/op_1.key
-  peer_id_file: peer_id
   timeout: 5
 coordinator_settings:
   max_feerate_sat_vb: 2
@@ -25,9 +24,32 @@ coordinator_settings:
 coordinator:
   throtthle_bitcoin_updates_until_sync: 1
   throtthle_bitcoin_updates: 1
-broker_storage:
-  path: /tmp/op_1/broker.db
-broker_port: 22222
+broker:
+  allow_list: config/allow_list.yaml
+  routing_table: config/routing_table.yaml
+  port: 22222
+  ip: 127.0.0.1
+  id: 0
+  priv_key: ../rust-bitvmx-broker/certs/services.key
+  storage: 
+    path: /tmp/op_1/broker.db
+components:
+  l2:
+    address: 127.0.0.1:7000
+    priv_key: config/keys/l2.key
+    id: 0
+  bitvmx:
+    address: 127.0.0.1:7000
+    priv_key: config/keys/bitvmx.key
+    id: 0
+  emulator:
+    address: 127.0.0.1:7000
+    priv_key: config/keys/emulator.key
+    id: 0
+  prover:
+    address: 127.0.0.1:7000
+    priv_key: config/keys/prover.key
+    id: 0
 client:
   retry: 1
   retry_delay: 1000

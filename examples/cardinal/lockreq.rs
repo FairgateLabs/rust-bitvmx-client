@@ -1,7 +1,17 @@
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
 use anyhow::{Ok, Result};
 use bitcoin::{absolute, secp256k1};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
-use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
+use bitvmx_broker::{
+    channel::channel::DualChannel,
+    identification::identifier::Identifier,
+    rpc::{
+        tls_helper::{init_tls, Cert},
+        BrokerConfig,
+    },
+};
+use p2p_handler::p2p_handler::AllowList;
 use protocol_builder::scripts::{
     build_taproot_spend_info, reveal_secret, timelock, ProtocolScript, SignMode,
 };
@@ -19,14 +29,18 @@ use tracing::info;
 
 pub fn main() -> Result<()> {
     let bitcoin_client = get_bitcoin_client()?;
-
+    init_tls();
     let preimage = "top_secret".to_string();
     let hash = sha256(preimage.as_bytes().to_vec());
 
-    let port = 54322;
-    let (broker_config, identifier, _) = BrokerConfig::new_only_address(54321, None)?;
-    let (channel, _) = DualChannel::new_simple(&broker_config, 2, port)?;
-    channel.send(identifier.clone(), "burn".to_string())?;
+    let (broker_config, _identifier, _) = BrokerConfig::new_only_address(54321, None)?;
+    let cert = Cert::from_key_file("config/keys/l2.key")?;
+    let my_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 54322);
+    let allow_list = AllowList::new();
+    allow_list.lock().unwrap().allow_all();
+    let channel = DualChannel::new(&broker_config, cert, Some(2), my_address, allow_list)?;
+    let identifier = Identifier::new_local("local".to_string(), 0, 54321);
+    channel.send(identifier.clone(), "get_aggregated".to_string())?;
 
     let aggregated_pub_key: PublicKey;
     loop {

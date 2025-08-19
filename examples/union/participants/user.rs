@@ -46,7 +46,6 @@ impl User {
             &config.bitcoin.username,
             &config.bitcoin.password,
         )?;
-
         let network = Network::Regtest;
         let secp = Secp256k1::new();
         let (user_address, user_pubkey, user_sk) =

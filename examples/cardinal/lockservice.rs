@@ -9,7 +9,11 @@ use bitvmx_broker::{
     broker_storage::BrokerStorage,
     channel::channel::{DualChannel, LocalChannel},
     identification::identifier::Identifier,
-    rpc::{sync_server::BrokerSync, tls_helper::Cert, BrokerConfig},
+    rpc::{
+        sync_server::BrokerSync,
+        tls_helper::{init_tls, Cert},
+        BrokerConfig,
+    },
 };
 use bitvmx_client::{
     config::Config,
@@ -119,24 +123,24 @@ pub fn main() -> Result<()> {
     let broker_backend = Storage::new(&config)?;
     let broker_backend = Arc::new(Mutex::new(broker_backend));
     let broker_storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
-
-    let (server_config, server_identifier, cert) = BrokerConfig::new_only_address(54321, None)?;
+    let (server_config, _server_identifier, cert) = BrokerConfig::new_only_address(54321, None)?;
     let mut broker = BrokerSync::new_simple(&server_config, broker_storage.clone(), cert);
 
     let broker_channel =
         LocalChannel::new_simple("local".to_string(), 54321, broker_storage.clone());
 
-    lockservice(broker_channel, server_identifier)?;
+    let cert = Cert::from_key_file("config/keys/l2.key")?;
+    let pubk_hash = cert.get_pubk_hash()?;
+    let identifier = Identifier::new_local(pubk_hash, 2, 54322);
+    lockservice(broker_channel, identifier)?;
 
     broker.close();
 
     Ok(())
 }
 
-pub fn lockservice(
-    channel: LocalChannel<BrokerStorage>,
-    server_identifier: Identifier,
-) -> Result<()> {
+pub fn lockservice(channel: LocalChannel<BrokerStorage>, identifier: Identifier) -> Result<()> {
+    init_tls();
     let (bitcoin_client, wallet) = prepare_bitcoin_running()?;
 
     //TODO: A channel that talks directly with the broker without going through localhost loopback could be implemented
@@ -165,7 +169,6 @@ pub fn lockservice(
             }
         })
         .collect::<Vec<_>>();
-
     //ask the peers to generate the aggregated public key
     let aggregation_id = Uuid::new_v4();
     let command = IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), None, 0)
@@ -195,7 +198,6 @@ pub fn lockservice(
         let protocol_fee: Amount;
         let preimage: String;
         let hash: Vec<u8>;
-
         let fake_hapy_path = true;
         let (aggregated_happy_path, fake_secret) = if fake_hapy_path {
             // emulate the user keypair
@@ -249,7 +251,7 @@ pub fn lockservice(
             if let Some(msg) = msg {
                 if msg.0 == "get_aggregated" {
                     info!("Ask for aggregated. Sending.");
-                    channel.send(server_identifier.clone(), aggregated_pub_key.to_string())?;
+                    channel.send(identifier.clone(), aggregated_pub_key.to_string())?;
                 } else {
                     info!("Received message from channel: {:?}", msg);
                     (txid, pubuser, ordinal_fee, protocol_fee, preimage, hash) =
@@ -436,7 +438,7 @@ pub fn lockservice(
         info!("happy path public: {}", aggregated_happy_path);
 
         let msg = serde_json::to_string(&(status.tx_id, fake_secret))?;
-        channel.send(server_identifier.clone(), msg)?;
+        channel.send(identifier.clone(), msg)?;
     }
 
     //Ok(())

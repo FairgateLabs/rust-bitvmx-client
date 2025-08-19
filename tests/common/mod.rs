@@ -10,10 +10,7 @@ use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_broker::{
     channel::channel::DualChannel,
     identification::identifier::Identifier,
-    rpc::{
-        tls_helper::{init_tls, Cert},
-        BrokerConfig,
-    },
+    rpc::{tls_helper::Cert, BrokerConfig},
 };
 use bitvmx_client::{
     bitvmx::BitVMX,
@@ -43,7 +40,6 @@ pub fn init_bitvmx(
     emulator_dispatcher: bool,
 ) -> Result<(BitVMX, P2PAddress, DualChannel, Option<DualChannel>)> {
     let config = Config::new(Some(format!("config/{}.yaml", role)))?;
-    init_tls();
     let allow_list = AllowList::from_file(&config.broker.allow_list)?;
     let broker_config = BrokerConfig::new(
         config.broker.port,

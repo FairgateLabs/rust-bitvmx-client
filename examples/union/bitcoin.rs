@@ -111,7 +111,7 @@ pub fn init_wallet() -> Result<Wallet> {
     wallet.create_wallet(WALLET_NAME)?;
     wallet.regtest_fund(WALLET_NAME, FUNDING_ID, 100_000_000)?;
 
-    let _bitcoin_client = BitcoinClient::new(
+    let _ = BitcoinClient::new(
         &config.bitcoin.url,
         &config.bitcoin.username,
         &config.bitcoin.password,
