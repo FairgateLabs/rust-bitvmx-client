@@ -6,7 +6,7 @@ pub mod dispute;
 use anyhow::Result;
 use bitcoin::{Network, PublicKey};
 use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
-use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
+use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use bitvmx_client::{
     bitvmx::BitVMX,
@@ -98,29 +98,6 @@ pub const WALLET_NAME: &str = "wallet";
 pub const FUNDING_ID: &str = "fund_1";
 pub const FEE: u64 = 500;
 
-fn generate_unique_wallet_name() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    
-    let test_name = std::thread::current()
-        .name()
-        .unwrap_or("unknown_test")
-        .replace("::", "_")
-        .replace(" ", "_")
-        .replace("-", "_");
-    
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() % 100000; 
-    let wallet_name = format!("test_{}_{}", test_name, timestamp);
-    
-    if wallet_name.len() > 50 {
-        format!("test_{}", timestamp)
-    } else {
-        wallet_name
-    }
-}
-
 pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
     let config = Config::new(Some("config/op_1.yaml".to_string()))?;
 
@@ -166,30 +143,33 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
     wallet.create_wallet(WALLET_NAME)?;
     wallet.regtest_fund(WALLET_NAME, FUNDING_ID, 100_000_000)?;
 
-    if is_ci {
-        info!("🧹 CI cleanup before test...");
-        wallet.mine(3)?;
-        std::thread::sleep(std::time::Duration::from_secs(2));
-    }
+    let bitcoin_client = BitcoinClient::new(
+        &config.bitcoin.url,
+        &config.bitcoin.username,
+        &config.bitcoin.password,
+    )?;
 
-    let unique_wallet_name = generate_unique_wallet_name();
-    info!("🎯 Creating unique wallet for test: {}", unique_wallet_name);
-    
-    let bitcoin_client_base = BitcoinClient::new(
-        &config.bitcoin.url,
-        &config.bitcoin.username,
-        &config.bitcoin.password,
-    )?;
-    
-    let address = bitcoin_client_base.init_wallet(&unique_wallet_name)?;
-    info!("✅ Wallet '{}' created with address: {}", unique_wallet_name, address);
-    
-    let bitcoin_client = BitcoinClient::new_with_wallet(
-        &config.bitcoin.url,
-        &config.bitcoin.username,
-        &config.bitcoin.password,
-        &unique_wallet_name,
-    )?;
+    // Generar nombre único de wallet para evitar conflictos
+    let wallet_name = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        
+        // Usar también el nombre del test actual si está disponible
+        let test_name = std::thread::current()
+            .name()
+            .unwrap_or("unknown")
+            .replace("::", "_")
+            .replace(" ", "_");
+            
+        format!("test_{}_{}", test_name, timestamp)
+    };
+
+    info!("🎯 Creating unique wallet: {}", wallet_name);
+    let address = bitcoin_client.init_wallet(&wallet_name)?;
+    info!("✅ Wallet '{}' created with address: {}", wallet_name, address);
 
     Ok((bitcoin_client, bitcoind, wallet))
 }
