@@ -2,6 +2,7 @@ use anyhow::Result;
 use bitcoin::Txid;
 use bitvmx_client::program::protocols::union::common::{
     get_accept_pegin_pid, get_dispute_aggregated_key_pid, get_take_aggreated_key_pid,
+    get_user_take_pid,
 };
 use bitvmx_client::program::protocols::union::types::{ACCEPT_PEGIN_TX, USER_TAKE_TX};
 use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtxo};
@@ -202,7 +203,7 @@ impl Committee {
             )
         })?;
 
-        let protocol_id = get_accept_pegin_pid(committee_id, slot_index);
+        let protocol_id = get_user_take_pid(committee_id, slot_index);
         self.dispatch_transaction_and_wait_for_spv_proof(protocol_id, USER_TAKE_TX.to_string())?;
 
         Ok(())
