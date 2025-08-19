@@ -327,10 +327,7 @@ impl Member {
                     &self.bitvmx,
                     Transaction(_, _status, _) => _status
                 );
-                info!(
-                    id = self.id,
-                    "Sent {} transaction with status: {:?}", ADVANCE_FUNDS_TX, status
-                );
+                info!(id = self.id, "Sent {} transaction", ADVANCE_FUNDS_TX);
 
                 // Get the SPV proof, this should be used by the union client to present to the smart contract
                 self.bitvmx.get_spv_proof(txid)?;
@@ -338,7 +335,7 @@ impl Member {
                     &self.bitvmx,
                     SPVProof(_, Some(_spv_proof)) => _spv_proof
                 );
-                info!("SPV proof: {:?}", spv_proof);
+                info!("Got SPV proof for transaction: {:?}", ADVANCE_FUNDS_TX);
             } else {
                 return Err(anyhow::anyhow!(
                     "UTXO not initialized for signing transaction"

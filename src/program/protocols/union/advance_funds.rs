@@ -88,7 +88,6 @@ impl ProtocolHandler for AdvanceFundsProtocol {
 
         // NOTE: This is read from storage now, it will be replaced with the wallet request in the future.
         let input_utxo = self.input_utxo(context, request.slot_index)?;
-        info!("Input UTXO for advance funds: {:?}", input_utxo);
 
         let operator_input_tx_name = indexed_name(ADVANCE_FUNDS_INPUT, request.slot_index);
         create_transaction_reference(
