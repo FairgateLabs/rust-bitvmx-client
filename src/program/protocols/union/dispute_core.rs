@@ -27,7 +27,7 @@ use protocol_builder::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
         output::{SpeedupData, AUTO_AMOUNT, RECOVER_AMOUNT},
-        InputArgs, OutputType,
+        InputArgs, OutputType, Utxo,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -173,14 +173,14 @@ impl ProtocolHandler for DisputeCoreProtocol {
         name: &str,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        if name == format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX) {
-            Ok((self.op_initial_deposit_tx(name, context)?, None))
-        } else if name == format!("{}{}", OPERATOR, SETUP_TX_SUFFIX) {
-            Ok((self.setup_tx(context)?, None))
+        if name == format!("{}{}", OPERATOR, SETUP_TX_SUFFIX) {
+            Ok(self.setup_tx(context)?)
+        } else if name == format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX) {
+            Ok(self.op_initial_deposit_tx(name, context)?)
         } else if name.starts_with(REIMBURSEMENT_KICKOFF_TX) {
-            Ok((self.reimbursement_kickoff_tx(name, context)?, None))
+            Ok(self.reimbursement_kickoff_tx(name, context)?)
         } else if name.starts_with(CHALLENGE_TX) {
-            Ok((self.challenge_tx(name, context)?, None))
+            Ok(self.challenge_tx(name, context)?)
         } else {
             Err(BitVMXError::InvalidTransactionName(name.to_string()))
         }
@@ -526,7 +526,10 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn setup_tx(&self, context: &ProgramContext) -> Result<Transaction, BitVMXError> {
+    fn setup_tx(
+        &self,
+        context: &ProgramContext,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         let setup_tx_name = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
 
         let mut protocol = self.load_protocol()?;
@@ -538,14 +541,66 @@ impl DisputeCoreProtocol {
         input_args.push_ecdsa_signature(signature)?;
 
         let setup_tx = protocol.transaction_to_send(&setup_tx_name, &[input_args])?;
-        Ok(setup_tx)
+        Ok((setup_tx, None))
+    }
+
+    pub fn op_initial_deposit_tx(
+        &self,
+        tx_name: &str,
+        context: &ProgramContext,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        info!(
+            id = self.ctx.my_idx,
+            "Loading OP Initial Deposit transaction for DisputeCore"
+        );
+
+        if !self.is_my_dispute_core(context)? {
+            info!(
+                id = self.ctx.my_idx,
+                "Not my dispute_core, skipping dispatch of {} transaction", tx_name
+            );
+            return Err(BitVMXError::InvalidParticipant(
+                "Not my dispute_core, skipping dispatch of initial deposit transaction".to_string(),
+            ));
+        }
+
+        let mut protocol: Protocol = self.load_protocol()?;
+        let signatures = protocol.sign_taproot_input(
+            tx_name,
+            0,
+            &SpendMode::KeyOnly {
+                key_path_sign: SignMode::Single,
+            },
+            context.key_chain.key_manager.as_ref(),
+            "",
+        )?;
+
+        let mut input_args = InputArgs::new_taproot_key_args();
+        for signature in signatures {
+            if signature.is_some() {
+                info!(
+                    "Adding taproot signature to input args for {}: {:?}",
+                    tx_name, signature
+                );
+                input_args.push_taproot_signature(signature.unwrap())?;
+            }
+        }
+
+        let tx = protocol.transaction_to_send(&tx_name, &[input_args])?;
+
+        let txid = tx.compute_txid();
+        let speedup_key = self.my_dispute_key(context)?;
+        let speedup_vout = (tx.output.len() - 1) as u32;
+        let speedup_utxo = Utxo::new(txid, speedup_vout, SPEEDUP_VALUE, &speedup_key);
+
+        Ok((tx, Some(speedup_utxo.into())))
     }
 
     fn reimbursement_kickoff_tx(
         &self,
         name: &str,
         context: &ProgramContext,
-    ) -> Result<Transaction, BitVMXError> {
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         let leaf_index = 0;
         let slot_index = self.extract_slot_index(name, REIMBURSEMENT_KICKOFF_TX)?;
 
@@ -570,14 +625,21 @@ impl DisputeCoreProtocol {
         input_args.push_winternitz_signature(pegout_id_signature);
         input_args.push_taproot_signature(committee_signature)?;
 
-        Ok(protocol.transaction_to_send(&name, &[input_args])?)
+        let tx = protocol.transaction_to_send(&name, &[input_args])?;
+
+        let txid = tx.compute_txid();
+        let speedup_key = self.my_dispute_key(context)?;
+        let speedup_vout = (tx.output.len() - 1) as u32;
+        let speedup_utxo = Utxo::new(txid, speedup_vout, SPEEDUP_VALUE, &speedup_key);
+
+        Ok((tx, Some(speedup_utxo.into())))
     }
 
     fn challenge_tx(
         &self,
         name: &str,
         context: &ProgramContext,
-    ) -> Result<Transaction, BitVMXError> {
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         let slot_index = self.extract_slot_index(name, CHALLENGE_TX)?;
         let my_index = self.ctx.my_idx;
 
@@ -609,7 +671,14 @@ impl DisputeCoreProtocol {
         let mut input_args = InputArgs::new_taproot_script_args(my_index);
         input_args.push_taproot_signature(signatures[my_index].unwrap())?;
 
-        Ok(protocol.transaction_to_send(&name, &[input_args])?)
+        let tx = protocol.transaction_to_send(&name, &[input_args])?;
+
+        let txid = tx.compute_txid();
+        let speedup_key = self.my_dispute_key(context)?;
+        let speedup_vout = 1 + self.ctx.my_idx as u32;
+        let speedup_utxo = Utxo::new(txid, speedup_vout, SPEEDUP_VALUE, &speedup_key);
+
+        Ok((tx, Some(speedup_utxo.into())))
     }
 
     fn dispute_core_data(&self, context: &ProgramContext) -> Result<DisputeCoreData, BitVMXError> {
@@ -849,7 +918,7 @@ impl DisputeCoreProtocol {
         );
 
         // Get the signed transaction
-        let setup_tx = self.setup_tx(program_context)?;
+        let (setup_tx, speedup) = self.setup_tx(program_context)?;
         let setup_txid = setup_tx.compute_txid();
 
         info!(
@@ -860,9 +929,9 @@ impl DisputeCoreProtocol {
         // Dispatch the transaction through the bitcoin coordinator
         program_context.bitcoin_coordinator.dispatch(
             setup_tx,
-            None,                                                            // No speedup data
+            speedup, // No speedup data
             format!("dispute_core_setup_{}:{}", self.ctx.id, setup_tx_name), // Context string
-            None,                                                            // Dispatch immediately
+            None,    // Dispatch immediately
         )?;
 
         info!(
@@ -982,54 +1051,6 @@ impl DisputeCoreProtocol {
         }
 
         Ok(())
-    }
-
-    pub fn op_initial_deposit_tx(
-        &self,
-        tx_name: &str,
-        context: &ProgramContext,
-    ) -> Result<Transaction, BitVMXError> {
-        info!(
-            id = self.ctx.my_idx,
-            "Loading OP Initial Deposit transaction for DisputeCore"
-        );
-
-        if !self.is_my_dispute_core(context)? {
-            info!(
-                id = self.ctx.my_idx,
-                "Not my dispute_core, skipping dispatch of {} transaction", tx_name
-            );
-            return Err(BitVMXError::InvalidParticipant(
-                "Not my dispute_core, skipping dispatch of initial deposit transaction".to_string(),
-            ));
-        }
-
-        let mut protocol: Protocol = self.load_protocol()?;
-        let signatures = protocol.sign_taproot_input(
-            tx_name,
-            0,
-            &SpendMode::KeyOnly {
-                key_path_sign: SignMode::Single,
-            },
-            context.key_chain.key_manager.as_ref(),
-            "",
-        )?;
-
-        let mut input_args = InputArgs::new_taproot_key_args();
-        for signature in signatures {
-            if signature.is_some() {
-                info!(
-                    "Adding taproot signature to input args for {}: {:?}",
-                    tx_name, signature
-                );
-                input_args.push_taproot_signature(signature.unwrap())?;
-            }
-        }
-
-        info!("{} tx signatures: {:?}", OP_INITIAL_DEPOSIT_TX, input_args);
-
-        let tx = protocol.transaction_to_send(&tx_name, &[input_args])?;
-        Ok(tx)
     }
 
     fn pegout_id(

@@ -12,7 +12,7 @@ use crate::{
                     Committee, PegInAccepted, PegInRequest, ACCEPT_PEGIN_TX,
                     DISPUTE_CORE_LONG_TIMELOCK, OPERATOR_LEAF_INDEX, OPERATOR_TAKE_ENABLER,
                     OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX, P2TR_FEE,
-                    REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, SPEED_UP_VALUE,
+                    REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, SPEEDUP_VALUE,
                 },
             },
         },
@@ -30,7 +30,7 @@ use protocol_builder::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
         output::SpeedupData,
-        InputArgs, OutputType,
+        InputArgs, OutputType, Utxo,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -79,7 +79,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
         let pegin_request: PegInRequest = self.pegin_request(context)?;
         let pegin_request_txid = pegin_request.txid;
         let mut amount = self.checked_sub(pegin_request.amount, P2TR_FEE)?;
-        amount = self.checked_sub(amount, SPEED_UP_VALUE)?;
+        amount = self.checked_sub(amount, SPEEDUP_VALUE)?;
 
         let take_aggregated_key = &pegin_request.take_aggregated_key;
 
@@ -115,7 +115,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
         pb.add_speedup_output(
             &mut protocol,
             ACCEPT_PEGIN_TX,
-            SPEED_UP_VALUE,
+            SPEEDUP_VALUE,
             &pegin_request.reimbursement_pubkey,
         )?;
 
@@ -406,7 +406,7 @@ impl AcceptPegInProtocol {
             Some(take_enabler.0),
         )?;
 
-        let operator_amount = self.checked_sub(amount, SPEED_UP_VALUE)?;
+        let operator_amount = self.checked_sub(amount, SPEEDUP_VALUE)?;
 
         // Operator Output
         self.add_operator_output(
@@ -418,12 +418,7 @@ impl AcceptPegInProtocol {
 
         // Speed up transaction (Operator pay for it)
         let pb = ProtocolBuilder {};
-        pb.add_speedup_output(
-            protocol,
-            operator_take_tx_name,
-            SPEED_UP_VALUE,
-            &take_pubkey,
-        )?;
+        pb.add_speedup_output(protocol, operator_take_tx_name, SPEEDUP_VALUE, &take_pubkey)?;
 
         Ok(())
     }
@@ -460,14 +455,14 @@ impl AcceptPegInProtocol {
             Some(won_enabler.0),
         )?;
 
-        let operator_amount = self.checked_sub(amount, SPEED_UP_VALUE)?;
+        let operator_amount = self.checked_sub(amount, SPEEDUP_VALUE)?;
 
         // Operator Output
         self.add_operator_output(protocol, operator_won_tx_name, operator_amount, take_pubkey)?;
 
         // Speed up transaction (Operator pay for it)
         let pb = ProtocolBuilder {};
-        pb.add_speedup_output(protocol, operator_won_tx_name, SPEED_UP_VALUE, &take_pubkey)?;
+        pb.add_speedup_output(protocol, operator_won_tx_name, SPEEDUP_VALUE, &take_pubkey)?;
 
         Ok(())
     }
@@ -542,6 +537,7 @@ impl AcceptPegInProtocol {
         name: &str,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         let op_leaf_index = self.operator_leaf_index(context)?;
+
         info!(
             id = self.ctx.my_idx,
             "Loading {} tx for AcceptPegInProtocol. Name: {}. Op leaf index: {}",
@@ -575,7 +571,15 @@ impl AcceptPegInProtocol {
         let tx = self
             .load_protocol()?
             .transaction_to_send(name, &[accept_pegin_args, reimbursement_args])?;
-        Ok((tx, None))
+
+        let txid = tx.compute_txid();
+        let speedup_key =
+            self.my_dispute_key(context, self.pegin_request(context)?.committee_id)?;
+
+        let speedup_vout = (tx.output.len() - 1) as u32;
+        let speedup_utxo = Utxo::new(txid, speedup_vout, SPEEDUP_VALUE, &speedup_key);
+
+        Ok((tx, Some(speedup_utxo.into())))
     }
 
     fn operator_leaf_index(&self, context: &ProgramContext) -> Result<usize, BitVMXError> {
@@ -588,7 +592,7 @@ impl AcceptPegInProtocol {
 
     pub fn operator_won_tx(
         &self,
-        _context: &ProgramContext,
+        context: &ProgramContext,
         name: &str,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(
@@ -598,7 +602,15 @@ impl AcceptPegInProtocol {
         let args = InputArgs::new_taproot_key_args();
         // TODO: add the necessary arguments to args
         let tx = self.load_protocol()?.transaction_to_send(name, &[args])?;
-        Ok((tx, None))
+
+        let txid = tx.compute_txid();
+        let speedup_key =
+            self.my_dispute_key(context, self.pegin_request(context)?.committee_id)?;
+
+        let speedup_vout = (tx.output.len() - 1) as u32;
+        let speedup_utxo = Utxo::new(txid, speedup_vout, SPEEDUP_VALUE, &speedup_key);
+
+        Ok((tx, Some(speedup_utxo.into())))
     }
 
     pub fn request_pegin_leaves(
@@ -639,5 +651,15 @@ impl AcceptPegInProtocol {
 
         let committee: Committee = serde_json::from_str(&committee)?;
         Ok(committee)
+    }
+
+    fn my_dispute_key(
+        &self,
+        context: &ProgramContext,
+        committee_id: Uuid,
+    ) -> Result<PublicKey, BitVMXError> {
+        let my_index = self.ctx.my_idx;
+        let committee = self.committee(context, committee_id)?;
+        Ok(committee.members[my_index].dispute_key.clone())
     }
 }
