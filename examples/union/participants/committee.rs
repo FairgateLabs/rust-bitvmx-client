@@ -11,7 +11,7 @@ use bitvmx_client::types::OutgoingBitVMXApiMessages::{SPVProof, Transaction, Tra
 
 use bitcoin::{Amount, PublicKey, ScriptBuf};
 use bitvmx_wallet::wallet::Wallet;
-use protocol_builder::types::OutputType;
+use protocol_builder::types::{OutputType, Utxo};
 use std::collections::HashMap;
 use std::thread::{self};
 use std::time::Duration;
@@ -88,11 +88,22 @@ impl Committee {
         let seed = self.committee_id;
 
         let mut funding_utxos_per_member: HashMap<PublicKey, PartialUtxo> = HashMap::new();
+        let mut speedup_funding_utxos_per_member: HashMap<PublicKey, Utxo> = HashMap::new();
         for member in &self.members {
             funding_utxos_per_member.insert(
                 member.keyring.take_pubkey.unwrap(),
-                self.get_funding_utxo(member)?,
+                self.get_funding_utxo(10_000_000, &member.keyring.dispute_pubkey.unwrap())?,
             );
+
+            let partial =
+                self.get_funding_utxo(10_000_000, &member.keyring.dispute_pubkey.unwrap())?;
+            let utxo = Utxo::new(
+                partial.0,
+                partial.1,
+                partial.2.unwrap(),
+                &member.keyring.dispute_pubkey.unwrap(),
+            );
+            speedup_funding_utxos_per_member.insert(member.keyring.take_pubkey.unwrap(), utxo);
         }
 
         let members = self.get_member_data();
@@ -103,6 +114,9 @@ impl Committee {
                 seed,
                 &members.clone(),
                 &funding_utxos_per_member,
+                &speedup_funding_utxos_per_member
+                    .get(op.keyring.take_pubkey.as_ref().unwrap())
+                    .unwrap(),
                 &addresses.clone(),
             )
         })?;
@@ -251,14 +265,8 @@ impl Committee {
         Ok(self.members[0].keyring.take_aggregated_key.unwrap())
     }
 
-    fn get_funding_utxo(&self, member: &Member) -> Result<PartialUtxo> {
-        self.prepare_funding_utxo(
-            &self.wallet,
-            "fund_1",
-            &member.keyring.dispute_pubkey.unwrap(),
-            10_000_000,
-            None,
-        )
+    fn get_funding_utxo(&self, amount: u64, pubkey: &PublicKey) -> Result<PartialUtxo> {
+        self.prepare_funding_utxo(&self.wallet, "fund_1", pubkey, amount, None)
     }
 
     fn prepare_funding_utxo(

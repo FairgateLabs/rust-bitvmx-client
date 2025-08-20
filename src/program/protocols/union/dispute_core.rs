@@ -462,15 +462,22 @@ impl DisputeCoreProtocol {
         packet_size: usize,
     ) -> Result<(), BitVMXError> {
         let initial_deposit = format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX);
+        let setup = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
         let reimbursement_kickoff = indexed_name(REIMBURSEMENT_KICKOFF_TX, dispute_core_index);
         let challenge = indexed_name(CHALLENGE_TX, dispute_core_index);
         let reveal_input = indexed_name(REVEAL_INPUT_TX, dispute_core_index);
         let input_not_revealed = indexed_name(INPUT_NOT_REVEALED_TX, dispute_core_index);
 
-        // Add a speedup output to the initial_deposit transaction after the last reimbursement output.
+        // Add a speedup output to the initial_deposit transaction and to the setup tx when the last initial deposit
+        // output has been added.
         if dispute_core_index == packet_size - 1 {
             protocol.add_transaction_output(
                 &initial_deposit,
+                &OutputType::segwit_key(AUTO_AMOUNT, operator_dispute_key)?,
+            )?;
+
+            protocol.add_transaction_output(
+                &setup,
                 &OutputType::segwit_key(AUTO_AMOUNT, operator_dispute_key)?,
             )?;
         }
@@ -505,8 +512,11 @@ impl DisputeCoreProtocol {
         dispute_core_data: &DisputeCoreData,
     ) -> Result<(), BitVMXError> {
         // Add a change output to the setup transaction
+        // This fee assumes 1 sat per byte plus a 10 extra percent as a safety margin.
+        // It is computed using the size of the transaction, a 68 vbyte size for the input witness (P2WPKH)
+        // and the 3 outputs (setup, change, and speedup output).
+        let setup_fees = 246;
         let funding_amount = dispute_core_data.operator_utxo.2.unwrap();
-        let setup_fees = 1000; //TODO: replace with actual fee calculation or make it configurable
         let operator_dispute_key = operator_keys.get_public(DISPUTE_KEY)?;
         let setup = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
 
@@ -518,11 +528,12 @@ impl DisputeCoreProtocol {
             .add_transaction_output(
                 &setup,
                 &OutputType::segwit_key(
-                    funding_amount - setup_amount - setup_fees,
+                    funding_amount - setup_amount - setup_fees - SPEEDUP_VALUE,
                     operator_dispute_key,
                 )?,
             )
             .map_err(|e| BitVMXError::ProtocolBuilderError(e))?;
+
         Ok(())
     }
 
@@ -530,18 +541,23 @@ impl DisputeCoreProtocol {
         &self,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        let setup_tx_name = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
+        let name = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
 
         let mut protocol = self.load_protocol()?;
 
-        let signature =
-            protocol.sign_ecdsa_input(&setup_tx_name, 0, &context.key_chain.key_manager)?;
+        let signature = protocol.sign_ecdsa_input(&name, 0, &context.key_chain.key_manager)?;
 
         let mut input_args = InputArgs::new_segwit_args();
         input_args.push_ecdsa_signature(signature)?;
 
-        let setup_tx = protocol.transaction_to_send(&setup_tx_name, &[input_args])?;
-        Ok((setup_tx, None))
+        let tx = protocol.transaction_to_send(&name, &[input_args])?;
+
+        let txid = tx.compute_txid();
+        let speedup_key = self.my_dispute_key(context)?;
+        let speedup_vout = (tx.output.len() - 2) as u32;
+        let speedup_utxo = Utxo::new(txid, speedup_vout, SPEEDUP_VALUE, &speedup_key);
+
+        Ok((tx, Some(speedup_utxo.into())))
     }
 
     pub fn op_initial_deposit_tx(
@@ -784,7 +800,7 @@ impl DisputeCoreProtocol {
 
         info!("Getting challenge transaction: {}", challenge_tx_name);
 
-        let (mut challenge_tx, _) =
+        let (mut challenge_tx, _speedup) =
             self.get_transaction_by_name(&challenge_tx_name, program_context)?;
         let txid = challenge_tx.compute_txid();
 
@@ -798,7 +814,7 @@ impl DisputeCoreProtocol {
 
         program_context.bitcoin_coordinator.dispatch(
             challenge_tx,
-            None, // No speedup data
+            None, //speedup,
             format!(
                 "dispute_core_challenge_{}:{}",
                 self.ctx.id, challenge_tx_name
@@ -918,7 +934,7 @@ impl DisputeCoreProtocol {
         );
 
         // Get the signed transaction
-        let (setup_tx, speedup) = self.setup_tx(program_context)?;
+        let (setup_tx, _speedup) = self.setup_tx(program_context)?;
         let setup_txid = setup_tx.compute_txid();
 
         info!(
@@ -929,9 +945,9 @@ impl DisputeCoreProtocol {
         // Dispatch the transaction through the bitcoin coordinator
         program_context.bitcoin_coordinator.dispatch(
             setup_tx,
-            speedup, // No speedup data
+            None,                                                            //speedup,
             format!("dispute_core_setup_{}:{}", self.ctx.id, setup_tx_name), // Context string
-            None,    // Dispatch immediately
+            None,                                                            // Dispatch immediately
         )?;
 
         info!(
@@ -964,12 +980,12 @@ impl DisputeCoreProtocol {
         let protocol = self.load_protocol_by_name(PROGRAM_TYPE_ACCEPT_PEGIN, accept_pegin_pid)?;
 
         let tx_name = indexed_name(OPERATOR_TAKE_TX, self.ctx.my_idx);
-        let (tx, _) = protocol.get_transaction_by_name(&tx_name, context)?;
+        let (tx, _speedup) = protocol.get_transaction_by_name(&tx_name, context)?;
         let txid = tx.compute_txid();
 
         context.bitcoin_coordinator.dispatch(
             tx,
-            None,               // No speedup data
+            None,               //speedup,
             tx_name.clone(),    // Context string
             Some(block_height), // Dispatch immediately with input args
         )?;

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use bitcoin::PublicKey;
+use protocol_builder::types::Utxo;
 use std::collections::HashMap;
 
 use bitvmx_client::{
@@ -29,6 +30,7 @@ impl DisputeCoreSetup {
         dispute_aggregated_key: PublicKey,
         bitvmx: &BitVMXClient,
         operator_protocol_funding: &HashMap<PublicKey, PartialUtxo>,
+        _my_speedup_funding: &Utxo,
         addresses: &Vec<P2PAddress>,
     ) -> Result<()> {
         let committee = Committee {
@@ -38,6 +40,11 @@ impl DisputeCoreSetup {
             operator_count: Self::operator_count(&members.clone())?,
             packet_size: 10,
         };
+
+        // UNCOMMENT THIS IF YOU WANT TO SETUP THE SPEEDUP FUNDING UTXO TO TEST THE SPEEDUP FEATURE
+        // bitvmx.send_message(IncomingBitVMXApiMessages::SetFundingUtxo(
+        //     my_speedup_funding.clone(),
+        // ))?;
 
         bitvmx.set_var(
             committee_id,

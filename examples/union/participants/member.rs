@@ -1,5 +1,6 @@
 use anyhow::Result;
 use core::clone::Clone;
+use protocol_builder::types::Utxo;
 use std::{collections::HashMap, thread};
 use uuid::Uuid;
 
@@ -143,12 +144,14 @@ impl Member {
         committee_id: Uuid,
         members: &Vec<MemberData>,
         funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
+        my_speedup_funding: &Utxo,
         addresses: &Vec<P2PAddress>,
     ) -> Result<()> {
         info!(
             id = self.id,
             "Setting up dispute protocols for member {}", self.id
         );
+
         DisputeCoreSetup::setup(
             committee_id,
             &self.id,
@@ -157,6 +160,7 @@ impl Member {
             self.keyring.dispute_aggregated_key.unwrap(),
             &self.bitvmx,
             funding_utxos_per_member,
+            my_speedup_funding,
             addresses,
         )?;
 
