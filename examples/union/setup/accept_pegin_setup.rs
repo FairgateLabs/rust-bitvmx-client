@@ -1,11 +1,13 @@
-use crate::participants::member::{Keyring, Member};
 use anyhow::Result;
 use bitcoin::{PublicKey, Txid};
 use bitvmx_client::{
     client::BitVMXClient,
     program::{
         participant::{P2PAddress, ParticipantRole},
-        protocols::union::{common::get_accept_pegin_pid, types::PegInRequest},
+        protocols::union::{
+            common::get_accept_pegin_pid,
+            types::{MemberData, PegInRequest},
+        },
         variables::VariableTypes,
     },
     types::PROGRAM_TYPE_ACCEPT_PEGIN,
@@ -20,18 +22,18 @@ impl AcceptPegInSetup {
     pub fn setup(
         my_id: &str,
         _my_role: &ParticipantRole,
-        committee: &[Member],
+        members: &Vec<MemberData>,
         request_pegin_txid: Txid,
         request_pegin_amount: u64,
         accept_pegin_sighash: &[u8],
-        keyring: &Keyring,
+        take_aggregated_key: PublicKey,
         bitvmx: &BitVMXClient,
         committee_id: Uuid,
         slot_index: usize,
         rootstock_address: String,
         reimbursement_pubkey: PublicKey,
+        addresses: &Vec<P2PAddress>,
     ) -> Result<()> {
-        let addresses = Self::get_addresses(committee);
         let protocol_id = get_accept_pegin_pid(committee_id, slot_index);
 
         info!(
@@ -40,9 +42,9 @@ impl AcceptPegInSetup {
         );
 
         let mut operators_take_key = Vec::new();
-        for member in committee {
+        for member in members {
             if member.role == ParticipantRole::Prover {
-                operators_take_key.push(member.keyring.take_pubkey.unwrap());
+                operators_take_key.push(member.take_key.clone());
             }
         }
 
@@ -50,7 +52,7 @@ impl AcceptPegInSetup {
             txid: request_pegin_txid,
             amount: request_pegin_amount,
             accept_pegin_sighash: accept_pegin_sighash.to_vec(),
-            take_aggregated_key: keyring.take_aggregated_key.unwrap(),
+            take_aggregated_key,
             operators_take_key,
             slot_index: slot_index,
             committee_id: committee_id,
@@ -67,17 +69,10 @@ impl AcceptPegInSetup {
         bitvmx.setup(
             protocol_id,
             PROGRAM_TYPE_ACCEPT_PEGIN.to_string(),
-            addresses,
+            addresses.to_vec(),
             0,
         )?;
 
         Ok(())
-    }
-
-    fn get_addresses(committee: &[Member]) -> Vec<P2PAddress> {
-        committee
-            .iter()
-            .map(|m| m.address.clone().unwrap())
-            .collect()
     }
 }

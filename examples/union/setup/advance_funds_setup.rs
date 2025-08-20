@@ -24,7 +24,7 @@ use protocol_builder::types::OutputType;
 use tracing::info;
 use uuid::Uuid;
 
-use crate::{macros::wait_for_message_blocking, participants::member::Member, wait_until_msg};
+use crate::{macros::wait_for_message_blocking, wait_until_msg};
 
 pub struct AdvanceFunds {}
 
@@ -43,12 +43,12 @@ impl AdvanceFunds {
         bitvmx: &BitVMXClient,
         protocol_id: Uuid,
         committee_id: Uuid,
-        committee: &[Member],
         slot_index: usize,
         user_pubkey: PublicKey,
         operator_pubkey: PublicKey,
         my_take_pubkey: PublicKey,
         pegout_id: Vec<u8>,
+        my_address: P2PAddress,
     ) -> Result<()> {
         // All members should set up the operator pubkey that should advance the funds
         bitvmx.set_var(
@@ -81,7 +81,6 @@ impl AdvanceFunds {
             VariableTypes::String(serde_json::to_string(&request)?),
         )?;
 
-        let my_address = Self::get_address_by_take_pubkey(committee, &my_take_pubkey).unwrap();
         info!(
             "Advance funds setup for member {} with address {:?}",
             my_take_pubkey, my_address
@@ -95,13 +94,6 @@ impl AdvanceFunds {
         )?;
 
         Ok(())
-    }
-
-    fn get_address_by_take_pubkey(committee: &[Member], pubkey: &PublicKey) -> Option<P2PAddress> {
-        committee
-            .iter()
-            .find(|m| m.keyring.take_pubkey == Some(*pubkey))
-            .and_then(|m| m.address.clone())
     }
 }
 
