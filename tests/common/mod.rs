@@ -7,6 +7,7 @@ use anyhow::Result;
 use bitcoin::{Network, PublicKey};
 use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
+use bitcoincore_rpc::RpcApi;
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use bitvmx_client::{
     bitvmx::BitVMX,
