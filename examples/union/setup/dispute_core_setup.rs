@@ -7,8 +7,8 @@ use bitvmx_client::{
     program::{
         participant::{P2PAddress, ParticipantRole},
         protocols::union::{
-            common::get_dispute_core_id,
-            types::{Committee, DisputeCoreData, MemberData},
+            common::get_dispute_core_pid,
+            types::{Committee, DisputeCoreData, MemberData, MONITORED_OPERATOR_KEY},
         },
         variables::{PartialUtxo, VariableTypes},
     },
@@ -29,7 +29,7 @@ impl DisputeCoreSetup {
         members: &[Member],
         keyring: &Keyring,
         bitvmx: &BitVMXClient,
-        funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
+        operator_protocol_funding: &HashMap<PublicKey, PartialUtxo>,
     ) -> Result<()> {
         let committee = Committee {
             members: members
@@ -55,8 +55,8 @@ impl DisputeCoreSetup {
         for (operator_index, member) in members.iter().enumerate() {
             if member.role == ParticipantRole::Prover {
                 let pubkey = member.keyring.take_pubkey.unwrap();
-                let protocol_id = get_dispute_core_id(committee_id, &pubkey);
-                let operator_utxo = funding_utxos_per_member[&pubkey].clone();
+                let protocol_id = get_dispute_core_pid(committee_id, &pubkey);
+                let operator_utxo = operator_protocol_funding[&pubkey].clone();
                 info!(
                     id = my_id,
                     "Setting up the DisputeCore protocol handler {} for {}", protocol_id, my_id
@@ -69,7 +69,15 @@ impl DisputeCoreSetup {
                         committee_id,
                         operator_index,
                         operator_utxo: operator_utxo,
+                        operator_take_pubkey: pubkey,
                     })?),
+                )?;
+
+                // Save the monitored operator's take key
+                bitvmx.set_var(
+                    protocol_id,
+                    MONITORED_OPERATOR_KEY,
+                    VariableTypes::PubKey(pubkey),
                 )?;
 
                 bitvmx.setup(

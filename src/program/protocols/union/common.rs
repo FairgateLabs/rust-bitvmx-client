@@ -4,10 +4,53 @@ use uuid::Uuid;
 
 use crate::{errors::BitVMXError, program::variables::PartialUtxo};
 
-pub fn get_dispute_core_id(committee_id: Uuid, pubkey: &PublicKey) -> Uuid {
+pub fn get_dispute_core_pid(committee_id: Uuid, pubkey: &PublicKey) -> Uuid {
     let mut hasher = Sha256::new();
     hasher.update(committee_id.as_bytes());
     hasher.update(pubkey.to_bytes());
+    hasher.update("dispute_core");
+
+    // Get the result as a byte array
+    let hash = hasher.finalize();
+    return Uuid::from_bytes(hash[0..16].try_into().unwrap());
+}
+
+pub fn get_accept_pegin_pid(committee_id: Uuid, slot_index: usize) -> Uuid {
+    let mut hasher = Sha256::new();
+    hasher.update(committee_id.as_bytes());
+    hasher.update(&slot_index.to_be_bytes());
+    hasher.update("accept_pegin");
+
+    // Get the result as a byte array
+    let hash = hasher.finalize();
+    return Uuid::from_bytes(hash[0..16].try_into().unwrap());
+}
+
+pub fn get_user_take_pid(committee_id: Uuid, slot_index: usize) -> Uuid {
+    let mut hasher = Sha256::new();
+    hasher.update(committee_id.as_bytes());
+    hasher.update(&slot_index.to_be_bytes());
+    hasher.update("user_take");
+
+    // Get the result as a byte array
+    let hash = hasher.finalize();
+    return Uuid::from_bytes(hash[0..16].try_into().unwrap());
+}
+
+pub fn get_take_aggreated_key_pid(committee_id: Uuid) -> Uuid {
+    let mut hasher = Sha256::new();
+    hasher.update(committee_id.as_bytes());
+    hasher.update("take_aggregated_key");
+
+    // Get the result as a byte array
+    let hash = hasher.finalize();
+    return Uuid::from_bytes(hash[0..16].try_into().unwrap());
+}
+
+pub fn get_dispute_aggregated_key_pid(committee_id: Uuid) -> Uuid {
+    let mut hasher = Sha256::new();
+    hasher.update(committee_id.as_bytes());
+    hasher.update("dispute_aggregated_key");
 
     // Get the result as a byte array
     let hash = hasher.finalize();

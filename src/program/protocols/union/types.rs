@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use bitcoin::{PublicKey, Txid};
 use musig2::{secp::MaybeScalar, PubNonce};
 use serde::{Deserialize, Serialize};
@@ -9,6 +11,9 @@ use crate::program::{participant::ParticipantRole, variables::PartialUtxo};
 pub const TAKE_AGGREGATED_KEY: &str = "take_aggregated_key";
 pub const DISPUTE_AGGREGATED_KEY: &str = "dispute_aggregated_key";
 pub const SELECTED_OPERATOR_PUBKEY: &str = "selected_operator_pubkey";
+pub const MONITORED_OPERATOR_KEY: &str = "monitored_operator_key";
+pub const OP_INITIAL_DEPOSIT_FLAG: &str = "op_initial_deposit_flag";
+pub const OPERATOR_LEAF_INDEX: &str = "operator_leaf_index";
 
 // Transaction names
 pub const REQUEST_PEGIN_TX: &str = "REQUEST_PEGIN_TX";
@@ -35,10 +40,8 @@ pub const NO_CHALLENGE_TX: &str = "NO_CHALLENGE_TX";
 // Parameters
 pub const DISPUTE_CORE_SHORT_TIMELOCK: u16 = 3;
 pub const DISPUTE_CORE_LONG_TIMELOCK: u16 = 6;
-pub const DISPUTE_OPENER_VALUE: u64 = 1000;
-pub const START_ENABLER_VALUE: u64 = 1000;
-pub const DUST_VALUE: u64 = 546;
-pub const SPEED_UP_VALUE: u64 = 546;
+pub const DUST_VALUE: u64 = 540;
+pub const SPEEDUP_VALUE: u64 = 540;
 pub const P2TR_FEE: u64 = 355; // This should match the value P2TR_FEE in Union Smart contracts
 
 // Suffixes
@@ -77,6 +80,14 @@ impl Committee {
     pub fn name() -> String {
         "committee".to_string()
     }
+
+    pub fn indexes_map(&self) -> HashMap<PublicKey, usize> {
+        self.members
+            .iter()
+            .enumerate()
+            .map(|(index, member)| (member.take_key, index))
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,6 +95,7 @@ pub struct DisputeCoreData {
     pub committee_id: Uuid,
     pub operator_index: usize,
     pub operator_utxo: PartialUtxo,
+    pub operator_take_pubkey: PublicKey,
 }
 
 impl DisputeCoreData {
@@ -99,7 +111,7 @@ pub struct PegInRequest {
     pub accept_pegin_sighash: Vec<u8>,
     pub take_aggregated_key: PublicKey,
     pub operators_take_key: Vec<PublicKey>,
-    pub slot_index: u64,
+    pub slot_index: usize,
     pub committee_id: uuid::Uuid,
     pub rootstock_address: String,
     pub reimbursement_pubkey: PublicKey,
@@ -126,7 +138,7 @@ pub struct PegOutRequest {
     pub committee_id: Uuid,
     pub stream_id: u64,
     pub packet_number: u64,
-    pub slot_id: u64,
+    pub slot_index: usize,
     pub amount: u64,
     pub pegout_id: Vec<u8>,
     pub pegout_signature_hash: Vec<u8>,
@@ -159,10 +171,9 @@ impl PegOutAccepted {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdvanceFundsRequest {
     pub committee_id: Uuid,
-    pub slot_id: usize,
+    pub slot_index: usize,
     pub pegout_id: Vec<u8>,
     pub fee: u64,
-    pub operator_pubkey: PublicKey,
     pub user_pubkey: PublicKey,
     pub my_take_pubkey: PublicKey,
 }

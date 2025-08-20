@@ -20,7 +20,6 @@ use super::super::participant::ParticipantKeys;
 use crate::config::ComponentsConfig;
 use crate::errors::BitVMXError;
 use crate::keychain::KeyChain;
-use crate::program::participant::ParticipantKeysExt;
 
 #[cfg(feature = "cardinal")]
 use super::cardinal::{lock::LockProtocol, slot::SlotProtocol, transfer::TransferProtocol};
@@ -306,7 +305,6 @@ pub trait ProtocolHandler {
         name: &str,
         input_index: u32,
         program_context: &ProgramContext,
-        participant_keys: &Vec<&ParticipantKeys>,
         transaction: &Transaction,
         leaf: Option<u32>,
         protocol: Option<Protocol>,
@@ -350,24 +348,16 @@ pub trait ProtocolHandler {
         //TODO: make the script save the size so we don't need to get it from participant keys or variables
         script.get_keys().iter().rev().for_each(|k| {
             names.push(k.name().to_string());
-            let size = participant_keys.get_key_size(k.name());
-            if size.is_err()  {
-                info!("Could not get the key from participant keys: {}. Trying to get from variables.", k.name());
-                let var = program_context.globals.get_var(&self.context().id, k.name());
-                if var.is_err() || var.as_ref().unwrap().is_none() {
-                    error!(
-                        "Failed to get key size for {}: {}",
-                        k.name(),
-                        size.err().unwrap()
-                    );
-                    return;
-                } else {
-                    sizes.push(message_bytes_length( var.unwrap().unwrap().wots_pubkey().unwrap().message_size().unwrap()));
-                }
-
-            } else {
-                sizes.push(size.unwrap());
+            let size = k.key_type().winternitz_message_size();
+            if size.is_err() {
+                error!(
+                    "Failed to get key size for {}: {}",
+                    k.name(),
+                    size.err().unwrap()
+                );
+                return;
             }
+            sizes.push(message_bytes_length(size.unwrap()));
         });
         info!("Decoding data for {}", name);
         info!("Names: {:?}", names);
@@ -396,7 +386,6 @@ pub trait ProtocolHandler {
         prev_vout: u32,
         prev_name: &str,
         program_context: &ProgramContext,
-        participant_keys: &Vec<&ParticipantKeys>,
         transaction: &Transaction,
         leaf: Option<u32>,
     ) -> Result<Vec<String>, BitVMXError> {
@@ -411,7 +400,6 @@ pub trait ProtocolHandler {
             prev_name,
             idx,
             program_context,
-            participant_keys,
             transaction,
             leaf,
             Some(protocol),
@@ -464,6 +452,20 @@ pub trait ProtocolHandler {
             &speedup,
         );
         Ok(speedup_utxo.into())
+    }
+
+    fn load_protocol_by_name(
+        &self,
+        name: &str,
+        protocol_id: Uuid,
+    ) -> Result<ProtocolType, BitVMXError> {
+        new_protocol_type(
+            protocol_id,
+            name,
+            self.context().my_idx,
+            self.context().storage.as_ref().unwrap().clone(),
+            &self.context().components_config,
+        )
     }
 
     fn setup_complete(&self, program_context: &ProgramContext) -> Result<(), BitVMXError>;
@@ -561,15 +563,6 @@ pub fn new_protocol_type(
     }
 }
 
-impl ProtocolType {
-    pub fn dispute(self) -> Result<DisputeResolutionProtocol, BitVMXError> {
-        match self {
-            ProtocolType::DisputeResolutionProtocol(protocol) => Ok(protocol),
-            _ => Err(BitVMXError::InvalidMessageType),
-        }
-    }
-}
-
 pub fn external_fund_tx(
     internal_key: &PublicKey,
     spending_scripts: Vec<ProtocolScript>,
@@ -580,4 +573,8 @@ pub fn external_fund_tx(
         internal_key,
         &spending_scripts,
     )?)
+}
+
+fn get_protocol_name(name: &str, protocol_id: Uuid) -> String {
+    format!("{}_{}", name, protocol_id)
 }

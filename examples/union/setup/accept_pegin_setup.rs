@@ -5,7 +5,7 @@ use bitvmx_client::{
     client::BitVMXClient,
     program::{
         participant::{P2PAddress, ParticipantRole},
-        protocols::union::types::PegInRequest,
+        protocols::union::{common::get_accept_pegin_pid, types::PegInRequest},
         variables::VariableTypes,
     },
     types::PROGRAM_TYPE_ACCEPT_PEGIN,
@@ -18,7 +18,6 @@ pub struct AcceptPegInSetup {}
 impl AcceptPegInSetup {
     #[allow(clippy::too_many_arguments)]
     pub fn setup(
-        protocol_id: Uuid,
         my_id: &str,
         _my_role: &ParticipantRole,
         committee: &[Member],
@@ -28,11 +27,12 @@ impl AcceptPegInSetup {
         keyring: &Keyring,
         bitvmx: &BitVMXClient,
         committee_id: Uuid,
-        slot_index: u64,
+        slot_index: usize,
         rootstock_address: String,
         reimbursement_pubkey: PublicKey,
     ) -> Result<()> {
         let addresses = Self::get_addresses(committee);
+        let protocol_id = get_accept_pegin_pid(committee_id, slot_index);
 
         info!(
             id = my_id,

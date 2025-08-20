@@ -23,7 +23,10 @@ use crate::{
         participant::ParticipantKeys,
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
-            union::types::{PegOutAccepted, PegOutRequest, ACCEPT_PEGIN_TX, USER_TAKE_TX},
+            union::{
+                common::indexed_name,
+                types::{PegOutAccepted, PegOutRequest, ACCEPT_PEGIN_TX, USER_TAKE_TX},
+            },
         },
         variables::{PartialUtxo, VariableTypes},
     },
@@ -71,7 +74,7 @@ impl ProtocolHandler for UserTakeProtocol {
         let accept_pegin_utxo = self.accept_pegin_utxo(
             context,
             &pegout_request.committee_id,
-            pegout_request.slot_id,
+            pegout_request.slot_index,
         )?;
         let user_pubkey = pegout_request.user_pubkey;
 
@@ -131,13 +134,19 @@ impl ProtocolHandler for UserTakeProtocol {
 
     fn notify_news(
         &self,
-        _tx_id: Txid,
+        tx_id: Txid,
         _vout: Option<u32>,
-        _tx_status: TransactionStatus,
+        tx_status: TransactionStatus,
         _context: String,
         _program_context: &ProgramContext,
         _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
+        let tx_name = self.get_transaction_name_by_id(tx_id)?;
+        info!(
+            "User Take protocol received news of transaction: {}, txid: {} with {} confirmations",
+            tx_name, tx_id, tx_status.confirmations
+        );
+
         Ok(())
     }
 
@@ -177,14 +186,11 @@ impl UserTakeProtocol {
         &self,
         context: &ProgramContext,
         committee_id: &Uuid,
-        slot_index: u64,
+        slot_index: usize,
     ) -> Result<PartialUtxo, BitVMXError> {
         Ok(context
             .globals
-            .get_var(
-                committee_id,
-                &format!("{}_{}", ACCEPT_PEGIN_TX, slot_index).to_string(),
-            )?
+            .get_var(committee_id, &indexed_name(ACCEPT_PEGIN_TX, slot_index))?
             .unwrap()
             .utxo()?)
     }
