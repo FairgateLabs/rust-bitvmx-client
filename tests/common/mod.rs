@@ -133,31 +133,22 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
     let wallet_config = bitvmx_settings::settings::load_config_file::<
         bitvmx_wallet::config::WalletConfig,
     >(Some(wallet_config.to_string()))?;
+    
     if config.bitcoin.network == Network::Regtest {
         clear_db(&wallet_config.storage.path);
         clear_db(&wallet_config.key_storage.path);
     }
+    
     let wallet = Wallet::new(wallet_config, true)?;
     wallet.mine(INITIAL_BLOCK_COUNT)?;
 
-    wallet.create_wallet(WALLET_NAME)?;
-    wallet.regtest_fund(WALLET_NAME, FUNDING_ID, 100_000_000)?;
-
-    let bitcoin_client = BitcoinClient::new(
-        &config.bitcoin.url,
-        &config.bitcoin.username,
-        &config.bitcoin.password,
-    )?;
-
-    // Generar nombre único de wallet para evitar conflictos
-    let wallet_name = {
+    let wallet_name = if is_ci {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
         
-        // Usar también el nombre del test actual si está disponible
         let test_name = std::thread::current()
             .name()
             .unwrap_or("unknown")
@@ -165,11 +156,50 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
             .replace(" ", "_");
             
         format!("test_{}_{}", test_name, timestamp)
+    } else {
+        WALLET_NAME.to_string()
     };
 
-    info!("🎯 Creating unique wallet: {}", wallet_name);
-    let address = bitcoin_client.init_wallet(&wallet_name)?;
-    info!("✅ Wallet '{}' created with address: {}", wallet_name, address);
+    info!("🎯 Creating wallet: {}", wallet_name);
+
+    // Crear BitcoinClient usando la estrategia correcta
+    let bitcoin_client = if is_ci {
+        // 1. Cliente genérico para crear wallet en Bitcoin Core
+        let generic_client = BitcoinClient::new(
+            &config.bitcoin.url,
+            &config.bitcoin.username,
+            &config.bitcoin.password,
+        )?;
+        
+        // 2. Crear wallet en Bitcoin Core (maneja si ya existe)
+        let _ = generic_client.init_wallet(&wallet_name)?;
+        
+        // 3. Cliente específico usando new_with_wallet()
+        BitcoinClient::new_with_wallet(
+            &config.bitcoin.url,
+            &config.bitcoin.username,
+            &config.bitcoin.password,
+            &wallet_name,
+        )?
+    } else {
+        // Para local, usar wallet tradicional
+        wallet.create_wallet(WALLET_NAME)?;
+        wallet.regtest_fund(WALLET_NAME, FUNDING_ID, 100_000_000)?;
+        
+        BitcoinClient::new(
+            &config.bitcoin.url,
+            &config.bitcoin.username,
+            &config.bitcoin.password,
+        )?
+    };
+
+    // Para CI, usar bitvmx_wallet para crear storage interno
+    if is_ci {
+        wallet.create_wallet(&wallet_name)?;
+        wallet.regtest_fund(&wallet_name, FUNDING_ID, 100_000_000)?;
+    }
+
+    info!("✅ Wallet '{}' created and configured", wallet_name);
 
     Ok((bitcoin_client, bitcoind, wallet))
 }
