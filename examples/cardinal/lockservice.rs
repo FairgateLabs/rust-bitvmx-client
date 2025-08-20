@@ -2,9 +2,8 @@ use anyhow::Result;
 use bitcoin::{
     key::{rand::rngs::OsRng, Parity, Secp256k1},
     secp256k1::{self, All, PublicKey as SecpPublicKey, SecretKey},
-    Address, Amount, PublicKey as BitcoinPubKey, Txid,
+    Amount, Network, PublicKey as BitcoinPubKey, Txid,
 };
-use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
     channel::channel::{DualChannel, LocalChannel},
@@ -15,16 +14,15 @@ use bitvmx_client::{
     program::{
         self,
         protocols::cardinal::{
-            EOL_TIMELOCK_DURATION, FEE, GID_MAX, OPERATORS_AGGREGATED_PUB, PROTOCOL_COST,
-            SPEEDUP_DUST, UNSPENDABLE,
+            lock::lock_protocol_dust_cost, lock_config::LockProtocolConfiguration,
         },
-        variables::{VariableTypes, WitnessTypes},
+        variables::WitnessTypes,
     },
-    types::{
-        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID, PROGRAM_TYPE_LOCK,
-    },
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID},
 };
 
+use bitvmx_wallet::wallet::Wallet;
+use protocol_builder::types::Utxo;
 use storage_backend::{storage::Storage, storage_config::StorageConfig};
 use tracing::info;
 use uuid::Uuid;
@@ -53,21 +51,25 @@ pub fn wait_message_from_channel(channel: &DualChannel) -> Result<(String, u32)>
     }
     panic!("Timeout waiting for message from channel");
 }
-pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, Address)> {
+pub fn prepare_bitcoin_running() -> Result<Wallet> {
     let config = Config::new(Some("config/op_1.yaml".to_string()))?;
 
-    let bitcoin_client = BitcoinClient::new(
-        &config.bitcoin.url,
-        &config.bitcoin.username,
-        &config.bitcoin.password,
-    )?;
+    let wallet_config = match config.bitcoin.network {
+        Network::Regtest => "config/wallet_regtest.yaml",
+        Network::Testnet => "config/wallet_testnet.yaml",
+        _ => panic!("Not supported network {}", config.bitcoin.network),
+    };
 
-    let wallet = bitcoin_client.init_wallet("test_wallet").unwrap();
+    let wallet_config = bitvmx_settings::settings::load_config_file::<
+        bitvmx_wallet::config::WalletConfig,
+    >(Some(wallet_config.to_string()))?;
+    let wallet = Wallet::new(wallet_config, true)?;
+    //wallet.mine(101)?;
 
-    info!("Mine 1 blocks to address {:?}", wallet);
-    bitcoin_client.mine_blocks_to_address(1, &wallet).unwrap();
+    //wallet.create_wallet("wallet")?;
+    wallet.regtest_fund("wallet", "fund", 100_000_000)?;
 
-    Ok((bitcoin_client, wallet))
+    Ok(wallet)
 }
 
 pub fn send_all(channels: &Vec<DualChannel>, msg: &str) -> Result<()> {
@@ -112,16 +114,16 @@ pub fn main() -> Result<()> {
 }
 
 pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
-    let (bitcoin_client, wallet) = prepare_bitcoin_running()?;
+    let wallet = prepare_bitcoin_running()?;
 
     //TODO: A channel that talks directly with the broker without going through localhost loopback could be implemented
 
     let bridge_1 = init_broker("op_1")?;
     let bridge_2 = init_broker("op_2")?;
     let bridge_3 = init_broker("op_3")?;
-    let bridge_4 = init_broker("op_4")?;
+    //let bridge_4 = init_broker("op_4")?;
 
-    let channels = vec![bridge_1, bridge_2, bridge_3, bridge_4];
+    let channels = vec![bridge_1, bridge_2, bridge_3];
 
     let command = IncomingBitVMXApiMessages::GetCommInfo().to_string()?;
     send_all(&channels, &command)?;
@@ -137,6 +139,27 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
         })
         .collect::<Vec<_>>();
 
+    //one time per bitvmx instance, we need to get the public key for the speedup funding utxo
+    info!("================================================");
+    info!("Setting up speedup funding addresses");
+    info!("================================================");
+    let funding_public_id = Uuid::new_v4();
+    let command = IncomingBitVMXApiMessages::GetPubKey(funding_public_id, true).to_string()?;
+    send_all(&channels, &command)?;
+    let msgs = get_all(&channels)?
+        .iter()
+        .map(|msg| OutgoingBitVMXApiMessages::from_string(&msg.0).unwrap())
+        .collect::<Vec<_>>();
+    let funding_key_0 = msgs[0].public_key().unwrap().1;
+    let funding_key_1 = msgs[1].public_key().unwrap().1;
+    let funding_key_2 = msgs[2].public_key().unwrap().1;
+    set_speedup_funding(10_000_000, &funding_key_0, &channels[0], &wallet)?;
+    set_speedup_funding(10_000_000, &funding_key_1, &channels[1], &wallet)?;
+    set_speedup_funding(10_000_000, &funding_key_2, &channels[2], &wallet)?;
+
+    info!("================================================");
+    info!("Setting up aggregated addresses");
+    info!("================================================");
     //ask the peers to generate the aggregated public key
     let aggregation_id = Uuid::new_v4();
     let command = IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), None, 0)
@@ -163,7 +186,6 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
         let txid: Txid;
         let pubuser: bitcoin::PublicKey;
         let ordinal_fee: Amount;
-        let protocol_fee: Amount;
         let preimage: String;
         let hash: Vec<u8>;
 
@@ -223,8 +245,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
                     channel.send(2, aggregated_pub_key.to_string())?;
                 } else {
                     info!("Received message from channel: {:?}", msg);
-                    (txid, pubuser, ordinal_fee, protocol_fee, preimage, hash) =
-                        serde_json::from_str(&msg.0)?;
+                    (txid, pubuser, ordinal_fee, preimage, hash) = serde_json::from_str(&msg.0)?;
                     break;
                 }
             } else {
@@ -232,70 +253,46 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
             }
         }
 
-        let program_id = Uuid::new_v4();
-
         //need lockreq txid to subscribe to it
 
         let lockreqtx_on_chain = Uuid::new_v4();
         let command = IncomingBitVMXApiMessages::SubscribeToTransaction(lockreqtx_on_chain, txid)
             .to_string()?;
         send_all(&channels, &command)?;
+        info!("Subscribe to lockreq transaction: {}", lockreqtx_on_chain);
 
-        bitcoin_client.mine_blocks_to_address(10, &wallet)?;
-        std::thread::sleep(std::time::Duration::from_millis(1000));
+        info!("Wait to mine");
+        std::thread::sleep(std::time::Duration::from_millis(2000));
+        info!("Mining blocks...");
+        for _ in 0..10 {
+            wallet.mine(1)?;
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        info!("Waiting bitvmx to notify tx");
         get_all(&channels)?;
 
-        let set_fee = VariableTypes::Number(3000).set_msg(program_id, FEE)?;
-        send_all(&channels, &set_fee)?;
+        // SETUP LOCK BEGIN
+        info!("================================================");
+        info!("Setting LOCK");
+        info!("================================================");
 
-        let set_ops_aggregated = VariableTypes::PubKey(aggregated_pub_key)
-            .set_msg(program_id, OPERATORS_AGGREGATED_PUB)?;
-        send_all(&channels, &set_ops_aggregated)?;
-
-        let set_ops_aggregated_hp = VariableTypes::PubKey(aggregated_happy_path)
-            .set_msg(program_id, "operators_aggregated_happy_path")?;
-        send_all(&channels, &set_ops_aggregated_hp)?;
-
-        let set_unspendable = VariableTypes::PubKey(hardcoded_unspendable().into())
-            .set_msg(program_id, UNSPENDABLE)?;
-        send_all(&channels, &set_unspendable)?;
-
-        let set_secret = VariableTypes::Secret(hash).set_msg(program_id, "secret")?;
-        send_all(&channels, &set_secret)?;
-
-        let set_ordinal_utxo = VariableTypes::Utxo((txid, 0, Some(ordinal_fee.to_sat()), None))
-            .set_msg(program_id, "ordinal_utxo")?;
-        send_all(&channels, &set_ordinal_utxo)?;
-
-        let set_protocol_fee = VariableTypes::Utxo((txid, 1, Some(protocol_fee.to_sat()), None))
-            .set_msg(program_id, "protocol_utxo")?;
-        send_all(&channels, &set_protocol_fee)?;
-
-        let set_user_pubkey = VariableTypes::PubKey(bitcoin::PublicKey::from(pubuser))
-            .set_msg(program_id, "user_pubkey")?;
-        send_all(&channels, &set_user_pubkey)?;
-
-        let eol_timelock_duration =
-            VariableTypes::Number(100).set_msg(program_id, EOL_TIMELOCK_DURATION)?;
-        send_all(&channels, &eol_timelock_duration)?;
-
-        let protocol_cost = VariableTypes::Number(20_000).set_msg(program_id, PROTOCOL_COST)?;
-        send_all(&channels, &protocol_cost)?;
-
-        let speedup_dust = VariableTypes::Number(500).set_msg(program_id, SPEEDUP_DUST)?;
-        send_all(&channels, &speedup_dust)?;
-
-        let gid_max = VariableTypes::Number(8).set_msg(program_id, GID_MAX)?;
-        send_all(&channels, &gid_max)?;
-
-        let setup_msg = IncomingBitVMXApiMessages::Setup(
+        let program_id = Uuid::new_v4();
+        let lock_protocol_configuration = LockProtocolConfiguration::new(
             program_id,
-            PROGRAM_TYPE_LOCK.to_string(),
-            addresses.clone(),
-            0,
-        )
-        .to_string()?;
-        send_all(&channels, &setup_msg)?;
+            aggregated_pub_key,
+            aggregated_happy_path,
+            hardcoded_unspendable().into(),
+            pubuser.into(),
+            hash,
+            (txid, 0, Some(ordinal_fee.to_sat()), None),
+            (txid, 1, Some(lock_protocol_dust_cost(3)), None),
+            10,
+            100,
+        );
+
+        for c in &channels {
+            lock_protocol_configuration.setup(&c, addresses.clone(), 0)?;
+        }
 
         get_all(&channels)?;
 
@@ -360,9 +357,12 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
 
         info!("Sent lock tx");
 
-        std::thread::sleep(std::time::Duration::from_millis(1000));
+        std::thread::sleep(std::time::Duration::from_millis(3000));
         info!("Mining blocks to confirm lock tx");
-        bitcoin_client.mine_blocks_to_address(10, &wallet)?;
+        for _ in 0..20 {
+            wallet.mine(1)?;
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
         info!("Wait for confirmation of lock tx");
         get_all(&channels)?;
 
@@ -393,7 +393,10 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>) -> Result<()> {
         info!("Sent happy path tx");
         std::thread::sleep(std::time::Duration::from_millis(1000));
         info!("Mining blocks to confirm happy path tx");
-        bitcoin_client.mine_blocks_to_address(10, &wallet)?;
+        for _ in 0..20 {
+            wallet.mine(1)?;
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
         info!("Wait for confirmation of happy path tx");
         let ret = get_all(&channels)?;
         let msg = OutgoingBitVMXApiMessages::from_str(&ret[0].0)?;
@@ -434,4 +437,29 @@ fn adjust_parity(
     } else {
         (pubkey, seckey)
     }
+}
+
+pub fn set_speedup_funding(
+    amount: u64,
+    pub_key: &BitcoinPubKey,
+    channel: &DualChannel,
+    wallet: &Wallet,
+) -> Result<()> {
+    let fund_txid = wallet.fund_address(
+        "wallet",
+        "fund",
+        *pub_key,
+        &vec![amount],
+        1000,
+        false,
+        true,
+        None,
+    )?;
+
+    wallet.mine(1)?;
+
+    let funds_utxo_0 = Utxo::new(fund_txid, 0, amount, pub_key);
+    let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
+    channel.send(BITVMX_ID, command)?;
+    Ok(())
 }

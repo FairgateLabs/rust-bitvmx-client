@@ -2,6 +2,7 @@ use anyhow::{Ok, Result};
 use bitcoin::{absolute, secp256k1};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
+use bitvmx_client::program::protocols::cardinal::lock::lock_protocol_dust_cost;
 use protocol_builder::scripts::{
     build_taproot_spend_info, reveal_secret, timelock, ProtocolScript, SignMode,
 };
@@ -38,15 +39,14 @@ pub fn main() -> Result<()> {
         }
     }
 
-    let (txid, pubuser, ordinal_fee, protocol_fee) = create_lockreq_ready(
+    let (txid, pubuser, ordinal_fee) = create_lockreq_ready(
         aggregated_pub_key,
         hash.clone(),
         Network::Regtest,
         &bitcoin_client,
     )?;
 
-    let msg_req =
-        serde_json::to_string(&(txid, pubuser, ordinal_fee, protocol_fee, preimage, hash))?;
+    let msg_req = serde_json::to_string(&(txid, pubuser, ordinal_fee, preimage, hash))?;
     channel.send(1, msg_req)?;
 
     Ok(())
@@ -63,7 +63,7 @@ pub fn create_lockreq_ready(
     secret_hash: Vec<u8>,
     network: Network,
     bitcoin_client: &BitcoinClient,
-) -> Result<(Txid, SecpPublicKey, Amount, Amount)> {
+) -> Result<(Txid, SecpPublicKey, Amount)> {
     //PublicKey user, txid, 0 :amount-ordinal, 1: amount-fees
 
     let secp = secp256k1::Secp256k1::new();
@@ -87,8 +87,6 @@ pub fn create_lockreq_ready(
         user_address
     );
 
-    const ONE_BTC: Amount = Amount::from_sat(10_000_000);
-
     // Ordinal funding
     const ORDINAL_AMOUNT: Amount = Amount::from_sat(10_000);
     let funding_amount_ordinal = ORDINAL_AMOUNT;
@@ -99,12 +97,17 @@ pub fn create_lockreq_ready(
         .unwrap();
     let ordinal_txout = funding_tx_ordinal.output[vout_ordinal as usize].clone();
 
+    const MINER_FEE: Amount = Amount::from_sat(3000);
+    const CHANGE_AMOUNT: Amount = Amount::from_sat(1000);
     // Protocol fees funding
-    let funding_amount_used_for_protocol_fees = ONE_BTC;
+    let funding_amount_used_for_protocol_fees = Amount::from_sat(lock_protocol_dust_cost(3));
     let funding_tx_protocol_fees: Transaction;
     let vout_protocol_fees: u32;
     (funding_tx_protocol_fees, vout_protocol_fees) = bitcoin_client
-        .fund_address(&user_address, funding_amount_used_for_protocol_fees)
+        .fund_address(
+            &user_address,
+            funding_amount_used_for_protocol_fees + MINER_FEE + CHANGE_AMOUNT,
+        )
         .unwrap();
     let protocol_fees_txout = funding_tx_protocol_fees.output[vout_protocol_fees as usize].clone();
 
@@ -115,18 +118,14 @@ pub fn create_lockreq_ready(
         OutPoint::new(funding_tx_protocol_fees.compute_txid(), vout_protocol_fees);
     tracing::debug!("Protocol fees outpoint: {:?}", protocol_fees_outpoint);
 
-    let protocol_fee = Amount::from_sat(1_000_000);
-
-    const MINER_FEE: Amount = Amount::from_sat(355_000);
-
     let signed_lockreq_tx = create_lockreq_tx_and_sign(
         &secp,
         funding_amount_ordinal,
         ordinal_outpoint,
         ordinal_txout,
         10,
+        funding_amount_used_for_protocol_fees + MINER_FEE + CHANGE_AMOUNT,
         funding_amount_used_for_protocol_fees,
-        protocol_fee,
         protocol_fees_outpoint,
         protocol_fees_txout,
         &aggregated_operators,
@@ -142,7 +141,7 @@ pub fn create_lockreq_ready(
 
     let lockreq_txid = bitcoin_client.send_transaction(&signed_lockreq_tx).unwrap();
 
-    Ok((lockreq_txid, user_pk, funding_amount_ordinal, protocol_fee))
+    Ok((lockreq_txid, user_pk, funding_amount_ordinal))
 }
 
 pub fn build_taptree_for_lockreq_tx_outputs(
@@ -234,6 +233,9 @@ fn create_lockreq_tx_and_sign(
     };
 
     // Calculate change (Ordinal amount is sum and the subtracted so is cancelled)
+    info!("funding_amount: {:?}", funding_amount);
+    info!("protocol_fee_amount: {:?}", protocol_fee_amount);
+    info!("miner_fee: {:?}", miner_fee);
     let change_amount = funding_amount
         .unchecked_sub(protocol_fee_amount)
         .unchecked_sub(miner_fee);
