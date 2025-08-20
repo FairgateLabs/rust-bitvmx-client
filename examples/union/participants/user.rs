@@ -153,9 +153,11 @@ impl User {
         pub const KEY_SPEND_FEE: u64 = 335;
         pub const OP_RETURN_FEE: u64 = 300;
         pub const TIMELOCK_BLOCKS: u16 = 1;
+        // TODO: This should be based on the actual fee rate from the Bitcoin network
+        // pub const EXTRA_FEE: u64 = 1000;
 
         let value = stream_value;
-        let fee = KEY_SPEND_FEE;
+        let fee = KEY_SPEND_FEE; // + EXTRA_FEE;
         let op_return_fee = OP_RETURN_FEE;
         let total_amount = value + fee + op_return_fee;
 
