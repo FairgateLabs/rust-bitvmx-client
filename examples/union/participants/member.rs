@@ -497,11 +497,7 @@ impl Member {
         Ok(counterparty_address.clone())
     }
 
-    pub fn dispatch_reimbursement_flow(
-        &mut self,
-        committee_id: Uuid,
-        slot_index: usize,
-    ) -> Result<()> {
+    pub fn dispatch_reimbursement_flow(&self, committee_id: Uuid, slot_index: usize) -> Result<()> {
         // Get the dispute core protocol ID for this member
         let member_take_pubkey = self.keyring.take_pubkey.unwrap();
         let dispute_protocol_id = get_dispute_core_pid(committee_id, &member_take_pubkey);
@@ -528,7 +524,7 @@ impl Member {
         Ok(())
     }
 
-    fn setup_pegout_id(&mut self, dispute_protocol_id: Uuid, slot_index: usize) -> Result<()> {
+    fn setup_pegout_id(&self, dispute_protocol_id: Uuid, slot_index: usize) -> Result<()> {
         let pegout_id = vec![0u8; 32]; // dummy pegout_id for testing
         let pegout_id_key = indexed_name(PEGOUT_ID, slot_index);
 
@@ -546,7 +542,7 @@ impl Member {
         Ok(())
     }
 
-    fn dispatch_initial_deposit_tx(&mut self, dispute_protocol_id: Uuid) -> Result<()> {
+    fn dispatch_initial_deposit_tx(&self, dispute_protocol_id: Uuid) -> Result<()> {
         let tx_name = format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX);
 
         info!(
@@ -578,7 +574,7 @@ impl Member {
     }
 
     fn dispatch_reimbursement_tx(
-        &mut self,
+        &self,
         dispute_protocol_id: Uuid,
         slot_index: usize,
     ) -> Result<()> {

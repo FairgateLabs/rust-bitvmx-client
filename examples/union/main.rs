@@ -18,7 +18,7 @@ use core::convert::Into;
 use std::{env, thread, time::Duration};
 use tracing::info;
 
-use crate::participants::{committee::Committee, user::User};
+use crate::participants::{committee::Committee, member::Member, user::User};
 
 mod macros;
 mod participants;
@@ -223,17 +223,17 @@ pub fn advance_funds() -> Result<()> {
 }
 
 pub fn invalid_reimbursement() -> Result<()> {
-    let (mut committee, _, slot_index, _) = accept_pegin()?;
+    let (committee, _, slot_index, _) = accept_pegin()?;
 
     info!("Forcing member 0 to dispatch invalid reimbursement transaction...");
     // Force member 0 to dispatch reimbursement without proper advancement setup
     let committee_id = committee.committee_id();
-    let member = &mut committee.members[0];
+    let member: &Member = &committee.members[0];
 
     member.dispatch_reimbursement_flow(committee_id, slot_index as usize)?;
 
     info!("Starting mining loop to ensure challenge transaction is dispatched...");
-    committee.mine_and_wait(4)?;
+    committee.mine_and_wait(10)?;
 
     info!("Invalid reimbursement test complete.");
     Ok(())
