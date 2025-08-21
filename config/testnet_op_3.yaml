@@ -14,7 +14,7 @@ storage:
   path: /tmp/op_3/storage.db
 p2p:
   address: 127.0.0.1:61182
-  key: config/keys/op_3.key
+  priv_key: config/keys/op_3.key
   timeout: 5
 coordinator_settings:
   max_feerate_sat_vb: 2
