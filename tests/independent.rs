@@ -42,7 +42,7 @@ use uuid::Uuid;
 
 mod common;
 
-const MIN_TX_FEE: f64 = 8.0;
+const MIN_TX_FEE: f64 = 2.0;
 
 pub fn get_configs(network: Network) -> Result<Vec<Config>> {
     let config_names = match network {
@@ -491,7 +491,7 @@ pub fn test_all_aux(
     let _funding_key_2 = msgs[2].public_key().unwrap().1;
 
     info!("Creating speedup funds");
-    let speedup_amount = 100_000 * MIN_TX_FEE as u64;
+    let speedup_amount = 70_000 * MIN_TX_FEE as u64;
 
     let fund_txid_0 = helper.wallet.fund_address(
         WALLET_NAME,

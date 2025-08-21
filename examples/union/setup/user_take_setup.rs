@@ -12,8 +12,6 @@ use bitvmx_client::{
 use tracing::info;
 use uuid::Uuid;
 
-use crate::participants::member::Member;
-
 pub struct UserTakeSetup {}
 
 impl UserTakeSetup {
@@ -30,8 +28,8 @@ impl UserTakeSetup {
         user_pubkey: PublicKey,
         take_aggregated_key: PublicKey,
         my_id: &str,
-        members: &[Member],
         bitvmx: &BitVMXClient,
+        addresses: &Vec<P2PAddress>,
     ) -> Result<()> {
         let protocol_id = get_user_take_pid(committee_id, slot_index);
         info!(
@@ -61,14 +59,10 @@ impl UserTakeSetup {
         bitvmx.setup(
             protocol_id,
             PROGRAM_TYPE_USER_TAKE.to_string(),
-            Self::get_addresses(members),
+            addresses.to_vec(),
             0,
         )?;
 
         Ok(())
-    }
-
-    fn get_addresses(members: &[Member]) -> Vec<P2PAddress> {
-        members.iter().map(|m| m.address.clone().unwrap()).collect()
     }
 }

@@ -28,10 +28,7 @@ where
 {
     let mut msg = bitvmx.wait_message(Some(Duration::from_secs(60)), None)?;
     while !matches_fn(&msg) {
-        info!(
-            "Waiting for another message that match condition. Message received was: {:?}",
-            msg
-        );
+        info!("Waiting for another message that match condition.");
         thread::sleep(Duration::from_millis(10));
         msg = bitvmx.wait_message(Some(Duration::from_secs(60)), None)?;
     }

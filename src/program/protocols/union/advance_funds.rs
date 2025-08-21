@@ -308,12 +308,12 @@ impl AdvanceFundsProtocol {
             self.load_protocol_by_name(PROGRAM_TYPE_DISPUTE_CORE, dispute_protocol_id)?;
 
         let tx_name = format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX);
-        let (tx, _) = dispute_core.get_transaction_by_name(&tx_name, context)?;
+        let (tx, _speedup) = dispute_core.get_transaction_by_name(&tx_name, context)?;
         let txid = tx.compute_txid();
 
         context.bitcoin_coordinator.dispatch(
             tx.clone(),
-            None,                                                      // TODO: Add speedup data
+            None,                                                      //speedup,
             format!("dispute_core_setup_{}:{}", self.ctx.id, tx_name), // Context string
             None,                                                      // Dispatch immediately
         )?;
@@ -347,13 +347,13 @@ impl AdvanceFundsProtocol {
             self.load_protocol_by_name(PROGRAM_TYPE_DISPUTE_CORE, dispute_protocol_id)?;
 
         let tx_name = indexed_name(REIMBURSEMENT_KICKOFF_TX, slot_index);
-        let (tx, _) = dispute_core_ph.get_transaction_by_name(&tx_name, context)?;
+        let (tx, _speedup) = dispute_core_ph.get_transaction_by_name(&tx_name, context)?;
         let txid = tx.compute_txid();
 
         // Dispatch the transaction through the bitcoin coordinator
         context.bitcoin_coordinator.dispatch(
             tx.clone(),
-            None,            // TODO: Add speedup data
+            None,            //speedup,
             tx_name.clone(), // Context string
             None,            // Dispatch immediately
         )?;

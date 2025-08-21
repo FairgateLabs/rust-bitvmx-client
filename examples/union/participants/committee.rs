@@ -1,16 +1,17 @@
 use anyhow::Result;
 use bitcoin::Txid;
+use bitvmx_client::program::participant::P2PAddress;
 use bitvmx_client::program::protocols::union::common::{
     get_accept_pegin_pid, get_dispute_aggregated_key_pid, get_take_aggreated_key_pid,
     get_user_take_pid,
 };
-use bitvmx_client::program::protocols::union::types::{ACCEPT_PEGIN_TX, USER_TAKE_TX};
+use bitvmx_client::program::protocols::union::types::{MemberData, ACCEPT_PEGIN_TX, USER_TAKE_TX};
 use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtxo};
 use bitvmx_client::types::OutgoingBitVMXApiMessages::{SPVProof, Transaction, TransactionInfo};
 
 use bitcoin::{Amount, PublicKey, ScriptBuf};
 use bitvmx_wallet::wallet::Wallet;
-use protocol_builder::types::OutputType;
+use protocol_builder::types::{OutputType, Utxo};
 use std::collections::HashMap;
 use std::thread::{self};
 use std::time::Duration;
@@ -72,11 +73,11 @@ impl Committee {
 
         let take_aggregation_id = self.take_aggregation_id;
         let dispute_aggregation_id = self.dispute_aggregation_id;
-        let members = self.members.clone();
 
-        self.all(|op| {
+        let members = self.members.clone();
+        let _ = self.all(|op: &mut Member| {
             op.setup_committee_keys(
-                &members,
+                &members.clone(),
                 &members_take_pubkeys,
                 &members_dispute_pubkeys,
                 take_aggregation_id,
@@ -87,15 +88,37 @@ impl Committee {
         let seed = self.committee_id;
 
         let mut funding_utxos_per_member: HashMap<PublicKey, PartialUtxo> = HashMap::new();
+        let mut speedup_funding_utxos_per_member: HashMap<PublicKey, Utxo> = HashMap::new();
         for member in &self.members {
             funding_utxos_per_member.insert(
                 member.keyring.take_pubkey.unwrap(),
-                self.get_funding_utxo(member)?,
+                self.get_funding_utxo(10_000_000, &member.keyring.dispute_pubkey.unwrap())?,
             );
+
+            let partial =
+                self.get_funding_utxo(10_000_000, &member.keyring.dispute_pubkey.unwrap())?;
+            let utxo = Utxo::new(
+                partial.0,
+                partial.1,
+                partial.2.unwrap(),
+                &member.keyring.dispute_pubkey.unwrap(),
+            );
+            speedup_funding_utxos_per_member.insert(member.keyring.take_pubkey.unwrap(), utxo);
         }
 
+        let members = self.get_member_data();
+        let addresses = self.get_addresses();
+
         self.all(|op: &mut Member| {
-            op.setup_dispute_protocols(seed, &members, &funding_utxos_per_member)
+            op.setup_dispute_protocols(
+                seed,
+                &members.clone(),
+                &funding_utxos_per_member,
+                &speedup_funding_utxos_per_member
+                    .get(op.keyring.take_pubkey.as_ref().unwrap())
+                    .unwrap(),
+                &addresses.clone(),
+            )
         })?;
 
         Ok(self.public_key()?)
@@ -111,11 +134,12 @@ impl Committee {
         rootstock_address: String,
         reimbursement_pubkey: PublicKey,
     ) -> Result<()> {
-        let members = self.members.clone();
+        let members = self.get_member_data();
+        let addresses = self.get_addresses();
 
         self.all(|op: &mut Member| {
             op.accept_pegin(
-                &members,
+                &members.clone(),
                 request_pegin_txid,
                 amount,
                 accept_pegin_sighash.as_slice(),
@@ -123,6 +147,7 @@ impl Committee {
                 slot_index,
                 rootstock_address.clone(),
                 reimbursement_pubkey.clone(),
+                &addresses.clone(),
             )
         })?;
 
@@ -185,8 +210,8 @@ impl Committee {
         pegout_signature_hash: Vec<u8>,
         pegout_signature_message: Vec<u8>,
     ) -> Result<()> {
-        let members = self.members.clone();
         let committee_id = self.committee_id.clone();
+        let addresses = self.get_addresses();
 
         self.all(|op: &mut Member| {
             op.request_pegout(
@@ -199,7 +224,7 @@ impl Committee {
                 pegout_signature_hash.clone(),
                 pegout_signature_message.clone(),
                 user_pubkey,
-                &members,
+                &addresses,
             )
         })?;
 
@@ -218,7 +243,6 @@ impl Committee {
     ) -> Result<()> {
         let protocol_id = Uuid::new_v4();
         let committee_id = self.committee_id.clone();
-        let members = self.members.clone();
 
         self.all(|op: &mut Member| {
             op.advance_funds(
@@ -228,7 +252,6 @@ impl Committee {
                 user_public_key,
                 pegout_id.clone(),
                 selected_operator_pubkey,
-                &members,
             )
         })?;
 
@@ -242,14 +265,8 @@ impl Committee {
         Ok(self.members[0].keyring.take_aggregated_key.unwrap())
     }
 
-    fn get_funding_utxo(&self, member: &Member) -> Result<PartialUtxo> {
-        self.prepare_funding_utxo(
-            &self.wallet,
-            "fund_1",
-            &member.keyring.dispute_pubkey.unwrap(),
-            10_000_000,
-            None,
-        )
+    fn get_funding_utxo(&self, amount: u64, pubkey: &PublicKey) -> Result<PartialUtxo> {
+        self.prepare_funding_utxo(&self.wallet, "fund_1", pubkey, amount, None)
     }
 
     fn prepare_funding_utxo(
@@ -281,6 +298,24 @@ impl Committee {
         };
 
         Ok((txid, 0, Some(amount), Some(output_type)))
+    }
+
+    fn get_addresses(&self) -> Vec<P2PAddress> {
+        self.members
+            .iter()
+            .map(|m| m.address.clone().unwrap())
+            .collect()
+    }
+
+    fn get_member_data(&self) -> Vec<MemberData> {
+        self.members
+            .iter()
+            .map(|m| MemberData {
+                role: m.role.clone(),
+                take_key: m.keyring.take_pubkey.unwrap(),
+                dispute_key: m.keyring.dispute_pubkey.unwrap(),
+            })
+            .collect()
     }
 
     fn all<F, R>(&mut self, f: F) -> Result<Vec<R>>

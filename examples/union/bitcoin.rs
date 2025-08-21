@@ -58,6 +58,20 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
         config.bitcoin.clone(),
     );
     info!("Starting bitcoind");
+
+    // Config to trigger speedup transactions in Regtest
+    // let bitcoind = Bitcoind::new_with_flags(
+    //     "bitcoin-regtest",
+    //     "ruimarinho/bitcoin-core",
+    //     config.bitcoin.clone(),
+    //     BitcoindFlags {
+    //         min_relay_tx_fee: 0.00001,
+    //         block_min_tx_fee: 0.00008,
+    //         debug: 1,
+    //         fallback_fee: 0.0002,
+    //     },
+    // );
+
     bitcoind.start()?;
 
     let wallet_config = match config.bitcoin.network {
