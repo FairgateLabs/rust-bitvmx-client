@@ -62,8 +62,7 @@ pub fn main() -> Result<()> {
         &bitcoin_client,
     )?;
 
-    let msg_req =
-        serde_json::to_string(&(txid, pubuser, ordinal_fee, protocol_fee, preimage, hash))?;
+    let msg_req = serde_json::to_string(&(txid, pubuser, ordinal_fee, preimage, hash))?;
     channel.send(identifier, msg_req)?;
 
     Ok(())

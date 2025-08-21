@@ -23,7 +23,7 @@ use bitvmx_client::{
         },
         variables::WitnessTypes,
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, PROGRAM_TYPE_LOCK},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
 
 use bitvmx_wallet::wallet::Wallet;
@@ -37,8 +37,6 @@ use std::{
     str::FromStr,
     sync::{Arc, Mutex},
 };
-
-use crate::common::ParticipantChannel;
 
 pub fn wait_message_from_channel(channel: &DualChannel) -> Result<(String, Identifier)> {
     //loop to timeout
@@ -124,6 +122,7 @@ pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
 pub fn main() -> Result<()> {
     // This will act as rpc with to allow the wallets to talk with the L2
     let config = StorageConfig::new("/tmp/lockservice_broker".to_string(), None);
+    init_tls();
     let broker_backend = Storage::new(&config)?;
     let broker_backend = Arc::new(Mutex::new(broker_backend));
     let broker_storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
@@ -154,7 +153,11 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>, identifier: Identifier)
     let bridge_3 = init_broker("op_3")?;
     //let bridge_4 = init_broker("op_4")?;
 
-    let channels = vec![bridge_1, bridge_2, bridge_3];
+    let id_channel_pairs = vec![bridge_1, bridge_2, bridge_3];
+    let channels = id_channel_pairs
+        .iter()
+        .map(|pair| pair.channel.clone())
+        .collect::<Vec<_>>();
 
     let command = IncomingBitVMXApiMessages::GetCommInfo().to_string()?;
     send_all(&id_channel_pairs, &command)?;
@@ -176,7 +179,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>, identifier: Identifier)
     info!("================================================");
     let funding_public_id = Uuid::new_v4();
     let command = IncomingBitVMXApiMessages::GetPubKey(funding_public_id, true).to_string()?;
-    send_all(&channels, &command)?;
+    send_all(&id_channel_pairs, &command)?;
     let msgs = get_all(&channels)?
         .iter()
         .map(|msg| OutgoingBitVMXApiMessages::from_string(&msg.0).unwrap())
@@ -184,9 +187,9 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>, identifier: Identifier)
     let funding_key_0 = msgs[0].public_key().unwrap().1;
     let funding_key_1 = msgs[1].public_key().unwrap().1;
     let funding_key_2 = msgs[2].public_key().unwrap().1;
-    set_speedup_funding(10_000_000, &funding_key_0, &channels[0], &wallet)?;
-    set_speedup_funding(10_000_000, &funding_key_1, &channels[1], &wallet)?;
-    set_speedup_funding(10_000_000, &funding_key_2, &channels[2], &wallet)?;
+    set_speedup_funding(10_000_000, &funding_key_0, &id_channel_pairs[0], &wallet)?;
+    set_speedup_funding(10_000_000, &funding_key_1, &id_channel_pairs[1], &wallet)?;
+    set_speedup_funding(10_000_000, &funding_key_2, &id_channel_pairs[2], &wallet)?;
 
     info!("================================================");
     info!("Setting up aggregated addresses");
@@ -288,7 +291,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>, identifier: Identifier)
         let lockreqtx_on_chain = Uuid::new_v4();
         let command = IncomingBitVMXApiMessages::SubscribeToTransaction(lockreqtx_on_chain, txid)
             .to_string()?;
-        send_all(&channels, &command)?;
+        send_all(&id_channel_pairs, &command)?;
         info!("Subscribe to lockreq transaction: {}", lockreqtx_on_chain);
 
         info!("Wait to mine");
@@ -320,9 +323,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>, identifier: Identifier)
             100,
         );
 
-        for c in &channels {
-            lock_protocol_configuration.setup(&c, addresses.clone(), 0)?;
-        }
+        lock_protocol_configuration.setup(&id_channel_pairs, addresses.clone(), 0)?;
 
         get_all(&channels)?;
 
@@ -472,7 +473,7 @@ fn adjust_parity(
 pub fn set_speedup_funding(
     amount: u64,
     pub_key: &BitcoinPubKey,
-    channel: &DualChannel,
+    id_channel_pair: &ParticipantChannel,
     wallet: &Wallet,
 ) -> Result<()> {
     let fund_txid = wallet.fund_address(
@@ -490,6 +491,8 @@ pub fn set_speedup_funding(
 
     let funds_utxo_0 = Utxo::new(fund_txid, 0, amount, pub_key);
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
-    channel.send(BITVMX_ID, command)?;
+    id_channel_pair
+        .channel
+        .send(id_channel_pair.id.clone(), command)?;
     Ok(())
 }
