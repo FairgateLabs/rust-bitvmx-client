@@ -1096,56 +1096,32 @@ impl BitVMXApi for BitVMX {
                     )?;
                 }
             }
-            IncomingBitVMXApiMessages::GetSignedPubKey(id, new) => {
-                let mut public_key = if new {
-                    self.program_context.key_chain.derive_keypair()?
-                } else {
-                    let collaboration = self
-                        .get_collaboration(&id)?
-                        .ok_or(BitVMXError::ProgramNotFound(id))?;
-                    let aggregated = collaboration
-                        .aggregated_key
-                        .ok_or(BitVMXError::ProgramNotFound(id))?;
-                    self.program_context
-                        .key_chain
-                        .key_manager
-                        .get_my_public_key(&aggregated)?
-                };
+            IncomingBitVMXApiMessages::SignMessage(id, payload, public_key) => {
+                // Create message from the payload
+                let message = Message::from_digest_slice(&payload)
+                    .map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
-                // Get uncompressed public key coordinates as in your example
-                public_key.compressed = false;
-                let uncompressed_pub_key = public_key.to_bytes().split_off(1); // Remove the 0x04 prefix
-                
-                // Create keccak256 hash of the uncompressed public key
-                let mut keccak = Keccak::v256();
-                let mut pub_key_hash = [0u8; 32];
-                keccak.update(&uncompressed_pub_key);
-                keccak.finalize(&mut pub_key_hash);
-
-                // Create message from the hash
-                // TODO map error to BitVMXError
-                let message = Message::from_digest_slice(&pub_key_hash).unwrap();
-
-                // Set back to compressed for signing
-                public_key.compressed = true;
-
-                // Sign message
+                // Sign the message with the provided public key
                 let recoverable_signature = self.program_context.key_chain.key_manager
                     .sign_ecdsa_recoverable_message(&message, &public_key)?;
                 
                 let (recovery_id, compact) = recoverable_signature.serialize_compact();
                 let (r_bytes, s_bytes) = compact.split_at(32);
                 
-                let signed_pubkey = SignedPublicKey {
-                    public_key,
-                    signature_r: r_bytes.try_into().unwrap(),
-                    signature_s: s_bytes.try_into().unwrap(),
-                    recovery_id: recovery_id.to_i32() as u8,
-                };
+                // Convert to fixed-size arrays
+                let signature_r: [u8; 32] = r_bytes.try_into()
+                    .map_err(|_| BitVMXError::InvalidMessageFormat)?;
+                let signature_s: [u8; 32] = s_bytes.try_into()
+                    .map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
                 self.program_context.broker_channel.send(
                     from,
-                    serde_json::to_string(&OutgoingBitVMXApiMessages::SignedPubKey(id, signed_pubkey))?,
+                    serde_json::to_string(&OutgoingBitVMXApiMessages::SignedMessage(
+                        id, 
+                        signature_r, 
+                        signature_s, 
+                        recovery_id.to_i32() as u8
+                    ))?,
                 )?;
             }
             IncomingBitVMXApiMessages::GetAggregatedPubkey(id) => {
