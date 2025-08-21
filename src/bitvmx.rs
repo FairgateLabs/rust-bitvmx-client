@@ -18,7 +18,6 @@ use crate::{
     },
 };
 use bitcoin::{PublicKey, Transaction, Txid};
-use bitcoin::hashes::{Hash, sha256::Hash as Sha256Hash};
 use bitcoin::secp256k1::Message;
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_coordinator::{
@@ -963,7 +962,7 @@ impl BitVMXApi for BitVMX {
         }
 
         let decoded: IncomingBitVMXApiMessages = serde_json::from_str(&msg)?;
-        info!("< {:?}", decoded);
+        debug!("< {:?}", decoded);
 
         match decoded {
             IncomingBitVMXApiMessages::GetHashedMessage(id, name, vout, leaf) => {
