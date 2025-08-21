@@ -6,8 +6,7 @@ pub mod dispute;
 use anyhow::Result;
 use bitcoin::{Network, PublicKey};
 use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
-use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
-use bitcoincore_rpc::RpcApi;
+use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
 use bitvmx_client::{
     bitvmx::BitVMX,
@@ -134,52 +133,21 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
     let wallet_config = bitvmx_settings::settings::load_config_file::<
         bitvmx_wallet::config::WalletConfig,
     >(Some(wallet_config.to_string()))?;
-    
     if config.bitcoin.network == Network::Regtest {
         clear_db(&wallet_config.storage.path);
         clear_db(&wallet_config.key_storage.path);
     }
-    
     let wallet = Wallet::new(wallet_config, true)?;
     wallet.mine(INITIAL_BLOCK_COUNT)?;
 
-    // SIMPLIFICAR: usar WALLET_NAME siempre
-    info!("🎯 Creating wallet: {}", WALLET_NAME);
-
-    let bitcoin_client = if is_ci {
-        // 1. Cliente genérico para operaciones globales
-        let generic_client = BitcoinClient::new(
-            &config.bitcoin.url,
-            &config.bitcoin.username,
-            &config.bitcoin.password,
-        )?;
-        
-        // 2. Crear wallet usando cliente genérico (si no existe)
-        let wallets = generic_client.client.list_wallets().unwrap_or_default();
-        if !wallets.contains(&WALLET_NAME.to_string()) {
-            let _ = generic_client.client.create_wallet(WALLET_NAME, None, None, None, None);
-        }
-        
-        // 3. Cliente específico para operaciones de wallet
-        BitcoinClient::new_with_wallet(
-            &config.bitcoin.url,
-            &config.bitcoin.username,
-            &config.bitcoin.password,
-            WALLET_NAME,
-        )?
-    } else {
-        BitcoinClient::new(
-            &config.bitcoin.url,
-            &config.bitcoin.username,
-            &config.bitcoin.password,
-        )?
-    };
-
-    // Configurar storage interno SIEMPRE con WALLET_NAME
     wallet.create_wallet(WALLET_NAME)?;
     wallet.regtest_fund(WALLET_NAME, FUNDING_ID, 100_000_000)?;
 
-    info!("✅ Wallet '{}' created and configured", WALLET_NAME);
+    let bitcoin_client = BitcoinClient::new(
+        &config.bitcoin.url,
+        &config.bitcoin.username,
+        &config.bitcoin.password,
+    )?;
 
     Ok((bitcoin_client, bitcoind, wallet))
 }
