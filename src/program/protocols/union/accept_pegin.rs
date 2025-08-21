@@ -9,7 +9,7 @@ use crate::{
             union::{
                 common::{create_transaction_reference, get_dispute_core_pid, indexed_name},
                 types::{
-                    Committee, PegInAccepted, PegInRequest, ACCEPT_PEGIN_TX,
+                    Committee, MemberData, PegInAccepted, PegInRequest, ACCEPT_PEGIN_TX,
                     DISPUTE_CORE_LONG_TIMELOCK, OPERATOR_LEAF_INDEX, OPERATOR_TAKE_ENABLER,
                     OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX, P2TR_FEE,
                     REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, SPEEDUP_VALUE,
@@ -123,6 +123,11 @@ impl ProtocolHandler for AcceptPegInProtocol {
             .committee(context, pegin_request.committee_id)?
             .indexes_map();
 
+        let members_data: Vec<MemberData> =
+            self.committee(context, pegin_request.committee_id)?.members;
+
+        // FIXME: It's possible to remove operators_take_key from PegInRequest and just use indexes.
+        // Take pub key could be recovered from self.committee(context, pegin_request.committee_id)?.members;
         // Loop over operators and create take 1 and take 2 transactions
         for (index, take_key) in pegin_request.operators_take_key.iter().enumerate() {
             let dispute_protocol_id = get_dispute_core_pid(pegin_request.committee_id, take_key);
@@ -130,6 +135,8 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 pegin_request.committee_id,
                 take_key.to_string(),
             ))?;
+
+            let dispute_pubkey = &members_data[*operator_index].dispute_key.clone();
 
             // Operator take transaction data
             let operator_take_enabler =
@@ -148,6 +155,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 *operator_index,
                 amount,
                 take_key,
+                dispute_pubkey,
                 pegin_request_txid,
                 kickoff_tx_name,
                 operator_take_enabler.clone(),
@@ -170,6 +178,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 *operator_index,
                 amount,
                 take_key,
+                dispute_pubkey,
                 pegin_request_txid,
                 reveal_tx_name,
                 operator_won_enabler.clone(),
@@ -387,6 +396,7 @@ impl AcceptPegInProtocol {
         operator_index: usize,
         amount: u64,
         take_pubkey: &PublicKey,
+        dispute_pubkey: &PublicKey,
         pegin_txid: Txid,
         kickoff_tx_name: &str,
         take_enabler: PartialUtxo,
@@ -418,7 +428,12 @@ impl AcceptPegInProtocol {
 
         // Speed up transaction (Operator pay for it)
         let pb = ProtocolBuilder {};
-        pb.add_speedup_output(protocol, operator_take_tx_name, SPEEDUP_VALUE, &take_pubkey)?;
+        pb.add_speedup_output(
+            protocol,
+            operator_take_tx_name,
+            SPEEDUP_VALUE,
+            &dispute_pubkey,
+        )?;
 
         Ok(())
     }
@@ -429,6 +444,7 @@ impl AcceptPegInProtocol {
         operator_index: usize,
         amount: u64,
         take_pubkey: &PublicKey,
+        dispute_pubkey: &PublicKey,
         pegin_txid: Txid,
         reveal_tx_name: &str,
         won_enabler: PartialUtxo,
@@ -462,7 +478,12 @@ impl AcceptPegInProtocol {
 
         // Speed up transaction (Operator pay for it)
         let pb = ProtocolBuilder {};
-        pb.add_speedup_output(protocol, operator_won_tx_name, SPEEDUP_VALUE, &take_pubkey)?;
+        pb.add_speedup_output(
+            protocol,
+            operator_won_tx_name,
+            SPEEDUP_VALUE,
+            &dispute_pubkey,
+        )?;
 
         Ok(())
     }

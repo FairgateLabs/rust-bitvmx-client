@@ -9,8 +9,12 @@
 //! `cargo run --example union request_pegout`     - Setups the request peg out protocol
 //! `cargo run --example union advance_funds`      - Performs an advancement of funds
 
-use ::bitcoin::PublicKey;
+use ::bitcoin::{OutPoint, PublicKey, Txid};
 use anyhow::Result;
+use bitvmx_client::program::protocols::union::{
+    common::get_accept_pegin_pid, types::ACCEPT_PEGIN_TX,
+};
+use core::convert::Into;
 use std::{env, thread, time::Duration};
 use tracing::info;
 
@@ -23,6 +27,12 @@ mod setup;
 mod bitcoin;
 mod log;
 
+// Adjust based on the network
+pub const ADVANCE_FUNDS_FEE: u64 = 1000;
+pub const ACCEPT_PEGIN_SPEEDUP_FEE: u64 = 5000;
+pub const STREAM_DENOMINATION: u64 = 100_000;
+static mut SLOT_INDEX_COUNTER: usize = 0;
+
 pub fn main() -> Result<()> {
     log::configure_tracing();
 
@@ -31,12 +41,12 @@ pub fn main() -> Result<()> {
 
     match command.map(|s| s.as_str()) {
         Some("setup_bitcoin_node") => setup_bitcoin_node()?,
-        Some("committee") => committee()?,
-        Some("request_pegin") => request_pegin()?,
-        Some("accept_pegin") => accept_pegin()?,
-        Some("request_pegout") => request_pegout()?,
-        Some("advance_funds") => advance_funds()?,
-        Some("invalid_reimbursement") => invalid_reimbursement()?,
+        Some("committee") => cli_committee()?,
+        Some("request_pegin") => cli_request_pegin()?,
+        Some("accept_pegin") => cli_accept_pegin()?,
+        Some("request_pegout") => cli_request_pegout()?,
+        Some("advance_funds") => cli_advance_funds()?,
+        Some("invalid_reimbursement") => cli_invalid_reimbursement()?,
         Some(cmd) => {
             eprintln!("Unknown command: {}", cmd);
             print_usage();
@@ -71,49 +81,68 @@ pub fn setup_bitcoin_node() -> Result<()> {
     Ok(())
 }
 
-pub fn committee() -> Result<()> {
+pub fn cli_committee() -> Result<()> {
+    committee()?;
+    Ok(())
+}
+
+pub fn cli_request_pegin() -> Result<()> {
+    request_pegin()?;
+    Ok(())
+}
+
+pub fn cli_accept_pegin() -> Result<()> {
+    accept_pegin()?;
+    Ok(())
+}
+
+pub fn cli_request_pegout() -> Result<()> {
+    request_pegout()?;
+    Ok(())
+}
+
+pub fn cli_advance_funds() -> Result<()> {
+    advance_funds()?;
+    Ok(())
+}
+
+pub fn cli_invalid_reimbursement() -> Result<()> {
+    invalid_reimbursement()?;
+    Ok(())
+}
+
+pub fn committee() -> Result<Committee> {
     // A new package is created. A committee is selected. Union client requests the setup of the
     // corresponding keys and programs.
     let mut committee = Committee::new()?;
     committee.setup()?;
+    committee.mine_and_wait(10)?;
 
-    info!("Waiting some time to ensure all setup messages are processed...");
-    thread::sleep(Duration::from_secs(2));
-    info!("Mining 1 block and wait...");
-    committee.wallet.mine(1)?;
-    thread::sleep(Duration::from_secs(2));
     info!("Committee setup complete.");
-
-    Ok(())
+    Ok(committee)
 }
 
-pub fn request_pegin() -> Result<()> {
+pub fn request_pegin() -> Result<(Committee, User, Txid, u64)> {
     // A peg-in request is reported by the Union Client.
-    let mut committee = Committee::new()?;
-    let committee_public_key = committee.setup()?;
+    let committee = committee()?;
+    let committee_public_key = committee.public_key()?;
 
     let mut user = User::new("user_1")?;
-    let amount: u64 = 100_000; // This should be replaced with the actual amount of the peg-in request
-    user.request_pegin(&committee_public_key, amount)?;
+    let amount: u64 = STREAM_DENOMINATION; // This should be replaced with the actual amount of the peg-in request
+    let request_pegin_txid = user.request_pegin(&committee_public_key, amount)?;
 
-    Ok(())
+    Ok((committee, user, request_pegin_txid, amount))
 }
 
-pub fn accept_pegin() -> Result<()> {
-    // A peg-in request is reported by the Union Client. The committee accepts the peg-in request.
-    let mut committee = Committee::new()?;
-    let committee_public_key = committee.setup()?;
-
-    let mut user = User::new("user_1")?;
-    let amount = 100_000; // This should be replaced with the actual amount of the peg-in request
-
-    let request_pegin_txid = user.request_pegin(&committee_public_key, amount)?;
-    let rootstock_address = user.get_rsk_address();
-    let reimbursement_pubkey = user.public_key()?;
+pub fn accept_pegin() -> Result<(Committee, User, usize, u64)> {
+    let (mut committee, user, request_pegin_txid, amount) = request_pegin()?;
 
     // This came from the contracts
+    let rootstock_address = user.get_rsk_address();
+    let reimbursement_pubkey = user.public_key()?;
     let accept_pegin_sighash = vec![0; 32]; // This should be replaced with the actual sighash of the accept peg-in tx
-    let slot_index = 0; // This should be replaced with the actual slot index
+    let slot_index = unsafe { SLOT_INDEX_COUNTER }; // This should be replaced with the actual slot index
+    unsafe { SLOT_INDEX_COUNTER += 1 };
 
     committee.accept_pegin(
         committee.committee_id(),
@@ -123,38 +152,30 @@ pub fn accept_pegin() -> Result<()> {
         slot_index,
         rootstock_address.clone(),
         reimbursement_pubkey.clone(),
+        false,
     )?;
-    Ok(())
+
+    let protocol_id = get_accept_pegin_pid(committee.committee_id(), slot_index);
+    let accept_pegin_txid =
+        committee.dispatch_transaction_by_name(protocol_id, ACCEPT_PEGIN_TX.to_string())?;
+    thread::sleep(Duration::from_secs(1));
+
+    user.create_and_dispatch_speedup(
+        OutPoint {
+            txid: accept_pegin_txid.into(),
+            vout: 1,
+        },
+        ACCEPT_PEGIN_SPEEDUP_FEE,
+    )?;
+
+    committee.mine_and_wait(3)?;
+    committee.wait_for_spv_proof(accept_pegin_txid)?;
+
+    Ok((committee, user, slot_index, amount))
 }
 
 pub fn request_pegout() -> Result<()> {
-    // A peg-in request is reported by the Union Client. The committee accepts the peg-in request.
-    let mut committee = Committee::new()?;
-    let committee_public_key = committee.setup()?;
-
-    let mut user = User::new("user_1")?;
-    let amount = 100_000; // This should be replaced with the actual amount of the peg-in request
-
-    let request_pegin_txid = user.request_pegin(&committee_public_key, amount)?;
-    let rootstock_address = user.get_rsk_address();
-    let reimbursement_pubkey = user.public_key()?;
-
-    // This came from the contracts
-    let accept_pegin_sighash = vec![0; 32]; // This should be replaced with the actual sighash of the accept peg-in tx
-    let slot_index = 0; // This should be replaced with the actual slot index
-
-    committee.accept_pegin(
-        committee.committee_id(),
-        request_pegin_txid,
-        amount,
-        accept_pegin_sighash,
-        slot_index,
-        rootstock_address.clone(),
-        reimbursement_pubkey.clone(),
-    )?;
-
-    // Wait some time to ensure the accept peg-in is processed
-    thread::sleep(Duration::from_secs(5));
+    let (mut committee, user, slot_index, amount) = accept_pegin()?;
 
     let user_pubkey = user.public_key()?;
     let stream_id = 0; // This should be replaced with the actual stream ID
@@ -178,40 +199,14 @@ pub fn request_pegout() -> Result<()> {
 }
 
 pub fn advance_funds() -> Result<()> {
-    // Advance funds to a user after a request pegout is not successfully processed.
-    let mut committee = Committee::new()?;
-    let committee_public_key = committee.setup()?;
-
-    let mut user = User::new("user_1")?;
-    let amount = 100_000; // This should be replaced with the actual amount of the peg-in request
-
-    let request_pegin_txid = user.request_pegin(&committee_public_key, amount)?;
+    let (mut committee, _, slot_index, _) = accept_pegin()?;
 
     // This came from the contracts
-    let rootstock_address = user.get_rsk_address();
-    let reimbursement_pubkey = user.public_key()?;
-    let accept_pegin_sighash = vec![0; 32]; // This should be replaced with the actual sighash of the accept peg-in tx
-    let slot_index = 0; // This should be replaced with the actual slot index
-
-    committee.accept_pegin(
-        committee.committee_id(),
-        request_pegin_txid,
-        amount,
-        accept_pegin_sighash,
-        slot_index,
-        rootstock_address.clone(),
-        reimbursement_pubkey.clone(),
-    )?;
-
-    // After some time, a peg-out request is not successfully processed and an operator is selected to advance funds.
-    thread::sleep(Duration::from_secs(2));
-
     let user_public_key = "026e14224899cf9c780fef5dd200f92a28cc67f71c0af6fe30b5657ffc943f08f4"; // Placeholder for the actual user public key
     let pegout_id = vec![0; 32]; // Placeholder for the actual peg-out ID
-    let slot_index = 0; // Placeholder for the slot ID
-    let operator_id = 0; // Placeholder for the actual operator ID
 
     // Get the selected operator's take public key (simulating what Union Client would provide)
+    let operator_id = 0; // Placeholder for the actual operator ID
     let selected_operator_pubkey = committee.members[operator_id].keyring.take_pubkey.unwrap();
 
     committee.advance_funds(
@@ -219,63 +214,28 @@ pub fn advance_funds() -> Result<()> {
         user_public_key.parse::<PublicKey>().unwrap(),
         pegout_id,
         selected_operator_pubkey,
+        ADVANCE_FUNDS_FEE,
     )?;
 
-    info!("Letting the network run...");
-    for _ in 0..20 {
-        info!("Mining 1 block and wait...");
-        committee.wallet.mine(1)?;
-        thread::sleep(Duration::from_secs(1));
-    }
+    committee.mine_and_wait(30)?;
     info!("Advance funds complete.");
-
     Ok(())
 }
 
 pub fn invalid_reimbursement() -> Result<()> {
-    // Force an invalid reimbursement dispatch to test challenge mechanism
-    let mut committee = Committee::new()?;
-    let committee_public_key = committee.setup()?;
-
-    let mut user = User::new("user_1")?;
-    let amount = 100_000;
-
-    let request_pegin_txid = user.request_pegin(&committee_public_key, amount)?;
-    let rootstock_address = user.get_rsk_address();
-    let reimbursement_pubkey = user.public_key()?;
-
-    // This came from the contracts
-    let accept_pegin_sighash = vec![0; 32];
-    let slot_index = 0;
-
-    committee.accept_pegin(
-        committee.committee_id(),
-        request_pegin_txid,
-        amount,
-        accept_pegin_sighash,
-        slot_index,
-        rootstock_address.clone(),
-        reimbursement_pubkey.clone(),
-    )?;
-
-    // Wait some time to ensure the accept peg-in is processed
-    thread::sleep(Duration::from_secs(5));
+    let (mut committee, _, slot_index, _) = accept_pegin()?;
 
     info!("Forcing member 0 to dispatch invalid reimbursement transaction...");
-
     // Force member 0 to dispatch reimbursement without proper advancement setup
     let committee_id = committee.committee_id();
     let member = &mut committee.members[0];
+
     member.dispatch_reimbursement_flow(committee_id, slot_index as usize)?;
 
     info!("Starting mining loop to ensure challenge transaction is dispatched...");
-    for _ in 0..4 {
-        info!("Mining 1 block and wait...");
-        committee.wallet.mine(1)?;
-        thread::sleep(Duration::from_secs(1));
-    }
-    info!("Invalid reimbursement test complete.");
+    committee.mine_and_wait(4)?;
 
+    info!("Invalid reimbursement test complete.");
     Ok(())
 }
 

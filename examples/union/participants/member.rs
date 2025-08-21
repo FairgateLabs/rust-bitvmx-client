@@ -259,6 +259,7 @@ impl Member {
         user_pubkey: PublicKey,
         pegout_id: Vec<u8>,
         selected_operator_pubkey: PublicKey,
+        fee: u64,
     ) -> Result<()> {
         let mut helper = AdvanceFundsHelper::new(&self.config)?;
 
@@ -295,6 +296,7 @@ impl Member {
             self.keyring.take_pubkey.unwrap(),
             pegout_id.clone(),
             self.address()?.clone(),
+            fee,
         )?;
 
         if self.keyring.take_pubkey.unwrap() == selected_operator_pubkey {
