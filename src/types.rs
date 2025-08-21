@@ -20,14 +20,6 @@ use crate::{
     },
 };
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct SignedPublicKey {
-    pub public_key: PublicKey,
-    pub signature_r: [u8; 32],
-    pub signature_s: [u8; 32],
-    pub recovery_id: u8,
-}
-
 pub struct ProgramContext {
     pub key_chain: KeyChain,
     pub comms: P2pHandler,
