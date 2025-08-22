@@ -19,6 +19,7 @@ use tracing::info;
 use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
+    program::{protocols::union::types::SPEEDUP_VALUE, variables::PartialUtxo},
     types::{OutgoingBitVMXApiMessages::*, L2_ID},
 };
 
@@ -122,11 +123,8 @@ impl User {
         packet_number: u64,
     ) -> Result<Txid> {
         // We'll create a transaction that will be detected as RSK pegin by the transaction monitor.
-        let signed_transaction = self.create_rsk_request_pegin_transaction(
-            aggregated_pubkey,
-            stream_value,
-            packet_number,
-        )?;
+        let signed_transaction =
+            self.create_request_pegin_tx(aggregated_pubkey, stream_value, packet_number)?;
         let txid = self
             .bitcoin_client
             .send_transaction(&signed_transaction)
@@ -143,7 +141,24 @@ impl User {
         Ok(request_pegin_txid)
     }
 
-    fn create_rsk_request_pegin_transaction(
+    pub fn dispatch_tx(&self, tx: Transaction) -> Result<Txid> {
+        let txid = self
+            .bitcoin_client
+            .send_transaction(&tx)
+            .map_err(|e| anyhow::anyhow!("Failed to dispatch transaction: {}", e))?;
+
+        Ok(txid)
+    }
+
+    pub fn get_funding_utxo(&self, amount: u64) -> Result<PartialUtxo> {
+        let (funding_tx, vout) = self
+            .bitcoin_client
+            .fund_address(&self.address, Amount::from_sat(amount))
+            .unwrap();
+        Ok((funding_tx.compute_txid(), vout, Some(amount), None))
+    }
+
+    fn create_request_pegin_tx(
         &mut self,
         aggregated_key: PublicKey,
         stream_value: u64,
@@ -154,10 +169,10 @@ impl User {
         pub const OP_RETURN_FEE: u64 = 300;
         pub const TIMELOCK_BLOCKS: u16 = 1;
         // TODO: This should be based on the actual fee rate from the Bitcoin network
-        // pub const EXTRA_FEE: u64 = 1000;
+        pub const EXTRA_FEE: u64 = 1000;
 
         let value = stream_value;
-        let fee = KEY_SPEND_FEE; // + EXTRA_FEE;
+        let fee = KEY_SPEND_FEE + EXTRA_FEE;
         let op_return_fee = OP_RETURN_FEE;
         let total_amount = value + fee + op_return_fee;
 
@@ -221,11 +236,64 @@ impl User {
             output: vec![taproot_output, op_return_output],
         };
 
-        let signed_transaction = self
-            .sign_p2wpkh_transaction_single_input(&mut request_pegin_transaction, total_amount)?;
+        let signed_transaction = self.sign_p2wpkh_transaction(
+            &mut request_pegin_transaction,
+            [(0 as usize, total_amount)].to_vec(),
+        )?;
+        info!("Request pegin txid: {}", signed_transaction.compute_txid());
+
+        Ok(signed_transaction)
+    }
+
+    pub fn create_and_dispatch_speedup(&self, tx_output: OutPoint, fee: u64) -> Result<()> {
+        let speedup_tx = self.create_speedup_tx(tx_output, fee)?;
+
+        let speedup_txid = self.dispatch_tx(speedup_tx)?;
+        info!("Speedup transaction dispatched: {}", speedup_txid);
+        Ok(())
+    }
+
+    pub fn create_speedup_tx(&self, tx_output: OutPoint, fee: u64) -> Result<Transaction> {
+        let funding_utxo = self.get_funding_utxo(10_000_000)?;
+
+        // Create two inputs: one from the funding utxo, one from the output to speed up
+        let input_funding = TxIn {
+            previous_output: OutPoint::new(funding_utxo.0, funding_utxo.1 as u32),
+            script_sig: ScriptBuf::default(),
+            sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+            witness: Witness::default(),
+        };
+
+        let input_speedup = TxIn {
+            previous_output: tx_output,
+            script_sig: ScriptBuf::default(),
+            sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+            witness: Witness::default(),
+        };
+
+        // Output: all funds (minus fee) to user address
+        let total_in = funding_utxo.2.unwrap(); // You may want to add the value of tx_output if known
+        let output = TxOut {
+            value: Amount::from_sat(total_in - fee),
+            script_pubkey: self.address.script_pubkey(),
+        };
+
+        let mut transaction = Transaction {
+            version: transaction::Version::TWO,
+            lock_time: absolute::LockTime::ZERO,
+            input: vec![input_speedup, input_funding],
+            output: vec![output],
+        };
+
+        // Sign the transaction (this may need to be adapted to sign both inputs)
+        let signed_transaction = self.sign_p2wpkh_transaction(
+            &mut transaction,
+            [(0, SPEEDUP_VALUE), (1, total_in)].to_vec(),
+        )?;
         info!(
-            "Signed RSK request pegin transaction: {:#?}",
-            signed_transaction
+            "Speeding up txid: {}. Speedup txid: {}",
+            tx_output.txid,
+            signed_transaction.compute_txid()
         );
 
         Ok(signed_transaction)
@@ -256,10 +324,10 @@ impl User {
         Ok(address_bytes)
     }
 
-    fn sign_p2wpkh_transaction_single_input(
-        &mut self,
+    fn sign_p2wpkh_transaction(
+        &self,
         transaction: &mut Transaction,
-        value: u64,
+        index_amount: Vec<(usize, u64)>,
     ) -> Result<Transaction> {
         let user_bitcoin_privkey = BitcoinPrivKey {
             compressed: true,
@@ -278,26 +346,27 @@ impl User {
         let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
         let mut sighasher = SighashCache::new(transaction);
 
-        let input_index = 0;
         let sighash_type = bitcoin::EcdsaSighashType::All;
-        let sighash = sighasher
-            .p2wpkh_signature_hash(
-                input_index,
-                &script_pubkey,
-                Amount::from_sat(value),
+        for (input_index, value) in index_amount {
+            let sighash = sighasher
+                .p2wpkh_signature_hash(
+                    input_index,
+                    &script_pubkey,
+                    Amount::from_sat(value),
+                    sighash_type,
+                )
+                .expect("failed to create rsk request pegin input sighash");
+
+            let signature = bitcoin::ecdsa::Signature {
+                signature: self
+                    .secp
+                    .sign_ecdsa(&Message::from(sighash), &self.secret_key),
                 sighash_type,
-            )
-            .expect("failed to create rsk request pegin input sighash");
+            };
 
-        let signature = bitcoin::ecdsa::Signature {
-            signature: self
-                .secp
-                .sign_ecdsa(&Message::from(sighash), &self.secret_key),
-            sighash_type,
-        };
-
-        *sighasher.witness_mut(input_index).unwrap() =
-            Witness::p2wpkh(&signature, &uncompressed_pk);
+            *sighasher.witness_mut(input_index).unwrap() =
+                Witness::p2wpkh(&signature, &uncompressed_pk);
+        }
 
         // Now the transaction is signed
         let signed_transaction = sighasher.into_transaction().to_owned();

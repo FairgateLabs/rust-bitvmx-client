@@ -4,7 +4,7 @@ use bitcoin::{
     secp256k1::{All, PublicKey as SecpPublicKey, SecretKey},
     Network, PublicKey as BitcoinPubKey,
 };
-use bitcoind::bitcoind::Bitcoind;
+use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
 use bitvmx_client::config::Config;
@@ -52,25 +52,25 @@ pub fn stop_existing_bitcoind() -> Result<()> {
 pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
     let config = Config::new(Some("config/op_1.yaml".to_string()))?;
 
-    let bitcoind = Bitcoind::new(
-        "bitcoin-regtest",
-        "ruimarinho/bitcoin-core",
-        config.bitcoin.clone(),
-    );
-    info!("Starting bitcoind");
-
-    // Config to trigger speedup transactions in Regtest
-    // let bitcoind = Bitcoind::new_with_flags(
+    // let bitcoind = Bitcoind::new(
     //     "bitcoin-regtest",
     //     "ruimarinho/bitcoin-core",
     //     config.bitcoin.clone(),
-    //     BitcoindFlags {
-    //         min_relay_tx_fee: 0.00001,
-    //         block_min_tx_fee: 0.00008,
-    //         debug: 1,
-    //         fallback_fee: 0.0002,
-    //     },
     // );
+    info!("Starting bitcoind");
+
+    // Config to trigger speedup transactions in Regtest
+    let bitcoind = Bitcoind::new_with_flags(
+        "bitcoin-regtest",
+        "ruimarinho/bitcoin-core",
+        config.bitcoin.clone(),
+        BitcoindFlags {
+            min_relay_tx_fee: 0.00001,
+            block_min_tx_fee: 0.00008,
+            debug: 1,
+            fallback_fee: 0.0002,
+        },
+    );
 
     bitcoind.start()?;
 

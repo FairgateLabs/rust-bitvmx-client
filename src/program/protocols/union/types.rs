@@ -38,7 +38,7 @@ pub const NO_DISPUTE_OPENED_TX: &str = "NO_DISPUTE_OPENED_TX";
 pub const NO_CHALLENGE_TX: &str = "NO_CHALLENGE_TX";
 
 // Parameters
-pub const DISPUTE_CORE_SHORT_TIMELOCK: u16 = 3;
+pub const DISPUTE_CORE_SHORT_TIMELOCK: u16 = 1;
 pub const DISPUTE_CORE_LONG_TIMELOCK: u16 = 6;
 pub const DUST_VALUE: u64 = 540;
 pub const SPEEDUP_VALUE: u64 = 540;

@@ -133,6 +133,7 @@ impl Committee {
         slot_index: usize,
         rootstock_address: String,
         reimbursement_pubkey: PublicKey,
+        dispatch_tx: bool,
     ) -> Result<()> {
         let members = self.get_member_data();
         let addresses = self.get_addresses();
@@ -151,17 +152,17 @@ impl Committee {
             )
         })?;
 
-        let protocol_id = get_accept_pegin_pid(committee_id, slot_index);
-        self.dispatch_transaction_and_wait_for_spv_proof(protocol_id, ACCEPT_PEGIN_TX.to_string())?;
+        if dispatch_tx {
+            self.dispatch_transaction_and_wait_for_spv_proof(
+                get_accept_pegin_pid(committee_id, slot_index),
+                ACCEPT_PEGIN_TX.to_string(),
+            )?;
+        }
 
         Ok(())
     }
 
-    fn dispatch_transaction_and_wait_for_spv_proof(
-        &self,
-        protocol_id: Uuid,
-        tx_name: String,
-    ) -> Result<()> {
+    pub fn dispatch_transaction_by_name(&self, protocol_id: Uuid, tx_name: String) -> Result<Txid> {
         let bitvmx = &self.members[0].bitvmx;
         let _ = bitvmx.get_transaction_by_name(protocol_id, tx_name.clone());
         thread::sleep(std::time::Duration::from_secs(1));
@@ -175,27 +176,33 @@ impl Committee {
         );
         bitvmx.dispatch_transaction(protocol_id, tx)?;
         thread::sleep(std::time::Duration::from_secs(1));
-        self.wallet.mine(1)?;
+        Ok(txid)
+    }
 
+    pub fn wait_for_spv_proof(&self, txid: Txid) -> Result<()> {
+        let bitvmx = &self.members[0].bitvmx;
         let status = wait_until_msg!(bitvmx, Transaction(_, _status, _) => _status);
 
-        info!(
-            "Protocol handler {} sent {} transaction with status: {:?}",
-            protocol_id,
-            tx_name.clone(),
-            status
-        );
+        info!("Sent {} transaction with status: {:?}", txid, status);
 
-        info!(
-            "Waiting for SPV proof for {} transaction...",
-            tx_name.clone()
-        );
+        info!("Waiting for SPV proof...",);
         let _ = bitvmx.get_spv_proof(txid);
         let spv_proof = wait_until_msg!(
             bitvmx,
             SPVProof(_, Some(_spv_proof)) => _spv_proof
         );
-        info!("{} SPV proof: {:?}", tx_name.clone(), spv_proof);
+        info!("SPV proof: {:?}", spv_proof);
+        Ok(())
+    }
+
+    fn dispatch_transaction_and_wait_for_spv_proof(
+        &self,
+        protocol_id: Uuid,
+        tx_name: String,
+    ) -> Result<()> {
+        let txid = self.dispatch_transaction_by_name(protocol_id, tx_name.clone())?;
+        self.wallet.mine(1)?;
+        self.wait_for_spv_proof(txid)?;
         Ok(())
     }
 
@@ -240,6 +247,7 @@ impl Committee {
         user_public_key: PublicKey,
         pegout_id: Vec<u8>,
         selected_operator_pubkey: PublicKey,
+        fee: u64,
     ) -> Result<()> {
         let protocol_id = Uuid::new_v4();
         let committee_id = self.committee_id.clone();
@@ -252,6 +260,7 @@ impl Committee {
                 user_public_key,
                 pegout_id.clone(),
                 selected_operator_pubkey,
+                fee,
             )
         })?;
 
@@ -316,6 +325,16 @@ impl Committee {
                 dispute_key: m.keyring.dispute_pubkey.unwrap(),
             })
             .collect()
+    }
+
+    pub fn mine_and_wait(&self, blocks: u32) -> Result<()> {
+        info!("Letting the network run...");
+        for _ in 0..blocks {
+            info!("Mining 1 block and wait...");
+            self.wallet.mine(1)?;
+            thread::sleep(Duration::from_secs(1));
+        }
+        Ok(())
     }
 
     fn all<F, R>(&mut self, f: F) -> Result<Vec<R>>

@@ -800,7 +800,7 @@ impl DisputeCoreProtocol {
 
         info!("Getting challenge transaction: {}", challenge_tx_name);
 
-        let (mut challenge_tx, _speedup) =
+        let (mut challenge_tx, speedup) =
             self.get_transaction_by_name(&challenge_tx_name, program_context)?;
         let txid = challenge_tx.compute_txid();
 
@@ -814,7 +814,7 @@ impl DisputeCoreProtocol {
 
         program_context.bitcoin_coordinator.dispatch(
             challenge_tx,
-            None, //speedup,
+            speedup,
             format!(
                 "dispute_core_challenge_{}:{}",
                 self.ctx.id, challenge_tx_name
@@ -934,7 +934,7 @@ impl DisputeCoreProtocol {
         );
 
         // Get the signed transaction
-        let (setup_tx, _speedup) = self.setup_tx(program_context)?;
+        let (setup_tx, speedup) = self.setup_tx(program_context)?;
         let setup_txid = setup_tx.compute_txid();
 
         info!(
@@ -945,7 +945,7 @@ impl DisputeCoreProtocol {
         // Dispatch the transaction through the bitcoin coordinator
         program_context.bitcoin_coordinator.dispatch(
             setup_tx,
-            None,                                                            //speedup,
+            speedup,
             format!("dispute_core_setup_{}:{}", self.ctx.id, setup_tx_name), // Context string
             None,                                                            // Dispatch immediately
         )?;
@@ -980,13 +980,13 @@ impl DisputeCoreProtocol {
         let protocol = self.load_protocol_by_name(PROGRAM_TYPE_ACCEPT_PEGIN, accept_pegin_pid)?;
 
         let tx_name = indexed_name(OPERATOR_TAKE_TX, self.ctx.my_idx);
-        let (tx, _speedup) = protocol.get_transaction_by_name(&tx_name, context)?;
+        let (tx, speedup) = protocol.get_transaction_by_name(&tx_name, context)?;
         let txid = tx.compute_txid();
 
         context.bitcoin_coordinator.dispatch(
             tx,
-            None,               //speedup,
-            tx_name.clone(),    // Context string
+            speedup,
+            tx_name.clone(),
             Some(block_height), // Dispatch immediately with input args
         )?;
 
