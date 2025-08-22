@@ -119,6 +119,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
             &pegin_request.reimbursement_pubkey,
         )?;
 
+        // FIXME: `indexes_map()` could be removed if we use self.committee(context, pegin_request.committee_id)?.members;
         let indexes = self
             .committee(context, pegin_request.committee_id)?
             .indexes_map();

@@ -17,6 +17,7 @@ use bitvmx_client::program::protocols::union::{
 use core::convert::Into;
 use std::{env, thread, time::Duration};
 use tracing::info;
+use uuid::Uuid;
 
 use crate::participants::{committee::Committee, member::Member, user::User};
 
@@ -111,6 +112,14 @@ pub fn cli_invalid_reimbursement() -> Result<()> {
     Ok(())
 }
 
+fn get_and_increment_slot_index() -> usize {
+    unsafe {
+        let current_index = SLOT_INDEX_COUNTER;
+        SLOT_INDEX_COUNTER += 1;
+        current_index
+    }
+}
+
 pub fn committee() -> Result<Committee> {
     // A new package is created. A committee is selected. Union client requests the setup of the
     // corresponding keys and programs.
@@ -141,8 +150,7 @@ pub fn accept_pegin() -> Result<(Committee, User, usize, u64)> {
     let rootstock_address = user.get_rsk_address();
     let reimbursement_pubkey = user.public_key()?;
     let accept_pegin_sighash = vec![0; 32]; // This should be replaced with the actual sighash of the accept peg-in tx
-    let slot_index = unsafe { SLOT_INDEX_COUNTER }; // This should be replaced with the actual slot index
-    unsafe { SLOT_INDEX_COUNTER += 1 };
+    let slot_index = get_and_increment_slot_index(); // This should be replaced with the actual slot index
 
     committee.accept_pegin(
         committee.committee_id(),
@@ -223,17 +231,27 @@ pub fn advance_funds() -> Result<()> {
 }
 
 pub fn invalid_reimbursement() -> Result<()> {
-    let (committee, _, slot_index, _) = accept_pegin()?;
+    let (mut committee, _, slot_index, _) = accept_pegin()?;
 
     info!("Forcing member 0 to dispatch invalid reimbursement transaction...");
     // Force member 0 to dispatch reimbursement without proper advancement setup
     let committee_id = committee.committee_id();
-    let member: &Member = &committee.members[0];
+    let operator_index = 0;
+    let member: &mut Member = &mut committee.members[operator_index];
+    let operator_pubkey = member.keyring.take_pubkey.unwrap();
 
-    member.dispatch_reimbursement_flow(committee_id, slot_index as usize)?;
+    member.advance_funds(
+        Uuid::new_v4(),
+        committee_id,
+        slot_index,
+        operator_pubkey,
+        vec![0; 32],
+        operator_pubkey,
+        ADVANCE_FUNDS_FEE,
+    )?;
 
     info!("Starting mining loop to ensure challenge transaction is dispatched...");
-    committee.mine_and_wait(10)?;
+    committee.mine_and_wait(20)?;
 
     info!("Invalid reimbursement test complete.");
     Ok(())
