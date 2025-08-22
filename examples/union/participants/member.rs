@@ -11,12 +11,8 @@ use bitvmx_client::{
     program::{
         participant::{P2PAddress, ParticipantRole},
         protocols::union::{
-            common::{get_dispute_core_pid, indexed_name},
-            dispute_core::PEGOUT_ID,
-            types::{
-                MemberData, ADVANCE_FUNDS_INPUT, ADVANCE_FUNDS_TX, INITIAL_DEPOSIT_TX_SUFFIX,
-                OPERATOR, REIMBURSEMENT_KICKOFF_TX,
-            },
+            common::indexed_name,
+            types::{MemberData, ADVANCE_FUNDS_INPUT, ADVANCE_FUNDS_TX},
         },
         variables::{PartialUtxo, VariableTypes},
     },
