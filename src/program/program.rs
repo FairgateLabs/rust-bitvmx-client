@@ -337,6 +337,10 @@ impl Program {
         data: Value,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
+        // TODO: review state logic. quickfix. before this if I get a message before moving from new to receivingkeys it got stuck
+        if self.state == ProgramState::New {
+            self.move_program_to_next_state()?;
+        }
         if !self.state.should_handle_msg(&msg_type) {
             error!(
                 "{}. Ignoring message {:?} {:?}",
