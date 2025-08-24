@@ -85,6 +85,26 @@ echo "🟢 run-tests.sh versión ACTUALIZADA"
 NIGHTLY="${1:-false}"
 DOCKER_COMPOSE_PATH="${2:-docker-compose.yml}"
 
+reset_bitcoin() {
+    echo "🔄 Reiniciando bitcoind..."
+    if [ -f "$DOCKER_COMPOSE_PATH" ]; then
+        docker-compose -f "$DOCKER_COMPOSE_PATH" restart bitcoin
+        echo "⏳ Esperando a que bitcoind esté listo..."
+        for i in {1..30}; do
+            if docker exec $(docker-compose -f "$DOCKER_COMPOSE_PATH" ps -q bitcoin) bitcoin-cli -regtest getblockchaininfo &>/dev/null; then
+                echo "✅ bitcoind está listo"
+                return 0
+            fi
+            sleep 1
+        done
+        echo "❌ bitcoind no respondió a tiempo"
+        return 1
+    else
+        echo "⚠️ No se encontró $DOCKER_COMPOSE_PATH"
+        return 1
+    fi
+}
+
 # Limpia directorios temporales de tests (ajusta los paths según tu proyecto)
 cleanup_test_dirs() {
     echo "🧹 Cleaning up test directories..."
