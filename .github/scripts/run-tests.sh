@@ -88,10 +88,10 @@ DOCKER_COMPOSE_PATH="${2:-docker-compose.yml}"
 reset_bitcoin() {
     echo "🔄 Reiniciando bitcoind..."
     if [ -f "$DOCKER_COMPOSE_PATH" ]; then
-        docker-compose -f "$DOCKER_COMPOSE_PATH" restart bitcoin
+        docker-compose -f "$DOCKER_COMPOSE_PATH" restart bitcoind
         echo "⏳ Esperando a que bitcoind esté listo..."
         for i in {1..30}; do
-            if docker exec $(docker-compose -f "$DOCKER_COMPOSE_PATH" ps -q bitcoin) bitcoin-cli -regtest getblockchaininfo &>/dev/null; then
+            if docker exec $(docker-compose -f "$DOCKER_COMPOSE_PATH" ps -q bitcoind) bitcoin-cli -regtest getblockchaininfo &>/dev/null; then
                 echo "✅ bitcoind está listo"
                 return 0
             fi
