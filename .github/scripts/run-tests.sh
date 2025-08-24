@@ -82,8 +82,9 @@
 #!/bin/bash
 set -euo pipefail
 echo "🟢 run-tests.sh versión ACTUALIZADA"
+NIGHTLY="${1:-false}"
+DOCKER_COMPOSE_PATH="${2:-docker-compose.yml}"
 
-# echo "✅ Test execution completed"
 # Limpia directorios temporales de tests (ajusta los paths según tu proyecto)
 cleanup_test_dirs() {
     echo "🧹 Cleaning up test directories..."
