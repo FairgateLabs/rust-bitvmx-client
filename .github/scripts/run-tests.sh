@@ -89,15 +89,17 @@ reset_bitcoin() {
     echo "🔄 Reiniciando bitcoind..."
     if [ -f "$DOCKER_COMPOSE_PATH" ]; then
         docker-compose -f "$DOCKER_COMPOSE_PATH" restart bitcoind
-        echo "⏳ Esperando a que bitcoind esté listo..."
-        for i in {1..30}; do
-            if docker exec $(docker-compose -f "$DOCKER_COMPOSE_PATH" ps -q bitcoind) bitcoin-cli -regtest getblockchaininfo &>/dev/null; then
-                echo "✅ bitcoind está listo"
+        echo "⏳ Esperando a que bitcoind esté healthy..."
+        for i in {1..60}; do
+            status=$(docker inspect --format='{{.State.Health.Status}}' $(docker-compose -f "$DOCKER_COMPOSE_PATH" ps -q bitcoind))
+            if [ "$status" == "healthy" ]; then
+                echo "✅ bitcoind está healthy"
                 return 0
             fi
             sleep 1
         done
-        echo "❌ bitcoind no respondió a tiempo"
+        echo "❌ bitcoind no se puso healthy a tiempo"
+        docker logs $(docker-compose -f "$DOCKER_COMPOSE_PATH" ps -q bitcoind)
         return 1
     else
         echo "⚠️ No se encontró $DOCKER_COMPOSE_PATH"
