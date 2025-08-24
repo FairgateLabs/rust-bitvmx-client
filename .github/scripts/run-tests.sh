@@ -12,7 +12,7 @@ echo "🐳 Docker compose file: $DOCKER_COMPOSE_PATH"
 restart_bitcoin() {
     echo "🔄 Restarting Bitcoin Core..."
     if [ -f "$DOCKER_COMPOSE_PATH" ]; then
-        docker-compose -f "$DOCKER_COMPOSE_PATH" restart bitcoin
+        docker-compose -f "$DOCKER_COMPOSE_PATH" restart bitcoind
         sleep 15
         echo "✅ Bitcoin Core restarted"
         return 0
@@ -29,7 +29,7 @@ if [[ "$NIGHTLY" == "true" ]]; then
     echo "🧹 Initial cleanup..."
     if [ -f "$DOCKER_COMPOSE_PATH" ]; then
         docker-compose -f "$DOCKER_COMPOSE_PATH" down --volumes || true
-        docker-compose -f "$DOCKER_COMPOSE_PATH" up -d bitcoin
+        docker-compose -f "$DOCKER_COMPOSE_PATH" up -d bitcoind
         sleep 15
     fi
     
