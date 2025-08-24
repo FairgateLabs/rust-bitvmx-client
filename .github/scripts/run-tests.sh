@@ -123,16 +123,17 @@ cleanup_test_dirs() {
 # Limpia wallets de bitcoind (requiere bitcoin-cli en PATH y credenciales correctas)
 cleanup_bitcoin_wallets() {
     echo "🧹 Cleaning up bitcoin wallets..."
-    # Elimina todas las wallets conocidas (sin usar jq)
-    wallets=$(bitcoin-cli -regtest listwallets | tr -d '[]" ,' | tr '\n' ' ')
+    CONTAINER_ID=$(docker-compose -f "$DOCKER_COMPOSE_PATH" ps -q bitcoind)
+    # Elimina todas las wallets conocidas
+    wallets=$(docker exec "$CONTAINER_ID" bitcoin-cli -regtest listwallets | tr -d '[]" ,' | tr '\n' ' ')
     for wallet in $wallets; do
         if [ -n "$wallet" ]; then
-            bitcoin-cli -regtest unloadwallet "$wallet" || true
-            bitcoin-cli -regtest -named createwallet wallet_name="$wallet" descriptors=true || true
+            docker exec "$CONTAINER_ID" bitcoin-cli -regtest unloadwallet "$wallet" || true
+            docker exec "$CONTAINER_ID" bitcoin-cli -regtest -named createwallet wallet_name="$wallet" descriptors=true || true
         fi
     done
     # Opcional: elimina archivos de wallets si se usan rutas personalizadas
-    rm -rf /tmp/regtest/wallets/* || true
+    docker exec "$CONTAINER_ID" rm -rf /tmp/regtest/wallets/* || true
 }
 
 if [[ "$NIGHTLY" == "true" ]]; then
