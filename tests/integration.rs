@@ -147,8 +147,8 @@ pub fn test_drp() -> Result<()> {
     )?;
 
     //prover final trace
-    //process_dispatcher(&mut dispatchers, &mut instances);
-    //let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    process_dispatcher(&mut dispatchers, &mut instances);
+    let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
     //TODO: allow fake and true job dispatcher execution and responses so we can test the whole flow
 
