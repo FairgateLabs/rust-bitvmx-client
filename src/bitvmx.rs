@@ -138,7 +138,7 @@ impl BitVMX {
             cert,
             allow_list,
             routing_table,
-        );
+        )?;
 
         //TODO: A channel that talks directly with the broker without going through localhost loopback could be implemented
         let broker_channel = LocalChannel::new(

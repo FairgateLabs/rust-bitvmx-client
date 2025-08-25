@@ -127,7 +127,7 @@ pub fn main() -> Result<()> {
     let broker_backend = Arc::new(Mutex::new(broker_backend));
     let broker_storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
     let (server_config, _server_identifier, cert) = BrokerConfig::new_only_address(54321, None)?;
-    let mut broker = BrokerSync::new_simple(&server_config, broker_storage.clone(), cert);
+    let mut broker = BrokerSync::new_simple(&server_config, broker_storage.clone(), cert)?;
 
     let broker_channel =
         LocalChannel::new_simple("local".to_string(), 54321, broker_storage.clone());
