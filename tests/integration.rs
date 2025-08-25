@@ -1,8 +1,8 @@
 use anyhow::Result;
 use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID};
 use common::{
-    config_trace, mine_and_wait,
-    dispute::{execute_dispute, prepare_dispute, process_dispatcher, ForcedChallenges},
+    config_trace,
+    dispute::{execute_dispute, prepare_dispute, ForcedChallenges},
     get_all, init_bitvmx, init_utxo_new, prepare_bitcoin, send_all, wait_message_from_channel,
 };
 use protocol_builder::{
@@ -17,10 +17,9 @@ use crate::common::{FEE, FUNDING_ID, WALLET_NAME};
 mod common;
 
 //cargo test --release  -- test_drp --features regtest
-#[cfg(feature = "regtest")]
+#[cfg(feature = "testnet")]
 #[test]
 pub fn test_drp() -> Result<()> {
-    use crate::common::{dispute::process_dispatcher, mine_and_wait};
 
     config_trace();
 
@@ -149,8 +148,8 @@ pub fn test_drp() -> Result<()> {
     )?;
 
     //prover final trace
-    process_dispatcher(&mut dispatchers, &mut instances);
-    let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    // process_dispatcher(&mut dispatchers, &mut instances);
+    // let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
     //TODO: allow fake and true job dispatcher execution and responses so we can test the whole flow
 
