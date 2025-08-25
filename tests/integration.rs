@@ -1,8 +1,8 @@
 use anyhow::Result;
 use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID};
 use common::{
-    config_trace,
-    dispute::{execute_dispute, prepare_dispute, ForcedChallenges},
+    config_trace, mine_and_wait,
+    dispute::{execute_dispute, prepare_dispute, process_dispatcher, ForcedChallenges},
     get_all, init_bitvmx, init_utxo_new, prepare_bitcoin, send_all, wait_message_from_channel,
 };
 use protocol_builder::{
@@ -20,6 +20,8 @@ mod common;
 #[cfg(feature = "regtest")]
 #[test]
 pub fn test_drp() -> Result<()> {
+    use crate::common::{dispute::process_dispatcher, mine_and_wait};
+
     config_trace();
 
     let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
