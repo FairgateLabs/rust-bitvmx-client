@@ -16,17 +16,15 @@ key_storage:
 storage:
   path: /tmp/op_4/storage.db
 
-p2p:
+comms:
   address: 127.0.0.1:61183
   priv_key: config/keys/op_4.key
-  timeout: 5
 
 broker:
   allow_list: config/allow_list.yaml
   routing_table: config/routing_table.yaml
   port: 55554
   ip: 127.0.0.1
-  id: 0
   priv_key: ../rust-bitvmx-broker/certs/services.key
   storage: 
     path: /tmp/op_4/broker.db

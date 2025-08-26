@@ -10,7 +10,7 @@ use key_manager::{
     errors::{KeyManagerError, WinternitzError},
     musig2::errors::Musig2SignerError,
 };
-use p2p_handler::helper::P2pHandlerError;
+use operator_comms::helper::OperatorCommsError;
 use protocol_builder::errors::{ProtocolBuilderError, ScriptError, UnspendableKeyError};
 use std::time::Duration;
 use storage_backend::error::StorageError;
@@ -75,14 +75,14 @@ pub enum BitVMXError {
 
     // #[error("Failed to create communications key")]
     // CommunicationsKeyGenerationError(#[from] DecodingError),
-    #[error("Failed to encode P2P data: {0}")]
-    P2PEncodingError(#[from] P2pHandlerError),
+    #[error("Failed to encode Comms data: {0}")]
+    CommsEncodingError(#[from] OperatorCommsError),
 
-    #[error("Failed to use P2P layer")]
-    P2PCommunicationError,
+    #[error("Failed to use Comms layer")]
+    CommsCommunicationError,
 
-    #[error("Invalid P2P address: {0}")]
-    InvalidP2PAddress(String),
+    #[error("Invalid Comms address: {0}")]
+    InvalidCommsAddress(String),
 
     #[error("Keys not found in program {0}")]
     KeysNotFound(Uuid),

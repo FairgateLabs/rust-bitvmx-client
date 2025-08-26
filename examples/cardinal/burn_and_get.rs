@@ -11,7 +11,7 @@ use bitvmx_broker::{
 };
 
 use bitcoin::Txid;
-use p2p_handler::p2p_handler::AllowList;
+use operator_comms::operator_comms::AllowList;
 use tracing::info;
 
 use crate::common::get_bitcoin_client;
@@ -24,7 +24,7 @@ pub fn main() -> Result<()> {
     let my_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 54322);
     let allow_list = AllowList::new();
     allow_list.lock().unwrap().allow_all();
-    let channel = DualChannel::new(&broker_config, cert, Some(3), my_address, allow_list)?;
+    let channel = DualChannel::new(&broker_config, cert, Some(3), my_address, Some(allow_list))?;
     let identifier = Identifier::new_local("local".to_string(), 0, 54321);
     channel.send(identifier, "burn".to_string())?;
 

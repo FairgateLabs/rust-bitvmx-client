@@ -7,12 +7,10 @@ pub fn configure_tracing() {
     INIT.call_once(|| {
         let default_modules = [
             "info",
-            "libp2p=off",
             "bitvmx_transaction_monitor=off",
             "bitcoin_indexer=off",
             "bitcoin_coordinator=info",
-            "p2p_protocol=off",
-            "p2p_handler=off",
+            "operator_comms=off",
             "tarpc=off",
             "key_manager=off",
             "memory=off",

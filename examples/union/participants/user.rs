@@ -13,7 +13,7 @@ use bitcoin::{
     Transaction, TxIn, TxOut, Txid, Witness, XOnlyPublicKey,
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
-use p2p_handler::p2p_handler::AllowList;
+use operator_comms::operator_comms::AllowList;
 use protocol_builder::scripts::{build_taproot_spend_info, op_return_script, timelock, SignMode};
 use tracing::info;
 

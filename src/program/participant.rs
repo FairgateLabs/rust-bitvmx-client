@@ -1,6 +1,6 @@
 use bitcoin::PublicKey;
 use key_manager::winternitz::WinternitzPublicKey;
-use p2p_handler::p2p_handler::PubKeyHash;
+use operator_comms::operator_comms::PubKeyHash;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr};
 
@@ -11,16 +11,16 @@ use crate::{
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ParticipantData {
-    pub p2p_address: P2PAddress,
+    pub comms_address: CommsAddress,
     pub keys: Option<ParticipantKeys>,
     pub nonces: Option<PubNonceMessage>,
     pub partial: Option<PartialSignatureMessage>,
 }
 
 impl ParticipantData {
-    pub fn new(address: &P2PAddress, keys: Option<ParticipantKeys>) -> Self {
+    pub fn new(address: &CommsAddress, keys: Option<ParticipantKeys>) -> Self {
         ParticipantData {
-            p2p_address: address.clone(),
+            comms_address: address.clone(),
             keys,
             nonces: None,
             partial: None,
@@ -136,12 +136,12 @@ impl ParticipantKeys {
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, Debug)]
-pub struct P2PAddress {
+pub struct CommsAddress {
     pub address: SocketAddr,
     pub pubkey_hash: PubKeyHash,
 }
 
-impl P2PAddress {
+impl CommsAddress {
     pub fn new(address: SocketAddr, pubkey_hash: PubKeyHash) -> Self {
         Self {
             address,
@@ -150,13 +150,13 @@ impl P2PAddress {
     }
 }
 
-impl fmt::Display for P2PAddress {
+impl fmt::Display for CommsAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{},{}", self.address, self.pubkey_hash)
     }
 }
 
-impl FromStr for P2PAddress {
+impl FromStr for CommsAddress {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -171,6 +171,6 @@ impl FromStr for P2PAddress {
 
         let pubkey_hash = parts[1].to_string();
 
-        Ok(P2PAddress::new(address, pubkey_hash))
+        Ok(CommsAddress::new(address, pubkey_hash))
     }
 }

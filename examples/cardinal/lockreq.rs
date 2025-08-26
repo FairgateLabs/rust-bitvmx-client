@@ -12,7 +12,7 @@ use bitvmx_broker::{
     },
 };
 use bitvmx_client::program::protocols::cardinal::lock::lock_protocol_dust_cost;
-use p2p_handler::p2p_handler::AllowList;
+use operator_comms::operator_comms::AllowList;
 use protocol_builder::scripts::{
     build_taproot_spend_info, reveal_secret, timelock, ProtocolScript, SignMode,
 };
@@ -39,7 +39,7 @@ pub fn main() -> Result<()> {
     let my_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 54322);
     let allow_list = AllowList::new();
     allow_list.lock().unwrap().allow_all();
-    let channel = DualChannel::new(&broker_config, cert, Some(2), my_address, allow_list)?;
+    let channel = DualChannel::new(&broker_config, cert, Some(2), my_address, Some(allow_list))?;
     let identifier = Identifier::new_local("local".to_string(), 0, 54321);
     channel.send(identifier.clone(), "get_aggregated".to_string())?;
 

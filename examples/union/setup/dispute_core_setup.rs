@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use bitvmx_client::{
     client::BitVMXClient,
     program::{
-        participant::{P2PAddress, ParticipantRole},
+        participant::{CommsAddress, ParticipantRole},
         protocols::union::{
             common::get_dispute_core_pid,
             types::{Committee, DisputeCoreData, MemberData, MONITORED_OPERATOR_KEY},
@@ -31,7 +31,7 @@ impl DisputeCoreSetup {
         bitvmx: &BitVMXClient,
         operator_protocol_funding: &HashMap<PublicKey, PartialUtxo>,
         my_speedup_funding: &Utxo,
-        addresses: &Vec<P2PAddress>,
+        addresses: &Vec<CommsAddress>,
     ) -> Result<()> {
         let committee = Committee {
             members: members.clone(),

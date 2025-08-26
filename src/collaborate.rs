@@ -2,25 +2,25 @@ use std::collections::HashMap;
 
 use bitcoin::PublicKey;
 use bitvmx_broker::identification::identifier::Identifier;
-use p2p_handler::p2p_handler::PubKeyHash;
+use operator_comms::operator_comms::PubKeyHash;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::{
+    comms_helper::{request, response, CommsMessageType},
     errors::BitVMXError,
     helper::parse_keys,
-    p2p_helper::{request, response, P2PMessageType},
-    program::participant::{P2PAddress, ParticipantKeys, PublicKeyType},
+    program::participant::{CommsAddress, ParticipantKeys, PublicKeyType},
     types::{OutgoingBitVMXApiMessages, ProgramContext},
 };
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Collaboration {
     pub collaboration_id: Uuid,
-    pub participants: Vec<P2PAddress>,
-    pub leader: P2PAddress,
+    pub participants: Vec<CommsAddress>,
+    pub leader: CommsAddress,
     pub im_leader: bool,
     pub keys: HashMap<PubKeyHash, PublicKey>,
     pub my_key: PublicKey,
@@ -33,8 +33,8 @@ pub struct Collaboration {
 impl Collaboration {
     pub fn new(
         collaboration_id: &Uuid,
-        participants: Vec<P2PAddress>,
-        leader: P2PAddress,
+        participants: Vec<CommsAddress>,
+        leader: CommsAddress,
         im_leader: bool,
         my_key: PublicKey,
         request_from: Identifier,
@@ -55,9 +55,9 @@ impl Collaboration {
 
     pub fn setup_aggregated_key(
         id: &Uuid,
-        peers: Vec<P2PAddress>,
+        peers: Vec<CommsAddress>,
         public_keys: Option<Vec<PublicKey>>,
-        leader: P2PAddress,
+        leader: CommsAddress,
         program_context: &mut ProgramContext,
         request_from: Identifier,
     ) -> Result<Self, BitVMXError> {
@@ -72,7 +72,7 @@ impl Collaboration {
                 &program_context.comms,
                 id,
                 leader.clone(),
-                crate::p2p_helper::P2PMessageType::Keys,
+                crate::comms_helper::CommsMessageType::Keys,
                 keys,
             )?;
         }
@@ -113,7 +113,7 @@ impl Collaboration {
                     &program_context.comms,
                     &self.collaboration_id,
                     peer.clone(),
-                    P2PMessageType::Keys,
+                    CommsMessageType::Keys,
                     keys.clone(),
                 )?;
             }
@@ -123,16 +123,16 @@ impl Collaboration {
         Ok(self.completed)
     }
 
-    pub fn process_p2p_message(
+    pub fn process_comms_message(
         &mut self,
-        p2p_address: P2PAddress, //TODO: validate positions
-        msg_type: P2PMessageType,
+        comms_address: CommsAddress, //TODO: validate positions
+        msg_type: CommsMessageType,
         data: Value,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let pubkey_hash = p2p_address.pubkey_hash.clone();
+        let pubkey_hash = comms_address.pubkey_hash.clone();
         match msg_type {
-            P2PMessageType::Keys => {
+            CommsMessageType::Keys => {
                 if self.im_leader {
                     let keys: ParticipantKeys = parse_keys(data)
                         .map_err(|_| BitVMXError::InvalidMessageFormat)?
@@ -195,12 +195,12 @@ impl Collaboration {
                 response(
                     &program_context.comms,
                     &self.collaboration_id,
-                    p2p_address,
-                    P2PMessageType::KeysAck,
+                    comms_address,
+                    CommsMessageType::KeysAck,
                     (),
                 )?;
             }
-            P2PMessageType::KeysAck => {
+            CommsMessageType::KeysAck => {
                 debug!(
                     "Collaboration id: {}: KeysAck received by {}",
                     self.collaboration_id, pubkey_hash
@@ -215,7 +215,7 @@ impl Collaboration {
 
     fn get_or_create_my_key(
         program_context: &mut ProgramContext,
-        peers: Vec<P2PAddress>,
+        peers: Vec<CommsAddress>,
         public_keys: Option<Vec<PublicKey>>,
     ) -> Result<PublicKey, BitVMXError> {
         let my_key = if public_keys.is_some() {

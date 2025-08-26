@@ -3,7 +3,7 @@ use bitcoin::{PublicKey, Txid};
 use bitvmx_client::{
     client::BitVMXClient,
     program::{
-        participant::{P2PAddress, ParticipantRole},
+        participant::{CommsAddress, ParticipantRole},
         protocols::union::{
             common::get_accept_pegin_pid,
             types::{MemberData, PegInRequest},
@@ -32,7 +32,7 @@ impl AcceptPegInSetup {
         slot_index: usize,
         rootstock_address: String,
         reimbursement_pubkey: PublicKey,
-        addresses: &Vec<P2PAddress>,
+        addresses: &Vec<CommsAddress>,
     ) -> Result<()> {
         let protocol_id = get_accept_pegin_pid(committee_id, slot_index);
 

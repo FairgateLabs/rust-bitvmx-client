@@ -111,7 +111,7 @@ impl TransferConfig {
 
     pub fn get_setup_messages(
         &self,
-        addresses: Vec<crate::program::participant::P2PAddress>,
+        addresses: Vec<crate::program::participant::CommsAddress>,
         leader: u16,
     ) -> Result<Vec<String>, BitVMXError> {
         let mut config_vec = vec![
@@ -153,7 +153,7 @@ impl TransferConfig {
     pub fn setup(
         &self,
         id_channel_pairs: &Vec<ParticipantChannel>,
-        addresses: Vec<crate::program::participant::P2PAddress>,
+        addresses: Vec<crate::program::participant::CommsAddress>,
         leader: u16,
     ) -> Result<(), BitVMXError> {
         for id_channel_pair in id_channel_pairs {

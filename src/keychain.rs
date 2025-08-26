@@ -49,7 +49,7 @@ impl KeyChain {
 
         let key_manager = Rc::new(key_manager);
 
-        let path = config.p2p_key();
+        let path = config.comms_key();
         let pem_file = std::fs::read_to_string(path).unwrap();
         let _pub_key = key_manager.import_rsa_private_key(&pem_file, RSA_KEY_INDEX)?;
 

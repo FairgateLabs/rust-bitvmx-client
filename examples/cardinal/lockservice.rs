@@ -27,7 +27,7 @@ use bitvmx_client::{
 };
 
 use bitvmx_wallet::wallet::Wallet;
-use p2p_handler::p2p_handler::AllowList;
+use operator_comms::operator_comms::AllowList;
 use protocol_builder::types::Utxo;
 use storage_backend::{storage::Storage, storage_config::StorageConfig};
 use tracing::info;
@@ -99,18 +99,14 @@ pub fn get_all(channels: &Vec<DualChannel>) -> Result<Vec<(String, Identifier)>>
 pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
     let config = Config::new(Some(format!("config/{}.yaml", role)))?;
     let allow_list = AllowList::from_file(&config.broker.allow_list)?;
-    let broker_config = BrokerConfig::new(
-        config.broker.port,
-        None,
-        config.broker.get_pubk_hash()?,
-        Some(config.broker.id),
-    )?;
+    let broker_config =
+        BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?)?;
     let bridge_client = DualChannel::new(
         &broker_config,
         Cert::from_key_file(&config.components.l2.priv_key)?,
         Some(config.components.l2.id),
         config.components.l2.address,
-        allow_list.clone(),
+        Some(allow_list.clone()),
     )?;
     let particiant_channel = ParticipantChannel {
         id: config.components.get_bitvmx_identifier()?,

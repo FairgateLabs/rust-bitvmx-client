@@ -3,12 +3,12 @@ use crate::program::protocols::protocol_handler::ProtocolHandler;
 use crate::{
     api::BitVMXApi,
     collaborate::Collaboration,
+    comms_helper::deserialize_msg,
     config::Config,
     errors::BitVMXError,
     keychain::KeyChain,
-    p2p_helper::deserialize_msg,
     program::{
-        participant::P2PAddress,
+        participant::CommsAddress,
         program::Program,
         variables::{Globals, WitnessVars},
     },
@@ -22,9 +22,9 @@ use bitcoin_coordinator::{
     AckMonitorNews, MonitorNews, TypesToMonitor,
 };
 use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
-use p2p_handler::{
+use operator_comms::{
     helper::ReceiveHandlerChannel,
-    p2p_handler::{AllowList, P2pHandler, PubKeyHash, RoutingTable},
+    operator_comms::{AllowList, OperatorComms, PubKeyHash, RoutingTable},
 };
 
 use crate::spv_proof::get_spv_proof;
@@ -106,11 +106,12 @@ impl BitVMX {
         let key_chain = KeyChain::new(&config, store.clone())?;
         let allow_list = AllowList::from_file(&config.broker.allow_list)?;
         let routing_table = RoutingTable::load_from_file(&config.broker.routing_table)?;
-        let comms = P2pHandler::new(
-            config.p2p.address,
-            &config.p2p.priv_key,
+        let comms = OperatorComms::new(
+            config.comms.address,
+            &config.comms.priv_key,
             allow_list.clone(),
             routing_table.clone(),
+            None, //TODO: replace with actual storage path
         )?;
 
         let bitcoin_coordinator = BitcoinCoordinator::new_with_paths(
@@ -130,7 +131,6 @@ impl BitVMX {
             config.broker.port,
             Some(config.broker.ip),
             config.broker.get_pubk_hash()?,
-            Some(config.broker.id),
         )?;
         let broker = BrokerSync::new(
             &broker_config,
@@ -193,17 +193,17 @@ impl BitVMX {
 
     pub fn process_msg(
         &mut self,
-        p2p_address: P2PAddress,
+        comms_address: CommsAddress,
         msg: Vec<u8>,
         pend_to_back: bool,
     ) -> Result<(), BitVMXError> {
         let (_version, msg_type, program_id, data) = deserialize_msg(msg.clone())?;
 
         if let Some(mut program) = self.load_program(&program_id).ok() {
-            program.process_p2p_message(p2p_address, msg_type, data, &self.program_context)?;
+            program.process_comms_message(comms_address, msg_type, data, &self.program_context)?;
         } else if let Some(mut collaboration) = self.get_collaboration(&program_id)? {
-            collaboration.process_p2p_message(
-                p2p_address,
+            collaboration.process_comms_message(
+                comms_address,
                 msg_type,
                 data,
                 &self.program_context,
@@ -213,11 +213,11 @@ impl BitVMX {
             if pend_to_back {
                 info!("Pending message to back: {:?}", msg_type);
                 self.pending_messages
-                    .push_back((p2p_address.to_string(), msg));
+                    .push_back((comms_address.to_string(), msg));
             } else {
                 info!("Pending message to front: {:?}", msg_type);
                 self.pending_messages
-                    .push_front((p2p_address.to_string(), msg));
+                    .push_front((comms_address.to_string(), msg));
             }
         }
 
@@ -229,15 +229,15 @@ impl BitVMX {
             return Ok(());
         }
 
-        let (p2p_address, msg) = self.pending_messages.pop_front().unwrap();
-        let p2p_address = p2p_address
+        let (comms_address, msg) = self.pending_messages.pop_front().unwrap();
+        let comms_address = comms_address
             .parse()
-            .map_err(|_| BitVMXError::InvalidP2PAddress(p2p_address))?;
-        self.process_msg(p2p_address, msg, false)?;
+            .map_err(|_| BitVMXError::InvalidCommsAddress(comms_address))?;
+        self.process_msg(comms_address, msg, false)?;
         Ok(())
     }
 
-    pub fn process_p2p_messages(&mut self) -> Result<(), BitVMXError> {
+    pub fn process_comms_messages(&mut self) -> Result<(), BitVMXError> {
         let message = self.program_context.comms.check_receive();
 
         if message.is_none() {
@@ -247,8 +247,8 @@ impl BitVMX {
         let message = message.unwrap();
         match message {
             ReceiveHandlerChannel::Msg(identifier, msg) => {
-                let p2p_address = P2PAddress::new(identifier.address, identifier.pubkey_hash);
-                self.process_msg(p2p_address, msg, true)?;
+                let comms_address = CommsAddress::new(identifier.address, identifier.pubkey_hash);
+                self.process_msg(comms_address, msg, true)?;
                 return Ok(());
             }
             ReceiveHandlerChannel::Error(e) => {
@@ -457,7 +457,7 @@ impl BitVMX {
         self.process_programs()?;
 
         if self.count % THROTTLE_TICKS == 0 {
-            self.process_p2p_messages()?;
+            self.process_comms_messages()?;
             self.process_api_messages()?;
             self.process_pending_messages()?;
         }
@@ -655,7 +655,7 @@ impl BitVMXApi for BitVMX {
         &mut self,
         from: Identifier,
         id: Uuid,
-        participants: Vec<P2PAddress>,
+        participants: Vec<CommsAddress>,
         participants_keys: Option<Vec<PublicKey>>,
         leader_idx: u16,
     ) -> Result<(), BitVMXError> {
@@ -818,7 +818,7 @@ impl BitVMXApi for BitVMX {
         &mut self,
         id: Uuid,
         program_type: String,
-        peer_address: Vec<P2PAddress>,
+        peer_address: Vec<CommsAddress>,
         leader: u16,
     ) -> Result<(), BitVMXError> {
         if self.program_exists(&id)? {
@@ -835,7 +835,6 @@ impl BitVMXApi for BitVMX {
             &mut self.program_context,
             self.store.clone(),
             &self.config.client,
-            &self.config.components,
         )?;
         self.add_new_program(&id)?;
         info!(
@@ -1023,7 +1022,7 @@ impl BitVMXApi for BitVMX {
                 )?;
             }
             IncomingBitVMXApiMessages::GetCommInfo() => {
-                let comm_info = OutgoingBitVMXApiMessages::CommInfo(P2PAddress {
+                let comm_info = OutgoingBitVMXApiMessages::CommInfo(CommsAddress {
                     address: self.program_context.comms.get_address(),
                     pubkey_hash: self.program_context.comms.get_pubk_hash()?,
                 });

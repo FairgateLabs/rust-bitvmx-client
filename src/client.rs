@@ -2,7 +2,7 @@ use crate::{
     config::{BrokerConfig, Component, ComponentsConfig},
     errors::ClientError,
     program::{
-        participant::P2PAddress,
+        participant::CommsAddress,
         variables::{VariableTypes, WitnessTypes},
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages},
@@ -14,7 +14,7 @@ use bitvmx_broker::{
     identification::identifier::Identifier,
     rpc::{self, tls_helper::Cert},
 };
-use p2p_handler::p2p_handler::AllowList;
+use operator_comms::operator_comms::AllowList;
 use std::{sync::Arc, thread};
 use std::{
     sync::Mutex,
@@ -39,14 +39,14 @@ impl BitVMXClient {
             broker_config.port,
             None,
             broker_config.get_pubk_hash()?,
-            Some(broker_config.id),
+            // Some(broker_config.id), //TODO:
         )?;
         let channel = DualChannel::new(
             &config,
             Cert::from_key_file(&client_config.priv_key)?,
             Some(client_config.id),
             client_config.address,
-            allow_list,
+            Some(allow_list),
         )?;
 
         Ok(Self {
@@ -63,7 +63,7 @@ impl BitVMXClient {
         &self,
         id: Uuid,
         program_type: String,
-        addresses: Vec<P2PAddress>,
+        addresses: Vec<CommsAddress>,
         leader: u16,
     ) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::Setup(
@@ -81,7 +81,7 @@ impl BitVMXClient {
     pub fn setup_key(
         &self,
         id: Uuid,
-        participants: Vec<P2PAddress>,
+        participants: Vec<CommsAddress>,
         participants_keys: Option<Vec<PublicKey>>,
         leader_idx: u16,
     ) -> Result<()> {

@@ -6,7 +6,7 @@ use bitvmx_broker::channel::channel::DualChannel;
 use bitvmx_broker::rpc::tls_helper::Cert;
 use bitvmx_broker::rpc::BrokerConfig;
 use bitvmx_client::program;
-use bitvmx_client::program::participant::P2PAddress;
+use bitvmx_client::program::participant::CommsAddress;
 use bitvmx_client::program::protocols::dispute::{
     input_tx_name, program_input, program_input_prev_prefix, program_input_prev_protocol,
 };
@@ -28,7 +28,7 @@ use key_manager::winternitz::{
     self, checksum_length, to_checksummed_message, WinternitzPublicKey, WinternitzSignature,
     WinternitzType,
 };
-use p2p_handler::p2p_handler::AllowList;
+use operator_comms::operator_comms::AllowList;
 use protocol_builder::scripts::{self, SignMode};
 use protocol_builder::types::Utxo;
 use std::sync::mpsc::channel;
@@ -130,18 +130,14 @@ fn run_emulator(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result
         );
 
         let allow_list = AllowList::from_file(&config.broker.allow_list)?;
-        let broker_config = BrokerConfig::new(
-            config.broker.port,
-            None,
-            config.broker.get_pubk_hash()?,
-            Some(config.broker.id),
-        )?;
+        let broker_config =
+            BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?)?;
         let channel = DualChannel::new(
             &broker_config,
             Cert::from_key_file(&config.components.emulator.priv_key)?,
             Some(config.components.emulator.id),
             config.components.emulator.address,
-            allow_list.clone(),
+            Some(allow_list.clone()),
         )?;
 
         let prover_dispatcher = DispatcherHandler::<EmulatorJobType>::new(channel);
@@ -171,18 +167,14 @@ fn run_zkp(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<()> 
     for config in &configs {
         info!("Starting zkp connection with port: {}", config.broker.port);
         let allow_list = AllowList::from_file(&config.broker.allow_list)?;
-        let broker_config = BrokerConfig::new(
-            config.broker.port,
-            None,
-            config.broker.get_pubk_hash()?,
-            Some(config.broker.id),
-        )?;
+        let broker_config =
+            BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?)?;
         let channel = DualChannel::new(
             &broker_config,
             Cert::from_key_file(&config.components.prover.priv_key)?,
             Some(config.components.prover.id),
             config.components.prover.address,
-            allow_list.clone(),
+            Some(allow_list.clone()),
         )?;
 
         let prover_dispatcher = DispatcherHandler::<ProverJobType>::new(channel);
@@ -338,18 +330,14 @@ impl TestHelper {
         let configs = get_configs(network)?;
         for config in &configs {
             let allow_list = AllowList::from_file(&config.broker.allow_list)?;
-            let broker_config = BrokerConfig::new(
-                config.broker.port,
-                None,
-                config.broker.get_pubk_hash()?,
-                Some(config.broker.id),
-            )?;
+            let broker_config =
+                BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?)?;
             let channel = DualChannel::new(
                 &broker_config,
                 Cert::from_key_file(&config.components.l2.priv_key)?,
                 Some(config.components.l2.id),
                 config.components.l2.address,
-                allow_list.clone(),
+                Some(allow_list.clone()),
             )?;
             let id = config.components.get_bitvmx_identifier()?;
             id_channel_pairs.push(ParticipantChannel { channel, id });
@@ -468,7 +456,7 @@ pub fn test_all_aux(
     let command = IncomingBitVMXApiMessages::GetCommInfo();
     helper.send_all(command)?;
 
-    let addresses: Vec<P2PAddress> = helper
+    let addresses: Vec<CommsAddress> = helper
         .wait_all_msg()?
         .iter()
         .map(|msg| msg.comm_info().unwrap())

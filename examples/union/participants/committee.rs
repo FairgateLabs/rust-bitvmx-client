@@ -1,6 +1,6 @@
 use anyhow::Result;
 use bitcoin::Txid;
-use bitvmx_client::program::participant::P2PAddress;
+use bitvmx_client::program::participant::CommsAddress;
 use bitvmx_client::program::protocols::union::common::{
     get_accept_pegin_pid, get_dispute_aggregated_key_pid, get_take_aggreated_key_pid,
     get_user_take_pid,
@@ -300,7 +300,7 @@ impl Committee {
         Ok((txid, 0, Some(amount), Some(output_type)))
     }
 
-    fn get_addresses(&self) -> Vec<P2PAddress> {
+    fn get_addresses(&self) -> Vec<CommsAddress> {
         self.members
             .iter()
             .map(|m| m.address.clone().unwrap())

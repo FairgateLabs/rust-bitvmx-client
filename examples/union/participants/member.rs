@@ -1,6 +1,6 @@
 use anyhow::Result;
 use core::clone::Clone;
-use p2p_handler::p2p_handler::AllowList;
+use operator_comms::operator_comms::AllowList;
 use protocol_builder::types::Utxo;
 use std::{collections::HashMap, thread};
 use uuid::Uuid;
@@ -10,7 +10,7 @@ use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
     program::{
-        participant::{P2PAddress, ParticipantRole},
+        participant::{CommsAddress, ParticipantRole},
         protocols::union::{
             common::{get_dispute_core_pid, indexed_name},
             dispute_core::PEGOUT_ID,
@@ -45,7 +45,7 @@ pub struct Keyring {
     pub take_aggregated_key: Option<PublicKey>,
     pub dispute_aggregated_key: Option<PublicKey>,
     pub communication_pubkey: Option<PublicKey>,
-    pub pairwise_keys: HashMap<P2PAddress, PublicKey>,
+    pub pairwise_keys: HashMap<CommsAddress, PublicKey>,
 }
 
 #[derive(Clone)]
@@ -53,7 +53,7 @@ pub struct Member {
     pub id: String,
     pub role: ParticipantRole,
     pub config: Config,
-    pub address: Option<P2PAddress>,
+    pub address: Option<CommsAddress>,
     pub bitvmx: BitVMXClient,
     pub keyring: Keyring,
 }
@@ -86,7 +86,7 @@ impl Member {
         })
     }
 
-    pub fn get_peer_info(&mut self) -> Result<P2PAddress> {
+    pub fn get_peer_info(&mut self) -> Result<CommsAddress> {
         self.bitvmx.get_comm_info()?;
         let addr = expect_msg!(self.bitvmx, CommInfo(addr) => addr)?;
 
@@ -152,7 +152,7 @@ impl Member {
         members: &Vec<MemberData>,
         funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
         my_speedup_funding: &Utxo,
-        addresses: &Vec<P2PAddress>,
+        addresses: &Vec<CommsAddress>,
     ) -> Result<()> {
         info!(
             id = self.id,
@@ -197,7 +197,7 @@ impl Member {
         slot_index: usize,
         rootstock_address: String,
         reimbursement_pubkey: PublicKey,
-        addresses: &Vec<P2PAddress>,
+        addresses: &Vec<CommsAddress>,
     ) -> Result<()> {
         info!(id = self.id, "Accepting peg-in");
         AcceptPegInSetup::setup(
@@ -233,7 +233,7 @@ impl Member {
         pegout_signature_hash: Vec<u8>,
         pegout_signature_message: Vec<u8>,
         user_pubkey: PublicKey,
-        addresses: &Vec<P2PAddress>,
+        addresses: &Vec<CommsAddress>,
     ) -> Result<()> {
         UserTakeSetup::setup(
             committee_id,
@@ -445,7 +445,7 @@ impl Member {
     fn setup_key(
         &mut self,
         aggregation_id: Uuid,
-        addresses: &[P2PAddress],
+        addresses: &[CommsAddress],
         public_keys: Option<&[PublicKey]>,
     ) -> Result<PublicKey> {
         info!(
@@ -472,19 +472,19 @@ impl Member {
     }
 
     /// Get own address
-    fn address(&self) -> Result<&P2PAddress> {
+    fn address(&self) -> Result<&CommsAddress> {
         self.address
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Member address not set for {}", self.id))
     }
 
     /// Get all addresses from a list of members
-    fn get_addresses(&self, members: &[Member]) -> Vec<P2PAddress> {
+    fn get_addresses(&self, members: &[Member]) -> Vec<CommsAddress> {
         members.iter().filter_map(|m| m.address.clone()).collect()
     }
 
     /// Determine the counterparty address in a pair of members
-    fn get_counterparty_address(&self, member1: &Member, member2: &Member) -> Result<P2PAddress> {
+    fn get_counterparty_address(&self, member1: &Member, member2: &Member) -> Result<CommsAddress> {
         let member1_address = member1.address()?;
         let member2_address = member2.address()?;
         let my_address = self.address()?;

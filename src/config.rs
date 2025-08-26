@@ -4,7 +4,7 @@ use bitcoin_coordinator::config::CoordinatorSettingsConfig;
 use bitvmx_bitcoin_rpc::rpc_config::RpcConfig;
 use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
 use key_manager::config::KeyManagerConfig;
-use p2p_handler::p2p_handler::PubKeyHash;
+use operator_comms::operator_comms::PubKeyHash;
 use serde::{Deserialize, Serialize};
 use storage_backend::storage_config::StorageConfig;
 use tracing::info;
@@ -22,10 +22,9 @@ pub struct ProtocolBuilderConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct P2PConfig {
+pub struct CommsConfig {
     pub address: SocketAddr,
     pub priv_key: String,
-    pub timeout: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -47,7 +46,7 @@ pub struct BrokerConfig {
     pub priv_key: String,
     pub port: u16,
     pub ip: IpAddr,
-    pub id: u8,
+    // pub id: u8, // Asume that id is 0 always
     pub storage: StorageConfig,
 }
 
@@ -95,32 +94,16 @@ pub struct ComponentsConfig {
 
 impl ComponentsConfig {
     pub fn get_l2_identifier(&self) -> Result<Identifier, ConfigError> {
-        Ok(Identifier::new(
-            self.l2.get_pubk_hash()?,
-            self.l2.id,
-            self.l2.get_address(),
-        ))
+        Ok(self.l2.get_identifier()?)
     }
     pub fn get_bitvmx_identifier(&self) -> Result<Identifier, ConfigError> {
-        Ok(Identifier::new(
-            self.bitvmx.get_pubk_hash()?,
-            self.bitvmx.id,
-            self.bitvmx.get_address(),
-        ))
+        Ok(self.bitvmx.get_identifier()?)
     }
     pub fn get_emulator_identifier(&self) -> Result<Identifier, ConfigError> {
-        Ok(Identifier::new(
-            self.emulator.get_pubk_hash()?,
-            self.emulator.id,
-            self.emulator.get_address(),
-        ))
+        Ok(self.emulator.get_identifier()?)
     }
     pub fn get_prover_identifier(&self) -> Result<Identifier, ConfigError> {
-        Ok(Identifier::new(
-            self.prover.get_pubk_hash()?,
-            self.prover.id,
-            self.prover.get_address(),
-        ))
+        Ok(self.prover.get_identifier()?)
     }
     pub fn get_bitvmx_config(&self) -> &Component {
         &self.bitvmx
@@ -134,7 +117,7 @@ pub struct Config {
     pub key_manager: KeyManagerConfig,
     pub key_storage: StorageConfig,
     pub storage: StorageConfig,
-    pub p2p: P2PConfig,
+    pub comms: CommsConfig,
     pub broker: BrokerConfig,
     pub client: ClientConfig,
     pub components: ComponentsConfig,
@@ -155,15 +138,11 @@ impl Config {
         }
     }
 
-    pub fn p2p_address(&self) -> &SocketAddr {
-        &self.p2p.address
+    pub fn comms_address(&self) -> &SocketAddr {
+        &self.comms.address
     }
 
-    pub fn p2p_key(&self) -> &str {
-        self.p2p.priv_key.as_str()
-    }
-
-    pub fn p2p_timeout(&self) -> u64 {
-        self.p2p.timeout
+    pub fn comms_key(&self) -> &str {
+        self.comms.priv_key.as_str()
     }
 }

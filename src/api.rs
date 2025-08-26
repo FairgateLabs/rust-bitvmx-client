@@ -1,4 +1,4 @@
-use crate::{errors::BitVMXError, program::participant::P2PAddress};
+use crate::{errors::BitVMXError, program::participant::CommsAddress};
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitvmx_broker::identification::identifier::Identifier;
 use uuid::Uuid;
@@ -10,7 +10,7 @@ pub trait BitVMXApi {
         &mut self,
         from: Identifier,
         id: Uuid,
-        participants: Vec<P2PAddress>,
+        participants: Vec<CommsAddress>,
         participants_keys: Option<Vec<PublicKey>>,
         leader_idx: u16,
     ) -> Result<(), BitVMXError>;
@@ -19,7 +19,7 @@ pub trait BitVMXApi {
         &mut self,
         id: Uuid,
         program_type: String,
-        peer_address: Vec<P2PAddress>,
+        peer_address: Vec<CommsAddress>,
         leader: u16,
     ) -> Result<(), BitVMXError>;
 

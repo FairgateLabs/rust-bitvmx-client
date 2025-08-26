@@ -16,7 +16,7 @@ key_storage:
 storage:
   path: /tmp/op_1/storage.db
 
-p2p:
+comms:
   address: /ip4/127.0.0.1/tcp/61180
   key: config/keys/op_1.key
   timeout: 5

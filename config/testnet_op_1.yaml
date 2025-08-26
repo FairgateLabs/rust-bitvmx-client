@@ -12,10 +12,9 @@ key_storage:
   path: /tmp/op_1/keys.db
 storage:
   path: /tmp/op_1/storage.db
-p2p:
+comms:
   address: 127.0.0.1:61180
   priv_key: config/keys/op_1.key
-  timeout: 5
 coordinator_settings:
   max_feerate_sat_vb: 2
   monitor_settings:
@@ -29,7 +28,6 @@ broker:
   routing_table: config/routing_table.yaml
   port: 22222
   ip: 127.0.0.1
-  id: 0
   priv_key: ../rust-bitvmx-broker/certs/services.key
   storage: 
     path: /tmp/op_1/broker.db

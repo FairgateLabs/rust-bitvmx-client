@@ -15,11 +15,11 @@ use bitvmx_broker::{
 use bitvmx_client::{
     bitvmx::BitVMX,
     config::{Component, Config},
-    program::{participant::P2PAddress, protocols::protocol_handler::external_fund_tx},
+    program::{participant::CommsAddress, protocols::protocol_handler::external_fund_tx},
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
 use bitvmx_wallet::wallet::Wallet;
-use p2p_handler::p2p_handler::AllowList;
+use operator_comms::operator_comms::AllowList;
 use protocol_builder::{
     scripts::{self, ProtocolScript, SignMode},
     types::{OutputType, Utxo},
@@ -38,21 +38,17 @@ pub fn clear_db(path: &str) {
 pub fn init_bitvmx(
     role: &str,
     emulator_dispatcher: bool,
-) -> Result<(BitVMX, P2PAddress, DualChannel, Option<DualChannel>)> {
+) -> Result<(BitVMX, CommsAddress, DualChannel, Option<DualChannel>)> {
     let config = Config::new(Some(format!("config/{}.yaml", role)))?;
     let allow_list = AllowList::from_file(&config.broker.allow_list)?;
-    let broker_config = BrokerConfig::new(
-        config.broker.port,
-        None,
-        config.broker.get_pubk_hash()?,
-        Some(config.broker.id),
-    )?;
+    let broker_config =
+        BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?)?;
     let bridge_client = DualChannel::new(
         &broker_config,
         Cert::from_key_file(&config.components.l2.priv_key)?,
         Some(config.components.l2.id),
         config.components.l2.address,
-        allow_list.clone(),
+        Some(allow_list.clone()),
     )?;
     let dispatcher_channel = if emulator_dispatcher {
         Some(DualChannel::new(
@@ -60,7 +56,7 @@ pub fn init_bitvmx(
             Cert::from_key_file(&config.components.emulator.priv_key)?,
             Some(config.components.emulator.id),
             config.components.emulator.address,
-            allow_list,
+            Some(allow_list),
         )?)
     } else {
         None
@@ -74,7 +70,7 @@ pub fn init_bitvmx(
 
     let bitvmx = BitVMX::new(config)?;
 
-    let address = P2PAddress::new(bitvmx.address(), bitvmx.pubkey_hash()?);
+    let address = CommsAddress::new(bitvmx.address(), bitvmx.pubkey_hash()?);
     info!("public key hash {:?}", bitvmx.pubkey_hash());
 
     //This messages will come from the bridge client.
@@ -84,7 +80,7 @@ pub fn init_bitvmx(
 
 pub fn tick(instance: &mut BitVMX) {
     instance.process_api_messages().unwrap();
-    instance.process_p2p_messages().unwrap();
+    instance.process_comms_messages().unwrap();
     instance.process_programs().unwrap();
     instance.process_collaboration().unwrap();
     instance.process_pending_messages().unwrap();
@@ -176,12 +172,10 @@ pub fn config_trace() {
 fn config_trace_aux() {
     let default_modules = [
         "info",
-        "libp2p=off",
         "bitvmx_transaction_monitor=off",
         "bitcoin_indexer=off",
         "bitcoin_coordinator=info",
-        "p2p_protocol=off",
-        "p2p_handler=off",
+        "operator_comms=off",
         "tarpc=off",
         "key_manager=off",
         "memory=off",
@@ -248,18 +242,14 @@ pub fn mine_and_wait(
 pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
     let config = Config::new(Some(format!("config/{}.yaml", role)))?;
     let allow_list = AllowList::from_file(&config.broker.allow_list)?;
-    let broker_config = BrokerConfig::new(
-        config.broker.port,
-        None,
-        config.broker.get_pubk_hash()?,
-        Some(config.broker.id),
-    )?;
+    let broker_config =
+        BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?)?;
     let bridge_client = DualChannel::new(
         &broker_config,
         Cert::from_key_file(&config.components.l2.priv_key)?,
         Some(config.components.l2.id),
         config.components.l2.address,
-        allow_list.clone(),
+        Some(allow_list.clone()),
     )?;
     let particiant_channel = ParticipantChannel {
         id: config.components.get_bitvmx_identifier()?,

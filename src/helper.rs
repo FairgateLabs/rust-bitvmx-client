@@ -5,7 +5,7 @@ use bitcoin::{key::Secp256k1, PublicKey};
 use key_manager::winternitz::{WinternitzPublicKey, WinternitzType};
 
 use key_manager::musig2::{types::MessageId, PartialSignature, PubNonce};
-use p2p_handler::p2p_handler::PubKeyHash;
+use operator_comms::operator_comms::PubKeyHash;
 use serde_json::Value;
 
 pub fn parse_keys(value: Value) -> Result<Vec<(PubKeyHash, ParticipantKeys)>, ParseError> {

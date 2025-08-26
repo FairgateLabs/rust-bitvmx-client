@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use crate::{config::ComponentsConfig, spv_proof::BtcTxSPVProof};
-use ::p2p_handler::p2p_handler::P2pHandler;
+use ::operator_comms::operator_comms::OperatorComms;
 use bitcoin::{PrivateKey, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TransactionStatus};
 use bitvmx_broker::{
@@ -19,13 +19,13 @@ use crate::{
     errors::BitVMXError,
     keychain::KeyChain,
     program::{
-        participant::P2PAddress,
+        participant::CommsAddress,
         variables::{Globals, VariableTypes, WitnessTypes, WitnessVars},
     },
 };
 pub struct ProgramContext {
     pub key_chain: KeyChain,
-    pub comms: P2pHandler,
+    pub comms: OperatorComms,
     pub bitcoin_coordinator: BitcoinCoordinator,
     pub broker_channel: LocalChannel<BrokerStorage>,
     pub globals: Globals,
@@ -40,7 +40,7 @@ pub struct ProgramContext {
 
 impl ProgramContext {
     pub fn new(
-        comms: P2pHandler,
+        comms: OperatorComms,
         key_chain: KeyChain,
         bitcoin_coordinator: BitcoinCoordinator,
         broker_channel: LocalChannel<BrokerStorage>,
@@ -108,14 +108,14 @@ pub enum IncomingBitVMXApiMessages {
     GetTransaction(Uuid, Txid),
     GetTransactionInfoByName(Uuid, String),
     GetHashedMessage(Uuid, String, u32, u32),
-    Setup(ProgramId, String, Vec<P2PAddress>, u16),
+    Setup(ProgramId, String, Vec<CommsAddress>, u16),
     SubscribeToTransaction(Uuid, Txid),
     SubscribeUTXO(),
     SubscribeToRskPegin(),
     GetSPVProof(Txid),
     DispatchTransaction(Uuid, Transaction),
     DispatchTransactionName(Uuid, String),
-    SetupKey(Uuid, Vec<P2PAddress>, Option<Vec<PublicKey>>, u16),
+    SetupKey(Uuid, Vec<CommsAddress>, Option<Vec<PublicKey>>, u16),
     GetAggregatedPubkey(Uuid),
     GetKeyPair(Uuid),
     GetPubKey(Uuid, bool),
@@ -153,7 +153,7 @@ pub enum OutgoingBitVMXApiMessages {
     TransactionInfo(Uuid, String, Transaction),
     ZKPResult(Uuid, Vec<u8>, Vec<u8>),
     ExecutionResult(/* Add appropriate type */),
-    CommInfo(P2PAddress),
+    CommInfo(CommsAddress),
     KeyPair(Uuid, PrivateKey, PublicKey),
     PubKey(Uuid, PublicKey),
     Variable(Uuid, String, VariableTypes),
@@ -179,7 +179,7 @@ impl OutgoingBitVMXApiMessages {
         Ok(msg)
     }
 
-    pub fn comm_info(&self) -> Option<P2PAddress> {
+    pub fn comm_info(&self) -> Option<CommsAddress> {
         match self {
             OutgoingBitVMXApiMessages::CommInfo(info) => Some(info.clone()),
             _ => None,

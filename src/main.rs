@@ -12,8 +12,8 @@ use bitvmx_client::{bitvmx::BitVMX, config::Config};
 
 fn config_trace() {
     let filter = EnvFilter::builder()
-        .parse("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitcoin_coordinator=info,p2p_protocol=off,p2p_handler=off,tarpc=off,broker=off")
-        // .parse("info,libp2p=off,p2p_protocol=off,p2p_handler=off,tarpc=off")
+        .parse("info,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitcoin_coordinator=info,operator_comms=off,tarpc=off,broker=off")
+        // .parse("info,operator_comms=off,tarpc=off")
         .expect("Invalid filter");
 
     tracing_subscriber::fmt()
@@ -63,7 +63,7 @@ fn run_bitvmx(opn: &str, rx: Receiver<()>, tx: Option<Sender<()>>) -> Result<()>
 
     info!("BitVMX instance initialized");
     for bitvmx in &instances {
-        info!("P2P Address: {}", bitvmx.address());
+        info!("Comms Address: {}", bitvmx.address());
         info!("Peer Public Key Hash: {}", bitvmx.pubkey_hash()?);
     }
 

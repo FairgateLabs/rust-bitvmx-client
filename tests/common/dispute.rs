@@ -6,7 +6,7 @@ use bitvmx_client::{
     bitvmx::BitVMX,
     program::{
         self,
-        participant::{P2PAddress, ParticipantRole},
+        participant::{CommsAddress, ParticipantRole},
         protocols::dispute::{
             input_tx_name, program_input, EXECUTE, TIMELOCK_BLOCKS, TIMELOCK_BLOCKS_KEY,
         },
@@ -53,7 +53,7 @@ pub enum ForcedChallenges {
 
 pub fn prepare_dispute(
     program_id: Uuid,
-    participants: Vec<P2PAddress>,
+    participants: Vec<CommsAddress>,
     id_channel_pairs: Vec<ParticipantChannel>,
     aggregated_pub_key: &PublicKey,
     initial_utxo: Utxo,
