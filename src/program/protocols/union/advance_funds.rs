@@ -136,6 +136,7 @@ impl ProtocolHandler for AdvanceFundsProtocol {
         let mut op_change = self.checked_sub(input_utxo.2.unwrap(), pegin_amount)?;
         op_change = self.checked_sub(op_change, request.fee)?;
 
+        // FIXME: Change should go to a operator "personal" address
         if op_change > DUST_VALUE {
             let op_wpkh = request
                 .my_take_pubkey
@@ -268,21 +269,14 @@ impl AdvanceFundsProtocol {
             .utxo()?)
     }
 
-    pub fn advance_funds_tx(&self) -> Result<Transaction, ProtocolBuilderError> {
-        // let signature = self
-        //     .load_protocol()?
-        //     .input_taproot_key_spend_signature(ADVANCE_FUNDS_TX, 0)?
-        //     .unwrap();
-        // let mut taproot_arg = InputArgs::new_taproot_key_args();
-        // taproot_arg.push_taproot_signature(signature)?;
-
+    fn advance_funds_tx(&self) -> Result<Transaction, ProtocolBuilderError> {
         Ok(self
             .load_protocol()?
             .transaction_by_name(ADVANCE_FUNDS_TX)?
             .clone())
     }
 
-    pub fn is_initial_deposit_tx_dispatched(
+    fn is_initial_deposit_tx_dispatched(
         &self,
         context: &ProgramContext,
         committee_id: &Uuid,
@@ -296,7 +290,7 @@ impl AdvanceFundsProtocol {
         Ok(dispatched)
     }
 
-    pub fn dispatch_op_initial_deposit_tx(
+    fn dispatch_op_initial_deposit_tx(
         &self,
         context: &ProgramContext,
         committee_id: &Uuid,
@@ -332,7 +326,7 @@ impl AdvanceFundsProtocol {
         Ok(())
     }
 
-    pub fn dispatch_reimbursement_tx(
+    fn dispatch_reimbursement_tx(
         &self,
         context: &ProgramContext,
         dispute_protocol_id: Uuid,

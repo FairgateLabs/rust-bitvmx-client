@@ -14,6 +14,7 @@ pub const SELECTED_OPERATOR_PUBKEY: &str = "selected_operator_pubkey";
 pub const MONITORED_OPERATOR_KEY: &str = "monitored_operator_key";
 pub const OP_INITIAL_DEPOSIT_FLAG: &str = "op_initial_deposit_flag";
 pub const OPERATOR_LEAF_INDEX: &str = "operator_leaf_index";
+pub const SPEEDUP_KEY: &str = "speedup_key";
 
 // Transaction names
 pub const REQUEST_PEGIN_TX: &str = "REQUEST_PEGIN_TX";

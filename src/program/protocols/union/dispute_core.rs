@@ -95,6 +95,19 @@ impl ProtocolHandler for DisputeCoreProtocol {
             PublicKeyType::Public(program_context.key_chain.derive_keypair()?),
         ));
 
+        let speedup_key = program_context.key_chain.derive_keypair()?;
+
+        keys.push((
+            SPEEDUP_KEY.to_string(),
+            PublicKeyType::Public(speedup_key.clone()),
+        ));
+
+        program_context.globals.set_var(
+            &self.ctx.id,
+            SPEEDUP_KEY,
+            VariableTypes::PubKey(speedup_key),
+        )?;
+
         if self.prover(program_context)? {
             keys.push((
                 REVEAL_INPUT_KEY.to_string(),
@@ -446,7 +459,7 @@ impl DisputeCoreProtocol {
             protocol,
             keys,
             dispute_core_index,
-            &operator_dispute_key,
+            dispute_core_data.operator_index,
             committee.packet_size as usize,
         )?;
 
@@ -458,7 +471,7 @@ impl DisputeCoreProtocol {
         protocol: &mut Protocol,
         keys: &Vec<ParticipantKeys>,
         dispute_core_index: usize,
-        operator_dispute_key: &PublicKey,
+        operator_index: usize,
         packet_size: usize,
     ) -> Result<(), BitVMXError> {
         let initial_deposit = format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX);
@@ -467,31 +480,32 @@ impl DisputeCoreProtocol {
         let challenge = indexed_name(CHALLENGE_TX, dispute_core_index);
         let reveal_input = indexed_name(REVEAL_INPUT_TX, dispute_core_index);
         let input_not_revealed = indexed_name(INPUT_NOT_REVEALED_TX, dispute_core_index);
+        let operator_speedup_key = keys[operator_index].get_public(SPEEDUP_KEY)?;
 
         // Add a speedup output to the initial_deposit transaction and to the setup tx when the last initial deposit
         // output has been added.
         if dispute_core_index == packet_size - 1 {
             protocol.add_transaction_output(
                 &initial_deposit,
-                &OutputType::segwit_key(AUTO_AMOUNT, operator_dispute_key)?,
+                &OutputType::segwit_key(AUTO_AMOUNT, operator_speedup_key)?,
             )?;
 
             protocol.add_transaction_output(
                 &setup,
-                &OutputType::segwit_key(AUTO_AMOUNT, operator_dispute_key)?,
+                &OutputType::segwit_key(AUTO_AMOUNT, operator_speedup_key)?,
             )?;
         }
 
         // Add a speedup output to the reimbursement_kickoff transaction.
         protocol.add_transaction_output(
             &reimbursement_kickoff,
-            &OutputType::segwit_key(AUTO_AMOUNT, operator_dispute_key)?,
+            &OutputType::segwit_key(AUTO_AMOUNT, operator_speedup_key)?,
         )?;
 
         // Add one speedup ouput per committee member to the challenge and input_not_revealed transactions.
         for i in 0..keys.len() {
             let speedup_output =
-                OutputType::segwit_key(AUTO_AMOUNT, keys[i].get_public(DISPUTE_KEY)?)?;
+                OutputType::segwit_key(AUTO_AMOUNT, keys[i].get_public(SPEEDUP_KEY)?)?;
             protocol.add_transaction_output(&challenge, &speedup_output)?;
             protocol.add_transaction_output(&input_not_revealed, &speedup_output)?;
         }
@@ -499,7 +513,7 @@ impl DisputeCoreProtocol {
         // Add a speedup output to the reveal_input transaction.
         protocol.add_transaction_output(
             &reveal_input,
-            &OutputType::segwit_key(AUTO_AMOUNT, operator_dispute_key)?,
+            &OutputType::segwit_key(AUTO_AMOUNT, operator_speedup_key)?,
         )?;
 
         Ok(())
@@ -553,14 +567,14 @@ impl DisputeCoreProtocol {
         let tx = protocol.transaction_to_send(&name, &[input_args])?;
 
         let txid = tx.compute_txid();
-        let speedup_key = self.my_dispute_key(context)?;
+        let speedup_key = self.my_speedup_key(context)?;
         let speedup_vout = (tx.output.len() - 2) as u32;
         let speedup_utxo = Utxo::new(txid, speedup_vout, SPEEDUP_VALUE, &speedup_key);
 
         Ok((tx, Some(speedup_utxo.into())))
     }
 
-    pub fn op_initial_deposit_tx(
+    fn op_initial_deposit_tx(
         &self,
         tx_name: &str,
         context: &ProgramContext,
@@ -605,7 +619,7 @@ impl DisputeCoreProtocol {
         let tx = protocol.transaction_to_send(&tx_name, &[input_args])?;
 
         let txid = tx.compute_txid();
-        let speedup_key = self.my_dispute_key(context)?;
+        let speedup_key = self.my_speedup_key(context)?;
         let speedup_vout = (tx.output.len() - 1) as u32;
         let speedup_utxo = Utxo::new(txid, speedup_vout, SPEEDUP_VALUE, &speedup_key);
 
@@ -644,7 +658,7 @@ impl DisputeCoreProtocol {
         let tx = protocol.transaction_to_send(&name, &[input_args])?;
 
         let txid = tx.compute_txid();
-        let speedup_key = self.my_dispute_key(context)?;
+        let speedup_key = self.my_speedup_key(context)?;
         let speedup_vout = (tx.output.len() - 1) as u32;
         let speedup_utxo = Utxo::new(txid, speedup_vout, SPEEDUP_VALUE, &speedup_key);
 
@@ -690,7 +704,7 @@ impl DisputeCoreProtocol {
         let tx = protocol.transaction_to_send(&name, &[input_args])?;
 
         let txid = tx.compute_txid();
-        let speedup_key = self.my_dispute_key(context)?;
+        let speedup_key = self.my_speedup_key(context)?;
         let speedup_vout = 1 + self.ctx.my_idx as u32;
         let speedup_utxo = Utxo::new(txid, speedup_vout, SPEEDUP_VALUE, &speedup_key);
 
@@ -746,6 +760,14 @@ impl DisputeCoreProtocol {
         let my_index = self.ctx.my_idx;
         let committee = self.committee(context)?;
         Ok(committee.members[my_index].dispute_key.clone())
+    }
+
+    fn my_speedup_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+        Ok(context
+            .globals
+            .get_var(&self.ctx.id, SPEEDUP_KEY)?
+            .unwrap()
+            .pubkey()?)
     }
 
     fn committee_id(&self, context: &ProgramContext) -> Result<Uuid, BitVMXError> {
