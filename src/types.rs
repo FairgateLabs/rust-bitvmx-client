@@ -23,6 +23,7 @@ use crate::{
         variables::{Globals, VariableTypes, WitnessTypes, WitnessVars},
     },
 };
+
 pub struct ProgramContext {
     pub key_chain: KeyChain,
     pub comms: OperatorComms,
@@ -119,6 +120,7 @@ pub enum IncomingBitVMXApiMessages {
     GetAggregatedPubkey(Uuid),
     GetKeyPair(Uuid),
     GetPubKey(Uuid, bool),
+    SignMessage(Uuid, Vec<u8>, PublicKey), // id, payload_to_sign, public_key_to_use
     GenerateZKP(Uuid, Vec<u8>, String),
     ProofReady(Uuid),
     GetZKPExecutionResult(Uuid),
@@ -156,6 +158,7 @@ pub enum OutgoingBitVMXApiMessages {
     CommInfo(CommsAddress),
     KeyPair(Uuid, PrivateKey, PublicKey),
     PubKey(Uuid, PublicKey),
+    SignedMessage(Uuid, [u8; 32], [u8; 32], u8), // id, signature_r, signature_s, recovery_id
     Variable(Uuid, String, VariableTypes),
     Witness(Uuid, String, WitnessTypes),
     NotFound(Uuid, String),

@@ -49,6 +49,7 @@ impl AdvanceFunds {
         my_take_pubkey: PublicKey,
         pegout_id: Vec<u8>,
         my_address: CommsAddress,
+        fee: u64,
     ) -> Result<()> {
         // All members should set up the operator pubkey that should advance the funds
         bitvmx.set_var(
@@ -70,7 +71,7 @@ impl AdvanceFunds {
             committee_id,
             slot_index,
             pegout_id,
-            fee: 355, // This will be set later
+            fee, // This will be set later
             user_pubkey,
             my_take_pubkey,
         };
