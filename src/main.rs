@@ -81,8 +81,8 @@ fn run_bitvmx(opn: &str, rx: Receiver<()>, tx: Option<Sender<()>>) -> Result<()>
     info!("BitVMX instance initialized");
     for instance in &instances {
         let _span = info_span!("", id = instance.name).entered();
-        info!("P2P Address: {}", instance.bitvmx.address());
-        info!("Peer ID: {}", instance.bitvmx.peer_id());
+        info!("Comms Address: {}", instance.bitvmx.address());
+        info!("Peer Public Key Hash: {}", instance.bitvmx.pubkey_hash()?);
         info!("Starting Bitcoin blockchain sync");
     }
 
@@ -100,7 +100,7 @@ fn run_bitvmx(opn: &str, rx: Receiver<()>, tx: Option<Sender<()>>) -> Result<()>
 
             if instance.ready {
                 // This instance is synced with Bitcoin chain. Call tick() to process pending
-                // operations, handle P2P messages, and execute BitVMX protocol logic.
+                // operations, handle Comms messages, and execute BitVMX protocol logic.
                 instance.bitvmx.tick()?;
                 thread::sleep(Duration::from_millis(10));
             } else {

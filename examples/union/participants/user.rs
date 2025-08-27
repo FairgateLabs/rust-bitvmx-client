@@ -21,7 +21,7 @@ use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
     program::{protocols::union::types::SPEEDUP_VALUE, variables::PartialUtxo},
-    types::{OutgoingBitVMXApiMessages::*, L2_ID},
+    types::OutgoingBitVMXApiMessages::*,
 };
 
 pub struct User {

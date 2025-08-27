@@ -611,7 +611,11 @@ impl BitVMX {
     }
 
     /// send replies via the broker channel
-    fn reply(&mut self, to: u32, message: OutgoingBitVMXApiMessages) -> Result<(), BitVMXError> {
+    fn reply(
+        &mut self,
+        to: Identifier,
+        message: OutgoingBitVMXApiMessages,
+    ) -> Result<(), BitVMXError> {
         debug!("> {:?}", message);
         self.program_context
             .broker_channel
@@ -622,7 +626,7 @@ impl BitVMX {
 }
 
 impl BitVMXApi for BitVMX {
-    fn ping(&mut self, from: u32) -> Result<(), BitVMXError> {
+    fn ping(&mut self, from: Identifier) -> Result<(), BitVMXError> {
         self.reply(from, OutgoingBitVMXApiMessages::Pong())?;
         Ok(())
     }
@@ -1171,7 +1175,8 @@ impl BitVMXApi for BitVMX {
                 let encrypted = self
                     .program_context
                     .key_chain
-                    .encrypt_messages(message, public_key)?;
+                    .key_manager
+                    .encrypt_rsa_message(&message, pub_key)?;
                 self.reply(from, OutgoingBitVMXApiMessages::Encrypted(id, encrypted))?;
             }
             IncomingBitVMXApiMessages::Decrypt(id, message) => {
