@@ -21,7 +21,6 @@ ENV BITCOIND_RPC_PASSWORD=rpcpassword
 RUN apt update
 RUN apt install -y wget
 RUN apt install -y curl
-RUN apt install -y librocksdb-dev 
 
 RUN mkdir -p /app/data
 WORKDIR /app
