@@ -11,8 +11,9 @@ use tracing_subscriber::EnvFilter;
 use bitvmx_client::{bitvmx::BitVMX, config::Config};
 
 fn config_trace() {
+    let log_level = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
     let filter = EnvFilter::builder()
-        .parse("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitcoin_coordinator=info,p2p_protocol=off,p2p_handler=off,tarpc=off,broker=off")
+        .parse(format!("{log_level},bitcoincore_rpc=off,hyper_util=off,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitcoin_coordinator=info,p2p_protocol=off,p2p_handler=off,tarpc=off,broker=off"))
         // .parse("info,libp2p=off,p2p_protocol=off,p2p_handler=off,tarpc=off")
         .expect("Invalid filter");
 

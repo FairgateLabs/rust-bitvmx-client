@@ -36,3 +36,12 @@ If you are running a bitcoin node, you should stop it before running the integra
 RUST_BACKTRACE=1 cargo test test_single_run -- --ignored
 ```
  
+## Development
+
+You can run the app with
+
+```bash
+RUST_LOG=debug cargo run op_1
+```
+
+Where `RUST_LOG`is the log level and `op_1` is the name of the yaml config file
