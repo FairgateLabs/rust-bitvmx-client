@@ -275,41 +275,6 @@ impl Committee {
         Ok(self.members[0].keyring.take_aggregated_key.unwrap())
     }
 
-    // fn get_funding_utxo(&self, amount: u64, pubkey: &PublicKey) -> Result<PartialUtxo> {
-    //     self.prepare_funding_utxo(&self.wallet, "fund_1", pubkey, amount, None)
-    // }
-
-    // fn prepare_funding_utxo(
-    //     &self,
-    //     wallet: &Wallet,
-    //     funding_id: &str,
-    //     public_key: &PublicKey,
-    //     amount: u64,
-    //     from: Option<&str>,
-    // ) -> Result<PartialUtxo> {
-    //     let txid = wallet.fund_address(
-    //         WALLET_NAME,
-    //         from.unwrap_or(funding_id),
-    //         *public_key,
-    //         &vec![amount],
-    //         FEE,
-    //         false,
-    //         true,
-    //         None,
-    //     )?;
-    //     wallet.mine(1)?;
-
-    //     let script_pubkey = ScriptBuf::new_p2wpkh(&public_key.wpubkey_hash().unwrap());
-
-    //     let output_type = OutputType::SegwitPublicKey {
-    //         value: Amount::from_sat(amount),
-    //         script_pubkey,
-    //         public_key: *public_key,
-    //     };
-
-    //     Ok((txid, 0, Some(amount), Some(output_type)))
-    // }
-
     fn get_addresses(&self) -> Vec<P2PAddress> {
         self.members
             .iter()
@@ -349,8 +314,6 @@ impl Committee {
                 .map(|m| {
                     let f = f.clone();
                     let span = info_span!("member", id = %m.id);
-
-                    thread::sleep(Duration::from_millis(2000)); // Simulate some delay for each member
 
                     thread::sleep(Duration::from_millis(2000)); // Simulate some delay for each member
 

@@ -149,20 +149,17 @@ impl Member {
         info!("Funding address: {:?} with: {}", public_key, amount);
         self.bitvmx.send_funds_to_p2wpkh(id, public_key, amount)?;
 
-        thread::sleep(std::time::Duration::from_secs(1));
-
-        // Mine a block to confirm the transaction
-        bitcoin_client.mine_blocks(1)?;
+        // Mine blocks to confirm the transaction
+        for _ in 0..3 {
+            info!("Mining 1 block and wait...");
+            bitcoin_client.mine_blocks(1)?;
+            thread::sleep(std::time::Duration::from_secs(1));
+        }
 
         let txid = wait_until_msg!(
             &self.bitvmx,
             FundsSent(_, _txid) => _txid
         );
-
-        thread::sleep(std::time::Duration::from_secs(1));
-
-        // Mine a block to confirm the transaction
-        bitcoin_client.mine_blocks(1)?;
 
         // Wait for the transaction info
         let tx_status = wait_until_msg!(

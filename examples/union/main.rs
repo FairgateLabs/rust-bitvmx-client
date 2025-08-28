@@ -8,10 +8,9 @@
 //! `cargo run --example union accept_pegin`       - Setups the accept peg in protocol
 //! `cargo run --example union request_pegout`     - Setups the request peg out protocol
 //! `cargo run --example union advance_funds`      - Performs an advancement of funds
-use ::bitcoin::{
-    Txid, {OutPoint, PublicKey},
-};
+use ::bitcoin::{Amount, OutPoint, PublicKey, Txid};
 use anyhow::Result;
+use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
 use bitvmx_client::program::protocols::union::{
     common::get_accept_pegin_pid, types::ACCEPT_PEGIN_TX,
 };
@@ -30,6 +29,7 @@ mod bitcoin;
 mod log;
 
 // Adjust based on the network
+pub const USER_FUNDS: u64 = 102_000;
 pub const ADVANCE_FUNDS_FEE: u64 = 1000;
 pub const ACCEPT_PEGIN_SPEEDUP_FEE: u64 = 5000;
 pub const STREAM_DENOMINATION: u64 = 100_000;
@@ -138,6 +138,11 @@ pub fn request_pegin() -> Result<(Committee, User, Txid, u64)> {
     let committee_public_key = committee.public_key()?;
 
     let mut user = User::new("user_1")?;
+
+    committee
+        .bitcoin_client
+        .fund_address(&user.address, Amount::from_sat(USER_FUNDS))?;
+
     let amount: u64 = STREAM_DENOMINATION; // This should be replaced with the actual amount of the peg-in request
     let request_pegin_txid = user.request_pegin(&committee_public_key, amount)?;
 
