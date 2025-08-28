@@ -8,8 +8,9 @@
 //! `cargo run --example union accept_pegin`       - Setups the accept peg in protocol
 //! `cargo run --example union request_pegout`     - Setups the request peg out protocol
 //! `cargo run --example union advance_funds`      - Performs an advancement of funds
-
-use ::bitcoin::{OutPoint, PublicKey, Txid};
+use ::bitcoin::{
+    Txid, {OutPoint, PublicKey},
+};
 use anyhow::Result;
 use bitvmx_client::program::protocols::union::{
     common::get_accept_pegin_pid, types::ACCEPT_PEGIN_TX,
@@ -77,7 +78,7 @@ fn print_usage() {
 
 pub fn setup_bitcoin_node() -> Result<()> {
     bitcoin::stop_existing_bitcoind()?;
-    let (_bitcoin_client, _bitcoind, _wallet) = bitcoin::prepare_bitcoin()?;
+    let (_bitcoin_client, _bitcoind) = bitcoin::prepare_bitcoin()?;
 
     Ok(())
 }

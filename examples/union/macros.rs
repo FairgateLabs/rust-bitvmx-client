@@ -27,8 +27,13 @@ where
     F: Fn(&OutgoingBitVMXApiMessages) -> bool,
 {
     let mut msg = bitvmx.wait_message(Some(Duration::from_secs(60)), None)?;
+    info!("Got message: {:?}", msg);
+
     while !matches_fn(&msg) {
-        info!("Waiting for another message that match condition.");
+        info!(
+            "Waiting for another message that match condition. Got: {:?}",
+            msg.name()
+        );
         thread::sleep(Duration::from_millis(10));
         msg = bitvmx.wait_message(Some(Duration::from_secs(60)), None)?;
     }

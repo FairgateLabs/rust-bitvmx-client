@@ -17,7 +17,7 @@ use bitvmx_client::{
         },
         variables::{PartialUtxo, VariableTypes},
     },
-    types::OutgoingBitVMXApiMessages::Variable,
+    types::OutgoingBitVMXApiMessages::*,
 };
 use bitvmx_client::{program::participant::P2PAddress, types::PROGRAM_TYPE_ADVANCE_FUNDS};
 use protocol_builder::types::OutputType;
@@ -139,11 +139,31 @@ impl AdvanceFundsHelper {
 
         let total_amount = utxo.2.unwrap() + KEY_SPEND_FEE + OP_RETURN_FEE + CHANGE;
 
+        let id = Uuid::new_v4();
         // Fund the operator address to cover the advancement of funds + fees
-        let (funding_tx, vout) = self
-            .bitcoin_client
-            .fund_address(&self.operator_address, Amount::from_sat(total_amount))
-            .unwrap();
+        bitvmx.send_funds_to_address(id, self.operator_address.to_string(), total_amount)?;
+
+        // Wait for the transaction to be sent
+        let _txid = wait_until_msg!(
+            bitvmx,
+            FundsSent(_, _txid) => _txid
+        );
+        // Mine a block to confirm the transaction
+        self.bitcoin_client.mine_blocks(1)?;
+        // Wait for the transaction info
+        let tx_status = wait_until_msg!(
+            &bitvmx,
+            Transaction(_, _tx_status, _) => _tx_status
+        );
+        // Check confirmation threashold
+        if tx_status.confirmations < 1 {
+            return Err(anyhow::anyhow!(
+                "prepare_funding_utxo Transaction not finalized, confirmations: {}",
+                tx_status.confirmations
+            ));
+        }
+        let vout = 0;
+        let funding_tx = tx_status.tx;
 
         info!("Funding transaction: {:#?}", funding_tx);
 

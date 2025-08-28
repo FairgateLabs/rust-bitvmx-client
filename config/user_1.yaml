@@ -36,3 +36,9 @@ client:
   retry: 1
   # Delay between retries in milliseconds
   retry_delay: 1000
+
+wallet:
+  receive_key: cRN57Z48ckBrksAn6TGv8SxCkhGxmHX2BybZZp3M8Wh5imnMxdwX
+  change_key: cP1ZRRhFSgaQ4dEqpERzt43eVkEJGko2VeWuedAz34M6H9Vjc6zo
+  db_path: /tmp/regtest/user_1/wallet.db
+  start_height: 0
