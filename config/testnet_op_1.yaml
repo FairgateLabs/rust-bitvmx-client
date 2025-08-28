@@ -31,3 +31,7 @@ broker_port: 22222
 client:
   retry: 1
   retry_delay: 1000
+
+wallet:
+  db_path: /tmp/testnet/op_1/wallet.db
+  start_height: 4631993

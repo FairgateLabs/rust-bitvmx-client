@@ -36,3 +36,9 @@ broker_port: 11111
 client:
   retry: 1
   retry_delay: 1000
+
+wallet:
+  receive_key: cUVFBGCCjw5JGY2DUY5HTtKoHevMHs675aFkXVLvXeE4jV7GPeGb
+  change_key: cVTMy1VXsEqT4z3nT3w8vupAmqBTjZBmyyE38TYP9kju9rQWpK9F
+  db_path: /tmp/regtest/development/wallet.db
+  start_height: 0

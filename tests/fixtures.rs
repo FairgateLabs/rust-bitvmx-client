@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+#![cfg(test)]
 use anyhow::Result;
 use bitcoin::{
     absolute,

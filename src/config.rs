@@ -3,6 +3,7 @@ use bitvmx_bitcoin_rpc::rpc_config::RpcConfig;
 use key_manager::config::KeyManagerConfig;
 use serde::{Deserialize, Serialize};
 use storage_backend::storage_config::StorageConfig;
+use bitvmx_wallet::config::WalletConfig;
 use tracing::info;
 
 use crate::errors::ConfigError;
@@ -50,6 +51,7 @@ pub struct Config {
     pub client: ClientConfig,
     pub coordinator_settings: Option<CoordinatorSettingsConfig>,
     pub coordinator: ThrotthleUpdate,
+    pub wallet: WalletConfig,
 }
 
 impl Config {

@@ -1,5 +1,5 @@
 use crate::program::protocols::protocol_handler::ProtocolHandler;
-use crate::types::{EMULATOR_ID, PROVER_ID};
+use crate::types::{Destination, EMULATOR_ID, PROVER_ID};
 use crate::{
     api::BitVMXApi,
     collaborate::Collaboration,
@@ -17,8 +17,8 @@ use crate::{
         BITVMX_ID, L2_ID,
     },
 };
-use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin::secp256k1::Message;
+use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_coordinator::{
     coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi},
@@ -35,6 +35,7 @@ use bitvmx_broker::{
 use bitvmx_cpu_definitions::challenge::EmulatorResultType;
 use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
+use bitvmx_wallet::wallet::Wallet;
 use p2p_handler::{LocalAllowList, P2pHandler, PeerId, ReceiveHandlerChannel};
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
@@ -50,6 +51,8 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 pub const THROTTLE_TICKS: u32 = 2;
+pub const WALLET_INDEX: u32 = 100;
+pub const WALLET_CHANGE_INDEX: u32 = 101;
 
 #[derive(Debug)]
 struct BitcoinUpdateState {
@@ -67,6 +70,7 @@ pub struct BitVMX {
     notified_request: HashSet<(Uuid, (Txid, Option<u32>))>,
     notified_rsk_pegin: HashSet<Txid>, //workaround for RSK pegin transactions because ack seems to be not working
     bitcoin_update: BitcoinUpdateState,
+    wallet: Wallet,
 }
 
 impl Drop for BitVMX {
@@ -107,6 +111,13 @@ impl BitVMX {
             config.p2p_address().to_string(),
             key_chain.communications_key.to_vec(),
         )?;
+        let wallet = Wallet::from_derive_keypair(
+            config.bitcoin.clone(),
+            config.wallet.clone(),
+            key_chain.key_manager.clone(),
+            WALLET_INDEX,
+            Some(WALLET_CHANGE_INDEX),
+        )?;
 
         let bitcoin_coordinator = BitcoinCoordinator::new_with_paths(
             &config.bitcoin,
@@ -138,7 +149,7 @@ impl BitVMX {
         );
 
         Ok(Self {
-            config: config,
+            config,
             program_context,
             store: store.clone(),
             broker,
@@ -150,6 +161,7 @@ impl BitVMX {
                 last_update: Instant::now(),
                 was_synced: false,
             },
+            wallet,
         })
     }
 
@@ -272,6 +284,7 @@ impl BitVMX {
 
     pub fn process_bitcoin_updates(&mut self) -> Result<bool, BitVMXError> {
         self.program_context.bitcoin_coordinator.tick()?;
+        self.process_wallet_updates()?;
 
         if !self.program_context.bitcoin_coordinator.is_ready()? {
             return Ok(false);
@@ -345,8 +358,6 @@ impl BitVMX {
                         "Dispatch Transaction Error: {:?} {:?} {}",
                         _tx_id, _context_data, _counter
                     );
-                    // Complete
-
                     ack_news =
                         AckNews::Coordinator(AckCoordinatorNews::DispatchTransactionError(_tx_id));
                 }
@@ -423,6 +434,11 @@ impl BitVMX {
         self.process_bitcoin_updates_with_throttle()?;
         self.process_collaboration()?;
 
+        Ok(())
+    }
+
+    pub fn process_wallet_updates(&mut self) -> Result<(), BitVMXError> {
+        self.wallet.tick()?;
         Ok(())
     }
 
@@ -570,10 +586,9 @@ impl BitVMX {
     /// send replies via the broker channel
     fn reply(&mut self, to: u32, message: OutgoingBitVMXApiMessages) -> Result<(), BitVMXError> {
         debug!("> {:?}", message);
-        self.program_context.broker_channel.send(
-            to,
-            serde_json::to_string(&message)?,
-        )?;
+        self.program_context
+            .broker_channel
+            .send(to, serde_json::to_string(&message)?)?;
 
         Ok(())
     }
@@ -621,16 +636,16 @@ impl BitVMXApi for BitVMX {
         leader_idx: u16,
     ) -> Result<(), BitVMXError> {
         info!("Setting up key for program: {:?}", id);
-        
+
         // Check if participants vector is empty or leader_idx is out of bounds
         if participants.is_empty() {
             return Err(BitVMXError::InvalidMessageFormat);
         }
-        
+
         if leader_idx as usize >= participants.len() {
             return Err(BitVMXError::InvalidMessageFormat);
         }
-        
+
         let leader = participants[leader_idx as usize].clone();
         let collab = Collaboration::setup_aggregated_key(
             &id,
@@ -809,7 +824,10 @@ impl BitVMXApi for BitVMX {
             .bitcoin_coordinator
             .get_transaction(txid)?;
 
-        self.reply(from, OutgoingBitVMXApiMessages::Transaction(id, tx_status, None))?;
+        self.reply(
+            from,
+            OutgoingBitVMXApiMessages::Transaction(id, tx_status, None),
+        )?;
         Ok(())
     }
 
@@ -827,6 +845,7 @@ impl BitVMXApi for BitVMX {
             Context::RequestId(id, from).to_string()?,
             None,
         )?;
+
         Ok(())
     }
 
@@ -958,9 +977,10 @@ impl BitVMXApi for BitVMX {
                     .load_program(&id)?
                     .protocol
                     .get_hashed_message(&name, vout, leaf)?;
-                self.reply(from, OutgoingBitVMXApiMessages::HashedMessage(
-                    id, name, vout, leaf, hashed,
-                ))?;
+                self.reply(
+                    from,
+                    OutgoingBitVMXApiMessages::HashedMessage(id, name, vout, leaf, hashed),
+                )?;
             }
             IncomingBitVMXApiMessages::GetCommInfo() => {
                 let comm_info = OutgoingBitVMXApiMessages::CommInfo(P2PAddress {
@@ -984,6 +1004,63 @@ impl BitVMXApi for BitVMX {
                 info!("Setting funding utxo {:?}", utxo);
                 self.program_context.bitcoin_coordinator.add_funding(utxo)?;
             }
+            IncomingBitVMXApiMessages::GetFundingAddress(id) => {
+                debug!("Getting funding address uuid: {:?}", id);
+                let address = self.wallet.receive_address()?;
+                self.program_context.broker_channel.send(
+                    from,
+                    serde_json::to_string(&OutgoingBitVMXApiMessages::FundingAddress(
+                        id,
+                        address.into_unchecked(),
+                    ))?,
+                )?;
+            }
+            IncomingBitVMXApiMessages::GetFundingBalance(id) => {
+                debug!("Getting funding balance uuid: {:?}", id);
+                if !self.wallet.is_ready {
+                    warn!("Wallet is not ready, to get funding balance uuid: {:?}", id);
+                    self.program_context.broker_channel.send(
+                        from,
+                        serde_json::to_string(&OutgoingBitVMXApiMessages::WalletNotReady(id))?,
+                    )?;
+                    return Ok(());
+                }
+                let balance = self.wallet.balance();
+                self.program_context.broker_channel.send(
+                    from,
+                    serde_json::to_string(&OutgoingBitVMXApiMessages::FundingBalance(
+                        id,
+                        balance.trusted_spendable().to_sat(),
+                    ))?,
+                )?;
+            }
+            IncomingBitVMXApiMessages::SendFunds(id, destination, amount) => {
+                info!("Sending funds to {:?} amount {:?}", destination, amount);
+                if !self.wallet.is_ready {
+                    warn!("Wallet is not ready, to send funds uuid: {:?}", id);
+                    self.program_context.broker_channel.send(
+                        from,
+                        serde_json::to_string(&OutgoingBitVMXApiMessages::WalletNotReady(id))?,
+                    )?;
+                    return Ok(());
+                }
+                let fee_rate = None; // TODO: get fee rate from coordinator
+                let tx = match destination {
+                    Destination::Address(address) => {
+                        self.wallet.send_to_address(&address, amount, fee_rate)?
+                    }
+                    Destination::P2WPKH(public_key) => {
+                        self.wallet.send_to_p2wpkh(&public_key, amount, fee_rate)?
+                    }
+                };
+                let txid = tx.compute_txid();
+                self.dispatch_transaction(from, id, tx.clone())?;
+
+                self.program_context.broker_channel.send(
+                    from,
+                    serde_json::to_string(&OutgoingBitVMXApiMessages::FundsSent(id, txid))?,
+                )?;
+            }
 
             IncomingBitVMXApiMessages::GetVar(uuid, key) => {
                 BitVMXApi::get_var(self, from, uuid, &key)?;
@@ -998,9 +1075,10 @@ impl BitVMXApi for BitVMX {
                 let tx = self
                     .load_program(&id)?
                     .get_transaction_by_name(&self.program_context, &name)?;
-                self.reply(from, OutgoingBitVMXApiMessages::TransactionInfo(
-                    id, name, tx,
-                ))?;
+                self.reply(
+                    from,
+                    OutgoingBitVMXApiMessages::TransactionInfo(id, name, tx),
+                )?;
             }
             IncomingBitVMXApiMessages::Setup(id, program_type, participants, leader) => {
                 BitVMXApi::setup(self, id, program_type, participants, leader)?
@@ -1022,7 +1100,7 @@ impl BitVMXApi for BitVMX {
                 BitVMXApi::dispatch_transaction_name(self, id, &tx)?
             }
             IncomingBitVMXApiMessages::DispatchTransaction(id, tx) => {
-                BitVMXApi::dispatch_transaction(self, from, id, tx)?
+                BitVMXApi::dispatch_transaction(self, from, id, tx)?;
             }
             IncomingBitVMXApiMessages::SetupKey(
                 id,
@@ -1071,24 +1149,32 @@ impl BitVMXApi for BitVMX {
                     .map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
                 // Sign the message with the provided public key
-                let recoverable_signature = self.program_context.key_chain.key_manager
+                let recoverable_signature = self
+                    .program_context
+                    .key_chain
+                    .key_manager
                     .sign_ecdsa_recoverable_message(&message, &public_key)?;
-                
+
                 let (recovery_id, compact) = recoverable_signature.serialize_compact();
                 let (r_bytes, s_bytes) = compact.split_at(32);
-                
+
                 // Convert to fixed-size arrays
-                let signature_r: [u8; 32] = r_bytes.try_into()
+                let signature_r: [u8; 32] = r_bytes
+                    .try_into()
                     .map_err(|_| BitVMXError::InvalidMessageFormat)?;
-                let signature_s: [u8; 32] = s_bytes.try_into()
+                let signature_s: [u8; 32] = s_bytes
+                    .try_into()
                     .map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
-                self.reply(from, OutgoingBitVMXApiMessages::SignedMessage(
-                    id, 
-                    signature_r, 
-                    signature_s, 
-                    recovery_id.to_i32() as u8
-                ))?;
+                self.reply(
+                    from,
+                    OutgoingBitVMXApiMessages::SignedMessage(
+                        id,
+                        signature_r,
+                        signature_s,
+                        recovery_id.to_i32() as u8,
+                    ),
+                )?;
             }
             IncomingBitVMXApiMessages::GetAggregatedPubkey(id) => {
                 BitVMXApi::get_aggregated_pubkey(self, from, id)?

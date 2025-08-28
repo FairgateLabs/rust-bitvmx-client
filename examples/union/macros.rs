@@ -6,11 +6,7 @@ macro_rules! expect_msg {
         if let $pattern = msg {
             Ok($expr)
         } else {
-            Err(anyhow::anyhow!(
-                "Expected `{}` but got `{:?}`",
-                stringify!($pattern),
-                msg
-            ))
+            Err(anyhow::anyhow!("Expected `{}`", stringify!($pattern)))
         }
     }};
 }
@@ -42,11 +38,7 @@ macro_rules! wait_until_msg {
         if let $pat = msg {
             $extract
         } else {
-            return Err(anyhow::anyhow!(
-                "Expected `{}` but got `{:?}`",
-                stringify!($pattern),
-                msg
-            ));
+            return Err(anyhow::anyhow!("Expected `{}`", stringify!($pattern)));
         }
     }};
 }

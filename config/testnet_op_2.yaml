@@ -30,4 +30,9 @@ broker_storage:
 broker_port: 33333
 client:
   retry: 1
+  # Delay between retries in milliseconds
   retry_delay: 1000
+
+wallet:
+  db_path: /tmp/testnet/op_2/wallet.db
+  start_height: 4631993
