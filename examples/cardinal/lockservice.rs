@@ -443,7 +443,7 @@ pub fn set_speedup_funding(
     wallet: &mut Wallet,
 ) -> Result<()> {
     // Send funds to the public key
-    let funds = wallet.send_to_p2wpkh(&pub_key, amount, None)?;
+    let funds = wallet.send_to_p2wpkh(&pub_key, amount, Some(100))?;
 
     let command = IncomingBitVMXApiMessages::DispatchTransaction(Uuid::new_v4(), funds.clone())
         .to_string()?;

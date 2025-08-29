@@ -4,7 +4,7 @@ use bitcoin::{
     secp256k1::{All, PublicKey as SecpPublicKey, SecretKey},
     Amount, Network, PublicKey as BitcoinPubKey,
 };
-use bitcoind::bitcoind::Bitcoind;
+use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
 use bitvmx_client::types::OutgoingBitVMXApiMessages::FundingAddress;
 
 use crate::macros::wait_for_message_blocking;
@@ -60,25 +60,25 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind)> {
     clear_db(&config.key_storage.path);
     Wallet::clear_db(&config.wallet)?;
 
-    let bitcoind = Bitcoind::new(
-        "bitcoin-regtest",
-        "ruimarinho/bitcoin-core",
-        config.bitcoin.clone(),
-    );
-    info!("Starting bitcoind");
-
-    // Config to trigger speedup transactions in Regtest
-    // let bitcoind = Bitcoind::new_with_flags(
+    // let bitcoind = Bitcoind::new(
     //     "bitcoin-regtest",
     //     "ruimarinho/bitcoin-core",
     //     config.bitcoin.clone(),
-    //     BitcoindFlags {
-    //         min_relay_tx_fee: 0.00001,
-    //         block_min_tx_fee: 0.00008,
-    //         debug: 1,
-    //         fallback_fee: 0.0002,
-    //     },
     // );
+    info!("Starting bitcoind");
+
+    // Config to trigger speedup transactions in Regtest
+    let bitcoind = Bitcoind::new_with_flags(
+        "bitcoin-regtest",
+        "ruimarinho/bitcoin-core",
+        config.bitcoin.clone(),
+        BitcoindFlags {
+            min_relay_tx_fee: 0.00001,
+            block_min_tx_fee: 0.00008,
+            debug: 1,
+            fallback_fee: 0.0002,
+        },
+    );
 
     bitcoind.start()?;
 

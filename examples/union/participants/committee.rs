@@ -23,6 +23,8 @@ use crate::macros::wait_for_message_blocking;
 use crate::participants::member::Member;
 use crate::wait_until_msg;
 
+pub const FEE_RATE: u64 = 9; // sat/vbyte
+
 pub struct Committee {
     pub members: Vec<Member>,
     take_aggregation_id: Uuid,
@@ -92,10 +94,11 @@ impl Committee {
         for member in &mut self.members {
             funding_utxos_per_member.insert(
                 member.keyring.take_pubkey.unwrap(),
-                member.get_funding_utxo(10_000_000, &self.bitcoin_client)?,
+                member.get_funding_utxo(10_000_000, &self.bitcoin_client, Some(FEE_RATE))?,
             );
 
-            let partial = member.get_funding_utxo(10_000_000, &self.bitcoin_client)?;
+            let partial =
+                member.get_funding_utxo(10_000_000, &self.bitcoin_client, Some(FEE_RATE))?;
             let utxo = Utxo::new(
                 partial.0,
                 partial.1,
