@@ -128,7 +128,7 @@ pub enum IncomingBitVMXApiMessages {
     Backup(String),
     GetFundingAddress(Uuid),
     GetFundingBalance(Uuid),
-    SendFunds(Uuid, Destination, u64),
+    SendFunds(Uuid, Destination, u64, Option<u64>),
 }
 impl IncomingBitVMXApiMessages {
     pub fn to_string(&self) -> Result<String, BitVMXError> {

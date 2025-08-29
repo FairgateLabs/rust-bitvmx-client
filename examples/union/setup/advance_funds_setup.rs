@@ -141,7 +141,12 @@ impl AdvanceFundsHelper {
 
         let id = Uuid::new_v4();
         // Fund the operator address to cover the advancement of funds + fees
-        bitvmx.send_funds_to_address(id, self.operator_address.to_string(), total_amount)?;
+        bitvmx.send_funds_to_address(
+            id,
+            self.operator_address.to_string(),
+            total_amount,
+            Some(2),
+        )?;
 
         // Wait for the transaction to be sent
         let _txid = wait_until_msg!(
