@@ -669,12 +669,10 @@ impl DisputeCoreProtocol {
         name: &str,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        let slot_index = extract_index(name, CHALLENGE_TX)?;
-        let my_index = self.ctx.my_idx;
-
-        info!(id = my_index, "Loading {} tx", name);
+        info!(id = self.ctx.my_idx, "Loading {} tx", name);
 
         let mut protocol = self.load_protocol()?;
+        let my_index = self.ctx.my_idx;
 
         let signatures = protocol.sign_taproot_input(
             name,
@@ -805,10 +803,7 @@ impl DisputeCoreProtocol {
         program_context.bitcoin_coordinator.dispatch(
             challenge_tx,
             speedup,
-            format!(
-                "dispute_core_challenge_{}:{}",
-                self.ctx.id, challenge_tx_name
-            ), // Context string
+            format!("dispute_core_challenge_{}:{}", self.ctx.id, tx_name), // Context string
             Some(tx_status.block_info.unwrap().height + DISPUTE_CORE_SHORT_TIMELOCK as u32), // Dispatch after short timelock
         )?;
 
