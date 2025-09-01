@@ -1,11 +1,14 @@
 use anyhow::Result;
-use bitcoin::Txid;
+use bitcoin::{Transaction as BtcTransaction, Txid};
 use bitvmx_client::program::participant::P2PAddress;
 use bitvmx_client::program::protocols::union::common::{
     get_accept_pegin_pid, get_dispute_aggregated_key_pid, get_take_aggreated_key_pid,
     get_user_take_pid,
 };
-use bitvmx_client::program::protocols::union::types::{MemberData, ACCEPT_PEGIN_TX, USER_TAKE_TX};
+use bitvmx_client::program::protocols::union::types::{
+    MemberData, ACCEPT_PEGIN_TX, ADVANCE_FUNDS_INPUT, USER_TAKE_TX,
+};
+use bitvmx_client::program::variables::VariableTypes;
 use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtxo};
 use bitvmx_client::types::OutgoingBitVMXApiMessages::{SPVProof, Transaction, TransactionInfo};
 
@@ -29,10 +32,11 @@ pub struct Committee {
     dispute_aggregation_id: Uuid,
     committee_id: Uuid,
     pub wallet: Wallet,
+    stream_denomination: u64,
 }
 
 impl Committee {
-    pub fn new() -> Result<Self> {
+    pub fn new(stream_denomination: u64) -> Result<Self> {
         let members = vec![
             Member::new("op_1", ParticipantRole::Prover)?,
             Member::new("op_2", ParticipantRole::Prover)?,
@@ -51,6 +55,7 @@ impl Committee {
             dispute_aggregation_id,
             committee_id,
             wallet,
+            stream_denomination,
         })
     }
 
@@ -104,6 +109,18 @@ impl Committee {
                 &member.keyring.dispute_pubkey.unwrap(),
             );
             speedup_funding_utxos_per_member.insert(member.keyring.take_pubkey.unwrap(), utxo);
+
+            // Advance Funds UTXOS
+            let fund_amount = self.stream_denomination * 12 / 10;
+            info!("Funding Advance Funds UTXO with {} sats", fund_amount);
+            let funded_utxo =
+                self.get_funding_utxo(fund_amount as u64, &member.keyring.dispute_pubkey.unwrap())?;
+
+            member.bitvmx.set_var(
+                self.committee_id,
+                ADVANCE_FUNDS_INPUT,
+                VariableTypes::Utxo(funded_utxo),
+            )?;
         }
 
         let members = self.get_member_data();
@@ -162,21 +179,24 @@ impl Committee {
         Ok(())
     }
 
-    pub fn dispatch_transaction_by_name(&self, protocol_id: Uuid, tx_name: String) -> Result<Txid> {
+    pub fn dispatch_transaction_by_name(
+        &self,
+        protocol_id: Uuid,
+        tx_name: String,
+    ) -> Result<BtcTransaction> {
         let bitvmx = &self.members[0].bitvmx;
         let _ = bitvmx.get_transaction_by_name(protocol_id, tx_name.clone());
         thread::sleep(std::time::Duration::from_secs(1));
         let tx = wait_until_msg!(bitvmx, TransactionInfo(_, _, _tx) => _tx);
-        let txid = tx.compute_txid();
         info!(
             "Protocol handler {} dispatching {} transaction: {:?}",
             protocol_id,
             tx_name.clone(),
-            tx
+            tx.clone()
         );
-        bitvmx.dispatch_transaction(protocol_id, tx)?;
+        bitvmx.dispatch_transaction(protocol_id, tx.clone())?;
         thread::sleep(std::time::Duration::from_secs(1));
-        Ok(txid)
+        Ok(tx)
     }
 
     pub fn wait_for_spv_proof(&self, txid: Txid) -> Result<()> {
@@ -200,7 +220,8 @@ impl Committee {
         protocol_id: Uuid,
         tx_name: String,
     ) -> Result<()> {
-        let txid = self.dispatch_transaction_by_name(protocol_id, tx_name.clone())?;
+        let tx = self.dispatch_transaction_by_name(protocol_id, tx_name.clone())?;
+        let txid = tx.compute_txid();
         self.wallet.mine(1)?;
         self.wait_for_spv_proof(txid)?;
         Ok(())
@@ -216,7 +237,7 @@ impl Committee {
         pegout_id: Vec<u8>,
         pegout_signature_hash: Vec<u8>,
         pegout_signature_message: Vec<u8>,
-    ) -> Result<()> {
+    ) -> Result<PartialUtxo> {
         let committee_id = self.committee_id.clone();
         let addresses = self.get_addresses();
 
@@ -236,9 +257,15 @@ impl Committee {
         })?;
 
         let protocol_id = get_user_take_pid(committee_id, slot_index);
-        self.dispatch_transaction_and_wait_for_spv_proof(protocol_id, USER_TAKE_TX.to_string())?;
-
-        Ok(())
+        let tx = self.dispatch_transaction_by_name(protocol_id, USER_TAKE_TX.to_string())?;
+        let utxo = (
+            tx.compute_txid(),
+            0,
+            Some(tx.output[0].value.to_sat()),
+            None,
+        );
+        thread::sleep(Duration::from_secs(1));
+        Ok(utxo)
     }
 
     pub fn advance_funds(

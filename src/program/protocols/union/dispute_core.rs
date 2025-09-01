@@ -6,7 +6,9 @@ use crate::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
                 self,
-                common::{create_transaction_reference, get_accept_pegin_pid, indexed_name},
+                common::{
+                    create_transaction_reference, extract_index, get_accept_pegin_pid, indexed_name,
+                },
                 types::*,
             },
         },
@@ -204,7 +206,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
         tx_id: Txid,
         _vout: Option<u32>,
         tx_status: TransactionStatus,
-        context: String,
+        _context: String,
         program_context: &ProgramContext,
         _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
@@ -212,11 +214,6 @@ impl ProtocolHandler for DisputeCoreProtocol {
         info!(
             "Dispute core protocol received news of transaction: {}, txid: {} with {} confirmations",
             tx_name, tx_id, tx_status.confirmations
-        );
-
-        info!(
-            "DisputeCoreProtocol::notify_news called with context: {}.",
-            context
         );
 
         if tx_name.starts_with(REIMBURSEMENT_KICKOFF_TX) {
@@ -631,17 +628,18 @@ impl DisputeCoreProtocol {
         name: &str,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        let leaf_index = 0;
-        let slot_index = self.extract_slot_index(name, REIMBURSEMENT_KICKOFF_TX)?;
+        let leaf_index = self.ctx.my_idx;
+        let slot_index = extract_index(name, REIMBURSEMENT_KICKOFF_TX)?;
+        info!(id = self.ctx.my_idx, "Loading {} tx", name);
 
         let protocol = self.load_protocol()?;
 
         // Prepare signatures
         let committee_signature = protocol
-            .input_taproot_script_spend_signature(name, slot_index, leaf_index)?
+            .input_taproot_script_spend_signature(name, 0, leaf_index)?
             .unwrap();
 
-        let script = protocol.get_script_to_spend(name, slot_index as u32, leaf_index as u32)?;
+        let script = protocol.get_script_to_spend(name, 0, leaf_index as u32)?;
         let pegout_id_key = script.get_key(PEGOUT_ID_KEY).unwrap();
 
         let pegout_id_signature = context.key_chain.key_manager.sign_winternitz_message(
@@ -656,6 +654,7 @@ impl DisputeCoreProtocol {
         input_args.push_taproot_signature(committee_signature)?;
 
         let tx = protocol.transaction_to_send(&name, &[input_args])?;
+        info!(id = self.ctx.my_idx, "Signed {} tx", name);
 
         let txid = tx.compute_txid();
         let speedup_key = self.my_speedup_key(context)?;
@@ -670,13 +669,10 @@ impl DisputeCoreProtocol {
         name: &str,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        let slot_index = self.extract_slot_index(name, CHALLENGE_TX)?;
+        let slot_index = extract_index(name, CHALLENGE_TX)?;
         let my_index = self.ctx.my_idx;
 
-        info!(
-            id = my_index,
-            "Loading Challenge transaction {} for slot {}", name, slot_index
-        );
+        info!(id = my_index, "Loading {} tx", name);
 
         let mut protocol = self.load_protocol()?;
 
@@ -690,18 +686,14 @@ impl DisputeCoreProtocol {
             "",
         )?;
 
-        info!(
-            id = my_index,
-            "Challenge transaction {} for slot {} signed with signatures: {:?}",
-            name,
-            slot_index,
-            signatures
-        );
-
         let mut input_args = InputArgs::new_taproot_script_args(my_index);
         input_args.push_taproot_signature(signatures[my_index].unwrap())?;
-
         let tx = protocol.transaction_to_send(&name, &[input_args])?;
+
+        info!(
+            id = my_index,
+            "Signed {} with signatures: {:?}", name, signatures
+        );
 
         let txid = tx.compute_txid();
         let speedup_key = self.my_speedup_key(context)?;
@@ -787,28 +779,6 @@ impl DisputeCoreProtocol {
         }
     }
 
-    fn extract_slot_index(&self, full_name: &str, tx_name: &str) -> Result<usize, BitVMXError> {
-        let prefix = format!("{}_", tx_name);
-        let slot_index = full_name
-            .strip_prefix(&prefix)
-            .ok_or_else(|| {
-                BitVMXError::InvalidTransactionName(format!(
-                    "'{}' does not match expected format '{}{{slot_index}}'",
-                    full_name, prefix
-                ))
-            })?
-            .parse::<usize>()
-            .map_err(|_| {
-                BitVMXError::InvalidTransactionName(format!(
-                    "Could not parse slot_index from: {}",
-                    full_name
-                ))
-            })?;
-
-        info!("Extracted slot_index {} from: {}", slot_index, full_name);
-        Ok(slot_index)
-    }
-
     fn dispatch_challenge_tx(
         &self,
         slot_id: usize,
@@ -816,14 +786,12 @@ impl DisputeCoreProtocol {
         reimbursement_tx_id: Txid,
         tx_status: TransactionStatus,
     ) -> Result<(), BitVMXError> {
-        info!("Dispatching Challenge Tx for slot_id: {}", slot_id);
+        let tx_name = indexed_name(CHALLENGE_TX, slot_id);
 
-        let challenge_tx_name = indexed_name(CHALLENGE_TX, slot_id);
-
-        info!("Getting challenge transaction: {}", challenge_tx_name);
+        info!("Dispatching {} tx", tx_name);
 
         let (mut challenge_tx, speedup) =
-            self.get_transaction_by_name(&challenge_tx_name, program_context)?;
+            self.get_transaction_by_name(&tx_name, program_context)?;
         let txid = challenge_tx.compute_txid();
 
         // Connect the challenge transaction to the reimbursement kickoff transaction
@@ -845,8 +813,8 @@ impl DisputeCoreProtocol {
         )?;
 
         info!(
-            "Challenge transaction {} connected to reimbursement tx {} and dispatched with txid: {}",
-            challenge_tx_name, reimbursement_tx_id, txid
+            "{} connected to reimbursement tx {} and dispatched with txid: {}",
+            tx_name, reimbursement_tx_id, txid
         );
 
         Ok(())
@@ -952,7 +920,7 @@ impl DisputeCoreProtocol {
 
         info!(
             id = self.ctx.my_idx,
-            "Dispatching {} transaction from protocol {}", setup_tx_name, self.ctx.id
+            "Dispatching {} tx from protocol {}", setup_tx_name, self.ctx.id
         );
 
         // Get the signed transaction
@@ -991,9 +959,10 @@ impl DisputeCoreProtocol {
         slot_index: usize,
         block_height: u32,
     ) -> Result<(), BitVMXError> {
+        let tx_name = indexed_name(OPERATOR_TAKE_TX, self.ctx.my_idx);
         info!(
             id = self.ctx.my_idx,
-            "Dispatching operator take transaction for slot index: {}", slot_index
+            "Dispatching {} tx for slot: {}", tx_name, slot_index
         );
 
         let dispute_core_data: DisputeCoreData = self.dispute_core_data(context)?;
@@ -1001,7 +970,6 @@ impl DisputeCoreProtocol {
         self.save_operator_leaf_index(context, accept_pegin_pid)?;
         let protocol = self.load_protocol_by_name(PROGRAM_TYPE_ACCEPT_PEGIN, accept_pegin_pid)?;
 
-        let tx_name = indexed_name(OPERATOR_TAKE_TX, self.ctx.my_idx);
         let (tx, speedup) = protocol.get_transaction_by_name(&tx_name, context)?;
         let txid = tx.compute_txid();
 
@@ -1014,10 +982,7 @@ impl DisputeCoreProtocol {
 
         info!(
             id = self.ctx.my_idx,
-            "Operator take transaction '{}' dispatched for slot index: {} with txid: {}",
-            tx_name,
-            slot_index,
-            txid
+            "{} dispatched for slot: {} with txid: {}", tx_name, slot_index, txid
         );
 
         Ok(())

@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use bitcoin::{PublicKey, Txid};
 use musig2::{secp::MaybeScalar, PubNonce};
 use serde::{Deserialize, Serialize};
@@ -56,6 +54,7 @@ pub const SELF_DISABLER_TX_SUFFIX: &str = "_SELF_DISABLER_TX";
 pub const OPERATOR_TAKE_ENABLER: &str = "operator_take_enabler";
 pub const OPERATOR_WON_ENABLER: &str = "operator_won_enabler";
 pub const ADVANCE_FUNDS_INPUT: &str = "advance_funds_input";
+pub const LAST_OPERATOR_TAKE_UTXO: &str = "last_operator_take_utxo";
 
 // Roles
 pub const OPERATOR: &str = "OP";
@@ -81,14 +80,6 @@ impl Committee {
     pub fn name() -> String {
         "committee".to_string()
     }
-
-    pub fn indexes_map(&self) -> HashMap<PublicKey, usize> {
-        self.members
-            .iter()
-            .enumerate()
-            .map(|(index, member)| (member.take_key, index))
-            .collect()
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,7 +102,7 @@ pub struct PegInRequest {
     pub amount: u64,
     pub accept_pegin_sighash: Vec<u8>,
     pub take_aggregated_key: PublicKey,
-    pub operators_take_key: Vec<PublicKey>,
+    pub operator_indexes: Vec<usize>,
     pub slot_index: usize,
     pub committee_id: uuid::Uuid,
     pub rootstock_address: String,

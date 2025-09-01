@@ -170,6 +170,7 @@ impl Program {
         // This is for those protocols that only has one participant
         if peers.len() == 1 {
             program.build_protocol(program_context)?;
+            program.protocol.sign(&program_context.key_chain)?;
             program.state = ProgramState::Monitoring
         }
         program.save()?;
