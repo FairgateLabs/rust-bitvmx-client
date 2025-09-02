@@ -1,10 +1,11 @@
-
 use anyhow::Result;
 use bitcoin::{Address, Network, PrivateKey, Txid};
 use bitvmx_settings::settings::load_config_file;
-use bitvmx_wallet::{config::{WalletConfig, Config}, wallet::{Wallet, RegtestWallet}};
+use bitvmx_wallet::{
+    config::{Config, WalletConfig},
+    wallet::{RegtestWallet, Wallet},
+};
 use tracing::info;
-
 
 /// Master wallet for funding Bitcoin addresses using bitvmx wallet
 pub struct MasterWallet {
@@ -13,10 +14,7 @@ pub struct MasterWallet {
 }
 
 impl MasterWallet {
-    pub fn new(
-        network: Option<Network>,
-        private_key: Option<PrivateKey>
-    ) -> Result<Self> {
+    pub fn new(network: Option<Network>, private_key: Option<PrivateKey>) -> Result<Self> {
         let network = network.unwrap_or(Network::Regtest);
 
         // Load configuration from appropriate config file
@@ -38,12 +36,17 @@ impl MasterWallet {
             let (secret_key, _) = secp.generate_keypair(&mut rng);
             PrivateKey::new(secret_key, network)
         } else {
-            return Err(anyhow::anyhow!("Private key required for non-regtest networks"));
+            return Err(anyhow::anyhow!(
+                "Private key required for non-regtest networks"
+            ));
         };
 
         // Create wallet config with the private key
         let wallet_config = WalletConfig {
-            db_path: format!("/tmp/{}/master_wallet.db", network.to_string().to_lowercase()),
+            db_path: format!(
+                "/tmp/{}/master_wallet.db",
+                network.to_string().to_lowercase()
+            ),
             start_height: Some(0), // TODO: Check where we can start from
             receive_key: Some(private_key.to_string()),
             change_key: None, // TODO: Check if we need a change key or a single descriptor wallet is sufficient
@@ -67,7 +70,7 @@ impl MasterWallet {
             match self.wallet.fund() {
                 Ok(_) => {
                     info!("Master wallet funded with 150 BTC on regtest");
-                },
+                }
                 Err(e) => {
                     info!("Warning: Failed to fund master wallet on regtest: {}", e);
                     info!("Make sure Bitcoin Core is running and accessible");
@@ -84,10 +87,16 @@ impl MasterWallet {
     }
 
     /// Fund a Bitcoin address with custom fee rate using send_to_address
-    pub fn fund_address_with_fee(&mut self, address: &Address, amount_sats: u64, fee_rate: Option<u64>) -> Result<Txid> {
+    pub fn fund_address_with_fee(
+        &mut self,
+        address: &Address,
+        amount_sats: u64,
+        fee_rate: Option<u64>,
+    ) -> Result<Txid> {
         let address_str = address.to_string();
 
-        let transaction = self.wallet
+        let transaction = self
+            .wallet
             .send_to_address(&address_str, amount_sats, fee_rate)
             .map_err(|e| anyhow::anyhow!("Failed to fund address: {}", e))?;
 

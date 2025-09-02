@@ -4,6 +4,7 @@ use core::clone::Clone;
 use protocol_builder::types::OutputType;
 use protocol_builder::types::Utxo;
 use std::collections::HashMap;
+use std::thread;
 use uuid::Uuid;
 
 use bitcoin::{PublicKey, Txid};
