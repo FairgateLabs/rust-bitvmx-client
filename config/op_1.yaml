@@ -37,3 +37,8 @@ client:
   retry: 1
   # Delay between retries in milliseconds
   retry_delay: 1000
+
+wallet:
+  db_path: /tmp/op_1/wallet.db
+  start_height: 0
+

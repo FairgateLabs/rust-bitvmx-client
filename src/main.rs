@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::Result;
+use bitvmx_wallet::wallet::{RegtestWallet, Wallet};
 use tracing::{debug, info, info_span};
 use tracing_subscriber::EnvFilter;
 
@@ -50,6 +51,7 @@ fn init_bitvmx(opn: &str) -> Result<BitVMX> {
     clear_db(&config.storage.path);
     clear_db(&config.key_storage.path);
     clear_db(&config.broker_storage.path);
+    Wallet::clear_db(&config.wallet).unwrap();
 
     info!("config: {:?}", config.storage.path);
 
@@ -63,7 +65,12 @@ fn run_bitvmx(opn: &str, rx: Receiver<()>, tx: Option<Sender<()>>) -> Result<()>
     // Determine which operators to run
     let operator_names: Vec<&str> = match opn {
         "all" => vec!["op_1", "op_2", "op_3", "op_4"],
-        "all-testnet" => vec!["testnet_op_1", "testnet_op_2", "testnet_op_3", "testnet_op_4"],
+        "all-testnet" => vec![
+            "testnet_op_1",
+            "testnet_op_2",
+            "testnet_op_3",
+            "testnet_op_4",
+        ],
         single_op => vec![single_op],
     };
 

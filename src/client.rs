@@ -4,7 +4,7 @@ use crate::{
         participant::P2PAddress,
         variables::{VariableTypes, WitnessTypes},
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
+    types::{Destination, IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
 use anyhow::Result;
 use bitcoin::{PublicKey, Transaction, Txid};
@@ -194,12 +194,7 @@ impl BitVMXClient {
     /// * `id` - The ID of the message
     /// * `messages` - The messages to encrypt as bytes
     /// * `public_key` - The public key to encrypt the messages with as pkcs8 DER bytes
-    pub fn encrypt(
-        &self,
-        id: Uuid,
-        messages: Vec<u8>,
-        public_key: Vec<u8>,
-    ) -> Result<()> {
+    pub fn encrypt(&self, id: Uuid, messages: Vec<u8>, public_key: Vec<u8>) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::Encrypt(id, messages, public_key))
     }
 
@@ -210,6 +205,30 @@ impl BitVMXClient {
     /// * `messages` - The messages to decrypt as bytes
     pub fn decrypt(&self, id: Uuid, messages: Vec<u8>) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::Decrypt(id, messages))
+    }
+
+    pub fn get_funding_address(&self, id: Uuid) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetFundingAddress(id))
+    }
+
+    pub fn get_funding_balance(&self, id: Uuid) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetFundingBalance(id))
+    }
+
+    pub fn send_funds_to_address(&self, id: Uuid, to_address: String, amount: u64) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SendFunds(
+            id,
+            Destination::Address(to_address),
+            amount,
+        ))
+    }
+
+    pub fn send_funds_to_p2wpkh(&self, id: Uuid, public_key: PublicKey, amount: u64) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SendFunds(
+            id,
+            Destination::P2WPKH(public_key),
+            amount,
+        ))
     }
 
     fn serialize_key(s: &str) -> String {
