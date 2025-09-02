@@ -41,10 +41,10 @@ impl AcceptPegInSetup {
             "Setting up the AcceptPegIn protocol handler {} for {}", protocol_id, my_id
         );
 
-        let mut operators_take_key = Vec::new();
-        for member in members {
+        let mut operator_indexes = Vec::new();
+        for (index, member) in members.iter().enumerate() {
             if member.role == ParticipantRole::Prover {
-                operators_take_key.push(member.take_key.clone());
+                operator_indexes.push(index);
             }
         }
 
@@ -53,7 +53,7 @@ impl AcceptPegInSetup {
             amount: request_pegin_amount,
             accept_pegin_sighash: accept_pegin_sighash.to_vec(),
             take_aggregated_key,
-            operators_take_key,
+            operator_indexes,
             slot_index: slot_index,
             committee_id: committee_id,
             rootstock_address,

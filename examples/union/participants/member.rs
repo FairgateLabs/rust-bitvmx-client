@@ -1,7 +1,7 @@
 use anyhow::Result;
 use core::clone::Clone;
 use protocol_builder::types::Utxo;
-use std::{collections::HashMap, thread};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use bitcoin::{PublicKey, Txid};
@@ -10,11 +10,8 @@ use bitvmx_client::{
     config::Config,
     program::{
         participant::{P2PAddress, ParticipantRole},
-        protocols::union::{
-            common::indexed_name,
-            types::{MemberData, ADVANCE_FUNDS_INPUT, ADVANCE_FUNDS_TX},
-        },
-        variables::{PartialUtxo, VariableTypes},
+        protocols::union::types::MemberData,
+        variables::PartialUtxo,
     },
     types::{OutgoingBitVMXApiMessages::*, L2_ID},
 };
@@ -25,10 +22,8 @@ use crate::{
     expect_msg,
     macros::wait_for_message_blocking,
     setup::{
-        accept_pegin_setup::AcceptPegInSetup,
-        advance_funds_setup::{AdvanceFunds, AdvanceFundsHelper},
-        dispute_core_setup::DisputeCoreSetup,
-        user_take_setup::UserTakeSetup,
+        accept_pegin_setup::AcceptPegInSetup, advance_funds_setup::AdvanceFunds,
+        dispute_core_setup::DisputeCoreSetup, user_take_setup::UserTakeSetup,
     },
     wait_until_msg,
 };
@@ -257,25 +252,6 @@ impl Member {
         selected_operator_pubkey: PublicKey,
         fee: u64,
     ) -> Result<()> {
-        let mut helper = AdvanceFundsHelper::new(&self.config)?;
-
-        // Check if this member is the selected operator for advance funds
-        let mut utxo: Option<PartialUtxo> = None;
-        if self.keyring.take_pubkey.unwrap() == selected_operator_pubkey {
-            // NOTE: This flow will be moved inside bitvmx if we decided to add the operator wallet inside it
-            // Fund operator wallet. This will be replaced with a wallet request in the future.
-            let funded_utxo =
-                helper.fund_operator_wallet(committee_id, slot_index, &self.bitvmx)?;
-            utxo = Some(funded_utxo.clone());
-
-            // Set UTXO. This won't be needed if bitvmx own the wallet.
-            self.bitvmx.set_var(
-                protocol_id,
-                &indexed_name(ADVANCE_FUNDS_INPUT, slot_index),
-                VariableTypes::Utxo(funded_utxo),
-            )?;
-        }
-
         info!(
             id = self.id,
             "Advancing funds to user public key {}",
@@ -294,61 +270,6 @@ impl Member {
             self.address()?.clone(),
             fee,
         )?;
-
-        if self.keyring.take_pubkey.unwrap() == selected_operator_pubkey {
-            info!(
-                id = self.id,
-                "Advance funds dispatch for member {}", self.id
-            );
-
-            thread::sleep(std::time::Duration::from_secs(5));
-
-            let program_id =
-                wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
-            info!(id = "AdvanceFundsSetup", program_id = ?program_id, "Advance funds setup completed (from setup)");
-
-            // Sign and dispatch transaction.
-            // NOTE: This is temporary, it will be done all internally by bitvmx in the future.
-            let _ = self
-                .bitvmx
-                .get_transaction_by_name(protocol_id, ADVANCE_FUNDS_TX.to_string());
-            thread::sleep(std::time::Duration::from_secs(1));
-            let mut tx = wait_until_msg!(&self.bitvmx, TransactionInfo(_, _, _tx) => _tx);
-
-            if let Some(ref utxo) = utxo {
-                let signed_tx = helper
-                    .sign_p2wpkh_transaction_single_input(&mut tx, utxo.2.clone().unwrap())?;
-
-                let txid = signed_tx.compute_txid();
-                info!(
-                    id = self.id,
-                    "Dispatching {} transaction: {:?}. Txid: {}", ADVANCE_FUNDS_TX, signed_tx, txid
-                );
-
-                self.bitvmx.dispatch_transaction(protocol_id, signed_tx)?;
-
-                thread::sleep(std::time::Duration::from_secs(1));
-                helper.mine_blocks(1)?;
-
-                let _status = wait_until_msg!(
-                    &self.bitvmx,
-                    Transaction(_, _status, _) => _status
-                );
-                info!(id = self.id, "Sent {} transaction", ADVANCE_FUNDS_TX);
-
-                // Get the SPV proof, this should be used by the union client to present to the smart contract
-                self.bitvmx.get_spv_proof(txid)?;
-                let _spv_proof = wait_until_msg!(
-                    &self.bitvmx,
-                    SPVProof(_, Some(_spv_proof)) => _spv_proof
-                );
-                info!("Got SPV proof for transaction: {:?}", ADVANCE_FUNDS_TX);
-            } else {
-                return Err(anyhow::anyhow!(
-                    "UTXO not initialized for signing transaction"
-                ));
-            }
-        }
 
         Ok(())
     }

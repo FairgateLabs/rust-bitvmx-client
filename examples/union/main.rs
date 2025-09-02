@@ -29,8 +29,9 @@ mod bitcoin;
 mod log;
 
 // Adjust based on the network
-pub const ADVANCE_FUNDS_FEE: u64 = 1000;
+pub const ADVANCE_FUNDS_FEE: u64 = 3000;
 pub const ACCEPT_PEGIN_SPEEDUP_FEE: u64 = 5000;
+pub const USER_TAKE_SPEEDUP_FEE: u64 = 3000;
 pub const STREAM_DENOMINATION: u64 = 100_000;
 static mut SLOT_INDEX_COUNTER: usize = 0;
 
@@ -47,6 +48,7 @@ pub fn main() -> Result<()> {
         Some("accept_pegin") => cli_accept_pegin()?,
         Some("request_pegout") => cli_request_pegout()?,
         Some("advance_funds") => cli_advance_funds()?,
+        Some("advance_funds_twice") => cli_advance_funds_twice()?,
         Some("invalid_reimbursement") => cli_invalid_reimbursement()?,
         Some(cmd) => {
             eprintln!("Unknown command: {}", cmd);
@@ -72,6 +74,9 @@ fn print_usage() {
         "  cargo run --example union request_pegout      - Setups the request peg out protocol"
     );
     println!("  cargo run --example union advance_funds       - Performs an advancement of funds");
+    println!(
+        "  cargo run --example union advance_funds_twice       - Performs advancement of funds twice"
+    );
     println!("  cargo run --example union invalid_reimbursement - Forces invalid reimbursement to test challenge tx");
 }
 
@@ -88,12 +93,17 @@ pub fn cli_committee() -> Result<()> {
 }
 
 pub fn cli_request_pegin() -> Result<()> {
-    request_pegin()?;
+    let mut committee = committee()?;
+    let mut user = User::new("user_1")?;
+    request_pegin(&mut committee, &mut user)?;
     Ok(())
 }
 
 pub fn cli_accept_pegin() -> Result<()> {
-    accept_pegin()?;
+    let mut committee = committee()?;
+    let mut user = User::new("user_1")?;
+
+    accept_pegin(&mut committee, &mut user)?;
     Ok(())
 }
 
@@ -103,12 +113,37 @@ pub fn cli_request_pegout() -> Result<()> {
 }
 
 pub fn cli_advance_funds() -> Result<()> {
-    advance_funds()?;
+    let mut committee = committee()?;
+    let mut user = User::new("user_1")?;
+
+    let (slot_index, _) = accept_pegin(&mut committee, &mut user)?;
+
+    advance_funds(&mut committee, slot_index)?;
+    Ok(())
+}
+
+pub fn cli_advance_funds_twice() -> Result<()> {
+    let mut committee = committee()?;
+    let mut user = User::new("user_1")?;
+
+    // First advance should use funding UTXO
+    let (slot_index, _) = accept_pegin(&mut committee, &mut user)?;
+    advance_funds(&mut committee, slot_index)?;
+
+    // Second advance should use change UTXO and Operator Take UTXO
+    let (slot_index, _) = accept_pegin(&mut committee, &mut user)?;
+    advance_funds(&mut committee, slot_index)?;
+
     Ok(())
 }
 
 pub fn cli_invalid_reimbursement() -> Result<()> {
-    invalid_reimbursement()?;
+    let mut committee = committee()?;
+    let mut user = User::new("user_1")?;
+
+    let (slot_index, _) = accept_pegin(&mut committee, &mut user)?;
+
+    invalid_reimbursement(&mut committee, slot_index)?;
     Ok(())
 }
 
@@ -123,7 +158,7 @@ fn get_and_increment_slot_index() -> usize {
 pub fn committee() -> Result<Committee> {
     // A new package is created. A committee is selected. Union client requests the setup of the
     // corresponding keys and programs.
-    let mut committee = Committee::new()?;
+    let mut committee = Committee::new(STREAM_DENOMINATION)?;
     committee.setup()?;
     committee.mine_and_wait(10)?;
 
@@ -131,20 +166,17 @@ pub fn committee() -> Result<Committee> {
     Ok(committee)
 }
 
-pub fn request_pegin() -> Result<(Committee, User, Txid, u64)> {
-    // A peg-in request is reported by the Union Client.
-    let committee = committee()?;
+pub fn request_pegin(committee: &mut Committee, user: &mut User) -> Result<(Txid, u64)> {
     let committee_public_key = committee.public_key()?;
 
-    let mut user = User::new("user_1")?;
     let amount: u64 = STREAM_DENOMINATION; // This should be replaced with the actual amount of the peg-in request
     let request_pegin_txid = user.request_pegin(&committee_public_key, amount)?;
 
-    Ok((committee, user, request_pegin_txid, amount))
+    Ok((request_pegin_txid, amount))
 }
 
-pub fn accept_pegin() -> Result<(Committee, User, usize, u64)> {
-    let (mut committee, user, request_pegin_txid, amount) = request_pegin()?;
+pub fn accept_pegin(committee: &mut Committee, user: &mut User) -> Result<(usize, u64)> {
+    let (request_pegin_txid, amount) = request_pegin(committee, user)?;
 
     // This came from the contracts
     let rootstock_address = user.get_rsk_address();
@@ -164,10 +196,10 @@ pub fn accept_pegin() -> Result<(Committee, User, usize, u64)> {
     )?;
 
     let protocol_id = get_accept_pegin_pid(committee.committee_id(), slot_index);
-    let accept_pegin_txid =
+    let accept_pegin_tx =
         committee.dispatch_transaction_by_name(protocol_id, ACCEPT_PEGIN_TX.to_string())?;
     thread::sleep(Duration::from_secs(1));
-
+    let accept_pegin_txid = accept_pegin_tx.compute_txid();
     user.create_and_dispatch_speedup(
         OutPoint {
             txid: accept_pegin_txid.into(),
@@ -179,11 +211,14 @@ pub fn accept_pegin() -> Result<(Committee, User, usize, u64)> {
     committee.mine_and_wait(3)?;
     committee.wait_for_spv_proof(accept_pegin_txid)?;
 
-    Ok((committee, user, slot_index, amount))
+    Ok((slot_index, amount))
 }
 
 pub fn request_pegout() -> Result<()> {
-    let (mut committee, user, slot_index, amount) = accept_pegin()?;
+    let mut committee = committee()?;
+    let mut user = User::new("user_1")?;
+
+    let (slot_index, amount) = accept_pegin(&mut committee, &mut user)?;
 
     let user_pubkey = user.public_key()?;
     let stream_id = 0; // This should be replaced with the actual stream ID
@@ -192,7 +227,7 @@ pub fn request_pegout() -> Result<()> {
     let pegout_signature_hash = vec![0; 32]; // This should be replaced with the actual peg-out signature hash
     let pegout_signature_message = vec![0; 32]; // This should be replaced with the actual peg-out signature message
 
-    committee.request_pegout(
+    let user_take_utxo = committee.request_pegout(
         user_pubkey,
         slot_index,
         stream_id,
@@ -203,18 +238,21 @@ pub fn request_pegout() -> Result<()> {
         pegout_signature_message,
     )?;
 
+    user.create_and_dispatch_user_take_speedup(user_take_utxo.clone(), USER_TAKE_SPEEDUP_FEE)?;
+
+    committee.mine_and_wait(3)?;
+    committee.wait_for_spv_proof(user_take_utxo.0)?;
+
     Ok(())
 }
 
-pub fn advance_funds() -> Result<()> {
-    let (mut committee, _, slot_index, _) = accept_pegin()?;
-
+pub fn advance_funds(committee: &mut Committee, slot_index: usize) -> Result<()> {
     // This came from the contracts
     let user_public_key = "026e14224899cf9c780fef5dd200f92a28cc67f71c0af6fe30b5657ffc943f08f4"; // Placeholder for the actual user public key
     let pegout_id = vec![0; 32]; // Placeholder for the actual peg-out ID
 
     // Get the selected operator's take public key (simulating what Union Client would provide)
-    let operator_id = 0; // Placeholder for the actual operator ID
+    let operator_id = 1; // Placeholder for the actual operator ID
     let selected_operator_pubkey = committee.members[operator_id].keyring.take_pubkey.unwrap();
 
     committee.advance_funds(
@@ -230,9 +268,7 @@ pub fn advance_funds() -> Result<()> {
     Ok(())
 }
 
-pub fn invalid_reimbursement() -> Result<()> {
-    let (mut committee, _, slot_index, _) = accept_pegin()?;
-
+pub fn invalid_reimbursement(committee: &mut Committee, slot_index: usize) -> Result<()> {
     info!("Forcing member 0 to dispatch invalid reimbursement transaction...");
     // Force member 0 to dispatch reimbursement without proper advancement setup
     let committee_id = committee.committee_id();
