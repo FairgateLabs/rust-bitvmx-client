@@ -189,10 +189,9 @@ impl Committee {
         thread::sleep(std::time::Duration::from_secs(1));
         let tx = wait_until_msg!(bitvmx, TransactionInfo(_, _, _tx) => _tx);
         info!(
-            "Protocol handler {} dispatching {} transaction: {:?}",
+            "Protocol handler {} dispatching {}",
             protocol_id,
-            tx_name.clone(),
-            tx.clone()
+            tx_name.clone()
         );
         bitvmx.dispatch_transaction(protocol_id, tx.clone())?;
         thread::sleep(std::time::Duration::from_secs(1));

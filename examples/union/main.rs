@@ -48,7 +48,7 @@ pub fn main() -> Result<()> {
         Some("accept_pegin") => cli_accept_pegin()?,
         Some("request_pegout") => cli_request_pegout()?,
         Some("advance_funds") => cli_advance_funds()?,
-        Some("double_advance_funds") => cli_double_advance_funds()?,
+        Some("advance_funds_twice") => cli_advance_funds_twice()?,
         Some("invalid_reimbursement") => cli_invalid_reimbursement()?,
         Some(cmd) => {
             eprintln!("Unknown command: {}", cmd);
@@ -74,7 +74,9 @@ fn print_usage() {
         "  cargo run --example union request_pegout      - Setups the request peg out protocol"
     );
     println!("  cargo run --example union advance_funds       - Performs an advancement of funds");
-    println!("  cargo run --example union double_advance_funds       - Performs two advancement of funds");
+    println!(
+        "  cargo run --example union advance_funds_twice       - Performs advancement of funds twice"
+    );
     println!("  cargo run --example union invalid_reimbursement - Forces invalid reimbursement to test challenge tx");
 }
 
@@ -120,7 +122,7 @@ pub fn cli_advance_funds() -> Result<()> {
     Ok(())
 }
 
-pub fn cli_double_advance_funds() -> Result<()> {
+pub fn cli_advance_funds_twice() -> Result<()> {
     let mut committee = committee()?;
     let mut user = User::new("user_1")?;
 
