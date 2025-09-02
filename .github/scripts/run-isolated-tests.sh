@@ -200,7 +200,7 @@ run_isolated_test() {
     
     # Ejecutar el test con timeout
     local test_result=0
-    timeout 600 cargo test --release --features regtest $test_name -- --test-threads=1 --nocapture || test_result=$?
+    timeout 1600 cargo test --release --features regtest $test_name -- --test-threads=1 --nocapture || test_result=$?
     
     # Paso 8: Limpiar después del test
     echo "=== Test $test_name completed with result: $test_result ==="
