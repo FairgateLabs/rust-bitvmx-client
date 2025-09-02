@@ -586,7 +586,7 @@ impl AcceptPegInProtocol {
 
         info!(
             id = self.ctx.my_idx,
-            "Loading {} tx for AcceptPegInProtocol. Name: {}. Op leaf index: {}",
+            "Loading {} for AcceptPegInProtocol. Name: {}. Op leaf index: {}",
             OPERATOR_TAKE_TX,
             name,
             op_leaf_index
@@ -642,7 +642,7 @@ impl AcceptPegInProtocol {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(
             id = self.ctx.my_idx,
-            "Loading {} tx for AcceptPegInProtocol. Name: {}", OPERATOR_WON_TX, name
+            "Loading {} for AcceptPegInProtocol. Name: {}", OPERATOR_WON_TX, name
         );
         let args = InputArgs::new_taproot_key_args();
         // TODO: add the necessary arguments to args

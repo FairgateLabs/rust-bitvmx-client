@@ -16,15 +16,6 @@ use uuid::Uuid;
 
 pub struct AdvanceFunds {}
 
-// pub struct AdvanceFundsHelper {
-//     pub bitcoin_client: BitcoinClient,
-//     pub network: Network,
-//     pub secp: Secp256k1<All>,
-//     pub operator_address: BitcoinAddress,
-//     pub operator_pubkey: BitcoinPubKey,
-//     pub operator_sk: SecretKey,
-// }
-
 impl AdvanceFunds {
     #[allow(clippy::too_many_arguments)]
     pub fn setup(
