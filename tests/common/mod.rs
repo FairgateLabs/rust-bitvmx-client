@@ -31,6 +31,23 @@ pub fn clear_db(path: &str) {
     let _ = std::fs::remove_dir_all(path);
 }
 
+pub fn clear_all_test_data() {
+    // Clear all possible database paths used by tests
+    let _ = std::fs::remove_dir_all("./target/test_data");
+    let _ = std::fs::remove_dir_all("./data");
+    let _ = std::fs::remove_dir_all("./storage");
+    let _ = std::fs::remove_dir_all("./key_storage");
+    let _ = std::fs::remove_dir_all("./broker_storage");
+    
+    // Clear role-specific directories
+    for role in ["op_1", "op_2", "op_3", "op_4"] {
+        let _ = std::fs::remove_dir_all(format!("./data/{}", role));
+        let _ = std::fs::remove_dir_all(format!("./storage/{}", role));
+        let _ = std::fs::remove_dir_all(format!("./key_storage/{}", role));
+        let _ = std::fs::remove_dir_all(format!("./broker_storage/{}", role));
+    }
+}
+
 pub fn init_bitvmx(
     role: &str,
     emulator_dispatcher: bool,
@@ -73,8 +90,8 @@ pub fn wait_message_from_channel(
     instances: &mut Vec<&mut BitVMX>,
     fake_tick: bool,
 ) -> Result<(String, u32)> {
-    //loop to timeout
-    for i in 0..40000 {
+    //loop to timeout - incrementado de 40000 a 80000 para evitar timeouts en CI
+    for i in 0..80000 {
         if i % 50 == 0 {
             let msg = channel.recv()?;
             if msg.is_some() {
@@ -99,6 +116,9 @@ pub const FUNDING_ID: &str = "fund_1";
 pub const FEE: u64 = 500;
 
 pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
+    // Clear all test data before starting
+    clear_all_test_data();
+    
     let config = Config::new(Some("config/op_1.yaml".to_string()))?;
 
     let is_ci = std::env::var("GITHUB_ACTIONS").is_ok();
