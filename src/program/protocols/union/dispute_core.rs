@@ -581,16 +581,6 @@ impl DisputeCoreProtocol {
             "Loading OP Initial Deposit transaction for DisputeCore"
         );
 
-        if !self.is_my_dispute_core(context)? {
-            info!(
-                id = self.ctx.my_idx,
-                "Not my dispute_core, skipping dispatch of {} transaction", tx_name
-            );
-            return Err(BitVMXError::InvalidParticipant(
-                "Not my dispute_core, skipping dispatch of initial deposit transaction".to_string(),
-            ));
-        }
-
         let mut protocol: Protocol = self.load_protocol()?;
         let signatures = protocol.sign_taproot_input(
             tx_name,

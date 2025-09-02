@@ -247,8 +247,8 @@ impl ProtocolHandler for AdvanceFundsProtocol {
     fn setup_complete(&self, context: &ProgramContext) -> Result<(), BitVMXError> {
         // This is called after the protocol is built and ready to be used
         info!(
-            id = self.ctx.my_idx,
-            "AdvanceFundsProtocol setup complete for program {}", self.ctx.id
+            "AdvanceFundsProtocol setup complete for program {}",
+            self.ctx.id
         );
 
         self.dispatch_advance_funds_tx(context)?;
@@ -350,10 +350,7 @@ impl AdvanceFundsProtocol {
             None,                                                      // Dispatch immediately
         )?;
 
-        info!(
-            id = self.ctx.my_idx,
-            "{} dispatched with txid: {}", tx_name, txid
-        );
+        info!("{} dispatched with txid: {}", tx_name, txid);
 
         // Set the initial deposit flag to true
         context.globals.set_var(
@@ -390,10 +387,7 @@ impl AdvanceFundsProtocol {
             None,            // Dispatch immediately
         )?;
 
-        info!(
-            id = self.ctx.my_idx,
-            "{} dispatched with txid: {}", tx_name, txid
-        );
+        info!("{} dispatched with txid: {}", tx_name, txid);
         Ok(())
     }
 
@@ -471,18 +465,15 @@ impl AdvanceFundsProtocol {
 
     fn dispatch_advance_funds_tx(&self, context: &ProgramContext) -> Result<(), BitVMXError> {
         info!(
-            id = self.ctx.my_idx,
-            "Dispatching {} transaction from protocol {}", ADVANCE_FUNDS_TX, self.ctx.id
+            "Dispatching {} transaction from protocol {}",
+            ADVANCE_FUNDS_TX, self.ctx.id
         );
 
         // Get the signed transaction
         let (tx, speedup) = self.advance_funds_tx(context)?;
         let txid = tx.compute_txid();
 
-        info!(
-            id = self.ctx.my_idx,
-            "Auto-dispatching ADVANCE_FUNDS_TX transaction: {}", txid
-        );
+        info!("Auto-dispatching ADVANCE_FUNDS_TX transaction: {}", txid);
 
         // Dispatch the transaction through the bitcoin coordinator
         context.bitcoin_coordinator.dispatch(
@@ -493,8 +484,8 @@ impl AdvanceFundsProtocol {
         )?;
 
         info!(
-            id = self.ctx.my_idx,
-            "ADVANCE_FUNDS_TX dispatched successfully with txid: {}", txid
+            "ADVANCE_FUNDS_TX dispatched successfully with txid: {}",
+            txid
         );
 
         Ok(())

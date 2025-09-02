@@ -250,7 +250,7 @@ pub fn advance_funds(committee: &mut Committee, slot_index: usize) -> Result<()>
     let pegout_id = vec![0; 32]; // Placeholder for the actual peg-out ID
 
     // Get the selected operator's take public key (simulating what Union Client would provide)
-    let operator_id = 0; // Placeholder for the actual operator ID
+    let operator_id = 1; // Placeholder for the actual operator ID
     let selected_operator_pubkey = committee.members[operator_id].keyring.take_pubkey.unwrap();
 
     committee.advance_funds(
