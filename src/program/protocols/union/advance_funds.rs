@@ -407,7 +407,8 @@ impl AdvanceFundsProtocol {
     }
 
     fn my_dispute_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
-        let my_index = self.ctx.my_idx;
+        let my_index = self.find_my_index(context)?;
+
         let committee = self.committee(context)?;
         Ok(committee.members[my_index].dispute_key.clone())
     }
@@ -427,6 +428,21 @@ impl AdvanceFundsProtocol {
 
     fn committee_id(&self, context: &ProgramContext) -> Result<Uuid, BitVMXError> {
         Ok(self.advance_funds_request(context)?.committee_id)
+    }
+
+    fn find_my_index(&self, context: &ProgramContext) -> Result<usize, BitVMXError> {
+        let my_key = self.advance_funds_request(context)?.my_take_pubkey;
+
+        let committee = self.committee(context)?;
+        for (i, member) in committee.members.iter().enumerate() {
+            if member.take_key == my_key {
+                return Ok(i);
+            }
+        }
+
+        Err(BitVMXError::InvalidParticipant(
+            "My dispute key not found in committee".to_string(),
+        ))
     }
 
     fn update_advance_funds_input(
