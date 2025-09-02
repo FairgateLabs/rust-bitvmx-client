@@ -618,7 +618,7 @@ impl DisputeCoreProtocol {
         name: &str,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        let leaf_index = self.ctx.my_idx;
+        let leaf_index = 0;
         let slot_index = extract_index(name, REIMBURSEMENT_KICKOFF_TX)?;
         info!(id = self.ctx.my_idx, "Loading {} tx", name);
 
