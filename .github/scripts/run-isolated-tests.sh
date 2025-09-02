@@ -7,7 +7,9 @@ set -e
 
 echo "=== Starting isolated test execution ==="
 
-# Lista de tests a ejecutar en orden específico
+# Lista de tests    # Ejecutar el test con timeout
+    local test_result=0
+    timeout 600 cargo test --release --features regtest,cardinal $test_name -- --test-threads=1 --nocapture || test_result=$?ejecutar en orden específico
 # Los tests más estables primero, luego los problemáticos
 TESTS=(
     "fulltest"

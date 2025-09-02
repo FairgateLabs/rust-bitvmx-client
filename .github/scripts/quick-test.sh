@@ -84,7 +84,7 @@ done
 
 # Ejecutar test
 echo "=== Running test: $TEST_NAME ==="
-cargo test --release --features regtest $TEST_NAME -- --test-threads=1 --nocapture
+cargo test --release --features regtest,cardinal $TEST_NAME -- --test-threads=1 --nocapture
 
 # Limpiar
 echo "=== Cleaning up ==="

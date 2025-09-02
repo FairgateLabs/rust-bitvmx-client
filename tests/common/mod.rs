@@ -260,6 +260,12 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
         bitvmx_wallet::config::WalletConfig,
     >(Some(wallet_config.to_string()))?;
     
+    // Usar la misma URL de Bitcoin RPC que el cliente principal
+    if let Ok(rpc_url) = std::env::var("BITCOIN_RPC_URL") {
+        wallet_config.bitcoin.url = rpc_url;
+        info!("Using isolated Bitcoin RPC URL for wallet: {}", wallet_config.bitcoin.url);
+    }
+    
     // Aislar rutas de almacenamiento del wallet
     if config.bitcoin.network == Network::Regtest {
         wallet_config.storage.path = format!("{}_{}", wallet_config.storage.path, isolation_id);
