@@ -1,5 +1,3 @@
-#![cfg(feature = "cardinal")]
-
 use anyhow::Result;
 use bitcoin::Amount;
 use bitvmx_client::{
