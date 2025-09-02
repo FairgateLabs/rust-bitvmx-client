@@ -5,7 +5,6 @@ use bitcoin::Amount;
 use bitvmx_client::{
     program::{
         self,
-        //participant::ParticipantRole,
         protocols::{
             cardinal::{
                 slot::{certificate_hash, group_id, slot_protocol_dust_cost},
@@ -17,6 +16,7 @@ use bitvmx_client::{
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
+use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
 use common::{
     config_trace,
     dispute::{execute_dispute, prepare_dispute, ForcedChallenges},
@@ -30,7 +30,6 @@ use crate::common::set_speedup_funding;
 
 mod common;
 mod fixtures;
-//mod integration;
 
 #[cfg(feature = "regtest")]
 #[test]
@@ -50,16 +49,13 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
     let fake_drp = false;
     let fake_instruction = false;
 
-    //const NETWORK: Network = Network::Regtest;
-
     let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
 
     let (bitvmx_1, address_1, bridge_1, emulator_1) = init_bitvmx("op_1", true)?;
     let (bitvmx_2, address_2, bridge_2, emulator_2) = init_bitvmx("op_2", true)?;
     let (bitvmx_3, _addres_3, bridge_3, _) = init_bitvmx("op_3", false)?;
-    //let (bitvmx_4, _addres_4, bridge_4, _) = init_bitvmx("op_4", false)?;
-    let mut instances = vec![bitvmx_1, bitvmx_2, bitvmx_3]; //, bitvmx_4];
-    let channels = vec![bridge_1, bridge_2, bridge_3]; // , bridge_4];
+    let mut instances = vec![bitvmx_1, bitvmx_2, bitvmx_3];
+    let channels = vec![bridge_1, bridge_2, bridge_3];
 
     //get to the top of the blockchain
     for _ in 0..101 {
@@ -77,10 +73,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
         .map(|msg| msg.comm_info().unwrap())
         .collect::<Vec<_>>();
 
-    //==================================================
-    //       SETUP FUNDING ADDRESS FOR SPEEDUP
-    //==================================================
-    //one time per bitvmx instance, we need to get the public key for the speedup funding utxo
+    // SETUP FUNDING ADDRESS FOR SPEEDUP
     let funding_public_id = Uuid::new_v4();
     let command = IncomingBitVMXApiMessages::GetPubKey(funding_public_id, true).to_string()?;
     send_all(&channels, &command)?;
@@ -92,8 +85,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
     set_speedup_funding(10_000_000, &funding_key_1, &channels[1], &wallet)?;
     set_speedup_funding(10_000_000, &funding_key_2, &channels[2], &wallet)?;
 
-    //==================================================
-    //ask the peers to generate the aggregated public key
+    // AGGREGATED PUBLIC KEY
     let aggregation_id = Uuid::new_v4();
     let command = IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), None, 0)
         .to_string()?;
@@ -101,7 +93,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
     let msgs = get_all(&channels, &mut instances, false)?;
     let aggregated_pub_key = msgs[0].aggregated_pub_key().unwrap();
 
-    //ask the peers to generate the aggregated public key
+    // PAIR AGGREGATED PUBLIC KEY
     let participants = vec![address_1, address_2];
     let sub_channel = vec![channels[0].clone(), channels[1].clone()];
     let aggregation_id = Uuid::new_v4();
@@ -119,7 +111,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
     let program_id = Uuid::new_v4();
     let slot_protocol_configuration = SlotProtocolConfiguration::new(
         program_id,
-        3, //operators
+        3,
         aggregated_pub_key,
         vec![pair_aggregated_pub_key],
         (utxo.txid, utxo.vout, Some(fund_value.to_sat()), None),
@@ -132,10 +124,13 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
 
     //wait setup complete
     let _msg = get_all(&channels, &mut instances, false)?;
-
     info!("{:?}", _msg[0]);
 
-    // this should be done for all operators, but for now just setup one dispute
+    // For debug: print balances and block height before dispute setup
+    let blockchain_info = bitcoin_client.get_blockchain_info()?;
+    info!("Blockchain info before dispute: {:?}", blockchain_info);
+
+    // Setup dispute
     let _ = channels[0].send(
         BITVMX_ID,
         IncomingBitVMXApiMessages::GetTransactionInfoByName(
@@ -156,8 +151,6 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
     let output = &tx.output;
     let txid = tx.compute_txid();
     info!("Output: {:?}", output);
-
-    //=====================================
 
     let (emulator_channels, dispute_id) = if and_drp {
         let emulator_channels = vec![emulator_1.unwrap(), emulator_2.unwrap()];
@@ -180,8 +173,6 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
         }
 
         // Set the constant input data for the dispute
-        // 4 bytes for the success flag (01000000) and 32 bytes for the lock transaction hash
-        // this needs to be set before the dispute is prepared
         let success = "01000000";
         let lock_tx = "90531051d96babfc1fd5973ef01e5d69746be907654c0b99cf1a853206647906";
         let const_input_data = format!("{}{}", success, lock_tx);
@@ -212,8 +203,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
         (vec![], Uuid::nil())
     };
 
-    // ==========================
-
+    // -- SLOT SETUP TX DISPATCH --
     let _ = channels[1].send(
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
@@ -222,11 +212,9 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
         )
         .to_string()?,
     );
-
-    //observe the setup tx
     let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
-    // one operator decide to put a certificate hash to start the transfer
+    // -- CERTIFICATE HASH & GID --
     let cert_hash = "966c3c1b3b93d12206202b8c685df7554d3df6c72b5cee973de94c45e3f37a0a";
     let set_cert_hash = VariableTypes::Input(hex::decode(cert_hash).unwrap())
         .set_msg(program_id, &certificate_hash(0))?;
@@ -237,7 +225,6 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
         .set_msg(program_id, &group_id(0))?;
     let _ = channels[0].send(BITVMX_ID, set_gid)?;
 
-    // send the tx
     let _ = channels[0].send(
         BITVMX_ID,
         IncomingBitVMXApiMessages::DispatchTransactionName(
@@ -247,17 +234,13 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
         .to_string()?,
     );
 
-    //observes the cert hash tx
+    let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
     let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
-    //observes the gid tx
-    let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
-
-    // one operator disagrees with the gid and challenges
     if and_drp {
         let gorth16proof = "b75f20d1aee5a1a0908edd107a25189ccc38b6d20c5dc33362a066157a6ee60350a09cfbfebe38c8d9f04a6dafe46ae2e30f6638f3eb93c1d2aeff2d52d66d0dcd68bf7f8fc07485dd04a573d233df3663d63e71568bc035ef82e8ab3525f025b487aaa4456aaf93be3141b210cda5165a714225d9fd63163f59d741bdaa8b93".to_string();
         execute_dispute(
-            sub_channel,
+            sub_channel.clone(),
             &mut instances,
             emulator_channels,
             &bitcoin_client,
@@ -267,16 +250,34 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
             Some((gorth16proof, 3)),
         )?;
 
+        // Debug: Print mempool after (posible) CPFP
+        let mempool = bitcoin_client.get_raw_mempool()?;
+        info!("Mempool after (posible) CPFP: {:?}", mempool);
+
+        // Mine un bloque explícito después de la disputa/CPFP para asegurar confirmación
+        wallet.mine(1)?;
+        let blockchain_info = bitcoin_client.get_blockchain_info()?;
+        info!("Blockchain info after wallet.mine(1): {:?}", blockchain_info);
+
         //Consume other stops through timeout
         let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
-        info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
+        info!("Observed: {:?}", msgs[0].transaction().unwrap().2);
+
         //Win start
         let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
-        info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
+        info!("Observed: {:?}", msgs[0].transaction().unwrap().2);
+
         //success wait
         wallet.mine(10)?;
+        let blockchain_info = bitcoin_client.get_blockchain_info()?;
+        info!("Blockchain info after wallet.mine(10): {:?}", blockchain_info);
+
         let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
-        info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
+        info!("Observed: {:?}", msgs[0].transaction().unwrap().2);
+
+        // Debug: print mempool and tx status
+        let mempool = bitcoin_client.get_raw_mempool()?;
+        info!("Final mempool: {:?}", mempool);
     }
 
     info!("Stopping bitcoind");
