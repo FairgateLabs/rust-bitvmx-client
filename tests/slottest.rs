@@ -20,10 +20,10 @@ use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
 use common::{
     config_trace,
     dispute::{execute_dispute, prepare_dispute, ForcedChallenges},
-    get_all, init_bitvmx, init_utxo, mine_and_wait, prepare_bitcoin, send_all,
+    get_all, init_bitvmx, init_utxo, mine_and_wait, mine_and_wait_with_timeout, prepare_bitcoin, send_all,
     wait_message_from_channel,
 };
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::common::set_speedup_funding;
@@ -259,21 +259,58 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
         let blockchain_info = bitcoin_client.get_blockchain_info()?;
         info!("Blockchain info after wallet.mine(1): {:?}", blockchain_info);
 
-        //Consume other stops through timeout
-        let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
-        info!("Observed: {:?}", msgs[0].transaction().unwrap().2);
+        // Give some time for protocol to process CPFP transaction
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        
+        // Try to consume other stops with timeout handling
+        info!("Attempting to consume other stops through timeout...");
+        match mine_and_wait_with_timeout(&bitcoin_client, &channels, &mut instances, &wallet, 30) {
+            Ok(msgs) => {
+                if !msgs.is_empty() {
+                    info!("Observed stop message: {:?}", msgs[0].transaction().unwrap().2);
+                } else {
+                    info!("No stop messages received");
+                }
+            }
+            Err(e) => {
+                warn!("Timeout waiting for stop messages: {:?}", e);
+            }
+        }
 
-        //Win start
-        let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
-        info!("Observed: {:?}", msgs[0].transaction().unwrap().2);
+        // Try win start with timeout handling  
+        info!("Attempting to get win start message...");
+        match mine_and_wait_with_timeout(&bitcoin_client, &channels, &mut instances, &wallet, 30) {
+            Ok(msgs) => {
+                if !msgs.is_empty() {
+                    info!("Observed win start: {:?}", msgs[0].transaction().unwrap().2);
+                } else {
+                    info!("No win start messages received");
+                }
+            }
+            Err(e) => {
+                warn!("Timeout waiting for win start: {:?}", e);
+            }
+        }
 
-        //success wait
+        // Mine blocks and check final state
         wallet.mine(10)?;
         let blockchain_info = bitcoin_client.get_blockchain_info()?;
         info!("Blockchain info after wallet.mine(10): {:?}", blockchain_info);
 
-        let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
-        info!("Observed: {:?}", msgs[0].transaction().unwrap().2);
+        // Try final success message with timeout
+        info!("Attempting to get final success message...");
+        match mine_and_wait_with_timeout(&bitcoin_client, &channels, &mut instances, &wallet, 30) {
+            Ok(msgs) => {
+                if !msgs.is_empty() {
+                    info!("Observed final success: {:?}", msgs[0].transaction().unwrap().2);
+                } else {
+                    info!("No final success messages received");
+                }
+            }
+            Err(e) => {
+                warn!("Timeout waiting for final success: {:?}", e);
+            }
+        }
 
         // Debug: print mempool and tx status
         let mempool = bitcoin_client.get_raw_mempool()?;

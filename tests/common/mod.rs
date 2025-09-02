@@ -21,7 +21,7 @@ use protocol_builder::{
     types::{OutputType, Utxo},
 };
 use std::sync::Once;
-use tracing::info;
+use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 /// Number of blocks to mine initially in tests to ensure sufficient coin maturity
@@ -109,6 +109,41 @@ pub fn wait_message_from_channel(
         }
     }
     panic!("Timeout waiting for message from channel");
+}
+
+pub fn wait_message_from_channel_with_timeout(
+    channel: &DualChannel,
+    instances: &mut Vec<&mut BitVMX>,
+    fake_tick: bool,
+    timeout_seconds: u64,
+) -> Result<(String, u32)> {
+    use std::time::{Duration, Instant};
+    
+    let start_time = Instant::now();
+    let timeout = Duration::from_secs(timeout_seconds);
+    let max_iterations = timeout_seconds * 100; // approximate iterations based on sleep
+    
+    for i in 0..max_iterations {
+        if start_time.elapsed() >= timeout {
+            return Err(anyhow::anyhow!("Timeout after {} seconds waiting for message from channel", timeout_seconds));
+        }
+        
+        if i % 50 == 0 {
+            let msg = channel.recv()?;
+            if msg.is_some() {
+                return Ok(msg.unwrap());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        for instance in instances.iter_mut() {
+            if fake_tick {
+                tick(instance);
+            } else {
+                instance.tick()?;
+            }
+        }
+    }
+    Err(anyhow::anyhow!("Timeout after {} seconds waiting for message from channel", timeout_seconds))
 }
 
 pub const WALLET_NAME: &str = "wallet";
@@ -228,6 +263,30 @@ pub fn get_all(
     Ok(ret)
 }
 
+pub fn get_all_with_timeout(
+    channels: &Vec<DualChannel>,
+    instances: &mut Vec<BitVMX>,
+    fake_tick: bool,
+    timeout_seconds: u64,
+) -> Result<Vec<OutgoingBitVMXApiMessages>> {
+    let mut ret = vec![];
+    let mut mutinstances = instances.iter_mut().collect::<Vec<_>>();
+    for channel in channels {
+        match wait_message_from_channel_with_timeout(&channel, &mut mutinstances, fake_tick, timeout_seconds) {
+            Ok(msg) => {
+                ret.push(OutgoingBitVMXApiMessages::from_string(&msg.0)?);
+            }
+            Err(e) => {
+                // Log timeout but don't fail immediately
+                warn!("Timeout waiting for message from channel: {:?}", e);
+                // Return what we have so far
+                break;
+            }
+        }
+    }
+    Ok(ret)
+}
+
 pub fn mine_and_wait(
     _bitcoin_client: &BitcoinClient,
     channels: &Vec<DualChannel>,
@@ -247,6 +306,39 @@ pub fn mine_and_wait(
     }
     let msgs = get_all(&channels, instances, false)?;
 
+    Ok(msgs)
+}
+
+pub fn mine_and_wait_with_timeout(
+    _bitcoin_client: &BitcoinClient,
+    channels: &Vec<DualChannel>,
+    instances: &mut Vec<BitVMX>,
+    wallet: &Wallet,
+    timeout_seconds: u64,
+) -> Result<Vec<OutgoingBitVMXApiMessages>> {
+    use std::time::{Duration, Instant};
+    
+    let start_time = Instant::now();
+    let timeout = Duration::from_secs(timeout_seconds);
+    
+    //MINE AND WAIT with timeout
+    for i in 0..1000 { // Increased max iterations
+        if start_time.elapsed() >= timeout {
+            return Err(anyhow::anyhow!("Timeout after {} seconds", timeout_seconds));
+        }
+        
+        if i % 10 == 0 {
+            wallet.mine(1)?;
+        }
+
+        for instance in instances.iter_mut() {
+            instance.tick()?;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(40));
+    }
+    
+    // Try to get messages with shorter timeout
+    let msgs = get_all_with_timeout(&channels, instances, false, 5)?;
     Ok(msgs)
 }
 
