@@ -32,27 +32,87 @@ pub fn clear_db(path: &str) {
 }
 
 pub fn clear_all_test_data() {
-    // Clear all possible database paths used by tests
-    let _ = std::fs::remove_dir_all("./target/test_data");
-    let _ = std::fs::remove_dir_all("./data");
-    let _ = std::fs::remove_dir_all("./storage");
-    let _ = std::fs::remove_dir_all("./key_storage");
-    let _ = std::fs::remove_dir_all("./broker_storage");
+    // Obtener ID de aislamiento si existe
+    let isolation_id = std::env::var("TEST_ISOLATION_ID").unwrap_or_else(|_| "default".to_string());
     
-    // Clear role-specific directories
-    for role in ["op_1", "op_2", "op_3", "op_4"] {
-        let _ = std::fs::remove_dir_all(format!("./data/{}", role));
-        let _ = std::fs::remove_dir_all(format!("./storage/{}", role));
-        let _ = std::fs::remove_dir_all(format!("./key_storage/{}", role));
-        let _ = std::fs::remove_dir_all(format!("./broker_storage/{}", role));
+    // Lista de directorios base a limpiar
+    let test_data_dir = format!("test_data_{}", isolation_id);
+    let base_dirs = vec![
+        "testdb",
+        "client_1_regtest_db",
+        "client_2_regtest_db", 
+        "client_3_regtest_db",
+        "client_4_regtest_db",
+        "storage_regtest",
+        "key_storage_regtest",
+        "wallet_regtest_db",
+        "dispute_storage",
+        "protocol_storage",
+        "temp_test_data",
+        &test_data_dir,
+    ];
+    
+    for base_dir in base_dirs {
+        // Limpiar directorio base
+        let _ = std::fs::remove_dir_all(base_dir);
+        
+        // Limpiar variantes con ID de aislamiento
+        let isolated_dir = format!("{}_{}", base_dir, isolation_id);
+        let _ = std::fs::remove_dir_all(&isolated_dir);
+        
+        // Limpiar en /tmp también
+        let tmp_dir = format!("/tmp/{}", base_dir);
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        
+        let tmp_isolated_dir = format!("/tmp/{}_{}", base_dir, isolation_id);
+        let _ = std::fs::remove_dir_all(&tmp_isolated_dir);
     }
+    
+    // Limpiar archivos de lockfiles y databases específicos
+    let isolation_pattern = format!("*{}*", isolation_id);
+    let patterns = vec![
+        "*.db",
+        "*.db-wal", 
+        "*.db-shm",
+        "*.lock",
+        &isolation_pattern,
+    ];
+    
+    for pattern in patterns {
+        // Usar find para localizar y eliminar archivos que coincidan con el patrón
+        let _ = std::process::Command::new("find")
+            .args(&[".", "-name", pattern, "-type", "f", "-delete"])
+            .output();
+    }
+    
+    info!("Cleared all test data for isolation ID: {}", isolation_id);
 }
 
 pub fn init_bitvmx(
     role: &str,
     emulator_dispatcher: bool,
 ) -> Result<(BitVMX, P2PAddress, DualChannel, Option<DualChannel>)> {
-    let config = Config::new(Some(format!("config/{}.yaml", role)))?;
+    let isolation_id = std::env::var("TEST_ISOLATION_ID").unwrap_or_else(|_| "default".to_string());
+    
+    let mut config = Config::new(Some(format!("config/{}.yaml", role)))?;
+    
+    // Aislar rutas de almacenamiento
+    config.storage.path = format!("{}_{}", config.storage.path, isolation_id);
+    config.key_storage.path = format!("{}_{}", config.key_storage.path, isolation_id);
+    config.broker_storage.path = format!("{}_{}", config.broker_storage.path, isolation_id);
+    
+    // Usar puerto de RPC desde variable de entorno si está disponible
+    if let Ok(rpc_url) = std::env::var("BITCOIN_RPC_URL") {
+        config.bitcoin.url = rpc_url;
+    }
+    
+    // Usar puerto de broker dinámico si está disponible
+    if let Ok(broker_port_str) = std::env::var("BROKER_PORT") {
+        if let Ok(broker_port) = broker_port_str.parse::<u16>() {
+            config.broker_port = broker_port;
+        }
+    }
+    
     let broker_config = BrokerConfig::new(config.broker_port, None);
     let bridge_client = DualChannel::new(&broker_config, L2_ID);
     let dispatcher_channel = if emulator_dispatcher {
@@ -151,12 +211,23 @@ pub const FUNDING_ID: &str = "fund_1";
 pub const FEE: u64 = 500;
 
 pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
-    // Clear all test data before starting
+    // Limpiar datos de tests anteriores al inicio
     clear_all_test_data();
     
-    let config = Config::new(Some("config/op_1.yaml".to_string()))?;
-
-    let is_ci = std::env::var("GITHUB_ACTIONS").is_ok();
+    let is_ci = std::env::var("CI").is_ok() || std::env::var("GITHUB_ACTIONS").is_ok();
+    let isolation_id = std::env::var("TEST_ISOLATION_ID").unwrap_or_else(|_| "default".to_string());
+    
+    // Crear configuración aislada
+    let mut config = Config::new(Some("config/development.yaml".to_string()))?;
+    
+    // Usar puerto de RPC desde variable de entorno si está disponible  
+    if let Ok(rpc_url) = std::env::var("BITCOIN_RPC_URL") {
+        config.bitcoin.url = rpc_url;
+        info!("Using isolated Bitcoin RPC URL: {}", config.bitcoin.url);
+    }
+    
+    // Modificar rutas de almacenamiento para aislamiento
+    config.storage.path = format!("{}_{}", config.storage.path, isolation_id);
 
     let bitcoind = if is_ci {
         info!("Running in CI - using external bitcoind from docker-compose");
@@ -185,13 +256,19 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
         _ => panic!("Not supported network {}", config.bitcoin.network),
     };
 
-    let wallet_config = bitvmx_settings::settings::load_config_file::<
+    let mut wallet_config = bitvmx_settings::settings::load_config_file::<
         bitvmx_wallet::config::WalletConfig,
     >(Some(wallet_config.to_string()))?;
+    
+    // Aislar rutas de almacenamiento del wallet
     if config.bitcoin.network == Network::Regtest {
+        wallet_config.storage.path = format!("{}_{}", wallet_config.storage.path, isolation_id);
+        wallet_config.key_storage.path = format!("{}_{}", wallet_config.key_storage.path, isolation_id);
+        
         clear_db(&wallet_config.storage.path);
         clear_db(&wallet_config.key_storage.path);
     }
+    
     let wallet = Wallet::new(wallet_config, true)?;
     wallet.mine(INITIAL_BLOCK_COUNT)?;
 
