@@ -120,6 +120,8 @@ pub enum IncomingBitVMXApiMessages {
     Encrypt(Uuid, Vec<u8>, Vec<u8>),
     Decrypt(Uuid, Vec<u8>),
     Backup(String),
+    #[cfg(any(test, feature = "test"))]
+    Test(String),
 }
 impl IncomingBitVMXApiMessages {
     pub fn to_string(&self) -> Result<String, BitVMXError> {

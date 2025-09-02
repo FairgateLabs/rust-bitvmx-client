@@ -1152,6 +1152,14 @@ impl BitVMXApi for BitVMX {
 
                 self.reply(from, message)?;
             }
+            #[cfg(any(test, feature = "test"))]
+            IncomingBitVMXApiMessages::Test(s) => {
+                if s == "panic" { panic!("test-induced panic"); }
+                if s == "fatal" { 
+                    use storage_backend::error::StorageError as KVStorageError;
+                    return Err(BitVMXError::from(KVStorageError::WriteError));
+                }
+            }
         }
 
         Ok(())

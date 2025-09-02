@@ -84,53 +84,72 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
         info!("Starting Bitcoin blockchain sync");
     }
 
-    // Main processing loop
-    loop {
-        // Check if Ctrl+C was pressed to gracefully shutdown
-        if rx.try_recv().is_ok() {
-            info!("Ctrl+C received, shutting down");
-            break;
-        }
+    // Install a panic hook to log panics
+    std::panic::set_hook(Box::new(|panic_info| {
+        eprintln!("panic occurred: {:?}", panic_info);
+        // tracing may be unavailable here depending on panic context; use eprintln
+    }));
 
-        for instance in instances.iter_mut() {
-            // include operator name in logs
-            let _span = info_span!("", id = instance.name).entered();
+    // Main processing loop wrapped in catch_unwind to ensure coordinated shutdown on panic
+    let loop_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        loop {
+            // Check if Ctrl+C was pressed to gracefully shutdown
+            if rx.try_recv().is_ok() {
+                info!("Ctrl+C received, shutting down");
+                break;
+            }
 
-            if instance.ready {
-                if let Err(e) = instance.bitvmx.tick() {
-                    // Log and continue; brief backoff to avoid log storms
-                    tracing::error!("Error in tick(): {e:?}");
-                    thread::sleep(Duration::from_millis(100));
+            for instance in instances.iter_mut() {
+                // include operator name in logs
+                let _span = info_span!("", id = instance.name).entered();
+
+                if instance.ready {
+                    if let Err(e) = instance.bitvmx.tick() {
+                        tracing::error!("Error in tick(): {e:?}");
+                        // escalate fatal errors to shutdown signal
+                        if e.is_fatal() {
+                            info!("Fatal error detected, initiating shutdown");
+                            return; // break out to shutdown
+                        }
+                        thread::sleep(Duration::from_millis(100));
+                    } else {
+                        thread::sleep(Duration::from_millis(10));
+                    }
                 } else {
-                    thread::sleep(Duration::from_millis(10));
-                }
-            } else {
-                // Still syncing with Bitcoin blockchain. Process bitcoin updates to catch up to the
-                // current chain tip
-                match instance.bitvmx.process_bitcoin_updates() {
-                    Ok(ready) => {
-                        instance.ready = ready;
-                        if !instance.ready {
-                            // TODO move this log to indexer/coordinator if we need to see sync progress
-                            debug!("Waiting for sync to complete");
-                            thread::sleep(Duration::from_millis(25));
-                        } else {
-                            // Sync complete - ready to start normal operation
-                            info!("Sync complete, starting normal operation");
-                            // Signal to any waiting threads that initialization is complete
-                            if let Some(tx) = &tx {
-                                let _ = tx.send(());
+                    // Still syncing with Bitcoin blockchain. Process bitcoin updates to catch up to the
+                    // current chain tip
+                    match instance.bitvmx.process_bitcoin_updates() {
+                        Ok(ready) => {
+                            instance.ready = ready;
+                            if !instance.ready {
+                                // TODO move this log to indexer/coordinator if we need to see sync progress
+                                debug!("Waiting for sync to complete");
+                                thread::sleep(Duration::from_millis(25));
+                            } else {
+                                // Sync complete - ready to start normal operation
+                                info!("Sync complete, starting normal operation");
+                                // Signal to any waiting threads that initialization is complete
+                                if let Some(tx) = &tx {
+                                    let _ = tx.send(());
+                                }
                             }
                         }
-                    }
-                    Err(e) => {
-                        tracing::error!("Error syncing bitcoin updates: {e:?}");
-                        // Keep not-ready state and backoff slightly
-                        thread::sleep(Duration::from_millis(100));
+                        Err(e) => {
+                            tracing::error!("Error syncing bitcoin updates: {e:?}");
+                            if e.is_fatal() {
+                                info!("Fatal error during sync, initiating shutdown");
+                                return; // break out to shutdown
+                            }
+                            thread::sleep(Duration::from_millis(100));
+                        }
                     }
                 }
             }
         }
+    }));
+
+    if loop_result.is_err() {
+        info!("Panic captured in main loop, initiating shutdown");
     }
 
     // Coordinated shutdown: give each instance a chance to finish and persist state
