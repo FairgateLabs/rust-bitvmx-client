@@ -1034,7 +1034,7 @@ impl BitVMXApi for BitVMX {
                     ))?,
                 )?;
             }
-            IncomingBitVMXApiMessages::SendFunds(id, destination, amount) => {
+            IncomingBitVMXApiMessages::SendFunds(id, destination, amount, fee_rate) => {
                 info!("Sending funds to {:?} amount {:?}", destination, amount);
                 if !self.wallet.is_ready {
                     warn!("Wallet is not ready, to send funds uuid: {:?}", id);
@@ -1044,7 +1044,7 @@ impl BitVMXApi for BitVMX {
                     )?;
                     return Ok(());
                 }
-                let fee_rate = None; // TODO: get fee rate from coordinator
+                // Use the fee_rate parameter passed in the message
                 let tx = match destination {
                     Destination::Address(address) => {
                         self.wallet.send_to_address(&address, amount, fee_rate)?

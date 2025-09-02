@@ -136,13 +136,15 @@ impl Member {
         &mut self,
         amount: u64,
         bitcoin_client: &BitcoinClient,
+        fee_rate: Option<u64>,
     ) -> Result<PartialUtxo> {
         let id = Uuid::new_v4();
         let public_key = self.keyring.dispute_pubkey.unwrap();
 
         // Send funds to the public key
         info!("Funding address: {:?} with: {}", public_key, amount);
-        self.bitvmx.send_funds_to_p2wpkh(id, public_key, amount)?;
+        self.bitvmx
+            .send_funds_to_p2wpkh(id, public_key, amount, fee_rate)?;
 
         // Mine blocks to confirm the transaction
         for _ in 0..3 {
@@ -157,10 +159,13 @@ impl Member {
         );
 
         // Wait for the transaction info
+        info!("Waiting for transaction confirmation...");
         let tx_status = wait_until_msg!(
             &self.bitvmx,
             Transaction(_, _tx_status, _) => _tx_status
         );
+        info!("Got transaction status: {:?}", tx_status);
+
         // Check confirmation threashold
         if tx_status.confirmations < 1 {
             return Err(anyhow::anyhow!(

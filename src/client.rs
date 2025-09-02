@@ -215,19 +215,21 @@ impl BitVMXClient {
         self.send_message(IncomingBitVMXApiMessages::GetFundingBalance(id))
     }
 
-    pub fn send_funds_to_address(&self, id: Uuid, to_address: String, amount: u64) -> Result<()> {
+    pub fn send_funds_to_address(&self, id: Uuid, to_address: String, amount: u64, fee_rate: Option<u64>) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::SendFunds(
             id,
             Destination::Address(to_address),
             amount,
+            fee_rate,
         ))
     }
 
-    pub fn send_funds_to_p2wpkh(&self, id: Uuid, public_key: PublicKey, amount: u64) -> Result<()> {
+    pub fn send_funds_to_p2wpkh(&self, id: Uuid, public_key: PublicKey, amount: u64, fee_rate: Option<u64>) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::SendFunds(
             id,
             Destination::P2WPKH(public_key),
             amount,
+            fee_rate,
         ))
     }
 
