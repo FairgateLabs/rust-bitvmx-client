@@ -153,6 +153,36 @@ impl BitVMX {
         })
     }
 
+    pub fn shutdown(&mut self, timeout: Duration) -> Result<(), BitVMXError> {
+        info!("Shutdown requested");
+
+        let start_time = Instant::now();
+
+        loop {
+            // Drain any pending P2P messages we already queued
+            while !self.pending_messages.is_empty() {
+                self.process_pending_messages()?;
+            }
+
+            // Persist collaboration progress one more time
+            self.process_collaboration()?;
+
+            // Exit if we've exceeded the timeout
+            if start_time.elapsed() >= timeout {
+                break;
+            }
+
+            // Minor delay to avoid busy spin
+            sleep(Duration::from_millis(10));
+        }
+
+        // Stop the embedded broker server
+        self.broker.close();
+
+        info!("Shutdown completed");
+        Ok(())
+    }
+
     pub fn address(&self) -> String {
         self.program_context.comms.get_address()
     }

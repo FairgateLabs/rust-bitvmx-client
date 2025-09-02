@@ -133,6 +133,12 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
         }
     }
 
+    // Coordinated shutdown: give each instance a chance to finish and persist state
+    for instance in instances.iter_mut() {
+        let _span = info_span!("", id = instance.name).entered();
+        let _ = instance.bitvmx.shutdown(Duration::from_secs(5));
+    }
+
     Ok(())
 }
 
