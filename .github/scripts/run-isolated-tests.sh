@@ -75,7 +75,7 @@ create_isolated_docker_compose() {
 version: '3.8'
 services:
   bitcoind:
-    image: ruimarinho/bitcoin-core:27.0-alpine
+    image: ruimarinho/bitcoin-core:24-alpine
     container_name: bitcoind-${test_name}
     ports:
       - "${BITCOIN_PORT}:${BITCOIN_PORT}"
@@ -175,18 +175,22 @@ run_isolated_test() {
     # Paso 3: Actualizar configuración
     update_test_config $test_name
     
-    # Paso 4: Iniciar servicios con docker-compose aislado
+    # Paso 4: Asegurar que la imagen de Bitcoin esté disponible
+    echo "=== Pulling Bitcoin Core image for $test_name ==="
+    docker pull ruimarinho/bitcoin-core:24-alpine
+    
+    # Paso 5: Iniciar servicios con docker-compose aislado
     echo "=== Starting isolated services for $test_name ==="
     docker-compose -f tests/docker-compose-${test_name}.yml up -d
     
-    # Paso 5: Esperar que los servicios estén listos
+    # Paso 6: Esperar que los servicios estén listos
     if ! wait_for_services $test_name; then
         echo "ERROR: Failed to start services for $test_name"
         cleanup_environment $test_name
         return 1
     fi
     
-    # Paso 6: Ejecutar el test específico
+    # Paso 7: Ejecutar el test específico
     echo "=== Executing test: $test_name ==="
     
     # Configurar variables de entorno para el test
@@ -198,7 +202,7 @@ run_isolated_test() {
     local test_result=0
     timeout 600 cargo test --release --features regtest $test_name -- --test-threads=1 --nocapture || test_result=$?
     
-    # Paso 7: Limpiar después del test
+    # Paso 8: Limpiar después del test
     echo "=== Test $test_name completed with result: $test_result ==="
     cleanup_environment $test_name
     

@@ -32,7 +32,7 @@ cat > tests/docker-compose-quick.yml << EOF
 version: '3.8'
 services:
   bitcoind:
-    image: ruimarinho/bitcoin-core:27.0-alpine
+    image: ruimarinho/bitcoin-core:24-alpine
     container_name: bitcoind-quick-test
     ports:
       - "${BITCOIN_PORT}:${BITCOIN_PORT}"
@@ -60,6 +60,10 @@ volumes:
   bitcoind_data_quick:
     driver: local
 EOF
+
+# Asegurar que la imagen esté disponible
+echo "=== Pulling Bitcoin Core image ==="
+docker pull ruimarinho/bitcoin-core:24-alpine
 
 # Iniciar servicios
 echo "=== Starting services ==="
