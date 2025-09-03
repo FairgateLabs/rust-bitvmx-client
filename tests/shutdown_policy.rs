@@ -2,8 +2,6 @@ use anyhow::Result;
 use uuid::Uuid;
 
 use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID};
-use bitvmx_client::config::Config;
-use bitvmx_client::program::variables::VariableTypes;
 
 mod common;
 
@@ -20,7 +18,7 @@ fn nonfatal_error_keeps_looping() -> Result<()> {
     match out { OutgoingBitVMXApiMessages::Pong() => {}, _ => panic!("expected Pong"), }
 
     // 2) Send an invalid message (non-fatal: serde error) and ensure loop continues
-    channel.send(BITVMX_ID, "this is not json".to_string())?;
+    channel.send(BITVMX_ID, "not json".to_string())?;
     let err = bitvmx
         .process_api_messages()
         .expect_err("expected non-fatal error from invalid json");
@@ -68,7 +66,7 @@ fn panic_triggers_shutdown() -> Result<()> {
         let _ = bitvmx.process_api_messages();
     }))
     .is_err();
-    assert!(panicked, "expected panic from TestPanic message");
+    assert!(panicked, "expected panic");
 
     // After panic we can still call shutdown without panicking
     bitvmx.shutdown(std::time::Duration::from_millis(100))?;
