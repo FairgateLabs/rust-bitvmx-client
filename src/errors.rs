@@ -169,6 +169,18 @@ pub enum BitVMXError {
     MissingPublicNonces(String, String),
 }
 
+impl BitVMXError {
+    pub fn is_fatal(&self) -> bool {
+        match self {
+            // TODO what errors are fatal?
+            // Storage corruption or inability to persist is fatal?
+            BitVMXError::StorageError(_) => true,
+            // Otherwise treat as recoverable (log and continue)
+            _ => false,
+        }
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum ConfigError {
     #[error("Error while trying to build configuration")]
