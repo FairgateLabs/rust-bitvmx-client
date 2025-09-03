@@ -47,6 +47,7 @@ use std::{
 };
 use storage_backend::storage::{KeyValueStore, Storage};
 use tracing::{debug, error, info, warn};
+use crate::shutdown::GracefulShutdown;
 use uuid::Uuid;
 
 pub const THROTTLE_TICKS: u32 = 2;
@@ -155,30 +156,38 @@ impl BitVMX {
 
     pub fn shutdown(&mut self, timeout: Duration) -> Result<(), BitVMXError> {
         info!("Shutdown requested");
+        let deadline = Instant::now() + timeout;
+        self.begin_shutdown();
 
-        let start_time = Instant::now();
+        // Begin shutdown on subcomponents
+        self.program_context.comms.begin_shutdown();
+        self.program_context.bitcoin_coordinator.begin_shutdown();
+        self.broker.begin_shutdown();
+        // Drain global in-flight
+        self.drain_until_idle(deadline);
 
-        loop {
-            // Drain any pending P2P messages we already queued
-            while !self.pending_messages.is_empty() {
-                self.process_pending_messages()?;
+        // Drain subcomponents best-effort
+        self.program_context.comms.drain_until_idle(deadline);
+        self.program_context.bitcoin_coordinator.drain_until_idle(deadline);
+        self.broker.drain_until_idle(deadline);
+
+        // Drain active programs: ensure we don't schedule new work and persist state
+        if let Ok(programs) = self.get_programs() {
+            for status in programs {
+                if let Ok(mut program) = self.load_program(&status.program_id) {
+                    program.begin_shutdown();
+                    program.drain_until_idle(deadline);
+                    program.shutdown_now();
+                }
             }
-
-            // Persist collaboration progress one more time
-            self.process_collaboration()?;
-
-            // Exit if we've exceeded the timeout
-            if start_time.elapsed() >= timeout {
-                break;
-            }
-
-            // Minor delay to avoid busy spin
-            sleep(Duration::from_millis(10));
         }
+        // Finalize subcomponents shutdown first
+        self.program_context.comms.shutdown_now();
+        self.program_context.bitcoin_coordinator.shutdown_now();
+        self.broker.shutdown_now();
 
-        // Stop the embedded broker server
-        self.broker.close();
-
+        // Finalize BitVMX shutdown
+        self.shutdown_now();
         info!("Shutdown completed");
         Ok(())
     }
@@ -606,6 +615,28 @@ impl BitVMX {
         )?;
 
         Ok(())
+    }
+}
+
+impl GracefulShutdown for BitVMX {
+    fn begin_shutdown(&mut self) {
+        // Future: signal programs/protocols/coordinator to quiesce
+    }
+
+    fn drain_until_idle(&mut self, deadline: Instant) {
+        while Instant::now() < deadline {
+            if let Err(e) = self.process_pending_messages() { warn!("drain pending msg err: {:?}", e); }
+            if let Err(e) = self.process_collaboration() { warn!("drain collaboration err: {:?}", e); }
+
+            if self.pending_messages.is_empty() {
+                break;
+            }
+            sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn shutdown_now(&mut self) {
+        self.broker.close();
     }
 }
 
