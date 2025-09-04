@@ -152,6 +152,7 @@ impl BitVMXClient {
         Ok(())
     }
 
+
     /// Busy wait for a message from the broker with configurable timeout and sleep duration
     ///
     /// # Arguments

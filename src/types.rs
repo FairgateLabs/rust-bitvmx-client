@@ -1,17 +1,17 @@
 use std::str::FromStr;
 
-use crate::spv_proof::BtcTxSPVProof;
-use bitcoin::{address::NetworkUnchecked, Address, PrivateKey, PublicKey, Transaction, Txid};
-use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TransactionStatus};
+pub use crate::spv_proof::BtcTxSPVProof;
+pub use bitcoin::{address::NetworkUnchecked, Address, PrivateKey, PublicKey, Transaction, Txid};
+pub use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TransactionStatus};
 use bitvmx_broker::{broker_storage::BrokerStorage, channel::channel::LocalChannel};
 use chrono::{DateTime, Utc};
-use p2p_handler::P2pHandler;
-use protocol_builder::types::Utxo;
+// Re-export types from the P2pHandler
+pub use p2p_handler::P2pHandler;
+pub use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
+pub use uuid::Uuid;
 
-use uuid::Uuid;
-
-use crate::{
+pub use crate::{
     errors::BitVMXError,
     keychain::KeyChain,
     program::{
@@ -19,6 +19,8 @@ use crate::{
         variables::{Globals, VariableTypes, WitnessTypes, WitnessVars},
     },
 };
+
+pub use p2p_handler::PeerId;
 
 pub struct ProgramContext {
     pub key_chain: KeyChain,
