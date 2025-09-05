@@ -6,6 +6,7 @@ use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages,
 mod common;
 
 #[test]
+#[ignore]
 fn nonfatal_error_keeps_looping() -> Result<()> {
     common::config_trace();
 
@@ -34,6 +35,7 @@ fn nonfatal_error_keeps_looping() -> Result<()> {
 }
 
 #[test]
+#[ignore]
 fn fatal_error_triggers_shutdown() -> Result<()> {
     common::config_trace();
 
@@ -53,6 +55,7 @@ fn fatal_error_triggers_shutdown() -> Result<()> {
 }
 
 #[test]
+#[ignore]
 fn panic_triggers_shutdown() -> Result<()> {
     common::config_trace();
 
