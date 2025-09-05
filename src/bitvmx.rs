@@ -1052,6 +1052,9 @@ impl BitVMXApi for BitVMX {
                     Destination::P2WPKH(public_key) => {
                         self.wallet.send_to_p2wpkh(&public_key, amount, fee_rate)?
                     }
+                    Destination::P2TR(public_key, scripts) => {
+                        self.wallet.send_to_p2tr(&public_key, &scripts, amount, fee_rate)?
+                    }
                 };
                 let txid = tx.compute_txid();
                 self.dispatch_transaction(from, id, tx.clone())?;

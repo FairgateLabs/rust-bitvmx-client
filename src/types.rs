@@ -1,17 +1,18 @@
 use std::str::FromStr;
 
-pub use crate::spv_proof::BtcTxSPVProof;
-pub use bitcoin::{address::NetworkUnchecked, Address, PrivateKey, PublicKey, Transaction, Txid};
-pub use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TransactionStatus};
+use crate::spv_proof::BtcTxSPVProof;
+use bitcoin::{address::NetworkUnchecked, Address, PrivateKey, PublicKey, Transaction, Txid, XOnlyPublicKey};
+use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TransactionStatus};
 use bitvmx_broker::{broker_storage::BrokerStorage, channel::channel::LocalChannel};
 use chrono::{DateTime, Utc};
 // Re-export types from the P2pHandler
-pub use p2p_handler::P2pHandler;
-pub use protocol_builder::types::Utxo;
+use p2p_handler::P2pHandler;
+use protocol_builder::scripts::ProtocolScript;
+use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
-pub use uuid::Uuid;
+use uuid::Uuid;
 
-pub use crate::{
+use crate::{
     errors::BitVMXError,
     keychain::KeyChain,
     program::{
@@ -19,8 +20,6 @@ pub use crate::{
         variables::{Globals, VariableTypes, WitnessTypes, WitnessVars},
     },
 };
-
-pub use p2p_handler::PeerId;
 
 pub struct ProgramContext {
     pub key_chain: KeyChain,
@@ -95,6 +94,7 @@ impl Default for ProgramRequestInfo {
 pub enum Destination {
     Address(String),
     P2WPKH(PublicKey),
+    P2TR(XOnlyPublicKey, Vec<ProtocolScript>),
 }
 
 //TODO: This should be moved to a common place that could be used to share the messages api
