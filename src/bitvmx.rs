@@ -187,6 +187,10 @@ impl BitVMX {
         &self.config.components
     }
 
+    pub fn get_store(&self) -> Rc<Storage> {
+        self.store.clone()
+    }
+
     pub fn load_program(&self, program_id: &Uuid) -> Result<Program, BitVMXError> {
         let program = Program::load(self.store.clone(), program_id)?;
         Ok(program)

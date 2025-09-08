@@ -153,7 +153,7 @@ pub fn handle_tx_news(
         )?;
     }
 
-    if name == COMMITMENT || name.starts_with("NARY_VERIFIER") && vout.is_some() {
+    if (name == COMMITMENT || name.starts_with("NARY_VERIFIER")) && vout.is_some() {
         let mut round = name
             .strip_prefix("NARY_VERIFIER_")
             .unwrap_or("0")

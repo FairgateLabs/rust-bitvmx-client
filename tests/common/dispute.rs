@@ -211,24 +211,25 @@ pub fn execute_dispute(
 
     let prover_dispatcher = bitvmx_job_dispatcher::DispatcherHandler::<EmulatorJobType>::new(
         emulator_channels[0].clone(),
-    );
+        instances[0].get_store(),
+    )?;
     let verifier_dispatcher = bitvmx_job_dispatcher::DispatcherHandler::<EmulatorJobType>::new(
         emulator_channels[1].clone(),
-    );
+        instances[1].get_store(),
+    )?;
 
     let mut dispatchers = vec![prover_dispatcher, verifier_dispatcher];
-
     //wait for prover execution
-    process_dispatcher(&mut dispatchers, &mut instances);
+    process_dispatcher(&mut dispatchers, &mut instances)?;
     let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
     //wait for verifier execution
-    process_dispatcher(&mut dispatchers, &mut instances);
-    process_dispatcher(&mut dispatchers, &mut instances);
+    process_dispatcher(&mut dispatchers, &mut instances)?;
+    process_dispatcher(&mut dispatchers, &mut instances)?;
     let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
     loop {
-        process_dispatcher(&mut dispatchers, &mut instances);
+        process_dispatcher(&mut dispatchers, &mut instances)?;
         let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
         let tx = msgs[0].transaction();
         if tx.is_some() {
@@ -245,7 +246,7 @@ pub fn execute_dispute(
     }
 
     //process verifier choose challenge
-    process_dispatcher(&mut dispatchers, &mut instances);
+    process_dispatcher(&mut dispatchers, &mut instances)?;
 
     //wait for claim start
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
@@ -273,7 +274,7 @@ pub fn execute_dispute(
 pub fn process_dispatcher(
     dispatchers: &mut Vec<DispatcherHandler<EmulatorJobType>>,
     instances: &mut Vec<BitVMX>,
-) {
+) -> Result<()> {
     info!("Processing dispatcher");
     let mut counter = 0;
     loop {
@@ -283,16 +284,16 @@ pub fn process_dispatcher(
         }
 
         for dispatcher in dispatchers.iter_mut() {
-            if dispatcher.tick() {
+            if dispatcher.tick()? {
                 info!("Dispatcher completed a job");
-                return;
+                return Ok(());
             }
         }
         for instance in instances.iter_mut() {
             let ret = instance.tick();
             if ret.is_err() {
                 error!("Error processing instance: {:?}", ret);
-                return;
+                return Ok(());
             }
         }
         std::thread::sleep(std::time::Duration::from_millis(200));

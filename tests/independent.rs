@@ -31,12 +31,14 @@ use key_manager::winternitz::{
 use operator_comms::operator_comms::AllowList;
 use protocol_builder::scripts::{self, SignMode};
 use protocol_builder::types::Utxo;
+use std::rc::Rc;
 use std::sync::mpsc::channel;
 use std::time::Duration;
 use std::{
     sync::mpsc::{Receiver, Sender},
     thread, vec,
 };
+use storage_backend::storage::Storage;
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -140,7 +142,8 @@ fn run_emulator(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result
             Some(allow_list.clone()),
         )?;
 
-        let prover_dispatcher = DispatcherHandler::<EmulatorJobType>::new(channel);
+        let storage = Rc::new(Storage::new(&config.storage)?);
+        let prover_dispatcher = DispatcherHandler::<EmulatorJobType>::new(channel, storage)?;
         instances.push(prover_dispatcher);
     }
 
@@ -151,7 +154,7 @@ fn run_emulator(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result
             break;
         }
         for (idx, dispatcher) in instances.iter_mut().enumerate() {
-            if dispatcher.tick() {
+            if dispatcher.tick()? {
                 let _ = tx.send(idx);
             }
             thread::sleep(Duration::from_millis(500));
@@ -176,8 +179,8 @@ fn run_zkp(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<()> 
             config.components.prover.address,
             Some(allow_list.clone()),
         )?;
-
-        let prover_dispatcher = DispatcherHandler::<ProverJobType>::new(channel);
+        let storage = Rc::new(Storage::new(&config.storage)?);
+        let prover_dispatcher = DispatcherHandler::<ProverJobType>::new(channel, storage)?;
         instances.push(prover_dispatcher);
     }
 
@@ -188,7 +191,7 @@ fn run_zkp(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<()> 
             break;
         }
         for (idx, dispatcher) in instances.iter_mut().enumerate() {
-            if dispatcher.tick() {
+            if dispatcher.tick()? {
                 let _ = tx.send(idx);
             }
             thread::sleep(Duration::from_millis(500));
