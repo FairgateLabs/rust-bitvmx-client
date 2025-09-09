@@ -259,6 +259,18 @@ impl User {
         Ok(())
     }
 
+    pub fn create_and_dispatch_user_take_speedup(
+        &self,
+        tx_output: PartialUtxo,
+        fee: u64,
+    ) -> Result<()> {
+        let speedup_tx = self.create_user_take_speedup_tx(tx_output, fee)?;
+
+        let speedup_txid = self.dispatch_tx(speedup_tx)?;
+        info!("User take speedup tx dispatched: {}", speedup_txid);
+        Ok(())
+    }
+
     pub fn create_speedup_tx(&self, tx_output: OutPoint, fee: u64) -> Result<Transaction> {
         let funding_utxo = self.get_funding_utxo(10_000_000)?;
 
@@ -299,6 +311,44 @@ impl User {
         info!(
             "Speeding up txid: {}. Speedup txid: {}",
             tx_output.txid,
+            signed_transaction.compute_txid()
+        );
+
+        Ok(signed_transaction)
+    }
+
+    pub fn create_user_take_speedup_tx(
+        &self,
+        tx_output: PartialUtxo,
+        fee: u64,
+    ) -> Result<Transaction> {
+        let input_speedup = TxIn {
+            previous_output: OutPoint::new(tx_output.0, tx_output.1 as u32),
+            script_sig: ScriptBuf::default(),
+            sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+            witness: Witness::default(),
+        };
+
+        // Output: all funds (minus fee) to user address
+        let total_in = tx_output.2.unwrap();
+        let output = TxOut {
+            value: Amount::from_sat(total_in - fee),
+            script_pubkey: self.address.script_pubkey(),
+        };
+
+        let mut transaction = Transaction {
+            version: transaction::Version::TWO,
+            lock_time: absolute::LockTime::ZERO,
+            input: vec![input_speedup],
+            output: vec![output],
+        };
+
+        // Sign the transaction (this may need to be adapted to sign both inputs)
+        let signed_transaction =
+            self.sign_p2wpkh_transaction(&mut transaction, [(0, total_in)].to_vec())?;
+        info!(
+            "Speeding up user take txid: {}. Speedup txid: {}",
+            tx_output.0,
             signed_transaction.compute_txid()
         );
 

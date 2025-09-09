@@ -1,4 +1,5 @@
-use bitcoin::PublicKey;
+use bitcoin::{Amount, PublicKey, ScriptBuf};
+use protocol_builder::types::OutputType;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -85,4 +86,39 @@ pub fn create_transaction_reference(
 
 pub fn indexed_name(prefix: &str, index: usize) -> String {
     format!("{}_{}", prefix, index)
+}
+
+pub fn extract_index(full_name: &str, tx_name: &str) -> Result<usize, BitVMXError> {
+    let prefix = format!("{}_", tx_name);
+    let slot_index = full_name
+        .strip_prefix(&prefix)
+        .ok_or_else(|| {
+            BitVMXError::InvalidTransactionName(format!(
+                "'{}' does not match expected format '{}{{slot_index}}'",
+                full_name, prefix
+            ))
+        })?
+        .parse::<usize>()
+        .map_err(|_| {
+            BitVMXError::InvalidTransactionName(format!(
+                "Could not parse slot_index from: {}",
+                full_name
+            ))
+        })?;
+
+    Ok(slot_index)
+}
+
+pub fn get_operator_output_type(
+    dispute_key: &PublicKey,
+    amount: u64,
+) -> Result<OutputType, BitVMXError> {
+    let wpkh = dispute_key.wpubkey_hash().expect("key is compressed");
+    let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
+
+    Ok(OutputType::SegwitPublicKey {
+        value: Amount::from_sat(amount),
+        script_pubkey,
+        public_key: *dispute_key,
+    })
 }
