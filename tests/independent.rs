@@ -732,18 +732,18 @@ pub fn sign_winternitz_message(message_bytes: &[u8], index: u32) -> WinternitzSi
     signature
 }
 
-// #[ignore]
-// #[test]
-// fn test_independent_testnet() -> Result<()> {
-//     test_all_aux(true, Network::Testnet, None, None, None)?;
-//     Ok(())
-// }
-// #[ignore]
-// #[test]
-// fn test_independent_regtest() -> Result<()> {
-//     test_all_aux(true, Network::Regtest, None, None, None)?;
-//     Ok(())
-// }
+#[ignore]
+#[test]
+fn test_independent_testnet() -> Result<()> {
+    test_all_aux(true, Network::Testnet, None, None, None)?;
+    Ok(())
+}
+#[ignore]
+#[test]
+fn test_independent_regtest() -> Result<()> {
+    test_all_aux(true, Network::Regtest, None, None, None)?;
+    Ok(())
+}
 
 #[ignore]
 #[test]
