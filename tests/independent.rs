@@ -31,14 +31,12 @@ use key_manager::winternitz::{
 use operator_comms::operator_comms::AllowList;
 use protocol_builder::scripts::{self, SignMode};
 use protocol_builder::types::Utxo;
-use std::rc::Rc;
 use std::sync::mpsc::channel;
 use std::time::Duration;
 use std::{
     sync::mpsc::{Receiver, Sender},
     thread, vec,
 };
-use storage_backend::storage::Storage;
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -125,7 +123,7 @@ fn run_emulator(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result
 
     let mut instances = vec![];
 
-    for config in &configs {
+    for (i, config) in configs.iter().enumerate() {
         info!(
             "Starting emulator connection with port: {}",
             config.broker.port
@@ -142,8 +140,11 @@ fn run_emulator(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result
             Some(allow_list.clone()),
         )?;
 
-        let storage = Rc::new(Storage::new(&config.storage)?);
-        let prover_dispatcher = DispatcherHandler::<EmulatorJobType>::new(channel, storage)?;
+        //TODO: this is temporal until there are separated storages
+        let prover_dispatcher = DispatcherHandler::<EmulatorJobType>::new_with_path(
+            channel,
+            &format!("/tmp/zkp_emulator_{i}.db"),
+        )?;
         instances.push(prover_dispatcher);
     }
 
@@ -167,7 +168,7 @@ fn run_zkp(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<()> 
     let configs = get_configs(network)?;
 
     let mut instances = vec![];
-    for config in &configs {
+    for (i, config) in configs.iter().enumerate() {
         info!("Starting zkp connection with port: {}", config.broker.port);
         let allow_list = AllowList::from_file(&config.broker.allow_list)?;
         let broker_config =
@@ -179,8 +180,12 @@ fn run_zkp(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<()> 
             config.components.prover.address,
             Some(allow_list.clone()),
         )?;
-        let storage = Rc::new(Storage::new(&config.storage)?);
-        let prover_dispatcher = DispatcherHandler::<ProverJobType>::new(channel, storage)?;
+
+        //TODO: this is temporal until there are separated storages
+        let prover_dispatcher = DispatcherHandler::<ProverJobType>::new_with_path(
+            channel,
+            &format!("/tmp/zkp_storage_{i}.db"),
+        )?;
         instances.push(prover_dispatcher);
     }
 
@@ -727,18 +732,18 @@ pub fn sign_winternitz_message(message_bytes: &[u8], index: u32) -> WinternitzSi
     signature
 }
 
-#[ignore]
-#[test]
-fn test_independent_testnet() -> Result<()> {
-    test_all_aux(true, Network::Testnet, None, None, None)?;
-    Ok(())
-}
-#[ignore]
-#[test]
-fn test_independent_regtest() -> Result<()> {
-    test_all_aux(true, Network::Regtest, None, None, None)?;
-    Ok(())
-}
+// #[ignore]
+// #[test]
+// fn test_independent_testnet() -> Result<()> {
+//     test_all_aux(true, Network::Testnet, None, None, None)?;
+//     Ok(())
+// }
+// #[ignore]
+// #[test]
+// fn test_independent_regtest() -> Result<()> {
+//     test_all_aux(true, Network::Regtest, None, None, None)?;
+//     Ok(())
+// }
 
 #[ignore]
 #[test]
