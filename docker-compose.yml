@@ -6,16 +6,17 @@ x-logging:
   driver: json-file
 
 services:
-  bitcoind:
-    image: ruimarinho/bitcoin-core:24
-    command: -regtest=1 -rpcport=${BITCOIND_RPC_PORT} -rpcuser=${BITCOIND_RPC_USER} -rpcpassword=${BITCOIND_RPC_PASSWORD} -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0
-    ports:
-      - "${BITCOIND_RPC_PORT}:18443"
-    expose:
-      - "${BITCOIND_RPC_PORT}"
+  # bitcoind:
+  #   image: ruimarinho/bitcoin-core:24
+  #   command: -regtest=1 -rpcport=${BITCOIND_RPC_PORT} -rpcuser=${BITCOIND_RPC_USER} -rpcpassword=${BITCOIND_RPC_PASSWORD} -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0
+  #   ports:
+  #     - "${BITCOIND_RPC_PORT}:18443"
+  #   expose:
+  #     - "${BITCOIND_RPC_PORT}"
+  #   profiles:
+  #     - bitcoind
 
   bitvmx-client:
-    container_name: ${BITVMX_CLIENT_CONTAINER_NAME}
     build:
       context: ./
       dockerfile: docker/Dockerfile
@@ -29,5 +30,57 @@ services:
       CLIENT_OP: ${CLIENT_OP}
       BITCOIND_RPC_USER: ${BITCOIND_RPC_USER}
       BITCOIND_RPC_PASSWORD: ${BITCOIND_RPC_PASSWORD}
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "${BROKER_PORT}"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    ports:
+      - "${BROKER_PORT}:${BROKER_PORT}"
+    expose:
+      - "${BROKER_PORT}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  bitvmx-emulator:
+    build:
+      context: ./
+      dockerfile: docker/Dockerfile.emulator
+      ssh:
+        - default
+    logging: *default-logging
+    restart: unless-stopped
+    entrypoint: ["./run_emulator.sh"]
+    environment:
+      CLIENT_OP: ${CLIENT_OP}
+    network_mode: "service:bitvmx-client"
     depends_on:
-      - bitcoind
+      bitvmx-client:
+        condition: service_healthy
+
+  bitvmx-zkp:
+    build:
+      context: ./
+      dockerfile: docker/Dockerfile.zkp
+      ssh:
+        - default
+    logging: *default-logging
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - docker-cache:/var/lib/docker
+    entrypoint: ["./run_zkp.sh"]
+    environment:
+      CLIENT_OP: ${CLIENT_OP}
+      DOCKER_HOST: unix:///var/run/docker.sock
+    network_mode: "service:bitvmx-client"
+    depends_on:
+      bitvmx-client:
+        condition: service_healthy
+    profiles:
+      - zkp
+
+volumes:
+  docker-cache:

@@ -1,7 +1,7 @@
 FROM rust:latest
 
 RUN apt-get update && \
-    apt-get install -y wget build-essential git pkg-config libssl-dev clang
+    apt-get install -y wget build-essential git pkg-config libssl-dev clang netcat-openbsd dos2unix
 
 RUN mkdir -p /root/.ssh && \
     ssh-keyscan github.com >> /root/.ssh/known_hosts && \
@@ -17,6 +17,7 @@ RUN --mount=type=ssh cd rust-bitvmx-workspace && git submodule update --init --r
 WORKDIR /app/rust-bitvmx-workspace/rust-bitvmx-client
 
 COPY docker/run.sh ./
+RUN dos2unix ./run.sh
 RUN chmod +x ./run.sh
 
 RUN cargo build --release
