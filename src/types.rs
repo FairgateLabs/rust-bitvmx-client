@@ -34,6 +34,39 @@ pub const L2_ID: u32 = 100;
 pub const EMULATOR_ID: u32 = 1000;
 pub const PROVER_ID: u32 = 2000;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvelopeError {
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Envelope<T> {
+    pub version: u8,
+    pub message_type: String,
+    pub request_id: Uuid,
+    pub session_id: Option<Uuid>,
+    pub from: u32,
+    pub dest: u32,
+    pub payload: T,
+    pub error: Option<EnvelopeError>,
+}
+
+impl<T> Envelope<T> {
+    pub fn map_payload<U>(self, mapper: impl FnOnce(T) -> U) -> Envelope<U> {
+        Envelope {
+            version: self.version,
+            message_type: self.message_type,
+            request_id: self.request_id,
+            session_id: self.session_id,
+            from: self.from,
+            dest: self.dest,
+            payload: mapper(self.payload),
+            error: self.error,
+        }
+    }
+}
+
 impl ProgramContext {
     pub fn new(
         comms: P2pHandler,
@@ -126,6 +159,41 @@ pub enum IncomingBitVMXApiMessages {
 impl IncomingBitVMXApiMessages {
     pub fn to_string(&self) -> Result<String, BitVMXError> {
         Ok(serde_json::to_string(self)?)
+    }
+
+    pub fn message_type(&self) -> &'static str {
+        match self {
+            IncomingBitVMXApiMessages::Ping() => "Ping",
+            IncomingBitVMXApiMessages::SetVar(_, _, _) => "SetVar",
+            IncomingBitVMXApiMessages::SetWitness(_, _, _) => "SetWitness",
+            IncomingBitVMXApiMessages::SetFundingUtxo(_) => "SetFundingUtxo",
+            IncomingBitVMXApiMessages::GetVar(_, _) => "GetVar",
+            IncomingBitVMXApiMessages::GetWitness(_, _) => "GetWitness",
+            IncomingBitVMXApiMessages::GetCommInfo() => "GetCommInfo",
+            IncomingBitVMXApiMessages::GetTransaction(_, _) => "GetTransaction",
+            IncomingBitVMXApiMessages::GetTransactionInfoByName(_, _) => "GetTransactionInfoByName",
+            IncomingBitVMXApiMessages::GetHashedMessage(_, _, _, _) => "GetHashedMessage",
+            IncomingBitVMXApiMessages::Setup(_, _, _, _) => "Setup",
+            IncomingBitVMXApiMessages::SubscribeToTransaction(_, _) => "SubscribeToTransaction",
+            IncomingBitVMXApiMessages::SubscribeUTXO() => "SubscribeUTXO",
+            IncomingBitVMXApiMessages::SubscribeToRskPegin() => "SubscribeToRskPegin",
+            IncomingBitVMXApiMessages::GetSPVProof(_) => "GetSPVProof",
+            IncomingBitVMXApiMessages::DispatchTransaction(_, _) => "DispatchTransaction",
+            IncomingBitVMXApiMessages::DispatchTransactionName(_, _) => "DispatchTransactionName",
+            IncomingBitVMXApiMessages::SetupKey(_, _, _, _) => "SetupKey",
+            IncomingBitVMXApiMessages::GetAggregatedPubkey(_) => "GetAggregatedPubkey",
+            IncomingBitVMXApiMessages::GetKeyPair(_) => "GetKeyPair",
+            IncomingBitVMXApiMessages::GetPubKey(_, _) => "GetPubKey",
+            IncomingBitVMXApiMessages::SignMessage(_, _, _) => "SignMessage",
+            IncomingBitVMXApiMessages::GenerateZKP(_, _, _) => "GenerateZKP",
+            IncomingBitVMXApiMessages::ProofReady(_) => "ProofReady",
+            IncomingBitVMXApiMessages::GetZKPExecutionResult(_) => "GetZKPExecutionResult",
+            IncomingBitVMXApiMessages::Encrypt(_, _, _) => "Encrypt",
+            IncomingBitVMXApiMessages::Decrypt(_, _) => "Decrypt",
+            IncomingBitVMXApiMessages::Backup(_) => "Backup",
+            #[cfg(any(test, feature = "test"))]
+            IncomingBitVMXApiMessages::Test(_) => "Test",
+        }
     }
 }
 
@@ -267,6 +335,62 @@ impl OutgoingBitVMXApiMessages {
             OutgoingBitVMXApiMessages::Decrypted(uuid, decrypted) => {
                 Some((uuid.clone(), decrypted.clone()))
             }
+            _ => None,
+        }
+    }
+
+    pub fn message_type(&self) -> &'static str {
+        match self {
+            OutgoingBitVMXApiMessages::Pong() => "Pong",
+            OutgoingBitVMXApiMessages::Transaction(_, _, _) => "Transaction",
+            OutgoingBitVMXApiMessages::PeginTransactionFound(_, _) => "PeginTransactionFound",
+            OutgoingBitVMXApiMessages::SpendingUTXOTransactionFound(_, _, _, _) => "SpendingUTXOTransactionFound",
+            OutgoingBitVMXApiMessages::SpeedUpProgramNoFunds(_) => "SpeedUpProgramNoFunds",
+            OutgoingBitVMXApiMessages::SetupCompleted(_) => "SetupCompleted",
+            OutgoingBitVMXApiMessages::AggregatedPubkey(_, _) => "AggregatedPubkey",
+            OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(_) => "AggregatedPubkeyNotReady",
+            OutgoingBitVMXApiMessages::TransactionInfo(_, _, _) => "TransactionInfo",
+            OutgoingBitVMXApiMessages::ZKPResult(_, _, _) => "ZKPResult",
+            OutgoingBitVMXApiMessages::ExecutionResult() => "ExecutionResult",
+            OutgoingBitVMXApiMessages::CommInfo(_) => "CommInfo",
+            OutgoingBitVMXApiMessages::KeyPair(_, _, _) => "KeyPair",
+            OutgoingBitVMXApiMessages::PubKey(_, _) => "PubKey",
+            OutgoingBitVMXApiMessages::SignedMessage(_, _, _, _) => "SignedMessage",
+            OutgoingBitVMXApiMessages::Variable(_, _, _) => "Variable",
+            OutgoingBitVMXApiMessages::Witness(_, _, _) => "Witness",
+            OutgoingBitVMXApiMessages::NotFound(_, _) => "NotFound",
+            OutgoingBitVMXApiMessages::HashedMessage(_, _, _, _, _) => "HashedMessage",
+            OutgoingBitVMXApiMessages::ProofReady(_) => "ProofReady",
+            OutgoingBitVMXApiMessages::ProofNotReady(_) => "ProofNotReady",
+            OutgoingBitVMXApiMessages::ProofGenerationError(_, _) => "ProofGenerationError",
+            OutgoingBitVMXApiMessages::SPVProof(_, _) => "SPVProof",
+            OutgoingBitVMXApiMessages::Encrypted(_, _) => "Encrypted",
+            OutgoingBitVMXApiMessages::Decrypted(_, _) => "Decrypted",
+            OutgoingBitVMXApiMessages::BackupResult(_, _) => "BackupResult",
+        }
+    }
+
+    pub fn request_id_opt(&self) -> Option<Uuid> {
+        match self {
+            OutgoingBitVMXApiMessages::Transaction(id, _, _) => Some(*id),
+            OutgoingBitVMXApiMessages::SpendingUTXOTransactionFound(id, _, _, _) => Some(*id),
+            OutgoingBitVMXApiMessages::SetupCompleted(id) => Some(*id),
+            OutgoingBitVMXApiMessages::AggregatedPubkey(id, _) => Some(*id),
+            OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(id) => Some(*id),
+            OutgoingBitVMXApiMessages::TransactionInfo(id, _, _) => Some(*id),
+            OutgoingBitVMXApiMessages::ZKPResult(id, _, _) => Some(*id),
+            OutgoingBitVMXApiMessages::KeyPair(id, _, _) => Some(*id),
+            OutgoingBitVMXApiMessages::PubKey(id, _) => Some(*id),
+            OutgoingBitVMXApiMessages::SignedMessage(id, _, _, _) => Some(*id),
+            OutgoingBitVMXApiMessages::Variable(id, _, _) => Some(*id),
+            OutgoingBitVMXApiMessages::Witness(id, _, _) => Some(*id),
+            OutgoingBitVMXApiMessages::NotFound(id, _) => Some(*id),
+            OutgoingBitVMXApiMessages::HashedMessage(id, _, _, _, _) => Some(*id),
+            OutgoingBitVMXApiMessages::ProofReady(id) => Some(*id),
+            OutgoingBitVMXApiMessages::ProofNotReady(id) => Some(*id),
+            OutgoingBitVMXApiMessages::ProofGenerationError(id, _) => Some(*id),
+            OutgoingBitVMXApiMessages::Encrypted(id, _) => Some(*id),
+            OutgoingBitVMXApiMessages::Decrypted(id, _) => Some(*id),
             _ => None,
         }
     }

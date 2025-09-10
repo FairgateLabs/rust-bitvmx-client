@@ -17,6 +17,7 @@ use uuid::Uuid;
 pub struct BitVMXClient {
     channel: DualChannel,
     _client_id: u32,
+    pending: Arc<Mutex<Vec<OutgoingBitVMXApiMessages>>>,
 }
 
 impl BitVMXClient {
@@ -27,6 +28,7 @@ impl BitVMXClient {
         Self {
             channel,
             _client_id: client_id,
+            pending: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -179,12 +181,51 @@ impl BitVMXClient {
         }
     }
 
-    pub fn get_message(&self) -> Result<Option<(OutgoingBitVMXApiMessages, u32)>> {
+    pub fn get_message(&self) -> Result<Option<(OutgoingBitVMXApiMessages, Identifier)>> {
+        // Check local pending cache first
+        if let Some(msg) = self.pending.lock().unwrap().pop() {
+            return Ok(Some((msg, BITVMX_ID)));
+        }
+
         if let Ok(Some((msg, from))) = self.channel.recv() {
             let dezerialized = serde_json::from_str(&msg)?;
             Ok(Some((dezerialized, from)))
         } else {
             Ok(None)
+        }
+    }
+
+    /// Await a correlated response by request_id; unmatched messages are cached locally.
+    pub fn await_response(
+        &self,
+        request_id: Uuid,
+        timeout: Duration,
+        sleep_duration: Duration,
+    ) -> Result<OutgoingBitVMXApiMessages> {
+        let start = Instant::now();
+
+        // Pending first
+        {
+            let mut pending = self.pending.lock().unwrap();
+            if let Some(idx) = pending.iter().position(|m| m.request_id_opt() == Some(request_id)) {
+                return Ok(pending.swap_remove(idx));
+            }
+        }
+
+        loop {
+            if let Some((message, _from)) = self.get_message()? {
+                if message.request_id_opt() == Some(request_id) {
+                    return Ok(message);
+                } else {
+                    self.pending.lock().unwrap().push(message);
+                }
+            }
+
+            if start.elapsed() > timeout {
+                return Err(ClientError::MessageTimeout(timeout).into());
+            }
+
+            thread::sleep(sleep_duration);
         }
     }
 
