@@ -10,7 +10,7 @@ use bitvmx_client::{
     config::Config,
     program::{
         participant::{P2PAddress, ParticipantRole},
-        protocols::union::types::MemberData,
+        protocols::union::{common::get_dispute_pair_aggregated_key_pid, types::MemberData},
         variables::PartialUtxo,
     },
     types::{OutgoingBitVMXApiMessages::*, L2_ID},
@@ -117,6 +117,7 @@ impl Member {
         members_dispute_pubkeys: &[PublicKey],
         take_aggregation_id: Uuid,
         dispute_aggregation_id: Uuid,
+        committee_id: Uuid,
     ) -> Result<()> {
         self.make_aggregated_keys(
             members,
@@ -126,7 +127,7 @@ impl Member {
             dispute_aggregation_id,
         )?;
 
-        self.make_pairwise_keys(members, take_aggregation_id)?;
+        self.make_pairwise_keys(members, committee_id)?;
 
         Ok(())
     }
@@ -304,12 +305,12 @@ impl Member {
         Ok(())
     }
 
-    fn make_pairwise_keys(&mut self, members: &[Member], session_id: Uuid) -> Result<()> {
+    fn make_pairwise_keys(&mut self, members: &[Member], committee_id: Uuid) -> Result<()> {
         let my_address = self.address()?.clone();
 
         // Create a sorted list of members to have a canonical order of pairs.
         let mut sorted_members = members.to_vec();
-        sorted_members.sort_by(|a, b| a.address.cmp(&b.address));
+        sorted_members.sort_by(|a, b| a.id.cmp(&b.id));
 
         for i in 0..sorted_members.len() {
             for j in (i + 1)..sorted_members.len() {
@@ -334,12 +335,8 @@ impl Member {
 
                     let participants = vec![op1_address.clone(), op2_address.clone()];
 
-                    // Create a deterministic aggregation_id for the pair that includes session_id
-                    let namespace = Uuid::NAMESPACE_DNS;
-                    let name_to_hash =
-                        format!("{:?}{:?}{:?}", op1_address, op2_address, session_id);
-
-                    let aggregation_id = Uuid::new_v5(&namespace, name_to_hash.as_bytes());
+                    // Deterministic id: committee_id + ordered indices + tag
+                    let aggregation_id = get_dispute_pair_aggregated_key_pid(committee_id, i, j);
                     let pairwise_key = self.setup_key(aggregation_id, &participants, None)?;
 
                     let other_address = self.get_counterparty_address(member1, member2)?;
@@ -348,7 +345,14 @@ impl Member {
                         .pairwise_keys
                         .insert(other_address.clone(), pairwise_key);
 
-                    info!(peer = ?other_address, key = ?pairwise_key.to_string(), "Generated pairwise key");
+                    let pair_members = format!("{}<>{}", member1.id, member2.id);
+                    info!(
+                        members = %pair_members,
+                        pair_id = ?aggregation_id,
+                        peer = ?other_address,
+                        key = %pairwise_key.to_string(),
+                        "Generated dispute-channel pair aggregated key"
+                    );
                 }
             }
         }
@@ -361,12 +365,13 @@ impl Member {
         addresses: &[P2PAddress],
         public_keys: Option<&[PublicKey]>,
     ) -> Result<PublicKey> {
-        info!(
+        debug!(
             id = self.id,
             aggregation_id = ?aggregation_id,
             addresses = ?addresses,
             "Setting up aggregated key"
         );
+
         self.bitvmx.setup_key(
             aggregation_id,
             addresses.to_vec(),
@@ -375,7 +380,7 @@ impl Member {
         )?;
 
         let aggregated_key = expect_msg!(self.bitvmx, AggregatedPubkey(_, key) => key)?;
-        info!(
+        debug!(
             id = self.id,
             "Key setup complete {}",
             aggregated_key.to_string()
