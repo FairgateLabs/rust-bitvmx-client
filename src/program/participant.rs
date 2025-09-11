@@ -135,7 +135,7 @@ impl ParticipantKeys {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
 pub struct P2PAddress {
     pub address: String,
     pub peer_id: PeerId,
@@ -159,5 +159,14 @@ impl P2PAddress {
 
     pub fn peer_id_bs58(&self) -> String {
         self.peer_id.to_base58()
+    }
+}
+
+// Keeps logs readable by showing only the address string.
+impl core::fmt::Debug for P2PAddress {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("P2PAddress")
+            .field("address", &self.address)
+            .finish()
     }
 }

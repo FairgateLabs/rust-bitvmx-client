@@ -125,6 +125,7 @@ impl Member {
             take_aggregation_id,
             dispute_aggregation_id,
         )?;
+
         self.make_pairwise_keys(members, take_aggregation_id)?;
 
         Ok(())
