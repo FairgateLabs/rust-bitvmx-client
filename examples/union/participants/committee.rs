@@ -40,8 +40,8 @@ impl Committee {
         let members = vec![
             Member::new("op_1", ParticipantRole::Prover)?,
             Member::new("op_2", ParticipantRole::Prover)?,
-            // Member::new("op_3", ParticipantRole::Prover)?,
-            // Member::new("op_4", ParticipantRole::Verifier)?,
+            Member::new("op_3", ParticipantRole::Prover)?,
+            Member::new("op_4", ParticipantRole::Verifier)?,
         ];
 
         let wallet = init_wallet()?;
@@ -79,6 +79,7 @@ impl Committee {
         let take_aggregation_id = self.take_aggregation_id;
         let dispute_aggregation_id = self.dispute_aggregation_id;
 
+        let committee_id = self.committee_id;
         let members = self.members.clone();
         let _ = self.all(|op: &mut Member| {
             op.setup_committee_keys(
@@ -87,6 +88,7 @@ impl Committee {
                 &members_dispute_pubkeys,
                 take_aggregation_id,
                 dispute_aggregation_id,
+                committee_id,
             )
         })?;
 

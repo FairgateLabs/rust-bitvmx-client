@@ -58,6 +58,24 @@ pub fn get_dispute_aggregated_key_pid(committee_id: Uuid) -> Uuid {
     return Uuid::from_bytes(hash[0..16].try_into().unwrap());
 }
 
+pub fn get_dispute_pair_aggregated_key_pid(
+    committee_id: Uuid,
+    idx_a: usize,
+    idx_b: usize,
+) -> Uuid {
+    let mut hasher = Sha256::new();
+    // Ensure canonical ordering (min, max) so both parties derive the same id.
+    let (min_i, max_i) = if idx_a <= idx_b { (idx_a, idx_b) } else { (idx_b, idx_a) };
+
+    hasher.update(committee_id.as_bytes());
+    hasher.update(&min_i.to_be_bytes());
+    hasher.update(&max_i.to_be_bytes());
+    hasher.update("pairwise_aggregated_key");
+
+    let hash = hasher.finalize();
+    Uuid::from_bytes(hash[0..16].try_into().unwrap())
+}
+
 pub fn create_transaction_reference(
     protocol: &mut protocol_builder::builder::Protocol,
     tx_name: &str,
