@@ -5,8 +5,8 @@ use std::{
 };
 
 use anyhow::Result;
+use bitcoin::Network;
 use bitvmx_wallet::wallet::{RegtestWallet, Wallet};
-use bollard::models::Network;
 use clap::{Arg, Command};
 use tracing::{debug, info, info_span};
 use tracing_subscriber::EnvFilter;
@@ -62,7 +62,8 @@ fn init_bitvmx(opn: &str, fresh: bool) -> Result<BitVMX> {
 
     info!("config: {:?}", config.storage.path);
 
-    let bitvmx = BitVMX::new(config)?;
+    let mut bitvmx = BitVMX::new(config)?;
+    bitvmx.sync_wallet()?;
     Ok(bitvmx)
 }
 

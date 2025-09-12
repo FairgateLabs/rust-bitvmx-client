@@ -631,6 +631,13 @@ impl BitVMX {
 
         Ok(())
     }
+
+    pub fn sync_wallet(&mut self) -> Result<(), BitVMXError> {
+        info!("Starting wallet sync...");
+        self.wallet.sync_wallet()?;
+        info!("Wallet sync completed.");
+        Ok(())
+    }
 }
 
 impl GracefulShutdown for BitVMX {
