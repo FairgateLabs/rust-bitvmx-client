@@ -193,7 +193,10 @@ impl Committee {
         let bitvmx = &self.members[0].bitvmx;
         let status = wait_until_msg!(bitvmx, Transaction(_, _status, _) => _status);
 
-        info!("Sent {} transaction with status: {:?}", txid, status);
+        info!(
+            "Sent {} transaction with {} confirmations.",
+            txid, status.confirmations
+        );
 
         info!("Waiting for SPV proof...",);
         let _ = bitvmx.get_spv_proof(txid);

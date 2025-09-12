@@ -157,7 +157,7 @@ impl Member {
         let public_key = self.keyring.dispute_pubkey.unwrap();
 
         // Send funds to the public key
-        info!("Funding address: {:?} with: {}", public_key, amount);
+        info!("Funding dispute pubkey of {} with: {}", self.id, amount);
         self.bitvmx
             .send_funds_to_p2wpkh(id, public_key, amount, fee_rate)?;
 
