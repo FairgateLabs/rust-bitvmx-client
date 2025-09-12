@@ -10,7 +10,7 @@ use tracing::info;
 use tracing::warn;
 use uuid::Uuid;
 
-const FEE_RATE: u64 = 2; // sats/vbyte
+const FEE_RATE: u64 = 1; // sats/vbyte
 const MIN_FUNDS_RECOVERY: u64 = 5000;
 const TX_SIZE: u64 = 140;
 
@@ -53,6 +53,7 @@ pub fn wallet_info(network: Network) -> Result<()> {
 }
 
 pub fn fund_members(wallet: &mut MasterWallet, members: &[Member], amount: u64) -> Result<()> {
+    info!("Funding members with {} sats each...", amount);
     non_regtest_warning(wallet.network(), "You are about to transfer REAL money.");
 
     let balance = wallet.wallet.balance();
@@ -62,7 +63,6 @@ pub fn fund_members(wallet: &mut MasterWallet, members: &[Member], amount: u64) 
     info!("Trusted: {} sats", balance.trusted_pending.to_sat());
     info!("Immature: {} sats", balance.immature.to_sat());
 
-    info!("Funding each member with {} sats", amount);
     for member in members {
         let address = member.get_funding_address()?;
         info!("Address: {:?}", address);
@@ -71,8 +71,17 @@ pub fn fund_members(wallet: &mut MasterWallet, members: &[Member], amount: u64) 
             .require_network(wallet.network())
             .expect("address not valid for this network");
 
-        let tx: bitcoin::Transaction =
-            wallet.fund_address_with_fee(&checked_address, amount, Some(FEE_RATE))?;
+        let result = wallet.fund_address_with_fee(&checked_address, amount, Some(FEE_RATE));
+        if result.is_err() {
+            warn!(
+                "Failed to fund member {} at address {}: {}",
+                member.id,
+                checked_address,
+                result.as_ref().err().unwrap()
+            );
+            continue;
+        }
+        let tx = result?;
 
         member
             .bitvmx
@@ -80,16 +89,13 @@ pub fn fund_members(wallet: &mut MasterWallet, members: &[Member], amount: u64) 
 
         let txid = tx.compute_txid();
         info!("Funded member with txid: {}", txid);
-        thread::sleep(std::time::Duration::from_secs(5));
+        print_link(wallet.network(), txid);
+        // Give some time to bitcoin coordinator to update transactions
+        thread::sleep(std::time::Duration::from_secs(7));
     }
 
     info!("Master wallet balance after funding members:");
-    let balance = wallet.wallet.balance();
-    info!("Confirmed: {} sats", balance.confirmed);
-    info!("Untrusted: {} sats", balance.untrusted_pending);
-    info!("Trusted: {} sats", balance.trusted_pending);
-    info!("Immature: {} sats", balance.immature);
-
+    print_balance(wallet)?;
     Ok(())
 }
 
@@ -101,7 +107,24 @@ pub fn print_members_balances(members: &[Member]) -> Result<()> {
     Ok(())
 }
 
-pub fn recover_funds(members: &[Member], address: String) -> Result<()> {
+pub fn print_link(network: Network, txid: bitcoin::Txid) {
+    if network == Network::Regtest {
+        return;
+    }
+
+    let url = match network {
+        Network::Testnet => format!("https://mempool.space/testnet/tx/{}", txid),
+        Network::Bitcoin => format!("https://mempool.space/tx/{}", txid),
+        _ => "Unsupported network".to_string(),
+    };
+    info!("View transaction at: {}", url);
+}
+
+pub fn recover_funds(members: &[Member], address: String, network: Network) -> Result<()> {
+    info!("Recovering funds to address: {}", address);
+    info!("Fee rate: {} sats/vbyte", FEE_RATE);
+    non_regtest_warning(network, "You are about to transfer REAL money.");
+
     for member in members {
         let balance = member.get_funding_balance()?;
         info!("Member {} balance: {} sats", member.id, balance);
@@ -113,14 +136,22 @@ pub fn recover_funds(members: &[Member], address: String) -> Result<()> {
             continue;
         }
 
-        let amount = balance - TX_SIZE * FEE_RATE; // leave some sats for fees
+        let amount = balance - FEE_RATE * TX_SIZE * 2; // leave some sats for fees. 2 factor is to considerate multiple inputs
 
-        member.bitvmx.send_funds_to_address(
-            Uuid::new_v4(),
-            address.clone(),
-            amount,
-            Some(FEE_RATE),
-        )?;
+        info!("Recovering {} sats from member {}", amount, member.id);
+        non_regtest_warning(network, "You are about to transfer REAL money.");
+
+        let txid = match member.send_funds(amount, address.clone(), Some(FEE_RATE)) {
+            Ok(txid) => txid,
+            Err(e) => {
+                warn!(
+                    "Failed to recover funds from member {} to address {}: {}",
+                    member.id, address, e
+                );
+                continue;
+            }
+        };
+        print_link(network, txid);
     }
     Ok(())
 }
@@ -233,4 +264,14 @@ fn env_var_or_default(var_name: &str, default: Option<String>) -> Option<String>
             default
         }
     }
+}
+
+pub fn print_balance(wallet: &MasterWallet) -> Result<()> {
+    let balance = wallet.wallet.balance();
+    info!("Master wallet balance:");
+    info!("Confirmed: {} sats", balance.confirmed.to_sat());
+    info!("Untrusted: {} sats", balance.untrusted_pending.to_sat());
+    info!("Trusted: {} sats", balance.trusted_pending.to_sat());
+    info!("Immature: {} sats", balance.immature.to_sat());
+    Ok(())
 }

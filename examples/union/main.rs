@@ -25,7 +25,7 @@ use crate::{
     wallet::{
         helper::{
             ask_user_confirmation, fund_members, load_change_key_from_env,
-            load_private_key_from_env, non_regtest_warning, print_members_balances, recover_funds,
+            load_private_key_from_env, print_balance, print_members_balances, recover_funds,
             string_to_network, wallet_info,
         },
         master_wallet::MasterWallet,
@@ -68,6 +68,8 @@ pub fn main() -> Result<()> {
         Some("master_wallet_info") => master_wallet_info(args.get(2))?,
         Some("latency") => cli_latency(args.get(2))?,
         Some("balances") => cli_balances()?,
+        Some("fund_members") => cli_fund_members()?,
+        Some("recover_funds") => cli_recover_funds()?,
         Some(cmd) => {
             eprintln!("Unknown command: {}", cmd);
             print_usage();
@@ -95,15 +97,19 @@ fn print_usage() {
     println!(
         "  cargo run --example union advance_funds_twice       - Performs advancement of funds twice"
     );
-    println!("  cargo run --example union invalid_reimbursement - Forces invalid reimbursement to test challenge tx");
+    println!("  cargo run --example union invalid_reimbursement     - Forces invalid reimbursement to test challenge tx");
+    // Testing commands
     println!(
-        "  cargo run --example union test_master_wallet  - Tests the master wallet functionality"
+        "  cargo run --example union master_wallet_info        - Print Master wallet info: key pair and address. (optionally pass network: regtest, testnet, bitcoin)"
     );
-    println!("  cargo run --example union balances - Print members and master wallet balance");
+    println!("  cargo run --example union latency             - Analyses latency to the Bitcoin node. (optionally pass network: regtest, testnet, bitcoin)");
     println!(
-        "  cargo run --example union master_wallet_info - Print Master wallet info: key pair and address. (optionally pass network: regtest, testnet, bitcoin)"
+        "  cargo run --example union balances            - Print members and master wallet balance"
     );
-    println!("  cargo run --example union latency - Analyses latency to the Bitcoin node. (optionally pass network: regtest, testnet, bitcoin)");
+    println!(
+        "  cargo run --example union fund_members        - Funds all committee members from master wallet with a testing amount"
+    );
+    println!("  cargo run --example union recover_funds       - Send all members funds to master wallet address");
 }
 
 fn master_wallet_info(network: Option<&String>) -> Result<()> {
@@ -199,12 +205,7 @@ pub fn cli_balances() -> Result<()> {
         load_change_key_from_env(NETWORK),
     )?;
 
-    let balance = wallet.wallet.balance();
-    info!("Master wallet balance:");
-    info!("Confirmed: {} sats", balance.confirmed.to_sat());
-    info!("Untrusted: {} sats", balance.untrusted_pending.to_sat());
-    info!("Trusted: {} sats", balance.trusted_pending.to_sat());
-    info!("Immature: {} sats", balance.immature.to_sat());
+    print_balance(&wallet)?;
     Ok(())
 }
 
@@ -220,11 +221,52 @@ pub fn cli_recover_funds() -> Result<()> {
 
     let address = wallet.wallet.receive_address()?;
 
-    info!("Recovering funds to address: {}", address);
-    non_regtest_warning(NETWORK, "You are about to transfer REAL money.");
+    recover_funds(
+        committee.members.as_slice(),
+        address.to_string(),
+        wallet.network(),
+    )?;
 
-    recover_funds(committee.members.as_slice(), address.to_string())?;
+    committee.bitcoin_client.wait_for_blocks(1)?;
 
+    info!("Balances after funds recovery:");
+    print_members_balances(committee.members.as_slice())?;
+    print_balance(&wallet)?;
+
+    Ok(())
+}
+
+pub fn cli_fund_members() -> Result<()> {
+    let mut committee = Committee::new(STREAM_DENOMINATION, NETWORK)?;
+    committee.setup_keys()?;
+
+    info!("Balances before funding:");
+    print_members_balances(committee.members.as_slice())?;
+
+    let mut wallet = MasterWallet::new(
+        NETWORK,
+        load_private_key_from_env(NETWORK),
+        load_change_key_from_env(NETWORK),
+    )?;
+
+    let amount = 10_000;
+    fund_members(&mut wallet, committee.members.as_slice(), amount)?;
+
+    committee.bitcoin_client.wait_for_blocks(1)?;
+
+    // This will work only if fund_members() is dispatching transaction throuhg BitVMX
+    for member in committee.members.iter_mut() {
+        let status = wait_until_msg!(&member.bitvmx, OutgoingBitVMXApiMessages::Transaction(_, _status, _) => _status);
+        info!(
+            "TransactionStatus received for txid: {}. Confirmations: {}",
+            status.tx_id, status.confirmations
+        );
+    }
+
+    info!("Balances after funding:");
+    print_members_balances(committee.members.as_slice())?;
+
+    print_balance(&wallet)?;
     Ok(())
 }
 
@@ -261,7 +303,7 @@ pub fn committee() -> Result<Committee> {
     print_members_balances(committee.members.as_slice())?;
 
     committee.setup_dispute_protocols()?;
-    committee.bitcoin_client.wait_for_blocks(20)?;
+    committee.bitcoin_client.wait_for_blocks(2)?;
 
     info!("Balances after dispute core protocol:");
     print_members_balances(committee.members.as_slice())?;

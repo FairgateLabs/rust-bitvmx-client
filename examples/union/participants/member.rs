@@ -468,14 +468,25 @@ impl Member {
 
     pub fn get_funding_address(&self) -> Result<bitcoin::Address<NetworkUnchecked>> {
         self.bitvmx.get_funding_address(Uuid::new_v4())?;
+        thread::sleep(std::time::Duration::from_secs(1));
         let address = wait_until_msg!(&self.bitvmx, FundingAddress(_, _address) => _address);
         Ok(address)
     }
 
     pub fn get_funding_balance(&self) -> Result<u64> {
         self.bitvmx.get_funding_balance(Uuid::new_v4())?;
+        thread::sleep(std::time::Duration::from_secs(1));
         let amount = wait_until_msg!(&self.bitvmx, FundingBalance(_, _amount) => _amount);
         Ok(amount)
+    }
+
+    pub fn send_funds(&self, amount: u64, address: String, fee_rate: Option<u64>) -> Result<Txid> {
+        self.bitvmx
+            .send_funds_to_address(Uuid::new_v4(), address.clone(), amount, fee_rate)?;
+        self.bitvmx.get_funding_address(Uuid::new_v4())?;
+        thread::sleep(std::time::Duration::from_secs(1));
+        let txid = wait_until_msg!(&self.bitvmx, FundsSent(_, _txid) => _txid);
+        Ok(txid)
     }
 
     pub fn init_funds(&mut self, amounts: FundingAmount) -> Result<FundingUtxos> {
