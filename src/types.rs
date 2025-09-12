@@ -4,6 +4,7 @@ use crate::spv_proof::BtcTxSPVProof;
 use bitcoin::{address::NetworkUnchecked, Address, PrivateKey, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TransactionStatus};
 use bitvmx_broker::{broker_storage::BrokerStorage, channel::channel::LocalChannel};
+use bitvmx_wallet::wallet::Destination;
 use chrono::{DateTime, Utc};
 use p2p_handler::P2pHandler;
 use protocol_builder::types::Utxo;
@@ -89,12 +90,6 @@ impl Default for ProgramRequestInfo {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub enum Destination {
-    Address(String),
-    P2WPKH(PublicKey),
-}
-
 //TODO: This should be moved to a common place that could be used to share the messages api
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum IncomingBitVMXApiMessages {
@@ -130,7 +125,7 @@ pub enum IncomingBitVMXApiMessages {
     Test(String),
     GetFundingAddress(Uuid),
     GetFundingBalance(Uuid),
-    SendFunds(Uuid, Destination, u64, Option<u64>),
+    SendFunds(Uuid, Destination, Option<u64>),
 }
 impl IncomingBitVMXApiMessages {
     pub fn to_string(&self) -> Result<String, BitVMXError> {

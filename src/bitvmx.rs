@@ -1,5 +1,5 @@
 use crate::program::protocols::protocol_handler::ProtocolHandler;
-use crate::types::{Destination, EMULATOR_ID, PROVER_ID};
+use crate::types::{EMULATOR_ID, PROVER_ID};
 use crate::{
     api::BitVMXApi,
     collaborate::Collaboration,
@@ -1118,8 +1118,8 @@ impl BitVMXApi for BitVMX {
                     ))?,
                 )?;
             }
-            IncomingBitVMXApiMessages::SendFunds(id, destination, amount, fee_rate) => {
-                info!("Sending funds to {:?} amount {:?}", destination, amount);
+            IncomingBitVMXApiMessages::SendFunds(id, destination, fee_rate) => {
+                info!("Sending funds to {:?}", destination);
                 if !self.wallet.is_ready {
                     warn!("Wallet is not ready, to send funds uuid: {:?}", id);
                     self.program_context.broker_channel.send(
@@ -1129,32 +1129,21 @@ impl BitVMXApi for BitVMX {
                     return Ok(());
                 }
                 // Use the fee_rate parameter passed in the message
-                let result = match destination.clone() {
-                    Destination::Address(address) => {
-                        self.wallet.send_to_address(&address, amount, fee_rate)
-                    }
-                    Destination::P2WPKH(public_key) => {
-                        self.wallet.send_to_p2wpkh(&public_key, amount, fee_rate)
+                let tx = match self.wallet.create_tx(destination.clone(), fee_rate) {
+                    Ok(tx) => tx,
+                    Err(e) => {
+                        error!("Failed sending funds to {:?}. Error: {:?}", destination, e);
+                        self.program_context.broker_channel.send(
+                            from,
+                            serde_json::to_string(&OutgoingBitVMXApiMessages::WalletError(
+                                id,
+                                e.to_string(),
+                            ))?,
+                        )?;
+                        return Ok(());
                     }
                 };
 
-                if result.is_err() {
-                    let error = result.err().unwrap();
-                    error!(
-                        "Error sending funds to {:?} amount {:?}: {:?}",
-                        destination, amount, error
-                    );
-                    self.program_context.broker_channel.send(
-                        from,
-                        serde_json::to_string(&OutgoingBitVMXApiMessages::WalletError(
-                            id,
-                            error.to_string(),
-                        ))?,
-                    )?;
-                    return Ok(());
-                }
-
-                let tx = result?;
                 let txid = tx.compute_txid();
                 self.dispatch_transaction(from, id, tx.clone())?;
 

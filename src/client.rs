@@ -4,11 +4,12 @@ use crate::{
         participant::P2PAddress,
         variables::{VariableTypes, WitnessTypes},
     },
-    types::{Destination, IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
 use anyhow::Result;
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
+use bitvmx_wallet::wallet::Destination;
 use std::thread;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -215,20 +216,15 @@ impl BitVMXClient {
         self.send_message(IncomingBitVMXApiMessages::GetFundingBalance(id))
     }
 
-    pub fn send_funds_to_address(&self, id: Uuid, to_address: String, amount: u64, fee_rate: Option<u64>) -> Result<()> {
+    pub fn send_funds(
+        &self,
+        id: Uuid,
+        destination: Destination,
+        fee_rate: Option<u64>,
+    ) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::SendFunds(
             id,
-            Destination::Address(to_address),
-            amount,
-            fee_rate,
-        ))
-    }
-
-    pub fn send_funds_to_p2wpkh(&self, id: Uuid, public_key: PublicKey, amount: u64, fee_rate: Option<u64>) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::SendFunds(
-            id,
-            Destination::P2WPKH(public_key),
-            amount,
+            destination,
             fee_rate,
         ))
     }
