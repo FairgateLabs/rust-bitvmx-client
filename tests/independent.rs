@@ -18,7 +18,7 @@ use bitvmx_client::{bitvmx::BitVMX, config::Config};
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
-use bitvmx_wallet::wallet::{RegtestWallet, Wallet};
+use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
 use common::dispute::{prepare_dispute, ForcedChallenges};
 use common::{clear_db, init_utxo_new, INITIAL_BLOCK_COUNT};
 use common::{config_trace, send_all};
@@ -259,7 +259,8 @@ impl TestHelper {
             Some(bitcoind)
         };
 
-        let mut wallet = Wallet::from_config(wallet_config.bitcoin.clone(), wallet_config.wallet.clone())?;
+        let mut wallet =
+            Wallet::from_config(wallet_config.bitcoin.clone(), wallet_config.wallet.clone())?;
         if !independent {
             let bitcoin_client = BitcoinClient::new(
                 &wallet_config.bitcoin.url,
@@ -470,10 +471,9 @@ pub fn test_all_aux(
     //     true,
     //     None,
     // )?;
-    let fund_tx_0 = helper.wallet.fund_p2wpkh(
-        &funding_key_0,
-        speedup_amount
-    )?;
+    let fund_tx_0 = helper
+        .wallet
+        .fund_destination(Destination::P2WPKH(funding_key_0, speedup_amount))?;
     let fund_txid_0 = fund_tx_0.compute_txid();
 
     helper.wallet.mine(1)?;
@@ -491,10 +491,9 @@ pub fn test_all_aux(
     //     None,
     // )?;
 
-    let fund_tx_1 = helper.wallet.fund_p2wpkh(
-        &funding_key_1,
-        speedup_amount
-    )?;
+    let fund_tx_1 = helper
+        .wallet
+        .fund_destination(Destination::P2WPKH(funding_key_1, speedup_amount))?;
     let fund_txid_1 = fund_tx_1.compute_txid();
     helper.wallet.mine(1)?;
     info!("Wait for the first funding ready");

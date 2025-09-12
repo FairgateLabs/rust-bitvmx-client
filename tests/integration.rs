@@ -1,6 +1,7 @@
 #![cfg(test)]
 use anyhow::Result;
 use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID};
+use bitvmx_wallet::wallet::{Destination, RegtestWallet};
 use common::{
     config_trace,
     dispute::{execute_dispute, prepare_dispute, ForcedChallenges},
@@ -12,7 +13,6 @@ use protocol_builder::{
 };
 use tracing::info;
 use uuid::Uuid;
-use bitvmx_wallet::wallet::RegtestWallet;
 
 mod common;
 
@@ -48,9 +48,9 @@ pub fn test_drp() -> Result<()> {
     let funding_key_0 = msgs[0].public_key().unwrap().1;
     let funding_key_1 = msgs[1].public_key().unwrap().1;
 
-    let fund_tx_0 = wallet.fund_p2wpkh(&funding_key_0, 10_000_000)?;
+    let fund_tx_0 = wallet.fund_destination(Destination::P2WPKH(funding_key_0, 10_000_000))?;
     let fund_txid_0 = fund_tx_0.compute_txid();
-    let fund_tx_1 = wallet.fund_p2wpkh(&funding_key_1, 10_000_000)?;
+    let fund_tx_1 = wallet.fund_destination(Destination::P2WPKH(funding_key_1, 10_000_000))?;
     let fund_txid_1 = fund_tx_1.compute_txid();
 
     let funds_utxo_0 = Utxo::new(fund_txid_0, 0, 10_000_000, &funding_key_0);

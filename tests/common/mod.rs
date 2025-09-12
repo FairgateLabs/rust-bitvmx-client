@@ -15,7 +15,7 @@ use bitvmx_client::{
     program::{participant::P2PAddress, protocols::protocol_handler::external_fund_tx},
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, EMULATOR_ID, L2_ID},
 };
-use bitvmx_wallet::wallet::{RegtestWallet, Wallet};
+use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
 use p2p_handler::PeerId;
 use protocol_builder::{
     scripts::{self, ProtocolScript, SignMode},
@@ -49,7 +49,6 @@ pub fn init_bitvmx(
     clear_db(&config.key_storage.path);
     clear_db(&config.broker_storage.path);
     Wallet::clear_db(&config.wallet)?;
-
 
     info!("config: {:?}", config.storage.path);
 
@@ -102,9 +101,9 @@ pub const FUNDING_ID: &str = "fund_1";
 pub const FEE: u64 = 500;
 
 pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
-    let wallet_config = bitvmx_settings::settings::load_config_file::<
-        bitvmx_wallet::config::Config,
-    >(Some("config/wallet_regtest.yaml".to_string()))?;
+    let wallet_config = bitvmx_settings::settings::load_config_file::<bitvmx_wallet::config::Config>(
+        Some("config/wallet_regtest.yaml".to_string()),
+    )?;
 
     // Clear indexer, monitor, key manager and wallet data.
     clear_db(&wallet_config.storage.path);
@@ -132,7 +131,8 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
     )?;
 
     // Create a new local wallet
-    let mut wallet = Wallet::from_config(wallet_config.bitcoin.clone(), wallet_config.wallet.clone())?;
+    let mut wallet =
+        Wallet::from_config(wallet_config.bitcoin.clone(), wallet_config.wallet.clone())?;
     // Initialize the wallet bitcoin RPC wallet
     let _address = bitcoin_client.init_wallet(&wallet_config.bitcoin.wallet)?;
     // Mine 100 blocks to ensure the coinbase output is mature
@@ -141,7 +141,6 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
     bitcoin_client.fund_address(&wallet.receive_address()?, Amount::from_int_btc(10))?;
     // Sync the wallet with the Bitcoin node to the latest block
     wallet.sync_wallet()?;
-
 
     Ok((bitcoin_client, bitcoind, wallet))
 }
@@ -272,11 +271,7 @@ pub fn init_utxo(
         )]
     };
 
-    let tx = wallet.fund_p2tr(
-        &aggregated_pub_key.into(),
-        &spending_scripts,
-        amount,
-    )?;
+    let tx = wallet.fund_p2tr(&aggregated_pub_key.into(), &spending_scripts, amount)?;
     wallet.mine(1)?;
 
     let utxo = Utxo::new(tx.compute_txid(), 0, amount, &aggregated_pub_key);
@@ -292,10 +287,7 @@ pub fn set_speedup_funding(
     channel: &DualChannel,
     wallet: &mut Wallet,
 ) -> Result<()> {
-    let fund_tx = wallet.fund_p2wpkh(
-        pub_key,
-        amount
-    )?;
+    let fund_tx = wallet.fund_destination(Destination::P2WPKH(*pub_key, amount))?;
 
     let funds_utxo_0 = Utxo::new(fund_tx.compute_txid(), 0, amount, pub_key);
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
