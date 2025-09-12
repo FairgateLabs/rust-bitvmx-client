@@ -94,6 +94,7 @@ impl Member {
 
     pub fn get_peer_info(&mut self) -> Result<P2PAddress> {
         self.bitvmx.get_comm_info()?;
+        thread::sleep(std::time::Duration::from_secs(5));
         let addr = expect_msg!(self.bitvmx, CommInfo(addr) => addr)?;
 
         self.address = Some(addr.clone());

@@ -1,5 +1,8 @@
+use anyhow::{anyhow, Result};
 use bitcoin::Network;
+use core::option::Option;
 use std::io::{self, Write};
+use tracing::warn;
 
 /// Ask the user a yes/no question and return true if they confirm (`y` or `yes`).
 pub fn ask_user_confirmation(prompt: &str) -> bool {
@@ -31,7 +34,7 @@ pub fn prefixed_name(prefix: &str, name: &str) -> String {
     format!("{}_{}", prefix, name)
 }
 
-pub fn regtest_warning(network: Network, message: &str) {
+pub fn non_regtest_warning(network: Network, message: &str) {
     if network == Network::Regtest {
         return;
     }
@@ -42,4 +45,40 @@ pub fn regtest_warning(network: Network, message: &str) {
         print!("Operation cancelled by user.\n");
         std::process::exit(0);
     }
+}
+
+pub fn get_network_prefix(network: Network, env_var: bool) -> Result<&'static str> {
+    match (network, env_var) {
+        (Network::Regtest, false) => Ok("regtest"),
+        (Network::Regtest, true) => Ok("REGTEST"),
+
+        (Network::Testnet, false) => Ok("testnet"),
+        (Network::Testnet, true) => Ok("TESTNET"),
+
+        (Network::Bitcoin, false) => Ok("mainnet"),
+        (Network::Bitcoin, true) => Ok("MAINNET"),
+
+        (other, _) => Err(anyhow!("Unsupported network: {:?}", other)),
+    }
+}
+
+pub fn string_to_network(network: Option<&String>) -> Result<Network> {
+    let network = match network {
+        Some(net) => match net.as_str() {
+            "regtest" => Network::Regtest,
+            "testnet" => Network::Testnet,
+            "mainnet" => Network::Bitcoin,
+            _ => {
+                return Err(anyhow!(
+                    "Unsupported network string: {}. Use 'regtest' or 'testnet'.",
+                    net
+                ));
+            }
+        },
+        None => {
+            warn!("No network specified. Using regtest.");
+            Network::Regtest
+        }
+    };
+    Ok(network)
 }

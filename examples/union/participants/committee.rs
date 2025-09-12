@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use crate::bitcoin::{init_client, BitcoinWrapper};
 use crate::macros::wait_for_message_blocking;
-use crate::participants::common::{prefixed_name, regtest_warning};
+use crate::participants::common::{non_regtest_warning, prefixed_name};
 use crate::participants::member::{FundingAmount, Member};
 use crate::wait_until_msg;
 
@@ -39,7 +39,7 @@ impl Committee {
 
         let network_prefix = match network {
             Network::Bitcoin => "mainnet",
-            Network::Testnet4 => "testnet",
+            Network::Testnet => "testnet",
             Network::Regtest => "",
             _ => panic!("Unsupported network"),
         };
@@ -369,7 +369,7 @@ impl Committee {
 }
 
 fn network_warning(network: Network) {
-    regtest_warning(
+    non_regtest_warning(
         network,
         "You are running this example in a non-regtest network",
     )

@@ -42,7 +42,7 @@ impl BitcoinWrapper {
 
         let sleep_secs = match self.network {
             Network::Regtest => 1,
-            Network::Testnet | Network::Signet | Network::Testnet4 => 10,
+            Network::Testnet | Network::Signet => 10,
             Network::Bitcoin => 5 * 60,
             _ => return Err(anyhow::anyhow!("Unsupported network")),
         };

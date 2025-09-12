@@ -23,29 +23,30 @@ use crate::{
     macros::wait_for_message_blocking,
     participants::{
         committee::Committee,
-        common::ask_user_confirmation,
+        common::{ask_user_confirmation, string_to_network},
         member::Member,
         user::User,
         wallet_helper::{fund_members, print_members_balances},
     },
-    wallet::MasterWallet,
+    wallet::{master_wallet::MasterWallet, master_wallet_info::wallet_info},
 };
 
+mod bitcoin;
+mod dev;
+mod log;
 mod macros;
 mod participants;
 mod setup;
 mod wallet;
-
-mod bitcoin;
-mod log;
 
 // Adjust based on the network
 pub const USER_FUNDS: u64 = 102_000;
 pub const ADVANCE_FUNDS_FEE: u64 = 3000;
 pub const ACCEPT_PEGIN_SPEEDUP_FEE: u64 = 5000;
 pub const USER_TAKE_SPEEDUP_FEE: u64 = 3000;
-pub const NETWORK: Network = Network::Regtest;
-pub const STREAM_DENOMINATION: u64 = 1_000_000;
+pub const NETWORK: Network = Network::Testnet;
+// pub const NETWORK: Network = Network::Regtest;
+pub const STREAM_DENOMINATION: u64 = 10_000;
 static mut SLOT_INDEX_COUNTER: usize = 0;
 
 pub fn main() -> Result<()> {
@@ -63,7 +64,9 @@ pub fn main() -> Result<()> {
         Some("advance_funds") => cli_advance_funds()?,
         Some("advance_funds_twice") => cli_advance_funds_twice()?,
         Some("invalid_reimbursement") => cli_invalid_reimbursement()?,
-        Some("test_master_wallet") => test_master_wallet()?,
+        Some("master_wallet_info") => master_wallet_info(args.get(2))?,
+        Some("latency") => cli_latency(args.get(2))?,
+        Some("balances") => cli_balances()?,
         Some(cmd) => {
             eprintln!("Unknown command: {}", cmd);
             print_usage();
@@ -95,22 +98,29 @@ fn print_usage() {
     println!(
         "  cargo run --example union test_master_wallet  - Tests the master wallet functionality"
     );
+    println!("  cargo run --example union balances - Print members and master wallet balance");
+    println!(
+        "  cargo run --example union master_wallet_info - Print Master wallet info: key pair and address. (optionally pass network: regtest, testnet, bitcoin)"
+    );
+    println!("  cargo run --example union latency - Analyses latency to the Bitcoin node. (optionally pass network: regtest, testnet, bitcoin)");
+}
+
+fn master_wallet_info(network: Option<&String>) -> Result<()> {
+    let network = string_to_network(network)?;
+    wallet_info(network)?;
+    Ok(())
+}
+
+fn cli_latency(network: Option<&String>) -> Result<()> {
+    let network = string_to_network(network)?;
+    dev::latency(network)?;
+    Ok(())
 }
 
 pub fn setup_bitcoin_node() -> Result<()> {
     bitcoin::stop_existing_bitcoind()?;
     let (_bitcoin_client, _bitcoind) = bitcoin::prepare_bitcoin()?;
 
-    Ok(())
-}
-
-pub fn test_master_wallet() -> Result<()> {
-    info!("Testing master wallet functionality");
-
-    // Run the master wallet examples
-    wallet::master_wallet_examples::run_master_wallet_example_regtest()?;
-    // wallet::master_wallet_examples::run_master_wallet_example_testnet()?;
-    info!("Master wallet tests completed");
     Ok(())
 }
 
@@ -175,6 +185,28 @@ pub fn cli_invalid_reimbursement() -> Result<()> {
     Ok(())
 }
 
+pub fn cli_balances() -> Result<()> {
+    let mut committee = Committee::new(STREAM_DENOMINATION, NETWORK)?;
+    committee.setup_keys()?;
+
+    info!("Members balances:");
+    print_members_balances(committee.members.as_slice())?;
+
+    let wallet = MasterWallet::new(
+        NETWORK,
+        load_private_key_from_env(),
+        load_change_key_from_env(),
+    )?;
+
+    let balance = wallet.wallet.balance();
+    info!("Master wallet balance:");
+    info!("Confirmed: {} sats", balance.confirmed.to_sat());
+    info!("Untrusted: {} sats", balance.untrusted_pending.to_sat());
+    info!("Trusted: {} sats", balance.trusted_pending.to_sat());
+    info!("Immature: {} sats", balance.immature.to_sat());
+    Ok(())
+}
+
 pub fn committee() -> Result<Committee> {
     // A new package is created. A committee is selected. Union client requests the setup of the
     // corresponding keys and programs.
@@ -184,7 +216,11 @@ pub fn committee() -> Result<Committee> {
     info!("Balances before funding:");
     print_members_balances(committee.members.as_slice())?;
 
-    let mut wallet = MasterWallet::new(NETWORK, load_private_key_from_env())?;
+    let mut wallet = MasterWallet::new(
+        NETWORK,
+        load_private_key_from_env(),
+        load_change_key_from_env(),
+    )?;
     let amount = STREAM_DENOMINATION * 3;
 
     fund_members(&mut wallet, committee.members.as_slice(), amount)?;
@@ -376,8 +412,33 @@ fn load_private_key_from_env() -> Option<String> {
         return None;
     }
     let env_var_name = match NETWORK {
-        Network::Testnet4 => "TESTNET_MASTER_WALLET_PRIVKEY",
+        Network::Testnet => "TESTNET_MASTER_WALLET_PRIVKEY",
         Network::Bitcoin => "MAINNET_MASTER_WALLET_PRIVKEY",
+        _ => {
+            info!("Unsupported network for private key loading: {}", NETWORK);
+            return None;
+        }
+    };
+
+    match env::var(env_var_name) {
+        Ok(val) => Some(val),
+        Err(_) => {
+            info!(
+                "Environment variable {} not set. Proceeding without private key.",
+                env_var_name
+            );
+            None
+        }
+    }
+}
+
+fn load_change_key_from_env() -> Option<String> {
+    if NETWORK == Network::Regtest {
+        return None;
+    }
+    let env_var_name = match NETWORK {
+        Network::Testnet => "TESTNET_MASTER_WALLET_CHANGE_KEY",
+        Network::Bitcoin => "MAINNET_MASTER_WALLET_CHANGE_KEY",
         _ => {
             info!("Unsupported network for private key loading: {}", NETWORK);
             return None;

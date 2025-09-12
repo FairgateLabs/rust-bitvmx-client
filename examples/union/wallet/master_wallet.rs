@@ -14,17 +14,21 @@ pub struct MasterWallet {
 }
 
 impl MasterWallet {
-    pub fn new(network: Network, private_key: Option<String>) -> Result<Self> {
-        if network != Network::Regtest && private_key.is_none() {
+    pub fn new(
+        network: Network,
+        private_key: Option<String>,
+        change_key: Option<String>,
+    ) -> Result<Self> {
+        if network != Network::Regtest && (private_key.is_none() || change_key.is_none()) {
             return Err(anyhow::anyhow!(
-                "Private key required for non-regtest networks"
+                "Private and change key required for non-regtest networks"
             ));
         };
 
         // Load configuration from appropriate config file
         let config_path = match network {
             Network::Regtest => "config/wallet_regtest.yaml",
-            Network::Testnet4 => "config/wallet_testnet.yaml",
+            Network::Testnet => "config/wallet_testnet.yaml",
             _ => return Err(anyhow::anyhow!("Unsupported network: {}", network)),
         };
 
@@ -36,14 +40,19 @@ impl MasterWallet {
         );
 
         if private_key.is_some() {
-            config.wallet.receive_key = private_key;
+            config.wallet.receive_key = private_key.clone();
+        }
+        if change_key.is_some() {
+            config.wallet.change_key = change_key.clone();
         }
 
         // Create wallet using config
         let mut wallet = Wallet::from_config(config.bitcoin, config.wallet)?;
 
         // Sync the wallet
+        info!("Syncing master wallet...");
         wallet.sync_wallet()?;
+        info!("Master wallet synced.");
 
         let mut master_wallet = Self { wallet, network };
         master_wallet.fund_if_regtest()?;
@@ -69,7 +78,7 @@ impl MasterWallet {
     }
 
     /// Fund a Bitcoin address directly using send_to_address
-    pub fn fund_address(&mut self, address: &Address, amount_sats: u64) -> Result<Transaction> {
+    pub fn _fund_address(&mut self, address: &Address, amount_sats: u64) -> Result<Transaction> {
         self.fund_address_with_fee(address, amount_sats, None)
     }
 
@@ -91,7 +100,7 @@ impl MasterWallet {
     }
 
     /// Get wallet balance
-    pub fn get_balance(&mut self) -> Result<u64> {
+    pub fn _get_balance(&mut self) -> Result<u64> {
         let balance = self.wallet.balance();
         Ok(balance.total().to_sat())
     }
@@ -101,7 +110,7 @@ impl MasterWallet {
     }
 
     /// Sync wallet with the blockchain
-    pub fn sync(&mut self) -> Result<()> {
+    pub fn _sync(&mut self) -> Result<()> {
         self.wallet
             .sync_wallet()
             .map_err(|e| anyhow::anyhow!("Failed to sync wallet: {}", e))?;
@@ -109,8 +118,7 @@ impl MasterWallet {
         Ok(())
     }
 
-    // uncomment for testnet example
-    // /// Generate a new receive address
+    // Generate a new receive address
     // pub fn receive_address(&mut self) -> Result<Address> {
     //     self.wallet
     //         .receive_address()
