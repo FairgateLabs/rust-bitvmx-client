@@ -4,7 +4,7 @@ use bitcoin::{Address, CompressedPublicKey, Network};
 use core::option::Option;
 use key_manager::{key_manager::KeyManager, key_store::KeyStore};
 use std::io::{self, Write};
-use std::thread;
+use std::{env, thread};
 use storage_backend::storage::Storage;
 use tracing::info;
 use tracing::warn;
@@ -161,18 +161,18 @@ pub fn non_regtest_warning(network: Network, message: &str) {
     }
 }
 
-pub fn get_network_prefix(network: Network, env_var: bool) -> Result<&'static str> {
+pub fn get_network_prefix(network: Network, env_var: bool) -> &'static str {
     match (network, env_var) {
-        (Network::Regtest, false) => Ok("regtest"),
-        (Network::Regtest, true) => Ok("REGTEST"),
+        (Network::Regtest, false) => "regtest",
+        (Network::Regtest, true) => "REGTEST",
 
-        (Network::Testnet, false) => Ok("testnet"),
-        (Network::Testnet, true) => Ok("TESTNET"),
+        (Network::Testnet, false) => "testnet",
+        (Network::Testnet, true) => "TESTNET",
 
-        (Network::Bitcoin, false) => Ok("mainnet"),
-        (Network::Bitcoin, true) => Ok("MAINNET"),
+        (Network::Bitcoin, false) => "mainnet",
+        (Network::Bitcoin, true) => "MAINNET",
 
-        (other, _) => Err(anyhow!("Unsupported network: {:?}", other)),
+        (other, _) => panic!("Unsupported network: {:?}", other),
     }
 }
 
@@ -195,4 +195,42 @@ pub fn string_to_network(network: Option<&String>) -> Result<Network> {
         }
     };
     Ok(network)
+}
+
+pub fn load_private_key_from_env(network: Network) -> Option<String> {
+    if network == Network::Regtest {
+        return None;
+    }
+
+    let env_var_name = &format!(
+        "{}_MASTER_WALLET_PRIVKEY",
+        get_network_prefix(network, true)
+    );
+
+    env_var_or_default(env_var_name, None)
+}
+
+pub fn load_change_key_from_env(network: Network) -> Option<String> {
+    if network == Network::Regtest {
+        return None;
+    }
+    let env_var_name = &format!(
+        "{}_MASTER_WALLET_CHANGE_KEY",
+        get_network_prefix(network, true)
+    );
+
+    env_var_or_default(env_var_name, None)
+}
+
+fn env_var_or_default(var_name: &str, default: Option<String>) -> Option<String> {
+    match env::var(var_name) {
+        Ok(val) => Some(val),
+        Err(_) => {
+            info!(
+                "Environment variable {} not set. Defaulting to {:?}.",
+                var_name, default
+            );
+            default
+        }
+    }
 }

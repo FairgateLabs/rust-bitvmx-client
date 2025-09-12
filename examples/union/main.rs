@@ -24,8 +24,9 @@ use crate::{
     participants::{committee::Committee, member::Member, user::User},
     wallet::{
         helper::{
-            ask_user_confirmation, fund_members, non_regtest_warning, print_members_balances,
-            recover_funds, string_to_network, wallet_info,
+            ask_user_confirmation, fund_members, load_change_key_from_env,
+            load_private_key_from_env, non_regtest_warning, print_members_balances, recover_funds,
+            string_to_network, wallet_info,
         },
         master_wallet::MasterWallet,
     },
@@ -194,8 +195,8 @@ pub fn cli_balances() -> Result<()> {
 
     let wallet = MasterWallet::new(
         NETWORK,
-        load_private_key_from_env(),
-        load_change_key_from_env(),
+        load_private_key_from_env(NETWORK),
+        load_change_key_from_env(NETWORK),
     )?;
 
     let balance = wallet.wallet.balance();
@@ -213,8 +214,8 @@ pub fn cli_recover_funds() -> Result<()> {
 
     let mut wallet = MasterWallet::new(
         NETWORK,
-        load_private_key_from_env(),
-        load_change_key_from_env(),
+        load_private_key_from_env(NETWORK),
+        load_change_key_from_env(NETWORK),
     )?;
 
     let address = wallet.wallet.receive_address()?;
@@ -238,8 +239,8 @@ pub fn committee() -> Result<Committee> {
 
     let mut wallet = MasterWallet::new(
         NETWORK,
-        load_private_key_from_env(),
-        load_change_key_from_env(),
+        load_private_key_from_env(NETWORK),
+        load_change_key_from_env(NETWORK),
     )?;
     let amount = STREAM_DENOMINATION * 3;
 
@@ -424,56 +425,6 @@ fn confirm_to_continue() {
     ) {
         print!("Operation cancelled by user.\n");
         std::process::exit(0);
-    }
-}
-
-fn load_private_key_from_env() -> Option<String> {
-    if NETWORK == Network::Regtest {
-        return None;
-    }
-    let env_var_name = match NETWORK {
-        Network::Testnet => "TESTNET_MASTER_WALLET_PRIVKEY",
-        Network::Bitcoin => "MAINNET_MASTER_WALLET_PRIVKEY",
-        _ => {
-            info!("Unsupported network for private key loading: {}", NETWORK);
-            return None;
-        }
-    };
-
-    match env::var(env_var_name) {
-        Ok(val) => Some(val),
-        Err(_) => {
-            info!(
-                "Environment variable {} not set. Proceeding without private key.",
-                env_var_name
-            );
-            None
-        }
-    }
-}
-
-fn load_change_key_from_env() -> Option<String> {
-    if NETWORK == Network::Regtest {
-        return None;
-    }
-    let env_var_name = match NETWORK {
-        Network::Testnet => "TESTNET_MASTER_WALLET_CHANGE_KEY",
-        Network::Bitcoin => "MAINNET_MASTER_WALLET_CHANGE_KEY",
-        _ => {
-            info!("Unsupported network for private key loading: {}", NETWORK);
-            return None;
-        }
-    };
-
-    match env::var(env_var_name) {
-        Ok(val) => Some(val),
-        Err(_) => {
-            info!(
-                "Environment variable {} not set. Proceeding without private key.",
-                env_var_name
-            );
-            None
-        }
     }
 }
 

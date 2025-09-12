@@ -34,7 +34,7 @@ fn measure_latency(url: &str, payload: Option<serde_json::Value>) -> f64 {
 }
 
 pub fn latency(network: Network) -> Result<()> {
-    let prefix = get_network_prefix(network, true)?;
+    let prefix = get_network_prefix(network, true);
     let env_var_name = &format!("{}_BITCOIN_API", prefix);
 
     let url = match env::var(env_var_name) {
