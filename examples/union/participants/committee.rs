@@ -26,6 +26,10 @@ use crate::participants::member::{FundingAmount, Member};
 use crate::wait_until_msg;
 use crate::wallet::helper::non_regtest_warning;
 
+const FUNDING_AMOUNT_PER_SLOT: u64 = 7_000; // an approximation in satoshis
+pub const PACKET_SIZE: u32 = 3; // number of slots per packet
+const SPEED_UP_MIN_FUNDS: u64 = 30_000; // minimum speedup funds in satoshis
+
 pub struct Committee {
     pub members: Vec<Member>,
     take_aggregation_id: Uuid,
@@ -317,8 +321,25 @@ impl Committee {
             .collect()
     }
 
-    fn min_speedup_funds(&self, stream_denomination: u64) -> u64 {
-        return cmp::max(stream_denomination / 10, 40_000);
+    fn get_speedup_funds_value(&self) -> u64 {
+        return cmp::max(self.stream_denomination / 10, SPEED_UP_MIN_FUNDS);
+    }
+
+    fn get_advance_funds_value(&self) -> u64 {
+        return self.stream_denomination * 12 / 10;
+    }
+
+    fn get_funding_protocol_value(&self) -> u64 {
+        return FUNDING_AMOUNT_PER_SLOT * PACKET_SIZE as u64;
+    }
+
+    pub fn get_total_funds_value(&self) -> u64 {
+        let fees = 5_000; // extra fees for safety
+
+        return self.get_speedup_funds_value()
+            + self.get_advance_funds_value()
+            + self.get_funding_protocol_value()
+            + fees;
     }
 
     fn init_funds(
@@ -327,9 +348,9 @@ impl Committee {
         let mut funding_utxos_per_member: HashMap<PublicKey, PartialUtxo> = HashMap::new();
         let mut speedup_funding_utxos_per_member: HashMap<PublicKey, Utxo> = HashMap::new();
         let funding_amounts = FundingAmount {
-            speedup: self.min_speedup_funds(self.stream_denomination),
-            protocol_funding: self.stream_denomination,
-            advance_funds: self.stream_denomination * 12 / 10,
+            speedup: self.get_speedup_funds_value(),
+            protocol_funding: self.get_funding_protocol_value(),
+            advance_funds: self.get_advance_funds_value(),
         };
 
         for member in &mut self.members {

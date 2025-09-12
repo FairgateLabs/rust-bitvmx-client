@@ -18,6 +18,8 @@ use bitvmx_client::{
 use tracing::info;
 use uuid::Uuid;
 
+use crate::participants::committee::PACKET_SIZE;
+
 pub struct DisputeCoreSetup {}
 
 impl DisputeCoreSetup {
@@ -38,7 +40,7 @@ impl DisputeCoreSetup {
             take_aggregated_key,
             dispute_aggregated_key,
             operator_count: Self::operator_count(&members.clone())?,
-            packet_size: 3,
+            packet_size: PACKET_SIZE,
         };
 
         bitvmx.send_message(IncomingBitVMXApiMessages::SetFundingUtxo(
