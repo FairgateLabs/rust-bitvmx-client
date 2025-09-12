@@ -23,6 +23,7 @@ use crate::{
     macros::wait_for_message_blocking,
     participants::{
         committee::Committee,
+        common::ask_user_confirmation,
         member::Member,
         user::User,
         wallet_helper::{fund_members, print_members_balances},
@@ -205,6 +206,7 @@ pub fn committee() -> Result<Committee> {
     info!("Balances after dispute core protocol:");
     print_members_balances(committee.members.as_slice())?;
 
+    confirm_to_continue();
     info!("Committee setup complete.");
     Ok(committee)
 }
@@ -219,6 +221,7 @@ pub fn request_pegin(committee: &mut Committee, user: &mut User) -> Result<(Txid
     let amount: u64 = STREAM_DENOMINATION; // This should be replaced with the actual amount of the peg-in request
     let request_pegin_txid = user.request_pegin(&committee_public_key, amount)?;
 
+    confirm_to_continue();
     Ok((request_pegin_txid, amount))
 }
 
@@ -258,6 +261,7 @@ pub fn accept_pegin(committee: &mut Committee, user: &mut User) -> Result<(usize
     committee.bitcoin_client.wait_for_blocks(3)?;
     committee.wait_for_spv_proof(accept_pegin_txid)?;
 
+    confirm_to_continue();
     Ok((slot_index, amount))
 }
 
@@ -290,6 +294,7 @@ pub fn request_pegout() -> Result<()> {
     committee.bitcoin_client.wait_for_blocks(3)?;
     committee.wait_for_spv_proof(user_take_utxo.0)?;
 
+    confirm_to_continue();
     Ok(())
 }
 
@@ -311,6 +316,7 @@ pub fn advance_funds(committee: &mut Committee, slot_index: usize) -> Result<()>
     )?;
 
     committee.bitcoin_client.wait_for_blocks(40)?;
+    confirm_to_continue();
     info!("Advance funds complete.");
     Ok(())
 }
@@ -336,6 +342,7 @@ pub fn invalid_reimbursement(committee: &mut Committee, slot_index: usize) -> Re
     info!("Starting mining loop to ensure challenge transaction is dispatched...");
     committee.bitcoin_client.wait_for_blocks(20)?;
 
+    confirm_to_continue();
     info!("Invalid reimbursement test complete.");
     Ok(())
 }
@@ -345,6 +352,19 @@ fn get_and_increment_slot_index() -> usize {
         let current_index = SLOT_INDEX_COUNTER;
         SLOT_INDEX_COUNTER += 1;
         current_index
+    }
+}
+
+fn confirm_to_continue() {
+    if NETWORK == Network::Regtest {
+        return;
+    }
+
+    if !ask_user_confirmation(
+        format!("Running in {} network. Do you want to continue?", NETWORK).as_str(),
+    ) {
+        print!("Operation cancelled by user.\n");
+        std::process::exit(0);
     }
 }
 

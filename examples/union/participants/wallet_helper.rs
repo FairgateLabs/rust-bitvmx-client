@@ -1,4 +1,7 @@
-use crate::{participants::member::Member, wallet::MasterWallet};
+use crate::{
+    participants::{common::regtest_warning, member::Member},
+    wallet::MasterWallet,
+};
 use anyhow::Result;
 
 use tracing::info;
@@ -6,6 +9,8 @@ use uuid::Uuid;
 const FEE_RATE: u64 = 10; // sats/vbyte
 
 pub fn fund_members(wallet: &mut MasterWallet, members: &[Member], amount: u64) -> Result<()> {
+    regtest_warning(wallet.network(), "You are about to transfer REAL money.");
+
     let balance = wallet.wallet.balance();
     info!("Master wallet balance:");
     info!("Confirmed: {} sats", balance.confirmed);
