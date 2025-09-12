@@ -115,8 +115,11 @@ impl Committee {
             // Advance Funds UTXOS
             let fund_amount = self.stream_denomination * 12 / 10;
             info!("Funding Advance Funds UTXO with {} sats", fund_amount);
-            let funded_utxo =
-                self.get_funding_utxo(fund_amount as u64, &member.keyring.dispute_pubkey.unwrap())?;
+            let funded_utxo = member.get_funding_utxo(
+                fund_amount as u64,
+                &self.bitcoin_client,
+                Some(FEE_RATE),
+            )?;
 
             member.bitvmx.set_var(
                 self.committee_id,
