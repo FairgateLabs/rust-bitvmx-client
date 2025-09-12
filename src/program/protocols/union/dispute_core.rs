@@ -830,10 +830,7 @@ impl DisputeCoreProtocol {
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         // Extract slot_index from transaction name
-        let slot_index = tx_name
-            .strip_prefix(&format!("{}_", REIMBURSEMENT_KICKOFF_TX))
-            .and_then(|s| s.parse().ok())
-            .ok_or_else(|| BitVMXError::InvalidTransactionName(tx_name.to_string()))?;
+        let slot_index = extract_index(tx_name, REIMBURSEMENT_KICKOFF_TX)?;
 
         if self.is_my_dispute_core(program_context)? {
             // Handle operator take if needed
