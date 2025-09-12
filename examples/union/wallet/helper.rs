@@ -3,12 +3,11 @@ use anyhow::{anyhow, Result};
 use bitcoin::{Address, CompressedPublicKey, Network};
 use core::option::Option;
 use key_manager::{key_manager::KeyManager, key_store::KeyStore};
+use std::env;
 use std::io::{self, Write};
-use std::{env, thread};
 use storage_backend::storage::Storage;
 use tracing::info;
 use tracing::warn;
-use uuid::Uuid;
 
 const FEE_RATE: u64 = 1; // sats/vbyte
 const MIN_FUNDS_RECOVERY: u64 = 5000;
@@ -83,15 +82,9 @@ pub fn fund_members(wallet: &mut MasterWallet, members: &[Member], amount: u64) 
         }
         let tx = result?;
 
-        member
-            .bitvmx
-            .dispatch_transaction(Uuid::new_v4(), tx.clone())?;
-
         let txid = tx.compute_txid();
         info!("Funded member with txid: {}", txid);
         print_link(wallet.network(), txid);
-        // Give some time to bitcoin coordinator to update transactions
-        thread::sleep(std::time::Duration::from_secs(7));
     }
 
     info!("Master wallet balance after funding members:");

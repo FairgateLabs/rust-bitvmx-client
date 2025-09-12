@@ -255,15 +255,6 @@ pub fn cli_fund_members() -> Result<()> {
 
     committee.bitcoin_client.wait_for_blocks(1)?;
 
-    // This will work only if fund_members() is dispatching transaction throuhg BitVMX
-    for member in committee.members.iter_mut() {
-        let status = wait_until_msg!(&member.bitvmx, OutgoingBitVMXApiMessages::Transaction(_, _status, _) => _status);
-        info!(
-            "TransactionStatus received for txid: {}. Confirmations: {}",
-            status.tx_id, status.confirmations
-        );
-    }
-
     info!("Balances after funding:");
     print_members_balances(committee.members.as_slice())?;
 
@@ -290,15 +281,6 @@ pub fn committee() -> Result<Committee> {
     fund_members(&mut wallet, committee.members.as_slice(), amount)?;
     // TODO: Fund user as well
     committee.bitcoin_client.wait_for_blocks(2)?;
-
-    // This will work only if fund_members() is dispatching transaction throuhg BitVMX
-    for member in committee.members.iter_mut() {
-        let status = wait_until_msg!(&member.bitvmx, OutgoingBitVMXApiMessages::Transaction(_, _status, _) => _status);
-        info!(
-            "TransactionStatus received for txid: {}. Confirmations: {}",
-            status.tx_id, status.confirmations
-        );
-    }
 
     info!("Balances after funding:");
     print_members_balances(committee.members.as_slice())?;
