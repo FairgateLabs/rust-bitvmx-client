@@ -477,7 +477,10 @@ impl BitVMX {
     }
 
     pub fn process_wallet_updates(&mut self) -> Result<(), BitVMXError> {
-        self.wallet.tick()?;
+        let result = self.wallet.tick();
+        if result.is_err() {
+            error!("Error updating wallet: {:?}", result.err().unwrap());
+        }
         Ok(())
     }
 
@@ -1074,7 +1077,20 @@ impl BitVMXApi for BitVMX {
             }
             IncomingBitVMXApiMessages::GetFundingAddress(id) => {
                 debug!("Getting funding address uuid: {:?}", id);
-                let address = self.wallet.receive_address()?;
+                let result = self.wallet.receive_address();
+                if result.is_err() {
+                    let error = result.as_ref().err().unwrap();
+                    error!("Error getting funding address uuid: {:?}: {:?}", id, error);
+                    self.program_context.broker_channel.send(
+                        from,
+                        serde_json::to_string(&OutgoingBitVMXApiMessages::WalletError(
+                            id,
+                            error.to_string(),
+                        ))?,
+                    )?;
+                }
+                let address = result?;
+
                 self.program_context.broker_channel.send(
                     from,
                     serde_json::to_string(&OutgoingBitVMXApiMessages::FundingAddress(
@@ -1113,14 +1129,32 @@ impl BitVMXApi for BitVMX {
                     return Ok(());
                 }
                 // Use the fee_rate parameter passed in the message
-                let tx = match destination {
+                let result = match destination.clone() {
                     Destination::Address(address) => {
-                        self.wallet.send_to_address(&address, amount, fee_rate)?
+                        self.wallet.send_to_address(&address, amount, fee_rate)
                     }
                     Destination::P2WPKH(public_key) => {
-                        self.wallet.send_to_p2wpkh(&public_key, amount, fee_rate)?
+                        self.wallet.send_to_p2wpkh(&public_key, amount, fee_rate)
                     }
                 };
+
+                if result.is_err() {
+                    let error = result.err().unwrap();
+                    error!(
+                        "Error sending funds to {:?} amount {:?}: {:?}",
+                        destination, amount, error
+                    );
+                    self.program_context.broker_channel.send(
+                        from,
+                        serde_json::to_string(&OutgoingBitVMXApiMessages::WalletError(
+                            id,
+                            error.to_string(),
+                        ))?,
+                    )?;
+                    return Ok(());
+                }
+
+                let tx = result?;
                 let txid = tx.compute_txid();
                 self.dispatch_transaction(from, id, tx.clone())?;
 

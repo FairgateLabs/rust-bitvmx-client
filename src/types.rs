@@ -178,6 +178,7 @@ pub enum OutgoingBitVMXApiMessages {
     FundingBalance(Uuid, u64),
     FundsSent(Uuid, Txid),
     WalletNotReady(Uuid),
+    WalletError(Uuid, String),
 }
 
 impl OutgoingBitVMXApiMessages {
@@ -326,6 +327,7 @@ impl OutgoingBitVMXApiMessages {
             OutgoingBitVMXApiMessages::FundingBalance(_, _) => "FundingBalance".to_string(),
             OutgoingBitVMXApiMessages::FundsSent(_, _) => "FundsSent".to_string(),
             OutgoingBitVMXApiMessages::WalletNotReady(_) => "WalletNotReady".to_string(),
+            OutgoingBitVMXApiMessages::WalletError(_, _) => "WalletError".to_string(),
         }
     }
 }
