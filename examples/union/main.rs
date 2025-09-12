@@ -24,6 +24,7 @@ use crate::participants::{committee::Committee, member::Member, user::User};
 mod macros;
 mod participants;
 mod setup;
+mod wallet;
 
 mod bitcoin;
 mod log;
@@ -51,6 +52,7 @@ pub fn main() -> Result<()> {
         Some("advance_funds") => cli_advance_funds()?,
         Some("advance_funds_twice") => cli_advance_funds_twice()?,
         Some("invalid_reimbursement") => cli_invalid_reimbursement()?,
+        Some("test_master_wallet") => test_master_wallet()?,
         Some(cmd) => {
             eprintln!("Unknown command: {}", cmd);
             print_usage();
@@ -79,12 +81,23 @@ fn print_usage() {
         "  cargo run --example union advance_funds_twice       - Performs advancement of funds twice"
     );
     println!("  cargo run --example union invalid_reimbursement - Forces invalid reimbursement to test challenge tx");
+    println!("  cargo run --example union test_master_wallet  - Tests the master wallet functionality");
 }
 
 pub fn setup_bitcoin_node() -> Result<()> {
     bitcoin::stop_existing_bitcoind()?;
     let (_bitcoin_client, _bitcoind) = bitcoin::prepare_bitcoin()?;
 
+    Ok(())
+}
+
+pub fn test_master_wallet() -> Result<()> {
+    info!("Testing master wallet functionality");
+
+    // Run the master wallet examples
+    wallet::master_wallet_examples::run_master_wallet_example_regtest()?;
+    wallet::master_wallet_examples::run_master_wallet_example_testnet()?;
+    info!("Master wallet tests completed");
     Ok(())
 }
 
