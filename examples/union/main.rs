@@ -207,6 +207,26 @@ pub fn cli_balances() -> Result<()> {
     Ok(())
 }
 
+pub fn cli_recover_funds() -> Result<()> {
+    let mut committee = Committee::new(STREAM_DENOMINATION, NETWORK)?;
+    committee.setup_keys()?;
+
+    let mut wallet = MasterWallet::new(
+        NETWORK,
+        load_private_key_from_env(),
+        load_change_key_from_env(),
+    )?;
+
+    let address = wallet.wallet.receive_address()?;
+
+    info!("Recovering funds to address: {}", address);
+    non_regtest_warning(NETWORK, "You are about to transfer REAL money.");
+
+    recover_funds(committee.members.as_slice(), address.to_string())?;
+
+    Ok(())
+}
+
 pub fn committee() -> Result<Committee> {
     // A new package is created. A committee is selected. Union client requests the setup of the
     // corresponding keys and programs.
