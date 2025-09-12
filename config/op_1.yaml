@@ -1,6 +1,6 @@
 bitcoin:
   network: regtest
-  url: http://127.0.0.1:18443
+  url: http://127.0.0.1:18443/
   username: foo
   password: rpcpassword
   wallet: test_wallet
@@ -11,10 +11,10 @@ key_manager:
 
 key_storage:
   password: secret_password_2
-  path: /tmp/op_1/keys.db
+  path: /tmp/regtest/op_1/keys.db
 
 storage:
-  path: /tmp/op_1/storage.db
+  path: /tmp/regtest/op_1/storage.db
 
 p2p:
   address: /ip4/127.0.0.1/tcp/61180
@@ -28,7 +28,7 @@ coordinator:
 #  estimate_fee: 8
 
 broker_storage: 
-  path: /tmp/op_1/broker.db
+  path: /tmp/regtest/op_1/broker.db
 
 broker_port: 22222
 
@@ -39,6 +39,6 @@ client:
   retry_delay: 1000
 
 wallet:
-  db_path: /tmp/op_1/wallet.db
+  db_path: /tmp/regtest/op_1/wallet.db
   start_height: 0
 

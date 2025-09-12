@@ -11,10 +11,10 @@ key_manager:
 
 key_storage:
   password: secret_password_4
-  path: /tmp/op_3/keys.db
+  path: /tmp/regtest/op_3/keys.db
 
 storage:
-  path: /tmp/op_3/storage.db
+  path: /tmp/regtest/op_3/storage.db
 
 p2p:
   address: /ip4/127.0.0.1/tcp/61182
@@ -28,7 +28,7 @@ coordinator:
 #  estimate_fee: 8
 
 broker_storage: 
-  path: /tmp/op_3/broker.db
+  path: /tmp/regtest/op_3/broker.db
 
 broker_port: 44444
 
@@ -39,5 +39,5 @@ client:
   retry_delay: 1000
 
 wallet:
-  db_path: /tmp/op_3/wallet.db
+  db_path: /tmp/regtest/op_3/wallet.db
   start_height: 0

@@ -11,10 +11,10 @@ key_manager:
 
 key_storage:
   password: secret_password_5
-  path: /tmp/op_4/keys.db
+  path: /tmp/regtest/op_4/keys.db
 
 storage:
-  path: /tmp/op_4/storage.db
+  path: /tmp/regtest/op_4/storage.db
 
 p2p:
   address: /ip4/127.0.0.1/tcp/61183
@@ -27,7 +27,7 @@ coordinator:
   throtthle_bitcoin_updates: 0
 
 broker_storage: 
-  path: /tmp/op_4/broker.db
+  path: /tmp/regtest/op_4/broker.db
 
 broker_port: 55554 
 
@@ -38,5 +38,5 @@ client:
   retry_delay: 1000
 
 wallet:
-  db_path: /tmp/op_4/wallet.db
+  db_path: /tmp/regtest/op_4/wallet.db
   start_height: 0
