@@ -1,24 +1,65 @@
-use anyhow::Result;
-use bitcoin::{
-    key::{rand::rngs::OsRng, Parity, Secp256k1},
-    secp256k1::{All, PublicKey as SecpPublicKey, SecretKey},
-    Amount, Network, PublicKey as BitcoinPubKey,
-};
-use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
-use bitvmx_client::types::OutgoingBitVMXApiMessages::FundingAddress;
+use core::time::Duration;
+use std::thread;
 
-use crate::macros::wait_for_message_blocking;
-use crate::participants::member::Member;
-use crate::wait_until_msg;
+use anyhow::Result;
+use bitcoin::Network;
+use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
 use bitvmx_client::config::Config;
 use bitvmx_wallet::wallet::{RegtestWallet, Wallet};
 use tracing::info;
-use uuid::Uuid;
 
 /// Number of blocks to mine initially to ensure sufficient coin maturity
 pub const INITIAL_BLOCK_COUNT: u64 = 110;
+
+pub struct BitcoinWrapper {
+    client: BitcoinClient,
+    network: bitcoin::Network,
+}
+
+// Allow transparent access to BitcoinClient methods
+impl std::ops::Deref for BitcoinWrapper {
+    type Target = BitcoinClient;
+
+    fn deref(&self) -> &Self::Target {
+        &self.client
+    }
+}
+
+impl BitcoinWrapper {
+    pub fn new(client: BitcoinClient, network: Network) -> Self {
+        Self { client, network }
+    }
+
+    pub fn wait_for_blocks(&self, blocks: u32) -> Result<()> {
+        let mut height = self.get_best_block()?;
+        let last_block = height + blocks;
+        info!(
+            "Letting the network run. Current height: {}. Waiting until block: {}",
+            height, last_block
+        );
+
+        let sleep_secs = match self.network {
+            Network::Regtest => 1,
+            Network::Testnet | Network::Signet | Network::Testnet4 => 10,
+            Network::Bitcoin => 5 * 60,
+            _ => return Err(anyhow::anyhow!("Unsupported network")),
+        };
+
+        while height < last_block {
+            if self.network == Network::Regtest {
+                info!("Mining 1 block...");
+                self.mine_blocks(1)?;
+            }
+            info!("Waiting {} seconds...", sleep_secs);
+            thread::sleep(Duration::from_secs(sleep_secs));
+            height = self.get_best_block()?;
+            info!("Current height: {}", height);
+        }
+        Ok(())
+    }
+}
 
 /// Helper function to clear database directories
 pub fn clear_db(path: &str) {
@@ -94,63 +135,51 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind)> {
     Ok((bitcoin_client, bitcoind))
 }
 
-pub fn init_wallets(members: &Vec<Member>) -> Result<BitcoinClient> {
-    let config = members[0].config.clone();
-
+pub fn init_client(config: Config) -> Result<(BitcoinClient, Network)> {
     let bitcoin_client = BitcoinClient::new(
         &config.bitcoin.url,
         &config.bitcoin.username,
         &config.bitcoin.password,
     )?;
 
-    for member in members {
-        let id = Uuid::new_v4();
-        member.bitvmx.get_funding_address(id)?;
-        let funding_address = wait_until_msg!(
-            &member.bitvmx,
-            FundingAddress(_, _funding_address) => _funding_address
-        );
-        bitcoin_client.fund_address(&funding_address.assume_checked(), Amount::from_int_btc(1))?;
-    }
-
-    Ok(bitcoin_client)
+    Ok((bitcoin_client, config.bitcoin.network))
 }
 
 // This method changes the parity of a keypair to be even, this is needed for Taproot.
-fn adjust_parity(
-    secp: &Secp256k1<All>,
-    pubkey: SecpPublicKey,
-    seckey: SecretKey,
-) -> (SecpPublicKey, SecretKey) {
-    let (_, parity) = pubkey.x_only_public_key();
+// fn adjust_parity(
+//     secp: &Secp256k1<All>,
+//     pubkey: SecpPublicKey,
+//     seckey: SecretKey,
+// ) -> (SecpPublicKey, SecretKey) {
+//     let (_, parity) = pubkey.x_only_public_key();
 
-    if parity == Parity::Odd {
-        (pubkey.negate(secp), seckey.negate())
-    } else {
-        (pubkey, seckey)
-    }
-}
+//     if parity == Parity::Odd {
+//         (pubkey.negate(secp), seckey.negate())
+//     } else {
+//         (pubkey, seckey)
+//     }
+// }
 
-pub fn emulated_user_keypair(
-    secp: &Secp256k1<All>,
-    bitcoin_client: &BitcoinClient,
-    network: Network,
-) -> Result<(bitcoin::Address, BitcoinPubKey, SecretKey)> {
-    let mut rng = OsRng;
+// pub fn emulated_user_keypair(
+//     secp: &Secp256k1<All>,
+//     bitcoin_client: &BitcoinClient,
+//     network: Network,
+// ) -> Result<(bitcoin::Address, BitcoinPubKey, SecretKey)> {
+//     let mut rng = OsRng;
 
-    // emulate the user keypair
-    let user_sk = SecretKey::new(&mut rng);
-    let user_pk = SecpPublicKey::from_secret_key(secp, &user_sk);
-    let (user_pk, user_sk) = adjust_parity(secp, user_pk, user_sk);
-    let user_pubkey = BitcoinPubKey {
-        compressed: true,
-        inner: user_pk,
-    };
-    let user_address: bitcoin::Address = bitcoin_client.get_new_address(user_pubkey, network);
-    info!(
-        "User Address({}): {:?}",
-        user_address.address_type().unwrap(),
-        user_address
-    );
-    Ok((user_address, user_pubkey, user_sk))
-}
+//     // emulate the user keypair
+//     let user_sk = SecretKey::new(&mut rng);
+//     let user_pk = SecpPublicKey::from_secret_key(secp, &user_sk);
+//     let (user_pk, user_sk) = adjust_parity(secp, user_pk, user_sk);
+//     let user_pubkey = BitcoinPubKey {
+//         compressed: true,
+//         inner: user_pk,
+//     };
+//     let user_address: bitcoin::Address = bitcoin_client.get_new_address(user_pubkey, network);
+//     info!(
+//         "User Address({}): {:?}",
+//         user_address.address_type().unwrap(),
+//         user_address
+//     );
+//     Ok((user_address, user_pubkey, user_sk))
+// }

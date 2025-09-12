@@ -1,32 +1,28 @@
 use anyhow::Result;
-use bitcoin::{Transaction as BtcTransaction, Txid};
-use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
+use bitcoin::{Network, Transaction as BtcTransaction, Txid};
+use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
 use bitvmx_client::program::participant::P2PAddress;
 use bitvmx_client::program::protocols::union::common::{
     get_accept_pegin_pid, get_dispute_aggregated_key_pid, get_take_aggreated_key_pid,
     get_user_take_pid,
 };
-use bitvmx_client::program::protocols::union::types::{
-    MemberData, ACCEPT_PEGIN_TX, ADVANCE_FUNDS_INPUT, USER_TAKE_TX,
-};
-use bitvmx_client::program::variables::VariableTypes;
+use bitvmx_client::program::protocols::union::types::{MemberData, ACCEPT_PEGIN_TX, USER_TAKE_TX};
 use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtxo};
 use bitvmx_client::types::OutgoingBitVMXApiMessages::{SPVProof, Transaction, TransactionInfo};
 
 use bitcoin::PublicKey;
 use protocol_builder::types::Utxo;
 use std::collections::HashMap;
+use std::io::{self, Write};
 use std::thread::{self};
 use std::time::Duration;
 use tracing::{info, info_span};
 use uuid::Uuid;
 
-use crate::bitcoin::init_wallets;
+use crate::bitcoin::{init_client, BitcoinWrapper};
 use crate::macros::wait_for_message_blocking;
-use crate::participants::member::Member;
+use crate::participants::member::{FundingAmount, Member};
 use crate::wait_until_msg;
-
-pub const FEE_RATE: u64 = 9; // sat/vbyte
 
 pub struct Committee {
     pub members: Vec<Member>,
@@ -34,19 +30,37 @@ pub struct Committee {
     dispute_aggregation_id: Uuid,
     committee_id: Uuid,
     stream_denomination: u64,
-    pub bitcoin_client: BitcoinClient,
+    pub bitcoin_client: BitcoinWrapper,
 }
 
 impl Committee {
-    pub fn new(stream_denomination: u64) -> Result<Self> {
+    pub fn new(stream_denomination: u64, network: Network) -> Result<Self> {
+        validate_network(network)?;
+        let network_prefix = match network {
+            Network::Bitcoin => "mainnet",
+            Network::Testnet4 => "testnet",
+            Network::Regtest => "",
+            _ => panic!("Unsupported network"),
+        };
+
         let members = vec![
-            Member::new("op_1", ParticipantRole::Prover)?,
-            Member::new("op_2", ParticipantRole::Prover)?,
-            // Member::new("op_3", ParticipantRole::Prover)?,
-            // Member::new("op_4", ParticipantRole::Verifier)?,
+            Member::new(
+                &prefixed_name(network_prefix, "op_1"),
+                ParticipantRole::Prover,
+            )?,
+            Member::new(
+                &prefixed_name(network_prefix, "op_2"),
+                ParticipantRole::Prover,
+            )?,
+            // Member::new(&prefixed_name(network_prefix, "op_3", ParticipantRole::Prover)?,
+            Member::new(
+                &prefixed_name(network_prefix, "op_4"),
+                ParticipantRole::Verifier,
+            )?,
         ];
 
-        let bitcoin_client = init_wallets(&members)?;
+        let (client, network) = init_client(members[0].config.clone())?;
+        let bitcoin_client = BitcoinWrapper::new(client, network);
         let committee_id = Uuid::new_v4();
         let take_aggregation_id = get_take_aggreated_key_pid(committee_id);
         let dispute_aggregation_id = get_dispute_aggregated_key_pid(committee_id);
@@ -65,7 +79,7 @@ impl Committee {
         self.committee_id
     }
 
-    pub fn setup(&mut self) -> Result<PublicKey> {
+    pub fn setup_keys(&mut self) -> Result<()> {
         // gather all operator addresses
         // in a real scenario, operators should get this from the chain
         self.all(|op| op.get_peer_info())?;
@@ -92,44 +106,15 @@ impl Committee {
             )
         })?;
 
-        let seed = self.committee_id;
+        Ok(())
+    }
 
-        let mut funding_utxos_per_member: HashMap<PublicKey, PartialUtxo> = HashMap::new();
-        let mut speedup_funding_utxos_per_member: HashMap<PublicKey, Utxo> = HashMap::new();
-        for member in &mut self.members {
-            funding_utxos_per_member.insert(
-                member.keyring.take_pubkey.unwrap(),
-                member.get_funding_utxo(10_000_000, &self.bitcoin_client, Some(FEE_RATE))?,
-            );
-
-            let partial =
-                member.get_funding_utxo(10_000_000, &self.bitcoin_client, Some(FEE_RATE))?;
-            let utxo = Utxo::new(
-                partial.0,
-                partial.1,
-                partial.2.unwrap(),
-                &member.keyring.dispute_pubkey.unwrap(),
-            );
-            speedup_funding_utxos_per_member.insert(member.keyring.take_pubkey.unwrap(), utxo);
-
-            // Advance Funds UTXOS
-            let fund_amount = self.stream_denomination * 12 / 10;
-            info!("Funding Advance Funds UTXO with {} sats", fund_amount);
-            let funded_utxo = member.get_funding_utxo(
-                fund_amount as u64,
-                &self.bitcoin_client,
-                Some(FEE_RATE),
-            )?;
-
-            member.bitvmx.set_var(
-                self.committee_id,
-                ADVANCE_FUNDS_INPUT,
-                VariableTypes::Utxo(funded_utxo),
-            )?;
-        }
+    pub fn setup_dispute_protocols(&mut self) -> Result<()> {
+        let (funding_utxos_per_member, speedup_funding_utxos_per_member) = self.init_funds()?;
 
         let members = self.get_member_data();
         let addresses = self.get_addresses();
+        let seed = self.committee_id;
 
         self.all(|op: &mut Member| {
             op.setup_dispute_protocols(
@@ -143,7 +128,7 @@ impl Committee {
             )
         })?;
 
-        Ok(self.public_key()?)
+        Ok(())
     }
 
     pub fn accept_pegin(
@@ -323,14 +308,36 @@ impl Committee {
             .collect()
     }
 
-    pub fn mine_and_wait(&self, blocks: u32) -> Result<()> {
-        info!("Letting the network run...");
-        for _ in 0..blocks {
-            info!("Mining 1 block and wait...");
-            self.bitcoin_client.mine_blocks(1)?;
-            thread::sleep(Duration::from_secs(1));
+    fn init_funds(
+        &mut self,
+    ) -> Result<(HashMap<PublicKey, PartialUtxo>, HashMap<PublicKey, Utxo>)> {
+        let mut funding_utxos_per_member: HashMap<PublicKey, PartialUtxo> = HashMap::new();
+        let mut speedup_funding_utxos_per_member: HashMap<PublicKey, Utxo> = HashMap::new();
+        let funding_amounts = FundingAmount {
+            speedup: self.stream_denomination / 10,
+            protocol_funding: self.stream_denomination,
+            advance_funds: self.stream_denomination * 12 / 10,
+        };
+
+        for member in &mut self.members {
+            let utxos = member.init_funds(funding_amounts.clone())?;
+
+            funding_utxos_per_member
+                .insert(member.keyring.take_pubkey.unwrap(), utxos.protocol_funding);
+
+            let speedup = Utxo::new(
+                utxos.speedup.0,
+                utxos.speedup.1,
+                utxos.speedup.2.unwrap(),
+                &member.keyring.dispute_pubkey.unwrap(),
+            );
+            speedup_funding_utxos_per_member.insert(member.keyring.take_pubkey.unwrap(), speedup);
+
+            // FIXME: speedup utxo is set in DisputeCoreSetup, should we do the same for advance funds?
+            // or should speedup utxo set here too? Unify criteria.
+            member.set_advance_funds_input(self.committee_id, utxos.advance_funds.clone())?;
         }
-        Ok(())
+        Ok((funding_utxos_per_member, speedup_funding_utxos_per_member))
     }
 
     fn all<F, R>(&mut self, f: F) -> Result<Vec<R>>
@@ -355,4 +362,52 @@ impl Committee {
                 .collect()
         })
     }
+}
+
+/// Ask the user a yes/no question and return true if they confirm (`y` or `yes`).
+pub fn ask_user_confirmation(prompt: &str) -> bool {
+    loop {
+        print!("{} [y/N]: ", prompt);
+        io::stdout().flush().unwrap(); // Make sure prompt is shown
+
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            println!("Failed to read input, try again.");
+            continue;
+        }
+
+        match input.trim().to_lowercase().as_str() {
+            "y" | "yes" => return true,
+            "n" | "no" | "" => return false, // default is "no"
+            _ => {
+                println!("Please answer 'y' or 'n'.");
+                continue;
+            }
+        }
+    }
+}
+
+fn validate_network(network: Network) -> Result<()> {
+    if network == Network::Regtest {
+        return Ok(());
+    }
+
+    print!(
+        "\n\n\nWarning: You are about to run this example on the {:?} network.\n\n\n",
+        network
+    );
+    print!("This may incur real costs and is not recommended for testing purposes.\n");
+    if !ask_user_confirmation("Do you want to proceed?") {
+        print!("Operation cancelled by user.\n");
+        std::process::exit(0);
+    }
+
+    Ok(())
+}
+
+fn prefixed_name(prefix: &str, name: &str) -> String {
+    if prefix.is_empty() {
+        return name.to_string();
+    }
+    format!("{}_{}", prefix, name)
 }

@@ -1,5 +1,9 @@
 use anyhow::Result;
-use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
+use bitcoin::address::NetworkUnchecked;
+use bitcoin::Amount;
+use bitcoin::ScriptBuf;
+use bitvmx_client::program::protocols::union::types::ADVANCE_FUNDS_INPUT;
+use bitvmx_client::program::variables::VariableTypes;
 use core::clone::Clone;
 use protocol_builder::types::OutputType;
 use protocol_builder::types::Utxo;
@@ -30,6 +34,21 @@ use crate::{
     },
     wait_until_msg,
 };
+
+pub const FEE_RATE: u64 = 9; // sat/vbyte
+
+#[derive(Clone)]
+pub struct FundingAmount {
+    pub speedup: u64,
+    pub protocol_funding: u64,
+    pub advance_funds: u64,
+}
+
+pub struct FundingUtxos {
+    pub speedup: PartialUtxo,
+    pub protocol_funding: PartialUtxo,
+    pub advance_funds: PartialUtxo,
+}
 
 #[derive(Clone)]
 pub struct Keyring {
@@ -133,12 +152,7 @@ impl Member {
         Ok(())
     }
 
-    pub fn get_funding_utxo(
-        &mut self,
-        amount: u64,
-        bitcoin_client: &BitcoinClient,
-        fee_rate: Option<u64>,
-    ) -> Result<PartialUtxo> {
+    pub fn get_funding_utxo(&mut self, amount: u64, fee_rate: Option<u64>) -> Result<PartialUtxo> {
         let id = Uuid::new_v4();
         let public_key = self.keyring.dispute_pubkey.unwrap();
 
@@ -147,42 +161,22 @@ impl Member {
         self.bitvmx
             .send_funds_to_p2wpkh(id, public_key, amount, fee_rate)?;
 
-        // Mine blocks to confirm the transaction
-        for _ in 0..3 {
-            info!("Mining 1 block and wait...");
-            bitcoin_client.mine_blocks(1)?;
-            thread::sleep(std::time::Duration::from_secs(1));
-        }
-
+        thread::sleep(std::time::Duration::from_secs(1));
         let txid = wait_until_msg!(
             &self.bitvmx,
             FundsSent(_, _txid) => _txid
         );
 
-        // Wait for the transaction info
-        info!("Waiting for transaction confirmation...");
-        let tx_status = wait_until_msg!(
-            &self.bitvmx,
-            Transaction(_, _tx_status, _) => _tx_status
-        );
-        info!("Got transaction status: {:?}", tx_status);
-
-        // Check confirmation threashold
-        if tx_status.confirmations < 1 {
-            return Err(anyhow::anyhow!(
-                "prepare_funding_utxo Transaction not finalized, confirmations: {}",
-                tx_status.confirmations
-            ));
-        }
         let vout = 0;
-        let output = &tx_status.tx.output[vout];
-        let script_pubkey = &output.script_pubkey;
+        let wpkh = public_key.wpubkey_hash().expect("key is compressed");
+        let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
 
         let output_type = OutputType::SegwitPublicKey {
-            value: output.value,
-            script_pubkey: script_pubkey.clone(),
+            value: Amount::from_sat(amount),
+            script_pubkey,
             public_key: public_key,
         };
+        info!("Funded. Txid: {}", txid);
 
         Ok((txid, vout as u32, Some(amount), Some(output_type)))
     }
@@ -469,5 +463,36 @@ impl Member {
         };
 
         Ok(counterparty_address.clone())
+    }
+
+    pub fn get_funding_address(&self) -> Result<bitcoin::Address<NetworkUnchecked>> {
+        self.bitvmx.get_funding_address(Uuid::new_v4())?;
+        let address = wait_until_msg!(&self.bitvmx, FundingAddress(_, _address) => _address);
+        Ok(address)
+    }
+
+    pub fn get_funding_balance(&self) -> Result<u64> {
+        self.bitvmx.get_funding_balance(Uuid::new_v4())?;
+        let amount = wait_until_msg!(&self.bitvmx, FundingBalance(_, _amount) => _amount);
+        Ok(amount)
+    }
+
+    pub fn init_funds(&mut self, amounts: FundingAmount) -> Result<FundingUtxos> {
+        let speedup = self.get_funding_utxo(amounts.speedup, Some(FEE_RATE))?;
+        let protocol_funding = self.get_funding_utxo(amounts.protocol_funding, Some(FEE_RATE))?;
+        let advance_funds = self.get_funding_utxo(amounts.advance_funds, Some(FEE_RATE))?;
+
+        Ok(FundingUtxos {
+            speedup,
+            protocol_funding,
+            advance_funds,
+        })
+    }
+
+    pub fn set_advance_funds_input(&mut self, committee_id: Uuid, utxo: PartialUtxo) -> Result<()> {
+        self.bitvmx
+            .set_var(committee_id, ADVANCE_FUNDS_INPUT, VariableTypes::Utxo(utxo))?;
+
+        Ok(())
     }
 }

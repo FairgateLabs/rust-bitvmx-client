@@ -8,18 +8,27 @@
 //! `cargo run --example union accept_pegin`       - Setups the accept peg in protocol
 //! `cargo run --example union request_pegout`     - Setups the request peg out protocol
 //! `cargo run --example union advance_funds`      - Performs an advancement of funds
-use ::bitcoin::{Amount, OutPoint, PublicKey, Txid};
+use ::bitcoin::{Network, OutPoint, PublicKey, Txid};
 use anyhow::Result;
-use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
-use bitvmx_client::program::protocols::union::{
-    common::get_accept_pegin_pid, types::ACCEPT_PEGIN_TX,
+use bitvmx_client::{
+    program::protocols::union::{common::get_accept_pegin_pid, types::ACCEPT_PEGIN_TX},
+    types::OutgoingBitVMXApiMessages,
 };
 use core::convert::Into;
 use std::{env, thread, time::Duration};
 use tracing::info;
 use uuid::Uuid;
 
-use crate::participants::{committee::Committee, member::Member, user::User};
+use crate::{
+    macros::wait_for_message_blocking,
+    participants::{
+        committee::Committee,
+        member::Member,
+        user::User,
+        wallet_helper::{fund_members, print_members_balances},
+    },
+    wallet::MasterWallet,
+};
 
 mod macros;
 mod participants;
@@ -31,10 +40,11 @@ mod log;
 
 // Adjust based on the network
 pub const USER_FUNDS: u64 = 102_000;
-pub const ADVANCE_FUNDS_FEE: u64 = 1000;
+pub const ADVANCE_FUNDS_FEE: u64 = 3000;
 pub const ACCEPT_PEGIN_SPEEDUP_FEE: u64 = 5000;
 pub const USER_TAKE_SPEEDUP_FEE: u64 = 3000;
-pub const STREAM_DENOMINATION: u64 = 100_000;
+pub const NETWORK: Network = Network::Regtest;
+pub const STREAM_DENOMINATION: u64 = 1_000_000;
 static mut SLOT_INDEX_COUNTER: usize = 0;
 
 pub fn main() -> Result<()> {
@@ -81,7 +91,9 @@ fn print_usage() {
         "  cargo run --example union advance_funds_twice       - Performs advancement of funds twice"
     );
     println!("  cargo run --example union invalid_reimbursement - Forces invalid reimbursement to test challenge tx");
-    println!("  cargo run --example union test_master_wallet  - Tests the master wallet functionality");
+    println!(
+        "  cargo run --example union test_master_wallet  - Tests the master wallet functionality"
+    );
 }
 
 pub fn setup_bitcoin_node() -> Result<()> {
@@ -96,7 +108,7 @@ pub fn test_master_wallet() -> Result<()> {
 
     // Run the master wallet examples
     wallet::master_wallet_examples::run_master_wallet_example_regtest()?;
-    wallet::master_wallet_examples::run_master_wallet_example_testnet()?;
+    // wallet::master_wallet_examples::run_master_wallet_example_testnet()?;
     info!("Master wallet tests completed");
     Ok(())
 }
@@ -109,6 +121,7 @@ pub fn cli_committee() -> Result<()> {
 pub fn cli_request_pegin() -> Result<()> {
     let mut committee = committee()?;
     let mut user = User::new("user_1")?;
+
     request_pegin(&mut committee, &mut user)?;
     Ok(())
 }
@@ -161,20 +174,36 @@ pub fn cli_invalid_reimbursement() -> Result<()> {
     Ok(())
 }
 
-fn get_and_increment_slot_index() -> usize {
-    unsafe {
-        let current_index = SLOT_INDEX_COUNTER;
-        SLOT_INDEX_COUNTER += 1;
-        current_index
-    }
-}
-
 pub fn committee() -> Result<Committee> {
     // A new package is created. A committee is selected. Union client requests the setup of the
     // corresponding keys and programs.
-    let mut committee = Committee::new(STREAM_DENOMINATION)?;
-    committee.setup()?;
-    committee.mine_and_wait(10)?;
+    let mut committee = Committee::new(STREAM_DENOMINATION, NETWORK)?;
+    committee.setup_keys()?;
+
+    info!("Balances before funding:");
+    print_members_balances(committee.members.as_slice())?;
+
+    let mut wallet = MasterWallet::new(NETWORK, None)?;
+    let amount = STREAM_DENOMINATION * 3;
+
+    fund_members(&mut wallet, committee.members.as_slice(), amount)?;
+    // TODO: Fund user as well
+    committee.bitcoin_client.wait_for_blocks(10)?;
+
+    // This will work only if fund_members() is dispatching transaction throuhg BitVMX
+    for member in committee.members.iter_mut() {
+        let status = wait_until_msg!(&member.bitvmx, OutgoingBitVMXApiMessages::Transaction(_, _status, _) => _status);
+        info!("Transaction status: {:?}", status);
+    }
+
+    info!("Balances after funding:");
+    print_members_balances(committee.members.as_slice())?;
+
+    committee.setup_dispute_protocols()?;
+    committee.bitcoin_client.wait_for_blocks(20)?;
+
+    info!("Balances after dispute core protocol:");
+    print_members_balances(committee.members.as_slice())?;
 
     info!("Committee setup complete.");
     Ok(committee)
@@ -183,9 +212,9 @@ pub fn committee() -> Result<Committee> {
 pub fn request_pegin(committee: &mut Committee, user: &mut User) -> Result<(Txid, u64)> {
     let committee_public_key = committee.public_key()?;
 
-    committee
-        .bitcoin_client
-        .fund_address(&user.address, Amount::from_sat(USER_FUNDS))?;
+    // committee
+    //     .bitcoin_client
+    //     .fund_address(&user.address, Amount::from_sat(USER_FUNDS))?;
 
     let amount: u64 = STREAM_DENOMINATION; // This should be replaced with the actual amount of the peg-in request
     let request_pegin_txid = user.request_pegin(&committee_public_key, amount)?;
@@ -226,7 +255,7 @@ pub fn accept_pegin(committee: &mut Committee, user: &mut User) -> Result<(usize
         ACCEPT_PEGIN_SPEEDUP_FEE,
     )?;
 
-    committee.mine_and_wait(3)?;
+    committee.bitcoin_client.wait_for_blocks(3)?;
     committee.wait_for_spv_proof(accept_pegin_txid)?;
 
     Ok((slot_index, amount))
@@ -258,7 +287,7 @@ pub fn request_pegout() -> Result<()> {
 
     user.create_and_dispatch_user_take_speedup(user_take_utxo.clone(), USER_TAKE_SPEEDUP_FEE)?;
 
-    committee.mine_and_wait(3)?;
+    committee.bitcoin_client.wait_for_blocks(3)?;
     committee.wait_for_spv_proof(user_take_utxo.0)?;
 
     Ok(())
@@ -281,7 +310,7 @@ pub fn advance_funds(committee: &mut Committee, slot_index: usize) -> Result<()>
         ADVANCE_FUNDS_FEE,
     )?;
 
-    committee.mine_and_wait(30)?;
+    committee.bitcoin_client.wait_for_blocks(40)?;
     info!("Advance funds complete.");
     Ok(())
 }
@@ -305,10 +334,18 @@ pub fn invalid_reimbursement(committee: &mut Committee, slot_index: usize) -> Re
     )?;
 
     info!("Starting mining loop to ensure challenge transaction is dispatched...");
-    committee.mine_and_wait(20)?;
+    committee.bitcoin_client.wait_for_blocks(20)?;
 
     info!("Invalid reimbursement test complete.");
     Ok(())
+}
+
+fn get_and_increment_slot_index() -> usize {
+    unsafe {
+        let current_index = SLOT_INDEX_COUNTER;
+        SLOT_INDEX_COUNTER += 1;
+        current_index
+    }
 }
 
 #[cfg(test)]

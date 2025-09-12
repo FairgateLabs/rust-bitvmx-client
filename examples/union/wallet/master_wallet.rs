@@ -1,21 +1,25 @@
 use anyhow::Result;
-use bitcoin::{Address, Network, PrivateKey, Txid};
+use bitcoin::{Address, Network, Transaction};
 use bitvmx_settings::settings::load_config_file;
 use bitvmx_wallet::{
-    config::{Config, WalletConfig},
+    config::Config,
     wallet::{RegtestWallet, Wallet},
 };
 use tracing::info;
 
 /// Master wallet for funding Bitcoin addresses using bitvmx wallet
 pub struct MasterWallet {
-    wallet: Wallet,
+    pub wallet: Wallet,
     network: Network,
 }
 
 impl MasterWallet {
-    pub fn new(network: Option<Network>, private_key: Option<PrivateKey>) -> Result<Self> {
-        let network = network.unwrap_or(Network::Regtest);
+    pub fn new(network: Network, private_key: Option<String>) -> Result<Self> {
+        if network != Network::Regtest && private_key.is_none() {
+            return Err(anyhow::anyhow!(
+                "Private key required for non-regtest networks"
+            ));
+        };
 
         // Load configuration from appropriate config file
         let config_path = match network {
@@ -24,36 +28,19 @@ impl MasterWallet {
             _ => return Err(anyhow::anyhow!("Unsupported network: {}", network)),
         };
 
-        let config = load_config_file::<Config>(Some(config_path.to_string()))?;
-        let bitcoin_config = config.bitcoin;
+        let mut config = load_config_file::<Config>(Some(config_path.to_string()))?;
+        // Override database path and private key in config
+        config.wallet.db_path = format!(
+            "/tmp/{}/master_wallet.db",
+            network.to_string().to_lowercase()
+        );
 
-        // Generate private key if not provided (regtest only)
-        let private_key = if let Some(pk) = private_key {
-            pk
-        } else if network == Network::Regtest {
-            let secp = bitcoin::secp256k1::Secp256k1::new();
-            let mut rng = bitcoin::secp256k1::rand::thread_rng();
-            let (secret_key, _) = secp.generate_keypair(&mut rng);
-            PrivateKey::new(secret_key, network)
-        } else {
-            return Err(anyhow::anyhow!(
-                "Private key required for non-regtest networks"
-            ));
-        };
-
-        // Create wallet config with the private key
-        let wallet_config = WalletConfig {
-            db_path: format!(
-                "/tmp/{}/master_wallet.db",
-                network.to_string().to_lowercase()
-            ),
-            start_height: Some(0), // TODO: Check where we can start from
-            receive_key: Some(private_key.to_string()),
-            change_key: None, // TODO: Check if we need a change key or a single descriptor wallet is sufficient
-        };
+        if private_key.is_some() {
+            config.wallet.receive_key = private_key;
+        }
 
         // Create wallet using config
-        let mut wallet = Wallet::from_config(bitcoin_config, wallet_config)?;
+        let mut wallet = Wallet::from_config(config.bitcoin, config.wallet)?;
 
         // Sync the wallet
         wallet.sync_wallet()?;
@@ -82,7 +69,7 @@ impl MasterWallet {
     }
 
     /// Fund a Bitcoin address directly using send_to_address
-    pub fn fund_address(&mut self, address: &Address, amount_sats: u64) -> Result<Txid> {
+    pub fn fund_address(&mut self, address: &Address, amount_sats: u64) -> Result<Transaction> {
         self.fund_address_with_fee(address, amount_sats, None)
     }
 
@@ -92,7 +79,7 @@ impl MasterWallet {
         address: &Address,
         amount_sats: u64,
         fee_rate: Option<u64>,
-    ) -> Result<Txid> {
+    ) -> Result<Transaction> {
         let address_str = address.to_string();
 
         let transaction = self
@@ -100,7 +87,7 @@ impl MasterWallet {
             .send_to_address(&address_str, amount_sats, fee_rate)
             .map_err(|e| anyhow::anyhow!("Failed to fund address: {}", e))?;
 
-        Ok(transaction.compute_txid())
+        Ok(transaction)
     }
 
     /// Get wallet balance
