@@ -49,7 +49,7 @@ static mut SLOT_INDEX_COUNTER: usize = 0;
 pub const NETWORK: Network = Network::Testnet;
 pub const STREAM_DENOMINATION: u64 = 30_000;
 // pub const NETWORK: Network = Network::Regtest;
-// pub const STREAM_DENOMINATION: u64 = 100_000;
+// pub const STREAM_DENOMINATION: u64 = 30_000;
 
 pub fn main() -> Result<()> {
     log::configure_tracing();
@@ -292,7 +292,7 @@ pub fn committee() -> Result<Committee> {
         load_change_key_from_env(NETWORK),
     )?;
 
-    let amount = STREAM_DENOMINATION * 3;
+    let amount = committee.get_total_funds_value();
 
     fund_members(&mut wallet, committee.members.as_slice(), amount)?;
     // TODO: Fund user as well
