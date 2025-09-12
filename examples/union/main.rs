@@ -10,9 +10,8 @@
 //! `cargo run --example union advance_funds`      - Performs an advancement of funds
 use ::bitcoin::{Network, OutPoint, PublicKey, Txid};
 use anyhow::Result;
-use bitvmx_client::{
-    program::protocols::union::{common::get_accept_pegin_pid, types::ACCEPT_PEGIN_TX},
-    types::OutgoingBitVMXApiMessages,
+use bitvmx_client::program::protocols::union::{
+    common::get_accept_pegin_pid, types::ACCEPT_PEGIN_TX,
 };
 use core::convert::Into;
 use std::{env, thread, time::Duration};
@@ -20,7 +19,6 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::{
-    macros::wait_for_message_blocking,
     participants::{committee::Committee, member::Member, user::User},
     wallet::{
         helper::{
@@ -65,9 +63,10 @@ pub fn main() -> Result<()> {
         Some("advance_funds") => cli_advance_funds()?,
         Some("advance_funds_twice") => cli_advance_funds_twice()?,
         Some("invalid_reimbursement") => cli_invalid_reimbursement()?,
-        Some("master_wallet_info") => master_wallet_info(args.get(2))?,
+        Some("wallet_info") => cli_wallet_info(args.get(2))?,
         Some("latency") => cli_latency(args.get(2))?,
         Some("balances") => cli_balances()?,
+        Some("wallet_balance") => cli_wallet_balance()?,
         Some("fund_members") => cli_fund_members()?,
         Some("recover_funds") => cli_recover_funds()?,
         Some(cmd) => {
@@ -100,8 +99,9 @@ fn print_usage() {
     println!("  cargo run --example union invalid_reimbursement     - Forces invalid reimbursement to test challenge tx");
     // Testing commands
     println!(
-        "  cargo run --example union master_wallet_info        - Print Master wallet info: key pair and address. (optionally pass network: regtest, testnet, bitcoin)"
+        "  cargo run --example union wallet_info        - Print Master wallet info: key pair and address. (optionally pass network: regtest, testnet, bitcoin)"
     );
+    println!("  cargo run --example union wallet_balance      - Print Master wallet balance");
     println!("  cargo run --example union latency             - Analyses latency to the Bitcoin node. (optionally pass network: regtest, testnet, bitcoin)");
     println!(
         "  cargo run --example union balances            - Print members and master wallet balance"
@@ -112,7 +112,7 @@ fn print_usage() {
     println!("  cargo run --example union recover_funds       - Send all members funds to master wallet address");
 }
 
-fn master_wallet_info(network: Option<&String>) -> Result<()> {
+fn cli_wallet_info(network: Option<&String>) -> Result<()> {
     let network = string_to_network(network)?;
     wallet_info(network)?;
     Ok(())
@@ -199,6 +199,17 @@ pub fn cli_balances() -> Result<()> {
     info!("Members balances:");
     print_members_balances(committee.members.as_slice())?;
 
+    let wallet = MasterWallet::new(
+        NETWORK,
+        load_private_key_from_env(NETWORK),
+        load_change_key_from_env(NETWORK),
+    )?;
+
+    print_balance(&wallet)?;
+    Ok(())
+}
+
+pub fn cli_wallet_balance() -> Result<()> {
     let wallet = MasterWallet::new(
         NETWORK,
         load_private_key_from_env(NETWORK),
