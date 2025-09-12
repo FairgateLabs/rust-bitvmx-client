@@ -184,7 +184,7 @@ pub fn committee() -> Result<Committee> {
     info!("Balances before funding:");
     print_members_balances(committee.members.as_slice())?;
 
-    let mut wallet = MasterWallet::new(NETWORK, None)?;
+    let mut wallet = MasterWallet::new(NETWORK, load_private_key_from_env())?;
     let amount = STREAM_DENOMINATION * 3;
 
     fund_members(&mut wallet, committee.members.as_slice(), amount)?;
@@ -368,6 +368,31 @@ fn confirm_to_continue() {
     ) {
         print!("Operation cancelled by user.\n");
         std::process::exit(0);
+    }
+}
+
+fn load_private_key_from_env() -> Option<String> {
+    if NETWORK == Network::Regtest {
+        return None;
+    }
+    let env_var_name = match NETWORK {
+        Network::Testnet4 => "TESTNET_MASTER_WALLET_PRIVKEY",
+        Network::Bitcoin => "MAINNET_MASTER_WALLET_PRIVKEY",
+        _ => {
+            info!("Unsupported network for private key loading: {}", NETWORK);
+            return None;
+        }
+    };
+
+    match env::var(env_var_name) {
+        Ok(val) => Some(val),
+        Err(_) => {
+            info!(
+                "Environment variable {} not set. Proceeding without private key.",
+                env_var_name
+            );
+            None
+        }
     }
 }
 
