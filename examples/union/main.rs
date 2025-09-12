@@ -21,14 +21,14 @@ use uuid::Uuid;
 
 use crate::{
     macros::wait_for_message_blocking,
-    participants::{
-        committee::Committee,
-        common::{ask_user_confirmation, string_to_network},
-        member::Member,
-        user::User,
-        wallet_helper::{fund_members, print_members_balances},
+    participants::{committee::Committee, member::Member, user::User},
+    wallet::{
+        helper::{
+            ask_user_confirmation, fund_members, non_regtest_warning, print_members_balances,
+            recover_funds, string_to_network, wallet_info,
+        },
+        master_wallet::MasterWallet,
     },
-    wallet::{master_wallet::MasterWallet, master_wallet_info::wallet_info},
 };
 
 mod bitcoin;

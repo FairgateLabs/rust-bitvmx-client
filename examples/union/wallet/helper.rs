@@ -1,0 +1,198 @@
+use crate::{participants::member::Member, MasterWallet};
+use anyhow::{anyhow, Result};
+use bitcoin::{Address, CompressedPublicKey, Network};
+use core::option::Option;
+use key_manager::{key_manager::KeyManager, key_store::KeyStore};
+use std::io::{self, Write};
+use std::thread;
+use storage_backend::storage::Storage;
+use tracing::info;
+use tracing::warn;
+use uuid::Uuid;
+
+const FEE_RATE: u64 = 2; // sats/vbyte
+const MIN_FUNDS_RECOVERY: u64 = 5000;
+const TX_SIZE: u64 = 140;
+
+pub fn wallet_info(network: Network) -> Result<()> {
+    info!("Generating master wallet info for network {}...", network);
+
+    let mut config = bitvmx_client::config::Config::new(Some("config/op_1.yaml".to_string()))?;
+    config.key_storage.path = "/tmp/master_wallet/keys.db".to_string();
+    config.storage.path = "/tmp/master_wallet/storage.db".to_string();
+
+    let key_derivation_seed: [u8; 32] = *b"1337beafdeadbeafdeadbeafdeadbeaf";
+
+    let key_manager = KeyManager::new(
+        network,
+        "m/84/0/0/0/",
+        Some(key_derivation_seed),
+        None,
+        KeyStore::new(std::rc::Rc::new(Storage::new(&config.key_storage)?)),
+        std::rc::Rc::new(Storage::new(&config.storage)?),
+    )?;
+
+    let pubkey = key_manager.derive_keypair(0)?;
+    let privkey = key_manager.export_secret(&pubkey)?;
+    let change_pubkey = key_manager.derive_keypair(1)?;
+    let change_privkey = key_manager.export_secret(&change_pubkey)?;
+    let compressed = CompressedPublicKey::try_from(pubkey).unwrap();
+    let address = Address::p2wpkh(&compressed, network);
+
+    let result = std::fs::remove_dir_all("/tmp/master_wallet");
+    info!("Master wallet temporary data removed: {:?}\n", result);
+
+    info!("Master wallet info:");
+    info!("  Pubkey: {}", pubkey);
+    info!("  Privkey: {}", privkey);
+    info!("  Address: {}", address);
+    info!("");
+    info!("  Change Privkey: {}", change_privkey);
+
+    Ok(())
+}
+
+pub fn fund_members(wallet: &mut MasterWallet, members: &[Member], amount: u64) -> Result<()> {
+    non_regtest_warning(wallet.network(), "You are about to transfer REAL money.");
+
+    let balance = wallet.wallet.balance();
+    info!("Master wallet balance:");
+    info!("Confirmed: {} sats", balance.confirmed.to_sat());
+    info!("Untrusted: {} sats", balance.untrusted_pending.to_sat());
+    info!("Trusted: {} sats", balance.trusted_pending.to_sat());
+    info!("Immature: {} sats", balance.immature.to_sat());
+
+    info!("Funding each member with {} sats", amount);
+    for member in members {
+        let address = member.get_funding_address()?;
+        info!("Address: {:?}", address);
+
+        let checked_address = address
+            .require_network(wallet.network())
+            .expect("address not valid for this network");
+
+        let tx: bitcoin::Transaction =
+            wallet.fund_address_with_fee(&checked_address, amount, Some(FEE_RATE))?;
+
+        member
+            .bitvmx
+            .dispatch_transaction(Uuid::new_v4(), tx.clone())?;
+
+        let txid = tx.compute_txid();
+        info!("Funded member with txid: {}", txid);
+        thread::sleep(std::time::Duration::from_secs(5));
+    }
+
+    info!("Master wallet balance after funding members:");
+    let balance = wallet.wallet.balance();
+    info!("Confirmed: {} sats", balance.confirmed);
+    info!("Untrusted: {} sats", balance.untrusted_pending);
+    info!("Trusted: {} sats", balance.trusted_pending);
+    info!("Immature: {} sats", balance.immature);
+
+    Ok(())
+}
+
+pub fn print_members_balances(members: &[Member]) -> Result<()> {
+    for member in members {
+        let balance = member.get_funding_balance()?;
+        info!("Member {} balance: {} sats", member.id, balance);
+    }
+    Ok(())
+}
+
+pub fn recover_funds(members: &[Member], address: String) -> Result<()> {
+    for member in members {
+        let balance = member.get_funding_balance()?;
+        info!("Member {} balance: {} sats", member.id, balance);
+        if balance <= MIN_FUNDS_RECOVERY {
+            info!(
+                "Member {} balance {} sats is too low to recover, skipping",
+                member.id, balance
+            );
+            continue;
+        }
+
+        let amount = balance - TX_SIZE * FEE_RATE; // leave some sats for fees
+
+        member.bitvmx.send_funds_to_address(
+            Uuid::new_v4(),
+            address.clone(),
+            amount,
+            Some(FEE_RATE),
+        )?;
+    }
+    Ok(())
+}
+
+/// Ask the user a yes/no question and return true if they confirm (`y` or `yes`).
+pub fn ask_user_confirmation(prompt: &str) -> bool {
+    loop {
+        print!("{} [y/N]: ", prompt);
+        io::stdout().flush().unwrap(); // Make sure prompt is shown
+
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            println!("Failed to read input, try again.");
+            continue;
+        }
+
+        match input.trim().to_lowercase().as_str() {
+            "y" | "yes" => return true,
+            "n" | "no" | "" => return false, // default is "no"
+            _ => {
+                println!("Please answer 'y' or 'n'.");
+                continue;
+            }
+        }
+    }
+}
+
+pub fn non_regtest_warning(network: Network, message: &str) {
+    if network == Network::Regtest {
+        return;
+    }
+
+    print!("\nWarning: {}. {:?} network.\n", message, network);
+    print!("This may incur real costs and is not recommended for testing purposes.\n");
+    if !ask_user_confirmation("Do you want to proceed?") {
+        print!("Operation cancelled by user.\n");
+        std::process::exit(0);
+    }
+}
+
+pub fn get_network_prefix(network: Network, env_var: bool) -> Result<&'static str> {
+    match (network, env_var) {
+        (Network::Regtest, false) => Ok("regtest"),
+        (Network::Regtest, true) => Ok("REGTEST"),
+
+        (Network::Testnet, false) => Ok("testnet"),
+        (Network::Testnet, true) => Ok("TESTNET"),
+
+        (Network::Bitcoin, false) => Ok("mainnet"),
+        (Network::Bitcoin, true) => Ok("MAINNET"),
+
+        (other, _) => Err(anyhow!("Unsupported network: {:?}", other)),
+    }
+}
+
+pub fn string_to_network(network: Option<&String>) -> Result<Network> {
+    let network = match network {
+        Some(net) => match net.as_str() {
+            "regtest" => Network::Regtest,
+            "testnet" => Network::Testnet,
+            "mainnet" => Network::Bitcoin,
+            _ => {
+                return Err(anyhow!(
+                    "Unsupported network string: {}. Use 'regtest' or 'testnet'.",
+                    net
+                ));
+            }
+        },
+        None => {
+            warn!("No network specified. Using regtest.");
+            Network::Regtest
+        }
+    };
+    Ok(network)
+}

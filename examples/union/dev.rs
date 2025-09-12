@@ -7,7 +7,7 @@ use std::time::Instant;
 use std::{thread, time::Duration};
 use tracing::info;
 
-use crate::participants::common::get_network_prefix;
+use crate::wallet::helper::get_network_prefix;
 
 fn measure_latency(url: &str, payload: Option<serde_json::Value>) -> f64 {
     let client = Client::new();

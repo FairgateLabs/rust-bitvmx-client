@@ -20,9 +20,10 @@ use uuid::Uuid;
 
 use crate::bitcoin::{init_client, BitcoinWrapper};
 use crate::macros::wait_for_message_blocking;
-use crate::participants::common::{non_regtest_warning, prefixed_name};
+use crate::participants::common::prefixed_name;
 use crate::participants::member::{FundingAmount, Member};
 use crate::wait_until_msg;
+use crate::wallet::helper::non_regtest_warning;
 
 pub struct Committee {
     pub members: Vec<Member>,
@@ -35,7 +36,7 @@ pub struct Committee {
 
 impl Committee {
     pub fn new(stream_denomination: u64, network: Network) -> Result<Self> {
-        network_warning(network);
+        non_regtest_warning(network, "You are about to transfer REAL money.");
 
         let network_prefix = match network {
             Network::Bitcoin => "mainnet",
@@ -366,11 +367,4 @@ impl Committee {
                 .collect()
         })
     }
-}
-
-fn network_warning(network: Network) {
-    non_regtest_warning(
-        network,
-        "You are running this example in a non-regtest network",
-    )
 }
