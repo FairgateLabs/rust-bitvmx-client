@@ -1,5 +1,4 @@
-#![cfg(feature = "cardinal")]
-
+#![cfg(all(feature = "cardinal", test))]
 use anyhow::Result;
 use bitcoin::{
     key::rand::rngs::OsRng,
@@ -20,7 +19,7 @@ use bitvmx_client::{
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
-use bitvmx_wallet::wallet::Wallet;
+use bitvmx_wallet::wallet::{RegtestWallet, Wallet};
 use common::{
     config_trace, get_all, init_bitvmx, init_broker, mine_and_wait, prepare_bitcoin, send_all,
     wait_message_from_channel,
@@ -44,17 +43,18 @@ pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, Wallet)> {
         &config.bitcoin.password,
     )?;
 
-    let wallet_config = match config.bitcoin.network {
+    let config_path = match config.bitcoin.network {
         Network::Regtest => "config/wallet_regtest.yaml",
         Network::Testnet => "config/wallet_testnet.yaml",
         _ => panic!("Not supported network {}", config.bitcoin.network),
     };
 
     let wallet_config = bitvmx_settings::settings::load_config_file::<
-        bitvmx_wallet::config::WalletConfig,
-    >(Some(wallet_config.to_string()))?;
-    let wallet = Wallet::new(wallet_config, true)?;
+            bitvmx_wallet::config::Config,
+        >(Some(config_path.to_string()))?;
 
+    let mut wallet = Wallet::from_config(wallet_config.bitcoin.clone(), wallet_config.wallet.clone())?;
+    wallet.sync_wallet()?;
     Ok((bitcoin_client, wallet))
 }
 
@@ -76,7 +76,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
 
     const NETWORK: Network = Network::Regtest;
 
-    let (bitcoin_client, bitcoind, wallet) = if independent {
+    let (bitcoin_client, bitcoind, mut wallet) = if independent {
         let (bitcoin_client, wallet) = prepare_bitcoin_running()?;
         (bitcoin_client, None, wallet)
     } else {
@@ -118,10 +118,10 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     let funding_key_1 = msgs[1].public_key().unwrap().1;
     let funding_key_2 = msgs[2].public_key().unwrap().1;
     let funding_key_3 = msgs[3].public_key().unwrap().1;
-    set_speedup_funding(10_000_000, &funding_key_0, &channels[0], &wallet)?;
-    set_speedup_funding(10_000_000, &funding_key_1, &channels[1], &wallet)?;
-    set_speedup_funding(10_000_000, &funding_key_2, &channels[2], &wallet)?;
-    set_speedup_funding(10_000_000, &funding_key_3, &channels[3], &wallet)?;
+    set_speedup_funding(10_000_000, &funding_key_0, &channels[0], &mut wallet)?;
+    set_speedup_funding(10_000_000, &funding_key_1, &channels[1], &mut wallet)?;
+    set_speedup_funding(10_000_000, &funding_key_2, &channels[2], &mut wallet)?;
+    set_speedup_funding(10_000_000, &funding_key_3, &channels[3], &mut wallet)?;
 
     let command = IncomingBitVMXApiMessages::GetCommInfo().to_string()?;
     send_all(&channels, &command)?;

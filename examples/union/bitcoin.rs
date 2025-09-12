@@ -2,20 +2,23 @@ use anyhow::Result;
 use bitcoin::{
     key::{rand::rngs::OsRng, Parity, Secp256k1},
     secp256k1::{All, PublicKey as SecpPublicKey, SecretKey},
-    Network, PublicKey as BitcoinPubKey,
+    Amount, Network, PublicKey as BitcoinPubKey,
 };
-use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
+use bitcoind::bitcoind::Bitcoind;
+use bitvmx_client::types::OutgoingBitVMXApiMessages::FundingAddress;
+
+use crate::macros::wait_for_message_blocking;
+use crate::participants::member::Member;
+use crate::wait_until_msg;
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
 use bitvmx_client::config::Config;
-use bitvmx_wallet::wallet::Wallet;
+use bitvmx_wallet::wallet::{RegtestWallet, Wallet};
 use tracing::info;
+use uuid::Uuid;
 
 /// Number of blocks to mine initially to ensure sufficient coin maturity
-pub const INITIAL_BLOCK_COUNT: u64 = 101;
-pub const WALLET_NAME: &str = "wallet";
-pub const FEE: u64 = 500;
-pub const FUNDING_ID: &str = "fund_1";
+pub const INITIAL_BLOCK_COUNT: u64 = 110;
 
 /// Helper function to clear database directories
 pub fn clear_db(path: &str) {
@@ -25,7 +28,7 @@ pub fn clear_db(path: &str) {
 pub fn stop_existing_bitcoind() -> Result<()> {
     info!("Checking for existing bitcoind instance...");
 
-    let config = Config::new(Some("config/op_1.yaml".to_string()))?;
+    let config = Config::new(Some("config/development.yaml".to_string()))?;
 
     // Create a temporary Bitcoind instance to check if one is running and stop it
     let temp_bitcoind = Bitcoind::new(
@@ -49,49 +52,35 @@ pub fn stop_existing_bitcoind() -> Result<()> {
     Ok(())
 }
 
-pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
-    let config = Config::new(Some("config/op_1.yaml".to_string()))?;
+pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind)> {
+    let config = Config::new(Some("config/development.yaml".to_string()))?;
 
-    // let bitcoind = Bitcoind::new(
-    //     "bitcoin-regtest",
-    //     "ruimarinho/bitcoin-core",
-    //     config.bitcoin.clone(),
-    // );
-    info!("Starting bitcoind");
+    // Clear indexer, monitor, key manager and wallet data.
+    clear_db(&config.storage.path);
+    clear_db(&config.key_storage.path);
+    Wallet::clear_db(&config.wallet)?;
 
-    // Config to trigger speedup transactions in Regtest
-    let bitcoind = Bitcoind::new_with_flags(
+    let bitcoind = Bitcoind::new(
         "bitcoin-regtest",
         "ruimarinho/bitcoin-core",
         config.bitcoin.clone(),
-        BitcoindFlags {
-            min_relay_tx_fee: 0.00001,
-            block_min_tx_fee: 0.00008,
-            debug: 1,
-            fallback_fee: 0.0002,
-        },
     );
+    info!("Starting bitcoind");
+
+    // Config to trigger speedup transactions in Regtest
+    // let bitcoind = Bitcoind::new_with_flags(
+    //     "bitcoin-regtest",
+    //     "ruimarinho/bitcoin-core",
+    //     config.bitcoin.clone(),
+    //     BitcoindFlags {
+    //         min_relay_tx_fee: 0.00001,
+    //         block_min_tx_fee: 0.00008,
+    //         debug: 1,
+    //         fallback_fee: 0.0002,
+    //     },
+    // );
 
     bitcoind.start()?;
-
-    let wallet_config = match config.bitcoin.network {
-        Network::Regtest => "config/wallet_regtest.yaml",
-        Network::Testnet => "config/wallet_testnet.yaml",
-        _ => panic!("Not supported network {}", config.bitcoin.network),
-    };
-
-    let wallet_config = bitvmx_settings::settings::load_config_file::<
-        bitvmx_wallet::config::WalletConfig,
-    >(Some(wallet_config.to_string()))?;
-    if config.bitcoin.network == Network::Regtest {
-        clear_db(&wallet_config.storage.path);
-        clear_db(&wallet_config.key_storage.path);
-    }
-    let wallet = Wallet::new(wallet_config, true)?;
-    wallet.mine(INITIAL_BLOCK_COUNT)?;
-
-    wallet.create_wallet(WALLET_NAME)?;
-    wallet.regtest_fund(WALLET_NAME, FUNDING_ID, 100_000_000)?;
 
     let bitcoin_client = BitcoinClient::new(
         &config.bitcoin.url,
@@ -99,39 +88,32 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
         &config.bitcoin.password,
     )?;
 
-    Ok((bitcoin_client, bitcoind, wallet))
+    let _address = bitcoin_client.init_wallet(&config.bitcoin.wallet)?;
+    bitcoin_client.mine_blocks_to_address(INITIAL_BLOCK_COUNT, &_address)?;
+
+    Ok((bitcoin_client, bitcoind))
 }
 
-pub fn init_wallet() -> Result<Wallet> {
-    let config = Config::new(Some("config/op_1.yaml".to_string()))?;
+pub fn init_wallets(members: &Vec<Member>) -> Result<BitcoinClient> {
+    let config = members[0].config.clone();
 
-    let wallet_config = match config.bitcoin.network {
-        Network::Regtest => "config/wallet_regtest.yaml",
-        Network::Testnet => "config/wallet_testnet.yaml",
-        _ => panic!("Not supported network {}", config.bitcoin.network),
-    };
-
-    let wallet_config = bitvmx_settings::settings::load_config_file::<
-        bitvmx_wallet::config::WalletConfig,
-    >(Some(wallet_config.to_string()))?;
-    if config.bitcoin.network == Network::Regtest {
-        clear_db(&wallet_config.storage.path);
-        clear_db(&wallet_config.key_storage.path);
-    }
-
-    let wallet = Wallet::new(wallet_config, true)?;
-    wallet.mine(INITIAL_BLOCK_COUNT)?;
-
-    wallet.create_wallet(WALLET_NAME)?;
-    wallet.regtest_fund(WALLET_NAME, FUNDING_ID, 100_000_000)?;
-
-    let _bitcoin_client = BitcoinClient::new(
+    let bitcoin_client = BitcoinClient::new(
         &config.bitcoin.url,
         &config.bitcoin.username,
         &config.bitcoin.password,
     )?;
 
-    Ok(wallet)
+    for member in members {
+        let id = Uuid::new_v4();
+        member.bitvmx.get_funding_address(id)?;
+        let funding_address = wait_until_msg!(
+            &member.bitvmx,
+            FundingAddress(_, _funding_address) => _funding_address
+        );
+        bitcoin_client.fund_address(&funding_address.assume_checked(), Amount::from_int_btc(1))?;
+    }
+
+    Ok(bitcoin_client)
 }
 
 // This method changes the parity of a keypair to be even, this is needed for Taproot.

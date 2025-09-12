@@ -1,5 +1,7 @@
 use anyhow::Result;
+use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use core::clone::Clone;
+use protocol_builder::types::OutputType;
 use protocol_builder::types::Utxo;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -128,6 +130,55 @@ impl Member {
         self.make_pairwise_keys(members, take_aggregation_id)?;
 
         Ok(())
+    }
+
+    pub fn get_funding_utxo(
+        &mut self,
+        amount: u64,
+        bitcoin_client: &BitcoinClient,
+    ) -> Result<PartialUtxo> {
+        let id = Uuid::new_v4();
+        let public_key = self.keyring.dispute_pubkey.unwrap();
+
+        // Send funds to the public key
+        info!("Funding address: {:?} with: {}", public_key, amount);
+        self.bitvmx.send_funds_to_p2wpkh(id, public_key, amount)?;
+
+        // Mine blocks to confirm the transaction
+        for _ in 0..3 {
+            info!("Mining 1 block and wait...");
+            bitcoin_client.mine_blocks(1)?;
+            thread::sleep(std::time::Duration::from_secs(1));
+        }
+
+        let txid = wait_until_msg!(
+            &self.bitvmx,
+            FundsSent(_, _txid) => _txid
+        );
+
+        // Wait for the transaction info
+        let tx_status = wait_until_msg!(
+            &self.bitvmx,
+            Transaction(_, _tx_status, _) => _tx_status
+        );
+        // Check confirmation threashold
+        if tx_status.confirmations < 1 {
+            return Err(anyhow::anyhow!(
+                "prepare_funding_utxo Transaction not finalized, confirmations: {}",
+                tx_status.confirmations
+            ));
+        }
+        let vout = 0;
+        let output = &tx_status.tx.output[vout];
+        let script_pubkey = &output.script_pubkey;
+
+        let output_type = OutputType::SegwitPublicKey {
+            value: output.value,
+            script_pubkey: script_pubkey.clone(),
+            public_key: public_key,
+        };
+
+        Ok((txid, vout as u32, Some(amount), Some(output_type)))
     }
 
     pub fn setup_dispute_protocols(
