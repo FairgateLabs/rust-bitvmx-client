@@ -21,7 +21,7 @@ use bitvmx_client::{
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, L2_ID},
 };
 
-use bitvmx_wallet::wallet::{RegtestWallet, Wallet};
+use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
 use protocol_builder::types::Utxo;
 use storage_backend::{storage::Storage, storage_config::StorageConfig};
 use tracing::info;
@@ -443,7 +443,7 @@ pub fn set_speedup_funding(
     wallet: &mut Wallet,
 ) -> Result<()> {
     // Send funds to the public key
-    let funds = wallet.send_to_p2wpkh(&pub_key, amount, Some(1))?;
+    let funds = wallet.send_funds(Destination::P2WPKH(*pub_key, amount), Some(1))?;
 
     let command = IncomingBitVMXApiMessages::DispatchTransaction(Uuid::new_v4(), funds.clone())
         .to_string()?;

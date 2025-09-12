@@ -6,7 +6,7 @@ use bitcoin::{Address, Network, Transaction};
 use bitvmx_settings::settings::load_config_file;
 use bitvmx_wallet::{
     config::Config,
-    wallet::{RegtestWallet, Wallet},
+    wallet::{Destination, RegtestWallet, Wallet},
 };
 use tracing::info;
 
@@ -99,7 +99,7 @@ impl MasterWallet {
 
         let transaction = self
             .wallet
-            .send_to_address(&address_str, amount_sats, fee_rate)
+            .send_funds(Destination::Address(address_str, amount_sats), fee_rate)
             .map_err(|e| anyhow::anyhow!("Failed to fund address: {}", e))?;
 
         Ok(transaction)
