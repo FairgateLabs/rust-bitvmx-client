@@ -36,7 +36,7 @@ pub struct Committee {
 
 impl Committee {
     pub fn new(stream_denomination: u64, network: Network) -> Result<Self> {
-        non_regtest_warning(network, "You are about to transfer REAL money.");
+        non_regtest_warning(network, "You are working with REAL money.");
 
         let network_prefix = match network {
             Network::Bitcoin => "mainnet",

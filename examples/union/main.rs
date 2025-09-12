@@ -229,6 +229,7 @@ pub fn cli_recover_funds() -> Result<()> {
 
     committee.bitcoin_client.wait_for_blocks(1)?;
 
+    thread::sleep(Duration::from_secs(5)); // wait for the wallet to update
     info!("Balances after funds recovery:");
     print_members_balances(committee.members.as_slice())?;
     print_balance(&wallet)?;
