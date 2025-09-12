@@ -38,7 +38,7 @@ impl DisputeCoreSetup {
             take_aggregated_key,
             dispute_aggregated_key,
             operator_count: Self::operator_count(&members.clone())?,
-            packet_size: 10,
+            packet_size: 3,
         };
 
         bitvmx.send_message(IncomingBitVMXApiMessages::SetFundingUtxo(

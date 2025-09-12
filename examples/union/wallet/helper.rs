@@ -1,6 +1,6 @@
 use crate::{participants::member::Member, MasterWallet};
 use anyhow::{anyhow, Result};
-use bitcoin::{Address, CompressedPublicKey, Network};
+use bitcoin::{Address, CompressedPublicKey, Network, Txid};
 use core::option::Option;
 use key_manager::{key_manager::KeyManager, key_store::KeyStore};
 use std::env;
@@ -9,7 +9,7 @@ use storage_backend::storage::Storage;
 use tracing::info;
 use tracing::warn;
 
-const FEE_RATE: u64 = 1; // sats/vbyte
+const TESTNET_FEE_RATE: u64 = 1; // sats/vbyte
 const MIN_FUNDS_RECOVERY: u64 = 5000;
 const TX_SIZE: u64 = 140;
 
@@ -51,9 +51,15 @@ pub fn wallet_info(network: Network) -> Result<()> {
     Ok(())
 }
 
-pub fn fund_members(wallet: &mut MasterWallet, members: &[Member], amount: u64) -> Result<()> {
+pub fn fund_members(
+    wallet: &mut MasterWallet,
+    members: &[Member],
+    amount: u64,
+) -> Result<Vec<Txid>> {
     info!("Funding members with {} sats each...", amount);
     non_regtest_warning(wallet.network(), "You are about to transfer REAL money.");
+
+    let fee_rate = get_fee_rate(wallet.network());
 
     let balance = wallet.wallet.balance();
     info!("Master wallet balance:");
@@ -61,6 +67,8 @@ pub fn fund_members(wallet: &mut MasterWallet, members: &[Member], amount: u64) 
     info!("Untrusted: {} sats", balance.untrusted_pending.to_sat());
     info!("Trusted: {} sats", balance.trusted_pending.to_sat());
     info!("Immature: {} sats", balance.immature.to_sat());
+
+    let mut txids = Vec::new();
 
     for member in members {
         let address = member.get_funding_address()?;
@@ -70,26 +78,32 @@ pub fn fund_members(wallet: &mut MasterWallet, members: &[Member], amount: u64) 
             .require_network(wallet.network())
             .expect("address not valid for this network");
 
-        let result = wallet.fund_address_with_fee(&checked_address, amount, Some(FEE_RATE));
-        if result.is_err() {
-            warn!(
-                "Failed to fund member {} at address {}: {}",
-                member.id,
-                checked_address,
-                result.as_ref().err().unwrap()
-            );
-            continue;
-        }
-        let tx = result?;
+        info!(
+            "Funding {} sats from member {}. Fee rate: {}",
+            amount, member.id, fee_rate
+        );
+        non_regtest_warning(wallet.network(), "You are about to transfer REAL money.");
+
+        let tx = match wallet.fund_address_with_fee(&checked_address, amount, Some(fee_rate)) {
+            Ok(tx) => tx,
+            Err(e) => {
+                warn!(
+                    "Failed to fund member {} at address {}: {}",
+                    member.id, checked_address, e
+                );
+                continue;
+            }
+        };
 
         let txid = tx.compute_txid();
+        txids.push(txid);
         info!("Funded member with txid: {}", txid);
         print_link(wallet.network(), txid);
     }
 
     info!("Master wallet balance after funding members:");
     print_balance(wallet)?;
-    Ok(())
+    Ok(txids)
 }
 
 pub fn print_members_balances(members: &[Member]) -> Result<()> {
@@ -115,7 +129,8 @@ pub fn print_link(network: Network, txid: bitcoin::Txid) {
 
 pub fn recover_funds(members: &[Member], address: String, network: Network) -> Result<()> {
     info!("Recovering funds to address: {}", address);
-    info!("Fee rate: {} sats/vbyte", FEE_RATE);
+    let fee_rate = get_fee_rate(network);
+    info!("Fee rate: {} sats/vbyte", fee_rate);
     non_regtest_warning(network, "You are about to transfer REAL money.");
 
     for member in members {
@@ -129,12 +144,12 @@ pub fn recover_funds(members: &[Member], address: String, network: Network) -> R
             continue;
         }
 
-        let amount = balance - FEE_RATE * TX_SIZE * 2; // leave some sats for fees. 2 factor is to considerate multiple inputs
+        let amount = balance - fee_rate * TX_SIZE * 2; // leave some sats for fees. 2 factor is to considerate multiple inputs
 
         info!("Recovering {} sats from member {}", amount, member.id);
         non_regtest_warning(network, "You are about to transfer REAL money.");
 
-        let txid = match member.send_funds(amount, address.clone(), Some(FEE_RATE)) {
+        let txid = match member.send_funds(amount, address.clone(), Some(fee_rate)) {
             Ok(txid) => txid,
             Err(e) => {
                 warn!(
@@ -267,4 +282,12 @@ pub fn print_balance(wallet: &MasterWallet) -> Result<()> {
     info!("Trusted: {} sats", balance.trusted_pending.to_sat());
     info!("Immature: {} sats", balance.immature.to_sat());
     Ok(())
+}
+
+fn get_fee_rate(network: Network) -> u64 {
+    if network == Network::Regtest {
+        10
+    } else {
+        TESTNET_FEE_RATE
+    }
 }

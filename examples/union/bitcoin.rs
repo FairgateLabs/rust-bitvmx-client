@@ -7,7 +7,6 @@ use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
 use bitvmx_client::config::Config;
-use bitvmx_wallet::wallet::{RegtestWallet, Wallet};
 use tracing::info;
 
 /// Number of blocks to mine initially to ensure sufficient coin maturity
@@ -95,11 +94,10 @@ pub fn stop_existing_bitcoind() -> Result<()> {
 
 pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind)> {
     let config = Config::new(Some("config/development.yaml".to_string()))?;
-
     // Clear indexer, monitor, key manager and wallet data.
     clear_db(&config.storage.path);
     clear_db(&config.key_storage.path);
-    Wallet::clear_db(&config.wallet)?;
+    // Wallet::clear_db(&config.wallet)?;
 
     // let bitcoind = Bitcoind::new(
     //     "bitcoin-regtest",
@@ -144,42 +142,3 @@ pub fn init_client(config: Config) -> Result<(BitcoinClient, Network)> {
 
     Ok((bitcoin_client, config.bitcoin.network))
 }
-
-// This method changes the parity of a keypair to be even, this is needed for Taproot.
-// fn adjust_parity(
-//     secp: &Secp256k1<All>,
-//     pubkey: SecpPublicKey,
-//     seckey: SecretKey,
-// ) -> (SecpPublicKey, SecretKey) {
-//     let (_, parity) = pubkey.x_only_public_key();
-
-//     if parity == Parity::Odd {
-//         (pubkey.negate(secp), seckey.negate())
-//     } else {
-//         (pubkey, seckey)
-//     }
-// }
-
-// pub fn emulated_user_keypair(
-//     secp: &Secp256k1<All>,
-//     bitcoin_client: &BitcoinClient,
-//     network: Network,
-// ) -> Result<(bitcoin::Address, BitcoinPubKey, SecretKey)> {
-//     let mut rng = OsRng;
-
-//     // emulate the user keypair
-//     let user_sk = SecretKey::new(&mut rng);
-//     let user_pk = SecpPublicKey::from_secret_key(secp, &user_sk);
-//     let (user_pk, user_sk) = adjust_parity(secp, user_pk, user_sk);
-//     let user_pubkey = BitcoinPubKey {
-//         compressed: true,
-//         inner: user_pk,
-//     };
-//     let user_address: bitcoin::Address = bitcoin_client.get_new_address(user_pubkey, network);
-//     info!(
-//         "User Address({}): {:?}",
-//         user_address.address_type().unwrap(),
-//         user_address
-//     );
-//     Ok((user_address, user_pubkey, user_sk))
-// }

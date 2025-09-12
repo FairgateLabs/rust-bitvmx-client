@@ -43,10 +43,13 @@ pub const USER_FUNDS: u64 = 102_000;
 pub const ADVANCE_FUNDS_FEE: u64 = 3000;
 pub const ACCEPT_PEGIN_SPEEDUP_FEE: u64 = 5000;
 pub const USER_TAKE_SPEEDUP_FEE: u64 = 3000;
-pub const NETWORK: Network = Network::Testnet;
-// pub const NETWORK: Network = Network::Regtest;
-pub const STREAM_DENOMINATION: u64 = 10_000;
 static mut SLOT_INDEX_COUNTER: usize = 0;
+
+// Network and stream denomination configuration
+pub const NETWORK: Network = Network::Testnet;
+pub const STREAM_DENOMINATION: u64 = 30_000;
+// pub const NETWORK: Network = Network::Regtest;
+// pub const STREAM_DENOMINATION: u64 = 100_000;
 
 pub fn main() -> Result<()> {
     log::configure_tracing();
@@ -239,8 +242,8 @@ pub fn cli_recover_funds() -> Result<()> {
     )?;
 
     committee.bitcoin_client.wait_for_blocks(1)?;
-
     thread::sleep(Duration::from_secs(5)); // wait for the wallet to update
+
     info!("Balances after funds recovery:");
     print_members_balances(committee.members.as_slice())?;
     print_balance(&wallet)?;
@@ -266,6 +269,7 @@ pub fn cli_fund_members() -> Result<()> {
 
     committee.bitcoin_client.wait_for_blocks(1)?;
 
+    thread::sleep(Duration::from_secs(10)); // wait for the wallet to update
     info!("Balances after funding:");
     print_members_balances(committee.members.as_slice())?;
 
@@ -287,17 +291,21 @@ pub fn committee() -> Result<Committee> {
         load_private_key_from_env(NETWORK),
         load_change_key_from_env(NETWORK),
     )?;
+
     let amount = STREAM_DENOMINATION * 3;
 
     fund_members(&mut wallet, committee.members.as_slice(), amount)?;
     // TODO: Fund user as well
-    committee.bitcoin_client.wait_for_blocks(2)?;
+
+    committee.bitcoin_client.wait_for_blocks(1)?;
+    thread::sleep(Duration::from_secs(10)); // wait for the wallet to update
 
     info!("Balances after funding:");
     print_members_balances(committee.members.as_slice())?;
 
     committee.setup_dispute_protocols()?;
-    committee.bitcoin_client.wait_for_blocks(2)?;
+    let blocks = if NETWORK == Network::Regtest { 10 } else { 2 };
+    committee.bitcoin_client.wait_for_blocks(blocks)?;
 
     info!("Balances after dispute core protocol:");
     print_members_balances(committee.members.as_slice())?;

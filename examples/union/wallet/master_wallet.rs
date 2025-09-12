@@ -1,3 +1,6 @@
+use core::time::Duration;
+use std::thread;
+
 use anyhow::Result;
 use bitcoin::{Address, Network, Transaction};
 use bitvmx_settings::settings::load_config_file;
@@ -73,6 +76,9 @@ impl MasterWallet {
                     // Don't fail the whole initialization, just warn
                 }
             }
+
+            info!("Waiting for regtest wallet to sync...");
+            thread::sleep(Duration::from_secs(25)); // wait for the wallet to update the 100 blocks. It only happens in regtest
         }
         Ok(())
     }

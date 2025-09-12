@@ -11,6 +11,7 @@ use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtx
 use bitvmx_client::types::OutgoingBitVMXApiMessages::{SPVProof, Transaction, TransactionInfo};
 
 use bitcoin::PublicKey;
+use core::cmp;
 use protocol_builder::types::Utxo;
 use std::collections::HashMap;
 use std::thread::{self};
@@ -54,11 +55,14 @@ impl Committee {
                 &prefixed_name(network_prefix, "op_2"),
                 ParticipantRole::Prover,
             )?,
-            // Member::new(&prefixed_name(network_prefix, "op_3", ParticipantRole::Prover)?,
-            Member::new(
-                &prefixed_name(network_prefix, "op_4"),
-                ParticipantRole::Verifier,
-            )?,
+            // Member::new(
+            //     &prefixed_name(network_prefix, "op_3"),
+            //     ParticipantRole::Prover,
+            // )?,
+            // Member::new(
+            //     &prefixed_name(network_prefix, "op_4"),
+            //     ParticipantRole::Verifier,
+            // )?,
         ];
 
         let (client, network) = init_client(members[0].config.clone())?;
@@ -313,13 +317,17 @@ impl Committee {
             .collect()
     }
 
+    fn min_speedup_funds(&self, stream_denomination: u64) -> u64 {
+        return cmp::max(stream_denomination / 10, 40_000);
+    }
+
     fn init_funds(
         &mut self,
     ) -> Result<(HashMap<PublicKey, PartialUtxo>, HashMap<PublicKey, Utxo>)> {
         let mut funding_utxos_per_member: HashMap<PublicKey, PartialUtxo> = HashMap::new();
         let mut speedup_funding_utxos_per_member: HashMap<PublicKey, Utxo> = HashMap::new();
         let funding_amounts = FundingAmount {
-            speedup: self.stream_denomination / 10,
+            speedup: self.min_speedup_funds(self.stream_denomination),
             protocol_funding: self.stream_denomination,
             advance_funds: self.stream_denomination * 12 / 10,
         };
