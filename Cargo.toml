@@ -60,6 +60,7 @@ bollard = "0.11.0"
 futures-util = "0.3"
 bitcoind = { git = "https://github.com/FairgateLabs/rust-bitcoind.git", branch = "v.0.0.2" }
 reqwest = "0.12.23"
+bitvmx-bitcoin-rpc = { path = "../rust-bitvmx-bitcoin-rpc", features = ["testing"] }
 
 zk-result = { git = "https://github.com/FairgateLabs/rust-bitvmx-zk-proof.git", branch = "v.0.0.2" }
 [features]
@@ -67,6 +68,8 @@ default = ["cardinal", "union"]
 cardinal = []
 union = []
 testpanic = []
+regtest = []
+testnet = []
 
 [[example]]
 name = "union"

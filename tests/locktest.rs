@@ -81,8 +81,8 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         let (bitcoin_client, wallet) = prepare_bitcoin_running()?;
         (bitcoin_client, None, wallet)
     } else {
-        let (client, deamon, wallet) = prepare_bitcoin()?;
-        (client, Some(deamon), wallet)
+        let (client, daemon, wallet) = prepare_bitcoin()?;
+        (client, daemon, wallet)
     };
 
     let (id_channel_pairs, mut instances) = if independent {
@@ -358,8 +358,8 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     info!("happy path secret: {}", fake_secret);
     info!("happy path public: {}", aggregated_happy_path);
 
-    if bitcoind.is_some() {
-        bitcoind.unwrap().stop()?;
+    if let Some(bitcoind_instance) = bitcoind {
+        bitcoind_instance.stop()?;
     }
     Ok(())
 }
@@ -434,7 +434,9 @@ pub fn test_send_lockreq_tx() -> Result<()> {
     // Mine 1 block to confirm transaction
     wallet.mine(1)?;
 
-    bitcoind.stop()?;
+    if let Some(bitcoind) = bitcoind {
+        bitcoind.stop()?;
+    }
 
     Ok(())
 }

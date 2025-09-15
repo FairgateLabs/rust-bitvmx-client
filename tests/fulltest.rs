@@ -1,4 +1,4 @@
-#![cfg(all(feature = "cardinal", test))]
+#![cfg(test)]
 use anyhow::Result;
 use bitcoin::{
     key::rand::rngs::OsRng,
@@ -39,7 +39,7 @@ mod common;
 mod fixtures;
 //mod integration;
 
-#[ignore]
+#[cfg(any(feature = "cardinal", feature = "regtest"))]
 #[test]
 pub fn test_full() -> Result<()> {
     config_trace();
@@ -534,6 +534,9 @@ pub fn test_full() -> Result<()> {
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
     info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
 
-    bitcoind.stop()?;
+     if let Some(ref bitcoind_instance) = bitcoind {
+        bitcoind_instance.stop()?;
+    }
+
     Ok(())
 }

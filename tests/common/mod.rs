@@ -115,45 +115,73 @@ pub const WALLET_NAME: &str = "wallet";
 pub const FUNDING_ID: &str = "fund_1";
 pub const FEE: u64 = 500;
 
-pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
+pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
     let wallet_config = bitvmx_settings::settings::load_config_file::<
         bitvmx_wallet::wallet::config::Config,
     >(Some("config/wallet_regtest.yaml".to_string()))?;
+
 
     // Clear indexer, monitor, key manager and wallet data.
     clear_db(&wallet_config.storage.path);
     clear_db(&wallet_config.key_storage.path);
     Wallet::clear_db(&wallet_config.wallet)?;
 
-    let bitcoind = Bitcoind::new_with_flags(
-        "bitcoin-regtest",
-        "ruimarinho/bitcoin-core",
-        wallet_config.bitcoin.clone(),
-        BitcoindFlags {
-            min_relay_tx_fee: 0.00001,
-            block_min_tx_fee: 0.00001,
-            debug: 1,
-            fallback_fee: 0.0002,
-        },
-    );
-    info!("Starting bitcoind");
-    bitcoind.start()?;
+    let is_ci = std::env::var("GITHUB_ACTIONS").is_ok();
 
-    let bitcoin_client = BitcoinClient::new(
-        &wallet_config.bitcoin.url,
-        &wallet_config.bitcoin.username,
-        &wallet_config.bitcoin.password,
-    )?;
+    let bitcoind = if is_ci {
+        info!("Running in CI - using external bitcoind from docker-compose");
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        None
+    } else {
+        let bitcoind_instance = Bitcoind::new_with_flags(
+            "bitcoin-regtest",
+            "ruimarinho/bitcoin-core",
+            wallet_config.bitcoin.clone(),
+            BitcoindFlags {
+                min_relay_tx_fee: 0.00001,
+                block_min_tx_fee: 0.00008,
+                debug: 1,
+                fallback_fee: 0.0002,
+            },
+        );
+        info!("Starting bitcoind");
+        bitcoind_instance.start()?;
+        Some(bitcoind_instance)
+    };
+
+    let bitcoin_client = if is_ci {
+        // In CI mode, use the wallet-specific endpoint to avoid RPC wallet errors
+        BitcoinClient::new_with_wallet(
+            &wallet_config.bitcoin.url,
+            &wallet_config.bitcoin.username,
+            &wallet_config.bitcoin.password,
+            &wallet_config.bitcoin.wallet,
+        )?
+    } else {
+        // Local mode uses the regular client
+        BitcoinClient::new(
+            &wallet_config.bitcoin.url,
+            &wallet_config.bitcoin.username,
+            &wallet_config.bitcoin.password,
+        )?
+    };
 
     // Create a new local wallet
     let mut wallet =
         Wallet::from_config(wallet_config.bitcoin.clone(), wallet_config.wallet.clone())?;
-    // Initialize the wallet bitcoin RPC wallet
-    let _address = bitcoin_client.init_wallet(&wallet_config.bitcoin.wallet)?;
-    // Mine 100 blocks to ensure the coinbase output is mature
-    bitcoin_client.mine_blocks_to_address(INITIAL_BLOCK_COUNT, &_address)?;
-    // Fund the local wallet with 10 BTC from the bitcoin RPC wallet
-    bitcoin_client.fund_address(&wallet.receive_address()?, Amount::from_int_btc(10))?;
+    
+    if is_ci {        
+        info!("CI mode: initializing wallet and funding from pre-existing test_wallet");
+        let _address = bitcoin_client.init_wallet(&wallet_config.bitcoin.wallet)?;        
+        info!("Funding local wallet from test_wallet in CI mode");
+        bitcoin_client.fund_address(&wallet.receive_address()?, Amount::from_int_btc(10))?;
+    } else {
+        info!("Local mode: full initialization with mining and funding");
+        let _address = bitcoin_client.init_wallet(&wallet_config.bitcoin.wallet)?;
+        bitcoin_client.mine_blocks_to_address(INITIAL_BLOCK_COUNT, &_address)?;
+        bitcoin_client.fund_address(&wallet.receive_address()?, Amount::from_int_btc(10))?;
+    }
+    
     // Sync the wallet with the Bitcoin node to the latest block
     wallet.sync_wallet()?;
 
