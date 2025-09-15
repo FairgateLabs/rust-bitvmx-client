@@ -858,7 +858,7 @@ impl BitVMXApi for BitVMX {
         self.add_new_program(&id)?;
         info!(
             "Program Setup Finished {}",
-            self.program_context.comms.get_peer_id()
+            id
         );
 
         Ok(())

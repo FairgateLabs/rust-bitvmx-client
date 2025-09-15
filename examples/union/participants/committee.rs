@@ -129,7 +129,7 @@ impl Committee {
         let addresses = self.get_addresses();
 
         self.all(|op: &mut Member| {
-            op.setup_dispute_protocols(
+            op.setup_dispute_core(
                 seed,
                 &members.clone(),
                 &funding_utxos_per_member,

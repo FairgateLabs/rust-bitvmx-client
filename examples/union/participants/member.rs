@@ -132,7 +132,7 @@ impl Member {
         Ok(())
     }
 
-    pub fn setup_dispute_protocols(
+    pub fn setup_dispute_core(
         &mut self,
         committee_id: Uuid,
         members: &Vec<MemberData>,
@@ -142,7 +142,7 @@ impl Member {
     ) -> Result<()> {
         info!(
             id = self.id,
-            "Setting up dispute protocols for member {}", self.id
+            "Setting up dispute core for member {}", self.id
         );
 
         DisputeCoreSetup::setup(
