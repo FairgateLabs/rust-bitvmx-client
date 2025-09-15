@@ -394,13 +394,23 @@ impl BitVMX {
                     self.program_context.broker_channel.send(L2_ID, data)?;
                     ack_news = AckNews::Coordinator(AckCoordinatorNews::InsufficientFunds(tx_id));
                 }
-                CoordinatorNews::DispatchTransactionError(_tx_id, _context_data, _counter) => {
+                CoordinatorNews::DispatchTransactionError(txid, _context_data, _counter) => {
                     error!(
                         "Dispatch Transaction Error: {:?} {:?} {}",
-                        _tx_id, _context_data, _counter
+                        txid, _context_data, _counter
                     );
+                    match self.wallet.get_wallet_tx(txid) {
+                        Ok(Some(wallet_tx)) => {
+                            self.wallet.cancel_tx(&wallet_tx.tx_node.tx)?;
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            error!("Error fetching transaction from wallet: {:?}", e);
+                        }
+                    }
+
                     ack_news =
-                        AckNews::Coordinator(AckCoordinatorNews::DispatchTransactionError(_tx_id));
+                        AckNews::Coordinator(AckCoordinatorNews::DispatchTransactionError(txid));
                 }
                 CoordinatorNews::DispatchSpeedUpError(
                     _tx_id,
@@ -1152,6 +1162,7 @@ impl BitVMXApi for BitVMX {
 
                 let txid = tx.compute_txid();
                 self.dispatch_transaction(from, id, tx.clone())?;
+                self.wallet.update_with_tx(&tx)?;
 
                 self.program_context.broker_channel.send(
                     from,
