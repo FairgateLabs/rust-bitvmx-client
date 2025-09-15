@@ -21,7 +21,7 @@ use bitvmx_client::{
 };
 use bitvmx_wallet::wallet::{RegtestWallet, Wallet};
 use common::{
-    config_trace, get_all, init_bitvmx, init_broker, mine_and_wait, prepare_bitcoin, send_all,
+    config_trace, get_all, init_bitvmx, init_broker, mine_and_wait, prepare_bitcoin_with_wallet_suffix, send_all,
     wait_message_from_channel,
 };
 use key_manager::verifier::SignatureVerifier;
@@ -80,8 +80,8 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         let (bitcoin_client, wallet) = prepare_bitcoin_running()?;
         (bitcoin_client, None, wallet)
     } else {
-        let (client, deamon, wallet) = prepare_bitcoin()?;
-        (client, Some(deamon), wallet)
+        let (client, daemon, wallet) = prepare_bitcoin_with_wallet_suffix("test_lock_aux")?;
+        (client, daemon, wallet)
     };
 
     let (channels, mut instances) = if independent {
@@ -316,8 +316,8 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     info!("happy path secret: {}", fake_secret);
     info!("happy path public: {}", aggregated_happy_path);
 
-    if bitcoind.is_some() {
-        bitcoind.unwrap().stop()?;
+    if let Some(bitcoind_instance) = bitcoind {
+        bitcoind_instance.stop()?;
     }
     Ok(())
 }
@@ -358,7 +358,7 @@ pub fn hardcoded_unspendable() -> SecpPublicKey {
 pub fn test_send_lockreq_tx() -> Result<()> {
     common::config_trace();
 
-    let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
+    let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin_with_wallet_suffix("test_send_lockreq_tx")?;
 
     let mut rng = OsRng;
     let secp = secp256k1::Secp256k1::new();
@@ -392,7 +392,9 @@ pub fn test_send_lockreq_tx() -> Result<()> {
     // Mine 1 block to confirm transaction
     wallet.mine(1)?;
 
-    bitcoind.stop()?;
+    if let Some(bitcoind) = bitcoind {
+        bitcoind.stop()?;
+    }
 
     Ok(())
 }
@@ -401,6 +403,6 @@ pub fn test_send_lockreq_tx() -> Result<()> {
 #[test]
 pub fn test_prepare_bitcoin() -> Result<()> {
     common::config_trace();
-    prepare_bitcoin()?;
+    prepare_bitcoin_with_wallet_suffix("test_prepare_bitcoin")?;
     Ok(())
 }

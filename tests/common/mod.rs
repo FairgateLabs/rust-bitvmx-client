@@ -100,7 +100,11 @@ pub const WALLET_NAME: &str = "wallet";
 pub const FUNDING_ID: &str = "fund_1";
 pub const FEE: u64 = 500;
 
-pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
+pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
+    prepare_bitcoin_with_wallet_suffix("default")
+}
+
+pub fn prepare_bitcoin_with_wallet_suffix(suffix: &str) -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
     let wallet_config = bitvmx_settings::settings::load_config_file::<bitvmx_wallet::config::Config>(
         Some("config/wallet_regtest.yaml".to_string()),
     )?;
@@ -109,34 +113,58 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
     clear_db(&wallet_config.storage.path);
     clear_db(&wallet_config.key_storage.path);
     Wallet::clear_db(&wallet_config.wallet)?;
+    let is_ci = std::env::var("GITHUB_ACTIONS").is_ok();
 
-    let bitcoind = Bitcoind::new_with_flags(
-        "bitcoin-regtest",
-        "ruimarinho/bitcoin-core",
-        wallet_config.bitcoin.clone(),
-        BitcoindFlags {
-            min_relay_tx_fee: 0.00001,
-            block_min_tx_fee: 0.00008,
-            debug: 1,
-            fallback_fee: 0.0002,
-        },
-    );
-    info!("Starting bitcoind");
-    bitcoind.start()?;
+    let bitcoind = if is_ci {
+        info!("Running in CI - using external bitcoind from docker-compose");
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        None
+    } else {
+        Bitcoind::new_with_flags(
+            "bitcoin-regtest",
+            "ruimarinho/bitcoin-core",
+            wallet_config.bitcoin.clone(),
+            BitcoindFlags {
+                min_relay_tx_fee: 0.00001,
+                block_min_tx_fee: 0.00008,
+                debug: 1,
+                fallback_fee: 0.0002,
+            },
+        );
+        info!("Starting bitcoind");
+        bitcoind.start()?;
+        Some(bitcoind)
+    };
 
-    let bitcoin_client = BitcoinClient::new(
+    // Use unique wallet name per test to avoid conflicts
+    let unique_wallet_name = format!("{}_{}", wallet_config.bitcoin.wallet, suffix);
+    
+    // First create a temporary client to create the wallet only
+    let temp_bitcoin_client = BitcoinClient::new(
         &wallet_config.bitcoin.url,
         &wallet_config.bitcoin.username,
         &wallet_config.bitcoin.password,
+    )?;
+    
+    // Create or ensure wallet exists (ignore potential RPC path errors)
+    let _ = temp_bitcoin_client.create_wallet_only(&unique_wallet_name)?;
+    
+    // Now create the actual client that will use the specific wallet
+    let bitcoin_client = BitcoinClient::new_with_wallet(
+        &wallet_config.bitcoin.url,
+        &wallet_config.bitcoin.username,
+        &wallet_config.bitcoin.password,
+        &unique_wallet_name,
     )?;
 
     // Create a new local wallet
     let mut wallet =
         Wallet::from_config(wallet_config.bitcoin.clone(), wallet_config.wallet.clone())?;
-    // Initialize the wallet bitcoin RPC wallet
-    let _address = bitcoin_client.init_wallet(&wallet_config.bitcoin.wallet)?;
+    
+    // Get address from the local wallet instead of Bitcoin RPC
+    let address = wallet.receive_address()?;
     // Mine 100 blocks to ensure the coinbase output is mature
-    bitcoin_client.mine_blocks_to_address(INITIAL_BLOCK_COUNT, &_address)?;
+    bitcoin_client.mine_blocks_to_address(INITIAL_BLOCK_COUNT, &address)?;
     // Fund the local wallet with 10 BTC from the bitcoin RPC wallet
     bitcoin_client.fund_address(&wallet.receive_address()?, Amount::from_int_btc(10))?;
     // Sync the wallet with the Bitcoin node to the latest block

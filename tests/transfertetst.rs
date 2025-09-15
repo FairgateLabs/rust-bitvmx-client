@@ -6,7 +6,8 @@ use bitvmx_client::{
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
 use common::{
-    config_trace, get_all, init_bitvmx, init_utxo_new, mine_and_wait, prepare_bitcoin, send_all,
+    config_trace, get_all, init_bitvmx, init_utxo_new, mine_and_wait, prepare_bitcoin_with_wallet_suffix, send_all,
+    wait_message_from_channel,
 };
 use protocol_builder::scripts::{self, SignMode};
 use tracing::info;
@@ -25,7 +26,7 @@ pub fn test_transfer() -> Result<()> {
 
     //const NETWORK: Network = Network::Regtest;
 
-    let (bitcoin_client, bitcoind, mut wallet) = prepare_bitcoin()?;
+    let (bitcoin_client, bitcoind, mut wallet) = prepare_bitcoin_with_wallet_suffix("test_transfer")?;
 
     let (bitvmx_1, _address_1, bridge_1, _) = init_bitvmx("op_1", true)?;
     let (bitvmx_2, _address_2, bridge_2, _) = init_bitvmx("op_2", true)?;
@@ -165,6 +166,8 @@ pub fn test_transfer() -> Result<()> {
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
     info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
 
-    bitcoind.stop()?;
+    if let Some(bitcoind) = bitcoind {
+        bitcoind.stop()?;
+    }
     Ok(())
 }

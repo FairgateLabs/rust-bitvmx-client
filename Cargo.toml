@@ -69,12 +69,15 @@ bollard = "0.11.0"
 futures-util = "0.3"
 bitcoind = { path = "../rust-bitcoind" }
 bitvmx-wallet = { path = "../rust-bitvmx-wallet" }
+bitvmx-bitcoin-rpc = { path = "../rust-bitvmx-bitcoin-rpc", features = ["testing"] }
 
 [features]
 default = ["cardinal", "union"]
 cardinal = []
 union = []
 testpanic = []
+regtest = []
+testnet = []
 
 [[example]]
 name = "union"

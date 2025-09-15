@@ -1,4 +1,4 @@
-#![cfg(all(feature = "cardinal", test))]
+#![cfg(all(feature = "regtest", test))]
 use anyhow::Result;
 use bitcoin::{
     key::rand::rngs::OsRng,
@@ -26,7 +26,7 @@ use bitvmx_wallet::wallet::RegtestWallet;
 use common::{
     config_trace,
     dispute::{execute_dispute, prepare_dispute, ForcedChallenges},
-    get_all, init_bitvmx, init_utxo, mine_and_wait, prepare_bitcoin, send_all,
+    get_all, init_bitvmx, init_utxo, mine_and_wait, prepare_bitcoin_with_wallet_suffix, send_all,
     wait_message_from_channel,
 };
 use key_manager::verifier::SignatureVerifier;
@@ -39,7 +39,7 @@ mod common;
 mod fixtures;
 //mod integration;
 
-#[ignore]
+#[cfg(feature = "regtest")]
 #[test]
 pub fn test_full() -> Result<()> {
     config_trace();
@@ -48,7 +48,7 @@ pub fn test_full() -> Result<()> {
     let fake_drp = false;
     let fake_instruction = false;
 
-    let (bitcoin_client, bitcoind, mut wallet) = prepare_bitcoin()?;
+    let (bitcoin_client, bitcoind, mut wallet) = prepare_bitcoin_with_wallet_suffix("test_full")?;
 
     let (bitvmx_1, address_1, bridge_1, emulator_1) = init_bitvmx("op_1", true)?;
     let (bitvmx_2, address_2, bridge_2, emulator_2) = init_bitvmx("op_2", true)?;
@@ -512,6 +512,9 @@ pub fn test_full() -> Result<()> {
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
     info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
 
-    bitcoind.stop()?;
+     if let Some(ref bitcoind_instance) = bitcoind {
+        bitcoind_instance.stop()?;
+    }
+
     Ok(())
 }
