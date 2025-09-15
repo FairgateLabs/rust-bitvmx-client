@@ -237,11 +237,11 @@ pub fn init_utxo_new(
     amount: u64,
 ) -> Result<(Utxo, OutputType)> {
     info!("Funding address: {:?} with: {}", internal_key, amount);
-    let tx = wallet.fund_p2tr(
-        &XOnlyPublicKey::from(internal_key.clone()),
-        &spending_scripts,
+    let tx = wallet.fund_destination(Destination::P2TR(
+        XOnlyPublicKey::from(internal_key.clone()),
+        spending_scripts.clone(),
         amount,
-    )?;
+    ))?;
     wallet.mine(1)?;
     let utxo = Utxo::new(tx.compute_txid(), 0, amount, &*internal_key);
 
@@ -271,7 +271,11 @@ pub fn init_utxo(
         )]
     };
 
-    let tx = wallet.fund_p2tr(&aggregated_pub_key.into(), &spending_scripts, amount)?;
+    let tx = wallet.fund_destination(Destination::P2TR(
+        aggregated_pub_key.into(),
+        spending_scripts,
+        amount,
+    ))?;
     wallet.mine(1)?;
 
     let utxo = Utxo::new(tx.compute_txid(), 0, amount, &aggregated_pub_key);

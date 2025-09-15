@@ -449,7 +449,6 @@ pub fn set_speedup_funding(
         .to_string()?;
     channel.send(BITVMX_ID, command)?;
 
-    // let funds = wallet.fund_p2wpkh(pub_key, amount)?;
     std::thread::sleep(std::time::Duration::from_secs(1));
     info!("Mining a block to confirm speedup funding");
     wallet.mine(1)?;
