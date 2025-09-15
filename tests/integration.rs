@@ -147,7 +147,7 @@ pub fn test_drp() -> Result<()> {
         prover_win_out_type,
         false,
         false,
-        ForcedChallenges::No,
+        ForcedChallenges::Execution,
         None,
         None,
     )?;

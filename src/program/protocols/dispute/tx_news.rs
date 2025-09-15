@@ -206,6 +206,7 @@ pub fn handle_tx_news(
                         decision as u32,
                         format!("{}/{}", execution_path, "execution.json").to_string(),
                         fail_config_prover.clone(),
+                        emulator::decision::nary_search::NArySearchType::ConflictStep, //TODO: hardcoded
                     ),
                 })?;
                 program_context.broker_channel.send(
@@ -305,6 +306,7 @@ pub fn handle_tx_news(
                 hashes,
                 format!("{}/{}", execution_path, "execution.json").to_string(),
                 fail_config_verifier.clone(),
+                emulator::decision::nary_search::NArySearchType::ConflictStep, //TODO: hardcoded
             ),
         })?;
 

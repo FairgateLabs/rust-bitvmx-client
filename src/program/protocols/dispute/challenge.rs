@@ -1,7 +1,9 @@
+use std::collections::HashMap;
+
 use bitcoin::PublicKey;
 use bitcoin_script_riscv::riscv::challenges::*;
 use bitcoin_script_stack::stack::StackTracker;
-use bitvmx_cpu_definitions::{challenge::ChallengeType, constants::CODE_CHUNK_SIZE};
+use bitvmx_cpu_definitions::{challenge::ChallengeType, constants::CHUNK_SIZE};
 use emulator::loader::program_definition::ProgramDefinition;
 use protocol_builder::scripts::{self, ProtocolScript, SignMode};
 use tracing::info;
@@ -91,7 +93,54 @@ pub const ROM_CHALLENGE: [(&str, usize); 6] = [
     ("prover_read_2_last_step", 8),
 ];
 
-pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 9] = [
+pub const INITIALIZED_CHALLENGE: [(&str, usize); 7] = [
+    ("prover_read_1_address", 4),
+    ("prover_read_1_value", 4),
+    ("prover_read_1_last_step", 8),
+    ("prover_read_2_address", 4),
+    ("prover_read_2_value", 4),
+    ("prover_read_2_last_step", 8),
+    ("verifier_read_selector", 1),
+];
+
+pub const UNINITIALIZED_CHALLENGE: [(&str, usize); 7] = [
+    ("prover_read_1_address", 4),
+    ("prover_read_1_value", 4),
+    ("prover_read_1_last_step", 8),
+    ("prover_read_2_address", 4),
+    ("prover_read_2_value", 4),
+    ("prover_read_2_last_step", 8),
+    ("verifier_read_selector", 1),
+];
+
+// pub const READ_VALUE_CHALLENGE: [(&str, usize); 14] = [
+//     ("prover_read_addr_1", 4),
+//     ("prover_read_value_1", 4),
+//     ("prover_read_step_1", 8),
+//     ("prover_read_addr_2", 4),
+//     ("prover_read_value_2", 4),
+//     ("prover_read_step_2", 8),
+//     ("read_selector", 1),
+//     ("step_hash", 20),
+//     ("write_addr", 4),
+//     ("write_value", 4),
+//     ("write_pc", 4),
+//     ("write_micro", 1),
+//     ("next_hash", 20),
+//     ("write_step", 8),
+// ];
+
+// pub const CORRECT_HASH_CHALLENGE: [(&str, usize); 7] = [
+//     ("prover_hash", 20),
+//     ("verifier_hash", 20),
+//     ("write_addr", 4),
+//     ("write_value", 4),
+//     ("write_pc", 4),
+//     ("write_micro", 1),
+//     ("next_hash", 20),
+// ];
+
+pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 11] = [
     ("entry_point", &ENTRY_POINT_CHALLENGE),
     ("program_counter", &PROGRAM_COUNTER_CHALLENGE),
     ("halt", &HALT_CHALLENGE),
@@ -101,6 +150,8 @@ pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 9] = [
     ("input", &INPUT_CHALLENGE),
     ("opcode", &OPCODE_CHALLENGE),
     ("rom", &ROM_CHALLENGE),
+    ("initialized", &INITIALIZED_CHALLENGE),
+    ("uninitialized", &UNINITIALIZED_CHALLENGE),
 ];
 
 pub fn get_verifier_keys() -> Vec<(String, usize)> {
@@ -125,7 +176,7 @@ pub fn challenge_scripts(
     sign_mode: SignMode,
     keys: &Vec<ParticipantKeys>,
 ) -> Result<Vec<ProtocolScript>, BitVMXError> {
-    let mut program = program_definitions.load_program()?;
+    let program = program_definitions.load_program()?;
 
     let mut challenge_leaf_script = vec![];
 
@@ -173,11 +224,11 @@ pub fn challenge_scripts(
 
         match *challenge_name {
             "opcode" => {
-                let chunks = program.get_chunks(CODE_CHUNK_SIZE);
-                for (chunk_base, opcodes_chunk) in chunks.iter() {
+                let chunks = program.get_code_chunks(CHUNK_SIZE);
+                for opcodes_chunk in chunks.iter() {
                     let mut scripts = vec![reverse_script.clone()];
                     stack = StackTracker::new();
-                    opcode_challenge(&mut stack, *chunk_base, &opcodes_chunk);
+                    opcode_challenge(&mut stack, opcodes_chunk);
                     scripts.push(stack.get_script());
                     let winternitz_check = scripts::verify_winternitz_signatures_aux(
                         aggregated,
@@ -347,6 +398,34 @@ pub fn challenge_scripts(
                     challenge_current_leaf += rodata_words;
                 }
             }
+            "initialized" => {
+                let chunks = program.get_initialized_chunks(CHUNK_SIZE);
+                for initialized_chunk in chunks.iter() {
+                    let mut scripts = vec![reverse_script.clone()];
+                    stack = StackTracker::new();
+                    let mut stackvars = HashMap::new();
+                    for (name, size) in INITIALIZED_CHALLENGE.iter() {
+                        stackvars.insert(*name, stack.define((size * 2) as u32, name));
+                    }
+                    let read_selector =
+                        stack.move_var_sub_n(stackvars["verifier_read_selector"], 0);
+                    stack.drop(read_selector);
+                    scripts.push(stack.get_script());
+                    stack = StackTracker::new();
+                    initialized_challenge(&mut stack, initialized_chunk);
+
+                    scripts.push(stack.get_script());
+                    let winternitz_check = scripts::verify_winternitz_signatures_aux(
+                        aggregated,
+                        &names_and_keys,
+                        sign_mode,
+                        true,
+                        Some(scripts),
+                    )?;
+                    challenge_leaf_script.push(winternitz_check);
+                }
+                challenge_current_leaf += chunks.len() as u32;
+            }
             _ => {
                 challenge_current_leaf += 1;
                 let mut scripts = vec![reverse_script.clone()];
@@ -375,6 +454,20 @@ pub fn challenge_scripts(
                             code_sections,
                         );
                     }
+                    "uninitialized" => {
+                        let mut stackvars = HashMap::new();
+                        for (name, size) in INITIALIZED_CHALLENGE.iter() {
+                            stackvars.insert(*name, stack.define((size * 2) as u32, name));
+                        }
+                        let read_selector =
+                            stack.move_var_sub_n(stackvars["verifier_read_selector"], 0);
+                        stack.drop(read_selector);
+                        scripts.push(stack.get_script());
+                        stack = StackTracker::new();
+                        let ranges = program.get_uninitialized_ranges(program_definitions);
+                        uninitialized_challenge(&mut stack, &ranges);
+                    }
+
                     _ => panic!("Unknown challenge name: {}", challenge_name),
                 };
                 scripts.push(stack.get_script());
@@ -399,7 +492,7 @@ pub fn get_challenge_leaf(
     program_definitions: &ProgramDefinition,
     challenge: &ChallengeType,
 ) -> Result<Option<u32>, BitVMXError> {
-    let mut program = program_definitions.load_program()?;
+    let program = program_definitions.load_program()?;
     let name: &str;
     let mut dynamic_offset: u32 = 0; // For offset inside a specific challenge
 
@@ -481,7 +574,7 @@ pub fn get_challenge_leaf(
             dynamic_offset = (address - base_addr) / 4;
         }
 
-        ChallengeType::Opcode(_pc_read, chunk_index, _chunk_base, _opcodes_chunk) => {
+        ChallengeType::Opcode(_pc_read, chunk_index, _opcodes_chunk) => {
             name = "opcode";
             info!("Verifier chose {name} challenge");
 
@@ -510,6 +603,45 @@ pub fn get_challenge_leaf(
             let base_addr = program.find_section_by_name(".rodata").unwrap().start;
             dynamic_offset = address - base_addr;
         }
+        ChallengeType::InitializedData(_read_1, _read_2, read_selector, chunk_index, _chunk) => {
+            name = "initialized";
+            info!("Verifier chose {name} challenge");
+
+            set_input_u8(
+                id,
+                context,
+                &format!("verifier_read_selector"),
+                *read_selector as u8, //ASK: Why u32 if it's u8?
+            )?;
+            dynamic_offset = *chunk_index;
+        }
+        ChallengeType::UninitializedData(_read_1, _read_2, read_selector, _section_definition) => {
+            name = "uninitialized";
+            info!("Verifier chose {name} challenge");
+
+            set_input_u8(
+                id,
+                context,
+                &format!("verifier_read_selector"),
+                *read_selector as u8, //ASK: Why u32 if it's u8?
+            )?;
+        }
+        ChallengeType::ReadValueNArySearch(_) => todo!(),
+        ChallengeType::ReadValue {
+            read_1,
+            read_2,
+            read_selector,
+            step_hash,
+            trace,
+            next_hash,
+            step,
+        } => todo!(),
+        ChallengeType::CorrectHash {
+            prover_hash,
+            verifier_hash,
+            trace,
+            next_hash,
+        } => todo!(),
         ChallengeType::No => {
             name = "";
         }

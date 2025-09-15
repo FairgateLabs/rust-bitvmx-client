@@ -36,6 +36,7 @@ use uuid::Uuid;
 
 use super::{mine_and_wait, send_all, wait_message_from_channel};
 
+#[derive(Clone, Debug)]
 pub enum ForcedChallenges {
     TraceHash(ParticipantRole),
     TraceHashZero(ParticipantRole),
@@ -46,7 +47,8 @@ pub enum ForcedChallenges {
     ReadSection(ParticipantRole),
     WriteSection(ParticipantRole),
     ProgramCounterSection(ParticipantRole),
-    Rom(ParticipantRole),
+    InitializedChallenge(ParticipantRole),
+    UninitializedChallenge(ParticipantRole),
     No,
     Execution,
 }
@@ -72,7 +74,7 @@ pub fn prepare_dispute(
     program_path: Option<String>,
 ) -> Result<()> {
     let (fail_config_prover, fail_config_verifier, force, force_condition) =
-        fail_data.unwrap_or(get_fail_force_config(fail_force_config));
+        fail_data.unwrap_or(get_fail_force_config(fail_force_config.clone()));
 
     let set_fail_force_config = VariableTypes::FailConfiguration(
         fail_config_prover,
@@ -116,7 +118,12 @@ pub fn prepare_dispute(
     send_all(&id_channel_pairs, &set_prover_win_utxo)?;
 
     //let program_path = "../BitVMX-CPU/docker-riscv32/verifier/build/zkverifier-new-mul.yaml";
-    let hello_world = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
+    let hello_world = match fail_force_config {
+        ForcedChallenges::UninitializedChallenge(_) => {
+            "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world-uninitialized.yaml"
+        }
+        _ => "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml",
+    };
     let set_program = VariableTypes::String(program_path.unwrap_or(hello_world.to_string()))
         .set_msg(program_id, "program_definition")?;
     send_all(&id_channel_pairs, &set_program)?;
@@ -426,33 +433,6 @@ pub fn get_fail_force_config(
             ForceChallenge::No,
             ForceCondition::No,
         ),
-        ForcedChallenges::Rom(ParticipantRole::Prover) => {
-            let fail_execute = FailExecute {
-                step: 32,
-                fake_trace: TraceRWStep::new(
-                    32,
-                    TraceRead::new(4026531900, 2952790016, 31),
-                    TraceRead::new(2952790016, 0, LAST_STEP_INIT), // read a different value from ROM
-                    TraceReadPC::new(ProgramCounter::new(2147483708, 0), 509699),
-                    TraceStep::new(
-                        TraceWrite::new(4026531896, 0),
-                        ProgramCounter::new(2147483712, 0),
-                    ),
-                    None,
-                    MemoryWitness::new(
-                        MemoryAccessType::Register,
-                        MemoryAccessType::Memory,
-                        MemoryAccessType::Register,
-                    ),
-                ),
-            };
-            (
-                Some(FailConfiguration::new_fail_execute(fail_execute)),
-                None,
-                ForceChallenge::No,
-                ForceCondition::ValidInputWrongStepOrHash,
-            )
-        }
         ForcedChallenges::TraceHash(ParticipantRole::Verifier) => (
             None,
             Some(FailConfiguration::new_fail_hash(100)),
@@ -549,7 +529,7 @@ pub fn get_fail_force_config(
             ForceChallenge::AddressesSections,
             ForceCondition::ValidInputWrongStepOrHash,
         ),
-        ForcedChallenges::Rom(ParticipantRole::Verifier) => {
+        ForcedChallenges::InitializedChallenge(participant_role) => {
             let fail_execute = FailExecute {
                 step: 32,
                 fake_trace: TraceRWStep::new(
@@ -569,15 +549,55 @@ pub fn get_fail_force_config(
                     ),
                 ),
             };
-            (
+            let fail_execute = Some(FailConfiguration::new_fail_execute(fail_execute));
+            match participant_role {
+                ParticipantRole::Prover => (
+                    fail_execute,
+                    None,
+                    ForceChallenge::No,
+                    ForceCondition::ValidInputWrongStepOrHash,
+                ),
+                ParticipantRole::Verifier => (
+                    None,
+                    fail_execute,
+                    ForceChallenge::InitializedData,
+                    ForceCondition::ValidInputWrongStepOrHash,
+                ),
+            }
+        }
+        ForcedChallenges::UninitializedChallenge(participant_role) => {
+            let fail_args = vec![
+                "9",
+                "0xa0001004",
+                "0x11111100",
+                "0xa0001004",
+                "0xffffffffffffffff",
+            ]
+            .iter()
+            .map(|x| x.to_string())
+            .collect::<Vec<String>>();
+            let fail_read_2 = Some(FailConfiguration::new_fail_reads(FailReads::new(
                 None,
-                Some(FailConfiguration::new_fail_execute(fail_execute)),
-                ForceChallenge::RomData,
-                ForceCondition::ValidInputWrongStepOrHash,
-            )
+                Some(&fail_args),
+            )));
+
+            match participant_role {
+                ParticipantRole::Prover => (
+                    fail_read_2,
+                    None,
+                    ForceChallenge::No,
+                    ForceCondition::Always,
+                ),
+                ParticipantRole::Verifier => (
+                    None,
+                    fail_read_2,
+                    ForceChallenge::UninitializedData,
+                    ForceCondition::ValidInputWrongStepOrHash,
+                ),
+            }
         }
 
         ForcedChallenges::No => (None, None, ForceChallenge::No, ForceCondition::No),
-        ForcedChallenges::Execution => (None, None, ForceChallenge::No, ForceCondition::Allways),
+        ForcedChallenges::Execution => (None, None, ForceChallenge::No, ForceCondition::Always),
     }
 }
