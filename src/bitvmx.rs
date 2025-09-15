@@ -26,6 +26,7 @@ use bitcoin_coordinator::{
     AckMonitorNews, MonitorNews, TypesToMonitor,
 };
 
+use crate::shutdown::GracefulShutdown;
 use crate::spv_proof::get_spv_proof;
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
@@ -48,7 +49,6 @@ use std::{
 };
 use storage_backend::storage::{KeyValueStore, Storage};
 use tracing::{debug, error, info, warn};
-use crate::shutdown::GracefulShutdown;
 use uuid::Uuid;
 
 pub const THROTTLE_TICKS: u32 = 2;
@@ -180,7 +180,9 @@ impl BitVMX {
 
         // Drain subcomponents best-effort
         self.program_context.comms.drain_until_idle(deadline);
-        self.program_context.bitcoin_coordinator.drain_until_idle(deadline);
+        self.program_context
+            .bitcoin_coordinator
+            .drain_until_idle(deadline);
         self.broker.drain_until_idle(deadline);
 
         // Drain active programs: ensure we don't schedule new work and persist state
@@ -650,8 +652,12 @@ impl GracefulShutdown for BitVMX {
 
     fn drain_until_idle(&mut self, deadline: Instant) {
         while Instant::now() < deadline {
-            if let Err(e) = self.process_pending_messages() { warn!("drain pending msg err: {:?}", e); }
-            if let Err(e) = self.process_collaboration() { warn!("drain collaboration err: {:?}", e); }
+            if let Err(e) = self.process_pending_messages() {
+                warn!("drain pending msg err: {:?}", e);
+            }
+            if let Err(e) = self.process_collaboration() {
+                warn!("drain collaboration err: {:?}", e);
+            }
 
             if self.pending_messages.is_empty() {
                 break;
@@ -1299,10 +1305,12 @@ impl BitVMXApi for BitVMX {
 
                 self.reply(from, message)?;
             }
-            #[cfg(any(test, feature = "test"))]
+            #[cfg(feature = "testpanic")]
             IncomingBitVMXApiMessages::Test(s) => {
-                if s == "panic" { panic!("test-induced panic"); }
-                if s == "fatal" { 
+                if s == "panic" {
+                    panic!("test-induced panic");
+                }
+                if s == "fatal" {
                     use storage_backend::error::StorageError as KVStorageError;
                     return Err(BitVMXError::from(KVStorageError::WriteError));
                 }

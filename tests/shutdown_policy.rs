@@ -39,6 +39,7 @@ fn nonfatal_error_keeps_looping() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "testpanic")]
 #[test]
 #[ignore]
 fn fatal_error_triggers_shutdown() -> Result<()> {
@@ -62,6 +63,7 @@ fn fatal_error_triggers_shutdown() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "testpanic")]
 #[test]
 #[ignore]
 fn panic_triggers_shutdown() -> Result<()> {

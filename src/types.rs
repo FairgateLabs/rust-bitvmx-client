@@ -121,7 +121,7 @@ pub enum IncomingBitVMXApiMessages {
     Encrypt(Uuid, Vec<u8>, Vec<u8>),
     Decrypt(Uuid, Vec<u8>),
     Backup(String),
-    #[cfg(any(test, feature = "test"))]
+    #[cfg(feature = "testpanic")]
     Test(String),
     GetFundingAddress(Uuid),
     GetFundingBalance(Uuid),
