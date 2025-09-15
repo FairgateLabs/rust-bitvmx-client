@@ -1,5 +1,4 @@
 use anyhow::Result;
-use uuid::Uuid;
 
 use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID};
 
@@ -11,12 +10,15 @@ fn nonfatal_error_keeps_looping() -> Result<()> {
     common::config_trace();
 
     let (mut bitvmx, _addr, channel, _emulator) = common::init_bitvmx("op_1", false)?;
- 
+
     // 1) Simple Ping -> Pong
     channel.send(BITVMX_ID, IncomingBitVMXApiMessages::Ping().to_string()?)?;
     let msg = common::wait_message_from_channel(&channel, &mut vec![&mut bitvmx], true)?;
     let out = OutgoingBitVMXApiMessages::from_string(&msg.0)?;
-    match out { OutgoingBitVMXApiMessages::Pong() => {}, _ => panic!("expected Pong"), }
+    match out {
+        OutgoingBitVMXApiMessages::Pong() => {}
+        _ => panic!("expected Pong"),
+    }
 
     // 2) Send an invalid message (non-fatal: serde error) and ensure loop continues
     channel.send(BITVMX_ID, "not json".to_string())?;
@@ -29,11 +31,15 @@ fn nonfatal_error_keeps_looping() -> Result<()> {
     channel.send(BITVMX_ID, IncomingBitVMXApiMessages::Ping().to_string()?)?;
     let msg = common::wait_message_from_channel(&channel, &mut vec![&mut bitvmx], true)?;
     let out = OutgoingBitVMXApiMessages::from_string(&msg.0)?;
-    match out { OutgoingBitVMXApiMessages::Pong() => {}, _ => panic!("expected Pong after non-fatal"), }
+    match out {
+        OutgoingBitVMXApiMessages::Pong() => {}
+        _ => panic!("expected Pong after non-fatal"),
+    }
 
     Ok(())
 }
 
+#[cfg(feature = "testpanic")]
 #[test]
 #[ignore]
 fn fatal_error_triggers_shutdown() -> Result<()> {
@@ -42,7 +48,10 @@ fn fatal_error_triggers_shutdown() -> Result<()> {
     let (mut bitvmx, _addr, channel, _emulator) = common::init_bitvmx("op_1", false)?;
 
     // Trigger a deterministic fatal error via test-only path
-    channel.send(BITVMX_ID, IncomingBitVMXApiMessages::Test("fatal".into()).to_string()?)?;
+    channel.send(
+        BITVMX_ID,
+        IncomingBitVMXApiMessages::Test("fatal".into()).to_string()?,
+    )?;
     let err = bitvmx
         .process_api_messages()
         .expect_err("expected fatal error via test path");
@@ -54,6 +63,7 @@ fn fatal_error_triggers_shutdown() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "testpanic")]
 #[test]
 #[ignore]
 fn panic_triggers_shutdown() -> Result<()> {
@@ -62,7 +72,10 @@ fn panic_triggers_shutdown() -> Result<()> {
     let (mut bitvmx, _addr, channel, _emulator) = common::init_bitvmx("op_1", false)?;
 
     // Trigger a test-only panic via API message
-    channel.send(BITVMX_ID, IncomingBitVMXApiMessages::Test("panic".into()).to_string()?)?;
+    channel.send(
+        BITVMX_ID,
+        IncomingBitVMXApiMessages::Test("panic".into()).to_string()?,
+    )?;
 
     // The call should panic inside processing; catch it here
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

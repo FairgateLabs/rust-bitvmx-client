@@ -5,6 +5,8 @@ use std::{
 };
 
 use anyhow::Result;
+use bitcoin::Network;
+use bitvmx_wallet::wallet::{RegtestWallet, Wallet};
 use clap::{Arg, Command};
 use tracing::{debug, info, info_span};
 use tracing_subscriber::EnvFilter;
@@ -47,16 +49,21 @@ fn clear_db(path: &str) {
 
 fn init_bitvmx(opn: &str, fresh: bool) -> Result<BitVMX> {
     let config = Config::new(Some(format!("config/{}.yaml", opn)))?;
-    
+
     if fresh {
         clear_db(&config.storage.path);
         clear_db(&config.key_storage.path);
         clear_db(&config.broker_storage.path);
+
+        if config.bitcoin.network == Network::Regtest {
+            Wallet::clear_db(&config.wallet).unwrap();
+        }
     }
 
     info!("config: {:?}", config.storage.path);
 
-    let bitvmx = BitVMX::new(config)?;
+    let mut bitvmx = BitVMX::new(config)?;
+    bitvmx.sync_wallet()?;
     Ok(bitvmx)
 }
 
@@ -66,7 +73,12 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
     // Determine which operators to run
     let operator_names: Vec<&str> = match opn {
         "all" => vec!["op_1", "op_2", "op_3", "op_4"],
-        "all-testnet" => vec!["testnet_op_1", "testnet_op_2", "testnet_op_3", "testnet_op_4"],
+        "all-testnet" => vec![
+            "testnet_op_1",
+            "testnet_op_2",
+            "testnet_op_3",
+            "testnet_op_4",
+        ],
         single_op => vec![single_op],
     };
 

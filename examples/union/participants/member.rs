@@ -1,7 +1,15 @@
 use anyhow::Result;
+use bitcoin::address::NetworkUnchecked;
+use bitcoin::Amount;
+use bitcoin::ScriptBuf;
+use bitvmx_client::program::protocols::union::types::ADVANCE_FUNDS_INPUT;
+use bitvmx_client::program::variables::VariableTypes;
+use bitvmx_wallet::wallet::Destination;
 use core::clone::Clone;
+use protocol_builder::types::OutputType;
 use protocol_builder::types::Utxo;
 use std::collections::HashMap;
+use std::thread;
 use uuid::Uuid;
 
 use bitcoin::{PublicKey, Txid};
@@ -27,6 +35,19 @@ use crate::{
     },
     wait_until_msg,
 };
+
+#[derive(Clone)]
+pub struct FundingAmount {
+    pub speedup: u64,
+    pub protocol_funding: u64,
+    pub advance_funds: u64,
+}
+
+pub struct FundingUtxos {
+    pub speedup: PartialUtxo,
+    pub protocol_funding: PartialUtxo,
+    pub advance_funds: PartialUtxo,
+}
 
 #[derive(Clone)]
 pub struct Keyring {
@@ -72,6 +93,7 @@ impl Member {
 
     pub fn get_peer_info(&mut self) -> Result<P2PAddress> {
         self.bitvmx.get_comm_info()?;
+        thread::sleep(std::time::Duration::from_secs(5));
         let addr = expect_msg!(self.bitvmx, CommInfo(addr) => addr)?;
 
         self.address = Some(addr.clone());
@@ -412,5 +434,107 @@ impl Member {
         };
 
         Ok(counterparty_address.clone())
+    }
+
+    pub fn get_funding_address(&self) -> Result<bitcoin::Address<NetworkUnchecked>> {
+        self.bitvmx.get_funding_address(Uuid::new_v4())?;
+        thread::sleep(std::time::Duration::from_secs(1));
+        let address = wait_until_msg!(&self.bitvmx, FundingAddress(_, _address) => _address);
+        Ok(address)
+    }
+
+    pub fn get_funding_balance(&self) -> Result<u64> {
+        self.bitvmx.get_funding_balance(Uuid::new_v4())?;
+        thread::sleep(std::time::Duration::from_secs(1));
+        let amount = wait_until_msg!(&self.bitvmx, FundingBalance(_, _amount) => _amount);
+        Ok(amount)
+    }
+
+    pub fn send_funds(&self, amount: u64, address: String, fee_rate: Option<u64>) -> Result<Txid> {
+        self.bitvmx.send_funds(
+            Uuid::new_v4(),
+            Destination::Address(address, amount),
+            fee_rate,
+        )?;
+        self.bitvmx.get_funding_address(Uuid::new_v4())?;
+        thread::sleep(std::time::Duration::from_secs(1));
+        let txid = wait_until_msg!(&self.bitvmx, FundsSent(_, _txid) => _txid);
+        Ok(txid)
+    }
+
+    pub fn init_funds(&mut self, amounts: FundingAmount) -> Result<FundingUtxos> {
+        let id = Uuid::new_v4();
+        let fee_rate = self.get_fee_rate();
+        let public_key = self.keyring.dispute_pubkey.unwrap();
+
+        // Send funds to the public key
+        info!(
+            "Funding dispute pubkey of {} with: {}",
+            self.id,
+            amounts.speedup + amounts.protocol_funding + amounts.advance_funds
+        );
+
+        self.bitvmx.send_funds(
+            id,
+            Destination::Batch(vec![
+                Destination::P2WPKH(public_key, amounts.speedup),
+                Destination::P2WPKH(public_key, amounts.protocol_funding),
+                Destination::P2WPKH(public_key, amounts.advance_funds),
+            ]),
+            Some(fee_rate),
+        )?;
+
+        thread::sleep(std::time::Duration::from_secs(2));
+        let txid = wait_until_msg!(
+            &self.bitvmx,
+            FundsSent(_, _txid) => _txid
+        );
+
+        info!("Funded. Txid: {}", txid);
+
+        let wpkh = public_key.wpubkey_hash().expect("key is compressed");
+        let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
+        let speedup_ot = OutputType::SegwitPublicKey {
+            value: Amount::from_sat(amounts.speedup),
+            script_pubkey: script_pubkey.clone(),
+            public_key: public_key,
+        };
+        let protocol_funding_ot = OutputType::SegwitPublicKey {
+            value: Amount::from_sat(amounts.protocol_funding),
+            script_pubkey: script_pubkey.clone(),
+            public_key: public_key,
+        };
+        let advance_funds_ot = OutputType::SegwitPublicKey {
+            value: Amount::from_sat(amounts.advance_funds),
+            script_pubkey: script_pubkey.clone(),
+            public_key: public_key,
+        };
+
+        // Output indexes should match the order in the Destination::Batch above
+        Ok(FundingUtxos {
+            speedup: (txid, 0, Some(amounts.speedup), Some(speedup_ot)),
+            protocol_funding: (
+                txid,
+                1,
+                Some(amounts.protocol_funding),
+                Some(protocol_funding_ot),
+            ),
+            advance_funds: (txid, 2, Some(amounts.advance_funds), Some(advance_funds_ot)),
+        })
+    }
+
+    pub fn set_advance_funds_input(&mut self, committee_id: Uuid, utxo: PartialUtxo) -> Result<()> {
+        self.bitvmx
+            .set_var(committee_id, ADVANCE_FUNDS_INPUT, VariableTypes::Utxo(utxo))?;
+
+        Ok(())
+    }
+
+    fn get_fee_rate(&self) -> u64 {
+        if self.config.bitcoin.network == bitcoin::Network::Regtest {
+            10
+        } else {
+            1
+        }
     }
 }

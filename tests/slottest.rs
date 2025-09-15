@@ -1,5 +1,4 @@
-#![cfg(feature = "cardinal")]
-
+#![cfg(all(feature = "cardinal", test))]
 use anyhow::Result;
 use bitcoin::Amount;
 use bitvmx_client::{
@@ -25,6 +24,7 @@ use common::{
 };
 use tracing::info;
 use uuid::Uuid;
+use bitvmx_wallet::wallet::RegtestWallet;
 
 use crate::common::set_speedup_funding;
 
@@ -52,7 +52,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
 
     //const NETWORK: Network = Network::Regtest;
 
-    let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
+    let (bitcoin_client, bitcoind, mut wallet) = prepare_bitcoin()?;
 
     let (bitvmx_1, address_1, bridge_1, emulator_1) = init_bitvmx("op_1", true)?;
     let (bitvmx_2, address_2, bridge_2, emulator_2) = init_bitvmx("op_2", true)?;
@@ -88,9 +88,9 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
     let funding_key_0 = msgs[0].public_key().unwrap().1;
     let funding_key_1 = msgs[1].public_key().unwrap().1;
     let funding_key_2 = msgs[2].public_key().unwrap().1;
-    set_speedup_funding(10_000_000, &funding_key_0, &channels[0], &wallet)?;
-    set_speedup_funding(10_000_000, &funding_key_1, &channels[1], &wallet)?;
-    set_speedup_funding(10_000_000, &funding_key_2, &channels[2], &wallet)?;
+    set_speedup_funding(10_000_000, &funding_key_0, &channels[0], &mut wallet)?;
+    set_speedup_funding(10_000_000, &funding_key_1, &channels[1], &mut wallet)?;
+    set_speedup_funding(10_000_000, &funding_key_2, &channels[2], &mut wallet)?;
 
     //==================================================
     //ask the peers to generate the aggregated public key
@@ -114,7 +114,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
 
     // Protocol fees funding
     let fund_value = Amount::from_sat(slot_protocol_dust_cost(3));
-    let utxo = init_utxo(&wallet, aggregated_pub_key, None, fund_value.to_sat())?;
+    let utxo = init_utxo(&mut wallet, aggregated_pub_key, None, fund_value.to_sat())?;
 
     let program_id = Uuid::new_v4();
     let slot_protocol_configuration = SlotProtocolConfiguration::new(

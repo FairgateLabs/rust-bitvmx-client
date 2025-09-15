@@ -709,6 +709,10 @@ impl AcceptPegInProtocol {
         context: &ProgramContext,
         utxo: PartialUtxo,
     ) -> Result<(), BitVMXError> {
+        info!(
+            id = self.ctx.my_idx,
+            "Updating operator take UTXO for AcceptPegInProtocol: {:?}", utxo
+        );
         context.globals.set_var(
             &self.pegin_request(context)?.committee_id,
             &LAST_OPERATOR_TAKE_UTXO,
