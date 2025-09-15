@@ -140,6 +140,12 @@ impl Committee {
             )
         })?;
 
+        let members_snapshot = self.members.clone();
+        let committee_id = self.committee_id;
+        self.all(|op: &mut Member| {
+            op.setup_dispute_channel(&members_snapshot, committee_id)
+        })?;
+
         Ok(self.public_key()?)
     }
 

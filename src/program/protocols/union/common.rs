@@ -76,6 +76,23 @@ pub fn get_dispute_pair_aggregated_key_pid(
     Uuid::from_bytes(hash[0..16].try_into().unwrap())
 }
 
+// Deterministic id for a dispute-channel instance (directional): from_idx -> to_idx
+pub fn get_dispute_channel_pid(
+    committee_id: Uuid,
+    from_idx: usize,
+    to_idx: usize,
+) -> Uuid {
+    let mut hasher = Sha256::new();
+
+    hasher.update(committee_id.as_bytes());
+    hasher.update(&from_idx.to_be_bytes());
+    hasher.update(&to_idx.to_be_bytes());
+    hasher.update("dispute_channel");
+
+    let hash = hasher.finalize();
+    Uuid::from_bytes(hash[0..16].try_into().unwrap())
+}
+
 pub fn create_transaction_reference(
     protocol: &mut protocol_builder::builder::Protocol,
     tx_name: &str,

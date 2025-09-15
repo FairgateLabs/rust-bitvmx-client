@@ -1,3 +1,16 @@
+use anyhow::Result;
+use uuid::Uuid;
+
+use crate::participants::member::Member;
+
+pub struct DisputeChannelSetup;
+
+impl DisputeChannelSetup {
+    pub fn setup(members: &Vec<Member>, committee_id: Uuid) -> Result<()> {
+         Ok(())
+    }
+}
+
 // fn setup_drp(
 //     &mut self,
 //     members: &Vec<Member>,
