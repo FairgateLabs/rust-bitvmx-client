@@ -58,6 +58,10 @@ impl BitcoinWrapper {
         }
         Ok(())
     }
+
+    pub fn network(&self) -> Network {
+        self.network
+    }
 }
 
 /// Helper function to clear database directories

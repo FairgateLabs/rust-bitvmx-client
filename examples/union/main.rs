@@ -154,7 +154,7 @@ pub fn cli_advance_funds() -> Result<()> {
 }
 
 pub fn cli_advance_funds_twice() -> Result<()> {
-    let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+    let (mut committee, mut user, _) = pegin_setup(2, NETWORK == Network::Regtest)?;
 
     // First advance should use funding UTXO
     let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
