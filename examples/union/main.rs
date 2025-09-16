@@ -33,7 +33,6 @@ mod wallet;
 pub const NETWORK: Network = Network::Regtest;
 pub const STREAM_DENOMINATION: u64 = 30_000;
 
-pub const USER_FUNDS: u64 = STREAM_DENOMINATION + 2_000;
 static mut SLOT_INDEX_COUNTER: usize = 0;
 
 pub fn main() -> Result<()> {
@@ -461,7 +460,9 @@ fn pegin_setup(
     let committee = committee(&mut wallet)?;
     let mut user = get_user()?;
 
-    fund_user_pegin_utxos(&mut wallet, &mut user, USER_FUNDS, pegin_quantity)?;
+    let amount = STREAM_DENOMINATION + user.get_request_pegin_fees();
+
+    fund_user_pegin_utxos(&mut wallet, &mut user, amount, pegin_quantity)?;
     if set_user_speedup {
         fund_user_speedup(
             &mut wallet,

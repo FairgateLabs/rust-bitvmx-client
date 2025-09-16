@@ -1,4 +1,7 @@
-use crate::{expect_msg, macros::wait_for_message_blocking, wait_until_msg};
+use crate::{
+    expect_msg, macros::wait_for_message_blocking, wait_until_msg,
+    wallet::helper::non_regtest_warning,
+};
 use anyhow::Result;
 use bitcoin::{
     absolute,
@@ -21,6 +24,9 @@ use bitvmx_client::{
     program::{protocols::union::types::SPEEDUP_VALUE, variables::PartialUtxo},
     types::{OutgoingBitVMXApiMessages::*, L2_ID},
 };
+
+const KEY_SPEND_FEE: u64 = 335;
+const OP_RETURN_FEE: u64 = 300;
 
 pub struct User {
     pub id: String,
@@ -172,17 +178,8 @@ impl User {
         stream_value: u64,
         packet_number: u64,
     ) -> Result<Transaction> {
-        pub const KEY_SPEND_FEE: u64 = 335;
-        pub const OP_RETURN_FEE: u64 = 300;
         pub const TIMELOCK_BLOCKS: u16 = 1;
-        let extra_fee = if self.network == Network::Regtest {
-            2000 - KEY_SPEND_FEE - OP_RETURN_FEE
-        } else {
-            0
-        };
-
-        let value = stream_value;
-        let fee = KEY_SPEND_FEE + OP_RETURN_FEE + extra_fee;
+        let fee = KEY_SPEND_FEE + OP_RETURN_FEE + self.get_extra_fee();
 
         // Fund the user address with enough to cover the taproot output + fees
         let input_utxo = match self.get_last_request_pegin_utxo() {
@@ -192,14 +189,14 @@ impl User {
                 return Err(anyhow::anyhow!("No UTXO available for request pegin"));
             }
         };
-        let input_amount = input_utxo.2.unwrap();
+        let input_value = input_utxo.2.unwrap();
+        let change_value = input_value - (stream_value + fee);
 
         info!(
-            "Using UTXO {}:{} with amount {} sats for request pegin",
-            input_utxo.0,
-            input_utxo.1,
-            input_utxo.2.unwrap_or(0)
+            "Creating request pegin transaction with value: {} sats, total fee: {} sats. Input value: {}. Change: {}",
+            stream_value, fee, input_value, change_value
         );
+        non_regtest_warning(self.network, "You are about to transfer REAL money.");
 
         // RSK Pegin values
         let rootstock_address = self.address_to_bytes(self.rsk_address)?;
@@ -216,7 +213,11 @@ impl User {
 
         // Outputs
         // Taproot output
-        let op_data = [rootstock_address.as_slice(), value.to_be_bytes().as_slice()].concat();
+        let op_data = [
+            rootstock_address.as_slice(),
+            stream_value.to_be_bytes().as_slice(),
+        ]
+        .concat();
         let script_op_return = op_return_script(op_data)?;
         let script_timelock = timelock(TIMELOCK_BLOCKS, &self.public_key, SignMode::Single);
 
@@ -233,7 +234,7 @@ impl User {
         );
 
         let taproot_output = TxOut {
-            value: Amount::from_sat(value),
+            value: Amount::from_sat(stream_value),
             script_pubkey: taproot_script_pubkey,
         };
 
@@ -251,7 +252,6 @@ impl User {
         let mut outputs = Vec::<TxOut>::from([taproot_output.clone(), op_return_output.clone()]);
 
         // Change output
-        let change_value = input_amount - (value + fee);
         if change_value > 546 {
             info!("Creating change output with value: {} sats", change_value);
             let wpkh = self.public_key.wpubkey_hash().expect("key is compressed");
@@ -273,7 +273,7 @@ impl User {
 
         let signed_transaction = self.sign_p2wpkh_transaction(
             &mut request_pegin_transaction,
-            [(0 as usize, input_amount)].to_vec(),
+            [(0 as usize, input_value)].to_vec(),
         )?;
 
         info!("Request pegin txid: {}", signed_transaction.compute_txid());
@@ -492,5 +492,17 @@ impl User {
 
     fn get_speedup_utxo(&self) -> Option<PartialUtxo> {
         self.speedup_utxo.clone()
+    }
+
+    fn get_extra_fee(&self) -> u64 {
+        if self.network == Network::Regtest {
+            1000
+        } else {
+            0
+        }
+    }
+
+    pub fn get_request_pegin_fees(&self) -> u64 {
+        return self.get_extra_fee() + OP_RETURN_FEE + KEY_SPEND_FEE;
     }
 }
