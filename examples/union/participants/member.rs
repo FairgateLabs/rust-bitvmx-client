@@ -26,6 +26,7 @@ use bitvmx_client::{
 
 use tracing::{debug, info};
 
+use crate::wallet::helper::print_link;
 use crate::{
     expect_msg,
     macros::wait_for_message_blocking,
@@ -491,6 +492,7 @@ impl Member {
         );
 
         info!("Funded. Txid: {}", txid);
+        print_link(self.config.bitcoin.network, txid);
 
         let wpkh = public_key.wpubkey_hash().expect("key is compressed");
         let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
