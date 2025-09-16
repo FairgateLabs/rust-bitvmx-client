@@ -41,8 +41,7 @@ pub fn init_bitvmx(
 ) -> Result<(BitVMX, CommsAddress, DualChannel, Option<DualChannel>)> {
     let config = Config::new(Some(format!("config/{}.yaml", role)))?;
     let allow_list = AllowList::from_file(&config.broker.allow_list)?;
-    let broker_config =
-        BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?)?;
+    let broker_config = BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
     let bridge_client = DualChannel::new(
         &broker_config,
         Cert::from_key_file(&config.components.l2.priv_key)?,
@@ -242,8 +241,7 @@ pub fn mine_and_wait(
 pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
     let config = Config::new(Some(format!("config/{}.yaml", role)))?;
     let allow_list = AllowList::from_file(&config.broker.allow_list)?;
-    let broker_config =
-        BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?)?;
+    let broker_config = BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
     let bridge_client = DualChannel::new(
         &broker_config,
         Cert::from_key_file(&config.components.l2.priv_key)?,

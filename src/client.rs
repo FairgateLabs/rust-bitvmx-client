@@ -35,12 +35,8 @@ impl BitVMXClient {
         client_config: &Component,
         allow_list: Arc<Mutex<AllowList>>,
     ) -> Result<Self> {
-        let config = rpc::BrokerConfig::new(
-            broker_config.port,
-            None,
-            broker_config.get_pubk_hash()?,
-            // Some(broker_config.id), //TODO:
-        )?;
+        let config =
+            rpc::BrokerConfig::new(broker_config.port, None, broker_config.get_pubk_hash()?);
         let channel = DualChannel::new(
             &config,
             Cert::from_key_file(&client_config.priv_key)?,

@@ -132,7 +132,7 @@ impl BitVMX {
             config.broker.port,
             Some(config.broker.ip),
             config.broker.get_pubk_hash()?,
-        )?;
+        );
         let broker = BrokerSync::new(
             &broker_config,
             broker_storage.clone(),
