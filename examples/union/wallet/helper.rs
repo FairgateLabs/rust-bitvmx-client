@@ -15,12 +15,12 @@ const TESTNET_FEE_RATE: u64 = 1; // sats/vbyte
 const MIN_FUNDS_RECOVERY: u64 = 5000;
 const TX_SIZE: u64 = 140;
 
-pub fn wallet_info(network: Network) -> Result<()> {
-    info!("Generating master wallet info for network {}...", network);
+pub fn create_wallet(network: Network) -> Result<()> {
+    info!("Generating wallet for network {}...", network);
 
     let mut config = bitvmx_client::config::Config::new(Some("config/op_1.yaml".to_string()))?;
-    config.key_storage.path = "/tmp/master_wallet/keys.db".to_string();
-    config.storage.path = "/tmp/master_wallet/storage.db".to_string();
+    config.key_storage.path = "/tmp/tmp_wallet/keys.db".to_string();
+    config.storage.path = "/tmp/tpm_wallet/storage.db".to_string();
 
     let key_derivation_seed: [u8; 32] = *b"1337beafdeadbeafdeadbeafdeadbeaf";
 
@@ -40,10 +40,7 @@ pub fn wallet_info(network: Network) -> Result<()> {
     let compressed = CompressedPublicKey::try_from(pubkey).unwrap();
     let address = Address::p2wpkh(&compressed, network);
 
-    let result = std::fs::remove_dir_all("/tmp/master_wallet");
-    info!("Master wallet temporary data removed: {:?}\n", result);
-
-    info!("Master wallet info:");
+    info!("Wallet info:");
     info!("  Pubkey: {}", pubkey);
     info!("  Privkey: {}", privkey);
     info!("  Address: {}", address);

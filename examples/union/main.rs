@@ -3,9 +3,9 @@ use crate::{
     participants::{committee::Committee, member::Member, user::User},
     wallet::{
         helper::{
-            ask_user_confirmation, fund_members, fund_user_pegin_utxos, fund_user_speedup,
-            load_change_key_from_env, load_private_key_from_env, print_balance, print_link,
-            print_members_balances, recover_funds, string_to_network, wallet_info,
+            ask_user_confirmation, create_wallet, fund_members, fund_user_pegin_utxos,
+            fund_user_speedup, load_change_key_from_env, load_private_key_from_env, print_balance,
+            print_link, print_members_balances, recover_funds, string_to_network,
         },
         master_wallet::MasterWallet,
     },
@@ -29,8 +29,8 @@ mod setup;
 mod wallet;
 
 // Network and stream denomination configuration
-// pub const NETWORK: Network = Network::Testnet;
-pub const NETWORK: Network = Network::Regtest;
+pub const NETWORK: Network = Network::Testnet;
+// pub const NETWORK: Network = Network::Regtest;
 pub const STREAM_DENOMINATION: u64 = 30_000;
 
 static mut SLOT_INDEX_COUNTER: usize = 0;
@@ -50,7 +50,7 @@ pub fn main() -> Result<()> {
         Some("advance_funds") => cli_advance_funds()?,
         Some("advance_funds_twice") => cli_advance_funds_twice()?,
         Some("invalid_reimbursement") => cli_invalid_reimbursement()?,
-        Some("wallet_info") => cli_wallet_info(args.get(2))?,
+        Some("create_wallet") => cli_create_wallet(args.get(2))?,
         Some("latency") => cli_latency(args.get(2))?,
         Some("balances") => cli_balances()?,
         Some("wallet_balance") => cli_wallet_balance()?,
@@ -86,7 +86,7 @@ fn print_usage() {
     println!("  cargo run --example union invalid_reimbursement     - Forces invalid reimbursement to test challenge tx");
     // Testing commands
     println!(
-        "  cargo run --example union wallet_info        - Print Master wallet info: key pair and address. (optionally pass network: regtest, testnet, bitcoin)"
+        "  cargo run --example union create_wallet        - Create wallet: key pair and address. (optionally pass network: regtest, testnet, bitcoin)"
     );
     println!("  cargo run --example union wallet_balance      - Print Master wallet balance");
     println!("  cargo run --example union latency             - Analyses latency to the Bitcoin node. (optionally pass network: regtest, testnet, bitcoin)");
@@ -99,9 +99,9 @@ fn print_usage() {
     println!("  cargo run --example union recover_funds       - Send all members funds to master wallet address");
 }
 
-fn cli_wallet_info(network: Option<&String>) -> Result<()> {
+fn cli_create_wallet(network: Option<&String>) -> Result<()> {
     let network = string_to_network(network)?;
-    wallet_info(network)?;
+    create_wallet(network)?;
     Ok(())
 }
 
@@ -189,7 +189,12 @@ pub fn cli_balances() -> Result<()> {
 }
 
 pub fn cli_wallet_balance() -> Result<()> {
-    let wallet = get_master_wallet()?;
+    let mut wallet = get_master_wallet()?;
+    let address = wallet.wallet.receive_address()?;
+
+    info!("Master Wallet info:");
+    info!("Address: {}", address);
+
     print_balance(&wallet)?;
     Ok(())
 }
