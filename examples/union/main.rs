@@ -149,7 +149,7 @@ pub fn cli_advance_funds() -> Result<()> {
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
     let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
-    advance_funds(&mut committee, slot_index)?;
+    advance_funds(&mut committee, user.public_key()?, slot_index)?;
     Ok(())
 }
 
@@ -158,11 +158,11 @@ pub fn cli_advance_funds_twice() -> Result<()> {
 
     // First advance should use funding UTXO
     let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
-    advance_funds(&mut committee, slot_index)?;
+    advance_funds(&mut committee, user.public_key()?, slot_index)?;
 
     // Second advance should use change UTXO and Operator Take UTXO
     let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
-    advance_funds(&mut committee, slot_index)?;
+    advance_funds(&mut committee, user.public_key()?, slot_index)?;
 
     Ok(())
 }
@@ -367,9 +367,12 @@ pub fn request_pegout() -> Result<()> {
     Ok(())
 }
 
-pub fn advance_funds(committee: &mut Committee, slot_index: usize) -> Result<()> {
+pub fn advance_funds(
+    committee: &mut Committee,
+    user_pubkey: PublicKey,
+    slot_index: usize,
+) -> Result<()> {
     // This came from the contracts
-    let user_public_key = "026e14224899cf9c780fef5dd200f92a28cc67f71c0af6fe30b5657ffc943f08f4"; // Placeholder for the actual user public key
     let pegout_id = vec![0; 32]; // Placeholder for the actual peg-out ID
 
     // Get the selected operator's take public key (simulating what Union Client would provide)
@@ -378,7 +381,7 @@ pub fn advance_funds(committee: &mut Committee, slot_index: usize) -> Result<()>
 
     committee.advance_funds(
         slot_index,
-        user_public_key.parse::<PublicKey>().unwrap(),
+        user_pubkey,
         pegout_id,
         selected_operator_pubkey,
         get_advance_funds_fee()?,
@@ -500,7 +503,7 @@ fn get_accept_pegin_fee() -> Result<u64, anyhow::Error> {
 fn get_advance_funds_fee() -> Result<u64, anyhow::Error> {
     match NETWORK {
         Network::Regtest => Ok(3000),
-        Network::Testnet => Ok(150),
+        Network::Testnet => Ok(300),
         _ => Err(anyhow::anyhow!("Unsupported network")),
     }
 }
