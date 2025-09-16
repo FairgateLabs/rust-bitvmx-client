@@ -96,12 +96,21 @@ impl Committee {
 
         let mut funding_utxos_per_member: HashMap<PublicKey, PartialUtxo> = HashMap::new();
         let mut speedup_funding_utxos_per_member: HashMap<PublicKey, Utxo> = HashMap::new();
+        let mut wt_funding_utxos_per_member: HashMap<PublicKey, PartialUtxo> = HashMap::new();
+
         for member in &self.members {
+            // Operator funding utxos
             funding_utxos_per_member.insert(
                 member.keyring.take_pubkey.unwrap(),
                 self.get_funding_utxo(10_000_000, &member.keyring.dispute_pubkey.unwrap())?,
             );
 
+            // Watchtower funding utxos
+            wt_funding_utxos_per_member.insert(
+                member.keyring.take_pubkey.unwrap(),
+                self.get_funding_utxo(10_000_000, &member.keyring.dispute_pubkey.unwrap())?,
+            );
+            
             let partial =
                 self.get_funding_utxo(10_000_000, &member.keyring.dispute_pubkey.unwrap())?;
             let utxo = Utxo::new(

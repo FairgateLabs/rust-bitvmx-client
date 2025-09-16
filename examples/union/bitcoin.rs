@@ -123,7 +123,7 @@ pub fn init_wallet() -> Result<Wallet> {
     wallet.mine(INITIAL_BLOCK_COUNT)?;
 
     wallet.create_wallet(WALLET_NAME)?;
-    wallet.regtest_fund(WALLET_NAME, FUNDING_ID, 100_000_000)?;
+    wallet.regtest_fund(WALLET_NAME, FUNDING_ID, 300_000_000)?;
 
     let _bitcoin_client = BitcoinClient::new(
         &config.bitcoin.url,
