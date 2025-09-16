@@ -4,7 +4,7 @@ use crate::{
     wallet::{
         helper::{
             ask_user_confirmation, fund_members, fund_user_pegin_utxos, fund_user_speedup,
-            load_change_key_from_env, load_private_key_from_env, print_balance,
+            load_change_key_from_env, load_private_key_from_env, print_balance, print_link,
             print_members_balances, recover_funds, string_to_network, wallet_info,
         },
         master_wallet::MasterWallet,
@@ -307,7 +307,11 @@ pub fn request_and_accept_pegin(
     thread::sleep(Duration::from_secs(1));
 
     let accept_pegin_txid = accept_pegin_tx.compute_txid();
-    if NETWORK == Network::Regtest {
+    info!("Accept peg-in TX dispatched. Txid: {}", accept_pegin_txid);
+    print_link(NETWORK, accept_pegin_txid);
+
+    if NETWORK == Network::Regtest || ask_user_confirmation("Dispatch speedup transaction? (y/n): ")
+    {
         user.create_and_dispatch_speedup(
             OutPoint {
                 txid: accept_pegin_txid.into(),
@@ -326,8 +330,7 @@ pub fn request_and_accept_pegin(
 }
 
 pub fn request_pegout() -> Result<()> {
-    let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
-
+    let (mut committee, mut user, _) = pegin_setup(1, true)?;
     let (slot_index, amount) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     let user_pubkey = user.public_key()?;
@@ -348,7 +351,11 @@ pub fn request_pegout() -> Result<()> {
         pegout_signature_message,
     )?;
 
-    if NETWORK == Network::Regtest {
+    info!("User take TX dispatched. Txid: {}", user_take_utxo.0);
+    print_link(NETWORK, user_take_utxo.0);
+
+    if NETWORK == Network::Regtest || ask_user_confirmation("Dispatch speedup transaction? (y/n): ")
+    {
         user.create_and_dispatch_user_take_speedup(user_take_utxo.clone(), get_user_take_fee()?)?;
     }
 
@@ -477,7 +484,7 @@ fn pegin_setup(
 fn get_user_take_fee() -> Result<u64, anyhow::Error> {
     match NETWORK {
         Network::Regtest => Ok(3000),
-        Network::Testnet => Ok(100),
+        Network::Testnet => Ok(300),
         _ => Err(anyhow::anyhow!("Unsupported network")),
     }
 }
@@ -485,7 +492,7 @@ fn get_user_take_fee() -> Result<u64, anyhow::Error> {
 fn get_accept_pegin_fee() -> Result<u64, anyhow::Error> {
     match NETWORK {
         Network::Regtest => Ok(5000),
-        Network::Testnet => Ok(200),
+        Network::Testnet => Ok(300),
         _ => Err(anyhow::anyhow!("Unsupported network")),
     }
 }
