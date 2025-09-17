@@ -321,18 +321,40 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             .unwrap()
             .number()? as u16;
 
+        let claim_prover = ClaimGate::new(
+            &mut protocol,
+            START_CH,
+            PROVER_WINS,
+            (prover_speedup_pub, prover_signs),
+            aggregated,
+            fee,
+            speedup_dust,
+            vec![verifier_speedup_pub],
+            None,
+            timelock_blocks,
+            vec![aggregated],
+        )?;
+
+        let claim_verifier = ClaimGate::new(
+            &mut protocol,
+            START_CH,
+            VERIFIER_WINS,
+            (verifier_speedup_pub, verifier_signs),
+            aggregated,
+            fee,
+            speedup_dust,
+            vec![prover_speedup_pub],
+            None,
+            timelock_blocks,
+            vec![aggregated],
+        )?;
+
         let mut prev_tx = START_CH.to_string();
         let mut input_tx = String::new();
 
         let (input_txs, input_txs_sizes, input_txs_offsets, _) =
             get_txs_configuration(&self.ctx.id, context)?;
 
-        //TODO: remove this
-        context.globals.set_var(
-            &self.ctx.id,
-            "input_words",
-            VariableTypes::Number(input_txs_sizes[0]),
-        )?;
         for (idx, tx_owner) in input_txs.iter().enumerate() {
             if tx_owner == "skip" || tx_owner == "prover_prev" {
                 continue;
@@ -372,20 +394,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             prev_tx = input_tx.clone();
         }
 
-        let claim_prover = ClaimGate::new(
-            &mut protocol,
-            START_CH,
-            PROVER_WINS,
-            (prover_speedup_pub, prover_signs),
-            aggregated,
-            fee,
-            speedup_dust,
-            vec![verifier_speedup_pub],
-            None,
-            timelock_blocks,
-            vec![aggregated],
-        )?;
-
         protocol.add_transaction(ACTION_PROVER_WINS)?;
         protocol.add_connection(
             "PROVER_ACTION_1",
@@ -402,7 +410,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             None,
         )?;
 
-        //let prover_win_amount = utxo_prover_win_action.2.unwrap();
         let output_type = utxo_prover_win_action.3.unwrap();
         protocol.add_external_transaction(EXTERNAL_ACTION)?;
         protocol.add_unknown_outputs(EXTERNAL_ACTION, utxo_prover_win_action.1)?;
@@ -426,20 +433,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             ACTION_PROVER_WINS,
             speedup_dust,
             &prover_speedup_pub,
-        )?;
-
-        let claim_verifier = ClaimGate::new(
-            &mut protocol,
-            START_CH,
-            VERIFIER_WINS,
-            (verifier_speedup_pub, verifier_signs),
-            aggregated,
-            fee,
-            speedup_dust,
-            vec![prover_speedup_pub],
-            None,
-            timelock_blocks,
-            vec![aggregated],
         )?;
 
         self.add_connection_with_scripts(
