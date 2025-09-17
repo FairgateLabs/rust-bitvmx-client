@@ -25,6 +25,7 @@ use bitcoin_coordinator::{
     types::{AckCoordinatorNews, AckNews, CoordinatorNews},
     AckMonitorNews, MonitorNews, TypesToMonitor,
 };
+use protocol_builder::graph::graph::GraphOptions;
 
 use crate::shutdown::GracefulShutdown;
 use crate::spv_proof::get_spv_proof;
@@ -1315,6 +1316,17 @@ impl BitVMXApi for BitVMX {
                 };
 
                 self.reply(from, message)?;
+            }
+            IncomingBitVMXApiMessages::GetProtocolVisualization(id) => {
+                let protocol_str = self
+                    .load_program(&id)?
+                    .protocol
+                    .load_protocol()?
+                    .visualize(GraphOptions::EdgeArrows)?;
+                self.reply(
+                    from,
+                    OutgoingBitVMXApiMessages::ProtocolVisualization(protocol_str),
+                )?;
             }
             #[cfg(feature = "testpanic")]
             IncomingBitVMXApiMessages::Test(s) => {
