@@ -100,6 +100,7 @@ impl User {
             stream_value,
             packet_number,
         )?;
+
         info!("Sent RSK pegin transaction to bitcoind");
         thread::sleep(std::time::Duration::from_secs(2));
 
@@ -157,10 +158,6 @@ impl User {
         // Get the transaction and verify it was created
         let request_pegin_tx = self.bitcoin_client.get_transaction(&txid)?.unwrap();
         let request_pegin_txid = request_pegin_tx.compute_txid();
-
-        // Mine blocks to include the transaction
-        self.bitcoin_client
-            .mine_blocks_to_address(1, &self.address)?;
 
         Ok(request_pegin_txid)
     }
