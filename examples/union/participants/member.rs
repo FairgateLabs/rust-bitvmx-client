@@ -28,7 +28,6 @@ use tracing::{debug, info};
 
 use crate::wallet::helper::print_link;
 use crate::{
-    expect_msg,
     macros::wait_for_message_blocking,
     setup::{
         accept_pegin_setup::AcceptPegInSetup, advance_funds_setup::AdvanceFunds,
@@ -95,7 +94,7 @@ impl Member {
     pub fn get_peer_info(&mut self) -> Result<P2PAddress> {
         self.bitvmx.get_comm_info()?;
         thread::sleep(std::time::Duration::from_secs(5));
-        let addr = expect_msg!(self.bitvmx, CommInfo(addr) => addr)?;
+        let addr = wait_until_msg!(&self.bitvmx, CommInfo(_addr) => _addr);
 
         self.address = Some(addr.clone());
         Ok(addr)
@@ -105,17 +104,17 @@ impl Member {
         // TODO what id should we use for these keys?
         let id = Uuid::new_v4();
         self.bitvmx.get_pubkey(id, true)?;
-        let take_pubkey = expect_msg!(self.bitvmx, PubKey(_, key) => key)?;
+        let take_pubkey = wait_until_msg!(&self.bitvmx, PubKey(_, _key) => _key);
         debug!(id = self.id, take_pubkey = ?take_pubkey, "Take pubkey");
 
         let id = Uuid::new_v4();
         self.bitvmx.get_pubkey(id, true)?;
-        let dispute_pubkey = expect_msg!(self.bitvmx, PubKey(_, key) => key)?;
+        let dispute_pubkey = wait_until_msg!(&self.bitvmx, PubKey(_, _key) => _key);
         debug!(id = self.id, dispute_pubkey = ?dispute_pubkey, "Dispute pubkey");
 
         let id = Uuid::new_v4();
         self.bitvmx.get_pubkey(id, true)?;
-        let communication_pubkey = expect_msg!(self.bitvmx, PubKey(_, key) => key)?;
+        let communication_pubkey = wait_until_msg!(&self.bitvmx, PubKey(_, _key) => _key);
         debug!(id = self.id, communication_pubkey = ?communication_pubkey, "Communication pubkey");
 
         self.keyring.take_pubkey = Some(take_pubkey);
@@ -185,7 +184,8 @@ impl Member {
 
         for i in 0..operator_count {
             // Wait for the dispute core setup to complete
-            let program_id = expect_msg!(self.bitvmx, SetupCompleted(program_id) => program_id)?;
+            let program_id =
+                wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
             info!(id = self.id, program_id = ?program_id, "Dispute core setup completed for operator index {}", i);
         }
 
@@ -396,7 +396,7 @@ impl Member {
             0,
         )?;
 
-        let aggregated_key = expect_msg!(self.bitvmx, AggregatedPubkey(_, key) => key)?;
+        let aggregated_key = wait_until_msg!(&self.bitvmx, AggregatedPubkey(_, _key) => _key);
         info!(
             id = self.id,
             "Key setup complete {}",
