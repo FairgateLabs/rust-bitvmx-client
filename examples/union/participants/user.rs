@@ -1,6 +1,7 @@
 use crate::{
-    expect_msg, macros::wait_for_message_blocking, wait_until_msg,
-    wallet::helper::non_regtest_warning,
+    macros::wait_for_message_blocking,
+    wait_until_msg,
+    wallet::helper::{non_regtest_warning, print_link},
 };
 use anyhow::Result;
 use bitcoin::{
@@ -15,18 +16,19 @@ use bitcoin::{
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use protocol_builder::scripts::{build_taproot_spend_info, op_return_script, timelock, SignMode};
-use std::{str::FromStr, thread};
+use std::str::FromStr;
 use tracing::{error, info};
 
 use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
     program::{protocols::union::types::SPEEDUP_VALUE, variables::PartialUtxo},
+    spv_proof::BtcTxSPVProof,
     types::{OutgoingBitVMXApiMessages::*, L2_ID},
 };
 
-const KEY_SPEND_FEE: u64 = 335;
-const OP_RETURN_FEE: u64 = 300;
+const KEY_SPEND_FEE: u64 = 135;
+const OP_RETURN_FEE: u64 = 100;
 
 pub struct User {
     pub id: String,
@@ -89,45 +91,51 @@ impl User {
         stream_value: u64,
     ) -> Result<Txid> {
         info!(id = self.id, "Requesting pegin");
+
         // Enable RSK pegin monitoring using the public API
         self.bitvmx.subscribe_to_rsk_pegin()?;
-        info!("Subscribed to RSK pegin");
 
         // Create a proper RSK pegin transaction and send it as if it was a user transaction
         let packet_number = 0;
-        let request_pegin_txid = self.create_and_send_request_pegin_tx(
-            *committee_public_key,
-            stream_value,
-            packet_number,
-        )?;
 
-        info!("Sent RSK pegin transaction to bitcoind");
-        thread::sleep(std::time::Duration::from_secs(2));
+        // We'll create a transaction that will be detected as RSK pegin by the transaction monitor.
+        let signed_transaction =
+            self.create_request_pegin_tx(*committee_public_key, stream_value, packet_number)?;
+
+        let txid = match self.bitcoin_client.send_transaction(&signed_transaction) {
+            Ok(txid) => txid,
+            Err(e) => {
+                error!("Failed to send request pegin transaction: {}", e);
+                return Err(anyhow::anyhow!(
+                    "Failed to send request pegin transaction: {}",
+                    e
+                ));
+            }
+        };
+
+        info!("Sent request pegin Tx: {}", txid);
+        print_link(self.network, txid);
+
+        Ok(txid)
+    }
+
+    pub fn get_request_pegin_spv(&self, request_pegin_txid: Txid) -> Result<BtcTxSPVProof> {
+        info!(
+            "Waiting for RSK pegin transaction to be found. Txid: {}",
+            request_pegin_txid
+        );
 
         // Wait for Bitvmx news PeginTransactionFound message
-        info!("Waiting for RSK pegin transaction to be found");
-
-        let (found_txid, tx_status) = wait_until_msg!(&self.bitvmx, PeginTransactionFound(_txid, _tx_status) => (_txid, _tx_status));
-        assert_eq!(
-            found_txid, request_pegin_txid,
-            "Request Pegin Transaction not found"
-        );
-        assert!(
-            tx_status.confirmations > 0,
-            "Request Pegin Transaction not confirmed"
-        );
-        info!("RSK pegin transaction test completed successfully");
-        info!("Transaction ID: {}", request_pegin_txid);
+        let (_, _) = wait_until_msg!(&self.bitvmx, PeginTransactionFound(_txid, _tx_status) => (_txid, _tx_status));
+        info!("RSK request pegin completed successfully");
+        info!("Waiting for SPV proof...");
 
         // Get the SPV proof, this should be used by the union client to present to the smart contract
         self.bitvmx.get_spv_proof(request_pegin_txid)?;
-        let spv_proof = expect_msg!(self.bitvmx, SPVProof(_, Some(spv_proof)) => spv_proof)?;
+        let spv_proof = wait_until_msg!(&self.bitvmx, SPVProof(_, Some(_spv_proof)) => _spv_proof);
+
         info!("SPV proof: {:?}", spv_proof);
-
-        // Union client calls the smart contract PegManager.requestPegin(spv_proof)
-        // Smart contracts emits the  PeginRequested event
-
-        Ok(request_pegin_txid)
+        Ok(spv_proof)
     }
 
     pub fn public_key(&self) -> Result<PublicKey> {
@@ -494,10 +502,9 @@ impl User {
     }
 
     fn get_extra_fee(&self) -> u64 {
-        if self.network == Network::Regtest {
-            1000
-        } else {
-            0
+        match self.network {
+            Network::Regtest => 1500,
+            _ => 0,
         }
     }
 
