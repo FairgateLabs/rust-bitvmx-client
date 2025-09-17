@@ -33,25 +33,25 @@ broker:
   routing_table: config/routing_table.yaml
   port: 22222
   ip: 127.0.0.1
-  priv_key: ../rust-bitvmx-broker/certs/services.key
+  priv_key: config/keys/services.key
   storage: 
     path: /tmp/development/broker.db
 
 components:
   l2:
-    address: 127.0.0.1:7000
+    ip: 127.0.0.1
     priv_key: config/keys/l2.key
     id: 0
   bitvmx:
-    address: 127.0.0.1:7000
+    ip: 127.0.0.1
     priv_key: config/keys/bitvmx.key
     id: 0
   emulator:
-    address: 127.0.0.1:7000
+    ip: 127.0.0.1
     priv_key: config/keys/emulator.key
     id: 0
   prover:
-    address: 127.0.0.1:7000
+    ip: 127.0.0.1
     priv_key: config/keys/prover.key
     id: 0
     

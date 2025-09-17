@@ -34,11 +34,6 @@ pub struct ProgramContext {
     pub components_config: ComponentsConfig,
 }
 
-// pub const BITVMX_ID: u8 = 1;
-// pub const L2_ID: u8 = 100;
-// pub const EMULATOR_ID: u8 = 1000;
-// pub const PROVER_ID: u8 = 2000;
-
 impl ProgramContext {
     pub fn new(
         comms: OperatorComms,

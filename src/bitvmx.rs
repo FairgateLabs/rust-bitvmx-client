@@ -198,15 +198,17 @@ impl BitVMX {
 
     pub fn process_msg(
         &mut self,
-        comms_address: CommsAddress,
+        identifier: Identifier,
         msg: Vec<u8>,
         pend_to_back: bool,
     ) -> Result<(), BitVMXError> {
         let (_version, msg_type, program_id, data) = deserialize_msg(msg.clone())?;
-
         if let Some(mut program) = self.load_program(&program_id).ok() {
-            program.process_comms_message(comms_address, msg_type, data, &self.program_context)?;
+            let address = program.get_address_from_pubkey_hash(&identifier.pubkey_hash.clone())?;
+            program.process_comms_message(address, msg_type, data, &self.program_context)?;
         } else if let Some(mut collaboration) = self.get_collaboration(&program_id)? {
+            let comms_address =
+                collaboration.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
             collaboration.process_comms_message(
                 comms_address,
                 msg_type,
@@ -218,11 +220,11 @@ impl BitVMX {
             if pend_to_back {
                 info!("Pending message to back: {:?}", msg_type);
                 self.pending_messages
-                    .push_back((comms_address.to_string(), msg));
+                    .push_back((identifier.to_string(), msg));
             } else {
                 info!("Pending message to front: {:?}", msg_type);
                 self.pending_messages
-                    .push_front((comms_address.to_string(), msg));
+                    .push_front((identifier.to_string(), msg));
             }
         }
 
@@ -252,8 +254,7 @@ impl BitVMX {
         let message = message.unwrap();
         match message {
             ReceiveHandlerChannel::Msg(identifier, msg) => {
-                let comms_address = CommsAddress::new(identifier.address, identifier.pubkey_hash);
-                self.process_msg(comms_address, msg, true)?;
+                self.process_msg(identifier, msg, true)?;
                 return Ok(());
             }
             ReceiveHandlerChannel::Error(e) => {

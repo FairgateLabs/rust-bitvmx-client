@@ -136,7 +136,7 @@ fn run_emulator(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result
             &broker_config,
             Cert::from_key_file(&config.components.emulator.priv_key)?,
             Some(config.components.emulator.id),
-            config.components.emulator.address,
+            config.components.emulator.ip,
             Some(allow_list.clone()),
         )?;
 
@@ -177,7 +177,7 @@ fn run_zkp(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<()> 
             &broker_config,
             Cert::from_key_file(&config.components.prover.priv_key)?,
             Some(config.components.prover.id),
-            config.components.prover.address,
+            config.components.prover.ip,
             Some(allow_list.clone()),
         )?;
 
@@ -344,7 +344,7 @@ impl TestHelper {
                 &broker_config,
                 Cert::from_key_file(&config.components.l2.priv_key)?,
                 Some(config.components.l2.id),
-                config.components.l2.address,
+                config.components.l2.ip,
                 Some(allow_list.clone()),
             )?;
             let id = config.components.get_bitvmx_identifier()?;

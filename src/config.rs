@@ -63,7 +63,7 @@ impl BrokerConfig {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Component {
     pub priv_key: String,
-    pub address: SocketAddr,
+    pub ip: IpAddr,
     pub id: u8,
 }
 
@@ -72,14 +72,14 @@ impl Component {
         let cert = Cert::from_key_file(&self.priv_key.clone())?;
         Ok(cert.get_pubk_hash()?)
     }
-    pub fn get_address(&self) -> SocketAddr {
-        self.address
+    pub fn get_ip(&self) -> IpAddr {
+        self.ip
     }
     pub fn get_identifier(&self) -> Result<Identifier, ConfigError> {
         Ok(Identifier::new(
             self.get_pubk_hash()?,
             self.id,
-            self.get_address(),
+            self.get_ip(),
         ))
     }
 }
