@@ -5,7 +5,8 @@ use crate::{
         helper::{
             ask_user_confirmation, create_wallet, fund_members, fund_user_pegin_utxos,
             fund_user_speedup, load_change_key_from_env, load_private_key_from_env, print_balance,
-            print_link, print_members_balances, recover_funds, string_to_network,
+            print_link, print_members_balances, recover_funds, recover_user_funds,
+            string_to_network,
         },
         master_wallet::MasterWallet,
     },
@@ -56,6 +57,7 @@ pub fn main() -> Result<()> {
         Some("wallet_balance") => cli_wallet_balance()?,
         Some("fund_members") => cli_fund_members()?,
         Some("recover_funds") => cli_recover_funds()?,
+        Some("recover_user_funds") => cli_recover_user_funds()?,
         Some(cmd) => {
             eprintln!("Unknown command: {}", cmd);
             print_usage();
@@ -97,6 +99,7 @@ fn print_usage() {
         "  cargo run --example union fund_members        - Funds all committee members from master wallet with a testing amount"
     );
     println!("  cargo run --example union recover_funds       - Send all members funds to master wallet address");
+    println!("  cargo run --example union recover_user_funds  - Send user funds to master wallet address");
 }
 
 fn cli_create_wallet(network: Option<&String>) -> Result<()> {
@@ -218,6 +221,25 @@ pub fn cli_recover_funds() -> Result<()> {
     info!("Balances after funds recovery:");
     print_members_balances(committee.members.as_slice())?;
     print_balance(&wallet)?;
+
+    Ok(())
+}
+
+pub fn cli_recover_user_funds() -> Result<()> {
+    let user = get_user()?;
+    let mut master_wallet = get_master_wallet()?;
+    let address = master_wallet.wallet.receive_address()?;
+
+    info!("Master wallet balance before recovery:");
+    print_balance(&master_wallet)?;
+
+    recover_user_funds(&user, address.to_string())?;
+
+    wait_for_blocks(&BitcoinWrapper::new(user.bitcoin_client, user.network), 1)?;
+    thread::sleep(Duration::from_secs(5)); // wait for the wallet to update
+
+    info!("Master wallet balance after recovery:");
+    print_balance(&master_wallet)?;
 
     Ok(())
 }

@@ -2,7 +2,7 @@ use crate::participants::user::User;
 use crate::{participants::member::Member, MasterWallet};
 use anyhow::{anyhow, Result};
 use bitcoin::{Address, CompressedPublicKey, Network, Txid};
-use bitvmx_wallet::wallet::Destination;
+use bitvmx_wallet::wallet::{Destination, Wallet};
 use core::option::Option;
 use key_manager::{key_manager::KeyManager, key_store::KeyStore};
 use std::env;
@@ -205,6 +205,45 @@ pub fn recover_funds(members: &[Member], address: String, network: Network) -> R
         };
         print_link(network, txid);
     }
+    Ok(())
+}
+
+pub fn recover_user_funds(user: &User, address: String) -> Result<()> {
+    let mut wallet = Wallet::from_config(user.config.bitcoin.clone(), user.config.wallet.clone())?;
+
+    // Sync the wallet
+    info!("Syncing user wallet...");
+    wallet.sync_wallet()?;
+    info!("User wallet synced.");
+
+    let balance = wallet.balance().confirmed.to_sat();
+    info!("User wallet balance: {} sats", balance);
+
+    if balance <= MIN_FUNDS_RECOVERY {
+        info!(
+            "User wallet balance {} sats is too low to recover, skipping",
+            balance
+        );
+        return Ok(());
+    }
+
+    let fee_rate = get_fee_rate(user.network);
+    info!(
+        "Recovering {} sats from user to address: {}",
+        balance, address
+    );
+    info!("Fee rate: {} sats/vbyte", fee_rate);
+    non_regtest_warning(user.network, "You are about to transfer REAL money.");
+
+    let txid = wallet
+        .send_funds(
+            Destination::Address(address, balance - fee_rate * TX_SIZE * 2),
+            Some(fee_rate),
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to recover funds from user to address: {}", e))?
+        .compute_txid();
+    print_link(user.network, txid);
+
     Ok(())
 }
 

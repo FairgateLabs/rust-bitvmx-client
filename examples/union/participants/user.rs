@@ -40,6 +40,7 @@ pub struct User {
     pub rsk_address: &'static str, // This is a placeholder, should be replaced with actual RSK address
     request_pegin_utxos: Vec<PartialUtxo>,
     speedup_utxo: Option<PartialUtxo>,
+    pub config: Config,
 }
 
 impl User {
@@ -53,7 +54,7 @@ impl User {
         )?;
 
         let network = config.bitcoin.network;
-        let priv_key = PrivateKey::from_str(&config.wallet.receive_key.unwrap())?;
+        let priv_key = PrivateKey::from_str(&config.wallet.clone().receive_key.unwrap())?;
         let user_sk: SecretKey = priv_key.inner;
 
         let secp = Secp256k1::new();
@@ -74,6 +75,7 @@ impl User {
             rsk_address: "7ac5496aee77c1ba1f0854206a26dda82a81d6d8",
             request_pegin_utxos: vec![],
             speedup_utxo: None,
+            config,
         })
     }
 
