@@ -101,13 +101,10 @@ pub const FUNDING_ID: &str = "fund_1";
 pub const FEE: u64 = 500;
 
 pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
-<<<<<<< HEAD
     prepare_bitcoin_with_wallet_suffix("default")
 }
 
 pub fn prepare_bitcoin_with_wallet_suffix(suffix: &str) -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
-=======
->>>>>>> 203a18e (QA-BitVMX: update workspace)
     let wallet_config = bitvmx_settings::settings::load_config_file::<bitvmx_wallet::config::Config>(
         Some("config/wallet_regtest.yaml".to_string()),
     )?;
