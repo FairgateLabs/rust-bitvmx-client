@@ -387,23 +387,20 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         )?;
 
         protocol.add_transaction(ACTION_PROVER_WINS)?;
-
-        if context.globals.get_var(&self.ctx.id, "FAKE_RUN")?.is_none() {
-            protocol.add_connection(
-                "PROVER_ACTION_1",
-                &ClaimGate::tx_success(PROVER_WINS),
-                0.into(),
-                ACTION_PROVER_WINS,
-                InputSpec::Auto(
-                    SighashType::taproot_all(),
-                    SpendMode::All {
-                        key_path_sign: SignMode::Aggregate,
-                    },
-                ),
-                None,
-                None,
-            )?;
-        }
+        protocol.add_connection(
+            "PROVER_ACTION_1",
+            &ClaimGate::tx_success(PROVER_WINS),
+            0.into(),
+            ACTION_PROVER_WINS,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            None,
+        )?;
 
         //let prover_win_amount = utxo_prover_win_action.2.unwrap();
         let output_type = utxo_prover_win_action.3.unwrap();
@@ -665,7 +662,7 @@ impl DisputeResolutionProtocol {
 
     fn execute_script(
         &self,
-        context: &ProgramContext,
+        _context: &ProgramContext,
         aggregated: &PublicKey,
         sign_mode: SignMode,
         keys: &ParticipantKeys,
@@ -709,13 +706,6 @@ impl DisputeResolutionProtocol {
 
         let mut winternitz_check_list = vec![];
 
-        if context
-            .globals
-            .get_var(&self.ctx.id, "FAKE_INSTRUCTION")?
-            .is_some()
-        {
-            instruction_names = vec!["ecall".to_string()];
-        }
         for (_, name) in instruction_names.iter().enumerate() {
             let script = mapping[name].0.clone();
             let winternitz_check = scripts::verify_winternitz_signatures_aux(

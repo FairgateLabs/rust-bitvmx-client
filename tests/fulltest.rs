@@ -45,8 +45,6 @@ pub fn test_full() -> Result<()> {
     config_trace();
 
     const NETWORK: Network = Network::Regtest;
-    let fake_drp = false;
-    let fake_instruction = false;
 
     let (bitcoin_client, bitcoind, mut wallet) = prepare_bitcoin()?;
 
@@ -204,8 +202,6 @@ pub fn test_full() -> Result<()> {
         initial_output_type,
         prover_win_utxo,
         prover_win_output_type,
-        fake_drp,
-        fake_instruction,
         ForcedChallenges::No,
         None,
         None,
@@ -478,7 +474,6 @@ pub fn test_full() -> Result<()> {
         &bitcoin_client,
         &wallet,
         dispute_id,
-        fake_drp,
         None,
     )?;
 

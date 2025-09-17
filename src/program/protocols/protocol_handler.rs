@@ -274,7 +274,10 @@ pub trait ProtocolHandler {
 
         let signature = protocol
             .input_taproot_script_spend_signature(name, input_index as usize, leaf_index as usize)?
-            .unwrap();
+            .expect(&format!(
+                "Failed to get taproot signature for tx {} input {} leaf {}",
+                name, input_index, leaf_index
+            ));
         spending_args.push_taproot_signature(signature)?;
 
         if leaf_identification {

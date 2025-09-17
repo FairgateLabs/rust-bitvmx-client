@@ -581,8 +581,6 @@ pub fn test_all_aux(
         initial_out_type,
         prover_win_utxo,
         prover_win_out_type,
-        false,
-        false,
         ForcedChallenges::No,
         fail_data,
         program,

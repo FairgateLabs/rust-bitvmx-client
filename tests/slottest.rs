@@ -16,6 +16,7 @@ use bitvmx_client::{
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
 };
+use bitvmx_wallet::wallet::RegtestWallet;
 use common::{
     config_trace,
     dispute::{execute_dispute, prepare_dispute, ForcedChallenges},
@@ -24,7 +25,6 @@ use common::{
 };
 use tracing::info;
 use uuid::Uuid;
-use bitvmx_wallet::wallet::RegtestWallet;
 
 use crate::common::set_speedup_funding;
 
@@ -46,9 +46,6 @@ pub fn test_slot_only() -> Result<()> {
 
 pub fn test_slot(and_drp: bool) -> Result<()> {
     config_trace();
-
-    let fake_drp = false;
-    let fake_instruction = false;
 
     //const NETWORK: Network = Network::Regtest;
 
@@ -198,8 +195,6 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
             initial_output_type,
             prover_win_utxo,
             prover_win_output_type,
-            fake_drp,
-            fake_instruction,
             ForcedChallenges::No,
             None,
             Some("./verifiers/cardinal-verifier.yaml".to_string()),
@@ -263,7 +258,6 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
             &bitcoin_client,
             &wallet,
             dispute_id,
-            fake_drp,
             Some((gorth16proof, 3)),
         )?;
 
