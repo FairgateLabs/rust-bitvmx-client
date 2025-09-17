@@ -777,7 +777,7 @@ impl DisputeResolutionProtocol {
             (leaves, None)
         };
 
-        let output_type = OutputType::taproot(amount, &hardcoded_unspendable(), &leaves)?;
+        let output_type = OutputType::taproot(amount, aggregated, &leaves)?;
         //sign all except the timeout
         let scripts_to_sign = (0..leaves.len() - 2).collect::<Vec<_>>();
 
@@ -819,11 +819,8 @@ impl DisputeResolutionProtocol {
         let pb = ProtocolBuilder {};
         //put the amount here as there is no output yet
         if input_in_speedup {
-            let output_type = OutputType::taproot(
-                amount_speedup,
-                &hardcoded_unspendable(),
-                &leaves_speedup.unwrap(),
-            )?;
+            let output_type =
+                OutputType::taproot(amount_speedup, &aggregated, &leaves_speedup.unwrap())?;
             protocol.add_transaction_output(to, &output_type)?;
             let last = protocol.get_output_count(to)? - 1;
             self.add_vout_to_monitor(context, to, last)?;
@@ -869,12 +866,4 @@ impl DisputeResolutionProtocol {
             program_definition,
         ))
     }
-}
-
-pub fn hardcoded_unspendable() -> PublicKey {
-    // hardcoded unspendable
-    let key_bytes =
-        hex::decode("02f286025adef23a29582a429ee1b201ba400a9c57e5856840ca139abb629889ad")
-            .expect("Invalid hex input");
-    PublicKey::from_slice(&key_bytes).expect("Invalid public key")
 }
