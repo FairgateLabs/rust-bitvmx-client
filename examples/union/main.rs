@@ -509,7 +509,7 @@ fn pegin_setup(
         fund_user_speedup(
             &mut wallet,
             &mut user,
-            get_accept_pegin_fee()? * (pegin_quantity + 1) as u64,
+            get_accept_pegin_fee()? * (pegin_quantity * 2) as u64,
         )?;
     }
 
