@@ -214,7 +214,7 @@ impl ProtocolHandler for LockProtocol {
             LOCK_TX,
             &OutputType::taproot(
                 ordinal_utxo.2.unwrap(),
-                &unspendable,
+                &operators_aggregated_pub,
                 &[
                     taproot_script_eol_timelock_expired_tx_lock.clone(),
                     taproot_script_all_sign_tx_lock.clone(),
@@ -233,7 +233,7 @@ impl ProtocolHandler for LockProtocol {
             LOCK_TX,
             &OutputType::taproot(
                 amount,
-                &unspendable,
+                &operators_aggregated_pub,
                 &[taproot_script_protocol_fee_addres_signature_in_tx_lock],
             )?,
         )?;
@@ -243,7 +243,7 @@ impl ProtocolHandler for LockProtocol {
         self.add_happy_path(
             &mut protocol,
             &operators_aggregated_pub_happy_path,
-            &unspendable,
+            &operators_aggregated_pub,
             ordinal_utxo.2.unwrap(),
             self.checked_sub(amount, DUST)?,
         )?;
