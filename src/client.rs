@@ -9,17 +9,10 @@ use crate::{
 };
 use anyhow::Result;
 use bitcoin::{PublicKey, Transaction, Txid};
-use bitvmx_broker::{
-    channel::channel::DualChannel,
-    identification::identifier::Identifier,
-    rpc::{self, tls_helper::Cert},
-};
-use operator_comms::operator_comms::AllowList;
-use std::{sync::Arc, thread};
-use std::{
-    sync::Mutex,
-    time::{Duration, Instant},
-};
+use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
+use bitvmx_wallet::wallet::Destination;
+use std::thread;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -214,8 +207,8 @@ impl BitVMXClient {
     /// # Arguments
     /// * `id` - The ID of the message
     /// * `messages` - The messages to encrypt as bytes
-    /// * `public_key` - The public key to encrypt the messages with as PEM string
-    pub fn encrypt(&self, id: Uuid, messages: Vec<u8>, public_key: String) -> Result<()> {
+    /// * `public_key` - The public key to encrypt the messages with as pkcs8 DER bytes
+    pub fn encrypt(&self, id: Uuid, messages: Vec<u8>, public_key: Vec<u8>) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::Encrypt(id, messages, public_key))
     }
 
@@ -226,6 +219,27 @@ impl BitVMXClient {
     /// * `messages` - The messages to decrypt as bytes
     pub fn decrypt(&self, id: Uuid, messages: Vec<u8>) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::Decrypt(id, messages))
+    }
+
+    pub fn get_funding_address(&self, id: Uuid) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetFundingAddress(id))
+    }
+
+    pub fn get_funding_balance(&self, id: Uuid) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetFundingBalance(id))
+    }
+
+    pub fn send_funds(
+        &self,
+        id: Uuid,
+        destination: Destination,
+        fee_rate: Option<u64>,
+    ) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SendFunds(
+            id,
+            destination,
+            fee_rate,
+        ))
     }
 
     fn serialize_key(s: &str) -> String {

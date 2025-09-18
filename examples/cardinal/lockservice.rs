@@ -26,7 +26,7 @@ use bitvmx_client::{
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
 
-use bitvmx_wallet::wallet::Wallet;
+use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
 use operator_comms::operator_comms::AllowList;
 use protocol_builder::types::Utxo;
 use storage_backend::{storage::Storage, storage_config::StorageConfig};
@@ -46,7 +46,7 @@ pub fn wait_message_from_channel(channel: &DualChannel) -> Result<(String, Ident
         if i % 10 == 0 {
             let msg = channel.recv()?;
             if msg.is_some() {
-                //info!("Received message from channel: {:?}", msg);
+                info!("Received message from channel: {:?}", msg);
                 return Ok(msg.unwrap());
             }
         }
@@ -60,20 +60,17 @@ pub fn wait_message_from_channel(channel: &DualChannel) -> Result<(String, Ident
 pub fn prepare_bitcoin_running() -> Result<Wallet> {
     let config = Config::new(Some("config/op_1.yaml".to_string()))?;
 
-    let wallet_config = match config.bitcoin.network {
+    let wallet_config_file = match config.bitcoin.network {
         Network::Regtest => "config/wallet_regtest.yaml",
         Network::Testnet => "config/wallet_testnet.yaml",
         _ => panic!("Not supported network {}", config.bitcoin.network),
     };
 
-    let wallet_config = bitvmx_settings::settings::load_config_file::<
-        bitvmx_wallet::config::WalletConfig,
-    >(Some(wallet_config.to_string()))?;
-    let wallet = Wallet::new(wallet_config, true)?;
-    //wallet.mine(101)?;
-
-    //wallet.create_wallet("wallet")?;
-    wallet.regtest_fund("wallet", "fund", 100_000_000)?;
+    let wallet_config = bitvmx_settings::settings::load_config_file::<bitvmx_wallet::config::Config>(
+        Some(wallet_config_file.to_string()),
+    )?;
+    let mut wallet = Wallet::from_config(config.bitcoin, wallet_config.wallet)?;
+    wallet.fund()?;
 
     Ok(wallet)
 }
@@ -138,7 +135,7 @@ pub fn main() -> Result<()> {
 
 pub fn lockservice(channel: LocalChannel<BrokerStorage>, identifier: Identifier) -> Result<()> {
     init_tls();
-    let wallet = prepare_bitcoin_running()?;
+    let mut wallet = prepare_bitcoin_running()?;
 
     //TODO: A channel that talks directly with the broker without going through localhost loopback could be implemented
 
@@ -181,9 +178,24 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>, identifier: Identifier)
     let funding_key_0 = msgs[0].public_key().unwrap().1;
     let funding_key_1 = msgs[1].public_key().unwrap().1;
     let funding_key_2 = msgs[2].public_key().unwrap().1;
-    set_speedup_funding(10_000_000, &funding_key_0, &id_channel_pairs[0], &wallet)?;
-    set_speedup_funding(10_000_000, &funding_key_1, &id_channel_pairs[1], &wallet)?;
-    set_speedup_funding(10_000_000, &funding_key_2, &id_channel_pairs[2], &wallet)?;
+    set_speedup_funding(
+        10_000_000,
+        &funding_key_0,
+        &id_channel_pairs[0],
+        &mut wallet,
+    )?;
+    set_speedup_funding(
+        10_000_000,
+        &funding_key_1,
+        &id_channel_pairs[1],
+        &mut wallet,
+    )?;
+    set_speedup_funding(
+        10_000_000,
+        &funding_key_2,
+        &id_channel_pairs[2],
+        &mut wallet,
+    )?;
 
     info!("================================================");
     info!("Setting up aggregated addresses");
@@ -384,9 +396,9 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>, identifier: Identifier)
 
         std::thread::sleep(std::time::Duration::from_millis(3000));
         info!("Mining blocks to confirm lock tx");
-        for _ in 0..20 {
+        for _ in 0..10 {
             wallet.mine(1)?;
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            std::thread::sleep(std::time::Duration::from_millis(1000));
         }
         info!("Wait for confirmation of lock tx");
         get_all(&channels)?;
@@ -418,9 +430,9 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>, identifier: Identifier)
         info!("Sent happy path tx");
         std::thread::sleep(std::time::Duration::from_millis(1000));
         info!("Mining blocks to confirm happy path tx");
-        for _ in 0..20 {
+        for _ in 0..10 {
             wallet.mine(1)?;
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            std::thread::sleep(std::time::Duration::from_millis(1000));
         }
         info!("Wait for confirmation of happy path tx");
         let ret = get_all(&channels)?;
@@ -468,22 +480,20 @@ pub fn set_speedup_funding(
     amount: u64,
     pub_key: &BitcoinPubKey,
     id_channel_pair: &ParticipantChannel,
-    wallet: &Wallet,
+    wallet: &mut Wallet,
 ) -> Result<()> {
-    let fund_txid = wallet.fund_address(
-        "wallet",
-        "fund",
-        *pub_key,
-        &vec![amount],
-        1000,
-        false,
-        true,
-        None,
-    )?;
+    // Send funds to the public key
+    let funds = wallet.send_funds(Destination::P2WPKH(*pub_key, amount), Some(1))?;
 
+    let command = IncomingBitVMXApiMessages::DispatchTransaction(Uuid::new_v4(), funds.clone())
+        .to_string()?;
+    channel.send(BITVMX_ID, command)?;
+
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    info!("Mining a block to confirm speedup funding");
     wallet.mine(1)?;
 
-    let funds_utxo_0 = Utxo::new(fund_txid, 0, amount, pub_key);
+    let funds_utxo_0 = Utxo::new(funds.compute_txid(), 0, amount, pub_key);
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
     id_channel_pair
         .channel

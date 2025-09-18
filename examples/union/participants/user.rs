@@ -1,6 +1,4 @@
-use crate::{
-    bitcoin::emulated_user_keypair, expect_msg, macros::wait_for_message_blocking, wait_until_msg,
-};
+use crate::{expect_msg, macros::wait_for_message_blocking, wait_until_msg};
 use anyhow::Result;
 use bitcoin::{
     absolute,
@@ -8,13 +6,14 @@ use bitcoin::{
     key::Secp256k1,
     secp256k1::{self, All, Message, SecretKey},
     sighash::SighashCache,
-    transaction, Address as BitcoinAddress, Amount, Network, OutPoint,
-    PrivateKey as BitcoinPrivKey, PublicKey, PublicKey as BitcoinPubKey, ScriptBuf, Sequence,
-    Transaction, TxIn, TxOut, Txid, Witness, XOnlyPublicKey,
+    transaction, Address, Address as BitcoinAddress, Amount, CompressedPublicKey, Network,
+    OutPoint, PrivateKey, PublicKey, PublicKey as BitcoinPubKey, ScriptBuf, Sequence, Transaction,
+    TxIn, TxOut, Txid, Witness, XOnlyPublicKey,
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use operator_comms::operator_comms::AllowList;
 use protocol_builder::scripts::{build_taproot_spend_info, op_return_script, timelock, SignMode};
+use std::str::FromStr;
 use tracing::info;
 
 use bitvmx_client::{
@@ -51,10 +50,17 @@ impl User {
             &config.bitcoin.username,
             &config.bitcoin.password,
         )?;
-        let network = Network::Regtest;
+
+        let network = config.bitcoin.network;
+
+        let priv_key = PrivateKey::from_str(&config.wallet.receive_key.unwrap())?;
+        let user_sk: SecretKey = priv_key.inner;
+
         let secp = Secp256k1::new();
-        let (user_address, user_pubkey, user_sk) =
-            emulated_user_keypair(&secp, &bitcoin_client, network)?;
+        let user_pubkey = PublicKey::from_private_key(&secp, &priv_key);
+
+        let compressed_pubkey = CompressedPublicKey::from_private_key(&secp, &priv_key)?;
+        let user_address = Address::p2wpkh(&compressed_pubkey, network);
 
         Ok(Self {
             id: id.to_string(),
@@ -385,7 +391,7 @@ impl User {
         transaction: &mut Transaction,
         index_amount: Vec<(usize, u64)>,
     ) -> Result<Transaction> {
-        let user_bitcoin_privkey = BitcoinPrivKey {
+        let user_bitcoin_privkey = PrivateKey {
             compressed: true,
             network: self.network.into(),
             inner: self.secret_key,

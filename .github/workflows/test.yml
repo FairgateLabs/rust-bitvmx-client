@@ -21,4 +21,5 @@ jobs:
       submodule_path: 'rust-bitvmx-client'
       cargo_lock_path: 'rust-bitvmx-client/Cargo.lock'
       target_path: 'rust-bitvmx-client/target'
+      cargo_features: 'test'
     secrets: inherit

@@ -1,6 +1,6 @@
 bitcoin:
   network: regtest
-  url: http://127.0.0.1:18443
+  url: http://127.0.0.1:18443/
   username: foo
   password: rpcpassword
   wallet: test_wallet
@@ -11,10 +11,10 @@ key_manager:
 
 key_storage:
   password: secret_password_2
-  path: /tmp/op_1/keys.db
+  path: /tmp/regtest/op_1/keys.db
 
 storage:
-  path: /tmp/op_1/storage.db
+  path: /tmp/regtest/op_1/storage.db
 
 comms:
   address: 127.0.0.1:61180
@@ -57,3 +57,8 @@ client:
   retry: 1
   # Delay between retries in milliseconds
   retry_delay: 1000
+
+wallet:
+  db_path: /tmp/regtest/op_1/wallet.db
+  start_height: 0
+

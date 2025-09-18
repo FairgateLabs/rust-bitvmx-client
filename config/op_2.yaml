@@ -11,10 +11,10 @@ key_manager:
 
 key_storage:
   password: secret_password_3
-  path: /tmp/op_2/keys.db
+  path: /tmp/regtest/op_2/keys.db
 
 storage:
-  path: /tmp/op_2/storage.db
+  path: /tmp/regtest/op_2/storage.db
 
 comms:
   address: 127.0.0.1:61181
@@ -57,3 +57,7 @@ client:
   retry: 1
   # Delay between retries in milliseconds
   retry_delay: 1000
+
+wallet:
+  db_path: /tmp/regtest/op_2/wallet.db
+  start_height: 0

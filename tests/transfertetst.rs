@@ -1,5 +1,4 @@
-#![cfg(feature = "cardinal")]
-
+#![cfg(all(feature = "cardinal", test))]
 use anyhow::Result;
 use bitcoin::PublicKey;
 use bitvmx_client::{
@@ -26,7 +25,7 @@ pub fn test_transfer() -> Result<()> {
 
     //const NETWORK: Network = Network::Regtest;
 
-    let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
+    let (bitcoin_client, bitcoind, mut wallet) = prepare_bitcoin()?;
 
     let (bitvmx_1, _address_1, bridge_1, _) = init_bitvmx("op_1", true)?;
     let (bitvmx_2, _address_2, bridge_2, _) = init_bitvmx("op_2", true)?;
@@ -88,21 +87,21 @@ pub fn test_transfer() -> Result<()> {
         10_000_000,
         &funding_key_0,
         &channels[0],
-        &wallet,
+        &mut wallet,
         &instances[0].get_components_config().get_bitvmx_config(),
     )?;
     set_speedup_funding(
         10_000_000,
         &funding_key_1,
         &channels[1],
-        &wallet,
+        &mut wallet,
         &instances[1].get_components_config().get_bitvmx_config(),
     )?;
     set_speedup_funding(
         10_000_000,
         &funding_key_2,
         &channels[2],
-        &wallet,
+        &mut wallet,
         &instances[2].get_components_config().get_bitvmx_config(),
     )?;
 
@@ -124,11 +123,10 @@ pub fn test_transfer() -> Result<()> {
         scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate),
     ];
     let asset_utxo = init_utxo_new(
-        &wallet,
+        &mut wallet,
         &aggregated_pub_key,
         asset_spending_condition.clone(),
         10_000,
-        None,
     )?;
 
     let spending_condition = vec![scripts::check_aggregated_signature(
@@ -137,19 +135,17 @@ pub fn test_transfer() -> Result<()> {
     )];
     //emulate op_n_gid_i
     let op_gid_utxo = init_utxo_new(
-        &wallet,
+        &mut wallet,
         &aggregated_pub_key,
         spending_condition.clone(),
         1000,
-        None,
     )?;
     //emulate op_won
     let op_won_utxo = init_utxo_new(
-        &wallet,
+        &mut wallet,
         &aggregated_pub_key,
         spending_condition.clone(),
         500,
-        None,
     )?;
 
     // SETUP TRANSFER BEGIN

@@ -14,3 +14,9 @@ key_storage:
 
 storage:
   path: /tmp/testnet/wallet/storage.db
+
+wallet:
+  receive_key: cUVFBGCCjw5JGY2DUY5HTtKoHevMHs675aFkXVLvXeE4jV7GPeGb
+  change_key: cVTMy1VXsEqT4z3nT3w8vupAmqBTjZBmyyE38TYP9kju9rQWpK9F
+  db_path: /tmp/testnet/wallet/wallet.db
+  start_height: 4631993

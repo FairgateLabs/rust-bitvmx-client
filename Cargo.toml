@@ -54,9 +54,10 @@ bitvmx-job-dispatcher-types = { path = "../rust-bitvmx-job-dispatcher/jobtypes",
     "prover",
 ] }
 zk-result = { path = "../rust-bitvmx-zk-proof/zk-result" }
-
+bitvmx-wallet = { path = "../rust-bitvmx-wallet" }
 
 musig2 = { version = "0.2.3", features = ["serde", "rand"] }
+reqwest = "0.12.23"
 
 [dev-dependencies]
 bollard = "0.11.0"
@@ -68,6 +69,7 @@ bitvmx-wallet = { path = "../rust-bitvmx-wallet" }
 default = ["cardinal", "union"]
 cardinal = []
 union = []
+testpanic = []
 
 [[example]]
 name = "union"

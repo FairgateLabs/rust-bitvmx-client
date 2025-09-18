@@ -7,6 +7,7 @@ use key_manager::config::KeyManagerConfig;
 use operator_comms::operator_comms::PubKeyHash;
 use serde::{Deserialize, Serialize};
 use storage_backend::storage_config::StorageConfig;
+use bitvmx_wallet::config::WalletConfig;
 use tracing::info;
 
 use crate::errors::ConfigError;
@@ -123,6 +124,7 @@ pub struct Config {
     pub components: ComponentsConfig,
     pub coordinator_settings: Option<CoordinatorSettingsConfig>,
     pub coordinator: ThrotthleUpdate,
+    pub wallet: WalletConfig,
 }
 
 impl Config {

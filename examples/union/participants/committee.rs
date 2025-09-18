@@ -1,50 +1,76 @@
 use anyhow::Result;
-use bitcoin::{Transaction as BtcTransaction, Txid};
-use bitvmx_client::program::participant::CommsAddress;
+use bitcoin::{Network, Transaction as BtcTransaction, Txid};
+use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
+use bitvmx_client::program::participant::P2PAddress;
 use bitvmx_client::program::protocols::union::common::{
     get_accept_pegin_pid, get_dispute_aggregated_key_pid, get_take_aggreated_key_pid,
     get_user_take_pid,
 };
-use bitvmx_client::program::protocols::union::types::{
-    MemberData, ACCEPT_PEGIN_TX, ADVANCE_FUNDS_INPUT, USER_TAKE_TX,
-};
-use bitvmx_client::program::variables::VariableTypes;
+use bitvmx_client::program::protocols::union::types::{MemberData, ACCEPT_PEGIN_TX, USER_TAKE_TX};
 use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtxo};
 use bitvmx_client::types::OutgoingBitVMXApiMessages::{SPVProof, Transaction, TransactionInfo};
 
-use bitcoin::{Amount, PublicKey, ScriptBuf};
-use bitvmx_wallet::wallet::Wallet;
-use protocol_builder::types::{OutputType, Utxo};
+use bitcoin::PublicKey;
+use core::cmp;
+use protocol_builder::types::Utxo;
 use std::collections::HashMap;
 use std::thread::{self};
 use std::time::Duration;
 use tracing::{info, info_span};
 use uuid::Uuid;
 
-use crate::bitcoin::{init_wallet, FEE, WALLET_NAME};
+use crate::bitcoin::{init_client, BitcoinWrapper};
 use crate::macros::wait_for_message_blocking;
-use crate::participants::member::Member;
+use crate::participants::common::prefixed_name;
+use crate::participants::member::{FundingAmount, Member};
 use crate::wait_until_msg;
+use crate::wallet::helper::non_regtest_warning;
+
+const FUNDING_AMOUNT_PER_SLOT: u64 = 7_000; // an approximation in satoshis
+pub const PACKET_SIZE: u32 = 3; // number of slots per packet
+const SPEED_UP_MIN_FUNDS: u64 = 30_000; // minimum speedup funds in satoshis
 
 pub struct Committee {
     pub members: Vec<Member>,
     take_aggregation_id: Uuid,
     dispute_aggregation_id: Uuid,
     committee_id: Uuid,
-    pub wallet: Wallet,
     stream_denomination: u64,
+    pub bitcoin_client: BitcoinWrapper,
 }
 
 impl Committee {
-    pub fn new(stream_denomination: u64) -> Result<Self> {
+    pub fn new(stream_denomination: u64, network: Network) -> Result<Self> {
+        non_regtest_warning(network, "You are working with REAL money.");
+
+        let network_prefix = match network {
+            Network::Bitcoin => "mainnet",
+            Network::Testnet => "testnet",
+            Network::Regtest => "",
+            _ => panic!("Unsupported network"),
+        };
+
         let members = vec![
-            Member::new("op_1", ParticipantRole::Prover)?,
-            Member::new("op_2", ParticipantRole::Prover)?,
-            // Member::new("op_3", ParticipantRole::Prover)?,
-            // Member::new("op_4", ParticipantRole::Verifier)?,
+            Member::new(
+                &prefixed_name(network_prefix, "op_1"),
+                ParticipantRole::Prover,
+            )?,
+            Member::new(
+                &prefixed_name(network_prefix, "op_2"),
+                ParticipantRole::Prover,
+            )?,
+            // Member::new(
+            //     &prefixed_name(network_prefix, "op_3"),
+            //     ParticipantRole::Prover,
+            // )?,
+            // Member::new(
+            //     &prefixed_name(network_prefix, "op_4"),
+            //     ParticipantRole::Verifier,
+            // )?,
         ];
 
-        let wallet = init_wallet()?;
+        let (client, network) = init_client(members[0].config.clone())?;
+        let bitcoin_client = BitcoinWrapper::new(client, network);
         let committee_id = Uuid::new_v4();
         let take_aggregation_id = get_take_aggreated_key_pid(committee_id);
         let dispute_aggregation_id = get_dispute_aggregated_key_pid(committee_id);
@@ -54,8 +80,8 @@ impl Committee {
             take_aggregation_id,
             dispute_aggregation_id,
             committee_id,
-            wallet,
             stream_denomination,
+            bitcoin_client,
         })
     }
 
@@ -63,7 +89,7 @@ impl Committee {
         self.committee_id
     }
 
-    pub fn setup(&mut self) -> Result<PublicKey> {
+    pub fn setup_keys(&mut self) -> Result<()> {
         // gather all operator addresses
         // in a real scenario, operators should get this from the chain
         self.all(|op| op.get_peer_info())?;
@@ -90,41 +116,15 @@ impl Committee {
             )
         })?;
 
-        let seed = self.committee_id;
+        Ok(())
+    }
 
-        let mut funding_utxos_per_member: HashMap<PublicKey, PartialUtxo> = HashMap::new();
-        let mut speedup_funding_utxos_per_member: HashMap<PublicKey, Utxo> = HashMap::new();
-        for member in &self.members {
-            funding_utxos_per_member.insert(
-                member.keyring.take_pubkey.unwrap(),
-                self.get_funding_utxo(10_000_000, &member.keyring.dispute_pubkey.unwrap())?,
-            );
-
-            let partial =
-                self.get_funding_utxo(10_000_000, &member.keyring.dispute_pubkey.unwrap())?;
-            let utxo = Utxo::new(
-                partial.0,
-                partial.1,
-                partial.2.unwrap(),
-                &member.keyring.dispute_pubkey.unwrap(),
-            );
-            speedup_funding_utxos_per_member.insert(member.keyring.take_pubkey.unwrap(), utxo);
-
-            // Advance Funds UTXOS
-            let fund_amount = self.stream_denomination * 12 / 10;
-            info!("Funding Advance Funds UTXO with {} sats", fund_amount);
-            let funded_utxo =
-                self.get_funding_utxo(fund_amount as u64, &member.keyring.dispute_pubkey.unwrap())?;
-
-            member.bitvmx.set_var(
-                self.committee_id,
-                ADVANCE_FUNDS_INPUT,
-                VariableTypes::Utxo(funded_utxo),
-            )?;
-        }
+    pub fn setup_dispute_protocols(&mut self) -> Result<()> {
+        let (funding_utxos_per_member, speedup_funding_utxos_per_member) = self.init_funds()?;
 
         let members = self.get_member_data();
         let addresses = self.get_addresses();
+        let seed = self.committee_id;
 
         self.all(|op: &mut Member| {
             op.setup_dispute_protocols(
@@ -138,7 +138,7 @@ impl Committee {
             )
         })?;
 
-        Ok(self.public_key()?)
+        Ok(())
     }
 
     pub fn accept_pegin(
@@ -202,7 +202,10 @@ impl Committee {
         let bitvmx = &self.members[0].bitvmx;
         let status = wait_until_msg!(bitvmx, Transaction(_, _status, _) => _status);
 
-        info!("Sent {} transaction with status: {:?}", txid, status);
+        info!(
+            "Sent {} transaction with {} confirmations.",
+            txid, status.confirmations
+        );
 
         info!("Waiting for SPV proof...",);
         let _ = bitvmx.get_spv_proof(txid);
@@ -221,7 +224,7 @@ impl Committee {
     ) -> Result<()> {
         let tx = self.dispatch_transaction_by_name(protocol_id, tx_name.clone())?;
         let txid = tx.compute_txid();
-        self.wallet.mine(1)?;
+        self.bitcoin_client.mine_blocks(1)?;
         self.wait_for_spv_proof(txid)?;
         Ok(())
     }
@@ -300,41 +303,6 @@ impl Committee {
         Ok(self.members[0].keyring.take_aggregated_key.unwrap())
     }
 
-    fn get_funding_utxo(&self, amount: u64, pubkey: &PublicKey) -> Result<PartialUtxo> {
-        self.prepare_funding_utxo(&self.wallet, "fund_1", pubkey, amount, None)
-    }
-
-    fn prepare_funding_utxo(
-        &self,
-        wallet: &Wallet,
-        funding_id: &str,
-        public_key: &PublicKey,
-        amount: u64,
-        from: Option<&str>,
-    ) -> Result<PartialUtxo> {
-        let txid = wallet.fund_address(
-            WALLET_NAME,
-            from.unwrap_or(funding_id),
-            *public_key,
-            &vec![amount],
-            FEE,
-            false,
-            true,
-            None,
-        )?;
-        wallet.mine(1)?;
-
-        let script_pubkey = ScriptBuf::new_p2wpkh(&public_key.wpubkey_hash().unwrap());
-
-        let output_type = OutputType::SegwitPublicKey {
-            value: Amount::from_sat(amount),
-            script_pubkey,
-            public_key: *public_key,
-        };
-
-        Ok((txid, 0, Some(amount), Some(output_type)))
-    }
-
     fn get_addresses(&self) -> Vec<CommsAddress> {
         self.members
             .iter()
@@ -353,14 +321,57 @@ impl Committee {
             .collect()
     }
 
-    pub fn mine_and_wait(&self, blocks: u32) -> Result<()> {
-        info!("Letting the network run...");
-        for _ in 0..blocks {
-            info!("Mining 1 block and wait...");
-            self.wallet.mine(1)?;
-            thread::sleep(Duration::from_secs(1));
+    fn get_speedup_funds_value(&self) -> u64 {
+        return cmp::max(self.stream_denomination / 10, SPEED_UP_MIN_FUNDS);
+    }
+
+    fn get_advance_funds_value(&self) -> u64 {
+        return self.stream_denomination * 12 / 10;
+    }
+
+    fn get_funding_protocol_value(&self) -> u64 {
+        return FUNDING_AMOUNT_PER_SLOT * PACKET_SIZE as u64;
+    }
+
+    pub fn get_total_funds_value(&self) -> u64 {
+        let fees = 5_000; // extra fees for safety
+
+        return self.get_speedup_funds_value()
+            + self.get_advance_funds_value()
+            + self.get_funding_protocol_value()
+            + fees;
+    }
+
+    fn init_funds(
+        &mut self,
+    ) -> Result<(HashMap<PublicKey, PartialUtxo>, HashMap<PublicKey, Utxo>)> {
+        let mut funding_utxos_per_member: HashMap<PublicKey, PartialUtxo> = HashMap::new();
+        let mut speedup_funding_utxos_per_member: HashMap<PublicKey, Utxo> = HashMap::new();
+        let funding_amounts = FundingAmount {
+            speedup: self.get_speedup_funds_value(),
+            protocol_funding: self.get_funding_protocol_value(),
+            advance_funds: self.get_advance_funds_value(),
+        };
+
+        for member in &mut self.members {
+            let utxos = member.init_funds(funding_amounts.clone())?;
+
+            funding_utxos_per_member
+                .insert(member.keyring.take_pubkey.unwrap(), utxos.protocol_funding);
+
+            let speedup = Utxo::new(
+                utxos.speedup.0,
+                utxos.speedup.1,
+                utxos.speedup.2.unwrap(),
+                &member.keyring.dispute_pubkey.unwrap(),
+            );
+            speedup_funding_utxos_per_member.insert(member.keyring.take_pubkey.unwrap(), speedup);
+
+            // FIXME: speedup utxo is set in DisputeCoreSetup, should we do the same for advance funds?
+            // or should speedup utxo set here too? Unify criteria.
+            member.set_advance_funds_input(self.committee_id, utxos.advance_funds.clone())?;
         }
-        Ok(())
+        Ok((funding_utxos_per_member, speedup_funding_utxos_per_member))
     }
 
     fn all<F, R>(&mut self, f: F) -> Result<Vec<R>>
@@ -374,8 +385,6 @@ impl Committee {
                 .map(|m| {
                     let f = f.clone();
                     let span = info_span!("member", id = %m.id);
-
-                    thread::sleep(Duration::from_millis(2000)); // Simulate some delay for each member
 
                     thread::sleep(Duration::from_millis(2000)); // Simulate some delay for each member
 
