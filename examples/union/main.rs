@@ -31,7 +31,6 @@ mod wallet;
 
 // Network and stream denomination configuration
 pub const NETWORK: Network = Network::Testnet;
-// pub const NETWORK: Network = Network::Regtest;
 pub const STREAM_DENOMINATION: u64 = 30_000;
 
 static mut SLOT_INDEX_COUNTER: usize = 0;
@@ -292,8 +291,8 @@ pub fn committee(wallet: &mut MasterWallet) -> Result<Committee> {
     info!("Balances after dispute core protocol:");
     print_members_balances(committee.members.as_slice())?;
 
-    confirm_to_continue();
     info!("Committee setup complete.");
+    confirm_to_continue();
     Ok(committee)
 }
 
@@ -306,6 +305,7 @@ pub fn request_pegin(committee_public_key: PublicKey, user: &mut User) -> Result
 
     user.get_request_pegin_spv(request_pegin_txid)?;
 
+    info!("Request pegin completed.");
     confirm_to_continue();
     Ok((request_pegin_txid, amount))
 }
@@ -353,10 +353,11 @@ pub fn request_and_accept_pegin(
         )?;
     }
 
-    let blocks = if NETWORK == Network::Regtest { 3 } else { 1 };
+    let blocks = if NETWORK == Network::Regtest { 3 } else { 0 };
     wait_for_blocks(&committee.bitcoin_client, blocks)?;
     committee.wait_for_spv_proof(accept_pegin_txid)?;
 
+    info!("Pegin accepted and confirmed.");
     confirm_to_continue();
     Ok((slot_index, amount))
 }
@@ -391,10 +392,11 @@ pub fn request_pegout() -> Result<()> {
         user.create_and_dispatch_user_take_speedup(user_take_utxo.clone(), get_user_take_fee()?)?;
     }
 
-    let blocks = if NETWORK == Network::Regtest { 3 } else { 1 };
+    let blocks = if NETWORK == Network::Regtest { 3 } else { 0 };
     wait_for_blocks(&committee.bitcoin_client, blocks)?;
     committee.wait_for_spv_proof(user_take_utxo.0)?;
 
+    info!("Pegout request accepted and confirmed.");
     confirm_to_continue();
     Ok(())
 }
@@ -419,10 +421,11 @@ pub fn advance_funds(
         get_advance_funds_fee()?,
     )?;
 
-    let blocks = if NETWORK == Network::Regtest { 20 } else { 7 };
+    let blocks = if NETWORK == Network::Regtest { 20 } else { 1 };
     wait_for_blocks(&committee.bitcoin_client, blocks)?;
-    confirm_to_continue();
+
     info!("Advance funds complete.");
+    confirm_to_continue();
     Ok(())
 }
 
@@ -448,7 +451,6 @@ pub fn invalid_reimbursement(committee: &mut Committee, slot_index: usize) -> Re
     info!("Starting mining loop to ensure challenge transaction is dispatched...");
     wait_for_blocks(&committee.bitcoin_client, blocks)?;
 
-    confirm_to_continue();
     info!("Invalid reimbursement test complete.");
     Ok(())
 }
