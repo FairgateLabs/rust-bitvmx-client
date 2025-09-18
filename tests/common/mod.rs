@@ -161,10 +161,10 @@ pub fn prepare_bitcoin_with_wallet_suffix(suffix: &str) -> Result<(BitcoinClient
     let mut wallet =
         Wallet::from_config(wallet_config.bitcoin.clone(), wallet_config.wallet.clone())?;
     
-    // Get address from the local wallet instead of Bitcoin RPC
-    let address = wallet.receive_address()?;
-    // Mine 100 blocks to ensure the coinbase output is mature
-    bitcoin_client.mine_blocks_to_address(INITIAL_BLOCK_COUNT, &address)?;
+    // Get a new address from the RPC wallet (this will use the existing wallet)
+    let rpc_address = bitcoin_client.init_wallet(&unique_wallet_name)?;
+    // Mine 101 blocks to the RPC wallet address to ensure coinbase outputs are mature
+    bitcoin_client.mine_blocks_to_address(INITIAL_BLOCK_COUNT, &rpc_address)?;
     // Fund the local wallet with 10 BTC from the bitcoin RPC wallet
     bitcoin_client.fund_address(&wallet.receive_address()?, Amount::from_int_btc(10))?;
     // Sync the wallet with the Bitcoin node to the latest block
