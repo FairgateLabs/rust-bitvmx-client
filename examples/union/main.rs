@@ -342,8 +342,7 @@ pub fn request_and_accept_pegin(
     info!("Accept peg-in TX dispatched. Txid: {}", accept_pegin_txid);
     print_link(NETWORK, accept_pegin_txid);
 
-    if NETWORK == Network::Regtest || ask_user_confirmation("Dispatch speedup transaction? (y/n): ")
-    {
+    if NETWORK == Network::Regtest || ask_user_confirmation("Dispatch speedup transaction?: ") {
         user.create_and_dispatch_speedup(
             OutPoint {
                 txid: accept_pegin_txid.into(),
@@ -387,8 +386,7 @@ pub fn request_pegout() -> Result<()> {
     info!("User take TX dispatched. Txid: {}", user_take_utxo.0);
     print_link(NETWORK, user_take_utxo.0);
 
-    if NETWORK == Network::Regtest || ask_user_confirmation("Dispatch speedup transaction? (y/n): ")
-    {
+    if NETWORK == Network::Regtest || ask_user_confirmation("Dispatch speedup transaction?: ") {
         user.create_and_dispatch_user_take_speedup(user_take_utxo.clone(), get_user_take_fee()?)?;
     }
 
@@ -547,7 +545,7 @@ fn wait_for_blocks(bitcoin_client: &BitcoinWrapper, mut blocks: u32) -> Result<(
 
     if NETWORK != Network::Regtest {
         while ask_user_confirmation(
-            format!("{} blocks waited. Wait for an extra block? (y/n): ", blocks).as_str(),
+            format!("{} blocks waited. Wait for an extra block?: ", blocks).as_str(),
         ) {
             blocks += 1;
             bitcoin_client.wait_for_blocks(1)?;
