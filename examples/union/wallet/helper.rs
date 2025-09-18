@@ -123,6 +123,7 @@ pub fn fund_user_pegin_utxos(
         user.add_request_pegin_utxo((txid, i as u32, Some(amount_in_sats), None));
     }
     info!("Pegin UTXOs Added. Txid: {}", txid);
+    print_link(wallet.network(), txid);
 
     Ok(())
 }
