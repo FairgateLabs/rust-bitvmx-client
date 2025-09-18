@@ -1340,11 +1340,13 @@ impl BitVMXApi for BitVMX {
                 self.reply(from, message)?;
             }
             IncomingBitVMXApiMessages::GetProtocolVisualization(id) => {
+                info!("Protocol visualization NACHO: {}", id);
                 let protocol_str = self
                     .load_program(&id)?
                     .protocol
                     .load_protocol()?
                     .visualize(GraphOptions::EdgeArrows)?;
+                info!("Protocol visualization NACHO1: {}", protocol_str);
                 self.reply(
                     from,
                     OutgoingBitVMXApiMessages::ProtocolVisualization(id, protocol_str),
