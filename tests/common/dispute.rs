@@ -9,7 +9,7 @@ use bitvmx_client::{
         self,
         participant::{P2PAddress, ParticipantRole},
         protocols::dispute::{
-            input_tx_name, program_input, EXECUTE, TIMELOCK_BLOCKS, TIMELOCK_BLOCKS_KEY,
+            input_tx_name, program_input, timeout_tx, EXECUTE, TIMELOCK_BLOCKS, TIMELOCK_BLOCKS_KEY,
         },
         variables::VariableTypes,
     },
@@ -211,9 +211,9 @@ pub fn execute_dispute(
                 info!("Prover executed the program");
                 break;
             }
-            if name.unwrap() == "EXECUTE_TO" {
+            if name.unwrap() == timeout_tx(EXECUTE) {
                 info!("Verifier wins by timeout");
-                break;
+                return Ok(());
             }
         }
     }

@@ -49,7 +49,7 @@ pub const START_CH: &str = "START_CHALLENGE";
 pub const INPUT_TX: &str = "INPUT_";
 pub const COMMITMENT: &str = "COMMITMENT";
 pub const EXECUTE: &str = "EXECUTE";
-pub const TIMELOCK_BLOCKS: u16 = 1;
+pub const TIMELOCK_BLOCKS: u16 = 5;
 pub const PROVER_WINS: &str = "PROVER_WINS";
 pub const VERIFIER_WINS: &str = "VERIFIER_WINS";
 pub const ACTION_PROVER_WINS: &str = "ACTION_PROVER_WINS";
@@ -112,6 +112,10 @@ pub fn program_input_prev_prefix(index: u32) -> String {
 
 pub fn program_input_word(index: u32, word: u32) -> String {
     format!("program_input_{}_{}", index, word)
+}
+
+pub fn timeout_tx(name: &str) -> String {
+    format!("{}_TO", name)
 }
 
 impl ProtocolHandler for DisputeResolutionProtocol {
@@ -383,7 +387,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 speedup_dust,
                 &prev_tx,
                 &input_tx,
-                None,
+                Some(&claim_verifier),
                 Self::winternitz_check(agg_or_prover, sign_mode, &keys[0], &input_vars)?,
                 input_in_speedup,
                 (&prover_speedup_pub, &verifier_speedup_pub),
@@ -543,9 +547,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             (&prover_speedup_pub, &verifier_speedup_pub),
         )?;
 
-        //Add this as if it were the final tx execution
-        claim_prover.add_claimer_win_connection(&mut protocol, EXECUTE)?;
-
         info!(
             "Amount {}, fee {}, speedup_dust {}",
             amount, fee, speedup_dust
@@ -576,6 +577,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             input_in_speedup,
             (&verifier_speedup_pub, &prover_speedup_pub),
         )?;
+
+        claim_verifier.add_claimer_win_connection(&mut protocol, CHALLENGE)?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
@@ -789,11 +792,17 @@ impl DisputeResolutionProtocol {
             None,
         )?;
 
+        context.globals.set_var(
+            &self.ctx.id,
+            &timeout_tx(to),
+            VariableTypes::VecNumber(vec![0, leaves.len() as u32 - 1]),
+        )?;
+
         protocol.add_connection(
             &format!("{}__{}_TO", from, to),
             from,
             OutputSpec::Last,
-            &format!("{}_TO", to),
+            &timeout_tx(to),
             InputSpec::Auto(
                 SighashType::taproot_all(),
                 SpendMode::Script {
@@ -806,7 +815,7 @@ impl DisputeResolutionProtocol {
         )?;
 
         if let Some(claim_gate) = claim_gate {
-            claim_gate.add_claimer_win_connection(protocol, &format!("{}_TO", to))?;
+            claim_gate.add_claimer_win_connection(protocol, &timeout_tx(to))?;
         }
 
         let pb = ProtocolBuilder {};
@@ -821,12 +830,7 @@ impl DisputeResolutionProtocol {
             pb.add_speedup_output(protocol, to, amount_speedup, mine_speedup)?;
         }
 
-        pb.add_speedup_output(
-            protocol,
-            &format!("{}_TO", to),
-            amount_speedup,
-            other_speedup,
-        )?;
+        pb.add_speedup_output(protocol, &timeout_tx(to), amount_speedup, other_speedup)?;
 
         Ok(())
     }
