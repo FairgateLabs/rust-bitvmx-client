@@ -285,7 +285,7 @@ pub fn committee(wallet: &mut MasterWallet) -> Result<Committee> {
 
     committee.setup_dispute_protocols()?;
 
-    let blocks = if NETWORK == Network::Regtest { 10 } else { 2 };
+    let blocks = if NETWORK == Network::Regtest { 10 } else { 1 };
     wait_for_blocks(&committee.bitcoin_client, blocks)?;
 
     info!("Balances after dispute core protocol:");
