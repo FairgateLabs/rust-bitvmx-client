@@ -64,7 +64,7 @@ pub fn init_bitvmx(
 
     clear_db(&config.storage.path);
     clear_db(&config.key_storage.path);
-    clear_db(&config.broker_storage.path);
+    clear_db(&config.broker.storage.path);
     Wallet::clear_db(&config.wallet)?;
 
     info!("config: {:?}", config.storage.path);

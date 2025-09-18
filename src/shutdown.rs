@@ -1,3 +1,5 @@
+use operator_comms::operator_comms::OperatorComms;
+
 pub trait GracefulShutdown {
     /// Signal the component to stop accepting new work immediately.
     fn begin_shutdown(&mut self);
@@ -11,7 +13,7 @@ pub trait GracefulShutdown {
 
 // Temporary no-op implementations for subcomponents. Replace with real logic later.
 
-impl GracefulShutdown for p2p_handler::P2pHandler {
+impl GracefulShutdown for OperatorComms {
     fn begin_shutdown(&mut self) {
         // TODO: stop accepting new P2P work and close listeners
     }
@@ -59,5 +61,3 @@ impl GracefulShutdown for crate::program::program::Program {
         // TODO: finalize program resources
     }
 }
-
-

@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use crate::spv_proof::BtcTxSPVProof;
+use crate::{config::ComponentsConfig, spv_proof::BtcTxSPVProof};
 use bitcoin::{address::NetworkUnchecked, Address, PrivateKey, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TransactionStatus};
 use bitvmx_broker::{
@@ -10,6 +10,7 @@ use bitvmx_broker::{
 };
 use bitvmx_wallet::wallet::Destination;
 use chrono::{DateTime, Utc};
+use operator_comms::operator_comms::OperatorComms;
 use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
 

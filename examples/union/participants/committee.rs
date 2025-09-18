@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bitcoin::{Network, Transaction as BtcTransaction, Txid};
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
-use bitvmx_client::program::participant::P2PAddress;
+use bitvmx_client::program::participant::CommsAddress;
 use bitvmx_client::program::protocols::union::common::{
     get_accept_pegin_pid, get_dispute_aggregated_key_pid, get_take_aggreated_key_pid,
     get_user_take_pid,

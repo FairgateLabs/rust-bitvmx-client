@@ -7,8 +7,7 @@ use bitvmx_wallet::wallet::{Destination, RegtestWallet};
 use common::{
     config_trace,
     dispute::{execute_dispute, prepare_dispute, ForcedChallenges},
-    get_all, init_bitvmx, init_utxo_new, prepare_bitcoin, send_all, wait_message_from_channel, FEE,
-    FUNDING_ID, WALLET_NAME,
+    get_all, init_bitvmx, init_utxo_new, prepare_bitcoin, send_all, wait_message_from_channel,
 };
 use protocol_builder::{
     scripts::{self, SignMode},

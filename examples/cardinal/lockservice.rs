@@ -487,7 +487,9 @@ pub fn set_speedup_funding(
 
     let command = IncomingBitVMXApiMessages::DispatchTransaction(Uuid::new_v4(), funds.clone())
         .to_string()?;
-    channel.send(BITVMX_ID, command)?;
+    id_channel_pair
+        .channel
+        .send(id_channel_pair.id.clone(), command)?;
 
     std::thread::sleep(std::time::Duration::from_secs(1));
     info!("Mining a block to confirm speedup funding");

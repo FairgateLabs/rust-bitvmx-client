@@ -27,7 +27,7 @@ broker:
   ip: 127.0.0.1
   priv_key: config/keys/services.key
   storage: 
-    path: /tmp/op_4/broker.db
+    path: /tmp/regtest/op_4/broker.db
 
 components:
   l2:

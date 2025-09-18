@@ -73,7 +73,7 @@ fn run_bitvmx(network: Network, independent: bool, rx: Receiver<()>, tx: Sender<
         for config in &configs {
             clear_db(&config.storage.path);
             clear_db(&config.key_storage.path);
-            clear_db(&config.broker_storage.path);
+            clear_db(&config.broker.storage.path);
             Wallet::clear_db(&config.wallet)?;
         }
     }

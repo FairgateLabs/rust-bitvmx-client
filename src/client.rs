@@ -9,10 +9,18 @@ use crate::{
 };
 use anyhow::Result;
 use bitcoin::{PublicKey, Transaction, Txid};
-use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
+use bitvmx_broker::{
+    channel::channel::DualChannel,
+    identification::identifier::Identifier,
+    rpc::{self, tls_helper::Cert},
+};
 use bitvmx_wallet::wallet::Destination;
-use std::thread;
+use operator_comms::operator_comms::AllowList;
 use std::time::{Duration, Instant};
+use std::{
+    sync::{Arc, Mutex},
+    thread,
+};
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -207,8 +215,8 @@ impl BitVMXClient {
     /// # Arguments
     /// * `id` - The ID of the message
     /// * `messages` - The messages to encrypt as bytes
-    /// * `public_key` - The public key to encrypt the messages with as pkcs8 DER bytes
-    pub fn encrypt(&self, id: Uuid, messages: Vec<u8>, public_key: Vec<u8>) -> Result<()> {
+    /// * `public_key` - The public key to encrypt the messages with as PEM string
+    pub fn encrypt(&self, id: Uuid, messages: Vec<u8>, public_key: String) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::Encrypt(id, messages, public_key))
     }
 
