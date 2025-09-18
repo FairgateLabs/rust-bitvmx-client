@@ -1,6 +1,8 @@
+use crate::participants::user::User;
 use crate::{participants::member::Member, MasterWallet};
 use anyhow::{anyhow, Result};
 use bitcoin::{Address, CompressedPublicKey, Network, Txid};
+use bitvmx_wallet::wallet::{Destination, Wallet};
 use core::option::Option;
 use key_manager::{key_manager::KeyManager, key_store::KeyStore};
 use std::env;
@@ -13,12 +15,12 @@ const TESTNET_FEE_RATE: u64 = 1; // sats/vbyte
 const MIN_FUNDS_RECOVERY: u64 = 5000;
 const TX_SIZE: u64 = 140;
 
-pub fn wallet_info(network: Network) -> Result<()> {
-    info!("Generating master wallet info for network {}...", network);
+pub fn create_wallet(network: Network) -> Result<()> {
+    info!("Generating wallet for network {}...", network);
 
     let mut config = bitvmx_client::config::Config::new(Some("config/op_1.yaml".to_string()))?;
-    config.key_storage.path = "/tmp/master_wallet/keys.db".to_string();
-    config.storage.path = "/tmp/master_wallet/storage.db".to_string();
+    config.key_storage.path = "/tmp/tmp_wallet/keys.db".to_string();
+    config.storage.path = "/tmp/tpm_wallet/storage.db".to_string();
 
     let key_derivation_seed: [u8; 32] = *b"1337beafdeadbeafdeadbeafdeadbeaf";
 
@@ -38,10 +40,7 @@ pub fn wallet_info(network: Network) -> Result<()> {
     let compressed = CompressedPublicKey::try_from(pubkey).unwrap();
     let address = Address::p2wpkh(&compressed, network);
 
-    let result = std::fs::remove_dir_all("/tmp/master_wallet");
-    info!("Master wallet temporary data removed: {:?}\n", result);
-
-    info!("Master wallet info:");
+    info!("Wallet info:");
     info!("  Pubkey: {}", pubkey);
     info!("  Privkey: {}", privkey);
     info!("  Address: {}", address);
@@ -51,14 +50,7 @@ pub fn wallet_info(network: Network) -> Result<()> {
     Ok(())
 }
 
-pub fn fund_members(
-    wallet: &mut MasterWallet,
-    members: &[Member],
-    amount: u64,
-) -> Result<Vec<Txid>> {
-    info!("Funding members with {} sats each...", amount);
-    non_regtest_warning(wallet.network(), "You are about to transfer REAL money.");
-
+pub fn fund_members(wallet: &mut MasterWallet, members: &[Member], amount: u64) -> Result<Txid> {
     let fee_rate = get_fee_rate(wallet.network());
 
     let balance = wallet.wallet.balance();
@@ -68,7 +60,7 @@ pub fn fund_members(
     info!("Trusted: {} sats", balance.trusted_pending.to_sat());
     info!("Immature: {} sats", balance.immature.to_sat());
 
-    let mut txids = Vec::new();
+    let mut batch = Vec::new();
 
     for member in members {
         let address = member.get_funding_address()?;
@@ -78,32 +70,84 @@ pub fn fund_members(
             .require_network(wallet.network())
             .expect("address not valid for this network");
 
-        info!(
-            "Funding {} sats from member {}. Fee rate: {}",
-            amount, member.id, fee_rate
-        );
-        non_regtest_warning(wallet.network(), "You are about to transfer REAL money.");
-
-        let tx = match wallet.fund_address_with_fee(&checked_address, amount, Some(fee_rate)) {
-            Ok(tx) => tx,
-            Err(e) => {
-                warn!(
-                    "Failed to fund member {} at address {}: {}",
-                    member.id, checked_address, e
-                );
-                continue;
-            }
-        };
-
-        let txid = tx.compute_txid();
-        txids.push(txid);
-        info!("Funded member with txid: {}", txid);
-        print_link(wallet.network(), txid);
+        let destination = Destination::Address(checked_address.to_string(), amount);
+        batch.push(destination);
     }
+
+    info!(
+        "Funding {} members with {} sats each. fee rate: {} sats/vbyte",
+        members.len(),
+        amount,
+        fee_rate
+    );
+    non_regtest_warning(wallet.network(), "You are about to transfer REAL money.");
+
+    let tx = wallet
+        .wallet
+        .send_funds(Destination::Batch(batch), Some(fee_rate))?;
+
+    let txid = tx.compute_txid();
+    info!("Funded members with txid: {}", txid);
+    print_link(wallet.network(), txid);
 
     info!("Master wallet balance after funding members:");
     print_balance(wallet)?;
-    Ok(txids)
+    Ok(txid)
+}
+
+pub fn fund_user_pegin_utxos(
+    wallet: &mut MasterWallet,
+    user: &mut User,
+    amount_in_sats: u64,
+    utxos_quantity: usize,
+) -> Result<()> {
+    let fee_rate = get_fee_rate(wallet.network());
+    info!(
+        "Funding user pegin address with {} sats. UTXOs quantity: {}. fee rate: {} sats/vbyte",
+        amount_in_sats, utxos_quantity, fee_rate
+    );
+    non_regtest_warning(wallet.network(), "You are about to transfer REAL money.");
+
+    let pubkey = user.public_key()?;
+    let mut batch = Vec::new();
+    for _i in 0..utxos_quantity {
+        let destination = Destination::P2WPKH(pubkey, amount_in_sats);
+        batch.push(destination);
+    }
+
+    let destination = Destination::Batch(batch);
+    let tx = wallet.wallet.send_funds(destination, Some(fee_rate))?;
+    let txid = tx.compute_txid();
+
+    for i in 0..utxos_quantity {
+        user.add_request_pegin_utxo((txid, i as u32, Some(amount_in_sats), None));
+    }
+    info!("Pegin UTXOs Added. Txid: {}", txid);
+
+    Ok(())
+}
+
+pub fn fund_user_speedup(
+    wallet: &mut MasterWallet,
+    user: &mut User,
+    amount_in_sats: u64,
+) -> Result<()> {
+    let fee_rate = get_fee_rate(wallet.network());
+    info!(
+        "Funding user speedup with {} sats. fee rate: {} sats/vbyte",
+        amount_in_sats, fee_rate
+    );
+    non_regtest_warning(wallet.network(), "You are about to transfer REAL money.");
+
+    let pubkey = user.public_key()?;
+    let destination = Destination::P2WPKH(pubkey, amount_in_sats);
+    let tx = wallet.wallet.send_funds(destination, Some(fee_rate))?;
+    let txid = tx.compute_txid();
+
+    user.set_speedup_utxo((txid, 0, Some(amount_in_sats), None));
+    info!("Speedup UTXO set. Txid: {}", txid);
+
+    Ok(())
 }
 
 pub fn print_members_balances(members: &[Member]) -> Result<()> {
@@ -161,6 +205,45 @@ pub fn recover_funds(members: &[Member], address: String, network: Network) -> R
         };
         print_link(network, txid);
     }
+    Ok(())
+}
+
+pub fn recover_user_funds(user: &User, address: String) -> Result<()> {
+    let mut wallet = Wallet::from_config(user.config.bitcoin.clone(), user.config.wallet.clone())?;
+
+    // Sync the wallet
+    info!("Syncing user wallet...");
+    wallet.sync_wallet()?;
+    info!("User wallet synced.");
+
+    let balance = wallet.balance().confirmed.to_sat();
+    info!("User wallet balance: {} sats", balance);
+
+    if balance <= MIN_FUNDS_RECOVERY {
+        info!(
+            "User wallet balance {} sats is too low to recover, skipping",
+            balance
+        );
+        return Ok(());
+    }
+
+    let fee_rate = get_fee_rate(user.network);
+    info!(
+        "Recovering {} sats from user to address: {}",
+        balance, address
+    );
+    info!("Fee rate: {} sats/vbyte", fee_rate);
+    non_regtest_warning(user.network, "You are about to transfer REAL money.");
+
+    let txid = wallet
+        .send_funds(
+            Destination::Address(address, balance - fee_rate * TX_SIZE * 2),
+            Some(fee_rate),
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to recover funds from user to address: {}", e))?
+        .compute_txid();
+    print_link(user.network, txid);
+
     Ok(())
 }
 

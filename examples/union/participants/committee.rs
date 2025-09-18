@@ -11,7 +11,6 @@ use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtx
 use bitvmx_client::types::OutgoingBitVMXApiMessages::{SPVProof, Transaction, TransactionInfo};
 
 use bitcoin::PublicKey;
-use core::cmp;
 use protocol_builder::types::Utxo;
 use std::collections::HashMap;
 use std::thread::{self};
@@ -322,7 +321,11 @@ impl Committee {
     }
 
     fn get_speedup_funds_value(&self) -> u64 {
-        return cmp::max(self.stream_denomination / 10, SPEED_UP_MIN_FUNDS);
+        return if self.bitcoin_client.network() == Network::Regtest {
+            100_000
+        } else {
+            SPEED_UP_MIN_FUNDS
+        };
     }
 
     fn get_advance_funds_value(&self) -> u64 {

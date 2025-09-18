@@ -11,10 +11,10 @@ key_manager:
 
 key_storage:
   password: secret_password_2
-  path: /tmp/op_1/keys.db
+  path: /tmp/regtest/op_1/keys.db
 
 storage:
-  path: /tmp/op_1/storage.db
+  path: /tmp/regtest/op_1/storage.db
 
 p2p:
   address: /ip4/127.0.0.1/tcp/61180
@@ -27,7 +27,7 @@ coordinator:
   throtthle_bitcoin_updates: 0
 
 broker_storage: 
-  path: /tmp/op_1/broker.db
+  path: /tmp/regtest/op_1/broker.db
 
 broker_port: 22222
 

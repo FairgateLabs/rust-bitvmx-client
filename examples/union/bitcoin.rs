@@ -31,6 +31,18 @@ impl BitcoinWrapper {
         Self { client, network }
     }
 
+    pub fn new_from_config(config: &Config) -> Result<Self> {
+        let client = BitcoinClient::new(
+            &config.bitcoin.url,
+            &config.bitcoin.username,
+            &config.bitcoin.password,
+        )?;
+        Ok(Self {
+            client,
+            network: config.bitcoin.network,
+        })
+    }
+
     pub fn wait_for_blocks(&self, blocks: u32) -> Result<()> {
         let mut height = self.get_best_block()?;
         let last_block = height + blocks;
@@ -57,6 +69,10 @@ impl BitcoinWrapper {
             info!("Current height: {}", height);
         }
         Ok(())
+    }
+
+    pub fn network(&self) -> Network {
+        self.network
     }
 }
 
