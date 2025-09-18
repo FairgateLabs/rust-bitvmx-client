@@ -16,8 +16,8 @@ use crate::{
             claim::ClaimGate,
             dispute::{
                 input_handler::{get_txs_configuration, unify_inputs, unify_witnesses},
-                timeout_tx, DisputeResolutionProtocol, ACTION_PROVER_WINS, CHALLENGE, COMMITMENT,
-                EXECUTE, INPUT_TX, PROVER_WINS, TRACE_VARS,
+                timeout_input_tx, timeout_tx, DisputeResolutionProtocol, ACTION_PROVER_WINS,
+                CHALLENGE, COMMITMENT, EXECUTE, INPUT_TX, PROVER_WINS, TRACE_VARS,
             },
             protocol_handler::ProtocolHandler,
         },
@@ -31,13 +31,7 @@ pub fn dispatch_timeout_tx(
     program_context: &ProgramContext,
     name: &str,
     current_height: u32,
-    timelock_blocks: u32,
 ) -> Result<(), BitVMXError> {
-    info!(
-        "Current block: {}. Will try to dispatch timeout tx: {} in {} blocks. ",
-        current_height, name, timelock_blocks,
-    );
-
     let params = program_context
         .globals
         .get_var(&drp.ctx.id, name)?
@@ -45,6 +39,12 @@ pub fn dispatch_timeout_tx(
         .vec_number()?;
     let input = params[0];
     let leaf = params[1];
+    let timelock_blocks = params[2];
+
+    info!(
+        "Current block: {}. Will try to dispatch timeout tx: {} in {} blocks. ",
+        current_height, name, timelock_blocks
+    );
 
     let tx = drp.get_signed_tx(program_context, name, input, leaf, true, 0)?;
     let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
@@ -65,13 +65,15 @@ pub fn handle_tx_news(
     program_context: &ProgramContext,
 ) -> Result<(), BitVMXError> {
     let name = drp.get_transaction_name_by_id(tx_id)?;
+    let current_height = tx_status.block_info.as_ref().unwrap().height;
     info!(
-        "Program {}: Transaction name: {}  id: {}:{:?} has been seen on-chain {}",
+        "Program {}: Transaction name: {}  id: {}:{:?} has been seen on-chain {}. Height: {}",
         drp.ctx.id,
         style(&name).blue(),
         style(&tx_id).green(),
         style(&vout).yellow(),
-        drp.role()
+        drp.role(),
+        current_height,
     );
 
     let timelock_blocks = program_context
@@ -79,7 +81,6 @@ pub fn handle_tx_news(
         .get_var(&drp.ctx.id, "TIMELOCK_BLOCKS")?
         .unwrap()
         .number()?;
-    let current_height = tx_status.block_info.as_ref().unwrap().height;
 
     let (fail_config_prover, fail_config_verifier, force, force_condition) = program_context
         .globals
@@ -252,13 +253,7 @@ pub fn handle_tx_news(
             }
         } else {
             if round == nary.total_rounds() as u32 {
-                dispatch_timeout_tx(
-                    drp,
-                    program_context,
-                    &timeout_tx(EXECUTE),
-                    current_height,
-                    timelock_blocks,
-                )?;
+                dispatch_timeout_tx(drp, program_context, &timeout_tx(EXECUTE), current_height)?;
             }
         }
     }
@@ -341,8 +336,17 @@ pub fn handle_tx_news(
         }
     }
 
+    if name == EXECUTE && drp.role() == ParticipantRole::Verifier && vout.is_none() {
+        dispatch_timeout_tx(
+            drp,
+            program_context,
+            &timeout_input_tx(EXECUTE),
+            current_height,
+        )?;
+    }
+
     if name == EXECUTE && drp.role() == ParticipantRole::Verifier && vout.is_some() {
-        drp.decode_witness_from_speedup(
+        let (_, leaf) = drp.decode_witness_from_speedup(
             tx_id,
             vout.unwrap(),
             &name,
@@ -350,6 +354,18 @@ pub fn handle_tx_news(
             &tx_status.tx,
             None,
         )?;
+
+        let params = program_context
+            .globals
+            .get_var(&drp.ctx.id, &timeout_input_tx(EXECUTE))?
+            .unwrap()
+            .vec_number()?;
+        let timeout_leaf = params[1];
+        if leaf == timeout_leaf {
+            info!("Verifier consumed the timeout input for EXECUTE");
+            return Ok(());
+        }
+
         let (_program_definition, pdf) = drp.get_program_definition(program_context)?;
         let execution_path = drp.get_execution_path()?;
 
