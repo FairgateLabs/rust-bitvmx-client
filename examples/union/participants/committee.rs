@@ -223,7 +223,7 @@ impl Committee {
     ) -> Result<()> {
         let tx = self.dispatch_transaction_by_name(protocol_id, tx_name.clone())?;
         let txid = tx.compute_txid();
-        self.bitcoin_client.mine_blocks(1)?;
+        self.bitcoin_client.wait_for_blocks(1)?;
         self.wait_for_spv_proof(txid)?;
         Ok(())
     }
