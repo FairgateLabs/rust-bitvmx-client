@@ -30,7 +30,7 @@ mod setup;
 mod wallet;
 
 // Network and stream denomination configuration
-pub const NETWORK: Network = Network::Testnet;
+pub const NETWORK: Network = Network::Regtest;
 pub const STREAM_DENOMINATION: u64 = 30_000;
 
 static mut SLOT_INDEX_COUNTER: usize = 0;
