@@ -96,8 +96,8 @@ impl ProtocolHandler for AcceptPegInProtocol {
     ) -> Result<(), BitVMXError> {
         let pegin_request: PegInRequest = self.pegin_request(context)?;
         let pegin_request_txid = pegin_request.txid;
-        let mut amount = self.checked_sub(pegin_request.amount, P2TR_FEE)?;
-        amount = self.checked_sub(amount, SPEEDUP_VALUE)?;
+        let mut user_output_amount = self.checked_sub(pegin_request.amount, P2TR_FEE)?;
+        user_output_amount = self.checked_sub(user_output_amount, SPEEDUP_VALUE)?;
 
         let take_aggregated_key = &pegin_request.take_aggregated_key;
 
@@ -125,7 +125,8 @@ impl ProtocolHandler for AcceptPegInProtocol {
             Some(pegin_request_txid),
         )?;
 
-        let accept_pegin_output = OutputType::taproot(amount, &take_aggregated_key, &[])?;
+        let accept_pegin_output =
+            OutputType::taproot(user_output_amount, &take_aggregated_key, &[])?;
         protocol.add_transaction_output(ACCEPT_PEGIN_TX, &accept_pegin_output)?;
 
         // Speed up transaction (User pay for it)
@@ -162,7 +163,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
             self.create_operator_take_transaction(
                 &mut protocol,
                 operator_index,
-                amount,
+                user_output_amount,
                 &dispute_key,
                 speedup_key,
                 pegin_request_txid,
@@ -185,7 +186,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
             self.create_operator_won_transaction(
                 &mut protocol,
                 operator_index,
-                amount,
+                user_output_amount,
                 &dispute_key,
                 speedup_key,
                 pegin_request_txid,
@@ -445,7 +446,7 @@ impl AcceptPegInProtocol {
         &self,
         protocol: &mut protocol_builder::builder::Protocol,
         operator_index: usize,
-        amount: u64,
+        accept_pegin_output_amount: u64,
         dispute_key: &PublicKey,
         speedup_key: &PublicKey,
         pegin_txid: Txid,
@@ -457,6 +458,10 @@ impl AcceptPegInProtocol {
         // Pegin input
         self.add_accept_pegin_connection(protocol, operator_take_tx_name, pegin_txid)?;
 
+        let operator_input_amount = accept_pegin_output_amount + take_enabler.2.unwrap();
+        let operator_output_amount =
+            self.checked_sub(operator_input_amount, P2TR_FEE + SPEEDUP_VALUE)?;
+
         protocol.add_connection(
             "take_enabler_conn",
             kickoff_tx_name,
@@ -467,13 +472,11 @@ impl AcceptPegInProtocol {
             Some(take_enabler.0),
         )?;
 
-        let operator_amount = self.checked_sub(amount, SPEEDUP_VALUE)?;
-
         // Operator Output
         self.add_operator_output(
             protocol,
             operator_take_tx_name,
-            operator_amount,
+            operator_output_amount,
             dispute_key,
         )?;
 
@@ -488,7 +491,7 @@ impl AcceptPegInProtocol {
         &self,
         protocol: &mut protocol_builder::builder::Protocol,
         operator_index: usize,
-        amount: u64,
+        accept_pegin_output_amount: u64,
         dispute_key: &PublicKey,
         speedup_key: &PublicKey,
         pegin_txid: Txid,
@@ -500,6 +503,10 @@ impl AcceptPegInProtocol {
 
         // Pegin input
         self.add_accept_pegin_connection(protocol, operator_won_tx_name, pegin_txid)?;
+
+        let operator_input_amount = accept_pegin_output_amount + won_enabler.2.unwrap();
+        let operator_output_amount =
+            self.checked_sub(operator_input_amount, P2TR_FEE + SPEEDUP_VALUE)?;
 
         // Input from try take 2 with timelock
         protocol.add_connection(
@@ -517,10 +524,13 @@ impl AcceptPegInProtocol {
             Some(won_enabler.0),
         )?;
 
-        let operator_amount = self.checked_sub(amount, SPEEDUP_VALUE)?;
-
         // Operator Output
-        self.add_operator_output(protocol, operator_won_tx_name, operator_amount, dispute_key)?;
+        self.add_operator_output(
+            protocol,
+            operator_won_tx_name,
+            operator_output_amount,
+            dispute_key,
+        )?;
 
         // Speed up transaction (Operator pay for it)
         let pb = ProtocolBuilder {};
