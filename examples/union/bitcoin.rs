@@ -44,17 +44,18 @@ impl BitcoinWrapper {
     }
 
     pub fn wait_for_blocks(&self, blocks: u32) -> Result<()> {
+        if blocks == 0 {
+            return Ok(());
+        }
+
         let mut height = self.get_best_block()?;
         let last_block = height + blocks;
-        info!(
-            "Letting the network run. Current height: {}. Waiting until block: {}",
-            height, last_block
-        );
+        info!("Height: {}. Waiting until block: {}", height, last_block);
 
         let sleep_secs = match self.network {
             Network::Regtest => 1,
-            Network::Testnet | Network::Signet => 30,
-            Network::Bitcoin => 5 * 60,
+            Network::Testnet | Network::Signet => 10,
+            Network::Bitcoin => 60,
             _ => return Err(anyhow::anyhow!("Unsupported network")),
         };
 
