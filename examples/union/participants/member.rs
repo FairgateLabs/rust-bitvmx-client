@@ -26,7 +26,8 @@ use crate::{
         advance_funds_setup::AdvanceFunds,
         dispute_channel_setup::DisputeChannelSetup,
         dispute_core_setup::DisputeCoreSetup,
-        user_take_setup::UserTakeSetup
+        init_setup::InitSetup,
+        user_take_setup::UserTakeSetup,
     },
     wait_until_msg,
 };
@@ -170,6 +171,29 @@ impl Member {
             let program_id = expect_msg!(self.bitvmx, SetupCompleted(program_id) => program_id)?;
             info!(id = self.id, program_id = ?program_id, "Dispute core setup completed for operator index {}", i);
         }
+
+        Ok(())
+    }
+
+    pub fn setup_init(
+        &mut self,
+        committee_id: Uuid,
+        members: &Vec<MemberData>,
+        funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
+        addresses: &Vec<P2PAddress>,
+    ) -> Result<()> {
+        info!(id = self.id, "Setting up init for member {}", self.id);
+
+        InitSetup::setup(
+            committee_id,
+            &self.id,
+            members,
+            self.keyring.take_aggregated_key.unwrap(),
+            self.keyring.dispute_aggregated_key.unwrap(),
+            &self.bitvmx,
+            funding_utxos_per_member,
+            addresses
+        )?;
 
         Ok(())
     }

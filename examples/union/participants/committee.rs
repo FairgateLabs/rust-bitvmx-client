@@ -137,6 +137,7 @@ impl Committee {
         let members = self.get_member_data();
         let addresses = self.get_addresses();
 
+        // Setup Dispute Core covenant
         self.all(|op: &mut Member| {
             op.setup_dispute_core(
                 seed,
@@ -149,10 +150,21 @@ impl Committee {
             )
         })?;
 
-        let members_snapshot = self.members.clone();
+        // Setup Init covenant
         let committee_id = self.committee_id;
-        let wt_funding_map = wt_funding_utxos_per_member.clone();
+        self.all(|op: &mut Member| {
+            op.setup_init(
+                committee_id,
+                &members.clone(),
+                &wt_funding_utxos_per_member,
+                &addresses.clone(),
+            )
+        })?;
 
+        // Setup Dispute Channel covenant
+        // let members_snapshot = self.members.clone();
+        // let committee_id = self.committee_id;
+        // let wt_funding_map = wt_funding_utxos_per_member.clone();
         // self.all(|op: &mut Member| {
         //     op.setup_dispute_channel(&members_snapshot, committee_id, &wt_funding_map)
         // })?;

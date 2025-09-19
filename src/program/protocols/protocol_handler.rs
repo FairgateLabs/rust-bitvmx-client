@@ -27,14 +27,19 @@ use super::dispute::DisputeResolutionProtocol;
 #[cfg(feature = "union")]
 use crate::program::protocols::union::{
     accept_pegin::AcceptPegInProtocol, advance_funds::AdvanceFundsProtocol,
-    dispute_core::DisputeCoreProtocol, pairwise_penalization::PairwisePenalizationProtocol,
+    dispute_core::DisputeCoreProtocol, init::InitProtocol,
+    pairwise_penalization::PairwisePenalizationProtocol,
     user_take::UserTakeProtocol,
 };
 
 #[cfg(feature = "union")]
 use crate::types::{
-    PROGRAM_TYPE_ACCEPT_PEGIN, PROGRAM_TYPE_ADVANCE_FUNDS, PROGRAM_TYPE_DISPUTE_CORE,
-    PROGRAM_TYPE_PAIRWISE_PENALIZATION, PROGRAM_TYPE_USER_TAKE,
+    PROGRAM_TYPE_ACCEPT_PEGIN,
+    PROGRAM_TYPE_ADVANCE_FUNDS,
+    PROGRAM_TYPE_DISPUTE_CORE,
+    PROGRAM_TYPE_INIT,
+    PROGRAM_TYPE_PAIRWISE_PENALIZATION,
+    PROGRAM_TYPE_USER_TAKE,
 };
 
 #[cfg(feature = "cardinal")]
@@ -509,6 +514,8 @@ pub enum ProtocolType {
     DisputeCoreProtocol,
     #[cfg(feature = "union")]
     PairwisePenalizationProtocol,
+    #[cfg(feature = "union")]
+    InitProtocol,
 }
 
 pub fn new_protocol_type(
@@ -548,6 +555,8 @@ pub fn new_protocol_type(
         PROGRAM_TYPE_DISPUTE_CORE => Ok(ProtocolType::DisputeCoreProtocol(
             DisputeCoreProtocol::new(ctx),
         )),
+        #[cfg(feature = "union")]
+        PROGRAM_TYPE_INIT => Ok(ProtocolType::InitProtocol(InitProtocol::new(ctx))),
         _ => Err(BitVMXError::NotImplemented(name.to_string())),
     }
 }
