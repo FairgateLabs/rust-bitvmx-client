@@ -906,23 +906,19 @@ impl BitVMXApi for BitVMX {
     }
 
     fn get_transaction(&mut self, from: u32, id: Uuid, txid: Txid) -> Result<(), BitVMXError> {
-        let tx_status = self
+        let response = match self
             .program_context
             .bitcoin_coordinator
-            .get_transaction(txid);
-        if tx_status.is_err() {
-            warn!("Transaction not found: {:?}", txid);
-            self.reply(
-                from,
-                OutgoingBitVMXApiMessages::NotFound(id, txid.to_string()),
-            )?;
-            return Ok(());
-        }
+            .get_transaction(txid)
+        {
+            Ok(tx_status) => OutgoingBitVMXApiMessages::Transaction(id, tx_status, None),
+            Err(e) => {
+                info!("Transaction not found: {:?}. Error: {}", txid, e);
+                OutgoingBitVMXApiMessages::NotFound(id, txid.to_string())
+            }
+        };
 
-        self.reply(
-            from,
-            OutgoingBitVMXApiMessages::Transaction(id, tx_status.unwrap(), None),
-        )?;
+        self.reply(from, response)?;
         Ok(())
     }
 
@@ -1188,13 +1184,31 @@ impl BitVMXApi for BitVMX {
                 BitVMXApi::get_transaction(self, from, id, txid)?
             }
             IncomingBitVMXApiMessages::GetTransactionInfoByName(id, name) => {
-                let tx = self
-                    .load_program(&id)?
-                    .get_transaction_by_name(&self.program_context, &name)?;
-                self.reply(
-                    from,
-                    OutgoingBitVMXApiMessages::TransactionInfo(id, name, tx),
-                )?;
+                let program = self.load_program(&id);
+                let response = match program {
+                    Ok(prog) => match prog.get_transaction_by_name(&self.program_context, &name) {
+                        Ok(tx) => OutgoingBitVMXApiMessages::TransactionInfo(id, name, tx),
+                        Err(err) => {
+                            info!(
+                                "Transaction not found: {} in program {:?}. Error: {}",
+                                name, id, err
+                            );
+                            OutgoingBitVMXApiMessages::NotFound(
+                                id,
+                                format!("Transaction not found: {}", name),
+                            )
+                        }
+                    },
+                    Err(err) => {
+                        info!("Program not found: {:?}. Error: {}", id, err);
+                        OutgoingBitVMXApiMessages::NotFound(
+                            id,
+                            format!("Program not found: {}", name),
+                        )
+                    }
+                };
+
+                self.reply(from, response)?;
             }
             IncomingBitVMXApiMessages::Setup(id, program_type, participants, leader) => {
                 BitVMXApi::setup(self, id, program_type, participants, leader)?
