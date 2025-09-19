@@ -909,11 +909,19 @@ impl BitVMXApi for BitVMX {
         let tx_status = self
             .program_context
             .bitcoin_coordinator
-            .get_transaction(txid)?;
+            .get_transaction(txid);
+        if tx_status.is_err() {
+            warn!("Transaction not found: {:?}", txid);
+            self.reply(
+                from,
+                OutgoingBitVMXApiMessages::NotFound(id, txid.to_string()),
+            )?;
+            return Ok(());
+        }
 
         self.reply(
             from,
-            OutgoingBitVMXApiMessages::Transaction(id, tx_status, None),
+            OutgoingBitVMXApiMessages::Transaction(id, tx_status.unwrap(), None),
         )?;
         Ok(())
     }
