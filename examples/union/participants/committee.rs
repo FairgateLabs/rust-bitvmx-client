@@ -151,8 +151,9 @@ impl Committee {
 
         let members_snapshot = self.members.clone();
         let committee_id = self.committee_id;
+        let wt_funding_map = wt_funding_utxos_per_member.clone();
         self.all(|op: &mut Member| {
-            op.setup_dispute_channel(&members_snapshot, committee_id)
+            op.setup_dispute_channel(&members_snapshot, committee_id, &wt_funding_map)
         })?;
 
         Ok(self.public_key()?)

@@ -174,10 +174,15 @@ impl Member {
         Ok(())
     }
 
-    pub fn setup_dispute_channel(&mut self, members: &Vec<Member>, committee_id: Uuid) -> Result<()> {
+    pub fn setup_dispute_channel(
+        &mut self,
+        members: &Vec<Member>,
+        committee_id: Uuid,
+        wt_funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
+    ) -> Result<()> {
         info!(id = self.id, "Setting up dispute channel for member {}", self.id);
 
-        DisputeChannelSetup::setup(members, committee_id)?;
+        DisputeChannelSetup::setup(self, members, committee_id, wt_funding_utxos_per_member)?;
 
         for i in 0..members.len() {
             let program_id = expect_msg!(self.bitvmx, SetupCompleted(program_id) => program_id)?;

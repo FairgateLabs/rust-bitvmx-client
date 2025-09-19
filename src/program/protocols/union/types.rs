@@ -97,6 +97,19 @@ impl DisputeCoreData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DisputeChannelData {
+    pub committee_id: Uuid,
+    pub watchtower_utxo: PartialUtxo,
+    pub watchtower_take_pubkey: PublicKey,
+}
+
+impl DisputeChannelData {
+    pub fn name() -> String {
+        "dispute_channel_data".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PegInRequest {
     pub txid: Txid,
     pub amount: u64,
