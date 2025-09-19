@@ -17,18 +17,40 @@ storage:
   path: /tmp/op_1/storage.db
 
 comms:
-  address: /ip4/127.0.0.1/tcp/61180
-  key: config/keys/op_1.key
-  timeout: 5
+  address: 127.0.0.1:61180
+  priv_key: config/keys/op_1.key
+  storage_path: /tmp/regtest/op_1/comms.db
+
+broker:
+  allow_list: config/allow_list.yaml
+  routing_table: config/routing_table.yaml
+  port: 22222
+  ip: 127.0.0.1
+  priv_key: config/keys/services.key
+  storage: 
+    path: /tmp/regtest/op_1/broker.db
+
+components:
+  l2:
+    ip: 127.0.0.1
+    priv_key: config/keys/l2.key
+    id: 0
+  bitvmx:
+    ip: 127.0.0.1
+    priv_key: config/keys/bitvmx.key
+    id: 0
+  emulator:
+    ip: 127.0.0.1
+    priv_key: config/keys/emulator.key
+    id: 0
+  prover:
+    ip: 127.0.0.1
+    priv_key: config/keys/prover.key
+    id: 0
 
 coordinator:
   throtthle_bitcoin_updates_until_sync: 0
   throtthle_bitcoin_updates: 0
-
-broker_storage: 
-  path: /tmp/op_1/broker.db
-
-broker_port: 22222
 
 client: 
   # Number of retries for requests

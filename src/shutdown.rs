@@ -15,7 +15,7 @@ pub trait GracefulShutdown {
 
 impl GracefulShutdown for OperatorComms {
     fn begin_shutdown(&mut self) {
-        // TODO: stop accepting new P2P work and close listeners
+        // TODO: stop accepting new Comms work and close listeners
     }
     fn drain_until_idle(&mut self, _deadline: std::time::Instant) {
         // TODO: drain internal queues if any

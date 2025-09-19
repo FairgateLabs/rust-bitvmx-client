@@ -15,6 +15,7 @@ storage:
 comms:
   address: 127.0.0.1:61181
   priv_key: config/keys/op_2.key
+  storage_path: /tmp/op_2/comms.db
 coordinator_settings:
   max_feerate_sat_vb: 2
   monitor_settings:

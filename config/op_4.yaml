@@ -19,6 +19,7 @@ storage:
 comms:
   address: 127.0.0.1:61183
   priv_key: config/keys/op_4.key
+  storage_path: /tmp/regtest/op_4/comms.db
 
 broker:
   allow_list: config/allow_list.yaml

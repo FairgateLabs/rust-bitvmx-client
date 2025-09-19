@@ -117,7 +117,7 @@ impl BitVMX {
             &config.comms.priv_key,
             allow_list.clone(),
             routing_table.clone(),
-            None, //TODO: replace with actual storage path
+            Some(config.comms.storage_path.clone()),
         )?;
         let wallet = Wallet::from_derive_keypair(
             config.bitcoin.clone(),

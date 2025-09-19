@@ -21,8 +21,8 @@ storage:
 comms:
   address: 127.0.0.1:61182
   priv_key: config/keys/op_1.key
-  timeout: 5
-
+  storage_path: /tmp/development/comms.db
+  
 coordinator:
   throtthle_bitcoin_updates_until_sync: 0
   throtthle_bitcoin_updates: 0

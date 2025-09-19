@@ -33,7 +33,7 @@ impl OperatorInstance {
 fn config_trace() {
     // Try to read from RUST_LOG environment variable first, fall back to default if not set
     let filter = EnvFilter::try_from_default_env()
-        .or_else(|_| EnvFilter::try_new("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitcoin_coordinator=info,p2p_protocol=off,p2p_handler=off,tarpc=off,broker=off"))
+        .or_else(|_| EnvFilter::try_new("info,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitcoin_coordinator=info,tarpc=off,broker=off"))
         .expect("Invalid filter");
 
     tracing_subscriber::fmt()
@@ -54,6 +54,7 @@ fn init_bitvmx(opn: &str, fresh: bool) -> Result<BitVMX> {
         clear_db(&config.storage.path);
         clear_db(&config.key_storage.path);
         clear_db(&config.broker.storage.path);
+        clear_db(&config.comms.storage_path);
 
         if config.bitcoin.network == Network::Regtest {
             Wallet::clear_db(&config.wallet).unwrap();
