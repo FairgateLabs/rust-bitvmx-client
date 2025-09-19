@@ -1,5 +1,3 @@
-use std::net::{IpAddr, Ipv4Addr};
-
 use anyhow::{Ok, Result};
 use bitcoin::{absolute, secp256k1};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
@@ -38,14 +36,8 @@ pub fn main() -> Result<()> {
     let cert = Cert::from_key_file("config/keys/l2.key")?;
     let allow_list = AllowList::new();
     allow_list.lock().unwrap().allow_all();
-    let channel = DualChannel::new(
-        &broker_config,
-        cert,
-        Some(2),
-        IpAddr::V4(Ipv4Addr::LOCALHOST),
-        Some(allow_list),
-    )?;
-    let identifier = Identifier::new_local("local".to_string(), 0);
+    let channel = DualChannel::new(&broker_config, cert, Some(2), allow_list)?;
+    let identifier = Identifier::new("local".to_string(), 0);
     channel.send(identifier.clone(), "get_aggregated".to_string())?;
 
     let aggregated_pub_key: PublicKey;

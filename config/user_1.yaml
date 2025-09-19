@@ -32,19 +32,15 @@ broker:
 
 components:
   l2:
-    ip: 127.0.0.1
     priv_key: config/keys/l2.key
     id: 0
   bitvmx:
-    ip: 127.0.0.1
     priv_key: config/keys/bitvmx.key
     id: 0
   emulator:
-    ip: 127.0.0.1
     priv_key: config/keys/emulator.key
     id: 0
   prover:
-    ip: 127.0.0.1
     priv_key: config/keys/prover.key
     id: 0
 

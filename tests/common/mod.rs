@@ -47,16 +47,14 @@ pub fn init_bitvmx(
         &broker_config,
         Cert::from_key_file(&config.components.l2.priv_key)?,
         Some(config.components.l2.id),
-        config.components.l2.ip,
-        Some(allow_list.clone()),
+        allow_list.clone(),
     )?;
     let dispatcher_channel = if emulator_dispatcher {
         Some(DualChannel::new(
             &broker_config,
             Cert::from_key_file(&config.components.emulator.priv_key)?,
             Some(config.components.emulator.id),
-            config.components.emulator.ip,
-            Some(allow_list),
+            allow_list,
         )?)
     } else {
         None
@@ -249,8 +247,7 @@ pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
         &broker_config,
         Cert::from_key_file(&config.components.l2.priv_key)?,
         Some(config.components.l2.id),
-        config.components.l2.ip,
-        Some(allow_list.clone()),
+        allow_list.clone(),
     )?;
     let particiant_channel = ParticipantChannel {
         id: config.components.get_bitvmx_identifier()?,

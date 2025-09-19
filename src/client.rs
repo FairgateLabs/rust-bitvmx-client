@@ -42,8 +42,7 @@ impl BitVMXClient {
             &config,
             Cert::from_key_file(&client_config.priv_key)?,
             Some(client_config.id),
-            client_config.ip,
-            Some(allow_list),
+            allow_list,
         )?;
 
         Ok(Self {

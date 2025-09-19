@@ -101,8 +101,7 @@ pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
         &broker_config,
         Cert::from_key_file(&config.components.l2.priv_key)?,
         Some(config.components.l2.id),
-        config.components.l2.ip,
-        Some(allow_list.clone()),
+        allow_list.clone(),
     )?;
     let particiant_channel = ParticipantChannel {
         id: config.components.get_bitvmx_identifier()?,
@@ -125,7 +124,7 @@ pub fn main() -> Result<()> {
 
     let cert = Cert::from_key_file("config/keys/l2.key")?;
     let pubk_hash = cert.get_pubk_hash()?;
-    let identifier = Identifier::new_local(pubk_hash, 2);
+    let identifier = Identifier::new(pubk_hash, 2);
     lockservice(broker_channel, identifier)?;
 
     broker.close();
