@@ -215,7 +215,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>, identifier: Identifier)
         OutgoingBitVMXApiMessages::AggregatedPubkey(_uuid, aggregated_pub_key) => {
             aggregated_pub_key
         }
-        _ => panic!("Expected AggregatedPubkey message"),
+        _ => panic!("Expected AggregatedPubkey message and got {:?}", msg),
     };
 
     info!("Aggregated pubkey: {:?}", aggregated_pub_key);
@@ -484,11 +484,11 @@ pub fn set_speedup_funding(
     // Send funds to the public key
     let funds = wallet.send_funds(Destination::P2WPKH(*pub_key, amount), Some(1))?;
 
-    let command = IncomingBitVMXApiMessages::DispatchTransaction(Uuid::new_v4(), funds.clone())
+    /*let command = IncomingBitVMXApiMessages::DispatchTransaction(Uuid::new_v4(), funds.clone())
         .to_string()?;
     id_channel_pair
         .channel
-        .send(id_channel_pair.id.clone(), command)?;
+        .send(id_channel_pair.id.clone(), command)?;*/
 
     std::thread::sleep(std::time::Duration::from_secs(1));
     info!("Mining a block to confirm speedup funding");
