@@ -748,17 +748,17 @@ pub fn sign_winternitz_message(message_bytes: &[u8], index: u32) -> WinternitzSi
 }
 
 #[ignore]
-// #[test]
-// fn test_independent_testnet() -> Result<()> {
-//     test_all_aux(true, Network::Testnet, None, None, None)?;
-//     Ok(())
-// }
-// #[ignore]
-// #[test]
-// fn test_independent_regtest() -> Result<()> {
-//     test_all_aux(true, Network::Regtest, None, None, None)?;
-//     Ok(())
-// }
+#[test]
+fn test_independent_testnet() -> Result<()> {
+    test_all_aux(true, Network::Testnet, None, None, None)?;
+    Ok(())
+}
+#[ignore]
+#[test]
+fn test_independent_regtest() -> Result<()> {
+    test_all_aux(true, Network::Regtest, None, None, None)?;
+    Ok(())
+}
 #[ignore]
 #[test]
 fn test_all() -> Result<()> {
@@ -848,35 +848,35 @@ fn test_previous_input() -> Result<()> {
     Ok(())
 }
 
-//#[cfg(target_os = "linux")]
-// #[ignore]
-// #[test]
-// fn test_zkp() -> Result<()> {
-//     config_trace();
-//     let mut helper = TestHelper::new(Network::Regtest, false, Some(1000))?;
+#[cfg(target_os = "linux")]
+#[ignore]
+#[test]
+fn test_zkp() -> Result<()> {
+    config_trace();
+    let mut helper = TestHelper::new(Network::Regtest, false, Some(1000))?;
 
-//     let id = Uuid::new_v4();
+    let id = Uuid::new_v4();
 
-//     let _ = helper.id_channel_pairs[0].channel.send(
-//         helper.id_channel_pairs[0].id.clone(),
-//         IncomingBitVMXApiMessages::GenerateZKP(
-//             id,
-//             vec![1, 2, 3, 4],
-//             "../rust-bitvmx-zk-proof/target/riscv-guest/methods/bitvmx/riscv32im-risc0-zkvm-elf/release/bitvmx.bin".to_string()
-//         ).to_string()?,
-//     );
+    let _ = helper.id_channel_pairs[0].channel.send(
+        helper.id_channel_pairs[0].id.clone(),
+        IncomingBitVMXApiMessages::GenerateZKP(
+            id,
+            vec![1, 2, 3, 4],
+            "../rust-bitvmx-zk-proof/target/riscv-guest/methods/bitvmx/riscv32im-risc0-zkvm-elf/release/bitvmx.bin".to_string()
+        ).to_string()?,
+    );
 
-//     let msg = helper.wait_msg(0)?;
-//     info!("ZKP generated: {:?}", msg);
+    let msg = helper.wait_msg(0)?;
+    info!("ZKP generated: {:?}", msg);
 
-//     let _ = helper.id_channel_pairs[0].channel.send(
-//         helper.id_channel_pairs[0].id.clone(),
-//         IncomingBitVMXApiMessages::GetZKPExecutionResult(id).to_string()?,
-//     );
+    let _ = helper.id_channel_pairs[0].channel.send(
+        helper.id_channel_pairs[0].id.clone(),
+        IncomingBitVMXApiMessages::GetZKPExecutionResult(id).to_string()?,
+    );
 
-//     let msg = helper.wait_msg(0)?;
-//     info!("ZKP result: {:?}", msg);
+    let msg = helper.wait_msg(0)?;
+    info!("ZKP result: {:?}", msg);
 
-//     helper.stop()?;
-//     Ok(())
-// }
+    helper.stop()?;
+    Ok(())
+}
