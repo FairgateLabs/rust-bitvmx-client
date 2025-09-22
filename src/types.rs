@@ -128,6 +128,7 @@ pub enum IncomingBitVMXApiMessages {
     GetFundingAddress(Uuid),
     GetFundingBalance(Uuid),
     SendFunds(Uuid, Destination, Option<u64>),
+    GetProtocolVisualization(Uuid),
 }
 impl IncomingBitVMXApiMessages {
     pub fn to_string(&self) -> Result<String, BitVMXError> {
@@ -176,6 +177,7 @@ pub enum OutgoingBitVMXApiMessages {
     FundsSent(Uuid, Txid),
     WalletNotReady(Uuid),
     WalletError(Uuid, String),
+    ProtocolVisualization(String),
 }
 
 impl OutgoingBitVMXApiMessages {
@@ -325,6 +327,9 @@ impl OutgoingBitVMXApiMessages {
             OutgoingBitVMXApiMessages::FundsSent(_, _) => "FundsSent".to_string(),
             OutgoingBitVMXApiMessages::WalletNotReady(_) => "WalletNotReady".to_string(),
             OutgoingBitVMXApiMessages::WalletError(_, _) => "WalletError".to_string(),
+            OutgoingBitVMXApiMessages::ProtocolVisualization(_) => {
+                "ProtocolVisualization".to_string()
+            }
         }
     }
 }

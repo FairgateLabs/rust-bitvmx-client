@@ -27,6 +27,7 @@ use operator_comms::{
     helper::ReceiveHandlerChannel,
     operator_comms::{AllowList, OperatorComms, PubKeyHash, RoutingTable},
 };
+use protocol_builder::graph::graph::GraphOptions;
 
 use crate::shutdown::GracefulShutdown;
 use crate::spv_proof::get_spv_proof;
@@ -970,15 +971,19 @@ impl BitVMXApi for BitVMX {
         id: Uuid,
         txid: Txid,
     ) -> Result<(), BitVMXError> {
-        let tx_status = self
+        let response = match self
             .program_context
             .bitcoin_coordinator
-            .get_transaction(txid)?;
+            .get_transaction(txid)
+        {
+            Ok(tx_status) => OutgoingBitVMXApiMessages::Transaction(id, tx_status, None),
+            Err(e) => {
+                info!("Transaction not found: {:?}. Error: {}", txid, e);
+                OutgoingBitVMXApiMessages::NotFound(id, txid.to_string())
+            }
+        };
 
-        self.reply(
-            from,
-            OutgoingBitVMXApiMessages::Transaction(id, tx_status, None),
-        )?;
+        self.reply(from, response)?;
         Ok(())
     }
 
@@ -1244,13 +1249,31 @@ impl BitVMXApi for BitVMX {
                 BitVMXApi::get_transaction(self, from, id, txid)?
             }
             IncomingBitVMXApiMessages::GetTransactionInfoByName(id, name) => {
-                let tx = self
-                    .load_program(&id)?
-                    .get_transaction_by_name(&self.program_context, &name)?;
-                self.reply(
-                    from,
-                    OutgoingBitVMXApiMessages::TransactionInfo(id, name, tx),
-                )?;
+                let program = self.load_program(&id);
+                let response = match program {
+                    Ok(prog) => match prog.get_transaction_by_name(&self.program_context, &name) {
+                        Ok(tx) => OutgoingBitVMXApiMessages::TransactionInfo(id, name, tx),
+                        Err(err) => {
+                            info!(
+                                "Transaction not found: {} in program {:?}. Error: {}",
+                                name, id, err
+                            );
+                            OutgoingBitVMXApiMessages::NotFound(
+                                id,
+                                format!("Transaction not found: {}", name),
+                            )
+                        }
+                    },
+                    Err(err) => {
+                        info!("Program not found: {:?}. Error: {}", id, err);
+                        OutgoingBitVMXApiMessages::NotFound(
+                            id,
+                            format!("Program not found: {}", name),
+                        )
+                    }
+                };
+
+                self.reply(from, response)?;
             }
             IncomingBitVMXApiMessages::Setup(id, program_type, participants, leader) => {
                 BitVMXApi::setup(self, id, program_type, participants, leader)?
@@ -1385,6 +1408,17 @@ impl BitVMXApi for BitVMX {
                 };
 
                 self.reply(from, message)?;
+            }
+            IncomingBitVMXApiMessages::GetProtocolVisualization(id) => {
+                let protocol_str = self
+                    .load_program(&id)?
+                    .protocol
+                    .load_protocol()?
+                    .visualize(GraphOptions::EdgeArrows)?;
+                self.reply(
+                    from,
+                    OutgoingBitVMXApiMessages::ProtocolVisualization(protocol_str),
+                )?;
             }
             #[cfg(feature = "testpanic")]
             IncomingBitVMXApiMessages::Test(s) => {

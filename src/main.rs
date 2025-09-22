@@ -33,7 +33,7 @@ impl OperatorInstance {
 fn config_trace() {
     // Try to read from RUST_LOG environment variable first, fall back to default if not set
     let filter = EnvFilter::try_from_default_env()
-        .or_else(|_| EnvFilter::try_new("info,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitcoin_coordinator=info,tarpc=off,broker=off"))
+        .or_else(|_| EnvFilter::try_new("info,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitcoin_coordinator=info,tarpc=off,broker=off,bitvmx_wallet=info,bitvmx_bitcoin_rpc=off"))
         .expect("Invalid filter");
 
     tracing_subscriber::fmt()

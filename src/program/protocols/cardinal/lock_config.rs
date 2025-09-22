@@ -150,7 +150,7 @@ impl LockProtocolConfiguration {
 
         let asset_value = self.ordinal_utxo.2.unwrap();
         let asset_output_type =
-            external_fund_tx(&self.unspendable, asset_spending_condition, asset_value)?;
+            external_fund_tx(&self.operators_aggregated_pub, asset_spending_condition, asset_value)?;
 
         Ok((txid.clone(), 0, Some(asset_value), Some(asset_output_type)))
     }

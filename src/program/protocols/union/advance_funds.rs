@@ -219,12 +219,17 @@ impl ProtocolHandler for AdvanceFundsProtocol {
 
         if tx_name == ADVANCE_FUNDS_TX {
             let request: AdvanceFundsRequest = self.advance_funds_request(context)?;
+            let mut block_height = None;
+
             if !self.is_initial_deposit_tx_dispatched(context, &self.committee_id(context)?)? {
                 self.dispatch_op_initial_deposit_tx(
                     context,
                     &request.committee_id,
                     &request.my_take_pubkey,
                 )?;
+
+                // In the first reimbursement delay one block to ensure the initial deposit is dispatched
+                block_height = Some(tx_status.block_info.as_ref().unwrap().height + 1);
             }
 
             let dispute_protocol_id =
@@ -237,7 +242,12 @@ impl ProtocolHandler for AdvanceFundsProtocol {
                 request.slot_index,
             )?;
 
-            self.dispatch_reimbursement_tx(context, dispute_protocol_id, request.slot_index)?;
+            self.dispatch_reimbursement_tx(
+                context,
+                dispute_protocol_id,
+                request.slot_index,
+                block_height,
+            )?;
 
             let tx = tx_status.tx;
             self.update_advance_funds_input(context, &tx)?;
@@ -368,6 +378,7 @@ impl AdvanceFundsProtocol {
         context: &ProgramContext,
         dispute_protocol_id: Uuid,
         slot_index: usize,
+        block_height: Option<u32>,
     ) -> Result<(), BitVMXError> {
         info!(
             "Dispatching reimbursement kickoff transaction for slot index {} in dispute protocol {}",
@@ -386,7 +397,7 @@ impl AdvanceFundsProtocol {
             tx.clone(),
             speedup,
             tx_name.clone(), // Context string
-            None,            // Dispatch immediately
+            block_height,    // Dispatch immediately
         )?;
 
         info!("{} dispatched with txid: {}", tx_name, txid);
