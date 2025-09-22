@@ -21,7 +21,7 @@ pub fn main() -> Result<()> {
     let cert = Cert::from_key_file("config/keys/l2.key")?;
     let allow_list = AllowList::new();
     allow_list.lock().unwrap().allow_all();
-    let channel = DualChannel::new(&broker_config, cert, Some(3), allow_list)?;
+    let channel = DualChannel::new(&broker_config, cert, Some(2), allow_list)?;
     let identifier = Identifier::new("local".to_string(), 0);
     channel.send(identifier, "burn".to_string())?;
 
