@@ -6,7 +6,7 @@ use crate::{
             ask_user_confirmation, create_wallet, fund_members, fund_user_pegin_utxos,
             fund_user_speedup, load_change_key_from_env, load_private_key_from_env, print_balance,
             print_link, print_members_balances, recover_funds, recover_user_funds,
-            string_to_network,
+            string_to_network, wallet_recover_funds,
         },
         master_wallet::MasterWallet,
     },
@@ -52,11 +52,12 @@ pub fn main() -> Result<()> {
         Some("invalid_reimbursement") => cli_invalid_reimbursement()?,
         Some("create_wallet") => cli_create_wallet(args.get(2))?,
         Some("latency") => cli_latency(args.get(2))?,
-        Some("balances") => cli_balances()?,
+        Some("members_balance") => cli_members_balance()?,
         Some("wallet_balance") => cli_wallet_balance()?,
         Some("fund_members") => cli_fund_members()?,
-        Some("recover_funds") => cli_recover_funds()?,
-        Some("recover_user_funds") => cli_recover_user_funds()?,
+        Some("members_recover_funds") => cli_members_recover_funds()?,
+        Some("user_recover_funds") => cli_user_recover_funds()?,
+        Some("wallet_recover_funds") => cli_wallet_recover_funds()?,
         Some(cmd) => {
             eprintln!("Unknown command: {}", cmd);
             print_usage();
@@ -91,14 +92,15 @@ fn print_usage() {
     );
     println!("  cargo run --example union wallet_balance      - Print Master wallet balance");
     println!("  cargo run --example union latency             - Analyses latency to the Bitcoin node. (optionally pass network: regtest, testnet, bitcoin)");
-    println!(
-        "  cargo run --example union balances            - Print members and master wallet balance"
-    );
+    println!("  cargo run --example union members_balance            - Print members balance");
     println!(
         "  cargo run --example union fund_members        - Funds all committee members from master wallet with a testing amount"
     );
-    println!("  cargo run --example union recover_funds       - Send all members funds to master wallet address");
-    println!("  cargo run --example union recover_user_funds  - Send user funds to master wallet address");
+    println!("  cargo run --example union members_recover_funds       - Send all members funds to master wallet address");
+    println!("  cargo run --example union user_recover_funds  - Send user funds to master wallet address");
+    println!(
+        "  cargo run --example union wallet_recover_funds  - Send master wallet funds to address"
+    );
 }
 
 fn cli_create_wallet(network: Option<&String>) -> Result<()> {
@@ -177,16 +179,12 @@ pub fn cli_invalid_reimbursement() -> Result<()> {
     Ok(())
 }
 
-pub fn cli_balances() -> Result<()> {
+pub fn cli_members_balance() -> Result<()> {
     let mut committee = Committee::new(STREAM_DENOMINATION, NETWORK)?;
     committee.setup_keys()?;
 
     info!("Members balances:");
     print_members_balances(committee.members.as_slice())?;
-
-    let wallet = get_master_wallet()?;
-
-    print_balance(&wallet)?;
     Ok(())
 }
 
@@ -201,7 +199,18 @@ pub fn cli_wallet_balance() -> Result<()> {
     Ok(())
 }
 
-pub fn cli_recover_funds() -> Result<()> {
+pub fn cli_wallet_recover_funds() -> Result<()> {
+    let mut wallet = get_master_wallet()?;
+    let address = "tb1qnfgpa7wlmjs435x6nrpv7p6yrvwe8gkscwfv0q".to_string();
+
+    info!("Master Wallet info:");
+    print_balance(&wallet)?;
+
+    wallet_recover_funds(&mut wallet, address)?;
+    Ok(())
+}
+
+pub fn cli_members_recover_funds() -> Result<()> {
     let mut committee = Committee::new(STREAM_DENOMINATION, NETWORK)?;
     committee.setup_keys()?;
 
@@ -224,7 +233,7 @@ pub fn cli_recover_funds() -> Result<()> {
     Ok(())
 }
 
-pub fn cli_recover_user_funds() -> Result<()> {
+pub fn cli_user_recover_funds() -> Result<()> {
     let user = get_user()?;
     let mut master_wallet = get_master_wallet()?;
     let address = master_wallet.wallet.receive_address()?;
