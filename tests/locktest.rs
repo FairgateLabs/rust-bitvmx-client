@@ -50,10 +50,11 @@ pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, Wallet)> {
     };
 
     let wallet_config = bitvmx_settings::settings::load_config_file::<
-            bitvmx_wallet::config::Config,
-        >(Some(config_path.to_string()))?;
+        bitvmx_wallet::wallet::config::Config,
+    >(Some(config_path.to_string()))?;
 
-    let mut wallet = Wallet::from_config(wallet_config.bitcoin.clone(), wallet_config.wallet.clone())?;
+    let mut wallet =
+        Wallet::from_config(wallet_config.bitcoin.clone(), wallet_config.wallet.clone())?;
     wallet.sync_wallet()?;
     Ok((bitcoin_client, wallet))
 }

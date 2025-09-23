@@ -1,9 +1,9 @@
 use bitcoin_coordinator::config::CoordinatorSettingsConfig;
 use bitvmx_bitcoin_rpc::rpc_config::RpcConfig;
+use bitvmx_wallet::wallet::config::WalletConfig;
 use key_manager::config::KeyManagerConfig;
 use serde::{Deserialize, Serialize};
 use storage_backend::storage_config::StorageConfig;
-use bitvmx_wallet::config::WalletConfig;
 use tracing::info;
 
 use crate::errors::ConfigError;
