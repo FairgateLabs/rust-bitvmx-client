@@ -169,7 +169,7 @@ pub enum BitVMXError {
     MissingPublicNonces(String, String),
 
     #[error("Wallet error {0}")]
-    WalletError(#[from] bitvmx_wallet::errors::WalletError),
+    WalletError(#[from] bitvmx_wallet::wallet::errors::WalletError),
 }
 
 impl BitVMXError {

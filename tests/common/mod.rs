@@ -101,9 +101,9 @@ pub const FUNDING_ID: &str = "fund_1";
 pub const FEE: u64 = 500;
 
 pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
-    let wallet_config = bitvmx_settings::settings::load_config_file::<bitvmx_wallet::config::Config>(
-        Some("config/wallet_regtest.yaml".to_string()),
-    )?;
+    let wallet_config = bitvmx_settings::settings::load_config_file::<
+        bitvmx_wallet::wallet::config::Config,
+    >(Some("config/wallet_regtest.yaml".to_string()))?;
 
     // Clear indexer, monitor, key manager and wallet data.
     clear_db(&wallet_config.storage.path);
