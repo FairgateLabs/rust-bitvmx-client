@@ -1,5 +1,4 @@
-#![cfg(feature = "cardinal")]
-
+#![cfg(all(feature = "cardinal", test))]
 use anyhow::Result;
 use bitcoin::{
     key::rand::rngs::OsRng,
@@ -23,6 +22,7 @@ use bitvmx_client::{
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
+use bitvmx_wallet::wallet::RegtestWallet;
 use common::{
     config_trace,
     dispute::{execute_dispute, prepare_dispute, ForcedChallenges},
@@ -48,7 +48,7 @@ pub fn test_full() -> Result<()> {
     let fake_drp = false;
     let fake_instruction = false;
 
-    let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
+    let (bitcoin_client, bitcoind, mut wallet) = prepare_bitcoin()?;
 
     let (bitvmx_1, address_1, bridge_1, emulator_1) = init_bitvmx("op_1", true)?;
     let (bitvmx_2, address_2, bridge_2, emulator_2) = init_bitvmx("op_2", true)?;
@@ -110,21 +110,21 @@ pub fn test_full() -> Result<()> {
         10_000_000,
         &funding_key_0,
         &channels[0],
-        &wallet,
+        &mut wallet,
         &instances[0].get_components_config().get_bitvmx_config(),
     )?;
     set_speedup_funding(
         10_000_000,
         &funding_key_1,
         &channels[1],
-        &wallet,
+        &mut wallet,
         &instances[1].get_components_config().get_bitvmx_config(),
     )?;
     set_speedup_funding(
         10_000_000,
         &funding_key_2,
         &channels[2],
-        &wallet,
+        &mut wallet,
         &instances[2].get_components_config().get_bitvmx_config(),
     )?;
 
@@ -168,7 +168,7 @@ pub fn test_full() -> Result<()> {
     info!("Setting SLOT");
     info!("================================================");
     let fund_value = slot_protocol_dust_cost(3);
-    let utxo = init_utxo(&wallet, aggregated_pub_key, None, fund_value)?;
+    let utxo = init_utxo(&mut wallet, aggregated_pub_key, None, fund_value)?;
 
     //======================================================
     // SETUP SLOT BEGIN

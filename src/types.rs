@@ -1,15 +1,16 @@
 use std::str::FromStr;
 
 use crate::{config::ComponentsConfig, spv_proof::BtcTxSPVProof};
-use ::operator_comms::operator_comms::OperatorComms;
-use bitcoin::{PrivateKey, PublicKey, Transaction, Txid};
+use bitcoin::{address::NetworkUnchecked, Address, PrivateKey, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TransactionStatus};
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
     channel::channel::{DualChannel, LocalChannel},
     identification::identifier::Identifier,
 };
+use bitvmx_wallet::wallet::Destination;
 use chrono::{DateTime, Utc};
+use operator_comms::operator_comms::OperatorComms;
 use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
 
@@ -33,11 +34,6 @@ pub struct ProgramContext {
     pub witness: WitnessVars,
     pub components_config: ComponentsConfig,
 }
-
-// pub const BITVMX_ID: u8 = 1;
-// pub const L2_ID: u8 = 100;
-// pub const EMULATOR_ID: u8 = 1000;
-// pub const PROVER_ID: u8 = 2000;
 
 impl ProgramContext {
     pub fn new(
@@ -127,6 +123,12 @@ pub enum IncomingBitVMXApiMessages {
     Encrypt(Uuid, Vec<u8>, String),
     Decrypt(Uuid, Vec<u8>),
     Backup(String),
+    #[cfg(feature = "testpanic")]
+    Test(String),
+    GetFundingAddress(Uuid),
+    GetFundingBalance(Uuid),
+    SendFunds(Uuid, Destination, Option<u64>),
+    GetProtocolVisualization(Uuid),
 }
 impl IncomingBitVMXApiMessages {
     pub fn to_string(&self) -> Result<String, BitVMXError> {
@@ -170,6 +172,12 @@ pub enum OutgoingBitVMXApiMessages {
     Encrypted(Uuid, Vec<u8>),
     Decrypted(Uuid, Vec<u8>),
     BackupResult(bool, String),
+    FundingAddress(Uuid, Address<NetworkUnchecked>),
+    FundingBalance(Uuid, u64),
+    FundsSent(Uuid, Txid),
+    WalletNotReady(Uuid),
+    WalletError(Uuid, String),
+    ProtocolVisualization(String),
 }
 
 impl OutgoingBitVMXApiMessages {
@@ -273,6 +281,55 @@ impl OutgoingBitVMXApiMessages {
                 Some((uuid.clone(), decrypted.clone()))
             }
             _ => None,
+        }
+    }
+
+    pub fn name(&self) -> String {
+        match self {
+            OutgoingBitVMXApiMessages::Pong() => "Pong".to_string(),
+            OutgoingBitVMXApiMessages::Transaction(_, _, _) => "Transaction".to_string(),
+            OutgoingBitVMXApiMessages::PeginTransactionFound(_, _) => {
+                "PeginTransactionFound".to_string()
+            }
+            OutgoingBitVMXApiMessages::SpendingUTXOTransactionFound(_, _, _, _) => {
+                "SpendingUTXOTransactionFound".to_string()
+            }
+            OutgoingBitVMXApiMessages::SpeedUpProgramNoFunds(_) => {
+                "SpeedUpProgramNoFunds".to_string()
+            }
+            OutgoingBitVMXApiMessages::SetupCompleted(_) => "SetupCompleted".to_string(),
+            OutgoingBitVMXApiMessages::AggregatedPubkey(_, _) => "AggregatedPubkey".to_string(),
+            OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(_) => {
+                "AggregatedPubkeyNotReady".to_string()
+            }
+            OutgoingBitVMXApiMessages::TransactionInfo(_, _, _) => "TransactionInfo".to_string(),
+            OutgoingBitVMXApiMessages::ZKPResult(_, _, _) => "ZKPResult".to_string(),
+            OutgoingBitVMXApiMessages::ExecutionResult() => "ExecutionResult".to_string(),
+            OutgoingBitVMXApiMessages::CommInfo(_) => "CommInfo".to_string(),
+            OutgoingBitVMXApiMessages::KeyPair(_, _, _) => "KeyPair".to_string(),
+            OutgoingBitVMXApiMessages::PubKey(_, _) => "PubKey".to_string(),
+            OutgoingBitVMXApiMessages::SignedMessage(_, _, _, _) => "SignedMessage".to_string(),
+            OutgoingBitVMXApiMessages::Variable(_, _, _) => "Variable".to_string(),
+            OutgoingBitVMXApiMessages::Witness(_, _, _) => "Witness".to_string(),
+            OutgoingBitVMXApiMessages::NotFound(_, _) => "NotFound".to_string(),
+            OutgoingBitVMXApiMessages::HashedMessage(_, _, _, _, _) => "HashedMessage".to_string(),
+            OutgoingBitVMXApiMessages::ProofReady(_) => "ProofReady".to_string(),
+            OutgoingBitVMXApiMessages::ProofNotReady(_) => "ProofNotReady".to_string(),
+            OutgoingBitVMXApiMessages::ProofGenerationError(_, _) => {
+                "ProofGenerationError".to_string()
+            }
+            OutgoingBitVMXApiMessages::SPVProof(_, _) => "SPVProof".to_string(),
+            OutgoingBitVMXApiMessages::BackupResult(_, _) => "BackupResult".to_string(),
+            OutgoingBitVMXApiMessages::Encrypted(_, _) => "Encrypted".to_string(),
+            OutgoingBitVMXApiMessages::Decrypted(_, _) => "Decrypted".to_string(),
+            OutgoingBitVMXApiMessages::FundingAddress(_, _) => "FundingAddress".to_string(),
+            OutgoingBitVMXApiMessages::FundingBalance(_, _) => "FundingBalance".to_string(),
+            OutgoingBitVMXApiMessages::FundsSent(_, _) => "FundsSent".to_string(),
+            OutgoingBitVMXApiMessages::WalletNotReady(_) => "WalletNotReady".to_string(),
+            OutgoingBitVMXApiMessages::WalletError(_, _) => "WalletError".to_string(),
+            OutgoingBitVMXApiMessages::ProtocolVisualization(_) => {
+                "ProtocolVisualization".to_string()
+            }
         }
     }
 }

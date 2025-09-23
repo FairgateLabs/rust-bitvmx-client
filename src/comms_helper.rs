@@ -32,15 +32,7 @@ pub fn response<T: Serialize>(
     msg_type: CommsMessageType,
     msg: T,
 ) -> Result<(), BitVMXError> {
-    let serialize_msg = serialize_msg(msg_type, program_id, msg)?;
-    comms
-        .send(
-            &comms_address.pubkey_hash,
-            comms_address.address,
-            serialize_msg,
-        )
-        .unwrap();
-    Ok(())
+    request(comms, program_id, comms_address, msg_type, msg) // In this version, response is identical to request. Keeping it separate for clarity.
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]

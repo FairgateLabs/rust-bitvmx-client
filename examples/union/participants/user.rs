@@ -1,5 +1,7 @@
 use crate::{
-    bitcoin::emulated_user_keypair, expect_msg, macros::wait_for_message_blocking, wait_until_msg,
+    macros::wait_for_message_blocking,
+    wait_until_msg,
+    wallet::helper::{non_regtest_warning, print_link},
 };
 use anyhow::Result;
 use bitcoin::{
@@ -8,21 +10,26 @@ use bitcoin::{
     key::Secp256k1,
     secp256k1::{self, All, Message, SecretKey},
     sighash::SighashCache,
-    transaction, Address as BitcoinAddress, Amount, Network, OutPoint,
-    PrivateKey as BitcoinPrivKey, PublicKey, PublicKey as BitcoinPubKey, ScriptBuf, Sequence,
-    Transaction, TxIn, TxOut, Txid, Witness, XOnlyPublicKey,
+    transaction, Address, Address as BitcoinAddress, Amount, CompressedPublicKey, Network,
+    OutPoint, PrivateKey, PublicKey, PublicKey as BitcoinPubKey, ScriptBuf, Sequence, Transaction,
+    TxIn, TxOut, Txid, Witness, XOnlyPublicKey,
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use operator_comms::operator_comms::AllowList;
 use protocol_builder::scripts::{build_taproot_spend_info, op_return_script, timelock, SignMode};
-use tracing::info;
+use std::str::FromStr;
+use tracing::{error, info};
 
 use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
     program::{protocols::union::types::SPEEDUP_VALUE, variables::PartialUtxo},
+    spv_proof::BtcTxSPVProof,
     types::OutgoingBitVMXApiMessages::*,
 };
+
+const KEY_SPEND_FEE: u64 = 135;
+const OP_RETURN_FEE: u64 = 100;
 
 pub struct User {
     pub id: String,
@@ -34,6 +41,9 @@ pub struct User {
     pub network: Network,
     pub secp: Secp256k1<All>,
     pub rsk_address: &'static str, // This is a placeholder, should be replaced with actual RSK address
+    request_pegin_utxos: Vec<PartialUtxo>,
+    speedup_utxo: Option<PartialUtxo>,
+    pub config: Config,
 }
 
 impl User {
@@ -51,10 +61,16 @@ impl User {
             &config.bitcoin.username,
             &config.bitcoin.password,
         )?;
-        let network = Network::Regtest;
+
+        let network = config.bitcoin.network;
+        let priv_key = PrivateKey::from_str(&config.wallet.clone().receive_key.unwrap())?;
+        let user_sk: SecretKey = priv_key.inner;
+
         let secp = Secp256k1::new();
-        let (user_address, user_pubkey, user_sk) =
-            emulated_user_keypair(&secp, &bitcoin_client, network)?;
+        let user_pubkey = PublicKey::from_private_key(&secp, &priv_key);
+
+        let compressed_pubkey = CompressedPublicKey::from_private_key(&secp, &priv_key)?;
+        let user_address = Address::p2wpkh(&compressed_pubkey, network);
 
         Ok(Self {
             id: id.to_string(),
@@ -66,6 +82,9 @@ impl User {
             network,
             secp,
             rsk_address: "7ac5496aee77c1ba1f0854206a26dda82a81d6d8",
+            request_pegin_utxos: vec![],
+            speedup_utxo: None,
+            config,
         })
     }
 
@@ -79,43 +98,51 @@ impl User {
         stream_value: u64,
     ) -> Result<Txid> {
         info!(id = self.id, "Requesting pegin");
+
         // Enable RSK pegin monitoring using the public API
         self.bitvmx.subscribe_to_rsk_pegin()?;
-        info!("Subscribed to RSK pegin");
 
         // Create a proper RSK pegin transaction and send it as if it was a user transaction
         let packet_number = 0;
-        let request_pegin_txid = self.create_and_send_request_pegin_tx(
-            *committee_public_key,
-            stream_value,
-            packet_number,
-        )?;
-        info!("Sent RSK pegin transaction to bitcoind");
+
+        // We'll create a transaction that will be detected as RSK pegin by the transaction monitor.
+        let signed_transaction =
+            self.create_request_pegin_tx(*committee_public_key, stream_value, packet_number)?;
+
+        let txid = match self.bitcoin_client.send_transaction(&signed_transaction) {
+            Ok(txid) => txid,
+            Err(e) => {
+                error!("Failed to send request pegin transaction: {}", e);
+                return Err(anyhow::anyhow!(
+                    "Failed to send request pegin transaction: {}",
+                    e
+                ));
+            }
+        };
+
+        info!("Sent request pegin Tx: {}", txid);
+        print_link(self.network, txid);
+
+        Ok(txid)
+    }
+
+    pub fn get_request_pegin_spv(&self, request_pegin_txid: Txid) -> Result<BtcTxSPVProof> {
+        info!(
+            "Waiting for RSK pegin transaction to be found. Txid: {}",
+            request_pegin_txid
+        );
 
         // Wait for Bitvmx news PeginTransactionFound message
-        info!("Waiting for RSK pegin transaction to be found");
-
-        let (found_txid, tx_status) = wait_until_msg!(&self.bitvmx, PeginTransactionFound(_txid, _tx_status) => (_txid, _tx_status));
-        assert_eq!(
-            found_txid, request_pegin_txid,
-            "Request Pegin Transaction not found"
-        );
-        assert!(
-            tx_status.confirmations > 0,
-            "Request Pegin Transaction not confirmed"
-        );
-        info!("RSK pegin transaction test completed successfully");
-        info!("Transaction ID: {}", request_pegin_txid);
+        let (_, _) = wait_until_msg!(&self.bitvmx, PeginTransactionFound(_txid, _tx_status) => (_txid, _tx_status));
+        info!("RSK request pegin completed successfully");
+        info!("Waiting for SPV proof...");
 
         // Get the SPV proof, this should be used by the union client to present to the smart contract
         self.bitvmx.get_spv_proof(request_pegin_txid)?;
-        let spv_proof = expect_msg!(self.bitvmx, SPVProof(_, Some(spv_proof)) => spv_proof)?;
+        let spv_proof = wait_until_msg!(&self.bitvmx, SPVProof(_, Some(_spv_proof)) => _spv_proof);
+
         info!("SPV proof: {:?}", spv_proof);
-
-        // Union client calls the smart contract PegManager.requestPegin(spv_proof)
-        // Smart contracts emits the  PeginRequested event
-
-        Ok(request_pegin_txid)
+        Ok(spv_proof)
     }
 
     pub fn public_key(&self) -> Result<PublicKey> {
@@ -131,18 +158,21 @@ impl User {
         // We'll create a transaction that will be detected as RSK pegin by the transaction monitor.
         let signed_transaction =
             self.create_request_pegin_tx(aggregated_pubkey, stream_value, packet_number)?;
-        let txid = self
-            .bitcoin_client
-            .send_transaction(&signed_transaction)
-            .unwrap();
+
+        let txid = match self.bitcoin_client.send_transaction(&signed_transaction) {
+            Ok(txid) => txid,
+            Err(e) => {
+                error!("Failed to send request pegin transaction: {}", e);
+                return Err(anyhow::anyhow!(
+                    "Failed to send request pegin transaction: {}",
+                    e
+                ));
+            }
+        };
 
         // Get the transaction and verify it was created
         let request_pegin_tx = self.bitcoin_client.get_transaction(&txid)?.unwrap();
         let request_pegin_txid = request_pegin_tx.compute_txid();
-
-        // Mine blocks to include the transaction
-        self.bitcoin_client
-            .mine_blocks_to_address(1, &self.address)?;
 
         Ok(request_pegin_txid)
     }
@@ -156,37 +186,31 @@ impl User {
         Ok(txid)
     }
 
-    pub fn get_funding_utxo(&self, amount: u64) -> Result<PartialUtxo> {
-        let (funding_tx, vout) = self
-            .bitcoin_client
-            .fund_address(&self.address, Amount::from_sat(amount))
-            .unwrap();
-        Ok((funding_tx.compute_txid(), vout, Some(amount), None))
-    }
-
     fn create_request_pegin_tx(
         &mut self,
         aggregated_key: PublicKey,
         stream_value: u64,
         packet_number: u64,
     ) -> Result<Transaction> {
-        // RSK Pegin constants
-        pub const KEY_SPEND_FEE: u64 = 335;
-        pub const OP_RETURN_FEE: u64 = 300;
         pub const TIMELOCK_BLOCKS: u16 = 1;
-        // TODO: This should be based on the actual fee rate from the Bitcoin network
-        pub const EXTRA_FEE: u64 = 1000;
-
-        let value = stream_value;
-        let fee = KEY_SPEND_FEE + EXTRA_FEE;
-        let op_return_fee = OP_RETURN_FEE;
-        let total_amount = value + fee + op_return_fee;
+        let fee = KEY_SPEND_FEE + OP_RETURN_FEE + self.get_extra_fee();
 
         // Fund the user address with enough to cover the taproot output + fees
-        let (funding_tx, vout) = self
-            .bitcoin_client
-            .fund_address(&self.address, Amount::from_sat(total_amount))
-            .unwrap();
+        let input_utxo = match self.get_last_request_pegin_utxo() {
+            Some(utxo) => utxo.clone(),
+            None => {
+                error!("No UTXO available for request pegin");
+                return Err(anyhow::anyhow!("No UTXO available for request pegin"));
+            }
+        };
+        let input_value = input_utxo.2.unwrap();
+        let change_value = input_value - (stream_value + fee);
+
+        info!(
+            "Creating request pegin transaction with value: {} sats, total fee: {} sats. Input value: {}. Change: {}",
+            stream_value, fee, input_value, change_value
+        );
+        non_regtest_warning(self.network, "You are about to transfer REAL money.");
 
         // RSK Pegin values
         let rootstock_address = self.address_to_bytes(self.rsk_address)?;
@@ -195,7 +219,7 @@ impl User {
         // Create the Request pegin transaction
         // Inputs
         let funds_input = TxIn {
-            previous_output: OutPoint::new(funding_tx.compute_txid(), vout),
+            previous_output: OutPoint::new(input_utxo.0, input_utxo.1),
             script_sig: ScriptBuf::default(), // For a p2wpkh script_sig is empty.
             sequence: Sequence::ENABLE_RBF_NO_LOCKTIME, // we want to be able to replace this transaction
             witness: Witness::default(),                // Filled in after, at signing time.
@@ -203,7 +227,11 @@ impl User {
 
         // Outputs
         // Taproot output
-        let op_data = [rootstock_address.as_slice(), value.to_be_bytes().as_slice()].concat();
+        let op_data = [
+            rootstock_address.as_slice(),
+            stream_value.to_be_bytes().as_slice(),
+        ]
+        .concat();
         let script_op_return = op_return_script(op_data)?;
         let script_timelock = timelock(TIMELOCK_BLOCKS, &self.public_key, SignMode::Single);
 
@@ -220,7 +248,7 @@ impl User {
         );
 
         let taproot_output = TxOut {
-            value: Amount::from_sat(value),
+            value: Amount::from_sat(stream_value),
             script_pubkey: taproot_script_pubkey,
         };
 
@@ -235,23 +263,43 @@ impl User {
             script_pubkey: op_return_script(op_return_data)?.get_script().clone(),
         };
 
+        let mut outputs = Vec::<TxOut>::from([taproot_output.clone(), op_return_output.clone()]);
+
+        // Change output
+        if change_value > 546 {
+            info!("Creating change output with value: {} sats", change_value);
+            let wpkh = self.public_key.wpubkey_hash().expect("key is compressed");
+            let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
+            let change_output = TxOut {
+                value: Amount::from_sat(change_value),
+                script_pubkey: script_pubkey,
+            };
+
+            outputs.push(change_output);
+        }
+
         let mut request_pegin_transaction = Transaction {
             version: transaction::Version::TWO,  // Post BIP-68.
             lock_time: absolute::LockTime::ZERO, // Ignore the transaction lvl absolute locktime.
             input: vec![funds_input],
-            output: vec![taproot_output, op_return_output],
+            output: outputs,
         };
 
         let signed_transaction = self.sign_p2wpkh_transaction(
             &mut request_pegin_transaction,
-            [(0 as usize, total_amount)].to_vec(),
+            [(0 as usize, input_value)].to_vec(),
         )?;
-        info!("Request pegin txid: {}", signed_transaction.compute_txid());
 
+        info!("Request pegin txid: {}", signed_transaction.compute_txid());
+        info!(
+            "Request pegin TX size: {} vbytes",
+            signed_transaction.vsize()
+        );
+        self.pop_request_pegin_utxo();
         Ok(signed_transaction)
     }
 
-    pub fn create_and_dispatch_speedup(&self, tx_output: OutPoint, fee: u64) -> Result<()> {
+    pub fn create_and_dispatch_speedup(&mut self, tx_output: OutPoint, fee: u64) -> Result<()> {
         let speedup_tx = self.create_speedup_tx(tx_output, fee)?;
 
         let speedup_txid = self.dispatch_tx(speedup_tx)?;
@@ -271,8 +319,14 @@ impl User {
         Ok(())
     }
 
-    pub fn create_speedup_tx(&self, tx_output: OutPoint, fee: u64) -> Result<Transaction> {
-        let funding_utxo = self.get_funding_utxo(10_000_000)?;
+    pub fn create_speedup_tx(&mut self, tx_output: OutPoint, fee: u64) -> Result<Transaction> {
+        let funding_utxo = match self.get_speedup_utxo() {
+            Some(utxo) => utxo, // Amount is not known here
+            None => {
+                error!("No UTXO available for speedup");
+                return Err(anyhow::anyhow!("No UTXO available for speedup"));
+            }
+        };
 
         // Create two inputs: one from the funding utxo, one from the output to speed up
         let input_funding = TxIn {
@@ -291,8 +345,9 @@ impl User {
 
         // Output: all funds (minus fee) to user address
         let total_in = funding_utxo.2.unwrap(); // You may want to add the value of tx_output if known
+        let change = total_in - fee;
         let output = TxOut {
-            value: Amount::from_sat(total_in - fee),
+            value: Amount::from_sat(change),
             script_pubkey: self.address.script_pubkey(),
         };
 
@@ -308,6 +363,10 @@ impl User {
             &mut transaction,
             [(0, SPEEDUP_VALUE), (1, total_in)].to_vec(),
         )?;
+
+        // Update the speedup_utxo to the change output
+        self.set_speedup_utxo((signed_transaction.compute_txid(), 0, Some(change), None));
+
         info!(
             "Speeding up txid: {}. Speedup txid: {}",
             tx_output.txid,
@@ -385,7 +444,7 @@ impl User {
         transaction: &mut Transaction,
         index_amount: Vec<(usize, u64)>,
     ) -> Result<Transaction> {
-        let user_bitcoin_privkey = BitcoinPrivKey {
+        let user_bitcoin_privkey = PrivateKey {
             compressed: true,
             network: self.network.into(),
             inner: self.secret_key,
@@ -427,5 +486,36 @@ impl User {
         // Now the transaction is signed
         let signed_transaction = sighasher.into_transaction().to_owned();
         Ok(signed_transaction)
+    }
+
+    pub fn add_request_pegin_utxo(&mut self, utxo: PartialUtxo) {
+        self.request_pegin_utxos.push(utxo);
+    }
+
+    fn pop_request_pegin_utxo(&mut self) -> Option<PartialUtxo> {
+        self.request_pegin_utxos.pop()
+    }
+
+    fn get_last_request_pegin_utxo(&mut self) -> Option<&PartialUtxo> {
+        self.request_pegin_utxos.last()
+    }
+
+    pub fn set_speedup_utxo(&mut self, utxo: PartialUtxo) {
+        self.speedup_utxo = Some(utxo);
+    }
+
+    fn get_speedup_utxo(&self) -> Option<PartialUtxo> {
+        self.speedup_utxo.clone()
+    }
+
+    fn get_extra_fee(&self) -> u64 {
+        match self.network {
+            Network::Regtest => 1500,
+            _ => 0,
+        }
+    }
+
+    pub fn get_request_pegin_fees(&self) -> u64 {
+        return self.get_extra_fee() + OP_RETURN_FEE + KEY_SPEND_FEE;
     }
 }

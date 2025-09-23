@@ -1,5 +1,6 @@
+#![cfg(test)]
 use anyhow::Result;
-use bitcoin::Network;
+use bitcoin::{Amount, Network};
 use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::channel::channel::DualChannel;
@@ -18,9 +19,9 @@ use bitvmx_client::{bitvmx::BitVMX, config::Config};
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
-use bitvmx_wallet::wallet::Wallet;
+use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
 use common::dispute::{prepare_dispute, ForcedChallenges};
-use common::{clear_db, init_utxo_new, FUNDING_ID, INITIAL_BLOCK_COUNT, WALLET_NAME};
+use common::{clear_db, init_utxo_new, INITIAL_BLOCK_COUNT};
 use common::{config_trace, send_all};
 use emulator::decision::challenge::{ForceChallenge, ForceCondition};
 use emulator::executor::utils::{FailConfiguration, FailReads};
@@ -73,6 +74,8 @@ fn run_bitvmx(network: Network, independent: bool, rx: Receiver<()>, tx: Sender<
             clear_db(&config.storage.path);
             clear_db(&config.key_storage.path);
             clear_db(&config.broker.storage.path);
+            clear_db(&config.comms.storage_path);
+            Wallet::clear_db(&config.wallet)?;
         }
     }
 
@@ -131,13 +134,12 @@ fn run_emulator(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result
 
         let allow_list = AllowList::from_file(&config.broker.allow_list)?;
         let broker_config =
-            BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?)?;
+            BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
         let channel = DualChannel::new(
             &broker_config,
             Cert::from_key_file(&config.components.emulator.priv_key)?,
             Some(config.components.emulator.id),
-            config.components.emulator.address,
-            Some(allow_list.clone()),
+            allow_list.clone(),
         )?;
 
         //TODO: this is temporal until there are separated storages
@@ -172,13 +174,12 @@ fn run_zkp(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<()> 
         info!("Starting zkp connection with port: {}", config.broker.port);
         let allow_list = AllowList::from_file(&config.broker.allow_list)?;
         let broker_config =
-            BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?)?;
+            BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
         let channel = DualChannel::new(
             &broker_config,
             Cert::from_key_file(&config.components.prover.priv_key)?,
             Some(config.components.prover.id),
-            config.components.prover.address,
-            Some(allow_list.clone()),
+            allow_list.clone(),
         )?;
 
         //TODO: this is temporal until there are separated storages
@@ -251,15 +252,15 @@ impl TestHelper {
             "Initializing TestHelper for network: {:?} {}",
             network, independent
         );
-        let wallet_config = match network {
+        let config_path = match network {
             Network::Regtest => "config/wallet_regtest.yaml",
             Network::Testnet => "config/wallet_testnet.yaml",
             _ => panic!("Not supported network {}", network),
         };
 
         let wallet_config = bitvmx_settings::settings::load_config_file::<
-            bitvmx_wallet::config::WalletConfig,
-        >(Some(wallet_config.to_string()))?;
+            bitvmx_wallet::config::Config,
+        >(Some(config_path.to_string()))?;
 
         info!("Wallet settings loaded");
 
@@ -269,6 +270,7 @@ impl TestHelper {
             assert!(network == Network::Regtest);
             clear_db(&wallet_config.storage.path);
             clear_db(&wallet_config.key_storage.path);
+            Wallet::clear_db(&wallet_config.wallet)?;
 
             let bitcoind = Bitcoind::new_with_flags(
                 "bitcoin-regtest",
@@ -285,11 +287,18 @@ impl TestHelper {
             Some(bitcoind)
         };
 
-        let wallet = Wallet::new(wallet_config, true)?;
+        let mut wallet =
+            Wallet::from_config(wallet_config.bitcoin.clone(), wallet_config.wallet.clone())?;
         if !independent {
-            wallet.mine(INITIAL_BLOCK_COUNT)?;
-            wallet.create_wallet(WALLET_NAME)?;
-            wallet.regtest_fund(WALLET_NAME, FUNDING_ID, 100_000_000)?;
+            let bitcoin_client = BitcoinClient::new(
+                &wallet_config.bitcoin.url,
+                &wallet_config.bitcoin.username,
+                &wallet_config.bitcoin.password,
+            )?;
+            let address = bitcoin_client.init_wallet(&wallet_config.bitcoin.wallet)?;
+            bitcoin_client.mine_blocks_to_address(INITIAL_BLOCK_COUNT, &address)?;
+            bitcoin_client.fund_address(&wallet.receive_address()?, Amount::from_int_btc(10))?;
+            wallet.sync_wallet()?;
         }
 
         info!("Wallet ready");
@@ -339,13 +348,12 @@ impl TestHelper {
         for config in &configs {
             let allow_list = AllowList::from_file(&config.broker.allow_list)?;
             let broker_config =
-                BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?)?;
+                BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
             let channel = DualChannel::new(
                 &broker_config,
                 Cert::from_key_file(&config.components.l2.priv_key)?,
                 Some(config.components.l2.id),
-                config.components.l2.address,
-                Some(allow_list.clone()),
+                allow_list.clone(),
             )?;
             let id = config.components.get_bitvmx_identifier()?;
             id_channel_pairs.push(ParticipantChannel { channel, id });
@@ -489,31 +497,40 @@ pub fn test_all_aux(
     info!("Creating speedup funds");
     let speedup_amount = 70_000 * MIN_TX_FEE as u64;
 
-    let fund_txid_0 = helper.wallet.fund_address(
-        WALLET_NAME,
-        FUNDING_ID,
-        funding_key_0,
-        &vec![speedup_amount],
-        1000,
-        false,
-        true,
-        None,
-    )?;
+    // let fund_txid_0 = helper.wallet.fund_address(
+    //     WALLET_NAME,
+    //     FUNDING_ID,
+    //     funding_key_0,
+    //     &vec![speedup_amount],
+    //     1000,
+    //     false,
+    //     true,
+    //     None,
+    // )?;
+    let fund_tx_0 = helper
+        .wallet
+        .fund_destination(Destination::P2WPKH(funding_key_0, speedup_amount))?;
+    let fund_txid_0 = fund_tx_0.compute_txid();
 
     helper.wallet.mine(1)?;
     info!("Wait for the fund for operator 0 speedups");
 
     wait_enter(independent);
-    let fund_txid_1 = helper.wallet.fund_address(
-        WALLET_NAME,
-        FUNDING_ID,
-        funding_key_1,
-        &vec![speedup_amount],
-        1000,
-        false,
-        true,
-        None,
-    )?;
+    // let fund_txid_1 = helper.wallet.fund_address(
+    //     WALLET_NAME,
+    //     FUNDING_ID,
+    //     funding_key_1,
+    //     &vec![speedup_amount],
+    //     1000,
+    //     false,
+    //     true,
+    //     None,
+    // )?;
+
+    let fund_tx_1 = helper
+        .wallet
+        .fund_destination(Destination::P2WPKH(funding_key_1, speedup_amount))?;
+    let fund_txid_1 = fund_tx_1.compute_txid();
     helper.wallet.mine(1)?;
     info!("Wait for the first funding ready");
     info!("Wait for the fund for operator 1 speedups");
@@ -552,11 +569,10 @@ pub fn test_all_aux(
         scripts::check_aggregated_signature(&pair_0_1_agg_pub_key, SignMode::Aggregate),
     ];
     let (utxo, initial_out_type) = init_utxo_new(
-        &helper.wallet,
+        &mut helper.wallet,
         &pair_0_1_agg_pub_key,
         spending_condition.clone(),
         20_000,
-        None,
     )?;
 
     info!("Wait for the first funding ready");
@@ -564,11 +580,10 @@ pub fn test_all_aux(
 
     info!("Initializing UTXO for the prover action");
     let (prover_win_utxo, prover_win_out_type) = init_utxo_new(
-        &helper.wallet,
+        &mut helper.wallet,
         &pair_0_1_agg_pub_key,
         spending_condition.clone(),
         11_000,
-        None,
     )?;
     info!("Wait for the action utxo ready");
     wait_enter(independent);
@@ -744,7 +759,6 @@ fn test_independent_regtest() -> Result<()> {
     test_all_aux(true, Network::Regtest, None, None, None)?;
     Ok(())
 }
-
 #[ignore]
 #[test]
 fn test_all() -> Result<()> {
@@ -834,7 +848,7 @@ fn test_previous_input() -> Result<()> {
     Ok(())
 }
 
-//#[cfg(target_os = "linux")]
+#[cfg(target_os = "linux")]
 #[ignore]
 #[test]
 fn test_zkp() -> Result<()> {

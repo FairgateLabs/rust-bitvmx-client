@@ -1,3 +1,4 @@
+#![cfg(test)]
 use anyhow::Result;
 use bitcoin::PublicKey;
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
@@ -24,7 +25,7 @@ use bitvmx_cpu_definitions::{
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 
-use bitvmx_wallet::wallet::Wallet;
+use bitvmx_wallet::wallet::{RegtestWallet, Wallet};
 use console::style;
 use emulator::{
     decision::challenge::{ForceChallenge, ForceCondition},

@@ -406,11 +406,18 @@ impl AcceptPegInProtocol {
             .transaction_by_name(ACCEPT_PEGIN_TX)?
             .compute_txid();
 
+        let accept_pegin_sighash = protocol
+            .get_hashed_message(ACCEPT_PEGIN_TX, 0, 2)?
+            .unwrap()
+            .as_ref()
+            .to_vec();
+
         // TODO: verify that the signature we are getting from the array of signatures is the proper one
         // FIXME: Should signatures and nonces array be indexed by self.ctx.my_idx?
         let pegin_accepted = PegInAccepted {
             committee_id: pegin_request.committee_id,
             accept_pegin_txid,
+            accept_pegin_sighash,
             accept_pegin_nonce: nonces[0].1.clone(),
             accept_pegin_signature: signatures[0].1.clone(),
             operator_take_sighash,
@@ -711,6 +718,10 @@ impl AcceptPegInProtocol {
         context: &ProgramContext,
         utxo: PartialUtxo,
     ) -> Result<(), BitVMXError> {
+        info!(
+            id = self.ctx.my_idx,
+            "Updating operator take UTXO for AcceptPegInProtocol: {:?}", utxo
+        );
         context.globals.set_var(
             &self.pegin_request(context)?.committee_id,
             &LAST_OPERATOR_TAKE_UTXO,

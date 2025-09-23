@@ -6,11 +6,7 @@ macro_rules! expect_msg {
         if let $pattern = msg {
             Ok($expr)
         } else {
-            Err(anyhow::anyhow!(
-                "Expected `{}` but got `{:?}`",
-                stringify!($pattern),
-                msg
-            ))
+            Err(anyhow::anyhow!("Expected `{}`", stringify!($pattern)))
         }
     }};
 }
@@ -28,7 +24,10 @@ where
 {
     let mut msg = bitvmx.wait_message(Some(Duration::from_secs(60)), None)?;
     while !matches_fn(&msg) {
-        info!("Waiting for another message that match condition.");
+        info!(
+            "Waiting for another message that match condition. Received: {:?}",
+            msg.name()
+        );
         thread::sleep(Duration::from_millis(10));
         msg = bitvmx.wait_message(Some(Duration::from_secs(60)), None)?;
     }
@@ -42,11 +41,7 @@ macro_rules! wait_until_msg {
         if let $pat = msg {
             $extract
         } else {
-            return Err(anyhow::anyhow!(
-                "Expected `{}` but got `{:?}`",
-                stringify!($pattern),
-                msg
-            ));
+            return Err(anyhow::anyhow!("Expected `{}`", stringify!($pattern)));
         }
     }};
 }

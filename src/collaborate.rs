@@ -237,4 +237,16 @@ impl Collaboration {
 
         Ok(my_key)
     }
+
+    pub fn get_address_from_pubkey_hash(
+        &self,
+        pubkey_hash: &PubKeyHash,
+    ) -> Result<CommsAddress, BitVMXError> {
+        for participant in &self.participants {
+            if &participant.pubkey_hash == pubkey_hash {
+                return Ok(participant.clone());
+            }
+        }
+        Err(BitVMXError::InvalidParticipant(pubkey_hash.to_string()))
+    }
 }

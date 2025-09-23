@@ -1,12 +1,13 @@
+#![cfg(test)]
 use anyhow::Result;
 use bitvmx_client::types::{
     IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel,
 };
+use bitvmx_wallet::wallet::{Destination, RegtestWallet};
 use common::{
     config_trace,
     dispute::{execute_dispute, prepare_dispute, ForcedChallenges},
-    get_all, init_bitvmx, init_utxo_new, prepare_bitcoin, send_all, wait_message_from_channel, FEE,
-    FUNDING_ID, WALLET_NAME,
+    get_all, init_bitvmx, init_utxo_new, prepare_bitcoin, send_all, wait_message_from_channel,
 };
 use protocol_builder::{
     scripts::{self, SignMode},
@@ -23,7 +24,7 @@ mod common;
 pub fn test_drp() -> Result<()> {
     config_trace();
 
-    let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
+    let (bitcoin_client, bitcoind, mut wallet) = prepare_bitcoin()?;
 
     let (prover_bitvmx, prover_address, prover_bridge_channel, prover_emulator_channel) =
         init_bitvmx("op_1", true)?;
@@ -66,29 +67,10 @@ pub fn test_drp() -> Result<()> {
     let funding_key_0 = msgs[0].public_key().unwrap().1;
     let funding_key_1 = msgs[1].public_key().unwrap().1;
 
-    let fund_txid_0 = wallet.fund_address(
-        WALLET_NAME,
-        FUNDING_ID,
-        funding_key_0,
-        &vec![10_000_000],
-        FEE,
-        false,
-        true,
-        None,
-    )?;
-
-    wallet.mine(1)?;
-    let fund_txid_1 = wallet.fund_address(
-        WALLET_NAME,
-        FUNDING_ID,
-        funding_key_1,
-        &vec![10_000_000],
-        FEE,
-        false,
-        true,
-        None,
-    )?;
-    wallet.mine(1)?;
+    let fund_tx_0 = wallet.fund_destination(Destination::P2WPKH(funding_key_0, 10_000_000))?;
+    let fund_txid_0 = fund_tx_0.compute_txid();
+    let fund_tx_1 = wallet.fund_destination(Destination::P2WPKH(funding_key_1, 10_000_000))?;
+    let fund_txid_1 = fund_tx_1.compute_txid();
 
     let funds_utxo_0 = Utxo::new(fund_txid_0, 0, 10_000_000, &funding_key_0);
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
@@ -119,20 +101,18 @@ pub fn test_drp() -> Result<()> {
         scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate),
     ];
     let (utxo, initial_out_type) = init_utxo_new(
-        &wallet,
+        &mut wallet,
         &aggregated_pub_key,
         spending_condition.clone(),
         20_000,
-        None,
     )?;
 
     info!("Initializing UTXO for the prover action");
     let (prover_win_utxo, prover_win_out_type) = init_utxo_new(
-        &wallet,
+        &mut wallet,
         &aggregated_pub_key,
         spending_condition.clone(),
         11_000,
-        None,
     )?;
 
     let prog_id = Uuid::new_v4();

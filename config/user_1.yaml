@@ -11,27 +11,51 @@ key_manager:
 
 key_storage:
   password: secret_password_2
-  path: /tmp/op_1/keys.db
+  path: /tmp/regtest/op_1/keys.db
 
 storage:
-  path: /tmp/op_1/storage.db
+  path: /tmp/regtest/op_1/storage.db
 
 comms:
-  address: /ip4/127.0.0.1/tcp/61180
-  key: config/keys/op_1.key
-  timeout: 5
+  address: 127.0.0.1:61180
+  priv_key: config/keys/op_1.key
+  storage_path: /tmp/regtest/op_1/comms.db
+
+broker:
+  allow_list: config/allow_list.yaml
+  routing_table: config/routing_table.yaml
+  port: 22222
+  ip: 127.0.0.1
+  priv_key: config/keys/services.key
+  storage: 
+    path: /tmp/regtest/op_1/broker.db
+
+components:
+  l2:
+    priv_key: config/keys/l2.key
+    id: 0
+  bitvmx:
+    priv_key: config/keys/bitvmx.key
+    id: 0
+  emulator:
+    priv_key: config/keys/emulator.key
+    id: 0
+  prover:
+    priv_key: config/keys/prover.key
+    id: 0
 
 coordinator:
   throtthle_bitcoin_updates_until_sync: 0
   throtthle_bitcoin_updates: 0
-
-broker_storage: 
-  path: /tmp/op_1/broker.db
-
-broker_port: 22222
 
 client: 
   # Number of retries for requests
   retry: 1
   # Delay between retries in milliseconds
   retry_delay: 1000
+
+wallet:
+  receive_key: cRN57Z48ckBrksAn6TGv8SxCkhGxmHX2BybZZp3M8Wh5imnMxdwX
+  change_key: cP1ZRRhFSgaQ4dEqpERzt43eVkEJGko2VeWuedAz34M6H9Vjc6zo
+  db_path: /tmp/regtest/user_1/wallet.db
+  start_height: 0

@@ -171,11 +171,26 @@ pub enum BitVMXError {
     #[error("No public nonces found for aggregated public key {0} and id {1}")]
     MissingPublicNonces(String, String),
 
+    #[error("Wallet error {0}")]
+    WalletError(#[from] bitvmx_wallet::errors::WalletError),
+
     #[error("Invalid List: {0}")]
     InvalidList(String),
 
     #[error("Identification error: {0}")]
     IdentificationError(#[from] IdentificationError),
+}
+
+impl BitVMXError {
+    /// Returns whether the error should be considered fatal.
+    ///
+    /// NOTE: For now, we mark all errors as fatal to avoid masking issues and ensure coordinated
+    /// shutdown paths are exercised.
+    /// Once the system is stable, we should revisit this and separate truly fatal errors
+    /// (e.g., storage corruption) from recoverable ones.
+    pub fn is_fatal(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Error, Debug)]

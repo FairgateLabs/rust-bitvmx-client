@@ -14,11 +14,12 @@ use bitvmx_broker::{
     identification::identifier::Identifier,
     rpc::{self, tls_helper::Cert},
 };
+use bitvmx_wallet::wallet::Destination;
 use operator_comms::operator_comms::AllowList;
-use std::{sync::Arc, thread};
+use std::time::{Duration, Instant};
 use std::{
-    sync::Mutex,
-    time::{Duration, Instant},
+    sync::{Arc, Mutex},
+    thread,
 };
 use uuid::Uuid;
 
@@ -35,18 +36,13 @@ impl BitVMXClient {
         client_config: &Component,
         allow_list: Arc<Mutex<AllowList>>,
     ) -> Result<Self> {
-        let config = rpc::BrokerConfig::new(
-            broker_config.port,
-            None,
-            broker_config.get_pubk_hash()?,
-            // Some(broker_config.id), //TODO:
-        )?;
+        let config =
+            rpc::BrokerConfig::new(broker_config.port, None, broker_config.get_pubk_hash()?);
         let channel = DualChannel::new(
             &config,
             Cert::from_key_file(&client_config.priv_key)?,
             Some(client_config.id),
-            client_config.address,
-            Some(allow_list),
+            allow_list,
         )?;
 
         Ok(Self {
@@ -230,6 +226,27 @@ impl BitVMXClient {
     /// * `messages` - The messages to decrypt as bytes
     pub fn decrypt(&self, id: Uuid, messages: Vec<u8>) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::Decrypt(id, messages))
+    }
+
+    pub fn get_funding_address(&self, id: Uuid) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetFundingAddress(id))
+    }
+
+    pub fn get_funding_balance(&self, id: Uuid) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetFundingBalance(id))
+    }
+
+    pub fn send_funds(
+        &self,
+        id: Uuid,
+        destination: Destination,
+        fee_rate: Option<u64>,
+    ) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SendFunds(
+            id,
+            destination,
+            fee_rate,
+        ))
     }
 
     fn serialize_key(s: &str) -> String {

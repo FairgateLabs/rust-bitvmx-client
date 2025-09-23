@@ -3,6 +3,7 @@ use std::net::{IpAddr, SocketAddr};
 use bitcoin_coordinator::config::CoordinatorSettingsConfig;
 use bitvmx_bitcoin_rpc::rpc_config::RpcConfig;
 use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
+use bitvmx_wallet::config::WalletConfig;
 use key_manager::config::KeyManagerConfig;
 use operator_comms::operator_comms::PubKeyHash;
 use serde::{Deserialize, Serialize};
@@ -25,6 +26,7 @@ pub struct ProtocolBuilderConfig {
 pub struct CommsConfig {
     pub address: SocketAddr,
     pub priv_key: String,
+    pub storage_path: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -63,7 +65,6 @@ impl BrokerConfig {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Component {
     pub priv_key: String,
-    pub address: SocketAddr,
     pub id: u8,
 }
 
@@ -72,15 +73,8 @@ impl Component {
         let cert = Cert::from_key_file(&self.priv_key.clone())?;
         Ok(cert.get_pubk_hash()?)
     }
-    pub fn get_address(&self) -> SocketAddr {
-        self.address
-    }
     pub fn get_identifier(&self) -> Result<Identifier, ConfigError> {
-        Ok(Identifier::new(
-            self.get_pubk_hash()?,
-            self.id,
-            self.get_address(),
-        ))
+        Ok(Identifier::new(self.get_pubk_hash()?, self.id))
     }
 }
 
@@ -123,6 +117,7 @@ pub struct Config {
     pub components: ComponentsConfig,
     pub coordinator_settings: Option<CoordinatorSettingsConfig>,
     pub coordinator: ThrotthleUpdate,
+    pub wallet: WalletConfig,
 }
 
 impl Config {

@@ -15,6 +15,7 @@ storage:
 comms:
   address: 127.0.0.1:61182
   priv_key: config/keys/op_3.key
+  storage_path: /tmp/op_3/comms.db
 coordinator_settings:
   max_feerate_sat_vb: 2
   monitor_settings:
@@ -28,26 +29,27 @@ broker:
   routing_table: config/routing_table.yaml
   port: 44444
   ip: 127.0.0.1
-  priv_key: ../rust-bitvmx-broker/certs/services.key
+  priv_key: config/keys/services.key
   storage: 
     path: /tmp/op_3/broker.db
 components:
   l2:
-    address: 127.0.0.1:7000
     priv_key: config/keys/l2.key
-    id: 2
+    id: 0
   bitvmx:
-    address: 127.0.0.1:7000
     priv_key: config/keys/bitvmx.key
-    id: 2
+    id: 0
   emulator:
-    address: 127.0.0.1:7000
     priv_key: config/keys/emulator.key
-    id: 2
+    id: 0
   prover:
-    address: 127.0.0.1:7000
     priv_key: config/keys/prover.key
-    id: 2
+    id: 0
 client:
   retry: 1
+  # Delay between retries in milliseconds
   retry_delay: 1000
+
+wallet:
+  db_path: /tmp/testnet/op_3/wallet.db
+  start_height: 4631993

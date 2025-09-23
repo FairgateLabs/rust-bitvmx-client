@@ -21,8 +21,8 @@ storage:
 comms:
   address: 127.0.0.1:61182
   priv_key: config/keys/op_1.key
-  timeout: 5
-
+  storage_path: /tmp/development/comms.db
+  
 coordinator:
   throtthle_bitcoin_updates_until_sync: 0
   throtthle_bitcoin_updates: 0
@@ -33,28 +33,30 @@ broker:
   routing_table: config/routing_table.yaml
   port: 22222
   ip: 127.0.0.1
-  priv_key: ../rust-bitvmx-broker/certs/services.key
+  priv_key: config/keys/services.key
   storage: 
     path: /tmp/development/broker.db
 
 components:
   l2:
-    address: 127.0.0.1:7000
     priv_key: config/keys/l2.key
     id: 0
   bitvmx:
-    address: 127.0.0.1:7000
     priv_key: config/keys/bitvmx.key
     id: 0
   emulator:
-    address: 127.0.0.1:7000
     priv_key: config/keys/emulator.key
     id: 0
   prover:
-    address: 127.0.0.1:7000
     priv_key: config/keys/prover.key
     id: 0
     
 client:
   retry: 1
   retry_delay: 1000
+
+wallet:
+  receive_key: cUVFBGCCjw5JGY2DUY5HTtKoHevMHs675aFkXVLvXeE4jV7GPeGb
+  change_key: cVTMy1VXsEqT4z3nT3w8vupAmqBTjZBmyyE38TYP9kju9rQWpK9F
+  db_path: /tmp/regtest/development/wallet.db
+  start_height: 0
