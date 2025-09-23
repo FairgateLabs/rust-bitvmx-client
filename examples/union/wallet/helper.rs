@@ -249,6 +249,36 @@ pub fn recover_user_funds(user: &User, address: String) -> Result<()> {
     Ok(())
 }
 
+pub fn wallet_recover_funds(wallet: &mut MasterWallet, address: String) -> Result<()> {
+    let balance = wallet.wallet.balance();
+    let total_balance = balance.total().to_sat();
+    let utxos_quantity = wallet.wallet.list_unspent()?.len();
+
+    if total_balance == 0 {
+        info!("No funds to return from master wallet.");
+        return Ok(());
+    }
+
+    let fee_rate = get_fee_rate(wallet.network());
+    let fee = (50 + 68 * utxos_quantity as u64) * fee_rate; // rough estimate
+
+    info!(
+        "Returning {} sats from master wallet to {} address.",
+        total_balance, address
+    );
+    info!("Fee rate: {} sats/vbyte. Total fee: {} sats", fee_rate, fee);
+    non_regtest_warning(wallet.network(), "You are about to transfer REAL money.");
+
+    let destination = Destination::Address(address, total_balance - fee);
+    let tx = wallet.wallet.send_funds(destination, Some(fee_rate))?;
+    let txid = tx.compute_txid();
+
+    info!("Returned funds with txid: {}", txid);
+    print_link(wallet.network(), txid);
+
+    Ok(())
+}
+
 /// Ask the user a yes/no question and return true if they confirm (`y` or `yes`).
 pub fn ask_user_confirmation(prompt: &str) -> bool {
     loop {
