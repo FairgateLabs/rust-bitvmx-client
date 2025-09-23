@@ -25,7 +25,9 @@ use crate::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
                 common::indexed_name,
-                types::{PegOutAccepted, PegOutRequest, ACCEPT_PEGIN_TX, USER_TAKE_TX},
+                types::{
+                    PegOutAccepted, PegOutRequest, ACCEPT_PEGIN_TX, USER_TAKE_FEE, USER_TAKE_TX,
+                },
             },
         },
         variables::{PartialUtxo, VariableTypes},
@@ -98,9 +100,7 @@ impl ProtocolHandler for UserTakeProtocol {
         )?;
 
         // Add the user output to the user take transaction
-        // TODO: This should be the fee for the peg-out. It should be same value that it's as constant in the contracts.
-        let fee = 335;
-        let user_amount = self.checked_sub(accept_pegin_utxo.2.unwrap(), fee)?;
+        let user_amount = self.checked_sub(accept_pegin_utxo.2.unwrap(), USER_TAKE_FEE)?;
 
         let wpkh = user_pubkey.wpubkey_hash().expect("key is compressed");
         let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
