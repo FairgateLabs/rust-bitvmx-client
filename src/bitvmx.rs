@@ -107,6 +107,9 @@ impl StoreKey {
 
 impl BitVMX {
     pub fn new(config: Config) -> Result<Self, BitVMXError> {
+        info!("BitVMX Version: {}", env!("CARGO_PKG_VERSION"));
+        info!("BitVMX Git hash: {}", env!("GIT_HASH"));
+
         let store = Rc::new(Storage::new(&config.storage)?);
         let key_chain = KeyChain::new(&config, store.clone())?;
         let comms = P2pHandler::new::<LocalAllowList>(
