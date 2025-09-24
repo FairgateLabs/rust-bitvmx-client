@@ -1,4 +1,4 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{collections::HashMap, path::Path, rc::Rc};
 
 use bitcoin::{secp256k1::rand::thread_rng, PublicKey, XOnlyPublicKey};
 use key_manager::{
@@ -17,7 +17,10 @@ use rsa::{
 use protocol_builder::unspendable::unspendable_key;
 use storage_backend::storage::{KeyValueStore, Storage};
 
-use crate::{config::Config, errors::BitVMXError};
+use crate::{
+    config::Config,
+    errors::{BitVMXError, ConfigError},
+};
 
 pub struct KeyChain {
     pub key_manager: Rc<KeyManager>,
@@ -59,6 +62,14 @@ impl KeyChain {
         // It uses pkcs8 format for the private key
         // get private key from file at p2p_key path
         let path = config.p2p_key();
+        if !Path::new(path).exists() {
+            return Err(BitVMXError::ConfigurationError(ConfigError::InvalidConfigPath(
+                format!(
+                    "Failed to read PEM file at path {}. Please ensure the file exists and is accessible.",
+                    path
+                )
+            )));
+        }
         let pem_file = std::fs::read_to_string(path).unwrap();
         let keypair = KeyPair::from_pem_and_sign_algo(&pem_file, &PKCS_RSA_SHA256).unwrap();
 
