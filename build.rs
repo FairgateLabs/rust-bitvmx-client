@@ -1,13 +1,19 @@
 use std::process::Command;
 
 fn main() {
-    // Run git to get the current commit hash
-    let output = Command::new("git")
+    let git_hash = Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
-        .output()
-        .expect("Failed to execute git");
+        .output();
 
-    let git_hash = String::from_utf8(output.stdout).unwrap();
-    // Export it as an environment variable for your code
-    println!("cargo:rustc-env=GIT_HASH={}", git_hash.trim());
+    match git_hash {
+        Ok(output) if output.status.success() => {
+            let hash = String::from_utf8_lossy(&output.stdout);
+            println!("cargo:rustc-env=GIT_HASH={}", hash.trim());
+        }
+        _ => {
+            eprintln!("cargo:warning=⚠️  git not found or failed to get commit hash");
+            // Provide a fallback value so compilation still works
+            println!("cargo:rustc-env=GIT_HASH=unknown");
+        }
+    }
 }
