@@ -1,10 +1,6 @@
 use std::process::Command;
 
 fn main() {
-    println!("cargo:rerun-if-changed=.git/HEAD");
-    println!("cargo:rerun-if-changed=.git/refs/heads");
-    println!("cargo:rerun-if-changed=.git/refs/tags");
-
     // Git tag (may be empty if no tag points at HEAD)
     let git_tag = run_git(&["tag", "--points-at", "HEAD"]).unwrap_or_else(|| "None".into());
     println!("cargo:rustc-env=GIT_TAG={}", git_tag);
