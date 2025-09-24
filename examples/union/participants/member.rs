@@ -22,12 +22,9 @@ use crate::{
     expect_msg,
     macros::wait_for_message_blocking,
     setup::{
-        accept_pegin_setup::AcceptPegInSetup,
-        advance_funds_setup::AdvanceFunds,
-        dispute_channel_setup::DisputeChannelSetup,
-        dispute_core_setup::DisputeCoreSetup,
-        init_setup::InitSetup,
-        user_take_setup::UserTakeSetup,
+        accept_pegin_setup::AcceptPegInSetup, advance_funds_setup::AdvanceFunds,
+        dispute_channel_setup::DisputeChannelSetup, dispute_core_setup::DisputeCoreSetup,
+        init_setup::InitSetup, user_take_setup::UserTakeSetup,
     },
     wait_until_msg,
 };
@@ -192,7 +189,7 @@ impl Member {
             self.keyring.dispute_aggregated_key.unwrap(),
             &self.bitvmx,
             funding_utxos_per_member,
-            addresses
+            addresses,
         )?;
 
         Ok(())
@@ -204,7 +201,10 @@ impl Member {
         committee_id: Uuid,
         wt_funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
     ) -> Result<()> {
-        info!(id = self.id, "Setting up dispute channel for member {}", self.id);
+        info!(
+            id = self.id,
+            "Setting up dispute channel for member {}", self.id
+        );
 
         DisputeChannelSetup::setup(self, members, committee_id, wt_funding_utxos_per_member)?;
 

@@ -10,6 +10,7 @@ pub const TAKE_AGGREGATED_KEY: &str = "take_aggregated_key";
 pub const DISPUTE_AGGREGATED_KEY: &str = "dispute_aggregated_key";
 pub const SELECTED_OPERATOR_PUBKEY: &str = "selected_operator_pubkey";
 pub const MONITORED_OPERATOR_KEY: &str = "monitored_operator_key";
+pub const MONITORED_WATCHTOWER_KEY: &str = "monitored_watchtower_key";
 pub const OP_INITIAL_DEPOSIT_FLAG: &str = "op_initial_deposit_flag";
 pub const OPERATOR_LEAF_INDEX: &str = "operator_leaf_index";
 pub const SPEEDUP_KEY: &str = "speedup_key";
@@ -49,6 +50,7 @@ pub const FUNDING_TX_SUFFIX: &str = "_FUNDING_TX";
 pub const SETUP_TX_SUFFIX: &str = "_SETUP_TX";
 pub const INITIAL_DEPOSIT_TX_SUFFIX: &str = "_INITIAL_DEPOSIT_TX";
 pub const SELF_DISABLER_TX_SUFFIX: &str = "_SELF_DISABLER_TX";
+pub const START_ENABLER_TX_SUFFIX: &str = "_START_ENABLER_TX";
 
 // UTXOs
 pub const OPERATOR_TAKE_ENABLER: &str = "operator_take_enabler";
@@ -97,15 +99,15 @@ impl DisputeCoreData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DisputeChannelData {
+pub struct InitData {
     pub committee_id: Uuid,
+    pub member_index: usize,
     pub watchtower_utxo: PartialUtxo,
-    pub watchtower_take_pubkey: PublicKey,
 }
 
-impl DisputeChannelData {
+impl InitData {
     pub fn name() -> String {
-        "dispute_channel_data".to_string()
+        "init_data".to_string()
     }
 }
 

@@ -110,7 +110,7 @@ impl Committee {
                 member.keyring.take_pubkey.unwrap(),
                 self.get_funding_utxo(10_000_000, &member.keyring.dispute_pubkey.unwrap())?,
             );
-            
+
             let partial =
                 self.get_funding_utxo(10_000_000, &member.keyring.dispute_pubkey.unwrap())?;
             let utxo = Utxo::new(
@@ -137,18 +137,18 @@ impl Committee {
         let members = self.get_member_data();
         let addresses = self.get_addresses();
 
-        // Setup Dispute Core covenant
-        self.all(|op: &mut Member| {
-            op.setup_dispute_core(
-                seed,
-                &members.clone(),
-                &funding_utxos_per_member,
-                &speedup_funding_utxos_per_member
-                    .get(op.keyring.take_pubkey.as_ref().unwrap())
-                    .unwrap(),
-                &addresses.clone(),
-            )
-        })?;
+        // // Setup Dispute Core covenant
+        // self.all(|op: &mut Member| {
+        //     op.setup_dispute_core(
+        //         seed,
+        //         &members.clone(),
+        //         &funding_utxos_per_member,
+        //         &speedup_funding_utxos_per_member
+        //             .get(op.keyring.take_pubkey.as_ref().unwrap())
+        //             .unwrap(),
+        //         &addresses.clone(),
+        //     )
+        // })?;
 
         // Setup Init covenant
         let committee_id = self.committee_id;
