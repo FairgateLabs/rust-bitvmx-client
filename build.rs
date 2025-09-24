@@ -1,19 +1,33 @@
 use std::process::Command;
 
 fn main() {
-    let git_hash = Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .output();
+    println!("cargo:rerun-if-changed=.git/HEAD");
+    println!("cargo:rerun-if-changed=.git/refs/heads");
+    println!("cargo:rerun-if-changed=.git/refs/tags");
 
-    match git_hash {
-        Ok(output) if output.status.success() => {
-            let hash = String::from_utf8_lossy(&output.stdout);
-            println!("cargo:rustc-env=GIT_HASH={}", hash.trim());
-        }
-        _ => {
-            eprintln!("cargo:warning=⚠️  git not found or failed to get commit hash");
-            // Provide a fallback value so compilation still works
-            println!("cargo:rustc-env=GIT_HASH=unknown");
-        }
+    // Git tag (may be empty if no tag points at HEAD)
+    let git_tag = run_git(&["tag", "--points-at", "HEAD"]).unwrap_or_else(|| "None".into());
+    println!("cargo:rustc-env=GIT_TAG={}", git_tag);
+
+    // Git hash
+    let git_hash = run_git(&["rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "None".into());
+    println!("cargo:rustc-env=GIT_HASH={}", git_hash);
+
+    // Git commit message
+    let git_message =
+        run_git(&["show", "-s", "--format=%s", "HEAD"]).unwrap_or_else(|| "None".into());
+    println!("cargo:rustc-env=GIT_MESSAGE={}", git_message);
+
+    // Git commit date
+    let git_date =
+        run_git(&["show", "-s", "--format=%ci", "HEAD"]).unwrap_or_else(|| "unknown".into());
+    println!("cargo:rustc-env=GIT_DATE={}", git_date);
+}
+
+fn run_git(args: &[&str]) -> Option<String> {
+    let output = Command::new("git").args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
     }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
