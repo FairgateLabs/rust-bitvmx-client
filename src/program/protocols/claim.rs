@@ -173,6 +173,7 @@ impl ClaimGate {
         })
     }
 
+    // Add the connections to the protocol to allow the claimer to spend the stops if he wins
     pub fn add_claimer_win_connection(
         &self,
         protocol: &mut Protocol,

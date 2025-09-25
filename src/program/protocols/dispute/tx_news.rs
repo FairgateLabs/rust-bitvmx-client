@@ -16,8 +16,8 @@ use crate::{
             claim::ClaimGate,
             dispute::{
                 input_handler::{get_txs_configuration, unify_inputs, unify_witnesses},
-                DisputeResolutionProtocol, ACTION_PROVER_WINS, CHALLENGE, COMMITMENT, EXECUTE,
-                INPUT_TX, PROVER_WINS, TRACE_VARS,
+                timeout_input_tx, timeout_tx, DisputeResolutionProtocol, ACTION_PROVER_WINS,
+                CHALLENGE, COMMITMENT, EXECUTE, INPUT_TX, PROVER_WINS, TRACE_VARS,
             },
             protocol_handler::ProtocolHandler,
         },
@@ -25,6 +25,37 @@ use crate::{
     },
     types::ProgramContext,
 };
+
+pub fn dispatch_timeout_tx(
+    drp: &DisputeResolutionProtocol,
+    program_context: &ProgramContext,
+    name: &str,
+    current_height: u32,
+) -> Result<(), BitVMXError> {
+    let params = program_context
+        .globals
+        .get_var(&drp.ctx.id, name)?
+        .unwrap()
+        .vec_number()?;
+    let input = params[0];
+    let leaf = params[1];
+    let timelock_blocks = params[2];
+
+    info!(
+        "Current block: {}. Will try to dispatch timeout tx: {} in {} blocks. ",
+        current_height, name, timelock_blocks
+    );
+
+    let tx = drp.get_signed_tx(program_context, name, input, leaf, true, 0)?;
+    let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
+    program_context.bitcoin_coordinator.dispatch(
+        tx,
+        Some(speedup_data),
+        Context::ProgramId(drp.ctx.id).to_string()?,
+        Some(current_height + timelock_blocks),
+    )?;
+    Ok(())
+}
 
 pub fn handle_tx_news(
     drp: &DisputeResolutionProtocol,
@@ -34,14 +65,22 @@ pub fn handle_tx_news(
     program_context: &ProgramContext,
 ) -> Result<(), BitVMXError> {
     let name = drp.get_transaction_name_by_id(tx_id)?;
+    let current_height = tx_status.block_info.as_ref().unwrap().height;
     info!(
-        "Program {}: Transaction name: {}  id: {}:{:?} has been seen on-chain {}",
+        "Program {}: Transaction name: {}  id: {}:{:?} has been seen on-chain {}. Height: {}",
         drp.ctx.id,
         style(&name).blue(),
         style(&tx_id).green(),
         style(&vout).yellow(),
-        drp.role()
+        drp.role(),
+        current_height,
     );
+
+    let timelock_blocks = program_context
+        .globals
+        .get_var(&drp.ctx.id, "TIMELOCK_BLOCKS")?
+        .unwrap()
+        .number()?;
 
     let (fail_config_prover, fail_config_verifier, force, force_condition) = program_context
         .globals
@@ -234,18 +273,7 @@ pub fn handle_tx_news(
             }
         } else {
             if round == nary.total_rounds() as u32 {
-                info!(
-                    "Current block: {}",
-                    tx_status.block_info.as_ref().unwrap().height
-                );
-                /*program_context.bitcoin_coordinator.dispatch(
-                    drp.get_signed_tx(program_context, "EXECUTE_TO", 0, 1, true)?,
-                    Context::ProgramId(drp.ctx.id).to_string()?,
-                    Some(
-                        tx_status.block_info.as_ref().unwrap().block_height
-                            + TIMELOCK_BLOCKS as u32,
-                    ),
-                )?;*/
+                dispatch_timeout_tx(drp, program_context, &timeout_tx(EXECUTE), current_height)?;
             }
         }
     }
@@ -338,8 +366,17 @@ pub fn handle_tx_news(
         }
     }
 
+    if name == EXECUTE && drp.role() == ParticipantRole::Verifier && vout.is_none() {
+        dispatch_timeout_tx(
+            drp,
+            program_context,
+            &timeout_input_tx(EXECUTE),
+            current_height,
+        )?;
+    }
+
     if name == EXECUTE && drp.role() == ParticipantRole::Verifier && vout.is_some() {
-        drp.decode_witness_from_speedup(
+        let (_, leaf) = drp.decode_witness_from_speedup(
             tx_id,
             vout.unwrap(),
             &name,
@@ -347,6 +384,18 @@ pub fn handle_tx_news(
             &tx_status.tx,
             None,
         )?;
+
+        let params = program_context
+            .globals
+            .get_var(&drp.ctx.id, &timeout_input_tx(EXECUTE))?
+            .unwrap()
+            .vec_number()?;
+        let timeout_leaf = params[1];
+        if leaf == timeout_leaf {
+            info!("Verifier consumed the timeout input for EXECUTE");
+            return Ok(());
+        }
+
         let (_program_definition, pdf) = drp.get_program_definition(program_context)?;
         let execution_path = drp.get_execution_path()?;
 
@@ -450,11 +499,6 @@ pub fn handle_tx_news(
 
     if name == ClaimGate::tx_start(PROVER_WINS) && drp.role() == ParticipantRole::Prover {
         info!("Prover wins SUCCESS dispatch");
-        let timelock_blocks = program_context
-            .globals
-            .get_var(&drp.ctx.id, "TIMELOCK_BLOCKS")?
-            .unwrap()
-            .number()?;
 
         let prover_wins_tx = drp.get_signed_tx(
             program_context,
@@ -469,7 +513,7 @@ pub fn handle_tx_news(
             prover_wins_tx,
             Some(speedup_data),
             Context::ProgramId(drp.ctx.id).to_string()?,
-            Some(tx_status.block_info.as_ref().unwrap().height + timelock_blocks),
+            Some(current_height + timelock_blocks),
         )?;
     }
 

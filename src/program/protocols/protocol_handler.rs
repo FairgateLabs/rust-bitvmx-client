@@ -274,7 +274,10 @@ pub trait ProtocolHandler {
 
         let signature = protocol
             .input_taproot_script_spend_signature(name, input_index as usize, leaf_index as usize)?
-            .unwrap();
+            .expect(&format!(
+                "Failed to get taproot signature for tx {} input {} leaf {}",
+                name, input_index, leaf_index
+            ));
         spending_args.push_taproot_signature(signature)?;
 
         if leaf_identification {
@@ -308,7 +311,7 @@ pub trait ProtocolHandler {
         leaf: Option<u32>,
         protocol: Option<Protocol>,
         scripts: Option<Vec<ProtocolScript>>,
-    ) -> Result<Vec<String>, BitVMXError> {
+    ) -> Result<(Vec<String>, u32), BitVMXError> {
         info!(
             "Program {}: Decoding witness for {} with input index {}",
             style(self.context().protocol_name.clone()).blue(),
@@ -376,7 +379,7 @@ pub trait ProtocolHandler {
                 WitnessTypes::Winternitz(data[i].clone()),
             )?;
         }
-        Ok(names)
+        Ok((names, leaf))
     }
 
     fn decode_witness_from_speedup(
@@ -387,7 +390,7 @@ pub trait ProtocolHandler {
         program_context: &ProgramContext,
         transaction: &Transaction,
         leaf: Option<u32>,
-    ) -> Result<Vec<String>, BitVMXError> {
+    ) -> Result<(Vec<String>, u32), BitVMXError> {
         let idx = self.find_prevout(prev_tx_id, prev_vout, transaction)?;
         let protocol = self.load_protocol()?;
         let scripts = protocol
