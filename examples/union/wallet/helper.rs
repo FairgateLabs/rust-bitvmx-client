@@ -11,7 +11,6 @@ use storage_backend::storage::Storage;
 use tracing::info;
 use tracing::warn;
 
-const TESTNET_FEE_RATE: u64 = 1; // sats/vbyte
 const MIN_FUNDS_RECOVERY: u64 = 5000;
 const TX_SIZE: u64 = 140;
 
@@ -228,22 +227,54 @@ pub fn recover_user_funds(user: &User, address: String) -> Result<()> {
         return Ok(());
     }
 
+    let utxos_quantity = wallet.list_unspent()?.len();
     let fee_rate = get_fee_rate(user.network);
+    // Some magic numbers here
+    let fee = (46 + utxos_quantity as u64 * 68) * fee_rate; // rough estimate
     info!(
         "Recovering {} sats from user to address: {}",
         balance, address
     );
+    info!("{} UTXOs will be used for the recovery.", utxos_quantity);
     info!("Fee rate: {} sats/vbyte", fee_rate);
+    info!("Estimated fee: {} sats", fee);
     non_regtest_warning(user.network, "You are about to transfer REAL money.");
 
     let txid = wallet
-        .send_funds(
-            Destination::Address(address, balance - fee_rate * TX_SIZE * 2),
-            Some(fee_rate),
-        )
+        .send_funds(Destination::Address(address, balance - fee), Some(fee_rate))
         .map_err(|e| anyhow::anyhow!("Failed to recover funds from user to address: {}", e))?
         .compute_txid();
     print_link(user.network, txid);
+
+    Ok(())
+}
+
+pub fn wallet_recover_funds(wallet: &mut MasterWallet, address: String) -> Result<()> {
+    let balance = wallet.wallet.balance();
+    let total_balance = balance.total().to_sat();
+    let utxos_quantity = wallet.wallet.list_unspent()?.len();
+
+    if total_balance == 0 {
+        info!("No funds to return from master wallet.");
+        return Ok(());
+    }
+
+    let fee_rate = get_fee_rate(wallet.network());
+    let fee = (50 + 68 * utxos_quantity as u64) * fee_rate; // rough estimate
+
+    info!(
+        "Returning {} sats from master wallet to {} address.",
+        total_balance, address
+    );
+    info!("Fee rate: {} sats/vbyte. Total fee: {} sats", fee_rate, fee);
+    non_regtest_warning(wallet.network(), "You are about to transfer REAL money.");
+
+    let destination = Destination::Address(address, total_balance - fee);
+    let tx = wallet.wallet.send_funds(destination, Some(fee_rate))?;
+    let txid = tx.compute_txid();
+
+    info!("Returned funds with txid: {}", txid);
+    print_link(wallet.network(), txid);
 
     Ok(())
 }
@@ -369,9 +400,10 @@ pub fn print_balance(wallet: &MasterWallet) -> Result<()> {
 }
 
 fn get_fee_rate(network: Network) -> u64 {
-    if network == Network::Regtest {
-        10
-    } else {
-        TESTNET_FEE_RATE
+    match network {
+        Network::Regtest => 10,
+        Network::Testnet => 1,
+        Network::Bitcoin => 1,
+        _ => 1,
     }
 }

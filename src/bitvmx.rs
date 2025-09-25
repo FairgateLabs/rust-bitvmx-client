@@ -1417,7 +1417,7 @@ impl BitVMXApi for BitVMX {
                     .visualize(GraphOptions::EdgeArrows)?;
                 self.reply(
                     from,
-                    OutgoingBitVMXApiMessages::ProtocolVisualization(protocol_str),
+                    OutgoingBitVMXApiMessages::ProtocolVisualization(id, protocol_str),
                 )?;
             }
             #[cfg(feature = "testpanic")]

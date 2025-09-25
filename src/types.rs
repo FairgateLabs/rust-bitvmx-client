@@ -177,7 +177,7 @@ pub enum OutgoingBitVMXApiMessages {
     FundsSent(Uuid, Txid),
     WalletNotReady(Uuid),
     WalletError(Uuid, String),
-    ProtocolVisualization(String),
+    ProtocolVisualization(Uuid, String),
 }
 
 impl OutgoingBitVMXApiMessages {
@@ -327,7 +327,7 @@ impl OutgoingBitVMXApiMessages {
             OutgoingBitVMXApiMessages::FundsSent(_, _) => "FundsSent".to_string(),
             OutgoingBitVMXApiMessages::WalletNotReady(_) => "WalletNotReady".to_string(),
             OutgoingBitVMXApiMessages::WalletError(_, _) => "WalletError".to_string(),
-            OutgoingBitVMXApiMessages::ProtocolVisualization(_) => {
+            OutgoingBitVMXApiMessages::ProtocolVisualization(_, _) => {
                 "ProtocolVisualization".to_string()
             }
         }

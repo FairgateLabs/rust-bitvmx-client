@@ -1,4 +1,5 @@
 use std::{
+    path::Path,
     sync::mpsc::{Receiver, Sender},
     thread,
     time::Duration,
@@ -48,7 +49,14 @@ fn clear_db(path: &str) {
 }
 
 fn init_bitvmx(opn: &str, fresh: bool) -> Result<BitVMX> {
-    let config = Config::new(Some(format!("config/{}.yaml", opn)))?;
+    let filename = format!("config/{}.yaml", opn);
+    if !Path::new(&filename).exists() {
+        panic!(
+            "Config file at path {} does not exist. Please create the configuration file before running the client.",
+            filename
+        );
+    }
+    let config = Config::new(Some(filename))?;
 
     if fresh {
         clear_db(&config.storage.path);

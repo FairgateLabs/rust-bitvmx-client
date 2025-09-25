@@ -1,4 +1,4 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{collections::HashMap, path::Path, rc::Rc};
 
 use bitcoin::{secp256k1::rand::thread_rng, PublicKey, XOnlyPublicKey};
 use key_manager::{
@@ -12,7 +12,10 @@ use key_manager::{
 use protocol_builder::unspendable::unspendable_key;
 use storage_backend::storage::{KeyValueStore, Storage};
 
-use crate::{config::Config, errors::BitVMXError};
+use crate::{
+    config::Config,
+    errors::{BitVMXError, ConfigError},
+};
 
 const RSA_KEY_INDEX: usize = 0; // TODO: make this configurable
 
@@ -50,6 +53,14 @@ impl KeyChain {
         let key_manager = Rc::new(key_manager);
 
         let path = config.comms_key();
+        if !Path::new(path).exists() {
+            return Err(BitVMXError::ConfigurationError(ConfigError::InvalidConfigPath(
+                format!(
+                    "Failed to read PEM file at path {}. Please ensure the file exists and is accessible.",
+                    path
+                )
+            )));
+        }
         let pem_file = std::fs::read_to_string(path).unwrap();
         let _pub_key = key_manager.import_rsa_private_key(&pem_file, RSA_KEY_INDEX)?;
 
