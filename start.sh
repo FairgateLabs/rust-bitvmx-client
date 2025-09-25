@@ -21,6 +21,8 @@ if [ -f "$CONFIG_FILE" ]; then
         exit 1
     fi
 
+    mkdir -p volumes/tmp
+
     # Add SSH keys if they exist (ignore errors if they don't)
     ssh-add ~/.ssh/id_rsa || true
     ssh-add ~/.ssh/id_ed25519 || true
