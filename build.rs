@@ -6,8 +6,6 @@ use std::process::Command;
 fn main() {
     #[cfg(target_family = "unix")]
     {
-        println!("cargo:rustc-link-lib=dylib=stdc++");
-
         // --- Tell Cargo when to rerun (important!) ---
         // Re-run if the branch HEAD moves.
         println!("cargo:rerun-if-changed=.git/HEAD");
