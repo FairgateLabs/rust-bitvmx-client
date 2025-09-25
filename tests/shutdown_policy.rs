@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID};
+use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages};
 
 mod common;
 
@@ -12,7 +12,13 @@ fn nonfatal_error_keeps_looping() -> Result<()> {
     let (mut bitvmx, _addr, channel, _emulator) = common::init_bitvmx("op_1", false)?;
 
     // 1) Simple Ping -> Pong
-    channel.send(BITVMX_ID, IncomingBitVMXApiMessages::Ping().to_string()?)?;
+    channel.send(
+        bitvmx
+            .get_components_config()
+            .get_bitvmx_config()
+            .get_identifier()?,
+        IncomingBitVMXApiMessages::Ping().to_string()?,
+    )?;
     let msg = common::wait_message_from_channel(&channel, &mut vec![&mut bitvmx], true)?;
     let out = OutgoingBitVMXApiMessages::from_string(&msg.0)?;
     match out {
@@ -21,14 +27,26 @@ fn nonfatal_error_keeps_looping() -> Result<()> {
     }
 
     // 2) Send an invalid message (non-fatal: serde error) and ensure loop continues
-    channel.send(BITVMX_ID, "not json".to_string())?;
+    channel.send(
+        bitvmx
+            .get_components_config()
+            .get_bitvmx_config()
+            .get_identifier()?,
+        "not json".to_string(),
+    )?;
     let err = bitvmx
         .process_api_messages()
         .expect_err("expected non-fatal error from invalid json");
     assert!(!err.is_fatal(), "serde/non-fatal error should not be fatal");
 
     // 3) Verify we can still Ping -> Pong
-    channel.send(BITVMX_ID, IncomingBitVMXApiMessages::Ping().to_string()?)?;
+    channel.send(
+        bitvmx
+            .get_components_config()
+            .get_bitvmx_config()
+            .get_identifier()?,
+        IncomingBitVMXApiMessages::Ping().to_string()?,
+    )?;
     let msg = common::wait_message_from_channel(&channel, &mut vec![&mut bitvmx], true)?;
     let out = OutgoingBitVMXApiMessages::from_string(&msg.0)?;
     match out {

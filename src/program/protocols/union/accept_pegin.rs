@@ -22,7 +22,7 @@ use crate::{
         },
         variables::{PartialUtxo, VariableTypes},
     },
-    types::{OutgoingBitVMXApiMessages, ProgramContext, L2_ID},
+    types::{OutgoingBitVMXApiMessages, ProgramContext},
 };
 use bitcoin::{hex::FromHex, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
@@ -437,7 +437,9 @@ impl AcceptPegInProtocol {
         );
 
         // Send the pegin accepted data to the broker channel
-        context.broker_channel.send(L2_ID, data)?;
+        context
+            .broker_channel
+            .send(context.components_config.get_l2_identifier()?, data)?;
 
         Ok(())
     }

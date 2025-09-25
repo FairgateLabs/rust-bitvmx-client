@@ -1,6 +1,8 @@
 #![cfg(test)]
 use anyhow::Result;
-use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID};
+use bitvmx_client::types::{
+    IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel,
+};
 use bitvmx_wallet::wallet::{Destination, RegtestWallet};
 use common::{
     config_trace,
@@ -32,7 +34,24 @@ pub fn test_drp() -> Result<()> {
 
     let mut instances = vec![prover_bitvmx, verifier_bitvmx];
     let channels = vec![prover_bridge_channel, verifier_bridge_channel];
+    let identifiers = [
+        instances[0]
+            .get_components_config()
+            .get_bitvmx_identifier()?,
+        instances[1]
+            .get_components_config()
+            .get_bitvmx_identifier()?,
+    ];
 
+    let id_channel_pairs: Vec<ParticipantChannel> = identifiers
+        .clone()
+        .into_iter()
+        .zip(channels.clone().into_iter())
+        .map(|(identifier, channel)| ParticipantChannel {
+            id: identifier,
+            channel,
+        })
+        .collect();
     //get to the top of the blockchain
     for _ in 0..101 {
         for instance in instances.iter_mut() {
@@ -43,7 +62,7 @@ pub fn test_drp() -> Result<()> {
     //one time per bitvmx instance, we need to get the public key for the speedup funding utxo
     let funding_public_id = Uuid::new_v4();
     let command = IncomingBitVMXApiMessages::GetPubKey(funding_public_id, true).to_string()?;
-    send_all(&channels, &command)?;
+    send_all(&id_channel_pairs, &command)?;
     let msgs = get_all(&channels, &mut instances, false)?;
     let funding_key_0 = msgs[0].public_key().unwrap().1;
     let funding_key_1 = msgs[1].public_key().unwrap().1;
@@ -55,10 +74,10 @@ pub fn test_drp() -> Result<()> {
 
     let funds_utxo_0 = Utxo::new(fund_txid_0, 0, 10_000_000, &funding_key_0);
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
-    channels[0].send(BITVMX_ID, command)?;
+    channels[0].send(identifiers[0].clone(), command)?;
     let funds_utxo_1 = Utxo::new(fund_txid_1, 0, 10_000_000, &funding_key_1);
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_1).to_string()?;
-    channels[1].send(BITVMX_ID, command)?;
+    channels[1].send(identifiers[1].clone(), command)?;
 
     let participants = vec![prover_address.clone(), verifier_address.clone()];
     let emulator_channels = vec![
@@ -70,7 +89,7 @@ pub fn test_drp() -> Result<()> {
     let command =
         IncomingBitVMXApiMessages::SetupKey(aggregation_id, participants.clone(), None, 0)
             .to_string()?;
-    send_all(&channels, &command)?;
+    send_all(&id_channel_pairs, &command)?;
 
     let msgs = get_all(&channels, &mut instances, false)?;
     let aggregated_pub_key = msgs[0].aggregated_pub_key().unwrap();
@@ -100,7 +119,7 @@ pub fn test_drp() -> Result<()> {
     prepare_dispute(
         prog_id,
         participants,
-        channels.clone(),
+        id_channel_pairs.clone(),
         &aggregated_pub_key,
         utxo,
         initial_out_type,
@@ -115,7 +134,7 @@ pub fn test_drp() -> Result<()> {
     let _msgs = get_all(&channels, &mut instances, false)?;
 
     execute_dispute(
-        channels,
+        id_channel_pairs,
         &mut instances,
         emulator_channels,
         &bitcoin_client,
@@ -150,6 +169,17 @@ pub fn test_aggregation() -> Result<()> {
     let (mut bitvmx_3, addres_3, bridge_3, _) = init_bitvmx("op_3", false)?;
 
     let mut instances = vec![&mut bitvmx_1, &mut bitvmx_2, &mut bitvmx_3];
+    let identifiers = [
+        instances[0]
+            .get_components_config()
+            .get_bitvmx_identifier()?,
+        instances[1]
+            .get_components_config()
+            .get_bitvmx_identifier()?,
+        instances[2]
+            .get_components_config()
+            .get_bitvmx_identifier()?,
+    ];
 
     //ask the peers to generate the aggregated public key
     let aggregation_id = Uuid::new_v4();
@@ -161,9 +191,9 @@ pub fn test_aggregation() -> Result<()> {
     )
     .to_string()?;
 
-    bridge_1.send(BITVMX_ID, command.clone())?;
-    bridge_2.send(BITVMX_ID, command.clone())?;
-    bridge_3.send(BITVMX_ID, command.clone())?;
+    bridge_1.send(identifiers[0].clone(), command.clone())?;
+    bridge_2.send(identifiers[1].clone(), command.clone())?;
+    bridge_3.send(identifiers[2].clone(), command.clone())?;
 
     let msg_1 = wait_message_from_channel(&bridge_1, &mut instances, true)?;
     let _msg_2 = wait_message_from_channel(&bridge_2, &mut instances, true)?;

@@ -5,10 +5,10 @@ use bitcoin::{key::Secp256k1, PublicKey};
 use key_manager::winternitz::{WinternitzPublicKey, WinternitzType};
 
 use key_manager::musig2::{types::MessageId, PartialSignature, PubNonce};
-use p2p_handler::PeerId;
+use operator_comms::operator_comms::PubKeyHash;
 use serde_json::Value;
 
-pub fn parse_keys(value: Value) -> Result<Vec<(PeerId, ParticipantKeys)>, ParseError> {
+pub fn parse_keys(value: Value) -> Result<Vec<(PubKeyHash, ParticipantKeys)>, ParseError> {
     Ok(serde_json::from_value(value).map_err(|_| ParseError::InvalidParticipantKeys))?
 }
 
@@ -18,7 +18,7 @@ pub type PubNonceMessage = Vec<(
     Vec<(MessageId, PubNonce)>,
 )>;
 
-pub fn parse_nonces(data: Value) -> Result<Vec<(PeerId, PubNonceMessage)>, ParseError> {
+pub fn parse_nonces(data: Value) -> Result<Vec<(PubKeyHash, PubNonceMessage)>, ParseError> {
     Ok(serde_json::from_value(data).map_err(|_| ParseError::InvalidNonces))?
 }
 
@@ -28,7 +28,9 @@ pub type PartialSignatureMessage = Vec<(
     Vec<(MessageId, PartialSignature)>,
 )>;
 
-pub fn parse_signatures(data: Value) -> Result<Vec<(PeerId, PartialSignatureMessage)>, ParseError> {
+pub fn parse_signatures(
+    data: Value,
+) -> Result<Vec<(PubKeyHash, PartialSignatureMessage)>, ParseError> {
     Ok(serde_json::from_value(data).map_err(|_| ParseError::InvalidPartialSignatures))?
 }
 

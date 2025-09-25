@@ -16,21 +16,38 @@ key_storage:
 storage:
   path: /tmp/regtest/op_3/storage.db
 
-p2p:
-  address: /ip4/127.0.0.1/tcp/61182
-  key: config/keys/op_3.key
-  peer_id_file: peer_id
-  timeout: 5
+comms:
+  address: 127.0.0.1:61182
+  priv_key: config/keys/op_3.key
+  storage_path: /tmp/regtest/op_3/comms.db
+
+broker:
+  allow_list: config/allow_list.yaml
+  routing_table: config/routing_table.yaml
+  port: 44444
+  ip: 127.0.0.1
+  priv_key: config/keys/services.key
+  storage: 
+    path: /tmp/regtest/op_3/broker.db
+
+components:
+  l2:
+    priv_key: config/keys/l2.key
+    id: 0
+  bitvmx:
+    priv_key: config/keys/bitvmx.key
+    id: 0
+  emulator:
+    priv_key: config/keys/emulator.key
+    id: 0
+  prover:
+    priv_key: config/keys/prover.key
+    id: 0
 
 coordinator:
   throtthle_bitcoin_updates_until_sync: 0
   throtthle_bitcoin_updates: 0
 #  estimate_fee: 8
-
-broker_storage: 
-  path: /tmp/regtest/op_3/broker.db
-
-broker_port: 44444
 
 client: 
   # Number of retries for requests

@@ -1,8 +1,16 @@
 use anyhow::{Ok, Result};
 use bitcoin::{absolute, secp256k1};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
-use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
+use bitvmx_broker::{
+    channel::channel::DualChannel,
+    identification::identifier::Identifier,
+    rpc::{
+        tls_helper::{init_tls, Cert},
+        BrokerConfig,
+    },
+};
 use bitvmx_client::program::protocols::cardinal::lock::lock_protocol_dust_cost;
+use operator_comms::operator_comms::AllowList;
 use protocol_builder::scripts::{
     build_taproot_spend_info, reveal_secret, timelock, ProtocolScript, SignMode,
 };
@@ -20,12 +28,17 @@ use tracing::info;
 
 pub fn main() -> Result<()> {
     let bitcoin_client = get_bitcoin_client()?;
-
+    init_tls();
     let preimage = "top_secret".to_string();
     let hash = sha256(preimage.as_bytes().to_vec());
 
-    let channel = DualChannel::new(&BrokerConfig::new(54321, None), 2);
-    channel.send(1, "get_aggregated".to_string())?;
+    let (broker_config, _identifier, _) = BrokerConfig::new_only_address(54321, None)?;
+    let cert = Cert::from_key_file("config/keys/l2.key")?;
+    let allow_list = AllowList::new();
+    allow_list.lock().unwrap().allow_all();
+    let channel = DualChannel::new(&broker_config, cert, Some(2), allow_list)?;
+    let identifier = Identifier::new("local".to_string(), 0);
+    channel.send(identifier.clone(), "get_aggregated".to_string())?;
 
     let aggregated_pub_key: PublicKey;
     loop {
@@ -47,7 +60,7 @@ pub fn main() -> Result<()> {
     )?;
 
     let msg_req = serde_json::to_string(&(txid, pubuser, ordinal_fee, preimage, hash))?;
-    channel.send(1, msg_req)?;
+    channel.send(identifier, msg_req)?;
 
     Ok(())
 }

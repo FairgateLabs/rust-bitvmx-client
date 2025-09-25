@@ -15,6 +15,7 @@ use bitcoin::{
     TxIn, TxOut, Txid, Witness, XOnlyPublicKey,
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
+use operator_comms::operator_comms::AllowList;
 use protocol_builder::scripts::{build_taproot_spend_info, op_return_script, timelock, SignMode};
 use std::str::FromStr;
 use tracing::{error, info};
@@ -24,7 +25,7 @@ use bitvmx_client::{
     config::Config,
     program::{protocols::union::types::SPEEDUP_VALUE, variables::PartialUtxo},
     spv_proof::BtcTxSPVProof,
-    types::{OutgoingBitVMXApiMessages::*, L2_ID},
+    types::OutgoingBitVMXApiMessages::*,
 };
 
 const KEY_SPEND_FEE: u64 = 135;
@@ -48,7 +49,13 @@ pub struct User {
 impl User {
     pub fn new(id: &str) -> Result<Self> {
         let config = Config::new(Some(format!("config/{}.yaml", id)))?;
-        let bitvmx = BitVMXClient::new(config.broker_port, L2_ID);
+        let allow_list = AllowList::from_file(&config.broker.allow_list)?;
+        let bitvmx = BitVMXClient::new(
+            &config.components,
+            &config.broker,
+            &config.components.l2,
+            allow_list,
+        )?;
         let bitcoin_client = BitcoinClient::new(
             &config.bitcoin.url,
             &config.bitcoin.username,

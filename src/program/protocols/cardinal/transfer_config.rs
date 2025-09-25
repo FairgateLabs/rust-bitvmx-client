@@ -1,7 +1,6 @@
 use std::rc::Rc;
 
 use bitcoin::PublicKey;
-use bitvmx_broker::channel::channel::DualChannel;
 use protocol_builder::{
     builder::Protocol,
     scripts::{self, SignMode},
@@ -24,7 +23,9 @@ use crate::{
         },
         variables::{Globals, PartialUtxo, VariableTypes},
     },
-    types::{IncomingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TRANSFER},
+    types::{
+        IncomingBitVMXApiMessages, ParticipantChannel, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TRANSFER,
+    },
 };
 
 pub struct TransferConfig {
@@ -110,7 +111,7 @@ impl TransferConfig {
 
     pub fn get_setup_messages(
         &self,
-        addresses: Vec<crate::program::participant::P2PAddress>,
+        addresses: Vec<crate::program::participant::CommsAddress>,
         leader: u16,
     ) -> Result<Vec<String>, BitVMXError> {
         let mut config_vec = vec![
@@ -151,12 +152,16 @@ impl TransferConfig {
 
     pub fn setup(
         &self,
-        channel: &DualChannel,
-        addresses: Vec<crate::program::participant::P2PAddress>,
+        id_channel_pairs: &Vec<ParticipantChannel>,
+        addresses: Vec<crate::program::participant::CommsAddress>,
         leader: u16,
     ) -> Result<(), BitVMXError> {
-        for msg in self.get_setup_messages(addresses, leader)? {
-            channel.send(BITVMX_ID, msg)?;
+        for id_channel_pair in id_channel_pairs {
+            for msg in self.get_setup_messages(addresses.clone(), leader)? {
+                id_channel_pair
+                    .channel
+                    .send(id_channel_pair.id.clone(), msg)?;
+            }
         }
         Ok(())
     }

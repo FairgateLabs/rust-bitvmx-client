@@ -517,7 +517,7 @@ pub fn new_protocol_type(
     my_idx: usize,
     storage: Rc<Storage>,
 ) -> Result<ProtocolType, BitVMXError> {
-    let protocol_name = get_protocol_name(name, id);
+    let protocol_name = format!("{}_{}", name, id);
     let ctx = ProtocolContext::new(id, &protocol_name, my_idx, storage);
 
     match name {
@@ -562,8 +562,4 @@ pub fn external_fund_tx(
         internal_key,
         &spending_scripts,
     )?)
-}
-
-fn get_protocol_name(name: &str, protocol_id: Uuid) -> String {
-    format!("{}_{}", name, protocol_id)
 }

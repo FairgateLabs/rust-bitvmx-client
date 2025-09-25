@@ -3,7 +3,7 @@ use anyhow::Result;
 use bitcoin::PublicKey;
 use bitvmx_client::{
     program::{self, protocols::cardinal::transfer_config::TransferConfig},
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
 use common::{
     config_trace, get_all, init_bitvmx, init_utxo_new, mine_and_wait, prepare_bitcoin, send_all,
@@ -33,6 +33,28 @@ pub fn test_transfer() -> Result<()> {
     //let (bitvmx_4, _addres_4, bridge_4, _) = init_bitvmx("op_4", false)?;
     let mut instances = vec![bitvmx_1, bitvmx_2, bitvmx_3]; //, bitvmx_4];
     let channels = vec![bridge_1, bridge_2, bridge_3]; // , bridge_4];
+    let identifiers = [
+        instances[0]
+            .get_components_config()
+            .get_bitvmx_identifier()?,
+        instances[1]
+            .get_components_config()
+            .get_bitvmx_identifier()?,
+        instances[2]
+            .get_components_config()
+            .get_bitvmx_identifier()?,
+        //instances[3].get_components_config().get_bitvmx_identifier()?,
+    ];
+
+    let id_channel_pairs: Vec<ParticipantChannel> = identifiers
+        .clone()
+        .into_iter()
+        .zip(channels.clone().into_iter())
+        .map(|(identifier, channel)| ParticipantChannel {
+            id: identifier,
+            channel,
+        })
+        .collect();
 
     //get to the top of the blockchain
     for _ in 0..101 {
@@ -43,7 +65,7 @@ pub fn test_transfer() -> Result<()> {
 
     //get addresses
     let command = IncomingBitVMXApiMessages::GetCommInfo().to_string()?;
-    send_all(&channels, &command)?;
+    send_all(&id_channel_pairs, &command)?;
     let comm_info: Vec<OutgoingBitVMXApiMessages> = get_all(&channels, &mut instances, false)?;
     let addresses = comm_info
         .iter()
@@ -56,20 +78,38 @@ pub fn test_transfer() -> Result<()> {
     //one time per bitvmx instance, we need to get the public key for the speedup funding utxo
     let funding_public_id = Uuid::new_v4();
     let command = IncomingBitVMXApiMessages::GetPubKey(funding_public_id, true).to_string()?;
-    send_all(&channels, &command)?;
+    send_all(&id_channel_pairs, &command)?;
     let msgs = get_all(&channels, &mut instances, false)?;
     let funding_key_0 = msgs[0].public_key().unwrap().1;
     let funding_key_1 = msgs[1].public_key().unwrap().1;
     let funding_key_2 = msgs[2].public_key().unwrap().1;
-    set_speedup_funding(10_000_000, &funding_key_0, &channels[0], &mut wallet)?;
-    set_speedup_funding(10_000_000, &funding_key_1, &channels[1], &mut wallet)?;
-    set_speedup_funding(10_000_000, &funding_key_2, &channels[2], &mut wallet)?;
+    set_speedup_funding(
+        10_000_000,
+        &funding_key_0,
+        &channels[0],
+        &mut wallet,
+        &instances[0].get_components_config().get_bitvmx_config(),
+    )?;
+    set_speedup_funding(
+        10_000_000,
+        &funding_key_1,
+        &channels[1],
+        &mut wallet,
+        &instances[1].get_components_config().get_bitvmx_config(),
+    )?;
+    set_speedup_funding(
+        10_000_000,
+        &funding_key_2,
+        &channels[2],
+        &mut wallet,
+        &instances[2].get_components_config().get_bitvmx_config(),
+    )?;
 
     //ask the peers to generate the aggregated public key
     let aggregation_id = Uuid::new_v4();
     let command = IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), None, 0)
         .to_string()?;
-    send_all(&channels, &command)?;
+    send_all(&id_channel_pairs, &command)?;
     let msgs = get_all(&channels, &mut instances, false)?;
     let aggregated_pub_key = msgs[0].aggregated_pub_key().unwrap();
 
@@ -98,14 +138,14 @@ pub fn test_transfer() -> Result<()> {
         &mut wallet,
         &aggregated_pub_key,
         spending_condition.clone(),
-        1000
+        1000,
     )?;
     //emulate op_won
     let op_won_utxo = init_utxo_new(
         &mut wallet,
         &aggregated_pub_key,
         spending_condition.clone(),
-        500
+        500,
     )?;
 
     // SETUP TRANSFER BEGIN
@@ -143,9 +183,7 @@ pub fn test_transfer() -> Result<()> {
         None,
     );
 
-    for channel in channels.iter() {
-        transfer_config.setup(channel, addresses.clone(), 0)?;
-    }
+    transfer_config.setup(&id_channel_pairs, addresses.clone(), 0)?;
 
     //wait setup complete
     let _msg = get_all(&channels, &mut instances, false)?;
@@ -153,7 +191,7 @@ pub fn test_transfer() -> Result<()> {
     info!("{:?}", _msg[0]);
 
     let _ = channels[1].send(
-        BITVMX_ID,
+        id_channel_pairs[1].id.clone(),
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
             program::protocols::cardinal::transfer::too_tx(1, 1),

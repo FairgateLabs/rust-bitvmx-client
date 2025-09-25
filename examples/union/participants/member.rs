@@ -6,6 +6,7 @@ use bitvmx_client::program::protocols::union::types::ADVANCE_FUNDS_INPUT;
 use bitvmx_client::program::variables::VariableTypes;
 use bitvmx_wallet::wallet::Destination;
 use core::clone::Clone;
+use operator_comms::operator_comms::AllowList;
 use protocol_builder::types::OutputType;
 use protocol_builder::types::Utxo;
 use std::collections::HashMap;
@@ -17,11 +18,11 @@ use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
     program::{
-        participant::{P2PAddress, ParticipantRole},
+        participant::{CommsAddress, ParticipantRole},
         protocols::union::types::MemberData,
         variables::PartialUtxo,
     },
-    types::{OutgoingBitVMXApiMessages::*, L2_ID},
+    types::OutgoingBitVMXApiMessages::*,
 };
 
 use tracing::{debug, info};
@@ -56,7 +57,7 @@ pub struct Keyring {
     pub take_aggregated_key: Option<PublicKey>,
     pub dispute_aggregated_key: Option<PublicKey>,
     pub communication_pubkey: Option<PublicKey>,
-    pub pairwise_keys: HashMap<P2PAddress, PublicKey>,
+    pub pairwise_keys: HashMap<CommsAddress, PublicKey>,
 }
 
 #[derive(Clone)]
@@ -64,7 +65,7 @@ pub struct Member {
     pub id: String,
     pub role: ParticipantRole,
     pub config: Config,
-    pub address: Option<P2PAddress>,
+    pub address: Option<CommsAddress>,
     pub bitvmx: BitVMXClient,
     pub keyring: Keyring,
 }
@@ -72,7 +73,13 @@ pub struct Member {
 impl Member {
     pub fn new(id: &str, role: ParticipantRole) -> Result<Self> {
         let config = Config::new(Some(format!("config/{}.yaml", id)))?;
-        let bitvmx = BitVMXClient::new(config.broker_port, L2_ID);
+        let allow_list = AllowList::from_file(&config.broker.allow_list)?;
+        let bitvmx = BitVMXClient::new(
+            &config.components,
+            &config.broker,
+            &config.components.l2,
+            allow_list,
+        )?;
 
         Ok(Self {
             id: id.to_string(),
@@ -91,7 +98,7 @@ impl Member {
         })
     }
 
-    pub fn get_peer_info(&mut self) -> Result<P2PAddress> {
+    pub fn get_peer_info(&mut self) -> Result<CommsAddress> {
         self.bitvmx.get_comm_info()?;
         thread::sleep(std::time::Duration::from_secs(5));
         let addr = wait_until_msg!(&self.bitvmx, CommInfo(_addr) => _addr);
@@ -158,7 +165,7 @@ impl Member {
         members: &Vec<MemberData>,
         funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
         my_speedup_funding: &Utxo,
-        addresses: &Vec<P2PAddress>,
+        addresses: &Vec<CommsAddress>,
     ) -> Result<()> {
         info!(
             id = self.id,
@@ -204,7 +211,7 @@ impl Member {
         slot_index: usize,
         rootstock_address: String,
         reimbursement_pubkey: PublicKey,
-        addresses: &Vec<P2PAddress>,
+        addresses: &Vec<CommsAddress>,
     ) -> Result<()> {
         info!(id = self.id, "Accepting peg-in");
         AcceptPegInSetup::setup(
@@ -240,7 +247,7 @@ impl Member {
         pegout_signature_hash: Vec<u8>,
         pegout_signature_message: Vec<u8>,
         user_pubkey: PublicKey,
-        addresses: &Vec<P2PAddress>,
+        addresses: &Vec<CommsAddress>,
     ) -> Result<()> {
         UserTakeSetup::setup(
             committee_id,
@@ -380,7 +387,7 @@ impl Member {
     fn setup_key(
         &mut self,
         aggregation_id: Uuid,
-        addresses: &[P2PAddress],
+        addresses: &[CommsAddress],
         public_keys: Option<&[PublicKey]>,
     ) -> Result<PublicKey> {
         info!(
@@ -407,19 +414,19 @@ impl Member {
     }
 
     /// Get own address
-    fn address(&self) -> Result<&P2PAddress> {
+    fn address(&self) -> Result<&CommsAddress> {
         self.address
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Member address not set for {}", self.id))
     }
 
     /// Get all addresses from a list of members
-    fn get_addresses(&self, members: &[Member]) -> Vec<P2PAddress> {
+    fn get_addresses(&self, members: &[Member]) -> Vec<CommsAddress> {
         members.iter().filter_map(|m| m.address.clone()).collect()
     }
 
     /// Determine the counterparty address in a pair of members
-    fn get_counterparty_address(&self, member1: &Member, member2: &Member) -> Result<P2PAddress> {
+    fn get_counterparty_address(&self, member1: &Member, member2: &Member) -> Result<CommsAddress> {
         let member1_address = member1.address()?;
         let member2_address = member2.address()?;
         let my_address = self.address()?;

@@ -34,7 +34,7 @@ impl OperatorInstance {
 fn config_trace() {
     // Try to read from RUST_LOG environment variable first, fall back to default if not set
     let filter = EnvFilter::try_from_default_env()
-        .or_else(|_| EnvFilter::try_new("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitcoin_coordinator=info,p2p_protocol=off,p2p_handler=off,tarpc=off,broker=off,bitvmx_wallet=info,bitvmx_bitcoin_rpc=off"))
+        .or_else(|_| EnvFilter::try_new("info,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitcoin_coordinator=info,tarpc=off,broker=off,bitvmx_wallet=info,bitvmx_bitcoin_rpc=off"))
         .expect("Invalid filter");
 
     tracing_subscriber::fmt()
@@ -61,7 +61,8 @@ fn init_bitvmx(opn: &str, fresh: bool) -> Result<BitVMX> {
     if fresh {
         clear_db(&config.storage.path);
         clear_db(&config.key_storage.path);
-        clear_db(&config.broker_storage.path);
+        clear_db(&config.broker.storage.path);
+        clear_db(&config.comms.storage_path);
 
         if config.bitcoin.network == Network::Regtest {
             Wallet::clear_db(&config.wallet).unwrap();
@@ -99,8 +100,8 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
     info!("BitVMX instance initialized");
     for instance in &instances {
         let _span = info_span!("", id = instance.name).entered();
-        info!("P2P Address: {}", instance.bitvmx.address());
-        info!("Peer ID: {}", instance.bitvmx.peer_id());
+        info!("Comms Address: {}", instance.bitvmx.address());
+        info!("Peer Public Key Hash: {}", instance.bitvmx.pubkey_hash()?);
         info!("Starting Bitcoin blockchain sync");
     }
 

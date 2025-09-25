@@ -1,7 +1,11 @@
+use std::net::{IpAddr, SocketAddr};
+
 use bitcoin_coordinator::config::CoordinatorSettingsConfig;
 use bitvmx_bitcoin_rpc::rpc_config::RpcConfig;
+use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
 use bitvmx_wallet::wallet::config::WalletConfig;
 use key_manager::config::KeyManagerConfig;
+use operator_comms::operator_comms::PubKeyHash;
 use serde::{Deserialize, Serialize};
 use storage_backend::storage_config::StorageConfig;
 use tracing::info;
@@ -19,11 +23,10 @@ pub struct ProtocolBuilderConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct P2PConfig {
-    pub address: String,
-    pub key: String,
-    pub peer_id_file: String,
-    pub timeout: u64,
+pub struct CommsConfig {
+    pub address: SocketAddr,
+    pub priv_key: String,
+    pub storage_path: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -39,16 +42,79 @@ pub struct ThrotthleUpdate {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct BrokerConfig {
+    pub allow_list: String,
+    pub routing_table: String,
+    pub priv_key: String,
+    pub port: u16,
+    pub ip: IpAddr,
+    // pub id: u8, // Asume that id is 0 always
+    pub storage: StorageConfig,
+}
+
+impl BrokerConfig {
+    pub fn get_address(&self) -> SocketAddr {
+        SocketAddr::new(self.ip, self.port)
+    }
+    pub fn get_pubk_hash(&self) -> Result<PubKeyHash, ConfigError> {
+        let cert = Cert::from_key_file(&self.priv_key.clone())?;
+        Ok(cert.get_pubk_hash()?)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Component {
+    pub priv_key: String,
+    pub id: u8,
+}
+
+impl Component {
+    pub fn get_pubk_hash(&self) -> Result<PubKeyHash, ConfigError> {
+        let cert = Cert::from_key_file(&self.priv_key.clone())?;
+        Ok(cert.get_pubk_hash()?)
+    }
+    pub fn get_identifier(&self) -> Result<Identifier, ConfigError> {
+        Ok(Identifier::new(self.get_pubk_hash()?, self.id))
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ComponentsConfig {
+    pub l2: Component,
+    pub bitvmx: Component,
+    pub emulator: Component,
+    pub prover: Component,
+}
+
+impl ComponentsConfig {
+    pub fn get_l2_identifier(&self) -> Result<Identifier, ConfigError> {
+        Ok(self.l2.get_identifier()?)
+    }
+    pub fn get_bitvmx_identifier(&self) -> Result<Identifier, ConfigError> {
+        Ok(self.bitvmx.get_identifier()?)
+    }
+    pub fn get_emulator_identifier(&self) -> Result<Identifier, ConfigError> {
+        Ok(self.emulator.get_identifier()?)
+    }
+    pub fn get_prover_identifier(&self) -> Result<Identifier, ConfigError> {
+        Ok(self.prover.get_identifier()?)
+    }
+    pub fn get_bitvmx_config(&self) -> &Component {
+        &self.bitvmx
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)] // enforce strict field compliance
 pub struct Config {
     pub bitcoin: RpcConfig,
     pub key_manager: KeyManagerConfig,
     pub key_storage: StorageConfig,
     pub storage: StorageConfig,
-    pub p2p: P2PConfig,
-    pub broker_storage: StorageConfig,
-    pub broker_port: u16,
+    pub comms: CommsConfig,
+    pub broker: BrokerConfig,
     pub client: ClientConfig,
+    pub components: ComponentsConfig,
     pub coordinator_settings: Option<CoordinatorSettingsConfig>,
     pub coordinator: ThrotthleUpdate,
     pub wallet: WalletConfig,
@@ -67,15 +133,11 @@ impl Config {
         }
     }
 
-    pub fn p2p_address(&self) -> &str {
-        self.p2p.address.as_str()
+    pub fn comms_address(&self) -> &SocketAddr {
+        &self.comms.address
     }
 
-    pub fn p2p_key(&self) -> &str {
-        self.p2p.key.as_str()
-    }
-
-    pub fn p2p_timeout(&self) -> u64 {
-        self.p2p.timeout
+    pub fn comms_key(&self) -> &str {
+        self.comms.priv_key.as_str()
     }
 }

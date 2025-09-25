@@ -1,12 +1,16 @@
 use std::str::FromStr;
 
-use crate::spv_proof::BtcTxSPVProof;
+use crate::{config::ComponentsConfig, spv_proof::BtcTxSPVProof};
 use bitcoin::{address::NetworkUnchecked, Address, PrivateKey, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TransactionStatus};
-use bitvmx_broker::{broker_storage::BrokerStorage, channel::channel::LocalChannel};
+use bitvmx_broker::{
+    broker_storage::BrokerStorage,
+    channel::channel::{DualChannel, LocalChannel},
+    identification::identifier::Identifier,
+};
 use bitvmx_wallet::wallet::Destination;
 use chrono::{DateTime, Utc};
-use p2p_handler::P2pHandler;
+use operator_comms::operator_comms::OperatorComms;
 use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
 
@@ -16,33 +20,30 @@ use crate::{
     errors::BitVMXError,
     keychain::KeyChain,
     program::{
-        participant::P2PAddress,
+        participant::CommsAddress,
         variables::{Globals, VariableTypes, WitnessTypes, WitnessVars},
     },
 };
 
 pub struct ProgramContext {
     pub key_chain: KeyChain,
-    pub comms: P2pHandler,
+    pub comms: OperatorComms,
     pub bitcoin_coordinator: BitcoinCoordinator,
     pub broker_channel: LocalChannel<BrokerStorage>,
     pub globals: Globals,
     pub witness: WitnessVars,
+    pub components_config: ComponentsConfig,
 }
-
-pub const BITVMX_ID: u32 = 1;
-pub const L2_ID: u32 = 100;
-pub const EMULATOR_ID: u32 = 1000;
-pub const PROVER_ID: u32 = 2000;
 
 impl ProgramContext {
     pub fn new(
-        comms: P2pHandler,
+        comms: OperatorComms,
         key_chain: KeyChain,
         bitcoin_coordinator: BitcoinCoordinator,
         broker_channel: LocalChannel<BrokerStorage>,
         globals: Globals,
         witness: WitnessVars,
+        components_config: ComponentsConfig,
     ) -> Self {
         Self {
             comms,
@@ -51,6 +52,7 @@ impl ProgramContext {
             broker_channel,
             globals,
             witness,
+            components_config,
         }
     }
 }
@@ -103,14 +105,14 @@ pub enum IncomingBitVMXApiMessages {
     GetTransaction(Uuid, Txid),
     GetTransactionInfoByName(Uuid, String),
     GetHashedMessage(Uuid, String, u32, u32),
-    Setup(ProgramId, String, Vec<P2PAddress>, u16),
+    Setup(ProgramId, String, Vec<CommsAddress>, u16),
     SubscribeToTransaction(Uuid, Txid),
     SubscribeUTXO(),
     SubscribeToRskPegin(),
     GetSPVProof(Txid),
     DispatchTransaction(Uuid, Transaction),
     DispatchTransactionName(Uuid, String),
-    SetupKey(Uuid, Vec<P2PAddress>, Option<Vec<PublicKey>>, u16),
+    SetupKey(Uuid, Vec<CommsAddress>, Option<Vec<PublicKey>>, u16),
     GetAggregatedPubkey(Uuid),
     GetKeyPair(Uuid),
     GetPubKey(Uuid, bool),
@@ -118,7 +120,7 @@ pub enum IncomingBitVMXApiMessages {
     GenerateZKP(Uuid, Vec<u8>, String),
     ProofReady(Uuid),
     GetZKPExecutionResult(Uuid),
-    Encrypt(Uuid, Vec<u8>, Vec<u8>),
+    Encrypt(Uuid, Vec<u8>, String),
     Decrypt(Uuid, Vec<u8>),
     Backup(String),
     #[cfg(feature = "testpanic")]
@@ -155,7 +157,7 @@ pub enum OutgoingBitVMXApiMessages {
     TransactionInfo(Uuid, String, Transaction),
     ZKPResult(Uuid, Vec<u8>, Vec<u8>),
     ExecutionResult(/* Add appropriate type */),
-    CommInfo(P2PAddress),
+    CommInfo(CommsAddress),
     KeyPair(Uuid, PrivateKey, PublicKey),
     PubKey(Uuid, PublicKey),
     SignedMessage(Uuid, [u8; 32], [u8; 32], u8), // id, signature_r, signature_s, recovery_id
@@ -188,7 +190,7 @@ impl OutgoingBitVMXApiMessages {
         Ok(msg)
     }
 
-    pub fn comm_info(&self) -> Option<P2PAddress> {
+    pub fn comm_info(&self) -> Option<CommsAddress> {
         match self {
             OutgoingBitVMXApiMessages::CommInfo(info) => Some(info.clone()),
             _ => None,
@@ -348,6 +350,12 @@ impl RequestId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct ParticipantChannel {
+    pub id: Identifier,
+    pub channel: DualChannel,
 }
 
 pub const PROGRAM_TYPE_LOCK: &str = "lock";

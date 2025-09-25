@@ -17,7 +17,7 @@ use crate::{
         },
         variables::VariableTypes,
     },
-    types::{ProgramContext, EMULATOR_ID},
+    types::ProgramContext,
 };
 
 pub fn execution_result(
@@ -55,7 +55,10 @@ pub fn execution_result(
                 .set_var(id, "execution-check-ready", VariableTypes::Number(1))?;
             if let Some(msg) = context.globals.get_var(id, "choose-segment-msg")? {
                 info!("The msg to choose segment was ready. Sending it");
-                context.broker_channel.send(EMULATOR_ID, msg.string()?)?;
+                context.broker_channel.send(
+                    context.components_config.get_emulator_identifier()?,
+                    msg.string()?,
+                )?;
             } else {
                 info!("The msg to choose segment was not ready");
             }

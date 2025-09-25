@@ -1,34 +1,54 @@
 use crate::{
+    config::{BrokerConfig, Component, ComponentsConfig},
     errors::ClientError,
     program::{
-        participant::P2PAddress,
+        participant::CommsAddress,
         variables::{VariableTypes, WitnessTypes},
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages},
 };
 use anyhow::Result;
 use bitcoin::{PublicKey, Transaction, Txid};
-use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
+use bitvmx_broker::{
+    channel::channel::DualChannel,
+    identification::identifier::Identifier,
+    rpc::{self, tls_helper::Cert},
+};
 use bitvmx_wallet::wallet::Destination;
-use std::thread;
+use operator_comms::operator_comms::AllowList;
 use std::time::{Duration, Instant};
+use std::{
+    sync::{Arc, Mutex},
+    thread,
+};
 use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct BitVMXClient {
     channel: DualChannel,
-    _client_id: u32,
+    components_config: ComponentsConfig,
 }
 
 impl BitVMXClient {
-    pub fn new(broker_port: u16, client_id: u32) -> Self {
-        let config = BrokerConfig::new(broker_port, None);
-        let channel = DualChannel::new(&config, client_id);
+    pub fn new(
+        components_config: &ComponentsConfig,
+        broker_config: &BrokerConfig,
+        client_config: &Component,
+        allow_list: Arc<Mutex<AllowList>>,
+    ) -> Result<Self> {
+        let config =
+            rpc::BrokerConfig::new(broker_config.port, None, broker_config.get_pubk_hash()?);
+        let channel = DualChannel::new(
+            &config,
+            Cert::from_key_file(&client_config.priv_key)?,
+            Some(client_config.id),
+            allow_list,
+        )?;
 
-        Self {
+        Ok(Self {
+            components_config: components_config.clone(),
             channel,
-            _client_id: client_id,
-        }
+        })
     }
 
     pub fn ping(&self) -> Result<()> {
@@ -39,7 +59,7 @@ impl BitVMXClient {
         &self,
         id: Uuid,
         program_type: String,
-        addresses: Vec<P2PAddress>,
+        addresses: Vec<CommsAddress>,
         leader: u16,
     ) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::Setup(
@@ -57,7 +77,7 @@ impl BitVMXClient {
     pub fn setup_key(
         &self,
         id: Uuid,
-        participants: Vec<P2PAddress>,
+        participants: Vec<CommsAddress>,
         participants_keys: Option<Vec<PublicKey>>,
         leader_idx: u16,
     ) -> Result<()> {
@@ -148,8 +168,8 @@ impl BitVMXClient {
     pub fn send_message(&self, msg: IncomingBitVMXApiMessages) -> Result<()> {
         // BitVMX instance uses ID 1 by convention
         let serialized = serde_json::to_string(&msg)?;
-        // info!("Sending message to {}: {:?}", BITVMX_ID, serialized);
-        self.channel.send(BITVMX_ID, serialized)?;
+        self.channel
+            .send(self.components_config.get_bitvmx_identifier()?, serialized)?;
         Ok(())
     }
 
@@ -180,7 +200,7 @@ impl BitVMXClient {
         }
     }
 
-    pub fn get_message(&self) -> Result<Option<(OutgoingBitVMXApiMessages, u32)>> {
+    pub fn get_message(&self) -> Result<Option<(OutgoingBitVMXApiMessages, Identifier)>> {
         if let Ok(Some((msg, from))) = self.channel.recv() {
             let dezerialized = serde_json::from_str(&msg)?;
             Ok(Some((dezerialized, from)))
@@ -194,8 +214,8 @@ impl BitVMXClient {
     /// # Arguments
     /// * `id` - The ID of the message
     /// * `messages` - The messages to encrypt as bytes
-    /// * `public_key` - The public key to encrypt the messages with as pkcs8 DER bytes
-    pub fn encrypt(&self, id: Uuid, messages: Vec<u8>, public_key: Vec<u8>) -> Result<()> {
+    /// * `public_key` - The public key to encrypt the messages with as PEM string
+    pub fn encrypt(&self, id: Uuid, messages: Vec<u8>, public_key: String) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::Encrypt(id, messages, public_key))
     }
 

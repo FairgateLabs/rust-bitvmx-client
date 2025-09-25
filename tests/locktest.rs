@@ -17,7 +17,7 @@ use bitvmx_client::{
         },
         variables::WitnessTypes,
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
 use bitvmx_wallet::wallet::{RegtestWallet, Wallet};
 use common::{
@@ -85,7 +85,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         (client, Some(deamon), wallet)
     };
 
-    let (channels, mut instances) = if independent {
+    let (id_channel_pairs, mut instances) = if independent {
         let bridge_1 = init_broker("op_1")?;
         let bridge_2 = init_broker("op_2")?;
         let bridge_3 = init_broker("op_3")?;
@@ -101,8 +101,35 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         let (bitvmx_4, _addres_4, bridge_4, _) = init_bitvmx("op_4", false)?;
         let instances = vec![bitvmx_1, bitvmx_2, bitvmx_3, bitvmx_4];
         let channels = vec![bridge_1, bridge_2, bridge_3, bridge_4];
-        (channels, instances)
+        let identifiers = vec![
+            instances[0]
+                .get_components_config()
+                .get_bitvmx_identifier()?,
+            instances[1]
+                .get_components_config()
+                .get_bitvmx_identifier()?,
+            instances[2]
+                .get_components_config()
+                .get_bitvmx_identifier()?,
+            instances[3]
+                .get_components_config()
+                .get_bitvmx_identifier()?,
+        ];
+        let id_channel_pairs: Vec<ParticipantChannel> = identifiers
+            .into_iter()
+            .zip(channels.into_iter())
+            .map(|(identifier, channel)| ParticipantChannel {
+                id: identifier,
+                channel,
+            })
+            .collect();
+        (id_channel_pairs, instances)
     };
+
+    let channels = id_channel_pairs
+        .iter()
+        .map(|pc| pc.channel.clone())
+        .collect::<Vec<_>>();
 
     //get to the top of the blockchain
     for _ in 0..101 {
@@ -113,19 +140,43 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
 
     let funding_public_id = Uuid::new_v4();
     let command = IncomingBitVMXApiMessages::GetPubKey(funding_public_id, true).to_string()?;
-    send_all(&channels, &command)?;
+    send_all(&id_channel_pairs, &command)?;
     let msgs = get_all(&channels, &mut instances, false)?;
     let funding_key_0 = msgs[0].public_key().unwrap().1;
     let funding_key_1 = msgs[1].public_key().unwrap().1;
     let funding_key_2 = msgs[2].public_key().unwrap().1;
     let funding_key_3 = msgs[3].public_key().unwrap().1;
-    set_speedup_funding(10_000_000, &funding_key_0, &channels[0], &mut wallet)?;
-    set_speedup_funding(10_000_000, &funding_key_1, &channels[1], &mut wallet)?;
-    set_speedup_funding(10_000_000, &funding_key_2, &channels[2], &mut wallet)?;
-    set_speedup_funding(10_000_000, &funding_key_3, &channels[3], &mut wallet)?;
+    set_speedup_funding(
+        10_000_000,
+        &funding_key_0,
+        &channels[0],
+        &mut wallet,
+        &instances[0].get_components_config().get_bitvmx_config(),
+    )?;
+    set_speedup_funding(
+        10_000_000,
+        &funding_key_1,
+        &channels[1],
+        &mut wallet,
+        &instances[1].get_components_config().get_bitvmx_config(),
+    )?;
+    set_speedup_funding(
+        10_000_000,
+        &funding_key_2,
+        &channels[2],
+        &mut wallet,
+        &instances[2].get_components_config().get_bitvmx_config(),
+    )?;
+    set_speedup_funding(
+        10_000_000,
+        &funding_key_3,
+        &channels[3],
+        &mut wallet,
+        &instances[3].get_components_config().get_bitvmx_config(),
+    )?;
 
     let command = IncomingBitVMXApiMessages::GetCommInfo().to_string()?;
-    send_all(&channels, &command)?;
+    send_all(&id_channel_pairs, &command)?;
     let comm_info: Vec<OutgoingBitVMXApiMessages> = get_all(&channels, &mut instances, false)?;
     let addresses = comm_info
         .iter()
@@ -138,7 +189,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         .to_string()?;
 
     info!("Command to all: {:?}", command);
-    send_all(&channels, &command)?;
+    send_all(&id_channel_pairs, &command)?;
     info!("Waiting for AggregatedPubkey message from all channels");
     let msgs = get_all(&channels, &mut instances, false)?;
     info!("Received AggregatedPubkey message from all channels");
@@ -169,14 +220,14 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         let command =
             IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), None, 0)
                 .to_string()?;
-        send_all(&channels, &command)?;
+        send_all(&id_channel_pairs, &command)?;
         let msgs = get_all(&channels, &mut instances, false)?;
         info!("Received AggregatedPubkey message from all channels");
         let aggregated_happy_path = msgs[0].aggregated_pub_key().unwrap();
 
         // get keypair to share with the user for happy path too
         let command = IncomingBitVMXApiMessages::GetKeyPair(aggregation_id).to_string()?;
-        send_all(&channels, &command)?;
+        send_all(&id_channel_pairs, &command)?;
         let _msgs = get_all(&channels, &mut instances, false)?;
         (aggregated_happy_path, "".to_string())
     };
@@ -202,7 +253,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     let lockreqtx_on_chain = Uuid::new_v4();
     let command =
         IncomingBitVMXApiMessages::SubscribeToTransaction(lockreqtx_on_chain, txid).to_string()?;
-    send_all(&channels, &command)?;
+    send_all(&id_channel_pairs, &command)?;
     mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
     // SETUP LOCK BEGIN
@@ -224,9 +275,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         100,
     );
 
-    for c in &channels {
-        lock_protocol_configuration.setup(&c, addresses.clone(), 0)?;
-    }
+    lock_protocol_configuration.setup(&id_channel_pairs, addresses.clone(), 0)?;
 
     get_all(&channels, &mut instances, false)?;
 
@@ -239,10 +288,10 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         WitnessTypes::Secret(preimage.as_bytes().to_vec()),
     ))?;
 
-    channels[op].send(BITVMX_ID, witness_msg.clone())?;
+    channels[op].send(id_channel_pairs[op].id.clone(), witness_msg.clone())?;
 
     let _ = channels[op].send(
-        BITVMX_ID,
+        id_channel_pairs[op].id.clone(),
         IncomingBitVMXApiMessages::GetTransactionInfoByName(program_id, LOCK_TX.to_string())
             .to_string()?,
     );
@@ -259,7 +308,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     );
 
     let _ = channels[op].send(
-        BITVMX_ID,
+        id_channel_pairs[op].id.clone(),
         IncomingBitVMXApiMessages::GetHashedMessage(
             program_id,
             program::protocols::cardinal::lock::LOCK_TX.to_string(),
@@ -291,7 +340,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     info!("Going to send the lock tx");
     info!("==========================");
     let _ = channels[op].send(
-        BITVMX_ID,
+        id_channel_pairs[op].id.clone(),
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
             program::protocols::cardinal::lock::LOCK_TX.to_string(),
@@ -304,7 +353,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     //EVENTUALY L2 DECIDED TO SEND THE HAPPY PATH
     //TODO: It should actually be signed in this moment and not before (could be signed but not shared the partials)
     let _ = channels[op].send(
-        BITVMX_ID,
+        id_channel_pairs[op].id.clone(),
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
             program::protocols::cardinal::lock::HAPPY_PATH_TX.to_string(),

@@ -1,16 +1,29 @@
 use anyhow::{Ok, Result};
-use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
+use bitvmx_broker::{
+    channel::channel::DualChannel,
+    identification::identifier::Identifier,
+    rpc::{
+        tls_helper::{init_tls, Cert},
+        BrokerConfig,
+    },
+};
 
 use bitcoin::Txid;
+use operator_comms::operator_comms::AllowList;
 use tracing::info;
 
 use crate::common::get_bitcoin_client;
 
 pub fn main() -> Result<()> {
+    init_tls();
     let _bitcoin_client = get_bitcoin_client()?;
-
-    let channel = DualChannel::new(&BrokerConfig::new(54321, None), 2);
-    channel.send(1, "burn".to_string())?;
+    let (broker_config, _identifier, _) = BrokerConfig::new_only_address(54321, None)?;
+    let cert = Cert::from_key_file("config/keys/l2.key")?;
+    let allow_list = AllowList::new();
+    allow_list.lock().unwrap().allow_all();
+    let channel = DualChannel::new(&broker_config, cert, Some(2), allow_list)?;
+    let identifier = Identifier::new("local".to_string(), 0);
+    channel.send(identifier, "burn".to_string())?;
 
     let happy_txid: Txid;
     let secret_key: String;

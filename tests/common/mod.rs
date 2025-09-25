@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 #![cfg(test)]
-use std::str::FromStr;
 
 pub mod dispute;
 
@@ -8,15 +7,19 @@ use anyhow::Result;
 use bitcoin::{Amount, PublicKey, XOnlyPublicKey};
 use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
-use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
+use bitvmx_broker::{
+    channel::channel::DualChannel,
+    identification::identifier::Identifier,
+    rpc::{tls_helper::Cert, BrokerConfig},
+};
 use bitvmx_client::{
     bitvmx::BitVMX,
-    config::Config,
-    program::{participant::P2PAddress, protocols::protocol_handler::external_fund_tx},
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, EMULATOR_ID, L2_ID},
+    config::{Component, Config},
+    program::{participant::CommsAddress, protocols::protocol_handler::external_fund_tx},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
 use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
-use p2p_handler::PeerId;
+use operator_comms::operator_comms::AllowList;
 use protocol_builder::{
     scripts::{self, ProtocolScript, SignMode},
     types::{OutputType, Utxo},
@@ -35,27 +38,39 @@ pub fn clear_db(path: &str) {
 pub fn init_bitvmx(
     role: &str,
     emulator_dispatcher: bool,
-) -> Result<(BitVMX, P2PAddress, DualChannel, Option<DualChannel>)> {
+) -> Result<(BitVMX, CommsAddress, DualChannel, Option<DualChannel>)> {
     let config = Config::new(Some(format!("config/{}.yaml", role)))?;
-    let broker_config = BrokerConfig::new(config.broker_port, None);
-    let bridge_client = DualChannel::new(&broker_config, L2_ID);
+    let allow_list = AllowList::from_file(&config.broker.allow_list)?;
+    let broker_config = BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
+    let bridge_client = DualChannel::new(
+        &broker_config,
+        Cert::from_key_file(&config.components.l2.priv_key)?,
+        Some(config.components.l2.id),
+        allow_list.clone(),
+    )?;
     let dispatcher_channel = if emulator_dispatcher {
-        Some(DualChannel::new(&broker_config, EMULATOR_ID))
+        Some(DualChannel::new(
+            &broker_config,
+            Cert::from_key_file(&config.components.emulator.priv_key)?,
+            Some(config.components.emulator.id),
+            allow_list,
+        )?)
     } else {
         None
     };
 
     clear_db(&config.storage.path);
     clear_db(&config.key_storage.path);
-    clear_db(&config.broker_storage.path);
+    clear_db(&config.broker.storage.path);
+    clear_db(&config.comms.storage_path);
     Wallet::clear_db(&config.wallet)?;
 
     info!("config: {:?}", config.storage.path);
 
     let bitvmx = BitVMX::new(config)?;
 
-    let address = P2PAddress::new(&bitvmx.address(), PeerId::from_str(&bitvmx.peer_id())?);
-    info!("peer id {:?}", bitvmx.peer_id());
+    let address = CommsAddress::new(bitvmx.address(), bitvmx.pubkey_hash()?);
+    info!("public key hash {:?}", bitvmx.pubkey_hash());
 
     //This messages will come from the bridge client.
 
@@ -64,7 +79,7 @@ pub fn init_bitvmx(
 
 pub fn tick(instance: &mut BitVMX) {
     instance.process_api_messages().unwrap();
-    instance.process_p2p_messages().unwrap();
+    instance.process_comms_messages().unwrap();
     instance.process_programs().unwrap();
     instance.process_collaboration().unwrap();
     instance.process_pending_messages().unwrap();
@@ -74,7 +89,7 @@ pub fn wait_message_from_channel(
     channel: &DualChannel,
     instances: &mut Vec<&mut BitVMX>,
     fake_tick: bool,
-) -> Result<(String, u32)> {
+) -> Result<(String, Identifier)> {
     //loop to timeout
     for i in 0..40000 {
         if i % 50 == 0 {
@@ -116,7 +131,7 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
         wallet_config.bitcoin.clone(),
         BitcoindFlags {
             min_relay_tx_fee: 0.00001,
-            block_min_tx_fee: 0.00008,
+            block_min_tx_fee: 0.00001,
             debug: 1,
             fallback_fee: 0.0002,
         },
@@ -156,12 +171,10 @@ pub fn config_trace() {
 fn config_trace_aux() {
     let default_modules = [
         "info",
-        "libp2p=off",
         "bitvmx_transaction_monitor=off",
         "bitcoin_indexer=off",
         "bitcoin_coordinator=info",
-        "p2p_protocol=off",
-        "p2p_handler=off",
+        "operator_comms=off",
         "tarpc=off",
         "key_manager=off",
         "memory=off",
@@ -180,9 +193,11 @@ fn config_trace_aux() {
         .init();
 }
 
-pub fn send_all(channels: &Vec<DualChannel>, msg: &str) -> Result<()> {
-    for channel in channels {
-        channel.send(BITVMX_ID, msg.to_string())?;
+pub fn send_all(id_channel_pairs: &Vec<ParticipantChannel>, msg: &str) -> Result<()> {
+    for id_channel_pair in id_channel_pairs {
+        id_channel_pair
+            .channel
+            .send(id_channel_pair.id.clone(), msg.to_string())?;
     }
     Ok(())
 }
@@ -223,11 +238,21 @@ pub fn mine_and_wait(
     Ok(msgs)
 }
 
-pub fn init_broker(role: &str) -> Result<DualChannel> {
+pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
     let config = Config::new(Some(format!("config/{}.yaml", role)))?;
-    let broker_config = BrokerConfig::new(config.broker_port, None);
-    let bridge_client = DualChannel::new(&broker_config, L2_ID);
-    Ok(bridge_client)
+    let allow_list = AllowList::from_file(&config.broker.allow_list)?;
+    let broker_config = BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
+    let bridge_client = DualChannel::new(
+        &broker_config,
+        Cert::from_key_file(&config.components.l2.priv_key)?,
+        Some(config.components.l2.id),
+        allow_list.clone(),
+    )?;
+    let particiant_channel = ParticipantChannel {
+        id: config.components.get_bitvmx_identifier()?,
+        channel: bridge_client,
+    };
+    Ok(particiant_channel)
 }
 
 pub fn init_utxo_new(
@@ -290,11 +315,12 @@ pub fn set_speedup_funding(
     pub_key: &PublicKey,
     channel: &DualChannel,
     wallet: &mut Wallet,
+    bitvmx_id: &Component,
 ) -> Result<()> {
     let fund_tx = wallet.fund_destination(Destination::P2WPKH(*pub_key, amount))?;
 
     let funds_utxo_0 = Utxo::new(fund_tx.compute_txid(), 0, amount, pub_key);
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
-    channel.send(BITVMX_ID, command)?;
+    channel.send(bitvmx_id.get_identifier()?, command)?;
     Ok(())
 }
