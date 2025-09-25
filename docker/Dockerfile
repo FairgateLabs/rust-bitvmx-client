@@ -16,6 +16,10 @@ RUN --mount=type=ssh cd rust-bitvmx-workspace && git submodule update --init --r
 
 WORKDIR /app/rust-bitvmx-workspace/rust-bitvmx-client
 
+# Remove ./config to build without default configs, they should be mounted in docker-compose.yml at runtime
+RUN rm -rf ./config
+RUN mkdir ./config
+
 COPY docker/run.sh ./
 RUN chmod +x ./run.sh
 
