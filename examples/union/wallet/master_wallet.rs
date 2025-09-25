@@ -5,7 +5,7 @@ use anyhow::Result;
 use bitcoin::{Address, Network, Transaction};
 use bitvmx_settings::settings::load_config_file;
 use bitvmx_wallet::{
-    config::Config,
+    wallet::config::Config,
     wallet::{Destination, RegtestWallet, Wallet},
 };
 use tracing::info;

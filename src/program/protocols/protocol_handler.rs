@@ -563,7 +563,3 @@ pub fn external_fund_tx(
         &spending_scripts,
     )?)
 }
-
-fn get_protocol_name(name: &str, protocol_id: Uuid) -> String {
-    format!("{}_{}", name, protocol_id)
-}

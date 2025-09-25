@@ -3,7 +3,7 @@ use std::net::{IpAddr, SocketAddr};
 use bitcoin_coordinator::config::CoordinatorSettingsConfig;
 use bitvmx_bitcoin_rpc::rpc_config::RpcConfig;
 use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
-use bitvmx_wallet::config::WalletConfig;
+use bitvmx_wallet::wallet::config::WalletConfig;
 use key_manager::config::KeyManagerConfig;
 use operator_comms::operator_comms::PubKeyHash;
 use serde::{Deserialize, Serialize};

@@ -49,9 +49,9 @@ pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, Wallet)> {
         _ => panic!("Not supported network {}", config.bitcoin.network),
     };
 
-    let wallet_config = bitvmx_settings::settings::load_config_file::<bitvmx_wallet::config::Config>(
-        Some(config_path.to_string()),
-    )?;
+    let wallet_config = bitvmx_settings::settings::load_config_file::<
+        bitvmx_wallet::wallet::config::Config,
+    >(Some(config_path.to_string()))?;
 
     let mut wallet =
         Wallet::from_config(wallet_config.bitcoin.clone(), wallet_config.wallet.clone())?;

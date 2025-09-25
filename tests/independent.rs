@@ -259,7 +259,7 @@ impl TestHelper {
         };
 
         let wallet_config = bitvmx_settings::settings::load_config_file::<
-            bitvmx_wallet::config::Config,
+            bitvmx_wallet::wallet::config::Config,
         >(Some(config_path.to_string()))?;
 
         info!("Wallet settings loaded");
