@@ -35,6 +35,35 @@ pub fn start_reimbursement(
     Ok(protocol_script)
 }
 
+// TODO this is almost the same as start_reimbursement. DRY this up.
+pub fn start_challenge(
+    committee_key: &PublicKey,
+    slot_id_pubkey_name: &str,
+    slot_id_pubkey: &WinternitzPublicKey,
+) -> Result<ProtocolScript, ScriptError> {
+    let script = script!(
+        { XOnlyPublicKey::from(committee_key.clone()).serialize().to_vec() }
+        OP_CHECKSIGVERIFY
+
+        { ots_checksig(slot_id_pubkey, false)? }
+        OP_PUSHNUM_1
+    );
+
+    let mut protocol_script = ProtocolScript::new(script, &committee_key, SignMode::Aggregate);
+
+    protocol_script.add_key(
+        slot_id_pubkey_name,
+        slot_id_pubkey.derivation_index()?,
+        KeyType::winternitz(slot_id_pubkey)?,
+        0,
+    )?;
+
+    protocol_script.add_stack_item(StackItem::new_schnorr_sig(true));
+    protocol_script.add_stack_item(StackItem::new_winternitz_sig(&slot_id_pubkey));
+
+    Ok(protocol_script)
+}
+
 pub fn operator_pegout_id(
     public_key: &PublicKey,
     pegout_id_key: &WinternitzPublicKey,

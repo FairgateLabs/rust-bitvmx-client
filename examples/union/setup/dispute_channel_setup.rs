@@ -1,194 +1,107 @@
-// fn setup_drp(
-//     &mut self,
-//     members: &Vec<Member>,
-//     utxo: &Utxo,
-//     session_id: Uuid,
-// ) -> Result<()> {
-//     // TODO we don't need to create the B => A drp when B is a challenger
-//     let my_address = self.address()?.clone();
+use anyhow::Result;
+use bitcoin::PublicKey;
+use std::collections::HashMap;
+use tracing::{info, warn};
+use uuid::Uuid;
 
-//     // Create a sorted list of members to have a canonical order of pairs.
-//     let mut sorted_members = members.clone();
-//     sorted_members.sort_by(|a, b| a.address.cmp(&b.address));
+use bitvmx_client::{
+    program::participant::{P2PAddress, ParticipantRole},
+    program::protocols::union::{
+        common::get_dispute_channel_pid,
+        types::{FUNDING_UTXO_SUFFIX, WATCHTOWER},
+    },
+    program::variables::{PartialUtxo, VariableTypes},
+    types::PROGRAM_TYPE_DRP,
+};
 
-//     for i in 0..sorted_members.len() {
-//         for j in (i + 1)..sorted_members.len() {
-//             let member1 = &sorted_members[i];
-//             let member2 = &sorted_members[j];
+use crate::participants::member::Member;
 
-//             let op1_address = member1.address()?;
-//             let op2_address = member2.address()?;
+pub struct DisputeChannelSetup;
 
-//             // Check if the current operator is part of the pair
-//             if my_address == *op1_address || my_address == *op2_address {
-//                 // Skip drp generation if both members are Challengers
-//                 if matches!(member1.role, Role::Challenger)
-//                     && matches!(member2.role, Role::Challenger)
-//                 {
-//                     info!("Skipping DRP drp generation between two Challengers: {:?} and {:?}", op1_address, op2_address);
-//                     continue;
-//                 }
+impl DisputeChannelSetup {
+    pub fn setup(
+        member: &mut Member,
+        members: &Vec<Member>,
+        committee_id: Uuid,
+        wt_funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
+    ) -> Result<()> {
+        let my_addr = member
+            .address
+            .as_ref()
+            .expect("member address not set")
+            .clone();
 
-//                 // Unlike pairwise keys, DRP need to be created in both directions
-//                 // Create drp for op1_address -> op2_address
-//                 // let drp_id_1 = Uuid::new_v4();
-//                 let namespace = Uuid::NAMESPACE_DNS;
-//                 let name_to_hash = format!(
-//                     "drp:{:?}:{:?}:{:?}",
-//                     op1_address, op2_address, session_id
-//                 );
-//                 let drp_id_1 = Uuid::new_v5(&namespace, name_to_hash.as_bytes());
-//                 let participants_1 = vec![op1_address.clone(), op2_address.clone()];
-//                 self.prepare_drp(drp_id_1, member1, member2)?;
-//                 self.bitvmx.setup(
-//                     drp_id_1,
-//                     PROGRAM_TYPE_DRP.to_string(),
-//                     participants_1,
-//                     0,
-//                 )?;
+        // Stable ordering by member id
+        let mut sorted = members.clone();
+        sorted.sort_by(|a, b| a.id.cmp(&b.id));
 
-//                 let other_address_1 = self.get_counterparty_address(member1, member2)?;
+        for i in 0..sorted.len() {
+            for j in (i + 1)..sorted.len() {
+                let m1 = &sorted[i];
+                let m2 = &sorted[j];
+                let a1 = m1.address.as_ref().expect("member address not set");
+                let a2 = m2.address.as_ref().expect("member address not set");
+                let r1 = &m1.role;
+                let r2 = &m2.role;
 
-//                 self.covenants.drp_covenants.push(DrpCovenant {
-//                     drp_id: drp_id_1,
-//                     counterparty: other_address_1.clone(),
-//                 });
+                // Skip if I'm not part of the pair
+                if my_addr != *a1 && my_addr != *a2 { continue; }
 
-//                 // Create drp for op2_address -> op1_address
-//                 // let drp_id_2 = Uuid::new_v4();
-//                 let name_to_hash = format!(
-//                     "drp:{:?}:{:?}:{:?}",
-//                     op2_address, op1_address, session_id
-//                 );
-//                 let drp_id_2 = Uuid::new_v5(&namespace, name_to_hash.as_bytes());
-//                 let participants_2 = vec![op2_address.clone(), op1_address.clone()];
-//                 self.prepare_drp(drp_id_2, member2, member1)?;
-//                 self.bitvmx.setup(
-//                     drp_id_2,
-//                     PROGRAM_TYPE_DRP.to_string(),
-//                     participants_2,
-//                     0,
-//                 )?;
+                // Helper to setup one directional DRP
+                let setup_one = |from_idx: usize, to_idx: usize, first: &P2PAddress, second: &P2PAddress| -> Result<()> {
+                    let drp_id = get_dispute_channel_pid(committee_id, from_idx, to_idx);
+                    let participants: Vec<P2PAddress> = vec![first.clone(), second.clone()];
+                    let my_idx = if my_addr == *first { 0 } else { 1 };
 
-//                 self.covenants.drp_covenants.push(DrpCovenant {
-//                     drp_id: drp_id_2,
-//                     counterparty: other_address_1.clone(),
-//                 });
+                    // Aggregated pairwise key
+                    let counterparty = if my_addr == *first { second } else { first };
+                    let pair_key = member
+                        .keyring
+                        .pairwise_keys
+                        .get(counterparty)
+                        .cloned()
+                        .expect("pairwise key should be present");
 
-//                 info!(
-//                     id = self.id,
-//                     counterparty = ?other_address_1,
-//                     drp_1 = ?drp_id_1,
-//                     drp_2 = ?drp_id_2,
-//                     "Setup DRPs"
-//                 );
-//             }
-//         }
-//     }
+                    // Program vars
+                    let program_path = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
+                    member.bitvmx.set_var(drp_id, "program_definition", VariableTypes::String(program_path.to_string()))?;
+                    member.bitvmx.set_var(drp_id, "aggregated", VariableTypes::PubKey(pair_key))?;
 
-//     Ok(())
-// }
+                    // If I'm a watchtower, provide funding hint
+                    if matches!(member.role, ParticipantRole::Verifier) {
+                        if let Some(my_take) = member.keyring.take_pubkey.as_ref() {
+                            if let Some(my_utxo) = wt_funding_utxos_per_member.get(my_take) {
+                                let wt_key = format!("{}{}", WATCHTOWER, FUNDING_UTXO_SUFFIX);
+                                member.bitvmx.set_var(drp_id, &wt_key, VariableTypes::Utxo(my_utxo.clone()))?;
+                                member.bitvmx.set_var(drp_id, "TIMELOCK_BLOCKS", VariableTypes::Number(1))?;
+                            }
+                        }
+                    }
 
-// pub fn prepare_drp(
-//     &mut self,
-//     drp_id: Uuid,
-//     member1: &Member,
-//     member2: &Member,
-// ) -> Result<()> {
-//     info!(
-//         id = self.id,
-//         "Preparing DRP {} for {} and {}", drp_id, member1.id, member2.id
-//     );
+                    member.bitvmx.setup(drp_id, PROGRAM_TYPE_DRP.to_string(), participants, 0)?;
+                    info!(id = member.id, drp = ?drp_id, dir = %format!("{}->{}", m1.id, m2.id), my_idx = my_idx, "Setup Dispute Channel");
+                    Ok(())
+                };
 
-//     // Get the pairwise aggregated key for this pair
-//     let counterparty_address = self.get_counterparty_address(member1, member2)?;
-//     let pair_aggregated_pub_key = self
-//         .keyring
-//         .pairwise_keys
-//         .get(&counterparty_address)
-//         .ok_or_else(|| {
-//             anyhow::anyhow!(
-//                 "Pairwise key not found for counterparty: {:?}",
-//                 counterparty_address
-//             )
-//         })?;
+                match (r1, r2) {
+                    // Two operators → two DRPs (both directions)
+                    (ParticipantRole::Prover, ParticipantRole::Prover) => {
+                        setup_one(i, j, a1, a2)?;
+                        setup_one(j, i, a2, a1)?;
+                    }
+                    // Operator + Watchtower → one DRP: Operator -> Watchtower
+                    (ParticipantRole::Prover, ParticipantRole::Verifier) => {
+                        setup_one(i, j, a1, a2)?;
+                    }
+                    (ParticipantRole::Verifier, ParticipantRole::Prover) => {
+                        setup_one(j, i, a2, a1)?;
+                    }
+                    // Two watchtowers → skip
+                    (ParticipantRole::Verifier, ParticipantRole::Verifier) => {}
+                }
+            }
+        }
 
-//     let program_path = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
-//     self.bitvmx.set_var(
-//         drp_id,
-//         "program_definition",
-//         VariableTypes::String(program_path.to_string()),
-//     )?;
-
-//     self.bitvmx.set_var(
-//         drp_id,
-//         "aggregated",
-//         VariableTypes::PubKey(pair_aggregated_pub_key.clone()),
-//     )?;
-
-//     self.bitvmx
-//         .set_var(drp_id, "FEE", VariableTypes::Number(10_000))?;
-
-//     // TODO this txid should come from the peg-in setup?
-//     let txid_str = "0000000000000000000000000000000000000000000000000000000000000000";
-//     let txid = bitcoin::Txid::from_str(txid_str)
-//         .map_err(|e| anyhow::anyhow!("Failed to parse txid: {}", e))?;
-
-//     let initial_utxo = Utxo::new(txid, 4, 200_000, pair_aggregated_pub_key);
-//     let prover_win_utxo = Utxo::new(txid, 2, 10_500, pair_aggregated_pub_key);
-
-//     // TODO: this is not the right initial spending condition for Union. Check the Miro diagram.
-//     let initial_spending_condition = vec![
-//         timelock(
-//             TIMELOCK_BLOCKS,
-//             &self.keyring.take_aggregated_key.unwrap(),
-//             SignMode::Aggregate,
-//         ), //convert to timelock
-//         check_aggregated_signature(&pair_aggregated_pub_key, SignMode::Aggregate),
-//     ];
-
-//     let initial_output_type = external_fund_tx(
-//         &self.keyring.take_aggregated_key.unwrap(),
-//         initial_spending_condition,
-//         200_000,
-//     )?;
-
-//     let prover_win_spending_condition = vec![
-//         check_aggregated_signature(
-//             &self.keyring.take_aggregated_key.unwrap(),
-//             SignMode::Aggregate,
-//         ), //convert to timelock
-//         check_aggregated_signature(&pair_aggregated_pub_key, SignMode::Aggregate),
-//     ];
-
-//     let prover_win_output_type = external_fund_tx(
-//         &self.keyring.take_aggregated_key.unwrap(),
-//         prover_win_spending_condition,
-//         10_500,
-//     )?;
-
-//     self.bitvmx.set_var(
-//         drp_id,
-//         "utxo",
-//         VariableTypes::Utxo((
-//             initial_utxo.txid,
-//             initial_utxo.vout,
-//             Some(initial_utxo.amount),
-//             Some(initial_output_type),
-//         )),
-//     )?;
-
-//     self.bitvmx.set_var(
-//         drp_id,
-//         "utxo_prover_win_action",
-//         VariableTypes::Utxo((
-//             prover_win_utxo.txid,
-//             prover_win_utxo.vout,
-//             Some(prover_win_utxo.amount),
-//             Some(prover_win_output_type),
-//         )),
-//     )?;
-
-//     sleep(Duration::from_secs(20));
-//     Ok(())
-// }
+        Ok(())
+    }
+}

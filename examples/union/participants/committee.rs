@@ -18,7 +18,7 @@ use protocol_builder::types::{OutputType, Utxo};
 use std::collections::HashMap;
 use std::thread::{self};
 use std::time::Duration;
-use tracing::{info, info_span};
+use tracing::{debug, info, info_span};
 use uuid::Uuid;
 
 use crate::bitcoin::{init_wallet, FEE, WALLET_NAME};
@@ -96,8 +96,17 @@ impl Committee {
 
         let mut funding_utxos_per_member: HashMap<PublicKey, PartialUtxo> = HashMap::new();
         let mut speedup_funding_utxos_per_member: HashMap<PublicKey, Utxo> = HashMap::new();
+        let mut wt_funding_utxos_per_member: HashMap<PublicKey, PartialUtxo> = HashMap::new();
+
         for member in &self.members {
+            // Operator funding utxos
             funding_utxos_per_member.insert(
+                member.keyring.take_pubkey.unwrap(),
+                self.get_funding_utxo(10_000_000, &member.keyring.dispute_pubkey.unwrap())?,
+            );
+
+            // Watchtower funding utxos
+            wt_funding_utxos_per_member.insert(
                 member.keyring.take_pubkey.unwrap(),
                 self.get_funding_utxo(10_000_000, &member.keyring.dispute_pubkey.unwrap())?,
             );
@@ -114,7 +123,6 @@ impl Committee {
 
             // Advance Funds UTXOS
             let fund_amount = self.stream_denomination * 12 / 10;
-            info!("Funding Advance Funds UTXO with {} sats", fund_amount);
             let funded_utxo =
                 self.get_funding_utxo(fund_amount as u64, &member.keyring.dispute_pubkey.unwrap())?;
 
@@ -128,8 +136,9 @@ impl Committee {
         let members = self.get_member_data();
         let addresses = self.get_addresses();
 
+        // Setup Dispute Core covenant
         self.all(|op: &mut Member| {
-            op.setup_dispute_protocols(
+            op.setup_dispute_core(
                 seed,
                 &members.clone(),
                 &funding_utxos_per_member,
@@ -139,6 +148,25 @@ impl Committee {
                 &addresses.clone(),
             )
         })?;
+
+        // Setup Init covenant
+        let committee_id = self.committee_id;
+        self.all(|op: &mut Member| {
+            op.setup_init(
+                committee_id,
+                &members.clone(),
+                &wt_funding_utxos_per_member,
+                &addresses.clone(),
+            )
+        })?;
+
+        // Setup Dispute Channel covenant
+        // let members_snapshot = self.members.clone();
+        // let committee_id = self.committee_id;
+        // let wt_funding_map = wt_funding_utxos_per_member.clone();
+        // self.all(|op: &mut Member| {
+        //     op.setup_dispute_channel(&members_snapshot, committee_id, &wt_funding_map)
+        // })?;
 
         Ok(self.public_key()?)
     }
@@ -356,9 +384,9 @@ impl Committee {
     }
 
     pub fn mine_and_wait(&self, blocks: u32) -> Result<()> {
-        info!("Letting the network run...");
+        debug!("Letting the network run...");
         for _ in 0..blocks {
-            info!("Mining 1 block and wait...");
+            debug!("Mining 1 block and wait...");
             self.wallet.mine(1)?;
             thread::sleep(Duration::from_secs(1));
         }

@@ -298,5 +298,6 @@ pub const PROGRAM_TYPE_ACCEPT_PEGIN: &str = "accept_pegin";
 pub const PROGRAM_TYPE_USER_TAKE: &str = "take";
 pub const PROGRAM_TYPE_ADVANCE_FUNDS: &str = "advance_funds";
 pub const PROGRAM_TYPE_DISPUTE_CORE: &str = "dispute_core";
+pub const PROGRAM_TYPE_INIT: &str = "init";
 pub const PROGRAM_TYPE_PAIRWISE_PENALIZATION: &str = "pairwise_penalization";
 pub const PROGRAM_TYPE_PACKET: &str = "packet";

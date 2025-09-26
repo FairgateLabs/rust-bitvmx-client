@@ -37,6 +37,8 @@ fn config_trace() {
     tracing_subscriber::fmt()
         //.without_time()
         .with_target(true)
+        .with_file(true)
+        .with_line_number(true)
         .with_env_filter(filter)
         .init();
 }
@@ -47,7 +49,7 @@ fn clear_db(path: &str) {
 
 fn init_bitvmx(opn: &str, fresh: bool) -> Result<BitVMX> {
     let config = Config::new(Some(format!("config/{}.yaml", opn)))?;
-    
+
     if fresh {
         clear_db(&config.storage.path);
         clear_db(&config.key_storage.path);
@@ -66,7 +68,7 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
     // Determine which operators to run
     let operator_names: Vec<&str> = match opn {
         "all" => vec!["op_1", "op_2", "op_3", "op_4"],
-        "all-testnet" => vec!["testnet_op_1", "testnet_op_2", "testnet_op_3", "testnet_op_4"],
+        "all-testnet" => vec!["testnet_op_1", "testnet_op_2", "testnet_op_3", "testnet_op_4",],
         single_op => vec![single_op],
     };
 
@@ -84,10 +86,15 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
         info!("Starting Bitcoin blockchain sync");
     }
 
-    // Install a panic hook to log panics
-    std::panic::set_hook(Box::new(|panic_info| {
-        eprintln!("panic occurred: {:?}", panic_info);
-        // tracing may be unavailable here depending on panic context; use eprintln
+    // Chain the default hook so RUST_BACKTRACE=1 prints full backtraces
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        // print full backtrace (honors RUST_BACKTRACE)
+        default_hook(info);
+        // optional: also log a compact line via tracing
+        if let Some(loc) = info.location() {
+            tracing::error!("panic at {}:{}: {}", loc.file(), loc.line(), info);
+        }
     }));
 
     // Main processing loop wrapped in catch_unwind to ensure coordinated shutdown on panic
