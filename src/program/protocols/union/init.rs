@@ -133,6 +133,10 @@ impl ProtocolHandler for InitProtocol {
         let init_data = self.init_data(context)?;
         let committee = self.committee(context)?;
         let watchtower_keys = keys[init_data.member_index].clone();
+        
+        info!(
+            "Setting up init protocol for member {}", init_data.member_index,
+        );
 
         self.create_initial_deposit(&mut protocol, &watchtower_keys, &init_data)?;
 
@@ -315,26 +319,13 @@ impl InitProtocol {
         member: &MemberData,
         index: usize,
     ) -> Result<(), BitVMXError> {
-        if member.role != ParticipantRole::Verifier {
+        if member.role == ParticipantRole::Verifier {
             return Ok(());
         }
 
         let watchtower_dispute_key = watchtower_keys.get_public(DISPUTE_KEY)?;
         let initial_deposit = format!("{}{}", WATCHTOWER, INITIAL_DEPOSIT_TX_SUFFIX);
         let start_enabler = format!("{}{}", WATCHTOWER, START_ENABLER_TX_SUFFIX);
-
-        // todo move to types
-        const START_CH: &str = "START_CHALLENGE";
-
-        // protocol.add_connection(
-        //     "start_enabler",
-        //     &start_enabler,
-        //     OutputType::taproot(AUTO_AMOUNT, watchtower_dispute_key, &[])?.into(),
-        //     &START_CH,
-        //     InputSpec::Auto(SighashType::taproot_all(), SpendMode::KeyOnly { key_path_sign: SignMode::Single }),
-        //     None,
-        //     None,
-        // )?;
 
         let mut scripts = vec![];
 

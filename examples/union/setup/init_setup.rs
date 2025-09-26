@@ -34,10 +34,11 @@ impl InitSetup {
             let pubkey = member.take_key;
             let protocol_id = get_init_pid(committee_id, &pubkey);
             let watchtower_utxo = watchtower_protocol_funding[&pubkey].clone();
+
             info!(
-                id = my_id,
                 member_index = member_index,
-                "Setting up Init protocol {}", protocol_id,
+                protocol_id = ?protocol_id,
+                "Setting up Init protocol",
             );
 
             // could this data go inside init data?
