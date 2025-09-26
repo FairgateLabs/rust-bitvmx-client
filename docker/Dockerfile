@@ -1,5 +1,5 @@
 # ----------- Build Stage -----------
-FROM rust:latest AS builder
+FROM rust:1.81-bullseye AS builder
 
 # Install build dependencies
 RUN apt-get update && \
@@ -14,8 +14,8 @@ RUN mkdir -p /root/.ssh && \
 WORKDIR /app
 
 # Clone repo and submodules
-RUN --mount=type=ssh git clone git@github.com:FairgateLabs/rust-bitvmx-workspace.git
-RUN --mount=type=ssh cd rust-bitvmx-workspace && git submodule update --init --recursive --remote
+RUN --mount=type=ssh git clone --branch v0.1.2-alpha git@github.com:FairgateLabs/rust-bitvmx-workspace.git
+RUN --mount=type=ssh cd rust-bitvmx-workspace && git submodule update --init --recursive
 
 WORKDIR /app/rust-bitvmx-workspace/rust-bitvmx-client
 
@@ -30,11 +30,11 @@ RUN chmod +x ./run.sh
 RUN cargo build --release
 
 # ----------- Runtime Stage -----------
-FROM debian:bookworm-slim AS runtime
+FROM debian:bullseye-slim AS runtime
 
 # Install only minimal runtime dependencies
 RUN apt-get update && \
-    apt-get install -y libssl-dev netcat-openbsd && \
+    apt-get install -y libssl-dev ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
