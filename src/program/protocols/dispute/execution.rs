@@ -213,14 +213,11 @@ pub fn execution_result(
             let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
             let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
             instruction_names.sort();
-            let mut index = instruction_names
+            let index = instruction_names
                 .iter()
                 .position(|i| i == &instruction)
                 .ok_or_else(|| BitVMXError::InstructionNotFound(instruction.to_string()))?;
 
-            if context.globals.get_var(id, "FAKE_INSTRUCTION")?.is_some() {
-                index = 0;
-            }
             let (tx, sp) = drp.get_tx_with_speedup_data(context, EXECUTE, 0, index as u32, true)?;
 
             context.bitcoin_coordinator.dispatch(

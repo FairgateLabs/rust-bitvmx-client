@@ -121,8 +121,6 @@ pub fn test_drp() -> Result<()> {
         initial_out_type,
         prover_win_utxo,
         prover_win_out_type,
-        false,
-        false,
         ForcedChallenges::No,
         None,
         None,
@@ -136,7 +134,6 @@ pub fn test_drp() -> Result<()> {
         &bitcoin_client,
         &wallet,
         prog_id,
-        false,
         None,
     )?;
 

@@ -9,7 +9,7 @@ use bitvmx_client::{
         self,
         participant::{CommsAddress, ParticipantRole},
         protocols::dispute::{
-            input_tx_name, program_input, EXECUTE, TIMELOCK_BLOCKS, TIMELOCK_BLOCKS_KEY,
+            input_tx_name, program_input, timeout_tx, EXECUTE, TIMELOCK_BLOCKS, TIMELOCK_BLOCKS_KEY,
         },
         variables::VariableTypes,
     },
@@ -61,8 +61,6 @@ pub fn prepare_dispute(
     initial_output_type: OutputType,
     prover_win_utxo: Utxo,
     prover_win_output_type: OutputType,
-    fake: bool,
-    fake_instruction: bool,
     fail_force_config: ForcedChallenges,
     fail_data: Option<(
         Option<FailConfiguration>,
@@ -83,16 +81,6 @@ pub fn prepare_dispute(
     )
     .set_msg(program_id, "fail_force_config")?;
     send_all(&id_channel_pairs, &set_fail_force_config)?;
-
-    if fake {
-        let set_fake = VariableTypes::Number(1).set_msg(program_id, "FAKE_RUN")?;
-        send_all(&id_channel_pairs, &set_fake)?;
-    }
-
-    if fake_instruction {
-        let set_fake = VariableTypes::Number(1).set_msg(program_id, "FAKE_INSTRUCTION")?;
-        send_all(&id_channel_pairs, &set_fake)?;
-    }
 
     let set_aggregated_msg =
         VariableTypes::PubKey(*aggregated_pub_key).set_msg(program_id, "aggregated")?;
@@ -143,7 +131,6 @@ pub fn execute_dispute(
     bitcoin_client: &BitcoinClient,
     wallet: &Wallet,
     program_id: Uuid,
-    fake: bool,
     input: Option<(String, u32)>,
 ) -> Result<()> {
     let channels = id_channel_pairs
@@ -187,14 +174,6 @@ pub fn execute_dispute(
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
     let (_uuid, _txid, name) = msgs[1].transaction().unwrap();
     assert_eq!(name.unwrap_or_default(), input_tx_name(input_pos));
-    if fake {
-        let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
-        info!(
-            "Observerd: {:?}",
-            style(msgs[0].transaction().unwrap().2).green()
-        );
-        return Ok(());
-    }
 
     let _ = channels[1].send(
         &id_channel_pairs[1].id,
@@ -239,9 +218,9 @@ pub fn execute_dispute(
                 info!("Prover executed the program");
                 break;
             }
-            if name.unwrap() == "EXECUTE_TO" {
+            if name.unwrap() == timeout_tx(EXECUTE) {
                 info!("Verifier wins by timeout");
-                break;
+                return Ok(());
             }
         }
     }
