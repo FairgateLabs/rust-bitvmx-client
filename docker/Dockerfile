@@ -14,8 +14,11 @@ RUN mkdir -p /root/.ssh && \
 WORKDIR /app
 
 # Clone repo and submodules
-RUN --mount=type=ssh git clone --branch v0.1.2-alpha git@github.com:FairgateLabs/rust-bitvmx-workspace.git
-RUN --mount=type=ssh cd rust-bitvmx-workspace && git submodule update --init --recursive
+# RUN --mount=type=ssh git clone --branch v0.1.2-alpha git@github.com:FairgateLabs/rust-bitvmx-workspace.git
+# RUN --mount=type=ssh cd rust-bitvmx-workspace && git submodule update --init --recursive
+
+# Workspace should be cloned before running the build in the tag/branch you want
+COPY . /app/rust-bitvmx-workspace
 
 WORKDIR /app/rust-bitvmx-workspace/rust-bitvmx-client
 
@@ -23,7 +26,7 @@ WORKDIR /app/rust-bitvmx-workspace/rust-bitvmx-client
 RUN rm -rf ./config && mkdir ./config
 
 # Copy run script
-COPY docker/run.sh ./
+COPY rust-bitvmx-client/docker/run.sh ./
 RUN chmod +x ./run.sh
 
 # Build release binary
