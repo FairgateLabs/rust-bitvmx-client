@@ -155,6 +155,13 @@ pub trait ProtocolHandler {
         self.load_protocol()?.transaction_name_by_id(txid).cloned()
     }
 
+    fn get_transaction_id_by_name(&self, name: &str) -> Result<Txid, ProtocolBuilderError> {
+        Ok(self
+            .load_protocol()?
+            .transaction_by_name(name)?
+            .compute_txid())
+    }
+
     fn load_protocol(&self) -> Result<Protocol, ProtocolBuilderError> {
         match Protocol::load(
             &self.context().protocol_name,

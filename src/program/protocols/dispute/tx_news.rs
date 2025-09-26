@@ -57,6 +57,33 @@ pub fn dispatch_timeout_tx(
     Ok(())
 }
 
+pub fn cancel_timeout(
+    drp: &DisputeResolutionProtocol,
+    name: &str,
+    vout: Option<u32>,
+    program_context: &ProgramContext,
+) -> Result<(), BitVMXError> {
+    match name {
+        EXECUTE => {
+            if drp.role() != ParticipantRole::Verifier {
+                return Ok(());
+            }
+            let tx_to_cancel = if vout.is_none() {
+                timeout_tx(name)
+            } else {
+                timeout_input_tx(name)
+            };
+            info!("Cancel timeout tx: {}", tx_to_cancel);
+            let tx_id = drp.get_transaction_id_by_name(&tx_to_cancel)?;
+            program_context.bitcoin_coordinator.cancel(
+                bitcoin_coordinator::TypesToMonitor::Transactions(vec![tx_id], String::default()),
+            )?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 pub fn handle_tx_news(
     drp: &DisputeResolutionProtocol,
     tx_id: Txid,
@@ -75,6 +102,8 @@ pub fn handle_tx_news(
         drp.role(),
         current_height,
     );
+
+    cancel_timeout(drp, &name, vout, program_context)?;
 
     let timelock_blocks = program_context
         .globals
@@ -514,6 +543,26 @@ pub fn handle_tx_news(
             Some(speedup_data),
             Context::ProgramId(drp.ctx.id).to_string()?,
             Some(current_height + timelock_blocks),
+        )?;
+    }
+
+    if name == ClaimGate::tx_start(PROVER_WINS) && drp.role() == ParticipantRole::Verifier {
+        info!("Verifier will try to stop the PROVER_WINS_SUCCESS");
+
+        let prover_win_stop = drp.get_signed_tx(
+            program_context,
+            &ClaimGate::tx_stop(PROVER_WINS, 0),
+            0,
+            0,
+            false,
+            0,
+        )?;
+        let speedup_data = drp.get_speedup_data_from_tx(&prover_win_stop, program_context, None)?;
+        program_context.bitcoin_coordinator.dispatch(
+            prover_win_stop,
+            Some(speedup_data),
+            Context::ProgramId(drp.ctx.id).to_string()?,
+            None,
         )?;
     }
 
