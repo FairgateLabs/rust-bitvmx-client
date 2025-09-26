@@ -14,7 +14,7 @@ use bitvmx_broker::{
 };
 use bitvmx_client::{
     bitvmx::BitVMX,
-    config::{Component, Config},
+    config::Config,
     program::{participant::CommsAddress, protocols::protocol_handler::external_fund_tx},
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
@@ -44,15 +44,15 @@ pub fn init_bitvmx(
     let broker_config = BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
     let bridge_client = DualChannel::new(
         &broker_config,
-        Cert::from_key_file(&config.components.l2.priv_key)?,
-        Some(config.components.l2.id),
+        Cert::from_key_file(&config.testing.l2.priv_key)?,
+        Some(config.testing.l2.id),
         allow_list.clone(),
     )?;
     let dispatcher_channel = if emulator_dispatcher {
         Some(DualChannel::new(
             &broker_config,
-            Cert::from_key_file(&config.components.emulator.priv_key)?,
-            Some(config.components.emulator.id),
+            Cert::from_key_file(&config.testing.emulator.priv_key)?,
+            Some(config.testing.emulator.id),
             allow_list,
         )?)
     } else {
@@ -197,7 +197,7 @@ pub fn send_all(id_channel_pairs: &Vec<ParticipantChannel>, msg: &str) -> Result
     for id_channel_pair in id_channel_pairs {
         id_channel_pair
             .channel
-            .send(id_channel_pair.id.clone(), msg.to_string())?;
+            .send(&id_channel_pair.id, msg.to_string())?;
     }
     Ok(())
 }
@@ -244,12 +244,12 @@ pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
     let broker_config = BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
     let bridge_client = DualChannel::new(
         &broker_config,
-        Cert::from_key_file(&config.components.l2.priv_key)?,
-        Some(config.components.l2.id),
+        Cert::from_key_file(&config.testing.l2.priv_key)?,
+        Some(config.testing.l2.id),
         allow_list.clone(),
     )?;
     let particiant_channel = ParticipantChannel {
-        id: config.components.get_bitvmx_identifier()?,
+        id: config.components.bitvmx,
         channel: bridge_client,
     };
     Ok(particiant_channel)
@@ -315,12 +315,12 @@ pub fn set_speedup_funding(
     pub_key: &PublicKey,
     channel: &DualChannel,
     wallet: &mut Wallet,
-    bitvmx_id: &Component,
+    bitvmx_id: &Identifier,
 ) -> Result<()> {
     let fund_tx = wallet.fund_destination(Destination::P2WPKH(*pub_key, amount))?;
 
     let funds_utxo_0 = Utxo::new(fund_tx.compute_txid(), 0, amount, pub_key);
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
-    channel.send(bitvmx_id.get_identifier()?, command)?;
+    channel.send(bitvmx_id, command)?;
     Ok(())
 }

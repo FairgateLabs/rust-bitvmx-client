@@ -53,7 +53,7 @@ impl User {
         let bitvmx = BitVMXClient::new(
             &config.components,
             &config.broker,
-            &config.components.l2,
+            &config.testing.l2,
             allow_list,
         )?;
         let bitcoin_client = BitcoinClient::new(

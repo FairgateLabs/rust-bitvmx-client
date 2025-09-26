@@ -183,7 +183,7 @@ impl Collaboration {
                 if self.aggregated_key.is_some() {
                     info!("Aggregated generated ({})", self.im_leader);
                     program_context.broker_channel.send(
-                        self.request_from.clone(),
+                        &self.request_from,
                         OutgoingBitVMXApiMessages::AggregatedPubkey(
                             self.collaboration_id,
                             self.aggregated_key.unwrap().clone(),

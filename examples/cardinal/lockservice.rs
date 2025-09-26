@@ -66,9 +66,9 @@ pub fn prepare_bitcoin_running() -> Result<Wallet> {
         _ => panic!("Not supported network {}", config.bitcoin.network),
     };
 
-    let wallet_config = bitvmx_settings::settings::load_config_file::<bitvmx_wallet::wallet::config::Config>(
-        Some(wallet_config_file.to_string()),
-    )?;
+    let wallet_config = bitvmx_settings::settings::load_config_file::<
+        bitvmx_wallet::wallet::config::Config,
+    >(Some(wallet_config_file.to_string()))?;
     let mut wallet = Wallet::from_config(config.bitcoin, wallet_config.wallet)?;
     wallet.fund()?;
 
@@ -79,7 +79,7 @@ pub fn send_all(id_channel_pairs: &Vec<ParticipantChannel>, msg: &str) -> Result
     for id_channel_pair in id_channel_pairs {
         id_channel_pair
             .channel
-            .send(id_channel_pair.id.clone(), msg.to_string())?;
+            .send(&id_channel_pair.id, msg.to_string())?;
     }
     Ok(())
 }
@@ -99,12 +99,12 @@ pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
     let broker_config = BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
     let bridge_client = DualChannel::new(
         &broker_config,
-        Cert::from_key_file(&config.components.l2.priv_key)?,
-        Some(config.components.l2.id),
+        Cert::from_key_file(&config.testing.l2.priv_key)?,
+        Some(config.testing.l2.id),
         allow_list.clone(),
     )?;
     let particiant_channel = ParticipantChannel {
-        id: config.components.get_bitvmx_identifier()?,
+        id: config.components.bitvmx,
         channel: bridge_client,
     };
     Ok(particiant_channel)
@@ -120,7 +120,10 @@ pub fn main() -> Result<()> {
     let (server_config, _server_identifier, cert) = BrokerConfig::new_only_address(54321, None)?;
     let mut broker = BrokerSync::new_simple(&server_config, broker_storage.clone(), cert)?;
 
-    let broker_channel = LocalChannel::new_simple("local".to_string(), broker_storage.clone());
+    let broker_channel = LocalChannel::new_simple(
+        "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+        broker_storage.clone(),
+    );
 
     let cert = Cert::from_key_file("config/keys/l2.key")?;
     let pubk_hash = cert.get_pubk_hash()?;
@@ -280,7 +283,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>, identifier: Identifier)
             if let Some(msg) = msg {
                 if msg.0 == "get_aggregated" {
                     info!("Ask for aggregated. Sending.");
-                    channel.send(identifier.clone(), aggregated_pub_key.to_string())?;
+                    channel.send(&identifier, aggregated_pub_key.to_string())?;
                 } else {
                     info!("Received message from channel: {:?}", msg);
                     (txid, pubuser, ordinal_fee, preimage, hash) = serde_json::from_str(&msg.0)?;
@@ -338,10 +341,10 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>, identifier: Identifier)
             "secret".to_string(),
             WitnessTypes::Secret(preimage.as_bytes().to_vec()),
         ))?;
-        channels[1].send(id_channel_pairs[1].id.clone(), witness_msg.clone())?;
+        channels[1].send(&id_channel_pairs[1].id, witness_msg.clone())?;
 
         let _ = channels[1].send(
-            id_channel_pairs[1].id.clone(),
+            &id_channel_pairs[1].id,
             IncomingBitVMXApiMessages::GetTransactionInfoByName(
                 program_id,
                 program::protocols::cardinal::lock::LOCK_TX.to_string(),
@@ -363,7 +366,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>, identifier: Identifier)
         );
 
         let _ = channels[1].send(
-            id_channel_pairs[1].id.clone(),
+            &id_channel_pairs[1].id,
             IncomingBitVMXApiMessages::GetHashedMessage(
                 program_id,
                 program::protocols::cardinal::lock::LOCK_TX.to_string(),
@@ -383,7 +386,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>, identifier: Identifier)
         info!("AGGREGATED PUB: ====> {}", aggregated_pub_key);
 
         let _ = channels[1].send(
-            id_channel_pairs[1].id.clone(),
+            &id_channel_pairs[1].id,
             IncomingBitVMXApiMessages::DispatchTransactionName(
                 program_id,
                 program::protocols::cardinal::lock::LOCK_TX.to_string(),
@@ -418,7 +421,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>, identifier: Identifier)
         }
 
         let _ = channels[1].send(
-            id_channel_pairs[1].id.clone(),
+            &id_channel_pairs[1].id,
             IncomingBitVMXApiMessages::DispatchTransactionName(
                 program_id,
                 program::protocols::cardinal::lock::HAPPY_PATH_TX.to_string(),
@@ -446,7 +449,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>, identifier: Identifier)
         info!("happy path public: {}", aggregated_happy_path);
 
         let msg = serde_json::to_string(&(status.tx_id, fake_secret))?;
-        channel.send(identifier.clone(), msg)?;
+        channel.send(&identifier, msg)?;
     }
 
     //Ok(())
@@ -496,8 +499,6 @@ pub fn set_speedup_funding(
 
     let funds_utxo_0 = Utxo::new(funds.compute_txid(), 0, amount, pub_key);
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
-    id_channel_pair
-        .channel
-        .send(id_channel_pair.id.clone(), command)?;
+    id_channel_pair.channel.send(&id_channel_pair.id, command)?;
     Ok(())
 }

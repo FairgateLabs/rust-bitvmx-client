@@ -695,7 +695,7 @@ impl Program {
                 self.protocol.setup_complete(&program_context)?;
 
                 let result = program_context.broker_channel.send(
-                    program_context.components_config.get_l2_identifier()?,
+                    &program_context.components_config.l2,
                     OutgoingBitVMXApiMessages::SetupCompleted(self.program_id).to_string()?,
                 );
                 if let Err(e) = result {
@@ -842,7 +842,7 @@ impl Program {
             )?;*/
         } else {
             program_context.broker_channel.send(
-                program_context.components_config.get_l2_identifier()?,
+                &program_context.components_config.l2,
                 OutgoingBitVMXApiMessages::Transaction(self.program_id, tx_status, Some(name))
                     .to_string()?,
             )?;

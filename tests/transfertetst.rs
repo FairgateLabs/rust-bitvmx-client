@@ -34,16 +34,9 @@ pub fn test_transfer() -> Result<()> {
     let mut instances = vec![bitvmx_1, bitvmx_2, bitvmx_3]; //, bitvmx_4];
     let channels = vec![bridge_1, bridge_2, bridge_3]; // , bridge_4];
     let identifiers = [
-        instances[0]
-            .get_components_config()
-            .get_bitvmx_identifier()?,
-        instances[1]
-            .get_components_config()
-            .get_bitvmx_identifier()?,
-        instances[2]
-            .get_components_config()
-            .get_bitvmx_identifier()?,
-        //instances[3].get_components_config().get_bitvmx_identifier()?,
+        instances[0].get_components_config().bitvmx.clone(),
+        instances[1].get_components_config().bitvmx.clone(),
+        instances[2].get_components_config().bitvmx.clone(),
     ];
 
     let id_channel_pairs: Vec<ParticipantChannel> = identifiers
@@ -88,21 +81,21 @@ pub fn test_transfer() -> Result<()> {
         &funding_key_0,
         &channels[0],
         &mut wallet,
-        &instances[0].get_components_config().get_bitvmx_config(),
+        &instances[0].get_components_config().bitvmx,
     )?;
     set_speedup_funding(
         10_000_000,
         &funding_key_1,
         &channels[1],
         &mut wallet,
-        &instances[1].get_components_config().get_bitvmx_config(),
+        &instances[1].get_components_config().bitvmx,
     )?;
     set_speedup_funding(
         10_000_000,
         &funding_key_2,
         &channels[2],
         &mut wallet,
-        &instances[2].get_components_config().get_bitvmx_config(),
+        &instances[2].get_components_config().bitvmx,
     )?;
 
     //ask the peers to generate the aggregated public key
@@ -191,7 +184,7 @@ pub fn test_transfer() -> Result<()> {
     info!("{:?}", _msg[0]);
 
     let _ = channels[1].send(
-        id_channel_pairs[1].id.clone(),
+        &id_channel_pairs[1].id,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
             program::protocols::cardinal::transfer::too_tx(1, 1),

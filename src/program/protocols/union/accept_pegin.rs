@@ -439,7 +439,7 @@ impl AcceptPegInProtocol {
         // Send the pegin accepted data to the broker channel
         context
             .broker_channel
-            .send(context.components_config.get_l2_identifier()?, data)?;
+            .send(&context.components_config.l2, data)?;
 
         Ok(())
     }

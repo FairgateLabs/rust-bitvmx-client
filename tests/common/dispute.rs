@@ -152,7 +152,7 @@ pub fn execute_dispute(
         .collect::<Vec<_>>();
     //CHALLENGERS STARTS CHALLENGE
     let _ = channels[1].send(
-        id_channel_pairs[1].id.clone(),
+        &id_channel_pairs[1].id,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
             program::protocols::dispute::START_CH.to_string(),
@@ -174,11 +174,11 @@ pub fn execute_dispute(
     let (data, input_pos) = input.unwrap_or(("11111111".to_string(), 0));
     let set_input_1 = VariableTypes::Input(hex::decode(data).unwrap())
         .set_msg(program_id, &program_input(input_pos))?;
-    let _ = channels[0].send(id_channel_pairs[0].id.clone(), set_input_1)?;
+    let _ = channels[0].send(&id_channel_pairs[0].id, set_input_1)?;
 
     // send the tx
     let _ = channels[0].send(
-        id_channel_pairs[0].id.clone(),
+        &id_channel_pairs[0].id,
         IncomingBitVMXApiMessages::DispatchTransactionName(program_id, input_tx_name(input_pos))
             .to_string()?,
     );
@@ -197,7 +197,7 @@ pub fn execute_dispute(
     }
 
     let _ = channels[1].send(
-        id_channel_pairs[1].id.clone(),
+        &id_channel_pairs[1].id,
         IncomingBitVMXApiMessages::GetVar(program_id, program_input(input_pos)).to_string()?,
     )?;
 

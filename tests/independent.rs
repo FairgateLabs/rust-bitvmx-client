@@ -137,8 +137,8 @@ fn run_emulator(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result
             BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
         let channel = DualChannel::new(
             &broker_config,
-            Cert::from_key_file(&config.components.emulator.priv_key)?,
-            Some(config.components.emulator.id),
+            Cert::from_key_file(&config.testing.emulator.priv_key)?,
+            Some(config.testing.emulator.id),
             allow_list.clone(),
         )?;
 
@@ -177,8 +177,8 @@ fn run_zkp(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<()> 
             BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
         let channel = DualChannel::new(
             &broker_config,
-            Cert::from_key_file(&config.components.prover.priv_key)?,
-            Some(config.components.prover.id),
+            Cert::from_key_file(&config.testing.prover.priv_key)?,
+            Some(config.testing.prover.id),
             allow_list.clone(),
         )?;
 
@@ -351,11 +351,11 @@ impl TestHelper {
                 BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
             let channel = DualChannel::new(
                 &broker_config,
-                Cert::from_key_file(&config.components.l2.priv_key)?,
-                Some(config.components.l2.id),
+                Cert::from_key_file(&config.testing.l2.priv_key)?,
+                Some(config.testing.l2.id),
                 allow_list.clone(),
             )?;
-            let id = config.components.get_bitvmx_identifier()?;
+            let id = config.components.bitvmx.clone();
             id_channel_pairs.push(ParticipantChannel { channel, id });
         }
 
@@ -540,12 +540,12 @@ pub fn test_all_aux(
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
     helper.id_channel_pairs[0]
         .channel
-        .send(helper.id_channel_pairs[0].id.clone(), command)?;
+        .send(&helper.id_channel_pairs[0].id, command)?;
     let funds_utxo_1 = Utxo::new(fund_txid_1, 0, speedup_amount, &funding_key_1);
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_1).to_string()?;
     helper.id_channel_pairs[1]
         .channel
-        .send(helper.id_channel_pairs[1].id.clone(), command)?;
+        .send(&helper.id_channel_pairs[1].id, command)?;
 
     info!("Generate Aggregated from pair");
     let pair_0_1 = vec![addresses[0].clone(), addresses[1].clone()];
@@ -553,10 +553,10 @@ pub fn test_all_aux(
     let command = IncomingBitVMXApiMessages::SetupKey(pair_0_1_agg_id, pair_0_1.clone(), None, 0);
     helper.id_channel_pairs[0]
         .channel
-        .send(helper.id_channel_pairs[0].id.clone(), command.to_string()?)?;
+        .send(&helper.id_channel_pairs[0].id, command.to_string()?)?;
     helper.id_channel_pairs[1]
         .channel
-        .send(helper.id_channel_pairs[1].id.clone(), command.to_string()?)?;
+        .send(&helper.id_channel_pairs[1].id, command.to_string()?)?;
     let _msg = helper.wait_msg(0)?;
     let msg = helper.wait_msg(1)?;
     let pair_0_1_agg_pub_key = msg.aggregated_pub_key().unwrap();
@@ -647,7 +647,7 @@ pub fn test_all_aux(
     send_all(&pair_0_1_channels, &set_witness)?;
 
     let _ = helper.id_channel_pairs[1].channel.send(
-        helper.id_channel_pairs[1].id.clone(),
+        &helper.id_channel_pairs[1].id,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             prog_id,
             program::protocols::dispute::START_CH.to_string(),
@@ -667,11 +667,11 @@ pub fn test_all_aux(
         VariableTypes::Input(hex::decode(data).unwrap()).set_msg(prog_id, &program_input(idx))?;
     let _ = helper.id_channel_pairs[0]
         .channel
-        .send(helper.id_channel_pairs[0].id.clone(), set_input_1)?;
+        .send(&helper.id_channel_pairs[0].id, set_input_1)?;
 
     // send the tx
     let _ = helper.id_channel_pairs[0].channel.send(
-        helper.id_channel_pairs[0].id.clone(),
+        &helper.id_channel_pairs[0].id,
         IncomingBitVMXApiMessages::DispatchTransactionName(prog_id, input_tx_name(idx))
             .to_string()?,
     );
@@ -858,7 +858,7 @@ fn test_zkp() -> Result<()> {
     let id = Uuid::new_v4();
 
     let _ = helper.id_channel_pairs[0].channel.send(
-        helper.id_channel_pairs[0].id.clone(),
+        &helper.id_channel_pairs[0].id,
         IncomingBitVMXApiMessages::GenerateZKP(
             id,
             vec![1, 2, 3, 4],
@@ -870,7 +870,7 @@ fn test_zkp() -> Result<()> {
     info!("ZKP generated: {:?}", msg);
 
     let _ = helper.id_channel_pairs[0].channel.send(
-        helper.id_channel_pairs[0].id.clone(),
+        &helper.id_channel_pairs[0].id,
         IncomingBitVMXApiMessages::GetZKPExecutionResult(id).to_string()?,
     );
 

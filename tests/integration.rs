@@ -35,12 +35,8 @@ pub fn test_drp() -> Result<()> {
     let mut instances = vec![prover_bitvmx, verifier_bitvmx];
     let channels = vec![prover_bridge_channel, verifier_bridge_channel];
     let identifiers = [
-        instances[0]
-            .get_components_config()
-            .get_bitvmx_identifier()?,
-        instances[1]
-            .get_components_config()
-            .get_bitvmx_identifier()?,
+        instances[0].get_components_config().bitvmx.clone(),
+        instances[1].get_components_config().bitvmx.clone(),
     ];
 
     let id_channel_pairs: Vec<ParticipantChannel> = identifiers
@@ -74,10 +70,10 @@ pub fn test_drp() -> Result<()> {
 
     let funds_utxo_0 = Utxo::new(fund_txid_0, 0, 10_000_000, &funding_key_0);
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
-    channels[0].send(identifiers[0].clone(), command)?;
+    channels[0].send(&identifiers[0], command)?;
     let funds_utxo_1 = Utxo::new(fund_txid_1, 0, 10_000_000, &funding_key_1);
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_1).to_string()?;
-    channels[1].send(identifiers[1].clone(), command)?;
+    channels[1].send(&identifiers[1], command)?;
 
     let participants = vec![prover_address.clone(), verifier_address.clone()];
     let emulator_channels = vec![
@@ -170,15 +166,9 @@ pub fn test_aggregation() -> Result<()> {
 
     let mut instances = vec![&mut bitvmx_1, &mut bitvmx_2, &mut bitvmx_3];
     let identifiers = [
-        instances[0]
-            .get_components_config()
-            .get_bitvmx_identifier()?,
-        instances[1]
-            .get_components_config()
-            .get_bitvmx_identifier()?,
-        instances[2]
-            .get_components_config()
-            .get_bitvmx_identifier()?,
+        instances[0].get_components_config().bitvmx.clone(),
+        instances[1].get_components_config().bitvmx.clone(),
+        instances[2].get_components_config().bitvmx.clone(),
     ];
 
     //ask the peers to generate the aggregated public key
@@ -191,9 +181,9 @@ pub fn test_aggregation() -> Result<()> {
     )
     .to_string()?;
 
-    bridge_1.send(identifiers[0].clone(), command.clone())?;
-    bridge_2.send(identifiers[1].clone(), command.clone())?;
-    bridge_3.send(identifiers[2].clone(), command.clone())?;
+    bridge_1.send(&identifiers[0], command.clone())?;
+    bridge_2.send(&identifiers[1], command.clone())?;
+    bridge_3.send(&identifiers[2], command.clone())?;
 
     let msg_1 = wait_message_from_channel(&bridge_1, &mut instances, true)?;
     let _msg_2 = wait_message_from_channel(&bridge_2, &mut instances, true)?;

@@ -37,8 +37,11 @@ pub fn main() -> Result<()> {
     let allow_list = AllowList::new();
     allow_list.lock().unwrap().allow_all();
     let channel = DualChannel::new(&broker_config, cert, Some(2), allow_list)?;
-    let identifier = Identifier::new("local".to_string(), 0);
-    channel.send(identifier.clone(), "get_aggregated".to_string())?;
+    let identifier = Identifier::new(
+        "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+        0,
+    );
+    channel.send(&identifier, "get_aggregated".to_string())?;
 
     let aggregated_pub_key: PublicKey;
     loop {
@@ -60,7 +63,7 @@ pub fn main() -> Result<()> {
     )?;
 
     let msg_req = serde_json::to_string(&(txid, pubuser, ordinal_fee, preimage, hash))?;
-    channel.send(identifier, msg_req)?;
+    channel.send(&identifier, msg_req)?;
 
     Ok(())
 }

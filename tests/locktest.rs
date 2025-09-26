@@ -102,18 +102,10 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         let instances = vec![bitvmx_1, bitvmx_2, bitvmx_3, bitvmx_4];
         let channels = vec![bridge_1, bridge_2, bridge_3, bridge_4];
         let identifiers = vec![
-            instances[0]
-                .get_components_config()
-                .get_bitvmx_identifier()?,
-            instances[1]
-                .get_components_config()
-                .get_bitvmx_identifier()?,
-            instances[2]
-                .get_components_config()
-                .get_bitvmx_identifier()?,
-            instances[3]
-                .get_components_config()
-                .get_bitvmx_identifier()?,
+            instances[0].get_components_config().bitvmx.clone(),
+            instances[1].get_components_config().bitvmx.clone(),
+            instances[2].get_components_config().bitvmx.clone(),
+            instances[3].get_components_config().bitvmx.clone(),
         ];
         let id_channel_pairs: Vec<ParticipantChannel> = identifiers
             .into_iter()
@@ -151,28 +143,28 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         &funding_key_0,
         &channels[0],
         &mut wallet,
-        &instances[0].get_components_config().get_bitvmx_config(),
+        &instances[0].get_components_config().bitvmx,
     )?;
     set_speedup_funding(
         10_000_000,
         &funding_key_1,
         &channels[1],
         &mut wallet,
-        &instances[1].get_components_config().get_bitvmx_config(),
+        &instances[1].get_components_config().bitvmx,
     )?;
     set_speedup_funding(
         10_000_000,
         &funding_key_2,
         &channels[2],
         &mut wallet,
-        &instances[2].get_components_config().get_bitvmx_config(),
+        &instances[2].get_components_config().bitvmx,
     )?;
     set_speedup_funding(
         10_000_000,
         &funding_key_3,
         &channels[3],
         &mut wallet,
-        &instances[3].get_components_config().get_bitvmx_config(),
+        &instances[3].get_components_config().bitvmx,
     )?;
 
     let command = IncomingBitVMXApiMessages::GetCommInfo().to_string()?;
@@ -288,10 +280,10 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         WitnessTypes::Secret(preimage.as_bytes().to_vec()),
     ))?;
 
-    channels[op].send(id_channel_pairs[op].id.clone(), witness_msg.clone())?;
+    channels[op].send(&id_channel_pairs[op].id, witness_msg.clone())?;
 
     let _ = channels[op].send(
-        id_channel_pairs[op].id.clone(),
+        &id_channel_pairs[op].id,
         IncomingBitVMXApiMessages::GetTransactionInfoByName(program_id, LOCK_TX.to_string())
             .to_string()?,
     );
@@ -308,7 +300,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     );
 
     let _ = channels[op].send(
-        id_channel_pairs[op].id.clone(),
+        &id_channel_pairs[op].id,
         IncomingBitVMXApiMessages::GetHashedMessage(
             program_id,
             program::protocols::cardinal::lock::LOCK_TX.to_string(),
@@ -340,7 +332,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     info!("Going to send the lock tx");
     info!("==========================");
     let _ = channels[op].send(
-        id_channel_pairs[op].id.clone(),
+        &id_channel_pairs[op].id,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
             program::protocols::cardinal::lock::LOCK_TX.to_string(),
@@ -353,7 +345,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     //EVENTUALY L2 DECIDED TO SEND THE HAPPY PATH
     //TODO: It should actually be signed in this moment and not before (could be signed but not shared the partials)
     let _ = channels[op].send(
-        id_channel_pairs[op].id.clone(),
+        &id_channel_pairs[op].id,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
             program::protocols::cardinal::lock::HAPPY_PATH_TX.to_string(),

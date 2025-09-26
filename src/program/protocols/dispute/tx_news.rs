@@ -79,12 +79,9 @@ pub fn handle_tx_news(
                         fail_config_prover.clone(),
                     ),
                 })?;
-                program_context.broker_channel.send(
-                    program_context
-                        .components_config
-                        .get_emulator_identifier()?,
-                    msg,
-                )?;
+                program_context
+                    .broker_channel
+                    .send(&program_context.components_config.emulator, msg)?;
             }
         } else {
             //if it's not my input, decode the witness
@@ -145,12 +142,9 @@ pub fn handle_tx_news(
             ),
         })?;
 
-        program_context.broker_channel.send(
-            program_context
-                .components_config
-                .get_emulator_identifier()?,
-            msg,
-        )?;
+        program_context
+            .broker_channel
+            .send(&program_context.components_config.emulator, msg)?;
     }
 
     if (name == COMMITMENT || name.starts_with("NARY_VERIFIER")) && vout.is_some() {
@@ -208,12 +202,9 @@ pub fn handle_tx_news(
                         fail_config_prover.clone(),
                     ),
                 })?;
-                program_context.broker_channel.send(
-                    program_context
-                        .components_config
-                        .get_emulator_identifier()?,
-                    msg,
-                )?;
+                program_context
+                    .broker_channel
+                    .send(&program_context.components_config.emulator, msg)?;
             } else {
                 let msg = serde_json::to_string(&DispatcherJob {
                     job_id: drp.ctx.id.to_string(),
@@ -225,12 +216,9 @@ pub fn handle_tx_news(
                         fail_config_prover.clone(),
                     ),
                 })?;
-                program_context.broker_channel.send(
-                    program_context
-                        .components_config
-                        .get_emulator_identifier()?,
-                    msg,
-                )?;
+                program_context
+                    .broker_channel
+                    .send(&program_context.components_config.emulator, msg)?;
             }
         } else {
             if round == nary.total_rounds() as u32 {
@@ -309,24 +297,18 @@ pub fn handle_tx_news(
         })?;
 
         if round > 1 {
-            program_context.broker_channel.send(
-                program_context
-                    .components_config
-                    .get_emulator_identifier()?,
-                msg,
-            )?;
+            program_context
+                .broker_channel
+                .send(&program_context.components_config.emulator, msg)?;
         } else {
             if let Some(_ready) = program_context
                 .globals
                 .get_var(&drp.ctx.id, "execution-check-ready")?
             {
                 info!("The execution is ready. Sending the choose segment message");
-                program_context.broker_channel.send(
-                    program_context
-                        .components_config
-                        .get_emulator_identifier()?,
-                    msg,
-                )?;
+                program_context
+                    .broker_channel
+                    .send(&program_context.components_config.emulator, msg)?;
             } else {
                 info!("The execution is not ready. Saving the message.");
                 program_context.globals.set_var(
@@ -420,12 +402,9 @@ pub fn handle_tx_news(
                 force,
             ),
         })?;
-        program_context.broker_channel.send(
-            program_context
-                .components_config
-                .get_emulator_identifier()?,
-            msg,
-        )?;
+        program_context
+            .broker_channel
+            .send(&program_context.components_config.emulator, msg)?;
     }
 
     if name == EXECUTE && drp.role() == ParticipantRole::Prover && vout.is_some() {
