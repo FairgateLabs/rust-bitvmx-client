@@ -58,7 +58,7 @@ fn fatal_error_triggers_shutdown() -> Result<()> {
 
     // Trigger a deterministic fatal error via test-only path
     channel.send(
-        BITVMX_ID,
+        &bitvmx.get_components_config().bitvmx,
         IncomingBitVMXApiMessages::Test("fatal".into()).to_string()?,
     )?;
     let err = bitvmx
@@ -82,7 +82,7 @@ fn panic_triggers_shutdown() -> Result<()> {
 
     // Trigger a test-only panic via API message
     channel.send(
-        BITVMX_ID,
+        &bitvmx.get_components_config().bitvmx,
         IncomingBitVMXApiMessages::Test("panic".into()).to_string()?,
     )?;
 
