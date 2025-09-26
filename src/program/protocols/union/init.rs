@@ -14,7 +14,7 @@ use crate::program::protocols::protocol_handler::{ProtocolContext, ProtocolHandl
 use crate::program::protocols::union::common::{create_transaction_reference, indexed_name};
 use crate::program::protocols::union::scripts;
 use crate::program::protocols::union::types::{
-    Committee, InitData, MemberData, DISPUTE_AGGREGATED_KEY, FUNDING_TX_SUFFIX, INITIAL_DEPOSIT_TX_SUFFIX, SELF_DISABLER_TX_SUFFIX, SETUP_TX_SUFFIX, SPEEDUP_KEY, START_ENABLER_TX_SUFFIX, TAKE_AGGREGATED_KEY, WATCHTOWER
+    Committee, InitData, MemberData, DISPUTE_AGGREGATED_KEY, FUNDING_TX_SUFFIX, INITIAL_DEPOSIT_TX_SUFFIX, SELF_DISABLER_TX_SUFFIX, SETUP_TX_SUFFIX, SPEEDUP_KEY, SPEEDUP_VALUE, START_ENABLER_TX_SUFFIX, TAKE_AGGREGATED_KEY, WATCHTOWER
 };
 use crate::program::variables::VariableTypes;
 use crate::types::ProgramContext;
@@ -151,7 +151,12 @@ impl ProtocolHandler for InitProtocol {
             )?;
         }
 
-        // TODO set utxo var for dispute channels
+        // TODO set utxo var here for dispute channels
+
+
+        // Add change output to setup tx
+        protocol.compute_minimum_output_values()?;
+        self.add_funding_change(&mut protocol, &watchtower_keys, &init_data)?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         self.save_protocol(protocol.clone())?;
@@ -351,4 +356,37 @@ impl InitProtocol {
 
         Ok(())
     }
+
+    fn add_funding_change(
+        &self,
+        protocol: &mut Protocol,
+        watchtower_keys: &ParticipantKeys,
+        init_data: &InitData,
+    ) -> Result<(), BitVMXError> {
+        // Add a change output to the setup transaction
+        // This fee assumes 1 sat per byte plus a 10 extra percent as a safety margin.
+        // It is computed using the size of the transaction, a 68 vbyte size for the input witness (P2WPKH)
+        // and the 3 outputs (setup, change, and speedup output).
+        let setup_fees = 246;
+        let funding_amount = init_data.watchtower_utxo.2.unwrap();
+        let watchtower_dispute_key = watchtower_keys.get_public(DISPUTE_KEY)?;
+        let setup = format!("{}{}", WATCHTOWER, SETUP_TX_SUFFIX);
+
+        let setup_amount = protocol.transaction_by_name(&setup)?.output[0]
+            .value
+            .to_sat();
+
+        protocol
+            .add_transaction_output(
+                &setup,
+                &OutputType::segwit_key(
+                    funding_amount - setup_amount - setup_fees - SPEEDUP_VALUE,
+                    watchtower_dispute_key,
+                )?,
+            )
+            .map_err(|e| BitVMXError::ProtocolBuilderError(e))?;
+
+        Ok(())
+    }
+
 }
