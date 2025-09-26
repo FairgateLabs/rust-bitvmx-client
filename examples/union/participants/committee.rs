@@ -18,7 +18,7 @@ use protocol_builder::types::{OutputType, Utxo};
 use std::collections::HashMap;
 use std::thread::{self};
 use std::time::Duration;
-use tracing::{info, info_span};
+use tracing::{debug, info, info_span};
 use uuid::Uuid;
 
 use crate::bitcoin::{init_wallet, FEE, WALLET_NAME};
@@ -123,7 +123,6 @@ impl Committee {
 
             // Advance Funds UTXOS
             let fund_amount = self.stream_denomination * 12 / 10;
-            info!("Funding Advance Funds UTXO with {} sats", fund_amount);
             let funded_utxo =
                 self.get_funding_utxo(fund_amount as u64, &member.keyring.dispute_pubkey.unwrap())?;
 
@@ -385,9 +384,9 @@ impl Committee {
     }
 
     pub fn mine_and_wait(&self, blocks: u32) -> Result<()> {
-        info!("Letting the network run...");
+        debug!("Letting the network run...");
         for _ in 0..blocks {
-            info!("Mining 1 block and wait...");
+            debug!("Mining 1 block and wait...");
             self.wallet.mine(1)?;
             thread::sleep(Duration::from_secs(1));
         }

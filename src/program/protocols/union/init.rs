@@ -1,9 +1,11 @@
 use protocol_builder::builder::Protocol;
+use protocol_builder::graph::graph::GraphOptions;
 use protocol_builder::scripts::SignMode;
 use protocol_builder::types::connection::{InputSpec, OutputSpec};
 use protocol_builder::types::input::{SighashType, SpendMode};
 use protocol_builder::types::OutputType;
 use serde::{Deserialize, Serialize};
+use tracing::info;
 use std::collections::HashMap;
 
 use crate::errors::BitVMXError;
@@ -12,7 +14,7 @@ use crate::program::protocols::protocol_handler::{ProtocolContext, ProtocolHandl
 use crate::program::protocols::union::common::{create_transaction_reference, indexed_name};
 use crate::program::protocols::union::scripts;
 use crate::program::protocols::union::types::{
-    Committee, InitData, MemberData, FUNDING_TX_SUFFIX, INITIAL_DEPOSIT_TX_SUFFIX, SELF_DISABLER_TX_SUFFIX, SETUP_TX_SUFFIX, SPEEDUP_KEY, START_ENABLER_TX_SUFFIX, WATCHTOWER
+    Committee, InitData, MemberData, DISPUTE_AGGREGATED_KEY, FUNDING_TX_SUFFIX, INITIAL_DEPOSIT_TX_SUFFIX, SELF_DISABLER_TX_SUFFIX, SETUP_TX_SUFFIX, SPEEDUP_KEY, START_ENABLER_TX_SUFFIX, TAKE_AGGREGATED_KEY, WATCHTOWER
 };
 use crate::program::variables::VariableTypes;
 use crate::types::ProgramContext;
@@ -21,7 +23,8 @@ use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::types::output::{SpeedupData, AUTO_AMOUNT, RECOVER_AMOUNT};
 use uuid::Uuid;
 
-// pub const PEGOUT_ID: &str = "pegout_id";
+pub const PEGOUT_ID: &str = "pegout_id";
+const PEGOUT_ID_KEY: &str = "pegout_id_key";
 const SLOT_ID_KEY: &str = "slot_id_key";
 const SECRET_KEY: &str = "secret";
 const CHALLENGE_KEY: &str = "challenge_pubkey";
@@ -48,40 +51,64 @@ impl ProtocolHandler for InitProtocol {
         &self,
         context: &ProgramContext,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
-        Ok(vec![])
+        Ok(vec![
+            (
+                TAKE_AGGREGATED_KEY.to_string(),
+                self.take_aggregated_key(context)?,
+            ),
+            (
+                DISPUTE_AGGREGATED_KEY.to_string(),
+                self.dispute_aggregated_key(context)?,
+            ),
+        ])
     }
 
     fn generate_keys(
         &self,
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
-        let committee = self.committee(program_context)?;
-        let packet_size = committee.packet_size as usize;
-        let member = &committee.members[self.ctx.my_idx];
+        let packet_size = self.committee(program_context)?.packet_size;
 
-        let mut keys = vec![
-            (
-                TAKE_KEY.to_string(),
-                PublicKeyType::Public(member.take_key.clone()),
-            ),
-            (
-                DISPUTE_KEY.to_string(),
-                PublicKeyType::Public(member.dispute_key.clone()),
-            ),
-        ];
+        let mut keys = vec![];
 
-        let speedup_key = program_context.key_chain.derive_keypair()?;
         keys.push((
-            SPEEDUP_KEY.to_string(),
-            PublicKeyType::Public(speedup_key.clone()),
+            TAKE_KEY.to_string(),
+            PublicKeyType::Public(self.my_take_key(program_context)?),
         ));
-        program_context.globals.set_var(
-            &self.ctx.id,
-            SPEEDUP_KEY,
-            VariableTypes::PubKey(speedup_key),
-        )?;
+        keys.push((
+            DISPUTE_KEY.to_string(),
+            PublicKeyType::Public(self.my_dispute_key(program_context)?),
+        ));
 
-        for slot in 0..packet_size {
+        // keys.push((
+        //     CHALLENGE_KEY.to_string(),
+        //     PublicKeyType::Public(program_context.key_chain.derive_keypair()?),
+        // ));
+
+        // let speedup_key = program_context.key_chain.derive_keypair()?;
+
+        // keys.push((
+        //     SPEEDUP_KEY.to_string(),
+        //     PublicKeyType::Public(speedup_key.clone()),
+        // ));
+
+        // program_context.globals.set_var(
+        //     &self.ctx.id,
+        //     SPEEDUP_KEY,
+        //     VariableTypes::PubKey(speedup_key),
+        // )?;
+
+        // keys.push((
+        //     REVEAL_INPUT_KEY.to_string(),
+        //     PublicKeyType::Public(program_context.key_chain.derive_keypair()?),
+        // ));
+
+        keys.push((
+            REVEAL_TAKE_PRIVKEY.to_string(),
+            PublicKeyType::Winternitz(program_context.key_chain.derive_winternitz_hash160(32)?),
+        ));
+
+        for slot in 0..packet_size as usize {
             keys.push((
                 indexed_name(SLOT_ID_KEY, slot),
                 PublicKeyType::Winternitz(program_context.key_chain.derive_winternitz_hash160(32)?),
@@ -122,6 +149,11 @@ impl ProtocolHandler for InitProtocol {
 
         // TODO set utxo var for dispute channels
 
+        protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
+        self.save_protocol(protocol.clone())?;
+
+        info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
+
         Ok(())
     }
 
@@ -142,10 +174,12 @@ impl ProtocolHandler for InitProtocol {
         program_context: &ProgramContext,
         participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
+        // todo!()
         Ok(())
     }
 
     fn setup_complete(&self, context: &ProgramContext) -> Result<(), BitVMXError> {
+        // todo!()
         Ok(())
     }
 }
@@ -177,6 +211,26 @@ impl InitProtocol {
 
         let committee: Committee = serde_json::from_str(&committee)?;
         Ok(committee)
+    }
+
+    fn take_aggregated_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+        Ok(self.committee(context)?.take_aggregated_key.clone())
+    }
+
+    fn dispute_aggregated_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+        Ok(self.committee(context)?.dispute_aggregated_key.clone())
+    }
+
+    fn my_take_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+        let my_index = self.ctx.my_idx;
+        let committee = self.committee(context)?;
+        Ok(committee.members[my_index].take_key.clone())
+    }
+
+    fn my_dispute_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+        let my_index = self.ctx.my_idx;
+        let committee = self.committee(context)?;
+        Ok(committee.members[my_index].dispute_key.clone())
     }
 
     fn committee_id(&self, context: &ProgramContext) -> Result<Uuid, BitVMXError> {
@@ -306,45 +360,4 @@ impl InitProtocol {
 
         Ok(())
     }
-
-    // fn create_watchtower_start_enablers(
-    //     &self,
-    //     protocol: &mut Protocol,
-    //     committee: &Committee,
-    //     watchtower_keys: &ParticipantKeys,
-    // ) -> Result<(), BitVMXError> {
-    //     let watchtower_dispute_key = watchtower_keys.get_public(DISPUTE_KEY)?;
-    //     let initial_deposit = format!("{}{}", WATCHTOWER, INITIAL_DEPOSIT_TX_SUFFIX);
-    //     let start_enabler = format!("{}{}", WATCHTOWER, START_ENABLER_TX_SUFFIX);
-
-    //     protocol.add_connection(
-    //         "start_enablers",
-    //         &initial_deposit,
-    //         OutputType::taproot(AUTO_AMOUNT, watchtower_dispute_key, &[])?.into(),
-    //         &start_enabler,
-    //         InputSpec::Auto(
-    //             SighashType::taproot_all(),
-    //             SpendMode::KeyOnly {
-    //                 key_path_sign: SignMode::Single,
-    //             },
-    //         ),
-    //         None,
-    //         None,
-    //     )?;
-
-    //     for slot in 0..committee.packet_size as usize {
-    //         let pegout_key = watchtower_keys.get_winternitz(&indexed_name(PEGOUT_ID_KEY, slot))?;
-    //         let secret_key = watchtower_keys.get_winternitz(&indexed_name(SECRET_KEY, slot))?;
-
-    //         let start_enabler_leaf =
-    //             scripts::operator_pegout_id(watchtower_dispute_key, pegout_key, secret_key)?;
-
-    //         protocol.add_transaction_output(
-    //             &start_enabler,
-    //             &OutputType::taproot(AUTO_AMOUNT, watchtower_dispute_key, &[start_enabler_leaf])?,
-    //         )?;
-    //     }
-
-    //     Ok(())
-    // }
 }

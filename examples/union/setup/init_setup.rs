@@ -1,6 +1,5 @@
 use anyhow::Result;
 use bitcoin::PublicKey;
-use protocol_builder::types::Utxo;
 use std::collections::HashMap;
 
 use bitvmx_client::{
@@ -9,11 +8,11 @@ use bitvmx_client::{
         participant::{P2PAddress, ParticipantRole},
         protocols::union::{
             common::get_init_pid,
-            types::{Committee, DisputeCoreData, InitData, MemberData, MONITORED_WATCHTOWER_KEY},
+            types::{Committee, InitData, MemberData, MONITORED_WATCHTOWER_KEY},
         },
         variables::{PartialUtxo, VariableTypes},
     },
-    types::{IncomingBitVMXApiMessages, PROGRAM_TYPE_INIT},
+    types::{PROGRAM_TYPE_INIT},
 };
 use tracing::info;
 use uuid::Uuid;
@@ -37,7 +36,8 @@ impl InitSetup {
             let watchtower_utxo = watchtower_protocol_funding[&pubkey].clone();
             info!(
                 id = my_id,
-                "Setting up the Init protocol handler {} for {}", protocol_id, my_id
+                member_index = member_index,
+                "Setting up Init protocol {}", protocol_id,
             );
 
             // could this data go inside init data?

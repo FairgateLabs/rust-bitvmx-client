@@ -179,8 +179,6 @@ impl Member {
         funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
         addresses: &Vec<P2PAddress>,
     ) -> Result<()> {
-        info!(id = self.id, "Setting up init for member {}", self.id);
-
         InitSetup::setup(
             committee_id,
             &self.id,

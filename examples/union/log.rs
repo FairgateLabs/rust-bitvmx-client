@@ -18,6 +18,7 @@ pub fn configure_tracing() {
             "memory=off",
             "bitvmx_client::config=off",
             "bitvmx_wallet=off",
+            "bitvmx_bitcoin_rpc=off",
         ];
 
         let filter = EnvFilter::builder()
