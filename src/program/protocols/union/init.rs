@@ -1,6 +1,5 @@
 use protocol_builder::builder::Protocol;
 use protocol_builder::graph::graph::GraphOptions;
-use protocol_builder::scripts::SignMode;
 use protocol_builder::types::connection::{InputSpec, OutputSpec};
 use protocol_builder::types::input::{SighashType, SpendMode};
 use protocol_builder::types::OutputType;
@@ -13,22 +12,15 @@ use crate::program::participant::{ParticipantKeys, ParticipantRole, PublicKeyTyp
 use crate::program::protocols::protocol_handler::{ProtocolContext, ProtocolHandler};
 use crate::program::protocols::union::common::{create_transaction_reference, indexed_name};
 use crate::program::protocols::union::scripts;
-use crate::program::protocols::union::types::{
-    Committee, InitData, MemberData, DISPUTE_AGGREGATED_KEY, FUNDING_TX_SUFFIX, INITIAL_DEPOSIT_TX_SUFFIX, SELF_DISABLER_TX_SUFFIX, SETUP_TX_SUFFIX, SPEEDUP_KEY, SPEEDUP_VALUE, START_ENABLER_TX_SUFFIX, TAKE_AGGREGATED_KEY, WATCHTOWER
-};
-use crate::program::variables::VariableTypes;
+use crate::program::protocols::union::types::*;
 use crate::types::ProgramContext;
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::types::output::{SpeedupData, AUTO_AMOUNT, RECOVER_AMOUNT};
 use uuid::Uuid;
 
-pub const PEGOUT_ID: &str = "pegout_id";
-const PEGOUT_ID_KEY: &str = "pegout_id_key";
 const SLOT_ID_KEY: &str = "slot_id_key";
 const SECRET_KEY: &str = "secret";
-const CHALLENGE_KEY: &str = "challenge_pubkey";
-const REVEAL_INPUT_KEY: &str = "reveal_pubkey";
 const REVEAL_TAKE_PRIVKEY: &str = "reveal_take_private_key";
 const TAKE_KEY: &str = "take_key";
 const DISPUTE_KEY: &str = "dispute_key";
@@ -79,29 +71,6 @@ impl ProtocolHandler for InitProtocol {
             DISPUTE_KEY.to_string(),
             PublicKeyType::Public(self.my_dispute_key(program_context)?),
         ));
-
-        // keys.push((
-        //     CHALLENGE_KEY.to_string(),
-        //     PublicKeyType::Public(program_context.key_chain.derive_keypair()?),
-        // ));
-
-        // let speedup_key = program_context.key_chain.derive_keypair()?;
-
-        // keys.push((
-        //     SPEEDUP_KEY.to_string(),
-        //     PublicKeyType::Public(speedup_key.clone()),
-        // ));
-
-        // program_context.globals.set_var(
-        //     &self.ctx.id,
-        //     SPEEDUP_KEY,
-        //     VariableTypes::PubKey(speedup_key),
-        // )?;
-
-        // keys.push((
-        //     REVEAL_INPUT_KEY.to_string(),
-        //     PublicKeyType::Public(program_context.key_chain.derive_keypair()?),
-        // ));
 
         keys.push((
             REVEAL_TAKE_PRIVKEY.to_string(),
@@ -168,26 +137,26 @@ impl ProtocolHandler for InitProtocol {
 
     fn get_transaction_by_name(
         &self,
-        transaction_name: &str,
-        context: &ProgramContext,
+        _transaction_name: &str,
+        _context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         todo!()
     }
 
     fn notify_news(
         &self,
-        tx_id: Txid,
-        vout: Option<u32>,
-        tx_status: TransactionStatus,
-        context: String,
-        program_context: &ProgramContext,
-        participant_keys: Vec<&ParticipantKeys>,
+        _tx_id: Txid,
+        _vout: Option<u32>,
+        _tx_status: TransactionStatus,
+        _context: String,
+        _program_context: &ProgramContext,
+        _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         // todo!()
         Ok(())
     }
 
-    fn setup_complete(&self, context: &ProgramContext) -> Result<(), BitVMXError> {
+    fn setup_complete(&self, _context: &ProgramContext) -> Result<(), BitVMXError> {
         // todo!()
         Ok(())
     }
@@ -328,8 +297,6 @@ impl InitProtocol {
             return Ok(());
         }
 
-        let watchtower_dispute_key = watchtower_keys.get_public(DISPUTE_KEY)?;
-        let initial_deposit = format!("{}{}", WATCHTOWER, INITIAL_DEPOSIT_TX_SUFFIX);
         let start_enabler = format!("{}{}", WATCHTOWER, START_ENABLER_TX_SUFFIX);
 
         let mut scripts = vec![];

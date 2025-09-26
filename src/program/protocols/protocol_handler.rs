@@ -26,8 +26,10 @@ use super::dispute::DisputeResolutionProtocol;
 
 #[cfg(feature = "union")]
 use crate::program::protocols::union::{
-    accept_pegin::AcceptPegInProtocol, advance_funds::AdvanceFundsProtocol,
-    dispute_core::DisputeCoreProtocol, init::InitProtocol,
+    accept_pegin::AcceptPegInProtocol,
+    advance_funds::AdvanceFundsProtocol,
+    dispute_core::DisputeCoreProtocol,
+    init::InitProtocol,
     pairwise_penalization::PairwisePenalizationProtocol,
     user_take::UserTakeProtocol,
 };

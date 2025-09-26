@@ -101,7 +101,6 @@ impl Member {
         self.keyring.communication_pubkey = Some(communication_pubkey);
 
         info!(
-            id = self.id,
             "Member keys setup complete: take_pubkey: {}, dispute_pubkey: {}, communication_pubkey: {}",
             take_pubkey.to_string(),
             dispute_pubkey.to_string(),
