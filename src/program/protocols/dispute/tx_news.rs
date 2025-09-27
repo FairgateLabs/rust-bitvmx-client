@@ -17,7 +17,7 @@ use crate::{
             dispute::{
                 input_handler::{get_txs_configuration, unify_inputs, unify_witnesses},
                 timeout_input_tx, timeout_tx, DisputeResolutionProtocol, ACTION_PROVER_WINS,
-                CHALLENGE, COMMITMENT, EXECUTE, INPUT_TX, PROVER_WINS, TRACE_VARS,
+                CHALLENGE, COMMITMENT, EXECUTE, INPUT_TX, PROVER_WINS, TRACE_VARS, VERIFIER_WINS,
             },
             protocol_handler::ProtocolHandler,
         },
@@ -26,7 +26,7 @@ use crate::{
     types::ProgramContext,
 };
 
-pub fn dispatch_timeout_tx(
+fn dispatch_timeout_tx(
     drp: &DisputeResolutionProtocol,
     program_context: &ProgramContext,
     name: &str,
@@ -57,29 +57,181 @@ pub fn dispatch_timeout_tx(
     Ok(())
 }
 
-pub fn cancel_timeout(
+//when is see [&Str], and vout is [bool] if I'm [ParticipantRole] then I dispatch [bool]? timeout_tx[Str] : timeout_input_tx[Str]
+pub const TIMEOUT_DISPATCH_TABLE: [(&str, bool, ParticipantRole, &str, bool); 3] = [
+    (EXECUTE, false, ParticipantRole::Prover, CHALLENGE, false),
+    (CHALLENGE, false, ParticipantRole::Prover, CHALLENGE, true),
+    (EXECUTE, false, ParticipantRole::Verifier, EXECUTE, true),
+];
+
+fn get_timeout_name(name: &str, is_input: bool) -> String {
+    if is_input {
+        timeout_input_tx(name)
+    } else {
+        timeout_tx(name)
+    }
+}
+
+fn auto_dispatch_timeout(
+    drp: &DisputeResolutionProtocol,
+    name: &str,
+    vout: Option<u32>,
+    program_context: &ProgramContext,
+    current_height: u32,
+) -> Result<(), BitVMXError> {
+    for (tx_name, tx_vout, tx_role, timeout_name, is_input) in TIMEOUT_DISPATCH_TABLE.iter() {
+        if *tx_name == name && *tx_role == drp.role() && *tx_vout == (vout.is_some()) {
+            dispatch_timeout_tx(
+                drp,
+                program_context,
+                &get_timeout_name(&timeout_name, *is_input),
+                current_height,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn cancel_timeout(
     drp: &DisputeResolutionProtocol,
     name: &str,
     vout: Option<u32>,
     program_context: &ProgramContext,
 ) -> Result<(), BitVMXError> {
-    match name {
-        EXECUTE => {
-            if drp.role() != ParticipantRole::Verifier {
-                return Ok(());
-            }
-            let tx_to_cancel = if vout.is_none() {
-                timeout_tx(name)
-            } else {
-                timeout_input_tx(name)
-            };
-            info!("Cancel timeout tx: {}", tx_to_cancel);
-            let tx_id = drp.get_transaction_id_by_name(&tx_to_cancel)?;
-            program_context.bitcoin_coordinator.cancel(
-                bitcoin_coordinator::TypesToMonitor::Transactions(vec![tx_id], String::default()),
+    let cancel = match name {
+        EXECUTE => drp.role() == ParticipantRole::Verifier,
+        CHALLENGE => drp.role() == ParticipantRole::Prover,
+        _ => false,
+    };
+
+    if cancel {
+        let tx_to_cancel = if vout.is_none() {
+            timeout_tx(name)
+        } else {
+            timeout_input_tx(name)
+        };
+        info!("Cancel timeout tx: {}", tx_to_cancel);
+        let tx_id = drp.get_transaction_id_by_name(&tx_to_cancel)?;
+        program_context.bitcoin_coordinator.cancel(
+            bitcoin_coordinator::TypesToMonitor::Transactions(vec![tx_id], String::default()),
+        )?;
+    }
+    Ok(())
+}
+
+fn get_claim_name(drp: &DisputeResolutionProtocol, other: bool) -> &str {
+    let (role, other_role) = match drp.role() {
+        ParticipantRole::Prover => (PROVER_WINS, VERIFIER_WINS),
+        ParticipantRole::Verifier => (VERIFIER_WINS, PROVER_WINS),
+    };
+    if other {
+        other_role
+    } else {
+        role
+    }
+}
+
+fn auto_claim_start(
+    drp: &DisputeResolutionProtocol,
+    name: &str,
+    vout: Option<u32>,
+    program_context: &ProgramContext,
+) -> Result<(), BitVMXError> {
+    if vout.is_some() {
+        return Ok(());
+    }
+    for (_, _, tx_role, timeout_name, is_input) in TIMEOUT_DISPATCH_TABLE.iter() {
+        let timeout_name = get_timeout_name(timeout_name, *is_input);
+        if &timeout_name == name && *tx_role == drp.role() {
+            let claim_name = ClaimGate::tx_start(get_claim_name(drp, false));
+            let tx = drp.get_signed_tx(program_context, &claim_name, 0, 0, false, 0)?;
+            let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
+            info!("{claim_name}: {:?}", tx);
+            program_context.bitcoin_coordinator.dispatch(
+                tx,
+                Some(speedup_data),
+                Context::ProgramId(drp.ctx.id).to_string()?,
+                None,
             )?;
         }
-        _ => {}
+    }
+
+    Ok(())
+}
+
+fn claim_state_handle(
+    drp: &DisputeResolutionProtocol,
+    name: &str,
+    vout: Option<u32>,
+    program_context: &ProgramContext,
+    current_height: u32,
+    timelock_blocks: u32,
+) -> Result<(), BitVMXError> {
+    if vout.is_some() {
+        return Ok(());
+    }
+    let my_claim = get_claim_name(drp, false);
+    let other_claim = get_claim_name(drp, true);
+    // start claim
+    if name == ClaimGate::tx_start(PROVER_WINS) || name == ClaimGate::tx_start(VERIFIER_WINS) {
+        // my start
+        if name == ClaimGate::tx_start(my_claim) {
+            info!("{my_claim} SUCCESS dispatch");
+
+            let prover_wins_tx = drp.get_signed_tx(
+                program_context,
+                &ClaimGate::tx_success(&my_claim),
+                0,
+                1,
+                false,
+                0,
+            )?;
+            let speedup_data =
+                drp.get_speedup_data_from_tx(&prover_wins_tx, program_context, None)?;
+            program_context.bitcoin_coordinator.dispatch(
+                prover_wins_tx,
+                Some(speedup_data),
+                Context::ProgramId(drp.ctx.id).to_string()?,
+                Some(current_height + timelock_blocks),
+            )?;
+        }
+        //other start
+        else {
+            info!("{other_claim} STOP dispatch attempt");
+            let prover_win_stop = drp.get_signed_tx(
+                program_context,
+                &ClaimGate::tx_stop(&other_claim, 0),
+                0,
+                0,
+                false,
+                0,
+            )?;
+            let speedup_data =
+                drp.get_speedup_data_from_tx(&prover_win_stop, program_context, None)?;
+            program_context.bitcoin_coordinator.dispatch(
+                prover_win_stop,
+                Some(speedup_data),
+                Context::ProgramId(drp.ctx.id).to_string()?,
+                None,
+            )?;
+        }
+    }
+
+    if name == ClaimGate::tx_success(PROVER_WINS) || name == ClaimGate::tx_success(VERIFIER_WINS) {
+        if name == ClaimGate::tx_success(PROVER_WINS) {
+            info!("Prover. Execute Action");
+            let prover_wins_action_tx =
+                drp.get_signed_tx(program_context, ACTION_PROVER_WINS, 0, 0, false, 1)?;
+            let speedup_data =
+                drp.get_speedup_data_from_tx(&prover_wins_action_tx, program_context, None)?;
+
+            program_context.bitcoin_coordinator.dispatch(
+                prover_wins_action_tx,
+                Some(speedup_data),
+                Context::ProgramId(drp.ctx.id).to_string()?,
+                None,
+            )?;
+        }
     }
     Ok(())
 }
@@ -110,6 +262,19 @@ pub fn handle_tx_news(
         .get_var(&drp.ctx.id, "TIMELOCK_BLOCKS")?
         .unwrap()
         .number()?;
+
+    auto_dispatch_timeout(drp, &name, vout, program_context, current_height)?;
+
+    auto_claim_start(drp, &name, vout, program_context)?;
+
+    claim_state_handle(
+        drp,
+        &name,
+        vout,
+        program_context,
+        current_height,
+        timelock_blocks,
+    )?;
 
     let (fail_config_prover, fail_config_verifier, force, force_condition) = program_context
         .globals
@@ -377,15 +542,6 @@ pub fn handle_tx_news(
         }
     }
 
-    if name == EXECUTE && drp.role() == ParticipantRole::Verifier && vout.is_none() {
-        dispatch_timeout_tx(
-            drp,
-            program_context,
-            &timeout_input_tx(EXECUTE),
-            current_height,
-        )?;
-    }
-
     if name == EXECUTE && drp.role() == ParticipantRole::Verifier && vout.is_some() {
         let (_, leaf) = drp.decode_witness_from_speedup(
             tx_id,
@@ -483,83 +639,6 @@ pub fn handle_tx_news(
         program_context
             .broker_channel
             .send(&program_context.components_config.emulator, msg)?;
-    }
-
-    if name == EXECUTE && drp.role() == ParticipantRole::Prover && vout.is_some() {
-        let tx = drp.get_signed_tx(
-            program_context,
-            &ClaimGate::tx_start(PROVER_WINS),
-            0,
-            0,
-            false,
-            0,
-        )?;
-        info!("PROVER_WINS_TX: {:?}", tx);
-        let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
-        program_context.bitcoin_coordinator.dispatch(
-            tx,
-            Some(speedup_data),
-            //prover-win-start is input 1
-            Context::ProgramId(drp.ctx.id).to_string()?,
-            None,
-        )?;
-    }
-
-    if name == ClaimGate::tx_start(PROVER_WINS) && drp.role() == ParticipantRole::Prover {
-        info!("Prover wins SUCCESS dispatch");
-
-        let prover_wins_tx = drp.get_signed_tx(
-            program_context,
-            &ClaimGate::tx_success(PROVER_WINS),
-            0,
-            1,
-            false,
-            0,
-        )?;
-        let speedup_data = drp.get_speedup_data_from_tx(&prover_wins_tx, program_context, None)?;
-        program_context.bitcoin_coordinator.dispatch(
-            prover_wins_tx,
-            Some(speedup_data),
-            Context::ProgramId(drp.ctx.id).to_string()?,
-            Some(current_height + timelock_blocks),
-        )?;
-    }
-
-    if name == ClaimGate::tx_start(PROVER_WINS) && drp.role() == ParticipantRole::Verifier {
-        info!("Verifier will try to stop the PROVER_WINS_SUCCESS");
-
-        let prover_win_stop = drp.get_signed_tx(
-            program_context,
-            &ClaimGate::tx_stop(PROVER_WINS, 0),
-            0,
-            0,
-            false,
-            0,
-        )?;
-        let speedup_data = drp.get_speedup_data_from_tx(&prover_win_stop, program_context, None)?;
-        program_context.bitcoin_coordinator.dispatch(
-            prover_win_stop,
-            Some(speedup_data),
-            Context::ProgramId(drp.ctx.id).to_string()?,
-            None,
-        )?;
-    }
-
-    if name == ClaimGate::tx_success(PROVER_WINS) && drp.role() == ParticipantRole::Prover {
-        //Execute actions.
-        //Could execute more than one
-        info!("Prover. Execute Action");
-        let prover_wins_action_tx =
-            drp.get_signed_tx(program_context, ACTION_PROVER_WINS, 0, 0, false, 1)?;
-        let speedup_data =
-            drp.get_speedup_data_from_tx(&prover_wins_action_tx, program_context, None)?;
-
-        program_context.bitcoin_coordinator.dispatch(
-            prover_wins_action_tx,
-            Some(speedup_data),
-            Context::ProgramId(drp.ctx.id).to_string()?,
-            None,
-        )?;
     }
 
     if name == CHALLENGE && drp.role() == ParticipantRole::Prover && vout.is_some() {

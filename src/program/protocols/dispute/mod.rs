@@ -49,7 +49,7 @@ pub const START_CH: &str = "START_CHALLENGE";
 pub const INPUT_TX: &str = "INPUT_";
 pub const COMMITMENT: &str = "COMMITMENT";
 pub const EXECUTE: &str = "EXECUTE";
-pub const TIMELOCK_BLOCKS: u16 = 20;
+pub const TIMELOCK_BLOCKS: u16 = 15;
 pub const PROVER_WINS: &str = "PROVER_WINS";
 pub const VERIFIER_WINS: &str = "VERIFIER_WINS";
 pub const ACTION_PROVER_WINS: &str = "ACTION_PROVER_WINS";
@@ -316,8 +316,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         amount = self.checked_sub(amount, fee)?;
 
-        amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
-        amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
+        amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1, true))?;
+        amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1, false))?;
 
         let timelock_blocks = context
             .globals
@@ -337,6 +337,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             None,
             timelock_blocks,
             vec![aggregated],
+            true,
+            None,
         )?;
 
         let claim_verifier = ClaimGate::new(
@@ -351,6 +353,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             None,
             timelock_blocks,
             vec![aggregated],
+            false,
+            claim_prover.exclusive_success_vout,
         )?;
 
         let mut prev_tx = START_CH.to_string();
@@ -788,12 +792,12 @@ impl DisputeResolutionProtocol {
 
         // add the timeout tx to penalize the non-acting party
         protocol.add_connection(
-            &format!("{}__{}_TO", from, to),
+            &format!("{}_TL_{}_{}_TO", from, 2 * timelock_blocks, to),
             from,
             OutputSpec::Last,
             &timeout_tx(to),
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
-            Some(timelock_blocks),
+            Some(2 * timelock_blocks),
             None,
         )?;
 
@@ -811,7 +815,7 @@ impl DisputeResolutionProtocol {
 
         // add the timeout tx to penalize the party for not commiting the input
         protocol.add_connection(
-            &format!("{}__{}_INPUT_TO", from, to),
+            &format!("{}_TL_{}_{}_INPUT_TO", from, timelock_blocks, to),
             to,
             OutputSpec::Last,
             &timeout_input_tx(to),
