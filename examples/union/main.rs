@@ -428,7 +428,7 @@ pub fn advance_funds(
         get_advance_funds_fee()?,
     )?;
 
-    let blocks = if NETWORK == Network::Regtest { 20 } else { 1 };
+    let blocks = if NETWORK == Network::Regtest { 30 } else { 1 };
     wait_for_blocks(&committee.bitcoin_client, blocks)?;
 
     info!("Advance funds complete.");
@@ -454,7 +454,7 @@ pub fn invalid_reimbursement(committee: &mut Committee, slot_index: usize) -> Re
         get_advance_funds_fee()?,
     )?;
 
-    let blocks = if NETWORK == Network::Regtest { 20 } else { 7 };
+    let blocks = if NETWORK == Network::Regtest { 30 } else { 7 };
     info!("Starting mining loop to ensure challenge transaction is dispatched...");
     wait_for_blocks(&committee.bitcoin_client, blocks)?;
 
