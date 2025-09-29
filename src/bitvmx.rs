@@ -1407,15 +1407,20 @@ impl BitVMXApi for BitVMX {
                 self.reply(from, message)?;
             }
             IncomingBitVMXApiMessages::GetProtocolVisualization(id) => {
-                let protocol_str = self
-                    .load_program(&id)?
-                    .protocol
-                    .load_protocol()?
-                    .visualize(GraphOptions::EdgeArrows)?;
-                self.reply(
-                    from,
-                    OutgoingBitVMXApiMessages::ProtocolVisualization(id, protocol_str),
-                )?;
+                let message = match self.load_program(&id) {
+                    Ok(program) => {
+                        let protocol_str = program
+                            .protocol
+                            .load_protocol()?
+                            .visualize(GraphOptions::EdgeArrows)?;
+                        OutgoingBitVMXApiMessages::ProtocolVisualization(id, protocol_str)
+                    }
+                    Err(e) => {
+                        warn!("Failed to load protocol: {:?}", e);
+                        OutgoingBitVMXApiMessages::ProtocolVisualization(id, String::default())
+                    }
+                };
+                self.reply(from, message)?;
             }
             #[cfg(feature = "testpanic")]
             IncomingBitVMXApiMessages::Test(s) => {
