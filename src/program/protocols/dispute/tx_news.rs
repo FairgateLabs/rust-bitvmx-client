@@ -15,9 +15,10 @@ use crate::{
         protocols::{
             claim::ClaimGate,
             dispute::{
+                action_wins,
                 input_handler::{get_txs_configuration, unify_inputs, unify_witnesses},
-                timeout_input_tx, timeout_tx, DisputeResolutionProtocol, ACTION_PROVER_WINS,
-                CHALLENGE, COMMITMENT, EXECUTE, INPUT_TX, PROVER_WINS, TRACE_VARS, VERIFIER_WINS,
+                timeout_input_tx, timeout_tx, DisputeResolutionProtocol, CHALLENGE, COMMITMENT,
+                EXECUTE, INPUT_TX, PROVER_WINS, TRACE_VARS, VERIFIER_WINS,
             },
             protocol_handler::ProtocolHandler,
         },
@@ -219,9 +220,16 @@ fn claim_state_handle(
 
     if name == ClaimGate::tx_success(PROVER_WINS) || name == ClaimGate::tx_success(VERIFIER_WINS) {
         if name == ClaimGate::tx_success(PROVER_WINS) {
+            //handle all actions
             info!("Prover. Execute Action");
-            let prover_wins_action_tx =
-                drp.get_signed_tx(program_context, ACTION_PROVER_WINS, 0, 0, false, 1)?;
+            let prover_wins_action_tx = drp.get_signed_tx(
+                program_context,
+                &action_wins(&ParticipantRole::Prover, 1),
+                0,
+                0,
+                false,
+                1,
+            )?;
             let speedup_data =
                 drp.get_speedup_data_from_tx(&prover_wins_action_tx, program_context, None)?;
 

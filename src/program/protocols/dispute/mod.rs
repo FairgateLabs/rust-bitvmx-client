@@ -44,7 +44,6 @@ use crate::{
 };
 
 pub const EXTERNAL_START: &str = "EXTERNAL_START";
-pub const EXTERNAL_ACTION: &str = "EXTERNAL_ACTION";
 pub const START_CH: &str = "START_CHALLENGE";
 pub const INPUT_TX: &str = "INPUT_";
 pub const COMMITMENT: &str = "COMMITMENT";
@@ -52,7 +51,6 @@ pub const EXECUTE: &str = "EXECUTE";
 pub const TIMELOCK_BLOCKS: u16 = 15;
 pub const PROVER_WINS: &str = "PROVER_WINS";
 pub const VERIFIER_WINS: &str = "VERIFIER_WINS";
-pub const ACTION_PROVER_WINS: &str = "ACTION_PROVER_WINS";
 pub const CHALLENGE: &str = "CHALLENGE";
 pub const TIMELOCK_BLOCKS_KEY: &str = "TIMELOCK_BLOCKS";
 
@@ -92,6 +90,20 @@ fn get_role(my_idx: usize) -> ParticipantRole {
         ParticipantRole::Prover
     } else {
         ParticipantRole::Verifier
+    }
+}
+
+pub fn action_wins(role: &ParticipantRole, n: u32) -> String {
+    match role {
+        ParticipantRole::Prover => format!("ACTION_PROVER_WINS_{n}"),
+        ParticipantRole::Verifier => format!("ACTION_VERIFIER_WINS_{n}"),
+    }
+}
+
+pub fn external_action(role: &ParticipantRole, n: u32) -> String {
+    match role {
+        ParticipantRole::Prover => format!("EXTERNAL_ACTION_PROVER_{n}"),
+        ParticipantRole::Verifier => format!("EXTERNAL_ACTION_VERIFIER_{n}"),
     }
 }
 
@@ -363,9 +375,11 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         self.add_action(
             &mut protocol,
-            context,
             &utxo_prover_win_action,
             &prover_speedup_pub,
+            &ParticipantRole::Prover,
+            PROVER_WINS,
+            1,
         )?;
 
         let mut prev_tx = START_CH.to_string();
@@ -583,17 +597,19 @@ impl DisputeResolutionProtocol {
     fn add_action(
         &self,
         protocol: &mut Protocol,
-        context: &ProgramContext,
         utxo_action: &PartialUtxo,
         speedup_pub: &PublicKey,
+        role: &ParticipantRole,
+        claim: &str,
+        action_number: u32,
     ) -> Result<(), BitVMXError> {
         let speedup_dust = DUST;
-        protocol.add_transaction(ACTION_PROVER_WINS)?;
+        protocol.add_transaction(&action_wins(role, action_number))?;
         protocol.add_connection(
-            "PROVER_ACTION_1",
-            &ClaimGate::tx_success(PROVER_WINS),
+            &format!("{:?}_ACTION_{action_number}", role),
+            &ClaimGate::tx_success(claim),
             0.into(),
-            ACTION_PROVER_WINS,
+            &action_wins(role, action_number),
             InputSpec::Auto(
                 SighashType::taproot_all(),
                 SpendMode::All {
@@ -605,14 +621,14 @@ impl DisputeResolutionProtocol {
         )?;
 
         let output_type = utxo_action.3.as_ref().unwrap();
-        protocol.add_external_transaction(EXTERNAL_ACTION)?;
-        protocol.add_unknown_outputs(EXTERNAL_ACTION, utxo_action.1)?;
-        protocol.add_transaction_output(EXTERNAL_ACTION, &output_type)?;
+        protocol.add_external_transaction(&external_action(role, action_number))?;
+        protocol.add_unknown_outputs(&external_action(role, action_number), utxo_action.1)?;
+        protocol.add_transaction_output(&external_action(role, action_number), &output_type)?;
         protocol.add_connection(
-            "EXTERNAL_ACTION__PROVER_WINS",
-            EXTERNAL_ACTION,
+            &format!("EXTERNAL_ACTION__{:?}_WINS", role),
+            &external_action(role, action_number),
             (utxo_action.1 as usize).into(),
-            ACTION_PROVER_WINS,
+            &action_wins(role, action_number),
             InputSpec::Auto(
                 SighashType::taproot_all(),
                 SpendMode::Script { leaf: 1 }, //the alternate key is on leaf 1
@@ -622,7 +638,12 @@ impl DisputeResolutionProtocol {
         )?;
 
         let pb = ProtocolBuilder {};
-        pb.add_speedup_output(protocol, ACTION_PROVER_WINS, speedup_dust, &speedup_pub)?;
+        pb.add_speedup_output(
+            protocol,
+            &action_wins(role, action_number),
+            speedup_dust,
+            &speedup_pub,
+        )?;
 
         Ok(())
     }

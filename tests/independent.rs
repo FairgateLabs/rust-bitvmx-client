@@ -7,9 +7,10 @@ use bitvmx_broker::channel::channel::DualChannel;
 use bitvmx_broker::rpc::tls_helper::Cert;
 use bitvmx_broker::rpc::BrokerConfig;
 use bitvmx_client::program;
-use bitvmx_client::program::participant::CommsAddress;
+use bitvmx_client::program::participant::{CommsAddress, ParticipantRole};
 use bitvmx_client::program::protocols::dispute::{
-    input_tx_name, program_input, program_input_prev_prefix, program_input_prev_protocol,
+    action_wins, input_tx_name, program_input, program_input_prev_prefix,
+    program_input_prev_protocol,
 };
 use bitvmx_client::program::variables::{VariableTypes, WitnessTypes};
 use bitvmx_client::types::{
@@ -674,7 +675,7 @@ pub fn test_all_aux(
             .to_string()?,
     );
 
-    helper.wait_tx_name(1, program::protocols::dispute::ACTION_PROVER_WINS)?;
+    helper.wait_tx_name(1, &action_wins(&ParticipantRole::Prover, 1))?;
 
     helper.stop()?;
 
