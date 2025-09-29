@@ -35,6 +35,8 @@ use protocol_builder::types::{OutputType, Utxo};
 use tracing::{error, info};
 use uuid::Uuid;
 
+use crate::common::mine_and_wait_blocks;
+
 use super::{mine_and_wait, send_all, wait_message_from_channel};
 
 pub enum ForcedChallenges {
@@ -228,21 +230,23 @@ pub fn execute_dispute(
     //process verifier choose challenge
     process_dispatcher(&mut dispatchers, &mut instances)?;
 
+    info!("Wait for TXs");
+
     //wait for claim start
-    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    let msgs = mine_and_wait_blocks(&bitcoin_client, &channels, &mut instances, &wallet, 30)?;
     info!(
         "Observed: {:?}",
         style(msgs[0].transaction().unwrap().2).green()
     );
     //success wait
     wallet.mine(10)?;
-    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    let msgs = mine_and_wait_blocks(&bitcoin_client, &channels, &mut instances, &wallet, 30)?;
     info!(
         "Observed: {:?}",
         style(msgs[0].transaction().unwrap().2).green()
     );
     //action wait
-    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    let msgs = mine_and_wait_blocks(&bitcoin_client, &channels, &mut instances, &wallet, 30)?;
     info!(
         "Observed: {:?}",
         style(msgs[0].transaction().unwrap().2).green()

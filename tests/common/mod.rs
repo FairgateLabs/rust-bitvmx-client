@@ -174,6 +174,7 @@ fn config_trace_aux() {
         "bitvmx_transaction_monitor=off",
         "bitcoin_indexer=off",
         "bitcoin_coordinator=info",
+        "bitvmx_wallet=info",
         "operator_comms=off",
         "tarpc=off",
         "key_manager=off",
@@ -222,8 +223,19 @@ pub fn mine_and_wait(
     instances: &mut Vec<BitVMX>,
     wallet: &Wallet,
 ) -> Result<Vec<OutgoingBitVMXApiMessages>> {
+    mine_and_wait_blocks(_bitcoin_client, channels, instances, wallet, 10)
+}
+
+pub fn mine_and_wait_blocks(
+    _bitcoin_client: &BitcoinClient,
+    channels: &Vec<DualChannel>,
+    instances: &mut Vec<BitVMX>,
+    wallet: &Wallet,
+    blocks: u32,
+) -> Result<Vec<OutgoingBitVMXApiMessages>> {
     //MINE AND WAIT
-    for i in 0..100 {
+    let iters = blocks * 10;
+    for i in 0..iters {
         if i % 10 == 0 {
             wallet.mine(1)?;
         }
