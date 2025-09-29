@@ -239,6 +239,26 @@ fn claim_state_handle(
                 Context::ProgramId(drp.ctx.id).to_string()?,
                 None,
             )?;
+        } else {
+            //handle all actions
+            info!("Verifier. Execute Action");
+            let verifier_wins_action_tx = drp.get_signed_tx(
+                program_context,
+                &action_wins(&ParticipantRole::Verifier, 1),
+                0,
+                0,
+                false,
+                1,
+            )?;
+            let speedup_data =
+                drp.get_speedup_data_from_tx(&verifier_wins_action_tx, program_context, None)?;
+
+            program_context.bitcoin_coordinator.dispatch(
+                verifier_wins_action_tx,
+                Some(speedup_data),
+                Context::ProgramId(drp.ctx.id).to_string()?,
+                None,
+            )?;
         }
     }
     Ok(())

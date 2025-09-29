@@ -382,6 +382,17 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             1,
         )?;
 
+        if utxo_verifier_win_action.is_some() {
+            self.add_action(
+                &mut protocol,
+                &utxo_verifier_win_action.unwrap().utxo()?,
+                &verifier_speedup_pub,
+                &ParticipantRole::Verifier,
+                VERIFIER_WINS,
+                1,
+            )?;
+        }
+
         let mut prev_tx = START_CH.to_string();
         let mut input_tx = String::new();
 

@@ -101,10 +101,19 @@ pub fn prepare_dispute(
         prover_win_utxo.txid,
         prover_win_utxo.vout,
         Some(prover_win_utxo.amount),
-        Some(prover_win_output_type),
+        Some(prover_win_output_type.clone()),
     ))
     .set_msg(program_id, "utxo_prover_win_action")?;
     send_all(&id_channel_pairs, &set_prover_win_utxo)?;
+
+    let set_verifier_win_utxo = VariableTypes::Utxo((
+        prover_win_utxo.txid,
+        prover_win_utxo.vout,
+        Some(prover_win_utxo.amount),
+        Some(prover_win_output_type),
+    ))
+    .set_msg(program_id, "utxo_verifier_win_action")?;
+    send_all(&id_channel_pairs, &set_verifier_win_utxo)?;
 
     //let program_path = "../BitVMX-CPU/docker-riscv32/verifier/build/zkverifier-new-mul.yaml";
     let hello_world = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
