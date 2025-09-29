@@ -22,7 +22,7 @@ use crate::{
         },
         variables::{PartialUtxo, VariableTypes},
     },
-    types::{OutgoingBitVMXApiMessages, ProgramContext, L2_ID},
+    types::{OutgoingBitVMXApiMessages, ProgramContext},
 };
 use bitcoin::{hex::FromHex, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
@@ -96,8 +96,8 @@ impl ProtocolHandler for AcceptPegInProtocol {
     ) -> Result<(), BitVMXError> {
         let pegin_request: PegInRequest = self.pegin_request(context)?;
         let pegin_request_txid = pegin_request.txid;
-        let mut amount = self.checked_sub(pegin_request.amount, P2TR_FEE)?;
-        amount = self.checked_sub(amount, SPEEDUP_VALUE)?;
+        let mut user_output_amount = self.checked_sub(pegin_request.amount, P2TR_FEE)?;
+        user_output_amount = self.checked_sub(user_output_amount, SPEEDUP_VALUE)?;
 
         let take_aggregated_key = &pegin_request.take_aggregated_key;
 
@@ -125,7 +125,8 @@ impl ProtocolHandler for AcceptPegInProtocol {
             Some(pegin_request_txid),
         )?;
 
-        let accept_pegin_output = OutputType::taproot(amount, &take_aggregated_key, &[])?;
+        let accept_pegin_output =
+            OutputType::taproot(user_output_amount, &take_aggregated_key, &[])?;
         protocol.add_transaction_output(ACCEPT_PEGIN_TX, &accept_pegin_output)?;
 
         // Speed up transaction (User pay for it)
@@ -162,7 +163,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
             self.create_operator_take_transaction(
                 &mut protocol,
                 operator_index,
-                amount,
+                user_output_amount,
                 &dispute_key,
                 speedup_key,
                 pegin_request_txid,
@@ -185,7 +186,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
             self.create_operator_won_transaction(
                 &mut protocol,
                 operator_index,
-                amount,
+                user_output_amount,
                 &dispute_key,
                 speedup_key,
                 pegin_request_txid,
@@ -406,11 +407,18 @@ impl AcceptPegInProtocol {
             .transaction_by_name(ACCEPT_PEGIN_TX)?
             .compute_txid();
 
+        let accept_pegin_sighash = protocol
+            .get_hashed_message(ACCEPT_PEGIN_TX, 0, 2)?
+            .unwrap()
+            .as_ref()
+            .to_vec();
+
         // TODO: verify that the signature we are getting from the array of signatures is the proper one
         // FIXME: Should signatures and nonces array be indexed by self.ctx.my_idx?
         let pegin_accepted = PegInAccepted {
             committee_id: pegin_request.committee_id,
             accept_pegin_txid,
+            accept_pegin_sighash,
             accept_pegin_nonce: nonces[0].1.clone(),
             accept_pegin_signature: signatures[0].1.clone(),
             operator_take_sighash,
@@ -429,7 +437,9 @@ impl AcceptPegInProtocol {
         );
 
         // Send the pegin accepted data to the broker channel
-        context.broker_channel.send(L2_ID, data)?;
+        context
+            .broker_channel
+            .send(&context.components_config.l2, data)?;
 
         Ok(())
     }
@@ -438,7 +448,7 @@ impl AcceptPegInProtocol {
         &self,
         protocol: &mut protocol_builder::builder::Protocol,
         operator_index: usize,
-        amount: u64,
+        accept_pegin_output_amount: u64,
         dispute_key: &PublicKey,
         speedup_key: &PublicKey,
         pegin_txid: Txid,
@@ -450,6 +460,10 @@ impl AcceptPegInProtocol {
         // Pegin input
         self.add_accept_pegin_connection(protocol, operator_take_tx_name, pegin_txid)?;
 
+        let operator_input_amount = accept_pegin_output_amount + take_enabler.2.unwrap();
+        let operator_output_amount =
+            self.checked_sub(operator_input_amount, P2TR_FEE + SPEEDUP_VALUE)?;
+
         protocol.add_connection(
             "take_enabler_conn",
             kickoff_tx_name,
@@ -460,13 +474,11 @@ impl AcceptPegInProtocol {
             Some(take_enabler.0),
         )?;
 
-        let operator_amount = self.checked_sub(amount, SPEEDUP_VALUE)?;
-
         // Operator Output
         self.add_operator_output(
             protocol,
             operator_take_tx_name,
-            operator_amount,
+            operator_output_amount,
             dispute_key,
         )?;
 
@@ -481,7 +493,7 @@ impl AcceptPegInProtocol {
         &self,
         protocol: &mut protocol_builder::builder::Protocol,
         operator_index: usize,
-        amount: u64,
+        accept_pegin_output_amount: u64,
         dispute_key: &PublicKey,
         speedup_key: &PublicKey,
         pegin_txid: Txid,
@@ -493,6 +505,10 @@ impl AcceptPegInProtocol {
 
         // Pegin input
         self.add_accept_pegin_connection(protocol, operator_won_tx_name, pegin_txid)?;
+
+        let operator_input_amount = accept_pegin_output_amount + won_enabler.2.unwrap();
+        let operator_output_amount =
+            self.checked_sub(operator_input_amount, P2TR_FEE + SPEEDUP_VALUE)?;
 
         // Input from try take 2 with timelock
         protocol.add_connection(
@@ -510,10 +526,13 @@ impl AcceptPegInProtocol {
             Some(won_enabler.0),
         )?;
 
-        let operator_amount = self.checked_sub(amount, SPEEDUP_VALUE)?;
-
         // Operator Output
-        self.add_operator_output(protocol, operator_won_tx_name, operator_amount, dispute_key)?;
+        self.add_operator_output(
+            protocol,
+            operator_won_tx_name,
+            operator_output_amount,
+            dispute_key,
+        )?;
 
         // Speed up transaction (Operator pay for it)
         let pb = ProtocolBuilder {};
@@ -709,6 +728,10 @@ impl AcceptPegInProtocol {
         context: &ProgramContext,
         utxo: PartialUtxo,
     ) -> Result<(), BitVMXError> {
+        info!(
+            id = self.ctx.my_idx,
+            "Updating operator take UTXO for AcceptPegInProtocol: {:?}", utxo
+        );
         context.globals.set_var(
             &self.pegin_request(context)?.committee_id,
             &LAST_OPERATOR_TAKE_UTXO,

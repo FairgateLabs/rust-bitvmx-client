@@ -1,21 +1,25 @@
 #![allow(dead_code)]
-use std::str::FromStr;
+#![cfg(test)]
 
 pub mod dispute;
 
 use anyhow::Result;
-use bitcoin::{Network, PublicKey};
+use bitcoin::{Amount, PublicKey, XOnlyPublicKey};
 use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
-use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
-use bitvmx_broker::{channel::channel::DualChannel, rpc::BrokerConfig};
+use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
+use bitvmx_broker::{
+    channel::channel::DualChannel,
+    identification::identifier::Identifier,
+    rpc::{tls_helper::Cert, BrokerConfig},
+};
 use bitvmx_client::{
     bitvmx::BitVMX,
     config::Config,
-    program::{participant::P2PAddress, protocols::protocol_handler::external_fund_tx},
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, EMULATOR_ID, L2_ID},
+    program::{participant::CommsAddress, protocols::protocol_handler::external_fund_tx},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
-use bitvmx_wallet::wallet::Wallet;
-use p2p_handler::PeerId;
+use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
+use operator_comms::operator_comms::AllowList;
 use protocol_builder::{
     scripts::{self, ProtocolScript, SignMode},
     types::{OutputType, Utxo},
@@ -34,26 +38,39 @@ pub fn clear_db(path: &str) {
 pub fn init_bitvmx(
     role: &str,
     emulator_dispatcher: bool,
-) -> Result<(BitVMX, P2PAddress, DualChannel, Option<DualChannel>)> {
+) -> Result<(BitVMX, CommsAddress, DualChannel, Option<DualChannel>)> {
     let config = Config::new(Some(format!("config/{}.yaml", role)))?;
-    let broker_config = BrokerConfig::new(config.broker_port, None);
-    let bridge_client = DualChannel::new(&broker_config, L2_ID);
+    let allow_list = AllowList::from_file(&config.broker.allow_list)?;
+    let broker_config = BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
+    let bridge_client = DualChannel::new(
+        &broker_config,
+        Cert::from_key_file(&config.testing.l2.priv_key)?,
+        Some(config.testing.l2.id),
+        allow_list.clone(),
+    )?;
     let dispatcher_channel = if emulator_dispatcher {
-        Some(DualChannel::new(&broker_config, EMULATOR_ID))
+        Some(DualChannel::new(
+            &broker_config,
+            Cert::from_key_file(&config.testing.emulator.priv_key)?,
+            Some(config.testing.emulator.id),
+            allow_list,
+        )?)
     } else {
         None
     };
 
     clear_db(&config.storage.path);
     clear_db(&config.key_storage.path);
-    clear_db(&config.broker_storage.path);
+    clear_db(&config.broker.storage.path);
+    clear_db(&config.comms.storage_path);
+    Wallet::clear_db(&config.wallet)?;
 
     info!("config: {:?}", config.storage.path);
 
     let bitvmx = BitVMX::new(config)?;
 
-    let address = P2PAddress::new(&bitvmx.address(), PeerId::from_str(&bitvmx.peer_id())?);
-    info!("peer id {:?}", bitvmx.peer_id());
+    let address = CommsAddress::new(bitvmx.address(), bitvmx.pubkey_hash()?);
+    info!("public key hash {:?}", bitvmx.pubkey_hash());
 
     //This messages will come from the bridge client.
 
@@ -62,7 +79,7 @@ pub fn init_bitvmx(
 
 pub fn tick(instance: &mut BitVMX) {
     instance.process_api_messages().unwrap();
-    instance.process_p2p_messages().unwrap();
+    instance.process_comms_messages().unwrap();
     instance.process_programs().unwrap();
     instance.process_collaboration().unwrap();
     instance.process_pending_messages().unwrap();
@@ -72,7 +89,7 @@ pub fn wait_message_from_channel(
     channel: &DualChannel,
     instances: &mut Vec<&mut BitVMX>,
     fake_tick: bool,
-) -> Result<(String, u32)> {
+) -> Result<(String, Identifier)> {
     //loop to timeout
     for i in 0..40000 {
         if i % 50 == 0 {
@@ -99,15 +116,22 @@ pub const FUNDING_ID: &str = "fund_1";
 pub const FEE: u64 = 500;
 
 pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
-    let config = Config::new(Some("config/op_1.yaml".to_string()))?;
+    let wallet_config = bitvmx_settings::settings::load_config_file::<
+        bitvmx_wallet::wallet::config::Config,
+    >(Some("config/wallet_regtest.yaml".to_string()))?;
+
+    // Clear indexer, monitor, key manager and wallet data.
+    clear_db(&wallet_config.storage.path);
+    clear_db(&wallet_config.key_storage.path);
+    Wallet::clear_db(&wallet_config.wallet)?;
 
     let bitcoind = Bitcoind::new_with_flags(
         "bitcoin-regtest",
         "ruimarinho/bitcoin-core",
-        config.bitcoin.clone(),
+        wallet_config.bitcoin.clone(),
         BitcoindFlags {
             min_relay_tx_fee: 0.00001,
-            block_min_tx_fee: 0.00008,
+            block_min_tx_fee: 0.00001,
             debug: 1,
             fallback_fee: 0.0002,
         },
@@ -115,30 +139,23 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
     info!("Starting bitcoind");
     bitcoind.start()?;
 
-    let wallet_config = match config.bitcoin.network {
-        Network::Regtest => "config/wallet_regtest.yaml",
-        Network::Testnet => "config/wallet_testnet.yaml",
-        _ => panic!("Not supported network {}", config.bitcoin.network),
-    };
-
-    let wallet_config = bitvmx_settings::settings::load_config_file::<
-        bitvmx_wallet::config::WalletConfig,
-    >(Some(wallet_config.to_string()))?;
-    if config.bitcoin.network == Network::Regtest {
-        clear_db(&wallet_config.storage.path);
-        clear_db(&wallet_config.key_storage.path);
-    }
-    let wallet = Wallet::new(wallet_config, true)?;
-    wallet.mine(INITIAL_BLOCK_COUNT)?;
-
-    wallet.create_wallet(WALLET_NAME)?;
-    wallet.regtest_fund(WALLET_NAME, FUNDING_ID, 100_000_000)?;
-
     let bitcoin_client = BitcoinClient::new(
-        &config.bitcoin.url,
-        &config.bitcoin.username,
-        &config.bitcoin.password,
+        &wallet_config.bitcoin.url,
+        &wallet_config.bitcoin.username,
+        &wallet_config.bitcoin.password,
     )?;
+
+    // Create a new local wallet
+    let mut wallet =
+        Wallet::from_config(wallet_config.bitcoin.clone(), wallet_config.wallet.clone())?;
+    // Initialize the wallet bitcoin RPC wallet
+    let _address = bitcoin_client.init_wallet(&wallet_config.bitcoin.wallet)?;
+    // Mine 100 blocks to ensure the coinbase output is mature
+    bitcoin_client.mine_blocks_to_address(INITIAL_BLOCK_COUNT, &_address)?;
+    // Fund the local wallet with 10 BTC from the bitcoin RPC wallet
+    bitcoin_client.fund_address(&wallet.receive_address()?, Amount::from_int_btc(10))?;
+    // Sync the wallet with the Bitcoin node to the latest block
+    wallet.sync_wallet()?;
 
     Ok((bitcoin_client, bitcoind, wallet))
 }
@@ -154,12 +171,11 @@ pub fn config_trace() {
 fn config_trace_aux() {
     let default_modules = [
         "info",
-        "libp2p=off",
         "bitvmx_transaction_monitor=off",
         "bitcoin_indexer=off",
         "bitcoin_coordinator=info",
-        "p2p_protocol=off",
-        "p2p_handler=off",
+        "bitvmx_wallet=info",
+        "operator_comms=off",
         "tarpc=off",
         "key_manager=off",
         "memory=off",
@@ -178,9 +194,11 @@ fn config_trace_aux() {
         .init();
 }
 
-pub fn send_all(channels: &Vec<DualChannel>, msg: &str) -> Result<()> {
-    for channel in channels {
-        channel.send(BITVMX_ID, msg.to_string())?;
+pub fn send_all(id_channel_pairs: &Vec<ParticipantChannel>, msg: &str) -> Result<()> {
+    for id_channel_pair in id_channel_pairs {
+        id_channel_pair
+            .channel
+            .send(&id_channel_pair.id, msg.to_string())?;
     }
     Ok(())
 }
@@ -205,8 +223,19 @@ pub fn mine_and_wait(
     instances: &mut Vec<BitVMX>,
     wallet: &Wallet,
 ) -> Result<Vec<OutgoingBitVMXApiMessages>> {
+    mine_and_wait_blocks(_bitcoin_client, channels, instances, wallet, 10)
+}
+
+pub fn mine_and_wait_blocks(
+    _bitcoin_client: &BitcoinClient,
+    channels: &Vec<DualChannel>,
+    instances: &mut Vec<BitVMX>,
+    wallet: &Wallet,
+    blocks: u32,
+) -> Result<Vec<OutgoingBitVMXApiMessages>> {
     //MINE AND WAIT
-    for i in 0..100 {
+    let iters = blocks * 10;
+    for i in 0..iters {
         if i % 10 == 0 {
             wallet.mine(1)?;
         }
@@ -221,33 +250,37 @@ pub fn mine_and_wait(
     Ok(msgs)
 }
 
-pub fn init_broker(role: &str) -> Result<DualChannel> {
+pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
     let config = Config::new(Some(format!("config/{}.yaml", role)))?;
-    let broker_config = BrokerConfig::new(config.broker_port, None);
-    let bridge_client = DualChannel::new(&broker_config, L2_ID);
-    Ok(bridge_client)
+    let allow_list = AllowList::from_file(&config.broker.allow_list)?;
+    let broker_config = BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
+    let bridge_client = DualChannel::new(
+        &broker_config,
+        Cert::from_key_file(&config.testing.l2.priv_key)?,
+        Some(config.testing.l2.id),
+        allow_list.clone(),
+    )?;
+    let particiant_channel = ParticipantChannel {
+        id: config.components.bitvmx,
+        channel: bridge_client,
+    };
+    Ok(particiant_channel)
 }
 
 pub fn init_utxo_new(
-    wallet: &Wallet,
+    wallet: &mut Wallet,
     internal_key: &PublicKey,
     spending_scripts: Vec<ProtocolScript>,
     amount: u64,
-    from: Option<&str>,
 ) -> Result<(Utxo, OutputType)> {
     info!("Funding address: {:?} with: {}", internal_key, amount);
-    let txid = wallet.fund_address(
-        WALLET_NAME,
-        from.unwrap_or(FUNDING_ID),
-        internal_key.clone(),
-        &vec![amount],
-        FEE,
-        true,
-        true,
-        Some(vec![spending_scripts.clone()]),
-    )?;
+    let tx = wallet.fund_destination(Destination::P2TR(
+        XOnlyPublicKey::from(internal_key.clone()),
+        spending_scripts.clone(),
+        amount,
+    ))?;
     wallet.mine(1)?;
-    let utxo = Utxo::new(txid, 0, amount, &*internal_key);
+    let utxo = Utxo::new(tx.compute_txid(), 0, amount, &*internal_key);
 
     let output_type = external_fund_tx(internal_key, spending_scripts, amount)?;
 
@@ -257,7 +290,7 @@ pub fn init_utxo_new(
 }
 
 pub fn init_utxo(
-    wallet: &Wallet,
+    wallet: &mut Wallet,
     aggregated_pub_key: PublicKey,
     secret: Option<Vec<u8>>,
     amount: u64,
@@ -275,19 +308,14 @@ pub fn init_utxo(
         )]
     };
 
-    let txid = wallet.fund_address(
-        WALLET_NAME,
-        FUNDING_ID,
-        aggregated_pub_key.clone(),
-        &vec![amount],
-        FEE,
-        true,
-        true,
-        Some(vec![spending_scripts.clone()]),
-    )?;
+    let tx = wallet.fund_destination(Destination::P2TR(
+        aggregated_pub_key.into(),
+        spending_scripts,
+        amount,
+    ))?;
     wallet.mine(1)?;
 
-    let utxo = Utxo::new(txid, 0, amount, &aggregated_pub_key);
+    let utxo = Utxo::new(tx.compute_txid(), 0, amount, &aggregated_pub_key);
 
     info!("UTXO: {:?}", utxo);
 
@@ -298,23 +326,13 @@ pub fn set_speedup_funding(
     amount: u64,
     pub_key: &PublicKey,
     channel: &DualChannel,
-    wallet: &Wallet,
+    wallet: &mut Wallet,
+    bitvmx_id: &Identifier,
 ) -> Result<()> {
-    let fund_txid = wallet.fund_address(
-        WALLET_NAME,
-        FUNDING_ID,
-        *pub_key,
-        &vec![amount],
-        FEE,
-        false,
-        true,
-        None,
-    )?;
+    let fund_tx = wallet.fund_destination(Destination::P2WPKH(*pub_key, amount))?;
 
-    wallet.mine(1)?;
-
-    let funds_utxo_0 = Utxo::new(fund_txid, 0, amount, pub_key);
+    let funds_utxo_0 = Utxo::new(fund_tx.compute_txid(), 0, amount, pub_key);
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
-    channel.send(BITVMX_ID, command)?;
+    channel.send(bitvmx_id, command)?;
     Ok(())
 }

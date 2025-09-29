@@ -25,9 +25,6 @@ tokio = { version = "1.40.0", features = ["sync"] }
 sha2 = "0.10"
 enum_dispatch = { version = "0.3.13" }
 ctrlc = "3.2.5"
-rsa = "0.9.8"
-# TODO: remove this once we have a proper certificate handling
-rcgen = "0.12.0"
 
 bitcoincore-rpc = { version = "0.19.0" }
 bitcoin-script = { git = "https://github.com/FairgateLabs/rust-bitcoin-script/", branch = "bitvmx" }
@@ -36,9 +33,7 @@ bitcoin-scriptexec = { git = "https://github.com/FairgateLabs/rust-bitcoin-scrip
 bitvmx-key-manager = { path = "../rust-bitvmx-key-manager" }
 bitvmx-protocol-builder = { path = "../rust-bitvmx-protocol-builder" }
 bitcoin-coordinator = { path = "../rust-bitcoin-coordinator" }
-#p2p_handler = { path = "../rust-p2p-handler" }
-#p2p_handler = { path = "../rust-fakep2p", features = [ "memory-impl", ], default-features = false }
-p2p_handler = { path = "../rust-fakep2p" }
+operator_comms = { path = "../rust-bitvmx-operator-comms" }
 rust-bitvmx-storage-backend = { path = "../rust-bitvmx-storage-backend" }
 bitvmx-settings = { path = "../rust-bitvmx-settings" }
 bitvmx-bitcoin-rpc = { path = "../rust-bitvmx-bitcoin-rpc" }
@@ -59,9 +54,10 @@ bitvmx-job-dispatcher-types = { path = "../rust-bitvmx-job-dispatcher/jobtypes",
     "prover",
 ] }
 zk-result = { path = "../rust-bitvmx-zk-proof/zk-result" }
-
+bitvmx-wallet = { path = "../rust-bitvmx-wallet" }
 
 musig2 = { version = "0.2.3", features = ["serde", "rand"] }
+reqwest = "0.12.23"
 
 [dev-dependencies]
 bollard = "0.11.0"
@@ -73,7 +69,7 @@ bitvmx-wallet = { path = "../rust-bitvmx-wallet" }
 default = ["cardinal", "union"]
 cardinal = []
 union = []
-test = []
+testpanic = []
 
 [[example]]
 name = "union"

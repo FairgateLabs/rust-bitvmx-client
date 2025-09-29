@@ -3,7 +3,7 @@ use bitcoin::PublicKey;
 use bitvmx_client::{
     client::BitVMXClient,
     program::{
-        participant::P2PAddress,
+        participant::CommsAddress,
         protocols::union::{common::get_user_take_pid, types::PegOutRequest},
         variables::VariableTypes,
     },
@@ -29,7 +29,7 @@ impl UserTakeSetup {
         take_aggregated_key: PublicKey,
         my_id: &str,
         bitvmx: &BitVMXClient,
-        addresses: &Vec<P2PAddress>,
+        addresses: &Vec<CommsAddress>,
     ) -> Result<()> {
         let protocol_id = get_user_take_pid(committee_id, slot_index);
         info!(

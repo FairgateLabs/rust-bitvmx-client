@@ -26,13 +26,13 @@ cargo build
 
 Run the client tests:
 ```bash
-RUST_BACKTRACE=1 cargo test --package bitvmx-client --test client -- test_client --exact --show-output --ignored
+RUST_BACKTRACE=1 cargo test --release -- --ignored test_all
 ```
 
 ### Integration test
 
 If you are running a bitcoin node, you should stop it before running the integratio test (as it handles its own node).
 ```bash
-RUST_BACKTRACE=1 cargo test test_single_run -- --ignored
+RUST_BACKTRACE=1 cargo test --release -- --ignored test_full
 ```
  

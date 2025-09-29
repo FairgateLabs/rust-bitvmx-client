@@ -1,10 +1,13 @@
 use std::{
+    path::Path,
     sync::mpsc::{Receiver, Sender},
     thread,
     time::Duration,
 };
 
 use anyhow::Result;
+use bitcoin::Network;
+use bitvmx_wallet::wallet::{RegtestWallet, Wallet};
 use clap::{Arg, Command};
 use tracing::{debug, info, info_span};
 use tracing_subscriber::EnvFilter;
@@ -31,7 +34,7 @@ impl OperatorInstance {
 fn config_trace() {
     // Try to read from RUST_LOG environment variable first, fall back to default if not set
     let filter = EnvFilter::try_from_default_env()
-        .or_else(|_| EnvFilter::try_new("info,libp2p=off,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitcoin_coordinator=info,p2p_protocol=off,p2p_handler=off,tarpc=off,broker=off"))
+        .or_else(|_| EnvFilter::try_new("info,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitcoin_coordinator=info,tarpc=off,broker=off,bitvmx_wallet=info,bitvmx_bitcoin_rpc=off"))
         .expect("Invalid filter");
 
     tracing_subscriber::fmt()
@@ -46,17 +49,30 @@ fn clear_db(path: &str) {
 }
 
 fn init_bitvmx(opn: &str, fresh: bool) -> Result<BitVMX> {
-    let config = Config::new(Some(format!("config/{}.yaml", opn)))?;
-    
+    let filename = format!("config/{}.yaml", opn);
+    if !Path::new(&filename).exists() {
+        panic!(
+            "Config file at path {} does not exist. Please create the configuration file before running the client.",
+            filename
+        );
+    }
+    let config = Config::new(Some(filename))?;
+
     if fresh {
         clear_db(&config.storage.path);
         clear_db(&config.key_storage.path);
-        clear_db(&config.broker_storage.path);
+        clear_db(&config.broker.storage.path);
+        clear_db(&config.comms.storage_path);
+
+        if config.bitcoin.network == Network::Regtest {
+            Wallet::clear_db(&config.wallet).unwrap();
+        }
     }
 
     info!("config: {:?}", config.storage.path);
 
-    let bitvmx = BitVMX::new(config)?;
+    let mut bitvmx = BitVMX::new(config)?;
+    bitvmx.sync_wallet()?;
     Ok(bitvmx)
 }
 
@@ -66,7 +82,12 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
     // Determine which operators to run
     let operator_names: Vec<&str> = match opn {
         "all" => vec!["op_1", "op_2", "op_3", "op_4"],
-        "all-testnet" => vec!["testnet_op_1", "testnet_op_2", "testnet_op_3", "testnet_op_4"],
+        "all-testnet" => vec![
+            "testnet_op_1",
+            "testnet_op_2",
+            "testnet_op_3",
+            "testnet_op_4",
+        ],
         single_op => vec![single_op],
     };
 
@@ -79,8 +100,8 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
     info!("BitVMX instance initialized");
     for instance in &instances {
         let _span = info_span!("", id = instance.name).entered();
-        info!("P2P Address: {}", instance.bitvmx.address());
-        info!("Peer ID: {}", instance.bitvmx.peer_id());
+        info!("Comms Address: {}", instance.bitvmx.address());
+        info!("Peer Public Key Hash: {}", instance.bitvmx.pubkey_hash()?);
         info!("Starting Bitcoin blockchain sync");
     }
 

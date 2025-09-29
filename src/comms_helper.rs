@@ -1,5 +1,5 @@
-use crate::{errors::BitVMXError, program::participant::P2PAddress};
-use p2p_handler::{P2pHandler, PeerId};
+use crate::{errors::BitVMXError, program::participant::CommsAddress};
+use operator_comms::operator_comms::OperatorComms;
 use serde::Serialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -8,33 +8,35 @@ const MIN_EXPECTED_MSG_LEN: usize = 4; // 2 bytes for version + 2 bytes for mess
 const MAX_EXPECTED_MSG_LEN: usize = 1000000; // Maximum length for a message //TODO: Change this value
 
 pub fn request<T: Serialize>(
-    comms: &P2pHandler,
+    comms: &OperatorComms,
     program_id: &Uuid,
-    p2p_address: P2PAddress,
-    msg_type: P2PMessageType,
+    comms_address: CommsAddress,
+    msg_type: CommsMessageType,
     msg: T,
 ) -> Result<(), BitVMXError> {
     let serialize_msg = serialize_msg(msg_type, program_id, msg)?;
     comms
-        .request(p2p_address.peer_id, p2p_address.address, serialize_msg)
+        .send(
+            &comms_address.pubkey_hash,
+            comms_address.address,
+            serialize_msg,
+        )
         .unwrap();
     Ok(())
 }
 
 pub fn response<T: Serialize>(
-    comms: &P2pHandler,
+    comms: &OperatorComms,
     program_id: &Uuid,
-    peer_id: PeerId,
-    msg_type: P2PMessageType,
+    comms_address: CommsAddress,
+    msg_type: CommsMessageType,
     msg: T,
 ) -> Result<(), BitVMXError> {
-    let serialize_msg = serialize_msg(msg_type, program_id, msg)?;
-    comms.response(peer_id, serialize_msg).unwrap();
-    Ok(())
+    request(comms, program_id, comms_address, msg_type, msg) // In this version, response is identical to request. Keeping it separate for clarity.
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub enum P2PMessageType {
+pub enum CommsMessageType {
     Keys,
     KeysAck,
     PublicNonces,
@@ -43,15 +45,15 @@ pub enum P2PMessageType {
     PartialSignaturesAck,
 }
 
-impl P2PMessageType {
+impl CommsMessageType {
     // Define a mapping between message kinds and their byte representations
-    const KIND_MAP: &'static [(&'static P2PMessageType, [u8; 2])] = &[
-        (&P2PMessageType::Keys, [0x00, 0x01]),
-        (&P2PMessageType::KeysAck, [0x00, 0x02]),
-        (&P2PMessageType::PublicNonces, [0x00, 0x03]),
-        (&P2PMessageType::PublicNoncesAck, [0x00, 0x04]),
-        (&P2PMessageType::PartialSignatures, [0x00, 0x05]),
-        (&P2PMessageType::PartialSignaturesAck, [0x00, 0x06]),
+    const KIND_MAP: &'static [(&'static CommsMessageType, [u8; 2])] = &[
+        (&CommsMessageType::Keys, [0x00, 0x01]),
+        (&CommsMessageType::KeysAck, [0x00, 0x02]),
+        (&CommsMessageType::PublicNonces, [0x00, 0x03]),
+        (&CommsMessageType::PublicNoncesAck, [0x00, 0x04]),
+        (&CommsMessageType::PartialSignatures, [0x00, 0x05]),
+        (&CommsMessageType::PartialSignaturesAck, [0x00, 0x06]),
     ];
 
     // Convert message type to 2-byte representation
@@ -104,7 +106,7 @@ impl Version {
 
 // Serialize the message into the required format
 pub fn serialize_msg<T: Serialize>(
-    msg_type: P2PMessageType,
+    msg_type: CommsMessageType,
     program_id: &Uuid,
     data: T,
 ) -> Result<Vec<u8>, BitVMXError> {
@@ -131,7 +133,7 @@ pub fn serialize_msg<T: Serialize>(
 
 pub fn deserialize_msg(
     data: Vec<u8>,
-) -> Result<(String, P2PMessageType, Uuid, Value), BitVMXError> {
+) -> Result<(String, CommsMessageType, Uuid, Value), BitVMXError> {
     // Minimum length check: 4 bytes (2 for version + 2 for message type) + payload
     if data.len() < MIN_EXPECTED_MSG_LEN || data.len() > MAX_EXPECTED_MSG_LEN {
         return Err(BitVMXError::InvalidMessageFormat);
@@ -144,7 +146,7 @@ pub fn deserialize_msg(
 
     // Validate and convert version and message type
     let version = Version::from_bytes(version_bytes)?;
-    let msg_type = P2PMessageType::from_bytes(msg_type_bytes)?;
+    let msg_type = CommsMessageType::from_bytes(msg_type_bytes)?;
 
     // Validate and parse JSON payload
     let payload: Value =
@@ -185,52 +187,52 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_p2p_message_kind_to_bytes() {
-        assert_eq!(P2PMessageType::Keys.to_bytes().unwrap(), [0x00, 0x01]);
-        assert_eq!(P2PMessageType::KeysAck.to_bytes().unwrap(), [0x00, 0x02]);
+    fn test_comms_message_kind_to_bytes() {
+        assert_eq!(CommsMessageType::Keys.to_bytes().unwrap(), [0x00, 0x01]);
+        assert_eq!(CommsMessageType::KeysAck.to_bytes().unwrap(), [0x00, 0x02]);
         assert_eq!(
-            P2PMessageType::PublicNonces.to_bytes().unwrap(),
+            CommsMessageType::PublicNonces.to_bytes().unwrap(),
             [0x00, 0x03]
         );
         assert_eq!(
-            P2PMessageType::PublicNoncesAck.to_bytes().unwrap(),
+            CommsMessageType::PublicNoncesAck.to_bytes().unwrap(),
             [0x00, 0x04]
         );
         assert_eq!(
-            P2PMessageType::PartialSignatures.to_bytes().unwrap(),
+            CommsMessageType::PartialSignatures.to_bytes().unwrap(),
             [0x00, 0x05]
         );
         assert_eq!(
-            P2PMessageType::PartialSignaturesAck.to_bytes().unwrap(),
+            CommsMessageType::PartialSignaturesAck.to_bytes().unwrap(),
             [0x00, 0x06]
         );
     }
 
     #[test]
-    fn test_p2p_message_kind_from_bytes() {
+    fn test_comms_message_kind_from_bytes() {
         assert_eq!(
-            P2PMessageType::from_bytes([0x00, 0x01]).unwrap(),
-            P2PMessageType::Keys
+            CommsMessageType::from_bytes([0x00, 0x01]).unwrap(),
+            CommsMessageType::Keys
         );
         assert_eq!(
-            P2PMessageType::from_bytes([0x00, 0x02]).unwrap(),
-            P2PMessageType::KeysAck
+            CommsMessageType::from_bytes([0x00, 0x02]).unwrap(),
+            CommsMessageType::KeysAck
         );
         assert_eq!(
-            P2PMessageType::from_bytes([0x00, 0x03]).unwrap(),
-            P2PMessageType::PublicNonces
+            CommsMessageType::from_bytes([0x00, 0x03]).unwrap(),
+            CommsMessageType::PublicNonces
         );
         assert_eq!(
-            P2PMessageType::from_bytes([0x00, 0x04]).unwrap(),
-            P2PMessageType::PublicNoncesAck
+            CommsMessageType::from_bytes([0x00, 0x04]).unwrap(),
+            CommsMessageType::PublicNoncesAck
         );
         assert_eq!(
-            P2PMessageType::from_bytes([0x00, 0x05]).unwrap(),
-            P2PMessageType::PartialSignatures
+            CommsMessageType::from_bytes([0x00, 0x05]).unwrap(),
+            CommsMessageType::PartialSignatures
         );
         assert_eq!(
-            P2PMessageType::from_bytes([0x00, 0x06]).unwrap(),
-            P2PMessageType::PartialSignaturesAck
+            CommsMessageType::from_bytes([0x00, 0x06]).unwrap(),
+            CommsMessageType::PartialSignaturesAck
         );
     }
 
@@ -247,7 +249,7 @@ mod tests {
     #[test]
     fn test_parse_msg() {
         let version = "1.0";
-        let msg_type = P2PMessageType::Keys;
+        let msg_type = CommsMessageType::Keys;
         let program_id = Uuid::new_v4();
         let msg = vec![0x01, 0x02, 0x03];
 
@@ -273,7 +275,7 @@ mod tests {
     #[test]
     fn test_deserialize_msg() {
         let version = "1.0";
-        let msg_type = P2PMessageType::Keys;
+        let msg_type = CommsMessageType::Keys;
         let program_id = Uuid::new_v4();
         let msg = "Hello, world!";
 
@@ -296,7 +298,7 @@ mod tests {
     // #[test]
     // fn test_message_contains_invalid_byte_value() {
     //     let version = "1.0";
-    //     let msg_type = P2PMessageType::Keys;
+    //     let msg_type = CommsMessageType::Keys;
     //     let program_id = Uuid::new_v4();
 
     //     // Create a JSON payload with an invalid value (>255)

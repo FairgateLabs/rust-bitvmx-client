@@ -1,4 +1,4 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{collections::HashMap, path::Path, rc::Rc};
 
 use bitcoin::{secp256k1::rand::thread_rng, PublicKey, XOnlyPublicKey};
 use key_manager::{
@@ -8,23 +8,20 @@ use key_manager::{
     musig2::{types::MessageId, PartialSignature, PubNonce},
     winternitz::{WinternitzPublicKey, WinternitzType},
 };
-use rcgen::{Certificate, CertificateParams, KeyPair, PKCS_RSA_SHA256};
-use rsa::{
-    pkcs8::{DecodePrivateKey, DecodePublicKey},
-    Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey,
-};
 
 use protocol_builder::unspendable::unspendable_key;
 use storage_backend::storage::{KeyValueStore, Storage};
 
-use crate::{config::Config, errors::BitVMXError};
+use crate::{
+    config::Config,
+    errors::{BitVMXError, ConfigError},
+};
+
+const RSA_KEY_INDEX: usize = 0; // TODO: make this configurable
 
 pub struct KeyChain {
     pub key_manager: Rc<KeyManager>,
-    pub communications_key: Vec<u8>,
     pub store: Rc<Storage>,
-    //TODO: move cert and communications_key to key manager
-    pub cert: Certificate,
 }
 
 pub type Index = u32;
@@ -55,28 +52,19 @@ impl KeyChain {
 
         let key_manager = Rc::new(key_manager);
 
-        //TODO: move to key manager and use PEM key pair for communications_key
-        // It uses pkcs8 format for the private key
-        // get private key from file at p2p_key path
-        let path = config.p2p_key();
+        let path = config.comms_key();
+        if !Path::new(path).exists() {
+            return Err(BitVMXError::ConfigurationError(ConfigError::InvalidConfigPath(
+                format!(
+                    "Failed to read PEM file at path {}. Please ensure the file exists and is accessible.",
+                    path
+                )
+            )));
+        }
         let pem_file = std::fs::read_to_string(path).unwrap();
-        let keypair = KeyPair::from_pem_and_sign_algo(&pem_file, &PKCS_RSA_SHA256).unwrap();
+        let _pub_key = key_manager.import_rsa_private_key(&pem_file, RSA_KEY_INDEX)?;
 
-        // TODO: hardcoded communications key to be on allowed list
-        let communications_key = keypair.public_key_der();
-
-        // Generate certificate
-        let mut params = CertificateParams::default();
-        params.key_pair = Some(keypair);
-        params.alg = &PKCS_RSA_SHA256;
-        let cert = Certificate::from_params(params).unwrap();
-
-        Ok(Self {
-            key_manager,
-            communications_key,
-            store,
-            cert,
-        })
+        Ok(Self { key_manager, store })
     }
 
     pub fn get_new_ecdsa_index(&self) -> Result<Index, BitVMXError> {
@@ -261,76 +249,12 @@ impl KeyChain {
     //         .map_err(BitVMXError::MuSig2SignerError)?;
     //     Ok(())
     // }
-
-    pub fn encrypt_messages(
-        &self,
-        message: Vec<u8>,
-        public_key: Vec<u8>,
-    ) -> Result<Vec<u8>, BitVMXError> {
-        // 2. Parse the pkcs8public key with rsa crate
-        let rsa_pub = RsaPublicKey::from_public_key_der(&public_key).unwrap();
-
-        // 3. Encrypt data with public key
-        let mut rng = thread_rng();
-        let enc_data = rsa_pub
-            .encrypt(&mut rng, Pkcs1v15Encrypt, &message)
-            .unwrap();
-
-        Ok(enc_data)
-    }
-
-    pub fn decrypt_messages(&self, message: Vec<u8>) -> Result<Vec<u8>, BitVMXError> {
-        // 1. Extract pkcs8 private key PEMs
-        let privkey_der = self.cert.get_key_pair().serialize_der();
-
-        // 2. Parse keys with rsa crate
-        let rsa_priv = RsaPrivateKey::from_pkcs8_der(&privkey_der).unwrap();
-
-        // 3. Decrypt data with private key
-        let decrypted = rsa_priv.decrypt(Pkcs1v15Encrypt, &message).unwrap();
-
-        Ok(decrypted)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::rc::Rc;
-
-    // TODO: when unhardcoded communications key in allowed list, remove this test
-    #[test]
-    fn test_communications_key() -> Result<(), BitVMXError> {
-        // Create config and storage for testing
-        let config_1 = Config::new(Some("config/op_1.yaml".to_string()))?;
-        let store_1 = Rc::new(Storage::new(&config_1.storage)?);
-        let keychain_1 = KeyChain::new(&config_1, store_1)?;
-        let public_key_der_1 = keychain_1.cert.get_key_pair().public_key_der();
-        assert_eq!(hex::encode(&public_key_der_1), "30820122300d06092a864886f70d01010105000382010f003082010a0282010100b0595a239c455f955ac2617061fadc0f3c532056da4a4ab4111b6581a62143e6c00b3041a00c290232fa65794ea0a55ca5f2ed3310ecbcab06a721d66e99a27e0d1b8a6afd8e395b741fbcf6cb73294eaeff43118f828f0118a4b5fdc95d472bcadaf2bc4d665e535ccd70b8ee5b82624794351a82c9f819d9a53638122228d1800d7d6561ae98183ae53c6cf23964c7eceeae95807db49a164cfbbc1ddc87a975fbe3d43545e8ce1bad2043cfe6a9aa3a7538ebdab8e6b900c94a691c1321d7c2d7f1a1beb3c3ef03686f7805ce938c92c8d5057cb5101cd51c1d97d7d3d4b9f13b7cb28bc5c4c5c9983a3062efc606b9c440021e1d5257d88d9c3ced0ac38f0203010001", "Op_1 public key should be correct");
-
-        // Create config and storage for testing
-        let config_2 = Config::new(Some("config/op_2.yaml".to_string()))?;
-        let store_2 = Rc::new(Storage::new(&config_2.storage)?);
-        let keychain_2 = KeyChain::new(&config_2, store_2)?;
-        let public_key_der_2 = keychain_2.cert.get_key_pair().public_key_der();
-        assert_eq!(hex::encode(&public_key_der_2), "30820122300d06092a864886f70d01010105000382010f003082010a0282010100c96872f74e913fbcf2e068d7f508e52dad5a278123ad6546d9735e3f35163e836427ef6ea14ff28d4ca30e7f0d4e251ddf4724668675052d6adb8581550b0adb11f0dcb78a4e9d6ad00f68bf21851d590d88d9fff1d8d7678454f9df4a1daad2f8ebfe69b4ea99160a9e2d43a98cdaaaf380bc4de9f9dec6bedc9351c89c43e4d5d89abbef98664f5d57cdf5c68d93e928203c84fd038fedddac5bbe2b243378141edec442e83c57f0bab437336586f6d6bc01bee222ee8f67dfacb2d94d7a4e406d05446c9f84de055d6175217de19d1005203674b1693f1df2d3dacd11839a782c343c33e86b952740812da624f2ddfd71edf9eb5e9ddf7944b9afc3a08b2f0203010001", "Op_2 public key should be correct");
-
-        // Create config and storage for testing
-        let config_3 = Config::new(Some("config/op_3.yaml".to_string()))?;
-        let store_3 = Rc::new(Storage::new(&config_3.storage)?);
-        let keychain_3 = KeyChain::new(&config_3, store_3)?;
-        let public_key_der_3 = keychain_3.cert.get_key_pair().public_key_der();
-        assert_eq!(hex::encode(&public_key_der_3), "30820122300d06092a864886f70d01010105000382010f003082010a0282010100e602dadfc9a2b10e6c042e10ba19628e49132fba6197f817457bd8728e881b35dc107838437b562cb9c611c2666fe3492db881630cd917178d17d21d48e664f685d9cd2ea2658501b3eb51ac7d9832e4ec580a5822616b0b663a3fb05a5aae15881baddeb7d8d329f064b460637a28ed569b93074446cb4946720474950456c950b5ae00b5f8b5a490eb1fc9af0206178ab81d3ca81b74fca1d84da9db510c10be2df4624be64fed6a6e59dc90880dc6ed61d4908ddcaf9eb0b08b0d58c5741085da051c4a537d33a8602fc22c6bef5853208698752561afa02ce763fb2bc0b88db51c90735d72dbd0ef6895c77aead64d5fe43e4d7521ed5f8da50c96636e4b0203010001", "Op_3 public key should be correct");
-
-        // Create config and storage for testing
-        let config_4 = Config::new(Some("config/op_4.yaml".to_string()))?;
-        let store_4 = Rc::new(Storage::new(&config_4.storage)?);
-        let keychain_4 = KeyChain::new(&config_4, store_4)?;
-        let public_key_der_4 = keychain_4.cert.get_key_pair().public_key_der();
-        assert_eq!(hex::encode(&public_key_der_4), "30820122300d06092a864886f70d01010105000382010f003082010a0282010100d1f76c66923556eaa6e9db0acf025fa96049e150cccd910ed6a36d6b32e1eb531620182c34b9ec04a00ba9e2f02f6f6f1493cf0dd42ffcafe60d81c7102f7b64f22a76ebe749dd285435a4d551ed03271062318e08efafbb1e9341aabe685a56cf81abf4af7437e60e9435a0a9682f8720b3ad017c29c517c3b25cc467f5f1ccd9ab791a206cef513141938491e5527df1e615088061a7bdc19622fd43323a74020870042ce33287f730fa5d17eb7f21b1dc6bb028d2a01850b9fb3c0ae40d5023dcdd2c888691a2c50d956f8e6d3d92c3cf893388f954781d1ee118b5840ef88a0d1cc8d218e535d706b044bf6c881ceafec982fd7ed516daaab60c4ea7d15b0203010001", "Op_4 public key should be correct");
-
-        Ok(())
-    }
 
     #[test]
     fn test_encrypt_and_decrypt_messages() -> Result<(), BitVMXError> {
@@ -344,19 +268,25 @@ mod tests {
         // Test message
         let original_message = b"Hello, this is a test message for encryption!".to_vec();
 
-        // Get the public key from the certificate for encryption
-        let public_key_der = keychain.cert.get_key_pair().public_key_der();
+        // Get the public key for encryption
+        let rng = &mut thread_rng();
+        let pub_key = keychain
+            .key_manager
+            .generate_rsa_keypair(rng, RSA_KEY_INDEX + 1)?; // +1 to avoid using the default RSA key index only for testing
 
         // Encrypt the message
-        let encrypted_message =
-            keychain.encrypt_messages(original_message.clone(), public_key_der)?;
+        let encrypted_message = keychain
+            .key_manager
+            .encrypt_rsa_message(&original_message.clone(), pub_key)?;
 
         // Verify encryption changed the data
         assert_ne!(original_message, encrypted_message);
         assert!(!encrypted_message.is_empty());
 
         // Decrypt the message
-        let decrypted_message = keychain.decrypt_messages(encrypted_message)?;
+        let decrypted_message = keychain
+            .key_manager
+            .decrypt_rsa_message(&encrypted_message, RSA_KEY_INDEX + 1)?;
 
         // Verify decryption restored the original message
         assert_eq!(original_message, decrypted_message);

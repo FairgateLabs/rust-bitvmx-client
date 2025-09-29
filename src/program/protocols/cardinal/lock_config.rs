@@ -1,5 +1,4 @@
 use bitcoin::{PublicKey, Txid};
-use bitvmx_broker::channel::channel::DualChannel;
 use protocol_builder::scripts::{self, SignMode};
 use uuid::Uuid;
 
@@ -9,7 +8,7 @@ use crate::{
         protocols::{cardinal::EOL_TIMELOCK_DURATION, protocol_handler::external_fund_tx},
         variables::{Globals, PartialUtxo, VariableTypes},
     },
-    types::{IncomingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_LOCK},
+    types::{IncomingBitVMXApiMessages, ParticipantChannel, PROGRAM_TYPE_LOCK},
 };
 
 pub struct LockProtocolConfiguration {
@@ -88,7 +87,7 @@ impl LockProtocolConfiguration {
 
     pub fn get_setup_messages(
         &self,
-        addresses: Vec<crate::program::participant::P2PAddress>,
+        addresses: Vec<crate::program::participant::CommsAddress>,
         leader: u16,
     ) -> Result<Vec<String>, BitVMXError> {
         Ok(vec![
@@ -117,12 +116,14 @@ impl LockProtocolConfiguration {
 
     pub fn setup(
         &self,
-        channel: &DualChannel,
-        addresses: Vec<crate::program::participant::P2PAddress>,
+        id_channel_pairs: &Vec<ParticipantChannel>,
+        addresses: Vec<crate::program::participant::CommsAddress>,
         leader: u16,
     ) -> Result<(), BitVMXError> {
-        for msg in self.get_setup_messages(addresses, leader)? {
-            channel.send(BITVMX_ID, msg)?;
+        for id_channel_pair in id_channel_pairs {
+            for msg in self.get_setup_messages(addresses.clone(), leader)? {
+                id_channel_pair.channel.send(&id_channel_pair.id, msg)?;
+            }
         }
         Ok(())
     }
@@ -146,8 +147,11 @@ impl LockProtocolConfiguration {
         ];
 
         let asset_value = self.ordinal_utxo.2.unwrap();
-        let asset_output_type =
-            external_fund_tx(&self.unspendable, asset_spending_condition, asset_value)?;
+        let asset_output_type = external_fund_tx(
+            &self.operators_aggregated_pub,
+            asset_spending_condition,
+            asset_value,
+        )?;
 
         Ok((txid.clone(), 0, Some(asset_value), Some(asset_output_type)))
     }

@@ -38,21 +38,19 @@ use crate::{
             },
             protocol_handler::{ProtocolContext, ProtocolHandler},
         },
-        variables::VariableTypes,
+        variables::{PartialUtxo, VariableTypes},
     },
     types::ProgramContext,
 };
 
 pub const EXTERNAL_START: &str = "EXTERNAL_START";
-pub const EXTERNAL_ACTION: &str = "EXTERNAL_ACTION";
 pub const START_CH: &str = "START_CHALLENGE";
 pub const INPUT_TX: &str = "INPUT_";
 pub const COMMITMENT: &str = "COMMITMENT";
 pub const EXECUTE: &str = "EXECUTE";
-pub const TIMELOCK_BLOCKS: u16 = 1;
+pub const TIMELOCK_BLOCKS: u16 = 15;
 pub const PROVER_WINS: &str = "PROVER_WINS";
 pub const VERIFIER_WINS: &str = "VERIFIER_WINS";
-pub const ACTION_PROVER_WINS: &str = "ACTION_PROVER_WINS";
 pub const CHALLENGE: &str = "CHALLENGE";
 pub const TIMELOCK_BLOCKS_KEY: &str = "TIMELOCK_BLOCKS";
 
@@ -95,6 +93,20 @@ fn get_role(my_idx: usize) -> ParticipantRole {
     }
 }
 
+pub fn action_wins(role: &ParticipantRole, n: u32) -> String {
+    match role {
+        ParticipantRole::Prover => format!("ACTION_PROVER_WINS_{n}"),
+        ParticipantRole::Verifier => format!("ACTION_VERIFIER_WINS_{n}"),
+    }
+}
+
+pub fn external_action(role: &ParticipantRole, n: u32) -> String {
+    match role {
+        ParticipantRole::Prover => format!("EXTERNAL_ACTION_PROVER_{n}"),
+        ParticipantRole::Verifier => format!("EXTERNAL_ACTION_VERIFIER_{n}"),
+    }
+}
+
 pub fn input_tx_name(index: u32) -> String {
     format!("INPUT_{}", index)
 }
@@ -112,6 +124,14 @@ pub fn program_input_prev_prefix(index: u32) -> String {
 
 pub fn program_input_word(index: u32, word: u32) -> String {
     format!("program_input_{}_{}", index, word)
+}
+
+pub fn timeout_tx(name: &str) -> String {
+    format!("{}_TO", name)
+}
+
+pub fn timeout_input_tx(name: &str) -> String {
+    format!("{}_INPUT_TO", name)
 }
 
 impl ProtocolHandler for DisputeResolutionProtocol {
@@ -273,15 +293,15 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             .unwrap()
             .utxo()?;
 
-        let input_in_speedup = true;
+        let utxo_verifier_win_action = context
+            .globals
+            .get_var(&self.ctx.id, "utxo_verifier_win_action")?;
+
         let prover_speedup_pub = keys[0].get_public("speedup")?;
         let verifier_speedup_pub = keys[1].get_public("speedup")?;
         let aggregated = computed_aggregated.get("aggregated_1").unwrap();
-        let (agg_or_prover, agg_or_verifier, sign_mode) = if input_in_speedup {
-            (prover_speedup_pub, verifier_speedup_pub, SignMode::Single)
-        } else {
-            (aggregated, aggregated, SignMode::Aggregate)
-        };
+        let (agg_or_prover, agg_or_verifier, sign_mode) =
+            (prover_speedup_pub, verifier_speedup_pub, SignMode::Single);
 
         let program_def = self.get_program_definition(context)?;
 
@@ -312,8 +332,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         amount = self.checked_sub(amount, fee)?;
 
-        amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
-        amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1))?;
+        amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1, true))?;
+        amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1, false))?;
 
         let timelock_blocks = context
             .globals
@@ -321,18 +341,64 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             .unwrap()
             .number()? as u16;
 
+        let claim_prover = ClaimGate::new(
+            &mut protocol,
+            START_CH,
+            PROVER_WINS,
+            (prover_speedup_pub, prover_signs),
+            aggregated,
+            fee,
+            speedup_dust,
+            vec![verifier_speedup_pub],
+            None,
+            timelock_blocks,
+            vec![aggregated],
+            true,
+            None,
+        )?;
+
+        let claim_verifier = ClaimGate::new(
+            &mut protocol,
+            START_CH,
+            VERIFIER_WINS,
+            (verifier_speedup_pub, verifier_signs),
+            aggregated,
+            fee,
+            speedup_dust,
+            vec![prover_speedup_pub],
+            None,
+            timelock_blocks,
+            vec![aggregated],
+            false,
+            claim_prover.exclusive_success_vout,
+        )?;
+
+        self.add_action(
+            &mut protocol,
+            &utxo_prover_win_action,
+            &prover_speedup_pub,
+            &ParticipantRole::Prover,
+            PROVER_WINS,
+            1,
+        )?;
+
+        if utxo_verifier_win_action.is_some() {
+            self.add_action(
+                &mut protocol,
+                &utxo_verifier_win_action.unwrap().utxo()?,
+                &verifier_speedup_pub,
+                &ParticipantRole::Verifier,
+                VERIFIER_WINS,
+                1,
+            )?;
+        }
+
         let mut prev_tx = START_CH.to_string();
         let mut input_tx = String::new();
 
         let (input_txs, input_txs_sizes, input_txs_offsets, _) =
             get_txs_configuration(&self.ctx.id, context)?;
 
-        //TODO: remove this
-        context.globals.set_var(
-            &self.ctx.id,
-            "input_words",
-            VariableTypes::Number(input_txs_sizes[0]),
-        )?;
         for (idx, tx_owner) in input_txs.iter().enumerate() {
             if tx_owner == "skip" || tx_owner == "prover_prev" {
                 continue;
@@ -361,9 +427,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 speedup_dust,
                 &prev_tx,
                 &input_tx,
-                None,
+                &claim_verifier,
                 Self::winternitz_check(agg_or_prover, sign_mode, &keys[0], &input_vars)?,
-                input_in_speedup,
                 (&prover_speedup_pub, &verifier_speedup_pub),
             )?;
 
@@ -371,79 +436,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             amount = self.checked_sub(amount, speedup_dust)?;
             prev_tx = input_tx.clone();
         }
-
-        let claim_prover = ClaimGate::new(
-            &mut protocol,
-            START_CH,
-            PROVER_WINS,
-            (prover_speedup_pub, prover_signs),
-            aggregated,
-            fee,
-            speedup_dust,
-            vec![verifier_speedup_pub],
-            None,
-            timelock_blocks,
-            vec![aggregated],
-        )?;
-
-        protocol.add_transaction(ACTION_PROVER_WINS)?;
-
-        if context.globals.get_var(&self.ctx.id, "FAKE_RUN")?.is_none() {
-            protocol.add_connection(
-                "PROVER_ACTION_1",
-                &ClaimGate::tx_success(PROVER_WINS),
-                0.into(),
-                ACTION_PROVER_WINS,
-                InputSpec::Auto(
-                    SighashType::taproot_all(),
-                    SpendMode::All {
-                        key_path_sign: SignMode::Aggregate,
-                    },
-                ),
-                None,
-                None,
-            )?;
-        }
-
-        //let prover_win_amount = utxo_prover_win_action.2.unwrap();
-        let output_type = utxo_prover_win_action.3.unwrap();
-        protocol.add_external_transaction(EXTERNAL_ACTION)?;
-        protocol.add_unknown_outputs(EXTERNAL_ACTION, utxo_prover_win_action.1)?;
-        protocol.add_transaction_output(EXTERNAL_ACTION, &output_type)?;
-        protocol.add_connection(
-            "EXTERNAL_ACTION__PROVER_WINS",
-            EXTERNAL_ACTION,
-            (utxo_prover_win_action.1 as usize).into(),
-            ACTION_PROVER_WINS,
-            InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::Script { leaf: 1 }, //the alternate key is on leaf 1
-            ),
-            None,
-            Some(utxo_prover_win_action.0),
-        )?;
-
-        let pb = ProtocolBuilder {};
-        pb.add_speedup_output(
-            &mut protocol,
-            ACTION_PROVER_WINS,
-            speedup_dust,
-            &prover_speedup_pub,
-        )?;
-
-        let claim_verifier = ClaimGate::new(
-            &mut protocol,
-            START_CH,
-            VERIFIER_WINS,
-            (verifier_speedup_pub, verifier_signs),
-            aggregated,
-            fee,
-            speedup_dust,
-            vec![prover_speedup_pub],
-            None,
-            timelock_blocks,
-            vec![aggregated],
-        )?;
 
         self.add_connection_with_scripts(
             context,
@@ -454,14 +446,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             speedup_dust,
             &input_tx,
             COMMITMENT,
-            Some(&claim_verifier),
+            &claim_verifier,
             Self::winternitz_check(
                 agg_or_prover,
                 sign_mode,
                 &keys[0],
                 &vec!["prover_last_step", "prover_last_hash"],
             )?,
-            input_in_speedup,
             (&prover_speedup_pub, &verifier_speedup_pub),
         )?;
         amount = self.checked_sub(amount, fee)?;
@@ -485,14 +476,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 speedup_dust,
                 &prev,
                 &next,
-                Some(&claim_verifier),
+                &claim_verifier,
                 Self::winternitz_check(
                     agg_or_prover,
                     sign_mode,
                     &keys[0],
                     &vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
                 )?,
-                input_in_speedup,
                 (&prover_speedup_pub, &verifier_speedup_pub),
             )?;
             amount = self.checked_sub(amount, fee)?;
@@ -512,14 +502,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 speedup_dust,
                 &prev,
                 &next,
-                Some(&claim_prover),
+                &claim_prover,
                 Self::winternitz_check(
                     agg_or_verifier,
                     sign_mode,
                     &keys[1],
                     &vec![&format!("selection_bits_{}", i)],
                 )?,
-                input_in_speedup,
                 (&verifier_speedup_pub, &prover_speedup_pub),
             )?;
             amount = self.checked_sub(amount, fee)?;
@@ -547,14 +536,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             speedup_dust,
             &prev,
             EXECUTE,
-            Some(&claim_verifier),
+            &claim_verifier,
             self.execute_script(context, agg_or_prover, sign_mode, &keys[0], &vars)?,
-            input_in_speedup,
             (&prover_speedup_pub, &verifier_speedup_pub),
         )?;
-
-        //Add this as if it were the final tx execution
-        claim_prover.add_claimer_win_connection(&mut protocol, EXECUTE)?;
 
         info!(
             "Amount {}, fee {}, speedup_dust {}",
@@ -573,7 +558,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             speedup_dust,
             EXECUTE,
             CHALLENGE,
-            Some(&claim_prover),
+            &claim_prover,
             challenge_scripts(
                 &self.ctx.id,
                 self.role(),
@@ -583,9 +568,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 sign_mode,
                 &keys,
             )?,
-            input_in_speedup,
             (&verifier_speedup_pub, &prover_speedup_pub),
         )?;
+
+        claim_verifier.add_claimer_win_connection(&mut protocol, CHALLENGE)?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
@@ -617,6 +603,60 @@ impl DisputeResolutionProtocol {
         let txid = tx.compute_txid();
         let amount = tx.output[vout as usize].value.to_sat();
         (txid, vout, amount)
+    }
+
+    fn add_action(
+        &self,
+        protocol: &mut Protocol,
+        utxo_action: &PartialUtxo,
+        speedup_pub: &PublicKey,
+        role: &ParticipantRole,
+        claim: &str,
+        action_number: u32,
+    ) -> Result<(), BitVMXError> {
+        let speedup_dust = DUST;
+        protocol.add_transaction(&action_wins(role, action_number))?;
+        protocol.add_connection(
+            &format!("{:?}_ACTION_{action_number}", role),
+            &ClaimGate::tx_success(claim),
+            0.into(),
+            &action_wins(role, action_number),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            None,
+        )?;
+
+        let output_type = utxo_action.3.as_ref().unwrap();
+        protocol.add_external_transaction(&external_action(role, action_number))?;
+        protocol.add_unknown_outputs(&external_action(role, action_number), utxo_action.1)?;
+        protocol.add_transaction_output(&external_action(role, action_number), &output_type)?;
+        protocol.add_connection(
+            &format!("EXTERNAL_ACTION__{:?}_WINS", role),
+            &external_action(role, action_number),
+            (utxo_action.1 as usize).into(),
+            &action_wins(role, action_number),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::Script { leaf: 1 }, //the alternate key is on leaf 1
+            ),
+            None,
+            Some(utxo_action.0),
+        )?;
+
+        let pb = ProtocolBuilder {};
+        pb.add_speedup_output(
+            protocol,
+            &action_wins(role, action_number),
+            speedup_dust,
+            &speedup_pub,
+        )?;
+
+        Ok(())
     }
 
     pub fn get_tx_with_speedup_data(
@@ -665,7 +705,7 @@ impl DisputeResolutionProtocol {
 
     fn execute_script(
         &self,
-        context: &ProgramContext,
+        _context: &ProgramContext,
         aggregated: &PublicKey,
         sign_mode: SignMode,
         keys: &ParticipantKeys,
@@ -709,13 +749,6 @@ impl DisputeResolutionProtocol {
 
         let mut winternitz_check_list = vec![];
 
-        if context
-            .globals
-            .get_var(&self.ctx.id, "FAKE_INSTRUCTION")?
-            .is_some()
-        {
-            instruction_names = vec!["ecall".to_string()];
-        }
         for (_, name) in instruction_names.iter().enumerate() {
             let script = mapping[name].0.clone();
             let winternitz_check = scripts::verify_winternitz_signatures_aux(
@@ -745,9 +778,8 @@ impl DisputeResolutionProtocol {
         amount_speedup: u64,
         from: &str,
         to: &str,
-        claim_gate: Option<&ClaimGate>,
+        claim_gate: &ClaimGate,
         mut leaves: Vec<ProtocolScript>,
-        input_in_speedup: bool,
         speedup_keys: (&PublicKey, &PublicKey),
     ) -> Result<(), BitVMXError> {
         //TODO:
@@ -763,58 +795,82 @@ impl DisputeResolutionProtocol {
             style(leaves.len()).yellow()
         );
 
-        let (mine_speedup, other_speedup) = speedup_keys;
-        let timeout_input = if input_in_speedup {
-            scripts::timelock(timelock_blocks, &*other_speedup, SignMode::Aggregate)
-        } else {
-            scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate)
-        };
+        let (_mine_speedup, other_speedup) = speedup_keys;
 
+        //add a tiemouet leaf to the possible leaves
+        let timeout_input = scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
         leaves.push(timeout_input);
         for (pos, leave) in leaves.iter_mut().enumerate() {
             leave.set_assert_leaf_id(pos as u32);
         }
 
-        let (leaves, leaves_speedup) = if input_in_speedup {
-            let mut connection_flow = scripts::check_signature(aggregated, SignMode::Aggregate);
-            connection_flow.set_assert_leaf_id(0);
-            let mut timeout_flow =
-                scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
-            timeout_flow.set_assert_leaf_id(1);
-            let flow_leaves = vec![connection_flow, timeout_flow];
-            (flow_leaves, Some(leaves))
-        } else {
-            (leaves, None)
-        };
+        //creates the connector output with the connection and timeout leaves
+        //the connector needs two times the timelock, because it needs to give time to the input in speedup timeout
+        let mut connection_leaf = scripts::check_signature(aggregated, SignMode::Aggregate);
+        connection_leaf.set_assert_leaf_id(0);
+        let mut timeout_leaf =
+            scripts::timelock(2 * timelock_blocks, &aggregated, SignMode::Aggregate);
+        timeout_leaf.set_assert_leaf_id(1);
+        let connector_leaves = vec![connection_leaf, timeout_leaf];
 
-        let output_type = OutputType::taproot(amount, &hardcoded_unspendable(), &leaves)?;
-        //sign all except the timeout
-        let scripts_to_sign = (0..leaves.len() - 2).collect::<Vec<_>>();
+        let output_type = OutputType::taproot(amount, aggregated, &connector_leaves)?;
 
+        // connector from -> to
         protocol.add_connection(
             &format!("{}__{}", from, to),
             from,
             output_type.clone().into(),
             to,
-            InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::Scripts {
-                    leaves: scripts_to_sign,
-                },
-            ),
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
             None,
             None,
         )?;
 
+        // creates the speedup output where the input will be commited
+        let output_type = OutputType::taproot(amount_speedup, &aggregated, &leaves)?;
+        protocol.add_transaction_output(to, &output_type)?;
+        let last = protocol.get_output_count(to)? - 1;
+        self.add_vout_to_monitor(context, to, last)?;
+
+        // store the input and leaf for the timeout tx
+        context.globals.set_var(
+            &self.ctx.id,
+            &timeout_tx(to),
+            VariableTypes::VecNumber(vec![0, 1, timelock_blocks as u32 * 2]),
+        )?;
+
+        // add the timeout tx to penalize the non-acting party
         protocol.add_connection(
-            &format!("{}__{}_TO", from, to),
+            &format!("{}_TL_{}_{}_TO", from, 2 * timelock_blocks, to),
             from,
             OutputSpec::Last,
-            &format!("{}_TO", to),
+            &timeout_tx(to),
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
+            Some(2 * timelock_blocks),
+            None,
+        )?;
+
+        //connect the opositte party claim gate to the timeout tx
+        claim_gate.add_claimer_win_connection(protocol, &timeout_tx(to))?;
+        let pb = ProtocolBuilder {};
+        pb.add_speedup_output(protocol, &timeout_tx(to), amount_speedup, other_speedup)?;
+
+        // store the input and leaf for the timeout tx
+        context.globals.set_var(
+            &self.ctx.id,
+            &timeout_input_tx(to),
+            VariableTypes::VecNumber(vec![0, leaves.len() as u32 - 1, timelock_blocks as u32]),
+        )?;
+
+        // add the timeout tx to penalize the party for not commiting the input
+        protocol.add_connection(
+            &format!("{}_TL_{}_{}_INPUT_TO", from, timelock_blocks, to),
+            to,
+            OutputSpec::Last,
+            &timeout_input_tx(to),
             InputSpec::Auto(
                 SighashType::taproot_all(),
                 SpendMode::Script {
-                    //sign timeout only
                     leaf: leaves.len() - 1,
                 },
             ),
@@ -822,28 +878,12 @@ impl DisputeResolutionProtocol {
             None,
         )?;
 
-        if let Some(claim_gate) = claim_gate {
-            claim_gate.add_claimer_win_connection(protocol, &format!("{}_TO", to))?;
-        }
-
+        //connect the opositte party claim gate to the timeout tx
+        claim_gate.add_claimer_win_connection(protocol, &timeout_input_tx(to))?;
         let pb = ProtocolBuilder {};
-        //put the amount here as there is no output yet
-        if input_in_speedup {
-            let output_type = OutputType::taproot(
-                amount_speedup,
-                &hardcoded_unspendable(),
-                &leaves_speedup.unwrap(),
-            )?;
-            protocol.add_transaction_output(to, &output_type)?;
-            let last = protocol.get_output_count(to)? - 1;
-            self.add_vout_to_monitor(context, to, last)?;
-        } else {
-            pb.add_speedup_output(protocol, to, amount_speedup, mine_speedup)?;
-        }
-
         pb.add_speedup_output(
             protocol,
-            &format!("{}_TO", to),
+            &timeout_input_tx(to),
             amount_speedup,
             other_speedup,
         )?;
@@ -879,12 +919,4 @@ impl DisputeResolutionProtocol {
             program_definition,
         ))
     }
-}
-
-pub fn hardcoded_unspendable() -> PublicKey {
-    // hardcoded unspendable
-    let key_bytes =
-        hex::decode("02f286025adef23a29582a429ee1b201ba400a9c57e5856840ca139abb629889ad")
-            .expect("Invalid hex input");
-    PublicKey::from_slice(&key_bytes).expect("Invalid public key")
 }

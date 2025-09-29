@@ -1,3 +1,4 @@
+#![cfg(test)]
 use anyhow::Result;
 use bitcoin::PublicKey;
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
@@ -6,13 +7,15 @@ use bitvmx_client::{
     bitvmx::BitVMX,
     program::{
         self,
-        participant::{P2PAddress, ParticipantRole},
+        participant::{CommsAddress, ParticipantRole},
         protocols::dispute::{
-            input_tx_name, program_input, EXECUTE, TIMELOCK_BLOCKS, TIMELOCK_BLOCKS_KEY,
+            input_tx_name, program_input, timeout_tx, EXECUTE, TIMELOCK_BLOCKS, TIMELOCK_BLOCKS_KEY,
         },
         variables::VariableTypes,
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, BITVMX_ID, PROGRAM_TYPE_DRP},
+    types::{
+        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel, PROGRAM_TYPE_DRP,
+    },
 };
 use bitvmx_cpu_definitions::{
     constants::LAST_STEP_INIT,
@@ -22,7 +25,7 @@ use bitvmx_cpu_definitions::{
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 
-use bitvmx_wallet::wallet::Wallet;
+use bitvmx_wallet::wallet::{RegtestWallet, Wallet};
 use console::style;
 use emulator::{
     decision::challenge::{ForceChallenge, ForceCondition},
@@ -31,6 +34,8 @@ use emulator::{
 use protocol_builder::types::{OutputType, Utxo};
 use tracing::{error, info};
 use uuid::Uuid;
+
+use crate::common::mine_and_wait_blocks;
 
 use super::{mine_and_wait, send_all, wait_message_from_channel};
 
@@ -51,15 +56,13 @@ pub enum ForcedChallenges {
 
 pub fn prepare_dispute(
     program_id: Uuid,
-    participants: Vec<P2PAddress>,
-    channels: Vec<DualChannel>,
+    participants: Vec<CommsAddress>,
+    id_channel_pairs: Vec<ParticipantChannel>,
     aggregated_pub_key: &PublicKey,
     initial_utxo: Utxo,
     initial_output_type: OutputType,
     prover_win_utxo: Utxo,
     prover_win_output_type: OutputType,
-    fake: bool,
-    fake_instruction: bool,
     fail_force_config: ForcedChallenges,
     fail_data: Option<(
         Option<FailConfiguration>,
@@ -79,21 +82,11 @@ pub fn prepare_dispute(
         force_condition,
     )
     .set_msg(program_id, "fail_force_config")?;
-    send_all(&channels, &set_fail_force_config)?;
-
-    if fake {
-        let set_fake = VariableTypes::Number(1).set_msg(program_id, "FAKE_RUN")?;
-        send_all(&channels, &set_fake)?;
-    }
-
-    if fake_instruction {
-        let set_fake = VariableTypes::Number(1).set_msg(program_id, "FAKE_INSTRUCTION")?;
-        send_all(&channels, &set_fake)?;
-    }
+    send_all(&id_channel_pairs, &set_fail_force_config)?;
 
     let set_aggregated_msg =
         VariableTypes::PubKey(*aggregated_pub_key).set_msg(program_id, "aggregated")?;
-    send_all(&channels, &set_aggregated_msg)?;
+    send_all(&id_channel_pairs, &set_aggregated_msg)?;
 
     let set_utxo_msg = VariableTypes::Utxo((
         initial_utxo.txid,
@@ -102,31 +95,40 @@ pub fn prepare_dispute(
         Some(initial_output_type),
     ))
     .set_msg(program_id, "utxo")?;
-    send_all(&channels, &set_utxo_msg)?;
+    send_all(&id_channel_pairs, &set_utxo_msg)?;
 
     let set_prover_win_utxo = VariableTypes::Utxo((
         prover_win_utxo.txid,
         prover_win_utxo.vout,
         Some(prover_win_utxo.amount),
-        Some(prover_win_output_type),
+        Some(prover_win_output_type.clone()),
     ))
     .set_msg(program_id, "utxo_prover_win_action")?;
-    send_all(&channels, &set_prover_win_utxo)?;
+    send_all(&id_channel_pairs, &set_prover_win_utxo)?;
+
+    let set_verifier_win_utxo = VariableTypes::Utxo((
+        prover_win_utxo.txid,
+        prover_win_utxo.vout,
+        Some(prover_win_utxo.amount),
+        Some(prover_win_output_type),
+    ))
+    .set_msg(program_id, "utxo_verifier_win_action")?;
+    send_all(&id_channel_pairs, &set_verifier_win_utxo)?;
 
     //let program_path = "../BitVMX-CPU/docker-riscv32/verifier/build/zkverifier-new-mul.yaml";
     let hello_world = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
     let set_program = VariableTypes::String(program_path.unwrap_or(hello_world.to_string()))
         .set_msg(program_id, "program_definition")?;
-    send_all(&channels, &set_program)?;
+    send_all(&id_channel_pairs, &set_program)?;
 
     let timelock_blocks =
         VariableTypes::Number(TIMELOCK_BLOCKS.into()).set_msg(program_id, TIMELOCK_BLOCKS_KEY)?;
-    send_all(&channels, &timelock_blocks)?;
+    send_all(&id_channel_pairs, &timelock_blocks)?;
 
     let setup_msg =
         IncomingBitVMXApiMessages::Setup(program_id, PROGRAM_TYPE_DRP.to_string(), participants, 1)
             .to_string()?;
-    send_all(&channels, &setup_msg)?;
+    send_all(&id_channel_pairs, &setup_msg)?;
 
     info!("Waiting for setup messages...");
 
@@ -134,18 +136,21 @@ pub fn prepare_dispute(
 }
 
 pub fn execute_dispute(
-    channels: Vec<DualChannel>,
+    id_channel_pairs: Vec<ParticipantChannel>,
     mut instances: &mut Vec<BitVMX>,
     emulator_channels: Vec<DualChannel>,
     bitcoin_client: &BitcoinClient,
     wallet: &Wallet,
     program_id: Uuid,
-    fake: bool,
     input: Option<(String, u32)>,
 ) -> Result<()> {
+    let channels = id_channel_pairs
+        .iter()
+        .map(|pair| pair.channel.clone())
+        .collect::<Vec<_>>();
     //CHALLENGERS STARTS CHALLENGE
     let _ = channels[1].send(
-        BITVMX_ID,
+        &id_channel_pairs[1].id,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
             program::protocols::dispute::START_CH.to_string(),
@@ -167,11 +172,11 @@ pub fn execute_dispute(
     let (data, input_pos) = input.unwrap_or(("11111111".to_string(), 0));
     let set_input_1 = VariableTypes::Input(hex::decode(data).unwrap())
         .set_msg(program_id, &program_input(input_pos))?;
-    let _ = channels[0].send(BITVMX_ID, set_input_1)?;
+    let _ = channels[0].send(&id_channel_pairs[0].id, set_input_1)?;
 
     // send the tx
     let _ = channels[0].send(
-        BITVMX_ID,
+        &id_channel_pairs[0].id,
         IncomingBitVMXApiMessages::DispatchTransactionName(program_id, input_tx_name(input_pos))
             .to_string()?,
     );
@@ -180,17 +185,9 @@ pub fn execute_dispute(
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
     let (_uuid, _txid, name) = msgs[1].transaction().unwrap();
     assert_eq!(name.unwrap_or_default(), input_tx_name(input_pos));
-    if fake {
-        let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
-        info!(
-            "Observerd: {:?}",
-            style(msgs[0].transaction().unwrap().2).green()
-        );
-        return Ok(());
-    }
 
     let _ = channels[1].send(
-        BITVMX_ID,
+        &id_channel_pairs[1].id,
         IncomingBitVMXApiMessages::GetVar(program_id, program_input(input_pos)).to_string()?,
     )?;
 
@@ -205,24 +202,25 @@ pub fn execute_dispute(
 
     let prover_dispatcher = bitvmx_job_dispatcher::DispatcherHandler::<EmulatorJobType>::new(
         emulator_channels[0].clone(),
-    );
+        instances[0].get_store(),
+    )?;
     let verifier_dispatcher = bitvmx_job_dispatcher::DispatcherHandler::<EmulatorJobType>::new(
         emulator_channels[1].clone(),
-    );
+        instances[1].get_store(),
+    )?;
 
     let mut dispatchers = vec![prover_dispatcher, verifier_dispatcher];
-
     //wait for prover execution
-    process_dispatcher(&mut dispatchers, &mut instances);
+    process_dispatcher(&mut dispatchers, &mut instances)?;
     let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
     //wait for verifier execution
-    process_dispatcher(&mut dispatchers, &mut instances);
-    process_dispatcher(&mut dispatchers, &mut instances);
+    process_dispatcher(&mut dispatchers, &mut instances)?;
+    process_dispatcher(&mut dispatchers, &mut instances)?;
     let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
     loop {
-        process_dispatcher(&mut dispatchers, &mut instances);
+        process_dispatcher(&mut dispatchers, &mut instances)?;
         let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
         let tx = msgs[0].transaction();
         if tx.is_some() {
@@ -231,31 +229,33 @@ pub fn execute_dispute(
                 info!("Prover executed the program");
                 break;
             }
-            if name.unwrap() == "EXECUTE_TO" {
+            if name.unwrap() == timeout_tx(EXECUTE) {
                 info!("Verifier wins by timeout");
-                break;
+                return Ok(());
             }
         }
     }
 
     //process verifier choose challenge
-    process_dispatcher(&mut dispatchers, &mut instances);
+    process_dispatcher(&mut dispatchers, &mut instances)?;
+
+    info!("Wait for TXs");
 
     //wait for claim start
-    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    let msgs = mine_and_wait_blocks(&bitcoin_client, &channels, &mut instances, &wallet, 30)?;
     info!(
         "Observed: {:?}",
         style(msgs[0].transaction().unwrap().2).green()
     );
     //success wait
     wallet.mine(10)?;
-    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    let msgs = mine_and_wait_blocks(&bitcoin_client, &channels, &mut instances, &wallet, 30)?;
     info!(
         "Observed: {:?}",
         style(msgs[0].transaction().unwrap().2).green()
     );
     //action wait
-    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    let msgs = mine_and_wait_blocks(&bitcoin_client, &channels, &mut instances, &wallet, 30)?;
     info!(
         "Observed: {:?}",
         style(msgs[0].transaction().unwrap().2).green()
@@ -267,7 +267,7 @@ pub fn execute_dispute(
 pub fn process_dispatcher(
     dispatchers: &mut Vec<DispatcherHandler<EmulatorJobType>>,
     instances: &mut Vec<BitVMX>,
-) {
+) -> Result<()> {
     info!("Processing dispatcher");
     let mut counter = 0;
     loop {
@@ -277,16 +277,16 @@ pub fn process_dispatcher(
         }
 
         for dispatcher in dispatchers.iter_mut() {
-            if dispatcher.tick() {
+            if dispatcher.tick()? {
                 info!("Dispatcher completed a job");
-                return;
+                return Ok(());
             }
         }
         for instance in instances.iter_mut() {
             let ret = instance.tick();
             if ret.is_err() {
                 error!("Error processing instance: {:?}", ret);
-                return;
+                return Ok(());
             }
         }
         std::thread::sleep(std::time::Duration::from_millis(200));

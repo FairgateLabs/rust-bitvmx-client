@@ -1,8 +1,8 @@
 use bitcoin::PublicKey;
 use key_manager::winternitz::WinternitzPublicKey;
-use p2p_handler::PeerId;
+use operator_comms::operator_comms::PubKeyHash;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt};
+use std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr};
 
 use crate::{
     errors::BitVMXError,
@@ -11,16 +11,16 @@ use crate::{
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ParticipantData {
-    pub p2p_address: P2PAddress,
+    pub comms_address: CommsAddress,
     pub keys: Option<ParticipantKeys>,
     pub nonces: Option<PubNonceMessage>,
     pub partial: Option<PartialSignatureMessage>,
 }
 
 impl ParticipantData {
-    pub fn new(address: &P2PAddress, keys: Option<ParticipantKeys>) -> Self {
+    pub fn new(address: &CommsAddress, keys: Option<ParticipantKeys>) -> Self {
         ParticipantData {
-            p2p_address: address.clone(),
+            comms_address: address.clone(),
             keys,
             nonces: None,
             partial: None,
@@ -135,37 +135,50 @@ impl ParticipantKeys {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
-pub struct P2PAddress {
-    pub address: String,
-    pub peer_id: PeerId,
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, Debug)]
+pub struct CommsAddress {
+    pub address: SocketAddr,
+    pub pubkey_hash: PubKeyHash,
 }
 
-impl P2PAddress {
-    pub fn new(address: &str, peer_id: PeerId) -> Self {
+impl CommsAddress {
+    pub fn new(address: SocketAddr, pubkey_hash: PubKeyHash) -> Self {
         Self {
-            address: address.to_string(),
-            peer_id,
+            address,
+            pubkey_hash,
         }
     }
+}
 
-    pub fn address_bytes(&self) -> Vec<u8> {
-        self.address.as_bytes().to_vec().clone()
+impl fmt::Display for CommsAddress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{},{}", self.address, self.pubkey_hash)
     }
+}
 
-    pub fn peer_id_bytes(&self) -> Vec<u8> {
-        self.peer_id.to_string().as_bytes().to_vec().clone()
-    }
+impl FromStr for CommsAddress {
+    type Err = String;
 
-    pub fn peer_id_bs58(&self) -> String {
-        self.peer_id.to_base58()
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let parts: Vec<&str> = s.splitn(2, ',').collect();
+        if parts.len() != 2 {
+            return Err("Invalid format. Expected <socket_addr>,<pubkey_hash>".to_string());
+        }
+
+        let address: SocketAddr = parts[0]
+            .parse()
+            .map_err(|e| format!("Invalid socket address: {}", e))?;
+
+        let pubkey_hash = parts[1].to_string();
+
+        Ok(CommsAddress::new(address, pubkey_hash))
     }
 }
 
 // Keeps logs readable by showing only the address string.
-impl core::fmt::Debug for P2PAddress {
+impl core::fmt::Debug for CommsAddress {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("P2PAddress")
+        f.debug_struct("CommsAddress")
             .field("address", &self.address)
             .finish()
     }

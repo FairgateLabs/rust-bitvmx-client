@@ -11,28 +11,60 @@ key_manager:
 
 key_storage:
   password: secret_password_5
-  path: /tmp/op_4/keys.db
+  path: /tmp/regtest/op_4/keys.db
 
 storage:
-  path: /tmp/op_4/storage.db
+  path: /tmp/regtest/op_4/storage.db
 
-p2p:
-  address: /ip4/127.0.0.1/tcp/61183
-  key: config/keys/op_4.key
-  peer_id_file: peer_id
-  timeout: 5
+comms:
+  address: 127.0.0.1:61183
+  priv_key: config/keys/op_4.key
+  storage_path: /tmp/regtest/op_4/comms.db
+
+broker:
+  allow_list: config/allow_list.yaml
+  routing_table: config/routing_table.yaml
+  port: 55554
+  ip: 127.0.0.1
+  priv_key: config/keys/services.key
+  storage: 
+    path: /tmp/regtest/op_4/broker.db
+
+components:
+  l2:
+    pubkey_hash: 7005e4a0325b644baa2b66c3fa2ed2a795cae584b6d3a57ca45ebf5d0eb0011f
+    id: 0
+  bitvmx:
+    pubkey_hash: 1d10fa43ebbf6674d74caa3e9032711ade09d98ea7d20f89459f61152bebda1e
+    id: 0
+  emulator:
+    pubkey_hash: c356750c04776008418c31cb1fd3d9dad936e5487358eeb8961b68831f419125
+    id: 0
+  prover:
+    pubkey_hash: 054dba5c41ee2926a7d909cc3443fa78f2f2e257cb1d008fd75e0d3534e3ba0d
+    id: 0
+
+testing:
+  l2:
+    priv_key: config/keys/l2.key
+    id: 0
+  emulator:
+    priv_key: config/keys/emulator.key
+    id: 0
+  prover:
+    priv_key: config/keys/prover.key
+    id: 0
 
 coordinator:
   throtthle_bitcoin_updates_until_sync: 0
   throtthle_bitcoin_updates: 0
-
-broker_storage: 
-  path: /tmp/op_4/broker.db
-
-broker_port: 55554 
 
 client: 
   # Number of retries for requests
   retry: 1
   # Delay between retries in milliseconds
   retry_delay: 1000
+
+wallet:
+  db_path: /tmp/regtest/op_4/wallet.db
+  start_height: 0

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::p2p_helper::P2PMessageType;
+use crate::comms_helper::CommsMessageType;
 
 #[derive(PartialEq, Clone, Serialize, Deserialize, Debug)]
 pub enum ProgramState {
@@ -108,7 +108,7 @@ impl ProgramState {
         }
     }
 
-    pub fn should_answer_ack(&self, leader: bool, msg_type: &P2PMessageType) -> bool {
+    pub fn should_answer_ack(&self, leader: bool, msg_type: &CommsMessageType) -> bool {
         if !leader {
             // Prover flow:
             // 1. Sends keys and waits for KeysAck
@@ -118,12 +118,13 @@ impl ProgramState {
             // 5. Sends signatures and waits for SignaturesAck
             // 6. Waits for signatures from verifier
             match (self, msg_type) {
-                (ProgramState::SettingUp(SettingUpState::SendingNonces), P2PMessageType::Keys) => {
-                    true
-                }
+                (
+                    ProgramState::SettingUp(SettingUpState::SendingNonces),
+                    CommsMessageType::Keys,
+                ) => true,
                 (
                     ProgramState::SettingUp(SettingUpState::SendingSignatures),
-                    P2PMessageType::PublicNonces,
+                    CommsMessageType::PublicNonces,
                 ) => true,
                 _ => false,
             }
@@ -136,41 +137,43 @@ impl ProgramState {
             // 5. Waits for signatures from prover
             // 6. Sends signatures and waits for SignaturesAck
             match (self, msg_type) {
-                (ProgramState::SettingUp(SettingUpState::SendingKeys), P2PMessageType::Keys) => {
+                (ProgramState::SettingUp(SettingUpState::SendingKeys), CommsMessageType::Keys) => {
                     true
                 }
                 (
                     ProgramState::SettingUp(SettingUpState::SendingNonces),
-                    P2PMessageType::PublicNonces,
+                    CommsMessageType::PublicNonces,
                 ) => true,
                 (
                     ProgramState::SettingUp(SettingUpState::SendingSignatures),
-                    P2PMessageType::PartialSignatures,
+                    CommsMessageType::PartialSignatures,
                 ) => true,
                 _ => false,
             }
         }
     }
 
-    pub fn should_handle_msg(&self, msg_type: &P2PMessageType) -> bool {
+    pub fn should_handle_msg(&self, msg_type: &CommsMessageType) -> bool {
         match (self, msg_type) {
-            (ProgramState::SettingUp(SettingUpState::WaitingKeys), P2PMessageType::Keys) => true,
+            (ProgramState::SettingUp(SettingUpState::WaitingKeys), CommsMessageType::Keys) => true,
             (
                 ProgramState::SettingUp(SettingUpState::WaitingNonces),
-                P2PMessageType::PublicNonces,
+                CommsMessageType::PublicNonces,
             ) => true,
             (
                 ProgramState::SettingUp(SettingUpState::WaitingSignatures),
-                P2PMessageType::PartialSignatures,
+                CommsMessageType::PartialSignatures,
             ) => true,
-            (ProgramState::SettingUp(SettingUpState::SendingKeys), P2PMessageType::KeysAck) => true,
+            (ProgramState::SettingUp(SettingUpState::SendingKeys), CommsMessageType::KeysAck) => {
+                true
+            }
             (
                 ProgramState::SettingUp(SettingUpState::SendingNonces),
-                P2PMessageType::PublicNoncesAck,
+                CommsMessageType::PublicNoncesAck,
             ) => true,
             (
                 ProgramState::SettingUp(SettingUpState::SendingSignatures),
-                P2PMessageType::PartialSignaturesAck,
+                CommsMessageType::PartialSignaturesAck,
             ) => true,
             _ => false,
         }

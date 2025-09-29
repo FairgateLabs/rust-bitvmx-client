@@ -17,6 +17,7 @@ pub struct ClaimGate {
     pub vout: usize,
     stop_count: u8,
     pub cost: u64,
+    pub exclusive_success_vout: Option<usize>,
 }
 
 impl ClaimGate {
@@ -30,9 +31,16 @@ impl ClaimGate {
         format!("{}_SUCCESS", claim_name)
     }
 
-    pub fn cost(amount_fee: u64, amount_dust: u64, stop_count: u8, actions: usize) -> u64 {
+    pub fn cost(
+        amount_fee: u64,
+        amount_dust: u64,
+        stop_count: u8,
+        actions: usize,
+        add_exclusive_success: bool,
+    ) -> u64 {
         let fees = (2 + stop_count as u64) * amount_fee;
-        let dust = (2 + actions as u64 + stop_count as u64) * amount_dust;
+        let exclusive_success = if add_exclusive_success { 1 } else { 0 };
+        let dust = (2 + actions as u64 + stop_count as u64 + exclusive_success) * amount_dust;
         fees + dust
     }
 
@@ -48,7 +56,23 @@ impl ClaimGate {
         subset_cov: Option<Vec<&PublicKey>>,
         timelock_blocks: u16,
         actions: Vec<&PublicKey>,
+        add_exclusive_success: bool,
+        exclusive_success_vout: Option<usize>,
     ) -> Result<Self, BitVMXError> {
+        // if exclusive vout will be added create the output for it
+        let exclusive_success_vout = if add_exclusive_success {
+            let verify_aggregated =
+                scripts::check_aggregated_signature(&aggregated, SignMode::Aggregate);
+            let exclusive_output =
+                OutputType::taproot(amount_dust, aggregated, &vec![verify_aggregated.clone()])?;
+
+            let vout_idx = protocol.transaction_by_name(from)?.output.len();
+            protocol.add_transaction_output(&from, &exclusive_output)?;
+            Some(vout_idx)
+        } else {
+            exclusive_success_vout
+        };
+
         // Add the claim start transaction
         // This transaction will verify onlye the claimer's signature
         // as the claimer is the one who will be able to spend it
@@ -141,6 +165,18 @@ impl ClaimGate {
             None,
         )?;
 
+        if exclusive_success_vout.is_some() {
+            protocol.add_connection(
+                &format!("{}_EXCLUSIVE_{}", from, &success),
+                &from,
+                OutputSpec::Index(exclusive_success_vout.unwrap()),
+                &success,
+                InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
+                None,
+                None,
+            )?;
+        }
+
         // add action/enablers as the vouts in the success transaction
         for action in &actions {
             let verify_aggregated_action =
@@ -162,6 +198,7 @@ impl ClaimGate {
             amount_dust,
             stoppers_pub.len() as u8,
             actions.len(),
+            add_exclusive_success,
         );
 
         Ok(Self {
@@ -170,9 +207,11 @@ impl ClaimGate {
             vout: vout_idx,
             stop_count: stoppers_pub.len() as u8,
             cost,
+            exclusive_success_vout,
         })
     }
 
+    // Add the connections to the protocol to allow the claimer to spend the stops if he wins
     pub fn add_claimer_win_connection(
         &self,
         protocol: &mut Protocol,

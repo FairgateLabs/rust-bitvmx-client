@@ -57,7 +57,7 @@ pub fn slot_protocol_dust_cost(participants: u8) -> u64 {
 
 pub fn amount_for_operator(operators: u8) -> u64 {
     let protocol_cost = dispute::protocol_cost();
-    let claim_gate_cost = ClaimGate::cost(DUST, DUST, operators as u8 - 1, 1);
+    let claim_gate_cost = ClaimGate::cost(DUST, DUST, operators as u8 - 1, 1, false);
     let amount_for_operator = DUST
         + DUST
         + (DUST * 8) // sending the cert hash tx
@@ -628,6 +628,8 @@ impl ProtocolHandler for SlotProtocol {
                 Some(subset_cov),
                 timelock_blocks,
                 vec![&operators_aggregated_pub],
+                false,
+                None,
             )?;
 
             //====================================

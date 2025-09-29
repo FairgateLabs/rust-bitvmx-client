@@ -10,7 +10,7 @@ use bitvmx_client::{
         variables::VariableTypes,
     },
 };
-use bitvmx_client::{program::participant::P2PAddress, types::PROGRAM_TYPE_ADVANCE_FUNDS};
+use bitvmx_client::{program::participant::CommsAddress, types::PROGRAM_TYPE_ADVANCE_FUNDS};
 use tracing::info;
 use uuid::Uuid;
 
@@ -27,7 +27,7 @@ impl AdvanceFunds {
         operator_pubkey: PublicKey,
         my_take_pubkey: PublicKey,
         pegout_id: Vec<u8>,
-        my_address: P2PAddress,
+        my_address: CommsAddress,
         fee: u64,
     ) -> Result<()> {
         // All members should set up the operator pubkey that should advance the funds

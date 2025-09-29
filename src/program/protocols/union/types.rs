@@ -41,7 +41,8 @@ pub const DISPUTE_CORE_SHORT_TIMELOCK: u16 = 1;
 pub const DISPUTE_CORE_LONG_TIMELOCK: u16 = 6;
 pub const DUST_VALUE: u64 = 540;
 pub const SPEEDUP_VALUE: u64 = 540;
-pub const P2TR_FEE: u64 = 355; // This should match the value P2TR_FEE in Union Smart contracts
+pub const P2TR_FEE: u64 = 335; // This should match the value P2TR_FEE in Union Smart contracts
+pub const USER_TAKE_FEE: u64 = 335; // This should match the value USER_TAKE_FEE in Union Smart contracts
 
 // Suffixes
 pub const FUNDING_UTXO_SUFFIX: &str = "_FUNDING_UTXO";
@@ -119,6 +120,7 @@ impl PegInRequest {
 pub struct PegInAccepted {
     pub committee_id: Uuid,
     pub accept_pegin_txid: Txid,
+    pub accept_pegin_sighash: Vec<u8>,
     pub accept_pegin_nonce: PubNonce,
     pub accept_pegin_signature: MaybeScalar,
     pub operator_take_sighash: Vec<u8>,

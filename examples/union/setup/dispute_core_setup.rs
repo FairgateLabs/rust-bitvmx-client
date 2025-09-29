@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use bitvmx_client::{
     client::BitVMXClient,
     program::{
-        participant::{P2PAddress, ParticipantRole},
+        participant::{CommsAddress, ParticipantRole},
         protocols::union::{
             common::get_dispute_core_pid,
             types::{Committee, DisputeCoreData, MemberData, MONITORED_OPERATOR_KEY},
@@ -17,6 +17,8 @@ use bitvmx_client::{
 };
 use tracing::info;
 use uuid::Uuid;
+
+use crate::participants::committee::PACKET_SIZE;
 
 pub struct DisputeCoreSetup {}
 
@@ -31,14 +33,14 @@ impl DisputeCoreSetup {
         bitvmx: &BitVMXClient,
         operator_protocol_funding: &HashMap<PublicKey, PartialUtxo>,
         my_speedup_funding: &Utxo,
-        addresses: &Vec<P2PAddress>,
+        addresses: &Vec<CommsAddress>,
     ) -> Result<()> {
         let committee = Committee {
             members: members.clone(),
             take_aggregated_key,
             dispute_aggregated_key,
             operator_count: Self::operator_count(&members.clone())?,
-            packet_size: 10,
+            packet_size: PACKET_SIZE,
         };
 
         bitvmx.send_message(IncomingBitVMXApiMessages::SetFundingUtxo(

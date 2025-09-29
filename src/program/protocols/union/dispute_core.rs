@@ -387,19 +387,6 @@ impl DisputeCoreProtocol {
             None,
         )?;
 
-        let mut challenge_requests = vec![];
-        for i in 0..keys.len() {
-            // If this is my dispute_core I need to disable me from performing a challenge request to myself.
-            if i == dispute_core_data.operator_index {
-                challenge_requests.push(scripts::op_return_script("skip".as_bytes().to_vec())?);
-            }
-
-            challenge_requests.push(scripts::verify_signature(
-                keys[i].get_public(CHALLENGE_KEY)?,
-                SignMode::Single,
-            )?);
-        }
-
         protocol.add_connection(
             "challenge",
             &reimbursement_kickoff,
@@ -830,12 +817,19 @@ impl DisputeCoreProtocol {
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         // Extract slot_index from transaction name
-        let slot_index = tx_name
-            .strip_prefix(&format!("{}_", REIMBURSEMENT_KICKOFF_TX))
-            .and_then(|s| s.parse().ok())
-            .ok_or_else(|| BitVMXError::InvalidTransactionName(tx_name.to_string()))?;
+        info!(
+            "Handling reimbursement kickoff txid: {}. Name: {}",
+            tx_id, tx_name
+        );
+        let slot_index = extract_index(tx_name, REIMBURSEMENT_KICKOFF_TX)?;
+        info!("Extracted slot index: {}", slot_index);
 
         if self.is_my_dispute_core(program_context)? {
+            info!(
+                id = self.ctx.my_idx,
+                "This is my dispute_core, checking for operator take dispatch for slot {}",
+                slot_index
+            );
             // Handle operator take if needed
             if tx_status.confirmations == 1 {
                 let block_height = tx_status.block_info.as_ref().unwrap().height
@@ -851,6 +845,10 @@ impl DisputeCoreProtocol {
                 );
             }
         } else {
+            info!(
+                id = self.ctx.my_idx,
+                "Not my dispute_core, skipping operator take dispatch for slot {}", slot_index
+            );
             // Handle challenge if needed
             match self.get_selected_operator_key(slot_index, program_context)? {
                 Some(selected_operator_key) => {
