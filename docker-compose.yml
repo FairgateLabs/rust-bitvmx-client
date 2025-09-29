@@ -1,5 +1,4 @@
-x-logging:
-  &default-logging
+x-logging: &default-logging
   options:
     max-size: '12m'
     max-file: '5'
@@ -24,14 +23,14 @@ services:
         - default
     logging: *default-logging
     restart: unless-stopped
-    entrypoint: ["./run.sh"]
+    entrypoint: [ "./run.sh" ]
     environment:
       BITCOIND_URL: ${BITCOIND_URL}
       CLIENT_OP: ${CLIENT_OP}
       BITCOIND_RPC_USER: ${BITCOIND_RPC_USER}
       BITCOIND_RPC_PASSWORD: ${BITCOIND_RPC_PASSWORD}
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "${BROKER_PORT}"]
+      test: [ "CMD-SHELL", "pgrep -f bitvmx-client" ] # Check bitvmx-client proccess is running
       interval: 2s
       timeout: 5s
       retries: 5
@@ -42,6 +41,9 @@ services:
       - "${BROKER_PORT}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - ./config:/app/rust-bitvmx-workspace/rust-bitvmx-client/config
+      - ./volumes/tmp:/tmp
 
   bitvmx-emulator:
     build:
@@ -51,7 +53,7 @@ services:
         - default
     logging: *default-logging
     restart: unless-stopped
-    entrypoint: ["./run_emulator.sh"]
+    entrypoint: [ "./run_emulator.sh" ]
     environment:
       CLIENT_OP: ${CLIENT_OP}
     network_mode: "service:bitvmx-client"
