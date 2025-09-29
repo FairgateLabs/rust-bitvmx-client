@@ -135,7 +135,7 @@ impl ParticipantKeys {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
 pub struct CommsAddress {
     pub address: SocketAddr,
     pub pubkey_hash: PubKeyHash,
