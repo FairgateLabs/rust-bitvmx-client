@@ -37,7 +37,7 @@ FROM debian:bullseye-slim AS runtime
 
 # Install only minimal runtime dependencies
 RUN apt-get update && \
-    apt-get install -y libssl-dev ca-certificates && \
+    apt-get install -y procps libssl-dev ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
