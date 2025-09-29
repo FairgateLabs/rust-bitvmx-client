@@ -38,7 +38,7 @@ use crate::{
             },
             protocol_handler::{ProtocolContext, ProtocolHandler},
         },
-        variables::VariableTypes,
+        variables::{PartialUtxo, VariableTypes},
     },
     types::ProgramContext,
 };
@@ -281,6 +281,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             .unwrap()
             .utxo()?;
 
+        let utxo_verifier_win_action = context
+            .globals
+            .get_var(&self.ctx.id, "utxo_verifier_win_action")?;
+
         let prover_speedup_pub = keys[0].get_public("speedup")?;
         let verifier_speedup_pub = keys[1].get_public("speedup")?;
         let aggregated = computed_aggregated.get("aggregated_1").unwrap();
@@ -357,6 +361,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             claim_prover.exclusive_success_vout,
         )?;
 
+        self.add_action(
+            &mut protocol,
+            context,
+            &utxo_prover_win_action,
+            &prover_speedup_pub,
+        )?;
+
         let mut prev_tx = START_CH.to_string();
         let mut input_tx = String::new();
 
@@ -400,47 +411,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             amount = self.checked_sub(amount, speedup_dust)?;
             prev_tx = input_tx.clone();
         }
-
-        protocol.add_transaction(ACTION_PROVER_WINS)?;
-        protocol.add_connection(
-            "PROVER_ACTION_1",
-            &ClaimGate::tx_success(PROVER_WINS),
-            0.into(),
-            ACTION_PROVER_WINS,
-            InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::All {
-                    key_path_sign: SignMode::Aggregate,
-                },
-            ),
-            None,
-            None,
-        )?;
-
-        let output_type = utxo_prover_win_action.3.unwrap();
-        protocol.add_external_transaction(EXTERNAL_ACTION)?;
-        protocol.add_unknown_outputs(EXTERNAL_ACTION, utxo_prover_win_action.1)?;
-        protocol.add_transaction_output(EXTERNAL_ACTION, &output_type)?;
-        protocol.add_connection(
-            "EXTERNAL_ACTION__PROVER_WINS",
-            EXTERNAL_ACTION,
-            (utxo_prover_win_action.1 as usize).into(),
-            ACTION_PROVER_WINS,
-            InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::Script { leaf: 1 }, //the alternate key is on leaf 1
-            ),
-            None,
-            Some(utxo_prover_win_action.0),
-        )?;
-
-        let pb = ProtocolBuilder {};
-        pb.add_speedup_output(
-            &mut protocol,
-            ACTION_PROVER_WINS,
-            speedup_dust,
-            &prover_speedup_pub,
-        )?;
 
         self.add_connection_with_scripts(
             context,
@@ -608,6 +578,53 @@ impl DisputeResolutionProtocol {
         let txid = tx.compute_txid();
         let amount = tx.output[vout as usize].value.to_sat();
         (txid, vout, amount)
+    }
+
+    fn add_action(
+        &self,
+        protocol: &mut Protocol,
+        context: &ProgramContext,
+        utxo_action: &PartialUtxo,
+        speedup_pub: &PublicKey,
+    ) -> Result<(), BitVMXError> {
+        let speedup_dust = DUST;
+        protocol.add_transaction(ACTION_PROVER_WINS)?;
+        protocol.add_connection(
+            "PROVER_ACTION_1",
+            &ClaimGate::tx_success(PROVER_WINS),
+            0.into(),
+            ACTION_PROVER_WINS,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            None,
+        )?;
+
+        let output_type = utxo_action.3.as_ref().unwrap();
+        protocol.add_external_transaction(EXTERNAL_ACTION)?;
+        protocol.add_unknown_outputs(EXTERNAL_ACTION, utxo_action.1)?;
+        protocol.add_transaction_output(EXTERNAL_ACTION, &output_type)?;
+        protocol.add_connection(
+            "EXTERNAL_ACTION__PROVER_WINS",
+            EXTERNAL_ACTION,
+            (utxo_action.1 as usize).into(),
+            ACTION_PROVER_WINS,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::Script { leaf: 1 }, //the alternate key is on leaf 1
+            ),
+            None,
+            Some(utxo_action.0),
+        )?;
+
+        let pb = ProtocolBuilder {};
+        pb.add_speedup_output(protocol, ACTION_PROVER_WINS, speedup_dust, &speedup_pub)?;
+
+        Ok(())
     }
 
     pub fn get_tx_with_speedup_data(
