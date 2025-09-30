@@ -40,7 +40,6 @@ bitvmx-bitcoin-rpc = { path = "../rust-bitvmx-bitcoin-rpc" }
 bitvmx-broker = { path = "../rust-bitvmx-broker", features = [
     "storagebackend",
 ] }
-bitcoind = { path = "../rust-bitcoind" }
 emulator = { path = "../BitVMX-CPU/emulator" }
 bitcoin-script-riscv = { path = "../BitVMX-CPU/bitcoin-script-riscv" }
 bitvmx-cpu-definitions = { path = "../BitVMX-CPU/definitions" }
@@ -56,19 +55,23 @@ bitvmx-job-dispatcher-types = { path = "../rust-bitvmx-job-dispatcher/jobtypes",
 zk-result = { path = "../rust-bitvmx-zk-proof/zk-result" }
 bitvmx-wallet = { path = "../rust-bitvmx-wallet" }
 
-musig2 = { version = "0.2.3", features = ["serde", "rand"] }
-reqwest = "0.12.23"
+[dependencies.reqwest]
+version = "0.12.23"
+optional = true
+
+[dependencies.bitcoind]
+path = "../rust-bitcoind"
+optional = true
 
 [dev-dependencies]
 bollard = "0.11.0"
 futures-util = "0.3"
 bitcoind = { path = "../rust-bitcoind" }
-bitvmx-wallet = { path = "../rust-bitvmx-wallet" }
 
 [features]
 default = ["cardinal", "union"]
 cardinal = []
-union = []
+union = ["reqwest", "bitcoind"]
 testpanic = []
 
 [[example]]

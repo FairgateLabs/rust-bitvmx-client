@@ -1,5 +1,5 @@
 use bitcoin::{PublicKey, Txid};
-use musig2::{secp::MaybeScalar, PubNonce};
+use key_manager::musig2::{secp::MaybeScalar, PubNonce};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
