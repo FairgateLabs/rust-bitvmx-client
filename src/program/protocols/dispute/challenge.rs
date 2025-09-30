@@ -113,34 +113,36 @@ pub const UNINITIALIZED_CHALLENGE: [(&str, usize); 7] = [
     ("verifier_read_selector", 1),
 ];
 
-// pub const READ_VALUE_CHALLENGE: [(&str, usize); 14] = [
-//     ("prover_read_addr_1", 4),
-//     ("prover_read_value_1", 4),
-//     ("prover_read_step_1", 8),
-//     ("prover_read_addr_2", 4),
-//     ("prover_read_value_2", 4),
-//     ("prover_read_step_2", 8),
-//     ("read_selector", 1),
-//     ("step_hash", 20),
-//     ("write_addr", 4),
-//     ("write_value", 4),
-//     ("write_pc", 4),
-//     ("write_micro", 1),
-//     ("next_hash", 20),
-//     ("write_step", 8),
-// ];
+pub const READ_VALUE_NARY_SEARCH_CHALLENGE: [(&str, usize); 1] = [("verifier_bits", 1)];
 
-// pub const CORRECT_HASH_CHALLENGE: [(&str, usize); 7] = [
-//     ("prover_hash", 20),
-//     ("verifier_hash", 20),
-//     ("write_addr", 4),
-//     ("write_value", 4),
-//     ("write_pc", 4),
-//     ("write_micro", 1),
-//     ("next_hash", 20),
-// ];
+pub const READ_VALUE_CHALLENGE: [(&str, usize); 14] = [
+    ("prover_read_addr_1", 4),
+    ("prover_read_value_1", 4),
+    ("prover_read_step_1", 8),
+    ("prover_read_addr_2", 4),
+    ("prover_read_value_2", 4),
+    ("prover_read_step_2", 8),
+    ("verifier_read_selector", 1),
+    ("verifier_step_hash", 20), //TODO: this should be from prover translation keys
+    ("verifier_write_addr", 4),
+    ("verifier_write_value", 4),
+    ("verifier_write_pc", 4),
+    ("verifier_write_micro", 1),
+    ("verifier_next_hash", 20), //TODO: this should be from prover translation keys
+    ("verifier_write_step", 8), //TODO: this should be from prover translation keys
+];
 
-pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 11] = [
+pub const CORRECT_HASH_CHALLENGE: [(&str, usize); 7] = [
+    ("verifier_prover_hash", 20), //TODO: this should be from prover translation keys
+    ("verifier_hash", 20),
+    ("verifier_write_addr", 4),
+    ("verifier_write_value", 4),
+    ("verifier_write_pc", 4),
+    ("verifier_write_micro", 1),
+    ("verifier_next_hash", 20), //TODO: this should be from prover translation keys
+];
+
+pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 12] = [
     ("entry_point", &ENTRY_POINT_CHALLENGE),
     ("program_counter", &PROGRAM_COUNTER_CHALLENGE),
     ("halt", &HALT_CHALLENGE),
@@ -152,6 +154,12 @@ pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 11] = [
     ("rom", &ROM_CHALLENGE),
     ("initialized", &INITIALIZED_CHALLENGE),
     ("uninitialized", &UNINITIALIZED_CHALLENGE),
+    ("read_value_nary_search", &READ_VALUE_NARY_SEARCH_CHALLENGE),
+];
+
+pub const READ_CHALLENGES: [(&str, &'static [(&str, usize)]); 2] = [
+    ("read_value", &READ_VALUE_CHALLENGE),
+    ("correct_hash", &CORRECT_HASH_CHALLENGE),
 ];
 
 pub fn get_verifier_keys() -> Vec<(String, usize)> {
@@ -467,7 +475,11 @@ pub fn challenge_scripts(
                         let ranges = program.get_uninitialized_ranges(program_definitions);
                         uninitialized_challenge(&mut stack, &ranges);
                     }
-
+                    "read_value_nary_search" => {
+                        let var = stack.define(2, "bits");
+                        stack.drop(var);
+                        //TODO: Should verify if var < 2^max_bits, with max_bits from N-ary search def
+                    }
                     _ => panic!("Unknown challenge name: {}", challenge_name),
                 };
                 scripts.push(stack.get_script());
@@ -611,7 +623,7 @@ pub fn get_challenge_leaf(
                 id,
                 context,
                 &format!("verifier_read_selector"),
-                *read_selector as u8, //ASK: Why u32 if it's u8?
+                *read_selector as u8,
             )?;
             dynamic_offset = *chunk_index;
         }
@@ -623,10 +635,15 @@ pub fn get_challenge_leaf(
                 id,
                 context,
                 &format!("verifier_read_selector"),
-                *read_selector as u8, //ASK: Why u32 if it's u8?
+                *read_selector as u8,
             )?;
         }
-        ChallengeType::ReadValueNArySearch(_) => todo!(),
+        ChallengeType::ReadValueNArySearch(bits) => {
+            name = "read_value_nary_search";
+            info!("Verifier chose {name} challenge");
+
+            set_input_u8(id, context, &format!("verifier_bits"), *bits as u8)?;
+        }
         ChallengeType::ReadValue {
             read_1,
             read_2,

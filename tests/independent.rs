@@ -11,7 +11,7 @@ use bitvmx_client::program::participant::CommsAddress;
 use bitvmx_client::program::protocols::dispute::{
     input_tx_name, program_input, program_input_prev_prefix, program_input_prev_protocol,
 };
-use bitvmx_client::program::variables::{VariableTypes, WitnessTypes};
+use bitvmx_client::program::variables::{ConfigResult, ConfigResults, VariableTypes, WitnessTypes};
 use bitvmx_client::types::{
     IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel,
 };
@@ -458,12 +458,7 @@ pub fn test_all_aux(
     network: Network,
     program: Option<String>,
     inputs: Option<(&str, u32, &str, u32)>,
-    fail_data: Option<(
-        Option<FailConfiguration>,
-        Option<FailConfiguration>,
-        ForceChallenge,
-        ForceCondition,
-    )>,
+    fail_data: Option<ConfigResults>,
 ) -> Result<()> {
     config_trace();
 
@@ -791,8 +786,8 @@ fn test_const() -> Result<()> {
 #[ignore]
 #[test]
 fn test_const_fail_input() -> Result<()> {
-    let fail_config = (
-        Some(FailConfiguration::new_fail_reads(FailReads::new(
+    let main_config = ConfigResult {
+        fail_config_prover: Some(FailConfiguration::new_fail_reads(FailReads::new(
             None,
             Some(&vec![
                 "16".to_string(),
@@ -802,10 +797,15 @@ fn test_const_fail_input() -> Result<()> {
                 "0xffffffffffffffff".to_string(),
             ]),
         ))),
-        None,
-        ForceChallenge::No,
-        ForceCondition::ValidInputWrongStepOrHash,
-    );
+        fail_config_verifier: None,
+        force_challenge: ForceChallenge::No,
+        force_condition: ForceCondition::ValidInputWrongStepOrHash,
+    };
+
+    let fail_config = ConfigResults {
+        main: main_config,
+        read: ConfigResult::default(),
+    };
 
     test_all_aux(
         false,

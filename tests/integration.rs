@@ -104,7 +104,7 @@ pub fn test_drp() -> Result<()> {
         &mut wallet,
         &aggregated_pub_key,
         spending_condition.clone(),
-        20_000,
+        30_000,
     )?;
 
     info!("Initializing UTXO for the prover action");
@@ -127,7 +127,9 @@ pub fn test_drp() -> Result<()> {
         prover_win_out_type,
         false,
         false,
-        ForcedChallenges::Execution,
+        ForcedChallenges::CorrectHashChallenge(
+            bitvmx_client::program::participant::ParticipantRole::Prover,
+        ),
         None,
         None,
     )?;

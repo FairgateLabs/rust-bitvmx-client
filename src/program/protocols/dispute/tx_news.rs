@@ -4,7 +4,6 @@ use bitvmx_cpu_definitions::{memory::MemoryWitness, trace::*};
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use console::style;
-use emulator::decision::challenge::{ForceChallenge, ForceCondition};
 use tracing::info;
 
 use crate::{
@@ -21,7 +20,7 @@ use crate::{
             },
             protocol_handler::ProtocolHandler,
         },
-        variables::VariableTypes,
+        variables::{ConfigResults, VariableTypes},
     },
     types::ProgramContext,
 };
@@ -43,15 +42,11 @@ pub fn handle_tx_news(
         drp.role()
     );
 
-    let (fail_config_prover, fail_config_verifier, force, force_condition) = program_context
+    // let (fail_config_prover, fail_config_verifier, force, force_condition) = program_context
+    let fail_force_config = program_context
         .globals
         .get_var(&drp.ctx.id, "fail_force_config")?
-        .unwrap_or(VariableTypes::FailConfiguration(
-            None,
-            None,
-            ForceChallenge::No,
-            ForceCondition::No,
-        ))
+        .unwrap_or(VariableTypes::FailConfiguration(ConfigResults::default()))
         .fail_configuration()?;
 
     if name.starts_with(INPUT_TX) && vout.is_some() {
@@ -76,7 +71,7 @@ pub fn handle_tx_news(
                         full_input,
                         execution_path.clone(),
                         format!("{}/{}", execution_path, "execution.json").to_string(),
-                        fail_config_prover.clone(),
+                        fail_force_config.main.fail_config_prover.clone(),
                     ),
                 })?;
                 program_context.broker_channel.send(
@@ -140,8 +135,8 @@ pub fn handle_tx_news(
                 last_step,
                 hex::encode(last_hash),
                 format!("{}/{}", execution_path, "execution.json").to_string(),
-                force_condition,
-                fail_config_verifier.clone(),
+                fail_force_config.main.force_condition,
+                fail_force_config.main.fail_config_verifier.clone(),
             ),
         })?;
 
@@ -205,7 +200,7 @@ pub fn handle_tx_news(
                         round as u8,
                         decision as u32,
                         format!("{}/{}", execution_path, "execution.json").to_string(),
-                        fail_config_prover.clone(),
+                        fail_force_config.main.fail_config_prover.clone(),
                         emulator::decision::nary_search::NArySearchType::ConflictStep, //TODO: hardcoded
                     ),
                 })?;
@@ -223,7 +218,7 @@ pub fn handle_tx_news(
                         execution_path.clone(),
                         (decision + 1) as u32,
                         format!("{}/{}", execution_path, "execution.json").to_string(),
-                        fail_config_prover.clone(),
+                        fail_force_config.main.fail_config_prover.clone(),
                     ),
                 })?;
                 program_context.broker_channel.send(
@@ -305,7 +300,7 @@ pub fn handle_tx_news(
                 round as u8,
                 hashes,
                 format!("{}/{}", execution_path, "execution.json").to_string(),
-                fail_config_verifier.clone(),
+                fail_force_config.main.fail_config_verifier.clone(),
                 emulator::decision::nary_search::NArySearchType::ConflictStep, //TODO: hardcoded
             ),
         })?;
@@ -418,8 +413,8 @@ pub fn handle_tx_news(
                 execution_path.clone(),
                 final_trace,
                 format!("{}/{}", execution_path, "execution.json").to_string(),
-                fail_config_verifier.clone(),
-                force,
+                fail_force_config.main.fail_config_verifier.clone(),
+                fail_force_config.main.force_challenge,
             ),
         })?;
         program_context.broker_channel.send(
@@ -493,7 +488,7 @@ pub fn handle_tx_news(
     }
 
     if name == CHALLENGE && drp.role() == ParticipantRole::Prover && vout.is_some() {
-        drp.decode_witness_from_speedup(
+        let result = drp.decode_witness_from_speedup(
             tx_id,
             vout.unwrap(),
             &name,
@@ -502,6 +497,8 @@ pub fn handle_tx_news(
             None,
         )?;
         //TODO: if the verifier is able to execute the challenge, the prover can react only to the read challenge nary search
+
+        info!("Prover. Challenge result: {:?}", result);
     }
 
     Ok(())

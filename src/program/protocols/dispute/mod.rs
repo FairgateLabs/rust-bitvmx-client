@@ -49,6 +49,7 @@ pub const START_CH: &str = "START_CHALLENGE";
 pub const INPUT_TX: &str = "INPUT_";
 pub const COMMITMENT: &str = "COMMITMENT";
 pub const EXECUTE: &str = "EXECUTE";
+pub const EXECUTE_2_NARY: &str = "EXECUTE_2_NARY"; // For the second N-ary search
 pub const TIMELOCK_BLOCKS: u16 = 1;
 pub const PROVER_WINS: &str = "PROVER_WINS";
 pub const VERIFIER_WINS: &str = "VERIFIER_WINS";
@@ -199,13 +200,17 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 let hashes = nary_def.hashes_for_round(i);
                 for h in 0..hashes {
                     let key = key_chain.derive_winternitz_hash160(20)?;
+                    let key2 = key_chain.derive_winternitz_hash160(20)?;
                     keys.push((format!("prover_hash_{}_{}", i, h), key.into()));
+                    keys.push((format!("prover_hash2_{}_{}", i, h), key2.into()));
+                    // for the second n-ary search
                 }
             } else {
                 let _bits = nary_def.bits_for_round(i);
                 let key = key_chain.derive_winternitz_hash160(1)?;
-                //TODO: assuming bits fits in one byte. We should also enforce in the script that the revealed are in range
+                let key2 = key_chain.derive_winternitz_hash160(1)?;
                 keys.push((format!("selection_bits_{}", i), key.into()));
+                keys.push((format!("selection_bits2_{}", i), key2.into())); // for the second n-ary search
             }
         }
 
@@ -527,9 +532,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             prev = next;
         }
 
-        // amount -= fee;
-        // amount -= speedup_dust;
-
         //Simple execution check
         let vars = TRACE_VARS
             .iter()
@@ -556,10 +558,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         //Add this as if it were the final tx execution
         claim_prover.add_claimer_win_connection(&mut protocol, EXECUTE)?;
 
-        info!(
-            "Amount {}, fee {}, speedup_dust {}",
-            amount, fee, speedup_dust
-        );
         amount -= fee;
         amount -= speedup_dust;
 
@@ -585,6 +583,92 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             )?,
             input_in_speedup,
             (&verifier_speedup_pub, &prover_speedup_pub),
+        )?;
+
+        amount = self.checked_sub(amount, fee)?;
+        amount = self.checked_sub(amount, speedup_dust)?;
+        prev = CHALLENGE.to_string();
+        for i in 1..nary_def.total_rounds() + 1 {
+            let next = format!("NARY2_PROVER_{}", i);
+            let hashes = nary_def.hashes_for_round(i);
+            let vars = (0..hashes)
+                .map(|h| format!("prover_hash2_{}_{}", i, h))
+                .collect::<Vec<_>>();
+
+            if i != 1 {
+                self.add_connection_with_scripts(
+                    context,
+                    aggregated,
+                    &mut protocol,
+                    timelock_blocks,
+                    amount,
+                    speedup_dust,
+                    &prev,
+                    &next,
+                    Some(&claim_verifier),
+                    Self::winternitz_check(
+                        agg_or_prover,
+                        sign_mode,
+                        &keys[0],
+                        &vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
+                    )?,
+                    input_in_speedup,
+                    (&prover_speedup_pub, &verifier_speedup_pub),
+                )?;
+                amount = self.checked_sub(amount, fee)?;
+                amount = self.checked_sub(amount, speedup_dust)?;
+
+                prev = next;
+            }
+            let next = format!("NARY2_VERIFIER_{}", i);
+            //TODO: Add a lower than value check
+            let _bits = nary_def.bits_for_round(i);
+
+            self.add_connection_with_scripts(
+                context,
+                aggregated,
+                &mut protocol,
+                timelock_blocks,
+                amount,
+                speedup_dust,
+                &prev,
+                &next,
+                Some(&claim_prover),
+                Self::winternitz_check(
+                    agg_or_verifier,
+                    sign_mode,
+                    &keys[1],
+                    &vec![&format!("selection_bits2_{}", i)],
+                )?,
+                input_in_speedup,
+                (&verifier_speedup_pub, &prover_speedup_pub),
+            )?;
+            amount = self.checked_sub(amount, fee)?;
+            amount = self.checked_sub(amount, speedup_dust)?;
+            prev = next;
+        }
+
+        //Simple execution check
+        let vars = TRACE_VARS
+            .iter()
+            .take(TRACE_VARS.len() - 1) // Skip the witness (except is needed)
+            //.rev() //reverse to get the proper order on the stack
+            .map(|(name, _)| *name)
+            .collect::<Vec<&str>>();
+
+        self.add_connection_with_scripts(
+            context,
+            aggregated,
+            &mut protocol,
+            timelock_blocks,
+            amount,
+            speedup_dust,
+            &prev,
+            EXECUTE_2_NARY,
+            Some(&claim_verifier),
+            self.execute_script(context, agg_or_prover, sign_mode, &keys[0], &vars)?,
+            input_in_speedup,
+            (&prover_speedup_pub, &verifier_speedup_pub),
         )?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
