@@ -15,7 +15,7 @@ use bitvmx_broker::{
     rpc::{self, tls_helper::Cert},
 };
 use bitvmx_wallet::wallet::Destination;
-use operator_comms::operator_comms::AllowList;
+use bitvmx_operator_comms::operator_comms::AllowList;
 use std::time::{Duration, Instant};
 use std::{
     sync::{Arc, Mutex},

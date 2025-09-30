@@ -1,4 +1,4 @@
-use operator_comms::operator_comms::OperatorComms;
+use bitvmx_operator_comms::operator_comms::OperatorComms;
 
 pub trait GracefulShutdown {
     /// Signal the component to stop accepting new work immediately.

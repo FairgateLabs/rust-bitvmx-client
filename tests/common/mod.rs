@@ -18,8 +18,8 @@ use bitvmx_client::{
     program::{participant::CommsAddress, protocols::protocol_handler::external_fund_tx},
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
+use bitvmx_operator_comms::operator_comms::AllowList;
 use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
-use operator_comms::operator_comms::AllowList;
 use protocol_builder::{
     scripts::{self, ProtocolScript, SignMode},
     types::{OutputType, Utxo},

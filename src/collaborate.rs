@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use bitcoin::PublicKey;
 use bitvmx_broker::identification::identifier::Identifier;
-use operator_comms::operator_comms::PubKeyHash;
+use bitvmx_operator_comms::operator_comms::PubKeyHash;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{debug, info, warn};

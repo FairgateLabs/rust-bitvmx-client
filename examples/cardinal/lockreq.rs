@@ -10,7 +10,7 @@ use bitvmx_broker::{
     },
 };
 use bitvmx_client::program::protocols::cardinal::lock::lock_protocol_dust_cost;
-use operator_comms::operator_comms::AllowList;
+use bitvmx_operator_comms::operator_comms::AllowList;
 use protocol_builder::scripts::{
     build_taproot_spend_info, reveal_secret, timelock, ProtocolScript, SignMode,
 };

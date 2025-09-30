@@ -9,7 +9,7 @@ use bitvmx_broker::{
 };
 
 use bitcoin::Txid;
-use operator_comms::operator_comms::AllowList;
+use bitvmx_operator_comms::operator_comms::AllowList;
 use tracing::info;
 
 use crate::common::get_bitcoin_client;
