@@ -58,7 +58,7 @@ bitvmx-job-dispatcher = { git = "https://github.com/FairgateLabs/rust-bitvmx-job
 [dev-dependencies]
 bollard = "0.11.0"
 futures-util = "0.3"
-bitcoind = { path = "../rust-bitcoind" }
+bitcoind = { git = "https://github.com/FairgateLabs/rust-bitcoind.git", branch = "v.0.0.2" }
 reqwest = "0.12.23"
 
 zk-result = { git = "https://github.com/FairgateLabs/rust-bitvmx-zk-proof.git", branch = "v.0.0.2" }
