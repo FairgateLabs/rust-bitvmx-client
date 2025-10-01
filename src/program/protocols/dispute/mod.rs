@@ -595,14 +595,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     speedup_dust,
                     &prev,
                     &next,
-                    Some(&claim_verifier),
+                    &claim_verifier,
                     Self::winternitz_check(
                         agg_or_prover,
                         sign_mode,
                         &keys[0],
                         &vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
                     )?,
-                    input_in_speedup,
                     (&prover_speedup_pub, &verifier_speedup_pub),
                 )?;
                 amount = self.checked_sub(amount, fee)?;
@@ -623,14 +622,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 speedup_dust,
                 &prev,
                 &next,
-                Some(&claim_prover),
+                &claim_prover,
                 Self::winternitz_check(
                     agg_or_verifier,
                     sign_mode,
                     &keys[1],
                     &vec![&format!("selection_bits2_{}", i)],
                 )?,
-                input_in_speedup,
                 (&verifier_speedup_pub, &prover_speedup_pub),
             )?;
             amount = self.checked_sub(amount, fee)?;
@@ -655,9 +653,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             speedup_dust,
             &prev,
             EXECUTE_2_NARY,
-            Some(&claim_verifier),
+            &claim_verifier,
             self.execute_script(context, agg_or_prover, sign_mode, &keys[0], &vars)?,
-            input_in_speedup,
             (&prover_speedup_pub, &verifier_speedup_pub),
         )?;
 
