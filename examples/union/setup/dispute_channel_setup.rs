@@ -5,7 +5,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use bitvmx_client::{
-    program::participant::{P2PAddress, ParticipantRole},
+    program::participant::{CommsAddress, ParticipantRole},
     program::protocols::union::{
         common::get_dispute_channel_pid,
         types::{FUNDING_UTXO_SUFFIX, WATCHTOWER},
@@ -48,9 +48,9 @@ impl DisputeChannelSetup {
                 if my_addr != *a1 && my_addr != *a2 { continue; }
 
                 // Helper to setup one directional DRP
-                let setup_one = |from_idx: usize, to_idx: usize, first: &P2PAddress, second: &P2PAddress| -> Result<()> {
+                let setup_one = |from_idx: usize, to_idx: usize, first: &CommsAddress, second: &CommsAddress| -> Result<()> {
                     let drp_id = get_dispute_channel_pid(committee_id, from_idx, to_idx);
-                    let participants: Vec<P2PAddress> = vec![first.clone(), second.clone()];
+                    let participants: Vec<CommsAddress> = vec![first.clone(), second.clone()];
                     let my_idx = if my_addr == *first { 0 } else { 1 };
 
                     // Aggregated pairwise key

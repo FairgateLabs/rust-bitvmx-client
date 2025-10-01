@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use bitvmx_client::{
     client::BitVMXClient,
     program::{
-        participant::{P2PAddress, ParticipantRole},
+        participant::{CommsAddress, ParticipantRole},
         protocols::union::{
             common::get_init_pid,
             types::{Committee, InitData, MemberData, MONITORED_WATCHTOWER_KEY},
@@ -28,7 +28,7 @@ impl InitSetup {
         dispute_aggregated_key: PublicKey,
         bitvmx: &BitVMXClient,
         watchtower_protocol_funding: &HashMap<PublicKey, PartialUtxo>,
-        addresses: &Vec<P2PAddress>,
+        addresses: &Vec<CommsAddress>,
     ) -> Result<()> {
         for (member_index, member) in members.iter().enumerate() {
             let pubkey = member.take_key;

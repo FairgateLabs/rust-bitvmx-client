@@ -24,7 +24,7 @@ use crate::participants::member::{FundingAmount, Member};
 use crate::wait_until_msg;
 use crate::wallet::helper::non_regtest_warning;
 
-const FUNDING_AMOUNT_PER_SLOT: u64 = 7_000; // an approximation in satoshis
+const FUNDING_AMOUNT_PER_SLOT: u64 = 9_500; // an approximation in satoshis
 pub const PACKET_SIZE: u32 = 3; // number of slots per packet
 const SPEED_UP_MIN_FUNDS: u64 = 30_000; // minimum speedup funds in satoshis
 
@@ -139,18 +139,18 @@ impl Committee {
             )
         })?;
 
-        // // Setup Init covenant
-        // let committee_id = self.committee_id;
-        // self.all(|op: &mut Member| {
-        //     op.setup_init(
-        //         committee_id,
-        //         &members.clone(),
-        //         &wt_funding_utxos_per_member,
-        //         &addresses.clone(),
-        //     )
-        // })?;
+        // Setup Init covenant
+        let committee_id = self.committee_id;
+        self.all(|op: &mut Member| {
+            op.setup_init(
+                committee_id,
+                &members.clone(),
+                &wt_funding_utxos_per_member,
+                &addresses.clone(),
+            )
+        })?;
 
-        // Setup Dispute Channel covenant
+        // // Setup Dispute Channel covenant
         // let members_snapshot = self.members.clone();
         // let committee_id = self.committee_id;
         // let wt_funding_map = wt_funding_utxos_per_member.clone();
@@ -158,7 +158,7 @@ impl Committee {
         //     op.setup_dispute_channel(&members_snapshot, committee_id, &wt_funding_map)
         // })?;
 
-        Ok()
+        // Ok(())
     }
 
     pub fn accept_pegin(
@@ -408,6 +408,7 @@ impl Committee {
             // or should speedup utxo set here too? Unify criteria.
             member.set_advance_funds_input(self.committee_id, utxos.advance_funds.clone())?;
         }
+
         Ok((funding_utxos_per_member, speedup_funding_utxos_per_member, wt_funding_utxos_per_member))
     }
 

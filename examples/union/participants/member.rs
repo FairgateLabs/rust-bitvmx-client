@@ -41,13 +41,15 @@ use crate::{
 #[derive(Clone)]
 pub struct FundingAmount {
     pub speedup: u64,
-    pub protocol_funding: u64,
+    pub operator_funding: u64,
+    pub watchtower_funding: u64,
     pub advance_funds: u64,
 }
 
 pub struct FundingUtxos {
     pub speedup: PartialUtxo,
-    pub protocol_funding: PartialUtxo,
+    pub operator_funding: PartialUtxo,
+    pub watchtower_funding: PartialUtxo,
     pub advance_funds: PartialUtxo,
 }
 
@@ -206,7 +208,7 @@ impl Member {
         committee_id: Uuid,
         members: &Vec<MemberData>,
         funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
-        addresses: &Vec<P2PAddress>,
+        addresses: &Vec<CommsAddress>,
     ) -> Result<()> {
         InitSetup::setup(
             committee_id,
@@ -236,7 +238,7 @@ impl Member {
         DisputeChannelSetup::setup(self, members, committee_id, wt_funding_utxos_per_member)?;
 
         for i in 0..members.len() {
-            let program_id = expect_msg!(self.bitvmx, SetupCompleted(program_id) => program_id)?;
+            let program_id = wait_until_msg!(&self.bitvmx, SetupCompleted(program_id) => program_id);
             info!(id = self.id, program_id = ?program_id, "Dispute channel setup completed for operator index {}", i);
         }
         Ok(())
@@ -524,14 +526,15 @@ impl Member {
         info!(
             "Funding dispute pubkey of {} with: {}",
             self.id,
-            amounts.speedup + amounts.protocol_funding + amounts.advance_funds
+            amounts.speedup + amounts.operator_funding + amounts.watchtower_funding + amounts.advance_funds
         );
 
         self.bitvmx.send_funds(
             id,
             Destination::Batch(vec![
                 Destination::P2WPKH(public_key, amounts.speedup),
-                Destination::P2WPKH(public_key, amounts.protocol_funding),
+                Destination::P2WPKH(public_key, amounts.operator_funding),
+                Destination::P2WPKH(public_key, amounts.watchtower_funding),
                 Destination::P2WPKH(public_key, amounts.advance_funds),
             ]),
             Some(fee_rate),
@@ -553,8 +556,13 @@ impl Member {
             script_pubkey: script_pubkey.clone(),
             public_key: public_key,
         };
-        let protocol_funding_ot = OutputType::SegwitPublicKey {
-            value: Amount::from_sat(amounts.protocol_funding),
+        let operator_funding_ot = OutputType::SegwitPublicKey {
+            value: Amount::from_sat(amounts.operator_funding),
+            script_pubkey: script_pubkey.clone(),
+            public_key: public_key,
+        };
+        let watchtower_funding_ot = OutputType::SegwitPublicKey {
+            value: Amount::from_sat(amounts.watchtower_funding),
             script_pubkey: script_pubkey.clone(),
             public_key: public_key,
         };
@@ -567,13 +575,19 @@ impl Member {
         // Output indexes should match the order in the Destination::Batch above
         Ok(FundingUtxos {
             speedup: (txid, 0, Some(amounts.speedup), Some(speedup_ot)),
-            protocol_funding: (
+            operator_funding: (
                 txid,
                 1,
-                Some(amounts.protocol_funding),
-                Some(protocol_funding_ot),
+                Some(amounts.operator_funding),
+                Some(operator_funding_ot),
             ),
             advance_funds: (txid, 2, Some(amounts.advance_funds), Some(advance_funds_ot)),
+            watchtower_funding: (
+                txid,
+                3,
+                Some(amounts.watchtower_funding),
+                Some(watchtower_funding_ot),
+            ),
         })
     }
 

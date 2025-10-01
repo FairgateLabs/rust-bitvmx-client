@@ -15,7 +15,7 @@ pub fn configure_tracing() {
             "key_manager=off",
             "memory=off",
             "bitvmx_client::config=off",
-            "bitvmx_wallet=info",
+            "bitvmx_wallet=off",
             "bitvmx_bitcoin_rpc=off",
         ];
 
