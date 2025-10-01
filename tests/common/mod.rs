@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 #![cfg(test)]
-use std::str::FromStr;
 
 pub mod dispute;
 
@@ -15,12 +14,12 @@ use bitvmx_broker::{
 };
 use bitvmx_client::{
     bitvmx::BitVMX,
-    config::{Component, Config},
+    config::Config,
     program::{participant::CommsAddress, protocols::protocol_handler::external_fund_tx},
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
+use bitvmx_operator_comms::operator_comms::AllowList;
 use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
-use operator_comms::operator_comms::AllowList;
 use protocol_builder::{
     scripts::{self, ProtocolScript, SignMode},
     types::{OutputType, Utxo},
@@ -45,15 +44,15 @@ pub fn init_bitvmx(
     let broker_config = BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
     let bridge_client = DualChannel::new(
         &broker_config,
-        Cert::from_key_file(&config.components.l2.priv_key)?,
-        Some(config.components.l2.id),
+        Cert::from_key_file(&config.testing.l2.priv_key)?,
+        Some(config.testing.l2.id),
         allow_list.clone(),
     )?;
     let dispatcher_channel = if emulator_dispatcher {
         Some(DualChannel::new(
             &broker_config,
-            Cert::from_key_file(&config.components.emulator.priv_key)?,
-            Some(config.components.emulator.id),
+            Cert::from_key_file(&config.testing.emulator.priv_key)?,
+            Some(config.testing.emulator.id),
             allow_list,
         )?)
     } else {
@@ -117,9 +116,9 @@ pub const FUNDING_ID: &str = "fund_1";
 pub const FEE: u64 = 500;
 
 pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind, Wallet)> {
-    let wallet_config = bitvmx_settings::settings::load_config_file::<bitvmx_wallet::config::Config>(
-        Some("config/wallet_regtest.yaml".to_string()),
-    )?;
+    let wallet_config = bitvmx_settings::settings::load_config_file::<
+        bitvmx_wallet::wallet::config::Config,
+    >(Some("config/wallet_regtest.yaml".to_string()))?;
 
     // Clear indexer, monitor, key manager and wallet data.
     clear_db(&wallet_config.storage.path);
@@ -175,6 +174,7 @@ fn config_trace_aux() {
         "bitvmx_transaction_monitor=off",
         "bitcoin_indexer=off",
         "bitcoin_coordinator=info",
+        "bitvmx_wallet=info",
         "operator_comms=off",
         "tarpc=off",
         "key_manager=off",
@@ -198,7 +198,7 @@ pub fn send_all(id_channel_pairs: &Vec<ParticipantChannel>, msg: &str) -> Result
     for id_channel_pair in id_channel_pairs {
         id_channel_pair
             .channel
-            .send(id_channel_pair.id.clone(), msg.to_string())?;
+            .send(&id_channel_pair.id, msg.to_string())?;
     }
     Ok(())
 }
@@ -223,8 +223,19 @@ pub fn mine_and_wait(
     instances: &mut Vec<BitVMX>,
     wallet: &Wallet,
 ) -> Result<Vec<OutgoingBitVMXApiMessages>> {
+    mine_and_wait_blocks(_bitcoin_client, channels, instances, wallet, 10)
+}
+
+pub fn mine_and_wait_blocks(
+    _bitcoin_client: &BitcoinClient,
+    channels: &Vec<DualChannel>,
+    instances: &mut Vec<BitVMX>,
+    wallet: &Wallet,
+    blocks: u32,
+) -> Result<Vec<OutgoingBitVMXApiMessages>> {
     //MINE AND WAIT
-    for i in 0..100 {
+    let iters = blocks * 10;
+    for i in 0..iters {
         if i % 10 == 0 {
             wallet.mine(1)?;
         }
@@ -245,12 +256,12 @@ pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
     let broker_config = BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
     let bridge_client = DualChannel::new(
         &broker_config,
-        Cert::from_key_file(&config.components.l2.priv_key)?,
-        Some(config.components.l2.id),
+        Cert::from_key_file(&config.testing.l2.priv_key)?,
+        Some(config.testing.l2.id),
         allow_list.clone(),
     )?;
     let particiant_channel = ParticipantChannel {
-        id: config.components.get_bitvmx_identifier()?,
+        id: config.components.bitvmx,
         channel: bridge_client,
     };
     Ok(particiant_channel)
@@ -316,12 +327,12 @@ pub fn set_speedup_funding(
     pub_key: &PublicKey,
     channel: &DualChannel,
     wallet: &mut Wallet,
-    bitvmx_id: &Component,
+    bitvmx_id: &Identifier,
 ) -> Result<()> {
     let fund_tx = wallet.fund_destination(Destination::P2WPKH(*pub_key, amount))?;
 
     let funds_utxo_0 = Utxo::new(fund_tx.compute_txid(), 0, amount, pub_key);
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
-    channel.send(bitvmx_id.get_identifier()?, command)?;
+    channel.send(bitvmx_id, command)?;
     Ok(())
 }

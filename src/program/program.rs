@@ -11,10 +11,10 @@ use crate::{
 };
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus, TypesToMonitor};
+use bitvmx_operator_comms::operator_comms::PubKeyHash;
 use chrono::Utc;
 use console::style;
 use key_manager::musig2::{types::MessageId, PartialSignature, PubNonce};
-use operator_comms::operator_comms::PubKeyHash;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashMap, rc::Rc};
@@ -695,7 +695,7 @@ impl Program {
                 self.protocol.setup_complete(&program_context)?;
 
                 let result = program_context.broker_channel.send(
-                    program_context.components_config.get_l2_identifier()?,
+                    &program_context.components_config.l2,
                     OutgoingBitVMXApiMessages::SetupCompleted(self.program_id).to_string()?,
                 );
                 if let Err(e) = result {
@@ -842,7 +842,7 @@ impl Program {
             )?;*/
         } else {
             program_context.broker_channel.send(
-                program_context.components_config.get_l2_identifier()?,
+                &program_context.components_config.l2,
                 OutgoingBitVMXApiMessages::Transaction(self.program_id, tx_status, Some(name))
                     .to_string()?,
             )?;

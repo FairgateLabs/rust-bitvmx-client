@@ -1,5 +1,5 @@
 use crate::{
-    config::{BrokerConfig, Component, ComponentsConfig},
+    config::{BrokerConfig, ComponentConfig, ComponentsConfig},
     errors::ClientError,
     program::{
         participant::CommsAddress,
@@ -15,7 +15,7 @@ use bitvmx_broker::{
     rpc::{self, tls_helper::Cert},
 };
 use bitvmx_wallet::wallet::Destination;
-use operator_comms::operator_comms::AllowList;
+use bitvmx_operator_comms::operator_comms::AllowList;
 use std::time::{Duration, Instant};
 use std::{
     sync::{Arc, Mutex},
@@ -33,15 +33,15 @@ impl BitVMXClient {
     pub fn new(
         components_config: &ComponentsConfig,
         broker_config: &BrokerConfig,
-        client_config: &Component,
+        l2_config: &ComponentConfig,
         allow_list: Arc<Mutex<AllowList>>,
     ) -> Result<Self> {
         let config =
             rpc::BrokerConfig::new(broker_config.port, None, broker_config.get_pubk_hash()?);
         let channel = DualChannel::new(
             &config,
-            Cert::from_key_file(&client_config.priv_key)?,
-            Some(client_config.id),
+            Cert::from_key_file(&l2_config.priv_key)?,
+            Some(l2_config.id),
             allow_list,
         )?;
 
@@ -169,7 +169,7 @@ impl BitVMXClient {
         // BitVMX instance uses ID 1 by convention
         let serialized = serde_json::to_string(&msg)?;
         self.channel
-            .send(self.components_config.get_bitvmx_identifier()?, serialized)?;
+            .send(&self.components_config.bitvmx, serialized)?;
         Ok(())
     }
 

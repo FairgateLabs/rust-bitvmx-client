@@ -10,7 +10,7 @@ use key_manager::{
     errors::{KeyManagerError, WinternitzError},
     musig2::errors::Musig2SignerError,
 };
-use operator_comms::helper::OperatorCommsError;
+use bitvmx_operator_comms::helper::OperatorCommsError;
 use protocol_builder::errors::{ProtocolBuilderError, ScriptError, UnspendableKeyError};
 use std::time::Duration;
 use storage_backend::error::StorageError;
@@ -172,7 +172,7 @@ pub enum BitVMXError {
     MissingPublicNonces(String, String),
 
     #[error("Wallet error {0}")]
-    WalletError(#[from] bitvmx_wallet::errors::WalletError),
+    WalletError(#[from] bitvmx_wallet::wallet::errors::WalletError),
 
     #[error("Invalid List: {0}")]
     InvalidList(String),

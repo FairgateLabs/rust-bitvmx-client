@@ -23,7 +23,7 @@ use bitcoin_coordinator::{
     AckMonitorNews, MonitorNews, TypesToMonitor,
 };
 use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
-use operator_comms::{
+use bitvmx_operator_comms::{
     helper::ReceiveHandlerChannel,
     operator_comms::{AllowList, OperatorComms, PubKeyHash, RoutingTable},
 };
@@ -154,11 +154,8 @@ impl BitVMX {
             routing_table,
         )?;
 
-        //TODO: A channel that talks directly with the broker without going through localhost loopback could be implemented
-        let broker_channel = LocalChannel::new(
-            config.components.get_bitvmx_identifier()?,
-            broker_storage.clone(),
-        );
+        let broker_channel =
+            LocalChannel::new(config.components.bitvmx.clone(), broker_storage.clone());
 
         bitcoin_coordinator.monitor(TypesToMonitor::NewBlock)?;
 
@@ -357,7 +354,7 @@ impl BitVMX {
                 {
                     info!("Sending News: {:?} for context: {:?}", tx_id, context);
                     self.program_context.broker_channel.send(
-                        from.clone(),
+                        from,
                         OutgoingBitVMXApiMessages::Transaction(*request_id, tx_status, None)
                             .to_string()?,
                     )?;
@@ -409,7 +406,7 @@ impl BitVMX {
                     if !self.notified_rsk_pegin.contains(&tx_id) {
                         self.program_context
                             .broker_channel
-                            .send(self.config.components.get_l2_identifier()?, data)?;
+                            .send(&self.config.components.l2, data)?;
                         self.notified_rsk_pegin.insert(tx_id);
                     }
                     ack_news = AckNews::Monitor(AckMonitorNews::RskPeginTransaction(tx_id));
@@ -440,7 +437,7 @@ impl BitVMX {
                     );
                     self.program_context
                         .broker_channel
-                        .send(self.config.components.get_l2_identifier()?, data)?;
+                        .send(&self.config.components.l2, data)?;
                     ack_news = AckNews::Coordinator(AckCoordinatorNews::InsufficientFunds(tx_id));
                 }
                 CoordinatorNews::DispatchTransactionError(txid, _context_data, _counter) => {
@@ -695,7 +692,7 @@ impl BitVMX {
         debug!("> {:?}", message);
         self.program_context
             .broker_channel
-            .send(to, serde_json::to_string(&message)?)?;
+            .send(&to, serde_json::to_string(&message)?)?;
 
         Ok(())
     }
@@ -839,7 +836,7 @@ impl BitVMXApi for BitVMX {
         info!("Sending dispatcher job message: {}", msg);
         self.program_context
             .broker_channel
-            .send(self.config.components.get_prover_identifier()?, msg)?;
+            .send(&self.config.components.prover, msg)?;
 
         Ok(())
     }
@@ -1106,7 +1103,7 @@ impl BitVMXApi for BitVMX {
     }
 
     fn handle_message(&mut self, msg: String, from: Identifier) -> Result<(), BitVMXError> {
-        if from == self.config.components.get_emulator_identifier()? {
+        if from == self.config.components.emulator {
             let result_message = ResultMessage::from_str(&msg)?;
             let value = result_message.result_as_value()?;
             let decoded = EmulatorResultType::from_value(value)?;
@@ -1119,7 +1116,7 @@ impl BitVMXApi for BitVMX {
             return Ok(());
         }
 
-        if from == self.config.components.get_prover_identifier()? {
+        if from == self.config.components.prover {
             self.handle_prover_message(msg)?;
             return Ok(());
         }
@@ -1167,7 +1164,7 @@ impl BitVMXApi for BitVMX {
                     let error = result.as_ref().err().unwrap();
                     error!("Error getting funding address uuid: {:?}: {:?}", id, error);
                     self.program_context.broker_channel.send(
-                        from.clone(),
+                        &from,
                         serde_json::to_string(&OutgoingBitVMXApiMessages::WalletError(
                             id,
                             error.to_string(),
@@ -1177,7 +1174,7 @@ impl BitVMXApi for BitVMX {
                 let address = result?;
 
                 self.program_context.broker_channel.send(
-                    from,
+                    &from,
                     serde_json::to_string(&OutgoingBitVMXApiMessages::FundingAddress(
                         id,
                         address.into_unchecked(),
@@ -1189,14 +1186,14 @@ impl BitVMXApi for BitVMX {
                 if !self.wallet.is_ready {
                     warn!("Wallet is not ready, to get funding balance uuid: {:?}", id);
                     self.program_context.broker_channel.send(
-                        from,
+                        &from,
                         serde_json::to_string(&OutgoingBitVMXApiMessages::WalletNotReady(id))?,
                     )?;
                     return Ok(());
                 }
                 let balance = self.wallet.balance();
                 self.program_context.broker_channel.send(
-                    from,
+                    &from,
                     serde_json::to_string(&OutgoingBitVMXApiMessages::FundingBalance(
                         id,
                         balance.trusted_spendable().to_sat(),
@@ -1208,7 +1205,7 @@ impl BitVMXApi for BitVMX {
                 if !self.wallet.is_ready {
                     warn!("Wallet is not ready, to send funds uuid: {:?}", id);
                     self.program_context.broker_channel.send(
-                        from,
+                        &from,
                         serde_json::to_string(&OutgoingBitVMXApiMessages::WalletNotReady(id))?,
                     )?;
                     return Ok(());
@@ -1219,7 +1216,7 @@ impl BitVMXApi for BitVMX {
                     Err(e) => {
                         error!("Failed sending funds to {:?}. Error: {:?}", destination, e);
                         self.program_context.broker_channel.send(
-                            from.clone(),
+                            &from.clone(),
                             serde_json::to_string(&OutgoingBitVMXApiMessages::WalletError(
                                 id,
                                 e.to_string(),
@@ -1234,7 +1231,7 @@ impl BitVMXApi for BitVMX {
                 self.wallet.update_with_tx(&tx)?;
 
                 self.program_context.broker_channel.send(
-                    from,
+                    &from,
                     serde_json::to_string(&OutgoingBitVMXApiMessages::FundsSent(id, txid))?,
                 )?;
             }
@@ -1410,15 +1407,20 @@ impl BitVMXApi for BitVMX {
                 self.reply(from, message)?;
             }
             IncomingBitVMXApiMessages::GetProtocolVisualization(id) => {
-                let protocol_str = self
-                    .load_program(&id)?
-                    .protocol
-                    .load_protocol()?
-                    .visualize(GraphOptions::EdgeArrows)?;
-                self.reply(
-                    from,
-                    OutgoingBitVMXApiMessages::ProtocolVisualization(protocol_str),
-                )?;
+                let message = match self.load_program(&id) {
+                    Ok(program) => {
+                        let protocol_str = program
+                            .protocol
+                            .load_protocol()?
+                            .visualize(GraphOptions::EdgeArrows)?;
+                        OutgoingBitVMXApiMessages::ProtocolVisualization(id, protocol_str)
+                    }
+                    Err(e) => {
+                        warn!("Failed to load protocol: {:?}", e);
+                        OutgoingBitVMXApiMessages::ProtocolVisualization(id, String::default())
+                    }
+                };
+                self.reply(from, message)?;
             }
             #[cfg(feature = "testpanic")]
             IncomingBitVMXApiMessages::Test(s) => {

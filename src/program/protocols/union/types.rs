@@ -1,5 +1,5 @@
 use bitcoin::{PublicKey, Txid};
-use musig2::{secp::MaybeScalar, PubNonce};
+use key_manager::musig2::{secp::MaybeScalar, PubNonce};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -42,6 +42,7 @@ pub const DISPUTE_CORE_LONG_TIMELOCK: u16 = 6;
 pub const DUST_VALUE: u64 = 540;
 pub const SPEEDUP_VALUE: u64 = 540;
 pub const P2TR_FEE: u64 = 335; // This should match the value P2TR_FEE in Union Smart contracts
+pub const USER_TAKE_FEE: u64 = 335; // This should match the value USER_TAKE_FEE in Union Smart contracts
 
 // Suffixes
 pub const FUNDING_UTXO_SUFFIX: &str = "_FUNDING_UTXO";

@@ -6,7 +6,7 @@ use bitvmx_client::program::protocols::union::types::ADVANCE_FUNDS_INPUT;
 use bitvmx_client::program::variables::VariableTypes;
 use bitvmx_wallet::wallet::Destination;
 use core::clone::Clone;
-use operator_comms::operator_comms::AllowList;
+use bitvmx_operator_comms::operator_comms::AllowList;
 use protocol_builder::types::OutputType;
 use protocol_builder::types::Utxo;
 use std::collections::HashMap;
@@ -77,7 +77,7 @@ impl Member {
         let bitvmx = BitVMXClient::new(
             &config.components,
             &config.broker,
-            &config.components.l2,
+            &config.testing.l2,
             allow_list,
         )?;
 

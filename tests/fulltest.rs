@@ -45,8 +45,6 @@ pub fn test_full() -> Result<()> {
     config_trace();
 
     const NETWORK: Network = Network::Regtest;
-    let fake_drp = false;
-    let fake_instruction = false;
 
     let (bitcoin_client, bitcoind, mut wallet) = prepare_bitcoin()?;
 
@@ -57,15 +55,9 @@ pub fn test_full() -> Result<()> {
     let mut instances = vec![bitvmx_1, bitvmx_2, bitvmx_3]; //, bitvmx_4];
     let channels = vec![bridge_1, bridge_2, bridge_3]; // , bridge_4];
     let identifiers = [
-        instances[0]
-            .get_components_config()
-            .get_bitvmx_identifier()?,
-        instances[1]
-            .get_components_config()
-            .get_bitvmx_identifier()?,
-        instances[2]
-            .get_components_config()
-            .get_bitvmx_identifier()?,
+        instances[0].get_components_config().bitvmx.clone(),
+        instances[1].get_components_config().bitvmx.clone(),
+        instances[2].get_components_config().bitvmx.clone(),
     ];
     let id_channel_pairs: Vec<ParticipantChannel> = identifiers
         .clone()
@@ -111,21 +103,21 @@ pub fn test_full() -> Result<()> {
         &funding_key_0,
         &channels[0],
         &mut wallet,
-        &instances[0].get_components_config().get_bitvmx_config(),
+        &instances[0].get_components_config().bitvmx,
     )?;
     set_speedup_funding(
         10_000_000,
         &funding_key_1,
         &channels[1],
         &mut wallet,
-        &instances[1].get_components_config().get_bitvmx_config(),
+        &instances[1].get_components_config().bitvmx,
     )?;
     set_speedup_funding(
         10_000_000,
         &funding_key_2,
         &channels[2],
         &mut wallet,
-        &instances[2].get_components_config().get_bitvmx_config(),
+        &instances[2].get_components_config().bitvmx,
     )?;
 
     //==================================================
@@ -192,7 +184,7 @@ pub fn test_full() -> Result<()> {
 
     // this should be done for all operators, but for now just setup one dispute
     let _ = channels[0].send(
-        identifiers[0].clone().clone(),
+        &identifiers[0].clone(),
         IncomingBitVMXApiMessages::GetTransactionInfoByName(
             slot_program_id,
             format!(
@@ -241,8 +233,6 @@ pub fn test_full() -> Result<()> {
         initial_output_type,
         prover_win_utxo,
         prover_win_output_type,
-        fake_drp,
-        fake_instruction,
         ForcedChallenges::No,
         None,
         None,
@@ -340,10 +330,10 @@ pub fn test_full() -> Result<()> {
         "secret".to_string(),
         WitnessTypes::Secret(preimage.as_bytes().to_vec()),
     ))?;
-    channels[1].send(identifiers[1].clone(), witness_msg.clone())?;
+    channels[1].send(&identifiers[1], witness_msg.clone())?;
 
     let _ = channels[1].send(
-        identifiers[1].clone(),
+        &identifiers[1],
         IncomingBitVMXApiMessages::GetTransactionInfoByName(
             lock_program_id,
             program::protocols::cardinal::lock::LOCK_TX.to_string(),
@@ -364,7 +354,7 @@ pub fn test_full() -> Result<()> {
     let locktx_id = tx.compute_txid();
 
     let _ = channels[1].send(
-        identifiers[1].clone(),
+        &identifiers[1],
         IncomingBitVMXApiMessages::GetHashedMessage(
             lock_program_id,
             program::protocols::cardinal::lock::LOCK_TX.to_string(),
@@ -437,7 +427,7 @@ pub fn test_full() -> Result<()> {
     info!("Going to dispatch LOCK TX");
     info!("================================================");
     let _ = channels[1].send(
-        identifiers[1].clone(),
+        &identifiers[1],
         IncomingBitVMXApiMessages::DispatchTransactionName(
             lock_program_id,
             program::protocols::cardinal::lock::LOCK_TX.to_string(),
@@ -454,7 +444,7 @@ pub fn test_full() -> Result<()> {
     info!("Going to dispatch SLOT SETUP TX");
     info!("================================================");
     let _ = channels[1].send(
-        identifiers[1].clone(),
+        &identifiers[1],
         IncomingBitVMXApiMessages::DispatchTransactionName(
             slot_program_id,
             program::protocols::cardinal::slot::SETUP_TX.to_string(),
@@ -475,16 +465,16 @@ pub fn test_full() -> Result<()> {
     let cert_hash = "966c3c1b3b93d12206202b8c685df7554d3df6c72b5cee973de94c45e3f37a0a";
     let set_cert_hash = VariableTypes::Input(hex::decode(cert_hash).unwrap())
         .set_msg(slot_program_id, &certificate_hash(0))?;
-    let _ = channels[0].send(identifiers[0].clone().clone(), set_cert_hash)?;
+    let _ = channels[0].send(&identifiers[0].clone(), set_cert_hash)?;
 
     let selected_gid: u32 = 7;
     let set_gid = VariableTypes::Input(selected_gid.to_le_bytes().to_vec())
         .set_msg(slot_program_id, &group_id(0))?;
-    let _ = channels[0].send(identifiers[0].clone().clone(), set_gid)?;
+    let _ = channels[0].send(&identifiers[0].clone(), set_gid)?;
 
     // send the tx
     let _ = channels[0].send(
-        identifiers[0].clone(),
+        &identifiers[0],
         IncomingBitVMXApiMessages::DispatchTransactionName(
             slot_program_id,
             program::protocols::cardinal::slot::cert_hash_tx_op(0),
@@ -511,7 +501,6 @@ pub fn test_full() -> Result<()> {
         &bitcoin_client,
         &wallet,
         dispute_id,
-        fake_drp,
         None,
     )?;
 
@@ -533,7 +522,7 @@ pub fn test_full() -> Result<()> {
     info!("Going to complete TOO");
     info!("================================================");
     let _ = channels[0].send(
-        id_channel_pairs[0].id.clone(),
+        &id_channel_pairs[0].id,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             transfer_program_id,
             program::protocols::cardinal::transfer::too_tx(0, 7),

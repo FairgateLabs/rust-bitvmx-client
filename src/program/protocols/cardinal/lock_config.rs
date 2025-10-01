@@ -122,9 +122,7 @@ impl LockProtocolConfiguration {
     ) -> Result<(), BitVMXError> {
         for id_channel_pair in id_channel_pairs {
             for msg in self.get_setup_messages(addresses.clone(), leader)? {
-                id_channel_pair
-                    .channel
-                    .send(id_channel_pair.id.clone(), msg)?;
+                id_channel_pair.channel.send(&id_channel_pair.id, msg)?;
             }
         }
         Ok(())
@@ -149,8 +147,11 @@ impl LockProtocolConfiguration {
         ];
 
         let asset_value = self.ordinal_utxo.2.unwrap();
-        let asset_output_type =
-            external_fund_tx(&self.operators_aggregated_pub, asset_spending_condition, asset_value)?;
+        let asset_output_type = external_fund_tx(
+            &self.operators_aggregated_pub,
+            asset_spending_condition,
+            asset_value,
+        )?;
 
         Ok((txid.clone(), 0, Some(asset_value), Some(asset_output_type)))
     }

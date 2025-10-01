@@ -1,6 +1,6 @@
 use bitcoin::PublicKey;
 use key_manager::winternitz::WinternitzPublicKey;
-use operator_comms::operator_comms::PubKeyHash;
+use bitvmx_operator_comms::operator_comms::PubKeyHash;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr};
 

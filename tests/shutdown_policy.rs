@@ -13,10 +13,7 @@ fn nonfatal_error_keeps_looping() -> Result<()> {
 
     // 1) Simple Ping -> Pong
     channel.send(
-        bitvmx
-            .get_components_config()
-            .get_bitvmx_config()
-            .get_identifier()?,
+        &bitvmx.get_components_config().bitvmx,
         IncomingBitVMXApiMessages::Ping().to_string()?,
     )?;
     let msg = common::wait_message_from_channel(&channel, &mut vec![&mut bitvmx], true)?;
@@ -28,10 +25,7 @@ fn nonfatal_error_keeps_looping() -> Result<()> {
 
     // 2) Send an invalid message (non-fatal: serde error) and ensure loop continues
     channel.send(
-        bitvmx
-            .get_components_config()
-            .get_bitvmx_config()
-            .get_identifier()?,
+        &bitvmx.get_components_config().bitvmx,
         "not json".to_string(),
     )?;
     let err = bitvmx
@@ -41,10 +35,7 @@ fn nonfatal_error_keeps_looping() -> Result<()> {
 
     // 3) Verify we can still Ping -> Pong
     channel.send(
-        bitvmx
-            .get_components_config()
-            .get_bitvmx_config()
-            .get_identifier()?,
+        &bitvmx.get_components_config().bitvmx,
         IncomingBitVMXApiMessages::Ping().to_string()?,
     )?;
     let msg = common::wait_message_from_channel(&channel, &mut vec![&mut bitvmx], true)?;
@@ -67,7 +58,7 @@ fn fatal_error_triggers_shutdown() -> Result<()> {
 
     // Trigger a deterministic fatal error via test-only path
     channel.send(
-        BITVMX_ID,
+        &bitvmx.get_components_config().bitvmx,
         IncomingBitVMXApiMessages::Test("fatal".into()).to_string()?,
     )?;
     let err = bitvmx
@@ -91,7 +82,7 @@ fn panic_triggers_shutdown() -> Result<()> {
 
     // Trigger a test-only panic via API message
     channel.send(
-        BITVMX_ID,
+        &bitvmx.get_components_config().bitvmx,
         IncomingBitVMXApiMessages::Test("panic".into()).to_string()?,
     )?;
 

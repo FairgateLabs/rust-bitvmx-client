@@ -155,6 +155,13 @@ pub trait ProtocolHandler {
         self.load_protocol()?.transaction_name_by_id(txid).cloned()
     }
 
+    fn get_transaction_id_by_name(&self, name: &str) -> Result<Txid, ProtocolBuilderError> {
+        Ok(self
+            .load_protocol()?
+            .transaction_by_name(name)?
+            .compute_txid())
+    }
+
     fn load_protocol(&self) -> Result<Protocol, ProtocolBuilderError> {
         match Protocol::load(
             &self.context().protocol_name,
@@ -274,7 +281,10 @@ pub trait ProtocolHandler {
 
         let signature = protocol
             .input_taproot_script_spend_signature(name, input_index as usize, leaf_index as usize)?
-            .unwrap();
+            .expect(&format!(
+                "Failed to get taproot signature for tx {} input {} leaf {}",
+                name, input_index, leaf_index
+            ));
         spending_args.push_taproot_signature(signature)?;
 
         if leaf_identification {
@@ -308,7 +318,7 @@ pub trait ProtocolHandler {
         leaf: Option<u32>,
         protocol: Option<Protocol>,
         scripts: Option<Vec<ProtocolScript>>,
-    ) -> Result<Vec<String>, BitVMXError> {
+    ) -> Result<(Vec<String>, u32), BitVMXError> {
         info!(
             "Program {}: Decoding witness for {} with input index {}",
             style(self.context().protocol_name.clone()).blue(),
@@ -376,7 +386,7 @@ pub trait ProtocolHandler {
                 WitnessTypes::Winternitz(data[i].clone()),
             )?;
         }
-        Ok(names)
+        Ok((names, leaf))
     }
 
     fn decode_witness_from_speedup(
@@ -387,7 +397,7 @@ pub trait ProtocolHandler {
         program_context: &ProgramContext,
         transaction: &Transaction,
         leaf: Option<u32>,
-    ) -> Result<Vec<String>, BitVMXError> {
+    ) -> Result<(Vec<String>, u32), BitVMXError> {
         let idx = self.find_prevout(prev_tx_id, prev_vout, transaction)?;
         let protocol = self.load_protocol()?;
         let scripts = protocol
@@ -562,8 +572,4 @@ pub fn external_fund_tx(
         internal_key,
         &spending_scripts,
     )?)
-}
-
-fn get_protocol_name(name: &str, protocol_id: Uuid) -> String {
-    format!("{}_{}", name, protocol_id)
 }

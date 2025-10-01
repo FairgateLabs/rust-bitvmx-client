@@ -47,9 +47,6 @@ pub fn test_slot_only() -> Result<()> {
 pub fn test_slot(and_drp: bool) -> Result<()> {
     config_trace();
 
-    let fake_drp = false;
-    let fake_instruction = false;
-
     //const NETWORK: Network = Network::Regtest;
 
     let (bitcoin_client, bitcoind, mut wallet) = prepare_bitcoin()?;
@@ -61,16 +58,9 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
     let mut instances = vec![bitvmx_1, bitvmx_2, bitvmx_3]; //, bitvmx_4];
     let channels = vec![bridge_1, bridge_2, bridge_3]; // , bridge_4];
     let identifiers = [
-        instances[0]
-            .get_components_config()
-            .get_bitvmx_identifier()?,
-        instances[1]
-            .get_components_config()
-            .get_bitvmx_identifier()?,
-        instances[2]
-            .get_components_config()
-            .get_bitvmx_identifier()?,
-        //instances[3].get_components_config().get_bitvmx_identifier()?,
+        instances[0].get_components_config().bitvmx.clone(),
+        instances[1].get_components_config().bitvmx.clone(),
+        instances[2].get_components_config().bitvmx.clone(),
     ];
 
     let id_channel_pairs: Vec<ParticipantChannel> = identifiers
@@ -115,21 +105,21 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
         &funding_key_0,
         &channels[0],
         &mut wallet,
-        &instances[0].get_components_config().get_bitvmx_config(),
+        &instances[0].get_components_config().bitvmx,
     )?;
     set_speedup_funding(
         10_000_000,
         &funding_key_1,
         &channels[1],
         &mut wallet,
-        &instances[1].get_components_config().get_bitvmx_config(),
+        &instances[1].get_components_config().bitvmx,
     )?;
     set_speedup_funding(
         10_000_000,
         &funding_key_2,
         &channels[2],
         &mut wallet,
-        &instances[2].get_components_config().get_bitvmx_config(),
+        &instances[2].get_components_config().bitvmx,
     )?;
 
     //==================================================
@@ -176,7 +166,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
 
     // this should be done for all operators, but for now just setup one dispute
     let _ = channels[0].send(
-        id_channel_pairs[0].id.clone(),
+        &id_channel_pairs[0].id,
         IncomingBitVMXApiMessages::GetTransactionInfoByName(
             program_id,
             format!(
@@ -237,8 +227,6 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
             initial_output_type,
             prover_win_utxo,
             prover_win_output_type,
-            fake_drp,
-            fake_instruction,
             ForcedChallenges::No,
             None,
             Some("./verifiers/cardinal-verifier.yaml".to_string()),
@@ -254,7 +242,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
     // ==========================
 
     let _ = channels[1].send(
-        id_channel_pairs[1].id.clone(),
+        &id_channel_pairs[1].id,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
             program::protocols::cardinal::slot::SETUP_TX.to_string(),
@@ -269,16 +257,16 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
     let cert_hash = "966c3c1b3b93d12206202b8c685df7554d3df6c72b5cee973de94c45e3f37a0a";
     let set_cert_hash = VariableTypes::Input(hex::decode(cert_hash).unwrap())
         .set_msg(program_id, &certificate_hash(0))?;
-    let _ = channels[0].send(id_channel_pairs[0].id.clone(), set_cert_hash)?;
+    let _ = channels[0].send(&id_channel_pairs[0].id, set_cert_hash)?;
 
     let selected_gid: u32 = 7;
     let set_gid = VariableTypes::Input(selected_gid.to_le_bytes().to_vec())
         .set_msg(program_id, &group_id(0))?;
-    let _ = channels[0].send(id_channel_pairs[0].id.clone(), set_gid)?;
+    let _ = channels[0].send(&id_channel_pairs[0].id, set_gid)?;
 
     // send the tx
     let _ = channels[0].send(
-        id_channel_pairs[0].id.clone(),
+        &id_channel_pairs[0].id,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             program_id,
             program::protocols::cardinal::slot::cert_hash_tx_op(0),
@@ -302,7 +290,6 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
             &bitcoin_client,
             &wallet,
             dispute_id,
-            fake_drp,
             Some((gorth16proof, 3)),
         )?;
 

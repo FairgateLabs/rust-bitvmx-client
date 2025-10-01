@@ -3,9 +3,9 @@ use std::net::{IpAddr, SocketAddr};
 use bitcoin_coordinator::config::CoordinatorSettingsConfig;
 use bitvmx_bitcoin_rpc::rpc_config::RpcConfig;
 use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
-use bitvmx_wallet::config::WalletConfig;
+use bitvmx_wallet::wallet::config::WalletConfig;
 use key_manager::config::KeyManagerConfig;
-use operator_comms::operator_comms::PubKeyHash;
+use bitvmx_operator_comms::operator_comms::PubKeyHash;
 use serde::{Deserialize, Serialize};
 use storage_backend::storage_config::StorageConfig;
 use tracing::info;
@@ -63,45 +63,24 @@ impl BrokerConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Component {
+pub struct ComponentConfig {
     pub priv_key: String,
     pub id: u8,
 }
 
-impl Component {
-    pub fn get_pubk_hash(&self) -> Result<PubKeyHash, ConfigError> {
-        let cert = Cert::from_key_file(&self.priv_key.clone())?;
-        Ok(cert.get_pubk_hash()?)
-    }
-    pub fn get_identifier(&self) -> Result<Identifier, ConfigError> {
-        Ok(Identifier::new(self.get_pubk_hash()?, self.id))
-    }
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TestConfig {
+    pub l2: ComponentConfig,
+    pub emulator: ComponentConfig,
+    pub prover: ComponentConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ComponentsConfig {
-    pub l2: Component,
-    pub bitvmx: Component,
-    pub emulator: Component,
-    pub prover: Component,
-}
-
-impl ComponentsConfig {
-    pub fn get_l2_identifier(&self) -> Result<Identifier, ConfigError> {
-        Ok(self.l2.get_identifier()?)
-    }
-    pub fn get_bitvmx_identifier(&self) -> Result<Identifier, ConfigError> {
-        Ok(self.bitvmx.get_identifier()?)
-    }
-    pub fn get_emulator_identifier(&self) -> Result<Identifier, ConfigError> {
-        Ok(self.emulator.get_identifier()?)
-    }
-    pub fn get_prover_identifier(&self) -> Result<Identifier, ConfigError> {
-        Ok(self.prover.get_identifier()?)
-    }
-    pub fn get_bitvmx_config(&self) -> &Component {
-        &self.bitvmx
-    }
+    pub l2: Identifier,
+    pub bitvmx: Identifier,
+    pub emulator: Identifier,
+    pub prover: Identifier,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -115,6 +94,7 @@ pub struct Config {
     pub broker: BrokerConfig,
     pub client: ClientConfig,
     pub components: ComponentsConfig,
+    pub testing: TestConfig, //This is here for testing purposes only
     pub coordinator_settings: Option<CoordinatorSettingsConfig>,
     pub coordinator: ThrotthleUpdate,
     pub wallet: WalletConfig,

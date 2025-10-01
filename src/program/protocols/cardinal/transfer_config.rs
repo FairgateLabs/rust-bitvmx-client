@@ -158,9 +158,7 @@ impl TransferConfig {
     ) -> Result<(), BitVMXError> {
         for id_channel_pair in id_channel_pairs {
             for msg in self.get_setup_messages(addresses.clone(), leader)? {
-                id_channel_pair
-                    .channel
-                    .send(id_channel_pair.id.clone(), msg)?;
+                id_channel_pair.channel.send(&id_channel_pair.id, msg)?;
             }
         }
         Ok(())

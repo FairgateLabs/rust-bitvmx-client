@@ -7,9 +7,10 @@ use bitvmx_broker::channel::channel::DualChannel;
 use bitvmx_broker::rpc::tls_helper::Cert;
 use bitvmx_broker::rpc::BrokerConfig;
 use bitvmx_client::program;
-use bitvmx_client::program::participant::CommsAddress;
+use bitvmx_client::program::participant::{CommsAddress, ParticipantRole};
 use bitvmx_client::program::protocols::dispute::{
-    input_tx_name, program_input, program_input_prev_prefix, program_input_prev_protocol,
+    action_wins, input_tx_name, program_input, program_input_prev_prefix,
+    program_input_prev_protocol,
 };
 use bitvmx_client::program::variables::{ConfigResult, ConfigResults, VariableTypes, WitnessTypes};
 use bitvmx_client::types::{
@@ -19,6 +20,7 @@ use bitvmx_client::{bitvmx::BitVMX, config::Config};
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
+use bitvmx_operator_comms::operator_comms::AllowList;
 use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
 use common::dispute::{prepare_dispute, ForcedChallenges};
 use common::{clear_db, init_utxo_new, INITIAL_BLOCK_COUNT};
@@ -29,7 +31,6 @@ use key_manager::winternitz::{
     self, checksum_length, to_checksummed_message, WinternitzPublicKey, WinternitzSignature,
     WinternitzType,
 };
-use operator_comms::operator_comms::AllowList;
 use protocol_builder::scripts::{self, SignMode};
 use protocol_builder::types::Utxo;
 use std::sync::mpsc::channel;
@@ -137,8 +138,8 @@ fn run_emulator(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result
             BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
         let channel = DualChannel::new(
             &broker_config,
-            Cert::from_key_file(&config.components.emulator.priv_key)?,
-            Some(config.components.emulator.id),
+            Cert::from_key_file(&config.testing.emulator.priv_key)?,
+            Some(config.testing.emulator.id),
             allow_list.clone(),
         )?;
 
@@ -177,8 +178,8 @@ fn run_zkp(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<()> 
             BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
         let channel = DualChannel::new(
             &broker_config,
-            Cert::from_key_file(&config.components.prover.priv_key)?,
-            Some(config.components.prover.id),
+            Cert::from_key_file(&config.testing.prover.priv_key)?,
+            Some(config.testing.prover.id),
             allow_list.clone(),
         )?;
 
@@ -259,7 +260,7 @@ impl TestHelper {
         };
 
         let wallet_config = bitvmx_settings::settings::load_config_file::<
-            bitvmx_wallet::config::Config,
+            bitvmx_wallet::wallet::config::Config,
         >(Some(config_path.to_string()))?;
 
         info!("Wallet settings loaded");
@@ -351,11 +352,11 @@ impl TestHelper {
                 BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
             let channel = DualChannel::new(
                 &broker_config,
-                Cert::from_key_file(&config.components.l2.priv_key)?,
-                Some(config.components.l2.id),
+                Cert::from_key_file(&config.testing.l2.priv_key)?,
+                Some(config.testing.l2.id),
                 allow_list.clone(),
             )?;
-            let id = config.components.get_bitvmx_identifier()?;
+            let id = config.components.bitvmx.clone();
             id_channel_pairs.push(ParticipantChannel { channel, id });
         }
 
@@ -535,12 +536,12 @@ pub fn test_all_aux(
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
     helper.id_channel_pairs[0]
         .channel
-        .send(helper.id_channel_pairs[0].id.clone(), command)?;
+        .send(&helper.id_channel_pairs[0].id, command)?;
     let funds_utxo_1 = Utxo::new(fund_txid_1, 0, speedup_amount, &funding_key_1);
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_1).to_string()?;
     helper.id_channel_pairs[1]
         .channel
-        .send(helper.id_channel_pairs[1].id.clone(), command)?;
+        .send(&helper.id_channel_pairs[1].id, command)?;
 
     info!("Generate Aggregated from pair");
     let pair_0_1 = vec![addresses[0].clone(), addresses[1].clone()];
@@ -548,10 +549,10 @@ pub fn test_all_aux(
     let command = IncomingBitVMXApiMessages::SetupKey(pair_0_1_agg_id, pair_0_1.clone(), None, 0);
     helper.id_channel_pairs[0]
         .channel
-        .send(helper.id_channel_pairs[0].id.clone(), command.to_string()?)?;
+        .send(&helper.id_channel_pairs[0].id, command.to_string()?)?;
     helper.id_channel_pairs[1]
         .channel
-        .send(helper.id_channel_pairs[1].id.clone(), command.to_string()?)?;
+        .send(&helper.id_channel_pairs[1].id, command.to_string()?)?;
     let _msg = helper.wait_msg(0)?;
     let msg = helper.wait_msg(1)?;
     let pair_0_1_agg_pub_key = msg.aggregated_pub_key().unwrap();
@@ -622,8 +623,6 @@ pub fn test_all_aux(
         initial_out_type,
         prover_win_utxo,
         prover_win_out_type,
-        false,
-        false,
         ForcedChallenges::No,
         fail_data,
         program,
@@ -642,7 +641,7 @@ pub fn test_all_aux(
     send_all(&pair_0_1_channels, &set_witness)?;
 
     let _ = helper.id_channel_pairs[1].channel.send(
-        helper.id_channel_pairs[1].id.clone(),
+        &helper.id_channel_pairs[1].id,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             prog_id,
             program::protocols::dispute::START_CH.to_string(),
@@ -662,16 +661,16 @@ pub fn test_all_aux(
         VariableTypes::Input(hex::decode(data).unwrap()).set_msg(prog_id, &program_input(idx))?;
     let _ = helper.id_channel_pairs[0]
         .channel
-        .send(helper.id_channel_pairs[0].id.clone(), set_input_1)?;
+        .send(&helper.id_channel_pairs[0].id, set_input_1)?;
 
     // send the tx
     let _ = helper.id_channel_pairs[0].channel.send(
-        helper.id_channel_pairs[0].id.clone(),
+        &helper.id_channel_pairs[0].id,
         IncomingBitVMXApiMessages::DispatchTransactionName(prog_id, input_tx_name(idx))
             .to_string()?,
     );
 
-    helper.wait_tx_name(1, program::protocols::dispute::ACTION_PROVER_WINS)?;
+    helper.wait_tx_name(1, &action_wins(&ParticipantRole::Prover, 1))?;
 
     helper.stop()?;
 
@@ -858,7 +857,7 @@ fn test_zkp() -> Result<()> {
     let id = Uuid::new_v4();
 
     let _ = helper.id_channel_pairs[0].channel.send(
-        helper.id_channel_pairs[0].id.clone(),
+        &helper.id_channel_pairs[0].id,
         IncomingBitVMXApiMessages::GenerateZKP(
             id,
             vec![1, 2, 3, 4],
@@ -870,7 +869,7 @@ fn test_zkp() -> Result<()> {
     info!("ZKP generated: {:?}", msg);
 
     let _ = helper.id_channel_pairs[0].channel.send(
-        helper.id_channel_pairs[0].id.clone(),
+        &helper.id_channel_pairs[0].id,
         IncomingBitVMXApiMessages::GetZKPExecutionResult(id).to_string()?,
     );
 

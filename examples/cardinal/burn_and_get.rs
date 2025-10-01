@@ -9,7 +9,7 @@ use bitvmx_broker::{
 };
 
 use bitcoin::Txid;
-use operator_comms::operator_comms::AllowList;
+use bitvmx_operator_comms::operator_comms::AllowList;
 use tracing::info;
 
 use crate::common::get_bitcoin_client;
@@ -22,8 +22,11 @@ pub fn main() -> Result<()> {
     let allow_list = AllowList::new();
     allow_list.lock().unwrap().allow_all();
     let channel = DualChannel::new(&broker_config, cert, Some(2), allow_list)?;
-    let identifier = Identifier::new("local".to_string(), 0);
-    channel.send(identifier, "burn".to_string())?;
+    let identifier = Identifier::new(
+        "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+        0,
+    );
+    channel.send(&identifier, "burn".to_string())?;
 
     let happy_txid: Txid;
     let secret_key: String;

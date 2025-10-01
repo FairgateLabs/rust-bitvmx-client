@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use bitcoin::PublicKey;
 use bitvmx_broker::identification::identifier::Identifier;
-use operator_comms::operator_comms::PubKeyHash;
+use bitvmx_operator_comms::operator_comms::PubKeyHash;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{debug, info, warn};
@@ -183,7 +183,7 @@ impl Collaboration {
                 if self.aggregated_key.is_some() {
                     info!("Aggregated generated ({})", self.im_leader);
                     program_context.broker_channel.send(
-                        self.request_from.clone(),
+                        &self.request_from,
                         OutgoingBitVMXApiMessages::AggregatedPubkey(
                             self.collaboration_id,
                             self.aggregated_key.unwrap().clone(),

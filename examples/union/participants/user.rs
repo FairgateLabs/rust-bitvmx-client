@@ -15,7 +15,7 @@ use bitcoin::{
     TxIn, TxOut, Txid, Witness, XOnlyPublicKey,
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
-use operator_comms::operator_comms::AllowList;
+use bitvmx_operator_comms::operator_comms::AllowList;
 use protocol_builder::scripts::{build_taproot_spend_info, op_return_script, timelock, SignMode};
 use std::str::FromStr;
 use tracing::{error, info};
@@ -53,7 +53,7 @@ impl User {
         let bitvmx = BitVMXClient::new(
             &config.components,
             &config.broker,
-            &config.components.l2,
+            &config.testing.l2,
             allow_list,
         )?;
         let bitcoin_client = BitcoinClient::new(

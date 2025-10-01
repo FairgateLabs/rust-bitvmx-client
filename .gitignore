@@ -24,4 +24,9 @@ Cargo.lock
 logs
 .DS_Store
 
+# BitVMX files
+temp-runs
+
+# env files
 .env.priv
+

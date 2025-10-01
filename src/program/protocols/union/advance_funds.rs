@@ -32,7 +32,7 @@ use crate::{
                     AdvanceFundsRequest, Committee, ACCEPT_PEGIN_TX, ADVANCE_FUNDS_INPUT,
                     ADVANCE_FUNDS_TX, DUST_VALUE, INITIAL_DEPOSIT_TX_SUFFIX,
                     LAST_OPERATOR_TAKE_UTXO, OPERATOR, OP_INITIAL_DEPOSIT_FLAG,
-                    REIMBURSEMENT_KICKOFF_TX,
+                    REIMBURSEMENT_KICKOFF_TX, USER_TAKE_FEE,
                 },
             },
         },
@@ -87,7 +87,7 @@ impl ProtocolHandler for AdvanceFundsProtocol {
 
         let accept_pegin_utxo =
             self.accept_pegin_utxo(context, &request.committee_id, request.slot_index)?;
-        let pegin_amount = accept_pegin_utxo.2.unwrap();
+        let accept_pegin_output_amount = accept_pegin_utxo.2.unwrap();
 
         // NOTE: This is read from storage now, it will be replaced with the wallet request in the future.
         let input_utxo = self.advance_funds_input_utxo(context)?;
@@ -142,7 +142,7 @@ impl ProtocolHandler for AdvanceFundsProtocol {
             .expect("key is compressed");
         let user_script_pubkey = ScriptBuf::new_p2wpkh(&user_wpkh);
 
-        let user_amount = self.checked_sub(pegin_amount, request.fee)?;
+        let user_amount = self.checked_sub(accept_pegin_output_amount, USER_TAKE_FEE)?;
         protocol.add_transaction_output(
             ADVANCE_FUNDS_TX,
             &OutputType::SegwitPublicKey {
@@ -166,7 +166,10 @@ impl ProtocolHandler for AdvanceFundsProtocol {
             input_amount += op_take_utxo.unwrap().2.unwrap();
         }
 
-        let op_change = self.checked_sub(input_amount, pegin_amount)?;
+        let op_change = self.checked_sub(
+            input_amount + USER_TAKE_FEE,
+            accept_pegin_output_amount + request.fee,
+        )?;
         if op_change > DUST_VALUE {
             let op_wpkh = self
                 .my_dispute_key(context)?

@@ -1,5 +1,5 @@
 use crate::{errors::BitVMXError, program::participant::CommsAddress};
-use operator_comms::operator_comms::OperatorComms;
+use bitvmx_operator_comms::operator_comms::OperatorComms;
 use serde::Serialize;
 use serde_json::{json, Value};
 use uuid::Uuid;

@@ -34,10 +34,20 @@ broker:
     path: /tmp/op_3/broker.db
 components:
   l2:
-    priv_key: config/keys/l2.key
+    pubkey_hash: 7005e4a0325b644baa2b66c3fa2ed2a795cae584b6d3a57ca45ebf5d0eb0011f
     id: 0
   bitvmx:
-    priv_key: config/keys/bitvmx.key
+    pubkey_hash: 1d10fa43ebbf6674d74caa3e9032711ade09d98ea7d20f89459f61152bebda1e
+    id: 0
+  emulator:
+    pubkey_hash: c356750c04776008418c31cb1fd3d9dad936e5487358eeb8961b68831f419125
+    id: 0
+  prover:
+    pubkey_hash: 054dba5c41ee2926a7d909cc3443fa78f2f2e257cb1d008fd75e0d3534e3ba0d
+    id: 0
+testing:
+  l2:
+    priv_key: config/keys/l2.key
     id: 0
   emulator:
     priv_key: config/keys/emulator.key
