@@ -152,12 +152,10 @@ impl ProtocolHandler for DisputeCoreProtocol {
         let operator_keys = keys[dispute_core_data.operator_index].clone();
 
         self.create_initial_deposit(&mut protocol, &operator_keys, &dispute_core_data)?;
+        let take_aggregated_key = self.take_aggregated_key(context)?;
 
-        let mut reimbursement_output = self.create_reimbursement_output(
-            &dispute_core_data,
-            &self.take_aggregated_key(context)?,
-            &keys,
-        )?;
+        let mut reimbursement_output =
+            self.create_reimbursement_output(&dispute_core_data, &take_aggregated_key, &keys)?;
 
         for i in 0..committee.packet_size as usize {
             self.create_dispute_core(
@@ -169,6 +167,8 @@ impl ProtocolHandler for DisputeCoreProtocol {
                 reimbursement_output.clone(),
                 context,
             )?;
+
+            self.create_two_dispute_penalization(&mut protocol, i, &take_aggregated_key)?;
         }
 
         protocol.compute_minimum_output_values()?;
@@ -218,10 +218,10 @@ impl ProtocolHandler for DisputeCoreProtocol {
 
         if tx_name.starts_with(REIMBURSEMENT_KICKOFF_TX) {
             self.handle_reimbursement_kickoff_transaction(
-                tx_id,
-                &tx_status,
-                &tx_name,
                 program_context,
+                &tx_status,
+                tx_id,
+                &tx_name,
             )?;
         }
 
@@ -450,6 +450,67 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
+    fn create_two_dispute_penalization(
+        &self,
+        protocol: &mut Protocol,
+        dispute_core_index: usize,
+        take_aggregated_key: &PublicKey,
+    ) -> Result<(), BitVMXError> {
+        let last_reimbursement_kickoff = indexed_name(REIMBURSEMENT_KICKOFF_TX, dispute_core_index);
+
+        if dispute_core_index == 0 {
+            // No previous reimbursement kickoff transaction to connect to.
+            return Ok(());
+        }
+
+        for i in 0..dispute_core_index {
+            let prev_reimbursement_kickoff = indexed_name(REIMBURSEMENT_KICKOFF_TX, i);
+            let two_dispute_penalization = format!(
+                "{}_{}_{}",
+                TWO_DISPUTE_PENALIZATION_TX, i, dispute_core_index
+            );
+
+            info!("Creating: {}", two_dispute_penalization);
+
+            protocol.add_connection(
+                "prev_reimbursement_kickoff",
+                &prev_reimbursement_kickoff,
+                OutputSpec::Index(0),
+                &two_dispute_penalization,
+                InputSpec::Auto(
+                    SighashType::taproot_all(),
+                    SpendMode::KeyOnly {
+                        key_path_sign: SignMode::Aggregate,
+                    },
+                ),
+                Some(DISPUTE_CORE_SHORT_TIMELOCK),
+                None,
+            )?;
+
+            protocol.add_connection(
+                "last_reimbursement_kickoff",
+                &last_reimbursement_kickoff,
+                OutputSpec::Index(0),
+                &two_dispute_penalization,
+                InputSpec::Auto(
+                    SighashType::taproot_all(),
+                    SpendMode::KeyOnly {
+                        key_path_sign: SignMode::Aggregate,
+                    },
+                ),
+                Some(DISPUTE_CORE_SHORT_TIMELOCK),
+                None,
+            )?;
+
+            protocol.add_transaction_output(
+                &two_dispute_penalization,
+                &OutputType::taproot(AUTO_AMOUNT, &take_aggregated_key, &[])?,
+            )?;
+        }
+
+        Ok(())
+    }
+
     fn add_speedup_outputs(
         &self,
         protocol: &mut Protocol,
@@ -522,13 +583,12 @@ impl DisputeCoreProtocol {
             .value
             .to_sat();
 
+        let change = self.checked_sub(funding_amount, setup_amount + setup_fees + SPEEDUP_VALUE)?;
+
         protocol
             .add_transaction_output(
                 &setup,
-                &OutputType::segwit_key(
-                    funding_amount - setup_amount - setup_fees - SPEEDUP_VALUE,
-                    operator_dispute_key,
-                )?,
+                &OutputType::segwit_key(change, operator_dispute_key)?,
             )
             .map_err(|e| BitVMXError::ProtocolBuilderError(e))?;
 
@@ -809,12 +869,165 @@ impl DisputeCoreProtocol {
         }
     }
 
+    fn get_reimbursement_in_progress(
+        &self,
+        program_context: &ProgramContext,
+    ) -> Result<Option<u32>, BitVMXError> {
+        match program_context
+            .globals
+            .get_var(&self.ctx.id, REIMBURSEMENT_KICKOFF_IN_PROGRESS)?
+        {
+            Some(var) => Ok(Some(var.number()?)),
+            None => Ok(None),
+        }
+    }
+
+    fn set_reimbursement_in_progress(
+        &self,
+        program_context: &ProgramContext,
+        slot_index: usize,
+    ) -> Result<(), BitVMXError> {
+        info!(
+            id = self.ctx.my_idx,
+            "Setting reimbursement in progress for slot index: {}", slot_index
+        );
+
+        program_context.globals.set_var(
+            &self.ctx.id,
+            REIMBURSEMENT_KICKOFF_IN_PROGRESS,
+            VariableTypes::Number(slot_index as u32),
+        )
+    }
+
+    fn handle_double_reimbursement_kickoff(
+        &self,
+        context: &ProgramContext,
+        tx_status: &TransactionStatus,
+        slot_index: usize,
+    ) -> Result<bool, BitVMXError> {
+        let reimbursement_in_progress = self.get_reimbursement_in_progress(context)?;
+        if reimbursement_in_progress.is_none() {
+            info!(
+                id = self.ctx.my_idx,
+                "No reimbursement in progress, setting slot index: {} as in progress", slot_index
+            );
+            self.set_reimbursement_in_progress(context, slot_index)?;
+            return Ok(false);
+        } else {
+            info!(
+                id = self.ctx.my_idx,
+                "Reimbursement already in progress for slot index: {}, dispatching double kickoff penalization for slots {} and {}",
+                reimbursement_in_progress.unwrap(),
+                reimbursement_in_progress.unwrap(),
+                slot_index
+            );
+
+            let block_height = Some(
+                tx_status.block_info.as_ref().unwrap().height
+                    + DISPUTE_CORE_SHORT_TIMELOCK as u32
+                    + 1,
+            );
+            self.dispatch_double_kickoff_penalization_tx(
+                context,
+                reimbursement_in_progress.unwrap() as usize,
+                slot_index,
+                block_height,
+            )?;
+
+            info!(
+                id = self.ctx.my_idx,
+                "Cleaning REIMBURSEMENT_KICKOFF_IN_PROGRESS"
+            );
+            // Asumming the penalization tx was dispatched successfully and mined,
+            context
+                .globals
+                .unset_var(&self.ctx.id, REIMBURSEMENT_KICKOFF_IN_PROGRESS)?;
+
+            return Ok(true);
+        }
+    }
+
+    fn dispatch_double_kickoff_penalization_tx(
+        &self,
+        context: &ProgramContext,
+        slot_index_prev: usize,
+        slot_index_last: usize,
+        block_height: Option<u32>,
+    ) -> Result<(), BitVMXError> {
+        // Get the signed transaction
+        let (tx, speedup, name) =
+            self.double_kickoff_penalization_tx(context, slot_index_prev, slot_index_last)?;
+        let txid = tx.compute_txid();
+
+        info!(
+            id = self.ctx.my_idx,
+            "Auto-dispatching {} txid: {}", name, txid
+        );
+
+        // Dispatch the transaction through the bitcoin coordinator
+        context.bitcoin_coordinator.dispatch(
+            tx,
+            speedup,
+            format!("dispute_core_setup_{}:{}", self.ctx.id, name), // Context string
+            block_height,                                           // Dispatch immediately
+        )?;
+
+        info!(
+            id = self.ctx.my_idx,
+            "OP_SETUP_TX dispatched successfully with txid: {}", txid
+        );
+        Ok(())
+    }
+
+    fn double_kickoff_penalization_tx(
+        &self,
+        context: &ProgramContext,
+        mut slot_index_prev: usize,
+        mut slot_index_last: usize,
+    ) -> Result<(Transaction, Option<SpeedupData>, String), BitVMXError> {
+        if slot_index_last < slot_index_prev {
+            (slot_index_last, slot_index_prev) = (slot_index_prev, slot_index_last);
+        }
+
+        let name = format!(
+            "{}_{}_{}",
+            TWO_DISPUTE_PENALIZATION_TX, slot_index_prev, slot_index_last
+        );
+
+        let leaf_index = self.ctx.my_idx as usize;
+        let mut protocol = self.load_protocol()?;
+
+        let signature_0 = protocol.sign_taproot_input(
+            &name,
+            0,
+            &SpendMode::Script { leaf: leaf_index },
+            context.key_chain.key_manager.as_ref(),
+            "",
+        )?;
+        let mut input_0 = InputArgs::new_taproot_script_args(leaf_index);
+        input_0.push_taproot_signature(signature_0[leaf_index].unwrap())?;
+
+        let signature_1 = protocol.sign_taproot_input(
+            &name,
+            1,
+            &SpendMode::Script { leaf: leaf_index },
+            context.key_chain.key_manager.as_ref(),
+            "",
+        )?;
+        let mut input_1 = InputArgs::new_taproot_script_args(leaf_index);
+        input_1.push_taproot_signature(signature_1[leaf_index].unwrap())?;
+
+        let tx = protocol.transaction_to_send(&name, &[input_0, input_1])?;
+
+        Ok((tx, None, name))
+    }
+
     fn handle_reimbursement_kickoff_transaction(
         &self,
-        tx_id: Txid,
-        tx_status: &TransactionStatus,
-        tx_name: &str,
         program_context: &ProgramContext,
+        tx_status: &TransactionStatus,
+        tx_id: Txid,
+        tx_name: &str,
     ) -> Result<(), BitVMXError> {
         // Extract slot_index from transaction name
         info!(
@@ -849,6 +1062,12 @@ impl DisputeCoreProtocol {
                 id = self.ctx.my_idx,
                 "Not my dispute_core, skipping operator take dispatch for slot {}", slot_index
             );
+
+            // Handle double reimbursement kick-off penalization if needed
+            if self.handle_double_reimbursement_kickoff(program_context, tx_status, slot_index)? {
+                return Ok(());
+            }
+
             // Handle challenge if needed
             match self.get_selected_operator_key(slot_index, program_context)? {
                 Some(selected_operator_key) => {

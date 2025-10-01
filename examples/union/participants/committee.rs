@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bitcoin::{Network, Transaction as BtcTransaction, Txid};
+use bitcoin::{Network, Txid};
 use bitvmx_client::program::participant::CommsAddress;
 use bitvmx_client::program::protocols::union::common::{
     get_accept_pegin_pid, get_dispute_aggregated_key_pid, get_take_aggreated_key_pid,
@@ -7,7 +7,7 @@ use bitvmx_client::program::protocols::union::common::{
 };
 use bitvmx_client::program::protocols::union::types::{MemberData, ACCEPT_PEGIN_TX, USER_TAKE_TX};
 use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtxo};
-use bitvmx_client::types::OutgoingBitVMXApiMessages::{SPVProof, Transaction, TransactionInfo};
+use bitvmx_client::types::OutgoingBitVMXApiMessages::{SPVProof, Transaction};
 
 use bitcoin::PublicKey;
 use protocol_builder::types::Utxo;
@@ -24,7 +24,7 @@ use crate::participants::member::{FundingAmount, Member};
 use crate::wait_until_msg;
 use crate::wallet::helper::non_regtest_warning;
 
-const FUNDING_AMOUNT_PER_SLOT: u64 = 7_000; // an approximation in satoshis
+const FUNDING_AMOUNT_PER_SLOT: u64 = 9_500; // an approximation in satoshis
 pub const PACKET_SIZE: u32 = 3; // number of slots per packet
 const SPEED_UP_MIN_FUNDS: u64 = 30_000; // minimum speedup funds in satoshis
 
@@ -177,25 +177,6 @@ impl Committee {
         Ok(())
     }
 
-    pub fn dispatch_transaction_by_name(
-        &self,
-        protocol_id: Uuid,
-        tx_name: String,
-    ) -> Result<BtcTransaction> {
-        let bitvmx = &self.members[0].bitvmx;
-        let _ = bitvmx.get_transaction_by_name(protocol_id, tx_name.clone());
-        thread::sleep(std::time::Duration::from_secs(1));
-        let tx = wait_until_msg!(bitvmx, TransactionInfo(_, _, _tx) => _tx);
-        info!(
-            "Protocol handler {} dispatching {}",
-            protocol_id,
-            tx_name.clone()
-        );
-        bitvmx.dispatch_transaction(protocol_id, tx.clone())?;
-        thread::sleep(std::time::Duration::from_secs(1));
-        Ok(tx)
-    }
-
     pub fn wait_for_spv_proof(&self, txid: Txid) -> Result<()> {
         let bitvmx = &self.members[0].bitvmx;
         let status = wait_until_msg!(bitvmx, Transaction(_, _status, _) => _status);
@@ -220,7 +201,7 @@ impl Committee {
         protocol_id: Uuid,
         tx_name: String,
     ) -> Result<()> {
-        let tx = self.dispatch_transaction_by_name(protocol_id, tx_name.clone())?;
+        let tx = self.members[0].dispatch_transaction_by_name(protocol_id, tx_name.clone())?;
         let txid = tx.compute_txid();
         self.bitcoin_client.wait_for_blocks(1)?;
         self.wait_for_spv_proof(txid)?;
@@ -257,7 +238,8 @@ impl Committee {
         })?;
 
         let protocol_id = get_user_take_pid(committee_id, slot_index);
-        let tx = self.dispatch_transaction_by_name(protocol_id, USER_TAKE_TX.to_string())?;
+        let tx =
+            self.members[0].dispatch_transaction_by_name(protocol_id, USER_TAKE_TX.to_string())?;
         let utxo = (
             tx.compute_txid(),
             0,

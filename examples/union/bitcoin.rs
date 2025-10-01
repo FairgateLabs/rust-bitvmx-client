@@ -11,6 +11,7 @@ use tracing::info;
 
 /// Number of blocks to mine initially to ensure sufficient coin maturity
 pub const INITIAL_BLOCK_COUNT: u64 = 110;
+pub const HIGH_FEE_NODE_ENABLED: bool = true;
 
 pub struct BitcoinWrapper {
     client: BitcoinClient,
@@ -116,25 +117,28 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind)> {
     clear_db(&config.key_storage.path);
     // Wallet::clear_db(&config.wallet)?;
 
-    // let bitcoind = Bitcoind::new(
-    //     "bitcoin-regtest",
-    //     "ruimarinho/bitcoin-core",
-    //     config.bitcoin.clone(),
-    // );
     info!("Starting bitcoind");
-
-    // Config to trigger speedup transactions in Regtest
-    let bitcoind = Bitcoind::new_with_flags(
-        "bitcoin-regtest",
-        "ruimarinho/bitcoin-core",
-        config.bitcoin.clone(),
-        BitcoindFlags {
-            min_relay_tx_fee: 0.00001,
-            block_min_tx_fee: 0.00008,
-            debug: 1,
-            fallback_fee: 0.0002,
-        },
-    );
+    let bitcoind = match HIGH_FEE_NODE_ENABLED {
+        true => {
+            // Config to trigger speedup transactions in Regtest
+            Bitcoind::new_with_flags(
+                "bitcoin-regtest",
+                "ruimarinho/bitcoin-core",
+                config.bitcoin.clone(),
+                BitcoindFlags {
+                    min_relay_tx_fee: 0.00001,
+                    block_min_tx_fee: 0.00008,
+                    debug: 1,
+                    fallback_fee: 0.0002,
+                },
+            )
+        }
+        false => Bitcoind::new(
+            "bitcoin-regtest",
+            "ruimarinho/bitcoin-core",
+            config.bitcoin.clone(),
+        ),
+    };
 
     bitcoind.start()?;
 
