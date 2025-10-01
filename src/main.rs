@@ -40,6 +40,8 @@ fn config_trace() {
     tracing_subscriber::fmt()
         //.without_time()
         .with_target(true)
+        .with_file(true)
+        .with_line_number(true)
         .with_env_filter(filter)
         .init();
 }
@@ -105,12 +107,15 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
         info!("Starting Bitcoin blockchain sync");
     }
 
-    // Install a panic hook that chains to the default so backtraces are printed
-    let default_panic_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |panic_info| {
-        // Basic line for structured logs, then delegate to default hook for full backtrace
-        eprintln!("panic occurred: {:?}", panic_info);
-        default_panic_hook(panic_info);
+    // Chain the default hook so RUST_BACKTRACE=1 prints full backtraces
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        // print full backtrace (honors RUST_BACKTRACE)
+        default_hook(info);
+        // optional: also log a compact line via tracing
+        if let Some(loc) = info.location() {
+            tracing::error!("panic at {}:{}: {}", loc.file(), loc.line(), info);
+        }
     }));
 
     // Main processing loop wrapped in catch_unwind to ensure coordinated shutdown on panic

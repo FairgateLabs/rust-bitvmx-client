@@ -14,7 +14,7 @@ use protocol_builder::types::Utxo;
 use std::collections::HashMap;
 use std::thread::{self};
 use std::time::Duration;
-use tracing::{info, info_span};
+use tracing::{debug, info, info_span};
 use uuid::Uuid;
 
 use crate::bitcoin::{init_client, BitcoinWrapper};
@@ -120,12 +120,13 @@ impl Committee {
     }
 
     pub fn setup_dispute_protocols(&mut self) -> Result<()> {
-        let (funding_utxos_per_member, speedup_funding_utxos_per_member) = self.init_funds()?;
+        let (funding_utxos_per_member, speedup_funding_utxos_per_member, wt_funding_utxos_per_member) = self.init_funds()?;
 
         let members = self.get_member_data();
         let addresses = self.get_addresses();
         let seed = self.committee_id;
 
+        // Setup Dispute Core covenant
         self.all(|op: &mut Member| {
             op.setup_dispute_core(
                 seed,
@@ -138,7 +139,26 @@ impl Committee {
             )
         })?;
 
-        Ok(())
+        // // Setup Init covenant
+        // let committee_id = self.committee_id;
+        // self.all(|op: &mut Member| {
+        //     op.setup_init(
+        //         committee_id,
+        //         &members.clone(),
+        //         &wt_funding_utxos_per_member,
+        //         &addresses.clone(),
+        //     )
+        // })?;
+
+        // Setup Dispute Channel covenant
+        // let members_snapshot = self.members.clone();
+        // let committee_id = self.committee_id;
+        // let wt_funding_map = wt_funding_utxos_per_member.clone();
+        // self.all(|op: &mut Member| {
+        //     op.setup_dispute_channel(&members_snapshot, committee_id, &wt_funding_map)
+        // })?;
+
+        Ok()
     }
 
     pub fn accept_pegin(
@@ -333,7 +353,11 @@ impl Committee {
         return self.stream_denomination * 12 / 10;
     }
 
-    fn get_funding_protocol_value(&self) -> u64 {
+    fn get_operator_funding_value(&self) -> u64 {
+        return FUNDING_AMOUNT_PER_SLOT * PACKET_SIZE as u64;
+    }
+
+    fn get_watchtower_funding_value(&self) -> u64 {
         return FUNDING_AMOUNT_PER_SLOT * PACKET_SIZE as u64;
     }
 
@@ -342,18 +366,22 @@ impl Committee {
 
         return self.get_speedup_funds_value()
             + self.get_advance_funds_value()
-            + self.get_funding_protocol_value()
+            + self.get_operator_funding_value()
+            + self.get_watchtower_funding_value()
             + fees;
     }
 
     fn init_funds(
         &mut self,
-    ) -> Result<(HashMap<PublicKey, PartialUtxo>, HashMap<PublicKey, Utxo>)> {
+    ) -> Result<(HashMap<PublicKey, PartialUtxo>, HashMap<PublicKey, Utxo>, HashMap<PublicKey, PartialUtxo>)> {
         let mut funding_utxos_per_member: HashMap<PublicKey, PartialUtxo> = HashMap::new();
         let mut speedup_funding_utxos_per_member: HashMap<PublicKey, Utxo> = HashMap::new();
+        let mut wt_funding_utxos_per_member: HashMap<PublicKey, PartialUtxo> = HashMap::new();
+
         let funding_amounts = FundingAmount {
             speedup: self.get_speedup_funds_value(),
-            protocol_funding: self.get_funding_protocol_value(),
+            operator_funding: self.get_operator_funding_value(),
+            watchtower_funding: self.get_watchtower_funding_value(),
             advance_funds: self.get_advance_funds_value(),
         };
 
@@ -361,7 +389,10 @@ impl Committee {
             let utxos = member.init_funds(funding_amounts.clone())?;
 
             funding_utxos_per_member
-                .insert(member.keyring.take_pubkey.unwrap(), utxos.protocol_funding);
+                .insert(member.keyring.take_pubkey.unwrap(), utxos.operator_funding);
+
+            wt_funding_utxos_per_member
+                .insert(member.keyring.take_pubkey.unwrap(), utxos.watchtower_funding);
 
             let speedup = Utxo::new(
                 utxos.speedup.0,
@@ -369,13 +400,15 @@ impl Committee {
                 utxos.speedup.2.unwrap(),
                 &member.keyring.dispute_pubkey.unwrap(),
             );
-            speedup_funding_utxos_per_member.insert(member.keyring.take_pubkey.unwrap(), speedup);
+
+            speedup_funding_utxos_per_member
+                .insert(member.keyring.take_pubkey.unwrap(), speedup);
 
             // FIXME: speedup utxo is set in DisputeCoreSetup, should we do the same for advance funds?
             // or should speedup utxo set here too? Unify criteria.
             member.set_advance_funds_input(self.committee_id, utxos.advance_funds.clone())?;
         }
-        Ok((funding_utxos_per_member, speedup_funding_utxos_per_member))
+        Ok((funding_utxos_per_member, speedup_funding_utxos_per_member, wt_funding_utxos_per_member))
     }
 
     fn all<F, R>(&mut self, f: F) -> Result<Vec<R>>

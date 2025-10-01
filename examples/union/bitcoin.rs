@@ -150,8 +150,30 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind)> {
     Ok((bitcoin_client, bitcoind))
 }
 
-pub fn init_client(config: Config) -> Result<(BitcoinClient, Network)> {
-    let bitcoin_client = BitcoinClient::new(
+pub fn init_wallet() -> Result<Wallet> {
+    let config = Config::new(Some("config/op_1.yaml".to_string()))?;
+
+    let wallet_config = match config.bitcoin.network {
+        Network::Regtest => "config/wallet_regtest.yaml",
+        Network::Testnet => "config/wallet_testnet.yaml",
+        _ => panic!("Not supported network {}", config.bitcoin.network),
+    };
+
+    let wallet_config = bitvmx_settings::settings::load_config_file::<
+        bitvmx_wallet::config::WalletConfig,
+    >(Some(wallet_config.to_string()))?;
+    if config.bitcoin.network == Network::Regtest {
+        clear_db(&wallet_config.storage.path);
+        clear_db(&wallet_config.key_storage.path);
+    }
+
+    let wallet = Wallet::new(wallet_config, true)?;
+    wallet.mine(INITIAL_BLOCK_COUNT)?;
+
+    wallet.create_wallet(WALLET_NAME)?;
+    wallet.regtest_fund(WALLET_NAME, FUNDING_ID, 300_000_000)?;
+
+    let _bitcoin_client = BitcoinClient::new(
         &config.bitcoin.url,
         &config.bitcoin.username,
         &config.bitcoin.password,

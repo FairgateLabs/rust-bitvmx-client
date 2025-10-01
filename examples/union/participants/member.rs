@@ -32,7 +32,8 @@ use crate::{
     macros::wait_for_message_blocking,
     setup::{
         accept_pegin_setup::AcceptPegInSetup, advance_funds_setup::AdvanceFunds,
-        dispute_core_setup::DisputeCoreSetup, user_take_setup::UserTakeSetup,
+        dispute_channel_setup::DisputeChannelSetup, dispute_core_setup::DisputeCoreSetup,
+        init_setup::InitSetup, user_take_setup::UserTakeSetup,
     },
     wait_until_msg,
 };
@@ -129,7 +130,6 @@ impl Member {
         self.keyring.communication_pubkey = Some(communication_pubkey);
 
         info!(
-            id = self.id,
             "Member keys setup complete: take_pubkey: {}, dispute_pubkey: {}, communication_pubkey: {}",
             take_pubkey.to_string(),
             dispute_pubkey.to_string(),
@@ -198,8 +198,47 @@ impl Member {
             info!(id = self.id, program_id = ?program_id, "Dispute core setup completed for operator index {}", i);
         }
 
-        // TODO: add the dispute channeles here
+        Ok(())
+    }
 
+    pub fn setup_init(
+        &mut self,
+        committee_id: Uuid,
+        members: &Vec<MemberData>,
+        funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
+        addresses: &Vec<P2PAddress>,
+    ) -> Result<()> {
+        InitSetup::setup(
+            committee_id,
+            &self.id,
+            members,
+            self.keyring.take_aggregated_key.unwrap(),
+            self.keyring.dispute_aggregated_key.unwrap(),
+            &self.bitvmx,
+            funding_utxos_per_member,
+            addresses,
+        )?;
+
+        Ok(())
+    }
+
+    pub fn setup_dispute_channel(
+        &mut self,
+        members: &Vec<Member>,
+        committee_id: Uuid,
+        wt_funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
+    ) -> Result<()> {
+        info!(
+            id = self.id,
+            "Setting up dispute channel for member {}", self.id
+        );
+
+        DisputeChannelSetup::setup(self, members, committee_id, wt_funding_utxos_per_member)?;
+
+        for i in 0..members.len() {
+            let program_id = expect_msg!(self.bitvmx, SetupCompleted(program_id) => program_id)?;
+            info!(id = self.id, program_id = ?program_id, "Dispute channel setup completed for operator index {}", i);
+        }
         Ok(())
     }
 
