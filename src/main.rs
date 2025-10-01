@@ -105,10 +105,12 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
         info!("Starting Bitcoin blockchain sync");
     }
 
-    // Install a panic hook to log panics
-    std::panic::set_hook(Box::new(|panic_info| {
+    // Install a panic hook that chains to the default so backtraces are printed
+    let default_panic_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        // Basic line for structured logs, then delegate to default hook for full backtrace
         eprintln!("panic occurred: {:?}", panic_info);
-        // tracing may be unavailable here depending on panic context; use eprintln
+        default_panic_hook(panic_info);
     }));
 
     // Main processing loop wrapped in catch_unwind to ensure coordinated shutdown on panic
