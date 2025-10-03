@@ -1,32 +1,3 @@
-use anyhow::Result;
-use bitcoin::address::NetworkUnchecked;
-use bitcoin::Amount;
-use bitcoin::ScriptBuf;
-use bitvmx_client::program::protocols::union::types::ADVANCE_FUNDS_INPUT;
-use bitvmx_client::program::variables::VariableTypes;
-use bitvmx_wallet::wallet::Destination;
-use core::clone::Clone;
-use bitvmx_operator_comms::operator_comms::AllowList;
-use protocol_builder::types::OutputType;
-use protocol_builder::types::Utxo;
-use std::collections::HashMap;
-use std::thread;
-use uuid::Uuid;
-
-use bitcoin::{PublicKey, Txid};
-use bitvmx_client::{
-    client::BitVMXClient,
-    config::Config,
-    program::{
-        participant::{CommsAddress, ParticipantRole},
-        protocols::union::types::MemberData,
-        variables::PartialUtxo,
-    },
-    types::OutgoingBitVMXApiMessages::*,
-};
-
-use tracing::{debug, info};
-
 use crate::wallet::helper::print_link;
 use crate::{
     macros::wait_for_message_blocking,
@@ -36,6 +7,30 @@ use crate::{
     },
     wait_until_msg,
 };
+use anyhow::Result;
+use bitcoin::{address::NetworkUnchecked, Amount, PublicKey, ScriptBuf, Transaction, Txid};
+use bitvmx_client::{
+    client::BitVMXClient,
+    config::Config,
+    program::{
+        participant::{CommsAddress, ParticipantRole},
+        protocols::union::{
+            common::{get_dispute_core_pid, indexed_name},
+            dispute_core::PEGOUT_ID,
+            types::{MemberData, ADVANCE_FUNDS_INPUT, REIMBURSEMENT_KICKOFF_TX},
+        },
+        variables::{PartialUtxo, VariableTypes},
+    },
+    types::OutgoingBitVMXApiMessages::*,
+};
+use bitvmx_operator_comms::operator_comms::AllowList;
+use bitvmx_wallet::wallet::Destination;
+use core::clone::Clone;
+use protocol_builder::types::{OutputType, Utxo};
+use std::collections::HashMap;
+use std::thread;
+use tracing::{debug, info};
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct FundingAmount {
@@ -545,5 +540,48 @@ impl Member {
         } else {
             1
         }
+    }
+
+    pub fn dispatch_transaction_by_name(
+        &self,
+        protocol_id: Uuid,
+        tx_name: String,
+    ) -> Result<Transaction> {
+        let _ = self
+            .bitvmx
+            .get_transaction_by_name(protocol_id, tx_name.clone());
+        thread::sleep(std::time::Duration::from_secs(1));
+        let tx = wait_until_msg!(&self.bitvmx, TransactionInfo(_, _, _tx) => _tx);
+        info!(
+            "Protocol handler {} dispatching {}",
+            protocol_id,
+            tx_name.clone()
+        );
+        self.bitvmx.dispatch_transaction(protocol_id, tx.clone())?;
+        thread::sleep(std::time::Duration::from_secs(1));
+        Ok(tx)
+    }
+
+    pub fn dispatch_reimbursement(
+        &self,
+        committee_id: Uuid,
+        slot_index: usize,
+        pegout_id: Vec<u8>,
+    ) -> Result<()> {
+        let protocol_id = get_dispute_core_pid(committee_id, &self.keyring.take_pubkey.unwrap());
+
+        self.bitvmx.set_var(
+            protocol_id,
+            &indexed_name(PEGOUT_ID, slot_index),
+            VariableTypes::Input(pegout_id.clone()),
+        )?;
+
+        let name = indexed_name(REIMBURSEMENT_KICKOFF_TX, slot_index);
+
+        let tx = self.dispatch_transaction_by_name(protocol_id, name)?;
+        let txid = tx.compute_txid();
+        info!("Dispatched reimbursement kickoff tx: {}", txid);
+
+        Ok(())
     }
 }
