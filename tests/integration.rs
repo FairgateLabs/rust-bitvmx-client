@@ -7,7 +7,7 @@ use bitvmx_wallet::wallet::{Destination, RegtestWallet};
 use common::{
     config_trace,
     dispute::{execute_dispute, prepare_dispute, ForcedChallenges},
-    get_all, init_bitvmx, init_utxo_new, prepare_bitcoin, send_all, wait_message_from_channel,
+        get_all, init_bitvmx, init_utxo_new, prepare_bitcoin, send_all, wait_message_from_channel,
 };
 use protocol_builder::{
     scripts::{self, SignMode},
@@ -19,12 +19,12 @@ use uuid::Uuid;
 mod common;
 
 //cargo test --release  -- test_drp --ignored
-#[ignore]
+#[cfg(feature = "regtest")]
 #[test]
 pub fn test_drp() -> Result<()> {
     config_trace();
 
-    let (bitcoin_client, bitcoind, mut wallet) = prepare_bitcoin()?;
+        let (bitcoin_client, bitcoind, mut wallet) = prepare_bitcoin()?;;
 
     let (prover_bitvmx, prover_address, prover_bridge_channel, prover_emulator_channel) =
         init_bitvmx("op_1", true)?;
@@ -144,7 +144,9 @@ pub fn test_drp() -> Result<()> {
     //TODO: allow fake and true job dispatcher execution and responses so we can test the whole flow
 
     info!("Stopping bitcoind");
-    bitcoind.stop()?;
+    if let Some(bitcoind) = bitcoind {
+        bitcoind.stop()?;
+    }
 
     Ok(())
 }
@@ -155,7 +157,7 @@ pub fn test_drp() -> Result<()> {
 pub fn test_aggregation() -> Result<()> {
     config_trace();
 
-    let (_bitcoin_client, bitcoind, _wallet) = prepare_bitcoin()?;
+        let (_bitcoin_client, bitcoind, _wallet) = prepare_bitcoin()?;
 
     let (mut bitvmx_1, addres_1, bridge_1, _) = init_bitvmx("op_1", false)?;
     let (mut bitvmx_2, addres_2, bridge_2, _) = init_bitvmx("op_2", false)?;
@@ -194,6 +196,8 @@ pub fn test_aggregation() -> Result<()> {
         _ => panic!("Expected AggregatedPubkey message"),
     };
 
-    bitcoind.stop()?;
+    if let Some(bitcoind) = bitcoind {
+        bitcoind.stop()?;
+    }
     Ok(())
 }
