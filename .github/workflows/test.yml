@@ -8,6 +8,12 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  actions: read
+  checks: write
+  contents: read
+  pull-requests: read
+
 concurrency:
   group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'
   cancel-in-progress: true
@@ -15,11 +21,12 @@ concurrency:
 jobs:
   test:
     if: ${{ !contains(github.event.pull_request.title, '[cov]') }}
-    uses: FairgateLabs/rust-bitvmx-workspace/.github/workflows/test_template.yml@main
+    uses: FairgateLabs/BitVMX-CI/.github/workflows/ci_local_template.yml@main
     with:
       repo: 'FairgateLabs/rust-bitvmx-workspace'
       submodule_path: 'rust-bitvmx-client'
       cargo_lock_path: 'rust-bitvmx-client/Cargo.lock'
       target_path: 'rust-bitvmx-client/target'
       cargo_features: 'testpanic'
+      nightly: false
     secrets: inherit

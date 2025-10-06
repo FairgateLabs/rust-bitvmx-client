@@ -10,7 +10,7 @@ use bitvmx_broker::{
 };
 use bitvmx_wallet::wallet::Destination;
 use chrono::{DateTime, Utc};
-use operator_comms::operator_comms::OperatorComms;
+use bitvmx_operator_comms::operator_comms::OperatorComms;
 use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
 

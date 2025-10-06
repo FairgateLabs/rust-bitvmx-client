@@ -27,7 +27,7 @@ use bitvmx_client::{
 };
 
 use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
-use operator_comms::operator_comms::AllowList;
+use bitvmx_operator_comms::operator_comms::AllowList;
 use protocol_builder::types::Utxo;
 use storage_backend::{storage::Storage, storage_config::StorageConfig};
 use tracing::info;

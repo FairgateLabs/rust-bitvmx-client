@@ -11,10 +11,10 @@ use crate::{
 };
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus, TypesToMonitor};
+use bitvmx_operator_comms::operator_comms::PubKeyHash;
 use chrono::Utc;
 use console::style;
 use key_manager::musig2::{types::MessageId, PartialSignature, PubNonce};
-use operator_comms::operator_comms::PubKeyHash;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashMap, rc::Rc};

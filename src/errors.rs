@@ -10,7 +10,7 @@ use key_manager::{
     errors::{KeyManagerError, WinternitzError},
     musig2::errors::Musig2SignerError,
 };
-use operator_comms::helper::OperatorCommsError;
+use bitvmx_operator_comms::helper::OperatorCommsError;
 use protocol_builder::errors::{ProtocolBuilderError, ScriptError, UnspendableKeyError};
 use std::time::Duration;
 use storage_backend::error::StorageError;
