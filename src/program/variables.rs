@@ -1,7 +1,6 @@
 use std::rc::Rc;
 
 use bitcoin::{PublicKey, Txid};
-use emulator::executor::utils::FailConfiguration;
 use key_manager::winternitz::{WinternitzPublicKey, WinternitzSignature};
 use protocol_builder::types::OutputType;
 use serde::{Deserialize, Serialize};
@@ -32,12 +31,6 @@ pub enum VariableTypes {
     Input(Vec<u8>),
     Uuid(Uuid),
     Bool(bool),
-    FailConfiguration(
-        Option<FailConfiguration>,
-        Option<FailConfiguration>,
-        emulator::decision::challenge::ForceChallenge,
-        emulator::decision::challenge::ForceCondition,
-    ),
 }
 
 impl VariableTypes {
@@ -109,28 +102,6 @@ impl VariableTypes {
     pub fn bool(&self) -> Result<bool, BitVMXError> {
         match self {
             VariableTypes::Bool(flag) => Ok(flag.clone()),
-            _ => Err(BitVMXError::InvalidVariableType(self.err())),
-        }
-    }
-
-    pub fn fail_configuration(
-        &self,
-    ) -> Result<
-        (
-            Option<FailConfiguration>,
-            Option<FailConfiguration>,
-            emulator::decision::challenge::ForceChallenge,
-            emulator::decision::challenge::ForceCondition,
-        ),
-        BitVMXError,
-    > {
-        match self {
-            VariableTypes::FailConfiguration(fc_prover, fc_verifier, force, condition) => Ok((
-                fc_prover.clone(),
-                fc_verifier.clone(),
-                force.clone(),
-                condition.clone(),
-            )),
             _ => Err(BitVMXError::InvalidVariableType(self.err())),
         }
     }
