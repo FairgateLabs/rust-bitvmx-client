@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bitcoin::PublicKey;
 use std::collections::HashMap;
-use tracing::{info, warn};
+use tracing::info;
 use uuid::Uuid;
 
 use bitvmx_client::{

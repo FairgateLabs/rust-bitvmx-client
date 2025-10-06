@@ -22,7 +22,6 @@ pub struct InitSetup {}
 impl InitSetup {
     pub fn setup(
         committee_id: Uuid,
-        my_id: &str,
         members: &Vec<MemberData>,
         take_aggregated_key: PublicKey,
         dispute_aggregated_key: PublicKey,

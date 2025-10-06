@@ -208,7 +208,6 @@ impl Member {
     ) -> Result<()> {
         InitSetup::setup(
             committee_id,
-            &self.id,
             members,
             self.keyring.take_aggregated_key.unwrap(),
             self.keyring.dispute_aggregated_key.unwrap(),
@@ -234,7 +233,7 @@ impl Member {
         DisputeChannelSetup::setup(self, members, committee_id, wt_funding_utxos_per_member)?;
 
         for i in 0..members.len() {
-            let program_id = wait_until_msg!(&self.bitvmx, SetupCompleted(program_id) => program_id);
+            let program_id = wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
             info!(id = self.id, program_id = ?program_id, "Dispute channel setup completed for operator index {}", i);
         }
         Ok(())

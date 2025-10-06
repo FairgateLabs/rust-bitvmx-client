@@ -14,7 +14,7 @@ use protocol_builder::types::Utxo;
 use std::collections::HashMap;
 use std::thread::{self};
 use std::time::Duration;
-use tracing::{debug, info, info_span};
+use tracing::{info, info_span};
 use uuid::Uuid;
 
 use crate::bitcoin::{init_client, BitcoinWrapper};
