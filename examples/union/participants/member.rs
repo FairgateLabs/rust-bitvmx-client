@@ -10,6 +10,7 @@ use crate::{
 };
 use anyhow::Result;
 use bitcoin::{address::NetworkUnchecked, Amount, PublicKey, ScriptBuf, Transaction, Txid};
+use bitvmx_client::program::protocols::union::common::get_dispute_pair_aggregated_key_pid;
 use bitvmx_client::{
     client::BitVMXClient,
     config::Config,

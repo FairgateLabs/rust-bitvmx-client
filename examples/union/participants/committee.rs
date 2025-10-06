@@ -150,6 +150,8 @@ impl Committee {
             )
         })?;
 
+        // TODO re-enable dispute channels once protocol is finalized:
+        // blocked by https://trello.com/c/eDA2ltcT/42-dispute-channel
         // // Setup Dispute Channel covenant
         // let members_snapshot = self.members.clone();
         // let committee_id = self.committee_id;
@@ -158,7 +160,7 @@ impl Committee {
         //     op.setup_dispute_channel(&members_snapshot, committee_id, &wt_funding_map)
         // })?;
 
-        // Ok(())
+        Ok(())
     }
 
     pub fn accept_pegin(
