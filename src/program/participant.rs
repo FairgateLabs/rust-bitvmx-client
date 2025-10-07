@@ -135,7 +135,7 @@ impl ParticipantKeys {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, Debug)]
 pub struct CommsAddress {
     pub address: SocketAddr,
     pub pubkey_hash: PubKeyHash,
@@ -172,14 +172,5 @@ impl FromStr for CommsAddress {
         let pubkey_hash = parts[1].to_string();
 
         Ok(CommsAddress::new(address, pubkey_hash))
-    }
-}
-
-// Keeps logs readable by showing only the address string.
-impl core::fmt::Debug for CommsAddress {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("CommsAddress")
-            .field("address", &self.address)
-            .finish()
     }
 }
