@@ -405,7 +405,7 @@ impl Program {
                 .get_nonces(aggregated, &self.protocol.context().protocol_name);
             if nonces.is_err() {
                 warn!(
-                    "{}. Error geting nonces for aggregated key: {}",
+                    "{}. Error getting nonces for aggregated key: {}",
                     self.my_idx,
                     aggregated.to_string()
                 );
