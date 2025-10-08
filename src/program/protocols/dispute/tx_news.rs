@@ -17,6 +17,7 @@ use crate::{
             dispute::{
                 action_wins,
                 challenge::READ_VALUE_NARY_SEARCH_CHALLENGE,
+                config::DisputeConfiguration,
                 input_handler::{get_txs_configuration, unify_inputs, unify_witnesses},
                 timeout_input_tx, timeout_tx, DisputeResolutionProtocol, CHALLENGE, CHALLENGE_READ,
                 COMMITMENT, EXECUTE, INPUT_TX, PROVER_WINS, TRACE_VARS, VERIFIER_WINS,
@@ -284,13 +285,11 @@ pub fn handle_tx_news(
         current_height,
     );
 
+    let config = DisputeConfiguration::load(&drp.ctx.id, &program_context.globals)?;
+
     cancel_timeout(drp, &name, vout, program_context)?;
 
-    let timelock_blocks = program_context
-        .globals
-        .get_var(&drp.ctx.id, "TIMELOCK_BLOCKS")?
-        .unwrap()
-        .number()?;
+    let timelock_blocks = config.timelock_blocks;
 
     auto_dispatch_timeout(drp, &name, vout, program_context, current_height)?;
 
@@ -302,7 +301,7 @@ pub fn handle_tx_news(
         vout,
         program_context,
         current_height,
-        timelock_blocks,
+        timelock_blocks as u32,
     )?;
 
     let fail_force_config = program_context

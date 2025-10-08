@@ -112,7 +112,7 @@ pub fn test_drp() -> Result<()> {
     )?;
 
     let prog_id = Uuid::new_v4();
-    let forced_challenge = ForcedChallenges::InitializedChallenge(
+    let forced_challenge = ForcedChallenges::ReadValueChallenge(
         bitvmx_client::program::participant::ParticipantRole::Prover,
     );
     prepare_dispute(
@@ -148,11 +148,14 @@ pub fn test_drp() -> Result<()> {
     //TODO: allow fake and true job dispatcher execution and responses so we can test the whole flow
 
     info!("Stopping bitcoind");
-    bitcoind.stop()?;
+    if let Some(bitcoind) = bitcoind {
+        bitcoind.stop()?;
+    }
 
     Ok(())
 }
 
+//cargo test --release  -- test_aggregation --ignored
 //Test aggregation with three parts
 #[ignore]
 #[test]
@@ -198,6 +201,8 @@ pub fn test_aggregation() -> Result<()> {
         _ => panic!("Expected AggregatedPubkey message"),
     };
 
-    bitcoind.stop()?;
+    if let Some(bitcoind) = bitcoind {
+        bitcoind.stop()?;
+    }
     Ok(())
 }

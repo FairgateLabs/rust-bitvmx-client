@@ -1,5 +1,5 @@
 use crate::{
-    bitcoin::BitcoinWrapper,
+    bitcoin::{BitcoinWrapper, HIGH_FEE_NODE_ENABLED},
     participants::{committee::Committee, member::Member, user::User},
     wallet::{
         helper::{
@@ -50,6 +50,8 @@ pub fn main() -> Result<()> {
         Some("advance_funds") => cli_advance_funds()?,
         Some("advance_funds_twice") => cli_advance_funds_twice()?,
         Some("invalid_reimbursement") => cli_invalid_reimbursement()?,
+        Some("double_reimbursement") => cli_double_reimbursement()?,
+        // Utils
         Some("create_wallet") => cli_create_wallet(args.get(2))?,
         Some("latency") => cli_latency(args.get(2))?,
         Some("members_balance") => cli_members_balance()?,
@@ -153,7 +155,7 @@ pub fn cli_advance_funds() -> Result<()> {
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
     let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
-    advance_funds(&mut committee, user.public_key()?, slot_index)?;
+    advance_funds(&mut committee, user.public_key()?, slot_index, true)?;
     Ok(())
 }
 
@@ -162,11 +164,11 @@ pub fn cli_advance_funds_twice() -> Result<()> {
 
     // First advance should use funding UTXO
     let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
-    advance_funds(&mut committee, user.public_key()?, slot_index)?;
+    advance_funds(&mut committee, user.public_key()?, slot_index, true)?;
 
     // Second advance should use change UTXO and Operator Take UTXO
     let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
-    advance_funds(&mut committee, user.public_key()?, slot_index)?;
+    advance_funds(&mut committee, user.public_key()?, slot_index, true)?;
 
     Ok(())
 }
@@ -176,6 +178,46 @@ pub fn cli_invalid_reimbursement() -> Result<()> {
     let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     invalid_reimbursement(&mut committee, slot_index)?;
+    Ok(())
+}
+
+pub fn cli_double_reimbursement() -> Result<()> {
+    // NOTE: This example works better with a client node with low fees.
+    // It require a fine timming to dispatch TXs and that's hard to reach if there is high fees
+    // Key: Second reimbursement kickoff tx should be dispatched right after the first reimbursement kickoff tx is mined
+    // and before the operator take is mined.
+    if HIGH_FEE_NODE_ENABLED {
+        info!("This example works better with a client node with low fees. Please disable HIGH_FEE_NODE_ENABLED and try again.");
+        return Ok(());
+    }
+
+    let (mut committee, mut user, _) = pegin_setup(2, NETWORK == Network::Regtest)?;
+
+    // Accept 2 pegins to have 2 operator take TXs to dispatch
+    let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    (_, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+
+    // Advance funds to the first pegin so it dispatch OP_INITIAL_SETUP and REIMBURSETMENT_TX for slot 0
+    let operator_id = advance_funds(&mut committee, user.public_key()?, slot_index, false)?;
+
+    // Wait some blocks to get INITIAL_SETUP and REIMBURSEMENT_TX mined
+    wait_for_blocks(&committee.bitcoin_client, 3)?;
+
+    // Dispatch second reimbusement without advancing funds.
+    // It should be dispatched before the OPERATOR_TAKE_TX from the first pegin is mined
+    info!(
+        "Forcing member {} to dispatch another reimbursement transaction...",
+        operator_id
+    );
+    let pegout_id = vec![0; 32]; // fake pegout id, it's trying to cheat
+    committee.members[operator_id].dispatch_reimbursement(
+        committee.committee_id(),
+        slot_index + 1,
+        pegout_id,
+    )?;
+
+    let blocks = if NETWORK == Network::Regtest { 30 } else { 1 };
+    wait_for_blocks(&committee.bitcoin_client, blocks)?;
     Ok(())
 }
 
@@ -343,8 +385,8 @@ pub fn request_and_accept_pegin(
     )?;
 
     let protocol_id = get_accept_pegin_pid(committee.committee_id(), slot_index);
-    let accept_pegin_tx =
-        committee.dispatch_transaction_by_name(protocol_id, ACCEPT_PEGIN_TX.to_string())?;
+    let accept_pegin_tx = committee.members[0]
+        .dispatch_transaction_by_name(protocol_id, ACCEPT_PEGIN_TX.to_string())?;
     thread::sleep(Duration::from_secs(1));
 
     let accept_pegin_txid = accept_pegin_tx.compute_txid();
@@ -412,7 +454,8 @@ pub fn advance_funds(
     committee: &mut Committee,
     user_pubkey: PublicKey,
     slot_index: usize,
-) -> Result<()> {
+    should_wait: bool,
+) -> Result<usize> {
     // This came from the contracts
     let pegout_id = vec![0; 32]; // Placeholder for the actual peg-out ID
 
@@ -428,12 +471,14 @@ pub fn advance_funds(
         get_advance_funds_fee()?,
     )?;
 
-    let blocks = if NETWORK == Network::Regtest { 30 } else { 1 };
-    wait_for_blocks(&committee.bitcoin_client, blocks)?;
+    if should_wait {
+        let blocks = if NETWORK == Network::Regtest { 30 } else { 1 };
+        wait_for_blocks(&committee.bitcoin_client, blocks)?;
+    }
 
     info!("Advance funds complete.");
     confirm_to_continue();
-    Ok(())
+    Ok(operator_id)
 }
 
 pub fn invalid_reimbursement(committee: &mut Committee, slot_index: usize) -> Result<()> {

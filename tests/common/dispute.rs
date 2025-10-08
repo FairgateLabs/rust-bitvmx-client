@@ -9,14 +9,12 @@ use bitvmx_client::{
         self,
         participant::{CommsAddress, ParticipantRole},
         protocols::dispute::{
-            input_tx_name, program_input, timeout_tx, CHALLENGE_READ, EXECUTE, TIMELOCK_BLOCKS,
-            TIMELOCK_BLOCKS_KEY,
+            config::DisputeConfiguration, input_tx_name, program_input, timeout_tx, CHALLENGE_READ,
+            EXECUTE, TIMELOCK_BLOCKS,
         },
         variables::{ConfigResult, ConfigResults, VariableTypes},
     },
-    types::{
-        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel, PROGRAM_TYPE_DRP,
-    },
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
 use bitvmx_cpu_definitions::{
     constants::LAST_STEP_INIT,
@@ -74,62 +72,57 @@ pub fn prepare_dispute(
     fail_data: Option<ConfigResults>,
     program_path: Option<String>,
 ) -> Result<()> {
-    let config_results = fail_data.unwrap_or(get_fail_force_config(fail_force_config.clone()));
-
-    let set_fail_force_config = VariableTypes::FailConfiguration(config_results)
-        .set_msg(program_id, "fail_force_config")?;
-    send_all(&id_channel_pairs, &set_fail_force_config)?;
-
-    let set_aggregated_msg =
-        VariableTypes::PubKey(*aggregated_pub_key).set_msg(program_id, "aggregated")?;
-    send_all(&id_channel_pairs, &set_aggregated_msg)?;
-
-    let set_utxo_msg = VariableTypes::Utxo((
-        initial_utxo.txid,
-        initial_utxo.vout,
-        Some(initial_utxo.amount),
-        Some(initial_output_type),
-    ))
-    .set_msg(program_id, "utxo")?;
-    send_all(&id_channel_pairs, &set_utxo_msg)?;
-
-    let set_prover_win_utxo = VariableTypes::Utxo((
-        prover_win_utxo.txid,
-        prover_win_utxo.vout,
-        Some(prover_win_utxo.amount),
-        Some(prover_win_output_type.clone()),
-    ))
-    .set_msg(program_id, "utxo_prover_win_action")?;
-    send_all(&id_channel_pairs, &set_prover_win_utxo)?;
-
-    let set_verifier_win_utxo = VariableTypes::Utxo((
-        prover_win_utxo.txid,
-        prover_win_utxo.vout,
-        Some(prover_win_utxo.amount),
-        Some(prover_win_output_type),
-    ))
-    .set_msg(program_id, "utxo_verifier_win_action")?;
-    send_all(&id_channel_pairs, &set_verifier_win_utxo)?;
-
-    //let program_path = "../BitVMX-CPU/docker-riscv32/verifier/build/zkverifier-new-mul.yaml";
     let hello_world = match fail_force_config {
         ForcedChallenges::UninitializedChallenge(_) => {
             "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world-uninitialized.yaml"
         }
         _ => "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml",
     };
-    let set_program = VariableTypes::String(program_path.unwrap_or(hello_world.to_string()))
-        .set_msg(program_id, "program_definition")?;
-    send_all(&id_channel_pairs, &set_program)?;
+    let program_definition = program_path.unwrap_or(hello_world.to_string());
 
-    let timelock_blocks =
-        VariableTypes::Number(TIMELOCK_BLOCKS.into()).set_msg(program_id, TIMELOCK_BLOCKS_KEY)?;
-    send_all(&id_channel_pairs, &timelock_blocks)?;
+    let config_results = fail_data.unwrap_or(get_fail_force_config(fail_force_config.clone()));
 
-    let setup_msg =
-        IncomingBitVMXApiMessages::Setup(program_id, PROGRAM_TYPE_DRP.to_string(), participants, 1)
-            .to_string()?;
-    send_all(&id_channel_pairs, &setup_msg)?;
+    let set_fail_force_config = VariableTypes::FailConfiguration(config_results)
+        .set_msg(program_id, "fail_force_config")?;
+    send_all(&id_channel_pairs, &set_fail_force_config)?;
+
+    let dispute_configuration = DisputeConfiguration::new(
+        program_id,
+        *aggregated_pub_key,
+        (
+            (
+                initial_utxo.txid,
+                initial_utxo.vout,
+                Some(initial_utxo.amount),
+                Some(initial_output_type),
+            ),
+            vec![1],
+        ),
+        vec![(
+            (
+                prover_win_utxo.txid,
+                prover_win_utxo.vout,
+                Some(prover_win_utxo.amount),
+                Some(prover_win_output_type.clone()),
+            ),
+            vec![1],
+        )],
+        vec![(
+            (
+                prover_win_utxo.txid,
+                prover_win_utxo.vout,
+                Some(prover_win_utxo.amount),
+                Some(prover_win_output_type),
+            ),
+            vec![1],
+        )],
+        TIMELOCK_BLOCKS,
+        program_definition,
+    );
+
+    for msg in dispute_configuration.get_setup_messages(participants, 1)? {
+        send_all(&id_channel_pairs, &msg)?;
+    }
 
     info!("Waiting for setup messages...");
 

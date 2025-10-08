@@ -307,6 +307,8 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
         info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
     }
 
-    bitcoind.stop()?;
+    if let Some(bitcoind) = bitcoind {
+        bitcoind.stop()?;
+    }
     Ok(())
 }
