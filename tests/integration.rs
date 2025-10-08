@@ -112,6 +112,9 @@ pub fn test_drp() -> Result<()> {
     )?;
 
     let prog_id = Uuid::new_v4();
+    let forced_challenge = ForcedChallenges::InitializedChallenge(
+        bitvmx_client::program::participant::ParticipantRole::Prover,
+    );
     prepare_dispute(
         prog_id,
         participants,
@@ -121,9 +124,7 @@ pub fn test_drp() -> Result<()> {
         initial_out_type,
         prover_win_utxo,
         prover_win_out_type,
-        ForcedChallenges::CorrectHashChallenge(
-            bitvmx_client::program::participant::ParticipantRole::Prover,
-        ),
+        forced_challenge.clone(),
         None,
         None,
     )?;
@@ -137,6 +138,7 @@ pub fn test_drp() -> Result<()> {
         &wallet,
         prog_id,
         None,
+        forced_challenge,
     )?;
 
     //prover final trace

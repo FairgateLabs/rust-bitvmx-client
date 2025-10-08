@@ -223,6 +223,7 @@ pub fn test_full() -> Result<()> {
 
     info!("Dispute setup");
 
+    let forced_challenge = ForcedChallenges::No;
     let dispute_id = Uuid::new_v4();
     prepare_dispute(
         dispute_id,
@@ -233,7 +234,7 @@ pub fn test_full() -> Result<()> {
         initial_output_type,
         prover_win_utxo,
         prover_win_output_type,
-        ForcedChallenges::No,
+        forced_challenge.clone(),
         None,
         None,
     )?;
@@ -502,6 +503,7 @@ pub fn test_full() -> Result<()> {
         &wallet,
         dispute_id,
         None,
+        forced_challenge,
     )?;
 
     //Consume other stops through timeout

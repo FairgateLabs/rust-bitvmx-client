@@ -9,7 +9,8 @@ use bitvmx_client::{
         self,
         participant::{CommsAddress, ParticipantRole},
         protocols::dispute::{
-            input_tx_name, program_input, timeout_tx, EXECUTE, TIMELOCK_BLOCKS, TIMELOCK_BLOCKS_KEY,
+            input_tx_name, program_input, timeout_tx, CHALLENGE_READ, EXECUTE, TIMELOCK_BLOCKS,
+            TIMELOCK_BLOCKS_KEY,
         },
         variables::{ConfigResult, ConfigResults, VariableTypes},
     },
@@ -143,6 +144,7 @@ pub fn execute_dispute(
     wallet: &Wallet,
     program_id: Uuid,
     input: Option<(String, u32)>,
+    forced_challenge: ForcedChallenges,
 ) -> Result<()> {
     let channels = id_channel_pairs
         .iter()
@@ -219,13 +221,20 @@ pub fn execute_dispute(
     process_dispatcher(&mut dispatchers, &mut instances)?;
     let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
+    let ending_state = match forced_challenge {
+        ForcedChallenges::ReadValueChallenge(..) | ForcedChallenges::CorrectHashChallenge(..) => {
+            CHALLENGE_READ
+        }
+        _ => EXECUTE,
+    };
+
     loop {
         process_dispatcher(&mut dispatchers, &mut instances)?;
         let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
         let tx = msgs[0].transaction();
         if tx.is_some() {
             let (_uuid, _txid, name) = tx.unwrap();
-            if name.as_ref().unwrap() == EXECUTE {
+            if name.as_ref().unwrap() == ending_state {
                 info!("Prover executed the program");
                 break;
             }
