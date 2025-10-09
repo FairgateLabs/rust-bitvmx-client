@@ -1320,11 +1320,12 @@ impl DisputeCoreProtocol {
         let setup = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
         let setup_tx: &Transaction = protocol.transaction_by_name(&setup)?;
         let setup_txid = setup_tx.compute_txid();
-        let output_value = setup_tx.output[0].value.to_sat();
+        let setup_output = 1;
+        let output_value = setup_tx.output[setup_output].value.to_sat();
 
         let setup_utxo = (
             setup_txid,
-            1 as u32,
+            setup_output as u32,
             Some(output_value),
             Some(OutputType::taproot(
                 output_value,
