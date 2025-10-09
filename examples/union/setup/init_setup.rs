@@ -17,6 +17,8 @@ use bitvmx_client::{
 use tracing::info;
 use uuid::Uuid;
 
+use crate::participants::committee::PACKET_SIZE;
+
 pub struct InitSetup {}
 
 impl InitSetup {
@@ -46,7 +48,7 @@ impl InitSetup {
                 take_aggregated_key,
                 dispute_aggregated_key,
                 operator_count: Self::operator_count(&members.clone())?,
-                packet_size: 10,
+                packet_size: PACKET_SIZE,
             };
 
             // this var is also set in the DisputeCoreSetup. We should de-duplicate this.
