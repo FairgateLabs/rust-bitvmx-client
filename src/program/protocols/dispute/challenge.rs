@@ -117,7 +117,7 @@ pub const UNINITIALIZED_CHALLENGE: [(&str, usize); 7] = [
 
 pub const READ_VALUE_NARY_SEARCH_CHALLENGE: [(&str, usize); 1] = [("verifier_bits", 1)];
 
-pub const READ_VALUE_CHALLENGE: [(&str, usize); 14] = [
+pub const READ_VALUE_CHALLENGE: [(&str, usize); 15] = [
     ("prover_read_1_address", 4),
     ("prover_read_1_value", 4),
     ("prover_read_1_last_step", 8),
@@ -132,6 +132,7 @@ pub const READ_VALUE_CHALLENGE: [(&str, usize); 14] = [
     ("verifier_write_micro", 1),
     ("verifier_next_hash", 20), //TODO: this should be from prover translation keys
     ("verifier_write_step", 8), //TODO: this should be from prover translation keys
+    ("verifier_conflict_step", 8), //TODO: this should be from prover translation keys
 ];
 
 pub const CORRECT_HASH_CHALLENGE: [(&str, usize); 7] = [
@@ -413,11 +414,13 @@ pub fn challenge_scripts(
                     }
                     "rom" => {
                         if let Some(rodata) = program.find_section_by_name(".rodata") {
+                            info!("RODATA: {:?}", rodata);
                             let rodata_words = rodata.data.len() as u32;
                             let base_addr = rodata.start;
-                            for i in 0..rodata_words {
+                            let step = 4; //TODO: make this configurable
+                            for i in (0..rodata_words).step_by(step) {
                                 let address = base_addr + i;
-                                let value = program.read_mem(address).unwrap();
+                                let value = program.read_mem(address, false).unwrap();
                                 let mut scripts = vec![reverse_script.clone()];
                                 stack = StackTracker::new();
                                 rom_challenge(&mut stack, address, value);
@@ -431,7 +434,7 @@ pub fn challenge_scripts(
                                 )?;
                                 challenge_leaf_script.push(winternitz_check);
                             }
-                            challenge_current_leaf += rodata_words;
+                            challenge_current_leaf += rodata_words / step as u32 + 1;
                         }
                     }
                     "initialized" => {
@@ -604,7 +607,6 @@ pub fn get_challenge_leaf(
             name = "entry_point";
             info!("Verifier chose {name} challenge");
         }
-
         ChallengeType::ProgramCounter(
             pre_pre_hash,
             pre_step,
@@ -651,7 +653,6 @@ pub fn get_challenge_leaf(
                 &prover_step_hash,
             )?;
         }
-
         ChallengeType::TraceHash(prover_prev_hash, _prover_trace_step, _prover_step_hash) => {
             name = "trace_hash";
             info!("Verifier chose {name} challenge");
@@ -659,13 +660,11 @@ pub fn get_challenge_leaf(
             //TODO: fix
             set_input_hex(id, context, "verifier_prev_hash", &prover_prev_hash)?;
         }
-
         ChallengeType::TraceHashZero(_prover_trace_step, prover_step_hash) => {
             name = "trace_hash_zero";
             info!("Verifier chose {name} challenge");
             set_input_hex(id, context, "verifier_step_hash", &prover_step_hash)?;
         }
-
         ChallengeType::InputData(_read_1, _read_2, address, _input_for_address) => {
             name = "input";
             info!("Verifier chose {name} challenge");
@@ -676,14 +675,12 @@ pub fn get_challenge_leaf(
                 .start;
             dynamic_offset = (address - base_addr) / 4;
         }
-
         ChallengeType::Opcode(_pc_read, chunk_index, _opcodes_chunk) => {
             name = "opcode";
             info!("Verifier chose {name} challenge");
 
             dynamic_offset = *chunk_index;
         }
-
         ChallengeType::AddressesSections(
             _read_1,
             _read_2,
@@ -698,7 +695,6 @@ pub fn get_challenge_leaf(
             name = "addresses_sections";
             info!("Verifier chose {name} challenge");
         }
-
         ChallengeType::RomData(_read_1, _read_2, address, _input_for_address) => {
             name = "rom";
             info!("Verifier chose {name} challenge");
@@ -742,7 +738,8 @@ pub fn get_challenge_leaf(
             step_hash,
             trace,
             next_hash,
-            step,
+            write_step,
+            conflict_step,
         } => {
             name = "read_value";
             info!("Verifier chose {name} challenge");
@@ -780,7 +777,13 @@ pub fn get_challenge_leaf(
                 trace.get_pc().get_micro(),
             )?;
             set_input_hex(id, context, &format!("verifier_next_hash"), &next_hash)?;
-            set_input_u64(id, context, &format!("verifier_write_step"), *step)?;
+            set_input_u64(id, context, &format!("verifier_write_step"), *write_step)?;
+            set_input_u64(
+                id,
+                context,
+                &format!("verifier_conflict_step"),
+                *conflict_step,
+            )?;
         }
         ChallengeType::CorrectHash {
             prover_hash,
@@ -819,6 +822,12 @@ pub fn get_challenge_leaf(
             )?;
             set_input_hex(id, context, &format!("verifier_next_hash"), &next_hash)?;
         }
+        ChallengeType::FutureRead {
+            step,
+            read_step_1,
+            read_step_2,
+            read_selector,
+        } => todo!(),
         ChallengeType::No => {
             name = "";
         }

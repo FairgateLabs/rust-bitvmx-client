@@ -570,33 +570,30 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 .map(|h| format!("prover_hash2_{}_{}", i, h))
                 .collect::<Vec<_>>();
 
-            // if i != 1 { //ASK: why? ES solo una optimización, en la primera busqueda n-aria, en el primer paso, ya hizo esa misma partición
-            //En la primera busqueda Naaria, parte en N pedazos, elije un sector y vuelve a partir, etc
-            // En la segunda busqueda Naria, parte en N pedazos, elije un sector (puede ser distinto al de la primera busqueda) y vuelve a partir, etc
-            // Encontec esa primera partición de la segunda busqueda Naria, es igual a la primera partición de la primera busqueda Naria
-            self.add_connection_with_scripts(
-                context,
-                aggregated,
-                &mut protocol,
-                timelock_blocks,
-                amount,
-                speedup_dust,
-                &prev,
-                &next,
-                &claim_verifier,
-                Self::winternitz_check(
-                    agg_or_prover,
-                    sign_mode,
-                    &keys[0],
-                    &vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
-                )?,
-                (&prover_speedup_pub, &verifier_speedup_pub),
-            )?;
-            amount = self.checked_sub(amount, fee)?;
-            amount = self.checked_sub(amount, speedup_dust)?;
+            if i != 1 {
+                self.add_connection_with_scripts(
+                    context,
+                    aggregated,
+                    &mut protocol,
+                    timelock_blocks,
+                    amount,
+                    speedup_dust,
+                    &prev,
+                    &next,
+                    &claim_verifier,
+                    Self::winternitz_check(
+                        agg_or_prover,
+                        sign_mode,
+                        &keys[0],
+                        &vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
+                    )?,
+                    (&prover_speedup_pub, &verifier_speedup_pub),
+                )?;
+                amount = self.checked_sub(amount, fee)?;
+                amount = self.checked_sub(amount, speedup_dust)?;
 
-            prev = next;
-            // }
+                prev = next;
+            }
             let next = format!("NARY2_VERIFIER_{}", i);
             //TODO: Add a lower than value check
             let _bits = nary_def.bits_for_round(i);
