@@ -8,11 +8,11 @@ use bitvmx_client::{
         participant::{CommsAddress, ParticipantRole},
         protocols::union::{
             common::get_init_pid,
-            types::{Committee, InitData, MemberData, MONITORED_WATCHTOWER_KEY},
+            types::{Committee, InitData, MemberData},
         },
         variables::{PartialUtxo, VariableTypes},
     },
-    types::{PROGRAM_TYPE_INIT},
+    types::PROGRAM_TYPE_INIT,
 };
 use tracing::info;
 use uuid::Uuid;
@@ -49,12 +49,13 @@ impl InitSetup {
                 packet_size: 10,
             };
 
+            // this var is also set in the DisputeCoreSetup. We should de-duplicate this.
             bitvmx.set_var(
                 committee_id,
                 &Committee::name(),
                 VariableTypes::String(serde_json::to_string(&committee)?),
             )?;
-    
+
             bitvmx.set_var(
                 protocol_id,
                 &InitData::name(),
@@ -63,13 +64,6 @@ impl InitSetup {
                     member_index,
                     watchtower_utxo: watchtower_utxo,
                 })?),
-            )?;
-
-            // Save the monitored watchtower's take key
-            bitvmx.set_var(
-                protocol_id,
-                MONITORED_WATCHTOWER_KEY,
-                VariableTypes::PubKey(pubkey),
             )?;
 
             bitvmx.setup(
@@ -88,5 +82,4 @@ impl InitSetup {
             .filter(|m| m.role == ParticipantRole::Prover)
             .count() as u32)
     }
-
 }

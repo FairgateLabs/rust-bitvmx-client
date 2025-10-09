@@ -221,19 +221,32 @@ impl Member {
 
     pub fn setup_dispute_channel(
         &mut self,
-        members: &Vec<Member>,
         committee_id: Uuid,
+        members: &Vec<MemberData>,
         wt_funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
+        addresses: &Vec<CommsAddress>,
     ) -> Result<()> {
         info!(
             id = self.id,
             "Setting up dispute channel for member {}", self.id
         );
 
-        DisputeChannelSetup::setup(self, members, committee_id, wt_funding_utxos_per_member)?;
+        DisputeChannelSetup::setup(
+            &self.id,
+            &self.address()?.clone(),
+            &self.role,
+            self.keyring.take_pubkey.as_ref().unwrap(),
+            &self.keyring.pairwise_keys,
+            &self.bitvmx,
+            members,
+            committee_id,
+            wt_funding_utxos_per_member,
+            addresses,
+        )?;
 
         for i in 0..members.len() {
-            let program_id = wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
+            let program_id =
+                wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
             info!(id = self.id, program_id = ?program_id, "Dispute channel setup completed for operator index {}", i);
         }
         Ok(())
@@ -521,7 +534,10 @@ impl Member {
         info!(
             "Funding dispute pubkey of {} with: {}",
             self.id,
-            amounts.speedup + amounts.operator_funding + amounts.watchtower_funding + amounts.advance_funds
+            amounts.speedup
+                + amounts.operator_funding
+                + amounts.watchtower_funding
+                + amounts.advance_funds
         );
 
         self.bitvmx.send_funds(
@@ -576,13 +592,13 @@ impl Member {
                 Some(amounts.operator_funding),
                 Some(operator_funding_ot),
             ),
-            advance_funds: (txid, 2, Some(amounts.advance_funds), Some(advance_funds_ot)),
             watchtower_funding: (
                 txid,
-                3,
+                2,
                 Some(amounts.watchtower_funding),
                 Some(watchtower_funding_ot),
             ),
+            advance_funds: (txid, 3, Some(amounts.advance_funds), Some(advance_funds_ot)),
         })
     }
 

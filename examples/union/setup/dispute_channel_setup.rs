@@ -5,47 +5,46 @@ use tracing::info;
 use uuid::Uuid;
 
 use bitvmx_client::{
-    program::participant::{CommsAddress, ParticipantRole},
-    program::protocols::union::{
-        common::get_dispute_channel_pid,
-        types::{FUNDING_UTXO_SUFFIX, WATCHTOWER},
+    client::BitVMXClient,
+    program::{
+        participant::{CommsAddress, ParticipantRole},
+        protocols::union::{
+            common::get_dispute_channel_pid,
+            types::{MemberData, FUNDING_UTXO_SUFFIX, WATCHTOWER},
+        },
+        variables::{PartialUtxo, VariableTypes},
     },
-    program::variables::{PartialUtxo, VariableTypes},
     types::PROGRAM_TYPE_DRP,
 };
-
-use crate::participants::member::Member;
 
 pub struct DisputeChannelSetup;
 
 impl DisputeChannelSetup {
     pub fn setup(
-        member: &mut Member,
-        members: &Vec<Member>,
+        my_id: &str,
+        my_address: &CommsAddress,
+        my_role: &ParticipantRole,
+        my_take_pubkey: &PublicKey,
+        pairwise_keys: &HashMap<CommsAddress, PublicKey>,
+        bitvmx: &BitVMXClient,
+        members: &Vec<MemberData>,
         committee_id: Uuid,
         wt_funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
+        addresses: &Vec<CommsAddress>,
     ) -> Result<()> {
-        let my_addr = member
-            .address
-            .as_ref()
-            .expect("member address not set")
-            .clone();
+        let my_addr = my_address.clone();
 
-        // Stable ordering by member id
-        let mut sorted = members.clone();
-        sorted.sort_by(|a, b| a.id.cmp(&b.id));
-
-        for i in 0..sorted.len() {
-            for j in (i + 1)..sorted.len() {
-                let m1 = &sorted[i];
-                let m2 = &sorted[j];
-                let a1 = m1.address.as_ref().expect("member address not set");
-                let a2 = m2.address.as_ref().expect("member address not set");
-                let r1 = &m1.role;
-                let r2 = &m2.role;
+        for i in 0..addresses.len() {
+            for j in (i + 1)..addresses.len() {
+                let r1 = &members[i].role;
+                let r2 = &members[j].role;
+                let a1 = &addresses[i];
+                let a2 = &addresses[j];
 
                 // Skip if I'm not part of the pair
-                if my_addr != *a1 && my_addr != *a2 { continue; }
+                if my_addr != *a1 && my_addr != *a2 {
+                    continue;
+                }
 
                 // Helper to setup one directional DRP
                 let setup_one = |from_idx: usize, to_idx: usize, first: &CommsAddress, second: &CommsAddress| -> Result<()> {
@@ -55,31 +54,35 @@ impl DisputeChannelSetup {
 
                     // Aggregated pairwise key
                     let counterparty = if my_addr == *first { second } else { first };
-                    let pair_key = member
-                        .keyring
-                        .pairwise_keys
+                    let pair_key = pairwise_keys
                         .get(counterparty)
                         .cloned()
                         .expect("pairwise key should be present");
 
                     // Program vars
                     let program_path = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
-                    member.bitvmx.set_var(drp_id, "program_definition", VariableTypes::String(program_path.to_string()))?;
-                    member.bitvmx.set_var(drp_id, "aggregated", VariableTypes::PubKey(pair_key))?;
+                    bitvmx.set_var(
+                        drp_id,
+                        "program_definition",
+                        VariableTypes::String(program_path.to_string()),
+                    )?;
+                    bitvmx.set_var(drp_id, "aggregated", VariableTypes::PubKey(pair_key))?;
 
                     // If I'm a watchtower, provide funding hint
-                    if matches!(member.role, ParticipantRole::Verifier) {
-                        if let Some(my_take) = member.keyring.take_pubkey.as_ref() {
-                            if let Some(my_utxo) = wt_funding_utxos_per_member.get(my_take) {
-                                let wt_key = format!("{}{}", WATCHTOWER, FUNDING_UTXO_SUFFIX);
-                                member.bitvmx.set_var(drp_id, &wt_key, VariableTypes::Utxo(my_utxo.clone()))?;
-                                member.bitvmx.set_var(drp_id, "TIMELOCK_BLOCKS", VariableTypes::Number(1))?;
-                            }
+                    if matches!(my_role, ParticipantRole::Verifier) {
+                        if let Some(my_utxo) = wt_funding_utxos_per_member.get(my_take_pubkey) {
+                            let wt_key = format!("{}{}", WATCHTOWER, FUNDING_UTXO_SUFFIX);
+                            bitvmx.set_var(
+                                drp_id,
+                                &wt_key,
+                                VariableTypes::Utxo(my_utxo.clone()),
+                            )?;
+                            bitvmx.set_var(drp_id, "TIMELOCK_BLOCKS", VariableTypes::Number(1))?;
                         }
                     }
 
-                    member.bitvmx.setup(drp_id, PROGRAM_TYPE_DRP.to_string(), participants, 0)?;
-                    info!(id = member.id, drp = ?drp_id, dir = %format!("{}->{}", m1.id, m2.id), my_idx = my_idx, "Setup Dispute Channel");
+                    bitvmx.setup(drp_id, PROGRAM_TYPE_DRP.to_string(), participants, 0)?;
+                    info!(id = my_id, drp = ?drp_id, dir = %format!("{}->{}", first.address, second.address), my_idx = my_idx, "Setup Dispute Channel");
                     Ok(())
                 };
 

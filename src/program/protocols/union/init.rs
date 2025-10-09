@@ -2,19 +2,27 @@ use protocol_builder::builder::Protocol;
 use protocol_builder::graph::graph::GraphOptions;
 use protocol_builder::types::connection::{InputSpec, OutputSpec};
 use protocol_builder::types::input::{SighashType, SpendMode};
-use protocol_builder::types::OutputType;
+use protocol_builder::types::{InputArgs, OutputType, Utxo};
 use serde::{Deserialize, Serialize};
-use tracing::info;
 use std::collections::HashMap;
+use tracing::info;
 
 use crate::errors::BitVMXError;
-use crate::program::participant::{ParticipantKeys, ParticipantRole, PublicKeyType};
-use crate::program::protocols::protocol_handler::{ProtocolContext, ProtocolHandler};
-use crate::program::protocols::union::common::{create_transaction_reference, indexed_name};
-use crate::program::protocols::union::scripts;
-use crate::program::protocols::union::types::*;
+use crate::program::{
+    participant::{ParticipantKeys, ParticipantRole, PublicKeyType},
+    protocols::{
+        protocol_handler::{ProtocolContext, ProtocolHandler},
+        union::{
+            common::{create_transaction_reference, indexed_name},
+            scripts,
+            types::*,
+        },
+    },
+    variables::VariableTypes,
+};
 use crate::types::ProgramContext;
 use bitcoin::{PublicKey, Transaction, Txid};
+use bitcoin_coordinator::coordinator::BitcoinCoordinatorApi;
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::types::output::{SpeedupData, AUTO_AMOUNT, RECOVER_AMOUNT};
 use uuid::Uuid;
@@ -72,6 +80,19 @@ impl ProtocolHandler for InitProtocol {
             PublicKeyType::Public(self.my_dispute_key(program_context)?),
         ));
 
+        let speedup_key = program_context.key_chain.derive_keypair()?;
+
+        keys.push((
+            SPEEDUP_KEY.to_string(),
+            PublicKeyType::Public(speedup_key.clone()),
+        ));
+
+        program_context.globals.set_var(
+            &self.ctx.id,
+            SPEEDUP_KEY,
+            VariableTypes::PubKey(speedup_key),
+        )?;
+
         keys.push((
             REVEAL_TAKE_PRIVKEY.to_string(),
             PublicKeyType::Winternitz(program_context.key_chain.derive_winternitz_hash160(32)?),
@@ -100,11 +121,13 @@ impl ProtocolHandler for InitProtocol {
     ) -> Result<(), BitVMXError> {
         let mut protocol = self.load_or_create_protocol();
         let init_data = self.init_data(context)?;
+        let current_member_index = init_data.member_index;
         let committee = self.committee(context)?;
         let watchtower_keys = keys[init_data.member_index].clone();
-        
+
         info!(
-            "Setting up init protocol for member {}", init_data.member_index,
+            "Setting up init protocol for member {}",
+            init_data.member_index,
         );
 
         self.create_initial_deposit(&mut protocol, &watchtower_keys, &init_data)?;
@@ -116,12 +139,12 @@ impl ProtocolHandler for InitProtocol {
                 &committee.clone(),
                 &watchtower_keys,
                 &member,
-                index
+                index,
+                current_member_index,
             )?;
         }
 
         // TODO set utxo var here for dispute channels
-
 
         // Add change output to setup tx
         protocol.compute_minimum_output_values()?;
@@ -156,8 +179,10 @@ impl ProtocolHandler for InitProtocol {
         Ok(())
     }
 
-    fn setup_complete(&self, _context: &ProgramContext) -> Result<(), BitVMXError> {
-        // todo!()
+    fn setup_complete(&self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
+        info!(id = self.ctx.my_idx, "Init {} setup complete", self.ctx.id);
+        self.dispatch_setup_tx(program_context)?;
+
         Ok(())
     }
 }
@@ -231,8 +256,8 @@ impl InitProtocol {
         let start_enabler = format!("{}{}", WATCHTOWER, START_ENABLER_TX_SUFFIX);
         let self_disabler = format!("{}{}", WATCHTOWER, SELF_DISABLER_TX_SUFFIX);
 
-        // Create the funding transaction reference
-        protocol.add_external_transaction(&funding)?;
+        // // Create the funding transaction reference
+        // protocol.add_external_transaction(&funding)?;
 
         // Create the funding transaction reference
         create_transaction_reference(protocol, &funding, &mut [watchtower_utxo.clone()].to_vec())?;
@@ -292,27 +317,26 @@ impl InitProtocol {
         watchtower_keys: &ParticipantKeys,
         member: &MemberData,
         index: usize,
+        current_member_index: usize,
     ) -> Result<(), BitVMXError> {
-        if member.role == ParticipantRole::Verifier {
-            return Ok(());
-        }
-
         let start_enabler = format!("{}{}", WATCHTOWER, START_ENABLER_TX_SUFFIX);
-
         let mut scripts = vec![];
 
-        if self.ctx.my_idx == index {
-            scripts = vec![protocol_builder::scripts::op_return_script("skip".as_bytes().to_vec())?];
+        if member.role == ParticipantRole::Verifier || current_member_index == index {
+            scripts = vec![protocol_builder::scripts::op_return_script(
+                "skip".as_bytes().to_vec(),
+            )?];
         } else {
             for slot in 0..committee.packet_size as usize {
-                let slot_id_key = watchtower_keys.get_winternitz(&indexed_name(SLOT_ID_KEY, slot))?;
+                let slot_id_key =
+                    watchtower_keys.get_winternitz(&indexed_name(SLOT_ID_KEY, slot))?;
 
                 // TODO is this correct? should we use aggregated key?
-                scripts.push(scripts::start_challenge
-                    (&committee.dispute_aggregated_key,
-                        SLOT_ID_KEY,
-                        slot_id_key
-                    )?);
+                scripts.push(scripts::start_challenge(
+                    &committee.dispute_aggregated_key,
+                    SLOT_ID_KEY,
+                    slot_id_key,
+                )?);
             }
         }
 
@@ -356,4 +380,71 @@ impl InitProtocol {
         Ok(())
     }
 
+    fn dispatch_setup_tx(&self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
+        let setup_tx_name = format!("{}{}", WATCHTOWER, SETUP_TX_SUFFIX);
+        let init_data = self.init_data(program_context)?;
+
+        if init_data.member_index != self.ctx.my_idx {
+            info!(
+                id = self.ctx.my_idx,
+                "Not my init, skipping dispatch of {} transaction", setup_tx_name
+            );
+            return Ok(());
+        }
+
+        info!(
+            id = self.ctx.my_idx,
+            "Dispatching {} tx from protocol {}", setup_tx_name, self.ctx.id
+        );
+
+        // Get the signed transaction
+        let (setup_tx, speedup) = self.setup_tx(program_context)?;
+        let setup_txid = setup_tx.compute_txid();
+
+        // Dispatch the transaction through the bitcoin coordinator
+        program_context.bitcoin_coordinator.dispatch(
+            setup_tx,
+            speedup,
+            format!("init_setup_{}:{}", self.ctx.id, setup_tx_name), // Context string
+            None,                                                    // Dispatch immediately
+        )?;
+
+        info!(
+            id = self.ctx.my_idx,
+            "{} dispatched successfully with txid: {}", setup_tx_name, setup_txid
+        );
+
+        Ok(())
+    }
+
+    fn setup_tx(
+        &self,
+        context: &ProgramContext,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        let name = format!("{}{}", WATCHTOWER, SETUP_TX_SUFFIX);
+
+        let mut protocol = self.load_protocol()?;
+
+        let signature = protocol.sign_ecdsa_input(&name, 0, &context.key_chain.key_manager)?;
+
+        let mut input_args = InputArgs::new_segwit_args();
+        input_args.push_ecdsa_signature(signature)?;
+
+        let tx = protocol.transaction_to_send(&name, &[input_args])?;
+
+        let txid = tx.compute_txid();
+        let speedup_key = self.my_speedup_key(context)?;
+        let speedup_vout = (tx.output.len() - 2) as u32;
+        let speedup_utxo = Utxo::new(txid, speedup_vout, SPEEDUP_VALUE, &speedup_key);
+
+        Ok((tx, Some(speedup_utxo.into())))
+    }
+
+    fn my_speedup_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+        Ok(context
+            .globals
+            .get_var(&self.ctx.id, SPEEDUP_KEY)?
+            .unwrap()
+            .pubkey()?)
+    }
 }
