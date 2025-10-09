@@ -608,19 +608,18 @@ impl DisputeCoreProtocol {
         dispute_core_data: &DisputeCoreData,
     ) -> Result<(), BitVMXError> {
         // Add a change output to the setup transaction
-        // This fee assumes 1 sat per byte plus a 10 extra percent as a safety margin.
-        // It is computed using the size of the transaction, a 68 vbyte size for the input witness (P2WPKH)
-        // and the 3 outputs (setup, change, and speedup output).
-        let setup_fees = 246;
         let funding_amount = dispute_core_data.operator_utxo.2.unwrap();
         let operator_dispute_key = operator_keys.get_public(DISPUTE_KEY)?;
         let setup = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
+        let setup_tx = protocol.transaction_by_name(&setup)?;
+        let setup_fees = estimate_fee(1, setup_tx.output.len() + 1, 1);
+        let mut total_cost = 0;
 
-        let setup_amount = protocol.transaction_by_name(&setup)?.output[0]
-            .value
-            .to_sat();
+        for i in 0..setup_tx.output.len() {
+            total_cost += setup_tx.output[i].value.to_sat();
+        }
 
-        let change = self.checked_sub(funding_amount, setup_amount + setup_fees + SPEEDUP_VALUE)?;
+        let change = self.checked_sub(funding_amount, total_cost + setup_fees)?;
 
         protocol
             .add_transaction_output(
