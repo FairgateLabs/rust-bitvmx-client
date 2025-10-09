@@ -509,8 +509,6 @@ impl DisputeCoreProtocol {
                 TWO_DISPUTE_PENALIZATION_TX, i, dispute_core_index
             );
 
-            info!("Creating: {}", two_dispute_penalization);
-
             protocol.add_connection(
                 "prev_reimbursement_kickoff",
                 &prev_reimbursement_kickoff,
