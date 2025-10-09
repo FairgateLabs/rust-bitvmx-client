@@ -26,7 +26,8 @@ use crate::{
             union::{
                 common::indexed_name,
                 types::{
-                    PegOutAccepted, PegOutRequest, ACCEPT_PEGIN_TX, USER_TAKE_FEE, USER_TAKE_TX,
+                    PegOutAccepted, PegOutRequest, ACCEPT_PEGIN_TX, SPEEDUP_VALUE, USER_TAKE_FEE,
+                    USER_TAKE_TX,
                 },
             },
         },
@@ -100,7 +101,8 @@ impl ProtocolHandler for UserTakeProtocol {
         )?;
 
         // Add the user output to the user take transaction
-        let user_amount = self.checked_sub(accept_pegin_utxo.2.unwrap(), USER_TAKE_FEE)?;
+        let user_amount =
+            self.checked_sub(accept_pegin_utxo.2.unwrap(), USER_TAKE_FEE + SPEEDUP_VALUE)?;
 
         let wpkh = user_pubkey.wpubkey_hash().expect("key is compressed");
         let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
@@ -113,7 +115,15 @@ impl ProtocolHandler for UserTakeProtocol {
                 public_key: user_pubkey,
             },
         )?;
-        // NOTE: No speed up output needed here, user could use the same output to speed up the transaction later
+
+        protocol.add_transaction_output(
+            USER_TAKE_TX,
+            &OutputType::SegwitPublicKey {
+                value: Amount::from_sat(SPEEDUP_VALUE),
+                script_pubkey: script_pubkey.clone(),
+                public_key: user_pubkey,
+            },
+        )?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
