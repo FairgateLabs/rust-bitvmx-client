@@ -309,8 +309,9 @@ impl DisputeCoreProtocol {
         )?;
 
         // Operator output for disabler directory
-        let directory_fee = estimate_fee(1, packet_size as usize, 1);
-        let disabler_directory_amount = packet_size as u64 * DUST_VALUE + directory_fee;
+        let directory_fee = estimate_fee(1, packet_size as usize + 1, 1);
+        let disabler_directory_amount =
+            packet_size as u64 * DUST_VALUE + SPEEDUP_VALUE + directory_fee;
         protocol.add_transaction_output(
             &setup,
             &OutputType::taproot(disabler_directory_amount, dispute_aggregated_key, &[])?,

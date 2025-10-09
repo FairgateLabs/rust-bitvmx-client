@@ -34,7 +34,7 @@ use crate::{
                     OPERATOR_TAKE_ENABLER, OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX,
                     OP_INITIAL_DEPOSIT_AMOUNT, OP_INITIAL_DEPOSIT_OUT_SCRIPT,
                     OP_INITIAL_DEPOSIT_TXID, OP_LAZY_DISABLER_TX, REIMBURSEMENT_KICKOFF_TX,
-                    SETUP_DISABLER_DIRECTORY_UTXO,
+                    SETUP_DISABLER_DIRECTORY_UTXO, SPEEDUP_VALUE,
                 },
             },
         },
@@ -459,6 +459,17 @@ impl FullPenalizationProtocol {
                 },
             )?;
         }
+
+        // Maybe this speedup here could be removed.
+        // Right not it's needed to make all disable directory tx different, if not they all have same txid for a particular operator.
+        // Soon they will be connected to dispute channels
+        protocol.add_transaction_output(
+            &op_disabler_directory_name,
+            &OutputType::segwit_key(
+                SPEEDUP_VALUE,
+                &committee.members[watchtower_index].dispute_key,
+            )?,
+        )?;
 
         Ok(())
     }
