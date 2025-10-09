@@ -61,10 +61,10 @@ impl Committee {
             //     &prefixed_name(network_prefix, "op_3"),
             //     ParticipantRole::Prover,
             // )?,
-            // Member::new(
-            //     &prefixed_name(network_prefix, "op_4"),
-            //     ParticipantRole::Verifier,
-            // )?,
+            Member::new(
+                &prefixed_name(network_prefix, "op_4"),
+                ParticipantRole::Verifier,
+            )?,
         ];
 
         let (client, network) = init_client(members[0].config.clone())?;
@@ -173,6 +173,15 @@ impl Committee {
                 ACCEPT_PEGIN_TX.to_string(),
             )?;
         }
+
+        Ok(())
+    }
+
+    pub fn setup_full_penalization(&mut self) -> Result<()> {
+        let addresses = self.get_addresses();
+        let committee_id = self.committee_id;
+
+        self.all(|op: &mut Member| op.setup_full_penalization(committee_id, &addresses.clone()))?;
 
         Ok(())
     }

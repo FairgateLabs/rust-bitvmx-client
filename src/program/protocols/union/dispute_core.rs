@@ -7,8 +7,8 @@ use crate::{
             union::{
                 self,
                 common::{
-                    create_transaction_reference, extract_index, get_accept_pegin_pid,
-                    get_initial_setup_output_type, indexed_name,
+                    create_transaction_reference, estimate_fee, extract_index,
+                    get_accept_pegin_pid, get_initial_setup_output_type, indexed_name,
                 },
                 types::*,
             },
@@ -152,7 +152,13 @@ impl ProtocolHandler for DisputeCoreProtocol {
         let committee = self.committee(context)?;
         let operator_keys = keys[dispute_core_data.operator_index].clone();
 
-        self.create_initial_deposit(&mut protocol, &operator_keys, &dispute_core_data)?;
+        self.create_initial_deposit(
+            &mut protocol,
+            &operator_keys,
+            &dispute_core_data,
+            committee.packet_size,
+            &committee.dispute_aggregated_key,
+        )?;
         let take_aggregated_key = self.take_aggregated_key(context)?;
 
         let mut reimbursement_output =
@@ -179,7 +185,11 @@ impl ProtocolHandler for DisputeCoreProtocol {
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
 
         self.save_protocol(protocol)?;
-        self.save_take_utxos(context, &mut reimbursement_output)?;
+        self.save_take_utxos(
+            context,
+            &mut reimbursement_output,
+            &committee.dispute_aggregated_key,
+        )?;
 
         Ok(())
     }
@@ -253,6 +263,8 @@ impl DisputeCoreProtocol {
         protocol: &mut Protocol,
         operator_keys: &ParticipantKeys,
         dispute_core_data: &DisputeCoreData,
+        packet_size: u32,
+        dispute_aggregated_key: &PublicKey,
     ) -> Result<(), BitVMXError> {
         let operator_utxo = dispute_core_data.operator_utxo.clone();
         let operator_dispute_key = operator_keys.get_public(DISPUTE_KEY)?;
@@ -294,6 +306,14 @@ impl DisputeCoreProtocol {
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
             None,
             None,
+        )?;
+
+        // Operator output for disabler directory
+        let directory_fee = estimate_fee(1, packet_size as usize, 1);
+        let disabler_directory_amount = packet_size as u64 * DUST_VALUE + directory_fee;
+        protocol.add_transaction_output(
+            &setup,
+            &OutputType::taproot(disabler_directory_amount, dispute_aggregated_key, &[])?,
         )?;
 
         // Connect the self-disabler (recover funds) transaction.
@@ -1221,6 +1241,7 @@ impl DisputeCoreProtocol {
         &self,
         context: &ProgramContext,
         reimbursement_output: &mut OutputType,
+        dispute_aggregated_key: &PublicKey,
     ) -> Result<(), BitVMXError> {
         let committee = self.committee(context)?;
         let protocol = self.load_or_create_protocol();
@@ -1293,6 +1314,31 @@ impl DisputeCoreProtocol {
             &self.ctx.id,
             OP_INITIAL_DEPOSIT_AMOUNT,
             VariableTypes::Amount(output_value),
+        )?;
+
+        // Save SETUP_DISABLER_DIRECTORY_UTXO for future use in the full penalization
+        let setup = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
+        let setup_tx: &Transaction = protocol.transaction_by_name(&setup)?;
+        let setup_txid = setup_tx.compute_txid();
+        let output_value = setup_tx.output[0].value.to_sat();
+
+        let setup_utxo = (
+            setup_txid,
+            1 as u32,
+            Some(output_value),
+            Some(OutputType::taproot(
+                output_value,
+                dispute_aggregated_key,
+                &[],
+            )?),
+        );
+
+        info!("Saving setup disabler utxo: {:?}", setup_utxo);
+
+        context.globals.set_var(
+            &self.ctx.id,
+            &SETUP_DISABLER_DIRECTORY_UTXO,
+            VariableTypes::Utxo(setup_utxo),
         )?;
 
         Ok(())
