@@ -19,6 +19,8 @@ use uuid::Uuid;
 use super::super::participant::ParticipantKeys;
 use crate::errors::BitVMXError;
 use crate::keychain::KeyChain;
+#[cfg(feature = "union")]
+use crate::program::protocols::union::full_penalization::FullPenalizationProtocol;
 
 #[cfg(feature = "cardinal")]
 use super::cardinal::{lock::LockProtocol, slot::SlotProtocol, transfer::TransferProtocol};
@@ -34,7 +36,7 @@ use crate::program::protocols::union::{
 #[cfg(feature = "union")]
 use crate::types::{
     PROGRAM_TYPE_ACCEPT_PEGIN, PROGRAM_TYPE_ADVANCE_FUNDS, PROGRAM_TYPE_DISPUTE_CORE,
-    PROGRAM_TYPE_PAIRWISE_PENALIZATION, PROGRAM_TYPE_USER_TAKE,
+    PROGRAM_TYPE_FULL_PENALIZATION, PROGRAM_TYPE_PAIRWISE_PENALIZATION, PROGRAM_TYPE_USER_TAKE,
 };
 
 #[cfg(feature = "cardinal")]
@@ -519,6 +521,8 @@ pub enum ProtocolType {
     DisputeCoreProtocol,
     #[cfg(feature = "union")]
     PairwisePenalizationProtocol,
+    #[cfg(feature = "union")]
+    FullPenalizationProtocol,
 }
 
 pub fn new_protocol_type(
@@ -557,6 +561,10 @@ pub fn new_protocol_type(
         #[cfg(feature = "union")]
         PROGRAM_TYPE_DISPUTE_CORE => Ok(ProtocolType::DisputeCoreProtocol(
             DisputeCoreProtocol::new(ctx),
+        )),
+        #[cfg(feature = "union")]
+        PROGRAM_TYPE_FULL_PENALIZATION => Ok(ProtocolType::FullPenalizationProtocol(
+            FullPenalizationProtocol::new(ctx),
         )),
         _ => Err(BitVMXError::NotImplemented(name.to_string())),
     }

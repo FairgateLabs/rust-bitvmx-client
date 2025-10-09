@@ -5,7 +5,9 @@ use bitvmx_client::program::protocols::union::common::{
     get_accept_pegin_pid, get_dispute_aggregated_key_pid, get_take_aggreated_key_pid,
     get_user_take_pid,
 };
-use bitvmx_client::program::protocols::union::types::{MemberData, ACCEPT_PEGIN_TX, USER_TAKE_TX};
+use bitvmx_client::program::protocols::union::types::{
+    MemberData, ACCEPT_PEGIN_TX, DUST_VALUE, SPEEDUP_VALUE, USER_TAKE_TX,
+};
 use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtxo};
 use bitvmx_client::types::OutgoingBitVMXApiMessages::{SPVProof, Transaction};
 
@@ -57,14 +59,14 @@ impl Committee {
                 &prefixed_name(network_prefix, "op_2"),
                 ParticipantRole::Prover,
             )?,
-            // Member::new(
-            //     &prefixed_name(network_prefix, "op_3"),
-            //     ParticipantRole::Prover,
-            // )?,
-            // Member::new(
-            //     &prefixed_name(network_prefix, "op_4"),
-            //     ParticipantRole::Verifier,
-            // )?,
+            Member::new(
+                &prefixed_name(network_prefix, "op_3"),
+                ParticipantRole::Prover,
+            )?,
+            Member::new(
+                &prefixed_name(network_prefix, "op_4"),
+                ParticipantRole::Verifier,
+            )?,
         ];
 
         let (client, network) = init_client(members[0].config.clone())?;
@@ -173,6 +175,15 @@ impl Committee {
                 ACCEPT_PEGIN_TX.to_string(),
             )?;
         }
+
+        Ok(())
+    }
+
+    pub fn setup_full_penalization(&mut self) -> Result<()> {
+        let addresses = self.get_addresses();
+        let committee_id = self.committee_id;
+
+        self.all(|op: &mut Member| op.setup_full_penalization(committee_id, &addresses.clone()))?;
 
         Ok(())
     }
@@ -317,12 +328,17 @@ impl Committee {
         return FUNDING_AMOUNT_PER_SLOT * PACKET_SIZE as u64;
     }
 
+    fn get_funding_op_disabler_directory_value(&self) -> u64 {
+        return DUST_VALUE * PACKET_SIZE as u64 + SPEEDUP_VALUE;
+    }
+
     pub fn get_total_funds_value(&self) -> u64 {
         let fees = 5_000; // extra fees for safety
 
         return self.get_speedup_funds_value()
             + self.get_advance_funds_value()
             + self.get_funding_protocol_value()
+            + self.get_funding_op_disabler_directory_value()
             + fees;
     }
 
@@ -333,7 +349,8 @@ impl Committee {
         let mut speedup_funding_utxos_per_member: HashMap<PublicKey, Utxo> = HashMap::new();
         let funding_amounts = FundingAmount {
             speedup: self.get_speedup_funds_value(),
-            protocol_funding: self.get_funding_protocol_value(),
+            protocol_funding: self.get_funding_protocol_value()
+                + self.get_funding_op_disabler_directory_value(),
             advance_funds: self.get_advance_funds_value(),
         };
 

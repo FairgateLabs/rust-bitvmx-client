@@ -8,9 +8,9 @@ use bitvmx_broker::{
     channel::channel::{DualChannel, LocalChannel},
     identification::identifier::Identifier,
 };
+use bitvmx_operator_comms::operator_comms::OperatorComms;
 use bitvmx_wallet::wallet::Destination;
 use chrono::{DateTime, Utc};
-use bitvmx_operator_comms::operator_comms::OperatorComms;
 use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
 
@@ -367,4 +367,5 @@ pub const PROGRAM_TYPE_USER_TAKE: &str = "take";
 pub const PROGRAM_TYPE_ADVANCE_FUNDS: &str = "advance_funds";
 pub const PROGRAM_TYPE_DISPUTE_CORE: &str = "dispute_core";
 pub const PROGRAM_TYPE_PAIRWISE_PENALIZATION: &str = "pairwise_penalization";
+pub const PROGRAM_TYPE_FULL_PENALIZATION: &str = "full_penalization";
 pub const PROGRAM_TYPE_PACKET: &str = "packet";
