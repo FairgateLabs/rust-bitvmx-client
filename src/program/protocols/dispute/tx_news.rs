@@ -17,14 +17,14 @@ use crate::{
             dispute::{
                 action_wins,
                 challenge::READ_VALUE_NARY_SEARCH_CHALLENGE,
-                config::DisputeConfiguration,
+                config::{ConfigResults, DisputeConfiguration},
                 input_handler::{get_txs_configuration, unify_inputs, unify_witnesses},
                 timeout_input_tx, timeout_tx, DisputeResolutionProtocol, CHALLENGE, CHALLENGE_READ,
                 COMMITMENT, EXECUTE, INPUT_TX, PROVER_WINS, TRACE_VARS, VERIFIER_WINS,
             },
             protocol_handler::ProtocolHandler,
         },
-        variables::{ConfigResults, VariableTypes},
+        variables::VariableTypes,
     },
     types::ProgramContext,
 };
@@ -304,11 +304,7 @@ pub fn handle_tx_news(
         timelock_blocks as u32,
     )?;
 
-    let fail_force_config = program_context
-        .globals
-        .get_var(&drp.ctx.id, "fail_force_config")?
-        .unwrap_or(VariableTypes::FailConfiguration(ConfigResults::default()))
-        .fail_configuration()?;
+    let fail_force_config = config.fail_force_config.unwrap_or_default();
 
     if name.starts_with(INPUT_TX) && vout.is_some() {
         let idx = name.strip_prefix(INPUT_TX).unwrap().parse::<u32>()?;

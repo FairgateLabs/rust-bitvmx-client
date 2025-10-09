@@ -414,7 +414,6 @@ pub fn challenge_scripts(
                     }
                     "rom" => {
                         if let Some(rodata) = program.find_section_by_name(".rodata") {
-                            info!("RODATA: {:?}", rodata);
                             let rodata_words = rodata.data.len() as u32;
                             let base_addr = rodata.start;
                             let step = 4; //TODO: make this configurable

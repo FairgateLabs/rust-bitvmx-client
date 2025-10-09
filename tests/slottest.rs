@@ -229,7 +229,6 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
             prover_win_utxo,
             prover_win_output_type,
             forced_challenge.clone(),
-            None,
             Some("./verifiers/cardinal-verifier.yaml".to_string()),
         )?;
         let _msgs = get_all(&sub_channel.clone(), &mut instances, false)?;

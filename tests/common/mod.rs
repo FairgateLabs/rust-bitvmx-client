@@ -120,7 +120,6 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
         bitvmx_wallet::wallet::config::Config,
     >(Some("config/wallet_regtest.yaml".to_string()))?;
 
-
     // Clear indexer, monitor, key manager and wallet data.
     clear_db(&wallet_config.storage.path);
     clear_db(&wallet_config.key_storage.path);
@@ -139,7 +138,7 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
             wallet_config.bitcoin.clone(),
             BitcoindFlags {
                 min_relay_tx_fee: 0.00001,
-                block_min_tx_fee: 0.00008,
+                block_min_tx_fee: 0.00002,
                 debug: 1,
                 fallback_fee: 0.0002,
             },
@@ -169,10 +168,10 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
     // Create a new local wallet
     let mut wallet =
         Wallet::from_config(wallet_config.bitcoin.clone(), wallet_config.wallet.clone())?;
-    
-    if is_ci {        
+
+    if is_ci {
         info!("CI mode: initializing wallet and funding from pre-existing test_wallet");
-        let _address = bitcoin_client.init_wallet(&wallet_config.bitcoin.wallet)?;        
+        let _address = bitcoin_client.init_wallet(&wallet_config.bitcoin.wallet)?;
         info!("Funding local wallet from test_wallet in CI mode");
         bitcoin_client.fund_address(&wallet.receive_address()?, Amount::from_int_btc(10))?;
     } else {
@@ -181,7 +180,7 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
         bitcoin_client.mine_blocks_to_address(INITIAL_BLOCK_COUNT, &_address)?;
         bitcoin_client.fund_address(&wallet.receive_address()?, Amount::from_int_btc(10))?;
     }
-    
+
     // Sync the wallet with the Bitcoin node to the latest block
     wallet.sync_wallet()?;
 

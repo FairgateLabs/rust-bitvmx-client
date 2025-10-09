@@ -12,7 +12,7 @@ use bitvmx_client::program::protocols::dispute::{
     action_wins, input_tx_name, program_input, program_input_prev_prefix,
     program_input_prev_protocol,
 };
-use bitvmx_client::program::variables::{ConfigResult, ConfigResults, VariableTypes, WitnessTypes};
+use bitvmx_client::program::variables::{VariableTypes, WitnessTypes};
 use bitvmx_client::types::{
     IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel,
 };
@@ -25,8 +25,6 @@ use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
 use common::dispute::{prepare_dispute, ForcedChallenges};
 use common::{clear_db, init_utxo_new, INITIAL_BLOCK_COUNT};
 use common::{config_trace, send_all};
-use emulator::decision::challenge::{ForceChallenge, ForceCondition};
-use emulator::executor::utils::{FailConfiguration, FailReads};
 use key_manager::winternitz::{
     self, checksum_length, to_checksummed_message, WinternitzPublicKey, WinternitzSignature,
     WinternitzType,
@@ -459,7 +457,7 @@ pub fn test_all_aux(
     network: Network,
     program: Option<String>,
     inputs: Option<(&str, u32, &str, u32)>,
-    fail_data: Option<ConfigResults>,
+    force_challenge: Option<ForcedChallenges>,
 ) -> Result<()> {
     config_trace();
 
@@ -623,8 +621,7 @@ pub fn test_all_aux(
         initial_out_type,
         prover_win_utxo,
         prover_win_out_type,
-        ForcedChallenges::No,
-        fail_data,
+        force_challenge.unwrap_or(ForcedChallenges::No),
         program,
     )?;
 
@@ -782,56 +779,56 @@ fn test_const() -> Result<()> {
     Ok(())
 }
 
-#[ignore]
-#[test]
-fn test_const_fail_input() -> Result<()> {
-    let main_config = ConfigResult {
-        fail_config_prover: Some(FailConfiguration::new_fail_reads(FailReads::new(
-            None,
-            Some(&vec![
-                "16".to_string(),
-                "0xaa000000".to_string(),
-                "0x00000002".to_string(),
-                "0xaa000000".to_string(),
-                "0xffffffffffffffff".to_string(),
-            ]),
-        ))),
-        fail_config_verifier: None,
-        force_challenge: ForceChallenge::No,
-        force_condition: ForceCondition::ValidInputWrongStepOrHash,
-    };
+// #[ignore] ASK: which particular challenge to force?
+// #[test]
+// fn test_const_fail_input() -> Result<()> {
+//     let main_config = ConfigResult {
+//         fail_config_prover: Some(FailConfiguration::new_fail_reads(FailReads::new(
+//             None,
+//             Some(&vec![
+//                 "16".to_string(),
+//                 "0xaa000000".to_string(),
+//                 "0x00000002".to_string(),
+//                 "0xaa000000".to_string(),
+//                 "0xffffffffffffffff".to_string(),
+//             ]),
+//         ))),
+//         fail_config_verifier: None,
+//         force_challenge: ForceChallenge::No,
+//         force_condition: ForceCondition::ValidInputWrongStepOrHash,
+//     };
 
-    let fail_config = ConfigResults {
-        main: main_config,
-        read: ConfigResult::default(),
-    };
+//     let fail_config = ConfigResults {
+//         main: main_config,
+//         read: ConfigResult::default(),
+//     };
 
-    test_all_aux(
-        false,
-        Network::Regtest,
-        Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
-        Some(("00000002", 1, "00000003", 2)),
-        Some(fail_config.clone()),
-    )?;
+//     test_all_aux(
+//         false,
+//         Network::Regtest,
+//         Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
+//         Some(("00000002", 1, "00000003", 2)),
+//         Some(fail_config.clone()),
+//     )?;
 
-    test_all_aux(
-        false,
-        Network::Regtest,
-        Some("./verifiers/add-test-with-const-post.yaml".to_string()),
-        Some(("0000000200000004", 1, "00000001", 0)),
-        Some(fail_config.clone()),
-    )?;
+//     test_all_aux(
+//         false,
+//         Network::Regtest,
+//         Some("./verifiers/add-test-with-const-post.yaml".to_string()),
+//         Some(("0000000200000004", 1, "00000001", 0)),
+//         Some(fail_config.clone()),
+//     )?;
 
-    test_all_aux(
-        false,
-        Network::Regtest,
-        Some("./verifiers/add-test-with-const-pre.yaml".to_string()),
-        Some(("0000000100000002", 0, "00000004", 1)),
-        Some(fail_config),
-    )?;
+//     test_all_aux(
+//         false,
+//         Network::Regtest,
+//         Some("./verifiers/add-test-with-const-pre.yaml".to_string()),
+//         Some(("0000000100000002", 0, "00000004", 1)),
+//         Some(fail_config),
+//     )?;
 
-    Ok(())
-}
+//     Ok(())
+// }
 
 #[ignore]
 #[test]

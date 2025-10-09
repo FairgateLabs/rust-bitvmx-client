@@ -17,7 +17,7 @@ use bitvmx_client::{
                 transfer_config::TransferConfig,
             },
             dispute::TIMELOCK_BLOCKS,
-        }, 
+        },
         variables::{VariableTypes, WitnessTypes},
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
@@ -235,7 +235,6 @@ pub fn test_full() -> Result<()> {
         prover_win_utxo,
         prover_win_output_type,
         forced_challenge.clone(),
-        None,
         None,
     )?;
 
@@ -536,7 +535,7 @@ pub fn test_full() -> Result<()> {
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
     info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
 
-     if let Some(ref bitcoind_instance) = bitcoind {
+    if let Some(ref bitcoind_instance) = bitcoind {
         bitcoind_instance.stop()?;
     }
 

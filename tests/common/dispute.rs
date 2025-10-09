@@ -3,6 +3,7 @@ use anyhow::Result;
 use bitcoin::PublicKey;
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_broker::channel::channel::DualChannel;
+use bitvmx_client::program::protocols::dispute::config::{ConfigResult, ConfigResults};
 use bitvmx_client::{
     bitvmx::BitVMX,
     program::{
@@ -12,7 +13,7 @@ use bitvmx_client::{
             config::DisputeConfiguration, input_tx_name, program_input, timeout_tx, CHALLENGE_READ,
             EXECUTE, TIMELOCK_BLOCKS,
         },
-        variables::{ConfigResult, ConfigResults, VariableTypes},
+        variables::VariableTypes,
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
@@ -69,7 +70,6 @@ pub fn prepare_dispute(
     prover_win_utxo: Utxo,
     prover_win_output_type: OutputType,
     fail_force_config: ForcedChallenges,
-    fail_data: Option<ConfigResults>,
     program_path: Option<String>,
 ) -> Result<()> {
     let hello_world = match fail_force_config {
@@ -80,11 +80,7 @@ pub fn prepare_dispute(
     };
     let program_definition = program_path.unwrap_or(hello_world.to_string());
 
-    let config_results = fail_data.unwrap_or(get_fail_force_config(fail_force_config.clone()));
-
-    let set_fail_force_config = VariableTypes::FailConfiguration(config_results)
-        .set_msg(program_id, "fail_force_config")?;
-    send_all(&id_channel_pairs, &set_fail_force_config)?;
+    let config_results = get_fail_force_config(fail_force_config.clone());
 
     let dispute_configuration = DisputeConfiguration::new(
         program_id,
@@ -118,6 +114,7 @@ pub fn prepare_dispute(
         )],
         TIMELOCK_BLOCKS,
         program_definition,
+        Some(config_results),
     );
 
     for msg in dispute_configuration.get_setup_messages(participants, 1)? {
@@ -238,8 +235,10 @@ pub fn execute_dispute(
         }
     }
 
-    //process verifier choose challenge
-    process_dispatcher(&mut dispatchers, &mut instances)?;
+    if ending_state == EXECUTE {
+        //process verifier choose challenge
+        process_dispatcher(&mut dispatchers, &mut instances)?;
+    }
 
     info!("Wait for TXs");
 
@@ -554,6 +553,7 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ConfigResul
             )
         }
         ForcedChallenges::No => ConfigResults::default(),
+        // The forced Execution is required for testing because without it, the prover or verifier will not execute directly
         ForcedChallenges::Execution => ConfigResults {
             main: ConfigResult {
                 fail_config_prover: None,

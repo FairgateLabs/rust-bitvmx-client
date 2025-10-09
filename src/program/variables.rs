@@ -1,17 +1,12 @@
 use std::rc::Rc;
 
+use crate::{errors::BitVMXError, types::IncomingBitVMXApiMessages};
 use bitcoin::{PublicKey, Txid};
-use emulator::{
-    decision::challenge::{ForceChallenge, ForceCondition},
-    executor::utils::FailConfiguration,
-};
 use key_manager::winternitz::{WinternitzPublicKey, WinternitzSignature};
 use protocol_builder::types::OutputType;
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::{KeyValueStore, Storage};
 use uuid::Uuid;
-
-use crate::{errors::BitVMXError, types::IncomingBitVMXApiMessages};
 
 /*
 - winternitz
@@ -35,41 +30,6 @@ pub enum VariableTypes {
     Input(Vec<u8>),
     Uuid(Uuid),
     Bool(bool),
-    FailConfiguration(ConfigResults),
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct ConfigResult {
-    pub fail_config_prover: Option<FailConfiguration>,
-    pub fail_config_verifier: Option<FailConfiguration>,
-    pub force_challenge: ForceChallenge,
-    pub force_condition: ForceCondition,
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct ConfigResults {
-    pub main: ConfigResult,
-    pub read: ConfigResult, // for read challenge (2nd n-ary search)
-}
-
-impl Default for ConfigResult {
-    fn default() -> Self {
-        Self {
-            fail_config_prover: None,
-            fail_config_verifier: None,
-            force_challenge: ForceChallenge::No,
-            force_condition: ForceCondition::No,
-        }
-    }
-}
-
-impl Default for ConfigResults {
-    fn default() -> Self {
-        Self {
-            main: ConfigResult::default(),
-            read: ConfigResult::default(),
-        }
-    }
 }
 
 impl VariableTypes {
@@ -141,13 +101,6 @@ impl VariableTypes {
     pub fn bool(&self) -> Result<bool, BitVMXError> {
         match self {
             VariableTypes::Bool(flag) => Ok(flag.clone()),
-            _ => Err(BitVMXError::InvalidVariableType(self.err())),
-        }
-    }
-
-    pub fn fail_configuration(&self) -> Result<ConfigResults, BitVMXError> {
-        match self {
-            VariableTypes::FailConfiguration(config_results) => Ok(config_results.clone()),
             _ => Err(BitVMXError::InvalidVariableType(self.err())),
         }
     }

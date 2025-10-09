@@ -112,7 +112,7 @@ pub fn test_drp() -> Result<()> {
     )?;
 
     let prog_id = Uuid::new_v4();
-    let forced_challenge = ForcedChallenges::ReadValueChallenge(
+    let forced_challenge = ForcedChallenges::InitializedChallenge(
         bitvmx_client::program::participant::ParticipantRole::Prover,
     );
     prepare_dispute(
@@ -125,7 +125,6 @@ pub fn test_drp() -> Result<()> {
         prover_win_utxo,
         prover_win_out_type,
         forced_challenge.clone(),
-        None,
         None,
     )?;
     let _msgs = get_all(&channels, &mut instances, false)?;
