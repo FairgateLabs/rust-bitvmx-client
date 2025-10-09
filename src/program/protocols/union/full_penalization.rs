@@ -10,7 +10,7 @@ use protocol_builder::{
         connection::InputSpec,
         input::{SighashType, SpendMode},
         output::SpeedupData,
-        OutputType,
+        InputArgs, OutputType,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -201,13 +201,17 @@ impl ProtocolHandler for FullPenalizationProtocol {
     fn get_transaction_by_name(
         &self,
         name: &str,
-        _context: &ProgramContext,
+        context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        // match name {
-        //     ADVANCE_FUNDS_TX => Ok(self.advance_funds_tx(context)?),
-        //     _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
-        // }
-        Err(BitVMXError::InvalidTransactionName(name.to_string()))
+        if name.starts_with(OP_LAZY_DISABLER_TX) {
+            Ok(self.op_lazy_disabler_tx(name, context)?)
+        } else if name.starts_with(OP_DISABLER_TX) {
+            Ok(self.op_disabler_tx(name, context)?)
+        } else if name.starts_with(OP_DISABLER_DIRECTORY_TX) {
+            Ok(self.op_disabler_directory_tx(name, context)?)
+        } else {
+            Err(BitVMXError::InvalidTransactionName(name.to_string()))
+        }
     }
 
     fn notify_news(
@@ -485,5 +489,126 @@ impl FullPenalizationProtocol {
             .get_var(&dispute_protocol_id, &SETUP_DISABLER_DIRECTORY_UTXO)?
             .unwrap()
             .utxo()?)
+    }
+
+    fn op_lazy_disabler_tx(
+        &self,
+        name: &str,
+        context: &ProgramContext,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        // NOTE: OP_LAZY_DISABLER_TX_<OP>_<WT>_<SLOT> it's tied to:
+        // - Operator index
+        // - Watchtower index
+        // - Slot
+        // Here watchtower index it's ignored and it dispatch the TX corresponding to
+        // current member, due to it should sign the output script leaf in the reimbursement kickoff.
+        info!(id = self.ctx.my_idx, "Loading {} tx", name);
+
+        let mut protocol = self.load_protocol()?;
+        let my_index = self.ctx.my_idx;
+
+        let kickoff_sig = protocol.sign_taproot_input(
+            name,
+            0,
+            &SpendMode::Script {
+                leaf: my_index as usize,
+            },
+            context.key_chain.key_manager.as_ref(),
+            "",
+        )?;
+        let mut kickoff_input = InputArgs::new_taproot_script_args(my_index);
+        kickoff_input.push_taproot_signature(kickoff_sig[my_index].unwrap())?;
+
+        let directory_sig = protocol
+            .input_taproot_key_spend_signature(name, 1)?
+            .unwrap();
+        let mut directory_input = InputArgs::new_taproot_key_args();
+        directory_input.push_taproot_signature(directory_sig)?;
+
+        let tx = protocol.transaction_to_send(&name, &[kickoff_input, directory_input])?;
+
+        let txid = tx.compute_txid();
+        info!(
+            id = my_index,
+            "Signed {}, txid: {} with signatures: [{:?},{:?}]",
+            name,
+            txid,
+            kickoff_sig,
+            directory_sig
+        );
+
+        Ok((tx, None))
+    }
+
+    fn op_disabler_tx(
+        &self,
+        name: &str,
+        context: &ProgramContext,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        info!(id = self.ctx.my_idx, "Loading {} tx", name);
+
+        let mut protocol = self.load_protocol()?;
+        let my_index = self.ctx.my_idx;
+
+        let op_deposit_script_index = 1;
+        let op_setup_sig = protocol.sign_taproot_input(
+            name,
+            0,
+            &SpendMode::Script {
+                leaf: op_deposit_script_index as usize,
+            },
+            context.key_chain.key_manager.as_ref(),
+            "",
+        )?;
+
+        let mut op_deposit_input = InputArgs::new_taproot_script_args(my_index);
+        op_deposit_input.push_taproot_signature(op_setup_sig[op_deposit_script_index].unwrap())?;
+
+        let directory_sig = protocol
+            .input_taproot_key_spend_signature(name, 1)?
+            .unwrap();
+        let mut directory_input = InputArgs::new_taproot_key_args();
+        directory_input.push_taproot_signature(directory_sig)?;
+
+        let tx = protocol.transaction_to_send(&name, &[op_deposit_input, directory_input])?;
+
+        let txid = tx.compute_txid();
+        info!(
+            id = my_index,
+            "Signed {}, txid: {} with signatures: [{:?},{:?}]",
+            name,
+            txid,
+            op_setup_sig,
+            directory_sig
+        );
+
+        Ok((tx, None))
+    }
+
+    fn op_disabler_directory_tx(
+        &self,
+        name: &str,
+        _context: &ProgramContext,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        info!(id = self.ctx.my_idx, "Loading {} tx", name);
+
+        let protocol = self.load_protocol()?;
+        let my_index = self.ctx.my_idx;
+
+        let setup_sig = protocol
+            .input_taproot_key_spend_signature(name, 0)?
+            .unwrap();
+        let mut setup_input = InputArgs::new_taproot_key_args();
+        setup_input.push_taproot_signature(setup_sig)?;
+
+        let tx = protocol.transaction_to_send(&name, &[setup_input])?;
+
+        let txid = tx.compute_txid();
+        info!(
+            id = my_index,
+            "Signed {} with txid: {} with signatures: [{:?}] ", name, txid, setup_sig,
+        );
+
+        Ok((tx, None))
     }
 }
