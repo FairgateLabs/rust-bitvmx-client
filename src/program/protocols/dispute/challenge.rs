@@ -879,9 +879,10 @@ pub fn extract_nibble(
 ) {
     let challenge = CHALLENGES
         .iter()
+        .chain(READ_CHALLENGES.iter())
         .find(|(name, _)| *name == challenge_type)
         .map(|(_, vars)| *vars)
-        .expect("Unknown challenge type");
+        .expect(&format!("Unknown challenge type {challenge_type}"));
     let mut stackvars = HashMap::new();
     for (name, size) in challenge.iter() {
         stackvars.insert(*name, stack.define((size * 2) as u32, name));
