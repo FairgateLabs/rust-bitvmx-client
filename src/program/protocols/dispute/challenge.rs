@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use bitcoin::PublicKey;
+use bitcoin::{PublicKey, ScriptBuf};
 use bitcoin_script_riscv::riscv::challenges::*;
 use bitcoin_script_stack::stack::StackTracker;
 use bitvmx_cpu_definitions::{challenge::ChallengeType, constants::CHUNK_SIZE};
@@ -115,6 +115,13 @@ pub const UNINITIALIZED_CHALLENGE: [(&str, usize); 7] = [
     ("verifier_read_selector", 1),
 ];
 
+pub const FUTURE_READ_CHALLENGE: [(&str, usize); 4] = [
+    ("prover_step_number", 8),
+    ("prover_read_1_last_step", 8),
+    ("prover_read_2_last_step", 8),
+    ("verifier_read_selector", 1),
+];
+
 pub const READ_VALUE_NARY_SEARCH_CHALLENGE: [(&str, usize); 1] = [("verifier_bits", 1)];
 
 pub const READ_VALUE_CHALLENGE: [(&str, usize); 15] = [
@@ -145,7 +152,7 @@ pub const CORRECT_HASH_CHALLENGE: [(&str, usize); 7] = [
     ("verifier_next_hash", 20), //TODO: this should be from prover translation keys
 ];
 
-pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 12] = [
+pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 13] = [
     ("entry_point", &ENTRY_POINT_CHALLENGE),
     ("program_counter", &PROGRAM_COUNTER_CHALLENGE),
     ("halt", &HALT_CHALLENGE),
@@ -157,6 +164,7 @@ pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 12] = [
     ("rom", &ROM_CHALLENGE),
     ("initialized", &INITIALIZED_CHALLENGE),
     ("uninitialized", &UNINITIALIZED_CHALLENGE),
+    ("future_read", &FUTURE_READ_CHALLENGE),
     ("read_value_nary_search", &READ_VALUE_NARY_SEARCH_CHALLENGE),
 ];
 
@@ -440,15 +448,12 @@ pub fn challenge_scripts(
                         let chunks = program.get_initialized_chunks(CHUNK_SIZE);
                         for initialized_chunk in chunks.iter() {
                             let mut scripts = vec![reverse_script.clone()];
-                            stack = StackTracker::new();
-                            let mut stackvars = HashMap::new();
-                            for (name, size) in INITIALIZED_CHALLENGE.iter() {
-                                stackvars.insert(*name, stack.define((size * 2) as u32, name));
-                            }
-                            let read_selector =
-                                stack.move_var_sub_n(stackvars["verifier_read_selector"], 0);
-                            stack.drop(read_selector);
-                            scripts.push(stack.get_script());
+                            extract_nibble(
+                                &mut stack,
+                                &mut scripts,
+                                "initialized",
+                                "verifier_read_selector",
+                            );
                             stack = StackTracker::new();
                             initialized_challenge(&mut stack, initialized_chunk);
 
@@ -493,17 +498,25 @@ pub fn challenge_scripts(
                                 );
                             }
                             "uninitialized" => {
-                                let mut stackvars = HashMap::new();
-                                for (name, size) in INITIALIZED_CHALLENGE.iter() {
-                                    stackvars.insert(*name, stack.define((size * 2) as u32, name));
-                                }
-                                let read_selector =
-                                    stack.move_var_sub_n(stackvars["verifier_read_selector"], 0);
-                                stack.drop(read_selector);
-                                scripts.push(stack.get_script());
+                                extract_nibble(
+                                    &mut stack,
+                                    &mut scripts,
+                                    "uninitialized",
+                                    "verifier_read_selector",
+                                );
                                 stack = StackTracker::new();
                                 let ranges = program.get_uninitialized_ranges(program_definitions);
                                 uninitialized_challenge(&mut stack, &ranges);
+                            }
+                            "future_read" => {
+                                extract_nibble(
+                                    &mut stack,
+                                    &mut scripts,
+                                    "future_read",
+                                    "verifier_read_selector",
+                                );
+                                stack = StackTracker::new();
+                                future_read_challenge(&mut stack);
                             }
                             "read_value_nary_search" => {
                                 let var = stack.define(2, "bits");
@@ -558,14 +571,12 @@ pub fn challenge_scripts(
 
                 match *challenge_name {
                     "read_value" => {
-                        let mut stackvars = HashMap::new();
-                        for (name, size) in READ_VALUE_CHALLENGE.iter() {
-                            stackvars.insert(*name, stack.define((size * 2) as u32, name));
-                        }
-                        let read_selector =
-                            stack.move_var_sub_n(stackvars["verifier_read_selector"], 0);
-                        stack.drop(read_selector);
-                        scripts.push(stack.get_script());
+                        extract_nibble(
+                            &mut stack,
+                            &mut scripts,
+                            "read_value",
+                            "verifier_read_selector",
+                        );
                         stack = StackTracker::new();
                         read_value_challenge(&mut stack);
                     }
@@ -822,11 +833,21 @@ pub fn get_challenge_leaf(
             set_input_hex(id, context, &format!("verifier_next_hash"), &next_hash)?;
         }
         ChallengeType::FutureRead {
-            step,
-            read_step_1,
-            read_step_2,
+            step: _,
+            read_step_1: _,
+            read_step_2: _,
             read_selector,
-        } => todo!(),
+        } => {
+            name = "future_read";
+            info!("Verifier chose {name} challenge");
+
+            set_input_u8(
+                id,
+                context,
+                &format!("verifier_read_selector"),
+                *read_selector as u8,
+            )?;
+        }
         ChallengeType::No => {
             name = "";
         }
@@ -848,4 +869,24 @@ pub fn get_challenge_leaf(
         leaf_start, dynamic_offset
     );
     Ok(Some(leaf_start + dynamic_offset))
+}
+
+pub fn extract_nibble(
+    stack: &mut StackTracker,
+    scripts: &mut Vec<ScriptBuf>,
+    challenge_type: &str,
+    var_name: &str,
+) {
+    let challenge = CHALLENGES
+        .iter()
+        .find(|(name, _)| *name == challenge_type)
+        .map(|(_, vars)| *vars)
+        .expect("Unknown challenge type");
+    let mut stackvars = HashMap::new();
+    for (name, size) in challenge.iter() {
+        stackvars.insert(*name, stack.define((size * 2) as u32, name));
+    }
+    let read_selector = stack.move_var_sub_n(stackvars[var_name], 0);
+    stack.drop(read_selector);
+    scripts.push(stack.get_script());
 }

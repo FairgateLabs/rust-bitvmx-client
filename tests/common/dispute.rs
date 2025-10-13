@@ -50,11 +50,12 @@ pub enum ForcedChallenges {
     ReadSection(ParticipantRole),
     WriteSection(ParticipantRole),
     ProgramCounterSection(ParticipantRole),
-    InitializedChallenge(ParticipantRole),
-    UninitializedChallenge(ParticipantRole),
+    Initialized(ParticipantRole),
+    Uninitialized(ParticipantRole),
+    FutureRead(ParticipantRole),
     // 2nd n-ary search
-    ReadValueChallenge(ParticipantRole),
-    CorrectHashChallenge(ParticipantRole),
+    ReadValue(ParticipantRole),
+    CorrectHash(ParticipantRole),
     // Default
     No,
     Execution,
@@ -73,7 +74,7 @@ pub fn prepare_dispute(
     program_path: Option<String>,
 ) -> Result<()> {
     let hello_world = match fail_force_config {
-        ForcedChallenges::UninitializedChallenge(_) => {
+        ForcedChallenges::Uninitialized(_) => {
             "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world-uninitialized.yaml"
         }
         _ => "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml",
@@ -212,9 +213,7 @@ pub fn execute_dispute(
     let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 
     let ending_state = match forced_challenge {
-        ForcedChallenges::ReadValueChallenge(..) | ForcedChallenges::CorrectHashChallenge(..) => {
-            CHALLENGE_READ
-        }
+        ForcedChallenges::ReadValue(..) | ForcedChallenges::CorrectHash(..) => CHALLENGE_READ,
         _ => EXECUTE,
     };
 
@@ -455,7 +454,7 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ConfigResul
                 ForceChallenge::No,
             )
         }
-        ForcedChallenges::InitializedChallenge(role) => {
+        ForcedChallenges::Initialized(role) => {
             let fail_execute = FailExecute {
                 step: 32,
                 fake_trace: TraceRWStep::new(
@@ -482,7 +481,7 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ConfigResul
                 ForceCondition::ValidInputWrongStepOrHash,
             )
         }
-        ForcedChallenges::UninitializedChallenge(role) => {
+        ForcedChallenges::Uninitialized(role) => {
             let fail_config = FailConfiguration::new_fail_reads(FailReads::new(
                 None,
                 Some(&vec![
@@ -505,7 +504,23 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ConfigResul
                 ForceChallenge::No,
             )
         }
-        ForcedChallenges::CorrectHashChallenge(role) => {
+        ForcedChallenges::FutureRead(role) => {
+            let fail_read_args = vec!["1106", "0xf000003c", "0xaa000004", "0xf000003c", "1107"]
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<String>>();
+
+            let fail_read_1 =
+                FailConfiguration::new_fail_reads(FailReads::new(Some(&fail_read_args), None));
+
+            get_config_simple(
+                role,
+                fail_read_1,
+                ForceChallenge::FutureRead,
+                ForceCondition::ValidInputWrongStepOrHash,
+            )
+        }
+        ForcedChallenges::CorrectHash(role) => {
             let fail_read_args = vec!["1106", "0xaa000000", "0x11111100", "0xaa000000", "600"]
                 .iter()
                 .map(|x| x.to_string())
@@ -531,8 +546,7 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ConfigResul
                 ForceChallenge::TraceHash,
             )
         }
-
-        ForcedChallenges::ReadValueChallenge(role) => {
+        ForcedChallenges::ReadValue(role) => {
             let fail_read_args = vec!["1106", "0xaa000000", "0x11111100", "0xaa000000", "600"]
                 .iter()
                 .map(|x| x.to_string())
