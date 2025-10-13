@@ -97,14 +97,14 @@ pub enum IncomingBitVMXApiMessages {
     SetFundingUtxo(Utxo),
     GetVar(Uuid, String),
     GetWitness(Uuid, String),
-    GetCommInfo(),
+    GetCommInfo(Uuid),
     GetTransaction(Uuid, Txid),
     GetTransactionInfoByName(Uuid, String),
     GetHashedMessage(Uuid, String, u32, u32),
     Setup(ProgramId, String, Vec<P2PAddress>, u16),
     SubscribeToTransaction(Uuid, Txid),
-    SubscribeUTXO(),
-    SubscribeToRskPegin(),
+    SubscribeUTXO(Uuid),
+    SubscribeToRskPegin(Uuid),
     GetSPVProof(Txid),
     DispatchTransaction(Uuid, Transaction),
     DispatchTransactionName(Uuid, String),
@@ -117,7 +117,7 @@ pub enum IncomingBitVMXApiMessages {
     GetZKPExecutionResult(Uuid),
     Encrypt(Uuid, Vec<u8>, Vec<u8>),
     Decrypt(Uuid, Vec<u8>),
-    Backup(String),
+    Backup(Uuid, String),
 }
 impl IncomingBitVMXApiMessages {
     pub fn to_string(&self) -> Result<String, BitVMXError> {
@@ -146,7 +146,7 @@ pub enum OutgoingBitVMXApiMessages {
     TransactionInfo(Uuid, String, Transaction),
     ZKPResult(Uuid, Vec<u8>, Vec<u8>),
     ExecutionResult(/* Add appropriate type */),
-    CommInfo(P2PAddress),
+    CommInfo(Uuid, P2PAddress),
     KeyPair(Uuid, PrivateKey, PublicKey),
     PubKey(Uuid, PublicKey),
     Variable(Uuid, String, VariableTypes),
@@ -159,7 +159,7 @@ pub enum OutgoingBitVMXApiMessages {
     SPVProof(Txid, Option<BtcTxSPVProof>),
     Encrypted(Uuid, Vec<u8>),
     Decrypted(Uuid, Vec<u8>),
-    BackupResult(bool, String),
+    BackupResult(Uuid, bool, String),
 }
 
 impl OutgoingBitVMXApiMessages {
@@ -172,9 +172,9 @@ impl OutgoingBitVMXApiMessages {
         Ok(msg)
     }
 
-    pub fn comm_info(&self) -> Option<P2PAddress> {
+    pub fn comm_info(&self) -> Option<(Uuid, P2PAddress)> {
         match self {
-            OutgoingBitVMXApiMessages::CommInfo(info) => Some(info.clone()),
+            OutgoingBitVMXApiMessages::CommInfo(uuid, info) => Some((uuid.clone(), info.clone())),
             _ => None,
         }
     }

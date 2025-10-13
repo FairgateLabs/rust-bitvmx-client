@@ -76,8 +76,8 @@ impl BitVMXClient {
         self.send_message(IncomingBitVMXApiMessages::GetPubKey(id, new))
     }
 
-    pub fn get_comm_info(&self) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::GetCommInfo())
+    pub fn get_comm_info(&self, id: Uuid) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetCommInfo(id))
     }
 
     pub fn generate_zkp(&self, id: Uuid, input: Vec<u8>, elf_file_path: String) -> Result<()> {
@@ -112,12 +112,12 @@ impl BitVMXClient {
         ))
     }
 
-    pub fn subscribe_utxo(&self) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::SubscribeUTXO())
+    pub fn subscribe_utxo(&self, id: Uuid) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SubscribeUTXO(id))
     }
 
-    pub fn subscribe_to_rsk_pegin(&self) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::SubscribeToRskPegin())
+    pub fn subscribe_to_rsk_pegin(&self, id: Uuid) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SubscribeToRskPegin(id))
     }
 
     pub fn get_spv_proof(&self, txid: Txid) -> Result<()> {
@@ -194,12 +194,7 @@ impl BitVMXClient {
     /// * `id` - The ID of the message
     /// * `messages` - The messages to encrypt as bytes
     /// * `public_key` - The public key to encrypt the messages with as pkcs8 DER bytes
-    pub fn encrypt(
-        &self,
-        id: Uuid,
-        messages: Vec<u8>,
-        public_key: Vec<u8>,
-    ) -> Result<()> {
+    pub fn encrypt(&self, id: Uuid, messages: Vec<u8>, public_key: Vec<u8>) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::Encrypt(id, messages, public_key))
     }
 

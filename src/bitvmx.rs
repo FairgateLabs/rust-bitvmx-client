@@ -752,16 +752,16 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn subscribe_utxo(&mut self) -> Result<(), BitVMXError> {
-        Ok(())
+    fn subscribe_utxo(&mut self, uuid: Uuid) -> Result<Uuid, BitVMXError> {
+        Ok(uuid)
     }
 
-    fn subscribe_to_rsk_pegin(&mut self) -> Result<(), BitVMXError> {
+    fn subscribe_to_rsk_pegin(&mut self, uuid: Uuid) -> Result<Uuid, BitVMXError> {
         // Enable RSK pegin transaction monitoring
         self.program_context
             .bitcoin_coordinator
             .monitor(TypesToMonitor::RskPeginTransaction)?;
-        Ok(())
+        Ok(uuid)
     }
 
     fn setup(
@@ -966,11 +966,14 @@ impl BitVMXApi for BitVMX {
                     ))?,
                 )?;
             }
-            IncomingBitVMXApiMessages::GetCommInfo() => {
-                let comm_info = OutgoingBitVMXApiMessages::CommInfo(P2PAddress {
-                    address: self.program_context.comms.get_address(),
-                    peer_id: self.program_context.comms.get_peer_id(),
-                });
+            IncomingBitVMXApiMessages::GetCommInfo(uuid) => {
+                let comm_info = OutgoingBitVMXApiMessages::CommInfo(
+                    uuid,
+                    P2PAddress {
+                        address: self.program_context.comms.get_address(),
+                        peer_id: self.program_context.comms.get_peer_id(),
+                    },
+                );
                 self.program_context
                     .broker_channel
                     .send(from, serde_json::to_string(&comm_info)?)?;
@@ -1017,10 +1020,12 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::SubscribeToTransaction(uuid, txid) => {
                 BitVMXApi::subscribe_to_tx(self, from, uuid, txid)?
             }
-            IncomingBitVMXApiMessages::SubscribeUTXO() => BitVMXApi::subscribe_utxo(self)?,
+            IncomingBitVMXApiMessages::SubscribeUTXO(uuid) => {
+                BitVMXApi::subscribe_utxo(self, uuid)?;
+            }
 
-            IncomingBitVMXApiMessages::SubscribeToRskPegin() => {
-                BitVMXApi::subscribe_to_rsk_pegin(self)?
+            IncomingBitVMXApiMessages::SubscribeToRskPegin(uuid) => {
+                BitVMXApi::subscribe_to_rsk_pegin(self, uuid)?;
             }
 
             IncomingBitVMXApiMessages::GetSPVProof(txid) => {
@@ -1110,13 +1115,14 @@ impl BitVMXApi for BitVMX {
                     serde_json::to_string(&OutgoingBitVMXApiMessages::Decrypted(id, decrypted))?,
                 )?;
             }
-            IncomingBitVMXApiMessages::Backup(path) => {
+            IncomingBitVMXApiMessages::Backup(uuid, path) => {
                 let message = match self.store.backup(&path) {
                     Ok(_) => OutgoingBitVMXApiMessages::BackupResult(
+                        uuid,
                         true,
                         "Backup successful".to_string(),
                     ),
-                    Err(e) => OutgoingBitVMXApiMessages::BackupResult(false, e.to_string()),
+                    Err(e) => OutgoingBitVMXApiMessages::BackupResult(uuid, false, e.to_string()),
                 };
 
                 self.program_context
