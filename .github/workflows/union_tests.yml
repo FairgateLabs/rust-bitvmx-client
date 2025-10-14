@@ -19,7 +19,7 @@ concurrency:
 jobs:
   test:
     if: ${{ !contains(github.event.pull_request.title, '[cov]') }}
-    uses: .github/workflows/union_test_template.yml
+    uses: ./.github/workflows/union_test_template.yml
     with:
       repo: 'FairgateLabs/rust-bitvmx-workspace'
       submodule_path: 'rust-bitvmx-client'
