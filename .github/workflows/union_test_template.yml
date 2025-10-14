@@ -1,4 +1,4 @@
-name: Rust Union Tests
+name: Rust Union Tests Template
 
 on:
   push:
@@ -96,11 +96,6 @@ jobs:
             if [[ ! "${{ inputs.cargo_features }}" =~ ^[a-zA-Z0-9_,-]+$ ]]; then
               ERRORS+=("'cargo_features' contains invalid characters")
             fi
-          fi
-          
-          if [[ "${{ inputs.docker_required }}" == "true" ]]; then
-            [[ -z "${{ inputs.dockerfile_path }}" ]] && ERRORS+=("'dockerfile_path' required when docker_required=true")
-            [[ -z "${{ inputs.docker_compose_path }}" ]] && ERRORS+=("'docker_compose_path' required when docker_required=true")
           fi
           
           if [[ ${#ERRORS[@]} -gt 0 ]]; then
