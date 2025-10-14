@@ -3,10 +3,48 @@ name: Rust Union Tests
 on:
   push:
   pull_request:
+  workflow_call:
+    inputs:
+      repo: 
+        description: 'Repository to check out'
+        required: true
+        type: string
+      submodule_path:
+        description: 'Path to the submodule within the repository'
+        required: true
+        type: string
+      cargo_lock_path:
+        description: 'Path to the Cargo.lock file'
+        required: true
+        type: string
+      target_path:
+        description: 'Path to the target directory'
+        required: true
+        type: string
+      nightly:
+        description: 'Flag to determine if nightly triggered'
+        required: false
+        type: boolean
+      cargo_features:
+        description: 'Cargo features to enable (space or comma separated)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  checks: write
+  pull-requests: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    env:
+      ROOT: "/home/runner/work/${{ github.event.repository.name }}/${{ github.event.repository.name }}"
+      REPO_NAME: ${{ github.event.repository.name }}
+      BRANCH: ${{ github.head_ref || 'main' }}
 
     services:
       bitcoind:
@@ -34,11 +72,179 @@ jobs:
           - create_wallet
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Validate Inputs
+        run: |
+          ERRORS=()          
+          
+          [[ -z "${{ inputs.repo }}" ]] && ERRORS+=("'repo' input cannot be empty")
+          [[ -z "${{ inputs.submodule_path }}" ]] && ERRORS+=("'submodule_path' input cannot be empty")
+          [[ -z "${{ inputs.cargo_lock_path }}" ]] && ERRORS+=("'cargo_lock_path' input cannot be empty")
+          [[ -z "${{ inputs.target_path }}" ]] && ERRORS+=("'target_path' input cannot be empty")          
+          
+          if [[ ! "${{ inputs.repo }}" =~ ^[a-zA-Z0-9_\-]+/[a-zA-Z0-9_\-]+$ ]]; then
+            ERRORS+=("'repo' must be in format 'owner/repo'")
+          fi
+          
+          if [[ ! "${{ inputs.submodule_path }}" =~ ^[a-zA-Z0-9_\-]+$ ]]; then
+            ERRORS+=("'submodule_path' contains invalid characters")
+          fi
+          
+          if [[ -n "${{ inputs.cargo_features }}" ]]; then
+            if [[ ! "${{ inputs.cargo_features }}" =~ ^[a-zA-Z0-9_,-]+$ ]]; then
+              ERRORS+=("'cargo_features' contains invalid characters")
+            fi
+          fi
+          
+          if [[ "${{ inputs.docker_required }}" == "true" ]]; then
+            [[ -z "${{ inputs.dockerfile_path }}" ]] && ERRORS+=("'dockerfile_path' required when docker_required=true")
+            [[ -z "${{ inputs.docker_compose_path }}" ]] && ERRORS+=("'docker_compose_path' required when docker_required=true")
+          fi
+          
+          if [[ ${#ERRORS[@]} -gt 0 ]]; then
+            printf "❌ Validation errors:\n"
+            printf "  - %s\n" "${ERRORS[@]}"
+            exit 1
+          fi
+          echo "✅ All inputs validated successfully"
+      
+      - name: Cleanup Disk Space
+        run: |
+          echo "🧹 Cleaning up disk space..."
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          echo "✅ Disk cleanup completed"
+            
+      - name: Check disk space
+        run: df -h
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Configure SSH for Git Submodule Access
+        uses: webfactory/ssh-agent@v0.5.4
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Configure Git with Token Authentication
+        run: |
+          git config --global url."https://x-access-token:${REPO_TOKEN}@github.com/".insteadOf "https://github.com/"
+        env:
+          REPO_TOKEN: ${{ secrets.REPO_ACCESS_TOKEN }}
+     
+      - name: Checkout Workspace Repository
+        run: |
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          if [[ "$PR_TITLE" =~ ^\[([a-zA-Z0-9_\-\.\/]+)\] ]]; then
+            BRANCH_CANDIDATE="${BASH_REMATCH[1]}"
+            if [[ "$BRANCH_CANDIDATE" =~ ^[a-zA-Z0-9_\-\.\/]+$ ]] && [[ ${#BRANCH_CANDIDATE} -lt 100 ]]; then
+              SAFE_BRANCH="$BRANCH_CANDIDATE"
+            else
+              echo "⚠️  Invalid branch name in PR title, using main"
+              SAFE_BRANCH="main"
+            fi
+          else
+            SAFE_BRANCH="main"
+          fi
+          
+          echo "SAFE_BRANCH=$SAFE_BRANCH" >> $GITHUB_ENV
+          echo "✅ Using validated branch: $SAFE_BRANCH"
+          
+          git clone --recurse-submodules --depth=1 --branch "$SAFE_BRANCH" --shallow-submodules https://github.com/${{ inputs.repo }} rust-bitvmx-workspace
+      
+      - name: Checkout current repository
+        run: |
+          echo "Checking out branch: $SAFE_BRANCH"
+          git clone --depth=1 --branch "$SAFE_BRANCH" https://github.com/FairgateLabs/${{ inputs.submodule_path }} ${{ inputs.submodule_path }}
+
+      - name: Handle Submodules for Nightly Build
+        run: |
+          if [[ "$NIGHTLY" == "true" ]]; then
+            echo "Rearranging submodules for build"
+            cd "$ROOT/rust-bitvmx-workspace"
+            
+            if [[ -f ".cargo/config.toml" ]]; then
+              echo "Copying .cargo/config.toml to preserve patches"
+              mkdir -p "$ROOT/.cargo"
+              cp ".cargo/config.toml" "$ROOT/.cargo/"
+            fi
+            
+            for dir in */; do
+              name="${dir%/}"
+              if [[ "$name" != "${{ inputs.submodule_path }}" ]]; then
+                echo "Moving $name to $ROOT"
+                mv "$name" "$ROOT/"
+              fi
+            done
+            echo "Moved all other submodules to top-level"
+            rm -rf "$ROOT/rust-bitvmx-workspace"
+          else
+            echo "Running in submodule-triggered mode"
+            
+            if [[ -f "/home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/rust-bitvmx-workspace/.cargo/config.toml" ]]; then
+              echo "Copying .cargo/config.toml to preserve patches"
+              mkdir -p "/home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/.cargo"
+              cp "/home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/rust-bitvmx-workspace/.cargo/config.toml" "/home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/.cargo/"
+            fi
+            
+            find /home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/rust-bitvmx-workspace -mindepth 1 -maxdepth 1 ! -name '${{ inputs.submodule_path }}' -exec mv {} /home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/ \;
+          fi
+        env:
+          NIGHTLY: ${{ inputs.nightly }}
+
+      - name: Install Rust Toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      
+      - name: Lint with rustfmt
+        continue-on-error: true
+        working-directory: ${{ inputs.submodule_path }}
+        run: cargo fmt --all -- --check
+
+      - name: Lint with Clippy
+        if: ${{ inputs.clippy }}
+        continue-on-error: true
+        working-directory: ${{ inputs.submodule_path }}
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Cache Rust Toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.rustup
+            ~/.cargo/bin
+          key: ${{ runner.os }}-rustup-${{ hashFiles('**/rust-toolchain*') }}
+          restore-keys: |
+            ${{ runner.os }}-rustup-
+
+      - name: Cache Cargo Registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Cache Workspace Target Directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-workspace-target-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-workspace-target-
+
+      - name: Cache Submodule Target Directory
+        uses: actions/cache@v4
+        with:
+          path: ${{ inputs.submodule_path }}/target
+          key: ${{ runner.os }}-${{ inputs.submodule_path }}-target-${{ hashFiles(format('{0}/Cargo.lock', inputs.submodule_path)) }}
+          restore-keys: |
+            ${{ runner.os }}-${{ inputs.submodule_path }}-target-
 
       - name: Build project
         run: cargo build --release
@@ -70,3 +276,12 @@ jobs:
           if [ -f setup_pid.txt ]; then
             kill $(cat setup_pid.txt) || true
           fi
+
+    with:
+      repo: 'FairgateLabs/rust-bitvmx-workspace'
+      submodule_path: 'rust-bitvmx-client'
+      cargo_lock_path: 'rust-bitvmx-client/Cargo.lock'
+      target_path: 'rust-bitvmx-client/target'
+      cargo_features: 'testpanic'
+      nightly: false
+    secrets: inherit
