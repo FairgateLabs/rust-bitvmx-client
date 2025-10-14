@@ -74,11 +74,11 @@ jobs:
           --health-retries 5
 
     steps:
-    - name: Debug inputs
-      run: |
-        echo "All inputs:"
-        echo "repo=${{ inputs.repo }}"
-        echo "submodule_path=${{ inputs.submodule_path }}"
+      - name: Debug inputs
+        run: |
+          echo "All inputs:"
+          echo "repo=${{ inputs.repo }}"
+          echo "submodule_path=${{ inputs.submodule_path }}"
 
       - name: Validate Inputs
         run: |
