@@ -18,6 +18,7 @@ pub const SPEEDUP_KEY: &str = "speedup_key";
 // Transaction names
 pub const REQUEST_PEGIN_TX: &str = "REQUEST_PEGIN_TX";
 pub const ACCEPT_PEGIN_TX: &str = "ACCEPT_PEGIN_TX";
+pub const CANCEL_TAKE0_TX: &str = "CANCEL_TAKE0_TX";
 pub const USER_TAKE_TX: &str = "USER_TAKE_TX";
 pub const ADVANCE_FUNDS_TX: &str = "ADVANCE_FUNDS_TX";
 pub const OPERATOR_TAKE_TX: &str = "OPERATOR_TAKE_TX";
@@ -125,8 +126,8 @@ pub struct PegInAccepted {
     pub accept_pegin_sighash: Vec<u8>,
     pub accept_pegin_nonce: PubNonce,
     pub accept_pegin_signature: MaybeScalar,
-    pub operator_take_sighash: Vec<u8>,
-    pub operator_won_sighash: Vec<u8>,
+    pub operator_take_sighash: Option<Vec<u8>>,
+    pub operator_won_sighash: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
