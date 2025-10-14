@@ -12,10 +12,10 @@ use crate::{
                     get_operator_output_type, indexed_name,
                 },
                 types::{
-                    Committee, PegInAccepted, PegInRequest, ACCEPT_PEGIN_TX, CANCEL_TAKE0_TX,
-                    DISPUTE_CORE_LONG_TIMELOCK, DUST_VALUE, LAST_OPERATOR_TAKE_UTXO,
-                    OPERATOR_LEAF_INDEX, OPERATOR_TAKE_ENABLER, OPERATOR_TAKE_TX,
-                    OPERATOR_WON_ENABLER, OPERATOR_WON_TX, P2TR_FEE,
+                    Committee, PegInAccepted, PegInRequest, ACCEPT_PEGIN_TX, CANCEL_TAKE0_TIMELOCK,
+                    CANCEL_TAKE0_TX, DISPUTE_CORE_LONG_TIMELOCK, DUST_VALUE,
+                    LAST_OPERATOR_TAKE_UTXO, OPERATOR_LEAF_INDEX, OPERATOR_TAKE_ENABLER,
+                    OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX, P2TR_FEE,
                     REIMBURSEMENT_KICKOFF_IN_PROGRESS, REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX,
                     SPEEDUP_KEY, SPEEDUP_VALUE,
                 },
@@ -112,10 +112,10 @@ impl ProtocolHandler for AcceptPegInProtocol {
             pegin_request.reimbursement_pubkey,
         )?;
 
-        let mut verify_signature_scripts = vec![];
+        let mut enabler_scripts = vec![];
         let members = self.committee(context, pegin_request.committee_id)?.members;
         for member in &members {
-            verify_signature_scripts.push(verify_signature(&member.dispute_key, SignMode::Single)?)
+            enabler_scripts.push(verify_signature(&member.dispute_key, SignMode::Single)?)
         }
 
         // External connection from request peg-in to accept peg-in
@@ -141,8 +141,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
         protocol.add_connection(
             "accept_enabler_conn",
             REQUEST_PEGIN_TX,
-            OutputType::taproot(DUST_VALUE, &take_aggregated_key, &verify_signature_scripts)?
-                .into(),
+            OutputType::taproot(DUST_VALUE, &take_aggregated_key, &enabler_scripts)?.into(),
             ACCEPT_PEGIN_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
@@ -158,9 +157,18 @@ impl ProtocolHandler for AcceptPegInProtocol {
             OutputType::taproot(user_output_amount, &take_aggregated_key, &[])?;
         protocol.add_transaction_output(ACCEPT_PEGIN_TX, &accept_pegin_output)?;
 
+        let mut take0_scripts = vec![];
+        let members = self.committee(context, pegin_request.committee_id)?.members;
+        for member in &members {
+            take0_scripts.push(timelock(
+                CANCEL_TAKE0_TIMELOCK,
+                &member.dispute_key,
+                SignMode::Single,
+            ))
+        }
+
         // Etake0
-        let etake_output =
-            OutputType::taproot(DUST_VALUE, &take_aggregated_key, &verify_signature_scripts)?;
+        let etake_output = OutputType::taproot(DUST_VALUE, &take_aggregated_key, &take0_scripts)?;
 
         protocol.add_connection(
             "cancel_take0_conn",
@@ -168,7 +176,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
             etake_output.clone().into(),
             CANCEL_TAKE0_TX,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
-            None,
+            Some(CANCEL_TAKE0_TIMELOCK),
             None,
         )?;
 

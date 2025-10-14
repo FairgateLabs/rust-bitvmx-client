@@ -15,7 +15,7 @@ use ::bitcoin::{Network, OutPoint, PublicKey, Txid};
 use anyhow::Result;
 use bitvmx_client::program::protocols::union::{
     common::get_accept_pegin_pid,
-    types::{ACCEPT_PEGIN_TX, CANCEL_TAKE0_TX},
+    types::{ACCEPT_PEGIN_TX, CANCEL_TAKE0_TIMELOCK, CANCEL_TAKE0_TX},
 };
 use core::convert::Into;
 use std::{env, thread, time::Duration};
@@ -155,22 +155,22 @@ pub fn cli_cancel_take0() -> Result<()> {
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
 
     let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
-
-    let accept_pegin_pid = get_accept_pegin_pid(committee.committee_id(), slot_index);
-    info!("Forcing member to cancel accept pegin transaction...");
-    let tx = committee.members[1]
-        .dispatch_transaction_by_name(accept_pegin_pid, CANCEL_TAKE0_TX.to_string())?;
-
     thread::sleep(Duration::from_secs(1));
+    wait_for_blocks(&committee.bitcoin_client, CANCEL_TAKE0_TIMELOCK as u32 + 1)?;
 
-    let txid = tx.compute_txid();
-    info!("{} dispatched. Txid: {}", CANCEL_TAKE0_TX, txid);
+    info!("Forcing member to cancel accept pegin transaction...");
+    let tx = committee.members[1].dispatch_transaction_by_name(
+        get_accept_pegin_pid(committee.committee_id(), slot_index),
+        CANCEL_TAKE0_TX.to_string(),
+    )?;
+
     info!(
-        "TX vsize: {} bytes. Weight: {} bytes",
-        tx.vsize(),
-        tx.weight()
+        "{} dispatched. Txid: {}",
+        CANCEL_TAKE0_TX,
+        tx.compute_txid()
     );
 
+    thread::sleep(Duration::from_secs(1));
     wait_for_blocks(&committee.bitcoin_client, 3)?;
 
     Ok(())
