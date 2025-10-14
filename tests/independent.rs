@@ -275,7 +275,7 @@ impl TestHelper {
 
             let bitcoind = Bitcoind::new_with_flags(
                 "bitcoin-regtest",
-                "ruimarinho/bitcoin-core",
+                "bitcoin/bitcoin:29.1",
                 wallet_config.bitcoin.clone(),
                 BitcoindFlags {
                     min_relay_tx_fee: 0.00001,
