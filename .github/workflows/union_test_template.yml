@@ -55,24 +55,6 @@ jobs:
       BRANCH: ${{ github.head_ref || 'main' }}
       BITCOIN_NETWORK: "regtest"
 
-    services:
-      bitcoind:
-        image: bitcoin/bitcoin:29.1
-        ports:
-          - 18443:18443
-        options: >-
-          --entrypoint bitcoind
-          --env BITCOIN_NETWORK=regtest
-          --env BITCOIN_EXTRA_ARGS=-regtest=1
-          --env BITCOIN_EXTRA_ARGS=-fallbackfee=0.0002
-          --env BITCOIN_EXTRA_ARGS=-rpcallowip=0.0.0.0/0
-          --env BITCOIN_EXTRA_ARGS=-rpcbind=0.0.0.0
-          --env BITCOIN_EXTRA_ARGS=-txindex=1
-          --health-cmd "bitcoin-cli -regtest -rpcconnect=127.0.0.1 -rpcport=18443 getblockchaininfo || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
       - name: Debug inputs
         run: |
