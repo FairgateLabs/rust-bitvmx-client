@@ -132,13 +132,9 @@ pub struct PegInAccepted {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PegOutRequest {
     pub committee_id: Uuid,
-    pub stream_id: u64,
-    pub packet_number: u64,
     pub slot_index: usize,
     pub amount: u64,
     pub pegout_id: Vec<u8>,
-    pub pegout_signature_hash: Vec<u8>,
-    pub pegout_signature_message: Vec<u8>,
     pub user_pubkey: PublicKey,
     pub take_aggregated_key: PublicKey,
 }
