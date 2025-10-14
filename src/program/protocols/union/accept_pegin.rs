@@ -112,11 +112,37 @@ impl ProtocolHandler for AcceptPegInProtocol {
             pegin_request.reimbursement_pubkey,
         )?;
 
+        let mut verify_signature_scripts = vec![];
+        let members = self.committee(context, pegin_request.committee_id)?.members;
+        for member in &members {
+            verify_signature_scripts.push(verify_signature(&member.dispute_key, SignMode::Single)?)
+        }
+
         // External connection from request peg-in to accept peg-in
         protocol.add_connection(
-            "accept_pegin_request",
+            "pegin_funds_conn",
             REQUEST_PEGIN_TX,
             OutputType::taproot(pegin_request.amount, &take_aggregated_key, &leaves)?.into(),
+            ACCEPT_PEGIN_TX,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::KeyOnly {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            Some(pegin_request_txid),
+        )?;
+
+        // Add OP_RETURN output
+        protocol.add_unknown_outputs(REQUEST_PEGIN_TX, 1)?;
+
+        // External connection from request peg-in to accept peg-in
+        protocol.add_connection(
+            "accept_enabler_conn",
+            REQUEST_PEGIN_TX,
+            OutputType::taproot(DUST_VALUE, &take_aggregated_key, &verify_signature_scripts)?
+                .into(),
             ACCEPT_PEGIN_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
@@ -131,13 +157,6 @@ impl ProtocolHandler for AcceptPegInProtocol {
         let accept_pegin_output =
             OutputType::taproot(user_output_amount, &take_aggregated_key, &[])?;
         protocol.add_transaction_output(ACCEPT_PEGIN_TX, &accept_pegin_output)?;
-
-        let members = self.committee(context, pegin_request.committee_id)?.members;
-
-        let mut verify_signature_scripts = vec![];
-        for member in &members {
-            verify_signature_scripts.push(verify_signature(&member.dispute_key, SignMode::Single)?)
-        }
 
         // Etake0
         let etake_output =
@@ -633,16 +652,23 @@ impl AcceptPegInProtocol {
             "Loading AcceptPegIn transaction for AcceptPegInProtocol"
         );
 
-        let signature = self
+        let funds_signature = self
             .load_protocol()?
             .input_taproot_key_spend_signature(ACCEPT_PEGIN_TX, 0)?
             .unwrap();
-        let mut taproot_arg = InputArgs::new_taproot_key_args();
-        taproot_arg.push_taproot_signature(signature)?;
+        let mut funds_input = InputArgs::new_taproot_key_args();
+        funds_input.push_taproot_signature(funds_signature)?;
+
+        let enabler_signature = self
+            .load_protocol()?
+            .input_taproot_key_spend_signature(ACCEPT_PEGIN_TX, 1)?
+            .unwrap();
+        let mut enabler_input = InputArgs::new_taproot_key_args();
+        enabler_input.push_taproot_signature(enabler_signature)?;
 
         let tx = self
             .load_protocol()?
-            .transaction_to_send(ACCEPT_PEGIN_TX, &[taproot_arg])?;
+            .transaction_to_send(ACCEPT_PEGIN_TX, &[funds_input, enabler_input])?;
         Ok((tx, None))
     }
 

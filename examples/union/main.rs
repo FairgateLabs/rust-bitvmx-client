@@ -134,11 +134,13 @@ pub fn cli_committee() -> Result<()> {
 }
 
 pub fn cli_request_pegin() -> Result<()> {
-    let mut wallet = get_master_wallet()?;
-    let committee = committee(&mut wallet)?;
-    let mut user = get_user()?;
+    let (committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
 
-    request_pegin(committee.public_key()?, &mut user)?;
+    request_pegin(
+        committee.public_key()?,
+        &mut user,
+        committee.get_dispute_keys().as_slice(),
+    )?;
     Ok(())
 }
 
@@ -375,9 +377,13 @@ pub fn committee(wallet: &mut MasterWallet) -> Result<Committee> {
     Ok(committee)
 }
 
-pub fn request_pegin(committee_public_key: PublicKey, user: &mut User) -> Result<(Txid, u64)> {
+pub fn request_pegin(
+    committee_public_key: PublicKey,
+    user: &mut User,
+    dispute_keys: &[PublicKey],
+) -> Result<(Txid, u64)> {
     let amount: u64 = STREAM_DENOMINATION; // This should be replaced with the actual amount of the peg-in request
-    let request_pegin_txid = user.request_pegin(&committee_public_key, amount)?;
+    let request_pegin_txid = user.request_pegin(&committee_public_key, amount, dispute_keys)?;
 
     wait_for_blocks(&BitcoinWrapper::new_from_config(&user.config)?, 1)?;
     thread::sleep(Duration::from_secs(2)); // wait for the coordinator to update
@@ -393,7 +399,11 @@ pub fn request_and_accept_pegin(
     committee: &mut Committee,
     user: &mut User,
 ) -> Result<(usize, u64)> {
-    let (request_pegin_txid, amount) = request_pegin(committee.public_key()?, user)?;
+    let (request_pegin_txid, amount) = request_pegin(
+        committee.public_key()?,
+        user,
+        committee.get_dispute_keys().as_slice(),
+    )?;
 
     // This came from the contracts
     let rootstock_address = user.get_rsk_address();
