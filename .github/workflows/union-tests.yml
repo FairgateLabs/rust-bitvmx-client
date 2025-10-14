@@ -133,7 +133,6 @@ jobs:
           git config --global url."https://x-access-token:${REPO_TOKEN}@github.com/".insteadOf "https://github.com/"
         env:
           REPO_TOKEN: ${{ secrets.REPO_ACCESS_TOKEN }}
-        secrets: inherit
 
       - name: Checkout Workspace Repository
         run: |
@@ -154,13 +153,6 @@ jobs:
           echo "✅ Using validated branch: $SAFE_BRANCH"
           
           git clone --recurse-submodules --depth=1 --branch "$SAFE_BRANCH" --shallow-submodules https://github.com/${{ inputs.repo }} rust-bitvmx-workspace
-        with:
-          repo: 'FairgateLabs/rust-bitvmx-workspace'
-          submodule_path: 'rust-bitvmx-client'
-          cargo_lock_path: 'rust-bitvmx-client/Cargo.lock'
-          target_path: 'rust-bitvmx-client/target'
-          cargo_features: 'testpanic'
-          nightly: false
 
       - name: Checkout current repository
         run: |
