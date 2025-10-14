@@ -29,6 +29,16 @@ on:
         description: 'Cargo features to enable (space or comma separated)'
         required: false
         type: string
+    secrets:
+      REPO_ACCESS_TOKEN:
+        description: 'Token to access the repository'
+        required: true
+      SSH_PRIVATE_KEY:
+        description: 'Private SSH key to authenticate with GitHub'
+        required: true
+      SLACK_WEBHOOK_URL:
+        description: 'Webhook endpoint to post on channel'
+        required: false
 
 permissions:
   contents: read
@@ -123,7 +133,8 @@ jobs:
           git config --global url."https://x-access-token:${REPO_TOKEN}@github.com/".insteadOf "https://github.com/"
         env:
           REPO_TOKEN: ${{ secrets.REPO_ACCESS_TOKEN }}
-     
+        secrets: inherit
+
       - name: Checkout Workspace Repository
         run: |
           PR_TITLE="${{ github.event.pull_request.title }}"
@@ -143,7 +154,14 @@ jobs:
           echo "✅ Using validated branch: $SAFE_BRANCH"
           
           git clone --recurse-submodules --depth=1 --branch "$SAFE_BRANCH" --shallow-submodules https://github.com/${{ inputs.repo }} rust-bitvmx-workspace
-      
+        with:
+          repo: 'FairgateLabs/rust-bitvmx-workspace'
+          submodule_path: 'rust-bitvmx-client'
+          cargo_lock_path: 'rust-bitvmx-client/Cargo.lock'
+          target_path: 'rust-bitvmx-client/target'
+          cargo_features: 'testpanic'
+          nightly: false
+
       - name: Checkout current repository
         run: |
           echo "Checking out branch: $SAFE_BRANCH"
@@ -279,12 +297,3 @@ jobs:
           # Run all desired examples
           run_example wallet_balance
           run_example create_wallet
-
-    with:
-      repo: 'FairgateLabs/rust-bitvmx-workspace'
-      submodule_path: 'rust-bitvmx-client'
-      cargo_lock_path: 'rust-bitvmx-client/Cargo.lock'
-      target_path: 'rust-bitvmx-client/target'
-      cargo_features: 'testpanic'
-      nightly: false
-    # secrets: inherit
