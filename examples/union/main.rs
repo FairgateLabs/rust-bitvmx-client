@@ -53,6 +53,7 @@ pub fn main() -> Result<()> {
         Some("invalid_reimbursement") => cli_invalid_reimbursement()?,
         Some("double_reimbursement") => cli_double_reimbursement()?,
         Some("cancel_take0") => cli_cancel_take0()?,
+        Some("reject_pegin") => cli_reject_pegin()?,
         // Utils
         Some("create_wallet") => cli_create_wallet(args.get(2))?,
         Some("latency") => cli_latency(args.get(2))?,
@@ -83,6 +84,7 @@ fn print_usage() {
     println!("  cargo run --example union request_pegin       - Setups a request pegin");
     println!("  cargo run --example union accept_pegin        - Setups the accept peg in protocol");
     println!("  cargo run --example union cancel_take0        - Dispatch CANCEL_TAKE0_TX to disable UserTake Protocol");
+    println!("  cargo run --example union reject_pegin        - Dispatch REJECT_PEGIN_TX to reject a peg in request before it's accepted");
     println!(
         "  cargo run --example union request_pegout      - Setups the request peg out protocol"
     );
@@ -141,6 +143,24 @@ pub fn cli_request_pegin() -> Result<()> {
         &mut user,
         committee.get_dispute_keys().as_slice(),
     )?;
+    Ok(())
+}
+
+pub fn cli_reject_pegin() -> Result<()> {
+    let (committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+
+    let (txid, _) = request_pegin(
+        committee.public_key()?,
+        &mut user,
+        committee.get_dispute_keys().as_slice(),
+    )?;
+
+    let member_index = 1;
+    committee.members[member_index].reject_pegin(committee.committee_id(), txid, member_index)?;
+
+    thread::sleep(Duration::from_secs(1));
+    wait_for_blocks(&committee.bitcoin_client, 5)?;
+
     Ok(())
 }
 
