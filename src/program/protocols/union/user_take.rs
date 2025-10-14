@@ -26,7 +26,8 @@ use crate::{
             union::{
                 common::indexed_name,
                 types::{
-                    PegOutAccepted, PegOutRequest, ACCEPT_PEGIN_TX, USER_TAKE_FEE, USER_TAKE_TX,
+                    PegOutAccepted, PegOutRequest, ACCEPT_PEGIN_TX, CANCEL_TAKE0_TX, SPEEDUP_VALUE,
+                    USER_TAKE_FEE, USER_TAKE_TX,
                 },
             },
         },
@@ -99,8 +100,31 @@ impl ProtocolHandler for UserTakeProtocol {
             Some(accept_pegin_utxo.0),
         )?;
 
+        let etake_utxo = self.etake_utxo(
+            context,
+            &pegout_request.committee_id,
+            pegout_request.slot_index,
+        )?;
+
+        // Connect the user take transaction with the Accept pegin Etake0 enabler output
+        protocol.add_connection(
+            "user_take",
+            ACCEPT_PEGIN_TX,
+            OutputSpec::Auto(etake_utxo.3.unwrap()),
+            USER_TAKE_TX,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::KeyOnly {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            Some(etake_utxo.0),
+        )?;
+
         // Add the user output to the user take transaction
-        let user_amount = self.checked_sub(accept_pegin_utxo.2.unwrap(), USER_TAKE_FEE)?;
+        let user_amount =
+            self.checked_sub(accept_pegin_utxo.2.unwrap(), USER_TAKE_FEE + SPEEDUP_VALUE)?;
 
         let wpkh = user_pubkey.wpubkey_hash().expect("key is compressed");
         let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
@@ -113,7 +137,15 @@ impl ProtocolHandler for UserTakeProtocol {
                 public_key: user_pubkey,
             },
         )?;
-        // NOTE: No speed up output needed here, user could use the same output to speed up the transaction later
+
+        protocol.add_transaction_output(
+            USER_TAKE_TX,
+            &OutputType::SegwitPublicKey {
+                value: Amount::from_sat(SPEEDUP_VALUE),
+                script_pubkey: script_pubkey.clone(),
+                public_key: user_pubkey,
+            },
+        )?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
@@ -195,16 +227,36 @@ impl UserTakeProtocol {
             .utxo()?)
     }
 
+    fn etake_utxo(
+        &self,
+        context: &ProgramContext,
+        committee_id: &Uuid,
+        slot_index: usize,
+    ) -> Result<PartialUtxo, BitVMXError> {
+        Ok(context
+            .globals
+            .get_var(committee_id, &indexed_name(CANCEL_TAKE0_TX, slot_index))?
+            .unwrap()
+            .utxo()?)
+    }
+
     pub fn user_take_tx(&self) -> Result<Transaction, ProtocolBuilderError> {
-        let signature = self
+        let funds_signature = self
             .load_protocol()?
             .input_taproot_key_spend_signature(USER_TAKE_TX, 0)?
             .unwrap();
-        let mut taproot_arg = InputArgs::new_taproot_key_args();
-        taproot_arg.push_taproot_signature(signature)?;
+        let mut funds_input = InputArgs::new_taproot_key_args();
+        funds_input.push_taproot_signature(funds_signature)?;
+
+        let etake_signature = self
+            .load_protocol()?
+            .input_taproot_key_spend_signature(USER_TAKE_TX, 1)?
+            .unwrap();
+        let mut etake_input = InputArgs::new_taproot_key_args();
+        etake_input.push_taproot_signature(etake_signature)?;
 
         self.load_protocol()?
-            .transaction_to_send(USER_TAKE_TX, &[taproot_arg])
+            .transaction_to_send(USER_TAKE_TX, &[funds_input, etake_input])
     }
 
     pub fn send_pegout_accepted(
