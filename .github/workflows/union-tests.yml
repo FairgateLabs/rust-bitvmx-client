@@ -1,0 +1,72 @@
+name: Rust Union Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      bitcoind:
+        image: bitcoin/bitcoin:29.1
+        ports:
+          - 18443:18443
+        options: >-
+          --entrypoint bitcoind
+          --env BITCOIN_NETWORK=regtest
+          --env BITCOIN_EXTRA_ARGS=-regtest=1
+          --env BITCOIN_EXTRA_ARGS=-fallbackfee=0.0002
+          --env BITCOIN_EXTRA_ARGS=-rpcallowip=0.0.0.0/0
+          --env BITCOIN_EXTRA_ARGS=-rpcbind=0.0.0.0
+          --env BITCOIN_EXTRA_ARGS=-txindex=1
+          --health-cmd "bitcoin-cli -regtest -rpcconnect=127.0.0.1 -rpcport=18443 getblockchaininfo || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    strategy:
+      fail-fast: false
+      matrix:
+        example:
+          - wallet_balance
+          - create_wallet
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build project
+        run: cargo build --release
+
+      - name: Start setup process
+        run: |
+          echo "🧹 Cleaning temporary directories..."
+          rm -rf /tmp/broker_p2p_6118* /tmp/testnet/op_*
+          mkdir -p logs
+
+          echo "🚀 Starting setup process for ${{ matrix.example }}..."
+          (RUST_BACKTRACE=full cargo run --release all-testnet \
+            2>&1 | sed -u -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})*)?[mGKHF]//g" \
+            > ./logs/setup_${{ matrix.example }}.log) &
+          echo $! > setup_pid.txt
+
+          # Give the setup some time to start properly
+          sleep 10
+
+      - name: Run Rust example
+        run: |
+          echo "▶️ Running example: ${{ matrix.example }}"
+          RUST_BACKTRACE=1 cargo run --release --example union ${{ matrix.example }}
+
+      - name: Stop setup process
+        if: always()
+        run: |
+          echo "🛑 Stopping setup process..."
+          if [ -f setup_pid.txt ]; then
+            kill $(cat setup_pid.txt) || true
+          fi
