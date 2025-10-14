@@ -92,16 +92,16 @@ jobs:
           fi
           echo "✅ All inputs validated successfully"
       
-      - name: Cleanup Disk Space
-        run: |
-          echo "🧹 Cleaning up disk space..."
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/share/boost
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
-          echo "✅ Disk cleanup completed"
-            
+      # - name: Cleanup Disk Space
+      #   run: |
+      #     echo "🧹 Cleaning up disk space..."
+      #     sudo rm -rf /usr/share/dotnet
+      #     sudo rm -rf /usr/local/lib/android
+      #     sudo rm -rf /opt/ghc
+      #     sudo rm -rf /usr/local/share/boost
+      #     sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+      #     echo "✅ Disk cleanup completed"
+`            
       - name: Check disk space
         run: df -h
 
@@ -137,9 +137,11 @@ jobs:
           git clone --recurse-submodules --depth=1 --branch "$SAFE_BRANCH" --shallow-submodules https://github.com/${{ inputs.repo }} rust-bitvmx-workspace
 
       - name: Checkout current repository
-        run: |
-          echo "Checking out branch: $SAFE_BRANCH"
-          git clone --depth=1 --branch "$SAFE_BRANCH" https://github.com/FairgateLabs/${{ inputs.submodule_path }} ${{ inputs.submodule_path }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          submodules: false
+          fetch-depth: 1   # optional: shallow clone to speed up
 
       - name: Handle Submodules for Nightly Build
         run: |
