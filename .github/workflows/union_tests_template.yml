@@ -65,7 +65,7 @@ jobs:
           - 18443:18443
         options: >-
           --entrypoint bitcoind
-          --env BITCOIN_NETWORK=regtest
+          --env BITCOIND_RPC_NETWORK=regtest
           --env BITCOIN_EXTRA_ARGS=-regtest=1
           --env BITCOIN_EXTRA_ARGS=-fallbackfee=0.0002
           --env BITCOIN_EXTRA_ARGS=-rpcallowip=0.0.0.0/0
