@@ -230,6 +230,7 @@ jobs:
 
       - name: Run integration examples
         run: |
+          cd ${{ inputs.submodule_path }}
           set -e
 
           run_example() {
