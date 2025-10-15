@@ -60,7 +60,7 @@ jobs:
 
     services:
       bitcoind:
-        image: bitcoin/bitcoin:29.1
+        image: ruimarinho/bitcoin-core
         ports:
           - 18443:18443
         options: >-
