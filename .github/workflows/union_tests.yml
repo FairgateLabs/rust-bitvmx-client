@@ -22,6 +22,7 @@ concurrency:
 
 jobs:
   test:
+    runs-on: ubuntu-latest
     env:
       BITCOIND_RPC_PORT: 18443
       BITCOIND_RPC_USERNAME: foo
