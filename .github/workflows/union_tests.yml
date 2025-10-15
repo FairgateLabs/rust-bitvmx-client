@@ -45,13 +45,6 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-        healthcheck:
-          test: ["CMD", "wget", "--user", "foo", "--password", "rpcpassword", "--post-data", '{"jsonrpc": "1.0", "id": "healthcheck", "method": "getblockchaininfo", "params": []}', "http://localhost:18443", "-O", "-"]
-          interval: 10s
-          timeout: 5s
-          retries: 10
-        restart: unless-stopped
-
 
     if: ${{ !contains(github.event.pull_request.title, '[cov]') }}
     uses: ./.github/workflows/union_test_template.yml
