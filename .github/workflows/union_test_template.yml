@@ -242,6 +242,7 @@ jobs:
 
       - name: Build project
         run: | 
+          cd ${{ inputs.submodule_path }}
           pwd
           ls
           cargo build --release
