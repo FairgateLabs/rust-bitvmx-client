@@ -733,7 +733,7 @@ impl GracefulShutdown for BitVMX {
 
 impl BitVMXApi for BitVMX {
     fn ping(&mut self, from: Identifier, uuid: Uuid) -> Result<Uuid, BitVMXError> {
-        self.reply(from, OutgoingBitVMXApiMessages::Pong())?;
+        self.reply(from, OutgoingBitVMXApiMessages::Pong(uuid))?;
         Ok(uuid)
     }
 
@@ -1402,13 +1402,14 @@ impl BitVMXApi for BitVMX {
                     .decrypt_rsa_message(&message, 0)?; // TODO: index may not be 0 if more than one RSA key is used
                 self.reply(from, OutgoingBitVMXApiMessages::Decrypted(id, decrypted))?;
             }
-            IncomingBitVMXApiMessages::Backup(path) => {
+            IncomingBitVMXApiMessages::Backup(id, path) => {
                 let message = match self.store.backup(&path) {
                     Ok(_) => OutgoingBitVMXApiMessages::BackupResult(
+                        id,
                         true,
                         "Backup successful".to_string(),
                     ),
-                    Err(e) => OutgoingBitVMXApiMessages::BackupResult(false, e.to_string()),
+                    Err(e) => OutgoingBitVMXApiMessages::BackupResult(id, false, e.to_string()),
                 };
 
                 self.reply(from, message)?;

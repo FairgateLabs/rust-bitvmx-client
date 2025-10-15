@@ -20,7 +20,7 @@ fn nonfatal_error_keeps_looping() -> Result<()> {
     let msg = common::wait_message_from_channel(&channel, &mut vec![&mut bitvmx], true)?;
     let out = OutgoingBitVMXApiMessages::from_string(&msg.0)?;
     match out {
-        OutgoingBitVMXApiMessages::Pong() => {}
+        OutgoingBitVMXApiMessages::Pong(_) => {}
         _ => panic!("expected Pong"),
     }
 
@@ -42,7 +42,7 @@ fn nonfatal_error_keeps_looping() -> Result<()> {
     let msg = common::wait_message_from_channel(&channel, &mut vec![&mut bitvmx], true)?;
     let out = OutgoingBitVMXApiMessages::from_string(&msg.0)?;
     match out {
-        OutgoingBitVMXApiMessages::Pong() => {}
+        OutgoingBitVMXApiMessages::Pong(_) => {}
         _ => panic!("expected Pong after non-fatal"),
     }
 

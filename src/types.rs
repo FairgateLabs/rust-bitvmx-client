@@ -122,7 +122,7 @@ pub enum IncomingBitVMXApiMessages {
     GetZKPExecutionResult(Uuid),
     Encrypt(Uuid, Vec<u8>, String),
     Decrypt(Uuid, Vec<u8>),
-    Backup(String),
+    Backup(Uuid, String),
     #[cfg(feature = "testpanic")]
     Test(String),
     GetFundingAddress(Uuid),
@@ -140,7 +140,7 @@ type ProgramId = Uuid;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum OutgoingBitVMXApiMessages {
-    Pong(),
+    Pong(Uuid),
     // response for transaction get and dispatch
     Transaction(Uuid, TransactionStatus, Option<String>),
     // Represents when pegin transactions is found
@@ -171,7 +171,7 @@ pub enum OutgoingBitVMXApiMessages {
     SPVProof(Txid, Option<BtcTxSPVProof>),
     Encrypted(Uuid, Vec<u8>),
     Decrypted(Uuid, Vec<u8>),
-    BackupResult(bool, String),
+    BackupResult(Uuid, bool, String),
     FundingAddress(Uuid, Address<NetworkUnchecked>),
     FundingBalance(Uuid, u64),
     FundsSent(Uuid, Txid),
@@ -286,7 +286,7 @@ impl OutgoingBitVMXApiMessages {
 
     pub fn name(&self) -> String {
         match self {
-            OutgoingBitVMXApiMessages::Pong() => "Pong".to_string(),
+            OutgoingBitVMXApiMessages::Pong(_) => "Pong".to_string(),
             OutgoingBitVMXApiMessages::Transaction(_, _, _) => "Transaction".to_string(),
             OutgoingBitVMXApiMessages::PeginTransactionFound(_, _) => {
                 "PeginTransactionFound".to_string()
@@ -319,7 +319,7 @@ impl OutgoingBitVMXApiMessages {
                 "ProofGenerationError".to_string()
             }
             OutgoingBitVMXApiMessages::SPVProof(_, _) => "SPVProof".to_string(),
-            OutgoingBitVMXApiMessages::BackupResult(_, _) => "BackupResult".to_string(),
+            OutgoingBitVMXApiMessages::BackupResult(_, _, _) => "BackupResult".to_string(),
             OutgoingBitVMXApiMessages::Encrypted(_, _) => "Encrypted".to_string(),
             OutgoingBitVMXApiMessages::Decrypted(_, _) => "Decrypted".to_string(),
             OutgoingBitVMXApiMessages::FundingAddress(_, _) => "FundingAddress".to_string(),
