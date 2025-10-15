@@ -145,6 +145,8 @@ jobs:
 
       - name: Handle Submodules for Nightly Build
         run: |
+          pwd
+          find . -type d
           if [[ "$NIGHTLY" == "true" ]]; then
             echo "Rearranging submodules for build"
             cd "$ROOT/rust-bitvmx-workspace"
