@@ -150,8 +150,6 @@ jobs:
 
       - name: Handle Submodules for Nightly Build
         run: |
-          pwd
-          find . -type d
           if [[ "$NIGHTLY" == "true" ]]; then
             echo "Rearranging submodules for build"
             cd "$ROOT/rust-bitvmx-workspace"
@@ -243,8 +241,6 @@ jobs:
       - name: Build project
         run: | 
           cd ${{ inputs.submodule_path }}
-          pwd
-          ls
           cargo build --release
 
       - name: Run integration examples
