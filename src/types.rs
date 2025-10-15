@@ -8,9 +8,9 @@ use bitvmx_broker::{
     channel::channel::{DualChannel, LocalChannel},
     identification::identifier::Identifier,
 };
+use bitvmx_operator_comms::operator_comms::OperatorComms;
 use bitvmx_wallet::wallet::Destination;
 use chrono::{DateTime, Utc};
-use bitvmx_operator_comms::operator_comms::OperatorComms;
 use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
 
@@ -95,19 +95,19 @@ impl Default for ProgramRequestInfo {
 //TODO: This should be moved to a common place that could be used to share the messages api
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum IncomingBitVMXApiMessages {
-    Ping(),
+    Ping(Uuid),
     SetVar(Uuid, String, VariableTypes),
     SetWitness(Uuid, String, WitnessTypes),
     SetFundingUtxo(Utxo),
     GetVar(Uuid, String),
     GetWitness(Uuid, String),
-    GetCommInfo(),
+    GetCommInfo(Uuid),
     GetTransaction(Uuid, Txid),
     GetTransactionInfoByName(Uuid, String),
     GetHashedMessage(Uuid, String, u32, u32),
     Setup(ProgramId, String, Vec<CommsAddress>, u16),
     SubscribeToTransaction(Uuid, Txid),
-    SubscribeUTXO(),
+    SubscribeUTXO(Uuid),
     SubscribeToRskPegin(),
     GetSPVProof(Txid),
     DispatchTransaction(Uuid, Transaction),
@@ -157,7 +157,7 @@ pub enum OutgoingBitVMXApiMessages {
     TransactionInfo(Uuid, String, Transaction),
     ZKPResult(Uuid, Vec<u8>, Vec<u8>),
     ExecutionResult(/* Add appropriate type */),
-    CommInfo(CommsAddress),
+    CommInfo(Uuid, CommsAddress),
     KeyPair(Uuid, PrivateKey, PublicKey),
     PubKey(Uuid, PublicKey),
     SignedMessage(Uuid, [u8; 32], [u8; 32], u8), // id, signature_r, signature_s, recovery_id
@@ -190,9 +190,9 @@ impl OutgoingBitVMXApiMessages {
         Ok(msg)
     }
 
-    pub fn comm_info(&self) -> Option<CommsAddress> {
+    pub fn comm_info(&self) -> Option<(Uuid, CommsAddress)> {
         match self {
-            OutgoingBitVMXApiMessages::CommInfo(info) => Some(info.clone()),
+            OutgoingBitVMXApiMessages::CommInfo(uuid, info) => Some((uuid.clone(), info.clone())),
             _ => None,
         }
     }
@@ -305,7 +305,7 @@ impl OutgoingBitVMXApiMessages {
             OutgoingBitVMXApiMessages::TransactionInfo(_, _, _) => "TransactionInfo".to_string(),
             OutgoingBitVMXApiMessages::ZKPResult(_, _, _) => "ZKPResult".to_string(),
             OutgoingBitVMXApiMessages::ExecutionResult() => "ExecutionResult".to_string(),
-            OutgoingBitVMXApiMessages::CommInfo(_) => "CommInfo".to_string(),
+            OutgoingBitVMXApiMessages::CommInfo(_, _) => "CommInfo".to_string(),
             OutgoingBitVMXApiMessages::KeyPair(_, _, _) => "KeyPair".to_string(),
             OutgoingBitVMXApiMessages::PubKey(_, _) => "PubKey".to_string(),
             OutgoingBitVMXApiMessages::SignedMessage(_, _, _, _) => "SignedMessage".to_string(),

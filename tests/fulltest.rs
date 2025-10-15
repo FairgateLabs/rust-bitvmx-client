@@ -17,7 +17,7 @@ use bitvmx_client::{
                 transfer_config::TransferConfig,
             },
             dispute::TIMELOCK_BLOCKS,
-        }, 
+        },
         variables::{VariableTypes, WitnessTypes},
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
@@ -76,12 +76,12 @@ pub fn test_full() -> Result<()> {
         }
     }
     //get addresses
-    let command = IncomingBitVMXApiMessages::GetCommInfo().to_string()?;
+    let command = IncomingBitVMXApiMessages::GetCommInfo(Uuid::new_v4()).to_string()?;
     send_all(&id_channel_pairs, &command)?;
     let comm_info: Vec<OutgoingBitVMXApiMessages> = get_all(&channels, &mut instances, false)?;
     let addresses = comm_info
         .iter()
-        .map(|msg| msg.comm_info().unwrap())
+        .map(|msg| msg.comm_info().unwrap().1)
         .collect::<Vec<_>>();
 
     //==================================================
@@ -534,7 +534,7 @@ pub fn test_full() -> Result<()> {
     let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
     info!("Observerd: {:?}", msgs[0].transaction().unwrap().2);
 
-     if let Some(ref bitcoind_instance) = bitcoind {
+    if let Some(ref bitcoind_instance) = bitcoind {
         bitcoind_instance.stop()?;
     }
 

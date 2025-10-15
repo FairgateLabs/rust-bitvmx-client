@@ -732,9 +732,9 @@ impl GracefulShutdown for BitVMX {
 }
 
 impl BitVMXApi for BitVMX {
-    fn ping(&mut self, from: Identifier) -> Result<(), BitVMXError> {
+    fn ping(&mut self, from: Identifier, uuid: Uuid) -> Result<Uuid, BitVMXError> {
         self.reply(from, OutgoingBitVMXApiMessages::Pong())?;
-        Ok(())
+        Ok(uuid)
     }
 
     fn get_var(&mut self, from: Identifier, id: Uuid, key: &str) -> Result<(), BitVMXError> {
@@ -919,8 +919,8 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn subscribe_utxo(&mut self) -> Result<(), BitVMXError> {
-        Ok(())
+    fn subscribe_utxo(&mut self, uuid: Uuid) -> Result<Uuid, BitVMXError> {
+        Ok(uuid)
     }
 
     fn subscribe_to_rsk_pegin(&mut self) -> Result<(), BitVMXError> {
@@ -1135,14 +1135,19 @@ impl BitVMXApi for BitVMX {
                     OutgoingBitVMXApiMessages::HashedMessage(id, name, vout, leaf, hashed),
                 )?;
             }
-            IncomingBitVMXApiMessages::GetCommInfo() => {
-                let comm_info = OutgoingBitVMXApiMessages::CommInfo(CommsAddress {
-                    address: self.program_context.comms.get_address(),
-                    pubkey_hash: self.program_context.comms.get_pubk_hash()?,
-                });
+            IncomingBitVMXApiMessages::GetCommInfo(uuid) => {
+                let comm_info = OutgoingBitVMXApiMessages::CommInfo(
+                    uuid,
+                    CommsAddress {
+                        address: self.program_context.comms.get_address(),
+                        pubkey_hash: self.program_context.comms.get_pubk_hash()?,
+                    },
+                );
                 self.reply(from, comm_info)?;
             }
-            IncomingBitVMXApiMessages::Ping() => BitVMXApi::ping(self, from)?,
+            IncomingBitVMXApiMessages::Ping(uuid) => {
+                BitVMXApi::ping(self, from, uuid)?;
+            }
             IncomingBitVMXApiMessages::SetVar(uuid, key, value) => {
                 debug!("Setting variable {}: {:?}", key, value);
                 self.program_context.globals.set_var(&uuid, &key, value)?;
@@ -1278,7 +1283,9 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::SubscribeToTransaction(uuid, txid) => {
                 BitVMXApi::subscribe_to_tx(self, from, uuid, txid)?
             }
-            IncomingBitVMXApiMessages::SubscribeUTXO() => BitVMXApi::subscribe_utxo(self)?,
+            IncomingBitVMXApiMessages::SubscribeUTXO(uuid) => {
+                BitVMXApi::subscribe_utxo(self, uuid)?;
+            }
 
             IncomingBitVMXApiMessages::SubscribeToRskPegin() => {
                 BitVMXApi::subscribe_to_rsk_pegin(self)?

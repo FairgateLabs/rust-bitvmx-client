@@ -470,13 +470,13 @@ pub fn test_all_aux(
 
     let mut helper = TestHelper::new(network, independent, Some(1000))?;
 
-    let command = IncomingBitVMXApiMessages::GetCommInfo();
+    let command = IncomingBitVMXApiMessages::GetCommInfo(Uuid::new_v4());
     helper.send_all(command)?;
 
     let addresses: Vec<CommsAddress> = helper
         .wait_all_msg()?
         .iter()
-        .map(|msg| msg.comm_info().unwrap())
+        .map(|msg| msg.comm_info().unwrap().1)
         .collect::<Vec<_>>();
 
     info!("Waiting for AggregatedPubkey message from all channels");
