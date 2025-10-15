@@ -243,7 +243,7 @@ jobs:
       - name: Build project
         run: | 
           pwd
-          find . -type d
+          ls
           cargo build --release
 
       - name: Run integration examples
