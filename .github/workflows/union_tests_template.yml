@@ -139,45 +139,16 @@ jobs:
           
           git clone --recurse-submodules --depth=1 --branch "$SAFE_BRANCH" --shallow-submodules https://github.com/${{ inputs.repo }} rust-bitvmx-workspace
 
-      - name: Checkout current repository
+      - name: Move submodule contents to root of submodule path
         run: |
-          echo "Checking out branch: $SAFE_BRANCH"
-          git clone --depth=1 --branch "$SAFE_BRANCH" https://github.com/FairgateLabs/${{ inputs.submodule_path }} ${{ inputs.submodule_path }}
+          find /home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/rust-bitvmx-workspace -mindepth 1 -maxdepth 1 ! -name '${{ inputs.submodule_path }}' -exec mv {} /home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/ \;
 
-      - name: Handle Submodules for Nightly Build
-        run: |
-          if [[ "$NIGHTLY" == "true" ]]; then
-            echo "Rearranging submodules for build"
-            cd "$ROOT/rust-bitvmx-workspace"
-            
-            if [[ -f ".cargo/config.toml" ]]; then
-              echo "Copying .cargo/config.toml to preserve patches"
-              mkdir -p "$ROOT/.cargo"
-              cp ".cargo/config.toml" "$ROOT/.cargo/"
-            fi
-            
-            for dir in */; do
-              name="${dir%/}"
-              if [[ "$name" != "${{ inputs.submodule_path }}" ]]; then
-                echo "Moving $name to $ROOT"
-                mv "$name" "$ROOT/"
-              fi
-            done
-            echo "Moved all other submodules to top-level"
-            rm -rf "$ROOT/rust-bitvmx-workspace"
-          else
-            echo "Running in submodule-triggered mode"
-            
-            if [[ -f "/home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/rust-bitvmx-workspace/.cargo/config.toml" ]]; then
-              echo "Copying .cargo/config.toml to preserve patches"
-              mkdir -p "/home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/.cargo"
-              cp "/home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/rust-bitvmx-workspace/.cargo/config.toml" "/home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/.cargo/"
-            fi
-            
-            find /home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/rust-bitvmx-workspace -mindepth 1 -maxdepth 1 ! -name '${{ inputs.submodule_path }}' -exec mv {} /home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/ \;
-          fi
-        env:
-          NIGHTLY: ${{ inputs.nightly }}
+      - name: Checkout current branch with submodules
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          submodules: true
+          fetch-depth: 1
 
       - name: Install Rust Toolchain
         uses: actions-rs/toolchain@v1
