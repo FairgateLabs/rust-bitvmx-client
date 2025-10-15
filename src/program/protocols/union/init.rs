@@ -1,8 +1,9 @@
 use protocol_builder::builder::Protocol;
 use protocol_builder::graph::graph::GraphOptions;
+use protocol_builder::scripts::SignMode;
 use protocol_builder::types::connection::{InputSpec, OutputSpec};
 use protocol_builder::types::input::{SighashType, SpendMode};
-use protocol_builder::types::{InputArgs, OutputType, Utxo};
+use protocol_builder::types::{InputArgs, OutputType};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::info;
@@ -121,7 +122,7 @@ impl ProtocolHandler for InitProtocol {
     ) -> Result<(), BitVMXError> {
         let mut protocol = self.load_or_create_protocol();
         let init_data = self.init_data(context)?;
-        let current_member_index = init_data.member_index;
+        let watchtower_index = init_data.member_index;
         let committee = self.committee(context)?;
         let watchtower_keys = keys[init_data.member_index].clone();
 
@@ -133,14 +134,14 @@ impl ProtocolHandler for InitProtocol {
         self.create_initial_deposit(&mut protocol, &watchtower_keys, &init_data)?;
 
         // iterate over committee members and create start enablers
-        for (index, member) in committee.members.clone().iter().enumerate() {
-            self.create_watchtower_start_enabler(
+        for (member_index, _member) in committee.members.clone().iter().enumerate() {
+            let member_keys = keys[member_index].clone();
+            self.add_start_enabler_output(
                 &mut protocol,
-                &committee.clone(),
-                &watchtower_keys,
-                &member,
-                index,
-                current_member_index,
+                &committee,
+                &member_keys,
+                member_index,
+                watchtower_index,
             )?;
         }
 
@@ -160,22 +161,33 @@ impl ProtocolHandler for InitProtocol {
 
     fn get_transaction_by_name(
         &self,
-        _transaction_name: &str,
-        _context: &ProgramContext,
+        name: &str,
+        context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        todo!()
+        if name == format!("{}{}", WATCHTOWER, SETUP_TX_SUFFIX) {
+            Ok(self.setup_tx(context)?)
+        } else if name == format!("{}{}", WATCHTOWER, START_ENABLER_TX_SUFFIX) {
+            Ok(self.start_enabler_tx(name, context)?)
+        } else {
+            Err(BitVMXError::InvalidTransactionName(name.to_string()))
+        }
     }
 
     fn notify_news(
         &self,
-        _tx_id: Txid,
+        tx_id: Txid,
         _vout: Option<u32>,
-        _tx_status: TransactionStatus,
+        tx_status: TransactionStatus,
         _context: String,
         _program_context: &ProgramContext,
         _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
-        // todo!()
+        let tx_name = self.get_transaction_name_by_id(tx_id)?;
+        info!(
+            "Init protocol received news of transaction: {}, txid: {} with {} confirmations",
+            tx_name, tx_id, tx_status.confirmations
+        );
+
         Ok(())
     }
 
@@ -256,9 +268,6 @@ impl InitProtocol {
         let start_enabler = format!("{}{}", WATCHTOWER, START_ENABLER_TX_SUFFIX);
         let self_disabler = format!("{}{}", WATCHTOWER, SELF_DISABLER_TX_SUFFIX);
 
-        // // Create the funding transaction reference
-        // protocol.add_external_transaction(&funding)?;
-
         // Create the funding transaction reference
         create_transaction_reference(protocol, &funding, &mut [watchtower_utxo.clone()].to_vec())?;
 
@@ -310,26 +319,26 @@ impl InitProtocol {
         Ok(())
     }
 
-    fn create_watchtower_start_enabler(
+    fn add_start_enabler_output(
         &self,
         protocol: &mut Protocol,
         committee: &Committee,
-        watchtower_keys: &ParticipantKeys,
-        member: &MemberData,
-        index: usize,
-        current_member_index: usize,
+        member_keys: &ParticipantKeys,
+        member_index: usize,
+        watchtower_index: usize,
     ) -> Result<(), BitVMXError> {
         let start_enabler = format!("{}{}", WATCHTOWER, START_ENABLER_TX_SUFFIX);
         let mut scripts = vec![];
 
-        if member.role == ParticipantRole::Verifier || current_member_index == index {
+        if committee.members[member_index].role == ParticipantRole::Verifier
+            || watchtower_index == member_index
+        {
             scripts = vec![protocol_builder::scripts::op_return_script(
                 "skip".as_bytes().to_vec(),
             )?];
         } else {
             for slot in 0..committee.packet_size as usize {
-                let slot_id_key =
-                    watchtower_keys.get_winternitz(&indexed_name(SLOT_ID_KEY, slot))?;
+                let slot_id_key = member_keys.get_winternitz(&indexed_name(SLOT_ID_KEY, slot))?;
 
                 // TODO is this correct? should we use aggregated key?
                 scripts.push(scripts::start_challenge(
@@ -342,7 +351,11 @@ impl InitProtocol {
 
         protocol.add_transaction_output(
             &start_enabler,
-            &OutputType::taproot(AUTO_AMOUNT, &member.dispute_key.clone(), &scripts)?,
+            &OutputType::taproot(
+                AUTO_AMOUNT,
+                &committee.members[watchtower_index].dispute_key,
+                &scripts,
+            )?,
         )?;
 
         Ok(())
@@ -432,19 +445,44 @@ impl InitProtocol {
 
         let tx = protocol.transaction_to_send(&name, &[input_args])?;
 
-        let txid = tx.compute_txid();
-        let speedup_key = self.my_speedup_key(context)?;
-        let speedup_vout = (tx.output.len() - 2) as u32;
-        let speedup_utxo = Utxo::new(txid, speedup_vout, SPEEDUP_VALUE, &speedup_key);
-
-        Ok((tx, Some(speedup_utxo.into())))
+        Ok((tx, None))
     }
 
-    fn my_speedup_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
-        Ok(context
-            .globals
-            .get_var(&self.ctx.id, SPEEDUP_KEY)?
-            .unwrap()
-            .pubkey()?)
+    fn start_enabler_tx(
+        &self,
+        name: &str,
+        context: &ProgramContext,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        info!(
+            id = self.ctx.my_idx,
+            "Loading Start Enabler transaction for Init"
+        );
+
+        let mut protocol: Protocol = self.load_protocol()?;
+
+        let signatures = protocol.sign_taproot_input(
+            &name,
+            0,
+            &SpendMode::KeyOnly {
+                key_path_sign: SignMode::Single,
+            },
+            context.key_chain.key_manager.as_ref(),
+            "",
+        )?;
+
+        let mut input_args = InputArgs::new_taproot_key_args();
+        for signature in signatures {
+            if signature.is_some() {
+                info!(
+                    "Adding taproot signature to input args for {}: {:?}",
+                    name, signature
+                );
+                input_args.push_taproot_signature(signature.unwrap())?;
+            }
+        }
+
+        let tx = protocol.transaction_to_send(&name, &[input_args])?;
+
+        Ok((tx, None))
     }
 }

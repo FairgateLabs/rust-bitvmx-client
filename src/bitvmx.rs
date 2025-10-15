@@ -1251,7 +1251,7 @@ impl BitVMXApi for BitVMX {
                     Ok(prog) => match prog.get_transaction_by_name(&self.program_context, &name) {
                         Ok(tx) => OutgoingBitVMXApiMessages::TransactionInfo(id, name, tx),
                         Err(err) => {
-                            info!(
+                            error!(
                                 "Transaction not found: {} in program {:?}. Error: {}",
                                 name, id, err
                             );
@@ -1262,7 +1262,7 @@ impl BitVMXApi for BitVMX {
                         }
                     },
                     Err(err) => {
-                        info!("Program not found: {:?}. Error: {}", id, err);
+                        error!("Program not found: {:?}. Error: {}", id, err);
                         OutgoingBitVMXApiMessages::NotFound(
                             id,
                             format!("Program not found: {}", name),

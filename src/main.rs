@@ -40,8 +40,6 @@ fn config_trace() {
     tracing_subscriber::fmt()
         //.without_time()
         .with_target(true)
-        .with_file(true)
-        .with_line_number(true)
         .with_env_filter(filter)
         .init();
 }

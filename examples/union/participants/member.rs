@@ -216,6 +216,13 @@ impl Member {
             addresses,
         )?;
 
+        for i in 0..members.len() {
+            // Wait for the init setup to complete
+            let program_id =
+                wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
+            info!(id = self.id, program_id = ?program_id, "Init setup completed for operator index {}", i);
+        }
+
         Ok(())
     }
 

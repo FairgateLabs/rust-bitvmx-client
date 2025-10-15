@@ -14,7 +14,8 @@ use crate::{
 use ::bitcoin::{Network, OutPoint, PublicKey, Txid};
 use anyhow::Result;
 use bitvmx_client::program::protocols::union::{
-    common::get_accept_pegin_pid, types::ACCEPT_PEGIN_TX,
+    common::{get_accept_pegin_pid, get_init_pid},
+    types::{ACCEPT_PEGIN_TX, START_ENABLER_TX_SUFFIX, WATCHTOWER},
 };
 use core::convert::Into;
 use std::{env, thread, time::Duration};
@@ -44,6 +45,7 @@ pub fn main() -> Result<()> {
     match command.map(|s| s.as_str()) {
         Some("setup_bitcoin_node") => setup_bitcoin_node()?,
         Some("committee") => cli_committee()?,
+        Some("watchtowers_init") => cli_watchtowers_init()?,
         Some("request_pegin") => cli_request_pegin()?,
         Some("accept_pegin") => cli_accept_pegin()?,
         Some("request_pegout") => cli_request_pegout()?,
@@ -78,6 +80,9 @@ fn print_usage() {
     println!("Usage:");
     println!("  cargo run --example union setup_bitcoin_node  - Sets up Bitcoin node only");
     println!("  cargo run --example union committee           - Setups a new committee");
+    println!(
+        "  cargo run --example union watchtowers_init    - Setups the watchtowers init protocol"
+    );
     println!("  cargo run --example union request_pegin       - Setups a request pegin");
     println!("  cargo run --example union accept_pegin        - Setups the accept peg in protocol");
     println!(
@@ -127,6 +132,14 @@ pub fn setup_bitcoin_node() -> Result<()> {
 pub fn cli_committee() -> Result<()> {
     let mut wallet = get_master_wallet()?;
     committee(&mut wallet)?;
+    Ok(())
+}
+
+pub fn cli_watchtowers_init() -> Result<()> {
+    let mut wallet = get_master_wallet()?;
+    let mut committee = committee(&mut wallet)?;
+
+    watchtowers_init(&mut committee)?;
     Ok(())
 }
 
@@ -345,6 +358,30 @@ pub fn committee(wallet: &mut MasterWallet) -> Result<Committee> {
     info!("Committee setup complete.");
     confirm_to_continue();
     Ok(committee)
+}
+
+pub fn watchtowers_init(committee: &mut Committee) -> Result<()> {
+    for member in committee.members.iter() {
+        let protocol_id = get_init_pid(
+            committee.committee_id(),
+            &member.keyring.take_pubkey.unwrap(),
+        );
+
+        info!(
+            "Dispatching transaction: {}, protocol id: {}",
+            format!("{}{}", WATCHTOWER, START_ENABLER_TX_SUFFIX),
+            protocol_id,
+        );
+
+        member.dispatch_transaction_by_name(
+            protocol_id,
+            format!("{}{}", WATCHTOWER, START_ENABLER_TX_SUFFIX),
+        )?;
+    }
+
+    wait_for_blocks(&committee.bitcoin_client, 1)?;
+
+    Ok(())
 }
 
 pub fn request_pegin(committee_public_key: PublicKey, user: &mut User) -> Result<(Txid, u64)> {
