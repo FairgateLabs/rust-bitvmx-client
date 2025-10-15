@@ -185,17 +185,6 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
-      
-      - name: Lint with rustfmt
-        continue-on-error: true
-        working-directory: ${{ inputs.submodule_path }}
-        run: cargo fmt --all -- --check
-
-      - name: Lint with Clippy
-        if: ${{ inputs.clippy }}
-        continue-on-error: true
-        working-directory: ${{ inputs.submodule_path }}
-        run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Cache Rust Toolchain
         uses: actions/cache@v4
