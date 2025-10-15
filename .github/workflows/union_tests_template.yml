@@ -54,7 +54,7 @@ jobs:
       BRANCH: ${{ github.head_ref || 'main' }}
       BITCOIN_NETWORK: "regtest"
       BITCOIND_RPC_PORT: 18443
-      BITCOIND_RPC_USERNAME: foo
+      BITCOIND_RPC_USER: foo
       BITCOIND_RPC_PASSWORD: rpcpassword
       BITCOIND_RPC_NETWORK: regtest
 
@@ -141,6 +141,14 @@ jobs:
 
       - name: Move submodule contents to root of submodule path
         run: |
+          echo "Running in submodule-triggered mode"
+
+          if [[ -f "/home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/rust-bitvmx-workspace/.cargo/config.toml" ]]; then
+            echo "Copying .cargo/config.toml to preserve patches"
+            mkdir -p "/home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/.cargo"
+            cp "/home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/rust-bitvmx-workspace/.cargo/config.toml" "/home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/.cargo/"
+          fi
+
           find /home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/rust-bitvmx-workspace -mindepth 1 -maxdepth 1 ! -name '${{ inputs.submodule_path }}' -exec mv {} /home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/ \;
 
       - name: Checkout current branch
@@ -196,7 +204,7 @@ jobs:
       - name: Build project
         run: | 
           cd ${{ inputs.submodule_path }}
-          # cargo build --release
+          cargo build --release
 
       - name: Run integration examples
         run: |
@@ -233,3 +241,5 @@ jobs:
           # Run all desired examples
           run_example wallet_balance
           run_example create_wallet
+        
+      
