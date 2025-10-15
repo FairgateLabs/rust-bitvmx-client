@@ -18,6 +18,37 @@ concurrency:
 
 jobs:
   test:
+    env:
+      BITCOIND_RPC_PORT: 18443
+      BITCOIND_RPC_USERNAME: foo
+      BITCOIND_RPC_PASSWORD: rpcpassword
+      BITCOIND_RPC_NETWORK: regtest
+
+    services:
+      bitcoind:
+        image: bitcoin/bitcoin:29.1
+        ports:
+          - 18443:18443
+        options: >-
+          --entrypoint bitcoind
+          --env BITCOIN_NETWORK=regtest
+          --env BITCOIN_EXTRA_ARGS=-regtest=1
+          --env BITCOIN_EXTRA_ARGS=-fallbackfee=0.0002
+          --env BITCOIN_EXTRA_ARGS=-rpcallowip=0.0.0.0/0
+          --env BITCOIN_EXTRA_ARGS=-rpcbind=0.0.0.0
+          --env BITCOIN_EXTRA_ARGS=-txindex=1
+          --health-cmd "bitcoin-cli -regtest -rpcconnect=127.0.0.1 -rpcport=18443 getblockchaininfo || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        healthcheck:
+          test: ["CMD", "wget", "--user", "foo", "--password", "rpcpassword", "--post-data", '{"jsonrpc": "1.0", "id": "healthcheck", "method": "getblockchaininfo", "params": []}', "http://localhost:18443", "-O", "-"]
+          interval: 10s
+          timeout: 5s
+          retries: 10
+        restart: unless-stopped
+
+
     if: ${{ !contains(github.event.pull_request.title, '[cov]') }}
     uses: ./.github/workflows/union_test_template.yml
     with:
