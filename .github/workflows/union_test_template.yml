@@ -136,16 +136,20 @@ jobs:
           
           git clone --recurse-submodules --depth=1 --branch "$SAFE_BRANCH" --shallow-submodules https://github.com/${{ inputs.repo }} rust-bitvmx-workspace
 
+      # - name: Checkout current repository
+      #   uses: actions/checkout@v4
+      #   with:
+      #     ref: ${{ github.head_ref || github.ref_name }}
+      #     submodules: false
+      #     fetch-depth: 1   # optional: shallow clone to speed up
+
       - name: Checkout current repository
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref || github.ref_name }}
-          submodules: false
-          fetch-depth: 1   # optional: shallow clone to speed up
+        run: |
+          echo "Checking out branch: $SAFE_BRANCH"
+          git clone --depth=1 --branch "$SAFE_BRANCH" https://github.com/FairgateLabs/${{ inputs.submodule_path }} ${{ inputs.submodule_path }}
 
       - name: Handle Submodules for Nightly Build
         run: |
-          cd ..
           pwd
           find . -type d
           if [[ "$NIGHTLY" == "true" ]]; then
