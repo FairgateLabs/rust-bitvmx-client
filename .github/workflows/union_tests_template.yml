@@ -64,7 +64,7 @@ jobs:
         ports:
           - 18443:18443
         env:
-          BITCOIN_EXTRA_ARGS: "-regtest=1 -fallbackfee=0.0002 -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0 -txindex=1"
+          BITCOIN_EXTRA_ARGS: "-regtest=1 -fallbackfee=0.0002 -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0 -txindex=1 -server=1"
         options: >-
           --health-cmd "bitcoin-cli -regtest -rpcconnect=127.0.0.1 -rpcport=18443 getblockchaininfo || exit 1"
           --health-interval 10s
