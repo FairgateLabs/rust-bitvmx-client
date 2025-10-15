@@ -53,22 +53,6 @@ jobs:
       REPO_NAME: ${{ github.event.repository.name }}
       BRANCH: ${{ github.head_ref || 'main' }}
       BITCOIN_NETWORK: "regtest"
-      BITCOIND_RPC_PORT: 18443
-      BITCOIND_RPC_USERNAME: foo
-      BITCOIND_RPC_PASSWORD: rpcpassword
-      BITCOIND_RPC_NETWORK: regtest
-
-    services:
-      bitcoind:
-        image: ruimarinho/bitcoin-core
-        ports:
-          - 18443:18443
-        options: >-
-          --entrypoint ["bitcoind", "-regtest=1", "-fallbackfee=0.0002", "-rpcallowip=0.0.0.0/0", "-rpcbind=0.0.0.0", "-txindex=1"]
-          --health-cmd "bitcoin-cli -regtest -rpcconnect=127.0.0.1 -rpcport=18443 getblockchaininfo || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
 
     steps:
       - name: Debug inputs
@@ -258,14 +242,9 @@ jobs:
           run_example() {
             echo "::group::🧪 Running example: $1 $2"
             
-            echo "Stopping bitcoind..."
-            docker stop $(docker ps -q --filter ancestor=ruimarinho/bitcoin-core:29.1) || true
-
-            echo "Cleaning regtest data..."
-            docker ps -a
-            docker start $(docker ps -a -q --filter ancestor=ruimarinho/bitcoin-core:29.1) || \
-              docker run -d --name bitcoind-test ruimarinho/bitcoin-core:29.1 \
-                -regtest -rpcuser=user -rpcpassword=pass -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0
+            # Restart bitcoind
+            docker-compose -f ./docker/bitcoind.docker-compose.yml down || true
+            docker-compose -f ./docker/bitcoind.docker-compose.yml up
 
             echo "Waiting for bitcoind..."
             sleep 5
