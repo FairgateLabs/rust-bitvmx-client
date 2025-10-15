@@ -65,12 +65,7 @@ jobs:
           - 18443:18443
         options: >-
           --entrypoint bitcoind
-          --env BITCOIND_RPC_NETWORK=regtest
-          --env BITCOIN_EXTRA_ARGS=-regtest=1
-          --env BITCOIN_EXTRA_ARGS=-fallbackfee=0.0002
-          --env BITCOIN_EXTRA_ARGS=-rpcallowip=0.0.0.0/0
-          --env BITCOIN_EXTRA_ARGS=-rpcbind=0.0.0.0
-          --env BITCOIN_EXTRA_ARGS=-txindex=1
+          --env BITCOIN_EXTRA_ARGS="-regtest=1 -fallbackfee=0.0002 -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0 -txindex=1"
           --health-cmd "bitcoin-cli -regtest -rpcconnect=127.0.0.1 -rpcport=18443 getblockchaininfo || exit 1"
           --health-interval 10s
           --health-timeout 5s
