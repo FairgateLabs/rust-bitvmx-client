@@ -145,6 +145,7 @@ jobs:
 
       - name: Handle Submodules for Nightly Build
         run: |
+          cd ..
           pwd
           find . -type d
           if [[ "$NIGHTLY" == "true" ]]; then
