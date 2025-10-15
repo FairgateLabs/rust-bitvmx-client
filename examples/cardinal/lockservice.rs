@@ -26,8 +26,8 @@ use bitvmx_client::{
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
 
-use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
 use bitvmx_operator_comms::operator_comms::AllowList;
+use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
 use protocol_builder::types::Utxo;
 use storage_backend::{storage::Storage, storage_config::StorageConfig};
 use tracing::info;
@@ -152,7 +152,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>, identifier: Identifier)
         .map(|pair| pair.channel.clone())
         .collect::<Vec<_>>();
 
-    let command = IncomingBitVMXApiMessages::GetCommInfo().to_string()?;
+    let command = IncomingBitVMXApiMessages::GetCommInfo(Uuid::new_v4()).to_string()?;
     send_all(&id_channel_pairs, &command)?;
     let msgs = get_all(&channels)?;
     let addresses = msgs
@@ -160,7 +160,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>, identifier: Identifier)
         .map(|msg| {
             let msg = OutgoingBitVMXApiMessages::from_string(&msg.0).unwrap();
             match msg {
-                OutgoingBitVMXApiMessages::CommInfo(comm_info) => comm_info,
+                OutgoingBitVMXApiMessages::CommInfo(_, comm_info) => comm_info,
                 _ => panic!("Expected CommInfo message"),
             }
         })

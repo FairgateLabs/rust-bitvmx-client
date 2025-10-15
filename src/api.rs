@@ -4,7 +4,7 @@ use bitvmx_broker::identification::identifier::Identifier;
 use uuid::Uuid;
 
 pub trait BitVMXApi {
-    fn ping(&mut self, from: Identifier) -> Result<(), BitVMXError>;
+    fn ping(&mut self, from: Identifier, uuid: Uuid) -> Result<Uuid, BitVMXError>;
 
     fn setup_key(
         &mut self,
@@ -62,7 +62,7 @@ pub trait BitVMXApi {
         txid: Txid,
     ) -> Result<(), BitVMXError>;
 
-    fn subscribe_utxo(&mut self) -> Result<(), BitVMXError>;
+    fn subscribe_utxo(&mut self, uuid: Uuid) -> Result<Uuid, BitVMXError>;
 
     fn subscribe_to_rsk_pegin(&mut self) -> Result<(), BitVMXError>;
 

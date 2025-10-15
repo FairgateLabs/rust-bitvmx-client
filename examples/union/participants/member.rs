@@ -98,9 +98,9 @@ impl Member {
     }
 
     pub fn get_peer_info(&mut self) -> Result<CommsAddress> {
-        self.bitvmx.get_comm_info()?;
+        self.bitvmx.get_comm_info(Uuid::new_v4())?;
         thread::sleep(std::time::Duration::from_secs(5));
-        let addr = wait_until_msg!(&self.bitvmx, CommInfo(_addr) => _addr);
+        let addr = wait_until_msg!(&self.bitvmx, CommInfo(_, _addr) => _addr);
 
         self.address = Some(addr.clone());
         Ok(addr)

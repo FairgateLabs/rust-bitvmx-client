@@ -14,8 +14,8 @@ use bitvmx_broker::{
     identification::identifier::Identifier,
     rpc::{self, tls_helper::Cert},
 };
-use bitvmx_wallet::wallet::Destination;
 use bitvmx_operator_comms::operator_comms::AllowList;
+use bitvmx_wallet::wallet::Destination;
 use std::time::{Duration, Instant};
 use std::{
     sync::{Arc, Mutex},
@@ -51,8 +51,8 @@ impl BitVMXClient {
         })
     }
 
-    pub fn ping(&self) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::Ping())
+    pub fn ping(&self, id: Uuid) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::Ping(id))
     }
 
     pub fn setup(
@@ -97,8 +97,8 @@ impl BitVMXClient {
         self.send_message(IncomingBitVMXApiMessages::GetPubKey(id, new))
     }
 
-    pub fn get_comm_info(&self) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::GetCommInfo())
+    pub fn get_comm_info(&self, id: Uuid) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetCommInfo(id))
     }
 
     pub fn generate_zkp(&self, id: Uuid, input: Vec<u8>, elf_file_path: String) -> Result<()> {
@@ -133,8 +133,8 @@ impl BitVMXClient {
         ))
     }
 
-    pub fn subscribe_utxo(&self) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::SubscribeUTXO())
+    pub fn subscribe_utxo(&self, id: Uuid) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SubscribeUTXO(id))
     }
 
     pub fn subscribe_to_rsk_pegin(&self) -> Result<()> {
