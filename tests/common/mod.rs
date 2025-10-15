@@ -138,7 +138,7 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
             wallet_config.bitcoin.clone(),
             BitcoindFlags {
                 min_relay_tx_fee: 0.00001,
-                block_min_tx_fee: 0.00008,
+                block_min_tx_fee: 0.00002,
                 debug: 1,
                 fallback_fee: 0.0002,
             },
