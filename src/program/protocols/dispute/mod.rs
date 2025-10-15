@@ -1,4 +1,5 @@
 pub mod challenge;
+pub mod config;
 pub mod execution;
 pub mod input_handler;
 pub mod tx_news;
@@ -33,6 +34,7 @@ use crate::{
             claim::ClaimGate,
             dispute::{
                 challenge::{challenge_scripts, get_verifier_keys},
+                config::DisputeConfiguration,
                 execution::execution_result,
                 input_handler::{get_required_keys, get_txs_configuration, split_input},
             },
@@ -147,13 +149,11 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         &self,
         context: &ProgramContext,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
+        let config = DisputeConfiguration::load(&self.ctx.id, &context.globals)?;
+
         Ok(vec![(
             "pregenerated".to_string(),
-            context
-                .globals
-                .get_var(&self.ctx.id, "aggregated")?
-                .unwrap()
-                .pubkey()?,
+            config.operators_aggregated_pub.clone(),
         )])
     }
 
@@ -281,21 +281,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             (SignMode::Skip, SignMode::Single)
         };
 
-        let utxo = context
-            .globals
-            .get_var(&self.ctx.id, "utxo")?
-            .unwrap()
-            .utxo()?;
-
-        let utxo_prover_win_action = context
-            .globals
-            .get_var(&self.ctx.id, "utxo_prover_win_action")?
-            .unwrap()
-            .utxo()?;
-
-        let utxo_verifier_win_action = context
-            .globals
-            .get_var(&self.ctx.id, "utxo_verifier_win_action")?;
+        let config = DisputeConfiguration::load(&self.ctx.id, &context.globals)?;
+        let utxo = config.protocol_connection.0.clone();
 
         let prover_speedup_pub = keys[0].get_public("speedup")?;
         let verifier_speedup_pub = keys[1].get_public("speedup")?;
@@ -335,11 +322,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1, true))?;
         amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1, false))?;
 
-        let timelock_blocks = context
-            .globals
-            .get_var(&self.ctx.id, TIMELOCK_BLOCKS_KEY)?
-            .unwrap()
-            .number()? as u16;
+        let timelock_blocks = config.timelock_blocks;
 
         let claim_prover = ClaimGate::new(
             &mut protocol,
@@ -373,23 +356,27 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             claim_prover.exclusive_success_vout,
         )?;
 
-        self.add_action(
-            &mut protocol,
-            &utxo_prover_win_action,
-            &prover_speedup_pub,
-            &ParticipantRole::Prover,
-            PROVER_WINS,
-            1,
-        )?;
-
-        if utxo_verifier_win_action.is_some() {
+        for (n, (utxo, leaves)) in config.prover_actions.iter().enumerate() {
             self.add_action(
                 &mut protocol,
-                &utxo_verifier_win_action.unwrap().utxo()?,
+                utxo,
+                leaves,
+                &prover_speedup_pub,
+                &ParticipantRole::Prover,
+                PROVER_WINS,
+                n as u32 + 1,
+            )?;
+        }
+
+        for (n, (utxo, leaves)) in config.prover_actions.iter().enumerate() {
+            self.add_action(
+                &mut protocol,
+                utxo,
+                leaves,
                 &verifier_speedup_pub,
                 &ParticipantRole::Verifier,
                 VERIFIER_WINS,
-                1,
+                n as u32 + 1,
             )?;
         }
 
@@ -609,6 +596,7 @@ impl DisputeResolutionProtocol {
         &self,
         protocol: &mut Protocol,
         utxo_action: &PartialUtxo,
+        leaves: &Vec<usize>,
         speedup_pub: &PublicKey,
         role: &ParticipantRole,
         claim: &str,
@@ -642,7 +630,9 @@ impl DisputeResolutionProtocol {
             &action_wins(role, action_number),
             InputSpec::Auto(
                 SighashType::taproot_all(),
-                SpendMode::Script { leaf: 1 }, //the alternate key is on leaf 1
+                SpendMode::Scripts {
+                    leaves: leaves.clone(),
+                },
             ),
             None,
             Some(utxo_action.0),
@@ -909,14 +899,10 @@ impl DisputeResolutionProtocol {
         &self,
         context: &ProgramContext,
     ) -> Result<(ProgramDefinition, String), BitVMXError> {
-        let program_definition = context
-            .globals
-            .get_var(&self.ctx.id, "program_definition")?
-            .unwrap()
-            .string()?;
+        let config = DisputeConfiguration::load(&self.ctx.id, &context.globals)?;
         Ok((
-            ProgramDefinition::from_config(&program_definition)?,
-            program_definition,
+            ProgramDefinition::from_config(&config.program_definition)?,
+            config.program_definition,
         ))
     }
 }

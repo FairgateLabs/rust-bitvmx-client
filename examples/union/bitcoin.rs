@@ -91,7 +91,7 @@ pub fn stop_existing_bitcoind() -> Result<()> {
     // Create a temporary Bitcoind instance to check if one is running and stop it
     let temp_bitcoind = Bitcoind::new(
         "bitcoin-regtest",
-        "ruimarinho/bitcoin-core",
+        "bitcoin/bitcoin:29.1",
         config.bitcoin.clone(),
     );
 
@@ -123,7 +123,7 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind)> {
             // Config to trigger speedup transactions in Regtest
             Bitcoind::new_with_flags(
                 "bitcoin-regtest",
-                "ruimarinho/bitcoin-core",
+                "bitcoin/bitcoin:29.1",
                 config.bitcoin.clone(),
                 BitcoindFlags {
                     min_relay_tx_fee: 0.00001,
@@ -135,7 +135,7 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind)> {
         }
         false => Bitcoind::new(
             "bitcoin-regtest",
-            "ruimarinho/bitcoin-core",
+            "bitcoin/bitcoin:29.1",
             config.bitcoin.clone(),
         ),
     };

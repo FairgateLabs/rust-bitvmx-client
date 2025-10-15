@@ -4,7 +4,6 @@ use bitvmx_cpu_definitions::{memory::MemoryWitness, trace::*};
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use console::style;
-use emulator::decision::challenge::{ForceChallenge, ForceCondition};
 use tracing::info;
 
 use crate::{
@@ -16,6 +15,7 @@ use crate::{
             claim::ClaimGate,
             dispute::{
                 action_wins,
+                config::DisputeConfiguration,
                 input_handler::{get_txs_configuration, unify_inputs, unify_witnesses},
                 timeout_input_tx, timeout_tx, DisputeResolutionProtocol, CHALLENGE, COMMITMENT,
                 EXECUTE, INPUT_TX, PROVER_WINS, TRACE_VARS, VERIFIER_WINS,
@@ -283,13 +283,11 @@ pub fn handle_tx_news(
         current_height,
     );
 
+    let config = DisputeConfiguration::load(&drp.ctx.id, &program_context.globals)?;
+
     cancel_timeout(drp, &name, vout, program_context)?;
 
-    let timelock_blocks = program_context
-        .globals
-        .get_var(&drp.ctx.id, "TIMELOCK_BLOCKS")?
-        .unwrap()
-        .number()?;
+    let timelock_blocks = config.timelock_blocks;
 
     auto_dispatch_timeout(drp, &name, vout, program_context, current_height)?;
 
@@ -301,19 +299,10 @@ pub fn handle_tx_news(
         vout,
         program_context,
         current_height,
-        timelock_blocks,
+        timelock_blocks as u32,
     )?;
 
-    let (fail_config_prover, fail_config_verifier, force, force_condition) = program_context
-        .globals
-        .get_var(&drp.ctx.id, "fail_force_config")?
-        .unwrap_or(VariableTypes::FailConfiguration(
-            None,
-            None,
-            ForceChallenge::No,
-            ForceCondition::No,
-        ))
-        .fail_configuration()?;
+    let fail_config = config.fail_configuration.unwrap_or_default();
 
     if name.starts_with(INPUT_TX) && vout.is_some() {
         let idx = name.strip_prefix(INPUT_TX).unwrap().parse::<u32>()?;
@@ -337,7 +326,7 @@ pub fn handle_tx_news(
                         full_input,
                         execution_path.clone(),
                         format!("{}/{}", execution_path, "execution.json").to_string(),
-                        fail_config_prover.clone(),
+                        fail_config.fail_prover.clone(),
                     ),
                 })?;
                 program_context
@@ -398,8 +387,8 @@ pub fn handle_tx_news(
                 last_step,
                 hex::encode(last_hash),
                 format!("{}/{}", execution_path, "execution.json").to_string(),
-                force_condition,
-                fail_config_verifier.clone(),
+                fail_config.force_condition,
+                fail_config.fail_verifier.clone(),
             ),
         })?;
 
@@ -460,7 +449,7 @@ pub fn handle_tx_news(
                         round as u8,
                         decision as u32,
                         format!("{}/{}", execution_path, "execution.json").to_string(),
-                        fail_config_prover.clone(),
+                        fail_config.fail_prover.clone(),
                     ),
                 })?;
                 program_context
@@ -474,7 +463,7 @@ pub fn handle_tx_news(
                         execution_path.clone(),
                         (decision + 1) as u32,
                         format!("{}/{}", execution_path, "execution.json").to_string(),
-                        fail_config_prover.clone(),
+                        fail_config.fail_prover.clone(),
                     ),
                 })?;
                 program_context
@@ -542,7 +531,7 @@ pub fn handle_tx_news(
                 round as u8,
                 hashes,
                 format!("{}/{}", execution_path, "execution.json").to_string(),
-                fail_config_verifier.clone(),
+                fail_config.fail_verifier.clone(),
             ),
         })?;
 
@@ -660,8 +649,8 @@ pub fn handle_tx_news(
                 execution_path.clone(),
                 final_trace,
                 format!("{}/{}", execution_path, "execution.json").to_string(),
-                fail_config_verifier.clone(),
-                force,
+                fail_config.fail_verifier.clone(),
+                fail_config.force.clone(),
             ),
         })?;
         program_context
