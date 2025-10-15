@@ -234,7 +234,10 @@ jobs:
             ${{ runner.os }}-${{ inputs.submodule_path }}-target-
 
       - name: Build project
-        run: cargo build --release
+        run: | 
+          pwd
+          find . -type d
+          cargo build --release
 
       - name: Run integration examples
         run: |
