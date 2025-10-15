@@ -3,12 +3,14 @@ use crate::{
     macros::wait_for_message_blocking,
     setup::{
         accept_pegin_setup::AcceptPegInSetup, advance_funds_setup::AdvanceFunds,
-        dispute_core_setup::DisputeCoreSetup, user_take_setup::UserTakeSetup,
+        dispute_channel_setup::DisputeChannelSetup, dispute_core_setup::DisputeCoreSetup,
+        init_setup::InitSetup, user_take_setup::UserTakeSetup,
     },
     wait_until_msg,
 };
 use anyhow::Result;
 use bitcoin::{address::NetworkUnchecked, Amount, PublicKey, ScriptBuf, Transaction, Txid};
+use bitvmx_client::program::protocols::union::common::get_dispute_pair_aggregated_key_pid;
 use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
@@ -35,13 +37,15 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct FundingAmount {
     pub speedup: u64,
-    pub protocol_funding: u64,
+    pub operator_funding: u64,
+    pub watchtower_funding: u64,
     pub advance_funds: u64,
 }
 
 pub struct FundingUtxos {
     pub speedup: PartialUtxo,
-    pub protocol_funding: PartialUtxo,
+    pub operator_funding: PartialUtxo,
+    pub watchtower_funding: PartialUtxo,
     pub advance_funds: PartialUtxo,
 }
 
@@ -124,7 +128,6 @@ impl Member {
         self.keyring.communication_pubkey = Some(communication_pubkey);
 
         info!(
-            id = self.id,
             "Member keys setup complete: take_pubkey: {}, dispute_pubkey: {}, communication_pubkey: {}",
             take_pubkey.to_string(),
             dispute_pubkey.to_string(),
@@ -141,6 +144,7 @@ impl Member {
         members_dispute_pubkeys: &[PublicKey],
         take_aggregation_id: Uuid,
         dispute_aggregation_id: Uuid,
+        committee_id: Uuid,
     ) -> Result<()> {
         self.make_aggregated_keys(
             members,
@@ -149,12 +153,13 @@ impl Member {
             take_aggregation_id,
             dispute_aggregation_id,
         )?;
-        self.make_pairwise_keys(members, take_aggregation_id)?;
+
+        self.make_pairwise_keys(members, committee_id)?;
 
         Ok(())
     }
 
-    pub fn setup_dispute_protocols(
+    pub fn setup_dispute_core(
         &mut self,
         committee_id: Uuid,
         members: &Vec<MemberData>,
@@ -164,7 +169,7 @@ impl Member {
     ) -> Result<()> {
         info!(
             id = self.id,
-            "Setting up dispute protocols for member {}", self.id
+            "Setting up dispute core for member {}", self.id
         );
 
         DisputeCoreSetup::setup(
@@ -191,8 +196,66 @@ impl Member {
             info!(id = self.id, program_id = ?program_id, "Dispute core setup completed for operator index {}", i);
         }
 
-        // TODO: add the dispute channeles here
+        Ok(())
+    }
 
+    pub fn setup_init(
+        &mut self,
+        committee_id: Uuid,
+        members: &Vec<MemberData>,
+        funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
+        addresses: &Vec<CommsAddress>,
+    ) -> Result<()> {
+        InitSetup::setup(
+            committee_id,
+            members,
+            self.keyring.take_aggregated_key.unwrap(),
+            self.keyring.dispute_aggregated_key.unwrap(),
+            &self.bitvmx,
+            funding_utxos_per_member,
+            addresses,
+        )?;
+
+        for i in 0..members.len() {
+            // Wait for the init setup to complete
+            let program_id =
+                wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
+            info!(id = self.id, program_id = ?program_id, "Init setup completed for operator index {}", i);
+        }
+
+        Ok(())
+    }
+
+    pub fn setup_dispute_channel(
+        &mut self,
+        committee_id: Uuid,
+        members: &Vec<MemberData>,
+        wt_funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
+        addresses: &Vec<CommsAddress>,
+    ) -> Result<()> {
+        info!(
+            id = self.id,
+            "Setting up dispute channel for member {}", self.id
+        );
+
+        DisputeChannelSetup::setup(
+            &self.id,
+            &self.address()?.clone(),
+            &self.role,
+            self.keyring.take_pubkey.as_ref().unwrap(),
+            &self.keyring.pairwise_keys,
+            &self.bitvmx,
+            members,
+            committee_id,
+            wt_funding_utxos_per_member,
+            addresses,
+        )?;
+
+        for i in 0..members.len() {
+            let program_id =
+                wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
+            info!(id = self.id, program_id = ?program_id, "Dispute channel setup completed for operator index {}", i);
+        }
         Ok(())
     }
 
@@ -328,12 +391,12 @@ impl Member {
         Ok(())
     }
 
-    fn make_pairwise_keys(&mut self, members: &[Member], session_id: Uuid) -> Result<()> {
+    fn make_pairwise_keys(&mut self, members: &[Member], committee_id: Uuid) -> Result<()> {
         let my_address = self.address()?.clone();
 
         // Create a sorted list of members to have a canonical order of pairs.
         let mut sorted_members = members.to_vec();
-        sorted_members.sort_by(|a, b| a.address.cmp(&b.address));
+        sorted_members.sort_by(|a, b| a.id.cmp(&b.id));
 
         for i in 0..sorted_members.len() {
             for j in (i + 1)..sorted_members.len() {
@@ -358,12 +421,8 @@ impl Member {
 
                     let participants = vec![op1_address.clone(), op2_address.clone()];
 
-                    // Create a deterministic aggregation_id for the pair that includes session_id
-                    let namespace = Uuid::NAMESPACE_DNS;
-                    let name_to_hash =
-                        format!("{:?}{:?}{:?}", op1_address, op2_address, session_id);
-
-                    let aggregation_id = Uuid::new_v5(&namespace, name_to_hash.as_bytes());
+                    // Deterministic id: committee_id + ordered indices + tag
+                    let aggregation_id = get_dispute_pair_aggregated_key_pid(committee_id, i, j);
                     let pairwise_key = self.setup_key(aggregation_id, &participants, None)?;
 
                     let other_address = self.get_counterparty_address(member1, member2)?;
@@ -372,7 +431,14 @@ impl Member {
                         .pairwise_keys
                         .insert(other_address.clone(), pairwise_key);
 
-                    info!(peer = ?other_address, key = ?pairwise_key.to_string(), "Generated pairwise key");
+                    let pair_members = format!("{}<>{}", member1.id, member2.id);
+                    info!(
+                        members = %pair_members,
+                        pair_id = ?aggregation_id,
+                        peer = ?other_address,
+                        key = %pairwise_key.to_string(),
+                        "Generated dispute-channel pair aggregated key"
+                    );
                 }
             }
         }
@@ -385,12 +451,13 @@ impl Member {
         addresses: &[CommsAddress],
         public_keys: Option<&[PublicKey]>,
     ) -> Result<PublicKey> {
-        info!(
+        debug!(
             id = self.id,
             aggregation_id = ?aggregation_id,
             addresses = ?addresses,
             "Setting up aggregated key"
         );
+
         self.bitvmx.setup_key(
             aggregation_id,
             addresses.to_vec(),
@@ -399,7 +466,7 @@ impl Member {
         )?;
 
         let aggregated_key = wait_until_msg!(&self.bitvmx, AggregatedPubkey(_, _key) => _key);
-        info!(
+        debug!(
             id = self.id,
             "Key setup complete {}",
             aggregated_key.to_string()
@@ -474,14 +541,18 @@ impl Member {
         info!(
             "Funding dispute pubkey of {} with: {}",
             self.id,
-            amounts.speedup + amounts.protocol_funding + amounts.advance_funds
+            amounts.speedup
+                + amounts.operator_funding
+                + amounts.watchtower_funding
+                + amounts.advance_funds
         );
 
         self.bitvmx.send_funds(
             id,
             Destination::Batch(vec![
                 Destination::P2WPKH(public_key, amounts.speedup),
-                Destination::P2WPKH(public_key, amounts.protocol_funding),
+                Destination::P2WPKH(public_key, amounts.operator_funding),
+                Destination::P2WPKH(public_key, amounts.watchtower_funding),
                 Destination::P2WPKH(public_key, amounts.advance_funds),
             ]),
             Some(fee_rate),
@@ -503,8 +574,13 @@ impl Member {
             script_pubkey: script_pubkey.clone(),
             public_key: public_key,
         };
-        let protocol_funding_ot = OutputType::SegwitPublicKey {
-            value: Amount::from_sat(amounts.protocol_funding),
+        let operator_funding_ot = OutputType::SegwitPublicKey {
+            value: Amount::from_sat(amounts.operator_funding),
+            script_pubkey: script_pubkey.clone(),
+            public_key: public_key,
+        };
+        let watchtower_funding_ot = OutputType::SegwitPublicKey {
+            value: Amount::from_sat(amounts.watchtower_funding),
             script_pubkey: script_pubkey.clone(),
             public_key: public_key,
         };
@@ -517,13 +593,19 @@ impl Member {
         // Output indexes should match the order in the Destination::Batch above
         Ok(FundingUtxos {
             speedup: (txid, 0, Some(amounts.speedup), Some(speedup_ot)),
-            protocol_funding: (
+            operator_funding: (
                 txid,
                 1,
-                Some(amounts.protocol_funding),
-                Some(protocol_funding_ot),
+                Some(amounts.operator_funding),
+                Some(operator_funding_ot),
             ),
-            advance_funds: (txid, 2, Some(amounts.advance_funds), Some(advance_funds_ot)),
+            watchtower_funding: (
+                txid,
+                2,
+                Some(amounts.watchtower_funding),
+                Some(watchtower_funding_ot),
+            ),
+            advance_funds: (txid, 3, Some(amounts.advance_funds), Some(advance_funds_ot)),
         })
     }
 
