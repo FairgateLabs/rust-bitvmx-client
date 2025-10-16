@@ -632,11 +632,9 @@ pub fn request_pegin(committee_public_key: PublicKey, user: &mut User) -> Result
     let amount: u64 = STREAM_DENOMINATION; // This should be replaced with the actual amount of the peg-in request
     let request_pegin_txid = user.request_pegin(&committee_public_key, amount)?;
 
-    wait_for_blocks(
-        &BitcoinWrapper::new_from_config(&user.config)?,
-        get_blocks_to_wait(),
-    )?;
-    thread::sleep(Duration::from_secs(2)); // wait for the coordinator to update
+    thread::sleep(Duration::from_secs(5)); // wait for the bitcoin node to update
+    wait_for_blocks(&BitcoinWrapper::new_from_config(&user.config)?, 5)?;
+    thread::sleep(Duration::from_secs(5)); // wait for the coordinator to update
 
     user.get_request_pegin_spv(request_pegin_txid)?;
 
