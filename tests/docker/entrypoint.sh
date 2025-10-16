@@ -12,7 +12,7 @@ mkdir -p /logs
 bitcoind ${NET_ARG} \
   -fallbackfee=0.0002 \
   -minrelaytxfee=0.00001 \
-  -blockmintxfee=0.00008 \
+  -blockmintxfee=0.00002 \
   -debug=1 \
   -datadir=/app/data \
   -rpcuser=${RPC_USER} \
@@ -32,7 +32,17 @@ done
 echo "✅ bitcoind is ready!"
 
 echo "Creating test wallet 'test_wallet'..."
-${CLI_CMD} createwallet "test_wallet" false false "" false false true > /dev/null 2>&1 || echo "Wallet already exists or creation failed, continuing..."
+# createwallet "wallet_name" disable_private_keys blank "passphrase" avoid_reuse descriptors load_on_startup
+if ${CLI_CMD} createwallet "test_wallet" false false "" false true > /dev/null 2>&1; then
+  echo "✅ Wallet created successfully"
+else
+  echo "Wallet already exists, trying to load..."
+  if ${CLI_CMD} loadwallet "test_wallet" > /dev/null 2>&1; then
+    echo "✅ Wallet loaded successfully"
+  else
+    echo "⚠️  Wallet issue, but continuing..."
+  fi
+fi
 
 echo "Getting address from test wallet..."
 DEFAULT_ADDRESS=$(${CLI_CMD} -rpcwallet=test_wallet getnewaddress "" "bech32")
@@ -51,6 +61,6 @@ echo "✅ Setup complete! Test wallet final balance: $FINAL_BALANCE BTC"
 BLOCKCHAIN_INFO=$(${CLI_CMD} getblockchaininfo | grep -E '"blocks":|"chain":')
 echo "Blockchain status: $BLOCKCHAIN_INFO"
 
-echo "🚀 bitcoind is fully initialized and ready for testing!"
+echo "Bitcoind is fully initialized and ready for testing!"
 
 tail -f /logs/bitcoind.log
