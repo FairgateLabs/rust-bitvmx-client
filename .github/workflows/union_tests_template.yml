@@ -217,8 +217,8 @@ jobs:
             echo "::group::🧪 Running example: $1 $2"
             
             # Restart bitcoind
-            docker compose -f ./docker/bitcoind.docker-compose.yml down || true
-            docker compose -f ./docker/bitcoind.docker-compose.yml up
+            docker compose -f ./docker/bitcoind.docker-compose.yml down bitcoind > /dev/null 2>&1 &
+            docker compose -f ./docker/bitcoind.docker-compose.yml up bitcoind > /dev/null 2>&1 &
 
             echo "Waiting for bitcoind..."
             sleep 5
