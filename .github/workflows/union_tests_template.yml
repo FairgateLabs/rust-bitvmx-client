@@ -11,14 +11,6 @@ on:
         description: 'Path to the submodule within the repository'
         required: true
         type: string
-      cargo_lock_path:
-        description: 'Path to the Cargo.lock file'
-        required: true
-        type: string
-      target_path:
-        description: 'Path to the target directory'
-        required: true
-        type: string
       nightly:
         description: 'Flag to determine if nightly triggered'
         required: false
