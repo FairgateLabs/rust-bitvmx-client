@@ -1,7 +1,7 @@
-# ubuntu:bionic
-FROM ubuntu@sha256:8d31dad0c58f552e890d68bbfb735588b6b820a46e459672d96e585871acc110 as build
+# ubuntu:focal (20.04) - Has GLIBC 2.31 which is required for Bitcoin Core 29.1
+FROM ubuntu:focal as build
 
-ENV VERSION 24.0.1
+ENV VERSION 29.1
 ENV ARCH x86_64-linux-gnu
 
 ARG BITCOIND_RPC_NETWORK
