@@ -117,7 +117,7 @@ jobs:
           echo "SAFE_BRANCH=$SAFE_BRANCH" >> $GITHUB_ENV
           echo "✅ Using validated branch: $SAFE_BRANCH"
           
-          cd ..
+          cd ${ROOT}
           git clone --recurse-submodules --depth=1 --branch "$SAFE_BRANCH" --shallow-submodules https://github.com/${{ inputs.repo }} rust-bitvmx-workspace
 
       - name: Move submodule contents to root of submodule path
