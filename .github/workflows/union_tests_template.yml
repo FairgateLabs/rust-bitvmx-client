@@ -71,8 +71,6 @@ jobs:
           
           [[ -z "${{ inputs.repo }}" ]] && ERRORS+=("'repo' input cannot be empty")
           [[ -z "${{ inputs.submodule_path }}" ]] && ERRORS+=("'submodule_path' input cannot be empty")
-          [[ -z "${{ inputs.cargo_lock_path }}" ]] && ERRORS+=("'cargo_lock_path' input cannot be empty")
-          [[ -z "${{ inputs.target_path }}" ]] && ERRORS+=("'target_path' input cannot be empty")          
           
           if [[ ! "${{ inputs.repo }}" =~ ^[a-zA-Z0-9_\-]+/[a-zA-Z0-9_\-]+$ ]]; then
             ERRORS+=("'repo' must be in format 'owner/repo'")
