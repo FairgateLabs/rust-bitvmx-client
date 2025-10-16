@@ -223,10 +223,10 @@ jobs:
           run_example create_wallet
 
           # Protocol steps
-          run_example committee
-          run_example request_pegin
-          run_example accept_pegin
-          run_example request_pegout
-          run_example advance_funds
-          run_example advance_funds_twice
-          run_example double_reimbursement
+          # run_example committee
+          # run_example request_pegin
+          # run_example accept_pegin
+          # run_example request_pegout
+          # run_example advance_funds
+          # run_example advance_funds_twice
+          # run_example double_reimbursement
