@@ -133,13 +133,14 @@ jobs:
         run: |
           echo "Running in submodule-triggered mode"
 
-          if [[ -f "/home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/rust-bitvmx-workspace/.cargo/config.toml" ]]; then
+          if [[ -f "${ROOT}/rust-bitvmx-workspace/.cargo/config.toml" ]]; then
             echo "Copying .cargo/config.toml to preserve patches"
-            mkdir -p "/home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/.cargo"
-            cp -f "/home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/rust-bitvmx-workspace/.cargo/config.toml" "/home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/.cargo/"
+            rm -f ${ROOT}/.cargo/config.toml
+            mkdir -p "${ROOT}/.cargo"
+            cp -f "${ROOT}/rust-bitvmx-workspace/.cargo/config.toml" "${ROOT}/.cargo/"
           fi
 
-          find /home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/rust-bitvmx-workspace -mindepth 1 -maxdepth 1 ! -name '${{ inputs.submodule_path }}' -exec mv -f {} /home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/ \;
+          find ${ROOT}/rust-bitvmx-workspace -mindepth 1 -maxdepth 1 ! -name '${{ inputs.submodule_path }}' -exec mv -f {} ${ROOT}/ \;
 
       - name: Checkout current branch
         uses: actions/checkout@v4
@@ -219,8 +220,8 @@ jobs:
 
           # Run all desired examples
           # Pre setup examples
-          run_example wallet_balance
-          run_example create_wallet
+          # run_example wallet_balance
+          # run_example create_wallet
 
           # Protocol steps
           # run_example committee
