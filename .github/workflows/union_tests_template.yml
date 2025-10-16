@@ -156,10 +156,25 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Cache Submodule Target Directory
+      - name: Cache Submodules Target Directory
         uses: actions/cache@v4
         with:
-          path: ${{ env.ROOT }}/${{ inputs.submodule_path }}/target
+          path: |
+            ${{ env.ROOT }}/${{ inputs.submodule_path }}/target
+            ${{ env.ROOT }}/rust-bitvmx-storage-backend/target
+            ${{ env.ROOT }}/rust-bitvmx-bitcoin-rpc/target
+            ${{ env.ROOT }}/rust-bitvmx-settings/target
+            ${{ env.ROOT }}/BitVMX-CPU/target
+            ${{ env.ROOT }}/rust-bitvmx-broker/target
+            ${{ env.ROOT }}/rust-bitcoind/target
+            ${{ env.ROOT }}/rust-bitvmx-key-manager/target
+            ${{ env.ROOT }}/rust-bitvmx-protocol-builder/target
+            ${{ env.ROOT }}/rust-bitcoin-indexer/target
+            ${{ env.ROOT }}/rust-bitvmx-transaction-monitor/target
+            ${{ env.ROOT }}/rust-bitvmx-operator-comms/target
+            ${{ env.ROOT }}/rust-bitvmx-wallet/target
+            ${{ env.ROOT }}/rust-bitcoin-coordinator/target
+            ${{ env.ROOT }}/rust-bitvmx-job-dispatcher/target
           key: ${{ runner.os }}-${{ inputs.submodule_path }}-target-${{ hashFiles(format('{0}/Cargo.lock', inputs.submodule_path)) }}
           restore-keys: |
             ${{ runner.os }}-${{ inputs.submodule_path }}-target-
