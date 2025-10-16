@@ -173,10 +173,10 @@ jobs:
           if [[ -f "/home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/rust-bitvmx-workspace/.cargo/config.toml" ]]; then
             echo "Copying .cargo/config.toml to preserve patches"
             mkdir -p "/home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/.cargo"
-            cp "/home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/rust-bitvmx-workspace/.cargo/config.toml" "/home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/.cargo/"
+            cp -f "/home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/rust-bitvmx-workspace/.cargo/config.toml" "/home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/.cargo/"
           fi
 
-          find /home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/rust-bitvmx-workspace -mindepth 1 -maxdepth 1 ! -name '${{ inputs.submodule_path }}' -exec mv {} /home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/ \;
+          find /home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/rust-bitvmx-workspace -mindepth 1 -maxdepth 1 ! -name '${{ inputs.submodule_path }}' -exec mv -f {} /home/runner/work/${{ inputs.submodule_path }}/${{ inputs.submodule_path }}/ \;
 
       - name: Checkout current branch
         uses: actions/checkout@v4
