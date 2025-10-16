@@ -94,16 +94,6 @@ jobs:
             exit 1
           fi
           echo "✅ All inputs validated successfully"
-      
-      # - name: Cleanup Disk Space
-      #   run: |
-      #     echo "🧹 Cleaning up disk space..."
-      #     sudo rm -rf /usr/share/dotnet
-      #     sudo rm -rf /usr/local/lib/android
-      #     sudo rm -rf /opt/ghc
-      #     sudo rm -rf /usr/local/share/boost
-      #     sudo rm -rf "$AGENT_TOOLSDIRECTORY"
-      #     echo "✅ Disk cleanup completed"
 
       - name: Check disk space
         run: df -h
