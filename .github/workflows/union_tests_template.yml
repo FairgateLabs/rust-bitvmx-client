@@ -190,7 +190,7 @@ jobs:
           set -e
 
           run_example() {
-            echo "::group::🧪 Running example: $1 $2"
+            echo "::group::🧪 Running example: $1"
             
             # Restart bitcoind
             docker compose -f ./docker/bitcoind.docker-compose.yml down bitcoind > /dev/null 2>&1 &
@@ -199,6 +199,7 @@ jobs:
             echo "Waiting for bitcoind..."
             sleep 5
 
+            # Clean previous state
             rm -rf /tmp/broker_p2p_6118* /tmp/regtest/ || true
             LOG_DIR="./logs/$1"
             mkdir -p "$LOG_DIR"
@@ -207,6 +208,7 @@ jobs:
             RUST_BACKTRACE=full cargo run --release all --fresh \
               2>&1 | sed -u -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})*)?[mGKHF]//g" > $LOG_DIR/bitvmx.log &
 
+            # Wait for bitvmx clients to be ready
             sleep 10
 
             # Run example
@@ -216,7 +218,15 @@ jobs:
           }
 
           # Run all desired examples
+          # Pre setup examples
           run_example wallet_balance
           run_example create_wallet
-        
-      
+
+          # Protocol steps
+          run_example committee
+          run_example request_pegin
+          run_example accept_pegin
+          run_example request_pegout
+          run_example advance_funds
+          run_example advance_funds_twice
+          run_example double_reimbursement
