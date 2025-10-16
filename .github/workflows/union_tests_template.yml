@@ -208,9 +208,6 @@ jobs:
 
       - name: Run integration examples
         run: |
-          pwd
-          find . -type d
-          ls ./docker/
           set -e
 
           run_example() {
