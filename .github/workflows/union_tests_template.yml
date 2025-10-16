@@ -119,33 +119,6 @@ jobs:
         env:
           REPO_TOKEN: ${{ secrets.REPO_ACCESS_TOKEN }}
 
-      - name: Cache Cargo Registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Cache Workspace Target Directory
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-workspace-target-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-workspace-target-
-
-      - name: Cache Submodule Target Directory
-        uses: actions/cache@v4
-        with:
-          path: ${{ inputs.submodule_path }}/target
-          key: ${{ runner.os }}-${{ inputs.submodule_path }}-target-${{ hashFiles(format('{0}/Cargo.lock', inputs.submodule_path)) }}
-          restore-keys: |
-            ${{ runner.os }}-${{ inputs.submodule_path }}-target-
-
       - name: Checkout Workspace Repository
         run: |
           PR_TITLE="${{ github.event.pull_request.title }}"
@@ -184,12 +157,40 @@ jobs:
           ref: ${{ github.head_ref || github.ref_name }}
           fetch-depth: 1
 
+      - name: Cache Rust toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.rustup
+            ~/.cargo/bin
+          key: ${{ runner.os }}-rustup-${{ hashFiles('**/rust-toolchain*') }}
+          restore-keys: |
+            ${{ runner.os }}-rustup-
+
       - name: Install Rust Toolchain
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: stable
           override: true
+
+      - name: Cache Cargo registry and git index
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Cache Submodule Target Directory
+        uses: actions/cache@v4
+        with:
+          path: ${{ inputs.submodule_path }}/target
+          key: ${{ runner.os }}-${{ inputs.submodule_path }}-target-${{ hashFiles(format('{0}/Cargo.lock', inputs.submodule_path)) }}
+          restore-keys: |
+            ${{ runner.os }}-${{ inputs.submodule_path }}-target-
 
       - name: Build project
         run: | 
