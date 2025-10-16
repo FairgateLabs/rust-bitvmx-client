@@ -166,12 +166,8 @@ jobs:
 
       - name: Build project
         run: | 
-          pwd
           cd ${ROOT}/${{ inputs.submodule_path }}
-          pwd
-          find . -type d
           cargo build --release
-          find . -type d
       - name: Run integration examples
         run: |
           set -e
