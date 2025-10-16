@@ -27,8 +27,6 @@ jobs:
     with:
       repo: 'FairgateLabs/rust-bitvmx-workspace'
       submodule_path: 'rust-bitvmx-client'
-      cargo_lock_path: 'rust-bitvmx-client/Cargo.lock'
-      target_path: 'rust-bitvmx-client/target'
       cargo_features: 'testpanic'
       nightly: false
     secrets: inherit
