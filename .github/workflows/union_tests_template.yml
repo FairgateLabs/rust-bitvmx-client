@@ -159,7 +159,7 @@ jobs:
       - name: Cache Workspace Target Directory
         uses: actions/cache@v4
         with:
-          path: target
+          path: ${ROOT}/target
           key: ${{ runner.os }}-workspace-target-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-workspace-target-
@@ -167,7 +167,7 @@ jobs:
       - name: Cache Submodule Target Directory
         uses: actions/cache@v4
         with:
-          path: ${{ inputs.submodule_path }}/target
+          path: ${ROOT}/${{ inputs.submodule_path }}/target
           key: ${{ runner.os }}-${{ inputs.submodule_path }}-target-${{ hashFiles(format('{0}/Cargo.lock', inputs.submodule_path)) }}
           restore-keys: |
             ${{ runner.os }}-${{ inputs.submodule_path }}-target-
