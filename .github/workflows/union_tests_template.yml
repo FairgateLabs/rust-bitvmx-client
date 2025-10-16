@@ -157,16 +157,6 @@ jobs:
           ref: ${{ github.head_ref || github.ref_name }}
           fetch-depth: 1
 
-      - name: Cache Rust toolchain
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.rustup
-            ~/.cargo/bin
-          key: ${{ runner.os }}-rustup-${{ hashFiles('**/rust-toolchain*') }}
-          restore-keys: |
-            ${{ runner.os }}-rustup-
-
       - name: Install Rust Toolchain
         uses: actions-rs/toolchain@v1
         with:
