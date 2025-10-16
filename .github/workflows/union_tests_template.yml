@@ -119,16 +119,6 @@ jobs:
         env:
           REPO_TOKEN: ${{ secrets.REPO_ACCESS_TOKEN }}
 
-      - name: Cache Rust Toolchain
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.rustup
-            ~/.cargo/bin
-          key: ${{ runner.os }}-rustup-${{ hashFiles('**/rust-toolchain*') }}
-          restore-keys: |
-            ${{ runner.os }}-rustup-
-
       - name: Cache Cargo Registry
         uses: actions/cache@v4
         with:
