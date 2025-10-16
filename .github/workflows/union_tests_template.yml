@@ -183,6 +183,7 @@ jobs:
         run: | 
           cd ${ROOT}/${{ inputs.submodule_path }}
           cargo build --release
+          cargo build --release --example union 
       - name: Run integration examples
         run: |
           set -e
