@@ -907,11 +907,11 @@ fn challenge_trace_hash_prover() -> Result<()> {
     test_challenge(ForcedChallenges::TraceHash(ParticipantRole::Prover))
 }
 
-// #[ignore] //FIX: not working. ACTION_VERIFIER_WINS_1 has been seen on-chain
-// #[test]
-// fn challenge_trace_hash_verifier() -> Result<()> {
-//     test_challenge(ForcedChallenges::TraceHash(ParticipantRole::Verifier))
-// }
+#[ignore] //FIX: not working. ACTION_VERIFIER_WINS_1 has been seen on-chain
+#[test]
+fn challenge_trace_hash_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::TraceHash(ParticipantRole::Verifier))
+}
 
 #[ignore]
 #[test]
@@ -1055,11 +1055,11 @@ fn challenge_read_value_prover() -> Result<()> {
     test_challenge(ForcedChallenges::ReadValue(ParticipantRole::Prover))
 }
 
-// #[ignore]
-// #[test]
-// fn challenge_read_value_verifier() -> Result<()> {
-//     test_challenge(ForcedChallenges::ReadValue(ParticipantRole::Verifier))
-// }
+#[ignore]
+#[test]
+fn challenge_read_value_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::ReadValue(ParticipantRole::Verifier))
+}
 
 #[ignore]
 #[test]

@@ -59,6 +59,7 @@ pub const VERIFIER_WINS: &str = "VERIFIER_WINS";
 pub const CHALLENGE: &str = "CHALLENGE";
 pub const CHALLENGE_READ: &str = "CHALLENGE_READ"; // For the second N-ary search
 pub const TIMELOCK_BLOCKS_KEY: &str = "TIMELOCK_BLOCKS";
+pub const VERIFIER_FINAL: &str = "VERIFIER_FINAL";
 
 pub const TRACE_VARS: [(&str, usize); 16] = [
     ("prover_write_address", 4 as usize),
@@ -658,7 +659,30 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             (&verifier_speedup_pub, &prover_speedup_pub),
         )?;
 
-        claim_verifier.add_claimer_win_connection(&mut protocol, CHALLENGE_READ)?;
+        amount = self.checked_sub(amount, fee)?;
+        amount = self.checked_sub(amount, speedup_dust)?;
+
+        let timeout_leaf = scripts::timelock(2 * timelock_blocks, &aggregated, SignMode::Aggregate);
+        let output_type = OutputType::taproot(amount, aggregated, &vec![timeout_leaf])?;
+
+        protocol.add_connection(
+            &format!("{}__{}", CHALLENGE_READ, VERIFIER_FINAL),
+            CHALLENGE_READ,
+            output_type.into(),
+            VERIFIER_FINAL,
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
+            Some(2 * timelock_blocks),
+            None,
+        )?;
+
+        pb.add_speedup_output(
+            &mut protocol,
+            VERIFIER_FINAL,
+            speedup_dust,
+            &verifier_speedup_pub,
+        )?;
+
+        claim_verifier.add_claimer_win_connection(&mut protocol, VERIFIER_FINAL)?;
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
         self.save_protocol(protocol)?;

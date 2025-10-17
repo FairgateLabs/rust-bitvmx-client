@@ -20,7 +20,8 @@ use crate::{
                 config::{ConfigResults, DisputeConfiguration},
                 input_handler::{get_txs_configuration, unify_inputs, unify_witnesses},
                 timeout_input_tx, timeout_tx, DisputeResolutionProtocol, CHALLENGE, CHALLENGE_READ,
-                COMMITMENT, EXECUTE, INPUT_TX, PROVER_WINS, TRACE_VARS, VERIFIER_WINS,
+                COMMITMENT, EXECUTE, INPUT_TX, PROVER_WINS, TRACE_VARS, VERIFIER_FINAL,
+                VERIFIER_WINS,
             },
             protocol_handler::ProtocolHandler,
         },
@@ -182,19 +183,6 @@ fn auto_claim_start(
                 None,
             )?;
         }
-    }
-
-    if CHALLENGE_READ == name && ParticipantRole::Verifier == drp.role() {
-        let claim_name = ClaimGate::tx_start(VERIFIER_WINS);
-        let tx = drp.get_signed_tx(program_context, &claim_name, 0, 0, false, 0)?;
-        let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
-        info!("Verifier wins force: {claim_name}: {:?}", tx);
-        program_context.bitcoin_coordinator.dispatch(
-            tx,
-            Some(speedup_data),
-            Context::ProgramId(drp.ctx.id).to_string()?,
-            None,
-        )?;
     }
 
     Ok(())
@@ -702,6 +690,32 @@ pub fn handle_tx_news(
             &name,
             program_context,
             &tx_status.tx,
+            None,
+        )?;
+    }
+
+    if CHALLENGE_READ == name && ParticipantRole::Verifier == drp.role() && vout.is_none() {
+        let verifier_final_tx =
+            drp.get_signed_tx(program_context, &VERIFIER_FINAL, 0, 0, false, 0)?;
+        let speedup_data =
+            drp.get_speedup_data_from_tx(&verifier_final_tx, program_context, None)?;
+        program_context.bitcoin_coordinator.dispatch(
+            verifier_final_tx,
+            Some(speedup_data),
+            Context::ProgramId(drp.ctx.id).to_string()?,
+            Some(current_height + 2 * timelock_blocks as u32),
+        )?;
+    }
+
+    if VERIFIER_FINAL == name && ParticipantRole::Verifier == drp.role() && vout.is_none() {
+        let claim_name = ClaimGate::tx_start(VERIFIER_WINS);
+        let tx = drp.get_signed_tx(program_context, &claim_name, 0, 0, false, 0)?;
+        let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
+        info!("{claim_name}: {:?}", tx);
+        program_context.bitcoin_coordinator.dispatch(
+            tx,
+            Some(speedup_data),
+            Context::ProgramId(drp.ctx.id).to_string()?,
             None,
         )?;
     }
