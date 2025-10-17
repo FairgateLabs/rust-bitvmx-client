@@ -3,6 +3,7 @@ use emulator::{
     decision::challenge::{ForceChallenge, ForceCondition},
     executor::utils::FailConfiguration,
 };
+use protocol_builder::types::OutputType;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -36,7 +37,9 @@ pub struct DisputeConfiguration {
     pub operators_aggregated_pub: PublicKey,
     pub protocol_connection: (PartialUtxo, Vec<usize>),
     pub prover_actions: Vec<(PartialUtxo, Vec<usize>)>,
+    pub prover_enablers: Vec<OutputType>,
     pub verifier_actions: Vec<(PartialUtxo, Vec<usize>)>,
+    pub verifier_enablers: Vec<OutputType>,
     pub timelock_blocks: u16,
     pub program_definition: String,
     pub fail_configuration: Option<TestFailConfiguration>,
@@ -48,7 +51,9 @@ impl DisputeConfiguration {
         operators_aggregated_pub: PublicKey,
         protocol_connection: (PartialUtxo, Vec<usize>),
         prover_actions: Vec<(PartialUtxo, Vec<usize>)>,
+        prover_enablers: Vec<OutputType>,
         verifier_actions: Vec<(PartialUtxo, Vec<usize>)>,
+        verifier_enablers: Vec<OutputType>,
         timelock_blocks: u16,
         program_definition: String,
         fail_configuration: Option<TestFailConfiguration>,
@@ -58,7 +63,9 @@ impl DisputeConfiguration {
             operators_aggregated_pub,
             protocol_connection,
             prover_actions,
+            prover_enablers,
             verifier_actions,
+            verifier_enablers,
             timelock_blocks,
             program_definition,
             fail_configuration,

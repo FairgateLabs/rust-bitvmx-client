@@ -84,6 +84,8 @@ pub fn prepare_dispute(
         force_condition,
     });
 
+    let test_enabler = OutputType::segwit_key(500, aggregated_pub_key).unwrap();
+
     let dispute_configuration = DisputeConfiguration::new(
         program_id,
         *aggregated_pub_key,
@@ -105,6 +107,7 @@ pub fn prepare_dispute(
             ),
             vec![1],
         )],
+        vec![test_enabler.clone()],
         vec![(
             (
                 prover_win_utxo.txid,
@@ -114,6 +117,7 @@ pub fn prepare_dispute(
             ),
             vec![1],
         )],
+        vec![test_enabler.clone(), test_enabler],
         TIMELOCK_BLOCKS,
         program_definition,
         test_fail_configuration,

@@ -10,7 +10,7 @@ use bitvmx_client::program;
 use bitvmx_client::program::participant::{CommsAddress, ParticipantRole};
 use bitvmx_client::program::protocols::dispute::{
     action_wins, input_tx_name, program_input, program_input_prev_prefix,
-    program_input_prev_protocol,
+    program_input_prev_protocol, protocol_cost,
 };
 use bitvmx_client::program::variables::{VariableTypes, WitnessTypes};
 use bitvmx_client::types::{
@@ -573,7 +573,7 @@ pub fn test_all_aux(
         &mut helper.wallet,
         &pair_0_1_agg_pub_key,
         spending_condition.clone(),
-        20_000,
+        protocol_cost(),
     )?;
 
     info!("Wait for the first funding ready");
