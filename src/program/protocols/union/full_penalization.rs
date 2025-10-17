@@ -1,49 +1,46 @@
 use core::convert::Into;
 use std::collections::HashMap;
 
-use bitcoin::{Amount, PublicKey, ScriptBuf, Transaction, Txid};
-use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
+use bitcoin::{PublicKey, Transaction, Txid};
+use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     graph::graph::GraphOptions,
-    scripts::{op_return_script, ProtocolScript},
+    scripts::{ProtocolScript, SignMode},
     types::{
-        connection::{InputSpec, OutputSpec},
+        connection::InputSpec,
         input::{SighashType, SpendMode},
         output::SpeedupData,
-        InputArgs, OutputType,
+        OutputType,
     },
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::watch;
 use tracing::info;
 use uuid::Uuid;
 
 use crate::{
     errors::BitVMXError,
     program::{
-        participant::ParticipantKeys,
+        participant::{ParticipantKeys, ParticipantRole},
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
                 common::{
-                    create_transaction_reference, get_dispute_core_pid,
-                    get_initial_setup_output_type, get_operator_output_type, indexed_name,
+                    create_transaction_reference, double_indexed_name, get_dispute_core_pid,
+                    get_initial_setup_output_type, indexed_name, triple_indexed_name,
                 },
-                dispute_core::PEGOUT_ID,
                 types::{
-                    AdvanceFundsRequest, Committee, FullPenalizationData, ACCEPT_PEGIN_TX,
-                    ADVANCE_FUNDS_INPUT, ADVANCE_FUNDS_TX, DISPUTE_CORE_SHORT_TIMELOCK, DUST_VALUE,
-                    INITIAL_DEPOSIT_TX_SUFFIX, LAST_OPERATOR_TAKE_UTXO, OPERATOR,
+                    Committee, FullPenalizationData, DISPUTE_AGGREGATED_KEY,
+                    DISPUTE_CORE_SHORT_TIMELOCK, DUST_VALUE, INITIAL_DEPOSIT_TX_SUFFIX, OPERATOR,
                     OPERATOR_TAKE_ENABLER, OP_DISABLER_DIRECTORY_TX, OP_DISABLER_FEE,
-                    OP_DISABLER_TX, OP_INITIAL_DEPOSIT_AMOUNT, OP_INITIAL_DEPOSIT_FLAG,
-                    OP_INITIAL_DEPOSIT_OUT_SCRIPT, OP_INITIAL_DEPOSIT_TXID, OP_LAZY_DISABLER_TX,
-                    REIMBURSEMENT_KICKOFF_TX, USER_TAKE_FEE,
+                    OP_DISABLER_TX, OP_INITIAL_DEPOSIT_AMOUNT, OP_INITIAL_DEPOSIT_OUT_SCRIPT,
+                    OP_INITIAL_DEPOSIT_TXID, OP_LAZY_DISABLER_TX, REIMBURSEMENT_KICKOFF_TX,
+                    SETUP_DISABLER_DIRECTORY_UTXO,
                 },
             },
         },
-        variables::{PartialUtxo, VariableTypes},
+        variables::PartialUtxo,
     },
-    types::{ProgramContext, PROGRAM_TYPE_DISPUTE_CORE},
+    types::ProgramContext,
 };
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -62,9 +59,15 @@ impl ProtocolHandler for FullPenalizationProtocol {
 
     fn get_pregenerated_aggregated_keys(
         &self,
-        _context: &ProgramContext,
+        context: &ProgramContext,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
-        Ok(vec![])
+        let data = self.full_penalization_data(context)?;
+        let committee = self.committee(context, data.committee_id)?;
+
+        Ok(vec![(
+            DISPUTE_AGGREGATED_KEY.to_string(),
+            committee.dispute_aggregated_key,
+        )])
     }
 
     fn generate_keys(
@@ -87,23 +90,63 @@ impl ProtocolHandler for FullPenalizationProtocol {
 
         let data: FullPenalizationData = self.full_penalization_data(context)?;
         let committee = self.committee(context, data.committee_id)?;
-        let operator_take_key = committee.members[data.operator_index].take_key;
-        let operator_dispute_key = committee.members[data.operator_index].dispute_key;
-        let watchtower_dispute_key = committee.members[data.watchtower_index].dispute_key;
+        let member_count = committee.members.len();
 
         //create the protocol
         let mut protocol = self.load_or_create_protocol();
 
-        let dispute_core_pid = get_dispute_core_pid(data.committee_id, &operator_take_key);
-        self.create_operator_disabler(
-            &mut protocol,
-            context,
-            dispute_core_pid,
-            committee.packet_size,
-            &operator_dispute_key,
-            &watchtower_dispute_key,
-            data.operator_index,
-        )?;
+        for operator_index in 0..member_count {
+            if committee.members[operator_index].role != ParticipantRole::Prover {
+                info!("Skipping operator {} as it is not a prover", operator_index);
+                continue;
+            }
+
+            let operator_dispute_key = committee.members[operator_index].dispute_key;
+            let dispute_core_pid = get_dispute_core_pid(
+                data.committee_id,
+                &committee.members[operator_index].take_key,
+            );
+
+            let disabler_directory_utxo =
+                self.setup_disabler_directory_utxo(context, dispute_core_pid)?;
+
+            let setup_tx_name = indexed_name("SETUP_TX", operator_index);
+            create_transaction_reference(
+                &mut protocol,
+                &setup_tx_name,
+                &mut [disabler_directory_utxo.clone()].to_vec(),
+            )?;
+
+            for watchtower_index in 0..member_count {
+                if operator_index == watchtower_index {
+                    info!(
+                        "Skipping operator {} as watchtower for itself",
+                        operator_index
+                    );
+                    continue;
+                }
+
+                info!(
+                    "Creating operator disabler for operator {} with watchtower {}",
+                    operator_index, watchtower_index
+                );
+
+                let watchtower_dispute_key = committee.members[watchtower_index].dispute_key;
+
+                self.create_operator_disabler(
+                    &mut protocol,
+                    context,
+                    dispute_core_pid,
+                    committee.packet_size,
+                    &operator_dispute_key,
+                    &watchtower_dispute_key,
+                    operator_index,
+                    watchtower_index,
+                    &setup_tx_name,
+                    &disabler_directory_utxo,
+                )?;
+            }
+        }
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
@@ -129,7 +172,7 @@ impl ProtocolHandler for FullPenalizationProtocol {
         _vout: Option<u32>,
         tx_status: TransactionStatus,
         _context: String,
-        context: &ProgramContext,
+        _program_context: &ProgramContext,
         _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
@@ -244,18 +287,36 @@ impl FullPenalizationProtocol {
         operator_key: &PublicKey,
         watchtower_key: &PublicKey,
         operator_index: usize,
+        watchtower_index: usize,
+        setup_tx_name: &str,
+        disabler_directory_utxo: &PartialUtxo,
     ) -> Result<String, BitVMXError> {
         // Create transaction
         let initial_deposit_name = format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX);
         let initial_deposit_txid = self.op_initial_deposit_txid(context, dispute_core_pid)?;
         let amount = self.op_initial_deposit_amount(context, dispute_core_pid)?;
-
         let op_disabler_change = self.checked_sub(amount + DUST_VALUE, OP_DISABLER_FEE)?;
+        let op_disabler_directory_name =
+            double_indexed_name(OP_DISABLER_DIRECTORY_TX, operator_index, watchtower_index);
 
-        // TODO: Add Operator disabler directory single (by now) input. It should came from Operator initial deposit tx
+        protocol.add_connection(
+            "setup",
+            &setup_tx_name,
+            (disabler_directory_utxo.1 as usize).into(),
+            &op_disabler_directory_name,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            Some(disabler_directory_utxo.0),
+        )?;
 
         for slot_index in 0..packet_size as usize {
-            let op_disabler_name = indexed_name(OP_DISABLER_TX, slot_index);
+            let op_disabler_name =
+                triple_indexed_name(OP_DISABLER_TX, operator_index, watchtower_index, slot_index);
 
             let script =
                 self.op_initial_deposit_out_script(context, dispute_core_pid, slot_index)?;
@@ -277,7 +338,7 @@ impl FullPenalizationProtocol {
             // What happens if watchtower does not want to dispatch them? Should anyone be able to dispatch it?
             protocol.add_connection(
                 "from_disabler_directory",
-                &OP_DISABLER_DIRECTORY_TX,
+                &op_disabler_directory_name,
                 OutputType::segwit_key(DUST_VALUE, watchtower_key)?.into(),
                 &op_disabler_name,
                 InputSpec::Auto(SighashType::ecdsa_all(), SpendMode::Segwit),
@@ -292,13 +353,18 @@ impl FullPenalizationProtocol {
 
             // Create Lazy Operator disablers
             // Operator take transaction data
-            let op_lazy_disabler_name = indexed_name(OP_LAZY_DISABLER_TX, slot_index); // TODO: Change to lazy disabler tx name
+            let op_lazy_disabler_name = triple_indexed_name(
+                OP_LAZY_DISABLER_TX,
+                operator_index,
+                watchtower_index,
+                slot_index,
+            );
             let take_enabler = self.operator_take_enabler(context, dispute_core_pid, slot_index)?;
 
             protocol.add_connection(
                 "reimbursement_kickoff_conn",
-                &indexed_name(REIMBURSEMENT_KICKOFF_TX, operator_index),
-                take_enabler.3.unwrap().into(),
+                &double_indexed_name(REIMBURSEMENT_KICKOFF_TX, operator_index, slot_index),
+                take_enabler.3.unwrap().into(), // This works because REIMBURSEMENT_KICKOFF_TX only has one output. Use create_transaction_reference if more outputs are added
                 &op_lazy_disabler_name,
                 InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
                 Some(DISPUTE_CORE_SHORT_TIMELOCK),
@@ -307,7 +373,7 @@ impl FullPenalizationProtocol {
 
             protocol.add_connection(
                 "from_disabler_directory",
-                &OP_DISABLER_DIRECTORY_TX,
+                &op_disabler_directory_name,
                 0.into(),
                 &op_lazy_disabler_name,
                 InputSpec::Auto(SighashType::ecdsa_all(), SpendMode::Segwit),
@@ -339,6 +405,18 @@ impl FullPenalizationProtocol {
                 &dispute_protocol_id,
                 &indexed_name(OPERATOR_TAKE_ENABLER, slot_index),
             )?
+            .unwrap()
+            .utxo()?)
+    }
+
+    fn setup_disabler_directory_utxo(
+        &self,
+        context: &ProgramContext,
+        dispute_protocol_id: Uuid,
+    ) -> Result<PartialUtxo, BitVMXError> {
+        Ok(context
+            .globals
+            .get_var(&dispute_protocol_id, &SETUP_DISABLER_DIRECTORY_UTXO)?
             .unwrap()
             .utxo()?)
     }

@@ -209,6 +209,15 @@ impl Committee {
         Ok(())
     }
 
+    pub fn setup_full_penalization(&mut self) -> Result<()> {
+        let addresses = self.get_addresses();
+        let committee_id = self.committee_id;
+
+        self.all(|op: &mut Member| op.setup_full_penalization(committee_id, &addresses.clone()))?;
+
+        Ok(())
+    }
+
     pub fn wait_for_spv_proof(&self, txid: Txid) -> Result<()> {
         let bitvmx = &self.members[0].bitvmx;
         let status = wait_until_msg!(bitvmx, Transaction(_, _status, _) => _status);

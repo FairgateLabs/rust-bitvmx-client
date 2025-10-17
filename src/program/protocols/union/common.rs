@@ -100,15 +100,9 @@ pub fn get_dispute_channel_pid(committee_id: Uuid, from_idx: usize, to_idx: usiz
     Uuid::from_bytes(hash[0..16].try_into().unwrap())
 }
 
-pub fn get_full_penalization_pid(
-    committee_id: Uuid,
-    operator_pubkey: &PublicKey,
-    watchtower_pubkey: &PublicKey,
-) -> Uuid {
+pub fn get_full_penalization_pid(committee_id: Uuid) -> Uuid {
     let mut hasher = Sha256::new();
     hasher.update(committee_id.as_bytes());
-    hasher.update(operator_pubkey.to_bytes());
-    hasher.update(watchtower_pubkey.to_bytes());
     hasher.update("full_penalization");
 
     // Get the result as a byte array
@@ -144,6 +138,14 @@ pub fn create_transaction_reference(
 
 pub fn indexed_name(prefix: &str, index: usize) -> String {
     format!("{}_{}", prefix, index)
+}
+
+pub fn double_indexed_name(prefix: &str, index_1: usize, index_2: usize) -> String {
+    format!("{}_{}_{}", prefix, index_1, index_2)
+}
+
+pub fn triple_indexed_name(prefix: &str, index_1: usize, index_2: usize, index_3: usize) -> String {
+    format!("{}_{}_{}_{}", prefix, index_1, index_2, index_3)
 }
 
 pub fn extract_index(full_name: &str, tx_name: &str) -> Result<usize, BitVMXError> {
@@ -187,4 +189,9 @@ pub fn get_initial_setup_output_type(
     script: &[ProtocolScript],
 ) -> Result<OutputType, BitVMXError> {
     Ok(OutputType::taproot(amount, &operator_key, script)?)
+}
+
+//Rough estimate of fee for P2WPKH outputs
+pub fn estimate_fee(input_quantity: usize, output_quantity: usize, fee_rate: u64) -> u64 {
+    (46 + input_quantity as u64 * 68 + output_quantity as u64 * 34) * fee_rate // rough estimate
 }

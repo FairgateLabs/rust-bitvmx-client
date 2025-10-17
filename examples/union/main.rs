@@ -348,6 +348,7 @@ pub fn committee(wallet: &mut MasterWallet) -> Result<Committee> {
     print_members_balances(committee.members.as_slice())?;
 
     committee.setup_dispute_protocols()?;
+    committee.setup_full_penalization()?;
 
     let blocks = if NETWORK == Network::Regtest { 10 } else { 1 };
     wait_for_blocks(&committee.bitcoin_client, blocks)?;
