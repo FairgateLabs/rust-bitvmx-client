@@ -4,13 +4,13 @@ use bitcoincore_rpc::bitcoin::{key::ParsePublicKeyError, sighash::SighashTypePar
 use bitvmx_broker::{identification::errors::IdentificationError, rpc::errors::BrokerError};
 use bitvmx_cpu_definitions::challenge::EmulatorResultError;
 use bitvmx_job_dispatcher::dispatcher_error::DispatcherError;
+use bitvmx_operator_comms::helper::OperatorCommsError;
 use config as settings;
 use emulator::{loader::program_definition::ProgramDefinitionError, EmulatorError};
 use key_manager::{
     errors::{KeyManagerError, WinternitzError},
     musig2::errors::Musig2SignerError,
 };
-use bitvmx_operator_comms::helper::OperatorCommsError;
 use protocol_builder::errors::{ProtocolBuilderError, ScriptError, UnspendableKeyError};
 use std::time::Duration;
 use storage_backend::error::StorageError;
@@ -24,6 +24,9 @@ pub enum BitVMXError {
 
     #[error("Invalid configuration")]
     ConfigurationError(#[from] ConfigError),
+
+    #[error("Invalid parameter in configuration. {0}")]
+    InvalidParameter(String),
 
     #[error("Error parsing int")]
     ParseIntError(#[from] std::num::ParseIntError),

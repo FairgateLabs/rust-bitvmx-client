@@ -8,9 +8,9 @@ use bitvmx_broker::{
     channel::channel::{DualChannel, LocalChannel},
     identification::identifier::Identifier,
 };
+use bitvmx_operator_comms::operator_comms::OperatorComms;
 use bitvmx_wallet::wallet::Destination;
 use chrono::{DateTime, Utc};
-use bitvmx_operator_comms::operator_comms::OperatorComms;
 use protocol_builder::types::Utxo;
 use serde::{Deserialize, Serialize};
 
@@ -95,19 +95,19 @@ impl Default for ProgramRequestInfo {
 //TODO: This should be moved to a common place that could be used to share the messages api
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum IncomingBitVMXApiMessages {
-    Ping(),
+    Ping(Uuid),
     SetVar(Uuid, String, VariableTypes),
     SetWitness(Uuid, String, WitnessTypes),
     SetFundingUtxo(Utxo),
     GetVar(Uuid, String),
     GetWitness(Uuid, String),
-    GetCommInfo(),
+    GetCommInfo(Uuid),
     GetTransaction(Uuid, Txid),
     GetTransactionInfoByName(Uuid, String),
     GetHashedMessage(Uuid, String, u32, u32),
     Setup(ProgramId, String, Vec<CommsAddress>, u16),
     SubscribeToTransaction(Uuid, Txid),
-    SubscribeUTXO(),
+    SubscribeUTXO(Uuid),
     SubscribeToRskPegin(),
     GetSPVProof(Txid),
     DispatchTransaction(Uuid, Transaction),
@@ -122,7 +122,7 @@ pub enum IncomingBitVMXApiMessages {
     GetZKPExecutionResult(Uuid),
     Encrypt(Uuid, Vec<u8>, String),
     Decrypt(Uuid, Vec<u8>),
-    Backup(String),
+    Backup(Uuid, String),
     #[cfg(feature = "testpanic")]
     Test(String),
     GetFundingAddress(Uuid),
@@ -140,7 +140,7 @@ type ProgramId = Uuid;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum OutgoingBitVMXApiMessages {
-    Pong(),
+    Pong(Uuid),
     // response for transaction get and dispatch
     Transaction(Uuid, TransactionStatus, Option<String>),
     // Represents when pegin transactions is found
@@ -157,7 +157,7 @@ pub enum OutgoingBitVMXApiMessages {
     TransactionInfo(Uuid, String, Transaction),
     ZKPResult(Uuid, Vec<u8>, Vec<u8>),
     ExecutionResult(/* Add appropriate type */),
-    CommInfo(CommsAddress),
+    CommInfo(Uuid, CommsAddress),
     KeyPair(Uuid, PrivateKey, PublicKey),
     PubKey(Uuid, PublicKey),
     SignedMessage(Uuid, [u8; 32], [u8; 32], u8), // id, signature_r, signature_s, recovery_id
@@ -171,7 +171,7 @@ pub enum OutgoingBitVMXApiMessages {
     SPVProof(Txid, Option<BtcTxSPVProof>),
     Encrypted(Uuid, Vec<u8>),
     Decrypted(Uuid, Vec<u8>),
-    BackupResult(bool, String),
+    BackupResult(Uuid, bool, String),
     FundingAddress(Uuid, Address<NetworkUnchecked>),
     FundingBalance(Uuid, u64),
     FundsSent(Uuid, Txid),
@@ -190,9 +190,9 @@ impl OutgoingBitVMXApiMessages {
         Ok(msg)
     }
 
-    pub fn comm_info(&self) -> Option<CommsAddress> {
+    pub fn comm_info(&self) -> Option<(Uuid, CommsAddress)> {
         match self {
-            OutgoingBitVMXApiMessages::CommInfo(info) => Some(info.clone()),
+            OutgoingBitVMXApiMessages::CommInfo(uuid, info) => Some((uuid.clone(), info.clone())),
             _ => None,
         }
     }
@@ -286,7 +286,7 @@ impl OutgoingBitVMXApiMessages {
 
     pub fn name(&self) -> String {
         match self {
-            OutgoingBitVMXApiMessages::Pong() => "Pong".to_string(),
+            OutgoingBitVMXApiMessages::Pong(_) => "Pong".to_string(),
             OutgoingBitVMXApiMessages::Transaction(_, _, _) => "Transaction".to_string(),
             OutgoingBitVMXApiMessages::PeginTransactionFound(_, _) => {
                 "PeginTransactionFound".to_string()
@@ -305,7 +305,7 @@ impl OutgoingBitVMXApiMessages {
             OutgoingBitVMXApiMessages::TransactionInfo(_, _, _) => "TransactionInfo".to_string(),
             OutgoingBitVMXApiMessages::ZKPResult(_, _, _) => "ZKPResult".to_string(),
             OutgoingBitVMXApiMessages::ExecutionResult() => "ExecutionResult".to_string(),
-            OutgoingBitVMXApiMessages::CommInfo(_) => "CommInfo".to_string(),
+            OutgoingBitVMXApiMessages::CommInfo(_, _) => "CommInfo".to_string(),
             OutgoingBitVMXApiMessages::KeyPair(_, _, _) => "KeyPair".to_string(),
             OutgoingBitVMXApiMessages::PubKey(_, _) => "PubKey".to_string(),
             OutgoingBitVMXApiMessages::SignedMessage(_, _, _, _) => "SignedMessage".to_string(),
@@ -319,7 +319,7 @@ impl OutgoingBitVMXApiMessages {
                 "ProofGenerationError".to_string()
             }
             OutgoingBitVMXApiMessages::SPVProof(_, _) => "SPVProof".to_string(),
-            OutgoingBitVMXApiMessages::BackupResult(_, _) => "BackupResult".to_string(),
+            OutgoingBitVMXApiMessages::BackupResult(_, _, _) => "BackupResult".to_string(),
             OutgoingBitVMXApiMessages::Encrypted(_, _) => "Encrypted".to_string(),
             OutgoingBitVMXApiMessages::Decrypted(_, _) => "Decrypted".to_string(),
             OutgoingBitVMXApiMessages::FundingAddress(_, _) => "FundingAddress".to_string(),
@@ -366,5 +366,6 @@ pub const PROGRAM_TYPE_ACCEPT_PEGIN: &str = "accept_pegin";
 pub const PROGRAM_TYPE_USER_TAKE: &str = "take";
 pub const PROGRAM_TYPE_ADVANCE_FUNDS: &str = "advance_funds";
 pub const PROGRAM_TYPE_DISPUTE_CORE: &str = "dispute_core";
+pub const PROGRAM_TYPE_INIT: &str = "init";
 pub const PROGRAM_TYPE_PAIRWISE_PENALIZATION: &str = "pairwise_penalization";
 pub const PROGRAM_TYPE_PACKET: &str = "packet";

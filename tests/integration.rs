@@ -1,7 +1,8 @@
 #![cfg(test)]
 use anyhow::Result;
-use bitvmx_client::types::{
-    IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel,
+use bitvmx_client::{
+    program::protocols::dispute::protocol_cost,
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
 use bitvmx_wallet::wallet::{Destination, RegtestWallet};
 use common::{
@@ -100,7 +101,7 @@ pub fn test_drp() -> Result<()> {
         &mut wallet,
         &aggregated_pub_key,
         spending_condition.clone(),
-        30_000,
+        protocol_cost(),
     )?;
 
     info!("Initializing UTXO for the prover action");

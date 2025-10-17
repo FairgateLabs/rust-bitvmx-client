@@ -7,7 +7,7 @@ x-logging:
 
 services:
   bitcoind:
-    image: ruimarinho/bitcoin-core:24
+    image: bitcoin/bitcoin:29.1
     command: -regtest=1 -rpcport=${BITCOIND_RPC_PORT} -rpcuser=${BITCOIND_RPC_USER} -rpcpassword=${BITCOIND_RPC_PASSWORD} -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0
     ports:
       - "${BITCOIND_RPC_PORT}:18443"

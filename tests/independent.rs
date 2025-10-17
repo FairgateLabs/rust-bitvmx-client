@@ -11,7 +11,7 @@ use bitvmx_client::program::participant::{CommsAddress, ParticipantRole};
 use bitvmx_client::program::protocols::dispute::config::{ConfigResult, ConfigResults};
 use bitvmx_client::program::protocols::dispute::{
     action_wins, input_tx_name, program_input, program_input_prev_prefix,
-    program_input_prev_protocol,
+    program_input_prev_protocol, protocol_cost,
 };
 use bitvmx_client::program::variables::{VariableTypes, WitnessTypes};
 use bitvmx_client::types::{
@@ -276,7 +276,7 @@ impl TestHelper {
 
             let bitcoind = Bitcoind::new_with_flags(
                 "bitcoin-regtest",
-                "ruimarinho/bitcoin-core",
+                "bitcoin/bitcoin:29.1",
                 wallet_config.bitcoin.clone(),
                 BitcoindFlags {
                     min_relay_tx_fee: 0.00001,
@@ -467,13 +467,13 @@ pub fn test_all_aux(
 
     let mut helper = TestHelper::new(network, independent, Some(1000))?;
 
-    let command = IncomingBitVMXApiMessages::GetCommInfo();
+    let command = IncomingBitVMXApiMessages::GetCommInfo(Uuid::new_v4());
     helper.send_all(command)?;
 
     let addresses: Vec<CommsAddress> = helper
         .wait_all_msg()?
         .iter()
-        .map(|msg| msg.comm_info().unwrap())
+        .map(|msg| msg.comm_info().unwrap().1)
         .collect::<Vec<_>>();
 
     info!("Waiting for AggregatedPubkey message from all channels");
@@ -570,7 +570,7 @@ pub fn test_all_aux(
         &mut helper.wallet,
         &pair_0_1_agg_pub_key,
         spending_condition.clone(),
-        40_000,
+        protocol_cost(),
     )?;
 
     info!("Wait for the first funding ready");

@@ -88,7 +88,7 @@ const MIN_RELAY_FEE: u64 = 1;
 const DUST: u64 = 500 * MIN_RELAY_FEE;
 
 pub fn protocol_cost() -> u64 {
-    32_000 // This is a placeholder value, adjust as needed
+    38_000 // This is a placeholder value, adjust as needed
 }
 
 fn get_role(my_idx: usize) -> ParticipantRole {
@@ -327,8 +327,16 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         amount = self.checked_sub(amount, fee)?;
 
-        amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1, true))?;
-        amount = self.checked_sub(amount, ClaimGate::cost(fee, speedup_dust, 1, 1, false))?;
+        let prover_outputs = config.prover_actions.len() + config.prover_enablers.len();
+        let verifier_outputs = config.verifier_actions.len() + config.verifier_enablers.len();
+        amount = self.checked_sub(
+            amount,
+            ClaimGate::cost(fee, speedup_dust, 1, prover_outputs, true),
+        )?;
+        amount = self.checked_sub(
+            amount,
+            ClaimGate::cost(fee, speedup_dust, 1, verifier_outputs, false),
+        )?;
 
         let timelock_blocks = config.timelock_blocks;
 
@@ -343,7 +351,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             vec![verifier_speedup_pub],
             None,
             timelock_blocks,
-            vec![aggregated],
+            config.prover_actions.len() as u64,
+            config.prover_enablers,
             true,
             None,
         )?;
@@ -359,7 +368,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             vec![prover_speedup_pub],
             None,
             timelock_blocks,
-            vec![aggregated],
+            config.verifier_actions.len() as u64,
+            config.verifier_enablers,
             false,
             claim_prover.exclusive_success_vout,
         )?;
@@ -533,8 +543,12 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             (&prover_speedup_pub, &verifier_speedup_pub),
         )?;
 
-        amount -= fee;
-        amount -= speedup_dust;
+        info!(
+            "Amount {}, fee {}, speedup_dust {}",
+            amount, fee, speedup_dust
+        );
+        amount = self.checked_sub(amount, fee)?;
+        amount = self.checked_sub(amount, speedup_dust)?;
 
         let (program_def, _) = self.get_program_definition(context)?;
         self.add_connection_with_scripts(

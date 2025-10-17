@@ -7,7 +7,7 @@ use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
 use bitvmx_client::config::Config;
-use tracing::info;
+use tracing::{debug, info};
 
 /// Number of blocks to mine initially to ensure sufficient coin maturity
 pub const INITIAL_BLOCK_COUNT: u64 = 110;
@@ -62,13 +62,13 @@ impl BitcoinWrapper {
 
         while height < last_block {
             if self.network == Network::Regtest {
-                info!("Mining 1 block...");
+                debug!("Mining 1 block...");
                 self.mine_blocks(1)?;
             }
-            info!("Waiting {} seconds...", sleep_secs);
+            debug!("Waiting {} seconds...", sleep_secs);
             thread::sleep(Duration::from_secs(sleep_secs));
             height = self.get_best_block()?;
-            info!("Current height: {}", height);
+            debug!("Current height: {}", height);
         }
         Ok(())
     }
@@ -91,7 +91,7 @@ pub fn stop_existing_bitcoind() -> Result<()> {
     // Create a temporary Bitcoind instance to check if one is running and stop it
     let temp_bitcoind = Bitcoind::new(
         "bitcoin-regtest",
-        "ruimarinho/bitcoin-core",
+        "bitcoin/bitcoin:29.1",
         config.bitcoin.clone(),
     );
 
@@ -123,7 +123,7 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind)> {
             // Config to trigger speedup transactions in Regtest
             Bitcoind::new_with_flags(
                 "bitcoin-regtest",
-                "ruimarinho/bitcoin-core",
+                "bitcoin/bitcoin:29.1",
                 config.bitcoin.clone(),
                 BitcoindFlags {
                     min_relay_tx_fee: 0.00001,
@@ -135,7 +135,7 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind)> {
         }
         false => Bitcoind::new(
             "bitcoin-regtest",
-            "ruimarinho/bitcoin-core",
+            "bitcoin/bitcoin:29.1",
             config.bitcoin.clone(),
         ),
     };

@@ -31,6 +31,10 @@ use tracing_subscriber::EnvFilter;
 /// Number of blocks to mine initially in tests to ensure sufficient coin maturity
 pub const INITIAL_BLOCK_COUNT: u64 = 101;
 
+pub const LOCAL_SLEEP_MS: u64 = 40;
+
+pub const CI_SLEEP_MS: u64 = 1000;
+
 pub fn clear_db(path: &str) {
     let _ = std::fs::remove_dir_all(path);
 }
@@ -90,7 +94,13 @@ pub fn wait_message_from_channel(
     instances: &mut Vec<&mut BitVMX>,
     fake_tick: bool,
 ) -> Result<(String, Identifier)> {
-    //loop to timeout
+    // Use longer sleep in CI for stability, shorter locally for speed
+    let sleep_ms = if std::env::var("GITHUB_ACTIONS").is_ok() {
+        CI_SLEEP_MS
+    } else {
+        LOCAL_SLEEP_MS
+    };
+    
     for i in 0..40000 {
         if i % 50 == 0 {
             let msg = channel.recv()?;
@@ -98,7 +108,7 @@ pub fn wait_message_from_channel(
                 //info!("Received message from channel: {:?}", msg);
                 return Ok(msg.unwrap());
             }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
         }
         for instance in instances.iter_mut() {
             if fake_tick {
@@ -134,7 +144,7 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
     } else {
         let bitcoind_instance = Bitcoind::new_with_flags(
             "bitcoin-regtest",
-            "ruimarinho/bitcoin-core",
+            "bitcoin/bitcoin:29.1",
             wallet_config.bitcoin.clone(),
             BitcoindFlags {
                 min_relay_tx_fee: 0.00001,
@@ -270,7 +280,7 @@ pub fn mine_and_wait_blocks(
         for instance in instances.iter_mut() {
             instance.tick()?;
         }
-        std::thread::sleep(std::time::Duration::from_millis(40));
+        std::thread::sleep(std::time::Duration::from_millis(LOCAL_SLEEP_MS));
     }
     let msgs = get_all(&channels, instances, false)?;
 
