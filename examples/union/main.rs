@@ -13,9 +13,14 @@ use crate::{
 };
 use ::bitcoin::{Network, OutPoint, PublicKey, Txid};
 use anyhow::Result;
-use bitvmx_client::program::protocols::union::{
-    common::{get_accept_pegin_pid, get_init_pid},
-    types::{ACCEPT_PEGIN_TX, START_ENABLER_TX_SUFFIX, WATCHTOWER},
+use bitvmx_client::program::{
+    participant::ParticipantRole,
+    protocols::union::{
+        common::{
+            double_indexed_name, get_accept_pegin_pid, get_full_penalization_pid, get_init_pid,
+        },
+        types::{ACCEPT_PEGIN_TX, OP_DISABLER_DIRECTORY_TX, START_ENABLER_TX_SUFFIX, WATCHTOWER},
+    },
 };
 use core::convert::Into;
 use std::{env, thread, time::Duration};
@@ -53,6 +58,7 @@ pub fn main() -> Result<()> {
         Some("advance_funds_twice") => cli_advance_funds_twice()?,
         Some("invalid_reimbursement") => cli_invalid_reimbursement()?,
         Some("double_reimbursement") => cli_double_reimbursement()?,
+        Some("full_penalization") => cli_full_penalization()?,
         // Utils
         Some("create_wallet") => cli_create_wallet(args.get(2))?,
         Some("latency") => cli_latency(args.get(2))?,
@@ -93,6 +99,7 @@ fn print_usage() {
         "  cargo run --example union advance_funds_twice       - Performs advancement of funds twice"
     );
     println!("  cargo run --example union invalid_reimbursement     - Forces invalid reimbursement to test challenge tx");
+    println!("  cargo run --example union full_penalization     - Dispatch disabler directory transactions");
     // Testing commands
     println!(
         "  cargo run --example union create_wallet        - Create wallet: key pair and address. (optionally pass network: regtest, testnet, bitcoin)"
@@ -144,9 +151,7 @@ pub fn cli_watchtowers_init() -> Result<()> {
 }
 
 pub fn cli_request_pegin() -> Result<()> {
-    let mut wallet = get_master_wallet()?;
-    let committee = committee(&mut wallet)?;
-    let mut user = get_user()?;
+    let (committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
 
     request_pegin(committee.public_key()?, &mut user)?;
     Ok(())
@@ -326,6 +331,58 @@ pub fn cli_fund_members() -> Result<()> {
     print_members_balances(committee.members.as_slice())?;
 
     print_balance(&wallet)?;
+    Ok(())
+}
+
+pub fn cli_full_penalization() -> Result<()> {
+    // NOTE: This example works better with a client node with low fees.
+    // It require a fine timming to dispatch TXs and that's hard to reach if there is high fees
+    // Key: Second reimbursement kickoff tx should be dispatched right after the first reimbursement kickoff tx is mined
+    // and before the operator take is mined.
+    if HIGH_FEE_NODE_ENABLED {
+        info!("This example works better with a client node with low fees. Please disable HIGH_FEE_NODE_ENABLED and try again.");
+        return Ok(());
+    }
+
+    let (committee, mut _user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+
+    if committee.members.len() != 4 {
+        info!("This example requires 4 committee members");
+        info!("Current members: {}", committee.members.len());
+        return Ok(());
+    }
+
+    let full_penalization_pid = get_full_penalization_pid(committee.committee_id());
+
+    for (index, member) in committee.members.iter().enumerate() {
+        if member.role == ParticipantRole::Prover {
+            let operator_index = index;
+            let watchtower_index = (index + 1) % committee.members.len();
+
+            let tx_name =
+                double_indexed_name(OP_DISABLER_DIRECTORY_TX, operator_index, watchtower_index);
+
+            let tx = committee.members[watchtower_index]
+                .dispatch_transaction_by_name(full_penalization_pid, tx_name.clone())?;
+
+            info!("Dispatched {} with txid: {}", tx_name, tx.compute_txid());
+        }
+    }
+
+    wait_for_blocks(&committee.bitcoin_client, 5)?;
+
+    // let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+
+    // let operator_index = advance_funds(&mut committee, user.public_key()?, slot_index, true)?;
+    // if operator_index != 1 {
+    //     info!("This example requires member 1 to be the operator");
+    //     info!("Current operator: {}", operator_index);
+    //     return Ok(());
+    // }
+
+    // let watchtower_challenger_index = operator_index + 1;
+    // let watchtower_honest_index = operator_index + 2;
+
     Ok(())
 }
 
