@@ -97,7 +97,7 @@ impl ProtocolHandler for FullPenalizationProtocol {
 
         for operator_index in 0..member_count {
             if committee.members[operator_index].role != ParticipantRole::Prover {
-                info!("Skipping operator {} as it is not a prover", operator_index);
+                debug!("Skipping operator {} as it is not a prover", operator_index);
                 continue;
             }
 
@@ -166,14 +166,10 @@ impl ProtocolHandler for FullPenalizationProtocol {
 
             for watchtower_index in 0..member_count {
                 if operator_index == watchtower_index {
-                    info!(
-                        "Skipping operator {} as watchtower for itself",
-                        operator_index
-                    );
                     continue;
                 }
 
-                info!(
+                debug!(
                     "Creating operator disabler for operator {} with watchtower {}",
                     operator_index, watchtower_index
                 );
@@ -554,27 +550,21 @@ impl FullPenalizationProtocol {
     fn op_disabler_tx(
         &self,
         name: &str,
-        context: &ProgramContext,
+        _context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} tx", name);
 
-        let mut protocol = self.load_protocol()?;
-        let my_index = self.ctx.my_idx;
+        let protocol = self.load_protocol()?;
 
+        // Operator inital deposit signature through script path
         let op_deposit_script_index = 1;
-        let op_setup_sig = protocol.sign_taproot_input(
-            name,
-            0,
-            &SpendMode::Script {
-                leaf: op_deposit_script_index as usize,
-            },
-            context.key_chain.key_manager.as_ref(),
-            "",
-        )?;
+        let mut op_deposit_input = InputArgs::new_taproot_script_args(op_deposit_script_index);
+        let op_setup_sig = protocol
+            .input_taproot_script_spend_signature(name, 0, op_deposit_script_index)?
+            .unwrap();
+        op_deposit_input.push_taproot_signature(op_setup_sig)?;
 
-        let mut op_deposit_input = InputArgs::new_taproot_script_args(my_index);
-        op_deposit_input.push_taproot_signature(op_setup_sig[op_deposit_script_index].unwrap())?;
-
+        // Directory key spend signature
         let directory_sig = protocol
             .input_taproot_key_spend_signature(name, 1)?
             .unwrap();
@@ -583,12 +573,11 @@ impl FullPenalizationProtocol {
 
         let tx = protocol.transaction_to_send(&name, &[op_deposit_input, directory_input])?;
 
-        let txid = tx.compute_txid();
         info!(
-            id = my_index,
+            id = self.ctx.my_idx,
             "Signed {}, txid: {} with signatures: [{:?},{:?}]",
             name,
-            txid,
+            tx.compute_txid(),
             op_setup_sig,
             directory_sig
         );
