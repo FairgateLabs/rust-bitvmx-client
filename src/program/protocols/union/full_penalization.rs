@@ -1,7 +1,7 @@
 use core::convert::Into;
 use std::collections::HashMap;
 
-use bitcoin::{PublicKey, Transaction, Txid};
+use bitcoin::{Amount, PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     graph::graph::GraphOptions,
@@ -31,8 +31,8 @@ use crate::{
                 types::{
                     Committee, FullPenalizationData, DISPUTE_AGGREGATED_KEY,
                     DISPUTE_CORE_SHORT_TIMELOCK, DUST_VALUE, INITIAL_DEPOSIT_TX_SUFFIX, OPERATOR,
-                    OPERATOR_TAKE_ENABLER, OP_DISABLER_DIRECTORY_TX, OP_DISABLER_FEE,
-                    OP_DISABLER_TX, OP_INITIAL_DEPOSIT_AMOUNT, OP_INITIAL_DEPOSIT_OUT_SCRIPT,
+                    OPERATOR_TAKE_ENABLER, OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX,
+                    OP_INITIAL_DEPOSIT_AMOUNT, OP_INITIAL_DEPOSIT_OUT_SCRIPT,
                     OP_INITIAL_DEPOSIT_TXID, OP_LAZY_DISABLER_TX, REIMBURSEMENT_KICKOFF_TX,
                     SETUP_DISABLER_DIRECTORY_UTXO,
                 },
@@ -180,8 +180,6 @@ impl ProtocolHandler for FullPenalizationProtocol {
 
                 self.create_operator_disabler(
                     &mut protocol,
-                    context,
-                    dispute_core_pid,
                     &committee,
                     operator_index,
                     watchtower_index,
@@ -327,8 +325,6 @@ impl FullPenalizationProtocol {
     fn create_operator_disabler(
         &self,
         protocol: &mut protocol_builder::builder::Protocol,
-        context: &ProgramContext,
-        dispute_core_pid: Uuid,
         committee: &Committee,
         operator_index: usize,
         watchtower_index: usize,
@@ -338,11 +334,7 @@ impl FullPenalizationProtocol {
         take_enablers: &Vec<PartialUtxo>,
         initial_setup_utxos: &Vec<PartialUtxo>,
     ) -> Result<(), BitVMXError> {
-        let watchtower_key = &committee.members[watchtower_index].dispute_key;
         let packet_size = committee.packet_size;
-
-        let amount = self.op_initial_deposit_amount(context, dispute_core_pid)?;
-        let op_disabler_change = self.checked_sub(amount + DUST_VALUE, OP_DISABLER_FEE)?;
         let op_disabler_directory_name =
             double_indexed_name(OP_DISABLER_DIRECTORY_TX, operator_index, watchtower_index);
 
@@ -383,23 +375,30 @@ impl FullPenalizationProtocol {
             )?;
 
             debug!("{} to {}", op_disabler_directory_name, op_disabler_name);
-
-            // FIXME: Here Operator Disabler Directory it's related to the watchtower key, is this okey?
-            // What happens if watchtower does not want to dispatch them? Should anyone be able to dispatch it?
             protocol.add_connection(
                 "from_disabler_directory",
                 &op_disabler_directory_name,
-                OutputType::segwit_key(DUST_VALUE, watchtower_key)?.into(),
+                OutputType::taproot(DUST_VALUE, &committee.dispute_aggregated_key, &[])?.into(),
                 &op_disabler_name,
-                InputSpec::Auto(SighashType::ecdsa_all(), SpendMode::None),
+                InputSpec::Auto(
+                    SighashType::taproot_all(),
+                    SpendMode::KeyOnly {
+                        key_path_sign: SignMode::Aggregate,
+                    },
+                ),
                 None,
                 None,
             )?;
 
+            // Output is unspendable. Everything is paid in fees to make sure this TXs is mined.
+            // If output goes to challenger WT it could decided no to dispatch or no to speedup it.
             debug!("Output for {}", op_disabler_name);
             protocol.add_transaction_output(
                 &op_disabler_name,
-                &OutputType::segwit_key(op_disabler_change, watchtower_key)?,
+                &OutputType::SegwitUnspendable {
+                    value: Amount::from_sat(0),
+                    script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
+                },
             )?;
 
             // Create Lazy Operator disablers
@@ -435,18 +434,25 @@ impl FullPenalizationProtocol {
                 &op_disabler_directory_name,
                 slot_index.into(),
                 &op_lazy_disabler_name,
-                InputSpec::Auto(SighashType::ecdsa_all(), SpendMode::None),
+                InputSpec::Auto(
+                    SighashType::taproot_all(),
+                    SpendMode::KeyOnly {
+                        key_path_sign: SignMode::Aggregate,
+                    },
+                ),
                 None,
                 None,
             )?;
 
-            let op_lazy_disabler_change =
-                self.checked_sub(take_enabler.2.unwrap() + DUST_VALUE, OP_DISABLER_FEE)?;
-
+            // Output is unspendable. Everything is paid in fees to make sure this TXs is mined.
+            // If output goes to challenger WT it could decided no to dispatch or no to speedup it.
             debug!("Output for {}", op_lazy_disabler_name);
             protocol.add_transaction_output(
                 &op_lazy_disabler_name,
-                &OutputType::segwit_key(op_lazy_disabler_change, watchtower_key)?,
+                &OutputType::SegwitUnspendable {
+                    value: Amount::from_sat(0),
+                    script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
+                },
             )?;
         }
 
