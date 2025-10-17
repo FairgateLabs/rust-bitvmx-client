@@ -12,9 +12,6 @@ use crate::{
     program::variables::{Globals, PartialUtxo, VariableTypes},
     types::{IncomingBitVMXApiMessages, PROGRAM_TYPE_DRP},
 };
-use emulator::decision::challenge::ForceChallenge;
-use emulator::decision::challenge::ForceCondition;
-use emulator::executor::utils::FailConfiguration;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct DisputeConfiguration {
