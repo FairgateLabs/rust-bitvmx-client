@@ -121,11 +121,13 @@ pub fn create_transaction_reference(
     // Sort UTXOs by index
     utxos.sort_by_key(|utxo| utxo.1);
     let mut last_index = 0;
+    let mut add_initial_outputs = utxos[0].1 > 0;
 
     for utxo in utxos {
         // If there is a gap in the indices, add unknown outputs
-        if utxo.1 > last_index + 1 || (utxo.1 == 1 && last_index == 0) {
+        if utxo.1 - last_index > 1 || add_initial_outputs {
             protocol.add_unknown_outputs(tx_name, utxo.1 - last_index)?;
+            add_initial_outputs = false;
         }
 
         // Add the UTXO as an output
