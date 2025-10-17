@@ -1,5 +1,5 @@
 use bitcoin::{Amount, PublicKey, ScriptBuf};
-use protocol_builder::types::OutputType;
+use protocol_builder::{scripts::ProtocolScript, types::OutputType};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -100,6 +100,22 @@ pub fn get_dispute_channel_pid(committee_id: Uuid, from_idx: usize, to_idx: usiz
     Uuid::from_bytes(hash[0..16].try_into().unwrap())
 }
 
+pub fn get_full_penalization_pid(
+    committee_id: Uuid,
+    operator_pubkey: &PublicKey,
+    watchtower_pubkey: &PublicKey,
+) -> Uuid {
+    let mut hasher = Sha256::new();
+    hasher.update(committee_id.as_bytes());
+    hasher.update(operator_pubkey.to_bytes());
+    hasher.update(watchtower_pubkey.to_bytes());
+    hasher.update("full_penalization");
+
+    // Get the result as a byte array
+    let hash = hasher.finalize();
+    return Uuid::from_bytes(hash[0..16].try_into().unwrap());
+}
+
 pub fn create_transaction_reference(
     protocol: &mut protocol_builder::builder::Protocol,
     tx_name: &str,
@@ -163,4 +179,12 @@ pub fn get_operator_output_type(
         script_pubkey,
         public_key: *dispute_key,
     })
+}
+
+pub fn get_initial_setup_output_type(
+    amount: u64,
+    operator_key: &PublicKey,
+    script: &[ProtocolScript],
+) -> Result<OutputType, BitVMXError> {
+    Ok(OutputType::taproot(amount, &operator_key, script)?)
 }

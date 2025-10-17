@@ -7,7 +7,8 @@ use crate::{
             union::{
                 self,
                 common::{
-                    create_transaction_reference, extract_index, get_accept_pegin_pid, indexed_name,
+                    create_transaction_reference, extract_index, get_accept_pegin_pid,
+                    get_initial_setup_output_type, indexed_name,
                 },
                 types::*,
             },
@@ -376,11 +377,23 @@ impl DisputeCoreProtocol {
             pegout_id_key,
         )?;
 
+        // Save start_reimbursement script by dispute_core_index. It will be used in FullPenalizationProtocol
+        context.globals.set_var(
+            &self.ctx.id,
+            &indexed_name(OP_INITIAL_DEPOSIT_OUT_SCRIPT, dispute_core_index),
+            VariableTypes::String(serde_json::to_string(&start_reimbursement)?),
+        )?;
+
         // We use the operator's dispute key as internal key to use the key spend path for self disablement.
         protocol.add_connection(
             "start_dispute_core",
             &initial_deposit,
-            OutputType::taproot(AUTO_AMOUNT, &operator_dispute_key, &[start_reimbursement])?.into(),
+            get_initial_setup_output_type(
+                AUTO_AMOUNT,
+                &operator_dispute_key,
+                &[start_reimbursement],
+            )?
+            .into(),
             &reimbursement_kickoff,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
             None,
@@ -1254,6 +1267,33 @@ impl DisputeCoreProtocol {
                 VariableTypes::Utxo(operator_won_utxo.clone()),
             )?;
         }
+
+        // FIXME: Should we save the whole UTXOS as in reimbursement_kickoff_utxos?
+        // Maybe we should improve reimbursement_kickoff_utxos to be a vector of TXIDs, and save just once the amount and the output type
+        // - Reimbursement: Multiples TXIDs with same amount and output type
+        // - Initial Setup: Single TXID and amount, with different output script. (output script is save in create_dispute_core function)
+
+        // Save initial deposit txid and output amount
+        let initial_deposit = format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX);
+        let initial_deposit_tx: &Transaction = protocol.transaction_by_name(&initial_deposit)?;
+        let initial_deposit_txid = initial_deposit_tx.compute_txid();
+        let output_value = initial_deposit_tx.output[0].value.to_sat();
+        info!(
+            id = self.ctx.my_idx,
+            "Saving initial deposit txid: {} and amount: {}", initial_deposit_txid, output_value
+        );
+
+        context.globals.set_var(
+            &self.ctx.id,
+            OP_INITIAL_DEPOSIT_TXID,
+            VariableTypes::String(initial_deposit_txid.to_string()),
+        )?;
+
+        context.globals.set_var(
+            &self.ctx.id,
+            OP_INITIAL_DEPOSIT_AMOUNT,
+            VariableTypes::Amount(output_value),
+        )?;
 
         Ok(())
     }
