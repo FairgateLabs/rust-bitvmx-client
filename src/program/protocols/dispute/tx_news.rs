@@ -61,37 +61,95 @@ fn dispatch_timeout_tx(
     Ok(())
 }
 
-// TODO: Refactor this static dispatch table into a dynamic configuration.
-//       The goal is to avoid hardcoding protocol-specific state names (e.g., "NARY2_PROVER_2_TO")
-//when is see [&Str], and vout is [bool] if I'm [ParticipantRole] then I dispatch [bool]? timeout_input_tx[Str] : timeout_tx[Str]
-pub const TIMEOUT_DISPATCH_TABLE: [(&str, bool, ParticipantRole, &str, bool, bool); 6] = [
-    (EXECUTE, false, Prover, CHALLENGE, true, false),
-    (CHALLENGE, false, Prover, CHALLENGE, true, true),
-    (EXECUTE, false, Verifier, EXECUTE, true, true),
-    (
-        CHALLENGE,
-        false,
-        Verifier,
-        "NARY2_PROVER_2_TO",
-        false, // not ignore
-        false,
-    ),
-    (
-        "NARY2_VERIFIER_4",
-        false,
-        Prover,
-        CHALLENGE_READ,
-        true,
-        false,
-    ),
-    (CHALLENGE_READ, false, Prover, CHALLENGE_READ, true, true),
-];
+// When I see [tx_name], and vout is [has_vout],
+// if I'm [role], then I dispatch
+// [is_input] ? timeout_input_tx[timeout_name] : timeout_tx[timeout_name].#[derive(Debug, Clone)]
+pub struct TimeoutDispatchRule {
+    pub tx_name: String,
+    pub has_vout: bool,
+    pub role: ParticipantRole,
+    pub timeout_name: String,
+    pub apply_timeout: bool,
+    pub is_input: bool,
+}
 
-fn get_timeout_name(name: &str, not_ignore: bool, is_input: bool) -> String {
-    if !not_ignore {
-        return name.to_string();
+impl TimeoutDispatchRule {
+    pub fn new(
+        tx_name: &str,
+        has_vout: bool,
+        role: ParticipantRole,
+        timeout_name: &str,
+        apply_timeout: bool,
+        is_input: bool,
+    ) -> Self {
+        Self {
+            tx_name: tx_name.to_string(),
+            has_vout,
+            role,
+            timeout_name: timeout_name.to_string(),
+            apply_timeout,
+            is_input,
+        }
     }
-    if is_input {
+}
+
+pub struct TimeoutDispatchTable {
+    pub rules: Vec<TimeoutDispatchRule>,
+}
+
+impl TimeoutDispatchTable {
+    pub fn new(rules: Vec<TimeoutDispatchRule>) -> Self {
+        Self { rules }
+    }
+    pub fn new_predefined(first_2nd_nary_prover_tx: &str, last_2nd_nary_verifier_tx: &str) -> Self {
+        Self {
+            rules: vec![
+                TimeoutDispatchRule::new(EXECUTE, false, Prover, CHALLENGE, true, false),
+                TimeoutDispatchRule::new(CHALLENGE, false, Prover, CHALLENGE, true, true),
+                TimeoutDispatchRule::new(EXECUTE, false, Verifier, EXECUTE, true, true),
+                TimeoutDispatchRule::new(
+                    CHALLENGE,
+                    false,
+                    Verifier,
+                    first_2nd_nary_prover_tx,
+                    false,
+                    false,
+                ),
+                TimeoutDispatchRule::new(
+                    last_2nd_nary_verifier_tx,
+                    false,
+                    Prover,
+                    CHALLENGE_READ,
+                    true,
+                    false,
+                ),
+                TimeoutDispatchRule::new(CHALLENGE_READ, false, Prover, CHALLENGE_READ, true, true),
+            ],
+        }
+    }
+    pub fn add_rule(&mut self, rule: TimeoutDispatchRule) {
+        self.rules.push(rule);
+    }
+    pub fn iter(
+        &self,
+    ) -> impl Iterator<Item = (&String, &bool, &ParticipantRole, &String, &bool, &bool)> {
+        self.rules.iter().map(|r| {
+            (
+                &r.tx_name,
+                &r.has_vout,
+                &r.role,
+                &r.timeout_name,
+                &r.apply_timeout,
+                &r.is_input,
+            )
+        })
+    }
+}
+
+fn get_timeout_name(name: &str, apply_timeout: bool, is_input: bool) -> String {
+    if !apply_timeout {
+        name.to_string()
+    } else if is_input {
         timeout_input_tx(name)
     } else {
         timeout_tx(name)
@@ -104,10 +162,9 @@ fn auto_dispatch_timeout(
     vout: Option<u32>,
     program_context: &ProgramContext,
     current_height: u32,
+    timeout_table: &TimeoutDispatchTable,
 ) -> Result<(), BitVMXError> {
-    for (tx_name, tx_vout, tx_role, timeout_name, not_ignore, is_input) in
-        TIMEOUT_DISPATCH_TABLE.iter()
-    {
+    for (tx_name, tx_vout, tx_role, timeout_name, not_ignore, is_input) in timeout_table.iter() {
         if *tx_name == name && *tx_role == drp.role() && *tx_vout == (vout.is_some()) {
             dispatch_timeout_tx(
                 drp,
@@ -165,11 +222,12 @@ fn auto_claim_start(
     name: &str,
     vout: Option<u32>,
     program_context: &ProgramContext,
+    timeout_table: &TimeoutDispatchTable,
 ) -> Result<(), BitVMXError> {
     if vout.is_some() {
         return Ok(());
     }
-    for (_, _, tx_role, timeout_name, not_ignore, is_input) in TIMEOUT_DISPATCH_TABLE.iter() {
+    for (_, _, tx_role, timeout_name, not_ignore, is_input) in timeout_table.iter() {
         let timeout_name = get_timeout_name(timeout_name, *not_ignore, *is_input);
         if &timeout_name == name && *tx_role == drp.role() {
             let claim_name = ClaimGate::tx_start(get_claim_name(drp, false));
@@ -246,51 +304,48 @@ fn claim_state_handle(
         }
     }
 
-    if (name == ClaimGate::tx_success(PROVER_WINS) && drp.role() == ParticipantRole::Prover)
-        || (name == ClaimGate::tx_success(VERIFIER_WINS) && drp.role() == ParticipantRole::Verifier)
+    if name == ClaimGate::tx_success(PROVER_WINS) && drp.role() == ParticipantRole::Prover {
+        //handle all actions
+        info!("Prover. Execute Action");
+        let prover_wins_action_tx = drp.get_signed_tx(
+            program_context,
+            &action_wins(&ParticipantRole::Prover, 1),
+            0,
+            0,
+            false,
+            1,
+        )?;
+        let speedup_data =
+            drp.get_speedup_data_from_tx(&prover_wins_action_tx, program_context, None)?;
+
+        program_context.bitcoin_coordinator.dispatch(
+            prover_wins_action_tx,
+            Some(speedup_data),
+            Context::ProgramId(drp.ctx.id).to_string()?,
+            None,
+        )?;
+    } else if name == ClaimGate::tx_success(VERIFIER_WINS)
+        && drp.role() == ParticipantRole::Verifier
     {
-        //TODO: if and else are the same as above, refactor
-        if name == ClaimGate::tx_success(PROVER_WINS) {
-            //handle all actions
-            info!("Prover. Execute Action");
-            let prover_wins_action_tx = drp.get_signed_tx(
-                program_context,
-                &action_wins(&ParticipantRole::Prover, 1),
-                0,
-                0,
-                false,
-                1,
-            )?;
-            let speedup_data =
-                drp.get_speedup_data_from_tx(&prover_wins_action_tx, program_context, None)?;
+        //handle all actions
+        info!("Verifier. Execute Action");
+        let verifier_wins_action_tx = drp.get_signed_tx(
+            program_context,
+            &action_wins(&ParticipantRole::Verifier, 1),
+            0,
+            0,
+            false,
+            1,
+        )?;
+        let speedup_data =
+            drp.get_speedup_data_from_tx(&verifier_wins_action_tx, program_context, None)?;
 
-            program_context.bitcoin_coordinator.dispatch(
-                prover_wins_action_tx,
-                Some(speedup_data),
-                Context::ProgramId(drp.ctx.id).to_string()?,
-                None,
-            )?;
-        } else {
-            //handle all actions
-            info!("Verifier. Execute Action");
-            let verifier_wins_action_tx = drp.get_signed_tx(
-                program_context,
-                &action_wins(&ParticipantRole::Verifier, 1),
-                0,
-                0,
-                false,
-                1,
-            )?;
-            let speedup_data =
-                drp.get_speedup_data_from_tx(&verifier_wins_action_tx, program_context, None)?;
-
-            program_context.bitcoin_coordinator.dispatch(
-                verifier_wins_action_tx,
-                Some(speedup_data),
-                Context::ProgramId(drp.ctx.id).to_string()?,
-                None,
-            )?;
-        }
+        program_context.bitcoin_coordinator.dispatch(
+            verifier_wins_action_tx,
+            Some(speedup_data),
+            Context::ProgramId(drp.ctx.id).to_string()?,
+            None,
+        )?;
     }
     Ok(())
 }
@@ -320,9 +375,19 @@ pub fn handle_tx_news(
 
     let timelock_blocks = config.timelock_blocks;
 
-    auto_dispatch_timeout(drp, &name, vout, program_context, current_height)?;
+    let timeout_table =
+        TimeoutDispatchTable::new_predefined("NARY2_PROVER_2_TO", "NARY2_VERIFIER_4"); //TODO: obtain from globals?
 
-    auto_claim_start(drp, &name, vout, program_context)?;
+    auto_dispatch_timeout(
+        drp,
+        &name,
+        vout,
+        program_context,
+        current_height,
+        &timeout_table,
+    )?;
+
+    auto_claim_start(drp, &name, vout, program_context, &timeout_table)?;
 
     claim_state_handle(
         drp,
