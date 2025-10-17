@@ -17,8 +17,7 @@ use bitvmx_client::program::{
     participant::ParticipantRole,
     protocols::union::{
         common::{
-            double_indexed_name, double_indexed_name, get_accept_pegin_pid, get_accept_pegin_pid,
-            get_full_penalization_pid, get_full_penalization_pid, get_init_pid,
+            double_indexed_name, get_accept_pegin_pid, get_full_penalization_pid, get_init_pid,
             triple_indexed_name,
         },
         types::{
