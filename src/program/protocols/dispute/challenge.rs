@@ -55,7 +55,7 @@ pub const TRACE_HASH_CHALLENGE: [(&str, usize); 6] = [
     ("prover_write_value", 4),
     ("prover_write_pc", 4),
     ("prover_write_micro", 1),
-    ("prover_last_hash", 20),
+    ("verifier_step_hash", 20), //TODO: this should be from prover translation keys
 ];
 pub const TRACE_HASH_ZERO_CHALLENGE: [(&str, usize); 5] = [
     ("prover_write_address", 4),
@@ -664,12 +664,14 @@ pub fn get_challenge_leaf(
                 &prover_step_hash,
             )?;
         }
-        ChallengeType::TraceHash(prover_prev_hash, _prover_trace_step, _prover_step_hash) => {
+        ChallengeType::TraceHash(prover_prev_hash, _prover_trace_step, prover_step_hash) => {
             name = "trace_hash";
             info!("Verifier chose {name} challenge");
 
             //TODO: fix
             set_input_hex(id, context, "verifier_prev_hash", &prover_prev_hash)?;
+            //TODO: fix
+            set_input_hex(id, context, "verifier_step_hash", &prover_step_hash)?;
         }
         ChallengeType::TraceHashZero(_prover_trace_step, prover_step_hash) => {
             name = "trace_hash_zero";
