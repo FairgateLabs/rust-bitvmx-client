@@ -1,5 +1,5 @@
 use bitcoin::{Amount, PublicKey, ScriptBuf};
-use protocol_builder::types::OutputType;
+use protocol_builder::{scripts::ProtocolScript, types::OutputType};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -100,6 +100,16 @@ pub fn get_dispute_channel_pid(committee_id: Uuid, from_idx: usize, to_idx: usiz
     Uuid::from_bytes(hash[0..16].try_into().unwrap())
 }
 
+pub fn get_full_penalization_pid(committee_id: Uuid) -> Uuid {
+    let mut hasher = Sha256::new();
+    hasher.update(committee_id.as_bytes());
+    hasher.update("full_penalization");
+
+    // Get the result as a byte array
+    let hash = hasher.finalize();
+    return Uuid::from_bytes(hash[0..16].try_into().unwrap());
+}
+
 pub fn create_transaction_reference(
     protocol: &mut protocol_builder::builder::Protocol,
     tx_name: &str,
@@ -111,11 +121,13 @@ pub fn create_transaction_reference(
     // Sort UTXOs by index
     utxos.sort_by_key(|utxo| utxo.1);
     let mut last_index = 0;
+    let mut add_initial_outputs = utxos[0].1 > 0;
 
     for utxo in utxos {
         // If there is a gap in the indices, add unknown outputs
-        if utxo.1 > last_index + 1 || (utxo.1 == 1 && last_index == 0) {
+        if utxo.1 - last_index > 1 || add_initial_outputs {
             protocol.add_unknown_outputs(tx_name, utxo.1 - last_index)?;
+            add_initial_outputs = false;
         }
 
         // Add the UTXO as an output
@@ -128,6 +140,14 @@ pub fn create_transaction_reference(
 
 pub fn indexed_name(prefix: &str, index: usize) -> String {
     format!("{}_{}", prefix, index)
+}
+
+pub fn double_indexed_name(prefix: &str, index_1: usize, index_2: usize) -> String {
+    format!("{}_{}_{}", prefix, index_1, index_2)
+}
+
+pub fn triple_indexed_name(prefix: &str, index_1: usize, index_2: usize, index_3: usize) -> String {
+    format!("{}_{}_{}_{}", prefix, index_1, index_2, index_3)
 }
 
 pub fn extract_index(full_name: &str, tx_name: &str) -> Result<usize, BitVMXError> {
@@ -163,4 +183,17 @@ pub fn get_operator_output_type(
         script_pubkey,
         public_key: *dispute_key,
     })
+}
+
+pub fn get_initial_setup_output_type(
+    amount: u64,
+    operator_key: &PublicKey,
+    script: &[ProtocolScript],
+) -> Result<OutputType, BitVMXError> {
+    Ok(OutputType::taproot(amount, &operator_key, script)?)
+}
+
+//Rough estimate of fee for P2WPKH outputs
+pub fn estimate_fee(input_quantity: usize, output_quantity: usize, fee_rate: u64) -> u64 {
+    (46 + input_quantity as u64 * 68 + output_quantity as u64 * 34) * fee_rate // rough estimate
 }

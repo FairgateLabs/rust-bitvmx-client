@@ -13,9 +13,18 @@ use crate::{
 };
 use ::bitcoin::{Network, OutPoint, PublicKey, Txid};
 use anyhow::Result;
-use bitvmx_client::program::protocols::union::{
-    common::{get_accept_pegin_pid, get_init_pid},
-    types::{ACCEPT_PEGIN_TX, START_ENABLER_TX_SUFFIX, WATCHTOWER},
+use bitvmx_client::program::{
+    participant::ParticipantRole,
+    protocols::union::{
+        common::{
+            double_indexed_name, get_accept_pegin_pid, get_full_penalization_pid, get_init_pid,
+            triple_indexed_name,
+        },
+        types::{
+            ACCEPT_PEGIN_TX, DISPUTE_CORE_SHORT_TIMELOCK, OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX,
+            OP_LAZY_DISABLER_TX, START_ENABLER_TX_SUFFIX, WATCHTOWER,
+        },
+    },
 };
 use core::convert::Into;
 use std::{env, thread, time::Duration};
@@ -53,6 +62,7 @@ pub fn main() -> Result<()> {
         Some("advance_funds_twice") => cli_advance_funds_twice()?,
         Some("invalid_reimbursement") => cli_invalid_reimbursement()?,
         Some("double_reimbursement") => cli_double_reimbursement()?,
+        Some("full_penalization") => cli_full_penalization()?,
         // Utils
         Some("create_wallet") => cli_create_wallet(args.get(2))?,
         Some("latency") => cli_latency(args.get(2))?,
@@ -93,6 +103,7 @@ fn print_usage() {
         "  cargo run --example union advance_funds_twice       - Performs advancement of funds twice"
     );
     println!("  cargo run --example union invalid_reimbursement     - Forces invalid reimbursement to test challenge tx");
+    println!("  cargo run --example union full_penalization     - Dispatch disabler directory transactions");
     // Testing commands
     println!(
         "  cargo run --example union create_wallet        - Create wallet: key pair and address. (optionally pass network: regtest, testnet, bitcoin)"
@@ -144,9 +155,7 @@ pub fn cli_watchtowers_init() -> Result<()> {
 }
 
 pub fn cli_request_pegin() -> Result<()> {
-    let mut wallet = get_master_wallet()?;
-    let committee = committee(&mut wallet)?;
-    let mut user = get_user()?;
+    let (committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
 
     request_pegin(committee.public_key()?, &mut user)?;
     Ok(())
@@ -329,6 +338,90 @@ pub fn cli_fund_members() -> Result<()> {
     Ok(())
 }
 
+pub fn cli_full_penalization() -> Result<()> {
+    // NOTE: This example works better with a client node with low fees.
+    // It require a fine timming to dispatch TXs and that's hard to reach if there is high fees
+    // Key: Second reimbursement kickoff tx should be dispatched right after the first reimbursement kickoff tx is mined
+    // and before the operator take is mined.
+    if HIGH_FEE_NODE_ENABLED {
+        info!("This example works better with a client node with low fees. Please disable HIGH_FEE_NODE_ENABLED and try again.");
+        return Ok(());
+    }
+
+    let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+
+    if committee.members.len() < 3 {
+        info!("This example requires 3 committee members or more.");
+        info!("Current members: {}", committee.members.len());
+        return Ok(());
+    }
+
+    let full_penalization_pid = get_full_penalization_pid(committee.committee_id());
+
+    // Dispatch OP_DISABLER_DIRECTORY_TX for each operator
+    // Temporary test due to it's not connected to dispute channels yet
+    for (index, member) in committee.members.iter().enumerate() {
+        if member.role == ParticipantRole::Prover {
+            let operator_index = index;
+            let watchtower_index = (operator_index + 1) % committee.members.len();
+
+            let tx_name =
+                double_indexed_name(OP_DISABLER_DIRECTORY_TX, operator_index, watchtower_index);
+
+            let tx = committee.members[watchtower_index]
+                .dispatch_transaction_by_name(full_penalization_pid, tx_name.clone())?;
+
+            info!("Dispatched {} with txid: {}", tx_name, tx.compute_txid());
+        }
+    }
+    wait_for_blocks(&committee.bitcoin_client, 5)?;
+
+    let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+
+    // Advance funds to dispatch REIMBURSEMENT_KICKOFF_TX without challenge (just for testing purposes)
+    let operator_index = advance_funds(&mut committee, user.public_key()?, slot_index, false)?;
+    wait_for_blocks(
+        &committee.bitcoin_client,
+        DISPUTE_CORE_SHORT_TIMELOCK as u32 + 2,
+    )?;
+
+    // Its the watchtower who should dispatch the operator disabler directory tx in the step above
+    let watchtower_challenger_index = (operator_index + 1) % committee.members.len();
+    let watchtower_honest_index = (operator_index + 2) % committee.members.len();
+
+    // Dispatch OP_LAZY_DISABLER_TX to disable reimbursement kickoff for `slot_index`
+    let tx_name = triple_indexed_name(
+        OP_LAZY_DISABLER_TX,
+        operator_index,
+        watchtower_challenger_index,
+        slot_index,
+    );
+
+    // watchtower_honest_index is dispatching tx of watchtower_challenger_index in case it's not doing it.
+    let tx = committee.members[watchtower_honest_index]
+        .dispatch_transaction_by_name(full_penalization_pid, tx_name.clone())?;
+
+    info!("Dispatched {} with txid: {}", tx_name, tx.compute_txid());
+
+    // Dispatch OP_DISABLER_TX to disable operator enabler for `slot_index + 1`
+    let tx_name = triple_indexed_name(
+        OP_DISABLER_TX,
+        operator_index,
+        watchtower_challenger_index,
+        slot_index + 1,
+    );
+
+    // watchtower_honest_index is dispatching tx of watchtower_challenger_index in case it's not doing it.
+    let tx = committee.members[watchtower_honest_index]
+        .dispatch_transaction_by_name(full_penalization_pid, tx_name.clone())?;
+
+    info!("Dispatched {} with txid: {}", tx_name, tx.compute_txid());
+
+    wait_for_blocks(&committee.bitcoin_client, 3)?;
+
+    Ok(())
+}
+
 pub fn committee(wallet: &mut MasterWallet) -> Result<Committee> {
     // A new package is created. A committee is selected. Union client requests the setup of the
     // corresponding keys and programs.
@@ -348,6 +441,7 @@ pub fn committee(wallet: &mut MasterWallet) -> Result<Committee> {
     print_members_balances(committee.members.as_slice())?;
 
     committee.setup_dispute_protocols()?;
+    committee.setup_full_penalization()?;
 
     let blocks = if NETWORK == Network::Regtest { 10 } else { 1 };
     wait_for_blocks(&committee.bitcoin_client, blocks)?;

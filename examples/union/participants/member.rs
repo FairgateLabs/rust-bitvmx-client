@@ -1,3 +1,4 @@
+use crate::setup::full_penalization_setup::FullPenalizationSetup;
 use crate::wallet::helper::print_link;
 use crate::{
     macros::wait_for_message_blocking,
@@ -290,6 +291,20 @@ impl Member {
 
         let program_id = wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
         info!(id = "AcceptPegInSetup", program_id = ?program_id, "Accept pegin setup completed (from member)");
+
+        Ok(())
+    }
+
+    pub fn setup_full_penalization(
+        &mut self,
+        committee_id: Uuid,
+        addresses: &Vec<CommsAddress>,
+    ) -> Result<()> {
+        info!(id = self.id, "Setting up full penalization protocol");
+        FullPenalizationSetup::setup(&self.id, &self.bitvmx, committee_id, addresses)?;
+
+        let program_id = wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
+        info!(id = "FullPenalizationSetup", program_id = ?program_id, "Full penalization setup completed (from member)");
 
         Ok(())
     }

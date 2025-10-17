@@ -5,7 +5,9 @@ use bitvmx_client::program::protocols::union::common::{
     get_accept_pegin_pid, get_dispute_aggregated_key_pid, get_take_aggreated_key_pid,
     get_user_take_pid,
 };
-use bitvmx_client::program::protocols::union::types::{MemberData, ACCEPT_PEGIN_TX, USER_TAKE_TX};
+use bitvmx_client::program::protocols::union::types::{
+    MemberData, ACCEPT_PEGIN_TX, DUST_VALUE, SPEEDUP_VALUE, USER_TAKE_TX,
+};
 use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtxo};
 use bitvmx_client::types::OutgoingBitVMXApiMessages::{SPVProof, Transaction};
 
@@ -209,6 +211,15 @@ impl Committee {
         Ok(())
     }
 
+    pub fn setup_full_penalization(&mut self) -> Result<()> {
+        let addresses = self.get_addresses();
+        let committee_id = self.committee_id;
+
+        self.all(|op: &mut Member| op.setup_full_penalization(committee_id, &addresses.clone()))?;
+
+        Ok(())
+    }
+
     pub fn wait_for_spv_proof(&self, txid: Txid) -> Result<()> {
         let bitvmx = &self.members[0].bitvmx;
         let status = wait_until_msg!(bitvmx, Transaction(_, _status, _) => _status);
@@ -353,6 +364,10 @@ impl Committee {
         return FUNDING_AMOUNT_PER_SLOT * PACKET_SIZE as u64;
     }
 
+    fn get_funding_op_disabler_directory_value(&self) -> u64 {
+        return DUST_VALUE * PACKET_SIZE as u64 + SPEEDUP_VALUE;
+    }
+
     pub fn get_total_funds_value(&self) -> u64 {
         let fees = 5_000; // extra fees for safety
 
@@ -360,6 +375,7 @@ impl Committee {
             + self.get_advance_funds_value()
             + self.get_operator_funding_value()
             + self.get_watchtower_funding_value()
+            + self.get_funding_op_disabler_directory_value()
             + fees;
     }
 
@@ -376,7 +392,8 @@ impl Committee {
 
         let funding_amounts = FundingAmount {
             speedup: self.get_speedup_funds_value(),
-            operator_funding: self.get_operator_funding_value(),
+            operator_funding: self.get_operator_funding_value()
+                + self.get_funding_op_disabler_directory_value(),
             watchtower_funding: self.get_watchtower_funding_value(),
             advance_funds: self.get_advance_funds_value(),
         };

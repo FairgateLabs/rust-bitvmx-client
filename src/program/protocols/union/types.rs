@@ -15,6 +15,9 @@ pub const MONITORED_WATCHTOWER_KEY: &str = "monitored_watchtower_key";
 pub const OP_INITIAL_DEPOSIT_FLAG: &str = "op_initial_deposit_flag";
 pub const OPERATOR_LEAF_INDEX: &str = "operator_leaf_index";
 pub const SPEEDUP_KEY: &str = "speedup_key";
+pub const OP_INITIAL_DEPOSIT_TXID: &str = "op_initial_deposit_txid";
+pub const OP_INITIAL_DEPOSIT_AMOUNT: &str = "op_initial_deposit_amount";
+pub const OP_INITIAL_DEPOSIT_OUT_SCRIPT: &str = "op_initial_deposit_out_script";
 
 // Transaction names
 pub const REQUEST_PEGIN_TX: &str = "REQUEST_PEGIN_TX";
@@ -38,6 +41,9 @@ pub const OP_SELF_DISABLER_TX: &str = "OP_SELF_DISABLER_TX";
 pub const TRY_TAKE_2_TX: &str = "TRY_TAKE_2_TX";
 pub const NO_DISPUTE_OPENED_TX: &str = "NO_DISPUTE_OPENED_TX";
 pub const NO_CHALLENGE_TX: &str = "NO_CHALLENGE_TX";
+pub const OP_DISABLER_TX: &str = "OP_DISABLER_TX";
+pub const OP_LAZY_DISABLER_TX: &str = "OP_LAZY_DISABLER_TX";
+pub const OP_DISABLER_DIRECTORY_TX: &str = "OP_DISABLER_DIRECTORY_TX";
 
 // Parameters
 pub const DISPUTE_CORE_SHORT_TIMELOCK: u16 = 1;
@@ -46,6 +52,7 @@ pub const DUST_VALUE: u64 = 540;
 pub const SPEEDUP_VALUE: u64 = 540;
 pub const P2TR_FEE: u64 = 335; // This should match the value P2TR_FEE in Union Smart contracts
 pub const USER_TAKE_FEE: u64 = 335; // This should match the value USER_TAKE_FEE in Union Smart contracts
+pub const OP_DISABLER_FEE: u64 = 240;
 
 // Suffixes
 pub const FUNDING_UTXO_SUFFIX: &str = "_FUNDING_UTXO";
@@ -60,6 +67,7 @@ pub const OPERATOR_TAKE_ENABLER: &str = "operator_take_enabler";
 pub const OPERATOR_WON_ENABLER: &str = "operator_won_enabler";
 pub const ADVANCE_FUNDS_INPUT: &str = "advance_funds_input";
 pub const LAST_OPERATOR_TAKE_UTXO: &str = "last_operator_take_utxo";
+pub const SETUP_DISABLER_DIRECTORY_UTXO: &str = "setup_disabler_directory_utxo";
 
 // Roles
 pub const OPERATOR: &str = "OP";
@@ -192,5 +200,16 @@ pub struct AdvanceFundsRequest {
 impl AdvanceFundsRequest {
     pub fn name() -> String {
         "advance_funds_request".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FullPenalizationData {
+    pub committee_id: Uuid,
+}
+
+impl FullPenalizationData {
+    pub fn name() -> String {
+        "full_penalization_data".to_string()
     }
 }
