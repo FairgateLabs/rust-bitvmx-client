@@ -461,6 +461,7 @@ pub fn test_all_aux(
     program: Option<String>,
     inputs: Option<(&str, u32, &str, u32)>,
     force_challenge: Option<ForcedChallenges>,
+    force_winner: Option<ParticipantRole>,
 ) -> Result<()> {
     config_trace();
 
@@ -673,10 +674,13 @@ pub fn test_all_aux(
 
     info!("Waiting for input tx to be mined");
 
-    let role = forced_challenge
-        .get_role()
-        .unwrap_or(ParticipantRole::Verifier)
-        .opposite();
+    let role = match force_winner {
+        Some(role) => role,
+        None => forced_challenge
+            .get_role()
+            .unwrap_or(ParticipantRole::Verifier)
+            .opposite(),
+    };
 
     helper.wait_tx_name(1, &action_wins(&role, 1))?;
 
@@ -752,19 +756,19 @@ pub fn sign_winternitz_message(message_bytes: &[u8], index: u32) -> WinternitzSi
 #[ignore]
 #[test]
 fn test_independent_testnet() -> Result<()> {
-    test_all_aux(true, Network::Testnet, None, None, None)?;
+    test_all_aux(true, Network::Testnet, None, None, None, None)?;
     Ok(())
 }
 #[ignore]
 #[test]
 fn test_independent_regtest() -> Result<()> {
-    test_all_aux(true, Network::Regtest, None, None, None)?;
+    test_all_aux(true, Network::Regtest, None, None, None, None)?;
     Ok(())
 }
 #[ignore]
 #[test]
 fn test_all() -> Result<()> {
-    test_all_aux(false, Network::Regtest, None, None, None)?;
+    test_all_aux(false, Network::Regtest, None, None, None, None)?;
     Ok(())
 }
 
@@ -777,6 +781,7 @@ fn test_const() -> Result<()> {
         Some("./verifiers/add-test-with-const-pre.yaml".to_string()),
         Some(("0000000100000002", 0, "00000003", 1)),
         None,
+        None,
     )?;
 
     test_all_aux(
@@ -784,6 +789,7 @@ fn test_const() -> Result<()> {
         Network::Regtest,
         Some("./verifiers/add-test-with-const-post.yaml".to_string()),
         Some(("0000000200000003", 1, "00000001", 0)),
+        None,
         None,
     )?;
 
@@ -820,22 +826,23 @@ fn test_const_fail_input() -> Result<()> {
         Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
         Some(("00000002", 1, "00000003", 2)),
         Some(ForcedChallenges::Personalized(fail_config.clone())),
+        Some(ParticipantRole::Verifier),
     )?;
-
     test_all_aux(
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-const-post.yaml".to_string()),
         Some(("0000000200000004", 1, "00000001", 0)),
         Some(ForcedChallenges::Personalized(fail_config.clone())),
+        Some(ParticipantRole::Verifier),
     )?;
-
     test_all_aux(
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-const-pre.yaml".to_string()),
         Some(("0000000100000002", 0, "00000004", 1)),
         Some(ForcedChallenges::Personalized(fail_config)),
+        Some(ParticipantRole::Verifier),
     )?;
 
     Ok(())
@@ -849,6 +856,7 @@ fn test_previous_input() -> Result<()> {
         Network::Regtest,
         Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
         Some(("00000002", 1, "00000003", 2)),
+        None,
         None,
     )?;
 
@@ -889,7 +897,7 @@ fn test_zkp() -> Result<()> {
 }
 
 fn test_challenge(challenge: ForcedChallenges) -> Result<()> {
-    test_all_aux(false, Network::Regtest, None, None, Some(challenge))?;
+    test_all_aux(false, Network::Regtest, None, None, Some(challenge), None)?;
     Ok(())
 }
 
