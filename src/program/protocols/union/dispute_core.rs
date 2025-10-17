@@ -397,11 +397,17 @@ impl DisputeCoreProtocol {
             pegout_id_key,
         )?;
 
+        let validate_dispute_key =
+            scripts::verify_signature(&committee.dispute_aggregated_key, SignMode::Aggregate)?;
+
         // Save start_reimbursement script by dispute_core_index. It will be used in FullPenalizationProtocol
         context.globals.set_var(
             &self.ctx.id,
             &indexed_name(OP_INITIAL_DEPOSIT_OUT_SCRIPT, dispute_core_index),
-            VariableTypes::String(serde_json::to_string(&start_reimbursement)?),
+            VariableTypes::String(serde_json::to_string(&[
+                &start_reimbursement,
+                &validate_dispute_key,
+            ])?),
         )?;
 
         // We use the operator's dispute key as internal key to use the key spend path for self disablement.
@@ -411,7 +417,7 @@ impl DisputeCoreProtocol {
             get_initial_setup_output_type(
                 AUTO_AMOUNT,
                 &operator_dispute_key,
-                &[start_reimbursement],
+                &[start_reimbursement, validate_dispute_key],
             )?
             .into(),
             &reimbursement_kickoff,

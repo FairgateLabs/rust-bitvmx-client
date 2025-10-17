@@ -135,16 +135,16 @@ impl ProtocolHandler for FullPenalizationProtocol {
                     &mut vec![take_enabler],
                 )?;
 
-                // Load initial deposit UTXOs and create TX reference just once.
-                let script =
-                    self.op_initial_deposit_out_script(context, dispute_core_pid, slot_index)?;
+                let scripts =
+                    self.op_initial_deposit_out_scripts(context, dispute_core_pid, slot_index)?;
 
                 let output_type = get_initial_setup_output_type(
                     amount,
                     &committee.members[operator_index].dispute_key,
-                    &[script],
+                    scripts.as_slice(),
                 )?;
 
+                // Load initial deposit UTXOs and create TX reference just once.
                 initial_deposit_utxos.push((
                     op_initial_deposit_txid,
                     slot_index as u32,
@@ -305,12 +305,12 @@ impl FullPenalizationProtocol {
         Ok(amount)
     }
 
-    fn op_initial_deposit_out_script(
+    fn op_initial_deposit_out_scripts(
         &self,
         context: &ProgramContext,
         dispute_core_pid: Uuid,
         slot_index: usize,
-    ) -> Result<ProtocolScript, BitVMXError> {
+    ) -> Result<Vec<ProtocolScript>, BitVMXError> {
         let data = context
             .globals
             .get_var(
@@ -320,8 +320,8 @@ impl FullPenalizationProtocol {
             .unwrap()
             .string()?;
 
-        let script: ProtocolScript = serde_json::from_str(&data)?;
-        Ok(script)
+        let scripts: Vec<ProtocolScript> = serde_json::from_str(&data)?;
+        Ok(scripts)
     }
 
     fn create_operator_disabler(
@@ -377,8 +377,7 @@ impl FullPenalizationProtocol {
                 &initial_deposit_name,
                 (initial_deposit_utxo.1 as usize).into(),
                 &op_disabler_name,
-                // TODO: Review this input
-                InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
+                InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
                 None,
                 Some(initial_deposit_utxo.0),
             )?;
