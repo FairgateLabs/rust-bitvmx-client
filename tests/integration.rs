@@ -113,6 +113,7 @@ pub fn test_drp() -> Result<()> {
     )?;
 
     let prog_id = Uuid::new_v4();
+    let forced_challenge = ForcedChallenges::Execution;
     prepare_dispute(
         prog_id,
         participants,
@@ -122,8 +123,7 @@ pub fn test_drp() -> Result<()> {
         initial_out_type,
         prover_win_utxo,
         prover_win_out_type,
-        ForcedChallenges::No,
-        None,
+        forced_challenge.clone(),
         None,
     )?;
     let _msgs = get_all(&channels, &mut instances, false)?;
@@ -136,6 +136,7 @@ pub fn test_drp() -> Result<()> {
         &wallet,
         prog_id,
         None,
+        forced_challenge,
     )?;
 
     //prover final trace

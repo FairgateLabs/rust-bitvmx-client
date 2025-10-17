@@ -187,6 +187,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
     info!("Output: {:?}", output);
 
     //=====================================
+    let forced_challenge = ForcedChallenges::No;
 
     let (emulator_channels, dispute_id) = if and_drp {
         let emulator_channels = vec![emulator_1.unwrap(), emulator_2.unwrap()];
@@ -227,8 +228,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
             initial_output_type,
             prover_win_utxo,
             prover_win_output_type,
-            ForcedChallenges::No,
-            None,
+            forced_challenge.clone(),
             Some("./verifiers/cardinal-verifier.yaml".to_string()),
         )?;
         let _msgs = get_all(&sub_channel.clone(), &mut instances, false)?;
@@ -291,6 +291,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
             &wallet,
             dispute_id,
             Some((gorth16proof, 3)),
+            forced_challenge,
         )?;
 
         //Consume other stops through timeout
