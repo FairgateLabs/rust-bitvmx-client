@@ -17,9 +17,14 @@ use bitvmx_client::program::{
     participant::ParticipantRole,
     protocols::union::{
         common::{
-            double_indexed_name, get_accept_pegin_pid, get_full_penalization_pid, get_init_pid,
+            double_indexed_name, double_indexed_name, get_accept_pegin_pid, get_accept_pegin_pid,
+            get_full_penalization_pid, get_full_penalization_pid, get_init_pid,
+            triple_indexed_name,
         },
-        types::{ACCEPT_PEGIN_TX, OP_DISABLER_DIRECTORY_TX, START_ENABLER_TX_SUFFIX, WATCHTOWER},
+        types::{
+            ACCEPT_PEGIN_TX, DISPUTE_CORE_SHORT_TIMELOCK, OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX,
+            OP_LAZY_DISABLER_TX, START_ENABLER_TX_SUFFIX, WATCHTOWER,
+        },
     },
 };
 use core::convert::Into;
@@ -344,20 +349,22 @@ pub fn cli_full_penalization() -> Result<()> {
         return Ok(());
     }
 
-    let (committee, mut _user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+    let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
 
-    if committee.members.len() != 4 {
-        info!("This example requires 4 committee members");
+    if committee.members.len() < 3 {
+        info!("This example requires 3 committee members or more.");
         info!("Current members: {}", committee.members.len());
         return Ok(());
     }
 
     let full_penalization_pid = get_full_penalization_pid(committee.committee_id());
 
+    // Dispatch OP_DISABLER_DIRECTORY_TX for each operator
+    // Temporary test due to it's not connected to dispute channels yet
     for (index, member) in committee.members.iter().enumerate() {
         if member.role == ParticipantRole::Prover {
             let operator_index = index;
-            let watchtower_index = (index + 1) % committee.members.len();
+            let watchtower_index = (operator_index + 1) % committee.members.len();
 
             let tx_name =
                 double_indexed_name(OP_DISABLER_DIRECTORY_TX, operator_index, watchtower_index);
@@ -368,20 +375,50 @@ pub fn cli_full_penalization() -> Result<()> {
             info!("Dispatched {} with txid: {}", tx_name, tx.compute_txid());
         }
     }
-
     wait_for_blocks(&committee.bitcoin_client, 5)?;
 
-    // let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
-    // let operator_index = advance_funds(&mut committee, user.public_key()?, slot_index, true)?;
-    // if operator_index != 1 {
-    //     info!("This example requires member 1 to be the operator");
-    //     info!("Current operator: {}", operator_index);
-    //     return Ok(());
-    // }
+    // Advance funds to dispatch REIMBURSEMENT_KICKOFF_TX without challenge (just for testing purposes)
+    let operator_index = advance_funds(&mut committee, user.public_key()?, slot_index, false)?;
+    wait_for_blocks(
+        &committee.bitcoin_client,
+        DISPUTE_CORE_SHORT_TIMELOCK as u32 + 2,
+    )?;
 
-    // let watchtower_challenger_index = operator_index + 1;
-    // let watchtower_honest_index = operator_index + 2;
+    // Its the watchtower who should dispatch the operator disabler directory tx in the step above
+    let watchtower_challenger_index = (operator_index + 1) % committee.members.len();
+    let watchtower_honest_index = (operator_index + 2) % committee.members.len();
+
+    // Dispatch OP_LAZY_DISABLER_TX to disable reimbursement kickoff for `slot_index`
+    let tx_name = triple_indexed_name(
+        OP_LAZY_DISABLER_TX,
+        operator_index,
+        watchtower_challenger_index,
+        slot_index,
+    );
+
+    // watchtower_honest_index is dispatching tx of watchtower_challenger_index in case it's not doing it.
+    let tx = committee.members[watchtower_honest_index]
+        .dispatch_transaction_by_name(full_penalization_pid, tx_name.clone())?;
+
+    info!("Dispatched {} with txid: {}", tx_name, tx.compute_txid());
+
+    // Dispatch OP_DISABLER_TX to disable operator enabler for `slot_index + 1`
+    let tx_name = triple_indexed_name(
+        OP_DISABLER_TX,
+        operator_index,
+        watchtower_challenger_index,
+        slot_index + 1,
+    );
+
+    // watchtower_honest_index is dispatching tx of watchtower_challenger_index in case it's not doing it.
+    let tx = committee.members[watchtower_honest_index]
+        .dispatch_transaction_by_name(full_penalization_pid, tx_name.clone())?;
+
+    info!("Dispatched {} with txid: {}", tx_name, tx.compute_txid());
+
+    wait_for_blocks(&committee.bitcoin_client, 3)?;
 
     Ok(())
 }
