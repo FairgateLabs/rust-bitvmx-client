@@ -6,7 +6,7 @@ use bitvmx_client::program::protocols::union::common::{
     get_user_take_pid,
 };
 use bitvmx_client::program::protocols::union::types::{
-    MemberData, ACCEPT_PEGIN_TX, DUST_VALUE, USER_TAKE_TX,
+    MemberData, ACCEPT_PEGIN_TX, DUST_VALUE, SPEEDUP_VALUE, USER_TAKE_TX,
 };
 use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtxo};
 use bitvmx_client::types::OutgoingBitVMXApiMessages::{SPVProof, Transaction};
@@ -365,7 +365,7 @@ impl Committee {
     }
 
     fn get_funding_op_disabler_directory_value(&self) -> u64 {
-        return DUST_VALUE * PACKET_SIZE as u64;
+        return DUST_VALUE * PACKET_SIZE as u64 + SPEEDUP_VALUE;
     }
 
     pub fn get_total_funds_value(&self) -> u64 {
