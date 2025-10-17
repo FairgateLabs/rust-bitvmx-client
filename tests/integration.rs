@@ -112,9 +112,7 @@ pub fn test_drp() -> Result<()> {
     )?;
 
     let prog_id = Uuid::new_v4();
-    let forced_challenge = ForcedChallenges::InitializedChallenge(
-        bitvmx_client::program::participant::ParticipantRole::Prover,
-    );
+    let forced_challenge = ForcedChallenges::Execution;
     prepare_dispute(
         prog_id,
         participants,

@@ -59,6 +59,31 @@ pub enum ForcedChallenges {
     // Default
     No,
     Execution,
+    // Other
+    Personalized(ConfigResults),
+}
+
+impl ForcedChallenges {
+    pub fn get_role(&self) -> Option<ParticipantRole> {
+        use ForcedChallenges::*;
+        match self {
+            TraceHash(role)
+            | TraceHashZero(role)
+            | EntryPoint(role)
+            | ProgramCounter(role)
+            | Input(role)
+            | Opcode(role)
+            | ReadSection(role)
+            | WriteSection(role)
+            | ProgramCounterSection(role)
+            | Initialized(role)
+            | Uninitialized(role)
+            | FutureRead(role)
+            | ReadValue(role)
+            | CorrectHash(role) => Some(role.clone()),
+            No | Execution | Personalized(_) => None,
+        }
+    }
 }
 
 pub fn prepare_dispute(
@@ -73,12 +98,17 @@ pub fn prepare_dispute(
     fail_force_config: ForcedChallenges,
     program_path: Option<String>,
 ) -> Result<()> {
-    let hello_world = match fail_force_config {
-        ForcedChallenges::Uninitialized(_) => {
-            "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world-uninitialized.yaml"
+    let hello_world = format!(
+        "{}/{}",
+        "../BitVMX-CPU/docker-riscv32/riscv32/build/",
+        match fail_force_config {
+            ForcedChallenges::Uninitialized(_) => "hello-world-uninitialized.yaml",
+            ForcedChallenges::ProgramCounterSection(ParticipantRole::Prover) => "pc_invalid.yaml",
+            ForcedChallenges::WriteSection(ParticipantRole::Prover) => "write_invalid.yaml",
+            ForcedChallenges::ReadSection(ParticipantRole::Prover) => "read_invalid.yaml",
+            _ => "hello-world.yaml",
         }
-        _ => "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml",
-    };
+    );
     let program_definition = program_path.unwrap_or(hello_world.to_string());
 
     let config_results = get_fail_force_config(fail_force_config.clone());
@@ -577,6 +607,7 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ConfigResul
             },
             read: ConfigResult::default(),
         },
+        ForcedChallenges::Personalized(config) => config,
     }
 }
 

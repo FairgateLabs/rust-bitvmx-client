@@ -448,6 +448,7 @@ pub fn challenge_scripts(
                         let chunks = program.get_initialized_chunks(CHUNK_SIZE);
                         for initialized_chunk in chunks.iter() {
                             let mut scripts = vec![reverse_script.clone()];
+                            stack = StackTracker::new();
                             extract_nibble(
                                 &mut stack,
                                 &mut scripts,

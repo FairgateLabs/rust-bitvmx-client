@@ -11,7 +11,7 @@ use crate::{
     bitvmx::Context,
     errors::BitVMXError,
     program::{
-        participant::ParticipantRole,
+        participant::ParticipantRole::{self, Prover, Verifier},
         protocols::{
             claim::ClaimGate,
             dispute::{
@@ -60,14 +60,36 @@ fn dispatch_timeout_tx(
     Ok(())
 }
 
-//when is see [&Str], and vout is [bool] if I'm [ParticipantRole] then I dispatch [bool]? timeout_tx[Str] : timeout_input_tx[Str]
-pub const TIMEOUT_DISPATCH_TABLE: [(&str, bool, ParticipantRole, &str, bool); 3] = [
-    (EXECUTE, false, ParticipantRole::Prover, CHALLENGE, false),
-    (CHALLENGE, false, ParticipantRole::Prover, CHALLENGE, true),
-    (EXECUTE, false, ParticipantRole::Verifier, EXECUTE, true),
+// TODO: Refactor this static dispatch table into a dynamic configuration.
+//       The goal is to avoid hardcoding protocol-specific state names (e.g., "NARY2_PROVER_2_TO")
+//when is see [&Str], and vout is [bool] if I'm [ParticipantRole] then I dispatch [bool]? timeout_input_tx[Str] : timeout_tx[Str]
+pub const TIMEOUT_DISPATCH_TABLE: [(&str, bool, ParticipantRole, &str, bool, bool); 6] = [
+    (EXECUTE, false, Prover, CHALLENGE, true, false),
+    (CHALLENGE, false, Prover, CHALLENGE, true, true),
+    (EXECUTE, false, Verifier, EXECUTE, true, true),
+    (
+        CHALLENGE,
+        false,
+        Verifier,
+        "NARY2_PROVER_2_TO",
+        false, // not ignore
+        false,
+    ),
+    (
+        "NARY2_VERIFIER_4",
+        false,
+        Prover,
+        CHALLENGE_READ,
+        true,
+        false,
+    ),
+    (CHALLENGE_READ, false, Prover, CHALLENGE_READ, true, true),
 ];
 
-fn get_timeout_name(name: &str, is_input: bool) -> String {
+fn get_timeout_name(name: &str, not_ignore: bool, is_input: bool) -> String {
+    if !not_ignore {
+        return name.to_string();
+    }
     if is_input {
         timeout_input_tx(name)
     } else {
@@ -82,12 +104,14 @@ fn auto_dispatch_timeout(
     program_context: &ProgramContext,
     current_height: u32,
 ) -> Result<(), BitVMXError> {
-    for (tx_name, tx_vout, tx_role, timeout_name, is_input) in TIMEOUT_DISPATCH_TABLE.iter() {
+    for (tx_name, tx_vout, tx_role, timeout_name, not_ignore, is_input) in
+        TIMEOUT_DISPATCH_TABLE.iter()
+    {
         if *tx_name == name && *tx_role == drp.role() && *tx_vout == (vout.is_some()) {
             dispatch_timeout_tx(
                 drp,
                 program_context,
-                &get_timeout_name(&timeout_name, *is_input),
+                &get_timeout_name(&timeout_name, *not_ignore, *is_input),
                 current_height,
             )?;
         }
@@ -104,6 +128,7 @@ fn cancel_timeout(
     let cancel = match name {
         EXECUTE => drp.role() == ParticipantRole::Verifier,
         CHALLENGE => drp.role() == ParticipantRole::Prover,
+        CHALLENGE_READ => drp.role() == ParticipantRole::Prover,
         _ => false,
     };
 
@@ -143,8 +168,8 @@ fn auto_claim_start(
     if vout.is_some() {
         return Ok(());
     }
-    for (_, _, tx_role, timeout_name, is_input) in TIMEOUT_DISPATCH_TABLE.iter() {
-        let timeout_name = get_timeout_name(timeout_name, *is_input);
+    for (_, _, tx_role, timeout_name, not_ignore, is_input) in TIMEOUT_DISPATCH_TABLE.iter() {
+        let timeout_name = get_timeout_name(timeout_name, *not_ignore, *is_input);
         if &timeout_name == name && *tx_role == drp.role() {
             let claim_name = ClaimGate::tx_start(get_claim_name(drp, false));
             let tx = drp.get_signed_tx(program_context, &claim_name, 0, 0, false, 0)?;
@@ -157,6 +182,19 @@ fn auto_claim_start(
                 None,
             )?;
         }
+    }
+
+    if CHALLENGE_READ == name && ParticipantRole::Verifier == drp.role() {
+        let claim_name = ClaimGate::tx_start(VERIFIER_WINS);
+        let tx = drp.get_signed_tx(program_context, &claim_name, 0, 0, false, 0)?;
+        let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
+        info!("Verifier wins force: {claim_name}: {:?}", tx);
+        program_context.bitcoin_coordinator.dispatch(
+            tx,
+            Some(speedup_data),
+            Context::ProgramId(drp.ctx.id).to_string()?,
+            None,
+        )?;
     }
 
     Ok(())
@@ -220,7 +258,10 @@ fn claim_state_handle(
         }
     }
 
-    if name == ClaimGate::tx_success(PROVER_WINS) || name == ClaimGate::tx_success(VERIFIER_WINS) {
+    if (name == ClaimGate::tx_success(PROVER_WINS) && drp.role() == ParticipantRole::Prover)
+        || (name == ClaimGate::tx_success(VERIFIER_WINS) && drp.role() == ParticipantRole::Verifier)
+    {
+        //TODO: if and else are the same as above, refactor
         if name == ClaimGate::tx_success(PROVER_WINS) {
             //handle all actions
             info!("Prover. Execute Action");
@@ -653,16 +694,16 @@ pub fn handle_tx_news(
         )?;
     }
 
-    if name == CHALLENGE_READ {
+    if name == CHALLENGE_READ && drp.role() == ParticipantRole::Prover && vout.is_some() {
         info!("The challenge has ended after the 2nd n-ary search.");
-        // drp.decode_witness_from_speedup(
-        //     tx_id,
-        //     vout.unwrap(),
-        //     &name,
-        //     program_context,
-        //     &tx_status.tx,
-        //     None,
-        // )?;
+        drp.decode_witness_from_speedup(
+            tx_id,
+            vout.unwrap(),
+            &name,
+            program_context,
+            &tx_status.tx,
+            None,
+        )?;
     }
 
     Ok(())
@@ -684,7 +725,6 @@ fn handle_nary_verifier(
     mut round: u32,                   // current round
     nary_search_type: NArySearchType, // ConflictStep
 ) -> Result<(), BitVMXError> {
-    info!("ROUND: {round}");
     let (program_definition, pdf) = drp.get_program_definition(program_context)?;
     let nary = program_definition.nary_def();
 
@@ -771,7 +811,7 @@ fn handle_nary_verifier(
             }
         }
     } else {
-        if round == nary.total_rounds() as u32 {
+        if round == nary.total_rounds() as u32 && nary_search_type == NArySearchType::ConflictStep {
             dispatch_timeout_tx(drp, program_context, &timeout_tx(post_name), current_height)?;
         }
         // TODO: this is a temporary solution to force the verifier to choose the challenge after the last n-ary search round

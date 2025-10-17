@@ -8,6 +8,7 @@ use bitvmx_broker::rpc::tls_helper::Cert;
 use bitvmx_broker::rpc::BrokerConfig;
 use bitvmx_client::program;
 use bitvmx_client::program::participant::{CommsAddress, ParticipantRole};
+use bitvmx_client::program::protocols::dispute::config::{ConfigResult, ConfigResults};
 use bitvmx_client::program::protocols::dispute::{
     action_wins, input_tx_name, program_input, program_input_prev_prefix,
     program_input_prev_protocol,
@@ -25,6 +26,8 @@ use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
 use common::dispute::{prepare_dispute, ForcedChallenges};
 use common::{clear_db, init_utxo_new, INITIAL_BLOCK_COUNT};
 use common::{config_trace, send_all};
+use emulator::decision::challenge::{ForceChallenge, ForceCondition};
+use emulator::executor::utils::{FailConfiguration, FailReads};
 use key_manager::winternitz::{
     self, checksum_length, to_checksummed_message, WinternitzPublicKey, WinternitzSignature,
     WinternitzType,
@@ -489,7 +492,7 @@ pub fn test_all_aux(
     let _funding_key_2 = msgs[2].public_key().unwrap().1;
 
     info!("Creating speedup funds");
-    let speedup_amount = 70_000 * MIN_TX_FEE as u64;
+    let speedup_amount = 100_000 * MIN_TX_FEE as u64;
 
     // let fund_txid_0 = helper.wallet.fund_address(
     //     WALLET_NAME,
@@ -566,7 +569,7 @@ pub fn test_all_aux(
         &mut helper.wallet,
         &pair_0_1_agg_pub_key,
         spending_condition.clone(),
-        20_000,
+        40_000,
     )?;
 
     info!("Wait for the first funding ready");
@@ -612,6 +615,7 @@ pub fn test_all_aux(
         let _ = send_all(&pair_0_1_channels, &const_input);
     }
 
+    let forced_challenge = force_challenge.unwrap_or(ForcedChallenges::Execution);
     prepare_dispute(
         prog_id,
         pair_0_1,
@@ -621,7 +625,7 @@ pub fn test_all_aux(
         initial_out_type,
         prover_win_utxo,
         prover_win_out_type,
-        force_challenge.unwrap_or(ForcedChallenges::No),
+        forced_challenge.clone(),
         program,
     )?;
 
@@ -667,7 +671,14 @@ pub fn test_all_aux(
             .to_string()?,
     );
 
-    helper.wait_tx_name(1, &action_wins(&ParticipantRole::Prover, 1))?;
+    info!("Waiting for input tx to be mined");
+
+    let role = forced_challenge
+        .get_role()
+        .unwrap_or(ParticipantRole::Verifier)
+        .opposite();
+
+    helper.wait_tx_name(1, &action_wins(&role, 1))?;
 
     helper.stop()?;
 
@@ -779,56 +790,56 @@ fn test_const() -> Result<()> {
     Ok(())
 }
 
-// #[ignore] ASK: which particular challenge to force?
-// #[test]
-// fn test_const_fail_input() -> Result<()> {
-//     let main_config = ConfigResult {
-//         fail_config_prover: Some(FailConfiguration::new_fail_reads(FailReads::new(
-//             None,
-//             Some(&vec![
-//                 "16".to_string(),
-//                 "0xaa000000".to_string(),
-//                 "0x00000002".to_string(),
-//                 "0xaa000000".to_string(),
-//                 "0xffffffffffffffff".to_string(),
-//             ]),
-//         ))),
-//         fail_config_verifier: None,
-//         force_challenge: ForceChallenge::No,
-//         force_condition: ForceCondition::ValidInputWrongStepOrHash,
-//     };
+#[ignore]
+#[test]
+fn test_const_fail_input() -> Result<()> {
+    let main_config = ConfigResult {
+        fail_config_prover: Some(FailConfiguration::new_fail_reads(FailReads::new(
+            None,
+            Some(&vec![
+                "16".to_string(),
+                "0xaa000000".to_string(),
+                "0x00000002".to_string(),
+                "0xaa000000".to_string(),
+                "0xffffffffffffffff".to_string(),
+            ]),
+        ))),
+        fail_config_verifier: None,
+        force_challenge: ForceChallenge::No,
+        force_condition: ForceCondition::ValidInputWrongStepOrHash,
+    };
 
-//     let fail_config = ConfigResults {
-//         main: main_config,
-//         read: ConfigResult::default(),
-//     };
+    let fail_config = ConfigResults {
+        main: main_config,
+        read: ConfigResult::default(),
+    };
 
-//     test_all_aux(
-//         false,
-//         Network::Regtest,
-//         Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
-//         Some(("00000002", 1, "00000003", 2)),
-//         Some(fail_config.clone()),
-//     )?;
+    test_all_aux(
+        false,
+        Network::Regtest,
+        Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
+        Some(("00000002", 1, "00000003", 2)),
+        Some(ForcedChallenges::Personalized(fail_config.clone())),
+    )?;
 
-//     test_all_aux(
-//         false,
-//         Network::Regtest,
-//         Some("./verifiers/add-test-with-const-post.yaml".to_string()),
-//         Some(("0000000200000004", 1, "00000001", 0)),
-//         Some(fail_config.clone()),
-//     )?;
+    test_all_aux(
+        false,
+        Network::Regtest,
+        Some("./verifiers/add-test-with-const-post.yaml".to_string()),
+        Some(("0000000200000004", 1, "00000001", 0)),
+        Some(ForcedChallenges::Personalized(fail_config.clone())),
+    )?;
 
-//     test_all_aux(
-//         false,
-//         Network::Regtest,
-//         Some("./verifiers/add-test-with-const-pre.yaml".to_string()),
-//         Some(("0000000100000002", 0, "00000004", 1)),
-//         Some(fail_config),
-//     )?;
+    test_all_aux(
+        false,
+        Network::Regtest,
+        Some("./verifiers/add-test-with-const-pre.yaml".to_string()),
+        Some(("0000000100000002", 0, "00000004", 1)),
+        Some(ForcedChallenges::Personalized(fail_config)),
+    )?;
 
-//     Ok(())
-// }
+    Ok(())
+}
 
 #[ignore]
 #[test]
@@ -875,4 +886,194 @@ fn test_zkp() -> Result<()> {
 
     helper.stop()?;
     Ok(())
+}
+
+fn test_challenge(challenge: ForcedChallenges) -> Result<()> {
+    test_all_aux(false, Network::Regtest, None, None, Some(challenge))?;
+    Ok(())
+}
+
+#[ignore]
+#[test]
+fn challenge_trace_hash_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::TraceHash(ParticipantRole::Prover))
+}
+
+// #[ignore] //FIX: not working. ACTION_VERIFIER_WINS_1 has been seen on-chain
+// #[test]
+// fn challenge_trace_hash_verifier() -> Result<()> {
+//     test_challenge(ForcedChallenges::TraceHash(ParticipantRole::Verifier))
+// }
+
+#[ignore]
+#[test]
+fn challenge_trace_hash_zero_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::TraceHashZero(ParticipantRole::Prover))
+}
+
+#[ignore]
+#[test]
+fn challenge_trace_hash_zero_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::TraceHashZero(ParticipantRole::Verifier))
+}
+
+#[ignore]
+#[test]
+fn challenge_entry_point_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::EntryPoint(ParticipantRole::Prover))
+}
+
+#[ignore]
+#[test]
+fn challenge_entry_point_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::EntryPoint(ParticipantRole::Verifier))
+}
+
+#[ignore]
+#[test]
+fn challenge_program_counter_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::ProgramCounter(ParticipantRole::Prover))
+}
+
+#[ignore]
+#[test]
+fn challenge_program_counter_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::ProgramCounter(ParticipantRole::Verifier))
+}
+
+#[ignore]
+#[test]
+fn challenge_input_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::Input(ParticipantRole::Prover))
+}
+
+#[ignore]
+#[test]
+fn challenge_input_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::Input(ParticipantRole::Verifier))
+}
+
+#[ignore]
+#[test]
+fn challenge_opcode_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::Opcode(ParticipantRole::Prover))
+}
+
+#[ignore]
+#[test]
+fn challenge_opcode_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::Opcode(ParticipantRole::Verifier))
+}
+
+#[ignore]
+#[test]
+fn challenge_read_section_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::ReadSection(ParticipantRole::Prover))
+}
+
+#[ignore]
+#[test]
+fn challenge_read_section_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::ReadSection(ParticipantRole::Verifier))
+}
+
+#[ignore]
+#[test]
+fn challenge_write_section_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::WriteSection(ParticipantRole::Prover))
+}
+
+#[ignore]
+#[test]
+fn challenge_write_section_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::WriteSection(ParticipantRole::Verifier))
+}
+
+#[ignore]
+#[test]
+fn challenge_program_counter_section_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::ProgramCounterSection(
+        ParticipantRole::Prover,
+    ))
+}
+
+#[ignore]
+#[test]
+fn challenge_program_counter_section_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::ProgramCounterSection(
+        ParticipantRole::Verifier,
+    ))
+}
+
+#[ignore]
+#[test]
+fn challenge_initialized_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::Initialized(ParticipantRole::Prover))
+}
+
+#[ignore]
+#[test]
+fn challenge_initialized_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::Initialized(ParticipantRole::Verifier))
+}
+
+#[ignore]
+#[test]
+fn challenge_uninitialized_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::Uninitialized(ParticipantRole::Prover))
+}
+
+#[ignore]
+#[test]
+fn challenge_uninitialized_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::Uninitialized(ParticipantRole::Verifier))
+}
+
+#[ignore]
+#[test]
+fn challenge_future_read_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::FutureRead(ParticipantRole::Prover))
+}
+
+#[ignore]
+#[test]
+fn challenge_future_read_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::FutureRead(ParticipantRole::Verifier))
+}
+
+#[ignore]
+#[test]
+fn challenge_read_value_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::ReadValue(ParticipantRole::Prover))
+}
+
+// #[ignore]
+// #[test]
+// fn challenge_read_value_verifier() -> Result<()> {
+//     test_challenge(ForcedChallenges::ReadValue(ParticipantRole::Verifier))
+// }
+
+#[ignore]
+#[test]
+fn challenge_correct_hash_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::CorrectHash(ParticipantRole::Prover))
+}
+
+#[ignore]
+#[test]
+fn challenge_correct_hash_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::CorrectHash(ParticipantRole::Verifier))
+}
+
+// The forced Execution is required for testing because without it, the prover or verifier will not execute directly
+// #[ignore]
+// #[test]
+// fn challenge_no() -> Result<()> {
+//     test_challenge(ForcedChallenges::No)
+// }
+
+#[ignore]
+#[test]
+fn challenge_execution() -> Result<()> {
+    test_challenge(ForcedChallenges::Execution)
 }

@@ -376,7 +376,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             )?;
         }
 
-        for (n, (utxo, leaves)) in config.prover_actions.iter().enumerate() {
+        for (n, (utxo, leaves)) in config.verifier_actions.iter().enumerate() {
             self.add_action(
                 &mut protocol,
                 utxo,

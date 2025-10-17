@@ -259,7 +259,6 @@ pub fn execution_result(
                 }
                 _ => CHALLENGE,
             };
-
             let (tx, sp) =
                 drp.get_tx_with_speedup_data(context, name, 0, leaf.unwrap() as u32, true)?;
             context.bitcoin_coordinator.dispatch(
