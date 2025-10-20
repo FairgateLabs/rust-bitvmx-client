@@ -182,12 +182,7 @@ impl Member {
             addresses,
         )?;
 
-        let operator_count = members
-            .iter()
-            .filter(|m| m.role == ParticipantRole::Prover)
-            .count();
-
-        for i in 0..operator_count {
+        for i in 0..members.len() {
             // Wait for the dispute core setup to complete
             let program_id =
                 wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
