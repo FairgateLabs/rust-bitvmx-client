@@ -44,7 +44,6 @@ const SECRET_KEY: &str = "secret";
 const CHALLENGE_KEY: &str = "challenge_pubkey";
 const REVEAL_INPUT_KEY: &str = "reveal_pubkey";
 const REVEAL_TAKE_PRIVKEY: &str = "reveal_take_private_key";
-const TAKE_KEY: &str = "take_key";
 const DISPUTE_KEY: &str = "dispute_key";
 const SLOT_ID_KEY: &str = "slot_id_key";
 
@@ -66,16 +65,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
         &self,
         context: &ProgramContext,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
-        Ok(vec![
-            (
-                TAKE_AGGREGATED_KEY.to_string(),
-                self.take_aggregated_key(context)?,
-            ),
-            (
-                DISPUTE_AGGREGATED_KEY.to_string(),
-                self.dispute_aggregated_key(context)?,
-            ),
-        ])
+        Ok(vec![])
     }
 
     fn generate_keys(
@@ -83,13 +73,9 @@ impl ProtocolHandler for DisputeCoreProtocol {
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
         let packet_size = self.committee(program_context)?.packet_size;
-
         let mut keys = vec![];
 
-        keys.push((
-            TAKE_KEY.to_string(),
-            PublicKeyType::Public(self.my_take_key(program_context)?),
-        ));
+        // TODO: Should it use the one in Committee.members[]?
         keys.push((
             DISPUTE_KEY.to_string(),
             PublicKeyType::Public(self.my_dispute_key(program_context)?),
@@ -134,6 +120,13 @@ impl ProtocolHandler for DisputeCoreProtocol {
                     indexed_name(SECRET_KEY, i).to_string(),
                     PublicKeyType::Winternitz(
                         program_context.key_chain.derive_winternitz_hash160(1)?,
+                    ),
+                ));
+
+                keys.push((
+                    indexed_name(SLOT_ID_KEY, slot),
+                    PublicKeyType::Winternitz(
+                        program_context.key_chain.derive_winternitz_hash160(32)?,
                     ),
                 ));
             }
