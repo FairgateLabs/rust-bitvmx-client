@@ -192,33 +192,6 @@ impl Member {
         Ok(())
     }
 
-    // pub fn setup_init(
-    //     &mut self,
-    //     committee_id: Uuid,
-    //     members: &Vec<MemberData>,
-    //     funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
-    //     addresses: &Vec<CommsAddress>,
-    // ) -> Result<()> {
-    //     InitSetup::setup(
-    //         committee_id,
-    //         members,
-    //         self.keyring.take_aggregated_key.unwrap(),
-    //         self.keyring.dispute_aggregated_key.unwrap(),
-    //         &self.bitvmx,
-    //         funding_utxos_per_member,
-    //         addresses,
-    //     )?;
-
-    //     for i in 0..members.len() {
-    //         // Wait for the init setup to complete
-    //         let program_id =
-    //             wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
-    //         info!(id = self.id, program_id = ?program_id, "Init setup completed for operator index {}", i);
-    //     }
-
-    //     Ok(())
-    // }
-
     pub fn setup_dispute_channel(
         &mut self,
         committee_id: Uuid,
@@ -631,7 +604,7 @@ impl Member {
         let _ = self
             .bitvmx
             .get_transaction_by_name(protocol_id, tx_name.clone());
-        thread::sleep(std::time::Duration::from_secs(1));
+        thread::sleep(std::time::Duration::from_secs(5));
         let tx = wait_until_msg!(&self.bitvmx, TransactionInfo(_, _, _tx) => _tx);
         info!(
             "Protocol handler {} dispatching {}",
