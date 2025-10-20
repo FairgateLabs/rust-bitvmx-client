@@ -26,7 +26,7 @@ use crate::participants::member::{FundingAmount, Member};
 use crate::wait_until_msg;
 use crate::wallet::helper::non_regtest_warning;
 
-const FUNDING_AMOUNT_PER_SLOT: u64 = 9_500; // an approximation in satoshis
+const FUNDING_AMOUNT_PER_SLOT: u64 = 10_500; // an approximation in satoshis
 const FUNDING_AMOUNT_PER_MEMBER: u64 = 1000; // per member, it should be 540 by now
 pub const PACKET_SIZE: u32 = 3; // number of slots per packet
 const SPEED_UP_MIN_FUNDS: u64 = 30_000; // minimum speedup funds in satoshis
@@ -56,14 +56,14 @@ impl Committee {
                 &prefixed_name(network_prefix, "op_1"),
                 ParticipantRole::Prover,
             )?,
-            // Member::new(
-            //     &prefixed_name(network_prefix, "op_2"),
-            //     ParticipantRole::Prover,
-            // )?,
-            // Member::new(
-            //     &prefixed_name(network_prefix, "op_3"),
-            //     ParticipantRole::Prover,
-            // )?,
+            Member::new(
+                &prefixed_name(network_prefix, "op_2"),
+                ParticipantRole::Prover,
+            )?,
+            Member::new(
+                &prefixed_name(network_prefix, "op_3"),
+                ParticipantRole::Verifier,
+            )?,
             Member::new(
                 &prefixed_name(network_prefix, "op_4"),
                 ParticipantRole::Verifier,
