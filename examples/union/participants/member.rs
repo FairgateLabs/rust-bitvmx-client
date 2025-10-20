@@ -5,13 +5,14 @@ use crate::{
     setup::{
         accept_pegin_setup::AcceptPegInSetup, advance_funds_setup::AdvanceFunds,
         dispute_channel_setup::DisputeChannelSetup, dispute_core_setup::DisputeCoreSetup,
-        init_setup::InitSetup, user_take_setup::UserTakeSetup,
+        user_take_setup::UserTakeSetup,
     },
     wait_until_msg,
 };
 use anyhow::Result;
 use bitcoin::{address::NetworkUnchecked, Amount, PublicKey, ScriptBuf, Transaction, Txid};
 use bitvmx_client::program::protocols::union::common::get_dispute_pair_aggregated_key_pid;
+use bitvmx_client::types::IncomingBitVMXApiMessages;
 use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
@@ -39,14 +40,12 @@ use uuid::Uuid;
 pub struct FundingAmount {
     pub speedup: u64,
     pub operator_funding: u64,
-    pub watchtower_funding: u64,
     pub advance_funds: u64,
 }
 
 pub struct FundingUtxos {
     pub speedup: PartialUtxo,
     pub operator_funding: PartialUtxo,
-    pub watchtower_funding: PartialUtxo,
     pub advance_funds: PartialUtxo,
 }
 
@@ -165,7 +164,6 @@ impl Member {
         committee_id: Uuid,
         members: &Vec<MemberData>,
         funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
-        my_speedup_funding: &Utxo,
         addresses: &Vec<CommsAddress>,
     ) -> Result<()> {
         info!(
@@ -181,7 +179,6 @@ impl Member {
             self.keyring.dispute_aggregated_key.unwrap(),
             &self.bitvmx,
             funding_utxos_per_member,
-            my_speedup_funding,
             addresses,
         )?;
 
@@ -556,10 +553,7 @@ impl Member {
         info!(
             "Funding dispute pubkey of {} with: {}",
             self.id,
-            amounts.speedup
-                + amounts.operator_funding
-                + amounts.watchtower_funding
-                + amounts.advance_funds
+            amounts.speedup + amounts.operator_funding + amounts.advance_funds
         );
 
         self.bitvmx.send_funds(
@@ -567,7 +561,6 @@ impl Member {
             Destination::Batch(vec![
                 Destination::P2WPKH(public_key, amounts.speedup),
                 Destination::P2WPKH(public_key, amounts.operator_funding),
-                Destination::P2WPKH(public_key, amounts.watchtower_funding),
                 Destination::P2WPKH(public_key, amounts.advance_funds),
             ]),
             Some(fee_rate),
@@ -594,11 +587,6 @@ impl Member {
             script_pubkey: script_pubkey.clone(),
             public_key: public_key,
         };
-        let watchtower_funding_ot = OutputType::SegwitPublicKey {
-            value: Amount::from_sat(amounts.watchtower_funding),
-            script_pubkey: script_pubkey.clone(),
-            public_key: public_key,
-        };
         let advance_funds_ot = OutputType::SegwitPublicKey {
             value: Amount::from_sat(amounts.advance_funds),
             script_pubkey: script_pubkey.clone(),
@@ -614,19 +602,20 @@ impl Member {
                 Some(amounts.operator_funding),
                 Some(operator_funding_ot),
             ),
-            watchtower_funding: (
-                txid,
-                2,
-                Some(amounts.watchtower_funding),
-                Some(watchtower_funding_ot),
-            ),
-            advance_funds: (txid, 3, Some(amounts.advance_funds), Some(advance_funds_ot)),
+            advance_funds: (txid, 2, Some(amounts.advance_funds), Some(advance_funds_ot)),
         })
     }
 
     pub fn set_advance_funds_input(&mut self, committee_id: Uuid, utxo: PartialUtxo) -> Result<()> {
         self.bitvmx
             .set_var(committee_id, ADVANCE_FUNDS_INPUT, VariableTypes::Utxo(utxo))?;
+
+        Ok(())
+    }
+
+    pub fn set_speedup_funding_utxo(&mut self, utxo: Utxo) -> Result<()> {
+        self.bitvmx
+            .send_message(IncomingBitVMXApiMessages::SetFundingUtxo(utxo))?;
 
         Ok(())
     }

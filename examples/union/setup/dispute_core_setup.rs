@@ -1,19 +1,18 @@
 use anyhow::Result;
 use bitcoin::PublicKey;
-use protocol_builder::types::Utxo;
 use std::collections::HashMap;
 
 use bitvmx_client::{
     client::BitVMXClient,
     program::{
-        participant::{CommsAddress, ParticipantRole},
+        participant::CommsAddress,
         protocols::union::{
             common::get_dispute_core_pid,
             types::{Committee, DisputeCoreData, MemberData, MONITORED_OPERATOR_KEY},
         },
         variables::{PartialUtxo, VariableTypes},
     },
-    types::{IncomingBitVMXApiMessages, PROGRAM_TYPE_DISPUTE_CORE},
+    types::PROGRAM_TYPE_DISPUTE_CORE,
 };
 use tracing::info;
 use uuid::Uuid;
@@ -32,7 +31,6 @@ impl DisputeCoreSetup {
         dispute_aggregated_key: PublicKey,
         bitvmx: &BitVMXClient,
         members_protocol_funding: &HashMap<PublicKey, PartialUtxo>,
-        my_speedup_funding: &Utxo,
         addresses: &Vec<CommsAddress>,
     ) -> Result<()> {
         let committee = Committee {
@@ -41,10 +39,6 @@ impl DisputeCoreSetup {
             dispute_aggregated_key,
             packet_size: PACKET_SIZE,
         };
-
-        bitvmx.send_message(IncomingBitVMXApiMessages::SetFundingUtxo(
-            my_speedup_funding.clone(),
-        ))?;
 
         bitvmx.set_var(
             committee_id,
@@ -88,12 +82,5 @@ impl DisputeCoreSetup {
         }
 
         Ok(())
-    }
-
-    fn operator_count(members: &Vec<MemberData>) -> Result<u32> {
-        Ok(members
-            .iter()
-            .filter(|m| m.role == ParticipantRole::Prover)
-            .count() as u32)
     }
 }
