@@ -65,7 +65,8 @@ pub const OPERATOR_TAKE_ENABLER: &str = "operator_take_enabler";
 pub const OPERATOR_WON_ENABLER: &str = "operator_won_enabler";
 pub const ADVANCE_FUNDS_INPUT: &str = "advance_funds_input";
 pub const LAST_OPERATOR_TAKE_UTXO: &str = "last_operator_take_utxo";
-pub const SETUP_DISABLER_DIRECTORY_UTXO: &str = "setup_disabler_directory_utxo";
+pub const SETUP_DISABLER_OP_DIRECTORY_UTXO: &str = "setup_disabler_op_directory_utxo";
+pub const SETUP_DISABLER_WT_DIRECTORY_UTXO: &str = "setup_disabler_wt_directory_utxo";
 
 // Roles
 pub const OPERATOR: &str = "OP";

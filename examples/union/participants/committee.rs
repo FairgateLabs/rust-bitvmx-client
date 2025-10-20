@@ -27,6 +27,7 @@ use crate::wait_until_msg;
 use crate::wallet::helper::non_regtest_warning;
 
 const FUNDING_AMOUNT_PER_SLOT: u64 = 9_500; // an approximation in satoshis
+const FUNDING_AMOUNT_PER_MEMBER: u64 = 1000; // per member, it should be 540 by now
 pub const PACKET_SIZE: u32 = 3; // number of slots per packet
 const SPEED_UP_MIN_FUNDS: u64 = 30_000; // minimum speedup funds in satoshis
 
@@ -55,14 +56,14 @@ impl Committee {
                 &prefixed_name(network_prefix, "op_1"),
                 ParticipantRole::Prover,
             )?,
-            Member::new(
-                &prefixed_name(network_prefix, "op_2"),
-                ParticipantRole::Prover,
-            )?,
-            Member::new(
-                &prefixed_name(network_prefix, "op_3"),
-                ParticipantRole::Prover,
-            )?,
+            // Member::new(
+            //     &prefixed_name(network_prefix, "op_2"),
+            //     ParticipantRole::Prover,
+            // )?,
+            // Member::new(
+            //     &prefixed_name(network_prefix, "op_3"),
+            //     ParticipantRole::Prover,
+            // )?,
             Member::new(
                 &prefixed_name(network_prefix, "op_4"),
                 ParticipantRole::Verifier,
@@ -354,7 +355,7 @@ impl Committee {
     }
 
     fn get_watchtower_funding_value(&self) -> u64 {
-        return FUNDING_AMOUNT_PER_SLOT * PACKET_SIZE as u64;
+        return FUNDING_AMOUNT_PER_MEMBER * self.members.len() as u64;
     }
 
     fn get_funding_op_disabler_directory_value(&self) -> u64 {
@@ -377,7 +378,7 @@ impl Committee {
 
         let funding_amounts = FundingAmount {
             speedup: self.get_speedup_funds_value(),
-            operator_funding: self.get_operator_funding_value()
+            protocol_funding: self.get_operator_funding_value()
                 + self.get_funding_op_disabler_directory_value()
                 + self.get_watchtower_funding_value(),
             advance_funds: self.get_advance_funds_value(),

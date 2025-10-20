@@ -39,7 +39,7 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct FundingAmount {
     pub speedup: u64,
-    pub operator_funding: u64,
+    pub protocol_funding: u64,
     pub advance_funds: u64,
 }
 
@@ -553,14 +553,14 @@ impl Member {
         info!(
             "Funding dispute pubkey of {} with: {}",
             self.id,
-            amounts.speedup + amounts.operator_funding + amounts.advance_funds
+            amounts.speedup + amounts.protocol_funding + amounts.advance_funds
         );
 
         self.bitvmx.send_funds(
             id,
             Destination::Batch(vec![
                 Destination::P2WPKH(public_key, amounts.speedup),
-                Destination::P2WPKH(public_key, amounts.operator_funding),
+                Destination::P2WPKH(public_key, amounts.protocol_funding),
                 Destination::P2WPKH(public_key, amounts.advance_funds),
             ]),
             Some(fee_rate),
@@ -583,7 +583,7 @@ impl Member {
             public_key: public_key,
         };
         let operator_funding_ot = OutputType::SegwitPublicKey {
-            value: Amount::from_sat(amounts.operator_funding),
+            value: Amount::from_sat(amounts.protocol_funding),
             script_pubkey: script_pubkey.clone(),
             public_key: public_key,
         };
@@ -599,7 +599,7 @@ impl Member {
             operator_funding: (
                 txid,
                 1,
-                Some(amounts.operator_funding),
+                Some(amounts.protocol_funding),
                 Some(operator_funding_ot),
             ),
             advance_funds: (txid, 2, Some(amounts.advance_funds), Some(advance_funds_ot)),

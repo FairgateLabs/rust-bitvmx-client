@@ -63,9 +63,18 @@ impl ProtocolHandler for DisputeCoreProtocol {
 
     fn get_pregenerated_aggregated_keys(
         &self,
-        _context: &ProgramContext,
+        context: &ProgramContext,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
-        Ok(vec![])
+        Ok(vec![
+            (
+                TAKE_AGGREGATED_KEY.to_string(),
+                self.take_aggregated_key(context)?,
+            ),
+            (
+                DISPUTE_AGGREGATED_KEY.to_string(),
+                self.dispute_aggregated_key(context)?,
+            ),
+        ])
     }
 
     fn generate_keys(
@@ -98,16 +107,16 @@ impl ProtocolHandler for DisputeCoreProtocol {
             VariableTypes::PubKey(speedup_key),
         )?;
 
-        if self.prover(program_context)? {
-            keys.push((
-                REVEAL_INPUT_KEY.to_string(),
-                PublicKeyType::Public(program_context.key_chain.derive_keypair()?),
-            ));
-            keys.push((
-                REVEAL_TAKE_PRIVKEY.to_string(),
-                PublicKeyType::Winternitz(program_context.key_chain.derive_winternitz_hash160(32)?),
-            ));
+        keys.push((
+            REVEAL_INPUT_KEY.to_string(),
+            PublicKeyType::Public(program_context.key_chain.derive_keypair()?),
+        ));
+        keys.push((
+            REVEAL_TAKE_PRIVKEY.to_string(),
+            PublicKeyType::Winternitz(program_context.key_chain.derive_winternitz_hash160(32)?),
+        ));
 
+        if self.prover(program_context)? {
             for i in 0..packet_size as usize {
                 keys.push((
                     indexed_name(PEGOUT_ID_KEY, i).to_string(),
@@ -164,13 +173,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
 
         // If member is an operator create Operator initial deposit and dispute cores
         if member.role == ParticipantRole::Prover {
-            self.create_op_initial_deposit(
-                &mut protocol,
-                &member_keys,
-                &member.dispute_key,
-                committee.packet_size,
-                &committee.dispute_aggregated_key,
-            )?;
+            self.create_op_initial_deposit(&mut protocol, &member_keys, &member.dispute_key)?;
 
             for i in 0..committee.packet_size as usize {
                 self.create_dispute_core(
@@ -191,10 +194,10 @@ impl ProtocolHandler for DisputeCoreProtocol {
             }
         }
 
-        // Add setup speedup output
+        // Add setup tx speedup output
         protocol.add_transaction_output(
             &SETUP_TX,
-            &OutputType::segwit_key(SPEEDUP_VALUE, &member.dispute_key)?,
+            &OutputType::segwit_key(SPEEDUP_VALUE, member_keys.get_public(SPEEDUP_KEY)?)?,
         )?;
 
         protocol.compute_minimum_output_values()?;
@@ -208,6 +211,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
             context,
             &mut reimbursement_output,
             &committee.dispute_aggregated_key,
+            &member.role,
         )?;
 
         Ok(())
@@ -334,7 +338,7 @@ impl DisputeCoreProtocol {
         // Connect the self-disabler (recover funds) transaction.
         protocol.add_connection(
             "self_disabler",
-            &FUNDING_TX,
+            &SETUP_TX,
             OutputSpec::Index(0),
             &self_disabler,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
@@ -390,6 +394,16 @@ impl DisputeCoreProtocol {
             )?;
         }
 
+        let wt_disabler_directory_fee = estimate_fee(2, committee.members.len(), 1);
+        protocol.add_transaction_output(
+            &WT_START_ENABLER_TX,
+            &OutputType::taproot(
+                DUST_VALUE * committee.members.len() as u64 + wt_disabler_directory_fee,
+                &committee.dispute_aggregated_key,
+                &[],
+            )?,
+        )?;
+
         // Add setup speedup output
         protocol.add_transaction_output(
             &WT_START_ENABLER_TX,
@@ -404,8 +418,6 @@ impl DisputeCoreProtocol {
         protocol: &mut Protocol,
         operator_keys: &ParticipantKeys,
         operator_dispute_key: &PublicKey,
-        packet_size: u32,
-        dispute_aggregated_key: &PublicKey,
     ) -> Result<(), BitVMXError> {
         let reveal_take_private_key = operator_keys.get_winternitz(REVEAL_TAKE_PRIVKEY)?.clone();
 
@@ -427,15 +439,6 @@ impl DisputeCoreProtocol {
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
             None,
             None,
-        )?;
-
-        // Operator output for disabler directory
-        let directory_fee = estimate_fee(1, packet_size as usize + 1, 1);
-        let disabler_directory_amount =
-            packet_size as u64 * DUST_VALUE + SPEEDUP_VALUE + directory_fee;
-        protocol.add_transaction_output(
-            &SETUP_TX,
-            &OutputType::taproot(disabler_directory_amount, dispute_aggregated_key, &[])?,
         )?;
 
         // Connect the self-disabler (recover funds) transaction.
@@ -606,7 +609,7 @@ impl DisputeCoreProtocol {
             keys,
             dispute_core_index,
             dispute_core_data.member_index,
-            committee.packet_size as usize,
+            committee,
         )?;
 
         Ok(())
@@ -677,7 +680,7 @@ impl DisputeCoreProtocol {
         keys: &Vec<ParticipantKeys>,
         dispute_core_index: usize,
         operator_index: usize,
-        packet_size: usize,
+        committee: &Committee,
     ) -> Result<(), BitVMXError> {
         let reimbursement_kickoff = indexed_name(REIMBURSEMENT_KICKOFF_TX, dispute_core_index);
         let challenge = indexed_name(CHALLENGE_TX, dispute_core_index);
@@ -687,14 +690,22 @@ impl DisputeCoreProtocol {
 
         // Add a speedup output to the initial_deposit transaction and to the setup tx when the last initial deposit
         // output has been added.
-        if dispute_core_index == packet_size - 1 {
+        if dispute_core_index == (committee.packet_size - 1) as usize {
+            // Operator output for disabler directory
+            let directory_fee = estimate_fee(1, committee.packet_size as usize + 1, 1);
+            let disabler_directory_amount =
+                committee.packet_size as u64 * DUST_VALUE + SPEEDUP_VALUE + directory_fee;
             protocol.add_transaction_output(
                 &OP_INITIAL_DEPOSIT_TX,
-                &OutputType::segwit_key(AUTO_AMOUNT, operator_speedup_key)?,
+                &OutputType::taproot(
+                    disabler_directory_amount,
+                    &committee.dispute_aggregated_key,
+                    &[],
+                )?,
             )?;
 
             protocol.add_transaction_output(
-                &SETUP_TX,
+                &OP_INITIAL_DEPOSIT_TX,
                 &OutputType::segwit_key(AUTO_AMOUNT, operator_speedup_key)?,
             )?;
         }
@@ -1122,7 +1133,7 @@ impl DisputeCoreProtocol {
 
         info!(
             id = self.ctx.my_idx,
-            "OP_SETUP_TX dispatched successfully with txid: {}", txid
+            "{} dispatched successfully with txid: {}", name, txid
         );
         Ok(())
     }
@@ -1272,7 +1283,7 @@ impl DisputeCoreProtocol {
 
         info!(
             id = self.ctx.my_idx,
-            "Auto-dispatching OP_SETUP_TX transaction: {}", setup_txid
+            "Auto-dispatching {} transaction: {}", tx_name, setup_txid
         );
 
         // Dispatch the transaction through the bitcoin coordinator
@@ -1285,7 +1296,7 @@ impl DisputeCoreProtocol {
 
         info!(
             id = self.ctx.my_idx,
-            "OP_SETUP_TX dispatched successfully with txid: {}", setup_txid
+            "{} dispatched successfully with txid: {}", tx_name, setup_txid
         );
 
         Ok(())
@@ -1350,89 +1361,120 @@ impl DisputeCoreProtocol {
         context: &ProgramContext,
         reimbursement_output: &mut OutputType,
         dispute_aggregated_key: &PublicKey,
+        role: &ParticipantRole,
     ) -> Result<(), BitVMXError> {
         let committee = self.committee(context)?;
         let protocol = self.load_or_create_protocol();
 
-        for i in 0..committee.packet_size as usize {
-            let name = indexed_name(REIMBURSEMENT_KICKOFF_TX, i);
-            let reimbursement_kickoff_tx: &Transaction = protocol.transaction_by_name(&name)?;
+        // Save REIMBURSEMENT_KICKOFF_UTXO if dispute core owner is a Prover
+        if *role == ParticipantRole::Prover {
+            for i in 0..committee.packet_size as usize {
+                let name = indexed_name(REIMBURSEMENT_KICKOFF_TX, i);
+                let reimbursement_kickoff_tx: &Transaction = protocol.transaction_by_name(&name)?;
 
-            let reimbursement_output_index = 0;
-            let reimbursement_output_value =
-                reimbursement_kickoff_tx.output[reimbursement_output_index].value;
-            reimbursement_output.set_value(reimbursement_output_value.clone());
+                let reimbursement_output_index = 0;
+                let reimbursement_output_value =
+                    reimbursement_kickoff_tx.output[reimbursement_output_index].value;
+                reimbursement_output.set_value(reimbursement_output_value.clone());
 
-            let operator_take_utxo = (
-                reimbursement_kickoff_tx.compute_txid(),
-                0,
-                Some(reimbursement_output_value.to_sat()),
-                Some(reimbursement_output.clone()),
-            );
+                let operator_take_utxo = (
+                    reimbursement_kickoff_tx.compute_txid(),
+                    0,
+                    Some(reimbursement_output_value.to_sat()),
+                    Some(reimbursement_output.clone()),
+                );
 
-            let name = indexed_name(REVEAL_INPUT_TX, i);
-            let reveal_tx = protocol.transaction_by_name(&name)?;
-            let reveal_output_index = 0;
-            let reveal_output_value = reveal_tx.output[reveal_output_index].value;
-            // Reusing reimbursement utxo, it's the same output type
-            reimbursement_output.set_value(reveal_output_value.clone());
+                let name = indexed_name(REVEAL_INPUT_TX, i);
+                let reveal_tx = protocol.transaction_by_name(&name)?;
+                let reveal_output_index = 0;
+                let reveal_output_value = reveal_tx.output[reveal_output_index].value;
+                // Reusing reimbursement utxo, it's the same output type
+                reimbursement_output.set_value(reveal_output_value.clone());
 
-            let operator_won_utxo = (
-                reveal_tx.compute_txid(),
-                0,
-                Some(reveal_output_value.to_sat()),
-                Some(reimbursement_output.clone()),
+                let operator_won_utxo = (
+                    reveal_tx.compute_txid(),
+                    0,
+                    Some(reveal_output_value.to_sat()),
+                    Some(reimbursement_output.clone()),
+                );
+
+                context.globals.set_var(
+                    &self.ctx.id,
+                    &indexed_name(OPERATOR_TAKE_ENABLER, i),
+                    VariableTypes::Utxo(operator_take_utxo.clone()),
+                )?;
+
+                context.globals.set_var(
+                    &self.ctx.id,
+                    &indexed_name(OPERATOR_WON_ENABLER, i),
+                    VariableTypes::Utxo(operator_won_utxo.clone()),
+                )?;
+            }
+
+            // FIXME: Should we save the whole UTXOS as in reimbursement_kickoff_utxos?
+            // Maybe we should improve reimbursement_kickoff_utxos to be a vector of TXIDs, and save just once the amount and the output type
+            // - Reimbursement: Multiples TXIDs with same amount and output type
+            // - Initial Setup: Single TXID and amount, with different output script. (output script is save in create_dispute_core function)
+
+            // Save initial deposit txid and output amount
+            let initial_deposit_tx: &Transaction =
+                protocol.transaction_by_name(OP_INITIAL_DEPOSIT_TX)?;
+            let initial_deposit_txid = initial_deposit_tx.compute_txid();
+            let output_value = initial_deposit_tx.output[0].value.to_sat();
+            info!(
+                id = self.ctx.my_idx,
+                "Saving initial deposit txid: {} and amount: {}",
+                initial_deposit_txid,
+                output_value
             );
 
             context.globals.set_var(
                 &self.ctx.id,
-                &indexed_name(OPERATOR_TAKE_ENABLER, i),
-                VariableTypes::Utxo(operator_take_utxo.clone()),
+                OP_INITIAL_DEPOSIT_TXID,
+                VariableTypes::String(initial_deposit_txid.to_string()),
             )?;
 
             context.globals.set_var(
                 &self.ctx.id,
-                &indexed_name(OPERATOR_WON_ENABLER, i),
-                VariableTypes::Utxo(operator_won_utxo.clone()),
+                OP_INITIAL_DEPOSIT_AMOUNT,
+                VariableTypes::Amount(output_value),
+            )?;
+
+            let op_disabler_directory_outout = committee.packet_size as usize;
+            let output_value = initial_deposit_tx.output[op_disabler_directory_outout]
+                .value
+                .to_sat();
+
+            let op_disabler_directory_utxo = (
+                initial_deposit_txid,
+                op_disabler_directory_outout as u32,
+                Some(output_value),
+                Some(OutputType::taproot(
+                    output_value,
+                    dispute_aggregated_key,
+                    &[],
+                )?),
+            );
+
+            info!("Saving op disabler utxo: {:?}", op_disabler_directory_utxo);
+            context.globals.set_var(
+                &self.ctx.id,
+                &SETUP_DISABLER_OP_DIRECTORY_UTXO,
+                VariableTypes::Utxo(op_disabler_directory_utxo),
             )?;
         }
 
-        // FIXME: Should we save the whole UTXOS as in reimbursement_kickoff_utxos?
-        // Maybe we should improve reimbursement_kickoff_utxos to be a vector of TXIDs, and save just once the amount and the output type
-        // - Reimbursement: Multiples TXIDs with same amount and output type
-        // - Initial Setup: Single TXID and amount, with different output script. (output script is save in create_dispute_core function)
+        // Save WT disabler directory UTXO
+        let wt_start_enabler_tx = protocol.transaction_by_name(WT_START_ENABLER_TX)?;
+        let wt_start_enabler_txid = wt_start_enabler_tx.compute_txid();
+        let wt_disabler_directory_outout = committee.members.len();
+        let output_value = wt_start_enabler_tx.output[wt_disabler_directory_outout]
+            .value
+            .to_sat();
 
-        // Save initial deposit txid and output amount
-        let initial_deposit_tx: &Transaction =
-            protocol.transaction_by_name(OP_INITIAL_DEPOSIT_TX)?;
-        let initial_deposit_txid = initial_deposit_tx.compute_txid();
-        let output_value = initial_deposit_tx.output[0].value.to_sat();
-        info!(
-            id = self.ctx.my_idx,
-            "Saving initial deposit txid: {} and amount: {}", initial_deposit_txid, output_value
-        );
-
-        context.globals.set_var(
-            &self.ctx.id,
-            OP_INITIAL_DEPOSIT_TXID,
-            VariableTypes::String(initial_deposit_txid.to_string()),
-        )?;
-
-        context.globals.set_var(
-            &self.ctx.id,
-            OP_INITIAL_DEPOSIT_AMOUNT,
-            VariableTypes::Amount(output_value),
-        )?;
-
-        // Save SETUP_DISABLER_DIRECTORY_UTXO for future use in the full penalization
-        let setup_tx: &Transaction = protocol.transaction_by_name(&SETUP_TX)?;
-        let setup_txid = setup_tx.compute_txid();
-        let setup_output = 1;
-        let output_value = setup_tx.output[setup_output].value.to_sat();
-
-        let setup_utxo = (
-            setup_txid,
-            setup_output as u32,
+        let wt_disabler_directory_utxo = (
+            wt_start_enabler_txid,
+            wt_disabler_directory_outout as u32,
             Some(output_value),
             Some(OutputType::taproot(
                 output_value,
@@ -1441,12 +1483,11 @@ impl DisputeCoreProtocol {
             )?),
         );
 
-        info!("Saving setup disabler utxo: {:?}", setup_utxo);
-
+        info!("Saving wt disabler utxo: {:?}", wt_disabler_directory_utxo);
         context.globals.set_var(
             &self.ctx.id,
-            &SETUP_DISABLER_DIRECTORY_UTXO,
-            VariableTypes::Utxo(setup_utxo),
+            &SETUP_DISABLER_WT_DIRECTORY_UTXO,
+            VariableTypes::Utxo(wt_disabler_directory_utxo),
         )?;
 
         Ok(())
