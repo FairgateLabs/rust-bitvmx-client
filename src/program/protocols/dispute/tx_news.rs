@@ -4,21 +4,24 @@ use bitvmx_cpu_definitions::{memory::MemoryWitness, trace::*};
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use console::style;
+use emulator::decision::nary_search::NArySearchType;
 use tracing::info;
 
 use crate::{
     bitvmx::Context,
     errors::BitVMXError,
     program::{
-        participant::ParticipantRole,
+        participant::ParticipantRole::{self, Prover, Verifier},
         protocols::{
             claim::ClaimGate,
             dispute::{
                 action_wins,
-                config::DisputeConfiguration,
+                challenge::READ_VALUE_NARY_SEARCH_CHALLENGE,
+                config::{ConfigResults, DisputeConfiguration},
                 input_handler::{get_txs_configuration, unify_inputs, unify_witnesses},
-                timeout_input_tx, timeout_tx, DisputeResolutionProtocol, CHALLENGE, COMMITMENT,
-                EXECUTE, INPUT_TX, PROVER_WINS, TRACE_VARS, VERIFIER_WINS,
+                timeout_input_tx, timeout_tx, DisputeResolutionProtocol, CHALLENGE, CHALLENGE_READ,
+                COMMITMENT, EXECUTE, INPUT_TX, PROVER_WINS, TRACE_VARS, VERIFIER_FINAL,
+                VERIFIER_WINS,
             },
             protocol_handler::ProtocolHandler,
         },
@@ -58,15 +61,95 @@ fn dispatch_timeout_tx(
     Ok(())
 }
 
-//when is see [&Str], and vout is [bool] if I'm [ParticipantRole] then I dispatch [bool]? timeout_tx[Str] : timeout_input_tx[Str]
-pub const TIMEOUT_DISPATCH_TABLE: [(&str, bool, ParticipantRole, &str, bool); 3] = [
-    (EXECUTE, false, ParticipantRole::Prover, CHALLENGE, false),
-    (CHALLENGE, false, ParticipantRole::Prover, CHALLENGE, true),
-    (EXECUTE, false, ParticipantRole::Verifier, EXECUTE, true),
-];
+// When I see [tx_name], and vout is [has_vout],
+// if I'm [role], then I dispatch
+// [is_input] ? timeout_input_tx[timeout_name] : timeout_tx[timeout_name].#[derive(Debug, Clone)]
+pub struct TimeoutDispatchRule {
+    pub tx_name: String,
+    pub has_vout: bool,
+    pub role: ParticipantRole,
+    pub timeout_name: String,
+    pub apply_timeout: bool,
+    pub is_input: bool,
+}
 
-fn get_timeout_name(name: &str, is_input: bool) -> String {
-    if is_input {
+impl TimeoutDispatchRule {
+    pub fn new(
+        tx_name: &str,
+        has_vout: bool,
+        role: ParticipantRole,
+        timeout_name: &str,
+        apply_timeout: bool,
+        is_input: bool,
+    ) -> Self {
+        Self {
+            tx_name: tx_name.to_string(),
+            has_vout,
+            role,
+            timeout_name: timeout_name.to_string(),
+            apply_timeout,
+            is_input,
+        }
+    }
+}
+
+pub struct TimeoutDispatchTable {
+    pub rules: Vec<TimeoutDispatchRule>,
+}
+
+impl TimeoutDispatchTable {
+    pub fn new(rules: Vec<TimeoutDispatchRule>) -> Self {
+        Self { rules }
+    }
+    pub fn new_predefined(first_2nd_nary_prover_tx: &str, last_2nd_nary_verifier_tx: &str) -> Self {
+        Self {
+            rules: vec![
+                TimeoutDispatchRule::new(EXECUTE, false, Prover, CHALLENGE, true, false),
+                TimeoutDispatchRule::new(CHALLENGE, false, Prover, CHALLENGE, true, true),
+                TimeoutDispatchRule::new(EXECUTE, false, Verifier, EXECUTE, true, true),
+                TimeoutDispatchRule::new(
+                    CHALLENGE,
+                    false,
+                    Verifier,
+                    first_2nd_nary_prover_tx,
+                    false,
+                    false,
+                ),
+                TimeoutDispatchRule::new(
+                    last_2nd_nary_verifier_tx,
+                    false,
+                    Prover,
+                    CHALLENGE_READ,
+                    true,
+                    false,
+                ),
+                TimeoutDispatchRule::new(CHALLENGE_READ, false, Prover, CHALLENGE_READ, true, true),
+            ],
+        }
+    }
+    pub fn add_rule(&mut self, rule: TimeoutDispatchRule) {
+        self.rules.push(rule);
+    }
+    pub fn iter(
+        &self,
+    ) -> impl Iterator<Item = (&String, &bool, &ParticipantRole, &String, &bool, &bool)> {
+        self.rules.iter().map(|r| {
+            (
+                &r.tx_name,
+                &r.has_vout,
+                &r.role,
+                &r.timeout_name,
+                &r.apply_timeout,
+                &r.is_input,
+            )
+        })
+    }
+}
+
+fn get_timeout_name(name: &str, apply_timeout: bool, is_input: bool) -> String {
+    if !apply_timeout {
+        name.to_string()
+    } else if is_input {
         timeout_input_tx(name)
     } else {
         timeout_tx(name)
@@ -79,13 +162,14 @@ fn auto_dispatch_timeout(
     vout: Option<u32>,
     program_context: &ProgramContext,
     current_height: u32,
+    timeout_table: &TimeoutDispatchTable,
 ) -> Result<(), BitVMXError> {
-    for (tx_name, tx_vout, tx_role, timeout_name, is_input) in TIMEOUT_DISPATCH_TABLE.iter() {
+    for (tx_name, tx_vout, tx_role, timeout_name, not_ignore, is_input) in timeout_table.iter() {
         if *tx_name == name && *tx_role == drp.role() && *tx_vout == (vout.is_some()) {
             dispatch_timeout_tx(
                 drp,
                 program_context,
-                &get_timeout_name(&timeout_name, *is_input),
+                &get_timeout_name(&timeout_name, *not_ignore, *is_input),
                 current_height,
             )?;
         }
@@ -102,6 +186,7 @@ fn cancel_timeout(
     let cancel = match name {
         EXECUTE => drp.role() == ParticipantRole::Verifier,
         CHALLENGE => drp.role() == ParticipantRole::Prover,
+        CHALLENGE_READ => drp.role() == ParticipantRole::Prover,
         _ => false,
     };
 
@@ -137,12 +222,13 @@ fn auto_claim_start(
     name: &str,
     vout: Option<u32>,
     program_context: &ProgramContext,
+    timeout_table: &TimeoutDispatchTable,
 ) -> Result<(), BitVMXError> {
     if vout.is_some() {
         return Ok(());
     }
-    for (_, _, tx_role, timeout_name, is_input) in TIMEOUT_DISPATCH_TABLE.iter() {
-        let timeout_name = get_timeout_name(timeout_name, *is_input);
+    for (_, _, tx_role, timeout_name, not_ignore, is_input) in timeout_table.iter() {
+        let timeout_name = get_timeout_name(timeout_name, *not_ignore, *is_input);
         if &timeout_name == name && *tx_role == drp.role() {
             let claim_name = ClaimGate::tx_start(get_claim_name(drp, false));
             let tx = drp.get_signed_tx(program_context, &claim_name, 0, 0, false, 0)?;
@@ -218,48 +304,48 @@ fn claim_state_handle(
         }
     }
 
-    if name == ClaimGate::tx_success(PROVER_WINS) || name == ClaimGate::tx_success(VERIFIER_WINS) {
-        if name == ClaimGate::tx_success(PROVER_WINS) {
-            //handle all actions
-            info!("Prover. Execute Action");
-            let prover_wins_action_tx = drp.get_signed_tx(
-                program_context,
-                &action_wins(&ParticipantRole::Prover, 1),
-                0,
-                0,
-                false,
-                1,
-            )?;
-            let speedup_data =
-                drp.get_speedup_data_from_tx(&prover_wins_action_tx, program_context, None)?;
+    if name == ClaimGate::tx_success(PROVER_WINS) && drp.role() == ParticipantRole::Prover {
+        //handle all actions
+        info!("Prover. Execute Action");
+        let prover_wins_action_tx = drp.get_signed_tx(
+            program_context,
+            &action_wins(&ParticipantRole::Prover, 1),
+            0,
+            0,
+            false,
+            1,
+        )?;
+        let speedup_data =
+            drp.get_speedup_data_from_tx(&prover_wins_action_tx, program_context, None)?;
 
-            program_context.bitcoin_coordinator.dispatch(
-                prover_wins_action_tx,
-                Some(speedup_data),
-                Context::ProgramId(drp.ctx.id).to_string()?,
-                None,
-            )?;
-        } else {
-            //handle all actions
-            info!("Verifier. Execute Action");
-            let verifier_wins_action_tx = drp.get_signed_tx(
-                program_context,
-                &action_wins(&ParticipantRole::Verifier, 1),
-                0,
-                0,
-                false,
-                1,
-            )?;
-            let speedup_data =
-                drp.get_speedup_data_from_tx(&verifier_wins_action_tx, program_context, None)?;
+        program_context.bitcoin_coordinator.dispatch(
+            prover_wins_action_tx,
+            Some(speedup_data),
+            Context::ProgramId(drp.ctx.id).to_string()?,
+            None,
+        )?;
+    } else if name == ClaimGate::tx_success(VERIFIER_WINS)
+        && drp.role() == ParticipantRole::Verifier
+    {
+        //handle all actions
+        info!("Verifier. Execute Action");
+        let verifier_wins_action_tx = drp.get_signed_tx(
+            program_context,
+            &action_wins(&ParticipantRole::Verifier, 1),
+            0,
+            0,
+            false,
+            1,
+        )?;
+        let speedup_data =
+            drp.get_speedup_data_from_tx(&verifier_wins_action_tx, program_context, None)?;
 
-            program_context.bitcoin_coordinator.dispatch(
-                verifier_wins_action_tx,
-                Some(speedup_data),
-                Context::ProgramId(drp.ctx.id).to_string()?,
-                None,
-            )?;
-        }
+        program_context.bitcoin_coordinator.dispatch(
+            verifier_wins_action_tx,
+            Some(speedup_data),
+            Context::ProgramId(drp.ctx.id).to_string()?,
+            None,
+        )?;
     }
     Ok(())
 }
@@ -289,9 +375,19 @@ pub fn handle_tx_news(
 
     let timelock_blocks = config.timelock_blocks;
 
-    auto_dispatch_timeout(drp, &name, vout, program_context, current_height)?;
+    let timeout_table =
+        TimeoutDispatchTable::new_predefined("NARY2_PROVER_2_TO", "NARY2_VERIFIER_4"); //TODO: obtain from globals?
 
-    auto_claim_start(drp, &name, vout, program_context)?;
+    auto_dispatch_timeout(
+        drp,
+        &name,
+        vout,
+        program_context,
+        current_height,
+        &timeout_table,
+    )?;
+
+    auto_claim_start(drp, &name, vout, program_context, &timeout_table)?;
 
     claim_state_handle(
         drp,
@@ -302,7 +398,7 @@ pub fn handle_tx_news(
         timelock_blocks as u32,
     )?;
 
-    let fail_config = config.fail_configuration.unwrap_or_default();
+    let fail_force_config = config.fail_force_config.unwrap_or_default();
 
     if name.starts_with(INPUT_TX) && vout.is_some() {
         let idx = name.strip_prefix(INPUT_TX).unwrap().parse::<u32>()?;
@@ -326,7 +422,7 @@ pub fn handle_tx_news(
                         full_input,
                         execution_path.clone(),
                         format!("{}/{}", execution_path, "execution.json").to_string(),
-                        fail_config.fail_prover.clone(),
+                        fail_force_config.main.fail_config_prover.clone(),
                     ),
                 })?;
                 program_context
@@ -387,8 +483,8 @@ pub fn handle_tx_news(
                 last_step,
                 hex::encode(last_hash),
                 format!("{}/{}", execution_path, "execution.json").to_string(),
-                fail_config.force_condition,
-                fail_config.fail_verifier.clone(),
+                fail_force_config.main.force_condition.clone(),
+                fail_force_config.main.fail_config_verifier.clone(),
             ),
         })?;
 
@@ -398,165 +494,45 @@ pub fn handle_tx_news(
     }
 
     if (name == COMMITMENT || name.starts_with("NARY_VERIFIER")) && vout.is_some() {
-        let mut round = name
+        let round = name
             .strip_prefix("NARY_VERIFIER_")
             .unwrap_or("0")
             .parse::<u32>()
             .unwrap();
-
-        let (program_definition, pdf) = drp.get_program_definition(program_context)?;
-        let nary = program_definition.nary_def();
-
-        if drp.role() == ParticipantRole::Prover {
-            let decision = if name == COMMITMENT {
-                0
-            } else {
-                drp.decode_witness_from_speedup(
-                    tx_id,
-                    vout.unwrap(),
-                    &name,
-                    program_context,
-                    &tx_status.tx,
-                    None,
-                )?;
-
-                let bits = program_context
-                    .witness
-                    .get_witness(&drp.ctx.id, &format!("selection_bits_{}", round))?
-                    .unwrap()
-                    .winternitz()?
-                    .message_bytes();
-                let bits = bits[0];
-                bits
-            };
-
-            round += 1;
-
-            //TODO: make this value return from execution
-            program_context.globals.set_var(
-                &drp.ctx.id,
-                "current_round",
-                VariableTypes::Number(round as u32),
-            )?;
-
-            let execution_path = drp.get_execution_path()?;
-            if round <= nary.total_rounds() as u32 {
-                let msg = serde_json::to_string(&DispatcherJob {
-                    job_id: drp.ctx.id.to_string(),
-                    job_type: EmulatorJobType::ProverGetHashesForRound(
-                        pdf,
-                        execution_path.clone(),
-                        round as u8,
-                        decision as u32,
-                        format!("{}/{}", execution_path, "execution.json").to_string(),
-                        fail_config.fail_prover.clone(),
-                    ),
-                })?;
-                program_context
-                    .broker_channel
-                    .send(&program_context.components_config.emulator, msg)?;
-            } else {
-                let msg = serde_json::to_string(&DispatcherJob {
-                    job_id: drp.ctx.id.to_string(),
-                    job_type: EmulatorJobType::ProverFinalTrace(
-                        pdf,
-                        execution_path.clone(),
-                        (decision + 1) as u32,
-                        format!("{}/{}", execution_path, "execution.json").to_string(),
-                        fail_config.fail_prover.clone(),
-                    ),
-                })?;
-                program_context
-                    .broker_channel
-                    .send(&program_context.components_config.emulator, msg)?;
-            }
-        } else {
-            if round == nary.total_rounds() as u32 {
-                dispatch_timeout_tx(drp, program_context, &timeout_tx(EXECUTE), current_height)?;
-            }
-        }
+        handle_nary_verifier(
+            &name,
+            drp,
+            program_context,
+            tx_id,
+            vout,
+            &tx_status,
+            current_height,
+            &fail_force_config,
+            "selection_bits",
+            COMMITMENT,
+            EXECUTE,
+            0,
+            round,
+            NArySearchType::ConflictStep,
+        )?;
     }
 
     if (name.starts_with("NARY_PROVER"))
         && drp.role() == ParticipantRole::Verifier
         && vout.is_some()
     {
-        drp.decode_witness_from_speedup(
-            tx_id,
-            vout.unwrap(),
+        handle_nary_prover(
             &name,
+            drp,
             program_context,
-            &tx_status.tx,
-            None,
+            tx_id,
+            vout,
+            &tx_status,
+            &fail_force_config,
+            "NARY_PROVER_",
+            "prover_hash",
+            NArySearchType::ConflictStep,
         )?;
-
-        let round = name
-            .strip_prefix("NARY_PROVER_")
-            .unwrap()
-            .parse::<u32>()
-            .unwrap();
-
-        //TODO: make this value return from execution
-        program_context.globals.set_var(
-            &drp.ctx.id,
-            "current_round",
-            VariableTypes::Number(round as u32),
-        )?;
-
-        let (program_definition, pdf) = drp.get_program_definition(program_context)?;
-        let nary = program_definition.nary_def();
-        let hashes_count = nary.hashes_for_round(round as u8);
-
-        let hashes: Vec<String> = (0..hashes_count)
-            .map(|h| {
-                hex::encode(
-                    program_context
-                        .witness
-                        .get_witness(&drp.ctx.id, &format!("prover_hash_{}_{}", round, h))
-                        .unwrap()
-                        .unwrap()
-                        .winternitz()
-                        .unwrap()
-                        .message_bytes(),
-                )
-            })
-            .collect();
-
-        let execution_path = drp.get_execution_path()?;
-        let msg = serde_json::to_string(&DispatcherJob {
-            job_id: drp.ctx.id.to_string(),
-            job_type: EmulatorJobType::VerifierChooseSegment(
-                pdf,
-                execution_path.clone(),
-                round as u8,
-                hashes,
-                format!("{}/{}", execution_path, "execution.json").to_string(),
-                fail_config.fail_verifier.clone(),
-            ),
-        })?;
-
-        if round > 1 {
-            program_context
-                .broker_channel
-                .send(&program_context.components_config.emulator, msg)?;
-        } else {
-            if let Some(_ready) = program_context
-                .globals
-                .get_var(&drp.ctx.id, "execution-check-ready")?
-            {
-                info!("The execution is ready. Sending the choose segment message");
-                program_context
-                    .broker_channel
-                    .send(&program_context.components_config.emulator, msg)?;
-            } else {
-                info!("The execution is not ready. Saving the message.");
-                program_context.globals.set_var(
-                    &drp.ctx.id,
-                    "choose-segment-msg",
-                    VariableTypes::String(msg),
-                )?;
-            }
-        }
     }
 
     if name == EXECUTE && drp.role() == ParticipantRole::Verifier && vout.is_some() {
@@ -649,8 +625,8 @@ pub fn handle_tx_news(
                 execution_path.clone(),
                 final_trace,
                 format!("{}/{}", execution_path, "execution.json").to_string(),
-                fail_config.fail_verifier.clone(),
-                fail_config.force.clone(),
+                fail_force_config.main.fail_config_verifier.clone(),
+                fail_force_config.main.force_challenge.clone(),
             ),
         })?;
         program_context
@@ -659,6 +635,120 @@ pub fn handle_tx_news(
     }
 
     if name == CHALLENGE && drp.role() == ParticipantRole::Prover && vout.is_some() {
+        let (names, leaf) = drp.decode_witness_from_speedup(
+            tx_id,
+            vout.unwrap(),
+            &name,
+            program_context,
+            &tx_status.tx,
+            None,
+        )?;
+
+        let read_value_nary_search_leaf = program_context
+            .globals
+            .get_var(
+                &drp.ctx.id,
+                &format!("challenge_leaf_start_{}", "read_value_nary_search"),
+            )?
+            .unwrap()
+            .number()? as u32;
+
+        //TODO: if the verifier is able to execute the challenge, the prover can react only to the read challenge nary search
+
+        match leaf {
+            l if l == read_value_nary_search_leaf => {
+                let expected_names: Vec<&str> = READ_VALUE_NARY_SEARCH_CHALLENGE
+                    .iter()
+                    .map(|(name, _)| *name)
+                    .collect();
+
+                if names.len() == 1 && names == expected_names {
+                    let bits_name = &names[0];
+                    let witness = program_context
+                        .witness
+                        .get_witness(&drp.ctx.id, bits_name)?
+                        .ok_or_else(|| {
+                            BitVMXError::VariableNotFound(drp.ctx.id, bits_name.to_string())
+                        })?;
+                    let bytes = witness.winternitz()?.message_bytes();
+
+                    info!(
+                        "Challenge will be extended with a 2nd nary search. {bits_name} are {:?}",
+                        bytes
+                    );
+
+                    handle_nary_verifier(
+                        &name,
+                        drp,
+                        program_context,
+                        tx_id,
+                        vout,
+                        &tx_status,
+                        current_height,
+                        &fail_force_config,
+                        "selection_bits2",
+                        CHALLENGE,
+                        CHALLENGE_READ,
+                        bytes[0],
+                        1, // round 2
+                        NArySearchType::ReadValueChallenge,
+                    )?;
+                } else {
+                    panic!(
+                        "The challenge leaf does not match the expected witness names.\n\
+                 Expected: {:?}, got: {:?}",
+                        expected_names, names
+                    );
+                }
+            }
+            _ => {
+                info!("Challenge ended successfully");
+            }
+        }
+    }
+
+    if name.starts_with("NARY2_VERIFIER") && vout.is_some() {
+        let round = name
+            .strip_prefix("NARY2_VERIFIER_")
+            .unwrap()
+            .parse::<u32>()
+            .unwrap();
+        handle_nary_verifier(
+            &name,
+            drp,
+            program_context,
+            tx_id,
+            vout,
+            &tx_status,
+            current_height,
+            &fail_force_config,
+            "selection_bits2",
+            CHALLENGE,
+            CHALLENGE_READ,
+            0, // Will be ignored
+            round,
+            NArySearchType::ReadValueChallenge,
+        )?;
+    }
+
+    if name.starts_with("NARY2_PROVER") && drp.role() == ParticipantRole::Verifier && vout.is_some()
+    {
+        handle_nary_prover(
+            &name,
+            drp,
+            program_context,
+            tx_id,
+            vout,
+            &tx_status,
+            &fail_force_config,
+            "NARY2_PROVER_",
+            "prover_hash2",
+            NArySearchType::ReadValueChallenge,
+        )?;
+    }
+
+    if name == CHALLENGE_READ && drp.role() == ParticipantRole::Prover && vout.is_some() {
+        info!("The challenge has ended after the 2nd n-ary search.");
         drp.decode_witness_from_speedup(
             tx_id,
             vout.unwrap(),
@@ -667,7 +757,268 @@ pub fn handle_tx_news(
             &tx_status.tx,
             None,
         )?;
-        //TODO: if the verifier is able to execute the challenge, the prover can react only to the read challenge nary search
+    }
+
+    if CHALLENGE_READ == name && ParticipantRole::Verifier == drp.role() && vout.is_none() {
+        let verifier_final_tx =
+            drp.get_signed_tx(program_context, &VERIFIER_FINAL, 0, 0, false, 0)?;
+        let speedup_data =
+            drp.get_speedup_data_from_tx(&verifier_final_tx, program_context, None)?;
+        program_context.bitcoin_coordinator.dispatch(
+            verifier_final_tx,
+            Some(speedup_data),
+            Context::ProgramId(drp.ctx.id).to_string()?,
+            Some(current_height + 2 * timelock_blocks as u32),
+        )?;
+    }
+
+    if VERIFIER_FINAL == name && ParticipantRole::Verifier == drp.role() && vout.is_none() {
+        let claim_name = ClaimGate::tx_start(VERIFIER_WINS);
+        let tx = drp.get_signed_tx(program_context, &claim_name, 0, 0, false, 0)?;
+        let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
+        info!("{claim_name}: {:?}", tx);
+        program_context.bitcoin_coordinator.dispatch(
+            tx,
+            Some(speedup_data),
+            Context::ProgramId(drp.ctx.id).to_string()?,
+            None,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn handle_nary_verifier(
+    name: &str,
+    drp: &DisputeResolutionProtocol,
+    program_context: &ProgramContext,
+    tx_id: Txid,
+    vout: Option<u32>,
+    tx_status: &TransactionStatus,
+    current_height: u32,
+    fail_force_config: &ConfigResults,
+    selection_bits: &str,             // "selection_bits"
+    prev_name: &str,                  // COMMITMENT
+    post_name: &str,                  // EXECUTE
+    decision_start_value: u8,         // 0
+    mut round: u32,                   // current round
+    nary_search_type: NArySearchType, // ConflictStep
+) -> Result<(), BitVMXError> {
+    let (program_definition, pdf) = drp.get_program_definition(program_context)?;
+    let nary = program_definition.nary_def();
+
+    let (prover_config, current_round) = match nary_search_type {
+        NArySearchType::ConflictStep => (
+            fail_force_config.main.fail_config_prover.clone(),
+            "current_round",
+        ),
+        NArySearchType::ReadValueChallenge => (
+            fail_force_config.read.fail_config_prover.clone(),
+            "current_round2",
+        ),
+    };
+    if drp.role() == ParticipantRole::Prover {
+        let decision = if name == prev_name {
+            decision_start_value
+        } else {
+            drp.decode_witness_from_speedup(
+                tx_id,
+                vout.unwrap(),
+                &name,
+                program_context,
+                &tx_status.tx,
+                None,
+            )?;
+
+            let bits = program_context
+                .witness
+                .get_witness(&drp.ctx.id, &format!("{}_{}", selection_bits, round))?
+                .unwrap()
+                .winternitz()?
+                .message_bytes();
+            let bits = bits[0];
+            bits
+        };
+
+        round += 1;
+
+        //TODO: make this value return from execution
+        program_context.globals.set_var(
+            &drp.ctx.id,
+            current_round,
+            VariableTypes::Number(round as u32),
+        )?;
+
+        let execution_path = drp.get_execution_path()?;
+        if round <= nary.total_rounds() as u32 {
+            let msg = serde_json::to_string(&DispatcherJob {
+                job_id: drp.ctx.id.to_string(),
+                job_type: EmulatorJobType::ProverGetHashesForRound(
+                    pdf,
+                    execution_path.clone(),
+                    round as u8,
+                    decision as u32,
+                    format!("{}/{}", execution_path, "execution.json").to_string(),
+                    prover_config,
+                    nary_search_type,
+                ),
+            })?;
+            program_context
+                .broker_channel
+                .send(&program_context.components_config.emulator, msg)?;
+        } else {
+            match nary_search_type {
+                NArySearchType::ConflictStep => {
+                    let msg = serde_json::to_string(&DispatcherJob {
+                        job_id: drp.ctx.id.to_string(),
+                        job_type: EmulatorJobType::ProverFinalTrace(
+                            pdf,
+                            execution_path.clone(),
+                            (decision + 1) as u32,
+                            format!("{}/{}", execution_path, "execution.json").to_string(),
+                            fail_force_config.main.fail_config_prover.clone(),
+                        ),
+                    })?;
+                    program_context
+                        .broker_channel
+                        .send(&program_context.components_config.emulator, msg)?;
+                }
+                NArySearchType::ReadValueChallenge => {
+                    info!("The dispute has ended after the 2nd n-ary search.");
+                    // TODO: implement transaction to end the dispute after the 2nd n-ary search
+                }
+            }
+        }
+    } else {
+        if round == nary.total_rounds() as u32 && nary_search_type == NArySearchType::ConflictStep {
+            dispatch_timeout_tx(drp, program_context, &timeout_tx(post_name), current_height)?;
+        }
+        // TODO: this is a temporary solution to force the verifier to choose the challenge after the last n-ary search round
+        // After a transaction to end the dispute is implemented, this can be removed
+        if round == nary.total_rounds() as u32
+            && drp.role() == ParticipantRole::Verifier
+            && nary_search_type == NArySearchType::ReadValueChallenge
+        {
+            info!("Forcing the verifier to choose the challenge after the last n-ary search round");
+            let execution_path = drp.get_execution_path()?;
+            info!("Path is {execution_path}");
+            let msg = serde_json::to_string(&DispatcherJob {
+                job_id: drp.ctx.id.to_string(),
+                job_type: EmulatorJobType::VerifierChooseChallengeForReadChallenge(
+                    pdf,
+                    execution_path.clone(),
+                    format!("{}/{}", execution_path, "execution.json").to_string(),
+                    fail_force_config.read.fail_config_verifier.clone(),
+                    fail_force_config.read.force_challenge.clone(),
+                ),
+            })?;
+            program_context
+                .broker_channel
+                .send(&program_context.components_config.emulator, msg)?;
+        }
+    }
+    Ok(())
+}
+
+fn handle_nary_prover(
+    name: &str,
+    drp: &DisputeResolutionProtocol,
+    program_context: &ProgramContext,
+    tx_id: Txid,
+    vout: Option<u32>,
+    tx_status: &TransactionStatus,
+    fail_force_config: &ConfigResults,
+    strip_prefix: &str,               // "NARY_PROVER_"
+    prover_hash: &str,                // "prover_hash"
+    nary_search_type: NArySearchType, // ConflictStep
+) -> Result<(), BitVMXError> {
+    drp.decode_witness_from_speedup(
+        tx_id,
+        vout.unwrap(),
+        &name,
+        program_context,
+        &tx_status.tx,
+        None,
+    )?;
+
+    let round = name
+        .strip_prefix(strip_prefix)
+        .unwrap()
+        .parse::<u32>()
+        .unwrap();
+
+    let (fail_config, current_round) = match nary_search_type {
+        NArySearchType::ConflictStep => (
+            fail_force_config.main.fail_config_verifier.clone(),
+            "current_round",
+        ),
+        NArySearchType::ReadValueChallenge => (
+            fail_force_config.read.fail_config_verifier.clone(),
+            "current_round2",
+        ),
+    };
+
+    //TODO: make this value return from execution
+    program_context.globals.set_var(
+        &drp.ctx.id,
+        current_round,
+        VariableTypes::Number(round as u32),
+    )?;
+
+    let (program_definition, pdf) = drp.get_program_definition(program_context)?;
+    let nary = program_definition.nary_def();
+    let hashes_count = nary.hashes_for_round(round as u8);
+    let execution_path = drp.get_execution_path()?;
+
+    let hashes: Vec<String> = (0..hashes_count)
+        .map(|h| {
+            hex::encode(
+                program_context
+                    .witness
+                    .get_witness(&drp.ctx.id, &format!("{}_{}_{}", prover_hash, round, h))
+                    .unwrap()
+                    .unwrap()
+                    .winternitz()
+                    .unwrap()
+                    .message_bytes(),
+            )
+        })
+        .collect();
+
+    let msg = serde_json::to_string(&DispatcherJob {
+        job_id: drp.ctx.id.to_string(),
+        job_type: EmulatorJobType::VerifierChooseSegment(
+            pdf,
+            execution_path.clone(),
+            round as u8,
+            hashes,
+            format!("{}/{}", execution_path, "execution.json").to_string(),
+            fail_config,
+            nary_search_type,
+        ),
+    })?;
+
+    if round > 1 {
+        program_context
+            .broker_channel
+            .send(&program_context.components_config.emulator, msg)?;
+    } else {
+        if let Some(_ready) = program_context
+            .globals
+            .get_var(&drp.ctx.id, "execution-check-ready")?
+        {
+            info!("The execution is ready. Sending the choose segment message");
+            program_context
+                .broker_channel
+                .send(&program_context.components_config.emulator, msg)?;
+        } else {
+            info!("The execution is not ready. Saving the message.");
+            program_context.globals.set_var(
+                &drp.ctx.id,
+                "choose-segment-msg",
+                VariableTypes::String(msg),
+            )?;
+        }
     }
 
     Ok(())

@@ -11,7 +11,10 @@ use bitcoin_script_riscv::riscv::instruction_mapping::create_verification_script
 use bitcoin_script_stack::stack::StackTracker;
 use bitvmx_cpu_definitions::challenge::EmulatorResultType;
 use console::style;
-use emulator::{constants::REGISTERS_BASE_ADDRESS, loader::program_definition::ProgramDefinition};
+use emulator::{
+    constants::REGISTERS_BASE_ADDRESS, decision::nary_search::NArySearchType,
+    loader::program_definition::ProgramDefinition,
+};
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
     graph::graph::GraphOptions,
@@ -54,7 +57,9 @@ pub const TIMELOCK_BLOCKS: u16 = 15;
 pub const PROVER_WINS: &str = "PROVER_WINS";
 pub const VERIFIER_WINS: &str = "VERIFIER_WINS";
 pub const CHALLENGE: &str = "CHALLENGE";
+pub const CHALLENGE_READ: &str = "CHALLENGE_READ"; // For the second N-ary search
 pub const TIMELOCK_BLOCKS_KEY: &str = "TIMELOCK_BLOCKS";
+pub const VERIFIER_FINAL: &str = "VERIFIER_FINAL";
 
 pub const TRACE_VARS: [(&str, usize); 16] = [
     ("prover_write_address", 4 as usize),
@@ -219,13 +224,17 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 let hashes = nary_def.hashes_for_round(i);
                 for h in 0..hashes {
                     let key = key_chain.derive_winternitz_hash160(20)?;
+                    let key2 = key_chain.derive_winternitz_hash160(20)?;
                     keys.push((format!("prover_hash_{}_{}", i, h), key.into()));
+                    keys.push((format!("prover_hash2_{}_{}", i, h), key2.into()));
+                    // for the second n-ary search
                 }
             } else {
                 let _bits = nary_def.bits_for_round(i);
                 let key = key_chain.derive_winternitz_hash160(1)?;
-                //TODO: assuming bits fits in one byte. We should also enforce in the script that the revealed are in range
+                let key2 = key_chain.derive_winternitz_hash160(1)?;
                 keys.push((format!("selection_bits_{}", i), key.into()));
+                keys.push((format!("selection_bits2_{}", i), key2.into())); // for the second n-ary search
             }
         }
 
@@ -561,16 +570,122 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 agg_or_verifier,
                 sign_mode,
                 &keys,
+                NArySearchType::ConflictStep,
             )?,
             (&verifier_speedup_pub, &prover_speedup_pub),
         )?;
 
-        claim_verifier.add_claimer_win_connection(&mut protocol, CHALLENGE)?;
+        amount = self.checked_sub(amount, fee)?;
+        amount = self.checked_sub(amount, speedup_dust)?;
+        prev = CHALLENGE.to_string();
+        for i in 2..nary_def.total_rounds() + 1 {
+            let next = format!("NARY2_PROVER_{}", i);
+            let hashes = nary_def.hashes_for_round(i);
+            let vars = (0..hashes)
+                .map(|h| format!("prover_hash2_{}_{}", i, h))
+                .collect::<Vec<_>>();
 
+            if i != 1 {
+                self.add_connection_with_scripts(
+                    context,
+                    aggregated,
+                    &mut protocol,
+                    timelock_blocks,
+                    amount,
+                    speedup_dust,
+                    &prev,
+                    &next,
+                    &claim_verifier,
+                    Self::winternitz_check(
+                        agg_or_prover,
+                        sign_mode,
+                        &keys[0],
+                        &vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
+                    )?,
+                    (&prover_speedup_pub, &verifier_speedup_pub),
+                )?;
+                amount = self.checked_sub(amount, fee)?;
+                amount = self.checked_sub(amount, speedup_dust)?;
+
+                prev = next;
+            }
+            let next = format!("NARY2_VERIFIER_{}", i);
+            //TODO: Add a lower than value check
+            let _bits = nary_def.bits_for_round(i);
+
+            self.add_connection_with_scripts(
+                context,
+                aggregated,
+                &mut protocol,
+                timelock_blocks,
+                amount,
+                speedup_dust,
+                &prev,
+                &next,
+                &claim_prover,
+                Self::winternitz_check(
+                    agg_or_verifier,
+                    sign_mode,
+                    &keys[1],
+                    &vec![&format!("selection_bits2_{}", i)],
+                )?,
+                (&verifier_speedup_pub, &prover_speedup_pub),
+            )?;
+            amount = self.checked_sub(amount, fee)?;
+            amount = self.checked_sub(amount, speedup_dust)?;
+            prev = next;
+        }
+
+        self.add_connection_with_scripts(
+            context,
+            aggregated,
+            &mut protocol,
+            timelock_blocks,
+            amount,
+            speedup_dust,
+            &prev,
+            CHALLENGE_READ,
+            &claim_prover,
+            challenge_scripts(
+                &self.ctx.id,
+                self.role(),
+                &program_def,
+                context,
+                agg_or_verifier,
+                sign_mode,
+                &keys,
+                NArySearchType::ReadValueChallenge,
+            )?,
+            (&verifier_speedup_pub, &prover_speedup_pub),
+        )?;
+
+        amount = self.checked_sub(amount, fee)?;
+        amount = self.checked_sub(amount, speedup_dust)?;
+
+        let timeout_leaf = scripts::timelock(2 * timelock_blocks, &aggregated, SignMode::Aggregate);
+        let output_type = OutputType::taproot(amount, aggregated, &vec![timeout_leaf])?;
+
+        protocol.add_connection(
+            &format!("{}__{}", CHALLENGE_READ, VERIFIER_FINAL),
+            CHALLENGE_READ,
+            output_type.into(),
+            VERIFIER_FINAL,
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
+            Some(2 * timelock_blocks),
+            None,
+        )?;
+
+        pb.add_speedup_output(
+            &mut protocol,
+            VERIFIER_FINAL,
+            speedup_dust,
+            &verifier_speedup_pub,
+        )?;
+
+        claim_verifier.add_claimer_win_connection(&mut protocol, VERIFIER_FINAL)?;
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
         self.save_protocol(protocol)?;
-
         Ok(())
     }
 

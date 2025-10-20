@@ -1,6 +1,6 @@
 use bitcoin::PublicKey;
-use key_manager::winternitz::WinternitzPublicKey;
 use bitvmx_operator_comms::operator_comms::PubKeyHash;
+use key_manager::winternitz::WinternitzPublicKey;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr};
 
@@ -46,6 +46,13 @@ impl ParticipantRole {
         match self {
             ParticipantRole::Prover => "prover".to_string(),
             ParticipantRole::Verifier => "verifier".to_string(),
+        }
+    }
+
+    pub fn opposite(&self) -> ParticipantRole {
+        match self {
+            ParticipantRole::Prover => ParticipantRole::Verifier,
+            ParticipantRole::Verifier => ParticipantRole::Prover,
         }
     }
 }

@@ -2,7 +2,7 @@ use bitcoin_coordinator::coordinator::BitcoinCoordinatorApi;
 use bitcoin_script_riscv::riscv::instruction_mapping::{
     create_verification_script_mapping, get_key_from_opcode,
 };
-use bitvmx_cpu_definitions::challenge::EmulatorResultType;
+use bitvmx_cpu_definitions::challenge::{ChallengeType, EmulatorResultType};
 use emulator::constants::REGISTERS_BASE_ADDRESS;
 use tracing::info;
 use uuid::Uuid;
@@ -13,7 +13,7 @@ use crate::{
     program::{
         protocols::dispute::{
             challenge::get_challenge_leaf, input_handler::*, DisputeResolutionProtocol, CHALLENGE,
-            COMMITMENT, EXECUTE,
+            CHALLENGE_READ, COMMITMENT, EXECUTE,
         },
         variables::VariableTypes,
     },
@@ -65,20 +65,29 @@ pub fn execution_result(
         EmulatorResultType::ProverGetHashesForRoundResult { hashes, round } => {
             let save_round = context
                 .globals
-                .get_var(id, "current_round")?
-                .unwrap()
+                .get_var(id, "current_round2")? // 2nd n-ary search
+                .unwrap_or(context.globals.get_var(id, "current_round")?.unwrap()) // 1st n-ary search
                 .number()? as u8;
+
+            let (nary_prover, prover_hash) =
+                if context.globals.get_var(id, "current_round2")?.is_some() {
+                    ("NARY2_PROVER", "prover_hash2") // 2nd n-ary search
+                } else {
+                    ("NARY_PROVER", "prover_hash") // 1st n-ary search
+                };
+
             assert_eq!(save_round, *round);
             for (i, h) in hashes.iter().enumerate() {
-                set_input_hex(id, context, &format!("prover_hash_{}_{}", round, i), h)?;
+                set_input_hex(id, context, &format!("{}_{}_{}", prover_hash, round, i), h)?;
             }
             let (tx, sp) = drp.get_tx_with_speedup_data(
                 context,
-                &format!("NARY_PROVER_{}", round),
+                &format!("{}_{}", nary_prover, round),
                 0,
                 0,
                 true,
             )?;
+            info!("Dispatching tx {:?}", tx);
             context.bitcoin_coordinator.dispatch(
                 tx,
                 Some(sp),
@@ -89,21 +98,29 @@ pub fn execution_result(
         EmulatorResultType::VerifierChooseSegmentResult { v_decision, round } => {
             let save_round = context
                 .globals
-                .get_var(id, "current_round")?
-                .unwrap()
+                .get_var(id, "current_round2")? // 2nd n-ary search
+                .unwrap_or(context.globals.get_var(id, "current_round")?.unwrap()) // 1st n-ary search
                 .number()? as u8;
+
             assert_eq!(save_round, *round);
+
+            let (nary_verifier, selection_bits) =
+                if context.globals.get_var(id, "current_round2")?.is_some() {
+                    ("NARY2_VERIFIER", "selection_bits2") // 2nd n-ary search
+                } else {
+                    ("NARY_VERIFIER", "selection_bits") // 1st n-ary search
+                };
 
             set_input_u8(
                 id,
                 context,
-                &format!("selection_bits_{}", round),
+                &format!("{}_{}", selection_bits, round),
                 *v_decision as u8,
             )?;
 
             let (tx, sp) = drp.get_tx_with_speedup_data(
                 context,
-                &format!("NARY_VERIFIER_{}", round),
+                &format!("{}_{}", nary_verifier, round),
                 0,
                 0,
                 true,
@@ -236,8 +253,14 @@ pub fn execution_result(
                 return Ok(());
             }
 
+            let name = match challenge {
+                ChallengeType::ReadValue { .. } | ChallengeType::CorrectHash { .. } => {
+                    CHALLENGE_READ
+                }
+                _ => CHALLENGE,
+            };
             let (tx, sp) =
-                drp.get_tx_with_speedup_data(context, CHALLENGE, 0, leaf.unwrap() as u32, true)?;
+                drp.get_tx_with_speedup_data(context, name, 0, leaf.unwrap() as u32, true)?;
             context.bitcoin_coordinator.dispatch(
                 tx,
                 Some(sp),

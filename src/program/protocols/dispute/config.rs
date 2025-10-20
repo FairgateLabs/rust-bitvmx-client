@@ -14,24 +14,6 @@ use crate::{
 };
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct TestFailConfiguration {
-    pub fail_prover: Option<FailConfiguration>,
-    pub fail_verifier: Option<FailConfiguration>,
-    pub force: ForceChallenge,
-    pub force_condition: ForceCondition,
-}
-impl Default for TestFailConfiguration {
-    fn default() -> Self {
-        Self {
-            fail_prover: None,
-            fail_verifier: None,
-            force: ForceChallenge::No,
-            force_condition: ForceCondition::No,
-        }
-    }
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct DisputeConfiguration {
     pub id: Uuid,
     pub operators_aggregated_pub: PublicKey,
@@ -42,7 +24,7 @@ pub struct DisputeConfiguration {
     pub verifier_enablers: Vec<OutputType>,
     pub timelock_blocks: u16,
     pub program_definition: String,
-    pub fail_configuration: Option<TestFailConfiguration>,
+    pub fail_force_config: Option<ConfigResults>,
 }
 
 impl DisputeConfiguration {
@@ -56,7 +38,7 @@ impl DisputeConfiguration {
         verifier_enablers: Vec<OutputType>,
         timelock_blocks: u16,
         program_definition: String,
-        fail_configuration: Option<TestFailConfiguration>,
+        fail_force_config: Option<ConfigResults>,
     ) -> Self {
         Self {
             id,
@@ -68,7 +50,7 @@ impl DisputeConfiguration {
             verifier_enablers,
             timelock_blocks,
             program_definition,
-            fail_configuration,
+            fail_force_config,
         }
     }
 
@@ -98,5 +80,39 @@ impl DisputeConfiguration {
             )
             .to_string()?,
         ])
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ConfigResult {
+    pub fail_config_prover: Option<FailConfiguration>,
+    pub fail_config_verifier: Option<FailConfiguration>,
+    pub force_challenge: ForceChallenge,
+    pub force_condition: ForceCondition,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ConfigResults {
+    pub main: ConfigResult,
+    pub read: ConfigResult, // for read challenge (2nd n-ary search)
+}
+
+impl Default for ConfigResult {
+    fn default() -> Self {
+        Self {
+            fail_config_prover: None,
+            fail_config_verifier: None,
+            force_challenge: ForceChallenge::No,
+            force_condition: ForceCondition::No,
+        }
+    }
+}
+
+impl Default for ConfigResults {
+    fn default() -> Self {
+        Self {
+            main: ConfigResult::default(),
+            read: ConfigResult::default(),
+        }
     }
 }

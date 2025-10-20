@@ -1,13 +1,12 @@
 use std::rc::Rc;
 
+use crate::{errors::BitVMXError, types::IncomingBitVMXApiMessages};
 use bitcoin::{PublicKey, Txid};
 use key_manager::winternitz::{WinternitzPublicKey, WinternitzSignature};
 use protocol_builder::types::OutputType;
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::{KeyValueStore, Storage};
 use uuid::Uuid;
-
-use crate::{errors::BitVMXError, types::IncomingBitVMXApiMessages};
 
 /*
 - winternitz
