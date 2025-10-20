@@ -218,7 +218,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
         name: &str,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        if name == format!("{}{}", OPERATOR, SETUP_TX_SUFFIX) {
+        if name == SETUP_TX {
             Ok(self.setup_tx(context)?)
         } else if name == OP_INITIAL_DEPOSIT_TX {
             Ok(self.op_initial_deposit_tx(name, context)?)
@@ -294,7 +294,6 @@ impl DisputeCoreProtocol {
         member: &MemberData,
     ) -> Result<(), BitVMXError> {
         let funding_utxo = dispute_core_data.funding_utxo.clone();
-        let start_enabler = format!("{}{}", WATCHTOWER, START_ENABLER_TX_SUFFIX);
         let self_disabler = format!("{}{}", WATCHTOWER, SELF_DISABLER_TX_SUFFIX);
         let reveal_take_private_key = watchtower_keys.get_winternitz(REVEAL_TAKE_PRIVKEY)?.clone();
         let watchtower_dispute_key = &member.dispute_key.clone();
@@ -326,7 +325,7 @@ impl DisputeCoreProtocol {
                     &reveal_take_private_key,
                 )?],
             )?),
-            &start_enabler,
+            &WT_START_ENABLER_TX,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
             None,
             None,
@@ -390,6 +389,12 @@ impl DisputeCoreProtocol {
                 &OutputType::taproot(output_amount, &*wt_dispute_key, &scripts)?,
             )?;
         }
+
+        // Add setup speedup output
+        protocol.add_transaction_output(
+            &WT_START_ENABLER_TX,
+            &OutputType::segwit_key(SPEEDUP_VALUE, &wt_dispute_key)?,
+        )?;
 
         Ok(())
     }
@@ -1398,8 +1403,8 @@ impl DisputeCoreProtocol {
         // - Initial Setup: Single TXID and amount, with different output script. (output script is save in create_dispute_core function)
 
         // Save initial deposit txid and output amount
-        let initial_deposit = format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX);
-        let initial_deposit_tx: &Transaction = protocol.transaction_by_name(&initial_deposit)?;
+        let initial_deposit_tx: &Transaction =
+            protocol.transaction_by_name(OP_INITIAL_DEPOSIT_TX)?;
         let initial_deposit_txid = initial_deposit_tx.compute_txid();
         let output_value = initial_deposit_tx.output[0].value.to_sat();
         info!(
@@ -1420,8 +1425,7 @@ impl DisputeCoreProtocol {
         )?;
 
         // Save SETUP_DISABLER_DIRECTORY_UTXO for future use in the full penalization
-        let setup = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
-        let setup_tx: &Transaction = protocol.transaction_by_name(&setup)?;
+        let setup_tx: &Transaction = protocol.transaction_by_name(&SETUP_TX)?;
         let setup_txid = setup_tx.compute_txid();
         let setup_output = 1;
         let output_value = setup_tx.output[setup_output].value.to_sat();

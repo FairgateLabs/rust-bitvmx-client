@@ -60,13 +60,6 @@ pub const WT_START_ENABLER_TX: &str = "WT_START_ENABLER_TX";
 pub const SETUP_TX: &str = "SETUP_TX";
 pub const SELF_DISABLER_TX_SUFFIX: &str = "_SELF_DISABLER_TX";
 
-// TODO: REMOVE
-pub const FUNDING_UTXO_SUFFIX: &str = "_FUNDING_UTXO";
-pub const FUNDING_TX_SUFFIX: &str = "_FUNDING_TX";
-pub const SETUP_TX_SUFFIX: &str = "_SETUP_TX";
-pub const INITIAL_DEPOSIT_TX_SUFFIX: &str = "_INITIAL_DEPOSIT_TX";
-pub const START_ENABLER_TX_SUFFIX: &str = "_START_ENABLER_TX";
-
 // UTXOs
 pub const OPERATOR_TAKE_ENABLER: &str = "operator_take_enabler";
 pub const OPERATOR_WON_ENABLER: &str = "operator_won_enabler";

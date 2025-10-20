@@ -30,11 +30,11 @@ use crate::{
                 },
                 types::{
                     Committee, FullPenalizationData, DISPUTE_AGGREGATED_KEY,
-                    DISPUTE_CORE_SHORT_TIMELOCK, DUST_VALUE, INITIAL_DEPOSIT_TX_SUFFIX, OPERATOR,
-                    OPERATOR_TAKE_ENABLER, OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX,
-                    OP_INITIAL_DEPOSIT_AMOUNT, OP_INITIAL_DEPOSIT_OUT_SCRIPT,
-                    OP_INITIAL_DEPOSIT_TXID, OP_LAZY_DISABLER_TX, REIMBURSEMENT_KICKOFF_TX,
-                    SETUP_DISABLER_DIRECTORY_UTXO, SPEEDUP_VALUE,
+                    DISPUTE_CORE_SHORT_TIMELOCK, DUST_VALUE, OPERATOR_TAKE_ENABLER,
+                    OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX, OP_INITIAL_DEPOSIT_AMOUNT,
+                    OP_INITIAL_DEPOSIT_OUT_SCRIPT, OP_INITIAL_DEPOSIT_TX, OP_INITIAL_DEPOSIT_TXID,
+                    OP_LAZY_DISABLER_TX, REIMBURSEMENT_KICKOFF_TX, SETUP_DISABLER_DIRECTORY_UTXO,
+                    SPEEDUP_VALUE,
                 },
             },
         },
@@ -153,10 +153,7 @@ impl ProtocolHandler for FullPenalizationProtocol {
                 ));
             }
 
-            let initial_deposit_name = indexed_name(
-                &format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX),
-                operator_index,
-            );
+            let initial_deposit_name = indexed_name(&OP_INITIAL_DEPOSIT_TX, operator_index);
 
             create_transaction_reference(
                 &mut protocol,
