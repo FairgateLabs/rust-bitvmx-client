@@ -178,6 +178,8 @@ pub enum OutgoingBitVMXApiMessages {
     WalletNotReady(Uuid),
     WalletError(Uuid, String),
     ProtocolVisualization(Uuid, String),
+    SetupError(Uuid, String),
+    CommsError(Uuid, String),
 }
 
 impl OutgoingBitVMXApiMessages {
@@ -329,7 +331,9 @@ impl OutgoingBitVMXApiMessages {
             OutgoingBitVMXApiMessages::WalletError(_, _) => "WalletError".to_string(),
             OutgoingBitVMXApiMessages::ProtocolVisualization(_, _) => {
                 "ProtocolVisualization".to_string()
-            }
+            },
+            OutgoingBitVMXApiMessages::SetupError(_, _) => "SetupError".to_string(),
+            OutgoingBitVMXApiMessages::CommsError(_, _) => "CommsError".to_string(),
         }
     }
 }

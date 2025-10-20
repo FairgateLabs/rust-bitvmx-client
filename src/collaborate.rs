@@ -5,7 +5,7 @@ use bitvmx_broker::identification::identifier::Identifier;
 use bitvmx_operator_comms::operator_comms::PubKeyHash;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, warn, error};
 use uuid::Uuid;
 
 use crate::{
@@ -131,88 +131,105 @@ impl Collaboration {
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         let pubkey_hash = comms_address.pubkey_hash.clone();
-        match msg_type {
+        let result = match msg_type {
             CommsMessageType::Keys => {
-                if self.im_leader {
-                    let keys: ParticipantKeys = parse_keys(data)
-                        .map_err(|_| BitVMXError::InvalidMessageFormat)?
-                        .first()
-                        .unwrap()
-                        .1
-                        .clone();
-                    let key = keys.get_public(&self.collaboration_id.to_string())?;
-                    self.keys.insert(pubkey_hash.clone(), *key);
-                    debug!("Got keys {:?}", self.keys);
-
-                    if self.keys.len() == self.participants.len() {
-                        let aggregated = program_context.key_chain.new_musig2_session(
-                            self.keys.values().cloned().collect(),
-                            self.my_key.clone(),
-                        )?;
-                        self.aggregated_key = Some(aggregated.clone());
-
-                        self.state = true;
-                    }
-                } else {
-                    let keys: ParticipantKeys = parse_keys(data)
-                        .map_err(|_| BitVMXError::InvalidMessageFormat)?
-                        .first()
-                        .unwrap()
-                        .1
-                        .clone();
-
-                    keys.mapping.iter().for_each(|(pubkey_hash, key)| {
-                        let pubkey_hash: PubKeyHash = pubkey_hash
-                            .parse()
-                            .unwrap_or(self.leader.pubkey_hash.clone()); //TODO: Handle the unwrap better
-                        if let Some(key) = key.public() {
-                            self.keys.insert(pubkey_hash, *key);
-                        } else {
-                            warn!("Key not found for peer: {}", pubkey_hash);
-                        }
-                    });
-
-                    let aggregated = program_context.key_chain.new_musig2_session(
-                        self.keys.values().cloned().collect(),
-                        self.my_key.clone(),
-                    )?;
-                    self.aggregated_key = Some(aggregated.clone());
-                    self.completed = true;
-                }
-
-                if self.aggregated_key.is_some() {
-                    info!("Aggregated generated ({})", self.im_leader);
-                    program_context.broker_channel.send(
-                        &self.request_from,
-                        OutgoingBitVMXApiMessages::AggregatedPubkey(
-                            self.collaboration_id,
-                            self.aggregated_key.unwrap().clone(),
-                        )
-                        .to_string()?,
-                    )?;
-                }
-
-                response(
-                    &program_context.comms,
-                    &self.collaboration_id,
-                    comms_address,
-                    CommsMessageType::KeysAck,
-                    (),
-                )?;
+                self.handle_key_message(comms_address, data, program_context, &pubkey_hash)
             }
             CommsMessageType::KeysAck => {
                 debug!(
                     "Collaboration id: {}: KeysAck received by {}",
                     self.collaboration_id, pubkey_hash
                 );
+                Ok(())
             }
             _ => {
-                return Err(BitVMXError::InvalidMessageType);
+                Err(BitVMXError::InvalidMessageType)
+            }
+        };
+
+        if result.is_err() {
+            let error = result.err().unwrap().to_string();
+            let result = program_context.broker_channel.send(
+                &program_context.components_config.l2,
+                OutgoingBitVMXApiMessages::CommsError(self.collaboration_id, error).to_string()?,
+            );
+
+            if let Err(e) = result {
+                error!("Error sending setup completed message: {:?}", e);
             }
         }
+        
         Ok(())
     }
 
+    fn handle_key_message(&mut self, comms_address: CommsAddress, data: Value, program_context: &ProgramContext, pubkey_hash: &String) -> Result<(), BitVMXError> {
+        if self.im_leader {
+            let keys: ParticipantKeys = parse_keys(data)
+                .map_err(|_| BitVMXError::InvalidMessageFormat)?
+                .first()
+                .unwrap()
+                .1
+                .clone();
+            let key = keys.get_public(&self.collaboration_id.to_string())?;
+            self.keys.insert(pubkey_hash.clone(), *key);
+            debug!("Got keys {:?}", self.keys);
+    
+            if self.keys.len() == self.participants.len() {
+                let aggregated = program_context.key_chain.new_musig2_session(
+                    self.keys.values().cloned().collect(),
+                    self.my_key.clone(),
+                )?;
+                self.aggregated_key = Some(aggregated.clone());
+    
+                self.state = true;
+            }
+        } else {
+            let keys: ParticipantKeys = parse_keys(data)
+                .map_err(|_| BitVMXError::InvalidMessageFormat)?
+                .first()
+                .unwrap()
+                .1
+                .clone();
+    
+            keys.mapping.iter().for_each(|(pubkey_hash, key)| {
+                let pubkey_hash: PubKeyHash = pubkey_hash
+                    .parse()
+                    .unwrap_or(self.leader.pubkey_hash.clone()); //TODO: Handle the unwrap better
+                if let Some(key) = key.public() {
+                    self.keys.insert(pubkey_hash, *key);
+                } else {
+                    warn!("Key not found for peer: {}", pubkey_hash);
+                }
+            });
+    
+            let aggregated = program_context.key_chain.new_musig2_session(
+                self.keys.values().cloned().collect(),
+                self.my_key.clone(),
+            )?;
+            self.aggregated_key = Some(aggregated.clone());
+            self.completed = true;
+        }
+        if self.aggregated_key.is_some() {
+            info!("Aggregated generated ({})", self.im_leader);
+            program_context.broker_channel.send(
+                &self.request_from,
+                OutgoingBitVMXApiMessages::AggregatedPubkey(
+                    self.collaboration_id,
+                    self.aggregated_key.unwrap().clone(),
+                )
+                .to_string()?,
+            )?;
+        }
+        response(
+            &program_context.comms,
+            &self.collaboration_id,
+            comms_address,
+            CommsMessageType::KeysAck,
+            (),
+        )?;
+        Ok(())
+    }
+    
     fn get_or_create_my_key(
         program_context: &mut ProgramContext,
         peers: Vec<CommsAddress>,

@@ -309,8 +309,8 @@ impl BitVMX {
                 return Ok(());
             }
             ReceiveHandlerChannel::Error(e) => {
-                info!("Error receiving message {}", e);
-            } //TODO: handle error
+                warn!("Error receiving message {}", e);
+            }
         }
 
         Ok(())
