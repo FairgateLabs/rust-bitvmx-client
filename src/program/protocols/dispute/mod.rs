@@ -61,7 +61,7 @@ pub const CHALLENGE_READ: &str = "CHALLENGE_READ"; // For the second N-ary searc
 pub const TIMELOCK_BLOCKS_KEY: &str = "TIMELOCK_BLOCKS";
 pub const VERIFIER_FINAL: &str = "VERIFIER_FINAL";
 
-pub const TRACE_VARS: [(&str, usize); 16] = [
+pub const TRACE_VARS: [(&str, usize); 22] = [
     ("prover_write_address", 4 as usize),
     ("prover_write_value", 4),
     ("prover_write_pc", 4),
@@ -78,6 +78,13 @@ pub const TRACE_VARS: [(&str, usize); 16] = [
     ("prover_read_pc_opcode", 4),
     ("prover_step_number", 8),
     ("prover_witness", 4),
+    // Translation keys
+    ("prover_prev_hash_tk", 20),
+    ("prover_step_hash_tk", 20),
+    ("prover_next_hash_tk", 20),
+    ("prover_write_step_tk", 8),
+    ("prover_conflict_step_tk", 8),
+    ("prover_hash_tk", 20),
 ];
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -867,7 +874,7 @@ impl DisputeResolutionProtocol {
                 aggregated,
                 &names_and_keys,
                 sign_mode,
-                true,
+                !name.ends_with("_tk"),
                 Some(vec![
                     reverse_script.clone(),
                     strip_script.clone(),

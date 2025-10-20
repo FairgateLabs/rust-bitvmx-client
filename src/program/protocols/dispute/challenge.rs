@@ -40,7 +40,7 @@ pub const PROGRAM_COUNTER_CHALLENGE: [(&str, usize); 8] = [
     ("verifier_prev_write_micro", 1),
     ("prover_read_pc_address", 4),
     ("prover_read_pc_micro", 1),
-    ("verifier_prev_hash", 20), //TODO: Fix, this hash is from prover translation keys
+    ("prover_prev_hash_tk", 20), //TODO: Fix, this hash is from prover translation keys
 ];
 pub const HALT_CHALLENGE: [(&str, usize); 5] = [
     ("prover_last_step", 8),
@@ -50,19 +50,19 @@ pub const HALT_CHALLENGE: [(&str, usize); 5] = [
     ("prover_read_pc_opcode", 4),
 ];
 pub const TRACE_HASH_CHALLENGE: [(&str, usize); 6] = [
-    ("verifier_prev_hash", 20), //TODO: this should be from prover translation keys
+    ("prover_prev_hash_tk", 20), //TODO: this should be from prover translation keys
     ("prover_write_address", 4),
     ("prover_write_value", 4),
     ("prover_write_pc", 4),
     ("prover_write_micro", 1),
-    ("verifier_step_hash", 20), //TODO: this should be from prover translation keys
+    ("prover_step_hash_tk", 20), //TODO: this should be from prover translation keys
 ];
 pub const TRACE_HASH_ZERO_CHALLENGE: [(&str, usize); 5] = [
     ("prover_write_address", 4),
     ("prover_write_value", 4),
     ("prover_write_pc", 4),
     ("prover_write_micro", 1),
-    ("verifier_step_hash", 20), //TODO: this should be from prover translation keys
+    ("prover_step_hash_tk", 20), //TODO: this should be from prover translation keys
 ];
 
 pub const INPUT_CHALLENGE: [(&str, usize); 7] = [
@@ -132,24 +132,24 @@ pub const READ_VALUE_CHALLENGE: [(&str, usize); 15] = [
     ("prover_read_2_value", 4),
     ("prover_read_2_last_step", 8),
     ("verifier_read_selector", 1),
-    ("verifier_step_hash", 20), //TODO: this should be from prover translation keys
+    ("prover_step_hash_tk", 20), //TODO: this should be from prover translation keys
     ("verifier_write_addr", 4),
     ("verifier_write_value", 4),
     ("verifier_write_pc", 4),
     ("verifier_write_micro", 1),
-    ("verifier_next_hash", 20), //TODO: this should be from prover translation keys
-    ("verifier_write_step", 8), //TODO: this should be from prover translation keys
-    ("verifier_conflict_step", 8), //TODO: this should be from prover translation keys
+    ("prover_next_hash_tk", 20), //TODO: this should be from prover translation keys
+    ("prover_write_step_tk", 8), //TODO: this should be from prover translation keys
+    ("prover_conflict_step_tk", 8), //TODO: this should be from prover translation keys
 ];
 
 pub const CORRECT_HASH_CHALLENGE: [(&str, usize); 7] = [
-    ("verifier_prover_hash", 20), //TODO: this should be from prover translation keys
+    ("prover_hash_tk", 20), //TODO: this should be from prover translation keys
     ("verifier_hash", 20),
     ("verifier_write_addr", 4),
     ("verifier_write_value", 4),
     ("verifier_write_pc", 4),
     ("verifier_write_micro", 1),
-    ("verifier_next_hash", 20), //TODO: this should be from prover translation keys
+    ("prover_next_hash_tk", 20), //TODO: this should be from prover translation keys
 ];
 
 pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 13] = [
@@ -231,7 +231,13 @@ pub fn challenge_scripts(
                             .iter()
                             .map(|(var_name, _)| {
                                 let idx = if var_name.starts_with("prover") { 0 } else { 1 };
-                                (var_name, keys[idx].get_winternitz(var_name).unwrap())
+                                (
+                                    var_name,
+                                    keys[idx].get_winternitz(var_name).expect(&format!(
+                                        "Missing winternitz key for variable '{}' (participant {})",
+                                        var_name, idx
+                                    )),
+                                )
                             })
                             .collect::<Vec<_>>(),
                         None,

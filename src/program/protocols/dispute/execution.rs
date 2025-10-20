@@ -216,6 +216,15 @@ pub fn execution_result(
             if let Some(witness) = final_trace.witness {
                 set_input_u32(id, context, "prover_witness", witness)?;
             }
+
+            //ASK: ok?
+            // set_input_hex(id, context, "prover_prev_hash_tk", &final_trace.prev_hash)?;
+            // set_input_hex(id, context, "prover_step_hash_tk", &final_trace.step_hash_tk)?;
+            // set_input_hex(id, context, "prover_next_hash_tk", &final_trace.next_hash_tk)?;
+            // set_input_u64(id, context, "prover_write_step_tk", final_trace.write_step_tk)?;
+            // set_input_u64(id, context, "prover_conflict_step_tk", final_trace.conflict_step_tk)?;
+            // set_input_hex(id, context, "prover_hash_tk", &final_trace.hash_tk)?;
+
             let instruction = get_key_from_opcode(
                 final_trace.read_pc.opcode,
                 final_trace.read_pc.pc.get_micro(),
