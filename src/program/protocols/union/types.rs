@@ -55,11 +55,16 @@ pub const USER_TAKE_FEE: u64 = 335; // This should match the value USER_TAKE_FEE
 pub const OP_DISABLER_FEE: u64 = 240;
 
 // Suffixes
+pub const FUNDING_TX: &str = "FUNDING_TX";
+pub const WT_START_ENABLER_TX: &str = "WT_START_ENABLER_TX";
+pub const SETUP_TX: &str = "SETUP_TX";
+pub const SELF_DISABLER_TX_SUFFIX: &str = "_SELF_DISABLER_TX";
+
+// TODO: REMOVE
 pub const FUNDING_UTXO_SUFFIX: &str = "_FUNDING_UTXO";
 pub const FUNDING_TX_SUFFIX: &str = "_FUNDING_TX";
 pub const SETUP_TX_SUFFIX: &str = "_SETUP_TX";
 pub const INITIAL_DEPOSIT_TX_SUFFIX: &str = "_INITIAL_DEPOSIT_TX";
-pub const SELF_DISABLER_TX_SUFFIX: &str = "_SELF_DISABLER_TX";
 pub const START_ENABLER_TX_SUFFIX: &str = "_START_ENABLER_TX";
 
 // UTXOs
@@ -85,7 +90,6 @@ pub struct Committee {
     pub members: Vec<MemberData>,
     pub take_aggregated_key: PublicKey,
     pub dispute_aggregated_key: PublicKey,
-    pub operator_count: u32,
     pub packet_size: u32,
 }
 
@@ -98,9 +102,8 @@ impl Committee {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DisputeCoreData {
     pub committee_id: Uuid,
-    pub operator_index: usize,
-    pub operator_utxo: PartialUtxo,
-    pub operator_take_pubkey: PublicKey,
+    pub member_index: usize,
+    pub funding_utxo: PartialUtxo,
 }
 
 impl DisputeCoreData {

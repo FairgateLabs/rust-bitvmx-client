@@ -167,7 +167,7 @@ impl ProtocolHandler for InitProtocol {
         if name == format!("{}{}", WATCHTOWER, SETUP_TX_SUFFIX) {
             Ok(self.setup_tx(context)?)
         } else if name == format!("{}{}", WATCHTOWER, START_ENABLER_TX_SUFFIX) {
-            Ok(self.start_enabler_tx(name, context)?)
+            Ok(self.wt_start_enabler_tx(name, context)?)
         } else {
             Err(BitVMXError::InvalidTransactionName(name.to_string()))
         }
@@ -448,7 +448,7 @@ impl InitProtocol {
         Ok((tx, None))
     }
 
-    fn start_enabler_tx(
+    fn wt_start_enabler_tx(
         &self,
         name: &str,
         context: &ProgramContext,

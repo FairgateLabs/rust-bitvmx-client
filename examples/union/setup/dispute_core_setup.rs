@@ -31,7 +31,7 @@ impl DisputeCoreSetup {
         take_aggregated_key: PublicKey,
         dispute_aggregated_key: PublicKey,
         bitvmx: &BitVMXClient,
-        operator_protocol_funding: &HashMap<PublicKey, PartialUtxo>,
+        members_protocol_funding: &HashMap<PublicKey, PartialUtxo>,
         my_speedup_funding: &Utxo,
         addresses: &Vec<CommsAddress>,
     ) -> Result<()> {
@@ -39,7 +39,6 @@ impl DisputeCoreSetup {
             members: members.clone(),
             take_aggregated_key,
             dispute_aggregated_key,
-            operator_count: Self::operator_count(&members.clone())?,
             packet_size: PACKET_SIZE,
         };
 
@@ -53,41 +52,39 @@ impl DisputeCoreSetup {
             VariableTypes::String(serde_json::to_string(&committee)?),
         )?;
 
-        for (operator_index, member) in members.iter().enumerate() {
-            if member.role == ParticipantRole::Prover {
-                let pubkey = member.take_key;
-                let protocol_id = get_dispute_core_pid(committee_id, &pubkey);
-                let operator_utxo = operator_protocol_funding[&pubkey].clone();
-                info!(
-                    id = my_id,
-                    "Setting up the DisputeCore protocol handler {} for {}", protocol_id, my_id
-                );
+        for (member_index, member) in members.iter().enumerate() {
+            let pubkey = member.take_key;
+            let protocol_id = get_dispute_core_pid(committee_id, &pubkey);
+            let funding_utxo = members_protocol_funding[&pubkey].clone();
+            info!(
+                id = my_id,
+                "Setting up the DisputeCore protocol handler {} for {}", protocol_id, my_id
+            );
 
-                bitvmx.set_var(
-                    protocol_id,
-                    &DisputeCoreData::name(),
-                    VariableTypes::String(serde_json::to_string(&DisputeCoreData {
-                        committee_id,
-                        operator_index,
-                        operator_utxo: operator_utxo,
-                        operator_take_pubkey: pubkey,
-                    })?),
-                )?;
+            bitvmx.set_var(
+                protocol_id,
+                &DisputeCoreData::name(),
+                VariableTypes::String(serde_json::to_string(&DisputeCoreData {
+                    committee_id,
+                    member_index,
+                    funding_utxo,
+                })?),
+            )?;
 
-                // Save the monitored operator's take key
-                bitvmx.set_var(
-                    protocol_id,
-                    MONITORED_OPERATOR_KEY,
-                    VariableTypes::PubKey(pubkey),
-                )?;
+            // FIXME: Should this be removed? Where is it used?
+            // Save the monitored operator's take key
+            bitvmx.set_var(
+                protocol_id,
+                MONITORED_OPERATOR_KEY,
+                VariableTypes::PubKey(pubkey),
+            )?;
 
-                bitvmx.setup(
-                    protocol_id,
-                    PROGRAM_TYPE_DISPUTE_CORE.to_string(),
-                    addresses.clone(),
-                    0,
-                )?;
-            }
+            bitvmx.setup(
+                protocol_id,
+                PROGRAM_TYPE_DISPUTE_CORE.to_string(),
+                addresses.clone(),
+                0,
+            )?;
         }
 
         Ok(())
