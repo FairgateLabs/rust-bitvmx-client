@@ -63,7 +63,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
 
     fn get_pregenerated_aggregated_keys(
         &self,
-        context: &ProgramContext,
+        _context: &ProgramContext,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
         Ok(vec![])
     }
@@ -124,7 +124,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
                 ));
 
                 keys.push((
-                    indexed_name(SLOT_ID_KEY, slot),
+                    indexed_name(SLOT_ID_KEY, i),
                     PublicKeyType::Winternitz(
                         program_context.key_chain.derive_winternitz_hash160(32)?,
                     ),
@@ -924,12 +924,6 @@ impl DisputeCoreProtocol {
 
     fn dispute_aggregated_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
         Ok(self.committee(context)?.dispute_aggregated_key.clone())
-    }
-
-    fn my_take_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
-        let my_index = self.ctx.my_idx;
-        let committee = self.committee(context)?;
-        Ok(committee.members[my_index].take_key.clone())
     }
 
     fn my_dispute_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
