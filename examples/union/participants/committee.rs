@@ -26,7 +26,7 @@ use crate::participants::member::{FundingAmount, Member};
 use crate::wait_until_msg;
 use crate::wallet::helper::non_regtest_warning;
 
-const FUNDING_AMOUNT_PER_SLOT: u64 = 10_500; // an approximation in satoshis
+const FUNDING_AMOUNT_PER_SLOT: u64 = 9_000; // an approximation in satoshis
 const DISPUTE_CHANNEL_FUNDING_PER_MEMBER: u64 = 540; // Output value that connect to dispute channel
 pub const PACKET_SIZE: u32 = 3; // number of slots per packet
 const SPEED_UP_MIN_FUNDS: u64 = 30_000; // minimum speedup funds in satoshis
@@ -351,32 +351,34 @@ impl Committee {
     }
 
     fn get_operator_funding_value(&self) -> u64 {
-        return FUNDING_AMOUNT_PER_SLOT * PACKET_SIZE as u64;
+        return FUNDING_AMOUNT_PER_SLOT * PACKET_SIZE as u64
+            + SPEEDUP_VALUE
+            + estimate_fee(1, PACKET_SIZE as usize + 2, 1);
     }
 
     fn get_watchtower_funding_value(&self) -> u64 {
         // Considerate each WT start enabler output
-        let members_count = self.members.len() as u64;
-        return DISPUTE_CHANNEL_FUNDING_PER_MEMBER * members_count
-            + estimate_fee(1, members_count as usize + 2, 1);
+        return DISPUTE_CHANNEL_FUNDING_PER_MEMBER * self.members.len() as u64
+            + SPEEDUP_VALUE
+            + estimate_fee(1, self.members.len() as usize + 2, 1);
     }
 
     fn get_funding_wt_disabler_directory_value(&self) -> u64 {
         // Considerate each WT disabler directory output
         return DUST_VALUE * self.members.len() as u64
             + SPEEDUP_VALUE
-            + estimate_fee(1, self.members.len(), 1);
+            + estimate_fee(2, self.members.len(), 1);
     }
 
     fn get_funding_op_disabler_directory_value(&self) -> u64 {
         // Considerate each OP disabler directory output
         return DUST_VALUE * PACKET_SIZE as u64
             + SPEEDUP_VALUE
-            + estimate_fee(1, PACKET_SIZE as usize, 1);
+            + estimate_fee(2, PACKET_SIZE as usize + 1, 1);
     }
 
     pub fn get_total_funds_value(&self) -> u64 {
-        let fees = 5_000; // extra fees for safety
+        let fees = 10_000; // extra fees for safety
 
         return self.get_speedup_funds_value()
             + self.get_advance_funds_value()
@@ -394,7 +396,9 @@ impl Committee {
             speedup: self.get_speedup_funds_value(),
             protocol_funding: self.get_operator_funding_value()
                 + self.get_funding_op_disabler_directory_value()
-                + self.get_watchtower_funding_value(),
+                + self.get_watchtower_funding_value()
+                + self.get_funding_wt_disabler_directory_value()
+                + 5_000, // extra for safety
             advance_funds: self.get_advance_funds_value(),
         };
 

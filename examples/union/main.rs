@@ -469,7 +469,8 @@ pub fn watchtowers_start_enabler(committee: &mut Committee) -> Result<()> {
         member.dispatch_transaction_by_name(protocol_id, WT_START_ENABLER_TX.to_string())?;
     }
 
-    wait_for_blocks(&committee.bitcoin_client, 1)?;
+    let blocks = if NETWORK == Network::Regtest { 10 } else { 1 };
+    wait_for_blocks(&committee.bitcoin_client, blocks)?;
 
     Ok(())
 }

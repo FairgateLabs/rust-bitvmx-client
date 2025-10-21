@@ -362,24 +362,17 @@ impl DisputeCoreProtocol {
         keys: &Vec<ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         let wt_dispute_key = &committee.members[dispute_core_data.member_index].dispute_key;
+        let owner_index = dispute_core_data.member_index;
 
         for (member_index, member) in committee.members.clone().iter().enumerate() {
             let mut scripts = vec![];
-            let mut output_amount = AUTO_AMOUNT;
 
-            if member.role == ParticipantRole::Verifier
-                || dispute_core_data.member_index == member_index
-            {
-                scripts = vec![protocol_builder::scripts::op_return_script(
-                    "skip".as_bytes().to_vec(),
-                )?];
-                output_amount = 0;
-            } else {
+            if member.role == ParticipantRole::Prover && owner_index != member_index {
                 for slot in 0..committee.packet_size as usize {
                     let slot_id_key =
                         keys[member_index].get_winternitz(&indexed_name(SLOT_ID_KEY, slot))?;
 
-                    // TODO: is this correct? should we use aggregated key?
+                    // TODO: is this correct? should we use aggregated key or wt key?
                     scripts.push(scripts::start_challenge(
                         &committee.dispute_aggregated_key,
                         SLOT_ID_KEY,
@@ -390,7 +383,7 @@ impl DisputeCoreProtocol {
 
             protocol.add_transaction_output(
                 &WT_START_ENABLER_TX,
-                &OutputType::taproot(output_amount, &*wt_dispute_key, &scripts)?,
+                &OutputType::taproot(AUTO_AMOUNT, &committee.dispute_aggregated_key, &scripts)?,
             )?;
         }
 
@@ -692,7 +685,7 @@ impl DisputeCoreProtocol {
         // output has been added.
         if dispute_core_index == (committee.packet_size - 1) as usize {
             // Operator output for disabler directory
-            let directory_fee = estimate_fee(1, committee.packet_size as usize + 1, 1);
+            let directory_fee = estimate_fee(2, committee.packet_size as usize + 1, 1);
             let disabler_directory_amount =
                 committee.packet_size as u64 * DUST_VALUE + SPEEDUP_VALUE + directory_fee;
             protocol.add_transaction_output(
