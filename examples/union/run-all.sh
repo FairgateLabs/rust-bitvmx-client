@@ -11,6 +11,7 @@ examples=(
     invalid_reimbursement
     double_reimbursement
     full_penalization
+    watchtowers_start_enabler
 )
 
 cargo build --release
