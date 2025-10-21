@@ -31,10 +31,10 @@ use crate::{
                 types::{
                     Committee, FullPenalizationData, DISPUTE_AGGREGATED_KEY,
                     DISPUTE_CORE_SHORT_TIMELOCK, DUST_VALUE, OPERATOR_TAKE_ENABLER,
-                    OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX, OP_INITIAL_DEPOSIT_AMOUNT,
-                    OP_INITIAL_DEPOSIT_OUT_SCRIPT, OP_INITIAL_DEPOSIT_TX, OP_INITIAL_DEPOSIT_TXID,
-                    OP_LAZY_DISABLER_TX, REIMBURSEMENT_KICKOFF_TX,
-                    SETUP_DISABLER_OP_DIRECTORY_UTXO, SPEEDUP_VALUE,
+                    OP_DISABLER_DIRECTORY_TX, OP_DISABLER_DIRECTORY_UTXO, OP_DISABLER_TX,
+                    OP_INITIAL_DEPOSIT_AMOUNT, OP_INITIAL_DEPOSIT_OUT_SCRIPT,
+                    OP_INITIAL_DEPOSIT_TX, OP_INITIAL_DEPOSIT_TXID, OP_LAZY_DISABLER_TX,
+                    REIMBURSEMENT_KICKOFF_TX, SPEEDUP_VALUE,
                 },
             },
         },
@@ -490,7 +490,7 @@ impl FullPenalizationProtocol {
     ) -> Result<PartialUtxo, BitVMXError> {
         Ok(context
             .globals
-            .get_var(&dispute_protocol_id, &SETUP_DISABLER_OP_DIRECTORY_UTXO)?
+            .get_var(&dispute_protocol_id, &OP_DISABLER_DIRECTORY_UTXO)?
             .unwrap()
             .utxo()?)
     }

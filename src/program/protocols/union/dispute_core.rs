@@ -1452,7 +1452,7 @@ impl DisputeCoreProtocol {
             info!("Saving op disabler utxo: {:?}", op_disabler_directory_utxo);
             context.globals.set_var(
                 &self.ctx.id,
-                &SETUP_DISABLER_OP_DIRECTORY_UTXO,
+                &OP_DISABLER_DIRECTORY_UTXO,
                 VariableTypes::Utxo(op_disabler_directory_utxo),
             )?;
         }
@@ -1479,7 +1479,7 @@ impl DisputeCoreProtocol {
         info!("Saving wt disabler utxo: {:?}", wt_disabler_directory_utxo);
         context.globals.set_var(
             &self.ctx.id,
-            &SETUP_DISABLER_WT_DIRECTORY_UTXO,
+            &WT_DISABLER_DIRECTORY_UTXO,
             VariableTypes::Utxo(wt_disabler_directory_utxo),
         )?;
 
