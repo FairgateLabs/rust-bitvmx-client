@@ -25,7 +25,6 @@ impl DisputeChannelSetup {
         bitvmx: &BitVMXClient,
         members: &Vec<MemberData>,
         committee_id: Uuid,
-        // wt_funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
         addresses: &Vec<CommsAddress>,
     ) -> Result<usize> {
         let mut total_setups = 0;

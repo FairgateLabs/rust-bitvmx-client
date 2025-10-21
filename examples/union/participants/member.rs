@@ -194,7 +194,6 @@ impl Member {
         &mut self,
         committee_id: Uuid,
         members: &Vec<MemberData>,
-        _wt_funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
         addresses: &Vec<CommsAddress>,
     ) -> Result<()> {
         info!(
