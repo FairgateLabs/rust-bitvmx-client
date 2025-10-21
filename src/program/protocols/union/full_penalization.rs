@@ -26,7 +26,7 @@ use crate::{
             union::{
                 common::{
                     create_transaction_reference, double_indexed_name, get_dispute_core_pid,
-                    get_initial_setup_output_type, indexed_name, triple_indexed_name,
+                    get_initial_deposit_output_type, indexed_name, triple_indexed_name,
                 },
                 types::{
                     Committee, FullPenalizationData, DISPUTE_AGGREGATED_KEY,
@@ -138,7 +138,7 @@ impl ProtocolHandler for FullPenalizationProtocol {
                 let scripts =
                     self.op_initial_deposit_out_scripts(context, dispute_core_pid, slot_index)?;
 
-                let output_type = get_initial_setup_output_type(
+                let output_type = get_initial_deposit_output_type(
                     amount,
                     &committee.members[operator_index].dispute_key,
                     scripts.as_slice(),

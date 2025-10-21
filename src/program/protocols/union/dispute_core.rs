@@ -8,7 +8,7 @@ use crate::{
                 self,
                 common::{
                     create_transaction_reference, estimate_fee, extract_index,
-                    get_accept_pegin_pid, get_initial_setup_output_type, indexed_name,
+                    get_accept_pegin_pid, get_initial_deposit_output_type, indexed_name,
                 },
                 scripts,
                 types::*,
@@ -533,7 +533,7 @@ impl DisputeCoreProtocol {
         protocol.add_connection(
             "start_dispute_core",
             &OP_INITIAL_DEPOSIT_TX,
-            get_initial_setup_output_type(
+            get_initial_deposit_output_type(
                 AUTO_AMOUNT,
                 &operator_dispute_key,
                 &[start_reimbursement, validate_dispute_key],
