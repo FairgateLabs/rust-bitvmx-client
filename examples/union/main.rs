@@ -17,12 +17,12 @@ use bitvmx_client::program::{
     participant::ParticipantRole,
     protocols::union::{
         common::{
-            double_indexed_name, get_accept_pegin_pid, get_full_penalization_pid, get_init_pid,
-            triple_indexed_name,
+            double_indexed_name, get_accept_pegin_pid, get_dispute_core_pid,
+            get_full_penalization_pid, triple_indexed_name,
         },
         types::{
             ACCEPT_PEGIN_TX, DISPUTE_CORE_SHORT_TIMELOCK, OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX,
-            OP_LAZY_DISABLER_TX, START_ENABLER_TX_SUFFIX, WATCHTOWER,
+            OP_LAZY_DISABLER_TX, WT_START_ENABLER_TX,
         },
     },
 };
@@ -54,7 +54,7 @@ pub fn main() -> Result<()> {
     match command.map(|s| s.as_str()) {
         Some("setup_bitcoin_node") => setup_bitcoin_node()?,
         Some("committee") => cli_committee()?,
-        Some("watchtowers_init") => cli_watchtowers_init()?,
+        Some("watchtowers_start_enabler") => cli_watchtowers_start_enabler()?,
         Some("request_pegin") => cli_request_pegin()?,
         Some("accept_pegin") => cli_accept_pegin()?,
         Some("request_pegout") => cli_request_pegout()?,
@@ -91,7 +91,7 @@ fn print_usage() {
     println!("  cargo run --example union setup_bitcoin_node  - Sets up Bitcoin node only");
     println!("  cargo run --example union committee           - Setups a new committee");
     println!(
-        "  cargo run --example union watchtowers_init    - Setups the watchtowers init protocol"
+        "  cargo run --example union watchtowers_start_enabler    - Dispatch WT start enabler transactions"
     );
     println!("  cargo run --example union request_pegin       - Setups a request pegin");
     println!("  cargo run --example union accept_pegin        - Setups the accept peg in protocol");
@@ -146,11 +146,11 @@ pub fn cli_committee() -> Result<()> {
     Ok(())
 }
 
-pub fn cli_watchtowers_init() -> Result<()> {
+pub fn cli_watchtowers_start_enabler() -> Result<()> {
     let mut wallet = get_master_wallet()?;
     let mut committee = committee(&mut wallet)?;
 
-    watchtowers_init(&mut committee)?;
+    watchtowers_start_enabler(&mut committee)?;
     Ok(())
 }
 
@@ -454,23 +454,19 @@ pub fn committee(wallet: &mut MasterWallet) -> Result<Committee> {
     Ok(committee)
 }
 
-pub fn watchtowers_init(committee: &mut Committee) -> Result<()> {
+pub fn watchtowers_start_enabler(committee: &mut Committee) -> Result<()> {
     for member in committee.members.iter() {
-        let protocol_id = get_init_pid(
+        let protocol_id = get_dispute_core_pid(
             committee.committee_id(),
             &member.keyring.take_pubkey.unwrap(),
         );
 
         info!(
             "Dispatching transaction: {}, protocol id: {}",
-            format!("{}{}", WATCHTOWER, START_ENABLER_TX_SUFFIX),
-            protocol_id,
+            WT_START_ENABLER_TX, protocol_id,
         );
 
-        member.dispatch_transaction_by_name(
-            protocol_id,
-            format!("{}{}", WATCHTOWER, START_ENABLER_TX_SUFFIX),
-        )?;
+        member.dispatch_transaction_by_name(protocol_id, WT_START_ENABLER_TX.to_string())?;
     }
 
     wait_for_blocks(&committee.bitcoin_client, 1)?;

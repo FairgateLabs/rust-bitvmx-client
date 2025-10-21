@@ -30,9 +30,8 @@ use crate::{
                 dispute_core::PEGOUT_ID,
                 types::{
                     AdvanceFundsRequest, Committee, ACCEPT_PEGIN_TX, ADVANCE_FUNDS_INPUT,
-                    ADVANCE_FUNDS_TX, DUST_VALUE, INITIAL_DEPOSIT_TX_SUFFIX,
-                    LAST_OPERATOR_TAKE_UTXO, OPERATOR, OP_INITIAL_DEPOSIT_FLAG,
-                    REIMBURSEMENT_KICKOFF_TX, USER_TAKE_FEE,
+                    ADVANCE_FUNDS_TX, DUST_VALUE, LAST_OPERATOR_TAKE_UTXO, OP_INITIAL_DEPOSIT_FLAG,
+                    OP_INITIAL_DEPOSIT_TX, REIMBURSEMENT_KICKOFF_TX, USER_TAKE_FEE,
                 },
             },
         },
@@ -354,7 +353,7 @@ impl AdvanceFundsProtocol {
         let dispute_core =
             self.load_protocol_by_name(PROGRAM_TYPE_DISPUTE_CORE, dispute_protocol_id)?;
 
-        let tx_name = format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX);
+        let tx_name = OP_INITIAL_DEPOSIT_TX;
         let (tx, speedup) = dispute_core.get_transaction_by_name(&tx_name, context)?;
         let txid = tx.compute_txid();
 
