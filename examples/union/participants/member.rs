@@ -364,16 +364,16 @@ impl Member {
 
         let take_aggregated_key = self.setup_key(
             take_aggregation_id,
-            &addresses.clone(),
-            Some(members_take_pubkeys.as_slice()),
+            addresses.clone(),
+            Some(members_take_pubkeys),
         )?;
 
         self.keyring.take_aggregated_key = Some(take_aggregated_key);
 
         let dispute_aggregated_key = self.setup_key(
             dispute_aggregation_id,
-            &addresses.clone(),
-            Some(members_dispute_pubkeys.as_slice()),
+            addresses.clone(),
+            Some(members_dispute_pubkeys),
         )?;
 
         self.keyring.dispute_aggregated_key = Some(dispute_aggregated_key);
@@ -401,6 +401,8 @@ impl Member {
             }
 
             let partner_address = addresses[partner_index].clone();
+
+            // Setup participants in deterministic order, the one with the lower index first
             let participants = if my_index < partner_index {
                 vec![my_address.clone(), partner_address.clone()]
             } else {
@@ -410,7 +412,7 @@ impl Member {
             // Deterministic id: committee_id + ordered indices + tag
             let aggregation_id =
                 get_dispute_pair_aggregated_key_pid(committee_id, my_index, partner_index);
-            let pairwise_key = self.setup_key(aggregation_id, &participants, None)?;
+            let pairwise_key = self.setup_key(aggregation_id, participants.to_vec(), None)?;
 
             self.keyring
                 .pairwise_keys
@@ -431,8 +433,8 @@ impl Member {
     fn setup_key(
         &mut self,
         aggregation_id: Uuid,
-        addresses: &[CommsAddress],
-        public_keys: Option<&[PublicKey]>,
+        addresses: Vec<CommsAddress>,
+        public_keys: Option<Vec<PublicKey>>,
     ) -> Result<PublicKey> {
         debug!(
             id = self.id,
@@ -441,12 +443,8 @@ impl Member {
             "Setting up aggregated key"
         );
 
-        self.bitvmx.setup_key(
-            aggregation_id,
-            addresses.to_vec(),
-            public_keys.map(|keys| keys.to_vec()),
-            0,
-        )?;
+        self.bitvmx
+            .setup_key(aggregation_id, addresses, public_keys, 0)?;
 
         let aggregated_key = wait_until_msg!(&self.bitvmx, AggregatedPubkey(_, _key) => _key);
         debug!(
