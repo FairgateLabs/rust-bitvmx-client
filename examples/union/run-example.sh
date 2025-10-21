@@ -44,8 +44,7 @@ echo "" > $EXAMPLE_LOG_FILE
 # Open logs in VS Code if available
 if command -v code >/dev/null 2>&1; then
   # Open logs in VS Code
-  code --wait "$BITVMX_LOG_FILE" &
-  code --wait "$EXAMPLE_LOG_FILE" &
+  code --reuse-window "$BITVMX_LOG_FILE" "$EXAMPLE_LOG_FILE" &
 else
   echo "VS Code not found. Open logs manually at:"
   echo "  $BITVMX_LOG_FILE"

@@ -174,7 +174,7 @@ pub fn get_operator_output_type(
     })
 }
 
-pub fn get_initial_setup_output_type(
+pub fn get_initial_deposit_output_type(
     amount: u64,
     operator_key: &PublicKey,
     script: &[ProtocolScript],
