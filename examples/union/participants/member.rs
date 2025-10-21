@@ -196,33 +196,43 @@ impl Member {
         &mut self,
         committee_id: Uuid,
         members: &Vec<MemberData>,
-        wt_funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
+        _wt_funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
         addresses: &Vec<CommsAddress>,
     ) -> Result<()> {
         info!(
             id = self.id,
-            "Setting up dispute channel for member {}", self.id
+            "Setting up dispute channels for member {}", self.id
         );
 
-        DisputeChannelSetup::setup(
-            &self.id,
-            &self.address()?.clone(),
-            &self.role,
-            self.keyring.take_pubkey.as_ref().unwrap(),
+        let total_setups = DisputeChannelSetup::setup(
+            self.get_my_index(members)?,
             &self.keyring.pairwise_keys,
             &self.bitvmx,
             members,
             committee_id,
-            wt_funding_utxos_per_member,
+            // wt_funding_utxos_per_member,
             addresses,
         )?;
 
-        for i in 0..members.len() {
+        for i in 0..total_setups {
             let program_id =
                 wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
             info!(id = self.id, program_id = ?program_id, "Dispute channel setup completed for operator index {}", i);
         }
         Ok(())
+    }
+
+    fn get_my_index(&self, members: &Vec<MemberData>) -> Result<usize> {
+        let my_take_key = self.keyring.take_pubkey.unwrap();
+        for (index, member) in members.iter().enumerate() {
+            if member.take_key == my_take_key {
+                return Ok(index);
+            }
+        }
+        Err(anyhow::anyhow!(
+            "Member id {} not found in members list",
+            self.id
+        ))
     }
 
     pub fn accept_pegin(
