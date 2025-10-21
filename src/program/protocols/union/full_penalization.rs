@@ -107,14 +107,7 @@ impl ProtocolHandler for FullPenalizationProtocol {
             );
 
             let disabler_directory_utxo =
-                self.setup_disabler_directory_utxo(context, dispute_core_pid)?;
-
-            let setup_tx_name = indexed_name("SETUP_TX", operator_index);
-            create_transaction_reference(
-                &mut protocol,
-                &setup_tx_name,
-                &mut [disabler_directory_utxo.clone()].to_vec(),
-            )?;
+                self.disabler_directory_utxo(context, dispute_core_pid)?;
 
             let amount = self.op_initial_deposit_amount(context, dispute_core_pid)?;
             let op_initial_deposit_txid =
@@ -153,8 +146,9 @@ impl ProtocolHandler for FullPenalizationProtocol {
                 ));
             }
 
-            let initial_deposit_name = indexed_name(&OP_INITIAL_DEPOSIT_TX, operator_index);
+            initial_deposit_utxos.push(disabler_directory_utxo.clone());
 
+            let initial_deposit_name = indexed_name(OP_INITIAL_DEPOSIT_TX, operator_index);
             create_transaction_reference(
                 &mut protocol,
                 &initial_deposit_name,
@@ -176,7 +170,6 @@ impl ProtocolHandler for FullPenalizationProtocol {
                     &committee,
                     operator_index,
                     watchtower_index,
-                    &setup_tx_name,
                     &initial_deposit_name,
                     &disabler_directory_utxo,
                     &take_enablers,
@@ -325,23 +318,18 @@ impl FullPenalizationProtocol {
         committee: &Committee,
         operator_index: usize,
         watchtower_index: usize,
-        setup_tx_name: &str,
         initial_deposit_name: &str,
         disabler_directory_utxo: &PartialUtxo,
         take_enablers: &Vec<PartialUtxo>,
-        initial_setup_utxos: &Vec<PartialUtxo>,
+        initial_deposit_utxos: &Vec<PartialUtxo>,
     ) -> Result<(), BitVMXError> {
         let packet_size = committee.packet_size;
         let op_disabler_directory_name =
             double_indexed_name(OP_DISABLER_DIRECTORY_TX, operator_index, watchtower_index);
 
-        debug!(
-            "Adding Setup to disabler directory name: {}",
-            op_disabler_directory_name
-        );
         protocol.add_connection(
-            "setup",
-            &setup_tx_name,
+            "funds",
+            &initial_deposit_name,
             (disabler_directory_utxo.1 as usize).into(),
             &op_disabler_directory_name,
             InputSpec::Auto(
@@ -358,7 +346,7 @@ impl FullPenalizationProtocol {
             let op_disabler_name =
                 triple_indexed_name(OP_DISABLER_TX, operator_index, watchtower_index, slot_index);
 
-            let initial_deposit_utxo = &initial_setup_utxos[slot_index];
+            let initial_deposit_utxo = &initial_deposit_utxos[slot_index];
 
             debug!("{} to {}", initial_deposit_name, op_disabler_name);
             protocol.add_connection(
@@ -483,7 +471,7 @@ impl FullPenalizationProtocol {
             .utxo()?)
     }
 
-    fn setup_disabler_directory_utxo(
+    fn disabler_directory_utxo(
         &self,
         context: &ProgramContext,
         dispute_protocol_id: Uuid,
@@ -556,10 +544,10 @@ impl FullPenalizationProtocol {
         // Operator inital deposit signature through script path
         let op_deposit_script_index = 1;
         let mut op_deposit_input = InputArgs::new_taproot_script_args(op_deposit_script_index);
-        let op_setup_sig = protocol
+        let op_initial_deposit_sig = protocol
             .input_taproot_script_spend_signature(name, 0, op_deposit_script_index)?
             .unwrap();
-        op_deposit_input.push_taproot_signature(op_setup_sig)?;
+        op_deposit_input.push_taproot_signature(op_initial_deposit_sig)?;
 
         // Directory key spend signature
         let directory_sig = protocol
@@ -575,7 +563,7 @@ impl FullPenalizationProtocol {
             "Signed {}, txid: {} with signatures: [{:?},{:?}]",
             name,
             tx.compute_txid(),
-            op_setup_sig,
+            op_initial_deposit_sig,
             directory_sig
         );
 
@@ -592,18 +580,18 @@ impl FullPenalizationProtocol {
         let protocol = self.load_protocol()?;
         let my_index = self.ctx.my_idx;
 
-        let setup_sig = protocol
+        let op_initial_deposit_sig = protocol
             .input_taproot_key_spend_signature(name, 0)?
             .unwrap();
-        let mut setup_input = InputArgs::new_taproot_key_args();
-        setup_input.push_taproot_signature(setup_sig)?;
+        let mut op_initial_deposit_input = InputArgs::new_taproot_key_args();
+        op_initial_deposit_input.push_taproot_signature(op_initial_deposit_sig)?;
 
-        let tx = protocol.transaction_to_send(&name, &[setup_input])?;
+        let tx = protocol.transaction_to_send(&name, &[op_initial_deposit_input])?;
 
         let txid = tx.compute_txid();
         info!(
             id = my_index,
-            "Signed {} with txid: {} with signatures: [{:?}] ", name, txid, setup_sig,
+            "Signed {} with txid: {} with signatures: [{:?}] ", name, txid, op_initial_deposit_sig,
         );
 
         Ok((tx, None))

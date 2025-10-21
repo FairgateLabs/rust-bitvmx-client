@@ -38,7 +38,7 @@ pub const OP_LAZY_DISABLER_TX: &str = "OP_LAZY_DISABLER_TX";
 pub const OP_DISABLER_DIRECTORY_TX: &str = "OP_DISABLER_DIRECTORY_TX";
 pub const FUNDING_TX: &str = "FUNDING_TX";
 pub const WT_START_ENABLER_TX: &str = "WT_START_ENABLER_TX";
-pub const SETUP_TX: &str = "SETUP_TX";
+pub const PROTOCOL_FUNDING_TX: &str = "PROTOCOL_FUNDING_TX";
 
 // Parameters
 pub const DISPUTE_CORE_SHORT_TIMELOCK: u16 = 1;

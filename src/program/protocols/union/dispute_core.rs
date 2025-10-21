@@ -194,9 +194,9 @@ impl ProtocolHandler for DisputeCoreProtocol {
             }
         }
 
-        // Add setup tx speedup output
+        // Add speedup output
         protocol.add_transaction_output(
-            &SETUP_TX,
+            &PROTOCOL_FUNDING_TX,
             &OutputType::segwit_key(SPEEDUP_VALUE, member_keys.get_public(SPEEDUP_KEY)?)?,
         )?;
 
@@ -222,8 +222,8 @@ impl ProtocolHandler for DisputeCoreProtocol {
         name: &str,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        if name == SETUP_TX {
-            Ok(self.setup_tx(context)?)
+        if name == PROTOCOL_FUNDING_TX {
+            Ok(self.protocol_funding_tx(context)?)
         } else if name == OP_INITIAL_DEPOSIT_TX {
             Ok(self.op_initial_deposit_tx(name, context)?)
         } else if name == WT_START_ENABLER_TX {
@@ -271,13 +271,13 @@ impl ProtocolHandler for DisputeCoreProtocol {
             "DisputeCore {} setup complete", self.ctx.id
         );
 
-        // Automatically get and dispatch the OP_SETUP_TX transaction
+        // Automatically get and dispatch the PROTOCOL_FUNDING_TX transaction
         if self.is_my_dispute_core(program_context)? {
-            self.dispatch_setup_tx(program_context)?;
+            self.dispatch_protocol_funding_tx(program_context)?;
         } else {
             info!(
                 id = self.ctx.my_idx,
-                "Not my dispute_core, skipping dispatch of {} transaction", SETUP_TX
+                "Not my dispute_core, skipping dispatch of {} transaction", PROTOCOL_FUNDING_TX
             );
         }
 
@@ -302,25 +302,25 @@ impl DisputeCoreProtocol {
         let reveal_take_private_key = watchtower_keys.get_winternitz(REVEAL_TAKE_PRIVKEY)?.clone();
         let watchtower_dispute_key = &member.dispute_key.clone();
 
-        // Connect the setup transaction to the operator funding transaction.
+        // Connect the PROTOCOL_FUNDING_TX transaction to the operator funding transaction.
         // Create the funding transaction reference
         create_transaction_reference(protocol, &FUNDING_TX, &mut [funding_utxo.clone()].to_vec())?;
 
         // The operator_utxo must be of type P2WPKH
         protocol.add_connection(
-            "setup",
+            "funds",
             &FUNDING_TX,
             (funding_utxo.1 as usize).into(),
-            &SETUP_TX,
+            &PROTOCOL_FUNDING_TX,
             InputSpec::Auto(SighashType::ecdsa_all(), SpendMode::None),
             None,
             Some(funding_utxo.0),
         )?;
 
-        // Connect the initial deposit transaction to the setup transaction.
+        // Connect the initial deposit transaction to the PROTOCOL_FUNDING_TX transaction.
         protocol.add_connection(
             "initial_deposit",
-            &SETUP_TX,
+            &PROTOCOL_FUNDING_TX,
             OutputSpec::Auto(OutputType::taproot(
                 AUTO_AMOUNT,
                 watchtower_dispute_key,
@@ -338,7 +338,7 @@ impl DisputeCoreProtocol {
         // Connect the self-disabler (recover funds) transaction.
         protocol.add_connection(
             "self_disabler",
-            &SETUP_TX,
+            &PROTOCOL_FUNDING_TX,
             OutputSpec::Index(0),
             &self_disabler,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
@@ -397,7 +397,7 @@ impl DisputeCoreProtocol {
             )?,
         )?;
 
-        // Add setup speedup output
+        // Add speedup output
         protocol.add_transaction_output(
             &WT_START_ENABLER_TX,
             &OutputType::segwit_key(SPEEDUP_VALUE, &wt_dispute_key)?,
@@ -416,10 +416,10 @@ impl DisputeCoreProtocol {
 
         let op_self_disabler = format!("{}{}", OPERATOR, SELF_DISABLER_TX_SUFFIX);
 
-        // Connect the initial deposit transaction to the setup transaction.
+        // Connect the initial deposit transaction to the PROTOCOL_FUNDING_TX transaction.
         protocol.add_connection(
             "initial_deposit",
-            &SETUP_TX,
+            &PROTOCOL_FUNDING_TX,
             OutputSpec::Auto(OutputType::taproot(
                 AUTO_AMOUNT,
                 operator_dispute_key,
@@ -437,7 +437,7 @@ impl DisputeCoreProtocol {
         // Connect the self-disabler (recover funds) transaction.
         protocol.add_connection(
             "self_disabler",
-            &SETUP_TX,
+            &PROTOCOL_FUNDING_TX,
             OutputSpec::Index(1),
             &op_self_disabler,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
@@ -681,7 +681,7 @@ impl DisputeCoreProtocol {
         let input_not_revealed = indexed_name(INPUT_NOT_REVEALED_TX, dispute_core_index);
         let operator_speedup_key = keys[operator_index].get_public(SPEEDUP_KEY)?;
 
-        // Add a speedup output to the initial_deposit transaction and to the setup tx when the last initial deposit
+        // Add a speedup output to the initial_deposit transaction when the last initial deposit
         // output has been added.
         if dispute_core_index == (committee.packet_size - 1) as usize {
             // Operator output for disabler directory
@@ -732,21 +732,21 @@ impl DisputeCoreProtocol {
         member_change_key: &PublicKey,
         dispute_core_data: &DisputeCoreData,
     ) -> Result<(), BitVMXError> {
-        // Add a change output to the setup transaction
+        // Add a change output to the PROTOCOL_FUNDING_TX transaction
         let funding_amount = dispute_core_data.funding_utxo.2.unwrap();
-        let setup_tx = protocol.transaction_by_name(&SETUP_TX)?;
-        let setup_fees = estimate_fee(1, setup_tx.output.len() + 1, 1);
+        let tx = protocol.transaction_by_name(&PROTOCOL_FUNDING_TX)?;
+        let fees = estimate_fee(1, tx.output.len() + 1, 1);
         let mut total_cost = 0;
 
-        for i in 0..setup_tx.output.len() {
-            total_cost += setup_tx.output[i].value.to_sat();
+        for i in 0..tx.output.len() {
+            total_cost += tx.output[i].value.to_sat();
         }
 
-        let change = self.checked_sub(funding_amount, total_cost + setup_fees)?;
+        let change = self.checked_sub(funding_amount, total_cost + fees)?;
 
         protocol
             .add_transaction_output(
-                &SETUP_TX,
+                &PROTOCOL_FUNDING_TX,
                 &OutputType::segwit_key(change, member_change_key)?,
             )
             .map_err(|e| BitVMXError::ProtocolBuilderError(e))?;
@@ -754,11 +754,11 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn setup_tx(
+    fn protocol_funding_tx(
         &self,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        let tx_name = SETUP_TX;
+        let tx_name = PROTOCOL_FUNDING_TX;
         let mut protocol = self.load_protocol()?;
 
         let signature = protocol.sign_ecdsa_input(&tx_name, 0, &context.key_chain.key_manager)?;
@@ -1262,8 +1262,11 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn dispatch_setup_tx(&self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
-        let tx_name = SETUP_TX;
+    fn dispatch_protocol_funding_tx(
+        &self,
+        program_context: &ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        let tx_name = PROTOCOL_FUNDING_TX;
 
         info!(
             id = self.ctx.my_idx,
@@ -1271,17 +1274,17 @@ impl DisputeCoreProtocol {
         );
 
         // Get the signed transaction
-        let (setup_tx, speedup) = self.setup_tx(program_context)?;
-        let setup_txid = setup_tx.compute_txid();
+        let (tx, speedup) = self.protocol_funding_tx(program_context)?;
+        let txid = tx.compute_txid();
 
         info!(
             id = self.ctx.my_idx,
-            "Auto-dispatching {} transaction: {}", tx_name, setup_txid
+            "Auto-dispatching {} transaction: {}", tx_name, txid
         );
 
         // Dispatch the transaction through the bitcoin coordinator
         program_context.bitcoin_coordinator.dispatch(
-            setup_tx,
+            tx,
             speedup,
             format!("dispute_core_setup_{}:{}", self.ctx.id, tx_name), // Context string
             None,                                                      // Dispatch immediately
@@ -1289,7 +1292,7 @@ impl DisputeCoreProtocol {
 
         info!(
             id = self.ctx.my_idx,
-            "{} dispatched successfully with txid: {}", tx_name, setup_txid
+            "{} dispatched successfully with txid: {}", tx_name, txid
         );
 
         Ok(())
@@ -1407,7 +1410,7 @@ impl DisputeCoreProtocol {
             // FIXME: Should we save the whole UTXOS as in reimbursement_kickoff_utxos?
             // Maybe we should improve reimbursement_kickoff_utxos to be a vector of TXIDs, and save just once the amount and the output type
             // - Reimbursement: Multiples TXIDs with same amount and output type
-            // - Initial Setup: Single TXID and amount, with different output script. (output script is save in create_dispute_core function)
+            // - Initial Deposit: Single TXID and amount, with different output script. (output script is save in create_dispute_core function)
 
             // Save initial deposit txid and output amount
             let initial_deposit_tx: &Transaction =
