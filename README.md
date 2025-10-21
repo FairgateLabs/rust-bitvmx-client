@@ -39,26 +39,13 @@ If you are running a bitcoin node, you should stop it before running the integra
 RUST_BACKTRACE=1 cargo test --release -- --ignored test_full
 ```
 
-## License
+## BitVMX API Messages
 
-This project is licensed under the MIT License - see [LICENSE](LICENSE) file for details.
-
----
-
-## 🧩 Part of the BitVMX Ecosystem
-
-This repository is a component of the **BitVMX Ecosystem**, an open platform for disputable computation secured by Bitcoin.  
-You can find the index of all BitVMX open-source components at [**FairgateLabs/BitVMX**](https://github.com/FairgateLabs/BitVMX).
-
----
-
-## BitVMX API Message
-
-Documentation for the BitVMX client API message system and request/response patterns. The API uses JSON RPC over the BitVMX broker.
+Documentation for the BitVMX client API message system and request/response patterns. The API uses RPC over the BitVMX broker.
 
 ### Message Request/Response Pairs
 
-This table shows the mapping between request messages and their expected response messages based on the correlation ID system used in the BitVMX client, organized by functional categories.
+This table shows the mapping between [request messages (IncomingBitVMXApiMessages)](./src/types.rs#97) and their expected [response messages(OutgoingBitVMXApiMessages)](./src/types.rs#OutgoingBitVMXApiMessages) based on the correlation ID system used in the BitVMX client, organized by functional categories.
 
 #### General Information
 
@@ -140,7 +127,7 @@ This table shows the mapping between request messages and their expected respons
 
 #### Transaction Name
 
-- Named transactions dispatched internally by the protocols will be sent to all protocol participants as response message `Transaction` without needing to request a `GetTransaction` message
+- Named transactions dispatched internally by protocols will be sent to all protocol participants as a `Transaction` response message  without needing to request a `GetTransaction` message
 
 #### Subscription Messages
 
@@ -158,3 +145,21 @@ This table shows the mapping between request messages and their expected respons
 - UUID-based correlation IDs ensure that multiple concurrent operations can be tracked independently
 - Some operations (like `SetFundingUtxo`, `SetupKey`) don't have direct response messages
 - The system supports both named and unnamed transaction dispatching with different correlation ID patterns
+
+## Example app using BitVMX-client
+
+You can find an [example app here](https://github.com/FairgateLabs/bitvmx-hackathon-games) - a BitVMX-based game where two players compete to solve a mathematical addition problem. The game uses Bitcoin's dispute resolution protocol to ensure fair play and automatic validation on chain by the BitVMX client.
+The repository hosts an Add Numbers game application, composed of a backend and frontend.
+
+## License
+
+This project is licensed under the MIT License - see [LICENSE](LICENSE) file for details.
+
+---
+
+## 🧩 Part of the BitVMX Ecosystem
+
+This repository is a component of the **BitVMX Ecosystem**, an open platform for disputable computation secured by Bitcoin.  
+You can find the index of all BitVMX open-source components at [**FairgateLabs/BitVMX**](https://github.com/FairgateLabs/BitVMX).
+
+---
