@@ -139,22 +139,20 @@ impl Member {
 
     pub fn setup_committee_keys(
         &mut self,
-        members: &[Member],
-        members_take_pubkeys: &[PublicKey],
-        members_dispute_pubkeys: &[PublicKey],
+        addresses: &Vec<CommsAddress>,
+        members: &Vec<MemberData>,
         take_aggregation_id: Uuid,
         dispute_aggregation_id: Uuid,
         committee_id: Uuid,
     ) -> Result<()> {
         self.make_aggregated_keys(
+            addresses,
             members,
-            members_take_pubkeys,
-            members_dispute_pubkeys,
             take_aggregation_id,
             dispute_aggregation_id,
         )?;
 
-        self.make_pairwise_keys(members, committee_id)?;
+        self.make_pairwise_keys(addresses, members, committee_id)?;
 
         Ok(())
     }
@@ -205,7 +203,7 @@ impl Member {
         );
 
         let total_setups = DisputeChannelSetup::setup(
-            self.get_my_index(members)?,
+            self.get_my_index(addresses)?,
             &self.keyring.pairwise_keys,
             &self.bitvmx,
             members,
@@ -222,15 +220,16 @@ impl Member {
         Ok(())
     }
 
-    fn get_my_index(&self, members: &Vec<MemberData>) -> Result<usize> {
-        let my_take_key = self.keyring.take_pubkey.unwrap();
-        for (index, member) in members.iter().enumerate() {
-            if member.take_key == my_take_key {
+    fn get_my_index(&self, addresses: &Vec<CommsAddress>) -> Result<usize> {
+        let my_address = self.address()?.clone();
+        for (index, addr) in addresses.iter().enumerate() {
+            if *addr == my_address {
                 return Ok(index);
             }
         }
         Err(anyhow::anyhow!(
-            "Member id {} not found in members list",
+            "Member address {} not found in addresses list for {}",
+            my_address,
             self.id
         ))
     }
@@ -354,18 +353,19 @@ impl Member {
 
     fn make_aggregated_keys(
         &mut self,
-        members: &[Member],
-        members_take_pubkeys: &[PublicKey],
-        members_dispute_pubkeys: &[PublicKey],
+        addresses: &Vec<CommsAddress>,
+        members: &Vec<MemberData>,
         take_aggregation_id: Uuid,
         dispute_aggregation_id: Uuid,
     ) -> Result<()> {
-        let addresses = self.get_addresses(members);
+        let members_take_pubkeys: Vec<PublicKey> = members.iter().map(|m| m.take_key).collect();
+        let members_dispute_pubkeys: Vec<PublicKey> =
+            members.iter().map(|m| m.dispute_key).collect();
 
         let take_aggregated_key = self.setup_key(
             take_aggregation_id,
             &addresses.clone(),
-            Some(members_take_pubkeys),
+            Some(members_take_pubkeys.as_slice()),
         )?;
 
         self.keyring.take_aggregated_key = Some(take_aggregated_key);
@@ -373,7 +373,7 @@ impl Member {
         let dispute_aggregated_key = self.setup_key(
             dispute_aggregation_id,
             &addresses.clone(),
-            Some(members_dispute_pubkeys),
+            Some(members_dispute_pubkeys.as_slice()),
         )?;
 
         self.keyring.dispute_aggregated_key = Some(dispute_aggregated_key);
@@ -381,56 +381,49 @@ impl Member {
         Ok(())
     }
 
-    fn make_pairwise_keys(&mut self, members: &[Member], committee_id: Uuid) -> Result<()> {
+    fn make_pairwise_keys(
+        &mut self,
+        addresses: &Vec<CommsAddress>,
+        members: &Vec<MemberData>,
+        committee_id: Uuid,
+    ) -> Result<()> {
         let my_address = self.address()?.clone();
+        let my_index = self.get_my_index(addresses)?;
+        let my_role = members[my_index].role.clone();
 
-        // Create a sorted list of members to have a canonical order of pairs.
-        let mut sorted_members = members.to_vec();
-        sorted_members.sort_by(|a, b| a.id.cmp(&b.id));
-
-        for i in 0..sorted_members.len() {
-            for j in (i + 1)..sorted_members.len() {
-                let member1 = &sorted_members[i];
-                let member2 = &sorted_members[j];
-
-                let op1_address = member1.address()?;
-                let op2_address = member2.address()?;
-
-                // Check if the current operator is part of the pair
-                if my_address == *op1_address || my_address == *op2_address {
-                    // Skip key generation if both members are Challengers
-                    if matches!(member1.role, ParticipantRole::Verifier)
-                        && matches!(member2.role, ParticipantRole::Verifier)
-                    {
-                        info!(
-                            "Skipping key generation between two Challengers: {:?} and {:?}",
-                            op1_address, op2_address
-                        );
-                        continue;
-                    }
-
-                    let participants = vec![op1_address.clone(), op2_address.clone()];
-
-                    // Deterministic id: committee_id + ordered indices + tag
-                    let aggregation_id = get_dispute_pair_aggregated_key_pid(committee_id, i, j);
-                    let pairwise_key = self.setup_key(aggregation_id, &participants, None)?;
-
-                    let other_address = self.get_counterparty_address(member1, member2)?;
-
-                    self.keyring
-                        .pairwise_keys
-                        .insert(other_address.clone(), pairwise_key);
-
-                    let pair_members = format!("{}<>{}", member1.id, member2.id);
-                    info!(
-                        members = %pair_members,
-                        pair_id = ?aggregation_id,
-                        peer = ?other_address,
-                        key = %pairwise_key.to_string(),
-                        "Generated dispute-channel pair aggregated key"
-                    );
-                }
+        for partner_index in 0..members.len() {
+            if partner_index == my_index
+                || (members[partner_index].role != ParticipantRole::Prover
+                    && my_role != ParticipantRole::Prover)
+            {
+                // Skip myself and watchtowers pairs
+                continue;
             }
+
+            let partner_address = addresses[partner_index].clone();
+            let participants = if my_index < partner_index {
+                vec![my_address.clone(), partner_address.clone()]
+            } else {
+                vec![partner_address.clone(), my_address.clone()]
+            };
+
+            // Deterministic id: committee_id + ordered indices + tag
+            let aggregation_id =
+                get_dispute_pair_aggregated_key_pid(committee_id, my_index, partner_index);
+            let pairwise_key = self.setup_key(aggregation_id, &participants, None)?;
+
+            self.keyring
+                .pairwise_keys
+                .insert(partner_address.clone(), pairwise_key);
+
+            let pair_members = format!("{}<>{}", my_index, partner_index);
+            info!(
+                members = %pair_members,
+                pair_id = ?aggregation_id,
+                peer = ?partner_address,
+                key = %pairwise_key.to_string(),
+                "Generated dispute-channel pair aggregated key"
+            );
         }
         Ok(())
     }
@@ -470,30 +463,6 @@ impl Member {
         self.address
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Member address not set for {}", self.id))
-    }
-
-    /// Get all addresses from a list of members
-    fn get_addresses(&self, members: &[Member]) -> Vec<CommsAddress> {
-        members.iter().filter_map(|m| m.address.clone()).collect()
-    }
-
-    /// Determine the counterparty address in a pair of members
-    fn get_counterparty_address(&self, member1: &Member, member2: &Member) -> Result<CommsAddress> {
-        let member1_address = member1.address()?;
-        let member2_address = member2.address()?;
-        let my_address = self.address()?;
-
-        let counterparty_address = if my_address == member1_address {
-            member2_address
-        } else if my_address == member2_address {
-            member1_address
-        } else {
-            return Err(anyhow::anyhow!(
-                "Current member is not part of the address pair"
-            ));
-        };
-
-        Ok(counterparty_address.clone())
     }
 
     pub fn get_funding_address(&self) -> Result<bitcoin::Address<NetworkUnchecked>> {

@@ -99,20 +99,19 @@ impl Committee {
         let keys = self.all(|op| op.setup_member_keys())?;
 
         // collect members keys
-        let members_take_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.0).collect();
-        let members_dispute_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.1).collect();
         let _members_communication_pubkeys: Vec<PublicKey> = keys.iter().map(|k| k.2).collect();
 
         let take_aggregation_id = self.take_aggregation_id;
         let dispute_aggregation_id = self.dispute_aggregation_id;
 
         let committee_id = self.committee_id;
-        let members = self.members.clone();
+        let members = self.get_member_data();
+        let addresses = self.get_addresses();
+
         let _ = self.all(|op: &mut Member| {
             op.setup_committee_keys(
+                &addresses.clone(),
                 &members.clone(),
-                &members_take_pubkeys,
-                &members_dispute_pubkeys,
                 take_aggregation_id,
                 dispute_aggregation_id,
                 committee_id,
