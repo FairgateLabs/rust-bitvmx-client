@@ -35,7 +35,7 @@ pub fn start_reimbursement(
     Ok(protocol_script)
 }
 
-// TODO this is almost the same as start_reimbursement. DRY this up.
+// TODO: this is almost the same as start_reimbursement. DRY this up.
 pub fn start_challenge(
     committee_key: &PublicKey,
     slot_id_pubkey_name: &str,

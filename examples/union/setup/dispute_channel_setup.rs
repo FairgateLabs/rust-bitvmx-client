@@ -10,12 +10,14 @@ use bitvmx_client::{
         participant::{CommsAddress, ParticipantRole},
         protocols::union::{
             common::get_dispute_channel_pid,
-            types::{MemberData, FUNDING_UTXO_SUFFIX, WATCHTOWER},
+            types::{MemberData, WATCHTOWER},
         },
         variables::{PartialUtxo, VariableTypes},
     },
     types::PROGRAM_TYPE_DRP,
 };
+
+const FUNDING_UTXO_SUFFIX: &str = "_FUNDING_UTXO";
 
 pub struct DisputeChannelSetup;
 
@@ -47,7 +49,11 @@ impl DisputeChannelSetup {
                 }
 
                 // Helper to setup one directional DRP
-                let setup_one = |from_idx: usize, to_idx: usize, first: &CommsAddress, second: &CommsAddress| -> Result<()> {
+                let setup_one = |from_idx: usize,
+                                 to_idx: usize,
+                                 first: &CommsAddress,
+                                 second: &CommsAddress|
+                 -> Result<()> {
                     let drp_id = get_dispute_channel_pid(committee_id, from_idx, to_idx);
                     let participants: Vec<CommsAddress> = vec![first.clone(), second.clone()];
                     let my_idx = if my_addr == *first { 0 } else { 1 };
@@ -60,7 +66,8 @@ impl DisputeChannelSetup {
                         .expect("pairwise key should be present");
 
                     // Program vars
-                    let program_path = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
+                    let program_path =
+                        "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
                     bitvmx.set_var(
                         drp_id,
                         "program_definition",
