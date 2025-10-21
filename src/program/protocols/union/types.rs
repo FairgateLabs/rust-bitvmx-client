@@ -6,18 +6,17 @@ use uuid::Uuid;
 use crate::program::{participant::ParticipantRole, variables::PartialUtxo};
 
 // Key names
-pub const TAKE_AGGREGATED_KEY: &str = "take_aggregated_key";
-pub const DISPUTE_AGGREGATED_KEY: &str = "dispute_aggregated_key";
-pub const SELECTED_OPERATOR_PUBKEY: &str = "selected_operator_pubkey";
-pub const REIMBURSEMENT_KICKOFF_IN_PROGRESS: &str = "reimbursement_kickoff_in_progress";
-pub const MONITORED_OPERATOR_KEY: &str = "monitored_operator_key";
-pub const MONITORED_WATCHTOWER_KEY: &str = "monitored_watchtower_key";
-pub const OP_INITIAL_DEPOSIT_FLAG: &str = "op_initial_deposit_flag";
-pub const OPERATOR_LEAF_INDEX: &str = "operator_leaf_index";
-pub const SPEEDUP_KEY: &str = "speedup_key";
-pub const OP_INITIAL_DEPOSIT_TXID: &str = "op_initial_deposit_txid";
-pub const OP_INITIAL_DEPOSIT_AMOUNT: &str = "op_initial_deposit_amount";
-pub const OP_INITIAL_DEPOSIT_OUT_SCRIPT: &str = "op_initial_deposit_out_script";
+pub const TAKE_AGGREGATED_KEY: &str = "TAKE_AGGREGATED_KEY";
+pub const DISPUTE_AGGREGATED_KEY: &str = "DISPUTE_AGGREGATED_KEY";
+pub const SELECTED_OPERATOR_PUBKEY: &str = "SELECTED_OPERATOR_PUBKEY";
+pub const REIMBURSEMENT_KICKOFF_IN_PROGRESS: &str = "REIMBURSEMENT_KICKOFF_IN_PROGRESS";
+pub const MONITORED_OPERATOR_KEY: &str = "MONITORED_OPERATOR_KEY";
+pub const OP_INITIAL_DEPOSIT_FLAG: &str = "OP_INITIAL_DEPOSIT_FLAG";
+pub const OPERATOR_LEAF_INDEX: &str = "OPERATOR_LEAF_INDEX";
+pub const SPEEDUP_KEY: &str = "SPEEDUP_KEY";
+pub const OP_INITIAL_DEPOSIT_TXID: &str = "OP_INITIAL_DEPOSIT_TXID";
+pub const OP_INITIAL_DEPOSIT_AMOUNT: &str = "OP_INITIAL_DEPOSIT_AMOUNT";
+pub const OP_INITIAL_DEPOSIT_OUT_SCRIPT: &str = "OP_INITIAL_DEPOSIT_OUT_SCRIPT";
 
 // Transaction names
 pub const REQUEST_PEGIN_TX: &str = "REQUEST_PEGIN_TX";
