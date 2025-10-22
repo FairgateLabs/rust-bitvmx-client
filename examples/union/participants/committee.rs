@@ -126,12 +126,12 @@ impl Committee {
 
         let members = self.get_member_data();
         let addresses = self.get_addresses();
-        let seed = self.committee_id;
+        let committee_id = self.committee_id;
 
         // Setup Dispute Core covenant
         self.all(|op: &mut Member| {
             op.setup_dispute_core(
-                seed,
+                committee_id,
                 &members.clone(),
                 &funding_utxos_per_member,
                 &addresses.clone(),
@@ -139,7 +139,6 @@ impl Committee {
         })?;
 
         //  Setup Dispute Channel covenant
-        let committee_id = self.committee_id;
         self.all(|op: &mut Member| {
             op.setup_dispute_channel(committee_id, &members.clone(), &addresses.clone())
         })?;
