@@ -54,7 +54,7 @@ impl BitcoinWrapper {
         info!("Height: {}. Waiting until block: {}", height, last_block);
 
         let sleep_secs = match self.network {
-            Network::Regtest => 3, // Give some time to bitvmx client to process new blocks and send news
+            Network::Regtest => 1, // Give some time to bitvmx client to process new blocks and send news
             Network::Testnet | Network::Signet => 10,
             Network::Bitcoin => 60,
             _ => return Err(anyhow::anyhow!("Unsupported network")),
