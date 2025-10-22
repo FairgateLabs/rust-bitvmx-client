@@ -61,7 +61,7 @@ for i in $(seq 1 $OP_COUNT); do
 done
 
 echo "Waiting for BitVMX clients to initialize..."
-sleep 10s
+sleep 20s
 
 printf "\nRunning union example: $name...\n\n\n"
 RUST_BACKTRACE=full cargo run --release --example union $name 2>&1 | sed -u -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})*)?[mGKHF]//g" > $EXAMPLE_LOG_FILE
