@@ -948,7 +948,7 @@ impl DisputeCoreProtocol {
         &self,
         slot_id: usize,
         program_context: &ProgramContext,
-        reimbursement_tx_id: Txid,
+        reimbursement_txid: Txid,
         tx_status: TransactionStatus,
     ) -> Result<(), BitVMXError> {
         let tx_name = indexed_name(CHALLENGE_TX, slot_id);
@@ -957,12 +957,12 @@ impl DisputeCoreProtocol {
 
         let (mut challenge_tx, speedup) =
             self.get_transaction_by_name(&tx_name, program_context)?;
-        let txid = challenge_tx.compute_txid();
+        let challenge_txid = challenge_tx.compute_txid();
 
         // Connect the challenge transaction to the reimbursement kickoff transaction
         if !challenge_tx.input.is_empty() {
             challenge_tx.input[0].previous_output = OutPoint {
-                txid: reimbursement_tx_id,
+                txid: reimbursement_txid,
                 vout: 0,
             };
         }
@@ -976,7 +976,7 @@ impl DisputeCoreProtocol {
 
         info!(
             "{} connected to reimbursement tx {} and dispatched with txid: {}",
-            tx_name, reimbursement_tx_id, txid
+            tx_name, reimbursement_txid, challenge_txid
         );
 
         Ok(())
