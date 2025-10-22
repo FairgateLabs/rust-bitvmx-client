@@ -633,6 +633,7 @@ pub fn invalid_reimbursement(committee: &mut Committee, slot_index: usize) -> Re
     let member: &mut Member = &mut committee.members[operator_index];
     let operator_pubkey = member.keyring.take_pubkey.unwrap();
 
+    // If just one member execute advance_funds the other one will not know it should advance funds and will try to challenge it.
     member.advance_funds(
         Uuid::new_v4(),
         committee_id,

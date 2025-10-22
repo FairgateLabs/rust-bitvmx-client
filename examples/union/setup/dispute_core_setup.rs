@@ -8,7 +8,7 @@ use bitvmx_client::{
         participant::CommsAddress,
         protocols::union::{
             common::get_dispute_core_pid,
-            types::{Committee, DisputeCoreData, MemberData, MONITORED_OPERATOR_KEY},
+            types::{Committee, DisputeCoreData, MemberData},
         },
         variables::{PartialUtxo, VariableTypes},
     },
@@ -63,14 +63,6 @@ impl DisputeCoreSetup {
                     member_index,
                     funding_utxo,
                 })?),
-            )?;
-
-            // FIXME: Should this be removed? Where is it used?
-            // Save the monitored operator's take key
-            bitvmx.set_var(
-                protocol_id,
-                MONITORED_OPERATOR_KEY,
-                VariableTypes::PubKey(pubkey),
             )?;
 
             bitvmx.setup(

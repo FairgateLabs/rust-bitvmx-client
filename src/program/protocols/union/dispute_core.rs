@@ -315,6 +315,7 @@ impl DisputeCoreProtocol {
             &PROTOCOL_FUNDING_TX,
             OutputSpec::Auto(OutputType::taproot(
                 AUTO_AMOUNT,
+                // FIXME: Should this be aggregated key? To avoid wt to be able to spend it alone. And SignMode should be Aggregated
                 watchtower_dispute_key,
                 &[scripts::reveal_take_private_key(
                     watchtower_dispute_key,
@@ -413,6 +414,7 @@ impl DisputeCoreProtocol {
             &PROTOCOL_FUNDING_TX,
             OutputSpec::Auto(OutputType::taproot(
                 AUTO_AMOUNT,
+                // FIXME: Should this be aggregated key? To avoid op to be able to spend it alone. And SignMode should be Aggregated
                 operator_dispute_key,
                 &[union::scripts::reveal_take_private_key(
                     operator_dispute_key,
@@ -937,16 +939,9 @@ impl DisputeCoreProtocol {
     }
 
     fn monitored_operator_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
-        match context
-            .globals
-            .get_var(&self.ctx.id, MONITORED_OPERATOR_KEY)?
-        {
-            Some(key_var) => Ok(key_var.pubkey()?),
-            None => Err(BitVMXError::VariableNotFound(
-                self.ctx.id,
-                MONITORED_OPERATOR_KEY.to_string(),
-            )),
-        }
+        let committee = self.committee(context)?;
+        let data = self.dispute_core_data(context)?;
+        Ok(committee.members[data.member_index].take_key)
     }
 
     fn dispatch_challenge_tx(
@@ -1207,7 +1202,6 @@ impl DisputeCoreProtocol {
             match self.get_selected_operator_key(slot_index, program_context)? {
                 Some(selected_operator_key) => {
                     // Get the operator's take key that this dispute core is monitoring
-                    // FIXME: Review this. Should we use DisputeCoreData.member_index instead?
                     let monitored_operator_key = self.monitored_operator_key(program_context)?;
 
                     // Compare if the monitored operator is the selected one
