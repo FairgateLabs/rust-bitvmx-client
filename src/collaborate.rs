@@ -194,7 +194,7 @@ impl Collaboration {
             keys.mapping.iter().for_each(|(pubkey_hash, key)| {
                 let pubkey_hash: PubKeyHash = pubkey_hash
                     .parse()
-                    .unwrap_or(self.leader.pubkey_hash.clone()); //TODO: Handle the unwrap better
+                    .map_err(|_| BitVMXError::InvalidMessageFormat)?;
                 if let Some(key) = key.public() {
                     self.keys.insert(pubkey_hash, *key);
                 } else {
