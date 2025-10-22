@@ -1,13 +1,14 @@
 #![cfg(test)]
 use anyhow::Result;
-use bitvmx_client::types::{
-    IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel,
+use bitvmx_client::{
+    program::protocols::dispute::protocol_cost,
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
 use bitvmx_wallet::wallet::{Destination, RegtestWallet};
 use common::{
     config_trace,
     dispute::{execute_dispute, prepare_dispute, ForcedChallenges},
-        get_all, init_bitvmx, init_utxo_new, prepare_bitcoin, send_all, wait_message_from_channel,
+    get_all, init_bitvmx, init_utxo_new, prepare_bitcoin, send_all, wait_message_from_channel,
 };
 use protocol_builder::{
     scripts::{self, SignMode},
@@ -100,7 +101,7 @@ pub fn test_drp() -> Result<()> {
         &mut wallet,
         &aggregated_pub_key,
         spending_condition.clone(),
-        20_000,
+        protocol_cost(),
     )?;
 
     info!("Initializing UTXO for the prover action");
@@ -112,6 +113,7 @@ pub fn test_drp() -> Result<()> {
     )?;
 
     let prog_id = Uuid::new_v4();
+    let forced_challenge = ForcedChallenges::Execution;
     prepare_dispute(
         prog_id,
         participants,
@@ -121,8 +123,7 @@ pub fn test_drp() -> Result<()> {
         initial_out_type,
         prover_win_utxo,
         prover_win_out_type,
-        ForcedChallenges::No,
-        None,
+        forced_challenge.clone(),
         None,
     )?;
     let _msgs = get_all(&channels, &mut instances, false)?;
@@ -135,6 +136,7 @@ pub fn test_drp() -> Result<()> {
         &wallet,
         prog_id,
         None,
+        forced_challenge,
     )?;
 
     //prover final trace
@@ -158,7 +160,7 @@ pub fn test_drp() -> Result<()> {
 pub fn test_aggregation() -> Result<()> {
     config_trace();
 
-        let (_bitcoin_client, bitcoind, _wallet) = prepare_bitcoin()?;
+    let (_bitcoin_client, bitcoind, _wallet) = prepare_bitcoin()?;
 
     let (mut bitvmx_1, addres_1, bridge_1, _) = init_bitvmx("op_1", false)?;
     let (mut bitvmx_2, addres_2, bridge_2, _) = init_bitvmx("op_2", false)?;

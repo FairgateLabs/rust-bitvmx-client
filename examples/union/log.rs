@@ -8,6 +8,7 @@ pub fn configure_tracing() {
         let default_modules = [
             "info",
             "bitvmx_transaction_monitor=off",
+            "bitvmx_broker=off",
             "bitcoin_indexer=off",
             "bitcoin_coordinator=info",
             "operator_comms=off",
@@ -15,7 +16,7 @@ pub fn configure_tracing() {
             "key_manager=off",
             "memory=off",
             "bitvmx_client::config=off",
-            "bitvmx_wallet=info",
+            "bitvmx_wallet=off",
             "bitvmx_bitcoin_rpc=off",
         ];
 

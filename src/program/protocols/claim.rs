@@ -44,6 +44,16 @@ impl ClaimGate {
         fees + dust
     }
 
+    pub fn output_from_aggregated(
+        aggregated: &PublicKey,
+        dust: u64,
+    ) -> Result<OutputType, BitVMXError> {
+        let verify_aggregated_action =
+            scripts::check_aggregated_signature(aggregated, SignMode::Aggregate);
+        let output_action = OutputType::taproot(dust, aggregated, &[verify_aggregated_action])?;
+        Ok(output_action)
+    }
+
     pub fn new(
         protocol: &mut Protocol,
         from: &str,
@@ -55,7 +65,8 @@ impl ClaimGate {
         stoppers_pub: Vec<&PublicKey>,
         subset_cov: Option<Vec<&PublicKey>>,
         timelock_blocks: u16,
-        actions: Vec<&PublicKey>,
+        action_count: u64,
+        outputs: Vec<OutputType>,
         add_exclusive_success: bool,
         exclusive_success_vout: Option<usize>,
     ) -> Result<Self, BitVMXError> {
@@ -78,7 +89,7 @@ impl ClaimGate {
         // as the claimer is the one who will be able to spend it
         let claim_start_check = scripts::check_signature(claimer.0, claimer.1);
         let claim_start = OutputType::taproot(
-            amount_fee + amount_fee + ((2 + actions.len() as u64) * amount_dust),
+            amount_fee + amount_fee + ((2 + (outputs.len() as u64 + action_count)) * amount_dust),
             aggregated,
             &vec![claim_start_check],
         )?;
@@ -103,7 +114,7 @@ impl ClaimGate {
         let timeout = scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
 
         let start_tx_output = OutputType::taproot(
-            amount_fee + ((1 + actions.len() as u64) * amount_dust),
+            amount_fee + ((1 + outputs.len() as u64 + action_count) * amount_dust),
             aggregated,
             &vec![verify_aggregated.clone(), timeout],
         )?;
@@ -178,13 +189,22 @@ impl ClaimGate {
         }
 
         // add action/enablers as the vouts in the success transaction
-        for action in &actions {
-            let verify_aggregated_action =
-                scripts::check_aggregated_signature(action, SignMode::Aggregate);
-            let output_action =
-                OutputType::taproot(amount_dust, action, &[verify_aggregated_action])?;
+        let aggregated_output = Self::output_from_aggregated(aggregated, amount_dust)?;
+        let action_outputs = (0..action_count)
+            .map(|_x| aggregated_output.clone())
+            .collect::<Vec<OutputType>>();
 
-            protocol.add_transaction_output(&success, &output_action)?;
+        for action in action_outputs.iter().chain(outputs.iter()) {
+            if action.get_value().to_sat() != amount_dust {
+                return Err(BitVMXError::InvalidParameter(format!(
+                    "Error building claimage {}, All claim gates outputs must have DUST={} as amount in output={}",
+                    claim_name,
+                    amount_dust,
+                    action.get_value().to_sat()
+                )));
+            }
+
+            protocol.add_transaction_output(&success, action)?;
         }
 
         // claimer speedup output for the claim success transaction
@@ -197,7 +217,7 @@ impl ClaimGate {
             amount_fee,
             amount_dust,
             stoppers_pub.len() as u8,
-            actions.len(),
+            outputs.len(),
             add_exclusive_success,
         );
 

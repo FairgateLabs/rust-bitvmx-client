@@ -1,6 +1,7 @@
 use anyhow::Result;
 
 use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages};
+use uuid::Uuid;
 
 mod common;
 
@@ -14,12 +15,12 @@ fn nonfatal_error_keeps_looping() -> Result<()> {
     // 1) Simple Ping -> Pong
     channel.send(
         &bitvmx.get_components_config().bitvmx,
-        IncomingBitVMXApiMessages::Ping().to_string()?,
+        IncomingBitVMXApiMessages::Ping(Uuid::new_v4()).to_string()?,
     )?;
     let msg = common::wait_message_from_channel(&channel, &mut vec![&mut bitvmx], true)?;
     let out = OutgoingBitVMXApiMessages::from_string(&msg.0)?;
     match out {
-        OutgoingBitVMXApiMessages::Pong() => {}
+        OutgoingBitVMXApiMessages::Pong(_) => {}
         _ => panic!("expected Pong"),
     }
 
@@ -36,12 +37,12 @@ fn nonfatal_error_keeps_looping() -> Result<()> {
     // 3) Verify we can still Ping -> Pong
     channel.send(
         &bitvmx.get_components_config().bitvmx,
-        IncomingBitVMXApiMessages::Ping().to_string()?,
+        IncomingBitVMXApiMessages::Ping(Uuid::new_v4()).to_string()?,
     )?;
     let msg = common::wait_message_from_channel(&channel, &mut vec![&mut bitvmx], true)?;
     let out = OutgoingBitVMXApiMessages::from_string(&msg.0)?;
     match out {
-        OutgoingBitVMXApiMessages::Pong() => {}
+        OutgoingBitVMXApiMessages::Pong(_) => {}
         _ => panic!("expected Pong after non-fatal"),
     }
 

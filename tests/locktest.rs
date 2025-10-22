@@ -167,12 +167,12 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         &instances[3].get_components_config().bitvmx,
     )?;
 
-    let command = IncomingBitVMXApiMessages::GetCommInfo().to_string()?;
+    let command = IncomingBitVMXApiMessages::GetCommInfo(Uuid::new_v4()).to_string()?;
     send_all(&id_channel_pairs, &command)?;
     let comm_info: Vec<OutgoingBitVMXApiMessages> = get_all(&channels, &mut instances, false)?;
     let addresses = comm_info
         .iter()
-        .map(|msg| msg.comm_info().unwrap())
+        .map(|msg| msg.comm_info().unwrap().1)
         .collect::<Vec<_>>();
 
     //ask the peers to generate the aggregated public key

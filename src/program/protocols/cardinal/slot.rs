@@ -627,7 +627,8 @@ impl ProtocolHandler for SlotProtocol {
                 stopper_keys,
                 Some(subset_cov),
                 timelock_blocks,
-                vec![&operators_aggregated_pub],
+                1,
+                vec![],
                 false,
                 None,
             )?;

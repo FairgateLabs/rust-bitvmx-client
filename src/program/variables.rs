@@ -1,13 +1,12 @@
 use std::rc::Rc;
 
+use crate::{errors::BitVMXError, types::IncomingBitVMXApiMessages};
 use bitcoin::{PublicKey, Txid};
 use key_manager::winternitz::{WinternitzPublicKey, WinternitzSignature};
 use protocol_builder::types::OutputType;
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::{KeyValueStore, Storage};
 use uuid::Uuid;
-
-use crate::{errors::BitVMXError, types::IncomingBitVMXApiMessages};
 
 /*
 - winternitz
@@ -25,6 +24,7 @@ pub enum VariableTypes {
     WinternitzPubKey(WinternitzPublicKey),
     Utxo(PartialUtxo),
     Number(u32),
+    Amount(u64),
     String(String),
     VecStr(Vec<String>),
     VecNumber(Vec<u32>),
@@ -65,6 +65,12 @@ impl VariableTypes {
     pub fn number(&self) -> Result<u32, BitVMXError> {
         match self {
             VariableTypes::Number(num) => Ok(*num),
+            _ => Err(BitVMXError::InvalidVariableType(self.err())),
+        }
+    }
+    pub fn amount(&self) -> Result<u64, BitVMXError> {
+        match self {
+            VariableTypes::Amount(num) => Ok(*num),
             _ => Err(BitVMXError::InvalidVariableType(self.err())),
         }
     }

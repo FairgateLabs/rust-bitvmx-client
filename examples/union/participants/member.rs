@@ -1,14 +1,18 @@
+use crate::setup::full_penalization_setup::FullPenalizationSetup;
 use crate::wallet::helper::print_link;
 use crate::{
     macros::wait_for_message_blocking,
     setup::{
         accept_pegin_setup::AcceptPegInSetup, advance_funds_setup::AdvanceFunds,
-        dispute_core_setup::DisputeCoreSetup, user_take_setup::UserTakeSetup,
+        dispute_channel_setup::DisputeChannelSetup, dispute_core_setup::DisputeCoreSetup,
+        user_take_setup::UserTakeSetup,
     },
     wait_until_msg,
 };
 use anyhow::Result;
 use bitcoin::{address::NetworkUnchecked, Amount, PublicKey, ScriptBuf, Transaction, Txid};
+use bitvmx_client::program::protocols::union::common::get_dispute_pair_aggregated_key_pid;
+use bitvmx_client::types::IncomingBitVMXApiMessages;
 use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
@@ -41,7 +45,7 @@ pub struct FundingAmount {
 
 pub struct FundingUtxos {
     pub speedup: PartialUtxo,
-    pub protocol_funding: PartialUtxo,
+    pub operator_funding: PartialUtxo,
     pub advance_funds: PartialUtxo,
 }
 
@@ -94,9 +98,9 @@ impl Member {
     }
 
     pub fn get_peer_info(&mut self) -> Result<CommsAddress> {
-        self.bitvmx.get_comm_info()?;
+        self.bitvmx.get_comm_info(Uuid::new_v4())?;
         thread::sleep(std::time::Duration::from_secs(5));
-        let addr = wait_until_msg!(&self.bitvmx, CommInfo(_addr) => _addr);
+        let addr = wait_until_msg!(&self.bitvmx, CommInfo(_, _addr) => _addr);
 
         self.address = Some(addr.clone());
         Ok(addr)
@@ -124,7 +128,6 @@ impl Member {
         self.keyring.communication_pubkey = Some(communication_pubkey);
 
         info!(
-            id = self.id,
             "Member keys setup complete: take_pubkey: {}, dispute_pubkey: {}, communication_pubkey: {}",
             take_pubkey.to_string(),
             dispute_pubkey.to_string(),
@@ -136,35 +139,34 @@ impl Member {
 
     pub fn setup_committee_keys(
         &mut self,
-        members: &[Member],
-        members_take_pubkeys: &[PublicKey],
-        members_dispute_pubkeys: &[PublicKey],
+        addresses: &Vec<CommsAddress>,
+        members: &Vec<MemberData>,
         take_aggregation_id: Uuid,
         dispute_aggregation_id: Uuid,
+        committee_id: Uuid,
     ) -> Result<()> {
         self.make_aggregated_keys(
+            addresses,
             members,
-            members_take_pubkeys,
-            members_dispute_pubkeys,
             take_aggregation_id,
             dispute_aggregation_id,
         )?;
-        self.make_pairwise_keys(members, take_aggregation_id)?;
+
+        self.make_pairwise_keys(addresses, members, committee_id)?;
 
         Ok(())
     }
 
-    pub fn setup_dispute_protocols(
+    pub fn setup_dispute_core(
         &mut self,
         committee_id: Uuid,
         members: &Vec<MemberData>,
         funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
-        my_speedup_funding: &Utxo,
         addresses: &Vec<CommsAddress>,
     ) -> Result<()> {
         info!(
             id = self.id,
-            "Setting up dispute protocols for member {}", self.id
+            "Setting up dispute core for member {}", self.id
         );
 
         DisputeCoreSetup::setup(
@@ -175,25 +177,59 @@ impl Member {
             self.keyring.dispute_aggregated_key.unwrap(),
             &self.bitvmx,
             funding_utxos_per_member,
-            my_speedup_funding,
             addresses,
         )?;
 
-        let operator_count = members
-            .iter()
-            .filter(|m| m.role == ParticipantRole::Prover)
-            .count();
-
-        for i in 0..operator_count {
+        for i in 0..members.len() {
             // Wait for the dispute core setup to complete
             let program_id =
                 wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
             info!(id = self.id, program_id = ?program_id, "Dispute core setup completed for operator index {}", i);
         }
 
-        // TODO: add the dispute channeles here
-
         Ok(())
+    }
+
+    pub fn setup_dispute_channel(
+        &mut self,
+        committee_id: Uuid,
+        members: &Vec<MemberData>,
+        addresses: &Vec<CommsAddress>,
+    ) -> Result<()> {
+        info!(
+            id = self.id,
+            "Setting up dispute channels for member {}", self.id
+        );
+
+        let total_setups = DisputeChannelSetup::setup(
+            self.get_my_index(addresses)?,
+            &self.keyring.pairwise_keys,
+            &self.bitvmx,
+            members,
+            committee_id,
+            addresses,
+        )?;
+
+        for i in 0..total_setups {
+            let program_id =
+                wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
+            info!(id = self.id, program_id = ?program_id, "Dispute channel setup completed for operator index {}", i);
+        }
+        Ok(())
+    }
+
+    fn get_my_index(&self, addresses: &Vec<CommsAddress>) -> Result<usize> {
+        let my_address = self.address()?.clone();
+        for (index, addr) in addresses.iter().enumerate() {
+            if *addr == my_address {
+                return Ok(index);
+            }
+        }
+        Err(anyhow::anyhow!(
+            "Member address {} not found in addresses list for {}",
+            my_address,
+            self.id
+        ))
     }
 
     pub fn accept_pegin(
@@ -227,6 +263,20 @@ impl Member {
 
         let program_id = wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
         info!(id = "AcceptPegInSetup", program_id = ?program_id, "Accept pegin setup completed (from member)");
+
+        Ok(())
+    }
+
+    pub fn setup_full_penalization(
+        &mut self,
+        committee_id: Uuid,
+        addresses: &Vec<CommsAddress>,
+    ) -> Result<()> {
+        info!(id = self.id, "Setting up full penalization protocol");
+        FullPenalizationSetup::setup(&self.id, &self.bitvmx, committee_id, addresses)?;
+
+        let program_id = wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
+        info!(id = "FullPenalizationSetup", program_id = ?program_id, "Full penalization setup completed (from member)");
 
         Ok(())
     }
@@ -301,17 +351,18 @@ impl Member {
 
     fn make_aggregated_keys(
         &mut self,
-        members: &[Member],
-        members_take_pubkeys: &[PublicKey],
-        members_dispute_pubkeys: &[PublicKey],
+        addresses: &Vec<CommsAddress>,
+        members: &Vec<MemberData>,
         take_aggregation_id: Uuid,
         dispute_aggregation_id: Uuid,
     ) -> Result<()> {
-        let addresses = self.get_addresses(members);
+        let members_take_pubkeys: Vec<PublicKey> = members.iter().map(|m| m.take_key).collect();
+        let members_dispute_pubkeys: Vec<PublicKey> =
+            members.iter().map(|m| m.dispute_key).collect();
 
         let take_aggregated_key = self.setup_key(
             take_aggregation_id,
-            &addresses.clone(),
+            addresses.clone(),
             Some(members_take_pubkeys),
         )?;
 
@@ -319,7 +370,7 @@ impl Member {
 
         let dispute_aggregated_key = self.setup_key(
             dispute_aggregation_id,
-            &addresses.clone(),
+            addresses.clone(),
             Some(members_dispute_pubkeys),
         )?;
 
@@ -328,53 +379,51 @@ impl Member {
         Ok(())
     }
 
-    fn make_pairwise_keys(&mut self, members: &[Member], session_id: Uuid) -> Result<()> {
+    fn make_pairwise_keys(
+        &mut self,
+        addresses: &Vec<CommsAddress>,
+        members: &Vec<MemberData>,
+        committee_id: Uuid,
+    ) -> Result<()> {
         let my_address = self.address()?.clone();
+        let my_index = self.get_my_index(addresses)?;
+        let my_role = members[my_index].role.clone();
+        let prover = my_role == ParticipantRole::Prover;
 
-        // Create a sorted list of members to have a canonical order of pairs.
-        let mut sorted_members = members.to_vec();
-        sorted_members.sort_by(|a, b| a.address.cmp(&b.address));
-
-        for i in 0..sorted_members.len() {
-            for j in (i + 1)..sorted_members.len() {
-                let member1 = &sorted_members[i];
-                let member2 = &sorted_members[j];
-
-                let op1_address = member1.address()?;
-                let op2_address = member2.address()?;
-
-                // Check if the current operator is part of the pair
-                if my_address == *op1_address || my_address == *op2_address {
-                    // Skip key generation if both members are Challengers
-                    if matches!(member1.role, ParticipantRole::Verifier)
-                        && matches!(member2.role, ParticipantRole::Verifier)
-                    {
-                        info!(
-                            "Skipping key generation between two Challengers: {:?} and {:?}",
-                            op1_address, op2_address
-                        );
-                        continue;
-                    }
-
-                    let participants = vec![op1_address.clone(), op2_address.clone()];
-
-                    // Create a deterministic aggregation_id for the pair that includes session_id
-                    let namespace = Uuid::NAMESPACE_DNS;
-                    let name_to_hash =
-                        format!("{:?}{:?}{:?}", op1_address, op2_address, session_id);
-
-                    let aggregation_id = Uuid::new_v5(&namespace, name_to_hash.as_bytes());
-                    let pairwise_key = self.setup_key(aggregation_id, &participants, None)?;
-
-                    let other_address = self.get_counterparty_address(member1, member2)?;
-
-                    self.keyring
-                        .pairwise_keys
-                        .insert(other_address.clone(), pairwise_key);
-
-                    info!(peer = ?other_address, key = ?pairwise_key.to_string(), "Generated pairwise key");
-                }
+        for partner_index in 0..members.len() {
+            if partner_index == my_index
+                || (!prover && members[partner_index].role != ParticipantRole::Prover)
+            {
+                // Skip myself and watchtowers pairs
+                continue;
             }
+
+            let partner_address = addresses[partner_index].clone();
+
+            // Setup participants in deterministic order, the one with the lower index first
+            let participants = if my_index < partner_index {
+                vec![my_address.clone(), partner_address.clone()]
+            } else {
+                vec![partner_address.clone(), my_address.clone()]
+            };
+
+            // Deterministic id: committee_id + ordered indices + tag
+            let aggregation_id =
+                get_dispute_pair_aggregated_key_pid(committee_id, my_index, partner_index);
+            let pairwise_key = self.setup_key(aggregation_id, participants.to_vec(), None)?;
+
+            self.keyring
+                .pairwise_keys
+                .insert(partner_address.clone(), pairwise_key);
+
+            let pair_members = format!("{}<>{}", my_index, partner_index);
+            info!(
+                members = %pair_members,
+                pair_id = ?aggregation_id,
+                peer = ?partner_address,
+                key = %pairwise_key.to_string(),
+                "Generated dispute-channel pair aggregated key"
+            );
         }
         Ok(())
     }
@@ -382,24 +431,21 @@ impl Member {
     fn setup_key(
         &mut self,
         aggregation_id: Uuid,
-        addresses: &[CommsAddress],
-        public_keys: Option<&[PublicKey]>,
+        addresses: Vec<CommsAddress>,
+        public_keys: Option<Vec<PublicKey>>,
     ) -> Result<PublicKey> {
-        info!(
+        debug!(
             id = self.id,
             aggregation_id = ?aggregation_id,
             addresses = ?addresses,
             "Setting up aggregated key"
         );
-        self.bitvmx.setup_key(
-            aggregation_id,
-            addresses.to_vec(),
-            public_keys.map(|keys| keys.to_vec()),
-            0,
-        )?;
+
+        self.bitvmx
+            .setup_key(aggregation_id, addresses, public_keys, 0)?;
 
         let aggregated_key = wait_until_msg!(&self.bitvmx, AggregatedPubkey(_, _key) => _key);
-        info!(
+        debug!(
             id = self.id,
             "Key setup complete {}",
             aggregated_key.to_string()
@@ -413,30 +459,6 @@ impl Member {
         self.address
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Member address not set for {}", self.id))
-    }
-
-    /// Get all addresses from a list of members
-    fn get_addresses(&self, members: &[Member]) -> Vec<CommsAddress> {
-        members.iter().filter_map(|m| m.address.clone()).collect()
-    }
-
-    /// Determine the counterparty address in a pair of members
-    fn get_counterparty_address(&self, member1: &Member, member2: &Member) -> Result<CommsAddress> {
-        let member1_address = member1.address()?;
-        let member2_address = member2.address()?;
-        let my_address = self.address()?;
-
-        let counterparty_address = if my_address == member1_address {
-            member2_address
-        } else if my_address == member2_address {
-            member1_address
-        } else {
-            return Err(anyhow::anyhow!(
-                "Current member is not part of the address pair"
-            ));
-        };
-
-        Ok(counterparty_address.clone())
     }
 
     pub fn get_funding_address(&self) -> Result<bitcoin::Address<NetworkUnchecked>> {
@@ -503,7 +525,7 @@ impl Member {
             script_pubkey: script_pubkey.clone(),
             public_key: public_key,
         };
-        let protocol_funding_ot = OutputType::SegwitPublicKey {
+        let operator_funding_ot = OutputType::SegwitPublicKey {
             value: Amount::from_sat(amounts.protocol_funding),
             script_pubkey: script_pubkey.clone(),
             public_key: public_key,
@@ -517,11 +539,11 @@ impl Member {
         // Output indexes should match the order in the Destination::Batch above
         Ok(FundingUtxos {
             speedup: (txid, 0, Some(amounts.speedup), Some(speedup_ot)),
-            protocol_funding: (
+            operator_funding: (
                 txid,
                 1,
                 Some(amounts.protocol_funding),
-                Some(protocol_funding_ot),
+                Some(operator_funding_ot),
             ),
             advance_funds: (txid, 2, Some(amounts.advance_funds), Some(advance_funds_ot)),
         })
@@ -530,6 +552,13 @@ impl Member {
     pub fn set_advance_funds_input(&mut self, committee_id: Uuid, utxo: PartialUtxo) -> Result<()> {
         self.bitvmx
             .set_var(committee_id, ADVANCE_FUNDS_INPUT, VariableTypes::Utxo(utxo))?;
+
+        Ok(())
+    }
+
+    pub fn set_speedup_funding_utxo(&mut self, utxo: Utxo) -> Result<()> {
+        self.bitvmx
+            .send_message(IncomingBitVMXApiMessages::SetFundingUtxo(utxo))?;
 
         Ok(())
     }
@@ -550,7 +579,7 @@ impl Member {
         let _ = self
             .bitvmx
             .get_transaction_by_name(protocol_id, tx_name.clone());
-        thread::sleep(std::time::Duration::from_secs(1));
+        thread::sleep(std::time::Duration::from_secs(5));
         let tx = wait_until_msg!(&self.bitvmx, TransactionInfo(_, _, _tx) => _tx);
         info!(
             "Protocol handler {} dispatching {}",

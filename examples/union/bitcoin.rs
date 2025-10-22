@@ -7,7 +7,7 @@ use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
 use bitvmx_client::config::Config;
-use tracing::info;
+use tracing::{debug, info};
 
 /// Number of blocks to mine initially to ensure sufficient coin maturity
 pub const INITIAL_BLOCK_COUNT: u64 = 110;
@@ -54,7 +54,7 @@ impl BitcoinWrapper {
         info!("Height: {}. Waiting until block: {}", height, last_block);
 
         let sleep_secs = match self.network {
-            Network::Regtest => 1,
+            Network::Regtest => 3, // Give some time to bitvmx client to process new blocks and send news
             Network::Testnet | Network::Signet => 10,
             Network::Bitcoin => 60,
             _ => return Err(anyhow::anyhow!("Unsupported network")),
@@ -62,13 +62,13 @@ impl BitcoinWrapper {
 
         while height < last_block {
             if self.network == Network::Regtest {
-                info!("Mining 1 block...");
+                debug!("Mining 1 block...");
                 self.mine_blocks(1)?;
             }
-            info!("Waiting {} seconds...", sleep_secs);
+            debug!("Waiting {} seconds...", sleep_secs);
             thread::sleep(Duration::from_secs(sleep_secs));
             height = self.get_best_block()?;
-            info!("Current height: {}", height);
+            debug!("Current height: {}", height);
         }
         Ok(())
     }
