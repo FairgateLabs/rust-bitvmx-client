@@ -77,12 +77,12 @@ pub fn get_dispute_pair_aggregated_key_pid(committee_id: Uuid, idx_a: usize, idx
 }
 
 // Deterministic id for a dispute-channel instance (directional): from_idx -> to_idx
-pub fn get_dispute_channel_pid(committee_id: Uuid, from_idx: usize, to_idx: usize) -> Uuid {
+pub fn get_dispute_channel_pid(committee_id: Uuid, op_index: usize, wt_index: usize) -> Uuid {
     let mut hasher = Sha256::new();
 
     hasher.update(committee_id.as_bytes());
-    hasher.update(&from_idx.to_be_bytes());
-    hasher.update(&to_idx.to_be_bytes());
+    hasher.update(&op_index.to_be_bytes());
+    hasher.update(&wt_index.to_be_bytes());
     hasher.update("dispute_channel");
 
     let hash = hasher.finalize();
@@ -174,7 +174,7 @@ pub fn get_operator_output_type(
     })
 }
 
-pub fn get_initial_setup_output_type(
+pub fn get_initial_deposit_output_type(
     amount: u64,
     operator_key: &PublicKey,
     script: &[ProtocolScript],

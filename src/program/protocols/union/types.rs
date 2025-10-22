@@ -6,18 +6,16 @@ use uuid::Uuid;
 use crate::program::{participant::ParticipantRole, variables::PartialUtxo};
 
 // Key names
-pub const TAKE_AGGREGATED_KEY: &str = "take_aggregated_key";
-pub const DISPUTE_AGGREGATED_KEY: &str = "dispute_aggregated_key";
-pub const SELECTED_OPERATOR_PUBKEY: &str = "selected_operator_pubkey";
-pub const REIMBURSEMENT_KICKOFF_IN_PROGRESS: &str = "reimbursement_kickoff_in_progress";
-pub const MONITORED_OPERATOR_KEY: &str = "monitored_operator_key";
-pub const MONITORED_WATCHTOWER_KEY: &str = "monitored_watchtower_key";
-pub const OP_INITIAL_DEPOSIT_FLAG: &str = "op_initial_deposit_flag";
-pub const OPERATOR_LEAF_INDEX: &str = "operator_leaf_index";
-pub const SPEEDUP_KEY: &str = "speedup_key";
-pub const OP_INITIAL_DEPOSIT_TXID: &str = "op_initial_deposit_txid";
-pub const OP_INITIAL_DEPOSIT_AMOUNT: &str = "op_initial_deposit_amount";
-pub const OP_INITIAL_DEPOSIT_OUT_SCRIPT: &str = "op_initial_deposit_out_script";
+pub const TAKE_AGGREGATED_KEY: &str = "TAKE_AGGREGATED_KEY";
+pub const DISPUTE_AGGREGATED_KEY: &str = "DISPUTE_AGGREGATED_KEY";
+pub const SELECTED_OPERATOR_PUBKEY: &str = "SELECTED_OPERATOR_PUBKEY";
+pub const REIMBURSEMENT_KICKOFF_IN_PROGRESS: &str = "REIMBURSEMENT_KICKOFF_IN_PROGRESS";
+pub const OP_INITIAL_DEPOSIT_FLAG: &str = "OP_INITIAL_DEPOSIT_FLAG";
+pub const OPERATOR_LEAF_INDEX: &str = "OPERATOR_LEAF_INDEX";
+pub const SPEEDUP_KEY: &str = "SPEEDUP_KEY";
+pub const OP_INITIAL_DEPOSIT_TXID: &str = "OP_INITIAL_DEPOSIT_TXID";
+pub const OP_INITIAL_DEPOSIT_AMOUNT: &str = "OP_INITIAL_DEPOSIT_AMOUNT";
+pub const OP_INITIAL_DEPOSIT_OUT_SCRIPT: &str = "OP_INITIAL_DEPOSIT_OUT_SCRIPT";
 
 // Transaction names
 pub const REQUEST_PEGIN_TX: &str = "REQUEST_PEGIN_TX";
@@ -26,24 +24,19 @@ pub const USER_TAKE_TX: &str = "USER_TAKE_TX";
 pub const ADVANCE_FUNDS_TX: &str = "ADVANCE_FUNDS_TX";
 pub const OPERATOR_TAKE_TX: &str = "OPERATOR_TAKE_TX";
 pub const OPERATOR_WON_TX: &str = "OPERATOR_WON_TX";
-pub const OP_FUNDING_TX: &str = "OP_FUNDING_TX";
-pub const WT_FUNDING_TX: &str = "WT_FUNDING_TX";
 pub const OP_INITIAL_DEPOSIT_TX: &str = "OP_INITIAL_DEPOSIT_TX";
-pub const WT_INITIAL_DEPOSIT_TX: &str = "WT_INITIAL_DEPOSIT_TX";
 pub const REIMBURSEMENT_KICKOFF_TX: &str = "REIMBURSEMENT_KICKOFF_TX";
 pub const TWO_DISPUTE_PENALIZATION_TX: &str = "TWO_DISPUTE_PENALIZATION_TX";
-pub const NO_TAKE_TX: &str = "NO_TAKE_TX";
 pub const CHALLENGE_TX: &str = "CHALLENGE_TX";
 pub const REVEAL_INPUT_TX: &str = "REVEAL_INPUT_TX";
 pub const INPUT_NOT_REVEALED_TX: &str = "INPUT_NOT_REVEALED_TX";
-pub const YOU_CANT_TAKE_TX: &str = "YOU_CANT_TAKE_TX";
 pub const OP_SELF_DISABLER_TX: &str = "OP_SELF_DISABLER_TX";
-pub const TRY_TAKE_2_TX: &str = "TRY_TAKE_2_TX";
-pub const NO_DISPUTE_OPENED_TX: &str = "NO_DISPUTE_OPENED_TX";
-pub const NO_CHALLENGE_TX: &str = "NO_CHALLENGE_TX";
 pub const OP_DISABLER_TX: &str = "OP_DISABLER_TX";
 pub const OP_LAZY_DISABLER_TX: &str = "OP_LAZY_DISABLER_TX";
 pub const OP_DISABLER_DIRECTORY_TX: &str = "OP_DISABLER_DIRECTORY_TX";
+pub const FUNDING_TX: &str = "FUNDING_TX";
+pub const WT_START_ENABLER_TX: &str = "WT_START_ENABLER_TX";
+pub const PROTOCOL_FUNDING_TX: &str = "PROTOCOL_FUNDING_TX";
 
 // Parameters
 pub const DISPUTE_CORE_SHORT_TIMELOCK: u16 = 1;
@@ -55,18 +48,15 @@ pub const USER_TAKE_FEE: u64 = 335; // This should match the value USER_TAKE_FEE
 pub const OP_DISABLER_FEE: u64 = 240;
 
 // Suffixes
-pub const FUNDING_TX: &str = "FUNDING_TX";
-pub const WT_START_ENABLER_TX: &str = "WT_START_ENABLER_TX";
-pub const SETUP_TX: &str = "SETUP_TX";
 pub const SELF_DISABLER_TX_SUFFIX: &str = "_SELF_DISABLER_TX";
 
 // UTXOs
-pub const OPERATOR_TAKE_ENABLER: &str = "operator_take_enabler";
-pub const OPERATOR_WON_ENABLER: &str = "operator_won_enabler";
-pub const ADVANCE_FUNDS_INPUT: &str = "advance_funds_input";
-pub const LAST_OPERATOR_TAKE_UTXO: &str = "last_operator_take_utxo";
-pub const SETUP_DISABLER_OP_DIRECTORY_UTXO: &str = "setup_disabler_op_directory_utxo";
-pub const SETUP_DISABLER_WT_DIRECTORY_UTXO: &str = "setup_disabler_wt_directory_utxo";
+pub const OPERATOR_TAKE_ENABLER: &str = "OPERATOR_TAKE_ENABLER";
+pub const OPERATOR_WON_ENABLER: &str = "OPERATOR_WON_ENABLER";
+pub const ADVANCE_FUNDS_INPUT: &str = "ADVANCE_FUNDS_INPUT";
+pub const LAST_OPERATOR_TAKE_UTXO: &str = "LAST_OPERATOR_TAKE_UTXO";
+pub const OP_DISABLER_DIRECTORY_UTXO: &str = "OP_DISABLER_DIRECTORY_UTXO";
+pub const WT_DISABLER_DIRECTORY_UTXO: &str = "WT_DISABLER_DIRECTORY_UTXO";
 
 // Roles
 pub const OPERATOR: &str = "OP";

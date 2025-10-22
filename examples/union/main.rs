@@ -21,8 +21,9 @@ use bitvmx_client::program::{
             get_full_penalization_pid, triple_indexed_name,
         },
         types::{
-            ACCEPT_PEGIN_TX, DISPUTE_CORE_SHORT_TIMELOCK, OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX,
-            OP_LAZY_DISABLER_TX, WT_START_ENABLER_TX,
+            ACCEPT_PEGIN_TX, DISPUTE_CORE_LONG_TIMELOCK, DISPUTE_CORE_SHORT_TIMELOCK,
+            OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX, OP_INITIAL_DEPOSIT_TX, OP_LAZY_DISABLER_TX,
+            WT_START_ENABLER_TX,
         },
     },
 };
@@ -238,8 +239,7 @@ pub fn cli_double_reimbursement() -> Result<()> {
         pegout_id,
     )?;
 
-    let blocks = if NETWORK == Network::Regtest { 30 } else { 1 };
-    wait_for_blocks(&committee.bitcoin_client, blocks)?;
+    wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
     Ok(())
 }
 
@@ -360,24 +360,43 @@ pub fn cli_full_penalization() -> Result<()> {
 
     // Dispatch OP_DISABLER_DIRECTORY_TX for each operator
     // Temporary test due to it's not connected to dispute channels yet
-    for (index, member) in committee.members.iter().enumerate() {
+    for (op_index, member) in committee.members.iter().enumerate() {
         if member.role == ParticipantRole::Prover {
-            let operator_index = index;
-            let watchtower_index = (operator_index + 1) % committee.members.len();
+            // Dispatch OP_INITIAL_DEPOSIT_TX, it has the funding UTXO for OP_DISABLER_DIRECTORY_TX
+            // and OP_INITIAL_DEPOSIT_TX is not dispatched until there is a reimbursement
+            let dispute_core_pid = get_dispute_core_pid(
+                committee.committee_id(),
+                &member.keyring.take_pubkey.unwrap(),
+            );
+            let tx = committee.members[op_index].dispatch_transaction_by_name(
+                dispute_core_pid,
+                OP_INITIAL_DEPOSIT_TX.to_string(),
+            )?;
 
-            let tx_name =
-                double_indexed_name(OP_DISABLER_DIRECTORY_TX, operator_index, watchtower_index);
+            info!(
+                "Dispatched {} with txid: {}",
+                OP_INITIAL_DEPOSIT_TX,
+                tx.compute_txid()
+            );
 
-            let tx = committee.members[watchtower_index]
+            thread::sleep(Duration::from_secs(2));
+            wait_for_blocks(&committee.bitcoin_client, 1)?;
+
+            let wt_index = (op_index + 1) % committee.members.len();
+            let tx_name = double_indexed_name(OP_DISABLER_DIRECTORY_TX, op_index, wt_index);
+
+            let tx = committee.members[wt_index]
                 .dispatch_transaction_by_name(full_penalization_pid, tx_name.clone())?;
 
             info!("Dispatched {} with txid: {}", tx_name, tx.compute_txid());
         }
     }
-    wait_for_blocks(&committee.bitcoin_client, 5)?;
+    wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
 
     let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
+    // NOTE: When doing an advance funds, the operator will try to dispatch its OP_INITIAL_DEPOSIT_TX in order to send the REIMBURSEMENT_KICKOFF_TX
+    // In this example we already dispatched OP_INITIAL_DEPOSIT_TX above, so you will see an error in the logs
     // Advance funds to dispatch REIMBURSEMENT_KICKOFF_TX without challenge (just for testing purposes)
     let operator_index = advance_funds(&mut committee, user.public_key()?, slot_index, false)?;
     wait_for_blocks(
@@ -417,7 +436,7 @@ pub fn cli_full_penalization() -> Result<()> {
 
     info!("Dispatched {} with txid: {}", tx_name, tx.compute_txid());
 
-    wait_for_blocks(&committee.bitcoin_client, 3)?;
+    wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
 
     Ok(())
 }
@@ -443,8 +462,7 @@ pub fn committee(wallet: &mut MasterWallet) -> Result<Committee> {
     committee.setup_dispute_protocols()?;
     committee.setup_full_penalization()?;
 
-    let blocks = if NETWORK == Network::Regtest { 10 } else { 1 };
-    wait_for_blocks(&committee.bitcoin_client, blocks)?;
+    wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
 
     info!("Balances after dispute core protocol:");
     print_members_balances(committee.members.as_slice())?;
@@ -469,7 +487,7 @@ pub fn watchtowers_start_enabler(committee: &mut Committee) -> Result<()> {
         member.dispatch_transaction_by_name(protocol_id, WT_START_ENABLER_TX.to_string())?;
     }
 
-    wait_for_blocks(&committee.bitcoin_client, 1)?;
+    wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
 
     Ok(())
 }
@@ -478,7 +496,10 @@ pub fn request_pegin(committee_public_key: PublicKey, user: &mut User) -> Result
     let amount: u64 = STREAM_DENOMINATION; // This should be replaced with the actual amount of the peg-in request
     let request_pegin_txid = user.request_pegin(&committee_public_key, amount)?;
 
-    wait_for_blocks(&BitcoinWrapper::new_from_config(&user.config)?, 1)?;
+    wait_for_blocks(
+        &BitcoinWrapper::new_from_config(&user.config)?,
+        get_blocks_to_wait(),
+    )?;
     thread::sleep(Duration::from_secs(2)); // wait for the coordinator to update
 
     user.get_request_pegin_spv(request_pegin_txid)?;
@@ -530,8 +551,7 @@ pub fn request_and_accept_pegin(
         )?;
     }
 
-    let blocks = if NETWORK == Network::Regtest { 3 } else { 0 };
-    wait_for_blocks(&committee.bitcoin_client, blocks)?;
+    wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
     committee.wait_for_spv_proof(accept_pegin_txid)?;
 
     info!("Pegin accepted and confirmed.");
@@ -568,8 +588,7 @@ pub fn request_pegout() -> Result<()> {
         user.create_and_dispatch_user_take_speedup(user_take_utxo.clone(), get_user_take_fee()?)?;
     }
 
-    let blocks = if NETWORK == Network::Regtest { 3 } else { 0 };
-    wait_for_blocks(&committee.bitcoin_client, blocks)?;
+    wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
     committee.wait_for_spv_proof(user_take_utxo.0)?;
 
     info!("Pegout request accepted and confirmed.");
@@ -599,8 +618,7 @@ pub fn advance_funds(
     )?;
 
     if should_wait {
-        let blocks = if NETWORK == Network::Regtest { 30 } else { 1 };
-        wait_for_blocks(&committee.bitcoin_client, blocks)?;
+        wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
     }
 
     info!("Advance funds complete.");
@@ -616,6 +634,7 @@ pub fn invalid_reimbursement(committee: &mut Committee, slot_index: usize) -> Re
     let member: &mut Member = &mut committee.members[operator_index];
     let operator_pubkey = member.keyring.take_pubkey.unwrap();
 
+    // If just one member execute advance_funds the other one will not know it should advance funds and will try to challenge it.
     member.advance_funds(
         Uuid::new_v4(),
         committee_id,
@@ -626,9 +645,11 @@ pub fn invalid_reimbursement(committee: &mut Committee, slot_index: usize) -> Re
         get_advance_funds_fee()?,
     )?;
 
-    let blocks = if NETWORK == Network::Regtest { 30 } else { 7 };
     info!("Starting mining loop to ensure challenge transaction is dispatched...");
-    wait_for_blocks(&committee.bitcoin_client, blocks)?;
+    wait_for_blocks(
+        &committee.bitcoin_client,
+        get_blocks_to_wait() + DISPUTE_CORE_LONG_TIMELOCK as u32,
+    )?;
 
     info!("Invalid reimbursement test complete.");
     Ok(())
@@ -718,6 +739,20 @@ fn get_advance_funds_fee() -> Result<u64, anyhow::Error> {
         Network::Regtest => Ok(3000),
         Network::Testnet => Ok(300),
         _ => Err(anyhow::anyhow!("Unsupported network")),
+    }
+}
+
+fn get_blocks_to_wait() -> u32 {
+    match NETWORK {
+        Network::Regtest => {
+            if HIGH_FEE_NODE_ENABLED {
+                15
+            } else {
+                2
+            }
+        }
+        Network::Testnet => 1,
+        _ => Err(anyhow::anyhow!("Unsupported network")).unwrap(),
     }
 }
 
