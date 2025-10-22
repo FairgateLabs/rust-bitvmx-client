@@ -34,7 +34,7 @@ use crate::{
                     OP_DISABLER_DIRECTORY_TX, OP_DISABLER_DIRECTORY_UTXO, OP_DISABLER_TX,
                     OP_INITIAL_DEPOSIT_AMOUNT, OP_INITIAL_DEPOSIT_OUT_SCRIPT,
                     OP_INITIAL_DEPOSIT_TX, OP_INITIAL_DEPOSIT_TXID, OP_LAZY_DISABLER_TX,
-                    REIMBURSEMENT_KICKOFF_TX, SPEEDUP_VALUE,
+                    REIMBURSEMENT_KICKOFF_TX, SPEEDUP_VALUE, WT_START_ENABLER_UTXOS,
                 },
             },
         },
@@ -310,6 +310,21 @@ impl FullPenalizationProtocol {
 
         let scripts: Vec<ProtocolScript> = serde_json::from_str(&data)?;
         Ok(scripts)
+    }
+
+    fn wt_start_enabler_utxos(
+        &self,
+        context: &ProgramContext,
+        dispute_core_pid: Uuid,
+    ) -> Result<Vec<PartialUtxo>, BitVMXError> {
+        let data = context
+            .globals
+            .get_var(&dispute_core_pid, &WT_START_ENABLER_UTXOS)?
+            .unwrap()
+            .string()?;
+
+        let utxos: Vec<PartialUtxo> = serde_json::from_str(&data)?;
+        Ok(utxos)
     }
 
     fn create_operator_disabler(
