@@ -486,17 +486,23 @@ impl DisputeCoreProtocol {
         reimbursement_output: OutputType,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let pegout_id_name = indexed_name(PEGOUT_ID_KEY, dispute_core_index);
-        let secret_name = indexed_name(SECRET_KEY, dispute_core_index);
-
+        // Operator keys
         let operator_keys = keys[dispute_core_data.member_index].clone();
-
         let operator_dispute_key = &committee.members[dispute_core_data.member_index].dispute_key;
+
+        // Aggregated keys
         let take_aggregated_key = &committee.take_aggregated_key;
         let dispute_aggregated_key = &committee.dispute_aggregated_key;
+
+        // Pegout ID key
+        let pegout_id_name = indexed_name(PEGOUT_ID_KEY, dispute_core_index);
         let pegout_id_key = operator_keys.get_winternitz(&pegout_id_name)?;
+
+        // Secret key
+        let secret_name = indexed_name(SECRET_KEY, dispute_core_index);
         let secret_key = operator_keys.get_winternitz(&secret_name)?;
 
+        // TX names
         let reimbursement_kickoff = indexed_name(REIMBURSEMENT_KICKOFF_TX, dispute_core_index);
         let challenge = indexed_name(CHALLENGE_TX, dispute_core_index);
         let reveal_input = indexed_name(REVEAL_INPUT_TX, dispute_core_index);
@@ -506,7 +512,7 @@ impl DisputeCoreProtocol {
             scripts::start_reimbursement(take_aggregated_key, PEGOUT_ID_KEY, pegout_id_key)?;
 
         let validate_dispute_key = protocol_builder::scripts::verify_signature(
-            &committee.dispute_aggregated_key,
+            dispute_aggregated_key,
             SignMode::Aggregate,
         )?;
 
@@ -555,7 +561,7 @@ impl DisputeCoreProtocol {
         protocol.add_connection(
             "reveal_input",
             &challenge,
-            OutputType::taproot(AUTO_AMOUNT, &dispute_aggregated_key, &[secret])?.into(),
+            OutputType::taproot(AUTO_AMOUNT, dispute_aggregated_key, &[secret])?.into(),
             &reveal_input,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
             None,
