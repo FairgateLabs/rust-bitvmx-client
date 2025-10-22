@@ -591,7 +591,7 @@ impl DisputeCoreProtocol {
 
         protocol.add_transaction_output(
             &input_not_revealed,
-            &OutputType::taproot(AUTO_AMOUNT, &take_aggregated_key, &[])?,
+            &OutputType::taproot(AUTO_AMOUNT, take_aggregated_key, &[])?,
         )?;
 
         self.add_dispute_core_speedup_outputs(
