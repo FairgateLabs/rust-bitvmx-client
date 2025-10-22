@@ -310,7 +310,7 @@ impl BitVMX {
             }
             ReceiveHandlerChannel::Error(e) => {
                 warn!("Error receiving message {}", e);
-            }
+            } //TODO: Handle Possible Errors in Handler/Broker
         }
 
         Ok(())
