@@ -207,7 +207,6 @@ impl Member {
             &self.bitvmx,
             members,
             committee_id,
-            // wt_funding_utxos_per_member,
             addresses,
         )?;
 
