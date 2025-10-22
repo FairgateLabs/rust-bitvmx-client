@@ -154,7 +154,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
         let mut reimbursement_output =
             self.create_reimbursement_output(&dispute_core_data, &keys, &committee)?;
 
-        self.create_wt_initial_deposit_output(
+        self.create_wt_start_enabler_output(
             &mut protocol,
             &dispute_core_data,
             &member_keys,
@@ -282,7 +282,7 @@ impl DisputeCoreProtocol {
         Self { ctx }
     }
 
-    fn create_wt_initial_deposit_output(
+    fn create_wt_start_enabler_output(
         &self,
         protocol: &mut Protocol,
         dispute_core_data: &DisputeCoreData,
