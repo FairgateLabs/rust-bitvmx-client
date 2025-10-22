@@ -90,93 +90,10 @@ impl ProtocolHandler for FullPenalizationProtocol {
 
         let data: FullPenalizationData = self.full_penalization_data(context)?;
         let committee = self.committee(context, data.committee_id)?;
-        let member_count = committee.members.len();
-
-        //create the protocol
         let mut protocol = self.load_or_create_protocol();
 
-        for operator_index in 0..member_count {
-            if committee.members[operator_index].role != ParticipantRole::Prover {
-                debug!("Skipping operator {} as it is not a prover", operator_index);
-                continue;
-            }
-
-            let dispute_core_pid = get_dispute_core_pid(
-                data.committee_id,
-                &committee.members[operator_index].take_key,
-            );
-
-            let disabler_directory_utxo =
-                self.disabler_directory_utxo(context, dispute_core_pid)?;
-
-            let amount = self.op_initial_deposit_amount(context, dispute_core_pid)?;
-            let op_initial_deposit_txid =
-                self.op_initial_deposit_txid(context, dispute_core_pid)?;
-
-            let mut take_enablers: Vec<PartialUtxo> = vec![];
-            let mut initial_deposit_utxos: Vec<PartialUtxo> = vec![];
-
-            for slot_index in 0..committee.packet_size as usize {
-                // Load reimbursement take enablers for the operator and create TX reference just once.
-                let take_enabler =
-                    self.operator_take_enabler(context, dispute_core_pid, slot_index)?;
-                take_enablers.push(take_enabler.clone());
-
-                create_transaction_reference(
-                    &mut protocol,
-                    &double_indexed_name(REIMBURSEMENT_KICKOFF_TX, operator_index, slot_index),
-                    &mut vec![take_enabler],
-                )?;
-
-                let scripts =
-                    self.op_initial_deposit_out_scripts(context, dispute_core_pid, slot_index)?;
-
-                let output_type = get_initial_deposit_output_type(
-                    amount,
-                    &committee.members[operator_index].dispute_key,
-                    scripts.as_slice(),
-                )?;
-
-                // Load initial deposit UTXOs and create TX reference just once.
-                initial_deposit_utxos.push((
-                    op_initial_deposit_txid,
-                    slot_index as u32,
-                    Some(amount),
-                    Some(output_type),
-                ));
-            }
-
-            initial_deposit_utxos.push(disabler_directory_utxo.clone());
-
-            let initial_deposit_name = indexed_name(OP_INITIAL_DEPOSIT_TX, operator_index);
-            create_transaction_reference(
-                &mut protocol,
-                &initial_deposit_name,
-                &mut initial_deposit_utxos,
-            )?;
-
-            for watchtower_index in 0..member_count {
-                if operator_index == watchtower_index {
-                    continue;
-                }
-
-                debug!(
-                    "Creating operator disabler for operator {} with watchtower {}",
-                    operator_index, watchtower_index
-                );
-
-                self.create_operator_disabler(
-                    &mut protocol,
-                    &committee,
-                    operator_index,
-                    watchtower_index,
-                    &initial_deposit_name,
-                    &disabler_directory_utxo,
-                    &take_enablers,
-                    &initial_deposit_utxos,
-                )?;
-            }
-        }
+        // Create Operator disabler directory and disablers
+        self.create_operator_disablers(&mut protocol, &committee, &data, context)?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
@@ -610,5 +527,118 @@ impl FullPenalizationProtocol {
         );
 
         Ok((tx, None))
+    }
+
+    fn create_operator_disablers(
+        &self,
+        protocol: &mut protocol_builder::builder::Protocol,
+        committee: &Committee,
+        data: &FullPenalizationData,
+        context: &ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        let member_count = committee.members.len();
+        for operator_index in 0..member_count {
+            if committee.members[operator_index].role != ParticipantRole::Prover {
+                debug!("Skipping member {} as it is not a prover", operator_index);
+                continue;
+            }
+
+            let (
+                initial_deposit_name,
+                disabler_directory_utxo,
+                take_enablers,
+                initial_deposit_utxos,
+            ) = self.create_op_initial_deposit_tx(
+                protocol,
+                operator_index,
+                data.committee_id,
+                committee,
+                context,
+            )?;
+
+            for watchtower_index in 0..member_count {
+                if operator_index == watchtower_index {
+                    continue;
+                }
+
+                debug!(
+                    "Creating operator disabler for operator {} with watchtower {}",
+                    operator_index, watchtower_index
+                );
+
+                self.create_operator_disabler(
+                    protocol,
+                    &committee,
+                    operator_index,
+                    watchtower_index,
+                    &initial_deposit_name,
+                    &disabler_directory_utxo,
+                    &take_enablers,
+                    &initial_deposit_utxos,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn create_op_initial_deposit_tx(
+        &self,
+        protocol: &mut protocol_builder::builder::Protocol,
+        operator_index: usize,
+        committee_id: Uuid,
+        committee: &Committee,
+        context: &ProgramContext,
+    ) -> Result<(String, PartialUtxo, Vec<PartialUtxo>, Vec<PartialUtxo>), BitVMXError> {
+        let dispute_core_pid =
+            get_dispute_core_pid(committee_id, &committee.members[operator_index].take_key);
+
+        let disabler_directory_utxo = self.disabler_directory_utxo(context, dispute_core_pid)?;
+
+        let amount = self.op_initial_deposit_amount(context, dispute_core_pid)?;
+        let op_initial_deposit_txid = self.op_initial_deposit_txid(context, dispute_core_pid)?;
+
+        let mut take_enablers: Vec<PartialUtxo> = vec![];
+        let mut initial_deposit_utxos: Vec<PartialUtxo> = vec![];
+
+        for slot_index in 0..committee.packet_size as usize {
+            // Load reimbursement take enablers for the operator and create TX reference just once.
+            let take_enabler = self.operator_take_enabler(context, dispute_core_pid, slot_index)?;
+            take_enablers.push(take_enabler.clone());
+
+            create_transaction_reference(
+                protocol,
+                &double_indexed_name(REIMBURSEMENT_KICKOFF_TX, operator_index, slot_index),
+                &mut vec![take_enabler],
+            )?;
+
+            let scripts =
+                self.op_initial_deposit_out_scripts(context, dispute_core_pid, slot_index)?;
+
+            let output_type = get_initial_deposit_output_type(
+                amount,
+                &committee.members[operator_index].dispute_key,
+                scripts.as_slice(),
+            )?;
+
+            // Load initial deposit UTXOs and create TX reference just once.
+            initial_deposit_utxos.push((
+                op_initial_deposit_txid,
+                slot_index as u32,
+                Some(amount),
+                Some(output_type),
+            ));
+        }
+
+        initial_deposit_utxos.push(disabler_directory_utxo.clone());
+
+        let initial_deposit_name = indexed_name(OP_INITIAL_DEPOSIT_TX, operator_index);
+        create_transaction_reference(protocol, &initial_deposit_name, &mut initial_deposit_utxos)?;
+
+        Ok((
+            initial_deposit_name,
+            disabler_directory_utxo,
+            take_enablers,
+            initial_deposit_utxos,
+        ))
     }
 }
