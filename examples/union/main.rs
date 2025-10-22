@@ -752,7 +752,7 @@ fn get_blocks_to_wait() -> u32 {
             }
         }
         Network::Testnet => 1,
-        _ => 0,
+        _ => Err(anyhow::anyhow!("Unsupported network")).unwrap(),
     }
 }
 

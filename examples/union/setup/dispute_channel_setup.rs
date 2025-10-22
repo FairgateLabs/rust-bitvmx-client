@@ -80,6 +80,7 @@ impl DisputeChannelSetup {
             }
         }
 
+        info!("DisputeChannel setup complete ({} setups)", total_setups);
         // TODO: Return total setups when dispute channels are re-enabled
         Ok(0)
         // Ok(total_setups)
