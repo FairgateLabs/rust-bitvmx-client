@@ -699,8 +699,7 @@ impl Program {
                     OutgoingBitVMXApiMessages::SetupCompleted(self.program_id).to_string()?,
                 );
                 if let Err(e) = result {
-                    warn!("Error sending setup completed message: {:?}", e);
-                    //TODO: Handle error and rollback
+                    error!("Error sending setup completed message: {:?}", e);
                 }
             }
             _ => {}
@@ -718,15 +717,15 @@ impl Program {
     ) -> Result<(), BitVMXError> {
         debug!("{}: Message received: {:?} ", self.my_idx, msg_type);
 
-        match msg_type {
+        let result = match msg_type {
             CommsMessageType::Keys => {
-                self.receive_keys(comms_address, msg_type, data, program_context)?;
+                self.receive_keys(comms_address, msg_type, data, program_context)
             }
             CommsMessageType::PublicNonces => {
-                self.receive_nonces(comms_address, msg_type, data, program_context)?;
+                self.receive_nonces(comms_address, msg_type, data, program_context)
             }
             CommsMessageType::PartialSignatures => {
-                self.receive_signatures(comms_address, msg_type, data, program_context)?;
+                self.receive_signatures(comms_address, msg_type, data, program_context)
             }
             CommsMessageType::KeysAck
             | CommsMessageType::PublicNoncesAck
@@ -739,7 +738,19 @@ impl Program {
                     return Ok(());
                 }
 
-                self.move_program_to_next_state()?;
+                self.move_program_to_next_state()
+            }
+        };
+
+        if result.is_err(){
+            let error = result.err().unwrap().to_string();
+            let result = program_context.broker_channel.send(
+                &program_context.components_config.l2,
+                OutgoingBitVMXApiMessages::SetupError(self.program_id, error).to_string()?,
+            );
+
+            if let Err(e) = result {
+                error!("Error sending setup completed message: {:?}", e);
             }
         }
 
