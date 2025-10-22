@@ -23,10 +23,12 @@ concurrency:
 jobs:
   test:
     if: ${{ !contains(github.event.pull_request.title, '[cov]') }}
-    uses: ./.github/workflows/union_tests_template_local.yml
+    uses: ./.github/workflows/union_tests_template.yml  # For CI.
+    # uses: ./.github/workflows/union_tests_template_local.yml  # For local act testing.
     with:
       repo: 'FairgateLabs/rust-bitvmx-workspace'
-      submodule_path: 'rust-bitvmx-client'
+      submodule_path: 'rust-bitvmx-client'  # For CI.
+      # submodule_path: '.'  # For local act testing.
       cargo_features: 'testpanic'
       nightly: false
     secrets: inherit
