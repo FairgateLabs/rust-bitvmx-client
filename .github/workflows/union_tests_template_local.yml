@@ -67,8 +67,11 @@ jobs:
           if [[ ! "${{ inputs.repo }}" =~ ^[a-zA-Z0-9_\-]+/[a-zA-Z0-9_\-]+$ ]]; then
             ERRORS+=("'repo' must be in format 'owner/repo'")
           fi
-          
-          if [[ ! "${{ inputs.submodule_path }}" =~ ^[a-zA-Z0-9_\-]+$ ]]; then
+
+          # Old regex - doesn't allow . or /
+          # if [[ ! "${{ inputs.submodule_path }}" =~ ^[a-zA-Z0-9_\-]+$ ]]; then
+          # New regex - allows . and / for paths like "." or "rust-bitvmx-client"
+          if [[ ! "${{ inputs.submodule_path }}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
             ERRORS+=("'submodule_path' contains invalid characters")
           fi
           
@@ -204,6 +207,7 @@ jobs:
         run: |
           echo "=== Performing initial cleanup ==="
           # Limpiar cualquier estado previo de docker
+          cd $GITHUB_WORKSPACE/${{ inputs.submodule_path }}
           docker-compose -f ./docker/bitcoind.docker-compose.yml down --volumes --remove-orphans || true
           docker container prune -f || true
           docker volume prune -f || true
@@ -212,63 +216,81 @@ jobs:
 
       - name: Build project
         run: | 
-          # cd ${ROOT}/${{ inputs.submodule_path }}
+          cd $GITHUB_WORKSPACE/${{ inputs.submodule_path }}
           cargo build --release
           cargo build --release --example union 
 
-      # - name: Run integration examples
-      #   run: |
-      #     set -e
+      - name: Run integration examples
+        run: |
+          set -e
 
-      #     run_example() {
-      #       echo "::group::🧪 Running example: $1"
+          run_example() {
+            echo "::group::🧪 Running example: $1"
             
-      #       # Restart bitcoind
-      #       docker compose -f ./docker/bitcoind.docker-compose.yml down bitcoind > /dev/null 2>&1 &
-      #       docker compose -f ./docker/bitcoind.docker-compose.yml up bitcoind > /dev/null 2>&1 &
+            # Restart bitcoind
+            docker compose -f ./docker/bitcoind.docker-compose.yml down --volumes || true
+            docker compose -f ./docker/bitcoind.docker-compose.yml up -d bitcoind
 
-      #       echo "Waiting for bitcoind..."
-      #       sleep 5
+            echo "Waiting for bitcoind to be ready..."
+            BITCOIND_READY=false
+            for i in {1..30}; do
+              if curl --silent --user foo:rpcpassword \
+                --data-binary '{"jsonrpc":"1.0","id":"healthcheck","method":"getblockchaininfo","params":[]}' \
+                -H 'content-type: text/plain;' http://127.0.0.1:18443/ 2>/dev/null | grep -q "result"; then
+                echo "✅ Bitcoind is ready (attempt $i)"
+                BITCOIND_READY=true
+                break
+              fi
+              echo "⏳ Waiting for bitcoind... (attempt $i/30)"
+              sleep 1
+            done
+            
+            if [ "$BITCOIND_READY" = false ]; then
+              echo "❌ Bitcoind failed to start after 30 seconds"
+              docker compose -f ./docker/bitcoind.docker-compose.yml logs bitcoind
+              exit 1
+            fi
 
-      #       # Clean previous state
-      #       rm -rf /tmp/broker_p2p_6118* /tmp/regtest/ || true
-      #       LOG_DIR="./logs/$1"
-      #       mkdir -p "$LOG_DIR"
+            # Clean previous state
+            rm -rf /tmp/broker_p2p_6118* /tmp/regtest/ || true
+            LOG_DIR="./logs/$1"
+            mkdir -p "$LOG_DIR"
 
-      #       # Run setup
-      #       RUST_BACKTRACE=full cargo run --release all --fresh \
-      #         2>&1 | sed -u -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})*)?[mGKHF]//g" > $LOG_DIR/bitvmx.log &
+            # Run setup
+            RUST_BACKTRACE=full cargo run --release all --fresh \
+              2>&1 | sed -u -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})*)?[mGKHF]//g" > $LOG_DIR/bitvmx.log &
 
-      #       # Wait for bitvmx clients to be ready
-      #       sleep 10
+            # Wait for bitvmx clients to be ready
+            sleep 10
 
-      #       # Run example
-      #       RUST_BACKTRACE=1 cargo run --release --example union "$1"
+            # Run example
+            RUST_BACKTRACE=1 cargo run --release --example union "$1"
 
-      #       echo "::endgroup::"
-      #     }
+            echo "::endgroup::"
+          }
 
-      #     # Run all desired examples
-      #     # Pre setup examples
-      #     # run_example wallet_balance
-      #     # run_example create_wallet
+          # Run all desired examples
+          # Pre setup examples
+          # run_example wallet_balance
+          # run_example create_wallet
 
-      #     # Protocol steps
-      #     # run_example committee
-      #     # run_example request_pegin
-      #     # run_example accept_pegin
-      #     run_example request_pegout
-      #     # run_example advance_funds
-      #     # run_example advance_funds_twice
-      #     # run_example double_reimbursement
-      #   env:
-      #     CI: true
-      #     GITHUB_ACTIONS: true
+          # Protocol steps
+          # run_example committee
+          # run_example request_pegin
+          # run_example accept_pegin
+          run_example request_pegout
+          # run_example advance_funds
+          # run_example advance_funds_twice
+          # run_example double_reimbursement
+        env:
+          CI: true
+          GITHUB_ACTIONS: true
 
       - name: Final cleanup
         if: always()
         run: |
           echo "=== Performing final cleanup ==="
+          cd $GITHUB_WORKSPACE/${{ inputs.submodule_path }}
           docker-compose -f ./docker/bitcoind.docker-compose.yml down --volumes --remove-orphans || true
           docker container prune -f || true
           docker volume prune -f || true          
