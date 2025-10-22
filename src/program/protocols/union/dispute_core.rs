@@ -18,7 +18,7 @@ use crate::{
     },
     types::{ProgramContext, PROGRAM_TYPE_ACCEPT_PEGIN},
 };
-use bitcoin::{OutPoint, PublicKey, Transaction, Txid};
+use bitcoin::{Amount, OutPoint, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use core::result::Result::Ok;
 use key_manager::winternitz::WinternitzType;
@@ -161,7 +161,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
             member,
         )?;
 
-        let wt_start_enabler_outputs =
+        let mut wt_start_enabler_outputs =
             self.create_wt_start_enabler(&mut protocol, &dispute_core_data, &committee, &keys)?;
 
         // If member is an operator create Operator initial deposit and dispute cores
@@ -205,7 +205,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
             &mut reimbursement_output,
             &committee.dispute_aggregated_key,
             &member.role,
-            &wt_start_enabler_outputs,
+            &mut wt_start_enabler_outputs,
         )?;
 
         Ok(())
@@ -1347,7 +1347,7 @@ impl DisputeCoreProtocol {
         reimbursement_output: &mut OutputType,
         dispute_aggregated_key: &PublicKey,
         role: &ParticipantRole,
-        wt_start_enabler_outputs: &Vec<OutputType>,
+        wt_start_enabler_outputs: &mut Vec<OutputType>,
     ) -> Result<(), BitVMXError> {
         let committee = self.committee(context)?;
         let protocol = self.load_or_create_protocol();
@@ -1458,6 +1458,7 @@ impl DisputeCoreProtocol {
         for i in 0..wt_start_enabler_outputs.len() {
             let output_value = wt_start_enabler_tx.output[i].value.to_sat();
 
+            wt_start_enabler_outputs[i].set_value(Amount::from_sat(output_value));
             wt_start_enabler_utxos.push((
                 wt_start_enabler_txid,
                 i as u32,

@@ -35,7 +35,7 @@ use crate::{
                     OP_INITIAL_DEPOSIT_AMOUNT, OP_INITIAL_DEPOSIT_OUT_SCRIPT,
                     OP_INITIAL_DEPOSIT_TX, OP_INITIAL_DEPOSIT_TXID, OP_LAZY_DISABLER_TX,
                     REIMBURSEMENT_KICKOFF_TX, SPEEDUP_VALUE, WT_DISABLER_DIRECTORY_TX,
-                    WT_DISABLER_TX, WT_START_ENABLER_UTXOS,
+                    WT_DISABLER_TX, WT_START_ENABLER_TX, WT_START_ENABLER_UTXOS,
                 },
             },
         },
@@ -659,7 +659,7 @@ impl FullPenalizationProtocol {
                 get_dispute_core_pid(data.committee_id, &committee.members[wt_index].take_key);
 
             let wt_start_enabler_utxos = self.wt_start_enabler_utxos(context, dispute_core_pid)?;
-            let wt_start_enabler_name = indexed_name(WT_START_ENABLER_UTXOS, wt_index);
+            let wt_start_enabler_name = indexed_name(WT_START_ENABLER_TX, wt_index);
             create_transaction_reference(
                 protocol,
                 &wt_start_enabler_name,
@@ -730,6 +730,16 @@ impl FullPenalizationProtocol {
                         ),
                         None,
                         None,
+                    )?;
+
+                    // Output is unspendable. Everything is paid in fees to make sure this TXs is mined.
+                    // If output goes to challenger WT it could decided no to dispatch or no to speedup it.
+                    protocol.add_transaction_output(
+                        &wt_disabler_name,
+                        &OutputType::SegwitUnspendable {
+                            value: Amount::from_sat(0),
+                            script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
+                        },
                     )?;
                 }
             }
