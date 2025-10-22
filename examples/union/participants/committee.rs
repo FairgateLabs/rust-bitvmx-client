@@ -138,13 +138,11 @@ impl Committee {
             )
         })?;
 
-        // TODO re-enable dispute channels once protocol is finalized:
-        // blocked by https://trello.com/c/eDA2ltcT/42-dispute-channel
         //  Setup Dispute Channel covenant
-        // let committee_id = self.committee_id;
-        // self.all(|op: &mut Member| {
-        //     op.setup_dispute_channel(committee_id, &members.clone(), &addresses.clone())
-        // })?;
+        let committee_id = self.committee_id;
+        self.all(|op: &mut Member| {
+            op.setup_dispute_channel(committee_id, &members.clone(), &addresses.clone())
+        })?;
 
         Ok(())
     }

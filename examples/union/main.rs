@@ -21,8 +21,9 @@ use bitvmx_client::program::{
             get_full_penalization_pid, triple_indexed_name,
         },
         types::{
-            ACCEPT_PEGIN_TX, DISPUTE_CORE_SHORT_TIMELOCK, OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX,
-            OP_INITIAL_DEPOSIT_TX, OP_LAZY_DISABLER_TX, WT_START_ENABLER_TX,
+            ACCEPT_PEGIN_TX, DISPUTE_CORE_LONG_TIMELOCK, DISPUTE_CORE_SHORT_TIMELOCK,
+            OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX, OP_INITIAL_DEPOSIT_TX, OP_LAZY_DISABLER_TX,
+            WT_START_ENABLER_TX,
         },
     },
 };
@@ -644,9 +645,11 @@ pub fn invalid_reimbursement(committee: &mut Committee, slot_index: usize) -> Re
         get_advance_funds_fee()?,
     )?;
 
-    let blocks = if NETWORK == Network::Regtest { 30 } else { 7 };
     info!("Starting mining loop to ensure challenge transaction is dispatched...");
-    wait_for_blocks(&committee.bitcoin_client, blocks)?;
+    wait_for_blocks(
+        &committee.bitcoin_client,
+        get_blocks_to_wait() + DISPUTE_CORE_LONG_TIMELOCK as u32,
+    )?;
 
     info!("Invalid reimbursement test complete.");
     Ok(())

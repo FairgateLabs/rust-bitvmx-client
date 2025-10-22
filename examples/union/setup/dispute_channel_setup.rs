@@ -29,33 +29,49 @@ impl DisputeChannelSetup {
     ) -> Result<usize> {
         let mut total_setups = 0;
         let my_address = addresses[my_index].clone();
+        let prover = members[my_index].role == ParticipantRole::Prover;
 
-        // If I'm an operator, set up dispute channels to all watchtowers
-        if members[my_index].role == ParticipantRole::Verifier {
-            for wt_index in 0..members.len() {
-                if wt_index == my_index {
-                    // Skip myself
-                    continue;
-                }
+        // Iterate over partners
+        for partner_index in 0..members.len() {
+            if partner_index == my_index
+                || (!prover && members[partner_index].role != ParticipantRole::Prover)
+            {
+                // Skip myself and verifiers pair
+                continue;
+            }
 
-                let pair_key = pairwise_keys
-                    .get(&addresses[wt_index])
-                    .cloned()
-                    .expect("pairwise key should be present");
+            // Set partner address and key pair
+            let partner_address = &addresses[partner_index];
+            let pair_key = pairwise_keys
+                .get(&partner_address)
+                .cloned()
+                .expect("pairwise key should be present");
 
-                info!(
-                    id = my_index,
-                    "Setting up DisputeChannel between operator index {} and watchtower index {}",
-                    my_index,
-                    wt_index
-                );
-
+            // If I'm an operator, set up DisputeChannel where I'm the operator and my partner is the watchtower
+            if prover {
+                Self::print_setup_info(my_index, my_index, partner_index);
                 Self::setup_one(
                     committee_id,
                     my_index,
-                    wt_index,
+                    partner_index,
                     &my_address,
-                    &addresses[wt_index],
+                    partner_address,
+                    &bitvmx,
+                    pair_key,
+                )?;
+
+                total_setups += 1;
+            }
+
+            // If my partner is an operator, set up DisputeChannel where they are the operator and I'm the watchtower
+            if members[partner_index].role == ParticipantRole::Prover {
+                Self::print_setup_info(my_index, partner_index, my_index);
+                Self::setup_one(
+                    committee_id,
+                    partner_index,
+                    my_index,
+                    &partner_address,
+                    &my_address,
                     &bitvmx,
                     pair_key,
                 )?;
@@ -64,39 +80,9 @@ impl DisputeChannelSetup {
             }
         }
 
-        // Now act as watchtower for other operators
-        for member_index in 0..members.len() {
-            if members[member_index].role == ParticipantRole::Verifier || member_index == my_index {
-                // Skip myself and other watchtowers
-                continue;
-            }
-
-            let pair_key = pairwise_keys
-                .get(&addresses[member_index])
-                .cloned()
-                .expect("pairwise key should be present");
-
-            info!(
-                id = my_index,
-                "Setting up DisputeChannel between operator index {} and watchtower index {}",
-                member_index,
-                my_index
-            );
-
-            Self::setup_one(
-                committee_id,
-                member_index,
-                my_index,
-                &addresses[member_index],
-                &my_address,
-                &bitvmx,
-                pair_key,
-            )?;
-
-            total_setups += 1;
-        }
-
-        Ok(total_setups)
+        // TODO: Return total setups when dispute channels are re-enabled
+        Ok(0)
+        // Ok(total_setups)
     }
 
     fn setup_one(
@@ -109,7 +95,7 @@ impl DisputeChannelSetup {
         pair_key: PublicKey,
     ) -> Result<()> {
         let drp_id = get_dispute_channel_pid(committee_id, op_index, wt_index);
-        let participants: Vec<CommsAddress> = vec![operator.clone(), watchtower.clone()];
+        let _participants: Vec<CommsAddress> = vec![operator.clone(), watchtower.clone()];
 
         // Program vars
         let program_path = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
@@ -132,12 +118,21 @@ impl DisputeChannelSetup {
         // }
 
         info!(
-            "Setting up DisputeChannel PID {} between OP {} and WT {}",
-            drp_id, op_index, wt_index,
+            "Setting up {} PID {} between OP {} and WT {}",
+            PROGRAM_TYPE_DRP, drp_id, op_index, wt_index,
         );
 
-        bitvmx.setup(drp_id, PROGRAM_TYPE_DRP.to_string(), participants, 0)?;
+        // TODO: re-enable dispute channels once protocol is finalized:
+        // blocked by https://trello.com/c/eDA2ltcT/42-dispute-channel
+        // bitvmx.setup(drp_id, PROGRAM_TYPE_DRP.to_string(), participants, 0)?;
 
         Ok(())
+    }
+
+    fn print_setup_info(member_index: usize, op_index: usize, wt_index: usize) {
+        info!(
+            index = member_index,
+            "Setting up DisputeChannel between OP {} and WT {}", op_index, wt_index
+        );
     }
 }

@@ -389,11 +389,11 @@ impl Member {
         let my_address = self.address()?.clone();
         let my_index = self.get_my_index(addresses)?;
         let my_role = members[my_index].role.clone();
+        let prover = my_role == ParticipantRole::Prover;
 
         for partner_index in 0..members.len() {
             if partner_index == my_index
-                || (members[partner_index].role != ParticipantRole::Prover
-                    && my_role != ParticipantRole::Prover)
+                || (!prover && members[partner_index].role != ParticipantRole::Prover)
             {
                 // Skip myself and watchtowers pairs
                 continue;
