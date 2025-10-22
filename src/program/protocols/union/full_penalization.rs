@@ -34,7 +34,8 @@ use crate::{
                     OP_DISABLER_DIRECTORY_TX, OP_DISABLER_DIRECTORY_UTXO, OP_DISABLER_TX,
                     OP_INITIAL_DEPOSIT_AMOUNT, OP_INITIAL_DEPOSIT_OUT_SCRIPT,
                     OP_INITIAL_DEPOSIT_TX, OP_INITIAL_DEPOSIT_TXID, OP_LAZY_DISABLER_TX,
-                    REIMBURSEMENT_KICKOFF_TX, SPEEDUP_VALUE, WT_START_ENABLER_UTXOS,
+                    REIMBURSEMENT_KICKOFF_TX, SPEEDUP_VALUE, WT_DISABLER_DIRECTORY_TX,
+                    WT_DISABLER_TX, WT_START_ENABLER_UTXOS,
                 },
             },
         },
@@ -94,6 +95,8 @@ impl ProtocolHandler for FullPenalizationProtocol {
 
         // Create Operator disabler directory and disablers
         self.create_operator_disablers(&mut protocol, &committee, &data, context)?;
+
+        self.create_watchtower_disablers(&mut protocol, &committee, &data, context)?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
@@ -640,5 +643,98 @@ impl FullPenalizationProtocol {
             take_enablers,
             initial_deposit_utxos,
         ))
+    }
+
+    fn create_watchtower_disablers(
+        &self,
+        protocol: &mut protocol_builder::builder::Protocol,
+        committee: &Committee,
+        data: &FullPenalizationData,
+        context: &ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        let member_count = committee.members.len();
+
+        for wt_index in 0..member_count {
+            let dispute_core_pid =
+                get_dispute_core_pid(data.committee_id, &committee.members[wt_index].take_key);
+
+            let wt_start_enabler_utxos = self.wt_start_enabler_utxos(context, dispute_core_pid)?;
+            let wt_start_enabler_name = indexed_name(WT_START_ENABLER_UTXOS, wt_index);
+            create_transaction_reference(
+                protocol,
+                &wt_start_enabler_name,
+                &mut wt_start_enabler_utxos.clone(),
+            )?;
+
+            for op_index in 0..member_count {
+                if wt_index == op_index
+                    || committee.members[op_index].role != ParticipantRole::Prover
+                {
+                    continue;
+                }
+                debug!(
+                    "Creating watchtower disabler for watchtower {} with member {}",
+                    wt_index, op_index
+                );
+
+                let wt_disabler_directory_name =
+                    double_indexed_name(WT_DISABLER_DIRECTORY_TX, wt_index, op_index);
+
+                let disabler_directory_utxo = wt_start_enabler_utxos[member_count].clone();
+
+                // Funds input
+                protocol.add_connection(
+                    "funds",
+                    &wt_start_enabler_name,
+                    (disabler_directory_utxo.1 as usize).into(),
+                    &wt_disabler_directory_name,
+                    InputSpec::Auto(
+                        SighashType::taproot_all(),
+                        SpendMode::All {
+                            key_path_sign: SignMode::Aggregate,
+                        },
+                    ),
+                    None,
+                    Some(disabler_directory_utxo.0),
+                )?;
+
+                // TODO: Add input from dispute channel when available
+
+                for member_index in 0..member_count {
+                    let wt_disabler_name =
+                        triple_indexed_name(WT_DISABLER_TX, wt_index, op_index, member_index);
+
+                    let utxo = wt_start_enabler_utxos[member_index].clone();
+                    protocol.add_connection(
+                        "from_start_enabler",
+                        &wt_start_enabler_name,
+                        (utxo.1 as usize).into(),
+                        &wt_disabler_name,
+                        // First script leaf is the disabler
+                        InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
+                        None,
+                        Some(utxo.0),
+                    )?;
+
+                    protocol.add_connection(
+                        "from_disabler_directory",
+                        &wt_disabler_directory_name,
+                        OutputType::taproot(DUST_VALUE, &committee.dispute_aggregated_key, &[])?
+                            .into(),
+                        &wt_disabler_name,
+                        InputSpec::Auto(
+                            SighashType::taproot_all(),
+                            SpendMode::KeyOnly {
+                                key_path_sign: SignMode::Aggregate,
+                            },
+                        ),
+                        None,
+                        None,
+                    )?;
+                }
+            }
+        }
+
+        Ok(())
     }
 }
