@@ -192,11 +192,28 @@ jobs:
             echo "::group::🧪 Running example: $1"
             
             # Restart bitcoind
-            docker compose -f ./docker/bitcoind.docker-compose.yml down bitcoind > /dev/null 2>&1 &
-            docker compose -f ./docker/bitcoind.docker-compose.yml up bitcoind > /dev/null 2>&1 &
+            docker compose -f ./docker/bitcoind.docker-compose.yml down --volumes || true
+            docker compose -f ./docker/bitcoind.docker-compose.yml up -d bitcoind
 
-            echo "Waiting for bitcoind..."
-            sleep 5
+            echo "Waiting for bitcoind to be ready..."
+            BITCOIND_READY=false
+            for i in {1..30}; do
+              if curl --silent --user foo:rpcpassword \
+                --data-binary '{"jsonrpc":"1.0","id":"healthcheck","method":"getblockchaininfo","params":[]}' \
+                -H 'content-type: text/plain;' http://127.0.0.1:18443/ 2>/dev/null | grep -q "result"; then
+                echo "✅ Bitcoind is ready (attempt $i)"
+                BITCOIND_READY=true
+                break
+              fi
+              echo "⏳ Waiting for bitcoind... (attempt $i/30)"
+              sleep 1
+            done
+            
+            if [ "$BITCOIND_READY" = false ]; then
+              echo "❌ Bitcoind failed to start after 30 seconds"
+              docker compose -f ./docker/bitcoind.docker-compose.yml logs bitcoind
+              exit 1
+            fi
 
             # Clean previous state
             rm -rf /tmp/broker_p2p_6118* /tmp/regtest/ || true
