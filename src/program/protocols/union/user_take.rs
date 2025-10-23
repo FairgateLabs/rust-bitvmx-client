@@ -64,7 +64,7 @@ impl ProtocolHandler for UserTakeProtocol {
         &self,
         _program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
-        Ok(ParticipantKeys::new(vec![], vec![]))
+        Ok(ParticipantKeys::new_with_verification_key(vec![], vec![], None))
     }
 
     fn build(

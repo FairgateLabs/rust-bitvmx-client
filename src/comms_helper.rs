@@ -1,5 +1,7 @@
 use crate::{errors::BitVMXError, program::participant::CommsAddress};
 use bitvmx_operator_comms::operator_comms::OperatorComms;
+use crate::keychain::KeyChain;
+use chrono::Utc;
 use serde::Serialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -9,12 +11,19 @@ const MAX_EXPECTED_MSG_LEN: usize = 1000000; // Maximum length for a message //T
 
 pub fn request<T: Serialize>(
     comms: &OperatorComms,
+    key_chain: &KeyChain,
     program_id: &Uuid,
     comms_address: CommsAddress,
     msg_type: CommsMessageType,
     msg: T,
 ) -> Result<(), BitVMXError> {
-    let serialize_msg = serialize_msg(msg_type, program_id, msg)?;
+
+    let msg_string = serde_json::to_string(&msg).map_err(|_| BitVMXError::SerializationError)?;
+    let timestamp = Utc::now().timestamp_millis();
+    let message = format!("{}{}{}", program_id.to_string(), msg_string, timestamp);
+    let signature = &key_chain.sign_rsa_message(message.as_bytes())?;
+
+    let serialize_msg = serialize_msg(msg_type, program_id, msg, timestamp, signature.to_vec())?;
     comms
         .send(
             &comms_address.pubkey_hash,
@@ -27,18 +36,20 @@ pub fn request<T: Serialize>(
 
 pub fn response<T: Serialize>(
     comms: &OperatorComms,
+    key_chain: &KeyChain,
     program_id: &Uuid,
     comms_address: CommsAddress,
     msg_type: CommsMessageType,
     msg: T,
 ) -> Result<(), BitVMXError> {
-    request(comms, program_id, comms_address, msg_type, msg) // In this version, response is identical to request. Keeping it separate for clarity.
+    request(comms, key_chain, program_id, comms_address, msg_type, msg) // In this version, response is identical to request. Keeping it separate for clarity.
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum CommsMessageType {
     Keys,
     KeysAck,
+    KeysVerification, // New: for consensus on key verification
     PublicNonces,
     PublicNoncesAck,
     PartialSignatures,
@@ -50,10 +61,11 @@ impl CommsMessageType {
     const KIND_MAP: &'static [(&'static CommsMessageType, [u8; 2])] = &[
         (&CommsMessageType::Keys, [0x00, 0x01]),
         (&CommsMessageType::KeysAck, [0x00, 0x02]),
-        (&CommsMessageType::PublicNonces, [0x00, 0x03]),
-        (&CommsMessageType::PublicNoncesAck, [0x00, 0x04]),
-        (&CommsMessageType::PartialSignatures, [0x00, 0x05]),
-        (&CommsMessageType::PartialSignaturesAck, [0x00, 0x06]),
+        (&CommsMessageType::KeysVerification, [0x00, 0x03]),
+        (&CommsMessageType::PublicNonces, [0x00, 0x04]),
+        (&CommsMessageType::PublicNoncesAck, [0x00, 0x05]),
+        (&CommsMessageType::PartialSignatures, [0x00, 0x06]),
+        (&CommsMessageType::PartialSignaturesAck, [0x00, 0x07]),
     ];
 
     // Convert message type to 2-byte representation
@@ -109,6 +121,8 @@ pub fn serialize_msg<T: Serialize>(
     msg_type: CommsMessageType,
     program_id: &Uuid,
     data: T,
+    timestamp: i64,
+    signature: Vec<u8>,
 ) -> Result<Vec<u8>, BitVMXError> {
     let version = "1.0";
     // Convert version and message type to bytes
@@ -119,6 +133,8 @@ pub fn serialize_msg<T: Serialize>(
     let payload = json!({
         "program_id": program_id.to_string(),
         "msg": data,
+        "timestamp": timestamp,
+        "signature": signature,
     });
     let json_payload = serde_json::to_vec(&payload).map_err(|_| BitVMXError::SerializationError)?;
 
@@ -133,7 +149,7 @@ pub fn serialize_msg<T: Serialize>(
 
 pub fn deserialize_msg(
     data: Vec<u8>,
-) -> Result<(String, CommsMessageType, Uuid, Value), BitVMXError> {
+) -> Result<(String, CommsMessageType, Uuid, Value, i64, Vec<u8>), BitVMXError> {
     // Minimum length check: 4 bytes (2 for version + 2 for message type) + payload
     if data.len() < MIN_EXPECTED_MSG_LEN || data.len() > MAX_EXPECTED_MSG_LEN {
         return Err(BitVMXError::InvalidMessageFormat);
@@ -164,6 +180,19 @@ pub fn deserialize_msg(
     // Convert program ID to Uuid
     let program_id = Uuid::parse_str(program_id).map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
+    let timestamp = payload
+        .get("timestamp")
+        .and_then(|t| t.as_i64())
+        .ok_or(BitVMXError::InvalidMessageFormat)?;
+        
+    let signature = payload
+        .get("signature")
+        .and_then(|s| s.as_array())
+        .ok_or(BitVMXError::InvalidMessageFormat)?
+        .iter()
+        .filter_map(|v| v.as_u64().and_then(|b| if b <= 255 { Some(b as u8) } else { None }))
+        .collect::<Vec<u8>>();
+
     //TODO: CHECK THIS WITH @KEVIN
     // Validate that "msg" is a byte array by filtering out invalid values
     // let message = to_vec(&msg)
@@ -179,7 +208,7 @@ pub fn deserialize_msg(
     //     return Err(BitVMXError::InvalidMessageFormat); // Ensure no invalid bytes after filtering previously
     // }
 
-    Ok((version, msg_type, program_id, data.clone()))
+    Ok((version, msg_type, program_id, data.clone(), timestamp, signature))
 }
 
 #[cfg(test)]
@@ -191,20 +220,24 @@ mod tests {
         assert_eq!(CommsMessageType::Keys.to_bytes().unwrap(), [0x00, 0x01]);
         assert_eq!(CommsMessageType::KeysAck.to_bytes().unwrap(), [0x00, 0x02]);
         assert_eq!(
-            CommsMessageType::PublicNonces.to_bytes().unwrap(),
+            CommsMessageType::KeysVerification.to_bytes().unwrap(),
             [0x00, 0x03]
         );
         assert_eq!(
-            CommsMessageType::PublicNoncesAck.to_bytes().unwrap(),
+            CommsMessageType::PublicNonces.to_bytes().unwrap(),
             [0x00, 0x04]
         );
         assert_eq!(
-            CommsMessageType::PartialSignatures.to_bytes().unwrap(),
+            CommsMessageType::PublicNoncesAck.to_bytes().unwrap(),
             [0x00, 0x05]
         );
         assert_eq!(
-            CommsMessageType::PartialSignaturesAck.to_bytes().unwrap(),
+            CommsMessageType::PartialSignatures.to_bytes().unwrap(),
             [0x00, 0x06]
+        );
+        assert_eq!(
+            CommsMessageType::PartialSignaturesAck.to_bytes().unwrap(),
+            [0x00, 0x07]
         );
     }
 
@@ -220,18 +253,22 @@ mod tests {
         );
         assert_eq!(
             CommsMessageType::from_bytes([0x00, 0x03]).unwrap(),
-            CommsMessageType::PublicNonces
+            CommsMessageType::KeysVerification
         );
         assert_eq!(
             CommsMessageType::from_bytes([0x00, 0x04]).unwrap(),
-            CommsMessageType::PublicNoncesAck
+            CommsMessageType::PublicNonces
         );
         assert_eq!(
             CommsMessageType::from_bytes([0x00, 0x05]).unwrap(),
-            CommsMessageType::PartialSignatures
+            CommsMessageType::PublicNoncesAck
         );
         assert_eq!(
             CommsMessageType::from_bytes([0x00, 0x06]).unwrap(),
+            CommsMessageType::PartialSignatures
+        );
+        assert_eq!(
+            CommsMessageType::from_bytes([0x00, 0x07]).unwrap(),
             CommsMessageType::PartialSignaturesAck
         );
     }
@@ -253,7 +290,7 @@ mod tests {
         let program_id = Uuid::new_v4();
         let msg = vec![0x01, 0x02, 0x03];
 
-        let result = serialize_msg(msg_type.clone(), &program_id, msg.clone()).unwrap();
+        let result = serialize_msg(msg_type.clone(), &program_id, msg.clone(), 0, vec![]).unwrap();
 
         let expected_version = Version::to_bytes(version).unwrap();
         let expected_msg_type = msg_type.to_bytes().unwrap();
@@ -279,12 +316,14 @@ mod tests {
         let program_id = Uuid::new_v4();
         let msg = "Hello, world!";
 
-        let serialized_msg = serialize_msg(msg_type.clone(), &program_id, msg).unwrap();
+        let serialized_msg = serialize_msg(msg_type.clone(), &program_id, msg, 0, vec![]).unwrap();
         let (
             deserialized_version,
             deserialized_msg_type,
             deserialized_program_id,
             deserialized_msg,
+            _deserialized_timestamp,
+            _deserialized_signature,
         ) = deserialize_msg(serialized_msg).unwrap();
 
         assert_eq!(deserialized_version, version);

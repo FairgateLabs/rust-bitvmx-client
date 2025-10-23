@@ -102,8 +102,11 @@ impl Into<PublicKeyType> for WinternitzPublicKey {
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct ParticipantKeys {
     pub mapping: HashMap<String, PublicKeyType>,
+    pub signatures: HashMap<String, Vec<u8>>, // RSA signatures for each key
     pub aggregated: Vec<String>,
     pub computed_aggregated: HashMap<String, PublicKey>,
+    pub verification_public_key: Option<PublicKey>,
+    pub rsa_public_keys: HashMap<String, String>, // RSA public keys for each participant
 }
 
 impl ParticipantKeys {
@@ -114,8 +117,30 @@ impl ParticipantKeys {
         }
         Self {
             mapping,
+            signatures: HashMap::new(),
             aggregated,
             computed_aggregated: HashMap::new(),
+            verification_public_key: None,
+            rsa_public_keys: HashMap::new(),
+        }
+    }
+
+    pub fn new_with_verification_key(
+        keys: Vec<(String, PublicKeyType)>, 
+        aggregated: Vec<String>, 
+        verification_public_key: Option<PublicKey>
+    ) -> Self {
+        let mut mapping = HashMap::new();
+        for (name, key) in keys {
+            mapping.insert(name.to_string(), key);
+        }
+        Self {
+            mapping,
+            signatures: HashMap::new(),
+            aggregated,
+            computed_aggregated: HashMap::new(),
+            verification_public_key,
+            rsa_public_keys: HashMap::new(),
         }
     }
 
@@ -139,6 +164,38 @@ impl ParticipantKeys {
 
     pub fn speedup(&self) -> &PublicKey {
         self.get_public("speedup").unwrap()
+    }
+
+    pub fn get_verification_public_key(&self) -> Option<&PublicKey> {
+        self.verification_public_key.as_ref()
+    }
+
+    pub fn set_verification_public_key(&mut self, key: PublicKey) {
+        self.verification_public_key = Some(key);
+    }
+
+    pub fn has_verification_key(&self) -> bool {
+        self.verification_public_key.is_some()
+    }
+
+    pub fn add_signature(&mut self, key_name: &str, signature: Vec<u8>) {
+        self.signatures.insert(key_name.to_string(), signature);
+    }
+
+    pub fn get_signature(&self, key_name: &str) -> Option<&Vec<u8>> {
+        self.signatures.get(key_name)
+    }
+
+    pub fn has_signature(&self, key_name: &str) -> bool {
+        self.signatures.contains_key(key_name)
+    }
+
+    pub fn add_rsa_public_key(&mut self, participant_id: &str, rsa_key: String) {
+        self.rsa_public_keys.insert(participant_id.to_string(), rsa_key);
+    }
+
+    pub fn get_rsa_public_key(&self, participant_id: &str) -> Option<&String> {
+        self.rsa_public_keys.get(participant_id)
     }
 }
 

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::Path, rc::Rc};
+use std::{collections::HashMap, path::Path, rc::Rc, str::FromStr};
 
 use bitcoin::{secp256k1::rand::thread_rng, PublicKey, XOnlyPublicKey};
 use key_manager::{
@@ -8,6 +8,7 @@ use key_manager::{
     musig2::{types::MessageId, PartialSignature, PubNonce},
     winternitz::{WinternitzPublicKey, WinternitzType},
 };
+use signature::SignatureEncoding;
 
 use protocol_builder::unspendable::unspendable_key;
 use storage_backend::storage::{KeyValueStore, Storage};
@@ -22,6 +23,8 @@ const RSA_KEY_INDEX: usize = 0; // TODO: make this configurable
 pub struct KeyChain {
     pub key_manager: Rc<KeyManager>,
     pub store: Rc<Storage>,
+    pub verification_public_key: Option<PublicKey>,
+    pub rsa_public_key: Option<String>,
 }
 
 pub type Index = u32;
@@ -62,9 +65,18 @@ impl KeyChain {
             )));
         }
         let pem_file = std::fs::read_to_string(path).unwrap();
-        let _pub_key = key_manager.import_rsa_private_key(&pem_file, RSA_KEY_INDEX)?;
+        let rsa_pub_key: String = key_manager.import_rsa_private_key(&pem_file, RSA_KEY_INDEX)?;
 
-        Ok(Self { key_manager, store })
+        // Use ECDSA for both signing and verification - unified key management
+        // This eliminates the need for separate RSA and ECDSA keys
+        let verification_key = key_manager.derive_keypair(0)?;
+        
+        Ok(Self { 
+            key_manager, 
+            store, 
+            verification_public_key: Some(verification_key),
+            rsa_public_key: Some(rsa_pub_key),
+        })
     }
 
     pub fn get_new_ecdsa_index(&self) -> Result<Index, BitVMXError> {
@@ -249,6 +261,73 @@ impl KeyChain {
     //         .map_err(BitVMXError::MuSig2SignerError)?;
     //     Ok(())
     // }
+
+    /// Sign a message using a pre-loaded RSA private key (optimized version)
+    /// This method assumes the RSA key is already loaded in the key manager at the specified index
+    pub fn sign_with_rsa_key(
+        &self,
+        message: &[u8],
+        _index: usize,
+    ) -> Result<Vec<u8>, BitVMXError> {
+        // Sign the message using the pre-loaded key
+        // Sign the message using the default RSA key index
+        let signature = self.key_manager.sign_rsa_message(message, RSA_KEY_INDEX)?;
+        
+        // Convert signature to bytes using the signature encoding
+        Ok(signature.to_bytes().to_vec())
+    }
+
+    /// Sign a message using RSA with the default key index (for compatibility)
+    pub fn sign_rsa_message(
+        &self,
+        message: &[u8],
+    ) -> Result<Vec<u8>, BitVMXError> {
+        // Sign the message using the default RSA key index
+        self.sign_with_rsa_key(message, RSA_KEY_INDEX)
+    }
+
+    /// Verify an RSA signature using a public key
+    pub fn verify_rsa_signature(
+        &self,
+        _pub_key: &PublicKey,
+        message: &[u8],
+        signature: &[u8],
+    ) -> Result<bool, BitVMXError> {
+        // Create a Signature from the bytes using try_from
+        let rsa_signature = key_manager::rsa::Signature::try_from(signature)
+            .map_err(|_e| BitVMXError::InvalidMessageFormat)?;
+        
+        // Get the RSA public key from the key manager (the one that was imported)
+        let rsa_pub_key = self.rsa_public_key.as_ref()
+            .ok_or(BitVMXError::InvalidMessageFormat)?;
+        
+        // Verify the signature using SignatureVerifier
+        Ok(key_manager::verifier::SignatureVerifier::new()
+            .verify_rsa_signature(&rsa_signature, message, rsa_pub_key)?)
+    }
+
+    pub fn verify_rsa_signature_with_string(
+        &self,
+        rsa_public_key_str: &str,
+        message: &[u8],
+        signature: &[u8],
+    ) -> Result<bool, BitVMXError> {
+        // Create a Signature from the bytes using try_from
+        let rsa_signature = key_manager::rsa::Signature::try_from(signature)
+            .map_err(|_e| BitVMXError::InvalidMessageFormat)?;
+        
+        // Parse the RSA public key from string
+        let rsa_pub_key = PublicKey::from_str(rsa_public_key_str)
+            .map_err(|_| BitVMXError::InvalidMessageFormat)?;
+        
+        // Verify the signature using SignatureVerifier
+        Ok(key_manager::verifier::SignatureVerifier::new()
+            .verify_rsa_signature(&rsa_signature, message, &rsa_pub_key.to_string())?)
+    }
+
+    pub fn get_verification_public_key(&self) -> Result<PublicKey, BitVMXError> {
+        Ok(self.verification_public_key.clone().unwrap())
+    }
 }
 
 #[cfg(test)]
@@ -293,4 +372,5 @@ mod tests {
 
         Ok(())
     }
+
 }
