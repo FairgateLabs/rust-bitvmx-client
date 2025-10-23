@@ -85,7 +85,7 @@ impl ProtocolHandler for FullPenalizationProtocol {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         info!(
-            "Building Full Penalization Protocol for program {}",
+            "Building FullPenalizationProtocol for program {}",
             self.ctx.id
         );
 
@@ -135,7 +135,7 @@ impl ProtocolHandler for FullPenalizationProtocol {
     ) -> Result<(), BitVMXError> {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
         info!(
-            "Full Penalization protocol received news of transaction: {}, txid: {} with {} confirmations",
+            "FullPenalizationProtocol received news of transaction: {}, txid: {} with {} confirmations",
             tx_name, tx_id, tx_status.confirmations
         );
 
