@@ -1,8 +1,22 @@
+#[macro_export]
+macro_rules! expect_msg {
+    ($bitvmx:expr, $pattern:pat => $expr:expr) => {{
+        let msg = $bitvmx.wait_message(Some(std::time::Duration::from_secs(120)), None)?;
+
+        if let $pattern = msg {
+            Ok($expr)
+        } else {
+            Err(anyhow::anyhow!("Expected `{}`", stringify!($pattern)))
+        }
+    }};
+}
+
 const TIMEOUT_SECS: std::time::Duration = std::time::Duration::from_secs(120);
 
 use bitvmx_client::{client::BitVMXClient, types::OutgoingBitVMXApiMessages};
 use std::{thread, time::Duration};
 use tracing::info;
+const TIMEOUT: Duration = Duration::from_secs(120);
 
 pub fn wait_for_message_blocking<F>(
     bitvmx: &BitVMXClient,

@@ -1,0 +1,34 @@
+name: 'Test action'
+on:
+  push:
+    branches: 
+      - '**'
+  pull_request:
+    branches: 
+      - '**'
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  actions: read
+  checks: write
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'
+  cancel-in-progress: true
+
+jobs:
+  test:
+    if: ${{ !contains(github.event.pull_request.title, '[cov]') }}
+    uses: ./.github/workflows/union_tests_template.yml  # For CI.
+    # uses: ./.github/workflows/union_tests_template_local.yml  # For local act testing.
+    with:
+      repo: 'FairgateLabs/rust-bitvmx-workspace'
+      submodule_path: 'rust-bitvmx-client'  # For CI.
+      # submodule_path: '.'  # For local act testing.
+      cargo_features: 'testpanic'
+      nightly: false
+    secrets: inherit

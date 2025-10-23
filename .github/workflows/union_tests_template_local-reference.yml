@@ -1,0 +1,162 @@
+name: 'Local Test Action'
+on:  
+  pull_request:
+    branches: [ "none" ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  GITHUB_ACTIONS: true
+
+jobs:
+  local_test:
+    runs-on: ubuntu-latest
+    steps: 
+      - name: Set up SSH key for submodule cloning
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          sed -i 's/-----BEGIN OPENSSH PRIVATE KEY-----//g' ~/.ssh/id_rsa
+          sed -i 's/-----END OPENSSH PRIVATE KEY-----//g' ~/.ssh/id_rsa
+          sed -i 's/ /\'$'\n/g' ~/.ssh/id_rsa
+          sed -i '1s/^/-----BEGIN OPENSSH PRIVATE KEY-----/' ~/.ssh/id_rsa
+          sed -i ':a;N;$!ba;s/\n$//;P;D' ~/.ssh/id_rsa
+          echo "-----END OPENSSH PRIVATE KEY-----" >> ~/.ssh/id_rsa
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      
+      - name: Set up git with token authentication
+        run: |
+          git config --global url."https://${{ secrets.REPO_ACCESS_TOKEN }}@github.com/".insteadOf "https://github.com/"
+    
+      - name: Checkout workspace repository (CI)
+        run: |
+          rm -rf rust-bitvmx-workspace
+          git clone --recurse-submodules --depth=1 --shallow-submodules https://github.com/FairgateLabs/rust-bitvmx-workspace rust-bitvmx-workspace
+      
+      - name: Checkout current repository (CI)
+        run: |
+          BRANCH="${{ github.head_ref }}"
+          if [[ -z "$BRANCH" ]]; then
+            BRANCH="main"
+          fi
+          git clone --depth=1 --branch docker_ci https://github.com/FairgateLabs/rust-bitvmx-client rust-bitvmx-client
+      
+      # Para ACT - usar código local
+      - name: Use local workspace (ACT)
+        run: |
+          echo "=== Using local workspace for ACT ==="
+          pwd
+          ls -la
+          echo "=== Workspace is already available locally ==="
+          
+      - name: Show structure for debugging
+        run: |
+          echo "=== Current directory structure ==="
+          pwd
+          ls -la
+          if [ -d "rust-bitvmx-client" ]; then
+            echo "=== rust-bitvmx-client contents ==="
+            ls -la rust-bitvmx-client/
+          fi
+          if [ -d "../rust-bitvmx-client" ]; then
+            echo "=== ../rust-bitvmx-client contents ==="
+            ls -la ../rust-bitvmx-client/
+          fi        
+        
+      - name: Detect host for container
+        run: |
+          if (grep -qi microsoft /proc/version || docker info 2>/dev/null | grep -qi 'ostype: windows'); then
+            echo "IS_WINDOWS_DOCKER=true" >> $GITHUB_ENV
+          else
+            echo "IS_WINDOWS_DOCKER=false" >> $GITHUB_ENV
+          fi
+  
+      - name: Move all submodules to correct location
+        run: |
+          echo "=== Current location ==="
+          pwd
+          ls -l
+          
+          echo "=== Workspace contents ==="
+          ls -l rust-bitvmx-workspace/
+          
+          echo "=== Moving submodules to parent level (excluding nested rust-bitvmx-client) ==="
+          # Mover todos los submodules al directorio PADRE, no dentro del client
+          find rust-bitvmx-workspace -mindepth 1 -maxdepth 1 ! -name 'rust-bitvmx-client' -exec mv {} . \;
+          
+          echo "=== After moving ==="
+          pwd
+          ls -l
+          echo "=== Client directory ==="
+          ls -l rust-bitvmx-client/          
+
+      # Install libclang (required for librocksdb-sys)
+      - name: Install libclang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev clang
+      
+      # Install Rust
+      - name: Install Rust Toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+  
+      - name: Install docker-compose
+        run: |
+          sudo curl -L "https://github.com/docker/compose/releases/download/v2.20.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          sudo chmod +x /usr/local/bin/docker-compose
+          docker-compose --version          
+          
+      # Build BitVMX-CPU dependencies
+      - name: Build BitVMX-CPU Emulator
+        run: |
+          cd rust-bitvmx-client
+          chmod +x .github/scripts/build-emulator.sh
+          .github/scripts/build-emulator.sh
+
+      - name: Run docker-compose (initial cleanup)
+        run: |
+          echo "=== Performing initial cleanup ==="
+          cd rust-bitvmx-client
+          
+          # Limpiar cualquier estado previo de docker
+          docker-compose -f tests/docker/docker-compose.yml down --volumes --remove-orphans || true
+          docker container prune -f || true
+          docker volume prune -f || true
+          
+          echo "=== Initial cleanup completed ==="
+      
+      - name: Run tests with complete isolation
+        working-directory: rust-bitvmx-client
+        run: |
+          echo "=== Running tests with complete isolation ==="
+          chmod +x .github/scripts/run-isolated-tests.sh
+          ./.github/scripts/run-isolated-tests.sh
+        env:
+          CI: true
+          GITHUB_ACTIONS: true
+
+      - name: Final cleanup
+        if: always()
+        run: |
+          echo "=== Performing final cleanup ==="
+          cd rust-bitvmx-client
+          
+          # Limpiar todos los containers y volúmenes
+          for compose_file in tests/docker/docker-compose-*.yml; do
+            if [ -f "$compose_file" ]; then
+              docker-compose -f "$compose_file" down --volumes --remove-orphans || true
+            fi
+          done
+          
+          docker-compose -f tests/docker/docker-compose.yml down --volumes --remove-orphans || true
+          docker container prune -f || true
+          docker volume prune -f || true
+          
+          echo "=== Final cleanup completed ==="
