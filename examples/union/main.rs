@@ -545,7 +545,7 @@ pub fn request_and_accept_pegin(
         user.create_and_dispatch_speedup(
             OutPoint {
                 txid: accept_pegin_txid.into(),
-                vout: 1,
+                vout: 2,
             },
             get_accept_pegin_fee()?,
         )?;
