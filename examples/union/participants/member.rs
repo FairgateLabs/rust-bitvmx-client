@@ -1,10 +1,10 @@
-use crate::setup::full_penalization_setup::FullPenalizationSetup;
 use crate::wallet::helper::print_link;
 use crate::{
     macros::wait_for_message_blocking,
     setup::{
         accept_pegin_setup::AcceptPegInSetup, advance_funds_setup::AdvanceFunds,
         dispute_channel_setup::DisputeChannelSetup, dispute_core_setup::DisputeCoreSetup,
+        full_penalization_setup::FullPenalizationSetup, reject_pegin_setup::RejectPegin,
         user_take_setup::UserTakeSetup,
     },
     wait_until_msg,
@@ -603,6 +603,26 @@ impl Member {
         let txid = tx.compute_txid();
         info!("Dispatched reimbursement kickoff tx: {}", txid);
 
+        Ok(())
+    }
+
+    pub fn reject_pegin(
+        &self,
+        committee_id: Uuid,
+        request_pegin_txid: Txid,
+        member_index: usize,
+    ) -> Result<()> {
+        RejectPegin::setup(
+            &self.bitvmx,
+            Uuid::new_v4(),
+            committee_id,
+            member_index,
+            request_pegin_txid,
+            self.address()?.clone(),
+        )?;
+
+        let program_id = wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
+        info!(id = self.id, program_id = ?program_id, "RejectPegin setup completed for operator index {}", member_index);
         Ok(())
     }
 }

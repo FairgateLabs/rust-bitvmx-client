@@ -4,6 +4,7 @@ pub mod common;
 pub mod dispute_core;
 pub mod full_penalization;
 pub mod pairwise_penalization;
+pub mod reject_pegin;
 pub mod scripts;
 pub mod types;
 pub mod user_take;

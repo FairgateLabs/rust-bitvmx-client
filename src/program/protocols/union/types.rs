@@ -19,6 +19,7 @@ pub const OP_INITIAL_DEPOSIT_OUT_SCRIPT: &str = "OP_INITIAL_DEPOSIT_OUT_SCRIPT";
 
 // Transaction names
 pub const REQUEST_PEGIN_TX: &str = "REQUEST_PEGIN_TX";
+pub const REJECT_PEGIN_TX: &str = "REJECT_PEGIN_TX";
 pub const ACCEPT_PEGIN_TX: &str = "ACCEPT_PEGIN_TX";
 pub const CANCEL_TAKE0_TX: &str = "CANCEL_TAKE0_TX";
 pub const USER_TAKE_TX: &str = "USER_TAKE_TX";
@@ -127,6 +128,19 @@ pub struct PegInRequest {
 impl PegInRequest {
     pub fn name() -> String {
         "pegin_request".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RejectPeginData {
+    pub txid: Txid,
+    pub committee_id: Uuid,
+    pub member_index: usize,
+}
+
+impl RejectPeginData {
+    pub fn name() -> String {
+        "reject_pegin_data".to_string()
     }
 }
 

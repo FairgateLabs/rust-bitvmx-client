@@ -300,7 +300,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
         } else if name.starts_with(OPERATOR_WON_TX) {
             self.operator_won_tx(context, name)
         } else if name == CANCEL_TAKE0_TX {
-            self.cancel_take0_tx(context, name)
+            self.cancel_take0_tx(context)
         } else {
             Err(BitVMXError::InvalidTransactionName(name.to_string()))
         }
@@ -741,9 +741,9 @@ impl AcceptPegInProtocol {
     fn cancel_take0_tx(
         &self,
         context: &ProgramContext,
-        name: &str,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         let member_leaf_index = self.ctx.my_idx;
+        let name = CANCEL_TAKE0_TX;
 
         info!(
             id = self.ctx.my_idx,
