@@ -22,7 +22,6 @@ LOGS_DIR="logs/examples/$name"
 rm -rf $LOGS_DIR
 mkdir -p $LOGS_DIR
 echo "Setting up example: $name"
-BITVMX_LOG_FILE="$LOGS_DIR/bitvmx.log"
 EXAMPLE_LOG_FILE="$LOGS_DIR/example.log"
 
 # Clean up previous logs and data
@@ -37,27 +36,32 @@ echo "Setting up Bitcoin regtest node..."
 cargo run --release --example union setup_bitcoin_node
 echo "Bitcoin regtest node setup complete."
 
-# Initialize log files
-echo "" > $BITVMX_LOG_FILE
+# Initialize log file
 echo "" > $EXAMPLE_LOG_FILE 
 
-# Open logs in VS Code if available
+# Open log in VS Code if available
 if command -v code >/dev/null 2>&1; then
-  # Open logs in VS Code
-  code --reuse-window "$BITVMX_LOG_FILE" "$EXAMPLE_LOG_FILE" &
+  # Open log in VS Code
+  code --reuse-window "$EXAMPLE_LOG_FILE" &
 else
   echo "VS Code not found. Open logs manually at:"
-  echo "  $BITVMX_LOG_FILE"
   echo "  $EXAMPLE_LOG_FILE"
   echo ""
 fi
 
 # Run the BitVMX clients and log output, stripping ANSI color codes
 echo "Running BitVMX clients on regtest..."
-RUST_BACKTRACE=full cargo run --release all --fresh 2>&1 | sed -u -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})*)?[mGKHF]//g" > $BITVMX_LOG_FILE &
+
+# Number of operator instances to start. Run them in separate background processes
+OP_COUNT=4
+for i in $(seq 1 $OP_COUNT); do
+  op_name="op_${i}"
+  RUST_BACKTRACE=full cargo run --release "$op_name" --fresh 2>&1 \
+    | sed -u -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})*)?[mGKHF]//g" > "$LOGS_DIR/bitvmx_$op_name.log" &
+done
 
 echo "Waiting for BitVMX clients to initialize..."
-sleep 10s
+sleep 20s
 
 printf "\nRunning union example: $name...\n\n\n"
 RUST_BACKTRACE=full cargo run --release --example union $name 2>&1 | sed -u -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})*)?[mGKHF]//g" > $EXAMPLE_LOG_FILE

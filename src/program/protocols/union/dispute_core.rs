@@ -14,11 +14,11 @@ use crate::{
                 types::*,
             },
         },
-        variables::VariableTypes,
+        variables::{PartialUtxo, VariableTypes},
     },
     types::{ProgramContext, PROGRAM_TYPE_ACCEPT_PEGIN},
 };
-use bitcoin::{OutPoint, PublicKey, Transaction, Txid};
+use bitcoin::{Amount, OutPoint, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use core::result::Result::Ok;
 use key_manager::winternitz::WinternitzType;
@@ -145,6 +145,8 @@ impl ProtocolHandler for DisputeCoreProtocol {
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
+        info!("Building DisputeCoreProtocol for program {}", self.ctx.id);
+
         let mut protocol = self.load_or_create_protocol();
         let dispute_core_data = self.dispute_core_data(context)?;
         let committee = self.committee(context)?;
@@ -154,14 +156,15 @@ impl ProtocolHandler for DisputeCoreProtocol {
         let mut reimbursement_output =
             self.create_reimbursement_output(&dispute_core_data, &keys, &committee)?;
 
-        self.create_wt_initial_deposit_output(
+        self.create_wt_start_enabler_output(
             &mut protocol,
             &dispute_core_data,
             &member_keys,
             member,
         )?;
 
-        self.create_wt_start_enabler(&mut protocol, &dispute_core_data, &committee, &keys)?;
+        let mut wt_start_enabler_outputs =
+            self.create_wt_start_enabler(&mut protocol, &dispute_core_data, &committee, &keys)?;
 
         // If member is an operator create Operator initial deposit and dispute cores
         if member.role == ParticipantRole::Prover {
@@ -204,6 +207,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
             &mut reimbursement_output,
             &committee.dispute_aggregated_key,
             &member.role,
+            &mut wt_start_enabler_outputs,
         )?;
 
         Ok(())
@@ -240,7 +244,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
     ) -> Result<(), BitVMXError> {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
         info!(
-            "Dispute core protocol received news of transaction: {}, txid: {} with {} confirmations",
+            "DisputeCoreProtocol received news of transaction: {}, txid: {} with {} confirmations",
             tx_name, tx_id, tx_status.confirmations
         );
 
@@ -260,7 +264,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
         // This is called after the protocol is built and ready to be used
         info!(
             id = self.ctx.my_idx,
-            "DisputeCore {} setup complete", self.ctx.id
+            "DisputeCoreProtocol {} setup complete", self.ctx.id
         );
 
         // Automatically get and dispatch the PROTOCOL_FUNDING_TX transaction
@@ -282,7 +286,7 @@ impl DisputeCoreProtocol {
         Self { ctx }
     }
 
-    fn create_wt_initial_deposit_output(
+    fn create_wt_start_enabler_output(
         &self,
         protocol: &mut Protocol,
         dispute_core_data: &DisputeCoreData,
@@ -353,11 +357,17 @@ impl DisputeCoreProtocol {
         data: &DisputeCoreData,
         committee: &Committee,
         keys: &Vec<ParticipantKeys>,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<Vec<OutputType>, BitVMXError> {
         let wt_speedup_key = keys[data.member_index].get_public(SPEEDUP_KEY)?;
+        let validate_dispute_key = protocol_builder::scripts::verify_signature(
+            &committee.dispute_aggregated_key,
+            SignMode::Aggregate,
+        )?;
+        let mut outputs = vec![];
 
         for (member_index, member) in committee.members.clone().iter().enumerate() {
-            let mut scripts = vec![];
+            // NOTE: This introduce a shift between scripts and slots to open a dispute
+            let mut scripts = vec![validate_dispute_key.clone()];
 
             if member.role == ParticipantRole::Prover && data.member_index != member_index {
                 for slot in 0..committee.packet_size as usize {
@@ -373,29 +383,33 @@ impl DisputeCoreProtocol {
                 }
             }
 
+            let start_enabler_output =
+                OutputType::taproot(AUTO_AMOUNT, &committee.dispute_aggregated_key, &scripts)?;
+
             protocol.add_transaction_output(
                 &WT_START_ENABLER_TX,
-                &OutputType::taproot(AUTO_AMOUNT, &committee.dispute_aggregated_key, &scripts)?,
+                // FIXME: Internal key should be wt_dispute_key?
+                &start_enabler_output,
             )?;
+
+            outputs.push(start_enabler_output);
         }
 
         let wt_disabler_directory_fee = estimate_fee(2, committee.members.len(), 1);
-        protocol.add_transaction_output(
-            &WT_START_ENABLER_TX,
-            &OutputType::taproot(
-                DUST_VALUE * committee.members.len() as u64 + wt_disabler_directory_fee,
-                &committee.dispute_aggregated_key,
-                &[],
-            )?,
+        let disabler_directory_funds_output = OutputType::taproot(
+            DUST_VALUE * committee.members.len() as u64 + wt_disabler_directory_fee,
+            &committee.dispute_aggregated_key,
+            &[],
         )?;
+        protocol.add_transaction_output(&WT_START_ENABLER_TX, &disabler_directory_funds_output)?;
+        outputs.push(disabler_directory_funds_output);
 
+        let speedup_output = OutputType::segwit_key(SPEEDUP_VALUE, &wt_speedup_key)?;
         // Add speedup output
-        protocol.add_transaction_output(
-            &WT_START_ENABLER_TX,
-            &OutputType::segwit_key(SPEEDUP_VALUE, &wt_speedup_key)?,
-        )?;
+        protocol.add_transaction_output(&WT_START_ENABLER_TX, &speedup_output)?;
+        outputs.push(speedup_output);
 
-        Ok(())
+        Ok(outputs)
     }
 
     fn create_op_initial_deposit(
@@ -782,7 +796,7 @@ impl DisputeCoreProtocol {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(
             id = self.ctx.my_idx,
-            "Loading OP Initial Deposit transaction for DisputeCore"
+            "Loading OP Initial Deposit transaction for DisputeCoreProtocol"
         );
 
         let mut protocol: Protocol = self.load_protocol()?;
@@ -1335,6 +1349,7 @@ impl DisputeCoreProtocol {
         reimbursement_output: &mut OutputType,
         dispute_aggregated_key: &PublicKey,
         role: &ParticipantRole,
+        wt_start_enabler_outputs: &mut Vec<OutputType>,
     ) -> Result<(), BitVMXError> {
         let committee = self.committee(context)?;
         let protocol = self.load_or_create_protocol();
@@ -1437,30 +1452,27 @@ impl DisputeCoreProtocol {
             )?;
         }
 
-        // Save WT disabler directory UTXO
         let wt_start_enabler_tx = protocol.transaction_by_name(WT_START_ENABLER_TX)?;
         let wt_start_enabler_txid = wt_start_enabler_tx.compute_txid();
-        let wt_disabler_directory_outout = committee.members.len();
-        let output_value = wt_start_enabler_tx.output[wt_disabler_directory_outout]
-            .value
-            .to_sat();
 
-        let wt_disabler_directory_utxo = (
-            wt_start_enabler_txid,
-            wt_disabler_directory_outout as u32,
-            Some(output_value),
-            Some(OutputType::taproot(
-                output_value,
-                dispute_aggregated_key,
-                &[],
-            )?),
-        );
+        // Create WT_START_ENABLER_UTXOs and save them in one array
+        let mut wt_start_enabler_utxos: Vec<PartialUtxo> = vec![];
+        for i in 0..wt_start_enabler_outputs.len() {
+            let output_value = wt_start_enabler_tx.output[i].value.to_sat();
 
-        info!("Saving wt disabler utxo: {:?}", wt_disabler_directory_utxo);
+            wt_start_enabler_outputs[i].set_value(Amount::from_sat(output_value));
+            wt_start_enabler_utxos.push((
+                wt_start_enabler_txid,
+                i as u32,
+                Some(output_value),
+                Some(wt_start_enabler_outputs[i].clone()),
+            ));
+        }
+
         context.globals.set_var(
             &self.ctx.id,
-            &WT_DISABLER_DIRECTORY_UTXO,
-            VariableTypes::Utxo(wt_disabler_directory_utxo),
+            &WT_START_ENABLER_UTXOS,
+            VariableTypes::String(serde_json::to_string(&wt_start_enabler_utxos)?),
         )?;
 
         Ok(())

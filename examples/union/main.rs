@@ -23,7 +23,7 @@ use bitvmx_client::program::{
         types::{
             ACCEPT_PEGIN_TX, DISPUTE_CORE_LONG_TIMELOCK, DISPUTE_CORE_SHORT_TIMELOCK,
             OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX, OP_INITIAL_DEPOSIT_TX, OP_LAZY_DISABLER_TX,
-            WT_START_ENABLER_TX,
+            WT_DISABLER_DIRECTORY_TX, WT_DISABLER_TX, WT_START_ENABLER_TX,
         },
     },
 };
@@ -63,7 +63,8 @@ pub fn main() -> Result<()> {
         Some("advance_funds_twice") => cli_advance_funds_twice()?,
         Some("invalid_reimbursement") => cli_invalid_reimbursement()?,
         Some("double_reimbursement") => cli_double_reimbursement()?,
-        Some("full_penalization") => cli_full_penalization()?,
+        Some("operator_disabler") => cli_operator_disabler()?,
+        Some("watchtower_disabler") => cli_watchtower_disabler()?,
         // Utils
         Some("create_wallet") => cli_create_wallet(args.get(2))?,
         Some("latency") => cli_latency(args.get(2))?,
@@ -104,7 +105,8 @@ fn print_usage() {
         "  cargo run --example union advance_funds_twice       - Performs advancement of funds twice"
     );
     println!("  cargo run --example union invalid_reimbursement     - Forces invalid reimbursement to test challenge tx");
-    println!("  cargo run --example union full_penalization     - Dispatch disabler directory transactions");
+    println!("  cargo run --example union operator_disabler     - Dispatch OP disabler directory transactions");
+    println!("  cargo run --example union watchtower_disabler     - Dispatch WT disabler directory transactions");
     // Testing commands
     println!(
         "  cargo run --example union create_wallet        - Create wallet: key pair and address. (optionally pass network: regtest, testnet, bitcoin)"
@@ -149,9 +151,9 @@ pub fn cli_committee() -> Result<()> {
 
 pub fn cli_watchtowers_start_enabler() -> Result<()> {
     let mut wallet = get_master_wallet()?;
-    let mut committee = committee(&mut wallet)?;
+    let committee = committee(&mut wallet)?;
 
-    watchtowers_start_enabler(&mut committee)?;
+    dispatch_wt_start_enabler(&committee)?;
     Ok(())
 }
 
@@ -338,7 +340,7 @@ pub fn cli_fund_members() -> Result<()> {
     Ok(())
 }
 
-pub fn cli_full_penalization() -> Result<()> {
+pub fn cli_operator_disabler() -> Result<()> {
     // NOTE: This example works better with a client node with low fees.
     // It require a fine timming to dispatch TXs and that's hard to reach if there is high fees
     // Key: Second reimbursement kickoff tx should be dispatched right after the first reimbursement kickoff tx is mined
@@ -441,6 +443,71 @@ pub fn cli_full_penalization() -> Result<()> {
     Ok(())
 }
 
+pub fn cli_watchtower_disabler() -> Result<()> {
+    // NOTE: This example works better with a client node with low fees.
+    if HIGH_FEE_NODE_ENABLED {
+        info!("This example works better with a client node with low fees. Please disable HIGH_FEE_NODE_ENABLED and try again.");
+        return Ok(());
+    }
+
+    let (committee, _user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+
+    if committee.members.len() < 3 {
+        info!("This example requires 3 committee members or more.");
+        info!("Current members: {}", committee.members.len());
+        return Ok(());
+    }
+
+    if committee.members[0].role != ParticipantRole::Prover
+        || committee.members[1].role != ParticipantRole::Prover
+        || committee.members[2].role != ParticipantRole::Verifier
+        || committee.members[3].role != ParticipantRole::Verifier
+    {
+        info!("This example requires 2 operators and 2 watchtowers in the committee.");
+        return Ok(());
+    }
+
+    let full_penalization_pid = get_full_penalization_pid(committee.committee_id());
+
+    // Each watchtower just can be challenged and penalized by an operator.
+    // Challenge pairs (watchtower_index, operator_index)
+    let challenge_pairs: Vec<(usize, usize)> = [(0, 1), (1, 0), (2, 0), (3, 1)].to_vec();
+
+    // Dispatch WT_START_ENABLER, it has the funding UTXO for WT_DISABLER_DIRECTORY_TX
+    // and WT_START_ENABLER is not dispatched until there is a challenge
+    dispatch_wt_start_enabler(&committee)?;
+
+    // Dispatch WT_DISABLER_DIRECTORY_TX for each watchtower
+    // Temporary test due to it's not connected to dispute channels yet
+    for (wt_index, op_index) in challenge_pairs {
+        let tx_name = double_indexed_name(WT_DISABLER_DIRECTORY_TX, wt_index, op_index);
+
+        let tx = committee.members[wt_index]
+            .dispatch_transaction_by_name(full_penalization_pid, tx_name.clone())?;
+
+        info!("Dispatched {} with txid: {}", tx_name, tx.compute_txid());
+        wait_for_blocks(&committee.bitcoin_client, 1)?;
+
+        // Its the operator who should dispatch the watchtower y disabler directory tx in the step above
+        let op_honest_index = (wt_index + 2) % committee.members.len();
+
+        // Dispatch WT_DISABLER_TX to disable watchtower start enabler enabler for operator_enabler
+        for member_index_to_disable in 0..committee.members.len() {
+            let tx_name =
+                triple_indexed_name(WT_DISABLER_TX, wt_index, op_index, member_index_to_disable);
+
+            // operator_enabler_index is dispatching tx of op_index in case it's not doing it.
+            let tx = committee.members[op_honest_index]
+                .dispatch_transaction_by_name(full_penalization_pid, tx_name.clone())?;
+
+            info!("Dispatched {} with txid: {}", tx_name, tx.compute_txid());
+        }
+    }
+    wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
+
+    Ok(())
+}
+
 pub fn committee(wallet: &mut MasterWallet) -> Result<Committee> {
     // A new package is created. A committee is selected. Union client requests the setup of the
     // corresponding keys and programs.
@@ -472,7 +539,7 @@ pub fn committee(wallet: &mut MasterWallet) -> Result<Committee> {
     Ok(committee)
 }
 
-pub fn watchtowers_start_enabler(committee: &mut Committee) -> Result<()> {
+pub fn dispatch_wt_start_enabler(committee: &Committee) -> Result<()> {
     for member in committee.members.iter() {
         let protocol_id = get_dispute_core_pid(
             committee.committee_id(),
