@@ -492,14 +492,16 @@ pub fn cli_watchtower_disabler() -> Result<()> {
         let op_honest_index = (wt_index + 2) % committee.members.len();
 
         // Dispatch WT_DISABLER_TX to disable watchtower start enabler enabler for operator_enabler
-        let start_enabler_output = 0; // We are going to disabler the first start enabler for wt_index
-        let tx_name = triple_indexed_name(WT_DISABLER_TX, wt_index, op_index, start_enabler_output);
+        for member_index_to_disable in 0..committee.members.len() {
+            let tx_name =
+                triple_indexed_name(WT_DISABLER_TX, wt_index, op_index, member_index_to_disable);
 
-        // operator_enabler_index is dispatching tx of op_index in case it's not doing it.
-        let tx = committee.members[op_honest_index]
-            .dispatch_transaction_by_name(full_penalization_pid, tx_name.clone())?;
+            // operator_enabler_index is dispatching tx of op_index in case it's not doing it.
+            let tx = committee.members[op_honest_index]
+                .dispatch_transaction_by_name(full_penalization_pid, tx_name.clone())?;
 
-        info!("Dispatched {} with txid: {}", tx_name, tx.compute_txid());
+            info!("Dispatched {} with txid: {}", tx_name, tx.compute_txid());
+        }
     }
     wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
 
