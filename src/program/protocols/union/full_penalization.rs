@@ -262,6 +262,7 @@ impl FullPenalizationProtocol {
         let op_disabler_directory_name =
             double_indexed_name(OP_DISABLER_DIRECTORY_TX, operator_index, watchtower_index);
 
+        // Input to disabler directory from initial deposit UTXO
         protocol.add_connection(
             "funds",
             &initial_deposit_name,
@@ -277,12 +278,16 @@ impl FullPenalizationProtocol {
             Some(disabler_directory_utxo.0),
         )?;
 
+        // TODO: Add input to OP DISABLER DIRECTORY from dispute channel when available
+
         for slot_index in 0..packet_size as usize {
+            // Create operator disabler for each slot
             let op_disabler_name =
                 triple_indexed_name(OP_DISABLER_TX, operator_index, watchtower_index, slot_index);
 
             let initial_deposit_utxo = &initial_deposit_utxos[slot_index];
 
+            // Connect initial deposit to OP_DISABLER
             debug!("{} to {}", initial_deposit_name, op_disabler_name);
             protocol.add_connection(
                 "from_initial_deposit",
@@ -294,6 +299,7 @@ impl FullPenalizationProtocol {
                 Some(initial_deposit_utxo.0),
             )?;
 
+            // Connect disabler directory to OP_DISABLER
             debug!("{} to {}", op_disabler_directory_name, op_disabler_name);
             protocol.add_connection(
                 "from_disabler_directory",
@@ -310,6 +316,7 @@ impl FullPenalizationProtocol {
                 None,
             )?;
 
+            // OP DISABLER output
             // Output is unspendable. Everything is paid in fees to make sure this TXs is mined.
             // If output goes to challenger WT it could decided no to dispatch or no to speedup it.
             debug!("Output for {}", op_disabler_name);
@@ -335,6 +342,7 @@ impl FullPenalizationProtocol {
                 "take enabler index {} to {}",
                 slot_index, op_lazy_disabler_name
             );
+            // Connect REIMBURSEMENT KICKOFF to OP LAZY DISABLER
             protocol.add_connection(
                 "reimbursement_kickoff_conn",
                 &double_indexed_name(REIMBURSEMENT_KICKOFF_TX, operator_index, slot_index),
@@ -349,6 +357,7 @@ impl FullPenalizationProtocol {
                 "{} to {}",
                 op_disabler_directory_name, op_lazy_disabler_name
             );
+            // Connect disabler directory to OP LAZY DISABLER
             protocol.add_connection(
                 "from_disabler_directory",
                 &op_disabler_directory_name,
@@ -364,6 +373,7 @@ impl FullPenalizationProtocol {
                 None,
             )?;
 
+            // OP LAZY DISABLER output
             // Output is unspendable. Everything is paid in fees to make sure this TXs is mined.
             // If output goes to challenger WT it could decided no to dispatch or no to speedup it.
             debug!("Output for {}", op_lazy_disabler_name);
@@ -376,9 +386,11 @@ impl FullPenalizationProtocol {
             )?;
         }
 
+        // OP DISABLER DIRECTORY output
         // Maybe this speedup here could be removed.
         // Right not it's needed to make all disable directory tx different, if not they all have same txid for a particular operator.
         // Soon they will be connected to dispute channels
+        // Probably it's not needed to speedup DISABLER DIRECTORY due to OP DISABLER pay a lot of fees.
         protocol.add_transaction_output(
             &op_disabler_directory_name,
             &OutputType::segwit_key(
