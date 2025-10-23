@@ -564,22 +564,9 @@ pub fn request_pegout() -> Result<()> {
     let (slot_index, amount) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     let user_pubkey = user.public_key()?;
-    let stream_id = 0; // This should be replaced with the actual stream ID
-    let packet_number = 0; // This should be replaced with the actual packet number
     let pegout_id = vec![0; 32]; // This should be replaced with the actual peg-out ID
-    let pegout_signature_hash = vec![0; 32]; // This should be replaced with the actual peg-out signature hash
-    let pegout_signature_message = vec![0; 32]; // This should be replaced with the actual peg-out signature message
 
-    let user_take_utxo = committee.request_pegout(
-        user_pubkey,
-        slot_index,
-        stream_id,
-        packet_number,
-        amount,
-        pegout_id,
-        pegout_signature_hash,
-        pegout_signature_message,
-    )?;
+    let user_take_utxo = committee.request_pegout(user_pubkey, slot_index, amount, pegout_id)?;
 
     info!("User take TX dispatched. Txid: {}", user_take_utxo.0);
     print_link(NETWORK, user_take_utxo.0);
