@@ -190,10 +190,16 @@ jobs:
 
           run_example() {
             echo "::group::🧪 Running example: $1"
-            
-            # Restart bitcoind
-            docker compose -f ./docker/bitcoind.docker-compose.yml down --volumes || true
-            docker compose -f ./docker/bitcoind.docker-compose.yml up -d bitcoind
+
+            # Set up log directory
+            LOG_DIR="./logs/$1"
+            mkdir -p "$LOG_DIR"
+
+            # Start bitcoind using cargo
+            echo "Starting bitcoind with setup_bitcoin_node..."
+            RUST_BACKTRACE=1 cargo run --release --example union setup_bitcoin_node > $LOG_DIR/bitcoind.log 2>&1 &
+            BITCOIND_PID=$!
+            echo "Bitcoind started with PID: $BITCOIND_PID"
 
             echo "Waiting for bitcoind to be ready..."
             BITCOIND_READY=false
@@ -211,14 +217,13 @@ jobs:
             
             if [ "$BITCOIND_READY" = false ]; then
               echo "❌ Bitcoind failed to start after 30 seconds"
-              docker compose -f ./docker/bitcoind.docker-compose.yml logs bitcoind
+              echo "=== Bitcoind logs ==="
+              cat $LOG_DIR/bitcoind.log || echo "No logs found"
               exit 1
             fi
 
             # Clean previous state
             rm -rf /tmp/broker_p2p_6118* /tmp/regtest/ || true
-            LOG_DIR="./logs/$1"
-            mkdir -p "$LOG_DIR"
 
             # Run setup
             RUST_BACKTRACE=full cargo run --release all --fresh \
@@ -246,3 +251,27 @@ jobs:
           # run_example advance_funds
           # run_example advance_funds_twice
           # run_example double_reimbursement
+        working-directory: ${{ env.ROOT }}/${{ inputs.submodule_path }}
+        env:
+          CI: true
+          GITHUB_ACTIONS: true
+
+      - name: Upload BitVMX logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bitvmx-logs-${{ github.run_number }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.ROOT }}/${{ inputs.submodule_path }}/logs/**/*.log
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Upload Bitcoind logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bitcoind-logs-${{ github.run_number }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.ROOT }}/${{ inputs.submodule_path }}/docker/
+          retention-days: 7
+          if-no-files-found: warn
