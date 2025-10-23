@@ -42,6 +42,7 @@ pub const PROTOCOL_FUNDING_TX: &str = "PROTOCOL_FUNDING_TX";
 // Parameters
 pub const DISPUTE_CORE_SHORT_TIMELOCK: u16 = 1;
 pub const DISPUTE_CORE_LONG_TIMELOCK: u16 = 6;
+pub const CANCEL_TAKE0_TIMELOCK: u16 = 6;
 pub const DUST_VALUE: u64 = 540;
 pub const SPEEDUP_VALUE: u64 = 540;
 pub const P2TR_FEE: u64 = 335; // This should match the value P2TR_FEE in Union Smart contracts
