@@ -857,5 +857,7 @@ impl FullPenalizationProtocol {
 
             // TODO: Add WT_LAZY_DISABLER once Dispute channel is available
         }
+
+        Ok(())
     }
 }
