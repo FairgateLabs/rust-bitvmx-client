@@ -21,9 +21,9 @@ use bitvmx_client::program::{
             get_full_penalization_pid, triple_indexed_name,
         },
         types::{
-            ACCEPT_PEGIN_TX, DISPUTE_CORE_LONG_TIMELOCK, DISPUTE_CORE_SHORT_TIMELOCK,
-            OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX, OP_INITIAL_DEPOSIT_TX, OP_LAZY_DISABLER_TX,
-            WT_START_ENABLER_TX,
+            ACCEPT_PEGIN_TX, CANCEL_TAKE0_TX, DISPUTE_CORE_LONG_TIMELOCK,
+            DISPUTE_CORE_SHORT_TIMELOCK, OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX,
+            OP_INITIAL_DEPOSIT_TX, OP_LAZY_DISABLER_TX, WT_START_ENABLER_TX,
         },
     },
 };
@@ -64,6 +64,7 @@ pub fn main() -> Result<()> {
         Some("invalid_reimbursement") => cli_invalid_reimbursement()?,
         Some("double_reimbursement") => cli_double_reimbursement()?,
         Some("full_penalization") => cli_full_penalization()?,
+        Some("cancel_take0") => cli_cancel_take0()?,
         // Utils
         Some("create_wallet") => cli_create_wallet(args.get(2))?,
         Some("latency") => cli_latency(args.get(2))?,
@@ -96,6 +97,7 @@ fn print_usage() {
     );
     println!("  cargo run --example union request_pegin       - Setups a request pegin");
     println!("  cargo run --example union accept_pegin        - Setups the accept peg in protocol");
+    println!("  cargo run --example union cancel_take0        - Dispatch CANCEL_TAKE0_TX to disable UserTake Protocol");
     println!(
         "  cargo run --example union request_pegout      - Setups the request peg out protocol"
     );
@@ -166,6 +168,31 @@ pub fn cli_accept_pegin() -> Result<()> {
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
 
     request_and_accept_pegin(&mut committee, &mut user)?;
+    Ok(())
+}
+
+pub fn cli_cancel_take0() -> Result<()> {
+    let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+
+    let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+
+    let accept_pegin_pid = get_accept_pegin_pid(committee.committee_id(), slot_index);
+    info!("Forcing member to cancel accept pegin transaction...");
+    let tx = committee.members[1]
+        .dispatch_transaction_by_name(accept_pegin_pid, CANCEL_TAKE0_TX.to_string())?;
+
+    thread::sleep(Duration::from_secs(1));
+
+    let txid = tx.compute_txid();
+    info!("{} dispatched. Txid: {}", CANCEL_TAKE0_TX, txid);
+    info!(
+        "TX vsize: {} bytes. Weight: {} bytes",
+        tx.vsize(),
+        tx.weight()
+    );
+
+    wait_for_blocks(&committee.bitcoin_client, 3)?;
+
     Ok(())
 }
 

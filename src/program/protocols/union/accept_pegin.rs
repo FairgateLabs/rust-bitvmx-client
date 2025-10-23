@@ -25,7 +25,9 @@ use crate::{
     },
     types::{OutgoingBitVMXApiMessages, ProgramContext},
 };
-use bitcoin::{hex::FromHex, Amount, PublicKey, ScriptBuf, Transaction, Txid};
+use bitcoin::{
+    hex::FromHex, script::PushBytesBuf, Amount, PublicKey, ScriptBuf, Transaction, Txid,
+};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
@@ -134,7 +136,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
 
         let mut verify_signature_scripts = vec![];
         for member in &members {
-            verify_signature_scripts.push(verify_signature(&member.take_key, SignMode::Skip)?)
+            verify_signature_scripts.push(verify_signature(&member.dispute_key, SignMode::Single)?)
         }
 
         // Etake0
@@ -151,11 +153,17 @@ impl ProtocolHandler for AcceptPegInProtocol {
             None,
         )?;
 
+        // NOTE: Need to add some bytes to OP_RETURN to reach the minimum tx size
+        let message = "disable_user_take_tx";
+        let mut data = PushBytesBuf::with_capacity(message.len());
+        data.extend_from_slice(message.as_bytes())
+            .map_err(|_| BitVMXError::SerializationError)?;
+
         protocol.add_transaction_output(
             CANCEL_TAKE0_TX,
             &OutputType::SegwitUnspendable {
                 value: Amount::from_sat(0),
-                script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
+                script_pubkey: ScriptBuf::new_op_return(&data),
             },
         )?;
 
@@ -264,6 +272,8 @@ impl ProtocolHandler for AcceptPegInProtocol {
             self.operator_take_tx(context, name)
         } else if name.starts_with(OPERATOR_WON_TX) {
             self.operator_won_tx(context, name)
+        } else if name == CANCEL_TAKE0_TX {
+            self.cancel_take0_tx(context, name)
         } else {
             Err(BitVMXError::InvalidTransactionName(name.to_string()))
         }
@@ -692,6 +702,39 @@ impl AcceptPegInProtocol {
             .get_var(&self.ctx.id, OPERATOR_LEAF_INDEX)?
             .unwrap()
             .number()? as usize)
+    }
+
+    fn cancel_take0_tx(
+        &self,
+        context: &ProgramContext,
+        name: &str,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        let member_leaf_index = self.ctx.my_idx;
+
+        info!(
+            id = self.ctx.my_idx,
+            "Loading {} for AcceptPegInProtocol. Member leaf index: {}", name, member_leaf_index
+        );
+
+        let mut protocol: Protocol = self.load_protocol()?;
+        let enabler_signature = protocol.sign_taproot_input(
+            name,
+            0,
+            &SpendMode::Script {
+                leaf: member_leaf_index,
+            },
+            context.key_chain.key_manager.as_ref(),
+            "",
+        )?;
+
+        let mut enabler_input = InputArgs::new_taproot_script_args(member_leaf_index);
+        enabler_input.push_taproot_signature(enabler_signature[member_leaf_index].unwrap())?;
+
+        let tx = self
+            .load_protocol()?
+            .transaction_to_send(name, &[enabler_input])?;
+
+        Ok((tx, None))
     }
 
     fn operator_won_tx(
