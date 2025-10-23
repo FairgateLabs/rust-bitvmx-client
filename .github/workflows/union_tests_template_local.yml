@@ -112,27 +112,20 @@ jobs:
       #   env:
       #     REPO_TOKEN: ${{ secrets.REPO_ACCESS_TOKEN }}
 
-      # - name: Set up git with token authentication
-      #   run: |
-      #     git config --global url."https://${{ secrets.REPO_ACCESS_TOKEN }}@github.com/".insteadOf "https://github.com/"
-    
-      # - name: Checkout workspace repository (CI)
-      #   run: |
-      #     rm -rf rust-bitvmx-workspace
-      #     git clone --recurse-submodules --depth=1 --shallow-submodules https://github.com/FairgateLabs/rust-bitvmx-workspace rust-bitvmx-workspace
-
-      # - name: Move submodule contents to root of submodule path
-      #   run: |
-      #     echo "Running in submodule-triggered mode"
-
-      #     if [[ -f "${ROOT}/rust-bitvmx-workspace/.cargo/config.toml" ]]; then
-      #       echo "Copying .cargo/config.toml to preserve patches"
-      #       rm -f ${ROOT}/.cargo/config.toml
-      #       mkdir -p "${ROOT}/.cargo"
-      #       cp -f "${ROOT}/rust-bitvmx-workspace/.cargo/config.toml" "${ROOT}/.cargo/"
-      #     fi
-
-      #     find ${ROOT}/rust-bitvmx-workspace -mindepth 1 -maxdepth 1 ! -name '${{ inputs.submodule_path }}' -exec mv -f {} ${ROOT}/ \;
+      # For local act testing with --bind, skip cloning and use workspace files directly
+      - name: Setup paths for local testing
+        run: |
+          echo "📍 Using local workspace (mounted with --bind)"
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          echo "ROOT=$ROOT"
+          
+          # The workspace root should be parent of rust-bitvmx-client
+          WORKSPACE_ROOT="$(dirname $GITHUB_WORKSPACE)"
+          echo "WORKSPACE_ROOT=$WORKSPACE_ROOT" >> $GITHUB_ENV
+          
+          echo "✅ Local workspace ready"
+          echo "📁 Available submodules:"
+          ls -d $WORKSPACE_ROOT/rust-* $WORKSPACE_ROOT/BitVMX-CPU 2>/dev/null | head -10 || echo "Run with: act --bind"
 
       # - name: Checkout current branch
       #   uses: actions/checkout@v4
@@ -215,21 +208,41 @@ jobs:
           echo "=== Initial cleanup completed ==="
 
       - name: Build project
-        run: | 
+        run: |
           cd $GITHUB_WORKSPACE/${{ inputs.submodule_path }}
+          echo "=== Debug Info ==="
+          echo "WORKSPACE_ROOT=$WORKSPACE_ROOT"
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          echo "PWD=$(pwd)"
+          echo "=== Checking parent directory ==="
+          ls -la /home/zava/dev/fairgate/bitvmx/rust-bitvmx-workspace/ | head -10 || echo "Parent not mounted"
+          echo "=== Checking for .cargo in parent ==="
+          ls -la /home/zava/dev/fairgate/bitvmx/rust-bitvmx-workspace/.cargo/ || echo "No .cargo"
+          echo "=== Building ==="
           cargo build --release
-          cargo build --release --example union 
+          cargo build --release --example union
 
       - name: Run integration examples
         run: |
           set -e
+          cd $GITHUB_WORKSPACE/${{ inputs.submodule_path }}
 
           run_example() {
             echo "::group::🧪 Running example: $1"
-            
+
+            # Set up log directory
+            LOG_DIR="./logs/$1"
+            mkdir -p "$LOG_DIR"
+
             # Restart bitcoind
-            docker compose -f ./docker/bitcoind.docker-compose.yml down --volumes || true
-            docker compose -f ./docker/bitcoind.docker-compose.yml up -d bitcoind
+            # docker compose -f ./docker/bitcoind.docker-compose.yml down --volumes || true
+            # docker compose -f ./docker/bitcoind.docker-compose.yml up -d bitcoind
+
+            # Start bitcoind using cargo
+            echo "Starting bitcoind with setup_bitcoin_node..."
+            RUST_BACKTRACE=1 cargo run --release --example union setup_bitcoin_node > $LOG_DIR/bitcoind.log 2>&1 &
+            BITCOIND_PID=$!
+            echo "Bitcoind started with PID: $BITCOIND_PID"
 
             echo "Waiting for bitcoind to be ready..."
             BITCOIND_READY=false
@@ -247,14 +260,13 @@ jobs:
             
             if [ "$BITCOIND_READY" = false ]; then
               echo "❌ Bitcoind failed to start after 30 seconds"
-              docker compose -f ./docker/bitcoind.docker-compose.yml logs bitcoind
+              echo "=== Bitcoind logs ==="
+              cat $LOG_DIR/bitcoind.log || echo "No logs found"
               exit 1
             fi
 
             # Clean previous state
             rm -rf /tmp/broker_p2p_6118* /tmp/regtest/ || true
-            LOG_DIR="./logs/$1"
-            mkdir -p "$LOG_DIR"
 
             # Run setup
             RUST_BACKTRACE=full cargo run --release all --fresh \
@@ -265,6 +277,12 @@ jobs:
 
             # Run example
             RUST_BACKTRACE=1 cargo run --release --example union "$1"
+            
+            # Cleanup after test
+            echo "Cleaning up bitcoind and background processes..."
+            pkill -9 bitcoind || true
+            pkill -f "cargo run --release all" || true
+            sleep 1
 
             echo "::endgroup::"
           }
