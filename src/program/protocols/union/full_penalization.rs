@@ -672,6 +672,7 @@ impl FullPenalizationProtocol {
 
             let wt_start_enabler_utxos = self.wt_start_enabler_utxos(context, dispute_core_pid)?;
             let wt_start_enabler_name = indexed_name(WT_START_ENABLER_TX, wt_index);
+
             create_transaction_reference(
                 protocol,
                 &wt_start_enabler_name,
@@ -689,74 +690,100 @@ impl FullPenalizationProtocol {
                     wt_index, op_index
                 );
 
-                let wt_disabler_directory_name =
-                    double_indexed_name(WT_DISABLER_DIRECTORY_TX, wt_index, op_index);
-
-                let disabler_directory_utxo = wt_start_enabler_utxos[member_count].clone();
-
-                // Funds input
-                protocol.add_connection(
-                    "funds",
+                self.create_watchtower_disabler(
+                    protocol,
+                    &committee,
+                    wt_index,
+                    op_index,
+                    member_count,
                     &wt_start_enabler_name,
-                    (disabler_directory_utxo.1 as usize).into(),
-                    &wt_disabler_directory_name,
-                    InputSpec::Auto(
-                        SighashType::taproot_all(),
-                        SpendMode::All {
-                            key_path_sign: SignMode::Aggregate,
-                        },
-                    ),
-                    None,
-                    Some(disabler_directory_utxo.0),
+                    &wt_start_enabler_utxos,
                 )?;
-
-                // TODO: Add input from dispute channel when available
-
-                for member_index in 0..member_count {
-                    let wt_disabler_name =
-                        triple_indexed_name(WT_DISABLER_TX, wt_index, op_index, member_index);
-
-                    let utxo = wt_start_enabler_utxos[member_index].clone();
-                    protocol.add_connection(
-                        "from_start_enabler",
-                        &wt_start_enabler_name,
-                        (utxo.1 as usize).into(),
-                        &wt_disabler_name,
-                        // First script leaf is the disabler
-                        InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
-                        None,
-                        Some(utxo.0),
-                    )?;
-
-                    protocol.add_connection(
-                        "from_disabler_directory",
-                        &wt_disabler_directory_name,
-                        OutputType::taproot(DUST_VALUE, &committee.dispute_aggregated_key, &[])?
-                            .into(),
-                        &wt_disabler_name,
-                        InputSpec::Auto(
-                            SighashType::taproot_all(),
-                            SpendMode::KeyOnly {
-                                key_path_sign: SignMode::Aggregate,
-                            },
-                        ),
-                        None,
-                        None,
-                    )?;
-
-                    // Output is unspendable. Everything is paid in fees to make sure this TXs is mined.
-                    // If output goes to challenger WT it could decided no to dispatch or no to speedup it.
-                    protocol.add_transaction_output(
-                        &wt_disabler_name,
-                        &OutputType::SegwitUnspendable {
-                            value: Amount::from_sat(0),
-                            script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
-                        },
-                    )?;
-                }
             }
         }
 
         Ok(())
+    }
+
+    fn create_watchtower_disabler(
+        &self,
+        protocol: &mut protocol_builder::builder::Protocol,
+        committee: &Committee,
+        wt_index: usize,
+        op_index: usize,
+        member_count: usize,
+        wt_start_enabler_name: &str,
+        wt_start_enabler_utxos: &Vec<PartialUtxo>,
+    ) -> Result<(), BitVMXError> {
+        let wt_disabler_directory_name =
+            double_indexed_name(WT_DISABLER_DIRECTORY_TX, wt_index, op_index);
+
+        let disabler_directory_utxo = wt_start_enabler_utxos[member_count].clone();
+
+        // Funds input to disabler directory from start enabler UTXO
+        protocol.add_connection(
+            "funds",
+            wt_start_enabler_name,
+            (disabler_directory_utxo.1 as usize).into(),
+            &wt_disabler_directory_name,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            Some(disabler_directory_utxo.0),
+        )?;
+
+        // TODO: Add input from dispute channel when available
+
+        for member_index in 0..member_count {
+            let wt_disabler_name =
+                triple_indexed_name(WT_DISABLER_TX, wt_index, op_index, member_index);
+
+            let utxo = wt_start_enabler_utxos[member_index].clone();
+
+            // Connection from start enabler to WT_DISABLER
+            protocol.add_connection(
+                "from_start_enabler",
+                wt_start_enabler_name,
+                (utxo.1 as usize).into(),
+                &wt_disabler_name,
+                // First script leaf is the disabler
+                InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
+                None,
+                Some(utxo.0),
+            )?;
+
+            // Connection from disabler directory to WT_DISABLER
+            protocol.add_connection(
+                "from_disabler_directory",
+                &wt_disabler_directory_name,
+                OutputType::taproot(DUST_VALUE, &committee.dispute_aggregated_key, &[])?.into(),
+                &wt_disabler_name,
+                InputSpec::Auto(
+                    SighashType::taproot_all(),
+                    SpendMode::KeyOnly {
+                        key_path_sign: SignMode::Aggregate,
+                    },
+                ),
+                None,
+                None,
+            )?;
+
+            // WT DISABLER output
+            // Output is unspendable. Everything is paid in fees to make sure this TXs is mined.
+            // If output goes to challenger WT it could decided no to dispatch or no to speedup it.
+            protocol.add_transaction_output(
+                &wt_disabler_name,
+                &OutputType::SegwitUnspendable {
+                    value: Amount::from_sat(0),
+                    script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
+                },
+            )?;
+
+            // TODO: Add WT_LAZY_DISABLER once Dispute channel is available
+        }
     }
 }
