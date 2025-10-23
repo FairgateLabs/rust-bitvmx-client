@@ -145,6 +145,8 @@ impl ProtocolHandler for DisputeCoreProtocol {
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
+        info!("Building DisputeCoreProtocol for program {}", self.ctx.id);
+
         let mut protocol = self.load_or_create_protocol();
         let dispute_core_data = self.dispute_core_data(context)?;
         let committee = self.committee(context)?;
@@ -242,7 +244,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
     ) -> Result<(), BitVMXError> {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
         info!(
-            "Dispute core protocol received news of transaction: {}, txid: {} with {} confirmations",
+            "DisputeCoreProtocol received news of transaction: {}, txid: {} with {} confirmations",
             tx_name, tx_id, tx_status.confirmations
         );
 
@@ -262,7 +264,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
         // This is called after the protocol is built and ready to be used
         info!(
             id = self.ctx.my_idx,
-            "DisputeCore {} setup complete", self.ctx.id
+            "DisputeCoreProtocol {} setup complete", self.ctx.id
         );
 
         // Automatically get and dispatch the PROTOCOL_FUNDING_TX transaction
@@ -794,7 +796,7 @@ impl DisputeCoreProtocol {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(
             id = self.ctx.my_idx,
-            "Loading OP Initial Deposit transaction for DisputeCore"
+            "Loading OP Initial Deposit transaction for DisputeCoreProtocol"
         );
 
         let mut protocol: Protocol = self.load_protocol()?;
