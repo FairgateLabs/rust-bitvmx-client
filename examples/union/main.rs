@@ -160,7 +160,11 @@ pub fn cli_watchtowers_start_enabler() -> Result<()> {
 pub fn cli_request_pegin() -> Result<()> {
     let (committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
 
-    request_pegin(committee.public_key()?, &mut user)?;
+    request_pegin(
+        committee.public_key()?,
+        &mut user,
+        committee.get_dispute_keys().as_slice(),
+    )?;
     Ok(())
 }
 
@@ -519,9 +523,13 @@ pub fn watchtowers_start_enabler(committee: &mut Committee) -> Result<()> {
     Ok(())
 }
 
-pub fn request_pegin(committee_public_key: PublicKey, user: &mut User) -> Result<(Txid, u64)> {
+pub fn request_pegin(
+    committee_public_key: PublicKey,
+    user: &mut User,
+    dispute_keys: &[PublicKey],
+) -> Result<(Txid, u64)> {
     let amount: u64 = STREAM_DENOMINATION; // This should be replaced with the actual amount of the peg-in request
-    let request_pegin_txid = user.request_pegin(&committee_public_key, amount)?;
+    let request_pegin_txid = user.request_pegin(&committee_public_key, amount, dispute_keys)?;
 
     wait_for_blocks(
         &BitcoinWrapper::new_from_config(&user.config)?,
@@ -540,7 +548,11 @@ pub fn request_and_accept_pegin(
     committee: &mut Committee,
     user: &mut User,
 ) -> Result<(usize, u64)> {
-    let (request_pegin_txid, amount) = request_pegin(committee.public_key()?, user)?;
+    let (request_pegin_txid, amount) = request_pegin(
+        committee.public_key()?,
+        user,
+        committee.get_dispute_keys().as_slice(),
+    )?;
 
     // This came from the contracts
     let rootstock_address = user.get_rsk_address();

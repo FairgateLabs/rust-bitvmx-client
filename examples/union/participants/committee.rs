@@ -393,6 +393,13 @@ impl Committee {
         Ok(funding_utxos_per_member)
     }
 
+    pub fn get_dispute_keys(&self) -> Vec<PublicKey> {
+        self.members
+            .iter()
+            .map(|m| m.keyring.dispute_pubkey.unwrap())
+            .collect()
+    }
+
     fn all<F, R>(&mut self, f: F) -> Result<Vec<R>>
     where
         F: Fn(&mut Member) -> Result<R> + Send + Sync + Clone,
