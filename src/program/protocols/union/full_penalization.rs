@@ -115,6 +115,10 @@ impl ProtocolHandler for FullPenalizationProtocol {
             Ok(self.op_disabler_tx(name, context)?)
         } else if name.starts_with(OP_DISABLER_DIRECTORY_TX) {
             Ok(self.op_disabler_directory_tx(name, context)?)
+        } else if name.starts_with(WT_DISABLER_TX) {
+            Ok(self.wt_disabler_tx(name, context)?)
+        } else if name.starts_with(WT_DISABLER_DIRECTORY_TX) {
+            Ok(self.wt_disabler_directory_tx(name, context)?)
         } else {
             Err(BitVMXError::InvalidTransactionName(name.to_string()))
         }
@@ -517,6 +521,45 @@ impl FullPenalizationProtocol {
         Ok((tx, None))
     }
 
+    fn wt_disabler_tx(
+        &self,
+        name: &str,
+        _context: &ProgramContext,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        info!(id = self.ctx.my_idx, "Loading {} tx", name);
+
+        let protocol = self.load_protocol()?;
+
+        // Watchtower start enabler signature through script path
+        let wt_start_enabler_script_index = 0;
+        let mut wt_start_enabler_input =
+            InputArgs::new_taproot_script_args(wt_start_enabler_script_index);
+        let wt_start_enabler_sig = protocol
+            .input_taproot_script_spend_signature(name, 0, wt_start_enabler_script_index)?
+            .unwrap();
+        wt_start_enabler_input.push_taproot_signature(wt_start_enabler_sig)?;
+
+        // Directory key spend signature
+        let directory_sig = protocol
+            .input_taproot_key_spend_signature(name, 1)?
+            .unwrap();
+        let mut directory_input = InputArgs::new_taproot_key_args();
+        directory_input.push_taproot_signature(directory_sig)?;
+
+        let tx = protocol.transaction_to_send(&name, &[wt_start_enabler_input, directory_input])?;
+
+        info!(
+            id = self.ctx.my_idx,
+            "Signed {}, txid: {} with signatures: [{:?},{:?}]",
+            name,
+            tx.compute_txid(),
+            wt_start_enabler_sig,
+            directory_sig
+        );
+
+        Ok((tx, None))
+    }
+
     fn op_disabler_directory_tx(
         &self,
         name: &str,
@@ -533,12 +576,41 @@ impl FullPenalizationProtocol {
         let mut op_initial_deposit_input = InputArgs::new_taproot_key_args();
         op_initial_deposit_input.push_taproot_signature(op_initial_deposit_sig)?;
 
+        // TODO: Add dispute channel input signature when available
         let tx = protocol.transaction_to_send(&name, &[op_initial_deposit_input])?;
 
         let txid = tx.compute_txid();
         info!(
             id = my_index,
             "Signed {} with txid: {} with signatures: [{:?}] ", name, txid, op_initial_deposit_sig,
+        );
+
+        Ok((tx, None))
+    }
+
+    fn wt_disabler_directory_tx(
+        &self,
+        name: &str,
+        _context: &ProgramContext,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        info!(id = self.ctx.my_idx, "Loading {} tx", name);
+
+        let protocol = self.load_protocol()?;
+        let my_index = self.ctx.my_idx;
+
+        let wt_start_enabler_sig = protocol
+            .input_taproot_key_spend_signature(name, 0)?
+            .unwrap();
+        let mut wt_start_enabler_input = InputArgs::new_taproot_key_args();
+        wt_start_enabler_input.push_taproot_signature(wt_start_enabler_sig)?;
+
+        // TODO: Add dispute channel input signature when available
+        let tx = protocol.transaction_to_send(&name, &[wt_start_enabler_input])?;
+
+        let txid = tx.compute_txid();
+        info!(
+            id = my_index,
+            "Signed {} with txid: {} with signatures: [{:?}] ", name, txid, wt_start_enabler_sig,
         );
 
         Ok((tx, None))
