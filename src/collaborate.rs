@@ -14,6 +14,7 @@ use crate::{
     helper::parse_keys,
     program::participant::{CommsAddress, ParticipantKeys, PublicKeyType},
     types::{OutgoingBitVMXApiMessages, ProgramContext},
+    comms_helper::publish_verification_key,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -24,8 +25,7 @@ pub struct Collaboration {
     pub im_leader: bool,
     pub keys: HashMap<PubKeyHash, PublicKey>,
     pub key_signatures: HashMap<PubKeyHash, Vec<u8>>, // Store RSA signatures for each key
-    pub key_verifications: HashMap<PubKeyHash, bool>, // Track key verification status from each participant
-    pub participant_rsa_keys: HashMap<PubKeyHash, String>, // Store RSA public keys of other participants
+    pub participant_verification_keys: HashMap<PubKeyHash, PublicKey>, // Store RSA public keys of other participants
     pub my_key: PublicKey,
     pub aggregated_key: Option<PublicKey>,
     pub request_from: Identifier,
@@ -49,8 +49,7 @@ impl Collaboration {
             im_leader,
             keys: HashMap::new(),
             key_signatures: HashMap::new(),
-            key_verifications: HashMap::new(),
-            participant_rsa_keys: HashMap::new(),
+            participant_verification_keys: HashMap::new(),
             my_key,
             aggregated_key: None,
             request_from,
@@ -67,35 +66,29 @@ impl Collaboration {
         program_context: &mut ProgramContext,
         request_from: Identifier,
     ) -> Result<Self, BitVMXError> {
-        let im_leader = program_context.comms.get_pubk_hash()? == leader.pubkey_hash;
+
+        let my_pubkey_hash = program_context.comms.get_pubk_hash()?;
+
+        let im_leader = my_pubkey_hash == leader.pubkey_hash;
         let my_key = Self::get_or_create_my_key(program_context, peers.clone(), public_keys)?;
-        // Use the same verification key that was generated in keychain initialization
-        // This unifies key management - no need to generate separate keys
         let my_verification_key = program_context.key_chain.get_verification_public_key()?;
 
-        let mut participant_keys = ParticipantKeys::new_with_verification_key(
+        let mut participant_keys = ParticipantKeys::new(
             vec![(id.to_string(), my_key.clone().into())], 
-            vec![], 
-            Some(my_verification_key.clone())
-        );
+            vec![]);
 
         // Sign the key with RSA signature for MITM protection
         let key_to_sign = format!("{}{}", id.to_string(), my_key.to_string());
         let signature = program_context.key_chain.sign_rsa_message(key_to_sign.as_bytes())?;
         participant_keys.add_signature(&id.to_string(), signature);
-        
-        // Include our RSA public key for signature verification
-        if let Some(rsa_pub_key) = &program_context.key_chain.rsa_public_key {
-            participant_keys.add_rsa_public_key(&id.to_string(), rsa_pub_key.clone());
-            debug!("Including RSA public key for verification: {}", rsa_pub_key);
-        } else {
-            warn!("No RSA public key available for participant");
-        }
 
         let keys = vec![(
-            program_context.comms.get_pubk_hash()?,
+            my_pubkey_hash.clone(),
             participant_keys,
         )];
+
+        // Broadcast my verification key to all participants
+        publish_verification_key(my_pubkey_hash.clone(), my_verification_key.clone(), &program_context.comms, &program_context.key_chain, id, peers.clone())?;
 
         if !im_leader {
             request(
@@ -130,25 +123,17 @@ impl Collaboration {
                 .collect::<Vec<_>>();
 
             let pubk_hash = program_context.comms.get_pubk_hash()?;
-            let verification_key = program_context.key_chain.get_verification_public_key()?;
             
             // Create ParticipantKeys with signatures for MITM protection
-            let mut participant_keys = ParticipantKeys::new_with_verification_key(
+            let mut participant_keys = ParticipantKeys::new(
                 all_keys, 
-                vec![], 
-                Some(verification_key.clone())
-            );
+                vec![]);
             
             // Add signatures for all keys (simplified MITM protection)
             for (pubkey_hash, _key) in &self.keys {
                 if let Some(signature) = self.get_key_signature(pubkey_hash) {
                     participant_keys.add_signature(&pubkey_hash.to_string(), signature.clone());
                 }
-            }
-            
-            // Include our own RSA public key for verification by other participants
-            if let Some(our_rsa_key) = &program_context.key_chain.rsa_public_key {
-                participant_keys.add_rsa_public_key(&pubk_hash.to_string(), our_rsa_key.clone());
             }
             
             let keys = vec![(pubk_hash, participant_keys)];
@@ -183,10 +168,24 @@ impl Collaboration {
         msg_type: CommsMessageType,
         data: Value,
         program_context: &ProgramContext,
-        _signature: Vec<u8>,
+        _timestamp: i64,
+        signature: Vec<u8>,
     ) -> Result<(), BitVMXError> {
         let pubkey_hash = comms_address.pubkey_hash.clone();
         match msg_type {
+            CommsMessageType::VerificationKey => {
+                // Handle peer verification key message
+                let verification_key: PublicKey = serde_json::from_value(data.clone())
+                    .map_err(|_| BitVMXError::InvalidMessageFormat)?;
+
+                // Verify the signature using the verification_key and message
+                program_context.key_chain.verify_rsa_signature(&verification_key, data.to_string().as_bytes(), &signature)?;
+                info!("Verification key verified for peer: {}", pubkey_hash);
+
+                self.participant_verification_keys.insert(pubkey_hash.clone(), verification_key);
+            }
+
+
             CommsMessageType::Keys => {
                 if self.im_leader { 
                     let keys: ParticipantKeys = parse_keys(data.clone())
@@ -271,17 +270,6 @@ impl Collaboration {
                     )?;
                     self.aggregated_key = Some(aggregated.clone());
                     
-                    // Send verification result to leader for consensus
-                    let verification_result = self.keys.len() == self.participants.len();
-                    response(
-                        &program_context.comms,
-                        &program_context.key_chain,
-                        &self.collaboration_id,
-                        self.leader.clone(),
-                        CommsMessageType::KeysVerification,
-                        verification_result,
-                    )?;
-                    
                     self.completed = true;
                 }
 
@@ -311,41 +299,6 @@ impl Collaboration {
                     "Collaboration id: {}: KeysAck received by {}",
                     self.collaboration_id, pubkey_hash
                 );
-            }
-            CommsMessageType::KeysVerification => {
-                // Handle key verification consensus
-                if self.im_leader {
-                    // Leader receives verification from participant
-                    let verification_data: bool = serde_json::from_value(data)
-                        .map_err(|_| BitVMXError::InvalidMessageFormat)?;
-                    
-                    self.key_verifications.insert(pubkey_hash.clone(), verification_data);
-                    debug!(
-                        "Collaboration id: {}: Key verification from {}: {}",
-                        self.collaboration_id, pubkey_hash, verification_data
-                    );
-                    
-                    // Check if all participants have verified
-                    if self.key_verifications.len() == self.participants.len() - 1 { // -1 because leader doesn't verify themselves
-                        let all_verified = self.key_verifications.values().all(|&verified| verified);
-                        if all_verified {
-                            info!("All participants have verified keys successfully");
-                        } else {
-                            warn!("Some participants failed key verification");
-                        }
-                    }
-                } else {
-                    // Non-leader sends verification result to leader
-                    let verification_result = self.keys.len() == self.participants.len();
-                    response(
-                        &program_context.comms,
-                        &program_context.key_chain,
-                        &self.collaboration_id,
-                        comms_address,
-                        CommsMessageType::KeysVerification,
-                        verification_result,
-                    )?;
-                }
             }
             _ => {
                 return Err(BitVMXError::InvalidMessageType);

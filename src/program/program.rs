@@ -720,7 +720,7 @@ impl Program {
         debug!("{}: Message received: {:?} ", self.my_idx, msg_type);
 
         match msg_type {
-            CommsMessageType::KeysVerification => {
+            CommsMessageType::VerificationKey => {
                 //HPR: TO IMPLEMENT
                 todo!()
             }

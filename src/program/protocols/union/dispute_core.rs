@@ -141,7 +141,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
             }
         }
 
-        Ok(ParticipantKeys::new_with_verification_key(keys, vec![], None))
+        Ok(ParticipantKeys::new(keys, vec![]))
     }
 
     fn build(

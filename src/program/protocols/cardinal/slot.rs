@@ -161,7 +161,7 @@ impl ProtocolHandler for SlotProtocol {
         let gid = key_chain.derive_winternitz_hash160(4)?;
         keys.push((group_id(self.ctx.my_idx), gid.into()));
 
-        Ok(ParticipantKeys::new_with_verification_key(keys, vec![], None))
+        Ok(ParticipantKeys::new(keys, vec![]))
     }
 
     fn get_transaction_by_name(

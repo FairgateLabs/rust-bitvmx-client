@@ -1,5 +1,6 @@
 use crate::{errors::BitVMXError, program::participant::CommsAddress};
-use bitvmx_operator_comms::operator_comms::OperatorComms;
+use bitvmx_operator_comms::operator_comms::{OperatorComms, PubKeyHash};
+use bitcoin::PublicKey;
 use crate::keychain::KeyChain;
 use chrono::Utc;
 use serde::Serialize;
@@ -49,11 +50,11 @@ pub fn response<T: Serialize>(
 pub enum CommsMessageType {
     Keys,
     KeysAck,
-    KeysVerification, // New: for consensus on key verification
     PublicNonces,
     PublicNoncesAck,
     PartialSignatures,
     PartialSignaturesAck,
+    VerificationKey,
 }
 
 impl CommsMessageType {
@@ -61,11 +62,11 @@ impl CommsMessageType {
     const KIND_MAP: &'static [(&'static CommsMessageType, [u8; 2])] = &[
         (&CommsMessageType::Keys, [0x00, 0x01]),
         (&CommsMessageType::KeysAck, [0x00, 0x02]),
-        (&CommsMessageType::KeysVerification, [0x00, 0x03]),
-        (&CommsMessageType::PublicNonces, [0x00, 0x04]),
-        (&CommsMessageType::PublicNoncesAck, [0x00, 0x05]),
-        (&CommsMessageType::PartialSignatures, [0x00, 0x06]),
-        (&CommsMessageType::PartialSignaturesAck, [0x00, 0x07]),
+        (&CommsMessageType::PublicNonces, [0x00, 0x03]),
+        (&CommsMessageType::PublicNoncesAck, [0x00, 0x04]),
+        (&CommsMessageType::PartialSignatures, [0x00, 0x05]),
+        (&CommsMessageType::PartialSignaturesAck, [0x00, 0x06]),
+        (&CommsMessageType::VerificationKey, [0x00, 0x07]),
     ];
 
     // Convert message type to 2-byte representation
@@ -211,6 +212,16 @@ pub fn deserialize_msg(
     Ok((version, msg_type, program_id, data.clone(), timestamp, signature))
 }
 
+pub fn publish_verification_key(my_pubkey_hash: PubKeyHash, my_verification_key: PublicKey, comms: &OperatorComms, key_chain: &KeyChain, program_id: &Uuid, participants: Vec<CommsAddress>) -> Result<(), BitVMXError> {
+    for peer in &participants {
+        if peer.pubkey_hash == my_pubkey_hash {
+            continue;
+        }
+        request(comms, key_chain, program_id, peer.clone(), CommsMessageType::VerificationKey, my_verification_key.clone())?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,23 +231,23 @@ mod tests {
         assert_eq!(CommsMessageType::Keys.to_bytes().unwrap(), [0x00, 0x01]);
         assert_eq!(CommsMessageType::KeysAck.to_bytes().unwrap(), [0x00, 0x02]);
         assert_eq!(
-            CommsMessageType::KeysVerification.to_bytes().unwrap(),
+            CommsMessageType::PublicNonces.to_bytes().unwrap(),
             [0x00, 0x03]
         );
         assert_eq!(
-            CommsMessageType::PublicNonces.to_bytes().unwrap(),
+            CommsMessageType::PublicNoncesAck.to_bytes().unwrap(),
             [0x00, 0x04]
         );
         assert_eq!(
-            CommsMessageType::PublicNoncesAck.to_bytes().unwrap(),
+            CommsMessageType::PartialSignatures.to_bytes().unwrap(),
             [0x00, 0x05]
         );
         assert_eq!(
-            CommsMessageType::PartialSignatures.to_bytes().unwrap(),
+            CommsMessageType::PartialSignaturesAck.to_bytes().unwrap(),
             [0x00, 0x06]
         );
         assert_eq!(
-            CommsMessageType::PartialSignaturesAck.to_bytes().unwrap(),
+            CommsMessageType::VerificationKey.to_bytes().unwrap(),
             [0x00, 0x07]
         );
     }
@@ -253,23 +264,23 @@ mod tests {
         );
         assert_eq!(
             CommsMessageType::from_bytes([0x00, 0x03]).unwrap(),
-            CommsMessageType::KeysVerification
-        );
-        assert_eq!(
-            CommsMessageType::from_bytes([0x00, 0x04]).unwrap(),
             CommsMessageType::PublicNonces
         );
         assert_eq!(
-            CommsMessageType::from_bytes([0x00, 0x05]).unwrap(),
+            CommsMessageType::from_bytes([0x00, 0x04]).unwrap(),
             CommsMessageType::PublicNoncesAck
         );
         assert_eq!(
-            CommsMessageType::from_bytes([0x00, 0x06]).unwrap(),
+            CommsMessageType::from_bytes([0x00, 0x05]).unwrap(),
             CommsMessageType::PartialSignatures
         );
         assert_eq!(
-            CommsMessageType::from_bytes([0x00, 0x07]).unwrap(),
+            CommsMessageType::from_bytes([0x00, 0x06]).unwrap(),
             CommsMessageType::PartialSignaturesAck
+        );
+        assert_eq!(
+            CommsMessageType::from_bytes([0x00, 0x07]).unwrap(),
+            CommsMessageType::VerificationKey
         );
     }
 

@@ -101,7 +101,7 @@ impl ProtocolHandler for TransferProtocol {
         )?;
 
         let keys = vec![("speedup".to_string(), speedup.into())];
-        Ok(ParticipantKeys::new_with_verification_key(keys, vec![], None))
+        Ok(ParticipantKeys::new(keys, vec![]))
     }
 
     fn get_transaction_by_name(

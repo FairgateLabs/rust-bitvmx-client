@@ -84,7 +84,7 @@ fn keys_encoding_test() -> Result<(), anyhow::Error> {
         ),
     ];
 
-    let participant = ParticipantKeys::new_with_verification_key(keys, vec![], None);
+    let participant = ParticipantKeys::new(keys, vec![]);
 
     let participant_value = serde_json::to_value(&participant)?;
 

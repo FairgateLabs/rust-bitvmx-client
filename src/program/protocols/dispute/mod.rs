@@ -238,7 +238,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             }
         }
 
-        Ok(ParticipantKeys::new_with_verification_key(keys, vec!["aggregated_1".to_string()], None))
+        Ok(ParticipantKeys::new(keys, vec!["aggregated_1".to_string()]))
     }
 
     fn get_transaction_by_name(
