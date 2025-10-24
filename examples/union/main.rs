@@ -23,7 +23,7 @@ use bitvmx_client::program::{
         types::{
             ACCEPT_PEGIN_TX, DISPUTE_CORE_LONG_TIMELOCK, DISPUTE_CORE_SHORT_TIMELOCK,
             OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX, OP_INITIAL_DEPOSIT_TX, OP_LAZY_DISABLER_TX,
-            WT_START_ENABLER_TX,
+            OP_SELF_DISABLER_TX, WT_SELF_DISABLER_TX, WT_START_ENABLER_TX,
         },
     },
 };
@@ -64,6 +64,7 @@ pub fn main() -> Result<()> {
         Some("invalid_reimbursement") => cli_invalid_reimbursement()?,
         Some("double_reimbursement") => cli_double_reimbursement()?,
         Some("full_penalization") => cli_full_penalization()?,
+        Some("self_disablers") => cli_self_disablers()?,
         // Utils
         Some("create_wallet") => cli_create_wallet(args.get(2))?,
         Some("latency") => cli_latency(args.get(2))?,
@@ -201,6 +202,42 @@ pub fn cli_invalid_reimbursement() -> Result<()> {
     let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     invalid_reimbursement(&mut committee, slot_index)?;
+    Ok(())
+}
+pub fn cli_self_disablers() -> Result<()> {
+    if HIGH_FEE_NODE_ENABLED {
+        // Due to self disablers does not have speedup by now
+        info!("This example works better with a client node with low fees. Please disable HIGH_FEE_NODE_ENABLED and try again.");
+        return Ok(());
+    }
+
+    let committee = committee(&mut get_master_wallet()?)?;
+    let committee_id = committee.committee_id();
+
+    for member in committee.members {
+        let dispute_core_pid =
+            get_dispute_core_pid(committee_id, &member.keyring.take_pubkey.unwrap());
+
+        let tx = member
+            .dispatch_transaction_by_name(dispute_core_pid, WT_SELF_DISABLER_TX.to_string())?;
+        info!(
+            "Dispatched {} with txid: {}",
+            WT_SELF_DISABLER_TX,
+            tx.compute_txid()
+        );
+
+        if member.role == ParticipantRole::Prover {
+            let tx = member
+                .dispatch_transaction_by_name(dispute_core_pid, OP_SELF_DISABLER_TX.to_string())?;
+            info!(
+                "Dispatched {} with txid: {}",
+                OP_SELF_DISABLER_TX,
+                tx.compute_txid()
+            );
+        }
+    }
+
+    wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
     Ok(())
 }
 
