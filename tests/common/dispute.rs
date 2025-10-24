@@ -98,7 +98,7 @@ pub fn prepare_dispute(
     fail_force_config: ForcedChallenges,
     program_path: Option<String>,
 ) -> Result<()> {
-    let hello_world = format!(
+    let program = format!(
         "{}/{}",
         "../BitVMX-CPU/docker-riscv32/riscv32/build/",
         match fail_force_config {
@@ -109,7 +109,7 @@ pub fn prepare_dispute(
             _ => "hello-world.yaml",
         }
     );
-    let program_definition = program_path.unwrap_or(hello_world.to_string());
+    let program_definition = program_path.unwrap_or(program.to_string());
 
     let config_results = get_fail_force_config(fail_force_config.clone());
 

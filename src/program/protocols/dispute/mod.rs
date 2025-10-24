@@ -414,10 +414,22 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             let words = input_txs_sizes[idx];
             let offset = input_txs_offsets[idx];
 
-            let owner = if tx_owner == "verifier" {
-                "verifier"
+            let (owner, claim, agg, keys, speedup_keys) = if tx_owner == "verifier" {
+                (
+                    "verifier",
+                    &claim_prover,
+                    agg_or_verifier,
+                    &keys[1],
+                    (verifier_speedup_pub, prover_speedup_pub),
+                )
             } else {
-                "prover"
+                (
+                    "prover",
+                    &claim_verifier,
+                    agg_or_prover,
+                    &keys[0],
+                    (prover_speedup_pub, verifier_speedup_pub),
+                )
             };
 
             let input_vars = (offset..offset + words)
@@ -433,9 +445,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 speedup_dust,
                 &prev_tx,
                 &input_tx,
-                &claim_verifier,
-                Self::winternitz_check(agg_or_prover, sign_mode, &keys[0], &input_vars)?,
-                (&prover_speedup_pub, &verifier_speedup_pub),
+                &claim,
+                Self::winternitz_check(agg, sign_mode, keys, &input_vars)?,
+                speedup_keys,
             )?;
 
             amount = self.checked_sub(amount, fee)?;

@@ -17,7 +17,7 @@ use crate::{
 
 pub enum ProgramInputType {
     Prover(u32, u32),
-    //Verifier(u32, u32), // Not yet supported
+    Verifier(u32, u32),
     ProverPrev(u32, u32),
     //VerifierPrev(u32, u32), // Not yet supported
     Const(u32, u32),
@@ -41,9 +41,9 @@ pub fn generate_input_owner_list(
             "prover" => {
                 input_mapping.push(ProgramInputType::Prover(words, total_words));
             }
-            /*"verifier" => {
+            "verifier" => {
                 input_mapping.push(ProgramInputType::Verifier(words, total_words));
-            }*/
+            }
             "prover_prev" => {
                 input_mapping.push(ProgramInputType::ProverPrev(words, total_words));
             }
@@ -97,7 +97,7 @@ pub fn get_required_keys(
                 last_tx_id = input_txs.len();
             }
             // if the input is owned by the verifier then the prover needs to cosign it
-            /*ProgramInputType::Verifier(words, offset) => {
+            ProgramInputType::Verifier(words, offset) => {
                 input_txs.push("verifier".to_string());
                 input_txs.push("prover_cosign".to_string());
                 input_txs_sizes.push(*words);
@@ -112,7 +112,7 @@ pub fn get_required_keys(
                     ));
                 }
                 last_tx_id = input_txs.len();
-            }*/
+            }
             ProgramInputType::Const(words, offset) => {
                 //similar to split_input
                 let full_input = program_context
@@ -189,6 +189,12 @@ pub fn split_input(
     let owner = input_txs[idx as usize].as_str();
     let offset = input_txs_offsets[idx as usize];
 
+    //TODO: rename
+    let owner = match owner {
+        "verifier" => "verifier",
+        _ => "prover",
+    };
+
     for i in 0..words {
         let partial_input = full_input
             .get((i * 4) as usize..((i + 1) * 4) as usize)
@@ -245,6 +251,12 @@ pub fn unify_witnesses(
     let owner = &input_txs[idx];
     let offset = input_txs_offsets[idx];
     let size = input_txs_sizes[idx];
+
+    // TODO: rename
+    let owner = match owner.as_str() {
+        "verifier" => "verifier",
+        _ => "prover",
+    };
 
     let mut input_for_tx = vec![];
     for i in 0..size {

@@ -7,7 +7,10 @@ use bitvmx_broker::channel::channel::DualChannel;
 use bitvmx_broker::rpc::tls_helper::Cert;
 use bitvmx_broker::rpc::BrokerConfig;
 use bitvmx_client::program;
-use bitvmx_client::program::participant::{CommsAddress, ParticipantRole};
+use bitvmx_client::program::participant::{
+    CommsAddress,
+    ParticipantRole::{self, Prover, Verifier},
+};
 use bitvmx_client::program::protocols::dispute::config::{ConfigResult, ConfigResults};
 use bitvmx_client::program::protocols::dispute::{
     action_wins, input_tx_name, program_input, program_input_prev_prefix,
@@ -26,6 +29,7 @@ use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
 use common::dispute::{prepare_dispute, ForcedChallenges};
 use common::{clear_db, init_utxo_new, INITIAL_BLOCK_COUNT};
 use common::{config_trace, send_all};
+use core::panic;
 use emulator::decision::challenge::{ForceChallenge, ForceCondition};
 use emulator::executor::utils::{FailConfiguration, FailReads};
 use key_manager::winternitz::{
@@ -432,6 +436,24 @@ impl TestHelper {
         }
     }
 
+    pub fn wait_specific_msg(
+        &self,
+        idx: u32,
+        expected_msg_type: &str,
+    ) -> Result<OutgoingBitVMXApiMessages> {
+        info!(
+            "Waiting for specific message type: {} on channel: {}",
+            expected_msg_type, idx
+        );
+        loop {
+            let msg = self.wait_msg(idx as usize)?;
+            if msg.name() == expected_msg_type {
+                return Ok(msg);
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
+
     pub fn send_all(&self, command: IncomingBitVMXApiMessages) -> Result<()> {
         send_all(&self.id_channel_pairs, &command.to_string()?)
     }
@@ -453,6 +475,28 @@ impl TestHelper {
             thread::sleep(Duration::from_millis(100));
         }
     }
+
+    fn set_input_and_send(
+        &self,
+        input_data: Vec<u8>,
+        input_idx: u32,
+        participant: usize,
+        prog_id: Uuid,
+    ) -> Result<()> {
+        let set_input_1 =
+            VariableTypes::Input(input_data).set_msg(prog_id, &program_input(input_idx))?;
+        let _ = self.id_channel_pairs[participant]
+            .channel
+            .send(&self.id_channel_pairs[participant].id, set_input_1)?;
+
+        // send the tx
+        let _ = self.id_channel_pairs[participant].channel.send(
+            &self.id_channel_pairs[participant].id,
+            IncomingBitVMXApiMessages::DispatchTransactionName(prog_id, input_tx_name(input_idx))
+                .to_string()?,
+        );
+        Ok(())
+    }
 }
 
 pub fn test_all_aux(
@@ -460,6 +504,7 @@ pub fn test_all_aux(
     network: Network,
     program: Option<String>,
     inputs: Option<(&str, u32, &str, u32)>,
+    input_type: ParticipantRole,
     force_challenge: Option<ForcedChallenges>,
     force_winner: Option<ParticipantRole>,
 ) -> Result<()> {
@@ -653,33 +698,31 @@ pub fn test_all_aux(
 
     helper.wait_tx_name(1, program::protocols::dispute::START_CH)?;
 
-    let (data, idx) = if let Some(input) = inputs {
+    let (msg, mut idx) = if let Some(input) = inputs {
         (input.2, input.3)
     } else {
         ("11111111", 0)
     };
 
-    let set_input_1 =
-        VariableTypes::Input(hex::decode(data).unwrap()).set_msg(prog_id, &program_input(idx))?;
-    let _ = helper.id_channel_pairs[0]
-        .channel
-        .send(&helper.id_channel_pairs[0].id, set_input_1)?;
-
-    // send the tx
-    let _ = helper.id_channel_pairs[0].channel.send(
-        &helper.id_channel_pairs[0].id,
-        IncomingBitVMXApiMessages::DispatchTransactionName(prog_id, input_tx_name(idx))
-            .to_string()?,
-    );
-
-    info!("Waiting for input tx to be mined");
+    match input_type {
+        Prover => {
+            info!("Setting input and sending from prover");
+            helper.set_input_and_send(hex::decode(msg).unwrap(), idx, 0, prog_id)?;
+        }
+        Verifier => {
+            info!("Setting input and sending from verifier");
+            helper.set_input_and_send(hex::decode(msg).unwrap(), idx, 1, prog_id)?;
+            info!("Waiting for input tx to be mined");
+            let msg = helper.wait_specific_msg(idx, "SetInput")?;
+            info!("Sending input received by prover: {:?}", msg);
+            idx += 1;
+            helper.set_input_and_send(msg.input().unwrap(), idx, 0, prog_id)?;
+        }
+    }
 
     let role = match force_winner {
         Some(role) => role,
-        None => forced_challenge
-            .get_role()
-            .unwrap_or(ParticipantRole::Verifier)
-            .opposite(),
+        None => forced_challenge.get_role().unwrap_or(Verifier).opposite(),
     };
 
     helper.wait_tx_name(1, &action_wins(&role, 1))?;
@@ -756,19 +799,19 @@ pub fn sign_winternitz_message(message_bytes: &[u8], index: u32) -> WinternitzSi
 #[ignore]
 #[test]
 fn test_independent_testnet() -> Result<()> {
-    test_all_aux(true, Network::Testnet, None, None, None, None)?;
+    test_all_aux(true, Network::Testnet, None, None, Prover, None, None)?;
     Ok(())
 }
 #[ignore]
 #[test]
 fn test_independent_regtest() -> Result<()> {
-    test_all_aux(true, Network::Regtest, None, None, None, None)?;
+    test_all_aux(true, Network::Regtest, None, None, Prover, None, None)?;
     Ok(())
 }
 #[ignore]
 #[test]
 fn test_all() -> Result<()> {
-    test_all_aux(false, Network::Regtest, None, None, None, None)?;
+    test_all_aux(false, Network::Regtest, None, None, Prover, None, None)?;
     Ok(())
 }
 
@@ -780,6 +823,7 @@ fn test_const() -> Result<()> {
         Network::Regtest,
         Some("./verifiers/add-test-with-const-pre.yaml".to_string()),
         Some(("0000000100000002", 0, "00000003", 1)),
+        Prover,
         None,
         None,
     )?;
@@ -789,6 +833,7 @@ fn test_const() -> Result<()> {
         Network::Regtest,
         Some("./verifiers/add-test-with-const-post.yaml".to_string()),
         Some(("0000000200000003", 1, "00000001", 0)),
+        Prover,
         None,
         None,
     )?;
@@ -825,24 +870,27 @@ fn test_const_fail_input() -> Result<()> {
         Network::Regtest,
         Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
         Some(("00000002", 1, "00000003", 2)),
+        Prover,
         Some(ForcedChallenges::Personalized(fail_config.clone())),
-        Some(ParticipantRole::Verifier),
+        Some(Verifier),
     )?;
     test_all_aux(
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-const-post.yaml".to_string()),
         Some(("0000000200000004", 1, "00000001", 0)),
+        Prover,
         Some(ForcedChallenges::Personalized(fail_config.clone())),
-        Some(ParticipantRole::Verifier),
+        Some(Verifier),
     )?;
     test_all_aux(
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-const-pre.yaml".to_string()),
         Some(("0000000100000002", 0, "00000004", 1)),
+        Prover,
         Some(ForcedChallenges::Personalized(fail_config)),
-        Some(ParticipantRole::Verifier),
+        Some(Verifier),
     )?;
 
     Ok(())
@@ -856,6 +904,23 @@ fn test_previous_input() -> Result<()> {
         Network::Regtest,
         Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
         Some(("00000002", 1, "00000003", 2)),
+        Prover,
+        None,
+        None,
+    )?;
+
+    Ok(())
+}
+
+#[ignore]
+#[test]
+fn test_verifier_input() -> Result<()> {
+    test_all_aux(
+        false,
+        Network::Regtest,
+        Some("../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world-verifier.yaml".to_string()),
+        None,
+        Verifier,
         None,
         None,
     )?;
@@ -897,180 +962,184 @@ fn test_zkp() -> Result<()> {
 }
 
 fn test_challenge(challenge: ForcedChallenges) -> Result<()> {
-    test_all_aux(false, Network::Regtest, None, None, Some(challenge), None)?;
+    test_all_aux(
+        false,
+        Network::Regtest,
+        None,
+        None,
+        Prover,
+        Some(challenge),
+        None,
+    )?;
     Ok(())
 }
 
 #[ignore]
 #[test]
 fn challenge_trace_hash_prover() -> Result<()> {
-    test_challenge(ForcedChallenges::TraceHash(ParticipantRole::Prover))
+    test_challenge(ForcedChallenges::TraceHash(Prover))
 }
 
 #[ignore] //FIX: not working. ACTION_VERIFIER_WINS_1 has been seen on-chain
 #[test]
 fn challenge_trace_hash_verifier() -> Result<()> {
-    test_challenge(ForcedChallenges::TraceHash(ParticipantRole::Verifier))
+    test_challenge(ForcedChallenges::TraceHash(Verifier))
 }
 
 #[ignore]
 #[test]
 fn challenge_trace_hash_zero_prover() -> Result<()> {
-    test_challenge(ForcedChallenges::TraceHashZero(ParticipantRole::Prover))
+    test_challenge(ForcedChallenges::TraceHashZero(Prover))
 }
 
 #[ignore]
 #[test]
 fn challenge_trace_hash_zero_verifier() -> Result<()> {
-    test_challenge(ForcedChallenges::TraceHashZero(ParticipantRole::Verifier))
+    test_challenge(ForcedChallenges::TraceHashZero(Verifier))
 }
 
 #[ignore]
 #[test]
 fn challenge_entry_point_prover() -> Result<()> {
-    test_challenge(ForcedChallenges::EntryPoint(ParticipantRole::Prover))
+    test_challenge(ForcedChallenges::EntryPoint(Prover))
 }
 
 #[ignore]
 #[test]
 fn challenge_entry_point_verifier() -> Result<()> {
-    test_challenge(ForcedChallenges::EntryPoint(ParticipantRole::Verifier))
+    test_challenge(ForcedChallenges::EntryPoint(Verifier))
 }
 
 #[ignore]
 #[test]
 fn challenge_program_counter_prover() -> Result<()> {
-    test_challenge(ForcedChallenges::ProgramCounter(ParticipantRole::Prover))
+    test_challenge(ForcedChallenges::ProgramCounter(Prover))
 }
 
 #[ignore]
 #[test]
 fn challenge_program_counter_verifier() -> Result<()> {
-    test_challenge(ForcedChallenges::ProgramCounter(ParticipantRole::Verifier))
+    test_challenge(ForcedChallenges::ProgramCounter(Verifier))
 }
 
 #[ignore]
 #[test]
 fn challenge_input_prover() -> Result<()> {
-    test_challenge(ForcedChallenges::Input(ParticipantRole::Prover))
+    test_challenge(ForcedChallenges::Input(Prover))
 }
 
 #[ignore]
 #[test]
 fn challenge_input_verifier() -> Result<()> {
-    test_challenge(ForcedChallenges::Input(ParticipantRole::Verifier))
+    test_challenge(ForcedChallenges::Input(Verifier))
 }
 
 #[ignore]
 #[test]
 fn challenge_opcode_prover() -> Result<()> {
-    test_challenge(ForcedChallenges::Opcode(ParticipantRole::Prover))
+    test_challenge(ForcedChallenges::Opcode(Prover))
 }
 
 #[ignore]
 #[test]
 fn challenge_opcode_verifier() -> Result<()> {
-    test_challenge(ForcedChallenges::Opcode(ParticipantRole::Verifier))
+    test_challenge(ForcedChallenges::Opcode(Verifier))
 }
 
 #[ignore]
 #[test]
 fn challenge_read_section_prover() -> Result<()> {
-    test_challenge(ForcedChallenges::ReadSection(ParticipantRole::Prover))
+    test_challenge(ForcedChallenges::ReadSection(Prover))
 }
 
 #[ignore]
 #[test]
 fn challenge_read_section_verifier() -> Result<()> {
-    test_challenge(ForcedChallenges::ReadSection(ParticipantRole::Verifier))
+    test_challenge(ForcedChallenges::ReadSection(Verifier))
 }
 
 #[ignore]
 #[test]
 fn challenge_write_section_prover() -> Result<()> {
-    test_challenge(ForcedChallenges::WriteSection(ParticipantRole::Prover))
+    test_challenge(ForcedChallenges::WriteSection(Prover))
 }
 
 #[ignore]
 #[test]
 fn challenge_write_section_verifier() -> Result<()> {
-    test_challenge(ForcedChallenges::WriteSection(ParticipantRole::Verifier))
+    test_challenge(ForcedChallenges::WriteSection(Verifier))
 }
 
 #[ignore]
 #[test]
 fn challenge_program_counter_section_prover() -> Result<()> {
-    test_challenge(ForcedChallenges::ProgramCounterSection(
-        ParticipantRole::Prover,
-    ))
+    test_challenge(ForcedChallenges::ProgramCounterSection(Prover))
 }
 
 #[ignore]
 #[test]
 fn challenge_program_counter_section_verifier() -> Result<()> {
-    test_challenge(ForcedChallenges::ProgramCounterSection(
-        ParticipantRole::Verifier,
-    ))
+    test_challenge(ForcedChallenges::ProgramCounterSection(Verifier))
 }
 
 #[ignore]
 #[test]
 fn challenge_initialized_prover() -> Result<()> {
-    test_challenge(ForcedChallenges::Initialized(ParticipantRole::Prover))
+    test_challenge(ForcedChallenges::Initialized(Prover))
 }
 
 #[ignore]
 #[test]
 fn challenge_initialized_verifier() -> Result<()> {
-    test_challenge(ForcedChallenges::Initialized(ParticipantRole::Verifier))
+    test_challenge(ForcedChallenges::Initialized(Verifier))
 }
 
 #[ignore]
 #[test]
 fn challenge_uninitialized_prover() -> Result<()> {
-    test_challenge(ForcedChallenges::Uninitialized(ParticipantRole::Prover))
+    test_challenge(ForcedChallenges::Uninitialized(Prover))
 }
 
 #[ignore]
 #[test]
 fn challenge_uninitialized_verifier() -> Result<()> {
-    test_challenge(ForcedChallenges::Uninitialized(ParticipantRole::Verifier))
+    test_challenge(ForcedChallenges::Uninitialized(Verifier))
 }
 
 #[ignore]
 #[test]
 fn challenge_future_read_prover() -> Result<()> {
-    test_challenge(ForcedChallenges::FutureRead(ParticipantRole::Prover))
+    test_challenge(ForcedChallenges::FutureRead(Prover))
 }
 
 #[ignore]
 #[test]
 fn challenge_future_read_verifier() -> Result<()> {
-    test_challenge(ForcedChallenges::FutureRead(ParticipantRole::Verifier))
+    test_challenge(ForcedChallenges::FutureRead(Verifier))
 }
 
 #[ignore]
 #[test]
 fn challenge_read_value_prover() -> Result<()> {
-    test_challenge(ForcedChallenges::ReadValue(ParticipantRole::Prover))
+    test_challenge(ForcedChallenges::ReadValue(Prover))
 }
 
 #[ignore]
 #[test]
 fn challenge_read_value_verifier() -> Result<()> {
-    test_challenge(ForcedChallenges::ReadValue(ParticipantRole::Verifier))
+    test_challenge(ForcedChallenges::ReadValue(Verifier))
 }
 
 #[ignore]
 #[test]
 fn challenge_correct_hash_prover() -> Result<()> {
-    test_challenge(ForcedChallenges::CorrectHash(ParticipantRole::Prover))
+    test_challenge(ForcedChallenges::CorrectHash(Prover))
 }
 
 #[ignore]
 #[test]
 fn challenge_correct_hash_verifier() -> Result<()> {
-    test_challenge(ForcedChallenges::CorrectHash(ParticipantRole::Verifier))
+    test_challenge(ForcedChallenges::CorrectHash(Verifier))
 }
 
 // The forced Execution is required for testing because without it, the prover or verifier will not execute directly

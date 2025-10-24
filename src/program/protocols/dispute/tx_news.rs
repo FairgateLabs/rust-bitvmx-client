@@ -19,15 +19,15 @@ use crate::{
                 challenge::READ_VALUE_NARY_SEARCH_CHALLENGE,
                 config::{ConfigResults, DisputeConfiguration},
                 input_handler::{get_txs_configuration, unify_inputs, unify_witnesses},
-                timeout_input_tx, timeout_tx, DisputeResolutionProtocol, CHALLENGE, CHALLENGE_READ,
-                COMMITMENT, EXECUTE, INPUT_TX, PROVER_WINS, TRACE_VARS, VERIFIER_FINAL,
-                VERIFIER_WINS,
+                program_input, timeout_input_tx, timeout_tx, DisputeResolutionProtocol, CHALLENGE,
+                CHALLENGE_READ, COMMITMENT, EXECUTE, INPUT_TX, PROVER_WINS, TRACE_VARS,
+                VERIFIER_FINAL, VERIFIER_WINS,
             },
             protocol_handler::ProtocolHandler,
         },
         variables::VariableTypes,
     },
-    types::ProgramContext,
+    types::{OutgoingBitVMXApiMessages, ProgramContext},
 };
 
 fn dispatch_timeout_tx(
@@ -63,8 +63,10 @@ fn dispatch_timeout_tx(
 
 // When I see [tx_name], and vout is [has_vout],
 // if I'm [role], then I dispatch
-// [is_input] ? timeout_input_tx[timeout_name] : timeout_tx[timeout_name].#[derive(Debug, Clone)]
+// [is_input] ? timeout_input_tx[timeout_name] : timeout_tx[timeout_name].
+#[derive(Debug, Clone)]
 pub struct TimeoutDispatchRule {
+    //TODO: better naming
     pub tx_name: String,
     pub has_vout: bool,
     pub role: ParticipantRole,
@@ -97,36 +99,75 @@ pub struct TimeoutDispatchTable {
     pub rules: Vec<TimeoutDispatchRule>,
 }
 
+//TODO: create actual table
 impl TimeoutDispatchTable {
     pub fn new(rules: Vec<TimeoutDispatchRule>) -> Self {
         Self { rules }
     }
-    pub fn new_predefined(first_2nd_nary_prover_tx: &str, last_2nd_nary_verifier_tx: &str) -> Self {
-        Self {
-            rules: vec![
-                TimeoutDispatchRule::new(EXECUTE, false, Prover, CHALLENGE, true, false),
-                TimeoutDispatchRule::new(CHALLENGE, false, Prover, CHALLENGE, true, true),
-                TimeoutDispatchRule::new(EXECUTE, false, Verifier, EXECUTE, true, true),
-                TimeoutDispatchRule::new(
-                    CHALLENGE,
-                    false,
-                    Verifier,
-                    first_2nd_nary_prover_tx,
-                    false,
-                    false,
-                ),
-                TimeoutDispatchRule::new(
-                    last_2nd_nary_verifier_tx,
-                    false,
-                    Prover,
-                    CHALLENGE_READ,
-                    true,
-                    false,
-                ),
-                TimeoutDispatchRule::new(CHALLENGE_READ, false, Prover, CHALLENGE_READ, true, true),
-            ],
-        }
+    pub fn new_predefined(rounds: u8) -> Self {
+        let rules = vec![
+            TimeoutDispatchRule::new(EXECUTE, false, Prover, CHALLENGE, true, false),
+            TimeoutDispatchRule::new(CHALLENGE, false, Prover, CHALLENGE, true, true),
+            TimeoutDispatchRule::new(EXECUTE, false, Verifier, EXECUTE, true, true),
+            TimeoutDispatchRule::new(
+                CHALLENGE,
+                false,
+                Verifier,
+                "NARY2_PROVER_2_TO",
+                false,
+                false,
+            ),
+            TimeoutDispatchRule::new(
+                &format!("NARY2_VERIFIER_{}", rounds),
+                false,
+                Prover,
+                CHALLENGE_READ,
+                true,
+                false,
+            ),
+            TimeoutDispatchRule::new(CHALLENGE_READ, false, Prover, CHALLENGE_READ, true, true), //TODO: add new_with_to new_with_const
+
+                                                                                                 //     TimeoutDispatchRule::new(INPUT_TX, false, Prover, COMMITMENT, true, false), // TODO: have for all the inputs
+                                                                                                 //     TimeoutDispatchRule::new(COMMITMENT, false, Prover, COMMITMENT, true, true),
+                                                                                                 //     TimeoutDispatchRule::new(COMMITMENT, false, Prover, "NARY_PROVER_1", true, false),
+                                                                                                 //     TimeoutDispatchRule::new("NARY_PROVER_1", false, Prover, "NARY_PROVER_1", true, true),
+        ];
+
+        // let mut add_rule = |tx_name: &str,
+        //                     role: ParticipantRole,
+        //                     has_vout: bool,
+        //                     timeout_name: &str,
+        //                     is_input: bool| {
+        //     rules.push(TimeoutDispatchRule::new(
+        //         tx_name,
+        //         has_vout,
+        //         role,
+        //         timeout_name,
+        //         true,
+        //         is_input,
+        //     ));
+        // };
+
+        // for prefix in ["NARY", "NARY2"] {
+        //     let start_round = if prefix == "NARY2" { 2 } else { 1 };
+        //     for round in start_round..=rounds {
+        //         let prover = format!("{}_PROVER_{}", prefix, round);
+        //         let verifier = format!("{}_VERIFIER_{}", prefix, round);
+        //         let next_prover = format!("{}_PROVER_{}", prefix, round + 1);
+
+        //         add_rule(&prover, Prover, false, &verifier, false);
+        //         add_rule(&verifier, Prover, false, &verifier, true);
+
+        //         if round < rounds {
+        //             add_rule(&verifier, Verifier, false, &next_prover, false);
+        //             add_rule(&next_prover, Verifier, false, &next_prover, true);
+        //         }
+        //     }
+        // }
+
+        Self { rules }
     }
+
     pub fn add_rule(&mut self, rule: TimeoutDispatchRule) {
         self.rules.push(rule);
     }
@@ -375,8 +416,12 @@ pub fn handle_tx_news(
 
     let timelock_blocks = config.timelock_blocks;
 
-    let timeout_table =
-        TimeoutDispatchTable::new_predefined("NARY2_PROVER_2_TO", "NARY2_VERIFIER_4"); //TODO: obtain from globals?
+    let rounds = drp
+        .get_program_definition(program_context)?
+        .0
+        .nary_def()
+        .total_rounds();
+    let timeout_table = TimeoutDispatchTable::new_predefined(rounds);
 
     auto_dispatch_timeout(
         drp,
@@ -408,12 +453,31 @@ pub fn handle_tx_news(
 
         let owner = input_txs[idx as usize].as_str();
 
-        if owner == drp.role().to_string() {
-            //if I'm the prover and it's the last input
-            if drp.role() == ParticipantRole::Prover && idx == last_tx_id {
+        // decode the witness
+        if owner != drp.role().to_string() {
+            drp.decode_witness_from_speedup(
+                tx_id,
+                vout.unwrap(),
+                &name,
+                program_context,
+                &tx_status.tx,
+                None,
+            )?;
+            unify_witnesses(&drp.ctx.id, program_context, idx as usize)?;
+        }
+        info!(
+            "I AM HERE AND IDX IS {}, role is {}, last_tx_id is {}",
+            idx,
+            drp.role(),
+            last_tx_id
+        );
+
+        if drp.role() == ParticipantRole::Prover {
+            if idx == last_tx_id {
+                //if I'm the prover and it's the last input
                 let (def, program_definition) = drp.get_program_definition(program_context)?;
                 let full_input = unify_inputs(&drp.ctx.id, program_context, &def)?;
-
+                info!("Full input: {:?}", full_input);
                 let execution_path = drp.get_execution_path()?;
                 let msg = serde_json::to_string(&DispatcherJob {
                     job_id: drp.ctx.id.to_string(),
@@ -428,19 +492,15 @@ pub fn handle_tx_news(
                 program_context
                     .broker_channel
                     .send(&program_context.components_config.emulator, msg)?;
+            } else {
+                info!("Setting key {}", program_input(idx + 1));
+                let (def, _program_definition) = drp.get_program_definition(program_context)?;
+                let full_input = unify_inputs(&drp.ctx.id, program_context, &def)?;
+                program_context.broker_channel.send(
+                    &program_context.components_config.l2,
+                    OutgoingBitVMXApiMessages::SetInput(full_input).to_string()?,
+                )?;
             }
-        } else {
-            //if it's not my input, decode the witness
-            drp.decode_witness_from_speedup(
-                tx_id,
-                vout.unwrap(),
-                &name,
-                program_context,
-                &tx_status.tx,
-                None,
-            )?;
-
-            unify_witnesses(&drp.ctx.id, program_context, idx as usize)?;
         }
     }
 

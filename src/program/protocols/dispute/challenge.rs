@@ -289,7 +289,9 @@ pub fn challenge_scripts(
 
                         for (idx, input) in inputs.iter().enumerate() {
                             match input {
-                                //ProgramInputType::Verifier(words, offset)
+                                ProgramInputType::Verifier(_words, _offset) => {
+                                    // TODO: Implement verifier input challenge
+                                }
                                 ProgramInputType::Prover(words, offset) => {
                                     for j in *offset..*offset + *words {
                                         let names_and_keys = subnames
