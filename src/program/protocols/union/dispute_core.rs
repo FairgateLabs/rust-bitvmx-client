@@ -1542,32 +1542,18 @@ impl DisputeCoreProtocol {
     fn self_disabler_tx(
         &self,
         tx_name: &str,
-        context: &ProgramContext,
+        _context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", tx_name);
 
-        let mut protocol = self.load_protocol()?;
+        let protocol = self.load_protocol()?;
 
-        let signatures = protocol.sign_taproot_input(
-            &tx_name,
-            0,
-            &SpendMode::KeyOnly {
-                key_path_sign: SignMode::Aggregate,
-            },
-            context.key_chain.key_manager.as_ref(),
-            "",
-        )?;
+        let signature = protocol
+            .input_taproot_key_spend_signature(tx_name, 0)?
+            .unwrap();
 
         let mut input_args = InputArgs::new_taproot_key_args();
-        for signature in signatures {
-            if signature.is_some() {
-                info!(
-                    "Adding taproot signature to input args for {}: {:?}",
-                    tx_name, signature
-                );
-                input_args.push_taproot_signature(signature.unwrap())?;
-            }
-        }
+        input_args.push_taproot_signature(signature)?;
 
         let tx = protocol.transaction_to_send(&tx_name, &[input_args])?;
         Ok((tx, None))
