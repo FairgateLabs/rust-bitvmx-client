@@ -24,9 +24,11 @@ RUST_BACKTRACE=1 cargo run --release --example union committee
 
 ## Using scripts
 
-Another option is to run them via the provided scripts in `scripts/union/`. For example, to run the committee setup:
+Another option is to run them via the provided scripts in `examples/union/scripts`.
+NOTE: Scripts should be run from the root of the repository to ensure correct config paths.
 
+For example, to run the committee setup:
 ```bash
-./examples/union/run-example.sh committee
+./examples/union/scripts/run-example.sh committee
 ```
 
