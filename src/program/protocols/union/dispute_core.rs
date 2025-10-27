@@ -158,6 +158,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
             &mut protocol,
             &dispute_core_data,
             &member.dispute_key,
+            &committee.dispute_aggregated_key.clone(),
         )?;
 
         let mut wt_start_enabler_outputs =
@@ -165,7 +166,11 @@ impl ProtocolHandler for DisputeCoreProtocol {
 
         // If member is an operator create Operator initial deposit and dispute cores
         if member.role == ParticipantRole::Prover {
-            self.create_op_initial_deposit(&mut protocol, &member.dispute_key)?;
+            self.create_op_initial_deposit(
+                &mut protocol,
+                &member.dispute_key,
+                &committee.dispute_aggregated_key,
+            )?;
 
             for i in 0..committee.packet_size as usize {
                 self.create_dispute_core(
@@ -293,6 +298,7 @@ impl DisputeCoreProtocol {
         protocol: &mut Protocol,
         dispute_core_data: &DisputeCoreData,
         watchtower_dispute_key: &PublicKey,
+        dispute_aggregated_key: &PublicKey,
     ) -> Result<(), BitVMXError> {
         let funding_utxo = dispute_core_data.funding_utxo.clone();
 
@@ -317,12 +323,16 @@ impl DisputeCoreProtocol {
             &PROTOCOL_FUNDING_TX,
             OutputSpec::Auto(OutputType::taproot(
                 AUTO_AMOUNT,
-                // FIXME: Should this be aggregated key? To avoid wt to be able to spend it alone. And SignMode should be Aggregated
-                watchtower_dispute_key,
+                dispute_aggregated_key,
                 &[],
             )?),
             &WT_START_ENABLER_TX,
-            InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
             None,
             None,
         )?;
@@ -333,7 +343,12 @@ impl DisputeCoreProtocol {
             &PROTOCOL_FUNDING_TX,
             OutputSpec::Index(0),
             &WT_SELF_DISABLER_TX,
-            InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
             None,
             None,
         )?;
@@ -411,15 +426,24 @@ impl DisputeCoreProtocol {
         &self,
         protocol: &mut Protocol,
         operator_dispute_key: &PublicKey,
+        dispute_aggregated_key: &PublicKey,
     ) -> Result<(), BitVMXError> {
         // Connect the initial deposit transaction to the PROTOCOL_FUNDING_TX transaction.
         protocol.add_connection(
             "initial_deposit",
             &PROTOCOL_FUNDING_TX,
-            // FIXME: Should this be aggregated key? To avoid wt to be able to spend it alone. And SignMode should be Aggregated
-            OutputSpec::Auto(OutputType::taproot(AUTO_AMOUNT, operator_dispute_key, &[])?),
+            OutputSpec::Auto(OutputType::taproot(
+                AUTO_AMOUNT,
+                dispute_aggregated_key,
+                &[],
+            )?),
             &OP_INITIAL_DEPOSIT_TX,
-            InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
             None,
             None,
         )?;
@@ -430,7 +454,12 @@ impl DisputeCoreProtocol {
             &PROTOCOL_FUNDING_TX,
             OutputSpec::Index(1),
             &OP_SELF_DISABLER_TX,
-            InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
             None,
             None,
         )?;
@@ -1523,7 +1552,7 @@ impl DisputeCoreProtocol {
             &tx_name,
             0,
             &SpendMode::KeyOnly {
-                key_path_sign: SignMode::Single,
+                key_path_sign: SignMode::Aggregate,
             },
             context.key_chain.key_manager.as_ref(),
             "",
