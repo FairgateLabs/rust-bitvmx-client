@@ -1,0 +1,304 @@
+name: 'Test action'
+on:
+  push:
+    branches: 
+      - '**'
+  pull_request:
+    branches: 
+      - '**'
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  actions: read
+  checks: write
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'
+  cancel-in-progress: true
+
+jobs:
+  local_test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      ROOT: "/home/runner/work/${{ github.event.repository.name }}"
+      REPO_NAME: ${{ github.event.repository.name }}
+      BRANCH: ${{ github.head_ref || 'main' }}
+      BITCOIN_NETWORK: "regtest"
+      BITCOIND_RPC_PORT: 18443
+      BITCOIND_RPC_USER: foo
+      BITCOIND_RPC_PASSWORD: rpcpassword
+      BITCOIND_RPC_NETWORK: regtest
+      # Variables from the original 'with' declaration
+      REPO: 'FairgateLabs/rust-bitvmx-workspace'
+      SUBMODULE_PATH: 'rust-bitvmx-client'  # Path relative to GITHUB_WORKSPACE
+      CARGO_FEATURES: 'testpanic'
+      NIGHTLY: false
+
+    steps:
+      - name: Debug inputs
+        run: |
+          echo "All inputs:"
+          echo "repo=${{ env.REPO }}"
+          echo "submodule_path=${{ env.SUBMODULE_PATH }}"
+
+      - name: Validate Inputs
+        run: |
+          ERRORS=()          
+          
+          [[ -z "${{ env.REPO }}" ]] && ERRORS+=("'repo' input cannot be empty")
+          [[ -z "${{ env.SUBMODULE_PATH }}" ]] && ERRORS+=("'submodule_path' input cannot be empty")
+          
+          if [[ ! "${{ env.REPO }}" =~ ^[a-zA-Z0-9_\-]+/[a-zA-Z0-9_\-]+$ ]]; then
+            ERRORS+=("'repo' must be in format 'owner/repo'")
+          fi
+
+          # Old regex - doesn't allow . or /
+          # if [[ ! "${{ env.SUBMODULE_PATH }}" =~ ^[a-zA-Z0-9_\-]+$ ]]; then
+          # New regex - allows . and / for paths like "." or "rust-bitvmx-client"
+          if [[ ! "${{ env.SUBMODULE_PATH }}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+            ERRORS+=("'submodule_path' contains invalid characters")
+          fi
+          
+          if [[ -n "${{ env.CARGO_FEATURES }}" ]]; then
+            if [[ ! "${{ env.CARGO_FEATURES }}" =~ ^[a-zA-Z0-9_,-]+$ ]]; then
+              ERRORS+=("'cargo_features' contains invalid characters")
+            fi
+          fi
+          
+          if [[ ${#ERRORS[@]} -gt 0 ]]; then
+            printf "❌ Validation errors:\n"
+            printf "  - %s\n" "${ERRORS[@]}"
+            exit 1
+          fi
+          echo "✅ All inputs validated successfully"
+
+      - name: Check disk space
+        run: df -h
+
+      # - name: Set up SSH key for submodule cloning
+      #   run: |
+      #     mkdir -p ~/.ssh
+      #     echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+      #     chmod 600 ~/.ssh/id_rsa
+      #     sed -i 's/-----BEGIN OPENSSH PRIVATE KEY-----//g' ~/.ssh/id_rsa
+      #     sed -i 's/-----END OPENSSH PRIVATE KEY-----//g' ~/.ssh/id_rsa
+      #     sed -i 's/ /\'$'\n/g' ~/.ssh/id_rsa
+      #     sed -i '1s/^/-----BEGIN OPENSSH PRIVATE KEY-----/' ~/.ssh/id_rsa
+      #     sed -i ':a;N;$!ba;s/\n$//;P;D' ~/.ssh/id_rsa
+      #     echo "-----END OPENSSH PRIVATE KEY-----" >> ~/.ssh/id_rsa
+      #     ssh-keyscan github.com >> ~/.ssh/known_hosts
+      #   env:
+      #     SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      # - name: Configure Git with Token Authentication
+      #   run: |
+      #     git config --global url."https://x-access-token:${REPO_TOKEN}@github.com/".insteadOf "https://github.com/"
+      #   env:
+      #     REPO_TOKEN: ${{ secrets.REPO_ACCESS_TOKEN }}
+
+      # For local act testing with --bind, skip cloning and use workspace files directly
+      - name: Setup paths for local testing
+        run: |
+          echo "📍 Using local workspace (mounted with --bind)"
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          echo "ROOT=$ROOT"
+          
+          # The workspace root should be parent of rust-bitvmx-client
+          WORKSPACE_ROOT="$(dirname $GITHUB_WORKSPACE)"
+          echo "WORKSPACE_ROOT=$WORKSPACE_ROOT" >> $GITHUB_ENV
+          
+          echo "✅ Local workspace ready"
+          echo "📁 Available submodules:"
+          ls -d $WORKSPACE_ROOT/rust-* $WORKSPACE_ROOT/BitVMX-CPU 2>/dev/null | head -10 || echo "Run with: act --bind"
+
+      # - name: Checkout current branch
+      #   uses: actions/checkout@v4
+      #   with:
+      #     ref: ${{ github.head_ref || github.ref_name }}
+      #     fetch-depth: 1
+
+# Local test setup
+      - name: Detect host for container
+        run: |
+          if (grep -qi microsoft /proc/version || docker info 2>/dev/null | grep -qi 'ostype: windows'); then
+            echo "IS_WINDOWS_DOCKER=true" >> $GITHUB_ENV
+          else
+            echo "IS_WINDOWS_DOCKER=false" >> $GITHUB_ENV
+          fi
+
+      # Install libclang (required for librocksdb-sys)
+      - name: Install libclang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev clang
+
+      - name: Install docker-compose
+        run: |
+          sudo curl -L "https://github.com/docker/compose/releases/download/v2.20.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          sudo chmod +x /usr/local/bin/docker-compose
+          docker-compose --version          
+
+# End Local test setup
+
+      - name: Install Rust Toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      # - name: Cache Cargo registry and git index
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: |
+      #       ~/.cargo/registry
+      #       ~/.cargo/git
+      #     key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      #     restore-keys: |
+      #       ${{ runner.os }}-cargo-
+
+      # - name: Cache Submodules Target Directory
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: |
+      #       ${{ env.ROOT }}/${{ inputs.submodule_path }}/target
+      #       ${{ env.ROOT }}/rust-bitvmx-storage-backend/target
+      #       ${{ env.ROOT }}/rust-bitvmx-bitcoin-rpc/target
+      #       ${{ env.ROOT }}/rust-bitvmx-settings/target
+      #       ${{ env.ROOT }}/BitVMX-CPU/target
+      #       ${{ env.ROOT }}/rust-bitvmx-broker/target
+      #       ${{ env.ROOT }}/rust-bitcoind/target
+      #       ${{ env.ROOT }}/rust-bitvmx-key-manager/target
+      #       ${{ env.ROOT }}/rust-bitvmx-protocol-builder/target
+      #       ${{ env.ROOT }}/rust-bitcoin-indexer/target
+      #       ${{ env.ROOT }}/rust-bitvmx-transaction-monitor/target
+      #       ${{ env.ROOT }}/rust-bitvmx-operator-comms/target
+      #       ${{ env.ROOT }}/rust-bitvmx-wallet/target
+      #       ${{ env.ROOT }}/rust-bitcoin-coordinator/target
+      #       ${{ env.ROOT }}/rust-bitvmx-job-dispatcher/target
+      #     key: ${{ runner.os }}-${{ inputs.submodule_path }}-target-${{ hashFiles(format('{0}/Cargo.lock', inputs.submodule_path)) }}
+      #     restore-keys: |
+      #       ${{ runner.os }}-${{ inputs.submodule_path }}-target-
+
+      - name: Run docker-compose (initial cleanup)
+        run: |
+          echo "=== Performing initial cleanup ==="
+          # Limpiar cualquier estado previo de docker
+          cd $GITHUB_WORKSPACE/${{ env.SUBMODULE_PATH }}
+          docker-compose -f ./docker/bitcoind.docker-compose.yml down --volumes --remove-orphans || true
+          docker container prune -f || true
+          docker volume prune -f || true
+          
+          echo "=== Initial cleanup completed ==="
+
+      - name: Build project
+        run: |
+          cd $GITHUB_WORKSPACE/${{ env.SUBMODULE_PATH }}
+          echo "=== Debug Info ==="
+          echo "WORKSPACE_ROOT=$WORKSPACE_ROOT"
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          echo "PWD=$(pwd)"
+          echo "=== Checking parent directory ==="
+          ls -la /home/zava/dev/fairgate/bitvmx/rust-bitvmx-workspace/ | head -10 || echo "Parent not mounted"
+          echo "=== Checking for .cargo in parent ==="
+          ls -la /home/zava/dev/fairgate/bitvmx/rust-bitvmx-workspace/.cargo/ || echo "No .cargo"
+          echo "=== Building ==="
+          cargo build --release
+          cargo build --release --example union
+
+      - name: Run integration examples
+        run: |
+          set -e
+          cd $GITHUB_WORKSPACE/${{ env.SUBMODULE_PATH }}
+
+          run_example() {
+            echo "::group::🧪 Running example: $1"
+
+            # Set up log directory
+            LOG_DIR="./logs/$1"
+            mkdir -p "$LOG_DIR"
+
+            # Restart bitcoind
+            # docker compose -f ./docker/bitcoind.docker-compose.yml down --volumes || true
+            # docker compose -f ./docker/bitcoind.docker-compose.yml up -d bitcoind
+
+            # Start bitcoind using cargo
+            echo "Starting bitcoind with setup_bitcoin_node..."
+            RUST_BACKTRACE=1 cargo run --release --example union setup_bitcoin_node > $LOG_DIR/bitcoind.log 2>&1 &
+            BITCOIND_PID=$!
+            echo "Bitcoind started with PID: $BITCOIND_PID"
+
+            echo "Waiting for bitcoind to be ready..."
+            BITCOIND_READY=false
+            for i in {1..30}; do
+              if curl --silent --user foo:rpcpassword \
+                --data-binary '{"jsonrpc":"1.0","id":"healthcheck","method":"getblockchaininfo","params":[]}' \
+                -H 'content-type: text/plain;' http://127.0.0.1:18443/ 2>/dev/null | grep -q "result"; then
+                echo "✅ Bitcoind is ready (attempt $i)"
+                BITCOIND_READY=true
+                break
+              fi
+              echo "⏳ Waiting for bitcoind... (attempt $i/30)"
+              sleep 1
+            done
+            
+            if [ "$BITCOIND_READY" = false ]; then
+              echo "❌ Bitcoind failed to start after 30 seconds"
+              echo "=== Bitcoind logs ==="
+              cat $LOG_DIR/bitcoind.log || echo "No logs found"
+              exit 1
+            fi
+
+            # Clean previous state
+            rm -rf /tmp/broker_p2p_6118* /tmp/regtest/ || true
+
+            # Run setup
+            RUST_BACKTRACE=full cargo run --release all --fresh \
+              2>&1 | sed -u -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})*)?[mGKHF]//g" > $LOG_DIR/bitvmx.log &
+
+            # Wait for bitvmx clients to be ready
+            sleep 10
+
+            # Run example
+            RUST_BACKTRACE=1 cargo run --release --example union "$1"
+            
+            # Cleanup after test
+            echo "Cleaning up bitcoind and background processes..."
+            pkill -9 bitcoind || true
+            pkill -f "cargo run --release all" || true
+            sleep 1
+
+            echo "::endgroup::"
+          }
+
+          # Run all desired examples
+          # Pre setup examples
+          # run_example wallet_balance
+          # run_example create_wallet
+
+          # Protocol steps
+          # run_example committee
+          # run_example request_pegin
+          # run_example accept_pegin
+          run_example request_pegout
+          # run_example advance_funds
+          # run_example advance_funds_twice
+          # run_example double_reimbursement
+        env:
+          CI: true
+          GITHUB_ACTIONS: true
+
+      - name: Final cleanup
+        if: always()
+        run: |
+          echo "=== Performing final cleanup ==="
+          cd $GITHUB_WORKSPACE/${{ env.SUBMODULE_PATH }}
+          docker-compose -f ./docker/bitcoind.docker-compose.yml down --volumes --remove-orphans || true
+          docker container prune -f || true
+          docker volume prune -f || true          
+          echo "=== Final cleanup completed ==="
