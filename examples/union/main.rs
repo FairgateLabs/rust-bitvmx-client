@@ -110,6 +110,7 @@ fn print_usage() {
     println!("  cargo run --example union invalid_reimbursement     - Forces invalid reimbursement to test challenge tx");
     println!("  cargo run --example union operator_disabler     - Dispatch OP disabler directory transactions");
     println!("  cargo run --example union watchtower_disabler     - Dispatch WT disabler directory transactions");
+    println!("  cargo run --example union self_disablers     - Dispatch WT and OP self disablers transactions");
     // Testing commands
     println!(
         "  cargo run --example union create_wallet        - Create wallet: key pair and address. (optionally pass network: regtest, testnet, bitcoin)"
