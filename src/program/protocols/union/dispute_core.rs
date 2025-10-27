@@ -1488,7 +1488,7 @@ impl DisputeCoreProtocol {
             &name,
             0,
             &SpendMode::KeyOnly {
-                key_path_sign: SignMode::Aggregate,
+                key_path_sign: SignMode::Single,
             },
             context.key_chain.key_manager.as_ref(),
             "",
