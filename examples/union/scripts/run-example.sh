@@ -4,7 +4,7 @@
 # Usage: ./run-example.sh <example>
 # Example: ./run-example.sh committee
 # NOTE: This script setup a fresh regtest environment for each run
-# It removes previous logs and data in /tmp/broker_p2p_6118* and /tmp/regtest/
+# It removes previous logs and data in /tmp/regtest/
 # It also kills all existing bitvmx-client processes
 # Logs are stored in logs/examples/<example>/
 

@@ -12,7 +12,6 @@ cargo run all
 
 or, clear all persistent data with
 ```bash
-rm -rf /tmp/broker_p2p_6118*
 rm -rf /tmp/regtest/
 RUST_BACKTRACE=1 cargo run --release all --fresh
 ```
