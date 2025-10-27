@@ -95,13 +95,8 @@ fn print_cmd_help(cmd: &str, description: &str) {
 }
 
 fn print_usage() {
-    println!("Usage:");
-    print_cmd_help("setup_bitcoin_node", "Sets up Bitcoin node only");
+    println!("Protocol examples:");
     print_cmd_help("committee", "Setups a new committee");
-    print_cmd_help(
-        "watchtowers_start_enabler",
-        "Dispatch WT start enabler transactions",
-    );
     print_cmd_help("request_pegin", "Setups a request pegin");
     print_cmd_help("accept_pegin", "Setups the accept peg in protocol");
     print_cmd_help("request_pegout", "Setups the request peg out protocol");
@@ -112,6 +107,14 @@ fn print_usage() {
         "Forces invalid reimbursement to test challenge tx",
     );
     print_cmd_help(
+        "watchtowers_start_enabler",
+        "Dispatch WT start enabler transactions",
+    );
+    print_cmd_help(
+        "self_disablers",
+        "Dispatch WT and OP self disablers transactions",
+    );
+    print_cmd_help(
         "operator_disabler",
         "Dispatch OP disabler directory transactions",
     );
@@ -119,12 +122,10 @@ fn print_usage() {
         "watchtower_disabler",
         "Dispatch WT disabler directory transactions",
     );
-    print_cmd_help(
-        "self_disablers",
-        "Dispatch WT and OP self disablers transactions",
-    );
 
     // Testing commands
+    println!("\nUtility commands:");
+    print_cmd_help("setup_bitcoin_node", "Sets up Bitcoin node only");
     print_cmd_help(
         "create_wallet",
         "Create wallet: key pair and address. (optionally pass network: regtest, testnet, bitcoin)",
