@@ -75,28 +75,6 @@ jobs:
       - name: Check disk space
         run: df -h
 
-      # - name: Set up SSH key for submodule cloning
-      #   run: |
-      #     mkdir -p ~/.ssh
-      #     echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-      #     chmod 600 ~/.ssh/id_rsa
-      #     sed -i 's/-----BEGIN OPENSSH PRIVATE KEY-----//g' ~/.ssh/id_rsa
-      #     sed -i 's/-----END OPENSSH PRIVATE KEY-----//g' ~/.ssh/id_rsa
-      #     sed -i 's/ /\'$'\n/g' ~/.ssh/id_rsa
-      #     sed -i '1s/^/-----BEGIN OPENSSH PRIVATE KEY-----/' ~/.ssh/id_rsa
-      #     sed -i ':a;N;$!ba;s/\n$//;P;D' ~/.ssh/id_rsa
-      #     echo "-----END OPENSSH PRIVATE KEY-----" >> ~/.ssh/id_rsa
-      #     ssh-keyscan github.com >> ~/.ssh/known_hosts
-      #   env:
-      #     SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-
-      # - name: Configure Git with Token Authentication
-      #   run: |
-      #     git config --global url."https://x-access-token:${REPO_TOKEN}@github.com/".insteadOf "https://github.com/"
-      #   env:
-      #     REPO_TOKEN: ${{ secrets.REPO_ACCESS_TOKEN }}
-
-      # For local act testing with --bind, skip cloning and use workspace files directly
       - name: Setup paths for local testing
         run: |
           echo "📍 Using local workspace (mounted with --bind)"
@@ -111,34 +89,11 @@ jobs:
           echo "📁 Available submodules:"
           ls -d $WORKSPACE_ROOT/rust-* $WORKSPACE_ROOT/BitVMX-CPU 2>/dev/null | head -10 || echo "Run with: act --bind"
 
-      # - name: Checkout current branch
-      #   uses: actions/checkout@v4
-      #   with:
-      #     ref: ${{ github.head_ref || github.ref_name }}
-      #     fetch-depth: 1
-
-# Local test setup
-      - name: Detect host for container
-        run: |
-          if (grep -qi microsoft /proc/version || docker info 2>/dev/null | grep -qi 'ostype: windows'); then
-            echo "IS_WINDOWS_DOCKER=true" >> $GITHUB_ENV
-          else
-            echo "IS_WINDOWS_DOCKER=false" >> $GITHUB_ENV
-          fi
-
       # Install libclang (required for librocksdb-sys)
       - name: Install libclang
         run: |
           sudo apt-get update
           sudo apt-get install -y libclang-dev clang
-
-      - name: Install docker-compose
-        run: |
-          sudo curl -L "https://github.com/docker/compose/releases/download/v2.20.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-          sudo chmod +x /usr/local/bin/docker-compose
-          docker-compose --version          
-
-# End Local test setup
 
       - name: Install Rust Toolchain
         uses: actions-rs/toolchain@v1
@@ -180,15 +135,17 @@ jobs:
       #     restore-keys: |
       #       ${{ runner.os }}-${{ inputs.submodule_path }}-target-
 
-      - name: Run docker-compose (initial cleanup)
+      - name: Initial cleanup
         run: |
           echo "=== Performing initial cleanup ==="
-          # Limpiar cualquier estado previo de docker
           cd $GITHUB_WORKSPACE/${{ env.SUBMODULE_PATH }}
-          docker-compose -f ./docker/bitcoind.docker-compose.yml down --volumes --remove-orphans || true
-          docker container prune -f || true
-          docker volume prune -f || true
-          
+
+          # Stop and remove any running bitcoind containers (if any)
+          docker stop bitcoin-regtest || true
+
+          # Clean up temp directories
+          rm -rf /tmp/broker_p2p_6118* /tmp/regtest/ || true
+
           echo "=== Initial cleanup completed ==="
 
       - name: Build project
@@ -217,10 +174,6 @@ jobs:
             # Set up log directory
             LOG_DIR="./logs/$1"
             mkdir -p "$LOG_DIR"
-
-            # Restart bitcoind
-            # docker compose -f ./docker/bitcoind.docker-compose.yml down --volumes || true
-            # docker compose -f ./docker/bitcoind.docker-compose.yml up -d bitcoind
 
             # Start bitcoind using cargo
             echo "Starting bitcoind with setup_bitcoin_node..."
@@ -261,12 +214,7 @@ jobs:
 
             # Run example
             RUST_BACKTRACE=1 cargo run --release --example union "$1"
-            
-            # Cleanup after test
-            echo "Cleaning up bitcoind and background processes..."
-            pkill -9 bitcoind || true
-            pkill -f "cargo run --release all" || true
-            sleep 1
+
 
             echo "::endgroup::"
           }
@@ -293,7 +241,15 @@ jobs:
         run: |
           echo "=== Performing final cleanup ==="
           cd $GITHUB_WORKSPACE/${{ env.SUBMODULE_PATH }}
-          docker-compose -f ./docker/bitcoind.docker-compose.yml down --volumes --remove-orphans || true
+
+          # Stop bitcoind container
+          docker stop bitcoin-regtest || true
+
+          # Clean up temp directories
+          rm -rf /tmp/broker_p2p_6118* /tmp/regtest/ || true
+
+          # Prune unused resources
           docker container prune -f || true
-          docker volume prune -f || true          
+          docker volume prune -f || true
+
           echo "=== Final cleanup completed ==="
