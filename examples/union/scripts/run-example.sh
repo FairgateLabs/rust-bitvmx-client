@@ -14,6 +14,8 @@ set -euo pipefail
 if [ "$#" -ne 1 ]; then
   echo "Usage: $0 <example>"
   echo "Example: $0 committee"
+  echo "Available examples:"
+  cargo run -q --release --example union
   exit 1
 fi
 
