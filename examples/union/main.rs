@@ -66,7 +66,6 @@ pub fn main() -> Result<()> {
         Some("double_reimbursement") => cli_double_reimbursement()?,
         Some("operator_disabler") => cli_operator_disabler()?,
         Some("watchtower_disabler") => cli_watchtower_disabler()?,
-        Some("full_penalization") => cli_full_penalization()?,
         Some("self_disablers") => cli_self_disablers()?,
         // Utils
         Some("create_wallet") => cli_create_wallet(args.get(2))?,
