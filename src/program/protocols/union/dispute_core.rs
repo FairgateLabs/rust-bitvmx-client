@@ -5,7 +5,6 @@ use crate::{
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
-                self,
                 common::{
                     create_transaction_reference, estimate_fee, extract_index,
                     get_accept_pegin_pid, get_initial_deposit_output_type, indexed_name,
@@ -150,7 +149,6 @@ impl ProtocolHandler for DisputeCoreProtocol {
         let mut protocol = self.load_or_create_protocol();
         let dispute_core_data = self.dispute_core_data(context)?;
         let committee = self.committee(context)?;
-        let member_keys = keys[dispute_core_data.member_index].clone();
         let member = &committee.members[dispute_core_data.member_index];
 
         let mut reimbursement_output =
@@ -159,8 +157,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
         self.create_wt_start_enabler_output(
             &mut protocol,
             &dispute_core_data,
-            &member_keys,
-            member,
+            &member.dispute_key,
         )?;
 
         let mut wt_start_enabler_outputs =
@@ -168,7 +165,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
 
         // If member is an operator create Operator initial deposit and dispute cores
         if member.role == ParticipantRole::Prover {
-            self.create_op_initial_deposit(&mut protocol, &member_keys, &member.dispute_key)?;
+            self.create_op_initial_deposit(&mut protocol, &member.dispute_key)?;
 
             for i in 0..committee.packet_size as usize {
                 self.create_dispute_core(
@@ -192,7 +189,10 @@ impl ProtocolHandler for DisputeCoreProtocol {
         // Add speedup output
         protocol.add_transaction_output(
             &PROTOCOL_FUNDING_TX,
-            &OutputType::segwit_key(SPEEDUP_VALUE, member_keys.get_public(SPEEDUP_KEY)?)?,
+            &OutputType::segwit_key(
+                SPEEDUP_VALUE,
+                keys[dispute_core_data.member_index].get_public(SPEEDUP_KEY)?,
+            )?,
         )?;
 
         protocol.compute_minimum_output_values()?;
@@ -228,6 +228,8 @@ impl ProtocolHandler for DisputeCoreProtocol {
             Ok(self.reimbursement_kickoff_tx(name, context)?)
         } else if name.starts_with(CHALLENGE_TX) {
             Ok(self.challenge_tx(name, context)?)
+        } else if name == WT_SELF_DISABLER_TX || name == OP_SELF_DISABLER_TX {
+            Ok(self.self_disabler_tx(name, context)?)
         } else {
             Err(BitVMXError::InvalidTransactionName(name.to_string()))
         }
@@ -290,13 +292,9 @@ impl DisputeCoreProtocol {
         &self,
         protocol: &mut Protocol,
         dispute_core_data: &DisputeCoreData,
-        watchtower_keys: &ParticipantKeys,
-        member: &MemberData,
+        watchtower_dispute_key: &PublicKey,
     ) -> Result<(), BitVMXError> {
         let funding_utxo = dispute_core_data.funding_utxo.clone();
-        let self_disabler = format!("{}{}", WATCHTOWER, SELF_DISABLER_TX_SUFFIX);
-        let reveal_take_private_key = watchtower_keys.get_winternitz(REVEAL_TAKE_PRIVKEY)?.clone();
-        let watchtower_dispute_key = &member.dispute_key.clone();
 
         // Connect the PROTOCOL_FUNDING_TX transaction to the operator funding transaction.
         // Create the funding transaction reference
@@ -321,10 +319,7 @@ impl DisputeCoreProtocol {
                 AUTO_AMOUNT,
                 // FIXME: Should this be aggregated key? To avoid wt to be able to spend it alone. And SignMode should be Aggregated
                 watchtower_dispute_key,
-                &[scripts::reveal_take_private_key(
-                    watchtower_dispute_key,
-                    &reveal_take_private_key,
-                )?],
+                &[],
             )?),
             &WT_START_ENABLER_TX,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
@@ -337,14 +332,14 @@ impl DisputeCoreProtocol {
             "self_disabler",
             &PROTOCOL_FUNDING_TX,
             OutputSpec::Index(0),
-            &self_disabler,
+            &WT_SELF_DISABLER_TX,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
             None,
             None,
         )?;
 
         protocol.add_transaction_output(
-            &self_disabler,
+            &WT_SELF_DISABLER_TX,
             &OutputType::segwit_key(RECOVER_AMOUNT, watchtower_dispute_key)?,
         )?;
 
@@ -415,26 +410,14 @@ impl DisputeCoreProtocol {
     fn create_op_initial_deposit(
         &self,
         protocol: &mut Protocol,
-        operator_keys: &ParticipantKeys,
         operator_dispute_key: &PublicKey,
     ) -> Result<(), BitVMXError> {
-        let reveal_take_private_key = operator_keys.get_winternitz(REVEAL_TAKE_PRIVKEY)?.clone();
-
-        let op_self_disabler = format!("{}{}", OPERATOR, SELF_DISABLER_TX_SUFFIX);
-
         // Connect the initial deposit transaction to the PROTOCOL_FUNDING_TX transaction.
         protocol.add_connection(
             "initial_deposit",
             &PROTOCOL_FUNDING_TX,
-            OutputSpec::Auto(OutputType::taproot(
-                AUTO_AMOUNT,
-                // FIXME: Should this be aggregated key? To avoid op to be able to spend it alone. And SignMode should be Aggregated
-                operator_dispute_key,
-                &[union::scripts::reveal_take_private_key(
-                    operator_dispute_key,
-                    &reveal_take_private_key,
-                )?],
-            )?),
+            // FIXME: Should this be aggregated key? To avoid wt to be able to spend it alone. And SignMode should be Aggregated
+            OutputSpec::Auto(OutputType::taproot(AUTO_AMOUNT, operator_dispute_key, &[])?),
             &OP_INITIAL_DEPOSIT_TX,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
             None,
@@ -446,14 +429,14 @@ impl DisputeCoreProtocol {
             "self_disabler",
             &PROTOCOL_FUNDING_TX,
             OutputSpec::Index(1),
-            &op_self_disabler,
+            &OP_SELF_DISABLER_TX,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
             None,
             None,
         )?;
 
         protocol.add_transaction_output(
-            &op_self_disabler,
+            &OP_SELF_DISABLER_TX,
             &OutputType::segwit_key(RECOVER_AMOUNT, operator_dispute_key)?,
         )?;
 
@@ -877,7 +860,7 @@ impl DisputeCoreProtocol {
         name: &str,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        info!(id = self.ctx.my_idx, "Loading {} tx", name);
+        info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", name);
 
         let mut protocol = self.load_protocol()?;
         let my_index = self.ctx.my_idx;
@@ -966,11 +949,9 @@ impl DisputeCoreProtocol {
         tx_status: TransactionStatus,
     ) -> Result<(), BitVMXError> {
         let tx_name = indexed_name(CHALLENGE_TX, slot_id);
+        info!("Dispatching {}", tx_name);
 
-        info!("Dispatching {} tx", tx_name);
-
-        let (mut challenge_tx, speedup) =
-            self.get_transaction_by_name(&tx_name, program_context)?;
+        let (mut challenge_tx, speedup) = self.challenge_tx(&tx_name, program_context)?;
         let challenge_txid = challenge_tx.compute_txid();
 
         // Connect the challenge transaction to the reimbursement kickoff transaction
@@ -1173,11 +1154,12 @@ impl DisputeCoreProtocol {
         tx_id: Txid,
         tx_name: &str,
     ) -> Result<(), BitVMXError> {
-        // Extract slot_index from transaction name
         info!(
             "Handling reimbursement kickoff txid: {}. Name: {}",
             tx_id, tx_name
         );
+
+        // Extract slot_index from transaction name
         let slot_index = extract_index(tx_name, REIMBURSEMENT_KICKOFF_TX)?;
         info!("Extracted slot index: {}", slot_index);
 
@@ -1196,7 +1178,7 @@ impl DisputeCoreProtocol {
             } else {
                 info!(
                     id = self.ctx.my_idx,
-                    "Reimbursement kickoff transaction {} lacks sufficient confirmations: {}",
+                    "Reimbursement kickoff transaction {} lacks enough confirmations: {}",
                     tx_id,
                     tx_status.confirmations
                 );
@@ -1497,7 +1479,7 @@ impl DisputeCoreProtocol {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(
             id = self.ctx.my_idx,
-            "Loading Start Enabler transaction for Init"
+            "Loading {} transaction for DisputeCore", name
         );
 
         let mut protocol: Protocol = self.load_protocol()?;
@@ -1506,7 +1488,7 @@ impl DisputeCoreProtocol {
             &name,
             0,
             &SpendMode::KeyOnly {
-                key_path_sign: SignMode::Single,
+                key_path_sign: SignMode::Aggregate,
             },
             context.key_chain.key_manager.as_ref(),
             "",
@@ -1525,6 +1507,40 @@ impl DisputeCoreProtocol {
 
         let tx = protocol.transaction_to_send(&name, &[input_args])?;
 
+        Ok((tx, None))
+    }
+
+    fn self_disabler_tx(
+        &self,
+        tx_name: &str,
+        context: &ProgramContext,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", tx_name);
+
+        let mut protocol = self.load_protocol()?;
+
+        let signatures = protocol.sign_taproot_input(
+            &tx_name,
+            0,
+            &SpendMode::KeyOnly {
+                key_path_sign: SignMode::Single,
+            },
+            context.key_chain.key_manager.as_ref(),
+            "",
+        )?;
+
+        let mut input_args = InputArgs::new_taproot_key_args();
+        for signature in signatures {
+            if signature.is_some() {
+                info!(
+                    "Adding taproot signature to input args for {}: {:?}",
+                    tx_name, signature
+                );
+                input_args.push_taproot_signature(signature.unwrap())?;
+            }
+        }
+
+        let tx = protocol.transaction_to_send(&tx_name, &[input_args])?;
         Ok((tx, None))
     }
 }
