@@ -1,3 +1,21 @@
+# GitHub Actions Debugging with act
+#
+# This workflow is used to debug the GitHub Actions workflow locally using `act`.
+# It mirrors union_tests.yml but uses local files via --bind instead of cloning from GitHub.
+#
+# Prerequisites:
+#   - Install act: https://nektosact.com/
+#
+# Usage:
+#   Run from the root of the workspace:
+#
+#   act --pull \
+#     -s SSH_PRIVATE_KEY="$(cat ~/.ssh/<YOUR_SSH_KEY_FILE>)" \
+#     -s GITHUB_TOKEN=<your_github_token> \
+#     -s REPO_ACCESS_TOKEN=<your_repo_token> \
+#     -W rust-bitvmx-client/.github/workflows/union_tests_local.yml \
+#     --bind
+#
 name: 'Test action (Local)'
 on:
   workflow_dispatch:  # Only runs with 'act' or manual trigger
@@ -28,50 +46,8 @@ jobs:
       BITCOIND_RPC_USER: foo
       BITCOIND_RPC_PASSWORD: rpcpassword
       BITCOIND_RPC_NETWORK: regtest
-      # Variables from the original 'with' declaration
-      REPO: 'FairgateLabs/rust-bitvmx-workspace'
-      SUBMODULE_PATH: 'rust-bitvmx-client'  # Path relative to GITHUB_WORKSPACE
-      CARGO_FEATURES: 'testpanic'
-      NIGHTLY: false
 
     steps:
-      - name: Debug inputs
-        run: |
-          echo "All inputs:"
-          echo "repo=${{ env.REPO }}"
-          echo "submodule_path=${{ env.SUBMODULE_PATH }}"
-
-      - name: Validate Inputs
-        run: |
-          ERRORS=()          
-          
-          [[ -z "${{ env.REPO }}" ]] && ERRORS+=("'repo' input cannot be empty")
-          [[ -z "${{ env.SUBMODULE_PATH }}" ]] && ERRORS+=("'submodule_path' input cannot be empty")
-          
-          if [[ ! "${{ env.REPO }}" =~ ^[a-zA-Z0-9_\-]+/[a-zA-Z0-9_\-]+$ ]]; then
-            ERRORS+=("'repo' must be in format 'owner/repo'")
-          fi
-
-          # Old regex - doesn't allow . or /
-          # if [[ ! "${{ env.SUBMODULE_PATH }}" =~ ^[a-zA-Z0-9_\-]+$ ]]; then
-          # New regex - allows . and / for paths like "." or "rust-bitvmx-client"
-          if [[ ! "${{ env.SUBMODULE_PATH }}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
-            ERRORS+=("'submodule_path' contains invalid characters")
-          fi
-          
-          if [[ -n "${{ env.CARGO_FEATURES }}" ]]; then
-            if [[ ! "${{ env.CARGO_FEATURES }}" =~ ^[a-zA-Z0-9_,-]+$ ]]; then
-              ERRORS+=("'cargo_features' contains invalid characters")
-            fi
-          fi
-          
-          if [[ ${#ERRORS[@]} -gt 0 ]]; then
-            printf "❌ Validation errors:\n"
-            printf "  - %s\n" "${ERRORS[@]}"
-            exit 1
-          fi
-          echo "✅ All inputs validated successfully"
-
       - name: Check disk space
         run: df -h
 
@@ -102,43 +78,10 @@ jobs:
           toolchain: stable
           override: true
 
-      # - name: Cache Cargo registry and git index
-      #   uses: actions/cache@v4
-      #   with:
-      #     path: |
-      #       ~/.cargo/registry
-      #       ~/.cargo/git
-      #     key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      #     restore-keys: |
-      #       ${{ runner.os }}-cargo-
-
-      # - name: Cache Submodules Target Directory
-      #   uses: actions/cache@v4
-      #   with:
-      #     path: |
-      #       ${{ env.ROOT }}/${{ inputs.submodule_path }}/target
-      #       ${{ env.ROOT }}/rust-bitvmx-storage-backend/target
-      #       ${{ env.ROOT }}/rust-bitvmx-bitcoin-rpc/target
-      #       ${{ env.ROOT }}/rust-bitvmx-settings/target
-      #       ${{ env.ROOT }}/BitVMX-CPU/target
-      #       ${{ env.ROOT }}/rust-bitvmx-broker/target
-      #       ${{ env.ROOT }}/rust-bitcoind/target
-      #       ${{ env.ROOT }}/rust-bitvmx-key-manager/target
-      #       ${{ env.ROOT }}/rust-bitvmx-protocol-builder/target
-      #       ${{ env.ROOT }}/rust-bitcoin-indexer/target
-      #       ${{ env.ROOT }}/rust-bitvmx-transaction-monitor/target
-      #       ${{ env.ROOT }}/rust-bitvmx-operator-comms/target
-      #       ${{ env.ROOT }}/rust-bitvmx-wallet/target
-      #       ${{ env.ROOT }}/rust-bitcoin-coordinator/target
-      #       ${{ env.ROOT }}/rust-bitvmx-job-dispatcher/target
-      #     key: ${{ runner.os }}-${{ inputs.submodule_path }}-target-${{ hashFiles(format('{0}/Cargo.lock', inputs.submodule_path)) }}
-      #     restore-keys: |
-      #       ${{ runner.os }}-${{ inputs.submodule_path }}-target-
-
       - name: Initial cleanup
         run: |
           echo "=== Performing initial cleanup ==="
-          cd $GITHUB_WORKSPACE/${{ env.SUBMODULE_PATH }}
+          cd $GITHUB_WORKSPACE/rust-bitvmx-client
 
           # Stop and remove any running bitcoind containers (if any)
           docker stop bitcoin-regtest || true
@@ -150,23 +93,14 @@ jobs:
 
       - name: Build project
         run: |
-          cd $GITHUB_WORKSPACE/${{ env.SUBMODULE_PATH }}
-          echo "=== Debug Info ==="
-          echo "WORKSPACE_ROOT=$WORKSPACE_ROOT"
-          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
-          echo "PWD=$(pwd)"
-          echo "=== Checking parent directory ==="
-          ls -la /home/zava/dev/fairgate/bitvmx/rust-bitvmx-workspace/ | head -10 || echo "Parent not mounted"
-          echo "=== Checking for .cargo in parent ==="
-          ls -la /home/zava/dev/fairgate/bitvmx/rust-bitvmx-workspace/.cargo/ || echo "No .cargo"
-          echo "=== Building ==="
+          cd $GITHUB_WORKSPACE/rust-bitvmx-client
           cargo build --release
           cargo build --release --example union
 
       - name: Run integration examples
         run: |
           set -e
-          cd $GITHUB_WORKSPACE/${{ env.SUBMODULE_PATH }}
+          cd $GITHUB_WORKSPACE/rust-bitvmx-client
 
           run_example() {
             echo "::group::🧪 Running example: $1"
@@ -215,7 +149,6 @@ jobs:
             # Run example
             RUST_BACKTRACE=1 cargo run --release --example union "$1"
 
-
             echo "::endgroup::"
           }
 
@@ -240,7 +173,7 @@ jobs:
         if: always()
         run: |
           echo "=== Performing final cleanup ==="
-          cd $GITHUB_WORKSPACE/${{ env.SUBMODULE_PATH }}
+          cd $GITHUB_WORKSPACE/rust-bitvmx-client
 
           # Stop bitcoind container
           docker stop bitcoin-regtest || true

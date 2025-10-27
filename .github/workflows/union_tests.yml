@@ -36,9 +36,6 @@ jobs:
       BITCOIND_RPC_NETWORK: regtest
 
     steps:
-      # - name: Check disk space
-      #   run: df -h
-
       - name: Configure SSH for Git Submodule Access
         uses: webfactory/ssh-agent@v0.5.4
         with:
@@ -231,6 +228,6 @@ jobs:
         with:
           name: bitcoind-logs-${{ github.run_number }}-${{ github.run_attempt }}
           path: |
-            ${{ env.ROOT }}/rust-bitvmx-client/docker/
+            ${{ env.ROOT }}/rust-bitvmx-client/logs/**/bitcoind.log
           retention-days: 7
           if-no-files-found: warn
