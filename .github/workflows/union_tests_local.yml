@@ -1,11 +1,6 @@
-name: 'Test action'
+name: 'Test action (Local)'
 on:
-  push:
-    branches: 
-      - '**'
-  pull_request:
-    branches: 
-      - '**'
+  workflow_dispatch:  # Only runs with 'act' or manual trigger
 
 env:
   CARGO_TERM_COLOR: always
