@@ -9,6 +9,36 @@ use uuid::Uuid;
 const MIN_EXPECTED_MSG_LEN: usize = 4; // 2 bytes for version + 2 bytes for message type
 const MAX_EXPECTED_MSG_LEN: usize = 1000000; // Maximum length for a message //TODO: Change this value
 
+// Public function for signature verification
+pub fn serialize_with_sorted_keys_for_verification(value: &Value) -> Result<String, BitVMXError> {
+    let sorted_json = sort_json_keys(value);
+    serde_json::to_string(&sorted_json).map_err(|_| BitVMXError::SerializationError)
+}
+
+// Recursively sort all keys in a JSON value
+fn sort_json_keys(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut sorted_map = serde_json::Map::new();
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            for key in keys {
+                sorted_map.insert(key.clone(), sort_json_keys(&map[key]));
+            }
+            Value::Object(sorted_map)
+        }
+        Value::Array(vec) => {
+            Value::Array(vec.iter().map(sort_json_keys).collect())
+        }
+        _ => value.clone(),
+    }
+}
+
+pub fn construct_message(program_id: &str, data: &Value, timestamp: i64) -> Result<String, BitVMXError> {
+    let msg_string = serialize_with_sorted_keys_for_verification(data)?;
+    Ok(format!("{}{}{}", program_id, msg_string, timestamp))
+}
+
 pub fn request<T: Serialize>(
     comms: &OperatorComms,
     key_chain: &KeyChain,
@@ -18,9 +48,11 @@ pub fn request<T: Serialize>(
     msg: T,
 ) -> Result<(), BitVMXError> {
 
-    let msg_string = serde_json::to_string(&msg).map_err(|_| BitVMXError::SerializationError)?;
+    // Serialize with sorted keys for consistent ordering during signature verification
+    let msg_value = serde_json::to_value(&msg).map_err(|_| BitVMXError::SerializationError)?;
     let timestamp = Utc::now().timestamp_millis();
-    let message = format!("{}{}{}", program_id.to_string(), msg_string, timestamp);
+    let message = construct_message(&program_id.to_string(), &msg_value, timestamp)?;
+    
     let signature = &key_chain.sign_rsa_message(message.as_bytes())?;
 
     let serialize_msg = serialize_msg(msg_type, program_id, msg, timestamp, signature.to_vec())?;
@@ -192,6 +224,8 @@ pub fn deserialize_msg(
         .iter()
         .filter_map(|v| v.as_u64().and_then(|b| if b <= 255 { Some(b as u8) } else { None }))
         .collect::<Vec<u8>>();
+
+
 
     //TODO: CHECK THIS WITH @KEVIN
     // Validate that "msg" is a byte array by filtering out invalid values

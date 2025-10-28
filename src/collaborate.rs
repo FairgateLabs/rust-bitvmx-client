@@ -167,7 +167,7 @@ impl Collaboration {
         msg_type: CommsMessageType,
         data: Value,
         program_context: &ProgramContext,
-        _timestamp: i64,
+        timestamp: i64,
         signature: Vec<u8>,
     ) -> Result<(), BitVMXError> {
         let pubkey_hash = comms_address.pubkey_hash.clone();
@@ -176,7 +176,12 @@ impl Collaboration {
                 // Handle peer verification key message
                 let verification_key: String = serde_json::from_value(data.clone())
                     .map_err(|_| BitVMXError::InvalidMessageFormat)?;
-                let verified = program_context.key_chain.verify_rsa_signature(&verification_key, data.to_string().as_bytes(), &signature)?;
+                
+                // Reconstruct the message that was signed: {program_id}{msg_string}{timestamp}
+                // Serialize with sorted keys to match the signing logic
+                let message = crate::comms_helper::construct_message(&self.collaboration_id.to_string(), &data, timestamp)?;
+                
+                let verified = program_context.key_chain.verify_rsa_signature(&verification_key, message.as_bytes(), &signature)?;
                 info!("Verification key verified for peer: {} ({})", pubkey_hash, verified);
                 self.participant_verification_keys.insert(pubkey_hash.clone(), verification_key);
             }
@@ -214,7 +219,6 @@ impl Collaboration {
                             self.my_key.clone(),
                         )?;
                         self.aggregated_key = Some(aggregated.clone());
-
                         self.state = true;
                     }
                 } else {
@@ -227,7 +231,10 @@ impl Collaboration {
 
                     //validates leader's verification key
                     let leader_verification_key = self.participant_verification_keys.get(&self.leader.pubkey_hash).unwrap();
-                    let verified = program_context.key_chain.verify_rsa_signature(&leader_verification_key, data.clone().to_string().as_bytes(), &signature)?;
+                    
+                    let message = crate::comms_helper::construct_message(&self.collaboration_id.to_string(), &data, timestamp)?;
+                    
+                    let verified = program_context.key_chain.verify_rsa_signature(&leader_verification_key, message.as_bytes(), &signature)?;
                     info!("Leader's verification key verified ({})", verified);
 
                     // Process all received keys - simplified MITM protection

@@ -23,7 +23,6 @@ const RSA_KEY_INDEX: usize = 0; // TODO: make this configurable
 pub struct KeyChain {
     pub key_manager: Rc<KeyManager>,
     pub store: Rc<Storage>,
-    //pub verification_public_key: Option<PublicKey>,
     pub rsa_public_key: Option<String>,
 }
 
@@ -66,15 +65,10 @@ impl KeyChain {
         }
         let pem_file = std::fs::read_to_string(path).unwrap();
         let rsa_pub_key: String = key_manager.import_rsa_private_key(&pem_file, RSA_KEY_INDEX)?;
-
-        // Use ECDSA for both signing and verification - unified key management
-        // This eliminates the need for separate RSA and ECDSA keys
-        //let verification_key = key_manager.derive_keypair(0)?;
         
         Ok(Self { 
             key_manager, 
             store, 
-            //verification_public_key: Some(verification_key),
             rsa_public_key: Some(rsa_pub_key),
         })
     }
@@ -301,26 +295,6 @@ impl KeyChain {
         Ok(key_manager::verifier::SignatureVerifier::new()
             .verify_rsa_signature(&rsa_signature, message, rsa_pub_key)?)
     }
-
-    /*
-    pub fn verify_rsa_signature_with_string(
-        &self,
-        rsa_public_key_str: &str,
-        message: &[u8],
-        signature: &[u8],
-    ) -> Result<bool, BitVMXError> {
-        // Create a Signature from the bytes using try_from
-        let rsa_signature = key_manager::rsa::Signature::try_from(signature)
-            .map_err(|_e| BitVMXError::InvalidMessageFormat)?;
-        
-        // Parse the RSA public key from string
-        let rsa_pub_key = PublicKey::from_str(rsa_public_key_str)
-            .map_err(|_| BitVMXError::InvalidMessageFormat)?;
-        
-        // Verify the signature using SignatureVerifier
-        Ok(key_manager::verifier::SignatureVerifier::new()
-            .verify_rsa_signature(&rsa_signature, message, &rsa_pub_key.to_string())?)
-    } */
 
     pub fn get_rsa_public_key(&self) -> Result<String, BitVMXError> {
         Ok(self.rsa_public_key.clone().ok_or(BitVMXError::InvalidMessageFormat)?)
