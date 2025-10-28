@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::Path, rc::Rc, str::FromStr};
+use std::{collections::HashMap, path::Path, rc::Rc};
 
 use bitcoin::{secp256k1::rand::thread_rng, PublicKey, XOnlyPublicKey};
 use key_manager::{
@@ -23,7 +23,7 @@ const RSA_KEY_INDEX: usize = 0; // TODO: make this configurable
 pub struct KeyChain {
     pub key_manager: Rc<KeyManager>,
     pub store: Rc<Storage>,
-    pub verification_public_key: Option<PublicKey>,
+    //pub verification_public_key: Option<PublicKey>,
     pub rsa_public_key: Option<String>,
 }
 
@@ -69,12 +69,12 @@ impl KeyChain {
 
         // Use ECDSA for both signing and verification - unified key management
         // This eliminates the need for separate RSA and ECDSA keys
-        let verification_key = key_manager.derive_keypair(0)?;
+        //let verification_key = key_manager.derive_keypair(0)?;
         
         Ok(Self { 
             key_manager, 
             store, 
-            verification_public_key: Some(verification_key),
+            //verification_public_key: Some(verification_key),
             rsa_public_key: Some(rsa_pub_key),
         })
     }
@@ -264,14 +264,14 @@ impl KeyChain {
 
     /// Sign a message using a pre-loaded RSA private key (optimized version)
     /// This method assumes the RSA key is already loaded in the key manager at the specified index
-    pub fn sign_with_rsa_key(
+    fn sign_with_rsa_key(
         &self,
         message: &[u8],
-        _index: usize,
+        index: usize,
     ) -> Result<Vec<u8>, BitVMXError> {
         // Sign the message using the pre-loaded key
         // Sign the message using the default RSA key index
-        let signature = self.key_manager.sign_rsa_message(message, RSA_KEY_INDEX)?;
+        let signature = self.key_manager.sign_rsa_message(message, index)?;
         
         // Convert signature to bytes using the signature encoding
         Ok(signature.to_bytes().to_vec())
@@ -289,7 +289,7 @@ impl KeyChain {
     /// Verify an RSA signature using a public key
     pub fn verify_rsa_signature(
         &self,
-        _pub_key: &PublicKey,
+        rsa_pub_key: &str,
         message: &[u8],
         signature: &[u8],
     ) -> Result<bool, BitVMXError> {
@@ -297,15 +297,12 @@ impl KeyChain {
         let rsa_signature = key_manager::rsa::Signature::try_from(signature)
             .map_err(|_e| BitVMXError::InvalidMessageFormat)?;
         
-        // Get the RSA public key from the key manager (the one that was imported)
-        let rsa_pub_key = self.rsa_public_key.as_ref()
-            .ok_or(BitVMXError::InvalidMessageFormat)?;
-        
-        // Verify the signature using SignatureVerifier
+        // Verify the signature using SignatureVerifier with the provided RSA public key
         Ok(key_manager::verifier::SignatureVerifier::new()
             .verify_rsa_signature(&rsa_signature, message, rsa_pub_key)?)
     }
 
+    /*
     pub fn verify_rsa_signature_with_string(
         &self,
         rsa_public_key_str: &str,
@@ -323,10 +320,10 @@ impl KeyChain {
         // Verify the signature using SignatureVerifier
         Ok(key_manager::verifier::SignatureVerifier::new()
             .verify_rsa_signature(&rsa_signature, message, &rsa_pub_key.to_string())?)
-    }
+    } */
 
-    pub fn get_verification_public_key(&self) -> Result<PublicKey, BitVMXError> {
-        Ok(self.verification_public_key.clone().unwrap())
+    pub fn get_rsa_public_key(&self) -> Result<String, BitVMXError> {
+        Ok(self.rsa_public_key.clone().ok_or(BitVMXError::InvalidMessageFormat)?)
     }
 }
 

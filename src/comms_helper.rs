@@ -1,6 +1,5 @@
 use crate::{errors::BitVMXError, program::participant::CommsAddress};
 use bitvmx_operator_comms::operator_comms::{OperatorComms, PubKeyHash};
-use bitcoin::PublicKey;
 use crate::keychain::KeyChain;
 use chrono::Utc;
 use serde::Serialize;
@@ -212,7 +211,7 @@ pub fn deserialize_msg(
     Ok((version, msg_type, program_id, data.clone(), timestamp, signature))
 }
 
-pub fn publish_verification_key(my_pubkey_hash: PubKeyHash, my_verification_key: PublicKey, comms: &OperatorComms, key_chain: &KeyChain, program_id: &Uuid, participants: Vec<CommsAddress>) -> Result<(), BitVMXError> {
+pub fn publish_verification_key(my_pubkey_hash: PubKeyHash, my_verification_key: String, comms: &OperatorComms, key_chain: &KeyChain, program_id: &Uuid, participants: Vec<CommsAddress>) -> Result<(), BitVMXError> {
     for peer in &participants {
         if peer.pubkey_hash == my_pubkey_hash {
             continue;
