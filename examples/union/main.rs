@@ -23,7 +23,8 @@ use bitvmx_client::program::{
         types::{
             ACCEPT_PEGIN_TX, DISPUTE_CORE_LONG_TIMELOCK, DISPUTE_CORE_SHORT_TIMELOCK,
             OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX, OP_INITIAL_DEPOSIT_TX, OP_LAZY_DISABLER_TX,
-            WT_DISABLER_DIRECTORY_TX, WT_DISABLER_TX, WT_START_ENABLER_TX,
+            OP_SELF_DISABLER_TX, WT_DISABLER_DIRECTORY_TX, WT_DISABLER_TX, WT_SELF_DISABLER_TX,
+            WT_START_ENABLER_TX,
         },
     },
 };
@@ -65,6 +66,7 @@ pub fn main() -> Result<()> {
         Some("double_reimbursement") => cli_double_reimbursement()?,
         Some("operator_disabler") => cli_operator_disabler()?,
         Some("watchtower_disabler") => cli_watchtower_disabler()?,
+        Some("self_disablers") => cli_self_disablers()?,
         // Utils
         Some("create_wallet") => cli_create_wallet(args.get(2))?,
         Some("latency") => cli_latency(args.get(2))?,
@@ -88,39 +90,70 @@ pub fn main() -> Result<()> {
     Ok(())
 }
 
+fn print_cmd_help(cmd: &str, description: &str) {
+    println!(
+        "  cargo run --release --example union {:<30} - {}",
+        cmd, description
+    );
+}
+
 fn print_usage() {
-    println!("Usage:");
-    println!("  cargo run --example union setup_bitcoin_node  - Sets up Bitcoin node only");
-    println!("  cargo run --example union committee           - Setups a new committee");
-    println!(
-        "  cargo run --example union watchtowers_start_enabler    - Dispatch WT start enabler transactions"
+    println!("Protocol examples:");
+    print_cmd_help("committee", "Setups a new committee");
+    print_cmd_help("request_pegin", "Setups a request pegin");
+    print_cmd_help("accept_pegin", "Setups the accept peg in protocol");
+    print_cmd_help("request_pegout", "Setups the request peg out protocol");
+    print_cmd_help("advance_funds", "Performs an advancement of funds");
+    print_cmd_help("advance_funds_twice", "Performs advancement of funds twice");
+    print_cmd_help(
+        "invalid_reimbursement",
+        "Forces invalid reimbursement to test challenge tx",
     );
-    println!("  cargo run --example union request_pegin       - Setups a request pegin");
-    println!("  cargo run --example union accept_pegin        - Setups the accept peg in protocol");
-    println!(
-        "  cargo run --example union request_pegout      - Setups the request peg out protocol"
+    print_cmd_help(
+        "watchtowers_start_enabler",
+        "Dispatch WT start enabler transactions",
     );
-    println!("  cargo run --example union advance_funds       - Performs an advancement of funds");
-    println!(
-        "  cargo run --example union advance_funds_twice       - Performs advancement of funds twice"
+    print_cmd_help(
+        "self_disablers",
+        "Dispatch WT and OP self disablers transactions",
     );
-    println!("  cargo run --example union invalid_reimbursement     - Forces invalid reimbursement to test challenge tx");
-    println!("  cargo run --example union operator_disabler     - Dispatch OP disabler directory transactions");
-    println!("  cargo run --example union watchtower_disabler     - Dispatch WT disabler directory transactions");
+    print_cmd_help(
+        "operator_disabler",
+        "Dispatch OP disabler directory transactions",
+    );
+    print_cmd_help(
+        "watchtower_disabler",
+        "Dispatch WT disabler directory transactions",
+    );
+
     // Testing commands
-    println!(
-        "  cargo run --example union create_wallet        - Create wallet: key pair and address. (optionally pass network: regtest, testnet, bitcoin)"
+    println!("\nUtility commands:");
+    print_cmd_help("setup_bitcoin_node", "Sets up Bitcoin node only");
+    print_cmd_help(
+        "create_wallet",
+        "Create wallet: key pair and address. (optionally pass network: regtest, testnet, bitcoin)",
     );
-    println!("  cargo run --example union wallet_balance      - Print Master wallet balance");
-    println!("  cargo run --example union latency             - Analyses latency to the Bitcoin node. (optionally pass network: regtest, testnet, bitcoin)");
-    println!("  cargo run --example union members_balance            - Print members balance");
-    println!(
-        "  cargo run --example union fund_members        - Funds all committee members from master wallet with a testing amount"
+    print_cmd_help("wallet_balance", "Print Master wallet balance");
+    print_cmd_help(
+        "latency",
+        "Analyses latency to the Bitcoin node. (optionally pass network: regtest, testnet, bitcoin)",
     );
-    println!("  cargo run --example union members_recover_funds       - Send all members funds to master wallet address");
-    println!("  cargo run --example union user_recover_funds  - Send user funds to master wallet address");
-    println!(
-        "  cargo run --example union wallet_recover_funds  - Send master wallet funds to address"
+    print_cmd_help("members_balance", "Print members balance");
+    print_cmd_help(
+        "fund_members",
+        "Funds all committee members from master wallet with a testing amount",
+    );
+    print_cmd_help(
+        "members_recover_funds",
+        "Send all members funds to master wallet address",
+    );
+    print_cmd_help(
+        "user_recover_funds",
+        "Send user funds to master wallet address",
+    );
+    print_cmd_help(
+        "wallet_recover_funds",
+        "Send master wallet funds to address",
     );
 }
 
@@ -203,6 +236,42 @@ pub fn cli_invalid_reimbursement() -> Result<()> {
     let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     invalid_reimbursement(&mut committee, slot_index)?;
+    Ok(())
+}
+pub fn cli_self_disablers() -> Result<()> {
+    if HIGH_FEE_NODE_ENABLED {
+        // Due to self disablers does not have speedup by now
+        info!("This example works better with a client node with low fees. Please disable HIGH_FEE_NODE_ENABLED and try again.");
+        return Ok(());
+    }
+
+    let committee = committee(&mut get_master_wallet()?)?;
+    let committee_id = committee.committee_id();
+
+    for member in committee.members {
+        let dispute_core_pid =
+            get_dispute_core_pid(committee_id, &member.keyring.take_pubkey.unwrap());
+
+        let tx = member
+            .dispatch_transaction_by_name(dispute_core_pid, WT_SELF_DISABLER_TX.to_string())?;
+        info!(
+            "Dispatched {} with txid: {}",
+            WT_SELF_DISABLER_TX,
+            tx.compute_txid()
+        );
+
+        if member.role == ParticipantRole::Prover {
+            let tx = member
+                .dispatch_transaction_by_name(dispute_core_pid, OP_SELF_DISABLER_TX.to_string())?;
+            info!(
+                "Dispatched {} with txid: {}",
+                OP_SELF_DISABLER_TX,
+                tx.compute_txid()
+            );
+        }
+    }
+
+    wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
     Ok(())
 }
 

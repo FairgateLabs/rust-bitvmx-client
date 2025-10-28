@@ -110,34 +110,35 @@ pub fn operator_pegout_id(
     Ok(protocol_script)
 }
 
-pub fn reveal_take_private_key(
-    public_key: &PublicKey,
-    take_private_key: &WinternitzPublicKey,
-) -> Result<ProtocolScript, ScriptError> {
-    let script = script!(
-        { XOnlyPublicKey::from(public_key.clone()).serialize().to_vec() }
-        OP_CHECKSIGVERIFY
+// Unused currently
+// pub fn reveal_take_private_key(
+//     public_key: &PublicKey,
+//     take_private_key: &WinternitzPublicKey,
+// ) -> Result<ProtocolScript, ScriptError> {
+//     let script = script!(
+//         { XOnlyPublicKey::from(public_key.clone()).serialize().to_vec() }
+//         OP_CHECKSIGVERIFY
 
-        { ots_checksig(take_private_key, false)? }
-        OP_PUSHNUM_1
-    );
+//         { ots_checksig(take_private_key, false)? }
+//         OP_PUSHNUM_1
+//     );
 
-    let mut protocol_script = ProtocolScript::new(script, public_key, SignMode::Aggregate);
-    protocol_script.add_key(
-        "pegout_id",
-        take_private_key.derivation_index()?,
-        KeyType::winternitz(take_private_key)?,
-        0,
-    )?;
+//     let mut protocol_script = ProtocolScript::new(script, public_key, SignMode::Aggregate);
+//     protocol_script.add_key(
+//         "pegout_id",
+//         take_private_key.derivation_index()?,
+//         KeyType::winternitz(take_private_key)?,
+//         0,
+//     )?;
 
-    protocol_script.add_stack_item(StackItem::SchnorrSig {
-        non_default_sighash: true,
-    });
+//     protocol_script.add_stack_item(StackItem::SchnorrSig {
+//         non_default_sighash: true,
+//     });
 
-    let extra_data = take_private_key.extra_data().unwrap();
-    protocol_script.add_stack_item(StackItem::WinternitzSig {
-        size: extra_data.message_size() + extra_data.checksum_size(),
-    });
+//     let extra_data = take_private_key.extra_data().unwrap();
+//     protocol_script.add_stack_item(StackItem::WinternitzSig {
+//         size: extra_data.message_size() + extra_data.checksum_size(),
+//     });
 
-    Ok(protocol_script)
-}
+//     Ok(protocol_script)
+// }

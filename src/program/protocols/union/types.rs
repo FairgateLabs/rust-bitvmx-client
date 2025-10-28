@@ -32,6 +32,7 @@ pub const CHALLENGE_TX: &str = "CHALLENGE_TX";
 pub const REVEAL_INPUT_TX: &str = "REVEAL_INPUT_TX";
 pub const INPUT_NOT_REVEALED_TX: &str = "INPUT_NOT_REVEALED_TX";
 pub const OP_SELF_DISABLER_TX: &str = "OP_SELF_DISABLER_TX";
+pub const WT_SELF_DISABLER_TX: &str = "WT_SELF_DISABLER_TX";
 pub const OP_DISABLER_TX: &str = "OP_DISABLER_TX";
 pub const WT_DISABLER_TX: &str = "WT_DISABLER_TX";
 pub const OP_LAZY_DISABLER_TX: &str = "OP_LAZY_DISABLER_TX";
@@ -49,9 +50,6 @@ pub const SPEEDUP_VALUE: u64 = 540;
 pub const P2TR_FEE: u64 = 335; // This should match the value P2TR_FEE in Union Smart contracts
 pub const USER_TAKE_FEE: u64 = 335; // This should match the value USER_TAKE_FEE in Union Smart contracts
 pub const OP_DISABLER_FEE: u64 = 240;
-
-// Suffixes
-pub const SELF_DISABLER_TX_SUFFIX: &str = "_SELF_DISABLER_TX";
 
 // UTXOs
 pub const OPERATOR_TAKE_ENABLER: &str = "OPERATOR_TAKE_ENABLER";
