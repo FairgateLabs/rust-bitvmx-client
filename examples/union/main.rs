@@ -91,7 +91,10 @@ pub fn main() -> Result<()> {
 }
 
 fn print_cmd_help(cmd: &str, description: &str) {
-    println!("  cargo run --example union {:<30} - {}", cmd, description);
+    println!(
+        "  cargo run --release --example union {:<30} - {}",
+        cmd, description
+    );
 }
 
 fn print_usage() {
