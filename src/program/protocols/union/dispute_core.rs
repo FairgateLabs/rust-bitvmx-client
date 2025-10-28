@@ -225,16 +225,14 @@ impl ProtocolHandler for DisputeCoreProtocol {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         if name == PROTOCOL_FUNDING_TX {
             Ok(self.protocol_funding_tx(context)?)
-        } else if name == OP_INITIAL_DEPOSIT_TX {
-            Ok(self.op_initial_deposit_tx(name, context)?)
-        } else if name == WT_START_ENABLER_TX {
-            Ok(self.wt_start_enabler_tx(name, context)?)
+        } else if name == OP_INITIAL_DEPOSIT_TX || name == WT_START_ENABLER_TX {
+            Ok(self.sign_aggregated_input(name, context, true)?)
         } else if name.starts_with(REIMBURSEMENT_KICKOFF_TX) {
             Ok(self.reimbursement_kickoff_tx(name, context)?)
         } else if name.starts_with(CHALLENGE_TX) {
             Ok(self.challenge_tx(name, context)?)
         } else if name == WT_SELF_DISABLER_TX || name == OP_SELF_DISABLER_TX {
-            Ok(self.self_disabler_tx(name, context)?)
+            Ok(self.sign_aggregated_input(name, context, false)?)
         } else {
             Err(BitVMXError::InvalidTransactionName(name.to_string()))
         }
@@ -796,48 +794,6 @@ impl DisputeCoreProtocol {
         let txid = tx.compute_txid();
         let speedup_key = self.my_speedup_key(context)?;
         let speedup_vout = (tx.output.len() - 2) as u32;
-        let speedup_utxo = Utxo::new(txid, speedup_vout, SPEEDUP_VALUE, &speedup_key);
-
-        Ok((tx, Some(speedup_utxo.into())))
-    }
-
-    fn op_initial_deposit_tx(
-        &self,
-        tx_name: &str,
-        context: &ProgramContext,
-    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        info!(
-            id = self.ctx.my_idx,
-            "Loading OP Initial Deposit transaction for DisputeCoreProtocol"
-        );
-
-        let mut protocol: Protocol = self.load_protocol()?;
-        let signatures = protocol.sign_taproot_input(
-            tx_name,
-            0,
-            &SpendMode::KeyOnly {
-                key_path_sign: SignMode::Single,
-            },
-            context.key_chain.key_manager.as_ref(),
-            "",
-        )?;
-
-        let mut input_args = InputArgs::new_taproot_key_args();
-        for signature in signatures {
-            if signature.is_some() {
-                info!(
-                    "Adding taproot signature to input args for {}: {:?}",
-                    tx_name, signature
-                );
-                input_args.push_taproot_signature(signature.unwrap())?;
-            }
-        }
-
-        let tx = protocol.transaction_to_send(&tx_name, &[input_args])?;
-
-        let txid = tx.compute_txid();
-        let speedup_key = self.my_speedup_key(context)?;
-        let speedup_vout = (tx.output.len() - 1) as u32;
         let speedup_utxo = Utxo::new(txid, speedup_vout, SPEEDUP_VALUE, &speedup_key);
 
         Ok((tx, Some(speedup_utxo.into())))
@@ -1501,48 +1457,11 @@ impl DisputeCoreProtocol {
             .input()
     }
 
-    fn wt_start_enabler_tx(
-        &self,
-        name: &str,
-        context: &ProgramContext,
-    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        info!(
-            id = self.ctx.my_idx,
-            "Loading {} transaction for DisputeCore", name
-        );
-
-        let mut protocol: Protocol = self.load_protocol()?;
-
-        let signatures = protocol.sign_taproot_input(
-            &name,
-            0,
-            &SpendMode::KeyOnly {
-                key_path_sign: SignMode::Single,
-            },
-            context.key_chain.key_manager.as_ref(),
-            "",
-        )?;
-
-        let mut input_args = InputArgs::new_taproot_key_args();
-        for signature in signatures {
-            if signature.is_some() {
-                info!(
-                    "Adding taproot signature to input args for {}: {:?}",
-                    name, signature
-                );
-                input_args.push_taproot_signature(signature.unwrap())?;
-            }
-        }
-
-        let tx = protocol.transaction_to_send(&name, &[input_args])?;
-
-        Ok((tx, None))
-    }
-
-    fn self_disabler_tx(
+    fn sign_aggregated_input(
         &self,
         tx_name: &str,
-        _context: &ProgramContext,
+        context: &ProgramContext,
+        with_speedup: bool,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", tx_name);
 
@@ -1556,6 +1475,17 @@ impl DisputeCoreProtocol {
         input_args.push_taproot_signature(signature)?;
 
         let tx = protocol.transaction_to_send(&tx_name, &[input_args])?;
-        Ok((tx, None))
+        let speedout = if with_speedup {
+            Some(SpeedupData::new(Utxo::new(
+                tx.compute_txid(),
+                (tx.output.len() - 1) as u32,
+                SPEEDUP_VALUE,
+                &self.my_speedup_key(context)?,
+            )))
+        } else {
+            None
+        };
+
+        Ok((tx, speedout))
     }
 }
