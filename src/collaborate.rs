@@ -244,8 +244,10 @@ impl Collaboration {
                             .unwrap_or(self.leader.pubkey_hash.clone()); //TODO: Handle the unwrap better
                         
                         if let Some(key) = key.public() {
-                            // Simplified MITM protection: only verify our own key
-                            if pubkey_hash == program_context.comms.get_pubk_hash()? {
+                            let my_pubkey_hash = program_context.comms.get_pubk_hash()?;
+                            
+                            // Simplified MITM protection: verify keys based on their source
+                            if pubkey_hash == my_pubkey_hash {
                                 // This is our own key - verify it hasn't been tampered with
                                 if let Some(signature) = keys.get_signature(pubkey_hash_str) {
                                     let my_verification_key = program_context.key_chain.get_rsa_public_key()?;
@@ -255,17 +257,25 @@ impl Collaboration {
                                     info!("Missing RSA signature for our own key");
                                     return Err(BitVMXError::InvalidMessageFormat);
                                 }
-                            } /*else {
+                            } else if pubkey_hash == self.leader.pubkey_hash {
+                                // Leader's key - we trust it since the leader's message is already verified
+                                info!("Leader's key accepted (message already verified)");
+                            } else {
+                                // Other participant's key - verify if signature is present
                                 if let Some(signature) = keys.get_signature(pubkey_hash_str) {
-                                    let verification_key = self.participant_verification_keys.get(&pubkey_hash).unwrap(); //ACA esta el problema es por id ?
-                                    let verified = program_context.key_chain.verify_rsa_signature(&verification_key, key.to_string().as_bytes(), &signature)?;
-                                    info!("Key verified for peer: {} ({})", pubkey_hash, verified);
+                                    if let Some(verification_key) = self.participant_verification_keys.get(&pubkey_hash) {
+                                        let verified = program_context.key_chain.verify_rsa_signature(verification_key, key.to_string().as_bytes(), &signature)?;
+                                        info!("Key verified for peer: {} ({})", pubkey_hash, verified);
+                                    } else {
+                                        info!("Missing verification key for peer: {}", pubkey_hash);
+                                        return Err(BitVMXError::InvalidMessageFormat);
+                                    }
                                 } else {
                                     info!("Missing RSA signature for peer: {}", pubkey_hash);
                                     return Err(BitVMXError::InvalidMessageFormat);
                                 }
-                            }*/
-                            // Accept all keys (our own is verified, others we trust from the leader)
+                            }
+                            // Accept all keys (our own is verified, leader's is trusted, others verified above)
                             self.keys.insert(pubkey_hash, *key);
                         } else {
                             info!("Key not found for peer: {}", pubkey_hash);
