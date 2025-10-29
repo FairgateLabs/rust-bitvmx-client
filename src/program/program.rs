@@ -296,6 +296,7 @@ impl Program {
 
                 request(
                     &program_context.comms,
+                    &program_context.key_chain,
                     &self.program_id,
                     dest,
                     msg_type.clone(),
@@ -719,6 +720,10 @@ impl Program {
         debug!("{}: Message received: {:?} ", self.my_idx, msg_type);
 
         match msg_type {
+            CommsMessageType::VerificationKey => {
+                //HPR: TO IMPLEMENT
+                todo!()
+            }
             CommsMessageType::Keys => {
                 self.receive_keys(comms_address, msg_type, data, program_context)?;
             }
@@ -756,6 +761,7 @@ impl Program {
 
         response(
             &program_context.comms,
+            &program_context.key_chain,
             &self.program_id,
             comms_address,
             msg_type,
