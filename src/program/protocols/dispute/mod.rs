@@ -51,7 +51,9 @@ use crate::{
 pub const EXTERNAL_START: &str = "EXTERNAL_START";
 pub const START_CH: &str = "START_CHALLENGE";
 pub const INPUT_TX: &str = "INPUT_";
+pub const PRE_COMMITMENT: &str = "PRE_COMMITMENT"; // TODO: Only to complete challenge-response sequence. See if can be avoided
 pub const COMMITMENT: &str = "COMMITMENT";
+pub const POST_COMMITMENT: &str = "POST_COMMITMENT"; // TODO: Only to complete challenge-response sequence. See if can be avoided
 pub const EXECUTE: &str = "EXECUTE";
 pub const TIMELOCK_BLOCKS: u16 = 15;
 pub const PROVER_WINS: &str = "PROVER_WINS";
@@ -400,7 +402,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         }
 
         let mut prev_tx = START_CH.to_string();
-        let mut input_tx = String::new();
 
         let (input_txs, input_txs_sizes, input_txs_offsets, _) =
             get_txs_configuration(&self.ctx.id, context)?;
@@ -409,7 +410,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             if tx_owner == "skip" || tx_owner == "prover_prev" {
                 continue;
             }
-            input_tx = format!("INPUT_{}", idx);
+            let input_tx = format!("INPUT_{}", idx);
 
             let words = input_txs_sizes[idx];
             let offset = input_txs_offsets[idx];
@@ -435,6 +436,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             let input_vars = (offset..offset + words)
                 .map(|i| format!("{}_program_input_{}", owner, i))
                 .collect::<Vec<_>>();
+
             //TODO: Handle prover cosigning (in the script check and automatic reply to news)
             self.add_connection_with_scripts(
                 context,
@@ -462,7 +464,24 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             timelock_blocks,
             amount,
             speedup_dust,
-            &input_tx,
+            &prev_tx,
+            PRE_COMMITMENT,
+            &claim_prover,
+            Self::winternitz_check(agg_or_verifier, sign_mode, &keys[1], &Vec::<&str>::new())?,
+            (&verifier_speedup_pub, &prover_speedup_pub),
+        )?;
+
+        amount = self.checked_sub(amount, fee)?;
+        amount = self.checked_sub(amount, speedup_dust)?;
+
+        self.add_connection_with_scripts(
+            context,
+            aggregated,
+            &mut protocol,
+            timelock_blocks,
+            amount,
+            speedup_dust,
+            &PRE_COMMITMENT,
             COMMITMENT,
             &claim_verifier,
             Self::winternitz_check(
@@ -476,8 +495,24 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         amount = self.checked_sub(amount, fee)?;
         amount = self.checked_sub(amount, speedup_dust)?;
 
+        self.add_connection_with_scripts(
+            context,
+            aggregated,
+            &mut protocol,
+            timelock_blocks,
+            amount,
+            speedup_dust,
+            COMMITMENT,
+            POST_COMMITMENT,
+            &claim_prover,
+            Self::winternitz_check(agg_or_verifier, sign_mode, &keys[1], &Vec::<&str>::new())?,
+            (&verifier_speedup_pub, prover_speedup_pub),
+        )?;
+        amount = self.checked_sub(amount, fee)?;
+        amount = self.checked_sub(amount, speedup_dust)?;
+
         let nary_def = program_def.0.nary_def();
-        let mut prev = COMMITMENT.to_string();
+        let mut prev = POST_COMMITMENT.to_string();
         for i in 1..nary_def.total_rounds() + 1 {
             let next = format!("NARY_PROVER_{}", i);
             let hashes = nary_def.hashes_for_round(i);
