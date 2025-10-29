@@ -154,7 +154,6 @@ impl ParticipantKeys {
     pub fn has_signature(&self, key_name: &str) -> bool {
         self.signatures.contains_key(key_name)
     }
-
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, Debug)]

@@ -65,10 +65,10 @@ impl KeyChain {
         }
         let pem_file = std::fs::read_to_string(path).unwrap();
         let rsa_pub_key: String = key_manager.import_rsa_private_key(&pem_file, RSA_KEY_INDEX)?;
-        
-        Ok(Self { 
-            key_manager, 
-            store, 
+
+        Ok(Self {
+            key_manager,
+            store,
             rsa_public_key: Some(rsa_pub_key),
         })
     }
@@ -280,24 +280,17 @@ impl KeyChain {
 
     /// Sign a message using a pre-loaded RSA private key (optimized version)
     /// This method assumes the RSA key is already loaded in the key manager at the specified index
-    fn sign_with_rsa_key(
-        &self,
-        message: &[u8],
-        index: usize,
-    ) -> Result<Vec<u8>, BitVMXError> {
+    fn sign_with_rsa_key(&self, message: &[u8], index: usize) -> Result<Vec<u8>, BitVMXError> {
         // Sign the message using the pre-loaded key
         // Sign the message using the default RSA key index
         let signature = self.key_manager.sign_rsa_message(message, index)?;
-        
+
         // Convert signature to bytes using the signature encoding
         Ok(signature.to_bytes().to_vec())
     }
 
     /// Sign a message using RSA with the default key index (for compatibility)
-    pub fn sign_rsa_message(
-        &self,
-        message: &[u8],
-    ) -> Result<Vec<u8>, BitVMXError> {
+    pub fn sign_rsa_message(&self, message: &[u8]) -> Result<Vec<u8>, BitVMXError> {
         // Sign the message using the default RSA key index
         self.sign_with_rsa_key(message, RSA_KEY_INDEX)
     }
@@ -312,14 +305,22 @@ impl KeyChain {
         // Create a Signature from the bytes using try_from
         let rsa_signature = key_manager::rsa::Signature::try_from(signature)
             .map_err(|_e| BitVMXError::InvalidMessageFormat)?;
-        
+
         // Verify the signature using SignatureVerifier with the provided RSA public key
-        Ok(key_manager::verifier::SignatureVerifier::new()
-            .verify_rsa_signature(&rsa_signature, message, rsa_pub_key)?)
+        Ok(
+            key_manager::verifier::SignatureVerifier::new().verify_rsa_signature(
+                &rsa_signature,
+                message,
+                rsa_pub_key,
+            )?,
+        )
     }
 
     pub fn get_rsa_public_key(&self) -> Result<String, BitVMXError> {
-        Ok(self.rsa_public_key.clone().ok_or(BitVMXError::InvalidMessageFormat)?)
+        Ok(self
+            .rsa_public_key
+            .clone()
+            .ok_or(BitVMXError::InvalidMessageFormat)?)
     }
 }
 
@@ -427,7 +428,7 @@ mod tests {
 
         // Original message
         let original_message = b"Hello, this is a test message for RSA signature verification!";
-        
+
         // Tampered message
         let tampered_message = b"Hello, this is a TAMPERED message for RSA signature verification!";
 
@@ -439,7 +440,10 @@ mod tests {
 
         // Verify the signature with the tampered message - should fail
         let is_valid = keychain.verify_rsa_signature(&rsa_pub_key, tampered_message, &signature)?;
-        assert!(!is_valid, "RSA signature should fail verification when message is tampered");
+        assert!(
+            !is_valid,
+            "RSA signature should fail verification when message is tampered"
+        );
 
         Ok(())
     }
@@ -467,7 +471,10 @@ mod tests {
 
         // Verify the signature with the wrong public key - should fail
         let is_valid = keychain.verify_rsa_signature(&wrong_pub_key, message, &signature)?;
-        assert!(!is_valid, "RSA signature should fail verification with wrong public key");
+        assert!(
+            !is_valid,
+            "RSA signature should fail verification with wrong public key"
+        );
 
         Ok(())
     }
@@ -493,7 +500,7 @@ mod tests {
         // Verify the signature - should either return an error due to invalid format
         // or return false if it manages to parse but verification fails
         let result = keychain.verify_rsa_signature(&rsa_pub_key, message, &invalid_signature);
-        
+
         // Should return an error when signature format is invalid, or false if parsing succeeds but verification fails
         match result {
             Err(BitVMXError::InvalidMessageFormat) => {
@@ -506,7 +513,10 @@ mod tests {
                 panic!("Invalid signature format should not verify successfully");
             }
             Err(e) => {
-                panic!("Expected InvalidMessageFormat error or Ok(false), got different error: {:?}", e);
+                panic!(
+                    "Expected InvalidMessageFormat error or Ok(false), got different error: {:?}",
+                    e
+                );
             }
         }
 
@@ -533,9 +543,11 @@ mod tests {
 
         // Verify the signature - should succeed even with empty message
         let is_valid = keychain.verify_rsa_signature(&rsa_pub_key, message, &signature)?;
-        assert!(is_valid, "RSA signature should verify successfully even for empty message");
+        assert!(
+            is_valid,
+            "RSA signature should verify successfully even for empty message"
+        );
 
         Ok(())
     }
-
 }
