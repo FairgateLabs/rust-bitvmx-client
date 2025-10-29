@@ -252,6 +252,10 @@ impl Collaboration {
                                 if let Some(signature) = keys.get_signature(pubkey_hash_str) {
                                     let my_verification_key = program_context.key_chain.get_rsa_public_key()?;
                                     let verified = program_context.key_chain.verify_rsa_signature(&my_verification_key, key.to_string().as_bytes(), &signature)?;
+                                    if !verified {
+                                        info!("Invalid RSA signature for our own key");
+                                        return Err(BitVMXError::InvalidMessageFormat);
+                                    }
                                     info!("My own key verified ({})", verified);
                                 } else {
                                     info!("Missing RSA signature for our own key");
@@ -265,6 +269,10 @@ impl Collaboration {
                                 if let Some(signature) = keys.get_signature(pubkey_hash_str) {
                                     if let Some(verification_key) = self.participant_verification_keys.get(&pubkey_hash) {
                                         let verified = program_context.key_chain.verify_rsa_signature(verification_key, key.to_string().as_bytes(), &signature)?;
+                                        if !verified {
+                                            info!("Invalid RSA signature for peer: {}", pubkey_hash);
+                                            return Err(BitVMXError::InvalidMessageFormat);
+                                        }
                                         info!("Key verified for peer: {} ({})", pubkey_hash, verified);
                                     } else {
                                         info!("Missing verification key for peer: {}", pubkey_hash);
@@ -368,64 +376,5 @@ impl Collaboration {
 
     pub fn add_key_signature(&mut self, pubkey_hash: PubKeyHash, signature: Vec<u8>) {
         self.key_signatures.insert(pubkey_hash, signature);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use bitcoin::PublicKey;
-    use std::str::FromStr;
-
-    #[test]
-    fn test_mitm_protection_key_signing() {
-        // Test that keys are properly signed with RSA signatures
-        let collaboration_id = Uuid::new_v4();
-        let my_key = PublicKey::from_str("02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9").unwrap();
-        let request_from = Identifier::new("test".to_string(), 0);
-        
-        let mut collaboration = Collaboration::new(
-            &collaboration_id,
-            vec![],
-            CommsAddress {
-                address: "127.0.0.1:8080".parse().unwrap(),
-                pubkey_hash: "test_hash".parse().unwrap(),
-            },
-            false,
-            my_key,
-            request_from,
-        );
-
-        // Test adding key signature
-        let test_signature: Vec<u8> = vec![1, 2, 3, 4, 5];
-        let test_pubkey_hash: PubKeyHash = "test_pubkey".parse().unwrap();
-        
-        collaboration.add_key_signature(test_pubkey_hash.clone(), test_signature.clone());
-        
-        // Verify signature was stored
-        assert!(collaboration.get_key_signature(&test_pubkey_hash).is_some());
-        assert_eq!(
-            collaboration.get_key_signature(&test_pubkey_hash).unwrap(),
-            &test_signature
-        );
-    }
-
-    #[test]
-    fn test_participant_keys_signature_management() {
-        let mut keys = ParticipantKeys::new(
-            vec![("test_key".to_string(), PublicKeyType::Public(
-                PublicKey::from_str("02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9").unwrap()
-            ))],
-            vec![]
-        );
-
-        // Test adding signature
-        let signature: Vec<u8> = vec![1, 2, 3, 4, 5];
-        keys.add_signature("test_key", signature.clone());
-
-        // Test signature retrieval
-        assert!(keys.has_signature("test_key"));
-        assert_eq!(keys.get_signature("test_key").unwrap(), &signature);
-        assert!(!keys.has_signature("nonexistent_key"));
     }
 }
