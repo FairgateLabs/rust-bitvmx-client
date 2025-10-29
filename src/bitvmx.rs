@@ -253,7 +253,7 @@ impl BitVMX {
         msg: Vec<u8>,
         pend_to_back: bool,
     ) -> Result<(), BitVMXError> {
-        let (_version, msg_type, program_id, data) = deserialize_msg(msg.clone())?;
+        let (_version, msg_type, program_id, data, timestamp, signature) = deserialize_msg(msg.clone())?;
         if let Some(mut program) = self.load_program(&program_id).ok() {
             let address = program.get_address_from_pubkey_hash(&identifier.pubkey_hash.clone())?;
             program.process_comms_message(address, msg_type, data, &self.program_context)?;
@@ -265,6 +265,8 @@ impl BitVMX {
                 msg_type,
                 data,
                 &self.program_context,
+                timestamp,
+                signature,
             )?;
             self.save_collaboration(&collaboration)?;
         } else {
