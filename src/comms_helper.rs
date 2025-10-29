@@ -1,6 +1,6 @@
+use crate::keychain::KeyChain;
 use crate::{errors::BitVMXError, program::participant::CommsAddress};
 use bitvmx_operator_comms::operator_comms::{OperatorComms, PubKeyHash};
-use crate::keychain::KeyChain;
 use chrono::Utc;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -27,14 +27,16 @@ fn sort_json_keys(value: &Value) -> Value {
             }
             Value::Object(sorted_map)
         }
-        Value::Array(vec) => {
-            Value::Array(vec.iter().map(sort_json_keys).collect())
-        }
+        Value::Array(vec) => Value::Array(vec.iter().map(sort_json_keys).collect()),
         _ => value.clone(),
     }
 }
 
-pub fn construct_message(program_id: &str, data: &Value, timestamp: i64) -> Result<String, BitVMXError> {
+pub fn construct_message(
+    program_id: &str,
+    data: &Value,
+    timestamp: i64,
+) -> Result<String, BitVMXError> {
     let msg_string = serialize_with_sorted_keys_for_verification(data)?;
     Ok(format!("{}{}{}", program_id, msg_string, timestamp))
 }
@@ -47,12 +49,11 @@ pub fn request<T: Serialize>(
     msg_type: CommsMessageType,
     msg: T,
 ) -> Result<(), BitVMXError> {
-
     // Serialize with sorted keys for consistent ordering during signature verification
     let msg_value = serde_json::to_value(&msg).map_err(|_| BitVMXError::SerializationError)?;
     let timestamp = Utc::now().timestamp_millis();
     let message = construct_message(&program_id.to_string(), &msg_value, timestamp)?;
-    
+
     let signature = &key_chain.sign_rsa_message(message.as_bytes())?;
 
     let serialize_msg = serialize_msg(msg_type, program_id, msg, timestamp, signature.to_vec())?;
@@ -216,16 +217,17 @@ pub fn deserialize_msg(
         .get("timestamp")
         .and_then(|t| t.as_i64())
         .ok_or(BitVMXError::InvalidMessageFormat)?;
-        
+
     let signature = payload
         .get("signature")
         .and_then(|s| s.as_array())
         .ok_or(BitVMXError::InvalidMessageFormat)?
         .iter()
-        .filter_map(|v| v.as_u64().and_then(|b| if b <= 255 { Some(b as u8) } else { None }))
+        .filter_map(|v| {
+            v.as_u64()
+                .and_then(|b| if b <= 255 { Some(b as u8) } else { None })
+        })
         .collect::<Vec<u8>>();
-
-
 
     //TODO: CHECK THIS WITH @KEVIN
     // Validate that "msg" is a byte array by filtering out invalid values
@@ -242,15 +244,36 @@ pub fn deserialize_msg(
     //     return Err(BitVMXError::InvalidMessageFormat); // Ensure no invalid bytes after filtering previously
     // }
 
-    Ok((version, msg_type, program_id, data.clone(), timestamp, signature))
+    Ok((
+        version,
+        msg_type,
+        program_id,
+        data.clone(),
+        timestamp,
+        signature,
+    ))
 }
 
-pub fn publish_verification_key(my_pubkey_hash: PubKeyHash, my_verification_key: String, comms: &OperatorComms, key_chain: &KeyChain, program_id: &Uuid, participants: Vec<CommsAddress>) -> Result<(), BitVMXError> {
+pub fn publish_verification_key(
+    my_pubkey_hash: PubKeyHash,
+    my_verification_key: String,
+    comms: &OperatorComms,
+    key_chain: &KeyChain,
+    program_id: &Uuid,
+    participants: Vec<CommsAddress>,
+) -> Result<(), BitVMXError> {
     for peer in &participants {
         if peer.pubkey_hash == my_pubkey_hash {
             continue;
         }
-        request(comms, key_chain, program_id, peer.clone(), CommsMessageType::VerificationKey, my_verification_key.clone())?;
+        request(
+            comms,
+            key_chain,
+            program_id,
+            peer.clone(),
+            CommsMessageType::VerificationKey,
+            my_verification_key.clone(),
+        )?;
     }
     Ok(())
 }
@@ -336,7 +359,14 @@ mod tests {
         let timestamp = 0;
         let signature = vec![];
 
-        let result = serialize_msg(msg_type.clone(), &program_id, msg.clone(), timestamp, signature.clone()).unwrap();
+        let result = serialize_msg(
+            msg_type.clone(),
+            &program_id,
+            msg.clone(),
+            timestamp,
+            signature.clone(),
+        )
+        .unwrap();
 
         let expected_version = Version::to_bytes(version).unwrap();
         let expected_msg_type = msg_type.to_bytes().unwrap();
@@ -411,9 +441,9 @@ mod tests {
             "apple": 2,
             "banana": 3
         });
-        
+
         let sorted = sort_json_keys(&input);
-        
+
         // Keys should be sorted alphabetically
         let sorted_str = serde_json::to_string(&sorted).unwrap();
         assert_eq!(sorted_str, r#"{"apple":2,"banana":3,"zebra":1}"#);
@@ -434,12 +464,15 @@ mod tests {
                 "x": 3
             }
         });
-        
+
         let sorted = sort_json_keys(&input);
-        
+
         // Both outer and inner keys should be sorted
         let sorted_str = serde_json::to_string(&sorted).unwrap();
-        assert_eq!(sorted_str, r#"{"apple":{"x":3,"y":2,"z":1},"zebra":{"a":2,"b":3,"c":1}}"#);
+        assert_eq!(
+            sorted_str,
+            r#"{"apple":{"x":3,"y":2,"z":1},"zebra":{"a":2,"b":3,"c":1}}"#
+        );
     }
 
     #[test]
@@ -457,9 +490,9 @@ mod tests {
                 "x": 3
             }
         ]);
-        
+
         let sorted = sort_json_keys(&input);
-        
+
         // Keys in each object within the array should be sorted
         let sorted_str = serde_json::to_string(&sorted).unwrap();
         assert_eq!(sorted_str, r#"[{"a":2,"b":3,"c":1},{"x":3,"y":2,"z":1}]"#);
@@ -499,10 +532,10 @@ mod tests {
                 }
             }
         });
-        
+
         let sorted = sort_json_keys(&input);
         let sorted_str = serde_json::to_string(&sorted).unwrap();
-        
+
         // Verify the structure is sorted correctly at all levels
         assert!(sorted_str.contains(r#""a":{"nested":{"#));
         assert!(sorted_str.contains(r#""z":{"items":["#));
@@ -516,12 +549,12 @@ mod tests {
             "apple": 2,
             "banana": 3
         });
-        
+
         let result = serialize_with_sorted_keys_for_verification(&input).unwrap();
-        
+
         // Result should be a JSON string with sorted keys
         assert_eq!(result, r#"{"apple":2,"banana":3,"zebra":1}"#);
-        
+
         // Verify it's valid JSON by parsing it back
         let parsed: Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["apple"], 2);
@@ -543,9 +576,9 @@ mod tests {
                 "y": 5
             }
         });
-        
+
         let result = serialize_with_sorted_keys_for_verification(&input).unwrap();
-        
+
         // Verify keys are sorted at all levels
         assert_eq!(result, r#"{"a":{"x":4,"y":5},"c":{"a":2,"b":3,"z":1}}"#);
     }
@@ -558,10 +591,10 @@ mod tests {
             "apple": 2,
             "banana": 3
         });
-        
+
         let result1 = serialize_with_sorted_keys_for_verification(&input).unwrap();
         let result2 = serialize_with_sorted_keys_for_verification(&input).unwrap();
-        
+
         // Results should be identical
         assert_eq!(result1, result2);
     }
@@ -574,16 +607,16 @@ mod tests {
             "apple": 2,
             "banana": 3
         });
-        
+
         let input2 = json!({
             "apple": 2,
             "banana": 3,
             "zebra": 1
         });
-        
+
         let result1 = serialize_with_sorted_keys_for_verification(&input1).unwrap();
         let result2 = serialize_with_sorted_keys_for_verification(&input2).unwrap();
-        
+
         // Results should be identical regardless of input order
         assert_eq!(result1, result2);
     }
@@ -594,13 +627,13 @@ mod tests {
         let program_id = "test-program-id";
         let data = json!({"key": "value"});
         let timestamp = 1234567890;
-        
+
         let result = construct_message(program_id, &data, timestamp).unwrap();
-        
+
         // Message should be: program_id + serialized_data + timestamp
         let expected_data_str = serialize_with_sorted_keys_for_verification(&data).unwrap();
         let expected = format!("{}{}{}", program_id, expected_data_str, timestamp);
-        
+
         assert_eq!(result, expected);
     }
 
@@ -609,13 +642,13 @@ mod tests {
         // Test with different program IDs
         let data = json!({"test": "data"});
         let timestamp = 1234567890;
-        
+
         let result1 = construct_message("program-1", &data, timestamp).unwrap();
         let result2 = construct_message("program-2", &data, timestamp).unwrap();
-        
+
         // Results should differ due to different program IDs
         assert_ne!(result1, result2);
-        
+
         // But both should end with the same serialized data + timestamp
         let data_str = serialize_with_sorted_keys_for_verification(&data).unwrap();
         let expected_suffix = format!("{}{}", data_str, timestamp);
@@ -628,13 +661,13 @@ mod tests {
         // Test with different timestamps
         let program_id = "test-program";
         let data = json!({"test": "data"});
-        
+
         let result1 = construct_message(program_id, &data, 1000).unwrap();
         let result2 = construct_message(program_id, &data, 2000).unwrap();
-        
+
         // Results should differ due to different timestamps
         assert_ne!(result1, result2);
-        
+
         // But both should start with the same program_id + serialized data
         let data_str = serialize_with_sorted_keys_for_verification(&data).unwrap();
         let expected_prefix = format!("{}{}", program_id, data_str);
@@ -648,9 +681,9 @@ mod tests {
         let program_id = "";
         let data = json!({"key": "value"});
         let timestamp = 1234567890;
-        
+
         let result = construct_message(program_id, &data, timestamp).unwrap();
-        
+
         // Should still work, just with empty prefix
         let data_str = serialize_with_sorted_keys_for_verification(&data).unwrap();
         let expected = format!("{}{}", data_str, timestamp);
@@ -667,17 +700,17 @@ mod tests {
             "banana": 3
         });
         let timestamp = 1234567890;
-        
+
         let result = construct_message(program_id, &data, timestamp).unwrap();
-        
+
         // The serialized data portion should have sorted keys
         let expected_data_str = serialize_with_sorted_keys_for_verification(&data).unwrap();
-        
+
         // Extract the serialized data portion (between program_id and timestamp)
         let data_start = program_id.len();
         let data_end = result.len() - timestamp.to_string().len();
         let extracted_data_str = &result[data_start..data_end];
-        
+
         assert_eq!(extracted_data_str, expected_data_str);
         assert_eq!(extracted_data_str, r#"{"apple":2,"banana":3,"zebra":1}"#);
     }
@@ -692,16 +725,16 @@ mod tests {
             "value": 42
         });
         let timestamp = 987654321;
-        
+
         let result = construct_message(program_id, &data, timestamp).unwrap();
-        
+
         // Verify the structure: program_id + sorted_json + timestamp
         // Program ID should be at the start
         assert!(result.starts_with(program_id));
-        
+
         // Timestamp should be at the end
         assert!(result.ends_with(&timestamp.to_string()));
-        
+
         // The middle part should be valid JSON with sorted keys
         let data_str = serialize_with_sorted_keys_for_verification(&data).unwrap();
         let expected = format!("{}{}{}", program_id, data_str, timestamp);
