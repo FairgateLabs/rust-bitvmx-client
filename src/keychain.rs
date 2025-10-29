@@ -344,4 +344,176 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_verify_rsa_signature_valid() -> Result<(), BitVMXError> {
+        // Create config and storage for testing
+        let config = Config::new(Some("config/development.yaml".to_string()))?;
+        let store = Rc::new(Storage::new(&config.storage)?);
+
+        // Create KeyChain using the existing constructor
+        let keychain = KeyChain::new(&config, store)?;
+
+        // Test message
+        let message = b"Hello, this is a test message for RSA signature verification!";
+
+        // Get the public key (this is the key loaded from the config)
+        let rsa_pub_key = keychain.get_rsa_public_key()?;
+
+        // Sign the message using the default RSA key
+        let signature = keychain.sign_rsa_message(message)?;
+
+        // Verify the signature - should succeed
+        let is_valid = keychain.verify_rsa_signature(&rsa_pub_key, message, &signature)?;
+        assert!(is_valid, "Valid RSA signature should verify successfully");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_verify_rsa_signature_invalid_signature() -> Result<(), BitVMXError> {
+        // Create config and storage for testing
+        let config = Config::new(Some("config/development.yaml".to_string()))?;
+        let store = Rc::new(Storage::new(&config.storage)?);
+
+        // Create KeyChain using the existing constructor
+        let keychain = KeyChain::new(&config, store)?;
+
+        // Test message
+        let message = b"Hello, this is a test message for RSA signature verification!";
+
+        // Get the public key
+        let rsa_pub_key = keychain.get_rsa_public_key()?;
+
+        // Create an invalid signature (wrong bytes)
+        let invalid_signature = vec![0u8; 256]; // Invalid signature bytes
+
+        // Verify the signature - should fail
+        let is_valid = keychain.verify_rsa_signature(&rsa_pub_key, message, &invalid_signature)?;
+        assert!(!is_valid, "Invalid RSA signature should fail verification");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_verify_rsa_signature_wrong_message() -> Result<(), BitVMXError> {
+        // Create config and storage for testing
+        let config = Config::new(Some("config/development.yaml".to_string()))?;
+        let store = Rc::new(Storage::new(&config.storage)?);
+
+        // Create KeyChain using the existing constructor
+        let keychain = KeyChain::new(&config, store)?;
+
+        // Original message
+        let original_message = b"Hello, this is a test message for RSA signature verification!";
+        
+        // Tampered message
+        let tampered_message = b"Hello, this is a TAMPERED message for RSA signature verification!";
+
+        // Get the public key
+        let rsa_pub_key = keychain.get_rsa_public_key()?;
+
+        // Sign the original message
+        let signature = keychain.sign_rsa_message(original_message)?;
+
+        // Verify the signature with the tampered message - should fail
+        let is_valid = keychain.verify_rsa_signature(&rsa_pub_key, tampered_message, &signature)?;
+        assert!(!is_valid, "RSA signature should fail verification when message is tampered");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_verify_rsa_signature_wrong_public_key() -> Result<(), BitVMXError> {
+        // Create config and storage for testing
+        let config = Config::new(Some("config/development.yaml".to_string()))?;
+        let store = Rc::new(Storage::new(&config.storage)?);
+
+        // Create KeyChain using the existing constructor
+        let keychain = KeyChain::new(&config, store)?;
+
+        // Test message
+        let message = b"Hello, this is a test message for RSA signature verification!";
+
+        // Generate a different RSA keypair for testing
+        let rng = &mut thread_rng();
+        let wrong_pub_key = keychain
+            .key_manager
+            .generate_rsa_keypair(rng, RSA_KEY_INDEX + 1)?;
+
+        // Sign the message using the default RSA key (RSA_KEY_INDEX)
+        let signature = keychain.sign_rsa_message(message)?;
+
+        // Verify the signature with the wrong public key - should fail
+        let is_valid = keychain.verify_rsa_signature(&wrong_pub_key, message, &signature)?;
+        assert!(!is_valid, "RSA signature should fail verification with wrong public key");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_verify_rsa_signature_invalid_signature_format() -> Result<(), BitVMXError> {
+        // Create config and storage for testing
+        let config = Config::new(Some("config/development.yaml".to_string()))?;
+        let store = Rc::new(Storage::new(&config.storage)?);
+
+        // Create KeyChain using the existing constructor
+        let keychain = KeyChain::new(&config, store)?;
+
+        // Test message
+        let message = b"Hello, this is a test message for RSA signature verification!";
+
+        // Get the public key
+        let rsa_pub_key = keychain.get_rsa_public_key()?;
+
+        // Create invalid signature format (too short, not valid signature bytes)
+        let invalid_signature = vec![0u8; 10]; // Too short to be a valid RSA signature
+
+        // Verify the signature - should either return an error due to invalid format
+        // or return false if it manages to parse but verification fails
+        let result = keychain.verify_rsa_signature(&rsa_pub_key, message, &invalid_signature);
+        
+        // Should return an error when signature format is invalid, or false if parsing succeeds but verification fails
+        match result {
+            Err(BitVMXError::InvalidMessageFormat) => {
+                // Expected error type when signature format cannot be parsed
+            }
+            Ok(false) => {
+                // Also acceptable: signature parsed but verification failed
+            }
+            Ok(true) => {
+                panic!("Invalid signature format should not verify successfully");
+            }
+            Err(e) => {
+                panic!("Expected InvalidMessageFormat error or Ok(false), got different error: {:?}", e);
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_verify_rsa_signature_empty_message() -> Result<(), BitVMXError> {
+        // Create config and storage for testing
+        let config = Config::new(Some("config/development.yaml".to_string()))?;
+        let store = Rc::new(Storage::new(&config.storage)?);
+
+        // Create KeyChain using the existing constructor
+        let keychain = KeyChain::new(&config, store)?;
+
+        // Empty message
+        let message = b"";
+
+        // Get the public key
+        let rsa_pub_key = keychain.get_rsa_public_key()?;
+
+        // Sign the empty message
+        let signature = keychain.sign_rsa_message(message)?;
+
+        // Verify the signature - should succeed even with empty message
+        let is_valid = keychain.verify_rsa_signature(&rsa_pub_key, message, &signature)?;
+        assert!(is_valid, "RSA signature should verify successfully even for empty message");
+
+        Ok(())
+    }
+
 }
