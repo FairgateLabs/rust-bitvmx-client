@@ -378,7 +378,7 @@ impl DisputeCoreProtocol {
         keys: &Vec<ParticipantKeys>,
     ) -> Result<Vec<OutputType>, BitVMXError> {
         let wt_speedup_key = keys[data.member_index].get_public(SPEEDUP_KEY)?;
-        let validate_dispute_key = protocol_builder::scripts::verify_signature(
+        let verify_dispute_key = protocol_builder::scripts::verify_signature(
             &committee.dispute_aggregated_key,
             SignMode::Aggregate,
         )?;
@@ -386,7 +386,7 @@ impl DisputeCoreProtocol {
 
         for (member_index, member) in committee.members.clone().iter().enumerate() {
             // NOTE: This introduce a shift between scripts and slots to open a dispute
-            let mut scripts = vec![validate_dispute_key.clone()];
+            let mut scripts = vec![verify_dispute_key.clone()];
 
             if member.role == ParticipantRole::Prover && data.member_index != member_index {
                 for slot in 0..committee.packet_size as usize {
