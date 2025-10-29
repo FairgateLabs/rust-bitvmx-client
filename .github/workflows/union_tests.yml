@@ -115,20 +115,6 @@ jobs:
         with:
           path: |
             ${{ env.ROOT }}/rust-bitvmx-client/target
-            ${{ env.ROOT }}/rust-bitvmx-storage-backend/target
-            ${{ env.ROOT }}/rust-bitvmx-bitcoin-rpc/target
-            ${{ env.ROOT }}/rust-bitvmx-settings/target
-            ${{ env.ROOT }}/BitVMX-CPU/target
-            ${{ env.ROOT }}/rust-bitvmx-broker/target
-            ${{ env.ROOT }}/rust-bitcoind/target
-            ${{ env.ROOT }}/rust-bitvmx-key-manager/target
-            ${{ env.ROOT }}/rust-bitvmx-protocol-builder/target
-            ${{ env.ROOT }}/rust-bitcoin-indexer/target
-            ${{ env.ROOT }}/rust-bitvmx-transaction-monitor/target
-            ${{ env.ROOT }}/rust-bitvmx-operator-comms/target
-            ${{ env.ROOT }}/rust-bitvmx-wallet/target
-            ${{ env.ROOT }}/rust-bitcoin-coordinator/target
-            ${{ env.ROOT }}/rust-bitvmx-job-dispatcher/target
           key: ${{ runner.os }}-rust-bitvmx-client-target-${{ hashFiles('rust-bitvmx-client/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-rust-bitvmx-client-target-
@@ -179,7 +165,7 @@ jobs:
             fi
 
             # Clean previous state for this example
-            rm -rf /tmp/broker_p2p_6118* /tmp/regtest/ || true
+            rm -rf /tmp/regtest/ || true
 
             # Run setup
             RUST_BACKTRACE=full cargo run --release all --fresh \
@@ -190,6 +176,9 @@ jobs:
 
             # Run example
             RUST_BACKTRACE=1 cargo run --release --example union "$1"
+
+            # Kill any remaining bitvmx-client processes
+            pkill -f bitvmx-client || true
 
             echo "::endgroup::"
           }

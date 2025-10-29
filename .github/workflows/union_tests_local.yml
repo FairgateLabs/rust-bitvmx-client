@@ -73,7 +73,7 @@ jobs:
           docker stop bitcoin-regtest || true
 
           # Clean up temp directories
-          rm -rf /tmp/broker_p2p_6118* /tmp/regtest/ || true
+          rm -rf /tmp/regtest/ || true
 
           echo "=== Initial cleanup completed ==="
 
