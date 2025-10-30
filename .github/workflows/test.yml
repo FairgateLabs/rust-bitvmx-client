@@ -2,8 +2,13 @@ name: 'Test action'
 on:
   push:
     branches: [ "main" ]
+    # paths-ignore:
+    #   - 'examples/union/**'
   pull_request:
     branches: [ "main" ]
+    # paths-ignore:
+    #   - 'examples/union/**'
+    #   - 'src/program/protocols/union/**'
 
 env:
   CARGO_TERM_COLOR: always
