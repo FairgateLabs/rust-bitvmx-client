@@ -596,7 +596,6 @@ pub fn committee(wallet: &mut MasterWallet) -> Result<Committee> {
     print_members_balances(committee.members.as_slice())?;
 
     committee.setup_dispute_protocols()?;
-    committee.setup_full_penalization()?;
 
     wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
 
@@ -755,7 +754,7 @@ pub fn advance_funds(
     )?;
 
     if should_wait {
-        wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
+        wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait() + 10)?;
     }
 
     info!("Advance funds complete.");
