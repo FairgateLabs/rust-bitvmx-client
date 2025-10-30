@@ -25,9 +25,10 @@ use crate::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
                 common::indexed_name,
+                errors::{ProtocolError, ProtocolErrorType},
                 types::{
-                    PegOutAccepted, PegOutRequest, ProtocolError, ProtocolErrorType, ProtocolName,
-                    ACCEPT_PEGIN_TX, SPEEDUP_VALUE, USER_TAKE_FEE, USER_TAKE_TX,
+                    PegOutAccepted, PegOutRequest, ProtocolName, ACCEPT_PEGIN_TX, SPEEDUP_VALUE,
+                    USER_TAKE_FEE, USER_TAKE_TX,
                 },
             },
         },
