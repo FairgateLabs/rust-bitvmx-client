@@ -26,13 +26,14 @@ use crate::{
             union::{
                 common::indexed_name,
                 types::{
-                    PegOutAccepted, PegOutRequest, ACCEPT_PEGIN_TX, SPEEDUP_VALUE, USER_TAKE_FEE,
-                    USER_TAKE_TX,
+                    PegOutAccepted, PegOutRequest, ProtocolError, ProtocolErrorType, ProtocolName,
+                    ACCEPT_PEGIN_TX, SPEEDUP_VALUE, USER_TAKE_FEE, USER_TAKE_TX,
                 },
             },
         },
         variables::{PartialUtxo, VariableTypes},
     },
+    send_to_l2,
     types::{OutgoingBitVMXApiMessages, ProgramContext},
 };
 
@@ -252,6 +253,20 @@ impl UserTakeProtocol {
             .unwrap()
             .as_ref()
             .to_vec();
+
+        if user_take_sighash != pegout_request.pegout_signature_hash {
+            let error = ProtocolError {
+                uuid: self.ctx.id,
+                protocol: ProtocolName::UserTake,
+                source: ProtocolErrorType::InvalidSighash {
+                    expected: pegout_request.pegout_signature_hash,
+                    found: user_take_sighash.clone(),
+                },
+            };
+            let data = send_to_l2!(self, program_context, ProtocolError, error);
+            info!(id = self.ctx.my_idx, "Failed to accept user take: {}", data);
+            return Err(BitVMXError::InvalidParameter(error.to_string()));
+        }
 
         let user_take_txid = protocol.transaction_by_name(USER_TAKE_TX)?.compute_txid();
 

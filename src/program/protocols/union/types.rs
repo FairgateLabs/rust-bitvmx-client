@@ -1,6 +1,7 @@
 use bitcoin::{PublicKey, Txid};
 use key_manager::musig2::{secp::MaybeScalar, PubNonce};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use uuid::Uuid;
 
 use crate::program::{participant::ParticipantRole, variables::PartialUtxo};
@@ -199,5 +200,35 @@ pub struct FullPenalizationData {
 impl FullPenalizationData {
     pub fn name() -> String {
         "full_penalization_data".to_string()
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum ProtocolName {
+    UserTake,
+    DisputeCore,
+    AcceptPegIn,
+    FullPenalization,
+    AdvanceFunds,
+}
+
+#[derive(Debug, Error, Serialize, Deserialize)]
+pub enum ProtocolErrorType {
+    #[error("Invalid sighash (expected {expected:?}, found {found:?})")]
+    InvalidSighash { expected: Vec<u8>, found: Vec<u8> },
+}
+
+#[derive(Debug, Error, Serialize, Deserialize)]
+#[error("Error in protocol {protocol:?} (uuid={uuid}): {source}")]
+pub struct ProtocolError {
+    pub uuid: Uuid,
+    pub protocol: ProtocolName,
+    #[source]
+    pub source: ProtocolErrorType,
+}
+
+impl ProtocolError {
+    pub fn name() -> String {
+        "protocol_error".to_string()
     }
 }

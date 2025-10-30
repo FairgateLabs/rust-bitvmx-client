@@ -3,6 +3,7 @@ pub mod advance_funds;
 pub mod common;
 pub mod dispute_core;
 pub mod full_penalization;
+pub mod macros;
 pub mod pairwise_penalization;
 pub mod scripts;
 pub mod types;
