@@ -20,7 +20,9 @@ pub const WT_START_ENABLER_UTXOS: &str = "WT_START_ENABLER_UTXOS";
 
 // Transaction names
 pub const REQUEST_PEGIN_TX: &str = "REQUEST_PEGIN_TX";
+pub const REJECT_PEGIN_TX: &str = "REJECT_PEGIN_TX";
 pub const ACCEPT_PEGIN_TX: &str = "ACCEPT_PEGIN_TX";
+pub const CANCEL_TAKE0_TX: &str = "CANCEL_TAKE0_TX";
 pub const USER_TAKE_TX: &str = "USER_TAKE_TX";
 pub const ADVANCE_FUNDS_TX: &str = "ADVANCE_FUNDS_TX";
 pub const OPERATOR_TAKE_TX: &str = "OPERATOR_TAKE_TX";
@@ -45,6 +47,7 @@ pub const PROTOCOL_FUNDING_TX: &str = "PROTOCOL_FUNDING_TX";
 // Parameters
 pub const DISPUTE_CORE_SHORT_TIMELOCK: u16 = 1;
 pub const DISPUTE_CORE_LONG_TIMELOCK: u16 = 6;
+pub const CANCEL_TAKE0_TIMELOCK: u16 = 6;
 pub const DUST_VALUE: u64 = 540;
 pub const SPEEDUP_VALUE: u64 = 540;
 pub const P2TR_FEE: u64 = 335; // This should match the value P2TR_FEE in Union Smart contracts
@@ -130,26 +133,35 @@ impl PegInRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RejectPeginData {
+    pub txid: Txid,
+    pub committee_id: Uuid,
+    pub member_index: usize,
+}
+
+impl RejectPeginData {
+    pub fn name() -> String {
+        "reject_pegin_data".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PegInAccepted {
     pub committee_id: Uuid,
     pub accept_pegin_txid: Txid,
     pub accept_pegin_sighash: Vec<u8>,
     pub accept_pegin_nonce: PubNonce,
     pub accept_pegin_signature: MaybeScalar,
-    pub operator_take_sighash: Vec<u8>,
-    pub operator_won_sighash: Vec<u8>,
+    pub operator_take_sighash: Option<Vec<u8>>,
+    pub operator_won_sighash: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PegOutRequest {
     pub committee_id: Uuid,
-    pub stream_id: u64,
-    pub packet_number: u64,
     pub slot_index: usize,
     pub amount: u64,
     pub pegout_id: Vec<u8>,
-    pub pegout_signature_hash: Vec<u8>,
-    pub pegout_signature_message: Vec<u8>,
     pub user_pubkey: PublicKey,
     pub take_aggregated_key: PublicKey,
 }
