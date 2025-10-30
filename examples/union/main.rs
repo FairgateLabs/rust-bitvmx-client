@@ -21,10 +21,10 @@ use bitvmx_client::program::{
             get_full_penalization_pid, triple_indexed_name,
         },
         types::{
-            ACCEPT_PEGIN_TX, DISPUTE_CORE_LONG_TIMELOCK, DISPUTE_CORE_SHORT_TIMELOCK,
-            OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX, OP_INITIAL_DEPOSIT_TX, OP_LAZY_DISABLER_TX,
-            OP_SELF_DISABLER_TX, WT_DISABLER_DIRECTORY_TX, WT_DISABLER_TX, WT_SELF_DISABLER_TX,
-            WT_START_ENABLER_TX,
+            ACCEPT_PEGIN_TX, CANCEL_TAKE0_TIMELOCK, CANCEL_TAKE0_TX, DISPUTE_CORE_LONG_TIMELOCK,
+            DISPUTE_CORE_SHORT_TIMELOCK, OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX,
+            OP_INITIAL_DEPOSIT_TX, OP_LAZY_DISABLER_TX, OP_SELF_DISABLER_TX,
+            WT_DISABLER_DIRECTORY_TX, WT_DISABLER_TX, WT_SELF_DISABLER_TX, WT_START_ENABLER_TX,
         },
     },
 };
@@ -67,6 +67,9 @@ pub fn main() -> Result<()> {
         Some("operator_disabler") => cli_operator_disabler()?,
         Some("watchtower_disabler") => cli_watchtower_disabler()?,
         Some("self_disablers") => cli_self_disablers()?,
+        Some("full_penalization") => cli_full_penalization()?,
+        Some("cancel_take0") => cli_cancel_take0()?,
+        Some("reject_pegin") => cli_reject_pegin()?,
         // Utils
         Some("create_wallet") => cli_create_wallet(args.get(2))?,
         Some("latency") => cli_latency(args.get(2))?,
@@ -101,7 +104,15 @@ fn print_usage() {
     println!("Protocol examples:");
     print_cmd_help("committee", "Setups a new committee");
     print_cmd_help("request_pegin", "Setups a request pegin");
+    print_cmd_help!(
+        "reject_pegin",
+        "Dispatch REJECT_PEGIN_TX to reject a peg in request before it's accepted"
+    );
     print_cmd_help("accept_pegin", "Setups the accept peg in protocol");
+    print_cmd_help(
+        "cancel_take0",
+        "Dispatch CANCEL_TAKE0_TX to disable UserTake Protocol",
+    );
     print_cmd_help("request_pegout", "Setups the request peg out protocol");
     print_cmd_help("advance_funds", "Performs an advancement of funds");
     print_cmd_help("advance_funds_twice", "Performs advancement of funds twice");
@@ -193,7 +204,29 @@ pub fn cli_watchtowers_start_enabler() -> Result<()> {
 pub fn cli_request_pegin() -> Result<()> {
     let (committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
 
-    request_pegin(committee.public_key()?, &mut user)?;
+    request_pegin(
+        committee.public_key()?,
+        &mut user,
+        committee.get_dispute_keys().as_slice(),
+    )?;
+    Ok(())
+}
+
+pub fn cli_reject_pegin() -> Result<()> {
+    let (committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+
+    let (txid, _) = request_pegin(
+        committee.public_key()?,
+        &mut user,
+        committee.get_dispute_keys().as_slice(),
+    )?;
+
+    let member_index = 1;
+    committee.members[member_index].reject_pegin(committee.committee_id(), txid, member_index)?;
+
+    thread::sleep(Duration::from_secs(1));
+    wait_for_blocks(&committee.bitcoin_client, 5)?;
+
     Ok(())
 }
 
@@ -201,6 +234,31 @@ pub fn cli_accept_pegin() -> Result<()> {
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
 
     request_and_accept_pegin(&mut committee, &mut user)?;
+    Ok(())
+}
+
+pub fn cli_cancel_take0() -> Result<()> {
+    let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+
+    let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    thread::sleep(Duration::from_secs(1));
+    wait_for_blocks(&committee.bitcoin_client, CANCEL_TAKE0_TIMELOCK as u32 + 1)?;
+
+    info!("Forcing member to cancel accept pegin transaction...");
+    let tx = committee.members[1].dispatch_transaction_by_name(
+        get_accept_pegin_pid(committee.committee_id(), slot_index),
+        CANCEL_TAKE0_TX.to_string(),
+    )?;
+
+    info!(
+        "{} dispatched. Txid: {}",
+        CANCEL_TAKE0_TX,
+        tx.compute_txid()
+    );
+
+    thread::sleep(Duration::from_secs(1));
+    wait_for_blocks(&committee.bitcoin_client, 3)?;
+
     Ok(())
 }
 
@@ -628,9 +686,13 @@ pub fn dispatch_wt_start_enabler(committee: &Committee) -> Result<()> {
     Ok(())
 }
 
-pub fn request_pegin(committee_public_key: PublicKey, user: &mut User) -> Result<(Txid, u64)> {
+pub fn request_pegin(
+    committee_public_key: PublicKey,
+    user: &mut User,
+    dispute_keys: &[PublicKey],
+) -> Result<(Txid, u64)> {
     let amount: u64 = STREAM_DENOMINATION; // This should be replaced with the actual amount of the peg-in request
-    let request_pegin_txid = user.request_pegin(&committee_public_key, amount)?;
+    let request_pegin_txid = user.request_pegin(&committee_public_key, amount, dispute_keys)?;
 
     wait_for_blocks(
         &BitcoinWrapper::new_from_config(&user.config)?,
@@ -649,7 +711,11 @@ pub fn request_and_accept_pegin(
     committee: &mut Committee,
     user: &mut User,
 ) -> Result<(usize, u64)> {
-    let (request_pegin_txid, amount) = request_pegin(committee.public_key()?, user)?;
+    let (request_pegin_txid, amount) = request_pegin(
+        committee.public_key()?,
+        user,
+        committee.get_dispute_keys().as_slice(),
+    )?;
 
     // This came from the contracts
     let rootstock_address = user.get_rsk_address();
@@ -681,7 +747,7 @@ pub fn request_and_accept_pegin(
         user.create_and_dispatch_speedup(
             OutPoint {
                 txid: accept_pegin_txid.into(),
-                vout: 1,
+                vout: 2,
             },
             get_accept_pegin_fee()?,
         )?;
@@ -700,22 +766,9 @@ pub fn request_pegout() -> Result<()> {
     let (slot_index, amount) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     let user_pubkey = user.public_key()?;
-    let stream_id = 0; // This should be replaced with the actual stream ID
-    let packet_number = 0; // This should be replaced with the actual packet number
     let pegout_id = vec![0; 32]; // This should be replaced with the actual peg-out ID
-    let pegout_signature_hash = vec![0; 32]; // This should be replaced with the actual peg-out signature hash
-    let pegout_signature_message = vec![0; 32]; // This should be replaced with the actual peg-out signature message
 
-    let user_take_utxo = committee.request_pegout(
-        user_pubkey,
-        slot_index,
-        stream_id,
-        packet_number,
-        amount,
-        pegout_id,
-        pegout_signature_hash,
-        pegout_signature_message,
-    )?;
+    let user_take_utxo = committee.request_pegout(user_pubkey, slot_index, amount, pegout_id)?;
 
     info!("User take TX dispatched. Txid: {}", user_take_utxo.0);
     print_link(NETWORK, user_take_utxo.0);
