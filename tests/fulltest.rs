@@ -223,7 +223,7 @@ pub fn test_full() -> Result<()> {
 
     info!("Dispute setup");
 
-    let forced_challenge = ForcedChallenges::No;
+    let forced_challenge = ForcedChallenges::Execution;
     let dispute_id = Uuid::new_v4();
     prepare_dispute(
         dispute_id,

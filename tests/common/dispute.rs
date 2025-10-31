@@ -4,6 +4,7 @@ use bitcoin::PublicKey;
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_broker::channel::channel::DualChannel;
 use bitvmx_client::program::protocols::dispute::config::{ConfigResult, ConfigResults};
+use bitvmx_client::program::protocols::dispute::{COMMITMENT, POST_COMMITMENT, PRE_COMMITMENT};
 use bitvmx_client::{
     bitvmx::BitVMX,
     program::{
@@ -35,7 +36,7 @@ use protocol_builder::types::{OutputType, Utxo};
 use tracing::{error, info};
 use uuid::Uuid;
 
-use crate::common::mine_and_wait_blocks;
+use crate::common::{mine_and_wait_blocks, mine_and_wait_with_dispatcher};
 
 use super::{mine_and_wait, send_all, wait_message_from_channel};
 
@@ -208,25 +209,6 @@ pub fn execute_dispute(
             .to_string()?,
     );
 
-    // VERIFIER DETECTS THE INPUT
-    let msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
-    let (_uuid, _txid, name) = msgs[1].transaction().unwrap();
-    assert_eq!(name.unwrap_or_default(), input_tx_name(input_pos));
-
-    let _ = channels[1].send(
-        &id_channel_pairs[1].id,
-        IncomingBitVMXApiMessages::GetVar(program_id, program_input(input_pos)).to_string()?,
-    )?;
-
-    let mut mutinstances = instances.iter_mut().collect::<Vec<_>>();
-    let msg = wait_message_from_channel(&channels[1], &mut mutinstances, false)?;
-    let (_uuid, _name, var_type) = OutgoingBitVMXApiMessages::from_string(&msg.0)?
-        .variable()
-        .unwrap();
-
-    let input1 = &var_type.input()?;
-    info!("Verifier observed Input 1: {:?}", input1);
-
     let prover_dispatcher = bitvmx_job_dispatcher::DispatcherHandler::<EmulatorJobType>::new(
         emulator_channels[0].clone(),
         instances[0].get_store(),
@@ -236,16 +218,49 @@ pub fn execute_dispute(
         instances[1].get_store(),
     )?;
 
-    let mut dispatchers = vec![prover_dispatcher, verifier_dispatcher];
-    //wait for prover execution
-    process_dispatcher(&mut dispatchers, &mut instances)?;
-    let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    let mut dispatcher_p = vec![prover_dispatcher];
+    let mut dispatcher_v = vec![verifier_dispatcher];
 
-    //wait for verifier execution
-    process_dispatcher(&mut dispatchers, &mut instances)?;
-    process_dispatcher(&mut dispatchers, &mut instances)?;
-    let _msgs = mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
+    // VERIFIER DETECTS THE INPUT
+    let msgs = mine_and_wait_with_dispatcher(
+        &bitcoin_client,
+        &channels,
+        &mut instances,
+        &wallet,
+        &mut dispatcher_p,
+        false,
+    )?;
+    let (_uuid, _txid, name) = msgs[1].transaction().unwrap();
+    assert_eq!(name.unwrap_or_default(), input_tx_name(input_pos));
 
+    let _ = channels[1].send(
+        &id_channel_pairs[1].id,
+        IncomingBitVMXApiMessages::GetVar(program_id, program_input(input_pos)).to_string()?,
+    )?;
+
+    let mut mutinstances = instances.iter_mut().collect::<Vec<_>>();
+
+    // Pre-commitment
+    wait_msg_channel(PRE_COMMITMENT, &mut mutinstances, channels.clone())?;
+
+    // Commitment
+    wait_msg_channel(COMMITMENT, &mut mutinstances, channels.clone())?;
+
+    // Post-commitment
+    wait_msg_channel(POST_COMMITMENT, &mut mutinstances, channels.clone())?;
+
+    let msg = wait_message_from_channel(&channels[1], &mut mutinstances, false)?;
+    let (_uuid, _name, var_type) = OutgoingBitVMXApiMessages::from_string(&msg.0)?
+        .variable()
+        .unwrap();
+    let input1 = &var_type.input()?;
+    info!("Verifier observed Input 1: {:?}", input1);
+
+    // Verifier check execution
+    process_dispatcher(&mut dispatcher_v, &mut instances)?;
+
+    dispatcher_p.append(&mut dispatcher_v);
+    let mut dispatchers = dispatcher_p;
     let ending_state = match forced_challenge {
         ForcedChallenges::ReadValue(..) | ForcedChallenges::CorrectHash(..) => CHALLENGE_READ,
         _ => EXECUTE,
@@ -276,20 +291,41 @@ pub fn execute_dispute(
     info!("Wait for TXs");
 
     //wait for claim start
-    let msgs = mine_and_wait_blocks(&bitcoin_client, &channels, &mut instances, &wallet, 30)?;
+    let msgs = mine_and_wait_blocks(
+        &bitcoin_client,
+        &channels,
+        &mut instances,
+        &wallet,
+        30,
+        None,
+    )?;
     info!(
         "Observed: {:?}",
         style(msgs[0].transaction().unwrap().2).green()
     );
     //success wait
     wallet.mine(10)?;
-    let msgs = mine_and_wait_blocks(&bitcoin_client, &channels, &mut instances, &wallet, 30)?;
+    let msgs = mine_and_wait_blocks(
+        &bitcoin_client,
+        &channels,
+        &mut instances,
+        &wallet,
+        30,
+        None,
+    )?;
     info!(
         "Observed: {:?}",
         style(msgs[0].transaction().unwrap().2).green()
     );
     //action wait
-    let msgs = mine_and_wait_blocks(&bitcoin_client, &channels, &mut instances, &wallet, 30)?;
+    let msgs = mine_and_wait_blocks(
+        &bitcoin_client,
+        &channels,
+        &mut instances,
+        &wallet,
+        30,
+        None,
+    )?;
     info!(
         "Observed: {:?}",
         style(msgs[0].transaction().unwrap().2).green()
@@ -325,6 +361,44 @@ pub fn process_dispatcher(
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
+}
+
+pub fn process_dispatcher_non_blocking(
+    dispatchers: &mut Vec<DispatcherHandler<EmulatorJobType>>,
+    instances: &mut Vec<BitVMX>,
+) -> Result<bool> {
+    for dispatcher in dispatchers.iter_mut() {
+        if dispatcher.tick()? {
+            info!("Dispatcher completed a job");
+            return Ok(true);
+        }
+    }
+    for instance in instances.iter_mut() {
+        let ret = instance.tick();
+        if ret.is_err() {
+            error!("Error processing instance: {:?}", ret);
+            return Ok(false);
+        }
+    }
+    Ok(false)
+}
+
+fn wait_msg_channel(
+    name: &str,
+    instances: &mut Vec<&mut BitVMX>,
+    channels: Vec<DualChannel>,
+) -> Result<()> {
+    for channel in channels.iter() {
+        let msg = wait_message_from_channel(channel, instances, false)?;
+        let tx = OutgoingBitVMXApiMessages::from_string(&msg.0)?
+            .transaction()
+            .unwrap()
+            .2
+            .unwrap();
+        assert_eq!(tx, name);
+    }
+
+    Ok(())
 }
 
 pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ConfigResults {
