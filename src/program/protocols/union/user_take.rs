@@ -27,8 +27,8 @@ use crate::{
                 common::indexed_name,
                 errors::{ProtocolError, ProtocolErrorType},
                 types::{
-                    PegOutAccepted, PegOutRequest, ProtocolName, ACCEPT_PEGIN_TX, SPEEDUP_VALUE,
-                    USER_TAKE_FEE, USER_TAKE_TX,
+                    PegOutAccepted, PegOutRequest, ACCEPT_PEGIN_TX, SPEEDUP_VALUE, USER_TAKE_FEE,
+                    USER_TAKE_TX,
                 },
             },
         },
@@ -139,7 +139,7 @@ impl ProtocolHandler for UserTakeProtocol {
         if user_take_sighash != pegout_request.pegout_signature_hash {
             let error = ProtocolError {
                 uuid: self.ctx.id,
-                protocol: ProtocolName::UserTake,
+                protocol_name: self.ctx.protocol_name.clone(),
                 source: ProtocolErrorType::InvalidSighash {
                     expected: hex::encode(pegout_request.pegout_signature_hash),
                     found: hex::encode(user_take_sighash.clone()),

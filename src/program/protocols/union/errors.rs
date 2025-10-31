@@ -2,8 +2,6 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::program::protocols::union::types::ProtocolName;
-
 #[derive(Debug, Error, Serialize, Deserialize)]
 pub enum ProtocolErrorType {
     #[error("Invalid sighash (expected {expected:?}, found {found:?})")]
@@ -11,10 +9,10 @@ pub enum ProtocolErrorType {
 }
 
 #[derive(Debug, Error, Serialize, Deserialize)]
-#[error("Error in protocol {protocol:?} (uuid={uuid}): {source}")]
+#[error("Error in protocol {protocol_name} (uuid={uuid}): {source}")]
 pub struct ProtocolError {
     pub uuid: Uuid,
-    pub protocol: ProtocolName,
+    pub protocol_name: String,
     #[source]
     pub source: ProtocolErrorType,
 }
