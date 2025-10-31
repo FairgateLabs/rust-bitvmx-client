@@ -128,6 +128,28 @@ impl ProtocolHandler for UserTakeProtocol {
         )?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
+
+        // Validate USER_TAKE_TX sighash
+        let user_take_sighash = protocol
+            .get_hashed_message(USER_TAKE_TX, 0, 0)?
+            .unwrap()
+            .as_ref()
+            .to_vec();
+
+        if user_take_sighash != pegout_request.pegout_signature_hash {
+            let error = ProtocolError {
+                uuid: self.ctx.id,
+                protocol: ProtocolName::UserTake,
+                source: ProtocolErrorType::InvalidSighash {
+                    expected: hex::encode(pegout_request.pegout_signature_hash),
+                    found: hex::encode(user_take_sighash.clone()),
+                },
+            };
+            let data = send_to_l2!(self, context, ProtocolError, error);
+            info!(id = self.ctx.my_idx, "Failed to accept user take: {}", data);
+            return Err(BitVMXError::InvalidParameter(error.to_string()));
+        }
+
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
         self.save_protocol(protocol)?;
         Ok(())
@@ -232,20 +254,6 @@ impl UserTakeProtocol {
             .unwrap()
             .as_ref()
             .to_vec();
-
-        if user_take_sighash != pegout_request.pegout_signature_hash {
-            let error = ProtocolError {
-                uuid: self.ctx.id,
-                protocol: ProtocolName::UserTake,
-                source: ProtocolErrorType::InvalidSighash {
-                    expected: hex::encode(pegout_request.pegout_signature_hash),
-                    found: hex::encode(user_take_sighash.clone()),
-                },
-            };
-            let data = send_to_l2!(self, program_context, ProtocolError, error);
-            info!(id = self.ctx.my_idx, "Failed to accept user take: {}", data);
-            return Err(BitVMXError::InvalidParameter(error.to_string()));
-        }
 
         let nonces = program_context
             .key_chain
