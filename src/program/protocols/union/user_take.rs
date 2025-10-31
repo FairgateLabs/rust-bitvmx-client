@@ -226,6 +226,27 @@ impl UserTakeProtocol {
         let pegout_request = self.pegout_request(program_context)?;
         let take_aggregated_key = pegout_request.take_aggregated_key;
 
+        let mut protocol = self.load_protocol()?;
+        let user_take_sighash = protocol
+            .get_hashed_message(USER_TAKE_TX, 0, 0)?
+            .unwrap()
+            .as_ref()
+            .to_vec();
+
+        if user_take_sighash != pegout_request.pegout_signature_hash {
+            let error = ProtocolError {
+                uuid: self.ctx.id,
+                protocol: ProtocolName::UserTake,
+                source: ProtocolErrorType::InvalidSighash {
+                    expected: pegout_request.pegout_signature_hash,
+                    found: user_take_sighash.clone(),
+                },
+            };
+            let data = send_to_l2!(self, program_context, ProtocolError, error);
+            info!(id = self.ctx.my_idx, "Failed to accept user take: {}", data);
+            return Err(BitVMXError::InvalidParameter(error.to_string()));
+        }
+
         let nonces = program_context
             .key_chain
             .get_nonces(&take_aggregated_key, &self.ctx.protocol_name)?;
@@ -246,27 +267,6 @@ impl UserTakeProtocol {
                 take_aggregated_key.to_string(),
                 self.ctx.protocol_name.to_string(),
             ));
-        }
-
-        let mut protocol = self.load_protocol()?;
-        let user_take_sighash = protocol
-            .get_hashed_message(USER_TAKE_TX, 0, 0)?
-            .unwrap()
-            .as_ref()
-            .to_vec();
-
-        if user_take_sighash != pegout_request.pegout_signature_hash {
-            let error = ProtocolError {
-                uuid: self.ctx.id,
-                protocol: ProtocolName::UserTake,
-                source: ProtocolErrorType::InvalidSighash {
-                    expected: pegout_request.pegout_signature_hash,
-                    found: user_take_sighash.clone(),
-                },
-            };
-            let data = send_to_l2!(self, program_context, ProtocolError, error);
-            info!(id = self.ctx.my_idx, "Failed to accept user take: {}", data);
-            return Err(BitVMXError::InvalidParameter(error.to_string()));
         }
 
         let user_take_txid = protocol.transaction_by_name(USER_TAKE_TX)?.compute_txid();
