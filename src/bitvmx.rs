@@ -38,9 +38,10 @@ use bitvmx_broker::{
 };
 use bitvmx_cpu_definitions::challenge::EmulatorResultType;
 use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
-use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
+use bitvmx_job_dispatcher_types::{prover_messages::ProverJobType, emulator_messages::EmulatorJobType};
 use bitvmx_wallet::wallet::Wallet;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::{
     collections::{HashSet, VecDeque},
     net::SocketAddr,
@@ -57,6 +58,8 @@ use uuid::Uuid;
 pub const THROTTLE_TICKS: u32 = 2;
 pub const WALLET_INDEX: u32 = 100;
 pub const WALLET_CHANGE_INDEX: u32 = 101;
+const MAX_RETRIES_PER_JOB_DISPATCHER: u8 = 5;
+const TIMEOUT: Duration = Duration::new(30, 0);
 
 #[derive(Debug)]
 struct BitcoinUpdateState {
@@ -75,6 +78,9 @@ pub struct BitVMX {
     notified_rsk_pegin: HashSet<Txid>, //workaround for RSK pegin transactions because ack seems to be not working
     bitcoin_update: BitcoinUpdateState,
     wallet: Wallet,
+    retries_per_job_dispatcher: HashMap<String, u8>,
+    ping_values: HashMap<String, u64>,
+    time_since_sent_check: HashMap<String, Instant>,
 }
 
 impl Drop for BitVMX {
@@ -169,6 +175,13 @@ impl BitVMX {
             config.components.clone(),
         );
 
+        let mut retries_per_job_dispatcher = HashMap::new();
+        retries_per_job_dispatcher.insert("ZKP".to_string(), 0);
+        retries_per_job_dispatcher.insert("Emulator".to_string(), 0);
+        let mut ping_values = HashMap::new();
+        ping_values.insert("ZKP".to_string(), 0);
+        ping_values.insert("Emulator".to_string(), 0);
+
         Ok(Self {
             config,
             program_context,
@@ -183,6 +196,9 @@ impl BitVMX {
                 was_synced: false,
             },
             wallet,
+            retries_per_job_dispatcher,
+            ping_values,
+            time_since_sent_check: HashMap::new(),
         })
     }
 
@@ -531,6 +547,73 @@ impl BitVMX {
         self.process_bitcoin_updates_with_throttle()?;
         self.process_collaboration()?;
 
+        let timeout_dispatcher: Vec<_> = self
+            .time_since_sent_check
+            .iter()
+            .filter(|(_, &time)| time.elapsed() >= TIMEOUT)
+            .map(|(dispatcher, _)| dispatcher)
+            .collect();
+
+        if !timeout_dispatcher.is_empty() {
+            //TODO:correct logic?
+            for dispatcher_name in timeout_dispatcher {
+                let retries = self
+                    .retries_per_job_dispatcher
+                    .get_mut(dispatcher_name)
+                    .unwrap();
+                if *retries < MAX_RETRIES_PER_JOB_DISPATCHER {
+                    warn!(
+                        "{dispatcher_name} dispatcher is not responding, retrying ({} out of {})",
+                        *retries + 1,
+                        MAX_RETRIES_PER_JOB_DISPATCHER
+                    );
+                    *retries += 1;
+                } else {
+                    error!(
+                        "{dispatcher_name} dispatcher is not responding after {} retries",
+                        MAX_RETRIES_PER_JOB_DISPATCHER
+                    );
+                    return Err(BitVMXError::JobDispatcherNotResponding(
+                        dispatcher_name.to_string(),
+                    ));
+                }
+            }
+            
+        }
+
+        if self.count % 60000 == 0 { //TODO: Check with Martin the number of ticks
+            self.send_liveness_message_to_dispatchers()?;
+        }
+
+        Ok(())
+    }
+
+
+    fn send_liveness_message_to_dispatchers(&mut self) -> Result<(), BitVMXError> {
+        let msg_to_prover = serde_json::to_string(&DispatcherJob{
+            job_id: Uuid::new_v4().to_string(), //use this?
+            job_type: ProverJobType::Ping(*self.ping_values.get("ZKP").unwrap(), "a".to_string()),
+        })?;
+
+        let msg_to_emulator = serde_json::to_string(&DispatcherJob{
+            job_id: Uuid::new_v4().to_string(),
+            job_type: EmulatorJobType::Ping(*self.ping_values.get("Emulator").unwrap(), "a".to_string()),
+        })?;
+
+        debug!("Sending ZKP dispatcher ping message: {}", msg_to_prover);
+        self.program_context
+            .broker_channel
+            .send(&self.config.components.prover, msg_to_prover)?;
+
+        self.time_since_sent_check.insert("ZKP".to_string(), Instant::now());
+
+        debug!("Sending Emulator dispatcher ping message: {}", msg_to_emulator);
+        self.program_context
+            .broker_channel
+            .send(&self.config.components.emulator, msg_to_emulator)?;
+
+        self.time_since_sent_check.insert("Emulator".to_string(), Instant::now());
+
         Ok(())
     }
 
@@ -701,6 +784,25 @@ impl BitVMX {
         info!("Starting wallet sync...");
         self.wallet.sync_wallet()?;
         info!("Wallet sync completed.");
+        Ok(())
+    }
+    
+    fn handle_emulator_message(&mut self, msg: &String) -> Result<(), BitVMXError> {
+        if msg.contains("Pong") {
+            self.time_since_sent_check.remove("Emulator");
+            self.retries_per_job_dispatcher.insert("Emulator".to_string(), 0);
+            self.ping_values.entry("Emulator".to_string()).and_modify(|v| *v = v.wrapping_add(1));
+        } else {
+            let result_message = ResultMessage::from_str(msg)?;
+            let value = result_message.result_as_value()?;
+            let decoded = EmulatorResultType::from_value(value)?;
+            let job_id = Uuid::parse_str(&result_message.job_id)
+                .map_err(|_| BitVMXError::InvalidMessageFormat)?;
+            self.load_program(&job_id)?
+                .protocol
+                .dispute()?
+                .execution_result(&decoded, &self.program_context)?; 
+        }
         Ok(())
     }
 }
@@ -1009,71 +1111,77 @@ impl BitVMXApi for BitVMX {
     }
 
     fn handle_prover_message(&mut self, msg: String) -> Result<(), BitVMXError> {
-        // Parse the message as ResultMessage
-        let result_message = ResultMessage::from_str(&msg)?;
-        let id = Uuid::parse_str(&result_message.job_id)
-            .map_err(|_| BitVMXError::InvalidMessageFormat)?;
+        if msg.contains("Pong") {
+            self.time_since_sent_check.remove("ZKP");
+            self.retries_per_job_dispatcher.insert("ZKP".to_string(), 0);
+            self.ping_values.entry("ZKP".to_string()).and_modify(|v| *v = v.wrapping_add(1));
+        } else {
+            // Parse the message as ResultMessage
+            let result_message = ResultMessage::from_str(&msg)?;
+            let id = Uuid::parse_str(&result_message.job_id)
+                .map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
-        // Parse the result JSON
-        let parsed: serde_json::Value = result_message.result_as_value()?;
-        let data = parsed.get("data").ok_or_else(|| {
-            warn!("Missing data field in result. Raw message: {}", msg);
-            BitVMXError::InvalidMessageFormat
-        })?;
-
-        // Extract status and vec from data
-        let status = data["status"].as_str().ok_or_else(|| {
-            warn!("Missing status field in data. Raw message: {}", msg);
-            BitVMXError::InvalidMessageFormat
-        })?;
-
-        let journal = data["journal"].as_array().ok_or_else(|| {
-            warn!("Missing journal field in data. Raw message: {}", msg);
-            BitVMXError::InvalidMessageFormat
-        })?;
-
-        let seal = data["seal"].as_array().ok_or_else(|| {
-            warn!("Missing seal field in data. Raw message: {}", msg);
-            BitVMXError::InvalidMessageFormat
-        })?;
-
-        // Convert seal to Vec<u8>
-        let seal: Vec<u8> = seal
-            .iter()
-            .filter_map(|v| v.as_u64())
-            .map(|v| v as u8)
-            .collect();
-
-        // Store the proof data and status
-        let transaction_id = self.store.begin_transaction();
-
-        self.store
-            .set(StoreKey::ZKPProof(id).get_key(), seal, Some(transaction_id))?;
-
-        self.store.set(
-            StoreKey::ZKPJournal(id).get_key(),
-            journal,
-            Some(transaction_id),
-        )?;
-
-        self.store.set(
-            StoreKey::ZKPStatus(id).get_key(),
-            status.to_string(),
-            Some(transaction_id),
-        )?;
-
-        self.store.commit_transaction(transaction_id)?;
-
-        // Get the stored 'from' parameter
-        let from: Identifier = self
-            .store
-            .get(StoreKey::ZKPFrom(id).get_key())?
-            .ok_or_else(|| {
-                warn!("Missing 'from' parameter for ZKP request: {}", id);
+            // Parse the result JSON
+            let parsed: serde_json::Value = result_message.result_as_value()?;
+            let data = parsed.get("data").ok_or_else(|| {
+                warn!("Missing data field in result. Raw message: {}", msg);
                 BitVMXError::InvalidMessageFormat
             })?;
 
-        self.proof_ready(from, id)?;
+            // Extract status and vec from data
+            let status = data["status"].as_str().ok_or_else(|| {
+                warn!("Missing status field in data. Raw message: {}", msg);
+                BitVMXError::InvalidMessageFormat
+            })?;
+
+            let journal = data["journal"].as_array().ok_or_else(|| {
+                warn!("Missing journal field in data. Raw message: {}", msg);
+                BitVMXError::InvalidMessageFormat
+            })?;
+
+            let seal = data["seal"].as_array().ok_or_else(|| {
+                warn!("Missing seal field in data. Raw message: {}", msg);
+                BitVMXError::InvalidMessageFormat
+            })?;
+
+            // Convert seal to Vec<u8>
+            let seal: Vec<u8> = seal
+                .iter()
+                .filter_map(|v| v.as_u64())
+                .map(|v| v as u8)
+                .collect();
+
+            // Store the proof data and status
+            let transaction_id = self.store.begin_transaction();
+
+            self.store
+                .set(StoreKey::ZKPProof(id).get_key(), seal, Some(transaction_id))?;
+
+            self.store.set(
+                StoreKey::ZKPJournal(id).get_key(),
+                journal,
+                Some(transaction_id),
+            )?;
+
+            self.store.set(
+                StoreKey::ZKPStatus(id).get_key(),
+                status.to_string(),
+                Some(transaction_id),
+            )?;
+
+            self.store.commit_transaction(transaction_id)?;
+
+            // Get the stored 'from' parameter
+            let from: Identifier = self
+                .store
+                .get(StoreKey::ZKPFrom(id).get_key())?
+                .ok_or_else(|| {
+                    warn!("Missing 'from' parameter for ZKP request: {}", id);
+                    BitVMXError::InvalidMessageFormat
+                })?;
+
+            self.proof_ready(from, id)?;
+        }
         Ok(())
     }
 
@@ -1104,15 +1212,7 @@ impl BitVMXApi for BitVMX {
 
     fn handle_message(&mut self, msg: String, from: Identifier) -> Result<(), BitVMXError> {
         if from == self.config.components.emulator {
-            let result_message = ResultMessage::from_str(&msg)?;
-            let value = result_message.result_as_value()?;
-            let decoded = EmulatorResultType::from_value(value)?;
-            let job_id = Uuid::parse_str(&result_message.job_id)
-                .map_err(|_| BitVMXError::InvalidMessageFormat)?;
-            self.load_program(&job_id)?
-                .protocol
-                .dispute()?
-                .execution_result(&decoded, &self.program_context)?;
+            self.handle_emulator_message(&msg)?;
             return Ok(());
         }
 
