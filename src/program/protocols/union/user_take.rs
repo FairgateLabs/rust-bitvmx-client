@@ -238,8 +238,8 @@ impl UserTakeProtocol {
                 uuid: self.ctx.id,
                 protocol: ProtocolName::UserTake,
                 source: ProtocolErrorType::InvalidSighash {
-                    expected: pegout_request.pegout_signature_hash,
-                    found: user_take_sighash.clone(),
+                    expected: hex::encode(pegout_request.pegout_signature_hash),
+                    found: hex::encode(user_take_sighash.clone()),
                 },
             };
             let data = send_to_l2!(self, program_context, ProtocolError, error);

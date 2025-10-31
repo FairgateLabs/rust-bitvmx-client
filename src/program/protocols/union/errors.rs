@@ -7,7 +7,7 @@ use crate::program::protocols::union::types::ProtocolName;
 #[derive(Debug, Error, Serialize, Deserialize)]
 pub enum ProtocolErrorType {
     #[error("Invalid sighash (expected {expected:?}, found {found:?})")]
-    InvalidSighash { expected: Vec<u8>, found: Vec<u8> },
+    InvalidSighash { expected: String, found: String },
 }
 
 #[derive(Debug, Error, Serialize, Deserialize)]
