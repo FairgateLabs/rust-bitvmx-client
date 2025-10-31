@@ -503,6 +503,7 @@ pub fn test_full() -> Result<()> {
         dispute_id,
         None,
         forced_challenge,
+        None,
     )?;
 
     //Consume other stops through timeout

@@ -292,6 +292,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
             dispute_id,
             Some((gorth16proof, 3)),
             forced_challenge,
+            None,
         )?;
 
         //Consume other stops through timeout

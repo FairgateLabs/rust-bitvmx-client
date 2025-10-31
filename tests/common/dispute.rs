@@ -171,6 +171,7 @@ pub fn execute_dispute(
     program_id: Uuid,
     input: Option<(String, u32)>,
     forced_challenge: ForcedChallenges,
+    last_tx_to_dispatch: Option<&str>, // To force timeout
 ) -> Result<()> {
     let channels = id_channel_pairs
         .iter()
@@ -276,6 +277,10 @@ pub fn execute_dispute(
                 info!("Prover executed the program");
                 break;
             }
+            if name.as_deref() == last_tx_to_dispatch {
+                info!("Stopping dispatch loop");
+                break;
+            }
             if name.unwrap() == timeout_tx(EXECUTE) {
                 info!("Verifier wins by timeout");
                 return Ok(());
@@ -283,7 +288,7 @@ pub fn execute_dispute(
         }
     }
 
-    if ending_state == EXECUTE {
+    if ending_state == EXECUTE && last_tx_to_dispatch.is_none() {
         //process verifier choose challenge
         process_dispatcher(&mut dispatchers, &mut instances)?;
     }
