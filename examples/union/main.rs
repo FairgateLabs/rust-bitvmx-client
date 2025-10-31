@@ -704,7 +704,8 @@ pub fn request_pegout() -> Result<()> {
     let stream_id = 0; // This should be replaced with the actual stream ID
     let packet_number = 0; // This should be replaced with the actual packet number
     let pegout_id = vec![0; 32]; // This should be replaced with the actual peg-out ID
-    let pegout_signature_hash = vec![0; 32]; // This should be replaced with the actual peg-out signature hash
+    let pegout_signature_hash =
+        hex::decode("dea309782c51c214e276f9fe20015d778dab47d41e704705844401525c65aea4")?; // This should be replaced with the actual peg-out signature hash
     let pegout_signature_message = vec![0; 32]; // This should be replaced with the actual peg-out signature message
 
     let user_take_utxo = committee.request_pegout(
