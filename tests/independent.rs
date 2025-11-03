@@ -714,7 +714,7 @@ pub fn test_all_aux(
             helper.set_input_and_send(hex::decode(msg).unwrap(), idx, 1, prog_id)?;
             info!("Waiting for input tx to be mined");
             let msg = helper.wait_specific_msg(idx, "SetInput")?;
-            info!("Sending input received by prover: {:?}", msg);
+            info!("Input set by verifier: {:?}", msg);
             idx += 1;
             helper.set_input_and_send(msg.input().unwrap(), idx, 0, prog_id)?;
         }

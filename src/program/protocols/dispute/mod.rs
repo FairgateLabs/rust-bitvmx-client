@@ -5,7 +5,7 @@ pub mod input_handler;
 pub mod tx_news;
 use std::{collections::HashMap, vec};
 
-use bitcoin::{PublicKey, Transaction, Txid};
+use bitcoin::{PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_script_riscv::riscv::instruction_mapping::create_verification_script_mapping;
 use bitcoin_script_stack::stack::StackTracker;
@@ -415,13 +415,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             let words = input_txs_sizes[idx];
             let offset = input_txs_offsets[idx];
 
-            let (owner, claim, agg, keys, speedup_keys) = if tx_owner == "verifier" {
+            let (owner, claim, agg, keys, speedup_keys, extra_script) = if tx_owner == "verifier" {
                 (
                     "verifier",
                     &claim_prover,
                     agg_or_verifier,
                     &keys[1],
                     (verifier_speedup_pub, prover_speedup_pub),
+                    None,
                 )
             } else {
                 (
@@ -430,6 +431,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     agg_or_prover,
                     &keys[0],
                     (prover_speedup_pub, verifier_speedup_pub),
+                    Some(vec![Self::get_cosign_extra_script()]),
                 )
             };
 
@@ -448,7 +450,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &prev_tx,
                 &input_tx,
                 &claim,
-                Self::winternitz_check(agg, sign_mode, keys, &input_vars)?,
+                Self::winternitz_check_extra_script(
+                    agg,
+                    sign_mode,
+                    keys,
+                    &input_vars,
+                    extra_script,
+                )?,
                 speedup_keys,
             )?;
 
@@ -844,11 +852,12 @@ impl DisputeResolutionProtocol {
         Ok((tx, speedup_data))
     }
 
-    fn winternitz_check<T: AsRef<str> + std::fmt::Debug>(
+    fn winternitz_check_extra_script<T: AsRef<str> + std::fmt::Debug>(
         aggregated: &PublicKey,
         sign_mode: SignMode,
         keys: &ParticipantKeys,
         var_names: &Vec<T>,
+        extra_check_scripts: Option<Vec<ScriptBuf>>,
     ) -> Result<Vec<ProtocolScript>, BitVMXError> {
         info!("Winternitz check for variables: {:?}", &var_names);
         let names_and_keys = var_names
@@ -856,10 +865,25 @@ impl DisputeResolutionProtocol {
             .map(|v| (v, keys.get_winternitz(v.as_ref()).unwrap()))
             .collect();
 
-        let winternitz_check =
-            scripts::verify_winternitz_signatures(aggregated, &names_and_keys, sign_mode)?;
+        let keep_message = extra_check_scripts.is_some(); // Because the extra script is only used for checking verifier input
+        let winternitz_check = scripts::verify_winternitz_signatures_aux(
+            aggregated,
+            &names_and_keys,
+            sign_mode,
+            keep_message,
+            extra_check_scripts,
+        )?;
 
         Ok(vec![winternitz_check])
+    }
+
+    fn winternitz_check<T: AsRef<str> + std::fmt::Debug>(
+        aggregated: &PublicKey,
+        sign_mode: SignMode,
+        keys: &ParticipantKeys,
+        var_names: &Vec<T>,
+    ) -> Result<Vec<ProtocolScript>, BitVMXError> {
+        Self::winternitz_check_extra_script(aggregated, sign_mode, keys, var_names, None)
     }
 
     fn execute_script(
@@ -1073,5 +1097,14 @@ impl DisputeResolutionProtocol {
             ProgramDefinition::from_config(&config.program_definition)?,
             config.program_definition,
         ))
+    }
+
+    fn get_cosign_extra_script() -> ScriptBuf {
+        //TODO: this is hardcoded for only 1 value
+        let mut stack = StackTracker::new();
+        let a = stack.define(4, "value_1_verifier");
+        let b = stack.define(4, "value_1_prover");
+        stack.equals(a, true, b, true);
+        stack.get_script()
     }
 }
