@@ -1,6 +1,11 @@
 use crate::{
     bitcoin::{BitcoinWrapper, HIGH_FEE_NODE_ENABLED},
-    participants::{committee::Committee, member::Member, user::User},
+    participants::{
+        committee::Committee,
+        common::{calculate_taproot_key_path_sighash, get_user_take_tx},
+        member::Member,
+        user::User,
+    },
     wallet::{
         helper::{
             ask_user_confirmation, create_wallet, fund_members, fund_user_pegin_utxos,
@@ -11,7 +16,7 @@ use crate::{
         master_wallet::MasterWallet,
     },
 };
-use ::bitcoin::{Network, OutPoint, PublicKey, Txid};
+use ::bitcoin::{Network, OutPoint, PublicKey, TapSighashType, Transaction, Txid};
 use anyhow::Result;
 use bitvmx_client::program::{
     participant::ParticipantRole,
@@ -211,7 +216,7 @@ pub fn cli_request_pegout() -> Result<()> {
 
 pub fn cli_advance_funds() -> Result<()> {
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
-    let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     advance_funds(&mut committee, user.public_key()?, slot_index, true)?;
     Ok(())
@@ -221,11 +226,11 @@ pub fn cli_advance_funds_twice() -> Result<()> {
     let (mut committee, mut user, _) = pegin_setup(2, NETWORK == Network::Regtest)?;
 
     // First advance should use funding UTXO
-    let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
     advance_funds(&mut committee, user.public_key()?, slot_index, true)?;
 
     // Second advance should use change UTXO and Operator Take UTXO
-    let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
     advance_funds(&mut committee, user.public_key()?, slot_index, true)?;
 
     Ok(())
@@ -233,7 +238,7 @@ pub fn cli_advance_funds_twice() -> Result<()> {
 
 pub fn cli_invalid_reimbursement() -> Result<()> {
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
-    let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     invalid_reimbursement(&mut committee, slot_index)?;
     Ok(())
@@ -288,8 +293,8 @@ pub fn cli_double_reimbursement() -> Result<()> {
     let (mut committee, mut user, _) = pegin_setup(2, NETWORK == Network::Regtest)?;
 
     // Accept 2 pegins to have 2 operator take TXs to dispatch
-    let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
-    (_, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    (_, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     // Advance funds to the first pegin so it dispatch OP_INITIAL_SETUP and REIMBURSETMENT_TX for slot 0
     let operator_id = advance_funds(&mut committee, user.public_key()?, slot_index, false)?;
@@ -464,7 +469,7 @@ pub fn cli_operator_disabler() -> Result<()> {
     }
     wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
 
-    let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     // NOTE: When doing an advance funds, the operator will try to dispatch its OP_INITIAL_DEPOSIT_TX in order to send the REIMBURSEMENT_KICKOFF_TX
     // In this example we already dispatched OP_INITIAL_DEPOSIT_TX above, so you will see an error in the logs
@@ -629,8 +634,8 @@ pub fn dispatch_wt_start_enabler(committee: &Committee) -> Result<()> {
 }
 
 pub fn request_pegin(committee_public_key: PublicKey, user: &mut User) -> Result<(Txid, u64)> {
-    let amount: u64 = STREAM_DENOMINATION; // This should be replaced with the actual amount of the peg-in request
-    let request_pegin_txid = user.request_pegin(&committee_public_key, amount)?;
+    let stream_value: u64 = STREAM_DENOMINATION; // This should be replaced with the actual amount of the peg-in request
+    let request_pegin_txid = user.request_pegin(&committee_public_key, stream_value)?;
 
     thread::sleep(Duration::from_secs(5)); // wait for the bitcoin node to update
     wait_for_blocks(
@@ -643,14 +648,14 @@ pub fn request_pegin(committee_public_key: PublicKey, user: &mut User) -> Result
 
     info!("Request pegin completed.");
     confirm_to_continue();
-    Ok((request_pegin_txid, amount))
+    Ok((request_pegin_txid, stream_value))
 }
 
 pub fn request_and_accept_pegin(
     committee: &mut Committee,
     user: &mut User,
-) -> Result<(usize, u64)> {
-    let (request_pegin_txid, amount) = request_pegin(committee.public_key()?, user)?;
+) -> Result<(usize, u64, Transaction)> {
+    let (request_pegin_txid, stream_value) = request_pegin(committee.public_key()?, user)?;
 
     // This came from the contracts
     let rootstock_address = user.get_rsk_address();
@@ -661,7 +666,7 @@ pub fn request_and_accept_pegin(
     committee.accept_pegin(
         committee.committee_id(),
         request_pegin_txid,
-        amount,
+        stream_value,
         accept_pegin_sighash,
         slot_index,
         rootstock_address.clone(),
@@ -693,19 +698,26 @@ pub fn request_and_accept_pegin(
 
     info!("Pegin accepted and confirmed.");
     confirm_to_continue();
-    Ok((slot_index, amount))
+    Ok((slot_index, stream_value, accept_pegin_tx))
 }
 
 pub fn request_pegout() -> Result<()> {
     let (mut committee, mut user, _) = pegin_setup(1, true)?;
-    let (slot_index, amount) = request_and_accept_pegin(&mut committee, &mut user)?;
+    let (slot_index, stream_value, accept_pegin_tx) =
+        request_and_accept_pegin(&mut committee, &mut user)?;
 
     let user_pubkey = user.public_key()?;
     let stream_id = 0; // This should be replaced with the actual stream ID
     let packet_number = 0; // This should be replaced with the actual packet number
     let pegout_id = vec![0; 32]; // This should be replaced with the actual peg-out ID
-    let pegout_signature_hash =
-        hex::decode("dea309782c51c214e276f9fe20015d778dab47d41e704705844401525c65aea4")?; // This should be replaced with the actual peg-out signature hash
+
+    // This is done in the contracts
+    let user_take_tx = get_user_take_tx(stream_value, accept_pegin_tx.compute_txid(), user_pubkey);
+    let user_take_sighash =
+        calculate_taproot_key_path_sighash(&user_take_tx, 0, &[accept_pegin_tx.output[0].clone()])?;
+    // End - This is done in the contracts
+
+    let pegout_signature_hash = user_take_sighash; // This should be replaced with the actual peg-out signature hash
     let pegout_signature_message = vec![0; 32]; // This should be replaced with the actual peg-out signature message
 
     let user_take_utxo = committee.request_pegout(
@@ -713,9 +725,9 @@ pub fn request_pegout() -> Result<()> {
         slot_index,
         stream_id,
         packet_number,
-        amount,
+        stream_value,
         pegout_id,
-        pegout_signature_hash,
+        pegout_signature_hash.to_vec(),
         pegout_signature_message,
     )?;
 

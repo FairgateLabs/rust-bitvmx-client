@@ -14,7 +14,7 @@ use protocol_builder::{
     },
 };
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::{
@@ -146,7 +146,7 @@ impl ProtocolHandler for UserTakeProtocol {
                 },
             };
             let data = send_to_l2!(self, context, ProtocolError, error);
-            info!(id = self.ctx.my_idx, "Failed to accept user take: {}", data);
+            error!(id = self.ctx.my_idx, "Failed to accept user take: {}", data);
             return Err(BitVMXError::InvalidParameter(error.to_string()));
         }
 
