@@ -639,9 +639,7 @@ impl AcceptPegInProtocol {
             .push_taproot_signature(reimbursement_signature[op_leaf_index].unwrap())?;
 
         // Create transaction
-        let tx = self
-            .load_protocol()?
-            .transaction_to_send(name, &[accept_pegin_args, reimbursement_args])?;
+        let tx = protocol.transaction_to_send(name, &[accept_pegin_args, reimbursement_args])?;
 
         let speedup_utxo = Utxo::new(
             tx.compute_txid(),

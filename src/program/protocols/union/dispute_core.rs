@@ -799,6 +799,10 @@ impl DisputeCoreProtocol {
         let change = self.checked_sub(funding_amount, total_cost + fees)?;
 
         if change > DUST_VALUE {
+            info!(
+                "Adding change output of {} sats to {} transaction. Change exceeds dust value: {} sats",
+                change, PROTOCOL_FUNDING_TX, DUST_VALUE
+            );
             protocol
                 .add_transaction_output(
                     &PROTOCOL_FUNDING_TX,
@@ -892,7 +896,7 @@ impl DisputeCoreProtocol {
         let challenge_key = script.get_key(CHALLENGE_KEY).unwrap();
 
         let challenge_signature = context.key_chain.key_manager.sign_winternitz_message(
-            &hex::decode("01").unwrap(),
+            &[1],
             WinternitzType::HASH160,
             challenge_key.derivation_index(),
         )?;

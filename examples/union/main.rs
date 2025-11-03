@@ -754,7 +754,10 @@ pub fn advance_funds(
     )?;
 
     if should_wait {
-        wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait() + 10)?;
+        wait_for_blocks(
+            &committee.bitcoin_client,
+            get_blocks_to_wait() + DISPUTE_CORE_LONG_TIMELOCK as u32,
+        )?;
     }
 
     info!("Advance funds complete.");
