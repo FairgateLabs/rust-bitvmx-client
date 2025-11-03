@@ -37,13 +37,13 @@ use std::collections::HashMap;
 use tracing::info;
 use uuid::Uuid;
 
-pub const PEGOUT_ID: &str = "pegout_id";
-const PEGOUT_ID_KEY: &str = "pegout_id_key";
-const SECRET_KEY: &str = "secret";
-pub const CHALLENGE_KEY: &str = "challenge_pubkey";
-const REVEAL_INPUT_KEY: &str = "reveal_pubkey";
-const REVEAL_TAKE_PRIVKEY: &str = "reveal_take_private_key";
-const SLOT_ID_KEY: &str = "slot_id_key";
+pub const PEGOUT_ID: &str = "PEGOUT_ID";
+const PEGOUT_ID_KEY: &str = "PEGOUT_ID_KEY";
+const SECRET_KEY: &str = "SECRET_KEY";
+pub const CHALLENGE_KEY: &str = "CHALLENGE_KEY";
+const REVEAL_INPUT_KEY: &str = "REVEAL_INPUT_KEY";
+const REVEAL_TAKE_PRIVKEY: &str = "REVEAL_TAKE_PRIVKEY";
+const SLOT_ID_KEY: &str = "SLOT_ID_KEY";
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DisputeCoreProtocol {
@@ -509,6 +509,7 @@ impl DisputeCoreProtocol {
                         DISPUTE_CORE_SHORT_TIMELOCK,
                         // NOTE: This should be take_aggregated_key due to if any member leave we want to keep signing this output in each accept pegin protocol.
                         &committee.take_aggregated_key,
+                        CHALLENGE_KEY,
                         keys[member_index].get_winternitz(&key_name)?,
                         SignMode::Aggregate,
                     )?
@@ -888,7 +889,7 @@ impl DisputeCoreProtocol {
             .unwrap();
 
         let script = protocol.get_script_to_spend(name, 0, leaf_index as u32)?;
-        let challenge_key = script.get_key("value").unwrap();
+        let challenge_key = script.get_key(CHALLENGE_KEY).unwrap();
 
         let challenge_signature = context.key_chain.key_manager.sign_winternitz_message(
             &hex::decode("01").unwrap(),
