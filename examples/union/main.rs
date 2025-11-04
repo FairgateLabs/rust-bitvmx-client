@@ -110,6 +110,11 @@ fn print_usage() {
         "Forces invalid reimbursement to test challenge tx",
     );
     print_cmd_help(
+        "double_challenge",
+        "Forces to send TWO_DISPUTE_PENALIZATION_TX to test double challenge handling",
+    );
+
+    print_cmd_help(
         "watchtowers_start_enabler",
         "Dispatch WT start enabler transactions",
     );
