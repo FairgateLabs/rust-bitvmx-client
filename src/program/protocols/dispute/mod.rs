@@ -431,7 +431,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     agg_or_prover,
                     &keys[0],
                     (prover_speedup_pub, verifier_speedup_pub),
-                    Some(vec![Self::get_cosign_extra_script()]),
+                    Some(vec![Self::get_cosign_extra_script(words)]),
                 )
             };
 
@@ -1099,12 +1099,31 @@ impl DisputeResolutionProtocol {
         ))
     }
 
-    fn get_cosign_extra_script() -> ScriptBuf {
-        //TODO: this is hardcoded for only 1 value
+    fn get_cosign_extra_script(words: u32) -> ScriptBuf {
+        //ASK: elf to try longer inputs?
         let mut stack = StackTracker::new();
-        let a = stack.define(4, "value_1_verifier");
-        let b = stack.define(4, "value_1_prover");
-        stack.equals(a, true, b, true);
+
+        let mut verifier_inputs = Vec::new();
+        for i in 0..words {
+            let var = stack.define(4, &format!("verifier_input_{}", i));
+            verifier_inputs.push(var);
+        }
+
+        let mut prover_inputs = Vec::new();
+        for i in 0..words {
+            let var = stack.define(4, &format!("prover_input_{}", i));
+            prover_inputs.push(var);
+        }
+
+        for i in 0..words {
+            stack.equals(
+                verifier_inputs[i as usize],
+                true,
+                prover_inputs[i as usize],
+                true,
+            );
+        }
+
         stack.get_script()
     }
 }
