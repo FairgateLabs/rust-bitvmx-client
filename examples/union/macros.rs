@@ -1,21 +1,8 @@
 const TIMEOUT_SECS: std::time::Duration = std::time::Duration::from_secs(120);
 
-#[macro_export]
-macro_rules! expect_msg {
-    ($bitvmx:expr, $pattern:pat => $expr:expr) => {{
-        let msg = $bitvmx.wait_message(Some(TIMEOUT_SECS), None)?;
-
-        if let $pattern = msg {
-            Ok($expr)
-        } else {
-            Err(anyhow::anyhow!("Expected `{}`", stringify!($pattern)))
-        }
-    }};
-}
-
 use bitvmx_client::{client::BitVMXClient, types::OutgoingBitVMXApiMessages};
 use std::{thread, time::Duration};
-use tracing::debug;
+use tracing::info;
 
 pub fn wait_for_message_blocking<F>(
     bitvmx: &BitVMXClient,
@@ -26,11 +13,11 @@ where
 {
     let mut msg = bitvmx.wait_message(Some(TIMEOUT_SECS), None)?;
     while !matches_fn(&msg) {
-        debug!(
+        info!(
             "Waiting for another message that match condition. Received: {:?}",
             msg.name()
         );
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(200));
         msg = bitvmx.wait_message(Some(TIMEOUT_SECS), None)?;
     }
     Ok(msg)

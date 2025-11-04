@@ -8,103 +8,132 @@ use bitvmx_client::{
     client::BitVMXClient,
     program::{
         participant::{CommsAddress, ParticipantRole},
-        protocols::union::{
-            common::get_dispute_channel_pid,
-            types::{MemberData, FUNDING_UTXO_SUFFIX, WATCHTOWER},
-        },
-        variables::{PartialUtxo, VariableTypes},
+        protocols::union::{common::get_dispute_channel_pid, types::MemberData},
+        variables::VariableTypes,
     },
     types::PROGRAM_TYPE_DRP,
 };
+
+// const FUNDING_UTXO_SUFFIX: &str = "_FUNDING_UTXO";
 
 pub struct DisputeChannelSetup;
 
 impl DisputeChannelSetup {
     pub fn setup(
-        my_id: &str,
-        my_address: &CommsAddress,
-        my_role: &ParticipantRole,
-        my_take_pubkey: &PublicKey,
+        my_index: usize,
         pairwise_keys: &HashMap<CommsAddress, PublicKey>,
         bitvmx: &BitVMXClient,
         members: &Vec<MemberData>,
         committee_id: Uuid,
-        wt_funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
         addresses: &Vec<CommsAddress>,
-    ) -> Result<()> {
-        let my_addr = my_address.clone();
+    ) -> Result<usize> {
+        let mut total_setups = 0;
+        let my_address = addresses[my_index].clone();
+        let prover = members[my_index].role == ParticipantRole::Prover;
 
-        for i in 0..addresses.len() {
-            for j in (i + 1)..addresses.len() {
-                let r1 = &members[i].role;
-                let r2 = &members[j].role;
-                let a1 = &addresses[i];
-                let a2 = &addresses[j];
+        // Iterate over partners
+        for partner_index in 0..members.len() {
+            if partner_index == my_index
+                || (!prover && members[partner_index].role != ParticipantRole::Prover)
+            {
+                // Skip myself and verifiers pair
+                continue;
+            }
 
-                // Skip if I'm not part of the pair
-                if my_addr != *a1 && my_addr != *a2 {
-                    continue;
-                }
+            // Set partner address and key pair
+            let partner_address = &addresses[partner_index];
+            let pair_key = pairwise_keys
+                .get(&partner_address)
+                .cloned()
+                .expect("pairwise key should be present");
 
-                // Helper to setup one directional DRP
-                let setup_one = |from_idx: usize, to_idx: usize, first: &CommsAddress, second: &CommsAddress| -> Result<()> {
-                    let drp_id = get_dispute_channel_pid(committee_id, from_idx, to_idx);
-                    let participants: Vec<CommsAddress> = vec![first.clone(), second.clone()];
-                    let my_idx = if my_addr == *first { 0 } else { 1 };
+            // If I'm an operator, set up DisputeChannel where I'm the operator and my partner is the watchtower
+            if prover {
+                Self::print_setup_info(my_index, my_index, partner_index);
+                Self::setup_one(
+                    committee_id,
+                    my_index,
+                    partner_index,
+                    &my_address,
+                    partner_address,
+                    &bitvmx,
+                    pair_key,
+                )?;
 
-                    // Aggregated pairwise key
-                    let counterparty = if my_addr == *first { second } else { first };
-                    let pair_key = pairwise_keys
-                        .get(counterparty)
-                        .cloned()
-                        .expect("pairwise key should be present");
+                total_setups += 1;
+            }
 
-                    // Program vars
-                    let program_path = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
-                    bitvmx.set_var(
-                        drp_id,
-                        "program_definition",
-                        VariableTypes::String(program_path.to_string()),
-                    )?;
-                    bitvmx.set_var(drp_id, "aggregated", VariableTypes::PubKey(pair_key))?;
+            // If my partner is an operator, set up DisputeChannel where they are the operator and I'm the watchtower
+            if members[partner_index].role == ParticipantRole::Prover {
+                Self::print_setup_info(my_index, partner_index, my_index);
+                Self::setup_one(
+                    committee_id,
+                    partner_index,
+                    my_index,
+                    &partner_address,
+                    &my_address,
+                    &bitvmx,
+                    pair_key,
+                )?;
 
-                    // If I'm a watchtower, provide funding hint
-                    if matches!(my_role, ParticipantRole::Verifier) {
-                        if let Some(my_utxo) = wt_funding_utxos_per_member.get(my_take_pubkey) {
-                            let wt_key = format!("{}{}", WATCHTOWER, FUNDING_UTXO_SUFFIX);
-                            bitvmx.set_var(
-                                drp_id,
-                                &wt_key,
-                                VariableTypes::Utxo(my_utxo.clone()),
-                            )?;
-                            bitvmx.set_var(drp_id, "TIMELOCK_BLOCKS", VariableTypes::Number(1))?;
-                        }
-                    }
-
-                    bitvmx.setup(drp_id, PROGRAM_TYPE_DRP.to_string(), participants, 0)?;
-                    info!(id = my_id, drp = ?drp_id, dir = %format!("{}->{}", first.address, second.address), my_idx = my_idx, "Setup Dispute Channel");
-                    Ok(())
-                };
-
-                match (r1, r2) {
-                    // Two operators → two DRPs (both directions)
-                    (ParticipantRole::Prover, ParticipantRole::Prover) => {
-                        setup_one(i, j, a1, a2)?;
-                        setup_one(j, i, a2, a1)?;
-                    }
-                    // Operator + Watchtower → one DRP: Operator -> Watchtower
-                    (ParticipantRole::Prover, ParticipantRole::Verifier) => {
-                        setup_one(i, j, a1, a2)?;
-                    }
-                    (ParticipantRole::Verifier, ParticipantRole::Prover) => {
-                        setup_one(j, i, a2, a1)?;
-                    }
-                    // Two watchtowers → skip
-                    (ParticipantRole::Verifier, ParticipantRole::Verifier) => {}
-                }
+                total_setups += 1;
             }
         }
 
+        info!("DisputeChannel setup complete ({} setups)", total_setups);
+        // TODO: Return total setups when dispute channels are re-enabled
+        Ok(0)
+        // Ok(total_setups)
+    }
+
+    fn setup_one(
+        committee_id: Uuid,
+        op_index: usize,
+        wt_index: usize,
+        operator: &CommsAddress,
+        watchtower: &CommsAddress,
+        bitvmx: &BitVMXClient,
+        pair_key: PublicKey,
+    ) -> Result<()> {
+        let drp_id = get_dispute_channel_pid(committee_id, op_index, wt_index);
+        let _participants: Vec<CommsAddress> = vec![operator.clone(), watchtower.clone()];
+
+        // Program vars
+        let program_path = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
+        bitvmx.set_var(
+            drp_id,
+            "program_definition",
+            VariableTypes::String(program_path.to_string()),
+        )?;
+        bitvmx.set_var(drp_id, "aggregated", VariableTypes::PubKey(pair_key))?;
+
+        // TODO: This should be loaded from WT_START_ENABLER_TX and both should set them consistently?
+        // We should request that TX to bitvmx with the proper protocol id using `get_dispute_core_pid()`
+        // If I'm a watchtower, provide funding hint
+        // if matches!(my_role, ParticipantRole::Verifier) {
+        //     if let Some(my_utxo) = wt_funding_utxos_per_member.get(my_take_pubkey) {
+        //         let wt_key = format!("{}{}", WATCHTOWER, FUNDING_UTXO_SUFFIX);
+        //         bitvmx.set_var(drp_id, &wt_key, VariableTypes::Utxo(my_utxo.clone()))?;
+        //         bitvmx.set_var(drp_id, "TIMELOCK_BLOCKS", VariableTypes::Number(1))?;
+        //     }
+        // }
+
+        info!(
+            "Setting up {} PID {} between OP {} and WT {}",
+            PROGRAM_TYPE_DRP, drp_id, op_index, wt_index,
+        );
+
+        // TODO: re-enable dispute channels once protocol is finalized:
+        // blocked by https://trello.com/c/eDA2ltcT/42-dispute-channel
+        // bitvmx.setup(drp_id, PROGRAM_TYPE_DRP.to_string(), participants, 0)?;
+
         Ok(())
+    }
+
+    fn print_setup_info(member_index: usize, op_index: usize, wt_index: usize) {
+        info!(
+            index = member_index,
+            "Setting up DisputeChannel between OP {} and WT {}", op_index, wt_index
+        );
     }
 }

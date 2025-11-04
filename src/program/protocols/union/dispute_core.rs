@@ -5,27 +5,26 @@ use crate::{
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
-                self,
                 common::{
                     create_transaction_reference, estimate_fee, extract_index,
-                    get_accept_pegin_pid, get_initial_setup_output_type, indexed_name,
+                    get_accept_pegin_pid, get_initial_deposit_output_type, indexed_name,
                 },
+                scripts,
                 types::*,
             },
         },
-        variables::VariableTypes,
+        variables::{PartialUtxo, VariableTypes},
     },
     types::{ProgramContext, PROGRAM_TYPE_ACCEPT_PEGIN},
 };
-
-use bitcoin::{OutPoint, PublicKey, Transaction, Txid};
+use bitcoin::{Amount, OutPoint, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use core::result::Result::Ok;
 use key_manager::winternitz::WinternitzType;
 use protocol_builder::{
     builder::Protocol,
     graph::graph::GraphOptions,
-    scripts::{self, SignMode},
+    scripts::SignMode,
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
@@ -44,8 +43,7 @@ const SECRET_KEY: &str = "secret";
 const CHALLENGE_KEY: &str = "challenge_pubkey";
 const REVEAL_INPUT_KEY: &str = "reveal_pubkey";
 const REVEAL_TAKE_PRIVKEY: &str = "reveal_take_private_key";
-const TAKE_KEY: &str = "take_key";
-const DISPUTE_KEY: &str = "dispute_key";
+const SLOT_ID_KEY: &str = "slot_id_key";
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DisputeCoreProtocol {
@@ -65,14 +63,15 @@ impl ProtocolHandler for DisputeCoreProtocol {
         &self,
         context: &ProgramContext,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
+        let committee = self.committee(context)?;
         Ok(vec![
             (
                 TAKE_AGGREGATED_KEY.to_string(),
-                self.take_aggregated_key(context)?,
+                committee.take_aggregated_key.clone(),
             ),
             (
                 DISPUTE_AGGREGATED_KEY.to_string(),
-                self.dispute_aggregated_key(context)?,
+                committee.dispute_aggregated_key.clone(),
             ),
         ])
     }
@@ -82,17 +81,8 @@ impl ProtocolHandler for DisputeCoreProtocol {
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
         let packet_size = self.committee(program_context)?.packet_size;
-
         let mut keys = vec![];
 
-        keys.push((
-            TAKE_KEY.to_string(),
-            PublicKeyType::Public(self.my_take_key(program_context)?),
-        ));
-        keys.push((
-            DISPUTE_KEY.to_string(),
-            PublicKeyType::Public(self.my_dispute_key(program_context)?),
-        ));
         keys.push((
             CHALLENGE_KEY.to_string(),
             PublicKeyType::Public(program_context.key_chain.derive_keypair()?),
@@ -111,16 +101,16 @@ impl ProtocolHandler for DisputeCoreProtocol {
             VariableTypes::PubKey(speedup_key),
         )?;
 
-        if self.prover(program_context)? {
-            keys.push((
-                REVEAL_INPUT_KEY.to_string(),
-                PublicKeyType::Public(program_context.key_chain.derive_keypair()?),
-            ));
-            keys.push((
-                REVEAL_TAKE_PRIVKEY.to_string(),
-                PublicKeyType::Winternitz(program_context.key_chain.derive_winternitz_hash160(32)?),
-            ));
+        keys.push((
+            REVEAL_INPUT_KEY.to_string(),
+            PublicKeyType::Public(program_context.key_chain.derive_keypair()?),
+        ));
+        keys.push((
+            REVEAL_TAKE_PRIVKEY.to_string(),
+            PublicKeyType::Winternitz(program_context.key_chain.derive_winternitz_hash160(32)?),
+        ));
 
+        if self.prover(program_context)? {
             for i in 0..packet_size as usize {
                 keys.push((
                     indexed_name(PEGOUT_ID_KEY, i).to_string(),
@@ -135,6 +125,13 @@ impl ProtocolHandler for DisputeCoreProtocol {
                         program_context.key_chain.derive_winternitz_hash160(1)?,
                     ),
                 ));
+
+                keys.push((
+                    indexed_name(SLOT_ID_KEY, i),
+                    PublicKeyType::Winternitz(
+                        program_context.key_chain.derive_winternitz_hash160(32)?,
+                    ),
+                ));
             }
         }
 
@@ -147,39 +144,64 @@ impl ProtocolHandler for DisputeCoreProtocol {
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
+        info!("Building DisputeCoreProtocol for program {}", self.ctx.id);
+
         let mut protocol = self.load_or_create_protocol();
         let dispute_core_data = self.dispute_core_data(context)?;
         let committee = self.committee(context)?;
-        let operator_keys = keys[dispute_core_data.operator_index].clone();
-
-        self.create_initial_deposit(
-            &mut protocol,
-            &operator_keys,
-            &dispute_core_data,
-            committee.packet_size,
-            &committee.dispute_aggregated_key,
-        )?;
-        let take_aggregated_key = self.take_aggregated_key(context)?;
+        let member = &committee.members[dispute_core_data.member_index];
 
         let mut reimbursement_output =
-            self.create_reimbursement_output(&dispute_core_data, &take_aggregated_key, &keys)?;
+            self.create_reimbursement_output(&dispute_core_data, &keys, &committee)?;
 
-        for i in 0..committee.packet_size as usize {
-            self.create_dispute_core(
+        self.create_wt_start_enabler_output(
+            &mut protocol,
+            &dispute_core_data,
+            &member.dispute_key,
+            &committee.dispute_aggregated_key.clone(),
+        )?;
+
+        let mut wt_start_enabler_outputs =
+            self.create_wt_start_enabler(&mut protocol, &dispute_core_data, &committee, &keys)?;
+
+        // If member is an operator create Operator initial deposit and dispute cores
+        if member.role == ParticipantRole::Prover {
+            self.create_op_initial_deposit(
                 &mut protocol,
-                &committee,
-                &dispute_core_data,
-                i,
-                &keys,
-                reimbursement_output.clone(),
-                context,
+                &member.dispute_key,
+                &committee.dispute_aggregated_key,
             )?;
 
-            self.create_two_dispute_penalization(&mut protocol, i, &take_aggregated_key)?;
+            for i in 0..committee.packet_size as usize {
+                self.create_dispute_core(
+                    &mut protocol,
+                    &committee,
+                    &dispute_core_data,
+                    i,
+                    &keys,
+                    reimbursement_output.clone(),
+                    context,
+                )?;
+
+                self.create_two_dispute_penalization(
+                    &mut protocol,
+                    i,
+                    &committee.take_aggregated_key,
+                )?;
+            }
         }
 
+        // Add speedup output
+        protocol.add_transaction_output(
+            &PROTOCOL_FUNDING_TX,
+            &OutputType::segwit_key(
+                SPEEDUP_VALUE,
+                keys[dispute_core_data.member_index].get_public(SPEEDUP_KEY)?,
+            )?,
+        )?;
+
         protocol.compute_minimum_output_values()?;
-        self.add_funding_change(&mut protocol, &operator_keys, &dispute_core_data)?;
+        self.add_funding_change(&mut protocol, &member.dispute_key, &dispute_core_data)?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
@@ -189,6 +211,8 @@ impl ProtocolHandler for DisputeCoreProtocol {
             context,
             &mut reimbursement_output,
             &committee.dispute_aggregated_key,
+            &member.role,
+            &mut wt_start_enabler_outputs,
         )?;
 
         Ok(())
@@ -199,14 +223,16 @@ impl ProtocolHandler for DisputeCoreProtocol {
         name: &str,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        if name == format!("{}{}", OPERATOR, SETUP_TX_SUFFIX) {
-            Ok(self.setup_tx(context)?)
-        } else if name == format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX) {
-            Ok(self.op_initial_deposit_tx(name, context)?)
+        if name == PROTOCOL_FUNDING_TX {
+            Ok(self.protocol_funding_tx(context)?)
+        } else if name == OP_INITIAL_DEPOSIT_TX || name == WT_START_ENABLER_TX {
+            Ok(self.sign_aggregated_input(name, context, true)?)
         } else if name.starts_with(REIMBURSEMENT_KICKOFF_TX) {
             Ok(self.reimbursement_kickoff_tx(name, context)?)
         } else if name.starts_with(CHALLENGE_TX) {
             Ok(self.challenge_tx(name, context)?)
+        } else if name == WT_SELF_DISABLER_TX || name == OP_SELF_DISABLER_TX {
+            Ok(self.sign_aggregated_input(name, context, false)?)
         } else {
             Err(BitVMXError::InvalidTransactionName(name.to_string()))
         }
@@ -223,7 +249,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
     ) -> Result<(), BitVMXError> {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
         info!(
-            "Dispute core protocol received news of transaction: {}, txid: {} with {} confirmations",
+            "DisputeCoreProtocol received news of transaction: {}, txid: {} with {} confirmations",
             tx_name, tx_id, tx_status.confirmations
         );
 
@@ -243,11 +269,18 @@ impl ProtocolHandler for DisputeCoreProtocol {
         // This is called after the protocol is built and ready to be used
         info!(
             id = self.ctx.my_idx,
-            "DisputeCore {} setup complete", self.ctx.id
+            "DisputeCoreProtocol {} setup complete", self.ctx.id
         );
 
-        // Automatically get and dispatch the OP_SETUP_TX transaction
-        self.dispatch_setup_tx(program_context)?;
+        // Automatically get and dispatch the PROTOCOL_FUNDING_TX transaction
+        if self.is_my_dispute_core(program_context)? {
+            self.dispatch_protocol_funding_tx(program_context)?;
+        } else {
+            info!(
+                id = self.ctx.my_idx,
+                "Not my dispute_core, skipping dispatch of {} transaction", PROTOCOL_FUNDING_TX
+            );
+        }
 
         Ok(())
     }
@@ -258,78 +291,179 @@ impl DisputeCoreProtocol {
         Self { ctx }
     }
 
-    fn create_initial_deposit(
+    fn create_wt_start_enabler_output(
         &self,
         protocol: &mut Protocol,
-        operator_keys: &ParticipantKeys,
         dispute_core_data: &DisputeCoreData,
-        packet_size: u32,
+        watchtower_dispute_key: &PublicKey,
         dispute_aggregated_key: &PublicKey,
     ) -> Result<(), BitVMXError> {
-        let operator_utxo = dispute_core_data.operator_utxo.clone();
-        let operator_dispute_key = operator_keys.get_public(DISPUTE_KEY)?;
-        let reveal_take_private_key = operator_keys.get_winternitz(REVEAL_TAKE_PRIVKEY)?.clone();
+        let funding_utxo = dispute_core_data.funding_utxo.clone();
 
-        // Connect the setup transaction to the operator funding transaction.
-        let funding = format!("{}{}", OPERATOR, FUNDING_TX_SUFFIX);
-        let setup = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
-        let initial_deposit = format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX);
-        let self_disabler = format!("{}{}", OPERATOR, SELF_DISABLER_TX_SUFFIX);
-
+        // Connect the PROTOCOL_FUNDING_TX transaction to the operator funding transaction.
         // Create the funding transaction reference
-        create_transaction_reference(protocol, &funding, &mut [operator_utxo.clone()].to_vec())?;
+        create_transaction_reference(protocol, &FUNDING_TX, &mut [funding_utxo.clone()].to_vec())?;
 
         // The operator_utxo must be of type P2WPKH
         protocol.add_connection(
-            "setup",
-            &funding,
-            (operator_utxo.1 as usize).into(),
-            &setup,
+            "funds",
+            &FUNDING_TX,
+            (funding_utxo.1 as usize).into(),
+            &PROTOCOL_FUNDING_TX,
             InputSpec::Auto(SighashType::ecdsa_all(), SpendMode::None),
             None,
-            Some(operator_utxo.0),
+            Some(funding_utxo.0),
         )?;
 
-        // Connect the initial deposit transaction to the setup transaction.
+        // Connect the initial deposit transaction to the PROTOCOL_FUNDING_TX transaction.
         protocol.add_connection(
             "initial_deposit",
-            &setup,
+            &PROTOCOL_FUNDING_TX,
             OutputSpec::Auto(OutputType::taproot(
                 AUTO_AMOUNT,
-                operator_dispute_key,
-                &[union::scripts::reveal_take_private_key(
-                    operator_dispute_key,
-                    &reveal_take_private_key,
-                )?],
+                dispute_aggregated_key,
+                &[],
             )?),
-            &initial_deposit,
-            InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
+            &WT_START_ENABLER_TX,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
             None,
             None,
-        )?;
-
-        // Operator output for disabler directory
-        let directory_fee = estimate_fee(1, packet_size as usize + 1, 1);
-        let disabler_directory_amount =
-            packet_size as u64 * DUST_VALUE + SPEEDUP_VALUE + directory_fee;
-        protocol.add_transaction_output(
-            &setup,
-            &OutputType::taproot(disabler_directory_amount, dispute_aggregated_key, &[])?,
         )?;
 
         // Connect the self-disabler (recover funds) transaction.
         protocol.add_connection(
             "self_disabler",
-            &setup,
+            &PROTOCOL_FUNDING_TX,
             OutputSpec::Index(0),
-            &self_disabler,
-            InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
+            &WT_SELF_DISABLER_TX,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
             None,
             None,
         )?;
 
         protocol.add_transaction_output(
-            &self_disabler,
+            &WT_SELF_DISABLER_TX,
+            &OutputType::segwit_key(RECOVER_AMOUNT, watchtower_dispute_key)?,
+        )?;
+
+        return Ok(());
+    }
+
+    fn create_wt_start_enabler(
+        &self,
+        protocol: &mut Protocol,
+        data: &DisputeCoreData,
+        committee: &Committee,
+        keys: &Vec<ParticipantKeys>,
+    ) -> Result<Vec<OutputType>, BitVMXError> {
+        let wt_speedup_key = keys[data.member_index].get_public(SPEEDUP_KEY)?;
+        let validate_dispute_key = protocol_builder::scripts::verify_signature(
+            &committee.dispute_aggregated_key,
+            SignMode::Aggregate,
+        )?;
+        let mut outputs = vec![];
+
+        for (member_index, member) in committee.members.clone().iter().enumerate() {
+            // NOTE: This introduce a shift between scripts and slots to open a dispute
+            let mut scripts = vec![validate_dispute_key.clone()];
+
+            if member.role == ParticipantRole::Prover && data.member_index != member_index {
+                for slot in 0..committee.packet_size as usize {
+                    let slot_id_key =
+                        keys[member_index].get_winternitz(&indexed_name(SLOT_ID_KEY, slot))?;
+
+                    // TODO: is this correct? should we use aggregated key or wt key?
+                    scripts.push(scripts::start_challenge(
+                        &committee.dispute_aggregated_key,
+                        SLOT_ID_KEY,
+                        slot_id_key,
+                    )?);
+                }
+            }
+
+            let start_enabler_output =
+                OutputType::taproot(AUTO_AMOUNT, &committee.dispute_aggregated_key, &scripts)?;
+
+            protocol.add_transaction_output(
+                &WT_START_ENABLER_TX,
+                // FIXME: Internal key should be wt_dispute_key?
+                &start_enabler_output,
+            )?;
+
+            outputs.push(start_enabler_output);
+        }
+
+        let wt_disabler_directory_fee = estimate_fee(2, committee.members.len(), 1);
+        let disabler_directory_funds_output = OutputType::taproot(
+            DUST_VALUE * committee.members.len() as u64 + wt_disabler_directory_fee,
+            &committee.dispute_aggregated_key,
+            &[],
+        )?;
+        protocol.add_transaction_output(&WT_START_ENABLER_TX, &disabler_directory_funds_output)?;
+        outputs.push(disabler_directory_funds_output);
+
+        let speedup_output = OutputType::segwit_key(SPEEDUP_VALUE, &wt_speedup_key)?;
+        // Add speedup output
+        protocol.add_transaction_output(&WT_START_ENABLER_TX, &speedup_output)?;
+        outputs.push(speedup_output);
+
+        Ok(outputs)
+    }
+
+    fn create_op_initial_deposit(
+        &self,
+        protocol: &mut Protocol,
+        operator_dispute_key: &PublicKey,
+        dispute_aggregated_key: &PublicKey,
+    ) -> Result<(), BitVMXError> {
+        // Connect the initial deposit transaction to the PROTOCOL_FUNDING_TX transaction.
+        protocol.add_connection(
+            "initial_deposit",
+            &PROTOCOL_FUNDING_TX,
+            OutputSpec::Auto(OutputType::taproot(
+                AUTO_AMOUNT,
+                dispute_aggregated_key,
+                &[],
+            )?),
+            &OP_INITIAL_DEPOSIT_TX,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            None,
+        )?;
+
+        // Connect the self-disabler (recover funds) transaction.
+        protocol.add_connection(
+            "self_disabler",
+            &PROTOCOL_FUNDING_TX,
+            OutputSpec::Index(1),
+            &OP_SELF_DISABLER_TX,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            None,
+        )?;
+
+        protocol.add_transaction_output(
+            &OP_SELF_DISABLER_TX,
             &OutputType::segwit_key(RECOVER_AMOUNT, operator_dispute_key)?,
         )?;
 
@@ -339,28 +473,31 @@ impl DisputeCoreProtocol {
     fn create_reimbursement_output(
         &self,
         dispute_core_data: &DisputeCoreData,
-        take_aggregated_key: &PublicKey,
         keys: &Vec<ParticipantKeys>,
+        committee: &Committee,
     ) -> Result<OutputType, BitVMXError> {
         let mut timelocks = vec![];
         for i in 0..keys.len() {
             // If this is the operator owning the dispute core, we use a long timelock for the operator take transaction,
             // otherwise a short one for the challenge transaction.
-            let blocks = if i == dispute_core_data.operator_index {
+            let blocks = if i == dispute_core_data.member_index {
                 DISPUTE_CORE_LONG_TIMELOCK
             } else {
                 DISPUTE_CORE_SHORT_TIMELOCK
             };
 
-            let timelock =
-                scripts::timelock(blocks, keys[i].get_public(DISPUTE_KEY)?, SignMode::Single);
+            let timelock = protocol_builder::scripts::timelock(
+                blocks,
+                &committee.members[i].dispute_key,
+                SignMode::Single,
+            );
 
             timelocks.push(timelock);
         }
 
         Ok(OutputType::taproot(
             AUTO_AMOUNT,
-            &take_aggregated_key,
+            &committee.take_aggregated_key,
             timelocks.as_slice(),
         )?)
     }
@@ -375,31 +512,35 @@ impl DisputeCoreProtocol {
         reimbursement_output: OutputType,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
+        // Operator keys
+        let operator_keys = keys[dispute_core_data.member_index].clone();
+        let operator_dispute_key = &committee.members[dispute_core_data.member_index].dispute_key;
+
+        // Aggregated keys
+        let take_aggregated_key = &committee.take_aggregated_key;
+        let dispute_aggregated_key = &committee.dispute_aggregated_key;
+
+        // Pegout ID key
         let pegout_id_name = indexed_name(PEGOUT_ID_KEY, dispute_core_index);
-        let secret_name = indexed_name(SECRET_KEY, dispute_core_index);
-
-        let operator_keys = keys[dispute_core_data.operator_index].clone();
-
-        let operator_dispute_key = operator_keys.get_public(DISPUTE_KEY)?;
-        let take_aggregated_key = self.take_aggregated_key(context)?;
-        let dispute_aggregated_key = &self.dispute_aggregated_key(context)?;
         let pegout_id_key = operator_keys.get_winternitz(&pegout_id_name)?;
+
+        // Secret key
+        let secret_name = indexed_name(SECRET_KEY, dispute_core_index);
         let secret_key = operator_keys.get_winternitz(&secret_name)?;
 
-        let initial_deposit = format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX);
+        // TX names
         let reimbursement_kickoff = indexed_name(REIMBURSEMENT_KICKOFF_TX, dispute_core_index);
         let challenge = indexed_name(CHALLENGE_TX, dispute_core_index);
         let reveal_input = indexed_name(REVEAL_INPUT_TX, dispute_core_index);
         let input_not_revealed = indexed_name(INPUT_NOT_REVEALED_TX, dispute_core_index);
 
-        let start_reimbursement = union::scripts::start_reimbursement(
-            &take_aggregated_key,
-            PEGOUT_ID_KEY,
-            pegout_id_key,
-        )?;
+        let start_reimbursement =
+            scripts::start_reimbursement(take_aggregated_key, PEGOUT_ID_KEY, pegout_id_key)?;
 
-        let validate_dispute_key =
-            scripts::verify_signature(&committee.dispute_aggregated_key, SignMode::Aggregate)?;
+        let validate_dispute_key = protocol_builder::scripts::verify_signature(
+            dispute_aggregated_key,
+            SignMode::Aggregate,
+        )?;
 
         // Save start_reimbursement script by dispute_core_index. It will be used in FullPenalizationProtocol
         context.globals.set_var(
@@ -414,10 +555,10 @@ impl DisputeCoreProtocol {
         // We use the operator's dispute key as internal key to use the key spend path for self disablement.
         protocol.add_connection(
             "start_dispute_core",
-            &initial_deposit,
-            get_initial_setup_output_type(
+            &OP_INITIAL_DEPOSIT_TX,
+            get_initial_deposit_output_type(
                 AUTO_AMOUNT,
-                &operator_dispute_key,
+                operator_dispute_key,
                 &[start_reimbursement, validate_dispute_key],
             )?
             .into(),
@@ -437,7 +578,7 @@ impl DisputeCoreProtocol {
             None,
         )?;
 
-        let secret = scripts::verify_winternitz_signature(
+        let secret = protocol_builder::scripts::verify_winternitz_signature(
             operator_keys.get_public(REVEAL_INPUT_KEY)?,
             secret_key,
             SignMode::Skip,
@@ -446,7 +587,7 @@ impl DisputeCoreProtocol {
         protocol.add_connection(
             "reveal_input",
             &challenge,
-            OutputType::taproot(AUTO_AMOUNT, &dispute_aggregated_key, &[secret])?.into(),
+            OutputType::taproot(AUTO_AMOUNT, dispute_aggregated_key, &[secret])?.into(),
             &reveal_input,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
             None,
@@ -456,7 +597,7 @@ impl DisputeCoreProtocol {
         // TODO: Add leaves with timelocks for each committee member
         protocol.add_transaction_output(
             &reveal_input,
-            &OutputType::taproot(AUTO_AMOUNT, &take_aggregated_key, &[])?,
+            &OutputType::taproot(AUTO_AMOUNT, take_aggregated_key, &[])?,
         )?;
 
         protocol.add_connection(
@@ -476,15 +617,15 @@ impl DisputeCoreProtocol {
 
         protocol.add_transaction_output(
             &input_not_revealed,
-            &OutputType::taproot(AUTO_AMOUNT, &take_aggregated_key, &[])?,
+            &OutputType::taproot(AUTO_AMOUNT, take_aggregated_key, &[])?,
         )?;
 
-        self.add_speedup_outputs(
+        self.add_dispute_core_speedup_outputs(
             protocol,
             keys,
             dispute_core_index,
-            dispute_core_data.operator_index,
-            committee.packet_size as usize,
+            dispute_core_data.member_index,
+            committee,
         )?;
 
         Ok(())
@@ -549,32 +690,38 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn add_speedup_outputs(
+    fn add_dispute_core_speedup_outputs(
         &self,
         protocol: &mut Protocol,
         keys: &Vec<ParticipantKeys>,
         dispute_core_index: usize,
         operator_index: usize,
-        packet_size: usize,
+        committee: &Committee,
     ) -> Result<(), BitVMXError> {
-        let initial_deposit = format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX);
-        let setup = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
         let reimbursement_kickoff = indexed_name(REIMBURSEMENT_KICKOFF_TX, dispute_core_index);
         let challenge = indexed_name(CHALLENGE_TX, dispute_core_index);
         let reveal_input = indexed_name(REVEAL_INPUT_TX, dispute_core_index);
         let input_not_revealed = indexed_name(INPUT_NOT_REVEALED_TX, dispute_core_index);
         let operator_speedup_key = keys[operator_index].get_public(SPEEDUP_KEY)?;
 
-        // Add a speedup output to the initial_deposit transaction and to the setup tx when the last initial deposit
+        // Add a speedup output to the initial_deposit transaction when the last initial deposit
         // output has been added.
-        if dispute_core_index == packet_size - 1 {
+        if dispute_core_index == (committee.packet_size - 1) as usize {
+            // Operator output for disabler directory
+            let directory_fee = estimate_fee(2, committee.packet_size as usize + 1, 1);
+            let disabler_directory_amount =
+                committee.packet_size as u64 * DUST_VALUE + SPEEDUP_VALUE + directory_fee;
             protocol.add_transaction_output(
-                &initial_deposit,
-                &OutputType::segwit_key(AUTO_AMOUNT, operator_speedup_key)?,
+                &OP_INITIAL_DEPOSIT_TX,
+                &OutputType::taproot(
+                    disabler_directory_amount,
+                    &committee.dispute_aggregated_key,
+                    &[],
+                )?,
             )?;
 
             protocol.add_transaction_output(
-                &setup,
+                &OP_INITIAL_DEPOSIT_TX,
                 &OutputType::segwit_key(AUTO_AMOUNT, operator_speedup_key)?,
             )?;
         }
@@ -605,93 +752,48 @@ impl DisputeCoreProtocol {
     fn add_funding_change(
         &self,
         protocol: &mut Protocol,
-        operator_keys: &ParticipantKeys,
+        member_change_key: &PublicKey,
         dispute_core_data: &DisputeCoreData,
     ) -> Result<(), BitVMXError> {
-        // Add a change output to the setup transaction
-        let funding_amount = dispute_core_data.operator_utxo.2.unwrap();
-        let operator_dispute_key = operator_keys.get_public(DISPUTE_KEY)?;
-        let setup = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
-        let setup_tx = protocol.transaction_by_name(&setup)?;
-        let setup_fees = estimate_fee(1, setup_tx.output.len() + 1, 1);
+        // Add a change output to the PROTOCOL_FUNDING_TX transaction
+        let funding_amount = dispute_core_data.funding_utxo.2.unwrap();
+        let tx = protocol.transaction_by_name(&PROTOCOL_FUNDING_TX)?;
+        let fees = estimate_fee(1, tx.output.len() + 1, 1);
         let mut total_cost = 0;
 
-        for i in 0..setup_tx.output.len() {
-            total_cost += setup_tx.output[i].value.to_sat();
+        for i in 0..tx.output.len() {
+            total_cost += tx.output[i].value.to_sat();
         }
 
-        let change = self.checked_sub(funding_amount, total_cost + setup_fees)?;
+        let change = self.checked_sub(funding_amount, total_cost + fees)?;
 
         protocol
             .add_transaction_output(
-                &setup,
-                &OutputType::segwit_key(change, operator_dispute_key)?,
+                &PROTOCOL_FUNDING_TX,
+                &OutputType::segwit_key(change, member_change_key)?,
             )
             .map_err(|e| BitVMXError::ProtocolBuilderError(e))?;
 
         Ok(())
     }
 
-    fn setup_tx(
+    fn protocol_funding_tx(
         &self,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        let name = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
-
+        let tx_name = PROTOCOL_FUNDING_TX;
         let mut protocol = self.load_protocol()?;
 
-        let signature = protocol.sign_ecdsa_input(&name, 0, &context.key_chain.key_manager)?;
+        let signature = protocol.sign_ecdsa_input(&tx_name, 0, &context.key_chain.key_manager)?;
 
         let mut input_args = InputArgs::new_segwit_args();
         input_args.push_ecdsa_signature(signature)?;
-
-        let tx = protocol.transaction_to_send(&name, &[input_args])?;
-
-        let txid = tx.compute_txid();
-        let speedup_key = self.my_speedup_key(context)?;
-        let speedup_vout = (tx.output.len() - 2) as u32;
-        let speedup_utxo = Utxo::new(txid, speedup_vout, SPEEDUP_VALUE, &speedup_key);
-
-        Ok((tx, Some(speedup_utxo.into())))
-    }
-
-    fn op_initial_deposit_tx(
-        &self,
-        tx_name: &str,
-        context: &ProgramContext,
-    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        info!(
-            id = self.ctx.my_idx,
-            "Loading OP Initial Deposit transaction for DisputeCore"
-        );
-
-        let mut protocol: Protocol = self.load_protocol()?;
-        let signatures = protocol.sign_taproot_input(
-            tx_name,
-            0,
-            &SpendMode::KeyOnly {
-                key_path_sign: SignMode::Single,
-            },
-            context.key_chain.key_manager.as_ref(),
-            "",
-        )?;
-
-        let mut input_args = InputArgs::new_taproot_key_args();
-        for signature in signatures {
-            if signature.is_some() {
-                info!(
-                    "Adding taproot signature to input args for {}: {:?}",
-                    tx_name, signature
-                );
-                input_args.push_taproot_signature(signature.unwrap())?;
-            }
-        }
 
         let tx = protocol.transaction_to_send(&tx_name, &[input_args])?;
 
         let txid = tx.compute_txid();
         let speedup_key = self.my_speedup_key(context)?;
-        let speedup_vout = (tx.output.len() - 1) as u32;
+        let speedup_vout = (tx.output.len() - 2) as u32;
         let speedup_utxo = Utxo::new(txid, speedup_vout, SPEEDUP_VALUE, &speedup_key);
 
         Ok((tx, Some(speedup_utxo.into())))
@@ -743,7 +845,7 @@ impl DisputeCoreProtocol {
         name: &str,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        info!(id = self.ctx.my_idx, "Loading {} tx", name);
+        info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", name);
 
         let mut protocol = self.load_protocol()?;
         let my_index = self.ctx.my_idx;
@@ -806,26 +908,6 @@ impl DisputeCoreProtocol {
         }
     }
 
-    fn take_aggregated_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
-        Ok(self.committee(context)?.take_aggregated_key.clone())
-    }
-
-    fn dispute_aggregated_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
-        Ok(self.committee(context)?.dispute_aggregated_key.clone())
-    }
-
-    fn my_take_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
-        let my_index = self.ctx.my_idx;
-        let committee = self.committee(context)?;
-        Ok(committee.members[my_index].take_key.clone())
-    }
-
-    fn my_dispute_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
-        let my_index = self.ctx.my_idx;
-        let committee = self.committee(context)?;
-        Ok(committee.members[my_index].dispute_key.clone())
-    }
-
     fn my_speedup_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
         Ok(context
             .globals
@@ -839,37 +921,28 @@ impl DisputeCoreProtocol {
     }
 
     fn monitored_operator_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
-        match context
-            .globals
-            .get_var(&self.ctx.id, MONITORED_OPERATOR_KEY)?
-        {
-            Some(key_var) => Ok(key_var.pubkey()?),
-            None => Err(BitVMXError::VariableNotFound(
-                self.ctx.id,
-                MONITORED_OPERATOR_KEY.to_string(),
-            )),
-        }
+        let committee = self.committee(context)?;
+        let data = self.dispute_core_data(context)?;
+        Ok(committee.members[data.member_index].take_key)
     }
 
     fn dispatch_challenge_tx(
         &self,
         slot_id: usize,
         program_context: &ProgramContext,
-        reimbursement_tx_id: Txid,
+        reimbursement_txid: Txid,
         tx_status: TransactionStatus,
     ) -> Result<(), BitVMXError> {
         let tx_name = indexed_name(CHALLENGE_TX, slot_id);
+        info!("Dispatching {}", tx_name);
 
-        info!("Dispatching {} tx", tx_name);
-
-        let (mut challenge_tx, speedup) =
-            self.get_transaction_by_name(&tx_name, program_context)?;
-        let txid = challenge_tx.compute_txid();
+        let (mut challenge_tx, speedup) = self.challenge_tx(&tx_name, program_context)?;
+        let challenge_txid = challenge_tx.compute_txid();
 
         // Connect the challenge transaction to the reimbursement kickoff transaction
         if !challenge_tx.input.is_empty() {
             challenge_tx.input[0].previous_output = OutPoint {
-                txid: reimbursement_tx_id,
+                txid: reimbursement_txid,
                 vout: 0,
             };
         }
@@ -883,7 +956,7 @@ impl DisputeCoreProtocol {
 
         info!(
             "{} connected to reimbursement tx {} and dispatched with txid: {}",
-            tx_name, reimbursement_tx_id, txid
+            tx_name, reimbursement_txid, challenge_txid
         );
 
         Ok(())
@@ -1011,7 +1084,7 @@ impl DisputeCoreProtocol {
 
         info!(
             id = self.ctx.my_idx,
-            "OP_SETUP_TX dispatched successfully with txid: {}", txid
+            "{} dispatched successfully with txid: {}", name, txid
         );
         Ok(())
     }
@@ -1066,11 +1139,12 @@ impl DisputeCoreProtocol {
         tx_id: Txid,
         tx_name: &str,
     ) -> Result<(), BitVMXError> {
-        // Extract slot_index from transaction name
         info!(
             "Handling reimbursement kickoff txid: {}. Name: {}",
             tx_id, tx_name
         );
+
+        // Extract slot_index from transaction name
         let slot_index = extract_index(tx_name, REIMBURSEMENT_KICKOFF_TX)?;
         info!("Extracted slot index: {}", slot_index);
 
@@ -1089,7 +1163,7 @@ impl DisputeCoreProtocol {
             } else {
                 info!(
                     id = self.ctx.my_idx,
-                    "Reimbursement kickoff transaction {} lacks sufficient confirmations: {}",
+                    "Reimbursement kickoff transaction {} lacks enough confirmations: {}",
                     tx_id,
                     tx_status.confirmations
                 );
@@ -1146,42 +1220,37 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn dispatch_setup_tx(&self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
-        let setup_tx_name = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
-
-        if !self.is_my_dispute_core(program_context)? {
-            info!(
-                id = self.ctx.my_idx,
-                "Not my dispute_core, skipping dispatch of {} transaction", setup_tx_name
-            );
-            return Ok(());
-        }
+    fn dispatch_protocol_funding_tx(
+        &self,
+        program_context: &ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        let tx_name = PROTOCOL_FUNDING_TX;
 
         info!(
             id = self.ctx.my_idx,
-            "Dispatching {} tx from protocol {}", setup_tx_name, self.ctx.id
+            "Dispatching {} tx from protocol {}", tx_name, self.ctx.id
         );
 
         // Get the signed transaction
-        let (setup_tx, speedup) = self.setup_tx(program_context)?;
-        let setup_txid = setup_tx.compute_txid();
+        let (tx, speedup) = self.protocol_funding_tx(program_context)?;
+        let txid = tx.compute_txid();
 
         info!(
             id = self.ctx.my_idx,
-            "Auto-dispatching OP_SETUP_TX transaction: {}", setup_txid
+            "Auto-dispatching {} transaction: {}", tx_name, txid
         );
 
         // Dispatch the transaction through the bitcoin coordinator
         program_context.bitcoin_coordinator.dispatch(
-            setup_tx,
+            tx,
             speedup,
-            format!("dispute_core_setup_{}:{}", self.ctx.id, setup_tx_name), // Context string
-            None,                                                            // Dispatch immediately
+            format!("dispute_core_setup_{}:{}", self.ctx.id, tx_name), // Context string
+            None,                                                      // Dispatch immediately
         )?;
 
         info!(
             id = self.ctx.my_idx,
-            "OP_SETUP_TX dispatched successfully with txid: {}", setup_txid
+            "{} dispatched successfully with txid: {}", tx_name, txid
         );
 
         Ok(())
@@ -1189,7 +1258,7 @@ impl DisputeCoreProtocol {
 
     fn is_my_dispute_core(&self, program_context: &ProgramContext) -> Result<bool, BitVMXError> {
         let dispute_core_data = self.dispute_core_data(program_context)?;
-        Ok(dispute_core_data.operator_index == self.ctx.my_idx)
+        Ok(dispute_core_data.member_index == self.ctx.my_idx)
     }
 
     fn dispatch_operator_take_tx(
@@ -1246,104 +1315,131 @@ impl DisputeCoreProtocol {
         context: &ProgramContext,
         reimbursement_output: &mut OutputType,
         dispute_aggregated_key: &PublicKey,
+        role: &ParticipantRole,
+        wt_start_enabler_outputs: &mut Vec<OutputType>,
     ) -> Result<(), BitVMXError> {
         let committee = self.committee(context)?;
         let protocol = self.load_or_create_protocol();
 
-        for i in 0..committee.packet_size as usize {
-            let name = indexed_name(REIMBURSEMENT_KICKOFF_TX, i);
-            let reimbursement_kickoff_tx: &Transaction = protocol.transaction_by_name(&name)?;
+        // Save REIMBURSEMENT_KICKOFF_UTXO if dispute core owner is a Prover
+        if *role == ParticipantRole::Prover {
+            for i in 0..committee.packet_size as usize {
+                let name = indexed_name(REIMBURSEMENT_KICKOFF_TX, i);
+                let reimbursement_kickoff_tx: &Transaction = protocol.transaction_by_name(&name)?;
 
-            let reimbursement_output_index = 0;
-            let reimbursement_output_value =
-                reimbursement_kickoff_tx.output[reimbursement_output_index].value;
-            reimbursement_output.set_value(reimbursement_output_value.clone());
+                let reimbursement_output_index = 0;
+                let reimbursement_output_value =
+                    reimbursement_kickoff_tx.output[reimbursement_output_index].value;
+                reimbursement_output.set_value(reimbursement_output_value.clone());
 
-            let operator_take_utxo = (
-                reimbursement_kickoff_tx.compute_txid(),
-                0,
-                Some(reimbursement_output_value.to_sat()),
-                Some(reimbursement_output.clone()),
-            );
+                let operator_take_utxo = (
+                    reimbursement_kickoff_tx.compute_txid(),
+                    0,
+                    Some(reimbursement_output_value.to_sat()),
+                    Some(reimbursement_output.clone()),
+                );
 
-            let name = indexed_name(REVEAL_INPUT_TX, i);
-            let reveal_tx = protocol.transaction_by_name(&name)?;
-            let reveal_output_index = 0;
-            let reveal_output_value = reveal_tx.output[reveal_output_index].value;
-            // Reusing reimbursement utxo, it's the same output type
-            reimbursement_output.set_value(reveal_output_value.clone());
+                let name = indexed_name(REVEAL_INPUT_TX, i);
+                let reveal_tx = protocol.transaction_by_name(&name)?;
+                let reveal_output_index = 0;
+                let reveal_output_value = reveal_tx.output[reveal_output_index].value;
+                // Reusing reimbursement utxo, it's the same output type
+                reimbursement_output.set_value(reveal_output_value.clone());
 
-            let operator_won_utxo = (
-                reveal_tx.compute_txid(),
-                0,
-                Some(reveal_output_value.to_sat()),
-                Some(reimbursement_output.clone()),
+                let operator_won_utxo = (
+                    reveal_tx.compute_txid(),
+                    0,
+                    Some(reveal_output_value.to_sat()),
+                    Some(reimbursement_output.clone()),
+                );
+
+                context.globals.set_var(
+                    &self.ctx.id,
+                    &indexed_name(OPERATOR_TAKE_ENABLER, i),
+                    VariableTypes::Utxo(operator_take_utxo.clone()),
+                )?;
+
+                context.globals.set_var(
+                    &self.ctx.id,
+                    &indexed_name(OPERATOR_WON_ENABLER, i),
+                    VariableTypes::Utxo(operator_won_utxo.clone()),
+                )?;
+            }
+
+            // FIXME: Should we save the whole UTXOS as in reimbursement_kickoff_utxos?
+            // Maybe we should improve reimbursement_kickoff_utxos to be a vector of TXIDs, and save just once the amount and the output type
+            // - Reimbursement: Multiples TXIDs with same amount and output type
+            // - Initial Deposit: Single TXID and amount, with different output script. (output script is save in create_dispute_core function)
+
+            // Save initial deposit txid and output amount
+            let initial_deposit_tx: &Transaction =
+                protocol.transaction_by_name(OP_INITIAL_DEPOSIT_TX)?;
+            let initial_deposit_txid = initial_deposit_tx.compute_txid();
+            let output_value = initial_deposit_tx.output[0].value.to_sat();
+            info!(
+                id = self.ctx.my_idx,
+                "Saving initial deposit txid: {} and amount: {}",
+                initial_deposit_txid,
+                output_value
             );
 
             context.globals.set_var(
                 &self.ctx.id,
-                &indexed_name(OPERATOR_TAKE_ENABLER, i),
-                VariableTypes::Utxo(operator_take_utxo.clone()),
+                OP_INITIAL_DEPOSIT_TXID,
+                VariableTypes::String(initial_deposit_txid.to_string()),
             )?;
 
             context.globals.set_var(
                 &self.ctx.id,
-                &indexed_name(OPERATOR_WON_ENABLER, i),
-                VariableTypes::Utxo(operator_won_utxo.clone()),
+                OP_INITIAL_DEPOSIT_AMOUNT,
+                VariableTypes::Amount(output_value),
+            )?;
+
+            let op_disabler_directory_outout = committee.packet_size as usize;
+            let output_value = initial_deposit_tx.output[op_disabler_directory_outout]
+                .value
+                .to_sat();
+
+            let op_disabler_directory_utxo = (
+                initial_deposit_txid,
+                op_disabler_directory_outout as u32,
+                Some(output_value),
+                Some(OutputType::taproot(
+                    output_value,
+                    dispute_aggregated_key,
+                    &[],
+                )?),
+            );
+
+            info!("Saving op disabler utxo: {:?}", op_disabler_directory_utxo);
+            context.globals.set_var(
+                &self.ctx.id,
+                &OP_DISABLER_DIRECTORY_UTXO,
+                VariableTypes::Utxo(op_disabler_directory_utxo),
             )?;
         }
 
-        // FIXME: Should we save the whole UTXOS as in reimbursement_kickoff_utxos?
-        // Maybe we should improve reimbursement_kickoff_utxos to be a vector of TXIDs, and save just once the amount and the output type
-        // - Reimbursement: Multiples TXIDs with same amount and output type
-        // - Initial Setup: Single TXID and amount, with different output script. (output script is save in create_dispute_core function)
+        let wt_start_enabler_tx = protocol.transaction_by_name(WT_START_ENABLER_TX)?;
+        let wt_start_enabler_txid = wt_start_enabler_tx.compute_txid();
 
-        // Save initial deposit txid and output amount
-        let initial_deposit = format!("{}{}", OPERATOR, INITIAL_DEPOSIT_TX_SUFFIX);
-        let initial_deposit_tx: &Transaction = protocol.transaction_by_name(&initial_deposit)?;
-        let initial_deposit_txid = initial_deposit_tx.compute_txid();
-        let output_value = initial_deposit_tx.output[0].value.to_sat();
-        info!(
-            id = self.ctx.my_idx,
-            "Saving initial deposit txid: {} and amount: {}", initial_deposit_txid, output_value
-        );
+        // Create WT_START_ENABLER_UTXOs and save them in one array
+        let mut wt_start_enabler_utxos: Vec<PartialUtxo> = vec![];
+        for i in 0..wt_start_enabler_outputs.len() {
+            let output_value = wt_start_enabler_tx.output[i].value.to_sat();
 
-        context.globals.set_var(
-            &self.ctx.id,
-            OP_INITIAL_DEPOSIT_TXID,
-            VariableTypes::String(initial_deposit_txid.to_string()),
-        )?;
+            wt_start_enabler_outputs[i].set_value(Amount::from_sat(output_value));
+            wt_start_enabler_utxos.push((
+                wt_start_enabler_txid,
+                i as u32,
+                Some(output_value),
+                Some(wt_start_enabler_outputs[i].clone()),
+            ));
+        }
 
         context.globals.set_var(
             &self.ctx.id,
-            OP_INITIAL_DEPOSIT_AMOUNT,
-            VariableTypes::Amount(output_value),
-        )?;
-
-        // Save SETUP_DISABLER_DIRECTORY_UTXO for future use in the full penalization
-        let setup = format!("{}{}", OPERATOR, SETUP_TX_SUFFIX);
-        let setup_tx: &Transaction = protocol.transaction_by_name(&setup)?;
-        let setup_txid = setup_tx.compute_txid();
-        let setup_output = 1;
-        let output_value = setup_tx.output[setup_output].value.to_sat();
-
-        let setup_utxo = (
-            setup_txid,
-            setup_output as u32,
-            Some(output_value),
-            Some(OutputType::taproot(
-                output_value,
-                dispute_aggregated_key,
-                &[],
-            )?),
-        );
-
-        info!("Saving setup disabler utxo: {:?}", setup_utxo);
-
-        context.globals.set_var(
-            &self.ctx.id,
-            &SETUP_DISABLER_DIRECTORY_UTXO,
-            VariableTypes::Utxo(setup_utxo),
+            &WT_START_ENABLER_UTXOS,
+            VariableTypes::String(serde_json::to_string(&wt_start_enabler_utxos)?),
         )?;
 
         Ok(())
@@ -1359,5 +1455,37 @@ impl DisputeCoreProtocol {
             .get_var(&self.ctx.id, &indexed_name(PEGOUT_ID, slot_index))?
             .unwrap()
             .input()
+    }
+
+    fn sign_aggregated_input(
+        &self,
+        tx_name: &str,
+        context: &ProgramContext,
+        with_speedup: bool,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", tx_name);
+
+        let protocol = self.load_protocol()?;
+
+        let signature = protocol
+            .input_taproot_key_spend_signature(tx_name, 0)?
+            .unwrap();
+
+        let mut input_args = InputArgs::new_taproot_key_args();
+        input_args.push_taproot_signature(signature)?;
+
+        let tx = protocol.transaction_to_send(&tx_name, &[input_args])?;
+        let speedout = if with_speedup {
+            Some(SpeedupData::new(Utxo::new(
+                tx.compute_txid(),
+                (tx.output.len() - 1) as u32,
+                SPEEDUP_VALUE,
+                &self.my_speedup_key(context)?,
+            )))
+        } else {
+            None
+        };
+
+        Ok((tx, speedout))
     }
 }
