@@ -15,8 +15,8 @@ use crate::{
                     Committee, PegInAccepted, PegInRequest, ACCEPT_PEGIN_TX,
                     DISPUTE_CORE_LONG_TIMELOCK, LAST_OPERATOR_TAKE_UTXO, OPERATOR_LEAF_INDEX,
                     OPERATOR_TAKE_ENABLER, OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX,
-                    P2TR_FEE, REIMBURSEMENT_KICKOFF_IN_PROGRESS, REIMBURSEMENT_KICKOFF_TX,
-                    REQUEST_PEGIN_TX, SPEEDUP_KEY, SPEEDUP_VALUE,
+                    P2TR_FEE, REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, REVEAL_IN_PROGRESS,
+                    SPEEDUP_KEY, SPEEDUP_VALUE,
                 },
             },
         },
@@ -266,7 +266,9 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 }
             };
 
-            self.clean_reimbursement_in_progress(context, operator_index)?;
+            if tx_name.starts_with(OPERATOR_WON_TX) {
+                self.clean_reveal_in_progress(context, operator_index)?;
+            }
 
             if operator_index == self.ctx.my_idx {
                 // Both, OPERATOR_TAKE_TX and OPERATOR_WON_TX, have the same output index to reimburse funds to the operator
@@ -747,7 +749,7 @@ impl AcceptPegInProtocol {
         Ok(committee.members[self.ctx.my_idx].dispute_key.clone())
     }
 
-    fn clean_reimbursement_in_progress(
+    fn clean_reveal_in_progress(
         &self,
         context: &ProgramContext,
         operator_index: usize,
@@ -758,35 +760,35 @@ impl AcceptPegInProtocol {
 
         let dispute_protocol_id = get_dispute_core_pid(request.committee_id, &operator_take_key);
 
-        let reimbursement_in_progress =
-            self.get_reimbursement_in_progress(context, dispute_protocol_id)?;
+        let reveal_in_progress = self.get_reveal_in_progress(context, dispute_protocol_id)?;
 
-        if reimbursement_in_progress.is_none() {
+        if reveal_in_progress.is_none() {
             warn!(
                 id = self.ctx.my_idx,
-                "Not cleaning REIMBURSEMENT_KICKOFF_IN_PROGRESS for dispute protocol: {}. It was already empty and current request is for slot_index: {}",
+                "Not cleaning {} for dispute protocol: {}. It was already empty and current request is for slot_index: {}",
+                REVEAL_IN_PROGRESS,
                 dispute_protocol_id,
                 request.slot_index
             );
             return Ok(());
         }
 
-        if reimbursement_in_progress == Some(request.slot_index as u32) {
+        if reveal_in_progress == Some(request.slot_index as u32) {
             context
                 .globals
-                .unset_var(&dispute_protocol_id, REIMBURSEMENT_KICKOFF_IN_PROGRESS)?;
+                .unset_var(&dispute_protocol_id, REVEAL_IN_PROGRESS)?;
 
             info!(
                 id = self.ctx.my_idx,
-                "Cleaned REIMBURSEMENT_KICKOFF_IN_PROGRESS for dispute protocol: {}",
-                dispute_protocol_id
+                "Cleaned {} for dispute protocol: {}", REVEAL_IN_PROGRESS, dispute_protocol_id
             );
         } else {
             warn!(
                 id = self.ctx.my_idx,
-                "Not cleaning REIMBURSEMENT_KICKOFF_IN_PROGRESS for dispute protocol: {}. It is set to slot_index: {} and current request is for slot_index: {}",
+                "Not cleaning {} for dispute protocol: {}. It is set to slot_index: {} and current request is for slot_index: {}",
+                REVEAL_IN_PROGRESS,
                 dispute_protocol_id,
-                reimbursement_in_progress.unwrap(),
+                reveal_in_progress.unwrap(),
                 request.slot_index
             );
         }
@@ -794,14 +796,14 @@ impl AcceptPegInProtocol {
         Ok(())
     }
 
-    fn get_reimbursement_in_progress(
+    fn get_reveal_in_progress(
         &self,
         program_context: &ProgramContext,
         protocol_id: Uuid,
     ) -> Result<Option<u32>, BitVMXError> {
         match program_context
             .globals
-            .get_var(&protocol_id, REIMBURSEMENT_KICKOFF_IN_PROGRESS)?
+            .get_var(&protocol_id, REVEAL_IN_PROGRESS)?
         {
             Some(var) => Ok(Some(var.number()?)),
             None => Ok(None),
