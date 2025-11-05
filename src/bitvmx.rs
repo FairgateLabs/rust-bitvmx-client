@@ -291,7 +291,7 @@ impl BitVMX {
         let comms_address = comms_address
             .parse()
             .map_err(|_| BitVMXError::InvalidCommsAddress(comms_address))?;
-        self.process_msg(comms_address, msg, false)?;
+        self.process_msg(comms_address, msg, true)?;
         Ok(())
     }
 

@@ -39,6 +39,8 @@ fn config_trace() {
 
     tracing_subscriber::fmt()
         //.without_time()
+        .with_line_number(true)
+        .with_file(true)
         .with_target(true)
         .with_env_filter(filter)
         .init();
@@ -131,7 +133,12 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
 
                 if instance.ready {
                     if let Err(e) = instance.bitvmx.tick() {
-                        tracing::error!("Error in tick(): {e:?}");
+                        tracing::error!("Error in tick(): {e:#?}");
+                        let mut source = std::error::Error::source(&e);
+                        while let Some(err) = source {
+                            tracing::error!("  Caused by: {err}");
+                            source = std::error::Error::source(err);
+                        }
                         // escalate fatal errors to shutdown signal
                         if e.is_fatal() {
                             info!("Fatal error detected, initiating shutdown");

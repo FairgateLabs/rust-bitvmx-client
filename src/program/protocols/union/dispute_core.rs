@@ -392,7 +392,8 @@ impl DisputeCoreProtocol {
             }
 
             let start_enabler_output =
-                OutputType::taproot(AUTO_AMOUNT, &committee.dispute_aggregated_key, &scripts)?;
+                // OutputType::taproot(AUTO_AMOUNT, &committee.dispute_aggregated_key, &scripts)?;
+                OutputType::taproot(50000, &committee.dispute_aggregated_key, &scripts)?;
 
             protocol.add_transaction_output(
                 &WT_START_ENABLER_TX,
