@@ -122,6 +122,7 @@ impl DisputeChannelSetup {
     ) -> Result<Vec<PartialUtxo>> {
         let dispute_core_pid = get_dispute_core_pid(committee_id, &members[wt_index].take_key);
         bitvmx.get_var(dispute_core_pid, WT_START_ENABLER_UTXOS.to_string())?;
+        std::thread::sleep(std::time::Duration::from_secs(1)); // wait a bit for the message to be processed
 
         let variable =
             wait_until_msg!(&bitvmx, OutgoingBitVMXApiMessages::Variable(_, _, _var) => _var);

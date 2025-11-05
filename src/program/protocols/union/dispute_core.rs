@@ -383,10 +383,17 @@ impl DisputeCoreProtocol {
                     let slot_id_key =
                         keys[member_index].get_winternitz(&indexed_name(SLOT_ID_KEY, slot))?;
 
+                    let sign_mode = if data.member_index == self.ctx.my_idx {
+                        SignMode::Single
+                    } else {
+                        SignMode::Skip
+                    };
+
                     scripts.push(scripts::start_challenge(
                         &wt_dispute_key,
                         SLOT_ID_KEY,
                         slot_id_key,
+                        sign_mode,
                     )?);
                 }
             }
