@@ -367,6 +367,7 @@ impl DisputeCoreProtocol {
         keys: &Vec<ParticipantKeys>,
     ) -> Result<Vec<OutputType>, BitVMXError> {
         let wt_speedup_key = keys[data.member_index].get_public(SPEEDUP_KEY)?;
+        let wt_dispute_key = &committee.members[data.member_index].dispute_key;
         let validate_dispute_key = protocol_builder::scripts::verify_signature(
             &committee.dispute_aggregated_key,
             SignMode::Aggregate,
@@ -382,9 +383,8 @@ impl DisputeCoreProtocol {
                     let slot_id_key =
                         keys[member_index].get_winternitz(&indexed_name(SLOT_ID_KEY, slot))?;
 
-                    // TODO: is this correct? should we use aggregated key or wt key?
                     scripts.push(scripts::start_challenge(
-                        &committee.dispute_aggregated_key,
+                        &wt_dispute_key,
                         SLOT_ID_KEY,
                         slot_id_key,
                     )?);
@@ -393,13 +393,9 @@ impl DisputeCoreProtocol {
 
             let start_enabler_output =
                 // OutputType::taproot(AUTO_AMOUNT, &committee.dispute_aggregated_key, &scripts)?;
-                OutputType::taproot(50000, &committee.dispute_aggregated_key, &scripts)?;
+                OutputType::taproot(50000, &wt_dispute_key, &scripts)?;
 
-            protocol.add_transaction_output(
-                &WT_START_ENABLER_TX,
-                // FIXME: Internal key should be wt_dispute_key?
-                &start_enabler_output,
-            )?;
+            protocol.add_transaction_output(&WT_START_ENABLER_TX, &start_enabler_output)?;
 
             outputs.push(start_enabler_output);
         }
