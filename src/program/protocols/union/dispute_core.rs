@@ -262,6 +262,15 @@ impl ProtocolHandler for DisputeCoreProtocol {
             )?;
         }
 
+        // TODO: Handle challenge transaction and dispatch reveal input tx
+
+        if tx_name.starts_with(REVEAL_INPUT_TX) {
+            let slot_index = extract_index(&tx_name, REVEAL_INPUT_TX)?;
+
+            // Handle double reveal penalization if needed
+            self.handle_double_reveal(program_context, slot_index)?;
+        }
+
         Ok(())
     }
 
@@ -637,23 +646,23 @@ impl DisputeCoreProtocol {
         dispute_core_index: usize,
         take_aggregated_key: &PublicKey,
     ) -> Result<(), BitVMXError> {
-        let last_reimbursement_kickoff = indexed_name(REIMBURSEMENT_KICKOFF_TX, dispute_core_index);
+        let last_reveal = indexed_name(REVEAL_INPUT_TX, dispute_core_index);
 
         if dispute_core_index == 0 {
-            // No previous reimbursement kickoff transaction to connect to.
+            // No previous reveal transaction to connect to.
             return Ok(());
         }
 
         for i in 0..dispute_core_index {
-            let prev_reimbursement_kickoff = indexed_name(REIMBURSEMENT_KICKOFF_TX, i);
+            let prev_reveal = indexed_name(REVEAL_INPUT_TX, i);
             let two_dispute_penalization = format!(
                 "{}_{}_{}",
                 TWO_DISPUTE_PENALIZATION_TX, i, dispute_core_index
             );
 
             protocol.add_connection(
-                "prev_reimbursement_kickoff",
-                &prev_reimbursement_kickoff,
+                "prev_reveal",
+                &prev_reveal,
                 OutputSpec::Index(0),
                 &two_dispute_penalization,
                 InputSpec::Auto(
@@ -662,13 +671,13 @@ impl DisputeCoreProtocol {
                         key_path_sign: SignMode::Aggregate,
                     },
                 ),
-                Some(DISPUTE_CORE_SHORT_TIMELOCK),
+                None,
                 None,
             )?;
 
             protocol.add_connection(
-                "last_reimbursement_kickoff",
-                &last_reimbursement_kickoff,
+                "last_reveal",
+                &last_reveal,
                 OutputSpec::Index(0),
                 &two_dispute_penalization,
                 InputSpec::Auto(
@@ -677,7 +686,7 @@ impl DisputeCoreProtocol {
                         key_path_sign: SignMode::Aggregate,
                     },
                 ),
-                Some(DISPUTE_CORE_SHORT_TIMELOCK),
+                None,
                 None,
             )?;
 
@@ -979,20 +988,20 @@ impl DisputeCoreProtocol {
         }
     }
 
-    fn get_reimbursement_in_progress(
+    fn get_reveal_in_progress(
         &self,
         program_context: &ProgramContext,
     ) -> Result<Option<u32>, BitVMXError> {
         match program_context
             .globals
-            .get_var(&self.ctx.id, REIMBURSEMENT_KICKOFF_IN_PROGRESS)?
+            .get_var(&self.ctx.id, REVEAL_IN_PROGRESS)?
         {
             Some(var) => Ok(Some(var.number()?)),
             None => Ok(None),
         }
     }
 
-    fn set_reimbursement_in_progress(
+    fn set_reveal_in_progress(
         &self,
         program_context: &ProgramContext,
         slot_index: usize,
@@ -1004,69 +1013,58 @@ impl DisputeCoreProtocol {
 
         program_context.globals.set_var(
             &self.ctx.id,
-            REIMBURSEMENT_KICKOFF_IN_PROGRESS,
+            REVEAL_IN_PROGRESS,
             VariableTypes::Number(slot_index as u32),
         )
     }
 
-    fn handle_double_reimbursement_kickoff(
+    fn handle_double_reveal(
         &self,
         context: &ProgramContext,
-        tx_status: &TransactionStatus,
         slot_index: usize,
     ) -> Result<bool, BitVMXError> {
-        let reimbursement_in_progress = self.get_reimbursement_in_progress(context)?;
-        if reimbursement_in_progress.is_none() {
+        let reveal_in_progress = self.get_reveal_in_progress(context)?;
+        if reveal_in_progress.is_none() {
             info!(
                 id = self.ctx.my_idx,
-                "No reimbursement in progress, setting slot index: {} as in progress", slot_index
+                "No reveal in progress, setting slot index: {} as in progress", slot_index
             );
-            self.set_reimbursement_in_progress(context, slot_index)?;
+            self.set_reveal_in_progress(context, slot_index)?;
             return Ok(false);
         } else {
             info!(
                 id = self.ctx.my_idx,
-                "Reimbursement already in progress for slot index: {}, dispatching double kickoff penalization for slots {} and {}",
-                reimbursement_in_progress.unwrap(),
-                reimbursement_in_progress.unwrap(),
+                "Reveal already in progress for slot index: {}, dispatching double reveal penalization for slots {} and {}",
+                reveal_in_progress.unwrap(),
+                reveal_in_progress.unwrap(),
                 slot_index
             );
 
-            let block_height = Some(
-                tx_status.block_info.as_ref().unwrap().height
-                    + DISPUTE_CORE_SHORT_TIMELOCK as u32
-                    + 1,
-            );
-            self.dispatch_double_kickoff_penalization_tx(
+            self.dispatch_two_dispute_penalization_tx(
                 context,
-                reimbursement_in_progress.unwrap() as usize,
+                reveal_in_progress.unwrap() as usize,
                 slot_index,
-                block_height,
             )?;
 
-            info!(
-                id = self.ctx.my_idx,
-                "Cleaning REIMBURSEMENT_KICKOFF_IN_PROGRESS"
-            );
+            info!(id = self.ctx.my_idx, "Cleaning REVEAL_IN_PROGRESS");
             // Asumming the penalization tx was dispatched successfully and mined,
             context
                 .globals
-                .unset_var(&self.ctx.id, REIMBURSEMENT_KICKOFF_IN_PROGRESS)?;
+                .unset_var(&self.ctx.id, REVEAL_IN_PROGRESS)?;
 
             return Ok(true);
         }
     }
 
-    fn dispatch_double_kickoff_penalization_tx(
+    fn dispatch_two_dispute_penalization_tx(
         &self,
         context: &ProgramContext,
         slot_index_prev: usize,
         slot_index_last: usize,
-        block_height: Option<u32>,
     ) -> Result<(), BitVMXError> {
         // Get the signed transaction
         let (tx, speedup, name) =
-            self.double_kickoff_penalization_tx(context, slot_index_prev, slot_index_last)?;
+            self.two_dispute_penalization_tx(slot_index_prev, slot_index_last)?;
         let txid = tx.compute_txid();
 
         info!(
@@ -1078,8 +1076,8 @@ impl DisputeCoreProtocol {
         context.bitcoin_coordinator.dispatch(
             tx,
             speedup,
-            format!("dispute_core_setup_{}:{}", self.ctx.id, name), // Context string
-            block_height,                                           // Dispatch immediately
+            format!("dispute_core_{}:{}", self.ctx.id, name), // Context string
+            None,                                             // Dispatch immediately
         )?;
 
         info!(
@@ -1089,9 +1087,8 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn double_kickoff_penalization_tx(
+    fn two_dispute_penalization_tx(
         &self,
-        context: &ProgramContext,
         mut slot_index_prev: usize,
         mut slot_index_last: usize,
     ) -> Result<(Transaction, Option<SpeedupData>, String), BitVMXError> {
@@ -1104,28 +1101,20 @@ impl DisputeCoreProtocol {
             TWO_DISPUTE_PENALIZATION_TX, slot_index_prev, slot_index_last
         );
 
-        let leaf_index = self.ctx.my_idx as usize;
-        let mut protocol = self.load_protocol()?;
+        let protocol = self.load_protocol()?;
+        let signature_0 = protocol
+            .input_taproot_key_spend_signature(&name, 0)?
+            .unwrap();
 
-        let signature_0 = protocol.sign_taproot_input(
-            &name,
-            0,
-            &SpendMode::Script { leaf: leaf_index },
-            context.key_chain.key_manager.as_ref(),
-            "",
-        )?;
-        let mut input_0 = InputArgs::new_taproot_script_args(leaf_index);
-        input_0.push_taproot_signature(signature_0[leaf_index].unwrap())?;
+        let mut input_0 = InputArgs::new_taproot_key_args();
+        input_0.push_taproot_signature(signature_0)?;
 
-        let signature_1 = protocol.sign_taproot_input(
-            &name,
-            1,
-            &SpendMode::Script { leaf: leaf_index },
-            context.key_chain.key_manager.as_ref(),
-            "",
-        )?;
-        let mut input_1 = InputArgs::new_taproot_script_args(leaf_index);
-        input_1.push_taproot_signature(signature_1[leaf_index].unwrap())?;
+        let signature_1 = protocol
+            .input_taproot_key_spend_signature(&name, 1)?
+            .unwrap();
+
+        let mut input_1 = InputArgs::new_taproot_key_args();
+        input_1.push_taproot_signature(signature_1)?;
 
         let tx = protocol.transaction_to_send(&name, &[input_0, input_1])?;
 
@@ -1173,11 +1162,6 @@ impl DisputeCoreProtocol {
                 id = self.ctx.my_idx,
                 "Not my dispute_core, skipping operator take dispatch for slot {}", slot_index
             );
-
-            // Handle double reimbursement kick-off penalization if needed
-            if self.handle_double_reimbursement_kickoff(program_context, tx_status, slot_index)? {
-                return Ok(());
-            }
 
             // Handle challenge if needed
             match self.get_selected_operator_key(slot_index, program_context)? {

@@ -30,7 +30,7 @@ use bitvmx_client::program::{
 };
 use core::convert::Into;
 use std::{env, thread, time::Duration};
-use tracing::info;
+use tracing::{error, info};
 use uuid::Uuid;
 
 mod bitcoin;
@@ -63,7 +63,7 @@ pub fn main() -> Result<()> {
         Some("advance_funds") => cli_advance_funds()?,
         Some("advance_funds_twice") => cli_advance_funds_twice()?,
         Some("invalid_reimbursement") => cli_invalid_reimbursement()?,
-        Some("double_reimbursement") => cli_double_reimbursement()?,
+        Some("double_challenge") => cli_double_challenge()?,
         Some("operator_disabler") => cli_operator_disabler()?,
         Some("watchtower_disabler") => cli_watchtower_disabler()?,
         Some("self_disablers") => cli_self_disablers()?,
@@ -109,6 +109,11 @@ fn print_usage() {
         "invalid_reimbursement",
         "Forces invalid reimbursement to test challenge tx",
     );
+    print_cmd_help(
+        "double_challenge",
+        "Forces to send TWO_DISPUTE_PENALIZATION_TX to test double challenge handling",
+    );
+
     print_cmd_help(
         "watchtowers_start_enabler",
         "Dispatch WT start enabler transactions",
@@ -275,11 +280,15 @@ pub fn cli_self_disablers() -> Result<()> {
     Ok(())
 }
 
-pub fn cli_double_reimbursement() -> Result<()> {
+pub fn cli_double_challenge() -> Result<()> {
+    if true {
+        error!("This example is not implemented yet.");
+        error!("Challenge transaction should be handled in dispute core and reveal transaction should be dispatched.");
+        return Ok(());
+    }
+
     // NOTE: This example works better with a client node with low fees.
     // It require a fine timming to dispatch TXs and that's hard to reach if there is high fees
-    // Key: Second reimbursement kickoff tx should be dispatched right after the first reimbursement kickoff tx is mined
-    // and before the operator take is mined.
     if HIGH_FEE_NODE_ENABLED {
         info!("This example works better with a client node with low fees. Please disable HIGH_FEE_NODE_ENABLED and try again.");
         return Ok(());
@@ -291,16 +300,24 @@ pub fn cli_double_reimbursement() -> Result<()> {
     let (slot_index, _) = request_and_accept_pegin(&mut committee, &mut user)?;
     (_, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
-    // Advance funds to the first pegin so it dispatch OP_INITIAL_SETUP and REIMBURSETMENT_TX for slot 0
-    let operator_id = advance_funds(&mut committee, user.public_key()?, slot_index, false)?;
+    let operator_id = 1;
+    // Dispatch first reimbusement without advancing funds.
+    info!(
+        "Forcing member {} to first reimbursement transaction...",
+        operator_id
+    );
+    committee.members[operator_id].dispatch_reimbursement(
+        committee.committee_id(),
+        slot_index,
+        vec![0; 32],
+    )?;
 
     // Wait some blocks to get INITIAL_SETUP and REIMBURSEMENT_TX mined
     wait_for_blocks(&committee.bitcoin_client, 3)?;
 
     // Dispatch second reimbusement without advancing funds.
-    // It should be dispatched before the OPERATOR_TAKE_TX from the first pegin is mined
     info!(
-        "Forcing member {} to dispatch another reimbursement transaction...",
+        "Forcing member {} to second reimbursement transaction...",
         operator_id
     );
     let pegout_id = vec![0; 32]; // fake pegout id, it's trying to cheat
