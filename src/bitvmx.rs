@@ -788,14 +788,27 @@ impl BitVMX {
     }
     
     fn handle_emulator_message(&mut self, msg: &String) -> Result<(), BitVMXError> {
-        if msg.contains("Pong") {
+        let result_message = ResultMessage::from_str(&msg)?;
+        let parsed: serde_json::Value = result_message.result_as_value()?;
+        let data = parsed.get("data").ok_or_else(|| {
+                warn!("Missing data field in result. Raw message: {}", msg);
+                BitVMXError::InvalidMessageFormat
+            })?;
+
+        if data["type"].as_str() == Some("Pong") {
+            let value = data["value"].as_u64().ok_or_else(|| {
+                warn!("Missing value field in data. Raw message: {}", msg);
+                BitVMXError::InvalidMessageFormat
+            })?;
+            if value != *self.ping_values.get("Emulator").unwrap() {
+                warn!("Received Pong with unexpected value: {} (expected {})", value, self.ping_values.get("ZKP").unwrap());
+            }
+            
             self.time_since_sent_check.remove("Emulator");
             self.retries_per_job_dispatcher.insert("Emulator".to_string(), 0);
             self.ping_values.entry("Emulator".to_string()).and_modify(|v| *v = v.wrapping_add(1));
         } else {
-            let result_message = ResultMessage::from_str(msg)?;
-            let value = result_message.result_as_value()?;
-            let decoded = EmulatorResultType::from_value(value)?;
+            let decoded = EmulatorResultType::from_value(parsed)?;
             let job_id = Uuid::parse_str(&result_message.job_id)
                 .map_err(|_| BitVMXError::InvalidMessageFormat)?;
             self.load_program(&job_id)?
@@ -1111,23 +1124,28 @@ impl BitVMXApi for BitVMX {
     }
 
     fn handle_prover_message(&mut self, msg: String) -> Result<(), BitVMXError> {
-        if msg.contains("Pong") {
-            self.time_since_sent_check.remove("ZKP");
-            self.retries_per_job_dispatcher.insert("ZKP".to_string(), 0);
-            self.ping_values.entry("ZKP".to_string()).and_modify(|v| *v = v.wrapping_add(1));
-        } else {
-            // Parse the message as ResultMessage
-            let result_message = ResultMessage::from_str(&msg)?;
-            let id = Uuid::parse_str(&result_message.job_id)
-                .map_err(|_| BitVMXError::InvalidMessageFormat)?;
-
-            // Parse the result JSON
-            let parsed: serde_json::Value = result_message.result_as_value()?;
-            let data = parsed.get("data").ok_or_else(|| {
+        let result_message = ResultMessage::from_str(&msg)?;
+        let parsed: serde_json::Value = result_message.result_as_value()?;
+        let data = parsed.get("data").ok_or_else(|| {
                 warn!("Missing data field in result. Raw message: {}", msg);
                 BitVMXError::InvalidMessageFormat
             })?;
 
+        if data["type"].as_str() == Some("Pong") {
+            let value = data["value"].as_u64().ok_or_else(|| {
+                warn!("Missing value field in data. Raw message: {}", msg);
+                BitVMXError::InvalidMessageFormat
+            })?;
+            if value != *self.ping_values.get("ZKP").unwrap() {
+                warn!("Received Pong with unexpected value: {} (expected {})", value, self.ping_values.get("ZKP").unwrap());
+            }
+            
+            self.time_since_sent_check.remove("ZKP");
+            self.retries_per_job_dispatcher.insert("ZKP".to_string(), 0);
+            self.ping_values.entry("ZKP".to_string()).and_modify(|v| *v = v.wrapping_add(1));
+        } else {
+            let id = Uuid::parse_str(&result_message.job_id)
+                .map_err(|_| BitVMXError::InvalidMessageFormat)?;
             // Extract status and vec from data
             let status = data["status"].as_str().ok_or_else(|| {
                 warn!("Missing status field in data. Raw message: {}", msg);

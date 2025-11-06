@@ -896,6 +896,22 @@ fn test_zkp() -> Result<()> {
     Ok(())
 }
 
+#[ignore]
+#[test]
+fn test_sucessful_ping_job_dispatchers() -> Result<()> {
+    config_trace();
+    let mut helper = TestHelper::new(Network::Regtest, false, Some(1000))?;
+
+    let msg = helper.wait_msg(0)?;
+    info!("Ping 1 result: {:?}", msg);
+
+    let msg = helper.wait_msg(1)?;
+    info!("Ping 2 result: {:?}", msg);
+
+    helper.stop()?;
+    Ok(())
+}
+
 fn test_challenge(challenge: ForcedChallenges) -> Result<()> {
     test_all_aux(false, Network::Regtest, None, None, Some(challenge), None)?;
     Ok(())
