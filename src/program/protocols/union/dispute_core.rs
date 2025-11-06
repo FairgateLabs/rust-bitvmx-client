@@ -44,6 +44,7 @@ pub const CHALLENGE_KEY: &str = "CHALLENGE_KEY";
 const REVEAL_INPUT_KEY: &str = "REVEAL_INPUT_KEY";
 const REVEAL_TAKE_PRIVKEY: &str = "REVEAL_TAKE_PRIVKEY";
 const SLOT_ID_KEY: &str = "SLOT_ID_KEY";
+const SLOT_ID_KEYS: &str = "SLOT_ID_KEYS";
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DisputeCoreProtocol {
@@ -81,6 +82,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
         let packet_size = self.committee(program_context)?.packet_size;
+        let data = self.dispute_core_data(program_context)?;
         let mut keys = vec![];
 
         let speedup_key = program_context.key_chain.derive_keypair()?;
@@ -106,9 +108,26 @@ impl ProtocolHandler for DisputeCoreProtocol {
             PublicKeyType::Winternitz(program_context.key_chain.derive_winternitz_hash160(32)?),
         ));
 
-        let prover = self.prover(program_context)?;
-        for i in 0..packet_size as usize {
-            if prover {
+        if self.prover(program_context)? {
+            // Load SLOT_ID_KEYS if they were previously generated
+            let mut slot_id_keys = self.slot_id_keys(&program_context, data.committee_id)?;
+
+            // If not present, generate and store them
+            if slot_id_keys.is_empty() {
+                for _ in 0..packet_size as usize {
+                    slot_id_keys.push(PublicKeyType::Winternitz(
+                        program_context.key_chain.derive_winternitz_hash160(32)?,
+                    ));
+                }
+
+                program_context.globals.set_var(
+                    &data.committee_id,
+                    SLOT_ID_KEYS,
+                    VariableTypes::String(serde_json::to_string(&slot_id_keys)?),
+                )?;
+            }
+
+            for i in 0..packet_size as usize {
                 keys.push((
                     indexed_name(PEGOUT_ID_KEY, i).to_string(),
                     PublicKeyType::Winternitz(
@@ -124,17 +143,17 @@ impl ProtocolHandler for DisputeCoreProtocol {
                 ));
 
                 keys.push((
-                    indexed_name(SLOT_ID_KEY, i),
+                    indexed_name(SLOT_ID_KEY, i).to_string(),
+                    slot_id_keys[i].clone(),
+                ));
+
+                keys.push((
+                    indexed_name(CHALLENGE_KEY, i),
                     PublicKeyType::Winternitz(
-                        program_context.key_chain.derive_winternitz_hash160(32)?,
+                        program_context.key_chain.derive_winternitz_hash160(1)?,
                     ),
                 ));
             }
-
-            keys.push((
-                indexed_name(CHALLENGE_KEY, i),
-                PublicKeyType::Winternitz(program_context.key_chain.derive_winternitz_hash160(1)?),
-            ));
         }
 
         Ok(ParticipantKeys::new(keys, vec![]))
@@ -1523,5 +1542,19 @@ impl DisputeCoreProtocol {
         };
 
         Ok((tx, speedout))
+    }
+
+    fn slot_id_keys(
+        &self,
+        context: &ProgramContext,
+        committee_id: Uuid,
+    ) -> Result<Vec<PublicKeyType>, BitVMXError> {
+        match context.globals.get_var(&committee_id, SLOT_ID_KEYS)? {
+            Some(var) => {
+                let slot_id_keys: Vec<PublicKeyType> = serde_json::from_str(&var.string()?)?;
+                Ok(slot_id_keys)
+            }
+            None => Ok(vec![]),
+        }
     }
 }
