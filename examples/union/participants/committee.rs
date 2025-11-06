@@ -138,10 +138,13 @@ impl Committee {
             )
         })?;
 
-        //  Setup Dispute Channel covenant
+        //  Setup DisputeChannels
         self.all(|op: &mut Member| {
             op.setup_dispute_channel(committee_id, &members.clone(), &addresses.clone())
         })?;
+
+        // Setup FullPenalization protocol
+        self.all(|op: &mut Member| op.setup_full_penalization(committee_id, &addresses.clone()))?;
 
         Ok(())
     }
@@ -180,15 +183,6 @@ impl Committee {
                 ACCEPT_PEGIN_TX.to_string(),
             )?;
         }
-
-        Ok(())
-    }
-
-    pub fn setup_full_penalization(&mut self) -> Result<()> {
-        let addresses = self.get_addresses();
-        let committee_id = self.committee_id;
-
-        self.all(|op: &mut Member| op.setup_full_penalization(committee_id, &addresses.clone()))?;
 
         Ok(())
     }

@@ -605,10 +605,13 @@ impl AcceptPegInProtocol {
         );
 
         let mut protocol: Protocol = self.load_protocol()?;
+
+        // Pegin signature
         let pegin_signature = protocol
             .input_taproot_key_spend_signature(name, 0)?
             .unwrap();
 
+        // Reimbursement signature
         let reimbursement_signature = protocol.sign_taproot_input(
             name,
             1,
@@ -626,15 +629,15 @@ impl AcceptPegInProtocol {
         reimbursement_args
             .push_taproot_signature(reimbursement_signature[op_leaf_index].unwrap())?;
 
-        let tx = self
-            .load_protocol()?
-            .transaction_to_send(name, &[accept_pegin_args, reimbursement_args])?;
+        // Create transaction
+        let tx = protocol.transaction_to_send(name, &[accept_pegin_args, reimbursement_args])?;
 
-        let txid = tx.compute_txid();
-
-        let speedup_key = self.my_speedup_key(context)?;
-        let speedup_vout = (tx.output.len() - 1) as u32;
-        let speedup_utxo = Utxo::new(txid, speedup_vout, SPEEDUP_VALUE, &speedup_key);
+        let speedup_utxo = Utxo::new(
+            tx.compute_txid(),
+            (tx.output.len() - 1) as u32,
+            SPEEDUP_VALUE,
+            &self.my_speedup_key(context)?,
+        );
 
         Ok((tx, Some(speedup_utxo.into())))
     }
