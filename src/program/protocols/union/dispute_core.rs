@@ -1620,11 +1620,11 @@ impl DisputeCoreProtocol {
                     let saved_key = &saved_keys[member_index][slot_index];
                     if current_key != saved_key {
                         return Err(BitVMXError::InvalidParameter(format!(
-                            "Key mismatch for member {} slot {}: current key {:#?} does not match saved key {:#?}",
+                            "Key mismatch for member {} slot {}: current key {} does not match saved key {}",
                             member_index,
                             slot_index,
-                            current_key,
-                            saved_key
+                            hex::encode(current_key.to_bytes()),
+                            hex::encode(saved_key.to_bytes())
                         ))
                     );
                     }
