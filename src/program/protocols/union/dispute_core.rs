@@ -491,6 +491,12 @@ impl DisputeCoreProtocol {
         let member_count = keys.len();
         let owner_index = dispute_core_data.member_index;
 
+        if keys.len() != committee.members.len() {
+            return Err(BitVMXError::InvalidList(
+                "Keys length does not match committee members length".to_string(),
+            ));
+        }
+
         for slot_index in 0..committee.packet_size {
             let mut scripts = vec![];
             let key_name = indexed_name(CHALLENGE_KEY, slot_index as usize);
