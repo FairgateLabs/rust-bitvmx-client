@@ -20,7 +20,7 @@ use crate::{
 use bitcoin::{Amount, OutPoint, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use core::result::Result::Ok;
-use key_manager::winternitz::WinternitzType;
+use key_manager::winternitz::{WinternitzPublicKey, WinternitzType};
 use protocol_builder::{
     builder::Protocol,
     graph::graph::GraphOptions,
@@ -45,6 +45,7 @@ const REVEAL_INPUT_KEY: &str = "REVEAL_INPUT_KEY";
 const REVEAL_TAKE_PRIVKEY: &str = "REVEAL_TAKE_PRIVKEY";
 const SLOT_ID_KEY: &str = "SLOT_ID_KEY";
 const SLOT_ID_KEYS: &str = "SLOT_ID_KEYS";
+const MEMBERS_SLOT_ID_KEYS: &str = "MEMBERS_SLOT_ID_KEYS";
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DisputeCoreProtocol {
@@ -166,9 +167,10 @@ impl ProtocolHandler for DisputeCoreProtocol {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         info!("Building DisputeCoreProtocol for program {}", self.ctx.id);
+        let dispute_core_data = self.dispute_core_data(context)?;
+        self.validate_keys(&keys, context, dispute_core_data.committee_id)?;
 
         let mut protocol = self.load_or_create_protocol();
-        let dispute_core_data = self.dispute_core_data(context)?;
         let committee = self.committee(context)?;
         let member = &committee.members[dispute_core_data.member_index];
         let mut reimbursement_outputs = vec![];
@@ -1556,5 +1558,80 @@ impl DisputeCoreProtocol {
             }
             None => Ok(vec![]),
         }
+    }
+
+    fn members_slot_id_keys(
+        &self,
+        context: &ProgramContext,
+        committee_id: Uuid,
+    ) -> Result<Vec<Vec<WinternitzPublicKey>>, BitVMXError> {
+        match context
+            .globals
+            .get_var(&committee_id, MEMBERS_SLOT_ID_KEYS)?
+        {
+            Some(var) => {
+                let members_slot_id_keys: Vec<Vec<WinternitzPublicKey>> =
+                    serde_json::from_str(&var.string()?)?;
+                Ok(members_slot_id_keys)
+            }
+            None => Ok(vec![]),
+        }
+    }
+
+    fn validate_keys(
+        &self,
+        keys: &Vec<ParticipantKeys>,
+        context: &ProgramContext,
+        committee_id: Uuid,
+    ) -> Result<(), BitVMXError> {
+        let committee = self.committee(context)?;
+        let mut saved_keys = self.members_slot_id_keys(context, committee_id)?;
+
+        // If no keys are saved yet, save the current ones
+        if saved_keys.len() == 0 {
+            for member_index in 0..committee.members.len() {
+                let mut member_keys: Vec<WinternitzPublicKey> = vec![];
+                if committee.members[member_index].role == ParticipantRole::Prover {
+                    for slot_index in 0..committee.packet_size as usize {
+                        member_keys.push(
+                            keys[member_index]
+                                .get_winternitz(&indexed_name(SLOT_ID_KEY, slot_index))?
+                                .clone(),
+                        );
+                    }
+                }
+                saved_keys.push(member_keys);
+            }
+
+            context.globals.set_var(
+                &committee_id,
+                MEMBERS_SLOT_ID_KEYS,
+                VariableTypes::String(serde_json::to_string(&saved_keys)?),
+            )?;
+            return Ok(());
+        }
+
+        // Validate current keys against saved ones
+        for member_index in 0..committee.members.len() {
+            if committee.members[member_index].role == ParticipantRole::Prover {
+                for slot_index in 0..committee.packet_size as usize {
+                    let current_key: &WinternitzPublicKey = keys[member_index]
+                        .get_winternitz(&indexed_name(SLOT_ID_KEY, slot_index))?;
+                    let saved_key = &saved_keys[member_index][slot_index];
+                    if current_key != saved_key {
+                        return Err(BitVMXError::InvalidParameter(format!(
+                            "Key mismatch for member {} slot {}: current key {:#?} does not match saved key {:#?}",
+                            member_index,
+                            slot_index,
+                            current_key,
+                            saved_key
+                        ))
+                    );
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }
