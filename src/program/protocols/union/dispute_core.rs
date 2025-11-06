@@ -126,6 +126,12 @@ impl ProtocolHandler for DisputeCoreProtocol {
                     SLOT_ID_KEYS,
                     VariableTypes::String(serde_json::to_string(&slot_id_keys)?),
                 )?;
+            } else if slot_id_keys.len() != packet_size as usize {
+                return Err(BitVMXError::InvalidParameter(format!(
+                    "Expected {} slot_id_keys but found {}",
+                    packet_size,
+                    slot_id_keys.len()
+                )));
             }
 
             for i in 0..packet_size as usize {
@@ -1611,9 +1617,26 @@ impl DisputeCoreProtocol {
             return Ok(());
         }
 
+        if saved_keys.len() != committee.members.len() {
+            return Err(BitVMXError::InvalidParameter(format!(
+                "Saved keys length {} does not match committee members length {}",
+                saved_keys.len(),
+                committee.members.len()
+            )));
+        }
+
         // Validate current keys against saved ones
         for member_index in 0..committee.members.len() {
             if committee.members[member_index].role == ParticipantRole::Prover {
+                if saved_keys[member_index].len() != committee.packet_size as usize {
+                    return Err(BitVMXError::InvalidParameter(format!(
+                        "Saved keys length for member {} does not match committee packet size: {} vs {}",
+                        member_index,
+                        saved_keys[member_index].len(),
+                        committee.packet_size
+                    )));
+                }
+
                 for slot_index in 0..committee.packet_size as usize {
                     let current_key: &WinternitzPublicKey = keys[member_index]
                         .get_winternitz(&indexed_name(SLOT_ID_KEY, slot_index))?;
