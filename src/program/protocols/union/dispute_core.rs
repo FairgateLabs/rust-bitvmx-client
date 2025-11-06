@@ -1591,6 +1591,15 @@ impl DisputeCoreProtocol {
         committee_id: Uuid,
     ) -> Result<(), BitVMXError> {
         let committee = self.committee(context)?;
+
+        if keys.len() != committee.members.len() {
+            return Err(BitVMXError::InvalidParameter(format!(
+                "Keys length {} does not match committee members length {}",
+                keys.len(),
+                committee.members.len()
+            )));
+        }
+
         let mut saved_keys = self.members_slot_id_keys(context, committee_id)?;
 
         // If no keys are saved yet, save the current ones
