@@ -201,12 +201,3 @@ impl FullPenalizationData {
         "full_penalization_data".to_string()
     }
 }
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum ProtocolName {
-    UserTake,
-    DisputeCore,
-    AcceptPegIn,
-    FullPenalization,
-    AdvanceFunds,
-}
