@@ -33,7 +33,7 @@ use protocol_builder::{
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
-        output::SpeedupData,
+        output::{MessageId, SpeedupData},
         InputArgs, OutputType, Utxo,
     },
 };
@@ -359,27 +359,18 @@ impl AcceptPegInProtocol {
     ) -> Result<(), BitVMXError> {
         let pegin_request: PegInRequest = self.pegin_request(context)?;
 
-        let nonces = context
-            .key_chain
-            .get_nonces(&take_aggregated_key, &self.ctx.protocol_name)?;
+        let message_id = MessageId::new_string_id(ACCEPT_PEGIN_TX, 0, 2); // 2 corresponds to key spend (it's equal to scripts_len())
+        let nonce = context.key_chain.get_nonce(
+            &take_aggregated_key,
+            &self.ctx.protocol_name,
+            &message_id,
+        )?;
 
-        if nonces.is_empty() {
-            return Err(BitVMXError::MissingPublicNonces(
-                take_aggregated_key.to_string(),
-                self.ctx.protocol_name.to_string(),
-            ));
-        }
-
-        let signatures = context
-            .key_chain
-            .get_signatures(&take_aggregated_key, &self.ctx.protocol_name)?;
-
-        if signatures.is_empty() {
-            return Err(BitVMXError::MissingPartialSignatures(
-                take_aggregated_key.to_string(),
-                self.ctx.protocol_name.to_string(),
-            ));
-        }
+        let signature = context.key_chain.get_signature(
+            &take_aggregated_key,
+            &self.ctx.protocol_name,
+            &message_id,
+        )?;
 
         let mut protocol = self.load_protocol()?;
 
@@ -415,14 +406,12 @@ impl AcceptPegInProtocol {
             .as_ref()
             .to_vec();
 
-        // TODO: verify that the signature we are getting from the array of signatures is the proper one
-        // FIXME: Should signatures and nonces array be indexed by self.ctx.my_idx?
         let pegin_accepted = PegInAccepted {
             committee_id: pegin_request.committee_id,
             accept_pegin_txid,
             accept_pegin_sighash,
-            accept_pegin_nonce: nonces[0].1.clone(),
-            accept_pegin_signature: signatures[0].1.clone(),
+            accept_pegin_nonce: nonce,
+            accept_pegin_signature: signature,
             operator_take_sighash,
             operator_won_sighash,
         };

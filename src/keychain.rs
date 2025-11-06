@@ -222,6 +222,17 @@ impl KeyChain {
         Ok(self.key_manager.get_my_pub_nonces(aggregated_pubkey, id)?)
     }
 
+    pub fn get_nonce(
+        &self,
+        aggregated_pubkey: &PublicKey,
+        id: &str,
+        message_id: &str,
+    ) -> Result<PubNonce, BitVMXError> {
+        Ok(self
+            .key_manager
+            .get_my_pub_nonce(aggregated_pubkey, id, message_id)?)
+    }
+
     pub fn get_aggregated_signature(
         &self,
         aggregated_pubkey: &PublicKey,
@@ -241,6 +252,17 @@ impl KeyChain {
         Ok(self
             .key_manager
             .get_my_partial_signatures(aggregated_pubkey, id)?)
+    }
+
+    pub fn get_signature(
+        &self,
+        aggregated_pubkey: &PublicKey,
+        id: &str,
+        message_id: &str,
+    ) -> Result<PartialSignature, BitVMXError> {
+        Ok(self
+            .key_manager
+            .get_my_partial_signature(aggregated_pubkey, id, message_id)?)
     }
 
     // pub fn generate_pub_nonce(&self, program_id: uuid::Uuid, message_id: &str, message: Message) -> Result<(), BitVMXError> {
