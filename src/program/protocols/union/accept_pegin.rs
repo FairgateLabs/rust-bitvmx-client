@@ -96,8 +96,8 @@ impl ProtocolHandler for AcceptPegInProtocol {
     ) -> Result<(), BitVMXError> {
         let pegin_request: PegInRequest = self.pegin_request(context)?;
         let pegin_request_txid = pegin_request.txid;
-        let mut user_output_amount = self.checked_sub(pegin_request.amount, P2TR_FEE)?;
-        user_output_amount = self.checked_sub(user_output_amount, SPEEDUP_VALUE)?;
+        let user_output_amount =
+            self.checked_sub(pegin_request.amount, P2TR_FEE + SPEEDUP_VALUE)?;
 
         let take_aggregated_key = &pegin_request.take_aggregated_key;
 
