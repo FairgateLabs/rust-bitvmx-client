@@ -16,7 +16,7 @@ use crate::{
                     DISPUTE_CORE_LONG_TIMELOCK, LAST_OPERATOR_TAKE_UTXO, OPERATOR_LEAF_INDEX,
                     OPERATOR_TAKE_ENABLER, OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX,
                     P2TR_FEE, REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, REVEAL_IN_PROGRESS,
-                    SPEEDUP_KEY, SPEEDUP_VALUE,
+                    SPEEDUP_KEY, SPEEDUP_VALUE, TAKE_AGGREGATED_KEY,
                 },
             },
         },
@@ -62,7 +62,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
         let pegin_request = self.pegin_request(context)?;
 
         Ok(vec![(
-            "take_aggregated".to_string(),
+            TAKE_AGGREGATED_KEY.to_string(),
             pegin_request.take_aggregated_key,
         )])
     }
@@ -509,12 +509,7 @@ impl AcceptPegInProtocol {
             reveal_tx_name,
             OutputSpec::Index(won_enabler.1 as usize),
             operator_won_tx_name,
-            InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::KeyOnly {
-                    key_path_sign: SignMode::Aggregate,
-                },
-            ),
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
             None,
             Some(won_enabler.0),
         )?;
@@ -659,9 +654,14 @@ impl AcceptPegInProtocol {
             id = self.ctx.my_idx,
             "Loading {} for AcceptPegInProtocol. Name: {}", OPERATOR_WON_TX, name
         );
-        let args = InputArgs::new_taproot_key_args();
-        // TODO: add the necessary arguments to args
-        let tx = self.load_protocol()?.transaction_to_send(name, &[args])?;
+
+        let protocol: Protocol = self.load_protocol()?;
+
+        let signature = protocol.input_taproot_script_spend_signature(name, 1, 0)?;
+        let mut args = InputArgs::new_taproot_script_args(0);
+        args.push_taproot_signature(signature.unwrap())?;
+
+        let tx = protocol.transaction_to_send(name, &[args])?;
         let txid = tx.compute_txid();
 
         let speedup_key = self.my_speedup_key(context)?;

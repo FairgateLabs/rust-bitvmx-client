@@ -24,7 +24,7 @@ use key_manager::winternitz::{WinternitzPublicKey, WinternitzType};
 use protocol_builder::{
     builder::Protocol,
     graph::graph::GraphOptions,
-    scripts::{timelock, verify_winternitz_signature_timelock, SignMode},
+    scripts::{op_return, timelock, verify_winternitz_signature_timelock, SignMode},
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
@@ -192,6 +192,18 @@ impl ProtocolHandler for DisputeCoreProtocol {
         let mut wt_start_enabler_outputs =
             self.create_wt_start_enabler(&mut protocol, &dispute_core_data, &committee, &keys)?;
 
+        let operator_won_script = timelock(
+            OPERATOR_WON_TIMELOCK,
+            &committee.take_aggregated_key,
+            SignMode::Aggregate,
+        );
+
+        let mut reveal_output: OutputType = OutputType::taproot(
+            AUTO_AMOUNT,
+            &committee.dispute_aggregated_key,
+            &[operator_won_script],
+        )?;
+
         // If member is an operator create Operator initial deposit and dispute cores
         if member.role == ParticipantRole::Prover {
             self.create_op_initial_deposit(
@@ -221,6 +233,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
                     reimbursement_outputs[i].clone(),
                     context,
                     &challenge_leaves,
+                    &reveal_output,
                 )?;
 
                 self.create_two_dispute_penalization(
@@ -249,7 +262,12 @@ impl ProtocolHandler for DisputeCoreProtocol {
         self.save_protocol(protocol)?;
 
         if member.role == ParticipantRole::Prover {
-            self.save_op_utxos(context, &committee, &mut reimbursement_outputs)?;
+            self.save_op_utxos(
+                context,
+                &committee,
+                &mut reimbursement_outputs,
+                &mut reveal_output,
+            )?;
         }
 
         self.save_wt_utxos(context, &mut wt_start_enabler_outputs)?;
@@ -580,6 +598,7 @@ impl DisputeCoreProtocol {
         reimbursement_output: OutputType,
         context: &ProgramContext,
         challenge_leaves: &Vec<usize>,
+        reveal_output: &OutputType,
     ) -> Result<(), BitVMXError> {
         // Operator keys
         let operator_keys = keys[dispute_core_data.member_index].clone();
@@ -668,11 +687,7 @@ impl DisputeCoreProtocol {
             None,
         )?;
 
-        // TODO: Add leaves with timelocks for each committee member
-        protocol.add_transaction_output(
-            &reveal_input,
-            &OutputType::taproot(AUTO_AMOUNT, take_aggregated_key, &[])?,
-        )?;
+        protocol.add_transaction_output(&reveal_input, reveal_output)?;
 
         protocol.add_connection(
             "input_not_revealed",
@@ -691,7 +706,7 @@ impl DisputeCoreProtocol {
 
         protocol.add_transaction_output(
             &input_not_revealed,
-            &OutputType::taproot(AUTO_AMOUNT, take_aggregated_key, &[])?,
+            &OutputType::segwit_unspendable(op_return(vec![]))?,
         )?;
 
         self.add_dispute_core_speedup_outputs(
@@ -1376,6 +1391,7 @@ impl DisputeCoreProtocol {
         context: &ProgramContext,
         committee: &Committee,
         reimbursement_outputs: &mut Vec<OutputType>,
+        reveal_output: &mut OutputType,
     ) -> Result<(), BitVMXError> {
         let protocol = self.load_or_create_protocol();
         let dispute_aggregated_key = &committee.dispute_aggregated_key;
@@ -1391,7 +1407,7 @@ impl DisputeCoreProtocol {
 
             let operator_take_utxo = (
                 reimbursement_kickoff_tx.compute_txid(),
-                0,
+                reimbursement_output_index as u32,
                 Some(reimbursement_output_value.to_sat()),
                 Some(reimbursement_outputs[i].clone()),
             );
@@ -1400,14 +1416,13 @@ impl DisputeCoreProtocol {
             let reveal_tx = protocol.transaction_by_name(&name)?;
             let reveal_output_index = 0;
             let reveal_output_value = reveal_tx.output[reveal_output_index].value;
-            // Reusing reimbursement utxo, it's the same output type
-            reimbursement_outputs[i].set_value(reveal_output_value.clone());
+            reveal_output.set_value(reveal_output_value);
 
             let operator_won_utxo = (
                 reveal_tx.compute_txid(),
-                0,
+                reveal_output_index as u32,
                 Some(reveal_output_value.to_sat()),
-                Some(reimbursement_outputs[i].clone()),
+                Some(reveal_output.clone()),
             );
 
             context.globals.set_var(
