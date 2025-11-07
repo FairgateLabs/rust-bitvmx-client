@@ -41,8 +41,6 @@ pub const PEGOUT_ID: &str = "PEGOUT_ID";
 const PEGOUT_ID_KEY: &str = "PEGOUT_ID_KEY";
 const SECRET_KEY: &str = "SECRET_KEY";
 pub const CHALLENGE_KEY: &str = "CHALLENGE_KEY";
-const REVEAL_INPUT_KEY: &str = "REVEAL_INPUT_KEY";
-const REVEAL_TAKE_PRIVKEY: &str = "REVEAL_TAKE_PRIVKEY";
 const SLOT_ID_KEY: &str = "SLOT_ID_KEY";
 const SLOT_ID_KEYS: &str = "SLOT_ID_KEYS";
 const MEMBERS_SLOT_ID_KEYS: &str = "MEMBERS_SLOT_ID_KEYS";
@@ -98,16 +96,6 @@ impl ProtocolHandler for DisputeCoreProtocol {
             SPEEDUP_KEY,
             VariableTypes::PubKey(speedup_key),
         )?;
-
-        keys.push((
-            REVEAL_INPUT_KEY.to_string(),
-            PublicKeyType::Public(program_context.key_chain.derive_keypair()?),
-        ));
-
-        keys.push((
-            REVEAL_TAKE_PRIVKEY.to_string(),
-            PublicKeyType::Winternitz(program_context.key_chain.derive_winternitz_hash160(32)?),
-        ));
 
         let prover = self.prover(program_context)?;
 
@@ -612,10 +600,6 @@ impl DisputeCoreProtocol {
         let pegout_id_name = indexed_name(PEGOUT_ID_KEY, dispute_core_index);
         let pegout_id_key = operator_keys.get_winternitz(&pegout_id_name)?;
 
-        // Secret key
-        let secret_name = indexed_name(SECRET_KEY, dispute_core_index);
-        let secret_key = operator_keys.get_winternitz(&secret_name)?;
-
         // TX names
         let reimbursement_kickoff = indexed_name(REIMBURSEMENT_KICKOFF_TX, dispute_core_index);
         let challenge = indexed_name(CHALLENGE_TX, dispute_core_index);
@@ -671,16 +655,16 @@ impl DisputeCoreProtocol {
             None,
         )?;
 
-        let secret = protocol_builder::scripts::verify_winternitz_signature(
-            operator_keys.get_public(REVEAL_INPUT_KEY)?,
-            secret_key,
+        let reveal_script = protocol_builder::scripts::verify_winternitz_signature(
+            &operator_dispute_key,
+            operator_keys.get_winternitz(&indexed_name(SLOT_ID_KEY, dispute_core_index))?,
             SignMode::Skip,
         )?;
 
         protocol.add_connection(
             "reveal_input",
             &challenge,
-            OutputType::taproot(AUTO_AMOUNT, dispute_aggregated_key, &[secret])?.into(),
+            OutputType::taproot(AUTO_AMOUNT, dispute_aggregated_key, &[reveal_script])?.into(),
             &reveal_input,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
             None,
