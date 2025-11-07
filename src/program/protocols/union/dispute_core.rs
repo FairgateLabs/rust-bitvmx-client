@@ -109,10 +109,11 @@ impl ProtocolHandler for DisputeCoreProtocol {
             PublicKeyType::Winternitz(program_context.key_chain.derive_winternitz_hash160(32)?),
         ));
 
-        if self.prover(program_context)? {
-            // Load SLOT_ID_KEYS if they were previously generated
-            let mut slot_id_keys = self.slot_id_keys(&program_context, data.committee_id)?;
+        let prover = self.prover(program_context)?;
 
+        let mut slot_id_keys = self.slot_id_keys(&program_context, data.committee_id)?;
+        if prover {
+            // Load SLOT_ID_KEYS if they were previously generated
             // If not present, generate and store them
             if slot_id_keys.is_empty() {
                 for _ in 0..packet_size as usize {
@@ -133,8 +134,10 @@ impl ProtocolHandler for DisputeCoreProtocol {
                     slot_id_keys.len()
                 )));
             }
+        }
 
-            for i in 0..packet_size as usize {
+        for i in 0..packet_size as usize {
+            if prover {
                 keys.push((
                     indexed_name(PEGOUT_ID_KEY, i).to_string(),
                     PublicKeyType::Winternitz(
@@ -153,14 +156,12 @@ impl ProtocolHandler for DisputeCoreProtocol {
                     indexed_name(SLOT_ID_KEY, i).to_string(),
                     slot_id_keys[i].clone(),
                 ));
-
-                keys.push((
-                    indexed_name(CHALLENGE_KEY, i),
-                    PublicKeyType::Winternitz(
-                        program_context.key_chain.derive_winternitz_hash160(1)?,
-                    ),
-                ));
             }
+
+            keys.push((
+                indexed_name(CHALLENGE_KEY, i),
+                PublicKeyType::Winternitz(program_context.key_chain.derive_winternitz_hash160(1)?),
+            ));
         }
 
         Ok(ParticipantKeys::new(keys, vec![]))
@@ -1608,6 +1609,7 @@ impl DisputeCoreProtocol {
                 let mut member_keys: Vec<WinternitzPublicKey> = vec![];
                 if committee.members[member_index].role == ParticipantRole::Prover {
                     for slot_index in 0..committee.packet_size as usize {
+                        info!("Saving key for member {} slot {}", member_index, slot_index);
                         member_keys.push(
                             keys[member_index]
                                 .get_winternitz(&indexed_name(SLOT_ID_KEY, slot_index))?
@@ -1647,6 +1649,10 @@ impl DisputeCoreProtocol {
                 }
 
                 for slot_index in 0..committee.packet_size as usize {
+                    info!(
+                        "Comparing key for member {} slot {}",
+                        member_index, slot_index
+                    );
                     let current_key: &WinternitzPublicKey = keys[member_index]
                         .get_winternitz(&indexed_name(SLOT_ID_KEY, slot_index))?;
                     let saved_key = &saved_keys[member_index][slot_index];
