@@ -16,7 +16,7 @@ use crate::{
         master_wallet::MasterWallet,
     },
 };
-use ::bitcoin::{Network, OutPoint, PublicKey, TapSighashType, Transaction, Txid};
+use ::bitcoin::{Network, OutPoint, PublicKey, Transaction, Txid};
 use anyhow::Result;
 use bitvmx_client::program::{
     participant::ParticipantRole,
