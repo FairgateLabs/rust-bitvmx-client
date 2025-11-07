@@ -1,5 +1,6 @@
 use crate::{
     bitcoin::{BitcoinWrapper, HIGH_FEE_NODE_ENABLED},
+    macros::wait_for_message_blocking,
     participants::{
         committee::Committee,
         common::{calculate_taproot_key_path_sighash, get_user_take_tx},
@@ -18,20 +19,24 @@ use crate::{
 };
 use ::bitcoin::{Network, OutPoint, PublicKey, Transaction, Txid};
 use anyhow::Result;
-use bitvmx_client::program::{
-    participant::ParticipantRole,
-    protocols::union::{
-        common::{
-            double_indexed_name, get_accept_pegin_pid, get_dispute_core_pid,
-            get_full_penalization_pid, triple_indexed_name,
+use bitvmx_client::{
+    program::{
+        participant::ParticipantRole,
+        protocols::union::{
+            common::{
+                double_indexed_name, get_accept_pegin_pid, get_dispute_core_pid,
+                get_full_penalization_pid, triple_indexed_name,
+            },
+            types::{
+                FundsAdvanced, ACCEPT_PEGIN_TX, DISPUTE_CORE_LONG_TIMELOCK,
+                DISPUTE_CORE_SHORT_TIMELOCK, OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX,
+                OP_INITIAL_DEPOSIT_TX, OP_LAZY_DISABLER_TX, OP_SELF_DISABLER_TX,
+                WT_DISABLER_DIRECTORY_TX, WT_DISABLER_TX, WT_SELF_DISABLER_TX, WT_START_ENABLER_TX,
+            },
         },
-        types::{
-            ACCEPT_PEGIN_TX, DISPUTE_CORE_LONG_TIMELOCK, DISPUTE_CORE_SHORT_TIMELOCK,
-            OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX, OP_INITIAL_DEPOSIT_TX, OP_LAZY_DISABLER_TX,
-            OP_SELF_DISABLER_TX, WT_DISABLER_DIRECTORY_TX, WT_DISABLER_TX, WT_SELF_DISABLER_TX,
-            WT_START_ENABLER_TX,
-        },
+        variables::VariableTypes,
     },
+    types::OutgoingBitVMXApiMessages,
 };
 use core::convert::Into;
 use std::{env, thread, time::Duration};
@@ -710,7 +715,7 @@ pub fn request_and_accept_pegin(
     }
 
     wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
-    committee.wait_for_spv_proof(accept_pegin_txid)?;
+    committee.members[0].wait_for_spv_proof(accept_pegin_txid)?;
 
     info!("Pegin accepted and confirmed.");
     confirm_to_continue();
@@ -755,7 +760,7 @@ pub fn request_pegout() -> Result<()> {
     }
 
     wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
-    committee.wait_for_spv_proof(user_take_utxo.0)?;
+    committee.members[0].wait_for_spv_proof(user_take_utxo.0)?;
 
     info!("Pegout request accepted and confirmed.");
     confirm_to_continue();
@@ -788,6 +793,29 @@ pub fn advance_funds(
             &committee.bitcoin_client,
             get_blocks_to_wait() + DISPUTE_CORE_LONG_TIMELOCK as u32,
         )?;
+
+        // Wait for the FundsAdvanced message
+        let (program_id, name, variable_type) = wait_until_msg!(&committee.members[operator_id].bitvmx, OutgoingBitVMXApiMessages::Variable(_program_id, _name, _type) =>(_program_id, _name, _type));
+        if name != FundsAdvanced::name() {
+            return Err(anyhow::anyhow!(
+                "Expected FundsAdvanced variable after advance funds, got {} from {}",
+                name,
+                program_id
+            ));
+        }
+
+        let data: FundsAdvanced = match variable_type {
+            VariableTypes::String(spv_json) => serde_json::from_str(&spv_json)?,
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Expected String variable type after advance funds, got {:?}",
+                    variable_type
+                ))
+            }
+        };
+
+        info!("FundsAdvanced message received: {:?}", data);
+        committee.members[operator_id].wait_for_spv_proof(data.txid)?;
     }
 
     info!("Advance funds complete.");
@@ -915,7 +943,7 @@ fn get_blocks_to_wait() -> u32 {
     match NETWORK {
         Network::Regtest => {
             if HIGH_FEE_NODE_ENABLED {
-                15
+                20
             } else {
                 2
             }

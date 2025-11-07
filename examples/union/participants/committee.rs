@@ -9,21 +9,18 @@ use bitvmx_client::program::protocols::union::types::{
     MemberData, ACCEPT_PEGIN_TX, DUST_VALUE, SPEEDUP_VALUE, USER_TAKE_TX,
 };
 use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtxo};
-use bitvmx_client::types::OutgoingBitVMXApiMessages::{SPVProof, Transaction};
 
 use bitcoin::PublicKey;
 use protocol_builder::types::Utxo;
 use std::collections::HashMap;
 use std::thread::{self};
 use std::time::Duration;
-use tracing::{info, info_span};
+use tracing::info_span;
 use uuid::Uuid;
 
 use crate::bitcoin::{init_client, BitcoinWrapper};
-use crate::macros::wait_for_message_blocking;
 use crate::participants::common::prefixed_name;
 use crate::participants::member::{FundingAmount, Member};
-use crate::wait_until_msg;
 use crate::wallet::helper::non_regtest_warning;
 
 const FUNDING_AMOUNT_PER_SLOT: u64 = 9_000; // an approximation in satoshis
@@ -187,22 +184,12 @@ impl Committee {
         Ok(())
     }
 
-    pub fn wait_for_spv_proof(&self, txid: Txid) -> Result<()> {
-        let bitvmx = &self.members[0].bitvmx;
-        let status = wait_until_msg!(bitvmx, Transaction(_, _status, _) => _status);
+    pub fn setup_full_penalization(&mut self) -> Result<()> {
+        let addresses = self.get_addresses();
+        let committee_id = self.committee_id;
 
-        info!(
-            "Sent {} transaction with {} confirmations.",
-            txid, status.confirmations
-        );
+        self.all(|op: &mut Member| op.setup_full_penalization(committee_id, &addresses.clone()))?;
 
-        info!("Waiting for SPV proof...",);
-        let _ = bitvmx.get_spv_proof(txid);
-        let spv_proof = wait_until_msg!(
-            bitvmx,
-            SPVProof(_, Some(_spv_proof)) => _spv_proof
-        );
-        info!("SPV proof: {:?}", spv_proof);
         Ok(())
     }
 
@@ -214,7 +201,7 @@ impl Committee {
         let tx = self.members[0].dispatch_transaction_by_name(protocol_id, tx_name.clone())?;
         let txid = tx.compute_txid();
         self.bitcoin_client.wait_for_blocks(1)?;
-        self.wait_for_spv_proof(txid)?;
+        self.members[0].wait_for_spv_proof(txid)?;
         Ok(())
     }
 

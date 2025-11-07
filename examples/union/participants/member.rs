@@ -613,4 +613,22 @@ impl Member {
 
         Ok(())
     }
+
+    pub fn wait_for_spv_proof(&self, txid: Txid) -> Result<()> {
+        let status = wait_until_msg!(&self.bitvmx, Transaction(_, _status, _) => _status);
+
+        info!(
+            "Sent {} transaction with {} confirmations.",
+            txid, status.confirmations
+        );
+
+        info!("Waiting for SPV proof...",);
+        let _ = self.bitvmx.get_spv_proof(txid);
+        let spv_proof = wait_until_msg!(
+            &self.bitvmx,
+            SPVProof(_, Some(_spv_proof)) => _spv_proof
+        );
+        info!("SPV proof: {:?}", spv_proof);
+        Ok(())
+    }
 }
