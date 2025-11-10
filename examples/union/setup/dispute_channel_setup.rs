@@ -1,6 +1,10 @@
 use anyhow::Result;
 use bitcoin::PublicKey;
-use protocol_builder::types::OutputType;
+use protocol_builder::types::{
+    connection::InputSpec,
+    input::{SighashType, SpendMode},
+    OutputType,
+};
 use std::collections::HashMap;
 use tracing::info;
 use uuid::Uuid;
@@ -23,8 +27,7 @@ use bitvmx_client::{
 
 use crate::wait_until_msg;
 
-use bitvmx_client::program::protocols::dispute::DRP_DUST_VALUE;
-// use bitvmx_client::program::protocols::dispute::DRP_DUST_VALUE as CHANNEL_DUST_VALUE;
+use bitvmx_client::program::protocols::dispute::DUST as DRP_DUST_VALUE;
 
 const DRP_TIMELOCK_BLOCKS: u16 = 15; // TODO review if this is the right value
 const DRP_PROGRAM_DEFINITION: &str = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml"; // TODO move to config?
@@ -34,7 +37,6 @@ pub struct DisputeChannelSetup;
 impl DisputeChannelSetup {
     pub fn setup(
         my_index: usize,
-        dispute_aggregated_key: &PublicKey,
         pairwise_keys: &HashMap<CommsAddress, PublicKey>,
         bitvmx: &BitVMXClient,
         members: &Vec<MemberData>,
@@ -81,7 +83,6 @@ impl DisputeChannelSetup {
                     &bitvmx,
                     pair_key,
                     &wt_start_enablers,
-                    &dispute_aggregated_key,
                 )?;
 
                 total_setups += 1;
@@ -103,7 +104,6 @@ impl DisputeChannelSetup {
                     &bitvmx,
                     pair_key,
                     &wt_start_enablers,
-                    &dispute_aggregated_key,
                 )?;
 
                 total_setups += 1;
@@ -142,7 +142,6 @@ impl DisputeChannelSetup {
         bitvmx: &BitVMXClient,
         pair_key: PublicKey,
         wt_start_enablers: &Vec<PartialUtxo>,
-        dispute_aggregated_key: &PublicKey,
     ) -> Result<()> {
         let drp_id = get_dispute_channel_pid(committee_id, op_index, wt_index);
         let participants: Vec<CommsAddress> = vec![operator.clone(), watchtower.clone()];
@@ -155,18 +154,20 @@ impl DisputeChannelSetup {
         let dispute_configuration = DisputeConfiguration::new(
             drp_id,
             pair_key,
-            (wt_start_enablers[op_index].clone(), vec![]), // TODO: this vec<usize> is not used by the protocol builder. what is it there for?
-            vec![],                                        // empty prover actions
-            vec![OutputType::taproot(
-                DRP_DUST_VALUE,
-                // dispute_aggregated_key, // TODO review if this is the right key
-                &pair_key,
-                &[],
-            )?],
+            (
+                wt_start_enablers[op_index].clone(),
+                vec![], // TODO: this vec<usize> is not used by the protocol builder. what is it there for?
+                // Some(InputSpec::Auto(SighashType::taproot_all(), SpendMode::None)),
+                Some(InputSpec::Auto(
+                    SighashType::taproot_all(),
+                    SpendMode::ScriptsOnly,
+                )),
+            ),
+            vec![], // empty prover actions
+            vec![OutputType::taproot(DRP_DUST_VALUE, &pair_key, &[])?],
             vec![], // empty verifier actions
             vec![OutputType::taproot(
                 DRP_DUST_VALUE,
-                // dispute_aggregated_key, // TODO review if this is the right key
                 &pair_key, // Use pairwise key for 2-party dispute channel
                 &[],
             )?],
