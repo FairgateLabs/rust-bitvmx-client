@@ -157,11 +157,7 @@ impl DisputeChannelSetup {
             (
                 wt_start_enablers[op_index].clone(),
                 vec![], // TODO: this vec<usize> is not used by the protocol builder. what is it there for?
-                // Some(InputSpec::Auto(SighashType::taproot_all(), SpendMode::None)),
-                Some(InputSpec::Auto(
-                    SighashType::taproot_all(),
-                    SpendMode::ScriptsOnly,
-                )),
+                Some(InputSpec::Auto(SighashType::taproot_all(), SpendMode::None)),
             ),
             vec![], // empty prover actions
             vec![OutputType::taproot(DRP_DUST_VALUE, &pair_key, &[])?],
