@@ -570,7 +570,7 @@ impl AdvanceFundsProtocol {
 
         info!(
             id = self.ctx.my_idx,
-            "Sending funds advanded data for AdvanceFunds: {}", data
+            "Sending funds advanced data for AdvanceFunds: {}", data
         );
 
         // Send the funds advanced data to the broker channel
