@@ -23,6 +23,7 @@ use bitcoin_coordinator::{
     AckMonitorNews, MonitorNews, TypesToMonitor,
 };
 use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
+use bitvmx_job_dispatcher::helper::PingMessages;
 use bitvmx_operator_comms::{
     helper::ReceiveHandlerChannel,
     operator_comms::{AllowList, OperatorComms, PubKeyHash, RoutingTable},
@@ -38,7 +39,7 @@ use bitvmx_broker::{
 };
 use bitvmx_cpu_definitions::challenge::EmulatorResultType;
 use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
-use bitvmx_job_dispatcher_types::{prover_messages::ProverJobType, emulator_messages::EmulatorJobType};
+use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use bitvmx_wallet::wallet::Wallet;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -60,6 +61,7 @@ pub const WALLET_INDEX: u32 = 100;
 pub const WALLET_CHANGE_INDEX: u32 = 101;
 const MAX_RETRIES_PER_JOB_DISPATCHER: u8 = 5;
 const TIMEOUT: Duration = Duration::new(30, 0);
+const TIME_BETWEEN_CHECKS: Duration = Duration::new(120, 0);
 
 #[derive(Debug)]
 struct BitcoinUpdateState {
@@ -81,6 +83,7 @@ pub struct BitVMX {
     retries_per_job_dispatcher: HashMap<String, u8>,
     ping_values: HashMap<String, u64>,
     time_since_sent_check: HashMap<String, Instant>,
+    time_to_send_check: Instant
 }
 
 impl Drop for BitVMX {
@@ -199,6 +202,7 @@ impl BitVMX {
             retries_per_job_dispatcher,
             ping_values,
             time_since_sent_check: HashMap::new(),
+            time_to_send_check: Instant::now()
         })
     }
 
@@ -547,19 +551,29 @@ impl BitVMX {
         self.process_bitcoin_updates_with_throttle()?;
         self.process_collaboration()?;
 
+        self.check_job_dispatchers_liveness();
+
+        if self.time_to_send_check.elapsed() >= TIME_BETWEEN_CHECKS {
+            self.send_liveness_message_to_dispatchers()?;
+            self.time_to_send_check = Instant::now();
+        }
+
+        Ok(())
+    }
+
+    fn check_job_dispatchers_liveness(&mut self) {
         let timeout_dispatcher: Vec<_> = self
             .time_since_sent_check
             .iter()
-            .filter(|(_, &time)| time.elapsed() >= TIMEOUT)
-            .map(|(dispatcher, _)| dispatcher)
+            .filter(|(_, time)| time.elapsed() >= TIMEOUT)
+            .map(|(dispatcher, _)| dispatcher.clone())
             .collect();
-
+        
         if !timeout_dispatcher.is_empty() {
-            //TODO:correct logic?
             for dispatcher_name in timeout_dispatcher {
                 let retries = self
                     .retries_per_job_dispatcher
-                    .get_mut(dispatcher_name)
+                    .get_mut(&dispatcher_name)
                     .unwrap();
                 if *retries < MAX_RETRIES_PER_JOB_DISPATCHER {
                     warn!(
@@ -568,37 +582,22 @@ impl BitVMX {
                         MAX_RETRIES_PER_JOB_DISPATCHER
                     );
                     *retries += 1;
+                    self.time_since_sent_check.insert(dispatcher_name.clone(), Instant::now());
                 } else {
                     error!(
                         "{dispatcher_name} dispatcher is not responding after {} retries",
                         MAX_RETRIES_PER_JOB_DISPATCHER
                     );
-                    return Err(BitVMXError::JobDispatcherNotResponding(
-                        dispatcher_name.to_string(),
-                    ));
+                    *retries = 0; //TODO: Handle it correctly
                 }
             }
-            
         }
-
-        if self.count % 60000 == 0 { //TODO: Check with Martin the number of ticks
-            self.send_liveness_message_to_dispatchers()?;
-        }
-
-        Ok(())
     }
 
-
     fn send_liveness_message_to_dispatchers(&mut self) -> Result<(), BitVMXError> {
-        let msg_to_prover = serde_json::to_string(&DispatcherJob{
-            job_id: Uuid::new_v4().to_string(), //use this?
-            job_type: ProverJobType::Ping(*self.ping_values.get("ZKP").unwrap(), "a".to_string()),
-        })?;
+        let msg_to_prover = serde_json::to_string(&PingMessages::Ping { value: *self.ping_values.get("ZKP").unwrap()})?;
 
-        let msg_to_emulator = serde_json::to_string(&DispatcherJob{
-            job_id: Uuid::new_v4().to_string(),
-            job_type: EmulatorJobType::Ping(*self.ping_values.get("Emulator").unwrap(), "a".to_string()),
-        })?;
+        let msg_to_emulator = serde_json::to_string(&PingMessages::Ping { value: *self.ping_values.get("Emulator").unwrap()})?;
 
         debug!("Sending ZKP dispatcher ping message: {}", msg_to_prover);
         self.program_context
@@ -784,38 +783,6 @@ impl BitVMX {
         info!("Starting wallet sync...");
         self.wallet.sync_wallet()?;
         info!("Wallet sync completed.");
-        Ok(())
-    }
-    
-    fn handle_emulator_message(&mut self, msg: &String) -> Result<(), BitVMXError> {
-        let result_message = ResultMessage::from_str(&msg)?;
-        let parsed: serde_json::Value = result_message.result_as_value()?;
-        let data = parsed.get("data").ok_or_else(|| {
-                warn!("Missing data field in result. Raw message: {}", msg);
-                BitVMXError::InvalidMessageFormat
-            })?;
-
-        if data["type"].as_str() == Some("Pong") {
-            let value = data["value"].as_u64().ok_or_else(|| {
-                warn!("Missing value field in data. Raw message: {}", msg);
-                BitVMXError::InvalidMessageFormat
-            })?;
-            if value != *self.ping_values.get("Emulator").unwrap() {
-                warn!("Received Pong with unexpected value: {} (expected {})", value, self.ping_values.get("ZKP").unwrap());
-            }
-            
-            self.time_since_sent_check.remove("Emulator");
-            self.retries_per_job_dispatcher.insert("Emulator".to_string(), 0);
-            self.ping_values.entry("Emulator".to_string()).and_modify(|v| *v = v.wrapping_add(1));
-        } else {
-            let decoded = EmulatorResultType::from_value(parsed)?;
-            let job_id = Uuid::parse_str(&result_message.job_id)
-                .map_err(|_| BitVMXError::InvalidMessageFormat)?;
-            self.load_program(&job_id)?
-                .protocol
-                .dispute()?
-                .execution_result(&decoded, &self.program_context)?; 
-        }
         Ok(())
     }
 }
@@ -1124,18 +1091,17 @@ impl BitVMXApi for BitVMX {
     }
 
     fn handle_prover_message(&mut self, msg: String) -> Result<(), BitVMXError> {
-        let result_message = ResultMessage::from_str(&msg)?;
-        let parsed: serde_json::Value = result_message.result_as_value()?;
-        let data = parsed.get("data").ok_or_else(|| {
-                warn!("Missing data field in result. Raw message: {}", msg);
-                BitVMXError::InvalidMessageFormat
-            })?;
+        if msg.contains("Pong") {
+            debug!("Received Pong Message from Emulator Job Dispatcher");
+            let message: PingMessages = serde_json::from_str(&msg)?;
+            let value = match message {
+                PingMessages::Pong { value } => value,
+                PingMessages::Ping { .. } => {
+                    warn!("Bitvmx Client should not receive Ping Message from Job Dispatcher");
+                    return Ok(());
+                },
+            };
 
-        if data["type"].as_str() == Some("Pong") {
-            let value = data["value"].as_u64().ok_or_else(|| {
-                warn!("Missing value field in data. Raw message: {}", msg);
-                BitVMXError::InvalidMessageFormat
-            })?;
             if value != *self.ping_values.get("ZKP").unwrap() {
                 warn!("Received Pong with unexpected value: {} (expected {})", value, self.ping_values.get("ZKP").unwrap());
             }
@@ -1144,6 +1110,13 @@ impl BitVMXApi for BitVMX {
             self.retries_per_job_dispatcher.insert("ZKP".to_string(), 0);
             self.ping_values.entry("ZKP".to_string()).and_modify(|v| *v = v.wrapping_add(1));
         } else {
+            let result_message = ResultMessage::from_str(&msg)?;
+            let parsed: serde_json::Value = result_message.result_as_value()?;
+            let data = parsed.get("data").ok_or_else(|| {
+                    warn!("Missing data field in result. Raw message: {}", msg);
+                    BitVMXError::InvalidMessageFormat
+                })?;
+
             let id = Uuid::parse_str(&result_message.job_id)
                 .map_err(|_| BitVMXError::InvalidMessageFormat)?;
             // Extract status and vec from data
@@ -1199,6 +1172,38 @@ impl BitVMXApi for BitVMX {
                 })?;
 
             self.proof_ready(from, id)?;
+        }
+        Ok(())
+    }
+
+    fn handle_emulator_message(&mut self, msg: &String) -> Result<(), BitVMXError> {
+        if msg.contains("Pong") {
+            debug!("Received Pong Message from Emulator Job Dispatcher");
+            let message: PingMessages = serde_json::from_str(msg)?;
+            let value = match message {
+                PingMessages::Pong { value } => value,
+                PingMessages::Ping { .. } => {
+                    warn!("Bitvmx Client should not receive Ping Message from Job Dispatcher");
+                    return Ok(());
+                },
+            };
+            if value != *self.ping_values.get("Emulator").unwrap() {
+                warn!("Received Pong with unexpected value: {} (expected {})", value, self.ping_values.get("ZKP").unwrap());
+            }
+            
+            self.time_since_sent_check.remove("Emulator");
+            self.retries_per_job_dispatcher.insert("Emulator".to_string(), 0);
+            self.ping_values.entry("Emulator".to_string()).and_modify(|v| *v = v.wrapping_add(1));
+        } else {
+            let result_message = ResultMessage::from_str(&msg)?;
+            let parsed: serde_json::Value = result_message.result_as_value()?;
+            let decoded = EmulatorResultType::from_value(parsed)?;
+            let job_id = Uuid::parse_str(&result_message.job_id)
+                .map_err(|_| BitVMXError::InvalidMessageFormat)?;
+            self.load_program(&job_id)?
+                .protocol
+                .dispute()?
+                .execution_result(&decoded, &self.program_context)?; 
         }
         Ok(())
     }
