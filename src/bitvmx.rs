@@ -40,9 +40,10 @@ use bitvmx_cpu_definitions::challenge::EmulatorResultType;
 use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use bitvmx_wallet::wallet::Wallet;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     net::SocketAddr,
     rc::Rc,
     sync::{Arc, Mutex},
@@ -57,6 +58,7 @@ use uuid::Uuid;
 pub const THROTTLE_TICKS: u32 = 2;
 pub const WALLET_INDEX: u32 = 100;
 pub const WALLET_CHANGE_INDEX: u32 = 101;
+const MAX_TIMESTAMP_DRIFT_MS: i64 = 5 * 60_000;
 
 #[derive(Debug)]
 struct BitcoinUpdateState {
@@ -71,6 +73,7 @@ pub struct BitVMX {
     broker: BrokerSync,
     count: u32,
     pending_messages: VecDeque<(PubKeyHash, Vec<u8>)>,
+    message_timestamps: HashMap<PubKeyHash, i64>,
     notified_request: HashSet<(Uuid, (Txid, Option<u32>))>,
     notified_rsk_pegin: HashSet<Txid>, //workaround for RSK pegin transactions because ack seems to be not working
     bitcoin_update: BitcoinUpdateState,
@@ -108,6 +111,38 @@ impl StoreKey {
 }
 
 impl BitVMX {
+    fn ensure_timestamp_fresh(&self, peer: &PubKeyHash, timestamp: i64) -> Result<(), BitVMXError> {
+        let now = Utc::now().timestamp_millis();
+        if timestamp > now + MAX_TIMESTAMP_DRIFT_MS {
+            warn!(
+                "Rejecting message from {}: timestamp {} is too far in the future (now: {})",
+                peer, timestamp, now
+            );
+            return Err(BitVMXError::InvalidMessageFormat);
+        }
+        if timestamp < now - MAX_TIMESTAMP_DRIFT_MS {
+            warn!(
+                "Rejecting message from {}: timestamp {} is too old (now: {})",
+                peer, timestamp, now
+            );
+            return Err(BitVMXError::InvalidMessageFormat);
+        }
+        if let Some(last_timestamp) = self.message_timestamps.get(peer) {
+            if timestamp <= *last_timestamp {
+                warn!(
+                    "Rejecting message from {}: timestamp {} not newer than last seen {}",
+                    peer, timestamp, last_timestamp
+                );
+                return Err(BitVMXError::InvalidMessageFormat);
+            }
+        }
+        Ok(())
+    }
+
+    fn record_timestamp(&mut self, peer: &PubKeyHash, timestamp: i64) {
+        self.message_timestamps.insert(peer.clone(), timestamp);
+    }
+
     pub fn new(config: Config) -> Result<Self, BitVMXError> {
         let store = Rc::new(Storage::new(&config.storage)?);
         let key_chain = KeyChain::new(&config, store.clone())?;
@@ -176,6 +211,7 @@ impl BitVMX {
             broker,
             count: 0,
             pending_messages: VecDeque::new(),
+            message_timestamps: HashMap::new(),
             notified_request: HashSet::new(),
             notified_rsk_pegin: HashSet::new(),
             bitcoin_update: BitcoinUpdateState {
@@ -253,16 +289,21 @@ impl BitVMX {
         msg: Vec<u8>,
         pend_to_back: bool,
     ) -> Result<(), BitVMXError> {
-        let (_version, msg_type, program_id, data, timestamp, signature) =
+        let (version, msg_type, program_id, data, timestamp, signature) =
             deserialize_msg(msg.clone())?;
+        let mut message_consumed = false;
         if let Some(mut program) = self.load_program(&program_id).ok() {
+            self.ensure_timestamp_fresh(&identifier.pubkey_hash, timestamp)?;
             let address = program.get_address_from_pubkey_hash(&identifier.pubkey_hash.clone())?;
             program.process_comms_message(address, msg_type, data, &self.program_context)?;
+            message_consumed = true;
         } else if let Some(mut collaboration) = self.get_collaboration(&program_id)? {
+            self.ensure_timestamp_fresh(&identifier.pubkey_hash, timestamp)?;
             let comms_address =
                 collaboration.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
             collaboration.process_comms_message(
                 comms_address,
+                version,
                 msg_type,
                 data,
                 &self.program_context,
@@ -270,6 +311,7 @@ impl BitVMX {
                 signature,
             )?;
             self.save_collaboration(&collaboration)?;
+            message_consumed = true;
         } else {
             if pend_to_back {
                 info!("Pending message to back: {:?}", msg_type);
@@ -280,6 +322,9 @@ impl BitVMX {
                 self.pending_messages
                     .push_front((identifier.to_string(), msg));
             }
+        }
+        if message_consumed {
+            self.record_timestamp(&identifier.pubkey_hash, timestamp);
         }
 
         Ok(())

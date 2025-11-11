@@ -2,12 +2,13 @@ use crate::keychain::KeyChain;
 use crate::{errors::BitVMXError, program::participant::CommsAddress};
 use bitvmx_operator_comms::operator_comms::{OperatorComms, PubKeyHash};
 use chrono::Utc;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
 const MIN_EXPECTED_MSG_LEN: usize = 4; // 2 bytes for version + 2 bytes for message type
 const MAX_EXPECTED_MSG_LEN: usize = 1000000; // Maximum length for a message //TODO: Change this value
+const CURRENT_PROTOCOL_VERSION: &str = "1.0";
 
 // Public function for signature verification
 pub fn serialize_with_sorted_keys_for_verification(value: &Value) -> Result<String, BitVMXError> {
@@ -34,11 +35,24 @@ fn sort_json_keys(value: &Value) -> Value {
 
 pub fn construct_message(
     program_id: &str,
+    version: &str,
+    msg_type: CommsMessageType,
     data: &Value,
     timestamp: i64,
 ) -> Result<String, BitVMXError> {
+    let version_bytes = Version::to_bytes(version)?;
+    let msg_type_bytes = msg_type.to_bytes()?;
     let msg_string = serialize_with_sorted_keys_for_verification(data)?;
-    Ok(format!("{}{}{}", program_id, msg_string, timestamp))
+    Ok(format!(
+        "{}|{:02X}{:02X}|{:02X}{:02X}|{}|{}",
+        program_id,
+        version_bytes[0],
+        version_bytes[1],
+        msg_type_bytes[0],
+        msg_type_bytes[1],
+        msg_string,
+        timestamp
+    ))
 }
 
 pub fn request<T: Serialize>(
@@ -52,11 +66,24 @@ pub fn request<T: Serialize>(
     // Serialize with sorted keys for consistent ordering during signature verification
     let msg_value = serde_json::to_value(&msg).map_err(|_| BitVMXError::SerializationError)?;
     let timestamp = Utc::now().timestamp_millis();
-    let message = construct_message(&program_id.to_string(), &msg_value, timestamp)?;
+    let message = construct_message(
+        &program_id.to_string(),
+        CURRENT_PROTOCOL_VERSION,
+        msg_type,
+        &msg_value,
+        timestamp,
+    )?;
 
     let signature = &key_chain.sign_rsa_message(message.as_bytes())?;
 
-    let serialize_msg = serialize_msg(msg_type, program_id, msg, timestamp, signature.to_vec())?;
+    let serialize_msg = serialize_msg(
+        CURRENT_PROTOCOL_VERSION,
+        msg_type,
+        program_id,
+        msg,
+        timestamp,
+        signature.to_vec(),
+    )?;
     comms
         .send(
             &comms_address.pubkey_hash,
@@ -78,7 +105,7 @@ pub fn response<T: Serialize>(
     request(comms, key_chain, program_id, comms_address, msg_type, msg) // In this version, response is identical to request. Keeping it separate for clarity.
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum CommsMessageType {
     Keys,
     KeysAck,
@@ -149,15 +176,21 @@ impl Version {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct VerificationKeyAnnouncement {
+    pub pubkey_hash: PubKeyHash,
+    pub verification_key: String,
+}
+
 // Serialize the message into the required format
 pub fn serialize_msg<T: Serialize>(
+    version: &str,
     msg_type: CommsMessageType,
     program_id: &Uuid,
     data: T,
     timestamp: i64,
     signature: Vec<u8>,
 ) -> Result<Vec<u8>, BitVMXError> {
-    let version = "1.0";
     // Convert version and message type to bytes
     let version_bytes = Version::to_bytes(version)?;
     let msg_type_bytes = msg_type.to_bytes()?;
@@ -262,8 +295,12 @@ pub fn publish_verification_key(
     program_id: &Uuid,
     participants: Vec<CommsAddress>,
 ) -> Result<(), BitVMXError> {
+    let announcement = VerificationKeyAnnouncement {
+        pubkey_hash: my_pubkey_hash.clone(),
+        verification_key: my_verification_key,
+    };
     for peer in &participants {
-        if peer.pubkey_hash == my_pubkey_hash {
+        if peer.pubkey_hash == announcement.pubkey_hash {
             continue;
         }
         request(
@@ -272,7 +309,7 @@ pub fn publish_verification_key(
             program_id,
             peer.clone(),
             CommsMessageType::VerificationKey,
-            my_verification_key.clone(),
+            announcement.clone(),
         )?;
     }
     Ok(())
@@ -360,7 +397,8 @@ mod tests {
         let signature = vec![];
 
         let result = serialize_msg(
-            msg_type.clone(),
+            version,
+            msg_type,
             &program_id,
             msg.clone(),
             timestamp,
@@ -394,7 +432,7 @@ mod tests {
         let program_id = Uuid::new_v4();
         let msg = "Hello, world!";
 
-        let serialized_msg = serialize_msg(msg_type.clone(), &program_id, msg, 0, vec![]).unwrap();
+        let serialized_msg = serialize_msg(version, msg_type, &program_id, msg, 0, vec![]).unwrap();
         let (
             deserialized_version,
             deserialized_msg_type,
@@ -625,14 +663,27 @@ mod tests {
     fn test_construct_message_basic() {
         // Test basic message construction
         let program_id = "test-program-id";
+        let version = CURRENT_PROTOCOL_VERSION;
+        let msg_type = CommsMessageType::Keys;
         let data = json!({"key": "value"});
         let timestamp = 1234567890;
 
-        let result = construct_message(program_id, &data, timestamp).unwrap();
+        let result = construct_message(program_id, version, msg_type, &data, timestamp).unwrap();
 
-        // Message should be: program_id + serialized_data + timestamp
+        // Message should include program_id, version bytes, message type bytes, serialized data, and timestamp
         let expected_data_str = serialize_with_sorted_keys_for_verification(&data).unwrap();
-        let expected = format!("{}{}{}", program_id, expected_data_str, timestamp);
+        let version_bytes = Version::to_bytes(version).unwrap();
+        let msg_type_bytes = msg_type.to_bytes().unwrap();
+        let expected = format!(
+            "{}|{:02X}{:02X}|{:02X}{:02X}|{}|{}",
+            program_id,
+            version_bytes[0],
+            version_bytes[1],
+            msg_type_bytes[0],
+            msg_type_bytes[1],
+            expected_data_str,
+            timestamp
+        );
 
         assert_eq!(result, expected);
     }
@@ -640,18 +691,30 @@ mod tests {
     #[test]
     fn test_construct_message_different_program_ids() {
         // Test with different program IDs
+        let version = CURRENT_PROTOCOL_VERSION;
+        let msg_type = CommsMessageType::Keys;
         let data = json!({"test": "data"});
         let timestamp = 1234567890;
 
-        let result1 = construct_message("program-1", &data, timestamp).unwrap();
-        let result2 = construct_message("program-2", &data, timestamp).unwrap();
+        let result1 = construct_message("program-1", version, msg_type, &data, timestamp).unwrap();
+        let result2 = construct_message("program-2", version, msg_type, &data, timestamp).unwrap();
 
         // Results should differ due to different program IDs
         assert_ne!(result1, result2);
 
-        // But both should end with the same serialized data + timestamp
+        // But both should share the same payload portion
         let data_str = serialize_with_sorted_keys_for_verification(&data).unwrap();
-        let expected_suffix = format!("{}{}", data_str, timestamp);
+        let version_bytes = Version::to_bytes(version).unwrap();
+        let msg_type_bytes = msg_type.to_bytes().unwrap();
+        let expected_suffix = format!(
+            "|{:02X}{:02X}|{:02X}{:02X}|{}|{}",
+            version_bytes[0],
+            version_bytes[1],
+            msg_type_bytes[0],
+            msg_type_bytes[1],
+            data_str,
+            timestamp
+        );
         assert!(result1.ends_with(&expected_suffix));
         assert!(result2.ends_with(&expected_suffix));
     }
@@ -660,17 +723,29 @@ mod tests {
     fn test_construct_message_different_timestamps() {
         // Test with different timestamps
         let program_id = "test-program";
+        let version = CURRENT_PROTOCOL_VERSION;
+        let msg_type = CommsMessageType::Keys;
         let data = json!({"test": "data"});
 
-        let result1 = construct_message(program_id, &data, 1000).unwrap();
-        let result2 = construct_message(program_id, &data, 2000).unwrap();
+        let result1 = construct_message(program_id, version, msg_type, &data, 1000).unwrap();
+        let result2 = construct_message(program_id, version, msg_type, &data, 2000).unwrap();
 
         // Results should differ due to different timestamps
         assert_ne!(result1, result2);
 
-        // But both should start with the same program_id + serialized data
+        // But both should share the same prefix up to the payload
         let data_str = serialize_with_sorted_keys_for_verification(&data).unwrap();
-        let expected_prefix = format!("{}{}", program_id, data_str);
+        let version_bytes = Version::to_bytes(version).unwrap();
+        let msg_type_bytes = msg_type.to_bytes().unwrap();
+        let expected_prefix = format!(
+            "{}|{:02X}{:02X}|{:02X}{:02X}|{}|",
+            program_id,
+            version_bytes[0],
+            version_bytes[1],
+            msg_type_bytes[0],
+            msg_type_bytes[1],
+            data_str
+        );
         assert!(result1.starts_with(&expected_prefix));
         assert!(result2.starts_with(&expected_prefix));
     }
@@ -679,14 +754,26 @@ mod tests {
     fn test_construct_message_empty_program_id() {
         // Test with empty program ID
         let program_id = "";
+        let version = CURRENT_PROTOCOL_VERSION;
+        let msg_type = CommsMessageType::Keys;
         let data = json!({"key": "value"});
         let timestamp = 1234567890;
 
-        let result = construct_message(program_id, &data, timestamp).unwrap();
+        let result = construct_message(program_id, version, msg_type, &data, timestamp).unwrap();
 
-        // Should still work, just with empty prefix
+        // Should still work, producing a string that starts with the delimiter
         let data_str = serialize_with_sorted_keys_for_verification(&data).unwrap();
-        let expected = format!("{}{}", data_str, timestamp);
+        let version_bytes = Version::to_bytes(version).unwrap();
+        let msg_type_bytes = msg_type.to_bytes().unwrap();
+        let expected = format!(
+            "|{:02X}{:02X}|{:02X}{:02X}|{}|{}",
+            version_bytes[0],
+            version_bytes[1],
+            msg_type_bytes[0],
+            msg_type_bytes[1],
+            data_str,
+            timestamp
+        );
         assert_eq!(result, expected);
     }
 
@@ -694,6 +781,8 @@ mod tests {
     fn test_construct_message_with_sorted_keys() {
         // Test that construct_message uses sorted keys for serialization
         let program_id = "test-program";
+        let version = CURRENT_PROTOCOL_VERSION;
+        let msg_type = CommsMessageType::Keys;
         let data = json!({
             "zebra": 1,
             "apple": 2,
@@ -701,24 +790,24 @@ mod tests {
         });
         let timestamp = 1234567890;
 
-        let result = construct_message(program_id, &data, timestamp).unwrap();
+        let result = construct_message(program_id, version, msg_type, &data, timestamp).unwrap();
 
         // The serialized data portion should have sorted keys
         let expected_data_str = serialize_with_sorted_keys_for_verification(&data).unwrap();
+        let parts: Vec<&str> = result.splitn(5, '|').collect();
+        assert_eq!(parts.len(), 5);
 
-        // Extract the serialized data portion (between program_id and timestamp)
-        let data_start = program_id.len();
-        let data_end = result.len() - timestamp.to_string().len();
-        let extracted_data_str = &result[data_start..data_end];
-
-        assert_eq!(extracted_data_str, expected_data_str);
-        assert_eq!(extracted_data_str, r#"{"apple":2,"banana":3,"zebra":1}"#);
+        assert_eq!(parts[0], program_id);
+        assert_eq!(parts[3], expected_data_str);
+        assert_eq!(parts[3], r#"{"apple":2,"banana":3,"zebra":1}"#);
     }
 
     #[test]
     fn test_construct_message_integration() {
         // Integration test: construct message and verify format
         let program_id = "abc-123-def";
+        let version = CURRENT_PROTOCOL_VERSION;
+        let msg_type = CommsMessageType::Keys;
         let data = json!({
             "msg": "Hello",
             "type": "test",
@@ -726,7 +815,7 @@ mod tests {
         });
         let timestamp = 987654321;
 
-        let result = construct_message(program_id, &data, timestamp).unwrap();
+        let result = construct_message(program_id, version, msg_type, &data, timestamp).unwrap();
 
         // Verify the structure: program_id + sorted_json + timestamp
         // Program ID should be at the start
@@ -737,7 +826,18 @@ mod tests {
 
         // The middle part should be valid JSON with sorted keys
         let data_str = serialize_with_sorted_keys_for_verification(&data).unwrap();
-        let expected = format!("{}{}{}", program_id, data_str, timestamp);
+        let version_bytes = Version::to_bytes(version).unwrap();
+        let msg_type_bytes = msg_type.to_bytes().unwrap();
+        let expected = format!(
+            "{}|{:02X}{:02X}|{:02X}{:02X}|{}|{}",
+            program_id,
+            version_bytes[0],
+            version_bytes[1],
+            msg_type_bytes[0],
+            msg_type_bytes[1],
+            data_str,
+            timestamp
+        );
         assert_eq!(result, expected);
     }
 }
