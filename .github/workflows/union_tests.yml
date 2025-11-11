@@ -48,9 +48,10 @@ jobs:
           REPO_TOKEN: ${{ secrets.REPO_ACCESS_TOKEN }}
 
       - name: Checkout Workspace Repository
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           # Extract branch from PR title if present (format: [branch-name])
-          PR_TITLE="${{ github.event.pull_request.title }}"
           if [[ "$PR_TITLE" =~ ^\[([a-zA-Z0-9_\-\.\/]+)\] ]]; then
             BRANCH_CANDIDATE="${BASH_REMATCH[1]}"
             if [[ "$BRANCH_CANDIDATE" =~ ^[a-zA-Z0-9_\-\.\/]+$ ]] && [[ ${#BRANCH_CANDIDATE} -lt 100 ]]; then

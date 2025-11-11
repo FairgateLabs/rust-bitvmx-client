@@ -192,6 +192,20 @@ impl AdvanceFundsRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FundsAdvanced {
+    pub txid: Txid,
+    pub committee_id: Uuid,
+    pub slot_index: usize,
+    pub pegout_id: Vec<u8>,
+}
+
+impl FundsAdvanced {
+    pub fn name() -> String {
+        "funds_advanced".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FullPenalizationData {
     pub committee_id: Uuid,
 }
