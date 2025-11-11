@@ -251,16 +251,29 @@ pub fn deserialize_msg(
         .and_then(|t| t.as_i64())
         .ok_or(BitVMXError::InvalidMessageFormat)?;
 
-    let signature = payload
+    let signature_values = payload
         .get("signature")
         .and_then(|s| s.as_array())
-        .ok_or(BitVMXError::InvalidMessageFormat)?
-        .iter()
-        .filter_map(|v| {
-            v.as_u64()
-                .and_then(|b| if b <= 255 { Some(b as u8) } else { None })
-        })
-        .collect::<Vec<u8>>();
+        .ok_or(BitVMXError::InvalidMessageFormat)?;
+
+    if signature_values.is_empty() {
+        return Err(BitVMXError::InvalidMessageFormat);
+    }
+
+    let mut signature = Vec::with_capacity(signature_values.len());
+    for value in signature_values {
+        let byte = value.as_u64().ok_or(BitVMXError::InvalidMessageFormat)?;
+        if byte > u8::MAX as u64 {
+            return Err(BitVMXError::InvalidMessageFormat);
+        }
+        signature.push(byte as u8);
+    }
+
+    // Reject signatures that are unexpectedly large to prevent malformed payloads.
+    const MAX_SIGNATURE_LEN: usize = 512;
+    if signature.len() > MAX_SIGNATURE_LEN {
+        return Err(BitVMXError::InvalidMessageFormat);
+    }
 
     //TODO: CHECK THIS WITH @KEVIN
     // Validate that "msg" is a byte array by filtering out invalid values
