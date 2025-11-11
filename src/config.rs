@@ -84,6 +84,13 @@ pub struct ComponentsConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct PingConfig {
+    pub interval_secs: u64,
+    pub timeout_secs: u64,
+    pub max_retries: u8,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)] // enforce strict field compliance
 pub struct Config {
     pub bitcoin: RpcConfig,
@@ -98,6 +105,7 @@ pub struct Config {
     pub coordinator_settings: Option<CoordinatorSettingsConfig>,
     pub coordinator: ThrotthleUpdate,
     pub wallet: WalletConfig,
+    pub job_dipatcher_ping: PingConfig,
 }
 
 impl Config {

@@ -69,3 +69,8 @@ client:
 wallet:
   db_path: /tmp/regtest/op_2/wallet.db
   start_height: 0
+
+job_dipatcher_ping:
+  interval_secs: 120
+  timeout_secs: 30
+  max_retries: 5

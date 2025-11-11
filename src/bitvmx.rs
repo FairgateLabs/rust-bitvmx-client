@@ -59,9 +59,6 @@ use uuid::Uuid;
 pub const THROTTLE_TICKS: u32 = 2;
 pub const WALLET_INDEX: u32 = 100;
 pub const WALLET_CHANGE_INDEX: u32 = 101;
-const MAX_RETRIES_PER_JOB_DISPATCHER: u8 = 5;
-const TIMEOUT: Duration = Duration::new(30, 0);
-const TIME_BETWEEN_CHECKS: Duration = Duration::new(120, 0);
 
 #[derive(Debug)]
 struct BitcoinUpdateState {
@@ -83,7 +80,10 @@ pub struct BitVMX {
     retries_per_job_dispatcher: HashMap<String, u8>,
     ping_values: HashMap<String, u64>,
     time_since_sent_check: HashMap<String, Instant>,
-    time_to_send_check: Instant
+    time_to_send_check: Instant,
+    max_retries_per_job_dispatcher: u8,
+    ping_timeout: Duration,
+    time_between_checks: Duration,
 }
 
 impl Drop for BitVMX {
@@ -185,6 +185,10 @@ impl BitVMX {
         ping_values.insert("ZKP".to_string(), 0);
         ping_values.insert("Emulator".to_string(), 0);
 
+        let ping_timeout = Duration::from_secs(config.job_dipatcher_ping.timeout_secs.clone());
+        let time_between_checks = Duration::from_secs(config.job_dipatcher_ping.interval_secs.clone());
+        let max_retries_per_job_dispatcher = config.job_dipatcher_ping.max_retries.clone();
+
         Ok(Self {
             config,
             program_context,
@@ -202,7 +206,10 @@ impl BitVMX {
             retries_per_job_dispatcher,
             ping_values,
             time_since_sent_check: HashMap::new(),
-            time_to_send_check: Instant::now()
+            time_to_send_check: Instant::now(),
+            max_retries_per_job_dispatcher,
+            ping_timeout,
+            time_between_checks,
         })
     }
 
@@ -553,7 +560,7 @@ impl BitVMX {
 
         self.check_job_dispatchers_liveness();
 
-        if self.time_to_send_check.elapsed() >= TIME_BETWEEN_CHECKS {
+        if self.time_to_send_check.elapsed() >= self.time_between_checks {
             self.send_liveness_message_to_dispatchers()?;
             self.time_to_send_check = Instant::now();
         }
@@ -565,7 +572,7 @@ impl BitVMX {
         let timeout_dispatcher: Vec<_> = self
             .time_since_sent_check
             .iter()
-            .filter(|(_, time)| time.elapsed() >= TIMEOUT)
+            .filter(|(_, time)| time.elapsed() >= self.ping_timeout)
             .map(|(dispatcher, _)| dispatcher.clone())
             .collect();
         
@@ -575,20 +582,20 @@ impl BitVMX {
                     .retries_per_job_dispatcher
                     .get_mut(&dispatcher_name)
                     .unwrap();
-                if *retries < MAX_RETRIES_PER_JOB_DISPATCHER {
+                if *retries < self.max_retries_per_job_dispatcher {
                     warn!(
                         "{dispatcher_name} dispatcher is not responding, retrying ({} out of {})",
                         *retries + 1,
-                        MAX_RETRIES_PER_JOB_DISPATCHER
+                        self.max_retries_per_job_dispatcher
                     );
                     *retries += 1;
                     self.time_since_sent_check.insert(dispatcher_name.clone(), Instant::now());
                 } else {
                     error!(
                         "{dispatcher_name} dispatcher is not responding after {} retries",
-                        MAX_RETRIES_PER_JOB_DISPATCHER
+                        self.max_retries_per_job_dispatcher
                     );
-                    *retries = 0; //TODO: Handle it correctly
+                    self.time_since_sent_check.remove(&dispatcher_name);
                 }
             }
         }
