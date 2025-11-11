@@ -810,12 +810,13 @@ pub fn handle_tx_news(
 
         let mut values = std::collections::HashMap::new();
 
-        for (name, _) in TRACE_VARS.iter() {
+        let trace_vars = TRACE_VARS.get().expect("TRACE_VARS not initialized");
+        for (name, _) in trace_vars.iter() {
             if *name == "prover_witness" {
                 continue;
             }
             if let Some(value) = program_context.witness.get_witness(&drp.ctx.id, name)? {
-                values.insert(*name, value.winternitz().unwrap().message_bytes());
+                values.insert(name.clone(), value.winternitz().unwrap().message_bytes());
             } else {
                 return Err(BitVMXError::VariableNotFound(drp.ctx.id, name.to_string()));
             }
@@ -828,6 +829,9 @@ pub fn handle_tx_news(
         }
         fn to_u64(bytes: &[u8]) -> u64 {
             u64::from_be_bytes(bytes.try_into().expect("Expected 8 bytes for u64"))
+        }
+        fn to_hex(bytes: &[u8]) -> String {
+            hex::encode(bytes)
         }
 
         let step_number = to_u64(&values["prover_step_number"]);
@@ -857,6 +861,13 @@ pub fn handle_tx_news(
         let trace_step = TraceStep::new(trace_write, program_counter);
         let witness = None; //TODO: get the witness from the context?
         let mem_witness = MemoryWitness::from_byte(to_u8(&values["prover_mem_witness"]));
+        let prover_step_hash = to_hex(&values["prover_prev_hash_tk"]);
+        let prover_next_hash = to_hex(&values["prover_step_hash_tk"]);
+        let mut decision_bits: Vec<u32> = Vec::new();
+        for i in 0..rounds {
+            let key = format!("prover_selection_bits_{}_tk", i);
+            decision_bits.push(to_u32(&values[&*key]));
+        }
 
         let final_trace = TraceRWStep::new(
             step_number,
@@ -872,7 +883,12 @@ pub fn handle_tx_news(
             job_type: EmulatorJobType::VerifierChooseChallenge(
                 pdf,
                 execution_path.clone(),
-                final_trace,
+                (
+                    final_trace,
+                    prover_step_hash,
+                    prover_next_hash,
+                    decision_bits,
+                ),
                 format!("{}/{}", execution_path, "execution.json").to_string(),
                 fail_force_config.main.fail_config_verifier.clone(),
                 fail_force_config.main.force_challenge.clone(),

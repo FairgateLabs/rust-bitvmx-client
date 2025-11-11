@@ -126,7 +126,12 @@ pub fn execution_result(
                 None,
             )?;
         }
-        EmulatorResultType::ProverFinalTraceResult { final_trace } => {
+        EmulatorResultType::ProverFinalTraceResult {
+            final_trace,
+            resigned_step_hash,
+            resigned_next_hash,
+            cosigned_decision_bits,
+        } => {
             info!("Final trace: {:?}", final_trace);
 
             set_input_u32(
@@ -210,6 +215,16 @@ pub fn execution_result(
             if let Some(witness) = final_trace.witness {
                 set_input_u32(id, context, "prover_witness", witness)?;
             }
+            set_input_hex(id, context, "prover_prev_hash_tk", resigned_step_hash)?; //TODO: rename in CPU
+            set_input_hex(id, context, "prover_step_hash_tk", resigned_next_hash)?; //TODO: rename in CPU
+            for decision_bit in cosigned_decision_bits.iter().enumerate() {
+                set_input_u32(
+                    id,
+                    context,
+                    &format!("prover_selection_bits_{}_tk", decision_bit.0),
+                    *decision_bit.1,
+                )?;
+            }
             let instruction = get_key_from_opcode(
                 final_trace.read_pc.opcode,
                 final_trace.read_pc.pc.get_micro(),
@@ -262,6 +277,11 @@ pub fn execution_result(
                 None,
             )?;
         }
+        EmulatorResultType::ProverGetCosignedBitsAndHashesResult {
+            resigned_step_hash: _,
+            resigned_next_hash: _,
+            cosigned_decision_bits: _,
+        } => todo!(),
     }
     Ok(())
 }

@@ -17,8 +17,8 @@ use crate::{
         participant::{ParticipantKeys, ParticipantRole},
         protocols::dispute::{
             input_handler::{
-                generate_input_owner_list, set_input_hex, set_input_u32, set_input_u64,
-                set_input_u8, ProgramInputType,
+                generate_input_owner_list, set_input_hex, set_input_u32, set_input_u8,
+                ProgramInputType,
             },
             program_input_prev_prefix, program_input_prev_protocol, program_input_word,
         },
@@ -40,7 +40,7 @@ pub const PROGRAM_COUNTER_CHALLENGE: [(&str, usize); 8] = [
     ("verifier_prev_write_micro", 1),
     ("prover_read_pc_address", 4),
     ("prover_read_pc_micro", 1),
-    ("verifier_prev_hash", 20), //TODO: Fix, this hash is from prover translation keys
+    ("prover_prev_hash_tk", 20),
 ];
 pub const HALT_CHALLENGE: [(&str, usize); 5] = [
     ("prover_last_step", 8),
@@ -50,19 +50,19 @@ pub const HALT_CHALLENGE: [(&str, usize); 5] = [
     ("prover_read_pc_opcode", 4),
 ];
 pub const TRACE_HASH_CHALLENGE: [(&str, usize); 6] = [
-    ("verifier_prev_hash", 20), //TODO: this should be from prover translation keys
+    ("prover_prev_hash_tk", 20),
     ("prover_write_address", 4),
     ("prover_write_value", 4),
     ("prover_write_pc", 4),
     ("prover_write_micro", 1),
-    ("verifier_step_hash", 20), //TODO: this should be from prover translation keys
+    ("prover_step_hash_tk", 20),
 ];
 pub const TRACE_HASH_ZERO_CHALLENGE: [(&str, usize); 5] = [
     ("prover_write_address", 4),
     ("prover_write_value", 4),
     ("prover_write_pc", 4),
     ("prover_write_micro", 1),
-    ("verifier_step_hash", 20), //TODO: this should be from prover translation keys
+    ("prover_step_hash_tk", 20),
 ];
 
 pub const INPUT_CHALLENGE: [(&str, usize); 7] = [
@@ -209,6 +209,10 @@ pub fn challenge_scripts(
     let mut challenge_leaf_script = vec![];
 
     let mut challenge_current_leaf = 0;
+
+    let rounds = program_definitions.nary_def().total_rounds();
+    let nary = program_definitions.nary_def().nary;
+    let nary_last_round = program_definitions.nary_def().nary_last_round;
 
     match nary_search_type {
         NArySearchType::ConflictStep => {
@@ -519,7 +523,7 @@ pub fn challenge_scripts(
                                     "verifier_read_selector",
                                 );
                                 stack = StackTracker::new();
-                                future_read_challenge(&mut stack);
+                                future_read_challenge(&mut stack, rounds, nary, nary_last_round);
                             }
                             "read_value_nary_search" => {
                                 let var = stack.define(2, "bits");
@@ -581,7 +585,7 @@ pub fn challenge_scripts(
                             "verifier_read_selector",
                         );
                         stack = StackTracker::new();
-                        read_value_challenge(&mut stack);
+                        read_value_challenge(&mut stack, rounds, nary, nary_last_round);
                     }
                     "correct_hash" => {
                         correct_hash_challenge(&mut stack);
@@ -616,71 +620,82 @@ pub fn get_challenge_leaf(
     let mut dynamic_offset: u32 = 0; // For offset inside a specific challenge
 
     match challenge {
-        ChallengeType::EntryPoint(_trace_read_pc, _prover_trace_step, _entrypoint) => {
+        ChallengeType::EntryPoint {
+            prover_read_pc: _,
+            prover_trace_step: _,
+            real_entry_point: _,
+        } => {
             name = "entry_point";
             info!("Verifier chose {name} challenge");
         }
-        ChallengeType::ProgramCounter(
-            pre_pre_hash,
-            pre_step,
-            prover_step_hash,
-            _prover_pc_read,
-        ) => {
+        ChallengeType::ProgramCounter {
+            pre_hash,
+            trace,
+            prover_step_hash: _,
+            prover_pc_read: _,
+        } => {
             name = "program_counter";
             info!("Verifier chose {name} challenge");
 
-            set_input_hex(
-                id,
-                context,
-                &format!("verifier_prev_prev_hash"),
-                &pre_pre_hash,
-            )?;
+            set_input_hex(id, context, &format!("verifier_prev_prev_hash"), &pre_hash)?;
             set_input_u32(
                 id,
                 context,
                 &format!("verifier_prev_write_add"),
-                pre_step.get_write().address,
+                trace.get_write().address,
             )?;
             set_input_u32(
                 id,
                 context,
                 &format!("verifier_prev_write_data"),
-                pre_step.get_write().value,
+                trace.get_write().value,
             )?;
             set_input_u32(
                 id,
                 context,
                 &format!("verifier_prev_write_pc"),
-                pre_step.get_pc().get_address(),
+                trace.get_pc().get_address(),
             )?;
             set_input_u8(
                 id,
                 context,
                 &format!("verifier_prev_write_micro"),
-                pre_step.get_pc().get_micro(),
+                trace.get_pc().get_micro(),
             )?;
-            set_input_hex(
-                id,
-                context,
-                &format!("verifier_prev_hash"), //TODO: fix
-                &prover_step_hash,
-            )?;
+            // set_input_hex(
+            //     id,
+            //     context,
+            //     &format!("verifier_prev_hash"), //TODO: fix
+            //     &prover_step_hash,
+            // )?;
         }
-        ChallengeType::TraceHash(prover_prev_hash, _prover_trace_step, prover_step_hash) => {
+        ChallengeType::TraceHash {
+            prover_step_hash: _,
+            prover_trace: _,
+            prover_next_hash: _,
+        } => {
             name = "trace_hash";
             info!("Verifier chose {name} challenge");
 
-            //TODO: fix
-            set_input_hex(id, context, "verifier_prev_hash", &prover_prev_hash)?;
-            //TODO: fix
-            set_input_hex(id, context, "verifier_step_hash", &prover_step_hash)?;
+            // //TODO: fix
+            // set_input_hex(id, context, "verifier_prev_hash", &prover_step_hash)?;
+            // //TODO: fix
+            // set_input_hex(id, context, "verifier_step_hash", &prover_next_hash)?;
         }
-        ChallengeType::TraceHashZero(_prover_trace_step, prover_step_hash) => {
+        ChallengeType::TraceHashZero {
+            prover_trace: _,
+            prover_next_hash: _,
+        } => {
             name = "trace_hash_zero";
             info!("Verifier chose {name} challenge");
-            set_input_hex(id, context, "verifier_step_hash", &prover_step_hash)?;
+            // set_input_hex(id, context, "verifier_step_hash", &prover_next_hash)?;
         }
-        ChallengeType::InputData(_read_1, _read_2, address, _input_for_address) => {
+        ChallengeType::InputData {
+            prover_read_1: _,
+            prover_read_2: _,
+            address,
+            input_for_address: _,
+        } => {
             name = "input";
             info!("Verifier chose {name} challenge");
 
@@ -690,34 +705,49 @@ pub fn get_challenge_leaf(
                 .start;
             dynamic_offset = (address - base_addr) / 4;
         }
-        ChallengeType::Opcode(_pc_read, chunk_index, _opcodes_chunk) => {
+        ChallengeType::Opcode {
+            prover_pc_read: _,
+            chunk_index,
+            chunk: _,
+        } => {
             name = "opcode";
             info!("Verifier chose {name} challenge");
 
             dynamic_offset = *chunk_index;
         }
-        ChallengeType::AddressesSections(
-            _read_1,
-            _read_2,
-            _write,
-            _memory_witness,
-            _program_counter,
-            _,
-            _,
-            _,
-            _,
-        ) => {
+        ChallengeType::AddressesSections {
+            prover_read_1: _,
+            prover_read_2: _,
+            prover_write: _,
+            prover_witness: _,
+            prover_pc: _,
+            read_write_sections: _,
+            read_only_sections: _,
+            register_sections: _,
+            code_sections: _,
+        } => {
             name = "addresses_sections";
             info!("Verifier chose {name} challenge");
         }
-        ChallengeType::RomData(_read_1, _read_2, address, _input_for_address) => {
+        ChallengeType::RomData {
+            prover_read_1: _,
+            prover_read_2: _,
+            address,
+            input_for_address: _,
+        } => {
             name = "rom";
             info!("Verifier chose {name} challenge");
 
             let base_addr = program.find_section_by_name(".rodata").unwrap().start;
             dynamic_offset = address - base_addr;
         }
-        ChallengeType::InitializedData(_read_1, _read_2, read_selector, chunk_index, _chunk) => {
+        ChallengeType::InitializedData {
+            prover_read_1: _,
+            prover_read_2: _,
+            read_selector,
+            chunk_index,
+            chunk: _,
+        } => {
             name = "initialized";
             info!("Verifier chose {name} challenge");
 
@@ -729,7 +759,12 @@ pub fn get_challenge_leaf(
             )?;
             dynamic_offset = *chunk_index;
         }
-        ChallengeType::UninitializedData(_read_1, _read_2, read_selector, _section_definition) => {
+        ChallengeType::UninitializedData {
+            prover_read_1: _,
+            prover_read_2: _,
+            read_selector,
+            sections: _,
+        } => {
             name = "uninitialized";
             info!("Verifier chose {name} challenge");
 
@@ -740,21 +775,41 @@ pub fn get_challenge_leaf(
                 *read_selector as u8,
             )?;
         }
-        ChallengeType::ReadValueNArySearch(bits) => {
+        ChallengeType::ReadValueNArySearch { bits } => {
             name = "read_value_nary_search";
             info!("Verifier chose {name} challenge");
 
             set_input_u8(id, context, &format!("verifier_bits"), *bits as u8)?;
         }
-        ChallengeType::ReadValue {
-            read_1: _,
-            read_2: _,
+        ChallengeType::FutureRead {
+            cosigned_decisions_bits: _,
+            prover_read_step_1: _,
+            prover_read_step_2: _,
             read_selector,
-            step_hash,
+            nary: _,
+            nary_last_round: _,
+        } => {
+            name = "future_read";
+            info!("Verifier chose {name} challenge");
+
+            set_input_u8(
+                id,
+                context,
+                &format!("verifier_read_selector"),
+                *read_selector as u8,
+            )?;
+        }
+        ChallengeType::ReadValue {
+            prover_read_1: _,
+            prover_read_2: _,
+            read_selector,
+            prover_hash: _,
             trace,
-            next_hash,
-            write_step,
-            conflict_step,
+            prover_next_hash: _,
+            cosigned_read_bits: _,
+            cosigned_conflict_bits: _,
+            nary: _,
+            nary_last_round: _,
         } => {
             name = "read_value";
             info!("Verifier chose {name} challenge");
@@ -766,7 +821,7 @@ pub fn get_challenge_leaf(
                 *read_selector as u8,
             )?;
 
-            set_input_hex(id, context, &format!("verifier_step_hash"), &step_hash)?;
+            // set_input_hex(id, context, &format!("verifier_step_hash"), &step_hash)?;
             set_input_u32(
                 id,
                 context,
@@ -791,25 +846,31 @@ pub fn get_challenge_leaf(
                 &format!("verifier_write_micro"),
                 trace.get_pc().get_micro(),
             )?;
-            set_input_hex(id, context, &format!("verifier_next_hash"), &next_hash)?;
-            set_input_u64(id, context, &format!("verifier_write_step"), *write_step)?;
-            set_input_u64(
-                id,
-                context,
-                &format!("verifier_conflict_step"),
-                *conflict_step,
-            )?;
+            // set_input_hex(
+            //     id,
+            //     context,
+            //     &format!("verifier_next_hash"),
+            //     &prover_next_hash,
+            // )?;
+            // set_input_u64(id, context, &format!("verifier_write_step"), *write_step)?;
+            // set_input_u64(
+            //     id,
+            //     context,
+            //     &format!("verifier_conflict_step"),
+            //     *conflict_step,
+            // )?;
+            todo!("See changes in CPU. Some vars are missing");
         }
         ChallengeType::CorrectHash {
-            prover_hash,
+            prover_step_hash,
             verifier_hash,
             trace,
-            next_hash,
+            prover_next_hash,
         } => {
             name = "correct_hash";
             info!("Verifier chose {name} challenge");
 
-            set_input_hex(id, context, &format!("verifier_prover_hash"), &prover_hash)?;
+            // set_input_hex(id, context, &format!("verifier_prover_hash"), &prover_hash)?;
             set_input_hex(id, context, &format!("verifier_hash"), &verifier_hash)?;
             set_input_u32(
                 id,
@@ -835,24 +896,20 @@ pub fn get_challenge_leaf(
                 &format!("verifier_write_micro"),
                 trace.get_pc().get_micro(),
             )?;
-            set_input_hex(id, context, &format!("verifier_next_hash"), &next_hash)?;
+            // set_input_hex(id, context, &format!("verifier_next_hash"), &next_hash)?;
+            todo!("UPDATE")
         }
-        ChallengeType::FutureRead {
-            step: _,
-            read_step_1: _,
-            read_step_2: _,
-            read_selector,
-        } => {
-            name = "future_read";
-            info!("Verifier chose {name} challenge");
 
-            set_input_u8(
-                id,
-                context,
-                &format!("verifier_read_selector"),
-                *read_selector as u8,
-            )?;
-        }
+        ChallengeType::EquivocationHash {
+            prover_true_hash,
+            prover_wrong_hash,
+            cosigned_decisions_bits,
+            kind,
+            round,
+            index,
+            nary,
+            nary_last_round,
+        } => todo!(),
         ChallengeType::No => {
             name = "";
         }

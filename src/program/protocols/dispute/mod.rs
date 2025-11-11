@@ -3,7 +3,7 @@ pub mod config;
 pub mod execution;
 pub mod input_handler;
 pub mod tx_news;
-use std::{collections::HashMap, vec};
+use std::{collections::HashMap, sync::OnceLock, vec};
 
 use bitcoin::{PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
@@ -63,24 +63,60 @@ pub const CHALLENGE_READ: &str = "CHALLENGE_READ"; // For the second N-ary searc
 pub const TIMELOCK_BLOCKS_KEY: &str = "TIMELOCK_BLOCKS";
 pub const VERIFIER_FINAL: &str = "VERIFIER_FINAL";
 
-pub const TRACE_VARS: [(&str, usize); 16] = [
-    ("prover_write_address", 4 as usize),
-    ("prover_write_value", 4),
-    ("prover_write_pc", 4),
-    ("prover_write_micro", 1),
-    ("prover_mem_witness", 1),
-    ("prover_read_1_address", 4),
-    ("prover_read_1_value", 4),
-    ("prover_read_1_last_step", 8),
-    ("prover_read_2_address", 4),
-    ("prover_read_2_value", 4),
-    ("prover_read_2_last_step", 8),
-    ("prover_read_pc_address", 4),
-    ("prover_read_pc_micro", 1),
-    ("prover_read_pc_opcode", 4),
-    ("prover_step_number", 8),
-    ("prover_witness", 4),
-];
+pub static TRACE_VARS: OnceLock<Vec<(String, usize)>> = OnceLock::new();
+pub fn build_trace_vars(rounds: u8) -> Vec<(String, usize)> {
+    let mut vars = vec![
+        ("prover_write_address".to_string(), 4),
+        ("prover_write_value".to_string(), 4),
+        ("prover_write_pc".to_string(), 4),
+        ("prover_write_micro".to_string(), 1),
+        ("prover_mem_witness".to_string(), 1),
+        ("prover_read_1_address".to_string(), 4),
+        ("prover_read_1_value".to_string(), 4),
+        ("prover_read_1_last_step".to_string(), 8),
+        ("prover_read_2_address".to_string(), 4),
+        ("prover_read_2_value".to_string(), 4),
+        ("prover_read_2_last_step".to_string(), 8),
+        ("prover_read_pc_address".to_string(), 4),
+        ("prover_read_pc_micro".to_string(), 1),
+        ("prover_read_pc_opcode".to_string(), 4),
+        ("prover_step_number".to_string(), 8),
+        ("prover_prev_hash_tk".to_string(), 20),
+        ("prover_step_hash_tk".to_string(), 20),
+    ];
+
+    for i in 0..rounds {
+        vars.push((format!("prover_selection_bits_{}_tk", i), 4));
+    }
+
+    vars.push(("prover_witness".to_string(), 4));
+    vars
+}
+
+pub fn init_trace_vars(rounds: u8) {
+    // If already initialized, check consistency
+    if let Some(existing) = TRACE_VARS.get() {
+        let existing_count = existing
+            .iter()
+            .filter(|(name, _)| name.starts_with("prover_selection_bits_"))
+            .count() as u8;
+
+        if existing_count != rounds {
+            panic!(
+                "TRACE_VARS already initialized with a different number of rounds: expected {}, got {}",
+                existing_count, rounds
+            );
+        }
+
+        // If same, is ok
+        return;
+    }
+
+    // Otherwise, initialize for the first time
+    TRACE_VARS
+        .set(build_trace_vars(rounds))
+        .expect("TRACE_VARS already initialized");
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DisputeResolutionProtocol {
@@ -169,6 +205,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
         let program_def = self.get_program_definition(&program_context)?.0;
+        let nary_def = program_def.nary_def();
+        init_trace_vars(nary_def.total_rounds());
 
         let aggregated_1 = program_context.key_chain.derive_keypair()?;
 
@@ -199,8 +237,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             let last_hash = key_chain.derive_winternitz_hash160(20)?;
             keys.push(("prover_last_hash".to_string(), last_hash.into()));
 
-            for (name, size) in TRACE_VARS {
-                let key = key_chain.derive_winternitz_hash160(size)?;
+            for (name, size) in TRACE_VARS.get().expect("TRACE_VARS not initialized") {
+                let key = key_chain.derive_winternitz_hash160(*size)?;
                 keys.push((name.to_string(), key.into()));
             }
         }
@@ -302,6 +340,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             (prover_speedup_pub, verifier_speedup_pub, SignMode::Single);
 
         let program_def = self.get_program_definition(context)?;
+        let nary_def = program_def.0.nary_def();
+
+        let trace_vars = TRACE_VARS.get().expect("TRACE_VARS not initialized");
 
         let mut protocol = self.load_or_create_protocol();
 
@@ -519,7 +560,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         amount = self.checked_sub(amount, fee)?;
         amount = self.checked_sub(amount, speedup_dust)?;
 
-        let nary_def = program_def.0.nary_def();
         let mut prev = POST_COMMITMENT.to_string();
         for i in 1..nary_def.total_rounds() + 1 {
             let next = format!("NARY_PROVER_{}", i);
@@ -578,11 +618,11 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         }
 
         //Simple execution check
-        let vars = TRACE_VARS
+        let vars = trace_vars
             .iter()
-            .take(TRACE_VARS.len() - 1) // Skip the witness (except is needed)
+            .take(trace_vars.len() - 1) // Skip the witness (except is needed)
             //.rev() //reverse to get the proper order on the stack
-            .map(|(name, _)| *name)
+            .map(|(name, _)| name.as_str())
             .collect::<Vec<&str>>();
 
         self.add_connection_with_scripts(
@@ -903,11 +943,18 @@ impl DisputeResolutionProtocol {
         let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
         instruction_names.sort();
 
+        let trace_vars = TRACE_VARS.get().expect("TRACE_VARS not initialized");
+
         //TODO: This is a workacround to inverse the order of the stack
+        let total_size = trace_vars
+            .iter()
+            .take(trace_vars.len() - 1) // skip witness
+            .map(|(_, size)| (*size as u32) * 2)
+            .sum();
         let mut stack = StackTracker::new();
-        let all = stack.define(126, "all");
-        for i in 1..126 {
-            stack.move_var_sub_n(all, 126 - i - 1);
+        let all = stack.define(total_size, "all");
+        for i in 1..total_size {
+            stack.move_var_sub_n(all, total_size - i - 1);
         }
         let reverse_script = stack.get_script();
 
@@ -915,8 +962,8 @@ impl DisputeResolutionProtocol {
         //and drop the last steps. (this can be avoided)
         let mut stack = StackTracker::new();
         let mut stackvars = HashMap::new();
-        for (name, size) in TRACE_VARS.iter().take(TRACE_VARS.len() - 1) {
-            stackvars.insert(*name, stack.define((size * 2) as u32, name));
+        for (name, size) in trace_vars.iter().take(trace_vars.len() - 1) {
+            stackvars.insert(name.clone(), stack.define((size * 2) as u32, name));
         }
         let step_n = stack.move_var(stackvars["prover_step_number"]);
         stack.drop(step_n);
@@ -928,6 +975,18 @@ impl DisputeResolutionProtocol {
         stack.drop(last_step_1);
         let last_step_2 = stack.move_var(stackvars["prover_read_2_last_step"]);
         stack.drop(last_step_2);
+        let prev_hash = stack.move_var(stackvars["prover_prev_hash_tk"]);
+        stack.drop(prev_hash);
+        let step_hash = stack.move_var(stackvars["prover_step_hash_tk"]);
+        stack.drop(step_hash);
+        let selection_bits_0 = stack.move_var(stackvars["prover_selection_bits_0_tk"]);
+        stack.drop(selection_bits_0);
+        let selection_bits_1 = stack.move_var(stackvars["prover_selection_bits_1_tk"]);
+        stack.drop(selection_bits_1);
+        let selection_bits_2 = stack.move_var(stackvars["prover_selection_bits_2_tk"]);
+        stack.drop(selection_bits_2);
+        let selection_bits_3 = stack.move_var(stackvars["prover_selection_bits_3_tk"]);
+        stack.drop(selection_bits_3);
         let strip_script = stack.get_script();
 
         let mut winternitz_check_list = vec![];
@@ -938,7 +997,7 @@ impl DisputeResolutionProtocol {
                 aggregated,
                 &names_and_keys,
                 sign_mode,
-                true,
+                true, //ASK: !name.ends_with("_tk"),
                 Some(vec![
                     reverse_script.clone(),
                     strip_script.clone(),
