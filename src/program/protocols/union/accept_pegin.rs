@@ -41,6 +41,12 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 use uuid::Uuid;
 
+const OP_WON_REVEAL_INPUT_INDEX: usize = 1;
+const OP_WON_REVEAL_INPUT_LEAF: usize = 0;
+const OP_WON_PEGIN_INPUT_INDEX: usize = 0;
+const OP_TAKE_REIMBURSEMENT_INPUT_INDEX: usize = 1;
+const OP_TAKE_PEGIN_INPUT_INDEX: usize = 0;
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct AcceptPegInProtocol {
     ctx: ProtocolContext,
@@ -385,14 +391,14 @@ impl AcceptPegInProtocol {
         {
             let operator_take_tx_name = &indexed_name(OPERATOR_TAKE_TX, self.ctx.my_idx);
             operator_take_sighash = protocol
-                .get_hashed_message(operator_take_tx_name, 0, 0)?
+                .get_hashed_message(operator_take_tx_name, OP_TAKE_PEGIN_INPUT_INDEX as u32, 0)?
                 .unwrap()
                 .as_ref()
                 .to_vec();
 
             let operator_won_tx_name = &indexed_name(OPERATOR_WON_TX, self.ctx.my_idx);
             operator_won_sighash = protocol
-                .get_hashed_message(operator_won_tx_name, 0, 0)?
+                .get_hashed_message(operator_won_tx_name, OP_TAKE_PEGIN_INPUT_INDEX as u32, 0)?
                 .unwrap()
                 .as_ref()
                 .to_vec();
@@ -509,7 +515,12 @@ impl AcceptPegInProtocol {
             reveal_tx_name,
             OutputSpec::Index(won_enabler.1 as usize),
             operator_won_tx_name,
-            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::Script {
+                    leaf: OP_WON_REVEAL_INPUT_LEAF,
+                },
+            ),
             None,
             Some(won_enabler.0),
         )?;
@@ -603,13 +614,13 @@ impl AcceptPegInProtocol {
 
         // Pegin signature
         let pegin_signature = protocol
-            .input_taproot_key_spend_signature(name, 0)?
+            .input_taproot_key_spend_signature(name, OP_TAKE_PEGIN_INPUT_INDEX)?
             .unwrap();
 
         // Reimbursement signature
         let reimbursement_signature = protocol.sign_taproot_input(
             name,
-            1,
+            OP_TAKE_REIMBURSEMENT_INPUT_INDEX,
             &SpendMode::Script {
                 leaf: op_leaf_index,
             },
@@ -657,11 +668,23 @@ impl AcceptPegInProtocol {
 
         let protocol: Protocol = self.load_protocol()?;
 
-        let signature = protocol.input_taproot_script_spend_signature(name, 1, 0)?;
-        let mut args = InputArgs::new_taproot_script_args(0);
-        args.push_taproot_signature(signature.unwrap())?;
+        // Pegin signature
+        let pegin_signature = protocol
+            .input_taproot_key_spend_signature(name, OP_WON_PEGIN_INPUT_INDEX)?
+            .unwrap();
 
-        let tx = protocol.transaction_to_send(name, &[args])?;
+        let mut pegin_args = InputArgs::new_taproot_key_args();
+        pegin_args.push_taproot_signature(pegin_signature)?;
+
+        let reveal_signature = protocol.input_taproot_script_spend_signature(
+            name,
+            OP_WON_REVEAL_INPUT_INDEX,
+            OP_WON_REVEAL_INPUT_LEAF,
+        )?;
+        let mut reveal_args = InputArgs::new_taproot_script_args(OP_WON_REVEAL_INPUT_LEAF);
+        reveal_args.push_taproot_signature(reveal_signature.unwrap())?;
+
+        let tx = protocol.transaction_to_send(name, &[pegin_args, reveal_args])?;
         let txid = tx.compute_txid();
 
         let speedup_key = self.my_speedup_key(context)?;
