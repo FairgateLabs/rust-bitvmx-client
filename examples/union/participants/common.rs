@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use bitcoin::{
     absolute::{self},
     hashes::Hash,
@@ -5,7 +7,9 @@ use bitcoin::{
     transaction, Amount, PublicKey, ScriptBuf, Sequence, TapSighash, TapSighashType, Transaction,
     TxOut, Txid, Witness,
 };
-use bitvmx_client::program::protocols::union::types::{P2TR_FEE, SPEEDUP_VALUE, USER_TAKE_FEE};
+use bitvmx_client::program::protocols::union::types::{
+    StreamSettings, UnionSettings, P2TR_FEE, SPEEDUP_VALUE, USER_TAKE_FEE,
+};
 use tracing::info;
 
 pub fn prefixed_name(prefix: &str, name: &str) -> String {
@@ -73,4 +77,39 @@ pub fn calculate_taproot_key_path_sighash(
     )?;
 
     Ok(sighash.to_raw_hash().as_byte_array().clone())
+}
+
+pub fn get_default_union_settings() -> UnionSettings {
+    let mut settings = UnionSettings {
+        settings: HashMap::new(),
+    };
+
+    settings.settings.insert(
+        30000,
+        StreamSettings {
+            short_timelock: 6,
+            long_timelock: 12,
+            op_won_timelock: 18,
+        },
+    );
+
+    settings.settings.insert(
+        100000,
+        StreamSettings {
+            short_timelock: 6,
+            long_timelock: 12,
+            op_won_timelock: 18,
+        },
+    );
+
+    settings.settings.insert(
+        1000000,
+        StreamSettings {
+            short_timelock: 6,
+            long_timelock: 12,
+            op_won_timelock: 18,
+        },
+    );
+
+    settings
 }

@@ -7,7 +7,8 @@ use crate::{
             union::{
                 common::{
                     create_transaction_reference, estimate_fee, extract_index,
-                    get_accept_pegin_pid, get_initial_deposit_output_type, indexed_name,
+                    get_accept_pegin_pid, get_initial_deposit_output_type, get_stream_setting,
+                    indexed_name, load_union_settings,
                 },
                 scripts,
                 types::*,
@@ -169,6 +170,10 @@ impl ProtocolHandler for DisputeCoreProtocol {
         let committee = self.committee(context)?;
         let member = &committee.members[dispute_core_data.member_index];
         let mut reimbursement_outputs = vec![];
+        let settings = get_stream_setting(
+            &load_union_settings(context)?,
+            committee.stream_denomination,
+        )?;
 
         self.create_wt_start_enabler_output(
             &mut protocol,
@@ -181,7 +186,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
             self.create_wt_start_enabler(&mut protocol, &dispute_core_data, &committee, &keys)?;
 
         let operator_won_script = timelock(
-            OPERATOR_WON_TIMELOCK,
+            settings.op_won_timelock,
             &committee.take_aggregated_key,
             SignMode::Aggregate,
         );
@@ -201,7 +206,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
             )?;
 
             reimbursement_outputs =
-                self.create_reimbursement_output(&dispute_core_data, &keys, &committee)?;
+                self.create_reimbursement_output(&dispute_core_data, &keys, &committee, &settings)?;
 
             let mut challenge_leaves = vec![];
             for i in 0..committee.members.len() {
@@ -222,6 +227,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
                     context,
                     &challenge_leaves,
                     &reveal_output,
+                    &settings,
                 )?;
 
                 self.create_two_dispute_penalization(
@@ -529,6 +535,7 @@ impl DisputeCoreProtocol {
         dispute_core_data: &DisputeCoreData,
         keys: &Vec<ParticipantKeys>,
         committee: &Committee,
+        settings: &StreamSettings,
     ) -> Result<Vec<OutputType>, BitVMXError> {
         let mut outputs = vec![];
         let member_count = keys.len();
@@ -549,13 +556,13 @@ impl DisputeCoreProtocol {
                 // otherwise a short one for the challenge transaction.
                 let script = if member_index == owner_index {
                     timelock(
-                        DISPUTE_CORE_LONG_TIMELOCK,
+                        settings.long_timelock,
                         &committee.members[member_index].dispute_key.clone(),
                         SignMode::Single,
                     )
                 } else {
                     verify_winternitz_signature_timelock(
-                        DISPUTE_CORE_SHORT_TIMELOCK,
+                        settings.short_timelock,
                         // NOTE: This should be take_aggregated_key due to if any member leave we want to keep signing this output in each accept pegin protocol.
                         &committee.take_aggregated_key,
                         CHALLENGE_KEY,
@@ -587,6 +594,7 @@ impl DisputeCoreProtocol {
         context: &ProgramContext,
         challenge_leaves: &Vec<usize>,
         reveal_output: &OutputType,
+        settings: &StreamSettings,
     ) -> Result<(), BitVMXError> {
         // Operator keys
         let operator_keys = keys[dispute_core_data.member_index].clone();
@@ -651,7 +659,7 @@ impl DisputeCoreProtocol {
                     leaves: challenge_leaves.to_vec(),
                 },
             ),
-            Some(DISPUTE_CORE_SHORT_TIMELOCK),
+            Some(settings.short_timelock),
             None,
         )?;
 
@@ -1014,14 +1022,15 @@ impl DisputeCoreProtocol {
     fn dispatch_challenge_tx(
         &self,
         slot_id: usize,
-        program_context: &ProgramContext,
+        context: &ProgramContext,
         reimbursement_txid: Txid,
         tx_status: TransactionStatus,
+        settings: &StreamSettings,
     ) -> Result<(), BitVMXError> {
         let tx_name = indexed_name(CHALLENGE_TX, slot_id);
         info!("Dispatching {}", tx_name);
 
-        let (mut challenge_tx, speedup) = self.challenge_tx(&tx_name, program_context)?;
+        let (mut challenge_tx, speedup) = self.challenge_tx(&tx_name, context)?;
         let challenge_txid = challenge_tx.compute_txid();
 
         // Connect the challenge transaction to the reimbursement kickoff transaction
@@ -1032,11 +1041,11 @@ impl DisputeCoreProtocol {
             };
         }
 
-        program_context.bitcoin_coordinator.dispatch(
+        context.bitcoin_coordinator.dispatch(
             challenge_tx,
             speedup,
             format!("dispute_core_challenge_{}:{}", self.ctx.id, tx_name), // Context string
-            Some(tx_status.block_info.unwrap().height + DISPUTE_CORE_SHORT_TIMELOCK as u32), // Dispatch after short timelock
+            Some(tx_status.block_info.unwrap().height + settings.long_timelock as u32), // Dispatch after short timelock
         )?;
 
         info!(
@@ -1199,7 +1208,7 @@ impl DisputeCoreProtocol {
 
     fn handle_reimbursement_kickoff_transaction(
         &self,
-        program_context: &ProgramContext,
+        context: &ProgramContext,
         tx_status: &TransactionStatus,
         tx_id: Txid,
         tx_name: &str,
@@ -1213,7 +1222,13 @@ impl DisputeCoreProtocol {
         let slot_index = extract_index(tx_name, REIMBURSEMENT_KICKOFF_TX)?;
         info!("Extracted slot index: {}", slot_index);
 
-        if self.is_my_dispute_core(program_context)? {
+        let committee = self.committee(context)?;
+        let settings = get_stream_setting(
+            &load_union_settings(context)?,
+            committee.stream_denomination,
+        )?;
+
+        if self.is_my_dispute_core(context)? {
             info!(
                 id = self.ctx.my_idx,
                 "This is my dispute_core, checking for operator take dispatch for slot {}",
@@ -1222,9 +1237,9 @@ impl DisputeCoreProtocol {
             // Handle operator take if needed
             if tx_status.confirmations == 1 {
                 let block_height = tx_status.block_info.as_ref().unwrap().height
-                    + DISPUTE_CORE_LONG_TIMELOCK as u32
+                    + settings.long_timelock as u32
                     + 1;
-                self.dispatch_operator_take_tx(program_context, slot_index, block_height)?;
+                self.dispatch_operator_take_tx(context, slot_index, block_height)?;
             } else {
                 info!(
                     id = self.ctx.my_idx,
@@ -1240,10 +1255,10 @@ impl DisputeCoreProtocol {
             );
 
             // Handle challenge if needed
-            match self.get_selected_operator_key(slot_index, program_context)? {
+            match self.get_selected_operator_key(slot_index, context)? {
                 Some(selected_operator_key) => {
                     // Get the operator's take key that this dispute core is monitoring
-                    let monitored_operator_key = self.monitored_operator_key(program_context)?;
+                    let monitored_operator_key = self.monitored_operator_key(context)?;
 
                     // Compare if the monitored operator is the selected one
                     let is_valid = selected_operator_key == monitored_operator_key;
@@ -1255,9 +1270,10 @@ impl DisputeCoreProtocol {
                         );
                         self.dispatch_challenge_tx(
                             slot_index,
-                            program_context,
+                            context,
                             tx_id,
                             tx_status.clone(),
+                            &settings,
                         )?;
                     } else {
                         info!("Authorized operator confirmed for slot {}", slot_index);
@@ -1269,9 +1285,10 @@ impl DisputeCoreProtocol {
                     // If no selected operator key is set, it means that someone triggered a reimbursment kickoff transaction but there was no advances of funds
                     self.dispatch_challenge_tx(
                         slot_index,
-                        program_context,
+                        context,
                         tx_id,
                         tx_status.clone(),
+                        &settings,
                     )?;
                 }
             }

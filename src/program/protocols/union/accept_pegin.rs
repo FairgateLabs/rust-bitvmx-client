@@ -9,14 +9,15 @@ use crate::{
             union::{
                 common::{
                     create_transaction_reference, extract_index, get_dispute_core_pid,
-                    get_operator_output_type, indexed_name,
+                    get_operator_output_type, get_stream_setting, indexed_name,
+                    load_union_settings,
                 },
                 types::{
-                    Committee, PegInAccepted, PegInRequest, ACCEPT_PEGIN_TX,
-                    DISPUTE_CORE_LONG_TIMELOCK, LAST_OPERATOR_TAKE_UTXO, OPERATOR_LEAF_INDEX,
-                    OPERATOR_TAKE_ENABLER, OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX,
-                    P2TR_FEE, REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, REVEAL_IN_PROGRESS,
-                    SPEEDUP_KEY, SPEEDUP_VALUE, TAKE_AGGREGATED_KEY,
+                    Committee, PegInAccepted, PegInRequest, StreamSettings, ACCEPT_PEGIN_TX,
+                    LAST_OPERATOR_TAKE_UTXO, OPERATOR_LEAF_INDEX, OPERATOR_TAKE_ENABLER,
+                    OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX, P2TR_FEE,
+                    REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, REVEAL_IN_PROGRESS, SPEEDUP_KEY,
+                    SPEEDUP_VALUE, TAKE_AGGREGATED_KEY,
                 },
             },
         },
@@ -144,7 +145,12 @@ impl ProtocolHandler for AcceptPegInProtocol {
             &pegin_request.reimbursement_pubkey,
         )?;
 
-        let members = self.committee(context, pegin_request.committee_id)?.members;
+        let committee = self.committee(context, pegin_request.committee_id)?;
+        let members = committee.members;
+        let settings = get_stream_setting(
+            &load_union_settings(context)?,
+            committee.stream_denomination,
+        )?;
 
         // Loop over operators and create take 1 and take 2 transactions
         for operator_index in pegin_request.operator_indexes {
@@ -175,6 +181,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 pegin_request_txid,
                 kickoff_tx_name,
                 operator_take_enabler.clone(),
+                &settings,
             )?;
 
             // Operator won transaction data
@@ -453,6 +460,7 @@ impl AcceptPegInProtocol {
         pegin_txid: Txid,
         kickoff_tx_name: &str,
         take_enabler: PartialUtxo,
+        settings: &StreamSettings,
     ) -> Result<(), BitVMXError> {
         let operator_take_tx_name = &indexed_name(OPERATOR_TAKE_TX, operator_index);
 
@@ -469,7 +477,7 @@ impl AcceptPegInProtocol {
             OutputSpec::Index(take_enabler.1 as usize),
             operator_take_tx_name,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
-            Some(DISPUTE_CORE_LONG_TIMELOCK),
+            Some(settings.long_timelock),
             Some(take_enabler.0),
         )?;
 

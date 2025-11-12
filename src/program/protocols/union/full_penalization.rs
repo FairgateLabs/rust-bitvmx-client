@@ -26,16 +26,17 @@ use crate::{
             union::{
                 common::{
                     create_transaction_reference, double_indexed_name, get_dispute_core_pid,
-                    get_initial_deposit_output_type, indexed_name, triple_indexed_name,
+                    get_initial_deposit_output_type, get_stream_setting, indexed_name,
+                    load_union_settings, triple_indexed_name,
                 },
                 types::{
-                    Committee, FullPenalizationData, DISPUTE_AGGREGATED_KEY,
-                    DISPUTE_CORE_SHORT_TIMELOCK, DUST_VALUE, OPERATOR_TAKE_ENABLER,
-                    OP_DISABLER_DIRECTORY_TX, OP_DISABLER_DIRECTORY_UTXO, OP_DISABLER_TX,
-                    OP_INITIAL_DEPOSIT_AMOUNT, OP_INITIAL_DEPOSIT_OUT_SCRIPT,
-                    OP_INITIAL_DEPOSIT_TX, OP_INITIAL_DEPOSIT_TXID, OP_LAZY_DISABLER_TX,
-                    REIMBURSEMENT_KICKOFF_TX, SPEEDUP_VALUE, WT_DISABLER_DIRECTORY_TX,
-                    WT_DISABLER_TX, WT_START_ENABLER_TX, WT_START_ENABLER_UTXOS,
+                    Committee, FullPenalizationData, StreamSettings, DISPUTE_AGGREGATED_KEY,
+                    DUST_VALUE, OPERATOR_TAKE_ENABLER, OP_DISABLER_DIRECTORY_TX,
+                    OP_DISABLER_DIRECTORY_UTXO, OP_DISABLER_TX, OP_INITIAL_DEPOSIT_AMOUNT,
+                    OP_INITIAL_DEPOSIT_OUT_SCRIPT, OP_INITIAL_DEPOSIT_TX, OP_INITIAL_DEPOSIT_TXID,
+                    OP_LAZY_DISABLER_TX, REIMBURSEMENT_KICKOFF_TX, SPEEDUP_VALUE,
+                    WT_DISABLER_DIRECTORY_TX, WT_DISABLER_TX, WT_START_ENABLER_TX,
+                    WT_START_ENABLER_UTXOS,
                 },
             },
         },
@@ -261,6 +262,7 @@ impl FullPenalizationProtocol {
         disabler_directory_utxo: &PartialUtxo,
         take_enablers: &Vec<PartialUtxo>,
         initial_deposit_utxos: &Vec<PartialUtxo>,
+        settings: &StreamSettings,
     ) -> Result<(), BitVMXError> {
         let packet_size = committee.packet_size;
         let op_disabler_directory_name =
@@ -353,7 +355,7 @@ impl FullPenalizationProtocol {
                 (take_enabler.1 as usize).into(),
                 &op_lazy_disabler_name,
                 InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
-                Some(DISPUTE_CORE_SHORT_TIMELOCK),
+                Some(settings.short_timelock),
                 Some(take_enabler.0),
             )?;
 
@@ -624,6 +626,11 @@ impl FullPenalizationProtocol {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         let member_count = committee.members.len();
+        let settings = get_stream_setting(
+            &load_union_settings(context)?,
+            committee.stream_denomination,
+        )?;
+
         for operator_index in 0..member_count {
             if committee.members[operator_index].role != ParticipantRole::Prover {
                 debug!("Skipping member {} as it is not a prover", operator_index);
@@ -662,6 +669,7 @@ impl FullPenalizationProtocol {
                     &disabler_directory_utxo,
                     &take_enablers,
                     &initial_deposit_utxos,
+                    &settings,
                 )?;
             }
         }
