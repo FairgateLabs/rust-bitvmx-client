@@ -62,7 +62,7 @@ pub const WT_DISABLER_DIRECTORY_UTXO: &str = "WT_DISABLER_DIRECTORY_UTXO";
 pub const OPERATOR: &str = "OP";
 pub const WATCHTOWER: &str = "WT";
 
-pub const GLOBAL_SETTINGS_UUID: Uuid = Uuid::from_u128(0x0);
+pub const GLOBAL_SETTINGS_UUID: Uuid = Uuid::from_bytes(*b"UNION_BRIDGE-000");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemberData {
