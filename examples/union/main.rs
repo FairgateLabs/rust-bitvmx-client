@@ -28,8 +28,7 @@ use bitvmx_client::{
                 get_full_penalization_pid, triple_indexed_name,
             },
             types::{
-                FundsAdvanced, ACCEPT_PEGIN_TX, DISPUTE_CORE_LONG_TIMELOCK,
-                DISPUTE_CORE_SHORT_TIMELOCK, OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX,
+                FundsAdvanced, ACCEPT_PEGIN_TX, OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX,
                 OP_INITIAL_DEPOSIT_TX, OP_LAZY_DISABLER_TX, OP_SELF_DISABLER_TX,
                 WT_DISABLER_DIRECTORY_TX, WT_DISABLER_TX, WT_SELF_DISABLER_TX, WT_START_ENABLER_TX,
             },
@@ -499,7 +498,7 @@ pub fn cli_operator_disabler() -> Result<()> {
     let operator_index = advance_funds(&mut committee, user.public_key()?, slot_index, false)?;
     wait_for_blocks(
         &committee.bitcoin_client,
-        DISPUTE_CORE_SHORT_TIMELOCK as u32 + 2,
+        committee.stream_settings.long_timelock as u32 + 2,
     )?;
 
     // Its the watchtower who should dispatch the operator disabler directory tx in the step above
@@ -791,7 +790,7 @@ pub fn advance_funds(
     if should_wait {
         wait_for_blocks(
             &committee.bitcoin_client,
-            get_blocks_to_wait() + DISPUTE_CORE_LONG_TIMELOCK as u32,
+            get_blocks_to_wait() + committee.stream_settings.long_timelock as u32,
         )?;
 
         // Wait for the FundsAdvanced message
@@ -845,7 +844,7 @@ pub fn invalid_reimbursement(committee: &mut Committee, slot_index: usize) -> Re
     info!("Starting mining loop to ensure challenge transaction is dispatched...");
     wait_for_blocks(
         &committee.bitcoin_client,
-        get_blocks_to_wait() + DISPUTE_CORE_LONG_TIMELOCK as u32,
+        get_blocks_to_wait() + committee.stream_settings.long_timelock as u32,
     )?;
 
     info!("Invalid reimbursement test complete.");

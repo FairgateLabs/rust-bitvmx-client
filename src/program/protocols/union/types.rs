@@ -1,6 +1,7 @@
 use bitcoin::{PublicKey, Txid};
 use key_manager::musig2::{secp::MaybeScalar, PubNonce};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::program::{participant::ParticipantRole, variables::PartialUtxo};
@@ -43,9 +44,6 @@ pub const WT_START_ENABLER_TX: &str = "WT_START_ENABLER_TX";
 pub const PROTOCOL_FUNDING_TX: &str = "PROTOCOL_FUNDING_TX";
 
 // Parameters
-pub const DISPUTE_CORE_SHORT_TIMELOCK: u16 = 1;
-pub const DISPUTE_CORE_LONG_TIMELOCK: u16 = 6;
-pub const OPERATOR_WON_TIMELOCK: u16 = 10; // FIXME: This timelock should last long enough as a dispute period
 pub const DUST_VALUE: u64 = 540;
 pub const SPEEDUP_VALUE: u64 = 540;
 pub const P2TR_FEE: u64 = 335; // This should match the value P2TR_FEE in Union Smart contracts
@@ -64,6 +62,8 @@ pub const WT_DISABLER_DIRECTORY_UTXO: &str = "WT_DISABLER_DIRECTORY_UTXO";
 pub const OPERATOR: &str = "OP";
 pub const WATCHTOWER: &str = "WT";
 
+pub const GLOBAL_SETTINGS_UUID: Uuid = Uuid::from_u128(0x0);
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemberData {
     pub role: ParticipantRole,
@@ -77,6 +77,7 @@ pub struct Committee {
     pub take_aggregated_key: PublicKey,
     pub dispute_aggregated_key: PublicKey,
     pub packet_size: u32,
+    pub stream_denomination: u64,
 }
 
 impl Committee {
@@ -214,5 +215,23 @@ pub struct FullPenalizationData {
 impl FullPenalizationData {
     pub fn name() -> String {
         "full_penalization_data".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamSettings {
+    pub short_timelock: u16,
+    pub long_timelock: u16,
+    pub op_won_timelock: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnionSettings {
+    pub settings: HashMap<u64, StreamSettings>,
+}
+
+impl UnionSettings {
+    pub fn name() -> String {
+        "union_settings".to_string()
     }
 }

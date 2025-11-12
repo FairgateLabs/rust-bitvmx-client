@@ -1,9 +1,17 @@
+use anyhow::Error;
 use bitcoin::{Amount, PublicKey, ScriptBuf};
 use protocol_builder::{scripts::ProtocolScript, types::OutputType};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::{errors::BitVMXError, program::variables::PartialUtxo};
+use crate::{
+    errors::BitVMXError,
+    program::{
+        protocols::union::types::{StreamSettings, UnionSettings, GLOBAL_SETTINGS_UUID},
+        variables::{PartialUtxo, VariableTypes},
+    },
+    types::ProgramContext,
+};
 
 pub fn get_dispute_core_pid(committee_id: Uuid, pubkey: &PublicKey) -> Uuid {
     let mut hasher = Sha256::new();
@@ -185,4 +193,53 @@ pub fn get_initial_deposit_output_type(
 //Rough estimate of fee for P2WPKH outputs
 pub fn estimate_fee(input_quantity: usize, output_quantity: usize, fee_rate: u64) -> u64 {
     (46 + input_quantity as u64 * 68 + output_quantity as u64 * 34) * fee_rate // rough estimate
+}
+
+pub fn load_union_settings(context: &ProgramContext) -> Result<UnionSettings, BitVMXError> {
+    let var = context
+        .globals
+        .get_var(&GLOBAL_SETTINGS_UUID, &UnionSettings::name().to_string())?
+        .ok_or_else(|| {
+            BitVMXError::InvalidParameter(format!(
+                "Union settings '{}' not found in UUID: {}",
+                UnionSettings::name(),
+                GLOBAL_SETTINGS_UUID
+            ))
+        })?;
+
+    let var_str = var.string().map_err(|_| {
+        BitVMXError::InvalidParameter(format!(
+            "Union settings '{}' in UUID: {} is not a string",
+            UnionSettings::name(),
+            GLOBAL_SETTINGS_UUID
+        ))
+    })?;
+
+    Ok(serde_json::from_str(&var_str)?)
+}
+
+pub fn save_union_settings(
+    context: &ProgramContext,
+    settings: &UnionSettings,
+) -> Result<(), Error> {
+    context.globals.set_var(
+        &GLOBAL_SETTINGS_UUID,
+        &UnionSettings::name(),
+        VariableTypes::String(serde_json::to_string(settings)?),
+    )?;
+    Ok(())
+}
+
+pub fn get_stream_setting(
+    settings: &UnionSettings,
+    stream_denomination: u64,
+) -> Result<StreamSettings, BitVMXError> {
+    if !settings.settings.contains_key(&stream_denomination) {
+        return Err(BitVMXError::InvalidParameter(format!(
+            "Stream settings not found for denomination: {}",
+            stream_denomination
+        )));
+    }
+
+    Ok(settings.settings.get(&stream_denomination).unwrap().clone())
 }
