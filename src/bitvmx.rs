@@ -1,4 +1,5 @@
 use crate::config::ComponentsConfig;
+use crate::ping_helper::PingHelper;
 use crate::program::protocols::protocol_handler::ProtocolHandler;
 use crate::{
     api::BitVMXApi,
@@ -23,7 +24,7 @@ use bitcoin_coordinator::{
     AckMonitorNews, MonitorNews, TypesToMonitor,
 };
 use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
-use bitvmx_job_dispatcher::helper::PingMessages;
+use bitvmx_job_dispatcher::helper::PingMessage;
 use bitvmx_operator_comms::{
     helper::ReceiveHandlerChannel,
     operator_comms::{AllowList, OperatorComms, PubKeyHash, RoutingTable},
@@ -42,7 +43,6 @@ use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use bitvmx_wallet::wallet::Wallet;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::{
     collections::{HashSet, VecDeque},
     net::SocketAddr,
@@ -77,13 +77,7 @@ pub struct BitVMX {
     notified_rsk_pegin: HashSet<Txid>, //workaround for RSK pegin transactions because ack seems to be not working
     bitcoin_update: BitcoinUpdateState,
     wallet: Wallet,
-    retries_per_job_dispatcher: HashMap<String, u8>,
-    ping_values: HashMap<String, u64>,
-    time_since_sent_check: HashMap<String, Instant>,
-    time_to_send_check: Instant,
-    max_retries_per_job_dispatcher: u8,
-    ping_timeout: Duration,
-    time_between_checks: Duration,
+    ping_helper: PingHelper,
 }
 
 impl Drop for BitVMX {
@@ -178,16 +172,10 @@ impl BitVMX {
             config.components.clone(),
         );
 
-        let mut retries_per_job_dispatcher = HashMap::new();
-        retries_per_job_dispatcher.insert("ZKP".to_string(), 0);
-        retries_per_job_dispatcher.insert("Emulator".to_string(), 0);
-        let mut ping_values = HashMap::new();
-        ping_values.insert("ZKP".to_string(), 0);
-        ping_values.insert("Emulator".to_string(), 0);
-
-        let ping_timeout = Duration::from_secs(config.job_dipatcher_ping.timeout_secs.clone());
-        let time_between_checks = Duration::from_secs(config.job_dipatcher_ping.interval_secs.clone());
-        let max_retries_per_job_dispatcher = config.job_dipatcher_ping.max_retries.clone();
+        let ping_helper = match &config.job_dipatcher_ping {
+            Some(ping_config) => PingHelper::new(ping_config.clone()),
+            None => PingHelper::default(),
+        };
 
         Ok(Self {
             config,
@@ -203,13 +191,7 @@ impl BitVMX {
                 was_synced: false,
             },
             wallet,
-            retries_per_job_dispatcher,
-            ping_values,
-            time_since_sent_check: HashMap::new(),
-            time_to_send_check: Instant::now(),
-            max_retries_per_job_dispatcher,
-            ping_timeout,
-            time_between_checks,
+            ping_helper,
         })
     }
 
@@ -558,67 +540,7 @@ impl BitVMX {
         self.process_bitcoin_updates_with_throttle()?;
         self.process_collaboration()?;
 
-        self.check_job_dispatchers_liveness();
-
-        if self.time_to_send_check.elapsed() >= self.time_between_checks {
-            self.send_liveness_message_to_dispatchers()?;
-            self.time_to_send_check = Instant::now();
-        }
-
-        Ok(())
-    }
-
-    fn check_job_dispatchers_liveness(&mut self) {
-        let timeout_dispatcher: Vec<_> = self
-            .time_since_sent_check
-            .iter()
-            .filter(|(_, time)| time.elapsed() >= self.ping_timeout)
-            .map(|(dispatcher, _)| dispatcher.clone())
-            .collect();
-        
-        if !timeout_dispatcher.is_empty() {
-            for dispatcher_name in timeout_dispatcher {
-                let retries = self
-                    .retries_per_job_dispatcher
-                    .get_mut(&dispatcher_name)
-                    .unwrap();
-                if *retries < self.max_retries_per_job_dispatcher {
-                    warn!(
-                        "{dispatcher_name} dispatcher is not responding, retrying ({} out of {})",
-                        *retries + 1,
-                        self.max_retries_per_job_dispatcher
-                    );
-                    *retries += 1;
-                    self.time_since_sent_check.insert(dispatcher_name.clone(), Instant::now());
-                } else {
-                    error!(
-                        "{dispatcher_name} dispatcher is not responding after {} retries",
-                        self.max_retries_per_job_dispatcher
-                    );
-                    self.time_since_sent_check.remove(&dispatcher_name);
-                }
-            }
-        }
-    }
-
-    fn send_liveness_message_to_dispatchers(&mut self) -> Result<(), BitVMXError> {
-        let msg_to_prover = serde_json::to_string(&PingMessages::Ping { value: *self.ping_values.get("ZKP").unwrap()})?;
-
-        let msg_to_emulator = serde_json::to_string(&PingMessages::Ping { value: *self.ping_values.get("Emulator").unwrap()})?;
-
-        debug!("Sending ZKP dispatcher ping message: {}", msg_to_prover);
-        self.program_context
-            .broker_channel
-            .send(&self.config.components.prover, msg_to_prover)?;
-
-        self.time_since_sent_check.insert("ZKP".to_string(), Instant::now());
-
-        debug!("Sending Emulator dispatcher ping message: {}", msg_to_emulator);
-        self.program_context
-            .broker_channel
-            .send(&self.config.components.emulator, msg_to_emulator)?;
-
-        self.time_since_sent_check.insert("Emulator".to_string(), Instant::now());
+        self.ping_helper.check_job_dispatchers_liveness(&self.program_context, &self.config.components)?;
 
         Ok(())
     }
@@ -1098,24 +1020,8 @@ impl BitVMXApi for BitVMX {
     }
 
     fn handle_prover_message(&mut self, msg: String) -> Result<(), BitVMXError> {
-        if msg.contains("Pong") {
-            debug!("Received Pong Message from Emulator Job Dispatcher");
-            let message: PingMessages = serde_json::from_str(&msg)?;
-            let value = match message {
-                PingMessages::Pong { value } => value,
-                PingMessages::Ping { .. } => {
-                    warn!("Bitvmx Client should not receive Ping Message from Job Dispatcher");
-                    return Ok(());
-                },
-            };
-
-            if value != *self.ping_values.get("ZKP").unwrap() {
-                warn!("Received Pong with unexpected value: {} (expected {})", value, self.ping_values.get("ZKP").unwrap());
-            }
-            
-            self.time_since_sent_check.remove("ZKP");
-            self.retries_per_job_dispatcher.insert("ZKP".to_string(), 0);
-            self.ping_values.entry("ZKP".to_string()).and_modify(|v| *v = v.wrapping_add(1));
+        if let Some(message) = serde_json::from_str::<PingMessage>(&msg).ok(){
+            self.ping_helper.received_message("ZKP", &message);
         } else {
             let result_message = ResultMessage::from_str(&msg)?;
             let parsed: serde_json::Value = result_message.result_as_value()?;
@@ -1184,23 +1090,8 @@ impl BitVMXApi for BitVMX {
     }
 
     fn handle_emulator_message(&mut self, msg: &String) -> Result<(), BitVMXError> {
-        if msg.contains("Pong") {
-            debug!("Received Pong Message from Emulator Job Dispatcher");
-            let message: PingMessages = serde_json::from_str(msg)?;
-            let value = match message {
-                PingMessages::Pong { value } => value,
-                PingMessages::Ping { .. } => {
-                    warn!("Bitvmx Client should not receive Ping Message from Job Dispatcher");
-                    return Ok(());
-                },
-            };
-            if value != *self.ping_values.get("Emulator").unwrap() {
-                warn!("Received Pong with unexpected value: {} (expected {})", value, self.ping_values.get("ZKP").unwrap());
-            }
-            
-            self.time_since_sent_check.remove("Emulator");
-            self.retries_per_job_dispatcher.insert("Emulator".to_string(), 0);
-            self.ping_values.entry("Emulator".to_string()).and_modify(|v| *v = v.wrapping_add(1));
+        if let Some(message) = serde_json::from_str::<PingMessage>(&msg).ok(){
+            self.ping_helper.received_message("Emulator", &message);
         } else {
             let result_message = ResultMessage::from_str(&msg)?;
             let parsed: serde_json::Value = result_message.result_as_value()?;

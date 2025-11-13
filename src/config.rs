@@ -87,7 +87,6 @@ pub struct ComponentsConfig {
 pub struct PingConfig {
     pub interval_secs: u64,
     pub timeout_secs: u64,
-    pub max_retries: u8,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -105,7 +104,7 @@ pub struct Config {
     pub coordinator_settings: Option<CoordinatorSettingsConfig>,
     pub coordinator: ThrotthleUpdate,
     pub wallet: WalletConfig,
-    pub job_dipatcher_ping: PingConfig,
+    pub job_dipatcher_ping: Option<PingConfig>,
 }
 
 impl Config {
