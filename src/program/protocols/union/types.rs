@@ -45,6 +45,9 @@ pub const WT_INIT_CHALLENGE_TX: &str = "WT_INIT_CHALLENGE_TX";
 pub const PROTOCOL_FUNDING_TX: &str = "PROTOCOL_FUNDING_TX";
 pub const WT_CLAIM_GATE: &str = "WT_CLAIM_GATE";
 pub const OP_CLAIM_GATE: &str = "OP_CLAIM_GATE";
+pub const OP_COSIGN_TX: &str = "OP_COSIGN_TX";
+pub const OP_NO_COSIGN_TX: &str = "OP_NO_COSIGN_TX";
+pub const WT_NO_CHALLENGE_TX: &str = "WT_NO_CHALLENGE_TX";
 
 // Parameters
 pub const DUST_VALUE: u64 = 540;
@@ -228,6 +231,8 @@ pub struct StreamSettings {
     pub op_won_timelock: u16,
     pub claim_gate_timelock: u16,
     pub input_not_revealed_timelock: u16,
+    pub op_no_cosign_timelock: u16,
+    pub wt_no_challenge_timelock: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
