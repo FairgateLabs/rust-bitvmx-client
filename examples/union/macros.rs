@@ -26,7 +26,7 @@ where
 #[macro_export]
 macro_rules! wait_until_msg {
     ($bitvmx:expr, $pat:pat => $extract:expr) => {{
-        let msg = wait_for_message_blocking($bitvmx, |msg| matches!(msg, $pat))?;
+        let msg = $crate::macros::wait_for_message_blocking($bitvmx, |msg| matches!(msg, $pat))?;
         if let $pat = msg {
             $extract
         } else {

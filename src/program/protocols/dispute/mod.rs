@@ -86,7 +86,7 @@ pub struct DisputeResolutionProtocol {
 }
 
 const MIN_RELAY_FEE: u64 = 1;
-const DUST: u64 = 500 * MIN_RELAY_FEE;
+pub const DUST: u64 = 500 * MIN_RELAY_FEE;
 
 pub fn protocol_cost() -> u64 {
     38_000 // This is a placeholder value, adjust as needed
@@ -293,6 +293,15 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         let config = DisputeConfiguration::load(&self.ctx.id, &context.globals)?;
         let utxo = config.protocol_connection.0.clone();
 
+        let input = config
+            .protocol_connection
+            .2
+            .clone()
+            .unwrap_or(InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::Script { leaf: 1 },
+            ));
+
         let prover_speedup_pub = keys[0].get_public("speedup")?;
         let verifier_speedup_pub = keys[1].get_public("speedup")?;
         let aggregated = computed_aggregated.get("aggregated_1").unwrap();
@@ -316,7 +325,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             EXTERNAL_START,
             (utxo.1 as usize).into(),
             START_CH,
-            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
+            input,
             None,
             Some(utxo.0),
         )?;

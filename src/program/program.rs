@@ -203,6 +203,11 @@ impl Program {
 
             let mut aggregated_pub_keys = vec![];
 
+            debug!(
+                "Computing aggregated key '{}' with {} participants",
+                agg_name,
+                self.participants.len()
+            );
             for other in &self.participants {
                 let other_key = other
                     .keys

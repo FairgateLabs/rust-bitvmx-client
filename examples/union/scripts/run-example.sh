@@ -21,12 +21,13 @@ fi
 
 name="$1"
 LOGS_DIR="logs/examples/$name"
-rm -rf "$LOGS_DIR"
-mkdir -p "$LOGS_DIR"
 echo "Setting up example: $name"
 EXAMPLE_LOG_FILE="$LOGS_DIR/example.log"
 
-# Clean up previous logs and data
+# save previous logs
+mv "$EXAMPLE_LOG_FILE" "$EXAMPLE_LOG_FILE.bak" || true
+
+# Clean up previous data
 rm -rf /tmp/regtest/
 
 # Kill all bitvmx-client process
@@ -40,15 +41,6 @@ echo "Bitcoin regtest node setup complete."
 # Initialize log file
 echo "" > "$EXAMPLE_LOG_FILE"
 
-# Open log in VS Code if available
-if command -v code >/dev/null 2>&1; then
-  # Open log in VS Code
-  code --reuse-window "$EXAMPLE_LOG_FILE" &
-else
-  echo "VS Code not found. Open logs manually at:"
-  echo "  $EXAMPLE_LOG_FILE"
-  echo ""
-fi
 
 # Ensure cleanup of bitvmx-client processes on script exit
 function cleanup() {
@@ -63,6 +55,10 @@ echo "Running BitVMX clients on regtest..."
 OP_COUNT=4
 for i in $(seq 1 $OP_COUNT); do
   op_name="op_${i}"
+
+  # save previous logs
+  mv "$LOGS_DIR/bitvmx_$op_name.log" "$LOGS_DIR/bitvmx_$op_name.log.bak" || true
+
   RUST_BACKTRACE=full cargo run --release "$op_name" --fresh 2>&1 \
     | sed -u -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})*)?[mGKHF]//g" > "$LOGS_DIR/bitvmx_$op_name.log" &
 done

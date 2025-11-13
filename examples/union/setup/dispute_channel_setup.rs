@@ -1,5 +1,10 @@
 use anyhow::Result;
 use bitcoin::PublicKey;
+use protocol_builder::types::{
+    connection::InputSpec,
+    input::{SighashType, SpendMode},
+    OutputType,
+};
 use std::collections::HashMap;
 use tracing::info;
 use uuid::Uuid;
@@ -8,13 +13,24 @@ use bitvmx_client::{
     client::BitVMXClient,
     program::{
         participant::{CommsAddress, ParticipantRole},
-        protocols::union::{common::get_dispute_channel_pid, types::MemberData},
-        variables::VariableTypes,
+        protocols::{
+            dispute::config::DisputeConfiguration,
+            union::{
+                common::{get_dispute_channel_pid, get_dispute_core_pid},
+                types::{MemberData, WT_START_ENABLER_UTXOS},
+            },
+        },
+        variables::{PartialUtxo, VariableTypes},
     },
-    types::PROGRAM_TYPE_DRP,
+    types::{OutgoingBitVMXApiMessages, PROGRAM_TYPE_DRP},
 };
 
-// const FUNDING_UTXO_SUFFIX: &str = "_FUNDING_UTXO";
+use crate::wait_until_msg;
+
+use bitvmx_client::program::protocols::dispute::DUST as DRP_DUST_VALUE;
+
+const DRP_TIMELOCK_BLOCKS: u16 = 15; // TODO review if this is the right value
+const DRP_PROGRAM_DEFINITION: &str = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml"; // TODO move to config?
 
 pub struct DisputeChannelSetup;
 
@@ -49,6 +65,14 @@ impl DisputeChannelSetup {
 
             // If I'm an operator, set up DisputeChannel where I'm the operator and my partner is the watchtower
             if prover {
+                // get wt start enabler utxos
+                let wt_start_enablers = Self::get_wt_start_enabler_utxos(
+                    committee_id,
+                    &bitvmx,
+                    partner_index,
+                    members,
+                )?;
+
                 Self::print_setup_info(my_index, my_index, partner_index);
                 Self::setup_one(
                     committee_id,
@@ -58,6 +82,7 @@ impl DisputeChannelSetup {
                     partner_address,
                     &bitvmx,
                     pair_key,
+                    &wt_start_enablers,
                 )?;
 
                 total_setups += 1;
@@ -65,6 +90,10 @@ impl DisputeChannelSetup {
 
             // If my partner is an operator, set up DisputeChannel where they are the operator and I'm the watchtower
             if members[partner_index].role == ParticipantRole::Prover {
+                // get wt start enabler utxos
+                let wt_start_enablers =
+                    Self::get_wt_start_enabler_utxos(committee_id, &bitvmx, my_index, members)?;
+
                 Self::print_setup_info(my_index, partner_index, my_index);
                 Self::setup_one(
                     committee_id,
@@ -74,6 +103,7 @@ impl DisputeChannelSetup {
                     &my_address,
                     &bitvmx,
                     pair_key,
+                    &wt_start_enablers,
                 )?;
 
                 total_setups += 1;
@@ -81,9 +111,26 @@ impl DisputeChannelSetup {
         }
 
         info!("DisputeChannel setup complete ({} setups)", total_setups);
-        // TODO: Return total setups when dispute channels are re-enabled
-        Ok(0)
-        // Ok(total_setups)
+        Ok(total_setups)
+    }
+
+    fn get_wt_start_enabler_utxos(
+        committee_id: Uuid,
+        bitvmx: &BitVMXClient,
+        wt_index: usize,
+        members: &Vec<MemberData>,
+    ) -> Result<Vec<PartialUtxo>> {
+        let dispute_core_pid = get_dispute_core_pid(committee_id, &members[wt_index].take_key);
+        bitvmx.get_var(dispute_core_pid, WT_START_ENABLER_UTXOS.to_string())?;
+        std::thread::sleep(std::time::Duration::from_secs(1)); // wait a bit for the message to be processed
+
+        let variable =
+            wait_until_msg!(&bitvmx, OutgoingBitVMXApiMessages::Variable(_, _, _var) => _var);
+
+        let data = variable.string()?;
+        let wt_start_enabler_utxos: Vec<PartialUtxo> = serde_json::from_str(&data)?;
+
+        Ok(wt_start_enabler_utxos)
     }
 
     fn setup_one(
@@ -94,38 +141,44 @@ impl DisputeChannelSetup {
         watchtower: &CommsAddress,
         bitvmx: &BitVMXClient,
         pair_key: PublicKey,
+        wt_start_enablers: &Vec<PartialUtxo>,
     ) -> Result<()> {
         let drp_id = get_dispute_channel_pid(committee_id, op_index, wt_index);
-        let _participants: Vec<CommsAddress> = vec![operator.clone(), watchtower.clone()];
-
-        // Program vars
-        let program_path = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml";
-        bitvmx.set_var(
-            drp_id,
-            "program_definition",
-            VariableTypes::String(program_path.to_string()),
-        )?;
-        bitvmx.set_var(drp_id, "aggregated", VariableTypes::PubKey(pair_key))?;
-
-        // TODO: This should be loaded from WT_START_ENABLER_TX and both should set them consistently?
-        // We should request that TX to bitvmx with the proper protocol id using `get_dispute_core_pid()`
-        // If I'm a watchtower, provide funding hint
-        // if matches!(my_role, ParticipantRole::Verifier) {
-        //     if let Some(my_utxo) = wt_funding_utxos_per_member.get(my_take_pubkey) {
-        //         let wt_key = format!("{}{}", WATCHTOWER, FUNDING_UTXO_SUFFIX);
-        //         bitvmx.set_var(drp_id, &wt_key, VariableTypes::Utxo(my_utxo.clone()))?;
-        //         bitvmx.set_var(drp_id, "TIMELOCK_BLOCKS", VariableTypes::Number(1))?;
-        //     }
-        // }
+        let participants: Vec<CommsAddress> = vec![operator.clone(), watchtower.clone()];
 
         info!(
             "Setting up {} PID {} between OP {} and WT {}",
             PROGRAM_TYPE_DRP, drp_id, op_index, wt_index,
         );
 
-        // TODO: re-enable dispute channels once protocol is finalized:
-        // blocked by https://trello.com/c/eDA2ltcT/42-dispute-channel
-        // bitvmx.setup(drp_id, PROGRAM_TYPE_DRP.to_string(), participants, 0)?;
+        let dispute_configuration = DisputeConfiguration::new(
+            drp_id,
+            pair_key,
+            (
+                wt_start_enablers[op_index].clone(),
+                vec![], // TODO: this vec<usize> is not used by the protocol builder. what is it there for?
+                Some(InputSpec::Auto(SighashType::taproot_all(), SpendMode::None)),
+            ),
+            vec![], // empty prover actions
+            vec![OutputType::taproot(DRP_DUST_VALUE, &pair_key, &[])?],
+            vec![], // empty verifier actions
+            vec![OutputType::taproot(
+                DRP_DUST_VALUE,
+                &pair_key, // Use pairwise key for 2-party dispute channel
+                &[],
+            )?],
+            DRP_TIMELOCK_BLOCKS,
+            DRP_PROGRAM_DEFINITION.to_string(),
+            None, // TODO review if this is the right fail force config
+        );
+
+        bitvmx.set_var(
+            drp_id,
+            "dispute_configuration",
+            VariableTypes::String(serde_json::to_string(&dispute_configuration)?),
+        )?;
+
+        bitvmx.setup(drp_id, PROGRAM_TYPE_DRP.to_string(), participants, 0)?;
 
         Ok(())
     }

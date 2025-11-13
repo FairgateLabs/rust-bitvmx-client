@@ -3,7 +3,7 @@ use emulator::{
     decision::challenge::{ForceChallenge, ForceCondition},
     executor::utils::FailConfiguration,
 };
-use protocol_builder::types::OutputType;
+use protocol_builder::types::{connection::InputSpec, OutputType};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -17,7 +17,7 @@ use crate::{
 pub struct DisputeConfiguration {
     pub id: Uuid,
     pub operators_aggregated_pub: PublicKey,
-    pub protocol_connection: (PartialUtxo, Vec<usize>),
+    pub protocol_connection: (PartialUtxo, Vec<usize>, Option<InputSpec>),
     pub prover_actions: Vec<(PartialUtxo, Vec<usize>)>,
     pub prover_enablers: Vec<OutputType>,
     pub verifier_actions: Vec<(PartialUtxo, Vec<usize>)>,
@@ -28,10 +28,12 @@ pub struct DisputeConfiguration {
 }
 
 impl DisputeConfiguration {
+    pub const NAME: &'static str = "dispute_configuration";
+
     pub fn new(
         id: Uuid,
         operators_aggregated_pub: PublicKey,
-        protocol_connection: (PartialUtxo, Vec<usize>),
+        protocol_connection: (PartialUtxo, Vec<usize>, Option<InputSpec>),
         prover_actions: Vec<(PartialUtxo, Vec<usize>)>,
         prover_enablers: Vec<OutputType>,
         verifier_actions: Vec<(PartialUtxo, Vec<usize>)>,
@@ -56,10 +58,7 @@ impl DisputeConfiguration {
 
     // The structure is serialized as a whole. If there is a performance hit it could be serialized in parts.
     pub fn load(id: &Uuid, globals: &Globals) -> Result<Self, BitVMXError> {
-        let dispute_configuration = globals
-            .get_var(id, "dispute_configuration")?
-            .unwrap()
-            .string()?;
+        let dispute_configuration = globals.get_var(id, Self::NAME)?.unwrap().string()?;
 
         Ok(serde_json::from_str(&dispute_configuration)?)
     }
@@ -70,8 +69,7 @@ impl DisputeConfiguration {
         leader: u16,
     ) -> Result<Vec<String>, BitVMXError> {
         Ok(vec![
-            VariableTypes::String(serde_json::to_string(&self)?)
-                .set_msg(self.id, "dispute_configuration")?,
+            VariableTypes::String(serde_json::to_string(&self)?).set_msg(self.id, Self::NAME)?,
             IncomingBitVMXApiMessages::Setup(
                 self.id,
                 PROGRAM_TYPE_DRP.to_string(),
