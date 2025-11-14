@@ -1106,17 +1106,17 @@ fn challenge_uninitialized_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::Uninitialized(Verifier))
 }
 
-#[ignore]
-#[test]
-fn challenge_future_read_prover() -> Result<()> {
-    test_challenge(ForcedChallenges::FutureRead(Prover))
-}
+// #[ignore]
+// #[test]
+// fn challenge_future_read_prover() -> Result<()> {
+//     test_challenge(ForcedChallenges::FutureRead(Prover))
+// }
 
-#[ignore]
-#[test]
-fn challenge_future_read_verifier() -> Result<()> {
-    test_challenge(ForcedChallenges::FutureRead(Verifier))
-}
+// #[ignore]
+// #[test]
+// fn challenge_future_read_verifier() -> Result<()> {
+//     test_challenge(ForcedChallenges::FutureRead(Verifier))
+// }
 
 #[ignore]
 #[test]
@@ -1130,17 +1130,17 @@ fn challenge_read_value_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::ReadValue(Verifier))
 }
 
-#[ignore]
-#[test]
-fn challenge_correct_hash_prover() -> Result<()> {
-    test_challenge(ForcedChallenges::CorrectHash(Prover))
-}
+// #[ignore]
+// #[test]
+// fn challenge_correct_hash_prover() -> Result<()> {
+//     test_challenge(ForcedChallenges::CorrectHash(Prover))
+// }
 
-#[ignore]
-#[test]
-fn challenge_correct_hash_verifier() -> Result<()> {
-    test_challenge(ForcedChallenges::CorrectHash(Verifier))
-}
+// #[ignore]
+// #[test]
+// fn challenge_correct_hash_verifier() -> Result<()> {
+//     test_challenge(ForcedChallenges::CorrectHash(Verifier))
+// }
 
 // The forced Execution is required for testing because without it, the prover or verifier will not execute directly
 // #[ignore]

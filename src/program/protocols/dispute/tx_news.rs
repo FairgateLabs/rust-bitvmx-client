@@ -11,8 +11,9 @@ use crate::{
                 config::{ConfigResults, DisputeConfiguration},
                 input_handler::{get_txs_configuration, unify_inputs, unify_witnesses},
                 input_tx_name, timeout_input_tx, timeout_tx, DisputeResolutionProtocol, CHALLENGE,
-                CHALLENGE_READ, COMMITMENT, EXECUTE, INPUT_TX, POST_COMMITMENT, PRE_COMMITMENT,
-                PROVER_WINS, TRACE_VARS, VERIFIER_FINAL, VERIFIER_WINS,
+                CHALLENGE_READ, COMMITMENT, EXECUTE, GET_BITS_AND_HASHES, INPUT_TX,
+                POST_COMMITMENT, PRE_COMMITMENT, PROVER_WINS, TK_2NARY, TRACE_VARS, VERIFIER_FINAL,
+                VERIFIER_WINS,
             },
             protocol_handler::ProtocolHandler,
         },
@@ -810,7 +811,10 @@ pub fn handle_tx_news(
 
         let mut values = std::collections::HashMap::new();
 
-        let trace_vars = TRACE_VARS.get().expect("TRACE_VARS not initialized");
+        let trace_vars = TRACE_VARS
+            .get()
+            .expect("TRACE_VARS not initialized")
+            .read()?;
         for (name, _) in trace_vars.iter() {
             if *name == "prover_witness" {
                 continue;
@@ -864,7 +868,7 @@ pub fn handle_tx_news(
         let prover_step_hash = to_hex(&values["prover_prev_hash_tk"]);
         let prover_next_hash = to_hex(&values["prover_step_hash_tk"]);
         let mut decision_bits: Vec<u32> = Vec::new();
-        for i in 0..rounds {
+        for i in 1..rounds + 1 {
             let key = format!("prover_selection_bits_{}_tk", i);
             decision_bits.push(to_u32(&values[&*key]));
         }
@@ -936,12 +940,12 @@ pub fn handle_tx_news(
                             BitVMXError::VariableNotFound(drp.ctx.id, bits_name.to_string())
                         })?;
                     let bytes = witness.winternitz()?.message_bytes();
-
                     info!(
                         "Challenge will be extended with a 2nd nary search. {bits_name} are {:?}",
                         bytes
                     );
-
+                    assert_eq!(bytes.len(), 4);
+                    let selection_bits = u32::from_be_bytes(bytes.try_into().unwrap());
                     handle_nary_verifier(
                         &name,
                         drp,
@@ -954,7 +958,7 @@ pub fn handle_tx_news(
                         "selection_bits2",
                         CHALLENGE,
                         CHALLENGE_READ,
-                        bytes[0],
+                        selection_bits,
                         1, // round 2
                         NArySearchType::ReadValueChallenge,
                     )?;
@@ -1012,6 +1016,60 @@ pub fn handle_tx_news(
         )?;
     }
 
+    if GET_BITS_AND_HASHES == name && drp.role() == ParticipantRole::Verifier && vout.is_some() {
+        drp.decode_witness_from_speedup(
+            tx_id,
+            vout.unwrap(),
+            &name,
+            program_context,
+            &tx_status.tx,
+            None,
+        )?;
+        let (_program_definition, pdf) = drp.get_program_definition(program_context)?;
+        let execution_path = drp.get_execution_path()?;
+
+        let mut values = std::collections::HashMap::new();
+
+        let trace_vars = TK_2NARY.get().expect("TK_2NARY not initialized").read()?;
+        for (name, _) in trace_vars.iter() {
+            if let Some(value) = program_context.witness.get_witness(&drp.ctx.id, name)? {
+                values.insert(name.clone(), value.winternitz().unwrap().message_bytes());
+            } else {
+                return Err(BitVMXError::VariableNotFound(drp.ctx.id, name.to_string()));
+            }
+        }
+        fn to_u32(bytes: &[u8]) -> u32 {
+            u32::from_be_bytes(bytes.try_into().expect("Expected 4 bytes for u32"))
+        }
+        fn to_hex(bytes: &[u8]) -> String {
+            hex::encode(bytes)
+        }
+
+        let prover_step_hash = to_hex(&values["prover_step_hash_tk2"]);
+        let prover_next_hash = to_hex(&values["prover_next_hash_tk2"]);
+        let mut decision_bits: Vec<u32> = Vec::new();
+        for i in 0..rounds {
+            let key = format!("prover_selection_bits_{}_tk2", i);
+            decision_bits.push(to_u32(&values[&*key])); //TODO: not used?
+        }
+
+        let msg = serde_json::to_string(&DispatcherJob {
+            job_id: drp.ctx.id.to_string(),
+            job_type: EmulatorJobType::VerifierChooseChallengeForReadChallenge(
+                pdf,
+                execution_path.clone(),
+                format!("{}/{}", execution_path, "execution.json").to_string(),
+                prover_step_hash,
+                prover_next_hash,
+                fail_force_config.read.fail_config_verifier.clone(),
+                fail_force_config.read.force_challenge.clone(),
+            ),
+        })?;
+        program_context
+            .broker_channel
+            .send(&program_context.components_config.emulator, msg)?;
+    }
+
     if name == CHALLENGE_READ && drp.role() == ParticipantRole::Prover && vout.is_some() {
         info!("The challenge has ended after the 2nd n-ary search.");
         drp.decode_witness_from_speedup(
@@ -1065,7 +1123,7 @@ fn handle_nary_verifier(
     selection_bits: &str,             // "selection_bits"
     prev_name: &str,                  // COMMITMENT
     post_name: &str,                  // EXECUTE
-    decision_start_value: u8,         // 0
+    decision_start_value: u32,        // 0
     mut round: u32,                   // current round
     nary_search_type: NArySearchType, // ConflictStep
 ) -> Result<(), BitVMXError> {
@@ -1101,8 +1159,8 @@ fn handle_nary_verifier(
                 .unwrap()
                 .winternitz()?
                 .message_bytes();
-            let bits = bits[0];
-            bits
+            assert!(bits.len() == 4);
+            u32::from_be_bytes(bits.try_into().unwrap())
         };
 
         round += 1;
@@ -1122,7 +1180,7 @@ fn handle_nary_verifier(
                     pdf,
                     execution_path.clone(),
                     round as u8,
-                    decision as u32,
+                    decision,
                     format!("{}/{}", execution_path, "execution.json").to_string(),
                     prover_config,
                     nary_search_type,
@@ -1132,54 +1190,36 @@ fn handle_nary_verifier(
                 .broker_channel
                 .send(&program_context.components_config.emulator, msg)?;
         } else {
-            match nary_search_type {
-                NArySearchType::ConflictStep => {
-                    let msg = serde_json::to_string(&DispatcherJob {
-                        job_id: drp.ctx.id.to_string(),
-                        job_type: EmulatorJobType::ProverFinalTrace(
-                            pdf,
-                            execution_path.clone(),
-                            (decision + 1) as u32,
-                            format!("{}/{}", execution_path, "execution.json").to_string(),
-                            fail_force_config.main.fail_config_prover.clone(),
-                        ),
-                    })?;
-                    program_context
-                        .broker_channel
-                        .send(&program_context.components_config.emulator, msg)?;
-                }
-                NArySearchType::ReadValueChallenge => {
-                    info!("The dispute has ended after the 2nd n-ary search.");
-                    // TODO: implement transaction to end the dispute after the 2nd n-ary search
-                }
-            }
+            let msg = match nary_search_type {
+                NArySearchType::ConflictStep => serde_json::to_string(&DispatcherJob {
+                    job_id: drp.ctx.id.to_string(),
+                    job_type: EmulatorJobType::ProverFinalTrace(
+                        pdf,
+                        execution_path.clone(),
+                        (decision + 1) as u32,
+                        format!("{}/{}", execution_path, "execution.json").to_string(),
+                        fail_force_config.main.fail_config_prover.clone(),
+                    ),
+                })?,
+                NArySearchType::ReadValueChallenge => serde_json::to_string(&DispatcherJob {
+                    job_id: drp.ctx.id.to_string(),
+                    job_type: EmulatorJobType::ProverGetCosignedBitsAndHashes(
+                        pdf,
+                        execution_path.clone(),
+                        (decision) as u32,
+                        format!("{}/{}", execution_path, "execution.json").to_string(),
+                        fail_force_config.read.fail_config_prover.clone(),
+                    ),
+                })?,
+            };
+            info!("Sending final trace or cosigned bits and hashes");
+            program_context
+                .broker_channel
+                .send(&program_context.components_config.emulator, msg)?;
         }
     } else {
         if round == nary.total_rounds() as u32 && nary_search_type == NArySearchType::ConflictStep {
             dispatch_timeout_tx(drp, program_context, &timeout_tx(post_name), current_height)?;
-        }
-        // TODO: this is a temporary solution to force the verifier to choose the challenge after the last n-ary search round
-        // After a transaction to end the dispute is implemented, this can be removed
-        if round == nary.total_rounds() as u32
-            && drp.role() == ParticipantRole::Verifier
-            && nary_search_type == NArySearchType::ReadValueChallenge
-        {
-            info!("Forcing the verifier to choose the challenge after the last n-ary search round");
-            let execution_path = drp.get_execution_path()?;
-            info!("Path is {execution_path}");
-            let msg = serde_json::to_string(&DispatcherJob {
-                job_id: drp.ctx.id.to_string(),
-                job_type: EmulatorJobType::VerifierChooseChallengeForReadChallenge(
-                    pdf,
-                    execution_path.clone(),
-                    format!("{}/{}", execution_path, "execution.json").to_string(),
-                    fail_force_config.read.fail_config_verifier.clone(),
-                    fail_force_config.read.force_challenge.clone(),
-                ),
-            })?;
-            program_context
-                .broker_channel
-                .send(&program_context.components_config.emulator, msg)?;
         }
     }
     Ok(())

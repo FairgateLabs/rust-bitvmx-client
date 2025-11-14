@@ -124,7 +124,7 @@ pub const FUTURE_READ_CHALLENGE: [(&str, usize); 4] = [
 
 pub const READ_VALUE_NARY_SEARCH_CHALLENGE: [(&str, usize); 1] = [("verifier_bits", 1)];
 
-pub const READ_VALUE_CHALLENGE: [(&str, usize); 15] = [
+pub const READ_VALUE_CHALLENGE: [(&str, usize); 13] = [
     ("prover_read_1_address", 4),
     ("prover_read_1_value", 4),
     ("prover_read_1_last_step", 8),
@@ -132,24 +132,22 @@ pub const READ_VALUE_CHALLENGE: [(&str, usize); 15] = [
     ("prover_read_2_value", 4),
     ("prover_read_2_last_step", 8),
     ("verifier_read_selector", 1),
-    ("verifier_step_hash", 20), //TODO: this should be from prover translation keys
+    ("prover_step_hash_tk2", 20),
     ("verifier_write_addr", 4),
     ("verifier_write_value", 4),
     ("verifier_write_pc", 4),
     ("verifier_write_micro", 1),
-    ("verifier_next_hash", 20), //TODO: this should be from prover translation keys
-    ("verifier_write_step", 8), //TODO: this should be from prover translation keys
-    ("verifier_conflict_step", 8), //TODO: this should be from prover translation keys
+    ("prover_next_hash_tk2", 20),
 ];
 
 pub const CORRECT_HASH_CHALLENGE: [(&str, usize); 7] = [
-    ("verifier_prover_hash", 20), //TODO: this should be from prover translation keys
+    ("prover_step_hash_tk2", 20),
     ("verifier_hash", 20),
     ("verifier_write_addr", 4),
     ("verifier_write_value", 4),
     ("verifier_write_pc", 4),
     ("verifier_write_micro", 1),
-    ("verifier_next_hash", 20), //TODO: this should be from prover translation keys
+    ("prover_next_hash_tk2", 20),
 ];
 
 pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 13] = [
@@ -846,31 +844,16 @@ pub fn get_challenge_leaf(
                 &format!("verifier_write_micro"),
                 trace.get_pc().get_micro(),
             )?;
-            // set_input_hex(
-            //     id,
-            //     context,
-            //     &format!("verifier_next_hash"),
-            //     &prover_next_hash,
-            // )?;
-            // set_input_u64(id, context, &format!("verifier_write_step"), *write_step)?;
-            // set_input_u64(
-            //     id,
-            //     context,
-            //     &format!("verifier_conflict_step"),
-            //     *conflict_step,
-            // )?;
-            todo!("See changes in CPU. Some vars are missing");
+            todo!("work in progress");
         }
         ChallengeType::CorrectHash {
-            prover_step_hash,
+            prover_step_hash: _,
             verifier_hash,
             trace,
-            prover_next_hash,
+            prover_next_hash: _,
         } => {
             name = "correct_hash";
             info!("Verifier chose {name} challenge");
-
-            // set_input_hex(id, context, &format!("verifier_prover_hash"), &prover_hash)?;
             set_input_hex(id, context, &format!("verifier_hash"), &verifier_hash)?;
             set_input_u32(
                 id,
@@ -896,8 +879,6 @@ pub fn get_challenge_leaf(
                 &format!("verifier_write_micro"),
                 trace.get_pc().get_micro(),
             )?;
-            // set_input_hex(id, context, &format!("verifier_next_hash"), &next_hash)?;
-            todo!("UPDATE")
         }
 
         ChallengeType::EquivocationHash {

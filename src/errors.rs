@@ -12,6 +12,7 @@ use key_manager::{
     musig2::errors::Musig2SignerError,
 };
 use protocol_builder::errors::{ProtocolBuilderError, ScriptError, UnspendableKeyError};
+use std::sync::PoisonError;
 use std::time::Duration;
 use storage_backend::error::StorageError;
 use thiserror::Error;
@@ -182,6 +183,15 @@ pub enum BitVMXError {
 
     #[error("Identification error: {0}")]
     IdentificationError(#[from] IdentificationError),
+
+    #[error("Poisoned lock error: {0}")]
+    PoisonedLockError(String),
+}
+
+impl<T> From<PoisonError<T>> for BitVMXError {
+    fn from(err: PoisonError<T>) -> Self {
+        BitVMXError::PoisonedLockError(format!("Lock poisoned: {err}"))
+    }
 }
 
 impl BitVMXError {

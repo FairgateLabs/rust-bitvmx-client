@@ -13,7 +13,7 @@ use crate::{
     program::{
         protocols::dispute::{
             challenge::get_challenge_leaf, input_handler::*, DisputeResolutionProtocol, CHALLENGE,
-            CHALLENGE_READ, EXECUTE,
+            CHALLENGE_READ, EXECUTE, GET_BITS_AND_HASHES,
         },
         variables::VariableTypes,
     },
@@ -105,11 +105,11 @@ pub fn execution_result(
                     ("NARY_VERIFIER", "selection_bits") // 1st n-ary search
                 };
 
-            set_input_u8(
+            set_input_u32(
                 id,
                 context,
                 &format!("{}_{}", selection_bits, round),
-                *v_decision as u8,
+                *v_decision,
             )?;
 
             let (tx, sp) = drp.get_tx_with_speedup_data(
@@ -221,7 +221,7 @@ pub fn execution_result(
                 set_input_u32(
                     id,
                     context,
-                    &format!("prover_selection_bits_{}_tk", decision_bit.0),
+                    &format!("prover_selection_bits_{}_tk", decision_bit.0 + 1),
                     *decision_bit.1,
                 )?;
             }
@@ -278,10 +278,35 @@ pub fn execution_result(
             )?;
         }
         EmulatorResultType::ProverGetCosignedBitsAndHashesResult {
-            resigned_step_hash: _,
-            resigned_next_hash: _,
-            cosigned_decision_bits: _,
-        } => todo!(),
+            resigned_step_hash,
+            resigned_next_hash,
+            cosigned_decision_bits,
+        } => {
+            info!(
+                "Prover got cosigned bits and hashes: {:?}, {:?}, {:?}",
+                resigned_step_hash, resigned_next_hash, cosigned_decision_bits
+            );
+
+            set_input_hex(id, context, "prover_step_hash_tk2", resigned_step_hash)?; //TODO: rename in CPU
+            set_input_hex(id, context, "prover_next_hash_tk2", resigned_next_hash)?; //TODO: rename in CPU
+            for decision_bit in cosigned_decision_bits.iter().enumerate() {
+                set_input_u32(
+                    id,
+                    context,
+                    &format!("prover_selection_bits_{}_tk2", decision_bit.0),
+                    *decision_bit.1,
+                )?;
+            }
+            let (tx, sp) =
+                drp.get_tx_with_speedup_data(context, GET_BITS_AND_HASHES, 0, 0, true)?; //ASK: new_tx? index?
+
+            context.bitcoin_coordinator.dispatch(
+                tx,
+                Some(sp),
+                Context::ProgramId(*id).to_string()?,
+                None,
+            )?;
+        }
     }
     Ok(())
 }
