@@ -3,10 +3,11 @@ use crate::{
     program::{
         participant::{ParticipantKeys, ParticipantRole, PublicKeyType},
         protocols::{
+            claim::ClaimGate,
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
                 common::{
-                    create_transaction_reference, estimate_fee, extract_index,
+                    create_transaction_reference, double_indexed_name, estimate_fee, extract_index,
                     get_accept_pegin_pid, get_initial_deposit_output_type, get_stream_setting,
                     indexed_name, load_union_settings,
                 },
@@ -45,6 +46,7 @@ pub const CHALLENGE_KEY: &str = "CHALLENGE_KEY";
 const SLOT_ID_KEY: &str = "SLOT_ID_KEY";
 const SLOT_ID_KEYS: &str = "SLOT_ID_KEYS";
 const MEMBERS_SLOT_ID_KEYS: &str = "MEMBERS_SLOT_ID_KEYS";
+const CLAIM_GATE_FEE: u64 = 335; // TODO: Validate this value
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DisputeCoreProtocol {
@@ -182,8 +184,13 @@ impl ProtocolHandler for DisputeCoreProtocol {
             &committee.dispute_aggregated_key.clone(),
         )?;
 
-        let mut wt_start_enabler_outputs =
-            self.create_wt_start_enabler(&mut protocol, &dispute_core_data, &committee, &keys)?;
+        let mut wt_start_enabler_outputs = self.create_wt_start_enabler(
+            &mut protocol,
+            &dispute_core_data,
+            &committee,
+            &keys,
+            &settings,
+        )?;
 
         let operator_won_script = timelock(
             settings.op_won_timelock,
@@ -425,8 +432,10 @@ impl DisputeCoreProtocol {
         data: &DisputeCoreData,
         committee: &Committee,
         keys: &Vec<ParticipantKeys>,
+        settings: &StreamSettings,
     ) -> Result<Vec<OutputType>, BitVMXError> {
         let wt_speedup_key = keys[data.member_index].get_public(SPEEDUP_KEY)?;
+        let wt_dispute_key = &committee.members[data.member_index].dispute_key;
         let verify_dispute_key = protocol_builder::scripts::verify_signature(
             &committee.dispute_aggregated_key,
             SignMode::Aggregate,
@@ -436,6 +445,8 @@ impl DisputeCoreProtocol {
         for (member_index, member) in committee.members.clone().iter().enumerate() {
             // NOTE: This introduce a shift between scripts and slots to open a dispute
             let mut scripts = vec![verify_dispute_key.clone()];
+            let op_speedup_key = keys[member_index].get_public(SPEEDUP_KEY)?;
+            let op_dispute_key = &committee.members[member_index].dispute_key;
 
             if member.role == ParticipantRole::Prover && data.member_index != member_index {
                 for slot in 0..committee.packet_size as usize {
@@ -454,13 +465,64 @@ impl DisputeCoreProtocol {
             let start_enabler_output =
                 OutputType::taproot(AUTO_AMOUNT, &committee.dispute_aggregated_key, &scripts)?;
 
-            protocol.add_transaction_output(
-                &WT_START_ENABLER_TX,
-                // FIXME: Internal key should be wt_dispute_key?
-                &start_enabler_output,
+            outputs.push(start_enabler_output.clone());
+
+            let init_challenge_name =
+                double_indexed_name(WT_INIT_CHALLENGE_TX, data.member_index, member_index);
+
+            protocol.add_connection(
+                "init_challenge",
+                WT_START_ENABLER_TX,
+                start_enabler_output.into(),
+                &init_challenge_name,
+                InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
+                None,
+                None,
             )?;
 
-            outputs.push(start_enabler_output);
+            if member.role == ParticipantRole::Prover && data.member_index != member_index {
+                // Create WT claim gate
+                let wt_claim_name =
+                    double_indexed_name(WT_CLAIM_GATE, data.member_index, member_index);
+
+                let wt_claim_gate = ClaimGate::new(
+                    protocol,
+                    &init_challenge_name,
+                    &wt_claim_name,
+                    (wt_dispute_key, self.get_sign_mode(data.member_index)),
+                    &committee.dispute_aggregated_key,
+                    CLAIM_GATE_FEE,
+                    DUST_VALUE,
+                    vec![op_speedup_key],
+                    Some(vec![&committee.dispute_aggregated_key]), // FIXME: This should be the key pair aggregated.
+                    settings.claim_gate_timelock,
+                    1, // Single output to connect to FullPenalization
+                    vec![],
+                    true,
+                    None,
+                )?;
+
+                // Create OP claim gate
+                let op_claim_name =
+                    double_indexed_name(OP_CLAIM_GATE, data.member_index, member_index);
+
+                let _op_claim_gate = ClaimGate::new(
+                    protocol,
+                    &init_challenge_name,
+                    &op_claim_name,
+                    (op_dispute_key, self.get_sign_mode(member_index)),
+                    &committee.dispute_aggregated_key,
+                    CLAIM_GATE_FEE,
+                    DUST_VALUE,
+                    vec![wt_speedup_key],
+                    Some(vec![&committee.dispute_aggregated_key]), // FIXME: This should be the key pair aggregated.
+                    settings.claim_gate_timelock,
+                    1, // Single output to connect to FullPenalization
+                    vec![],
+                    false,
+                    wt_claim_gate.exclusive_success_vout,
+                )?;
+            }
         }
 
         let wt_disabler_directory_fee = estimate_fee(2, committee.members.len(), 1);
@@ -692,7 +754,7 @@ impl DisputeCoreProtocol {
                     key_path_sign: SignMode::Aggregate,
                 },
             ),
-            None,
+            Some(settings.input_not_revealed_timelock),
             None,
         )?;
 
@@ -1687,5 +1749,13 @@ impl DisputeCoreProtocol {
         }
 
         Ok(())
+    }
+
+    fn get_sign_mode(&self, index: usize) -> SignMode {
+        if index == self.ctx.my_idx {
+            SignMode::Single
+        } else {
+            SignMode::Skip
+        }
     }
 }
