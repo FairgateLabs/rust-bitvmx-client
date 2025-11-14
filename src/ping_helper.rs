@@ -1,10 +1,26 @@
-use std::{collections::HashMap, time::{Duration, Instant}};
+use std::{collections::HashMap, fmt::Display, time::{Duration, Instant}};
 use tracing::{debug, warn};
 use bitvmx_job_dispatcher::helper::PingMessage;
 use crate::{config::{ComponentsConfig, PingConfig}, errors::BitVMXError, types::ProgramContext};
 
-pub struct PingHelper {
-    time_since_sent_check: HashMap<String, Instant>,
+#[derive(Eq, Hash, PartialEq, Clone, Copy)]
+pub(crate) enum JobDispatcherType {
+    ZKP,
+    Emulator,
+}
+
+impl Display for JobDispatcherType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            JobDispatcherType::ZKP => write!(f, "ZKP"),
+            JobDispatcherType::Emulator => write!(f, "Emulator"),
+        }
+    }
+}
+
+
+pub(crate) struct PingHelper {
+    time_since_sent_check: HashMap<JobDispatcherType, Instant>,
     time_to_send_check: Instant,
     ping_timeout: Duration,
     time_between_checks: Duration,
@@ -70,7 +86,7 @@ impl PingHelper {
             .broker_channel
             .send(&components.prover, msg_to_prover)?;
 
-        self.time_since_sent_check.insert("ZKP".to_string(), Instant::now());
+        self.time_since_sent_check.insert(JobDispatcherType::ZKP, Instant::now());
 
         debug!("Sending Emulator dispatcher ping message: {}", msg_to_emulator);
 
@@ -78,12 +94,12 @@ impl PingHelper {
             .broker_channel
             .send(&components.emulator, msg_to_emulator)?;
 
-        self.time_since_sent_check.insert("Emulator".to_string(), Instant::now());
+        self.time_since_sent_check.insert(JobDispatcherType::Emulator, Instant::now());
         
         Ok(())
     }
 
-    pub fn received_message(&mut self, dispatcher_name: &str, message: &PingMessage){
+    pub fn received_message(&mut self, dispatcher_name: JobDispatcherType, message: &PingMessage){
         match message {
             PingMessage::Ping => {
                 warn!("Client should not receive Ping");
@@ -92,7 +108,7 @@ impl PingHelper {
             PingMessage::Pong => debug!("Received Pong Message from {} Job Dispatcher", dispatcher_name),
         }
 
-        self.time_since_sent_check.remove(dispatcher_name);
+        self.time_since_sent_check.remove(&dispatcher_name);
     }
 
 }

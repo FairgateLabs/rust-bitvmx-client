@@ -70,8 +70,3 @@ wallet:
   change_key: cP1ZRRhFSgaQ4dEqpERzt43eVkEJGko2VeWuedAz34M6H9Vjc6zo
   db_path: /tmp/regtest/user_1/wallet.db
   start_height: 0
-
-job_dipatcher_ping:
-  interval_secs: 120
-  timeout_secs: 30
-  max_retries: 5

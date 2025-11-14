@@ -1,5 +1,5 @@
 use crate::config::ComponentsConfig;
-use crate::ping_helper::PingHelper;
+use crate::ping_helper::{JobDispatcherType, PingHelper};
 use crate::program::protocols::protocol_handler::ProtocolHandler;
 use crate::{
     api::BitVMXApi,
@@ -1021,7 +1021,7 @@ impl BitVMXApi for BitVMX {
 
     fn handle_prover_message(&mut self, msg: String) -> Result<(), BitVMXError> {
         if let Some(message) = serde_json::from_str::<PingMessage>(&msg).ok(){
-            self.ping_helper.received_message("ZKP", &message);
+            self.ping_helper.received_message(JobDispatcherType::ZKP, &message);
         } else {
             let result_message = ResultMessage::from_str(&msg)?;
             let parsed: serde_json::Value = result_message.result_as_value()?;
@@ -1091,7 +1091,7 @@ impl BitVMXApi for BitVMX {
 
     fn handle_emulator_message(&mut self, msg: &String) -> Result<(), BitVMXError> {
         if let Some(message) = serde_json::from_str::<PingMessage>(&msg).ok(){
-            self.ping_helper.received_message("Emulator", &message);
+            self.ping_helper.received_message(JobDispatcherType::Emulator, &message);
         } else {
             let result_message = ResultMessage::from_str(&msg)?;
             let parsed: serde_json::Value = result_message.result_as_value()?;
