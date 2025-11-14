@@ -469,20 +469,9 @@ impl DisputeCoreProtocol {
 
             outputs.push(start_enabler_output.clone());
 
-            let init_challenge_name =
-                double_indexed_name(WT_INIT_CHALLENGE_TX, data.member_index, member_index);
-
-            protocol.add_connection(
-                "init_challenge",
-                WT_START_ENABLER_TX,
-                start_enabler_output.into(),
-                &init_challenge_name,
-                InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
-                None,
-                None,
-            )?;
-
             if member.role == ParticipantRole::Prover && data.member_index != member_index {
+                let init_challenge_name =
+                    double_indexed_name(WT_INIT_CHALLENGE_TX, data.member_index, member_index);
                 let op_cosign_name =
                     double_indexed_name(OP_COSIGN_TX, data.member_index, member_index);
                 let op_no_cosign_name =
@@ -493,6 +482,16 @@ impl DisputeCoreProtocol {
                     double_indexed_name(WT_CLAIM_GATE, data.member_index, member_index);
                 let op_claim_name =
                     double_indexed_name(OP_CLAIM_GATE, data.member_index, member_index);
+
+                protocol.add_connection(
+                    "init_challenge",
+                    WT_START_ENABLER_TX,
+                    start_enabler_output.into(),
+                    &init_challenge_name,
+                    InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
+                    None,
+                    None,
+                )?;
 
                 let timelock = timelock(
                     settings.op_no_cosign_timelock,
@@ -603,6 +602,11 @@ impl DisputeCoreProtocol {
                     &OutputType::segwit_unspendable(
                         op_return_script(vec![])?.get_script().clone(),
                     )?,
+                )?;
+            } else {
+                protocol.add_transaction_output(
+                    WT_START_ENABLER_TX,
+                    &OutputType::taproot(AUTO_AMOUNT, wt_dispute_key, &vec![])?,
                 )?;
             }
         }
