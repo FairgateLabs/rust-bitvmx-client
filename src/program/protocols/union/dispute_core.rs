@@ -26,7 +26,9 @@ use key_manager::winternitz::{WinternitzPublicKey, WinternitzType};
 use protocol_builder::{
     builder::Protocol,
     graph::graph::GraphOptions,
-    scripts::{op_return, timelock, verify_winternitz_signature_timelock, SignMode},
+    scripts::{
+        op_return, op_return_script, timelock, verify_winternitz_signature_timelock, SignMode,
+    },
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
@@ -481,10 +483,36 @@ impl DisputeCoreProtocol {
             )?;
 
             if member.role == ParticipantRole::Prover && data.member_index != member_index {
-                // Create WT claim gate
+                let op_cosign_name =
+                    double_indexed_name(OP_COSIGN_TX, data.member_index, member_index);
+                let op_no_cosign_name =
+                    double_indexed_name(OP_NO_COSIGN_TX, data.member_index, member_index);
+                let wt_no_challenge_name =
+                    double_indexed_name(WT_NO_CHALLENGE_TX, data.member_index, member_index);
                 let wt_claim_name =
                     double_indexed_name(WT_CLAIM_GATE, data.member_index, member_index);
+                let op_claim_name =
+                    double_indexed_name(OP_CLAIM_GATE, data.member_index, member_index);
 
+                let timelock = timelock(
+                    settings.op_no_cosign_timelock,
+                    &wt_dispute_key,
+                    self.get_sign_mode(data.member_index),
+                );
+
+                // FIXME: Review this output. This goes to OP_COSIGN.
+                // This should cosign the challenge input to be able to open the challenge.
+                protocol.add_connection(
+                    "op_cosign",
+                    &init_challenge_name,
+                    OutputType::taproot(AUTO_AMOUNT, op_dispute_key, &vec![timelock])?.into(),
+                    &op_cosign_name,
+                    InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
+                    None,
+                    None,
+                )?;
+
+                // Create WT claim gate
                 let wt_claim_gate = ClaimGate::new(
                     protocol,
                     &init_challenge_name,
@@ -503,10 +531,7 @@ impl DisputeCoreProtocol {
                 )?;
 
                 // Create OP claim gate
-                let op_claim_name =
-                    double_indexed_name(OP_CLAIM_GATE, data.member_index, member_index);
-
-                let _op_claim_gate = ClaimGate::new(
+                let op_claim_gate = ClaimGate::new(
                     protocol,
                     &init_challenge_name,
                     &op_claim_name,
@@ -521,6 +546,63 @@ impl DisputeCoreProtocol {
                     vec![],
                     false,
                     wt_claim_gate.exclusive_success_vout,
+                )?;
+
+                protocol.add_connection(
+                    "wt_no_challenge",
+                    &op_cosign_name,
+                    // FIXME: Review this output. This goes to DisputeChallenge
+                    OutputType::taproot(AUTO_AMOUNT, wt_dispute_key, &vec![])?.into(),
+                    &wt_no_challenge_name,
+                    InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
+                    None,
+                    None,
+                )?;
+
+                // OP NO COSIGN TX
+                protocol.add_connection(
+                    "op_no_cosign",
+                    &init_challenge_name,
+                    OutputSpec::Index(0),
+                    &op_no_cosign_name,
+                    InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
+                    None,
+                    None,
+                )?;
+
+                protocol.add_connection(
+                    "op_no_cosign",
+                    &init_challenge_name,
+                    OutputSpec::Index(wt_claim_gate.vout + 1),
+                    &op_no_cosign_name,
+                    InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
+                    None,
+                    None,
+                )?;
+
+                protocol.add_transaction_output(
+                    &op_no_cosign_name,
+                    &OutputType::segwit_unspendable(
+                        op_return_script(vec![])?.get_script().clone(),
+                    )?,
+                )?;
+
+                // WT NO CHALLENGE TX
+                protocol.add_connection(
+                    "wt_no_challenge",
+                    &init_challenge_name,
+                    OutputSpec::Index(op_claim_gate.vout + 1),
+                    &wt_no_challenge_name,
+                    InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
+                    None,
+                    None,
+                )?;
+
+                protocol.add_transaction_output(
+                    &wt_no_challenge_name,
+                    &OutputType::segwit_unspendable(
+                        op_return_script(vec![])?.get_script().clone(),
+                    )?,
                 )?;
             }
         }
