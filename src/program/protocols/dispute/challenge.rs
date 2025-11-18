@@ -122,7 +122,7 @@ pub const FUTURE_READ_CHALLENGE: [(&str, usize); 4] = [
     ("verifier_read_selector", 1),
 ];
 
-pub const READ_VALUE_NARY_SEARCH_CHALLENGE: [(&str, usize); 1] = [("verifier_bits", 1)];
+pub const READ_VALUE_NARY_SEARCH_CHALLENGE: [(&str, usize); 1] = [("verifier_bits", 4)];
 
 pub const READ_VALUE_CHALLENGE: [(&str, usize); 13] = [
     ("prover_read_1_address", 4),
@@ -524,7 +524,7 @@ pub fn challenge_scripts(
                                 future_read_challenge(&mut stack, rounds, nary, nary_last_round);
                             }
                             "read_value_nary_search" => {
-                                let var = stack.define(2, "bits");
+                                let var = stack.define(8, "bits");
                                 stack.drop(var);
                                 //TODO: Should verify if var < 2^max_bits, with max_bits from N-ary search def
                             }
@@ -777,7 +777,7 @@ pub fn get_challenge_leaf(
             name = "read_value_nary_search";
             info!("Verifier chose {name} challenge");
 
-            set_input_u8(id, context, &format!("verifier_bits"), *bits as u8)?;
+            set_input_u32(id, context, &format!("verifier_bits"), *bits)?;
         }
         ChallengeType::FutureRead {
             cosigned_decisions_bits: _,
@@ -844,7 +844,6 @@ pub fn get_challenge_leaf(
                 &format!("verifier_write_micro"),
                 trace.get_pc().get_micro(),
             )?;
-            todo!("work in progress");
         }
         ChallengeType::CorrectHash {
             prover_step_hash: _,

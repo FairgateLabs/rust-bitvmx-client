@@ -980,7 +980,7 @@ fn challenge_trace_hash_prover() -> Result<()> {
     test_challenge(ForcedChallenges::TraceHash(Prover))
 }
 
-#[ignore] //FIX: not working. ACTION_VERIFIER_WINS_1 has been seen on-chain
+#[ignore]
 #[test]
 fn challenge_trace_hash_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::TraceHash(Verifier))
@@ -1106,6 +1106,7 @@ fn challenge_uninitialized_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::Uninitialized(Verifier))
 }
 
+//ASK: Future read, correct hash, read_value and correct_hash challenges have variable parameters that need to be constant
 // #[ignore]
 // #[test]
 // fn challenge_future_read_prover() -> Result<()> {
@@ -1118,17 +1119,17 @@ fn challenge_uninitialized_verifier() -> Result<()> {
 //     test_challenge(ForcedChallenges::FutureRead(Verifier))
 // }
 
-#[ignore]
-#[test]
-fn challenge_read_value_prover() -> Result<()> {
-    test_challenge(ForcedChallenges::ReadValue(Prover))
-}
+// #[ignore]
+// #[test]
+// fn challenge_read_value_prover() -> Result<()> {
+//     test_challenge(ForcedChallenges::ReadValue(Prover))
+// }
 
-#[ignore]
-#[test]
-fn challenge_read_value_verifier() -> Result<()> {
-    test_challenge(ForcedChallenges::ReadValue(Verifier))
-}
+// #[ignore]
+// #[test]
+// fn challenge_read_value_verifier() -> Result<()> {
+//     test_challenge(ForcedChallenges::ReadValue(Verifier))
+// }
 
 // #[ignore]
 // #[test]
