@@ -3,11 +3,11 @@ use crate::{
     errors::BitVMXError,
     keychain::KeyChain,
 };
-use bitvmx_operator_comms::operator_comms::{OperatorComms, PubKeyHash};
+use bitvmx_operator_comms::operator_comms::PubKeyHash;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tracing::{error, debug};
+use tracing::{debug, error};
 
 /// Centralized signature verification module
 ///
@@ -84,7 +84,7 @@ impl SignatureVerifier {
     /// - `sender_pubkey_hash`: Hash of the sender's public key
     /// - `participant_verification_keys`: Map of known verification keys (Arc<Mutex<HashMap<PubKeyHash, String>>>)
     /// - `key_chain`: KeyChain to get our own key
-    /// - `comms`: OperatorComms to get our pubkey_hash
+    /// - `my_pubkey_hash`: pubkey hash of the local operator (to detect self-messages)
     ///
     /// # Returns
     /// - `Ok(String)` with the RSA public key in PEM format
@@ -102,7 +102,7 @@ impl SignatureVerifier {
         sender_pubkey_hash: &PubKeyHash,
         participant_verification_keys: &Arc<Mutex<HashMap<PubKeyHash, String>>>,
         key_chain: &KeyChain,
-        comms: &OperatorComms,
+        my_pubkey_hash: &PubKeyHash,
     ) -> Result<String, BitVMXError> {
         match msg_type {
             CommsMessageType::VerificationKey => {
@@ -117,8 +117,7 @@ impl SignatureVerifier {
             }
             _ => {
                 // Check if it's our own message first
-                let my_pubkey_hash = comms.get_pubk_hash()?;
-                if sender_pubkey_hash == &my_pubkey_hash {
+                if sender_pubkey_hash == my_pubkey_hash {
                     return key_chain.get_rsa_public_key();
                 }
 
@@ -137,5 +136,221 @@ impl SignatureVerifier {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use serde_json::json;
+    use std::rc::Rc;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use storage_backend::storage::Storage;
+    use uuid::Uuid;
+
+    fn build_keychain() -> Result<KeyChain, BitVMXError> {
+        let mut config = Config::new(Some("config/development.yaml".to_string()))?;
+        let unique_dir = std::env::temp_dir()
+            .join("bitvmx-signature-tests")
+            .join(Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&unique_dir).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+        config.storage.path = unique_dir.join("storage.db").to_string_lossy().to_string();
+        let store = Rc::new(Storage::new(&config.storage)?);
+        KeyChain::new(&config, store)
+    }
+
+    fn default_maps() -> Arc<Mutex<HashMap<PubKeyHash, String>>> {
+        Arc::new(Mutex::new(HashMap::new()))
+    }
+
+    fn verify_message_signature_accepts_valid_payload_case() -> Result<(), BitVMXError> {
+        let key_chain = build_keychain()?;
+        let program_id = Uuid::new_v4();
+        let msg_type = CommsMessageType::Keys;
+        let data = json!({ "payload": "value" });
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let signature = {
+            let message = construct_message(
+                &program_id.to_string(),
+                "1.0",
+                msg_type.clone(),
+                &data,
+                timestamp,
+            )?;
+            key_chain.sign_rsa_message(message.as_bytes())?
+        };
+
+        let verified = SignatureVerifier::verify_message_signature(
+            &program_id.to_string(),
+            "1.0",
+            &msg_type,
+            &data,
+            timestamp,
+            &signature,
+            &"peer-1".to_string(),
+            &key_chain.get_rsa_public_key()?,
+            &key_chain,
+        )?;
+        assert!(verified);
+        Ok(())
+    }
+
+    fn verify_message_signature_detects_tampering_case() -> Result<(), BitVMXError> {
+        let key_chain = build_keychain()?;
+        let program_id = Uuid::new_v4();
+        let msg_type = CommsMessageType::Keys;
+        let original_data = json!({ "payload": "value" });
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let signature = {
+            let message = construct_message(
+                &program_id.to_string(),
+                "1.0",
+                msg_type.clone(),
+                &original_data,
+                timestamp,
+            )?;
+            key_chain.sign_rsa_message(message.as_bytes())?
+        };
+
+        let tampered_data = json!({ "payload": "tampered" });
+        let verified = SignatureVerifier::verify_message_signature(
+            &program_id.to_string(),
+            "1.0",
+            &msg_type,
+            &tampered_data,
+            timestamp,
+            &signature,
+            &"peer-1".to_string(),
+            &key_chain.get_rsa_public_key()?,
+            &key_chain,
+        )?;
+        assert!(!verified);
+        Ok(())
+    }
+
+    fn get_verification_key_from_announcement_case() -> Result<(), BitVMXError> {
+        let key_chain = build_keychain()?;
+        let map = default_maps();
+        let sender = "peer-1".to_string();
+        let my_pubkey_hash = "self".to_string();
+        let verification_key = key_chain.get_rsa_public_key()?;
+
+        let data = json!({
+            "pubkey_hash": sender.clone(),
+            "verification_key": verification_key.clone()
+        });
+
+        let key = SignatureVerifier::get_verification_key(
+            &CommsMessageType::VerificationKey,
+            &data,
+            &sender,
+            &map,
+            &key_chain,
+            &my_pubkey_hash,
+        )?;
+        assert_eq!(key, verification_key);
+        Ok(())
+    }
+
+    fn get_verification_key_for_self_message_case() -> Result<(), BitVMXError> {
+        let key_chain = build_keychain()?;
+        let map = default_maps();
+        let my_pubkey_hash = "self".to_string();
+        let data = json!({});
+
+        let key = SignatureVerifier::get_verification_key(
+            &CommsMessageType::Keys,
+            &data,
+            &my_pubkey_hash,
+            &map,
+            &key_chain,
+            &my_pubkey_hash,
+        )?;
+        assert_eq!(key, key_chain.get_rsa_public_key()?);
+        Ok(())
+    }
+
+    fn get_verification_key_from_shared_map_case() -> Result<(), BitVMXError> {
+        let key_chain = build_keychain()?;
+        let map = default_maps();
+        let sender = "peer-2".to_string();
+        let my_pubkey_hash = "self".to_string();
+        let verification_key = "peer-2-key".to_string();
+        map.lock()
+            .unwrap()
+            .insert(sender.clone(), verification_key.clone());
+
+        let key = SignatureVerifier::get_verification_key(
+            &CommsMessageType::Keys,
+            &json!({}),
+            &sender,
+            &map,
+            &key_chain,
+            &my_pubkey_hash,
+        )?;
+        assert_eq!(key, verification_key);
+        Ok(())
+    }
+
+    #[test]
+    fn verify_message_signature_accepts_valid_payload() -> Result<(), BitVMXError> {
+        verify_message_signature_accepts_valid_payload_case()
+    }
+
+    #[test]
+    fn verify_message_signature_detects_tampering() -> Result<(), BitVMXError> {
+        verify_message_signature_detects_tampering_case()
+    }
+
+    #[test]
+    fn get_verification_key_from_announcement() -> Result<(), BitVMXError> {
+        get_verification_key_from_announcement_case()
+    }
+
+    #[test]
+    fn get_verification_key_for_self_message() -> Result<(), BitVMXError> {
+        get_verification_key_for_self_message_case()
+    }
+
+    #[test]
+    fn get_verification_key_from_shared_map() -> Result<(), BitVMXError> {
+        get_verification_key_from_shared_map_case()
+    }
+
+    #[test]
+    fn get_verification_key_missing_entry_errors() -> Result<(), BitVMXError> {
+        let key_chain = build_keychain()?;
+        let map = default_maps();
+        let sender = "peer-3".to_string();
+        let my_pubkey_hash = "self".to_string();
+
+        let result = SignatureVerifier::get_verification_key(
+            &CommsMessageType::Keys,
+            &json!({}),
+            &sender,
+            &map,
+            &key_chain,
+            &my_pubkey_hash,
+        );
+        assert!(matches!(result, Err(BitVMXError::InvalidMessageFormat)));
+        Ok(())
+    }
+
+    #[ignore]
+    #[test]
+    fn test_all_signature_verifier_suite() -> Result<(), BitVMXError> {
+        verify_message_signature_accepts_valid_payload_case()?;
+        verify_message_signature_detects_tampering_case()?;
+        get_verification_key_from_announcement_case()?;
+        get_verification_key_for_self_message_case()?;
+        get_verification_key_from_shared_map_case()?;
+        Ok(())
     }
 }

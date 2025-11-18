@@ -111,37 +111,53 @@ impl StoreKey {
     }
 }
 
+fn ensure_timestamp_fresh_internal(
+    message_timestamps: &HashMap<PubKeyHash, i64>,
+    peer: &PubKeyHash,
+    timestamp: i64,
+) -> Result<(), BitVMXError> {
+    let now = Utc::now().timestamp_millis();
+    if timestamp > now + MAX_TIMESTAMP_DRIFT_MS {
+        warn!(
+            "Rejecting message from {}: timestamp {} is too far in the future (now: {})",
+            peer, timestamp, now
+        );
+        return Err(BitVMXError::InvalidMessageFormat);
+    }
+    if timestamp < now - MAX_TIMESTAMP_DRIFT_MS {
+        warn!(
+            "Rejecting message from {}: timestamp {} is too old (now: {})",
+            peer, timestamp, now
+        );
+        return Err(BitVMXError::InvalidMessageFormat);
+    }
+    if let Some(last_timestamp) = message_timestamps.get(peer) {
+        if timestamp <= *last_timestamp {
+            warn!(
+                "Rejecting message from {}: timestamp {} not newer than last seen {}",
+                peer, timestamp, last_timestamp
+            );
+            return Err(BitVMXError::InvalidMessageFormat);
+        }
+    }
+    Ok(())
+}
+
+fn record_timestamp_internal(
+    message_timestamps: &mut HashMap<PubKeyHash, i64>,
+    peer: &PubKeyHash,
+    timestamp: i64,
+) {
+    message_timestamps.insert(peer.clone(), timestamp);
+}
+
 impl BitVMX {
     fn ensure_timestamp_fresh(&self, peer: &PubKeyHash, timestamp: i64) -> Result<(), BitVMXError> {
-        let now = Utc::now().timestamp_millis();
-        if timestamp > now + MAX_TIMESTAMP_DRIFT_MS {
-            warn!(
-                "Rejecting message from {}: timestamp {} is too far in the future (now: {})",
-                peer, timestamp, now
-            );
-            return Err(BitVMXError::InvalidMessageFormat);
-        }
-        if timestamp < now - MAX_TIMESTAMP_DRIFT_MS {
-            warn!(
-                "Rejecting message from {}: timestamp {} is too old (now: {})",
-                peer, timestamp, now
-            );
-            return Err(BitVMXError::InvalidMessageFormat);
-        }
-        if let Some(last_timestamp) = self.message_timestamps.get(peer) {
-            if timestamp <= *last_timestamp {
-                warn!(
-                    "Rejecting message from {}: timestamp {} not newer than last seen {}",
-                    peer, timestamp, last_timestamp
-                );
-                return Err(BitVMXError::InvalidMessageFormat);
-            }
-        }
-        Ok(())
+        ensure_timestamp_fresh_internal(&self.message_timestamps, peer, timestamp)
     }
 
     fn record_timestamp(&mut self, peer: &PubKeyHash, timestamp: i64) {
-        self.message_timestamps.insert(peer.clone(), timestamp);
+        record_timestamp_internal(&mut self.message_timestamps, peer, timestamp);
     }
 
     pub fn new(config: Config) -> Result<Self, BitVMXError> {
@@ -293,6 +309,7 @@ impl BitVMX {
         let (version, msg_type, program_id, data, timestamp, signature) =
             deserialize_msg(msg.clone())?;
         let mut message_consumed = false;
+        let my_pubkey_hash = self.program_context.comms.get_pubk_hash()?;
 
         if let Some(mut program) = self.load_program(&program_id).ok() {
             self.ensure_timestamp_fresh(&identifier.pubkey_hash, timestamp)?;
@@ -305,7 +322,7 @@ impl BitVMX {
                 &identifier.pubkey_hash,
                 &self.program_context.participant_verification_keys,
                 &self.program_context.key_chain,
-                &self.program_context.comms,
+                &my_pubkey_hash,
             )?;
 
             // Verify message signature (except for VerificationKey which is verified later)
@@ -353,7 +370,7 @@ impl BitVMX {
                 &identifier.pubkey_hash,
                 &self.program_context.participant_verification_keys,
                 &self.program_context.key_chain,
-                &self.program_context.comms,
+                &my_pubkey_hash,
             )?;
 
             // Verify message signature (except for VerificationKey)
@@ -827,6 +844,92 @@ impl BitVMX {
         self.wallet.sync_wallet()?;
         info!("Wallet sync completed.");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Duration;
+
+    fn peer() -> PubKeyHash {
+        "peer-hash".to_string()
+    }
+
+    fn ensure_timestamp_fresh_internal_accepts_recent_message_case() {
+        let map = HashMap::new();
+        let now = Utc::now().timestamp_millis();
+        ensure_timestamp_fresh_internal(&map, &peer(), now).unwrap();
+    }
+
+    fn ensure_timestamp_fresh_internal_rejects_future_message_case() {
+        let map = HashMap::new();
+        let future = Utc::now().timestamp_millis() + MAX_TIMESTAMP_DRIFT_MS + 1;
+        let result = ensure_timestamp_fresh_internal(&map, &peer(), future);
+        assert!(matches!(result, Err(BitVMXError::InvalidMessageFormat)));
+    }
+
+    fn ensure_timestamp_fresh_internal_rejects_stale_message_case() {
+        let map = HashMap::new();
+        let past = Utc::now().timestamp_millis() - MAX_TIMESTAMP_DRIFT_MS - 1;
+        let result = ensure_timestamp_fresh_internal(&map, &peer(), past);
+        assert!(matches!(result, Err(BitVMXError::InvalidMessageFormat)));
+    }
+
+    fn ensure_timestamp_fresh_internal_rejects_replay_case() {
+        let mut map = HashMap::new();
+        let now = Utc::now().timestamp_millis();
+        record_timestamp_internal(&mut map, &peer(), now);
+        let replay = ensure_timestamp_fresh_internal(&map, &peer(), now);
+        assert!(matches!(replay, Err(BitVMXError::InvalidMessageFormat)));
+        let older = ensure_timestamp_fresh_internal(&map, &peer(), now - 1);
+        assert!(matches!(older, Err(BitVMXError::InvalidMessageFormat)));
+    }
+
+    fn record_timestamp_internal_updates_state_case() {
+        let mut map = HashMap::new();
+        let now = Utc::now().timestamp_millis();
+        record_timestamp_internal(&mut map, &peer(), now);
+        assert_eq!(map.get(&peer()), Some(&now));
+
+        let newer = now + Duration::milliseconds(1).num_milliseconds();
+        record_timestamp_internal(&mut map, &peer(), newer);
+        assert_eq!(map.get(&peer()), Some(&newer));
+    }
+
+    #[test]
+    fn ensure_timestamp_fresh_internal_accepts_recent_message() {
+        ensure_timestamp_fresh_internal_accepts_recent_message_case();
+    }
+
+    #[test]
+    fn ensure_timestamp_fresh_internal_rejects_future_message() {
+        ensure_timestamp_fresh_internal_rejects_future_message_case();
+    }
+
+    #[test]
+    fn ensure_timestamp_fresh_internal_rejects_stale_message() {
+        ensure_timestamp_fresh_internal_rejects_stale_message_case();
+    }
+
+    #[test]
+    fn ensure_timestamp_fresh_internal_rejects_replay() {
+        ensure_timestamp_fresh_internal_rejects_replay_case();
+    }
+
+    #[test]
+    fn record_timestamp_internal_updates_state() {
+        record_timestamp_internal_updates_state_case();
+    }
+
+    #[ignore]
+    #[test]
+    fn test_all_bitvmx_timestamp_guards() {
+        ensure_timestamp_fresh_internal_accepts_recent_message_case();
+        ensure_timestamp_fresh_internal_rejects_future_message_case();
+        ensure_timestamp_fresh_internal_rejects_stale_message_case();
+        ensure_timestamp_fresh_internal_rejects_replay_case();
+        record_timestamp_internal_updates_state_case();
     }
 }
 
