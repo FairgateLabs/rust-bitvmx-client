@@ -845,10 +845,12 @@ pub fn invalid_reimbursement(committee: &mut Committee, slot_index: usize) -> Re
         get_advance_funds_fee()?,
     )?;
 
+    let additional_blocks = committee.stream_settings.long_timelock + 20;
+
     info!("Starting mining loop to ensure challenge transaction is dispatched...");
     wait_for_blocks(
         &committee.bitcoin_client,
-        get_blocks_to_wait() + committee.stream_settings.long_timelock as u32,
+        get_blocks_to_wait() + additional_blocks as u32,
     )?;
 
     info!("Invalid reimbursement test complete.");
