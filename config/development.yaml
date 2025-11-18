@@ -71,3 +71,9 @@ wallet:
   change_key: cVTMy1VXsEqT4z3nT3w8vupAmqBTjZBmyyE38TYP9kju9rQWpK9F
   db_path: /tmp/regtest/development/wallet.db
   start_height: 0
+
+# coordinator_settings:
+#   max_feerate_sat_vb: 2
+#   monitor_settings:
+#     indexer_settings:
+#       checkpoint_height: 4737225
