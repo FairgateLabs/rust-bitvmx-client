@@ -73,8 +73,8 @@ pub fn main() -> Result<()> {
         Some("advance_funds_twice") => cli_advance_funds_twice()?,
         Some("invalid_reimbursement") => cli_invalid_reimbursement()?,
         Some("double_challenge") => cli_double_challenge()?,
-        Some("operator_disabler") => cli_operator_disabler()?,
-        Some("watchtower_disabler") => cli_watchtower_disabler()?,
+        // Some("operator_disabler") => cli_operator_disabler()?,
+        // Some("watchtower_disabler") => cli_watchtower_disabler()?,
         Some("self_disablers") => cli_self_disablers()?,
         // Utils
         Some("create_wallet") => cli_create_wallet(args.get(2))?,
@@ -131,14 +131,14 @@ fn print_usage() {
         "self_disablers",
         "Dispatch WT and OP self disablers transactions",
     );
-    print_cmd_help(
-        "operator_disabler",
-        "Dispatch OP disabler directory transactions",
-    );
-    print_cmd_help(
-        "watchtower_disabler",
-        "Dispatch WT disabler directory transactions",
-    );
+    // print_cmd_help(
+    //     "operator_disabler",
+    //     "Dispatch OP disabler directory transactions",
+    // );
+    // print_cmd_help(
+    //     "watchtower_disabler",
+    //     "Dispatch WT disabler directory transactions",
+    // );
 
     // Testing commands
     println!("\nUtility commands:");
@@ -436,6 +436,8 @@ pub fn cli_fund_members() -> Result<()> {
 }
 
 pub fn cli_operator_disabler() -> Result<()> {
+    // FIXME: This example should be updated because it needs to win a challenge to be able to dispatch disabler txs
+
     // NOTE: This example works better with a client node with low fees.
     // It require a fine timming to dispatch TXs and that's hard to reach if there is high fees
     // Key: Second reimbursement kickoff tx should be dispatched right after the first reimbursement kickoff tx is mined
@@ -539,6 +541,8 @@ pub fn cli_operator_disabler() -> Result<()> {
 }
 
 pub fn cli_watchtower_disabler() -> Result<()> {
+    // FIXME: This example should be updated because it needs to win a challenge to be able to dispatch disabler txs
+
     // NOTE: This example works better with a client node with low fees.
     if HIGH_FEE_NODE_ENABLED {
         info!("This example works better with a client node with low fees. Please disable HIGH_FEE_NODE_ENABLED and try again.");
