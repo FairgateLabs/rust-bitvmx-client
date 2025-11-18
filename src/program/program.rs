@@ -1,10 +1,13 @@
 use crate::{
     bitvmx::Context,
-    comms_helper::{request, response, CommsMessageType},
+    comms_helper::{
+        publish_verification_key, request, response, CommsMessageType, VerificationKeyAnnouncement,
+    },
     config::ClientConfig,
     errors::{BitVMXError, ProgramError},
     helper::{
-        parse_keys, parse_nonces, parse_signatures, PartialSignatureMessage, PubNonceMessage,
+        compute_pubkey_hash, parse_keys, parse_nonces, parse_signatures, PartialSignatureMessage,
+        PubNonceMessage,
     },
     program::{participant::ParticipantKeys, protocols::protocol_handler::new_protocol_type},
     types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramRequestInfo},
@@ -92,6 +95,7 @@ pub struct Program {
     pub leader: usize,
     pub protocol: ProtocolType,
     pub state: ProgramState,
+    pub key_signatures: HashMap<PubKeyHash, Vec<u8>>, // Store RSA signatures for each key
     #[serde(skip)]
     storage: Option<Rc<Storage>>,
     config: ClientConfig,
@@ -132,10 +136,10 @@ impl Program {
             return Err(BitVMXError::InvalidMessageFormat);
         }
 
-        let comms_address = CommsAddress::new(
-            program_context.comms.get_address(),
-            program_context.comms.get_pubk_hash()?,
-        );
+        let my_pubkey_hash = program_context.comms.get_pubk_hash()?;
+
+        let comms_address =
+            CommsAddress::new(program_context.comms.get_address(), my_pubkey_hash.clone());
 
         //FIX EXCPECT WITH PROPER ERROR (invalid message as I'm not in the list)
         let my_idx = peers
@@ -158,6 +162,18 @@ impl Program {
         // save my pos in the others list to have the complete message ready
         others[my_idx] = ParticipantData::new(&comms_address, Some(my_keys));
 
+        let my_verification_key = program_context.key_chain.get_rsa_public_key()?;
+
+        // Broadcast my verification key to all participants
+        publish_verification_key(
+            my_pubkey_hash.clone(),
+            my_verification_key.clone(),
+            &program_context.comms,
+            &program_context.key_chain,
+            id,
+            peers.clone(),
+        )?;
+
         let mut program = Self {
             program_id: *id,
             my_idx,
@@ -165,6 +181,7 @@ impl Program {
             leader,
             protocol,
             state: ProgramState::New,
+            key_signatures: HashMap::new(),
             storage: Some(storage),
             config: config.clone(),
         };
@@ -337,6 +354,56 @@ impl Program {
         self.request_helper(program_context, keys, CommsMessageType::Keys)?;
 
         self.save_retry(StoreKey::LastRequestKeys(self.program_id))?;
+        Ok(())
+    }
+
+    pub fn receive_verification_key(
+        &mut self,
+        comms_address: CommsAddress,
+        _msg_type: CommsMessageType,
+        data: Value,
+        program_context: &ProgramContext,
+        _version: String,
+        _timestamp: i64,
+        _signature: Vec<u8>,
+    ) -> Result<(), BitVMXError> {
+        // The message signature verification was already done in BitVMX::process_msg
+        // If we reach here, the message signature was verified and is valid
+        // We only process the content and store the key
+
+        let pubkey_hash = comms_address.pubkey_hash.clone();
+        let announcement: VerificationKeyAnnouncement =
+            serde_json::from_value(data.clone()).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+
+        // Additional content integrity checks
+        if announcement.pubkey_hash != pubkey_hash {
+            error!(
+                "Mismatched pubkey hash for peer {}: expected {}, got {}",
+                pubkey_hash, pubkey_hash, announcement.pubkey_hash
+            );
+            return Err(BitVMXError::InvalidMessageFormat);
+        }
+
+        let computed_hash = compute_pubkey_hash(&announcement.verification_key)?;
+        if computed_hash != announcement.pubkey_hash {
+            error!(
+                "Verification key fingerprint mismatch for peer {}",
+                pubkey_hash
+            );
+            return Err(BitVMXError::InvalidMessageFormat);
+        }
+
+        info!(
+            "Verification key received and validated for peer: {}",
+            pubkey_hash
+        );
+
+        // Store the verification key in the shared ProgramContext
+        program_context
+            .participant_verification_keys
+            .lock()
+            .unwrap()
+            .insert(pubkey_hash.clone(), announcement.verification_key);
         Ok(())
     }
 
@@ -713,16 +780,32 @@ impl Program {
     pub fn process_comms_message(
         &mut self,
         comms_address: CommsAddress,
+        version: String,
         msg_type: CommsMessageType,
         data: Value,
         program_context: &ProgramContext,
+        timestamp: i64,
+        signature: Vec<u8>,
     ) -> Result<(), BitVMXError> {
+        // The message signature verification was already done in BitVMX::process_msg
+        // If we reach here, the message signature was verified and is valid
+        // This method only focuses on the program's business logic
+
         debug!("{}: Message received: {:?} ", self.my_idx, msg_type);
 
         match msg_type {
             CommsMessageType::VerificationKey => {
-                //HPR: TO IMPLEMENT
-                todo!()
+                // Process the content and store the key
+                // (Message signature verification was already done in BitVMX::process_msg)
+                self.receive_verification_key(
+                    comms_address,
+                    msg_type,
+                    data,
+                    program_context,
+                    version.clone(),
+                    timestamp,
+                    signature.clone(),
+                )?;
             }
             CommsMessageType::Keys => {
                 self.receive_keys(comms_address, msg_type, data, program_context)?;
