@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Error, Result};
 use bitcoin::{Network, Txid};
 use bitvmx_client::program::participant::CommsAddress;
 use bitvmx_client::program::protocols::union::common::{
@@ -6,24 +6,22 @@ use bitvmx_client::program::protocols::union::common::{
     get_user_take_pid,
 };
 use bitvmx_client::program::protocols::union::types::{
-    MemberData, ACCEPT_PEGIN_TX, DUST_VALUE, SPEEDUP_VALUE, USER_TAKE_TX,
+    MemberData, StreamSettings, UnionSettings, ACCEPT_PEGIN_TX, DUST_VALUE, SPEEDUP_VALUE,
+    USER_TAKE_TX,
 };
 use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtxo};
-use bitvmx_client::types::OutgoingBitVMXApiMessages::{SPVProof, Transaction};
 
 use bitcoin::PublicKey;
 use protocol_builder::types::Utxo;
 use std::collections::HashMap;
 use std::thread::{self};
 use std::time::Duration;
-use tracing::{info, info_span};
+use tracing::info_span;
 use uuid::Uuid;
 
 use crate::bitcoin::{init_client, BitcoinWrapper};
-use crate::macros::wait_for_message_blocking;
-use crate::participants::common::prefixed_name;
+use crate::participants::common::{get_default_union_settings, prefixed_name};
 use crate::participants::member::{FundingAmount, Member};
-use crate::wait_until_msg;
 use crate::wallet::helper::non_regtest_warning;
 
 const FUNDING_AMOUNT_PER_SLOT: u64 = 9_000; // an approximation in satoshis
@@ -38,6 +36,8 @@ pub struct Committee {
     committee_id: Uuid,
     stream_denomination: u64,
     pub bitcoin_client: BitcoinWrapper,
+    pub union_settings: UnionSettings,
+    pub stream_settings: StreamSettings,
 }
 
 impl Committee {
@@ -76,6 +76,20 @@ impl Committee {
         let take_aggregation_id = get_take_aggreated_key_pid(committee_id);
         let dispute_aggregation_id = get_dispute_aggregated_key_pid(committee_id);
 
+        let union_settings = get_default_union_settings();
+        if !union_settings.settings.contains_key(&stream_denomination) {
+            return Err(anyhow::anyhow!(format!(
+                "Stream settings not found for denomination: {}",
+                stream_denomination
+            )));
+        }
+
+        let stream_settings = union_settings
+            .settings
+            .get(&stream_denomination)
+            .unwrap()
+            .clone();
+
         Ok(Self {
             members,
             take_aggregation_id,
@@ -83,6 +97,8 @@ impl Committee {
             committee_id,
             stream_denomination,
             bitcoin_client,
+            union_settings,
+            stream_settings,
         })
     }
 
@@ -124,9 +140,13 @@ impl Committee {
     pub fn setup_dispute_protocols(&mut self) -> Result<()> {
         let funding_utxos_per_member = self.init_funds()?;
 
+        let settings = self.union_settings.clone();
+        self.all(|op: &mut Member| op.save_union_settings(&settings))?;
+
         let members = self.get_member_data();
         let addresses = self.get_addresses();
         let committee_id = self.committee_id;
+        let stream_denomination = self.stream_denomination;
 
         // Setup Dispute Core covenant
         self.all(|op: &mut Member| {
@@ -135,13 +155,17 @@ impl Committee {
                 &members.clone(),
                 &funding_utxos_per_member,
                 &addresses.clone(),
+                stream_denomination,
             )
         })?;
 
-        //  Setup Dispute Channel covenant
+        //  Setup DisputeChannels
         self.all(|op: &mut Member| {
             op.setup_dispute_channel(committee_id, &members.clone(), &addresses.clone())
         })?;
+
+        // Setup FullPenalization protocol
+        self.all(|op: &mut Member| op.setup_full_penalization(committee_id, &addresses.clone()))?;
 
         Ok(())
     }
@@ -193,25 +217,6 @@ impl Committee {
         Ok(())
     }
 
-    pub fn wait_for_spv_proof(&self, txid: Txid) -> Result<()> {
-        let bitvmx = &self.members[0].bitvmx;
-        let status = wait_until_msg!(bitvmx, Transaction(_, _status, _) => _status);
-
-        info!(
-            "Sent {} transaction with {} confirmations.",
-            txid, status.confirmations
-        );
-
-        info!("Waiting for SPV proof...",);
-        let _ = bitvmx.get_spv_proof(txid);
-        let spv_proof = wait_until_msg!(
-            bitvmx,
-            SPVProof(_, Some(_spv_proof)) => _spv_proof
-        );
-        info!("SPV proof: {:?}", spv_proof);
-        Ok(())
-    }
-
     fn dispatch_transaction_and_wait_for_spv_proof(
         &self,
         protocol_id: Uuid,
@@ -220,7 +225,7 @@ impl Committee {
         let tx = self.members[0].dispatch_transaction_by_name(protocol_id, tx_name.clone())?;
         let txid = tx.compute_txid();
         self.bitcoin_client.wait_for_blocks(1)?;
-        self.wait_for_spv_proof(txid)?;
+        self.members[0].wait_for_spv_proof(txid)?;
         Ok(())
     }
 
@@ -399,6 +404,26 @@ impl Committee {
         }
 
         Ok(funding_utxos_per_member)
+    }
+
+    pub fn get_stream_settings(&self, stream_denomination: u64) -> Result<StreamSettings, Error> {
+        if !self
+            .union_settings
+            .settings
+            .contains_key(&stream_denomination)
+        {
+            return Err(anyhow::anyhow!(format!(
+                "Stream settings not found for denomination: {}",
+                stream_denomination
+            )));
+        }
+
+        Ok(self
+            .union_settings
+            .settings
+            .get(&stream_denomination)
+            .unwrap()
+            .clone())
     }
 
     fn all<F, R>(&mut self, f: F) -> Result<Vec<R>>

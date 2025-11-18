@@ -9,14 +9,15 @@ use crate::{
             union::{
                 common::{
                     create_transaction_reference, extract_index, get_dispute_core_pid,
-                    get_operator_output_type, indexed_name,
+                    get_operator_output_type, get_stream_setting, indexed_name,
+                    load_union_settings,
                 },
                 types::{
-                    Committee, PegInAccepted, PegInRequest, ACCEPT_PEGIN_TX,
-                    DISPUTE_CORE_LONG_TIMELOCK, LAST_OPERATOR_TAKE_UTXO, OPERATOR_LEAF_INDEX,
-                    OPERATOR_TAKE_ENABLER, OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX,
-                    P2TR_FEE, REIMBURSEMENT_KICKOFF_IN_PROGRESS, REIMBURSEMENT_KICKOFF_TX,
-                    REQUEST_PEGIN_TX, SPEEDUP_KEY, SPEEDUP_VALUE,
+                    Committee, PegInAccepted, PegInRequest, StreamSettings, ACCEPT_PEGIN_TX,
+                    LAST_OPERATOR_TAKE_UTXO, OPERATOR_LEAF_INDEX, OPERATOR_TAKE_ENABLER,
+                    OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX, P2TR_FEE,
+                    REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, REVEAL_IN_PROGRESS, SPEEDUP_KEY,
+                    SPEEDUP_VALUE, TAKE_AGGREGATED_KEY,
                 },
             },
         },
@@ -33,13 +34,19 @@ use protocol_builder::{
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
-        output::SpeedupData,
+        output::{MessageId, SpeedupData},
         InputArgs, OutputType, Utxo,
     },
 };
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 use uuid::Uuid;
+
+const OP_WON_REVEAL_INPUT_INDEX: usize = 1;
+const OP_WON_REVEAL_INPUT_LEAF: usize = 0;
+const OP_WON_PEGIN_INPUT_INDEX: usize = 0;
+const OP_TAKE_REIMBURSEMENT_INPUT_INDEX: usize = 1;
+const OP_TAKE_PEGIN_INPUT_INDEX: usize = 0;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct AcceptPegInProtocol {
@@ -62,7 +69,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
         let pegin_request = self.pegin_request(context)?;
 
         Ok(vec![(
-            "take_aggregated".to_string(),
+            TAKE_AGGREGATED_KEY.to_string(),
             pegin_request.take_aggregated_key,
         )])
     }
@@ -96,8 +103,8 @@ impl ProtocolHandler for AcceptPegInProtocol {
     ) -> Result<(), BitVMXError> {
         let pegin_request: PegInRequest = self.pegin_request(context)?;
         let pegin_request_txid = pegin_request.txid;
-        let mut user_output_amount = self.checked_sub(pegin_request.amount, P2TR_FEE)?;
-        user_output_amount = self.checked_sub(user_output_amount, SPEEDUP_VALUE)?;
+        let user_output_amount =
+            self.checked_sub(pegin_request.amount, P2TR_FEE + SPEEDUP_VALUE)?;
 
         let take_aggregated_key = &pegin_request.take_aggregated_key;
 
@@ -138,7 +145,12 @@ impl ProtocolHandler for AcceptPegInProtocol {
             &pegin_request.reimbursement_pubkey,
         )?;
 
-        let members = self.committee(context, pegin_request.committee_id)?.members;
+        let committee = self.committee(context, pegin_request.committee_id)?;
+        let members = committee.members;
+        let settings = get_stream_setting(
+            &load_union_settings(context)?,
+            committee.stream_denomination,
+        )?;
 
         // Loop over operators and create take 1 and take 2 transactions
         for operator_index in pegin_request.operator_indexes {
@@ -169,6 +181,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 pegin_request_txid,
                 kickoff_tx_name,
                 operator_take_enabler.clone(),
+                &settings,
             )?;
 
             // Operator won transaction data
@@ -266,7 +279,9 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 }
             };
 
-            self.clean_reimbursement_in_progress(context, operator_index)?;
+            if tx_name.starts_with(OPERATOR_WON_TX) {
+                self.clean_reveal_in_progress(context, operator_index)?;
+            }
 
             if operator_index == self.ctx.my_idx {
                 // Both, OPERATOR_TAKE_TX and OPERATOR_WON_TX, have the same output index to reimburse funds to the operator
@@ -359,27 +374,18 @@ impl AcceptPegInProtocol {
     ) -> Result<(), BitVMXError> {
         let pegin_request: PegInRequest = self.pegin_request(context)?;
 
-        let nonces = context
-            .key_chain
-            .get_nonces(&take_aggregated_key, &self.ctx.protocol_name)?;
+        let message_id = MessageId::new_string_id(ACCEPT_PEGIN_TX, 0, 2); // 2 corresponds to key spend (it's equal to scripts_len())
+        let nonce = context.key_chain.get_nonce(
+            &take_aggregated_key,
+            &self.ctx.protocol_name,
+            &message_id,
+        )?;
 
-        if nonces.is_empty() {
-            return Err(BitVMXError::MissingPublicNonces(
-                take_aggregated_key.to_string(),
-                self.ctx.protocol_name.to_string(),
-            ));
-        }
-
-        let signatures = context
-            .key_chain
-            .get_signatures(&take_aggregated_key, &self.ctx.protocol_name)?;
-
-        if signatures.is_empty() {
-            return Err(BitVMXError::MissingPartialSignatures(
-                take_aggregated_key.to_string(),
-                self.ctx.protocol_name.to_string(),
-            ));
-        }
+        let signature = context.key_chain.get_signature(
+            &take_aggregated_key,
+            &self.ctx.protocol_name,
+            &message_id,
+        )?;
 
         let mut protocol = self.load_protocol()?;
 
@@ -392,14 +398,14 @@ impl AcceptPegInProtocol {
         {
             let operator_take_tx_name = &indexed_name(OPERATOR_TAKE_TX, self.ctx.my_idx);
             operator_take_sighash = protocol
-                .get_hashed_message(operator_take_tx_name, 0, 0)?
+                .get_hashed_message(operator_take_tx_name, OP_TAKE_PEGIN_INPUT_INDEX as u32, 0)?
                 .unwrap()
                 .as_ref()
                 .to_vec();
 
             let operator_won_tx_name = &indexed_name(OPERATOR_WON_TX, self.ctx.my_idx);
             operator_won_sighash = protocol
-                .get_hashed_message(operator_won_tx_name, 0, 0)?
+                .get_hashed_message(operator_won_tx_name, OP_TAKE_PEGIN_INPUT_INDEX as u32, 0)?
                 .unwrap()
                 .as_ref()
                 .to_vec();
@@ -415,14 +421,12 @@ impl AcceptPegInProtocol {
             .as_ref()
             .to_vec();
 
-        // TODO: verify that the signature we are getting from the array of signatures is the proper one
-        // FIXME: Should signatures and nonces array be indexed by self.ctx.my_idx?
         let pegin_accepted = PegInAccepted {
             committee_id: pegin_request.committee_id,
             accept_pegin_txid,
             accept_pegin_sighash,
-            accept_pegin_nonce: nonces[0].1.clone(),
-            accept_pegin_signature: signatures[0].1.clone(),
+            accept_pegin_nonce: nonce,
+            accept_pegin_signature: signature,
             operator_take_sighash,
             operator_won_sighash,
         };
@@ -456,6 +460,7 @@ impl AcceptPegInProtocol {
         pegin_txid: Txid,
         kickoff_tx_name: &str,
         take_enabler: PartialUtxo,
+        settings: &StreamSettings,
     ) -> Result<(), BitVMXError> {
         let operator_take_tx_name = &indexed_name(OPERATOR_TAKE_TX, operator_index);
 
@@ -472,7 +477,7 @@ impl AcceptPegInProtocol {
             OutputSpec::Index(take_enabler.1 as usize),
             operator_take_tx_name,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
-            Some(DISPUTE_CORE_LONG_TIMELOCK),
+            Some(settings.long_timelock),
             Some(take_enabler.0),
         )?;
 
@@ -520,8 +525,8 @@ impl AcceptPegInProtocol {
             operator_won_tx_name,
             InputSpec::Auto(
                 SighashType::taproot_all(),
-                SpendMode::KeyOnly {
-                    key_path_sign: SignMode::Aggregate,
+                SpendMode::Script {
+                    leaf: OP_WON_REVEAL_INPUT_LEAF,
                 },
             ),
             None,
@@ -614,13 +619,16 @@ impl AcceptPegInProtocol {
         );
 
         let mut protocol: Protocol = self.load_protocol()?;
+
+        // Pegin signature
         let pegin_signature = protocol
-            .input_taproot_key_spend_signature(name, 0)?
+            .input_taproot_key_spend_signature(name, OP_TAKE_PEGIN_INPUT_INDEX)?
             .unwrap();
 
+        // Reimbursement signature
         let reimbursement_signature = protocol.sign_taproot_input(
             name,
-            1,
+            OP_TAKE_REIMBURSEMENT_INPUT_INDEX,
             &SpendMode::Script {
                 leaf: op_leaf_index,
             },
@@ -635,15 +643,15 @@ impl AcceptPegInProtocol {
         reimbursement_args
             .push_taproot_signature(reimbursement_signature[op_leaf_index].unwrap())?;
 
-        let tx = self
-            .load_protocol()?
-            .transaction_to_send(name, &[accept_pegin_args, reimbursement_args])?;
+        // Create transaction
+        let tx = protocol.transaction_to_send(name, &[accept_pegin_args, reimbursement_args])?;
 
-        let txid = tx.compute_txid();
-
-        let speedup_key = self.my_speedup_key(context)?;
-        let speedup_vout = (tx.output.len() - 1) as u32;
-        let speedup_utxo = Utxo::new(txid, speedup_vout, SPEEDUP_VALUE, &speedup_key);
+        let speedup_utxo = Utxo::new(
+            tx.compute_txid(),
+            (tx.output.len() - 1) as u32,
+            SPEEDUP_VALUE,
+            &self.my_speedup_key(context)?,
+        );
 
         Ok((tx, Some(speedup_utxo.into())))
     }
@@ -665,9 +673,26 @@ impl AcceptPegInProtocol {
             id = self.ctx.my_idx,
             "Loading {} for AcceptPegInProtocol. Name: {}", OPERATOR_WON_TX, name
         );
-        let args = InputArgs::new_taproot_key_args();
-        // TODO: add the necessary arguments to args
-        let tx = self.load_protocol()?.transaction_to_send(name, &[args])?;
+
+        let protocol: Protocol = self.load_protocol()?;
+
+        // Pegin signature
+        let pegin_signature = protocol
+            .input_taproot_key_spend_signature(name, OP_WON_PEGIN_INPUT_INDEX)?
+            .unwrap();
+
+        let mut pegin_args = InputArgs::new_taproot_key_args();
+        pegin_args.push_taproot_signature(pegin_signature)?;
+
+        let reveal_signature = protocol.input_taproot_script_spend_signature(
+            name,
+            OP_WON_REVEAL_INPUT_INDEX,
+            OP_WON_REVEAL_INPUT_LEAF,
+        )?;
+        let mut reveal_args = InputArgs::new_taproot_script_args(OP_WON_REVEAL_INPUT_LEAF);
+        reveal_args.push_taproot_signature(reveal_signature.unwrap())?;
+
+        let tx = protocol.transaction_to_send(name, &[pegin_args, reveal_args])?;
         let txid = tx.compute_txid();
 
         let speedup_key = self.my_speedup_key(context)?;
@@ -747,7 +772,7 @@ impl AcceptPegInProtocol {
         Ok(committee.members[self.ctx.my_idx].dispute_key.clone())
     }
 
-    fn clean_reimbursement_in_progress(
+    fn clean_reveal_in_progress(
         &self,
         context: &ProgramContext,
         operator_index: usize,
@@ -758,35 +783,35 @@ impl AcceptPegInProtocol {
 
         let dispute_protocol_id = get_dispute_core_pid(request.committee_id, &operator_take_key);
 
-        let reimbursement_in_progress =
-            self.get_reimbursement_in_progress(context, dispute_protocol_id)?;
+        let reveal_in_progress = self.get_reveal_in_progress(context, dispute_protocol_id)?;
 
-        if reimbursement_in_progress.is_none() {
+        if reveal_in_progress.is_none() {
             warn!(
                 id = self.ctx.my_idx,
-                "Not cleaning REIMBURSEMENT_KICKOFF_IN_PROGRESS for dispute protocol: {}. It was already empty and current request is for slot_index: {}",
+                "Not cleaning {} for dispute protocol: {}. It was already empty and current request is for slot_index: {}",
+                REVEAL_IN_PROGRESS,
                 dispute_protocol_id,
                 request.slot_index
             );
             return Ok(());
         }
 
-        if reimbursement_in_progress == Some(request.slot_index as u32) {
+        if reveal_in_progress == Some(request.slot_index as u32) {
             context
                 .globals
-                .unset_var(&dispute_protocol_id, REIMBURSEMENT_KICKOFF_IN_PROGRESS)?;
+                .unset_var(&dispute_protocol_id, REVEAL_IN_PROGRESS)?;
 
             info!(
                 id = self.ctx.my_idx,
-                "Cleaned REIMBURSEMENT_KICKOFF_IN_PROGRESS for dispute protocol: {}",
-                dispute_protocol_id
+                "Cleaned {} for dispute protocol: {}", REVEAL_IN_PROGRESS, dispute_protocol_id
             );
         } else {
             warn!(
                 id = self.ctx.my_idx,
-                "Not cleaning REIMBURSEMENT_KICKOFF_IN_PROGRESS for dispute protocol: {}. It is set to slot_index: {} and current request is for slot_index: {}",
+                "Not cleaning {} for dispute protocol: {}. It is set to slot_index: {} and current request is for slot_index: {}",
+                REVEAL_IN_PROGRESS,
                 dispute_protocol_id,
-                reimbursement_in_progress.unwrap(),
+                reveal_in_progress.unwrap(),
                 request.slot_index
             );
         }
@@ -794,14 +819,14 @@ impl AcceptPegInProtocol {
         Ok(())
     }
 
-    fn get_reimbursement_in_progress(
+    fn get_reveal_in_progress(
         &self,
         program_context: &ProgramContext,
         protocol_id: Uuid,
     ) -> Result<Option<u32>, BitVMXError> {
         match program_context
             .globals
-            .get_var(&protocol_id, REIMBURSEMENT_KICKOFF_IN_PROGRESS)?
+            .get_var(&protocol_id, REVEAL_IN_PROGRESS)?
         {
             Some(var) => Ok(Some(var.number()?)),
             None => Ok(None),

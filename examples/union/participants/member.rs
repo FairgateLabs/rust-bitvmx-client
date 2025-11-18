@@ -9,23 +9,24 @@ use crate::{
     },
     wait_until_msg,
 };
-use anyhow::Result;
+use anyhow::{Error, Result};
 use bitcoin::{address::NetworkUnchecked, Amount, PublicKey, ScriptBuf, Transaction, Txid};
-use bitvmx_client::program::protocols::union::common::get_dispute_pair_aggregated_key_pid;
-use bitvmx_client::types::IncomingBitVMXApiMessages;
 use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
     program::{
         participant::{CommsAddress, ParticipantRole},
         protocols::union::{
-            common::{get_dispute_core_pid, indexed_name},
+            common::{get_dispute_core_pid, get_dispute_pair_aggregated_key_pid, indexed_name},
             dispute_core::PEGOUT_ID,
-            types::{MemberData, ADVANCE_FUNDS_INPUT, REIMBURSEMENT_KICKOFF_TX},
+            types::{
+                MemberData, UnionSettings, ADVANCE_FUNDS_INPUT, GLOBAL_SETTINGS_UUID,
+                REIMBURSEMENT_KICKOFF_TX,
+            },
         },
         variables::{PartialUtxo, VariableTypes},
     },
-    types::OutgoingBitVMXApiMessages::*,
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages::*},
 };
 use bitvmx_operator_comms::operator_comms::AllowList;
 use bitvmx_wallet::wallet::Destination;
@@ -163,6 +164,7 @@ impl Member {
         members: &Vec<MemberData>,
         funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
         addresses: &Vec<CommsAddress>,
+        stream_denomination: u64,
     ) -> Result<()> {
         info!(
             id = self.id,
@@ -178,6 +180,7 @@ impl Member {
             &self.bitvmx,
             funding_utxos_per_member,
             addresses,
+            stream_denomination,
         )?;
 
         for i in 0..members.len() {
@@ -612,5 +615,45 @@ impl Member {
         info!("Dispatched reimbursement kickoff tx: {}", txid);
 
         Ok(())
+    }
+
+    pub fn wait_for_spv_proof(&self, txid: Txid) -> Result<()> {
+        let status = wait_until_msg!(&self.bitvmx, Transaction(_, _status, _) => _status);
+
+        info!(
+            "Sent {} transaction with {} confirmations.",
+            txid, status.confirmations
+        );
+
+        info!("Waiting for SPV proof...",);
+        let _ = self.bitvmx.get_spv_proof(txid);
+        let spv_proof = wait_until_msg!(
+            &self.bitvmx,
+            SPVProof(_, Some(_spv_proof)) => _spv_proof
+        );
+        info!("SPV proof: {:?}", spv_proof);
+        Ok(())
+    }
+
+    pub fn save_union_settings(&mut self, settings: &UnionSettings) -> Result<(), Error> {
+        self.bitvmx.set_var(
+            GLOBAL_SETTINGS_UUID,
+            &UnionSettings::name(),
+            VariableTypes::String(serde_json::to_string(settings)?),
+        )?;
+        Ok(())
+    }
+
+    pub fn get_union_settings(&mut self) -> Result<UnionSettings, Error> {
+        self.bitvmx
+            .get_var(GLOBAL_SETTINGS_UUID, UnionSettings::name())?;
+        thread::sleep(std::time::Duration::from_secs(1));
+        let settings_str = wait_until_msg!(
+            &self.bitvmx,
+            Variable(_, _settings_str, _) => _settings_str
+        );
+
+        let loaded_settings: UnionSettings = serde_json::from_str(&settings_str)?;
+        Ok(loaded_settings)
     }
 }

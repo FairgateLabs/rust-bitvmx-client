@@ -29,15 +29,16 @@ use crate::{
                 },
                 dispute_core::PEGOUT_ID,
                 types::{
-                    AdvanceFundsRequest, Committee, ACCEPT_PEGIN_TX, ADVANCE_FUNDS_INPUT,
-                    ADVANCE_FUNDS_TX, DUST_VALUE, LAST_OPERATOR_TAKE_UTXO, OP_INITIAL_DEPOSIT_FLAG,
-                    OP_INITIAL_DEPOSIT_TX, REIMBURSEMENT_KICKOFF_TX, USER_TAKE_FEE,
+                    AdvanceFundsRequest, Committee, FundsAdvanced, ACCEPT_PEGIN_TX,
+                    ADVANCE_FUNDS_INPUT, ADVANCE_FUNDS_TX, DUST_VALUE, LAST_OPERATOR_TAKE_UTXO,
+                    OP_INITIAL_DEPOSIT_FLAG, OP_INITIAL_DEPOSIT_TX, REIMBURSEMENT_KICKOFF_TX,
+                    USER_TAKE_FEE,
                 },
             },
         },
         variables::{PartialUtxo, VariableTypes},
     },
-    types::{ProgramContext, PROGRAM_TYPE_DISPUTE_CORE},
+    types::{OutgoingBitVMXApiMessages, ProgramContext, PROGRAM_TYPE_DISPUTE_CORE},
 };
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -265,7 +266,8 @@ impl ProtocolHandler for AdvanceFundsProtocol {
             self.ctx.id
         );
 
-        self.dispatch_advance_funds_tx(context)?;
+        let txid = self.dispatch_advance_funds_tx(context)?;
+        self.send_funds_advanced(&context, txid)?;
 
         Ok(())
     }
@@ -494,7 +496,7 @@ impl AdvanceFundsProtocol {
         Ok(())
     }
 
-    fn dispatch_advance_funds_tx(&self, context: &ProgramContext) -> Result<(), BitVMXError> {
+    fn dispatch_advance_funds_tx(&self, context: &ProgramContext) -> Result<Txid, BitVMXError> {
         info!(
             "Dispatching {} transaction from protocol {}",
             ADVANCE_FUNDS_TX, self.ctx.id
@@ -519,7 +521,7 @@ impl AdvanceFundsProtocol {
             txid
         );
 
-        Ok(())
+        Ok(txid)
     }
 
     fn advance_funds_tx(
@@ -548,5 +550,34 @@ impl AdvanceFundsProtocol {
 
         let tx2send = protocol.transaction_to_send(&name, &inputs.as_slice())?;
         Ok((tx2send, None))
+    }
+
+    fn send_funds_advanced(&self, context: &ProgramContext, txid: Txid) -> Result<(), BitVMXError> {
+        let request: AdvanceFundsRequest = self.advance_funds_request(context)?;
+
+        let funds_advanced = FundsAdvanced {
+            txid: txid,
+            committee_id: request.committee_id,
+            slot_index: request.slot_index,
+            pegout_id: request.pegout_id,
+        };
+
+        let data = serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(
+            self.ctx.id,
+            FundsAdvanced::name(),
+            VariableTypes::String(serde_json::to_string(&funds_advanced)?),
+        ))?;
+
+        info!(
+            id = self.ctx.my_idx,
+            "Sending funds advanced data for AdvanceFunds: {}", data
+        );
+
+        // Send the funds advanced data to the broker channel
+        context
+            .broker_channel
+            .send(&context.components_config.l2, data)?;
+
+        Ok(())
     }
 }

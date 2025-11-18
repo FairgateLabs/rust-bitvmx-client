@@ -1,6 +1,7 @@
 use bitcoin::{PublicKey, Txid};
 use key_manager::musig2::{secp::MaybeScalar, PubNonce};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::program::{participant::ParticipantRole, variables::PartialUtxo};
@@ -9,7 +10,7 @@ use crate::program::{participant::ParticipantRole, variables::PartialUtxo};
 pub const TAKE_AGGREGATED_KEY: &str = "TAKE_AGGREGATED_KEY";
 pub const DISPUTE_AGGREGATED_KEY: &str = "DISPUTE_AGGREGATED_KEY";
 pub const SELECTED_OPERATOR_PUBKEY: &str = "SELECTED_OPERATOR_PUBKEY";
-pub const REIMBURSEMENT_KICKOFF_IN_PROGRESS: &str = "REIMBURSEMENT_KICKOFF_IN_PROGRESS";
+pub const REVEAL_IN_PROGRESS: &str = "REVEAL_IN_PROGRESS";
 pub const OP_INITIAL_DEPOSIT_FLAG: &str = "OP_INITIAL_DEPOSIT_FLAG";
 pub const OPERATOR_LEAF_INDEX: &str = "OPERATOR_LEAF_INDEX";
 pub const SPEEDUP_KEY: &str = "SPEEDUP_KEY";
@@ -43,8 +44,6 @@ pub const WT_START_ENABLER_TX: &str = "WT_START_ENABLER_TX";
 pub const PROTOCOL_FUNDING_TX: &str = "PROTOCOL_FUNDING_TX";
 
 // Parameters
-pub const DISPUTE_CORE_SHORT_TIMELOCK: u16 = 1;
-pub const DISPUTE_CORE_LONG_TIMELOCK: u16 = 6;
 pub const DUST_VALUE: u64 = 540;
 pub const SPEEDUP_VALUE: u64 = 540;
 pub const P2TR_FEE: u64 = 335; // This should match the value P2TR_FEE in Union Smart contracts
@@ -63,6 +62,8 @@ pub const WT_DISABLER_DIRECTORY_UTXO: &str = "WT_DISABLER_DIRECTORY_UTXO";
 pub const OPERATOR: &str = "OP";
 pub const WATCHTOWER: &str = "WT";
 
+pub const GLOBAL_SETTINGS_UUID: Uuid = Uuid::from_bytes(*b"UNION_BRIDGE-000");
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemberData {
     pub role: ParticipantRole,
@@ -76,6 +77,7 @@ pub struct Committee {
     pub take_aggregated_key: PublicKey,
     pub dispute_aggregated_key: PublicKey,
     pub packet_size: u32,
+    pub stream_denomination: u64,
 }
 
 impl Committee {
@@ -192,6 +194,20 @@ impl AdvanceFundsRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FundsAdvanced {
+    pub txid: Txid,
+    pub committee_id: Uuid,
+    pub slot_index: usize,
+    pub pegout_id: Vec<u8>,
+}
+
+impl FundsAdvanced {
+    pub fn name() -> String {
+        "funds_advanced".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FullPenalizationData {
     pub committee_id: Uuid,
 }
@@ -199,5 +215,23 @@ pub struct FullPenalizationData {
 impl FullPenalizationData {
     pub fn name() -> String {
         "full_penalization_data".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamSettings {
+    pub short_timelock: u16,
+    pub long_timelock: u16,
+    pub op_won_timelock: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnionSettings {
+    pub settings: HashMap<u64, StreamSettings>,
+}
+
+impl UnionSettings {
+    pub fn name() -> String {
+        "union_settings".to_string()
     }
 }

@@ -32,12 +32,14 @@ impl DisputeCoreSetup {
         bitvmx: &BitVMXClient,
         members_protocol_funding: &HashMap<PublicKey, PartialUtxo>,
         addresses: &Vec<CommsAddress>,
+        stream_denomination: u64,
     ) -> Result<()> {
         let committee = Committee {
             members: members.clone(),
             take_aggregated_key,
             dispute_aggregated_key,
             packet_size: PACKET_SIZE,
+            stream_denomination,
         };
 
         bitvmx.set_var(

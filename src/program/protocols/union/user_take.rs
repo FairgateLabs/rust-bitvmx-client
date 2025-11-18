@@ -14,7 +14,7 @@ use protocol_builder::{
     },
 };
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::{
@@ -25,6 +25,7 @@ use crate::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
                 common::indexed_name,
+                errors::{ProtocolError, ProtocolErrorType},
                 types::{
                     PegOutAccepted, PegOutRequest, ACCEPT_PEGIN_TX, SPEEDUP_VALUE, USER_TAKE_FEE,
                     USER_TAKE_TX,
@@ -33,6 +34,7 @@ use crate::{
         },
         variables::{PartialUtxo, VariableTypes},
     },
+    send_to_l2,
     types::{OutgoingBitVMXApiMessages, ProgramContext},
 };
 
@@ -126,6 +128,28 @@ impl ProtocolHandler for UserTakeProtocol {
         )?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
+
+        // Validate USER_TAKE_TX sighash
+        let user_take_sighash = protocol
+            .get_hashed_message(USER_TAKE_TX, 0, 0)?
+            .unwrap()
+            .as_ref()
+            .to_vec();
+
+        if user_take_sighash != pegout_request.pegout_signature_hash {
+            let error = ProtocolError {
+                uuid: self.ctx.id,
+                protocol_name: self.ctx.protocol_name.clone(),
+                source: ProtocolErrorType::InvalidSighash {
+                    expected: hex::encode(pegout_request.pegout_signature_hash),
+                    found: hex::encode(user_take_sighash.clone()),
+                },
+            };
+            let data = send_to_l2!(self, context, ProtocolError, error);
+            error!(id = self.ctx.my_idx, "Failed to accept user take: {}", data);
+            return Err(BitVMXError::InvalidParameter(error.to_string()));
+        }
+
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
         self.save_protocol(protocol)?;
         Ok(())
@@ -224,6 +248,13 @@ impl UserTakeProtocol {
         let pegout_request = self.pegout_request(program_context)?;
         let take_aggregated_key = pegout_request.take_aggregated_key;
 
+        let mut protocol = self.load_protocol()?;
+        let user_take_sighash = protocol
+            .get_hashed_message(USER_TAKE_TX, 0, 0)?
+            .unwrap()
+            .as_ref()
+            .to_vec();
+
         let nonces = program_context
             .key_chain
             .get_nonces(&take_aggregated_key, &self.ctx.protocol_name)?;
@@ -245,13 +276,6 @@ impl UserTakeProtocol {
                 self.ctx.protocol_name.to_string(),
             ));
         }
-
-        let mut protocol = self.load_protocol()?;
-        let user_take_sighash = protocol
-            .get_hashed_message(USER_TAKE_TX, 0, 0)?
-            .unwrap()
-            .as_ref()
-            .to_vec();
 
         let user_take_txid = protocol.transaction_by_name(USER_TAKE_TX)?.compute_txid();
 
