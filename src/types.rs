@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{str::FromStr, time::Duration};
 
 use crate::{config::ComponentsConfig, spv_proof::BtcTxSPVProof};
 use bitcoin::{address::NetworkUnchecked, Address, PrivateKey, PublicKey, Transaction, Txid};
@@ -129,6 +129,7 @@ pub enum IncomingBitVMXApiMessages {
     GetFundingBalance(Uuid),
     SendFunds(Uuid, Destination, Option<u64>),
     GetProtocolVisualization(Uuid),
+    Shutdown(Duration),
 }
 impl IncomingBitVMXApiMessages {
     pub fn to_string(&self) -> Result<String, BitVMXError> {

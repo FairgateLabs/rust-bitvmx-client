@@ -75,6 +75,7 @@ pub struct BitVMX {
     notified_rsk_pegin: HashSet<Txid>, //workaround for RSK pegin transactions because ack seems to be not working
     bitcoin_update: BitcoinUpdateState,
     wallet: Wallet,
+    shutdown: bool,
 }
 
 impl Drop for BitVMX {
@@ -183,11 +184,13 @@ impl BitVMX {
                 was_synced: false,
             },
             wallet,
+            shutdown: false,
         })
     }
 
     pub fn shutdown(&mut self, timeout: Duration) -> Result<(), BitVMXError> {
         info!("Shutdown requested");
+        self.shutdown = true;
         let deadline = Instant::now() + timeout;
         self.begin_shutdown();
 
@@ -519,6 +522,10 @@ impl BitVMX {
 
     pub fn tick(&mut self) -> Result<(), BitVMXError> {
         //info!("Ticking BitVMX: {}", self.count);
+        if self.shutdown {
+            return Ok(());
+        }
+
         self.count += 1;
         self.process_programs()?;
 
@@ -1429,6 +1436,10 @@ impl BitVMXApi for BitVMX {
                     }
                 };
                 self.reply(from, message)?;
+            }
+            IncomingBitVMXApiMessages::Shutdown(timeout) => {
+                info!("Shutdown message received. Initiating shutdown...");
+                let _ = self.shutdown(timeout)?;
             }
             #[cfg(feature = "testpanic")]
             IncomingBitVMXApiMessages::Test(s) => {
