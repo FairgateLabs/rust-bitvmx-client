@@ -3,7 +3,7 @@ use crate::program::protocols::protocol_handler::ProtocolHandler;
 use crate::{
     api::BitVMXApi,
     collaborate::Collaboration,
-    comms_helper::deserialize_msg,
+    comms_helper::{deserialize_msg, CommsMessageType},
     config::Config,
     errors::BitVMXError,
     keychain::KeyChain,
@@ -12,6 +12,7 @@ use crate::{
         program::Program,
         variables::{Globals, WitnessVars},
     },
+    signature_verifier::SignatureVerifier,
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus},
 };
 use bitcoin::secp256k1::Message;
@@ -292,17 +293,46 @@ impl BitVMX {
         let (version, msg_type, program_id, data, timestamp, signature) =
             deserialize_msg(msg.clone())?;
         let mut message_consumed = false;
+
         if let Some(mut program) = self.load_program(&program_id).ok() {
             self.ensure_timestamp_fresh(&identifier.pubkey_hash, timestamp)?;
             let address = program.get_address_from_pubkey_hash(&identifier.pubkey_hash.clone())?;
-            program.process_comms_message(address, msg_type, data, &self.program_context)?;
-            message_consumed = true;
-        } else if let Some(mut collaboration) = self.get_collaboration(&program_id)? {
-            self.ensure_timestamp_fresh(&identifier.pubkey_hash, timestamp)?;
-            let comms_address =
-                collaboration.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
-            collaboration.process_comms_message(
-                comms_address,
+
+            // Retrieve verification key from shared ProgramContext
+            let verification_key = SignatureVerifier::get_verification_key(
+                &msg_type,
+                &data,
+                &identifier.pubkey_hash,
+                &self.program_context.participant_verification_keys,
+                &self.program_context.key_chain,
+                &self.program_context.comms,
+            )?;
+
+            // Verify message signature (except for VerificationKey which is verified later)
+            if msg_type != CommsMessageType::VerificationKey {
+                let verified = SignatureVerifier::verify_message_signature(
+                    &program_id.to_string(),
+                    &version,
+                    &msg_type,
+                    &data,
+                    timestamp,
+                    &signature,
+                    &identifier.pubkey_hash,
+                    &verification_key,
+                    &self.program_context.key_chain,
+                )?;
+
+                if !verified {
+                    error!(
+                        "Message signature verification failed from {} for program {}. Message rejected.",
+                        identifier.pubkey_hash, program_id
+                    );
+                    return Err(BitVMXError::InvalidMessageFormat);
+                }
+            }
+
+            program.process_comms_message(
+                address,
                 version,
                 msg_type,
                 data,
@@ -310,9 +340,55 @@ impl BitVMX {
                 timestamp,
                 signature,
             )?;
+            message_consumed = true;
+        } else if let Some(mut collaboration) = self.get_collaboration(&program_id)? {
+            self.ensure_timestamp_fresh(&identifier.pubkey_hash, timestamp)?;
+            let comms_address =
+                collaboration.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
+
+            // Retrieve verification key from shared ProgramContext
+            let verification_key = SignatureVerifier::get_verification_key(
+                &msg_type,
+                &data,
+                &identifier.pubkey_hash,
+                &self.program_context.participant_verification_keys,
+                &self.program_context.key_chain,
+                &self.program_context.comms,
+            )?;
+
+            // Verify message signature (except for VerificationKey)
+            if msg_type != CommsMessageType::VerificationKey {
+                let verified = SignatureVerifier::verify_message_signature(
+                    &program_id.to_string(),
+                    &version,
+                    &msg_type,
+                    &data,
+                    timestamp,
+                    &signature,
+                    &identifier.pubkey_hash,
+                    &verification_key,
+                    &self.program_context.key_chain,
+                )?;
+
+                if !verified {
+                    error!(
+                        "Message signature verification failed from {} for collaboration {}. Message rejected.",
+                        identifier.pubkey_hash, program_id
+                    );
+                    return Err(BitVMXError::InvalidMessageFormat);
+                }
+            }
+
+            collaboration.process_comms_message(
+                comms_address,
+                msg_type,
+                data,
+                &self.program_context,
+            )?;
             self.save_collaboration(&collaboration)?;
             message_consumed = true;
         } else {
+            // Message for program/collaboration that does not exist
             if pend_to_back {
                 info!("Pending message to back: {:?}", msg_type);
                 self.pending_messages
@@ -323,6 +399,7 @@ impl BitVMX {
                     .push_front((identifier.to_string(), msg));
             }
         }
+
         if message_consumed {
             self.record_timestamp(&identifier.pubkey_hash, timestamp);
         }

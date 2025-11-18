@@ -9,6 +9,7 @@ pub mod helper;
 pub mod keychain;
 pub mod program;
 pub mod shutdown;
+pub mod signature_verifier;
 pub mod spv_proof;
 pub mod types;
 
