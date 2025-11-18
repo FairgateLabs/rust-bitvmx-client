@@ -71,7 +71,8 @@ pub fn main() -> Result<()> {
         Some("request_pegout") => cli_request_pegout()?,
         Some("advance_funds") => cli_advance_funds()?,
         Some("advance_funds_twice") => cli_advance_funds_twice()?,
-        Some("invalid_reimbursement") => cli_invalid_reimbursement()?,
+        Some("challenge") => cli_challenge()?,
+        Some("input_not_revealed") => cli_input_not_revealed()?,
         Some("double_challenge") => cli_double_challenge()?,
         // Some("operator_disabler") => cli_operator_disabler()?,
         // Some("watchtower_disabler") => cli_watchtower_disabler()?,
@@ -115,8 +116,12 @@ fn print_usage() {
     print_cmd_help("advance_funds", "Performs an advancement of funds");
     print_cmd_help("advance_funds_twice", "Performs advancement of funds twice");
     print_cmd_help(
-        "invalid_reimbursement",
+        "challenge",
         "Forces invalid reimbursement to test challenge tx",
+    );
+    print_cmd_help(
+        "input_not_revealed",
+        "Forces INPUT_NOT_REVEALED_TX to be dispatched",
     );
     print_cmd_help(
         "double_challenge",
@@ -245,13 +250,25 @@ pub fn cli_advance_funds_twice() -> Result<()> {
     Ok(())
 }
 
-pub fn cli_invalid_reimbursement() -> Result<()> {
+pub fn cli_challenge() -> Result<()> {
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
     let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
-    invalid_reimbursement(&mut committee, slot_index)?;
+    challenge(&mut committee, slot_index, true)?;
     Ok(())
 }
+
+pub fn cli_input_not_revealed() -> Result<()> {
+    let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+
+    let op_index = challenge(&mut committee, slot_index, false)?;
+    // TODO: Should kill operator client after some blocks to simulate offline behavior
+    // committee.members[op_index].bitvmx.shutdown();
+
+    Ok(())
+}
+
 pub fn cli_self_disablers() -> Result<()> {
     if HIGH_FEE_NODE_ENABLED {
         // Due to self disablers does not have speedup by now
@@ -826,7 +843,11 @@ pub fn advance_funds(
     Ok(operator_id)
 }
 
-pub fn invalid_reimbursement(committee: &mut Committee, slot_index: usize) -> Result<()> {
+pub fn challenge(
+    committee: &mut Committee,
+    slot_index: usize,
+    should_wait: bool,
+) -> Result<(usize)> {
     info!("Forcing member 0 to dispatch invalid reimbursement transaction...");
     // Force member 0 to dispatch reimbursement without proper advancement setup
     let committee_id = committee.committee_id();
@@ -845,16 +866,18 @@ pub fn invalid_reimbursement(committee: &mut Committee, slot_index: usize) -> Re
         get_advance_funds_fee()?,
     )?;
 
-    let additional_blocks = committee.stream_settings.long_timelock + 20;
+    if should_wait {
+        let additional_blocks = committee.stream_settings.long_timelock + 20;
 
-    info!("Starting mining loop to ensure challenge transaction is dispatched...");
-    wait_for_blocks(
-        &committee.bitcoin_client,
-        get_blocks_to_wait() + additional_blocks as u32,
-    )?;
+        info!("Starting mining loop to ensure challenge transaction is dispatched...");
+        wait_for_blocks(
+            &committee.bitcoin_client,
+            get_blocks_to_wait() + additional_blocks as u32,
+        )?;
+    }
 
-    info!("Invalid reimbursement test complete.");
-    Ok(())
+    info!("Challenge test complete.");
+    Ok(operator_index)
 }
 
 fn get_and_increment_slot_index() -> usize {
