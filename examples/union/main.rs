@@ -251,6 +251,12 @@ pub fn cli_advance_funds_twice() -> Result<()> {
 }
 
 pub fn cli_challenge() -> Result<()> {
+    if HIGH_FEE_NODE_ENABLED {
+        // Due to self disablers does not have speedup by now
+        info!("This example works better with a client node with low fees. Please disable HIGH_FEE_NODE_ENABLED and try again.");
+        return Ok(());
+    }
+
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
     let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
@@ -259,12 +265,27 @@ pub fn cli_challenge() -> Result<()> {
 }
 
 pub fn cli_input_not_revealed() -> Result<()> {
+    if HIGH_FEE_NODE_ENABLED {
+        // Due to self disablers does not have speedup by now
+        info!("This example works better with a client node with low fees. Please disable HIGH_FEE_NODE_ENABLED and try again.");
+        return Ok(());
+    }
+
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
     let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
-    let op_index = challenge(&mut committee, slot_index, false)?;
-    // TODO: Should kill operator client after some blocks to simulate offline behavior
-    // committee.members[op_index].bitvmx.shutdown();
+    let _op_index = challenge(&mut committee, slot_index, false)?;
+    let timeout = Duration::from_secs(10);
+    // Kill operator client after some blocks to simulate offline behavior
+    // committee.members[op_index].bitvmx.shutdown(timeout);
+
+    thread::sleep(timeout);
+
+    // Wait some blocks to be able to dispatch and mine INPUT_NOT_REVEALED_TX
+    wait_for_blocks(
+        &committee.bitcoin_client,
+        get_blocks_to_wait() + committee.stream_settings.input_not_revealed_timelock as u32 + 20,
+    )?;
 
     Ok(())
 }
@@ -843,11 +864,7 @@ pub fn advance_funds(
     Ok(operator_id)
 }
 
-pub fn challenge(
-    committee: &mut Committee,
-    slot_index: usize,
-    should_wait: bool,
-) -> Result<(usize)> {
+pub fn challenge(committee: &mut Committee, slot_index: usize, should_wait: bool) -> Result<usize> {
     info!("Forcing member 0 to dispatch invalid reimbursement transaction...");
     // Force member 0 to dispatch reimbursement without proper advancement setup
     let committee_id = committee.committee_id();
