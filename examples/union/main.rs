@@ -273,11 +273,16 @@ pub fn cli_input_not_revealed() -> Result<()> {
 
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
     let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
 
-    let _op_index = challenge(&mut committee, slot_index, false)?;
-    let timeout = Duration::from_secs(10);
+    let op_index = challenge(&mut committee, slot_index, false)?;
+
+    // Wait some blocks to mine ADVANCE_FUNDS_TX and REIMBURSEMENT_KICKOFF_TX
+    wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait() + 2)?;
+
     // Kill operator client after some blocks to simulate offline behavior
-    // committee.members[op_index].bitvmx.shutdown(timeout);
+    let timeout = Duration::from_secs(10);
+    committee.members[op_index].bitvmx.shutdown(timeout);
 
     thread::sleep(timeout);
 

@@ -861,7 +861,7 @@ impl DisputeCoreProtocol {
             OutputSpec::Index(0),
             &input_not_revealed,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
-            None,
+            Some(settings.input_not_revealed_timelock),
             None,
         )?;
 
@@ -1194,7 +1194,7 @@ impl DisputeCoreProtocol {
         slot_id: usize,
         context: &ProgramContext,
         reimbursement_txid: Txid,
-        tx_status: TransactionStatus,
+        tx_status: &TransactionStatus,
         settings: &StreamSettings,
     ) -> Result<(), BitVMXError> {
         let tx_name = indexed_name(CHALLENGE_TX, slot_id);
@@ -1215,7 +1215,7 @@ impl DisputeCoreProtocol {
             challenge_tx,
             speedup,
             format!("dispute_core_challenge_{}:{}", self.ctx.id, tx_name), // Context string
-            Some(tx_status.block_info.unwrap().height + settings.long_timelock as u32), // Dispatch after short timelock
+            Some(tx_status.block_info.clone().unwrap().height + settings.short_timelock as u32), // Dispatch after short timelock
         )?;
 
         info!(
@@ -1429,8 +1429,7 @@ impl DisputeCoreProtocol {
             ),
             Some(
                 tx_status.block_info.as_ref().unwrap().height
-                    + settings.input_not_revealed_timelock as u32
-                    + 1,
+                    + settings.input_not_revealed_timelock as u32,
             ),
         )?;
 
@@ -1643,11 +1642,7 @@ impl DisputeCoreProtocol {
                             slot_index
                         );
                         self.dispatch_challenge_tx(
-                            slot_index,
-                            context,
-                            tx_id,
-                            tx_status.clone(),
-                            &settings,
+                            slot_index, context, tx_id, tx_status, &settings,
                         )?;
                     } else {
                         info!("Authorized operator confirmed for slot {}", slot_index);
@@ -1657,13 +1652,7 @@ impl DisputeCoreProtocol {
                 None => {
                     info!("No selected operator key found for slot {}", slot_index);
                     // If no selected operator key is set, it means that someone triggered a reimbursment kickoff transaction but there was no advances of funds
-                    self.dispatch_challenge_tx(
-                        slot_index,
-                        context,
-                        tx_id,
-                        tx_status.clone(),
-                        &settings,
-                    )?;
+                    self.dispatch_challenge_tx(slot_index, context, tx_id, tx_status, &settings)?;
                 }
             }
         }
