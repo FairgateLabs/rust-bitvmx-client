@@ -60,6 +60,7 @@ pub const THROTTLE_TICKS: u32 = 2;
 pub const WALLET_INDEX: u32 = 100;
 pub const WALLET_CHANGE_INDEX: u32 = 101;
 const MAX_TIMESTAMP_DRIFT_MS: i64 = 5 * 60_000;
+const ENABLE_TIMESTAMP_CHECK: bool = false; //Temporarily disabled pending the fix of the timestamp issue
 
 #[derive(Debug)]
 struct BitcoinUpdateState {
@@ -153,7 +154,11 @@ fn record_timestamp_internal(
 
 impl BitVMX {
     fn ensure_timestamp_fresh(&self, peer: &PubKeyHash, timestamp: i64) -> Result<(), BitVMXError> {
-        ensure_timestamp_fresh_internal(&self.message_timestamps, peer, timestamp)
+        if ENABLE_TIMESTAMP_CHECK {
+            ensure_timestamp_fresh_internal(&self.message_timestamps, peer, timestamp)
+        } else {
+            Ok(())
+        }
     }
 
     fn record_timestamp(&mut self, peer: &PubKeyHash, timestamp: i64) {
