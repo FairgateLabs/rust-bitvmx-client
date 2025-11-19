@@ -182,6 +182,9 @@ pub enum BitVMXError {
 
     #[error("Identification error: {0}")]
     IdentificationError(#[from] IdentificationError),
+
+    #[error("Job Dispatcher {0} is not responding")]
+    JobDispatcherNotResponding(String),
 }
 
 impl BitVMXError {
