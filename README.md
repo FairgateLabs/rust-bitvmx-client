@@ -1,4 +1,4 @@
-# BitVMX Client
+# BitVMX Client 
 
 The BitVMX Client provides the core functionality for interacting with BitVMX protocol and the Bitcoin blockchain.
 
