@@ -758,7 +758,7 @@ pub fn handle_tx_news(
             &tx_status,
             current_height,
             &fail_force_config,
-            "selection_bits",
+            "verifier_selection_bits",
             POST_COMMITMENT,
             EXECUTE,
             0,
@@ -870,7 +870,7 @@ pub fn handle_tx_news(
         let mut decision_bits: Vec<u32> = Vec::new();
         for i in 1..rounds + 1 {
             let key = format!("prover_selection_bits_{}_tk", i);
-            decision_bits.push(to_u32(&values[&*key]));
+            decision_bits.push(to_u8(&values[&*key]) as u32);
         }
 
         let final_trace = TraceRWStep::new(
@@ -955,7 +955,7 @@ pub fn handle_tx_news(
                         &tx_status,
                         current_height,
                         &fail_force_config,
-                        "selection_bits2",
+                        "verifier_selection_bits2",
                         CHALLENGE,
                         CHALLENGE_READ,
                         selection_bits,
@@ -991,7 +991,7 @@ pub fn handle_tx_news(
             &tx_status,
             current_height,
             &fail_force_config,
-            "selection_bits2",
+            "verifier_selection_bits2",
             CHALLENGE,
             CHALLENGE_READ,
             0, // Will be ignored
@@ -1038,8 +1038,8 @@ pub fn handle_tx_news(
                 return Err(BitVMXError::VariableNotFound(drp.ctx.id, name.to_string()));
             }
         }
-        fn to_u32(bytes: &[u8]) -> u32 {
-            u32::from_be_bytes(bytes.try_into().expect("Expected 4 bytes for u32"))
+        fn to_u8(bytes: &[u8]) -> u8 {
+            u8::from_be_bytes(bytes.try_into().expect("Expected 1 byte for u8"))
         }
         fn to_hex(bytes: &[u8]) -> String {
             hex::encode(bytes)
@@ -1047,10 +1047,10 @@ pub fn handle_tx_news(
 
         let prover_step_hash = to_hex(&values["prover_step_hash_tk2"]);
         let prover_next_hash = to_hex(&values["prover_next_hash_tk2"]);
-        let mut decision_bits: Vec<u32> = Vec::new();
-        for i in 0..rounds {
+        let mut decision_bits: Vec<u32> = Vec::new(); //TODO: not used?
+        for i in 1..rounds + 1 {
             let key = format!("prover_selection_bits_{}_tk2", i);
-            decision_bits.push(to_u32(&values[&*key])); //TODO: not used?
+            decision_bits.push(to_u8(&values[&*key]) as u32);
         }
 
         let msg = serde_json::to_string(&DispatcherJob {
@@ -1159,8 +1159,8 @@ fn handle_nary_verifier(
                 .unwrap()
                 .winternitz()?
                 .message_bytes();
-            assert!(bits.len() == 4);
-            u32::from_be_bytes(bits.try_into().unwrap())
+            assert!(bits.len() == 1);
+            bits[0] as u32
         };
 
         round += 1;

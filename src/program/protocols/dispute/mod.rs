@@ -91,9 +91,16 @@ fn build_trace_vars(rounds: u8) -> Vec<(String, usize)> {
         ("prover_step_hash_tk".to_string(), 20),
     ];
 
+    //TODO: if it is done this way, OP_EQUALVERIFY fails. The same with build_translation_keys_2nd_nary
+    // for i in 1..rounds + 1 {
+    //     vars.push((format!("prover_selection_bits_{}_tk", i), 1));
+    //     vars.push((format!("verifier_selection_bits_{}", i), 1));
+    // }
     for i in 1..rounds + 1 {
-        vars.push((format!("prover_selection_bits_{}_tk", i), 4));
-        // vars.push((format!("selection_bits_{}", i), 4));
+        vars.push((format!("prover_selection_bits_{}_tk", i), 1));
+    }
+    for i in 1..rounds + 1 {
+        vars.push((format!("verifier_selection_bits_{}", i), 1));
     }
 
     vars.push(("prover_witness".to_string(), 4));
@@ -106,8 +113,11 @@ fn build_translation_keys_2nd_nary(rounds: u8) -> Vec<(String, usize)> {
         ("prover_next_hash_tk2".to_string(), 20),
     ];
 
-    for i in 0..rounds {
-        vars.push((format!("prover_selection_bits_{}_tk2", i), 4));
+    for i in 1..rounds + 1 {
+        vars.push((format!("prover_selection_bits_{}_tk2", i), 1));
+    }
+    for i in 2..rounds + 1 {
+        vars.push((format!("verifier_selection_bits2_{}", i), 1));
     }
 
     vars
@@ -278,12 +288,16 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             let tk = TK_2NARY.get().expect("TK_2NARY not initialized").read()?;
 
             for (name, size) in trace.iter() {
-                let key = key_chain.derive_winternitz_hash160(*size)?;
-                keys.push((name.to_string(), key.into()));
+                if name.starts_with("prover") {
+                    let key = key_chain.derive_winternitz_hash160(*size)?;
+                    keys.push((name.to_string(), key.into()));
+                }
             }
             for (name, size) in tk.iter() {
-                let key = key_chain.derive_winternitz_hash160(*size)?;
-                keys.push((name.to_string(), key.into()));
+                if name.starts_with("prover") {
+                    let key = key_chain.derive_winternitz_hash160(*size)?;
+                    keys.push((name.to_string(), key.into()));
+                }
             }
         }
 
@@ -315,10 +329,11 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 }
             } else {
                 let _bits = nary_def.bits_for_round(i);
-                let key = key_chain.derive_winternitz_hash160(4)?;
-                let key2 = key_chain.derive_winternitz_hash160(4)?;
-                keys.push((format!("selection_bits_{}", i), key.into()));
-                keys.push((format!("selection_bits2_{}", i), key2.into())); // for the second n-ary search
+                let key = key_chain.derive_winternitz_hash160(1)?;
+                let key2 = key_chain.derive_winternitz_hash160(1)?;
+                keys.push((format!("verifier_selection_bits_{}", i), key.into()));
+                keys.push((format!("verifier_selection_bits2_{}", i), key2.into()));
+                // for the second n-ary search
             }
         }
 
@@ -650,7 +665,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     agg_or_verifier,
                     sign_mode,
                     &keys[1],
-                    &vec![&format!("selection_bits_{}", i)],
+                    &vec![&format!("verifier_selection_bits_{}", i)],
                 )?,
                 (&verifier_speedup_pub, &prover_speedup_pub),
             )?;
@@ -673,7 +688,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 context,
                 agg_or_prover,
                 sign_mode,
-                &keys[0],
+                &keys,
                 NArySearchType::ConflictStep,
             )?,
             (&prover_speedup_pub, &verifier_speedup_pub),
@@ -720,30 +735,28 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 .map(|h| format!("prover_hash2_{}_{}", i, h))
                 .collect::<Vec<_>>();
 
-            if i != 1 {
-                self.add_connection_with_scripts(
-                    context,
-                    aggregated,
-                    &mut protocol,
-                    timelock_blocks,
-                    amount,
-                    speedup_dust,
-                    &prev,
-                    &next,
-                    &claim_verifier,
-                    Self::winternitz_check(
-                        agg_or_prover,
-                        sign_mode,
-                        &keys[0],
-                        &vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
-                    )?,
-                    (&prover_speedup_pub, &verifier_speedup_pub),
-                )?;
-                amount = self.checked_sub(amount, fee)?;
-                amount = self.checked_sub(amount, speedup_dust)?;
+            self.add_connection_with_scripts(
+                context,
+                aggregated,
+                &mut protocol,
+                timelock_blocks,
+                amount,
+                speedup_dust,
+                &prev,
+                &next,
+                &claim_verifier,
+                Self::winternitz_check(
+                    agg_or_prover,
+                    sign_mode,
+                    &keys[0],
+                    &vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
+                )?,
+                (&prover_speedup_pub, &verifier_speedup_pub),
+            )?;
+            amount = self.checked_sub(amount, fee)?;
+            amount = self.checked_sub(amount, speedup_dust)?;
 
-                prev = next;
-            }
+            prev = next;
             let next = format!("NARY2_VERIFIER_{}", i);
             //TODO: Add a lower than value check
             let _bits = nary_def.bits_for_round(i);
@@ -762,7 +775,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     agg_or_verifier,
                     sign_mode,
                     &keys[1],
-                    &vec![&format!("selection_bits2_{}", i)],
+                    &vec![&format!("verifier_selection_bits2_{}", i)],
                 )?,
                 (&verifier_speedup_pub, &prover_speedup_pub),
             )?;
@@ -785,7 +798,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 context,
                 agg_or_prover,
                 sign_mode,
-                &keys[0],
+                &keys,
                 NArySearchType::ReadValueChallenge,
             )?,
             (&prover_speedup_pub, &verifier_speedup_pub),
@@ -994,9 +1007,11 @@ impl DisputeResolutionProtocol {
         context: &ProgramContext,
         aggregated: &PublicKey,
         sign_mode: SignMode,
-        keys: &ParticipantKeys,
+        keys: &Vec<ParticipantKeys>,
         nary_search_type: NArySearchType,
     ) -> Result<Vec<ProtocolScript>, BitVMXError> {
+        let prover_keys = &keys[0];
+        let verifier_keys = &keys[1];
         let (vars, skip) = match nary_search_type {
             NArySearchType::ConflictStep => {
                 let skip = 1; //skip witness
@@ -1016,14 +1031,28 @@ impl DisputeResolutionProtocol {
         let vars_names = vars
             .iter()
             .take(vars.len() - skip) // Skip the witness (except is needed)
-            //.rev() //reverse to get the proper order on the stack
+            .filter(|(name, _)| name.starts_with("prover"))
             .map(|(name, _)| name.as_str())
             .collect::<Vec<&str>>();
 
-        let names_and_keys = vars_names
-            .iter()
-            .map(|v| (*v, keys.get_winternitz(v).unwrap()))
-            .collect();
+        let mut names_and_keys: Vec<(&str, &key_manager::winternitz::WinternitzPublicKey)> =
+            vars_names
+                .iter()
+                .map(|v| (*v, prover_keys.get_winternitz(v).unwrap()))
+                .collect();
+
+        names_and_keys.extend(
+            vars.iter()
+                .filter(|(name, _)| name.starts_with("verifier_selection_bits"))
+                .map(|(name, _)| {
+                    (
+                        name.as_str(),
+                        verifier_keys
+                            .get_winternitz(name)
+                            .expect("Missing verifier selection_bits winternitz key"),
+                    )
+                }),
+        );
 
         //TODO: This is a workacround to inverse the order of the stack
         let total_size = vars
@@ -1072,30 +1101,14 @@ impl DisputeResolutionProtocol {
                 stack.drop(prev_hash);
                 let step_hash = stack.move_var(stackvars["prover_step_hash_tk"]);
                 stack.drop(step_hash);
-                let selection_bits_1 = stack.move_var(stackvars["prover_selection_bits_1_tk"]); //TODO: do equals instead
-                stack.drop(selection_bits_1);
-                let selection_bits_2 = stack.move_var(stackvars["prover_selection_bits_2_tk"]);
-                stack.drop(selection_bits_2);
-                let selection_bits_3 = stack.move_var(stackvars["prover_selection_bits_3_tk"]);
-                stack.drop(selection_bits_3);
-                let selection_bits_4 = stack.move_var(stackvars["prover_selection_bits_4_tk"]);
-                stack.drop(selection_bits_4);
-                // let selection_bits_1 = stack.move_var(stackvars["selection_bits_1"]);
-                // stack.drop(selection_bits_1);
-                // let selection_bits_2 = stack.move_var(stackvars["selection_bits_2"]);
-                // stack.drop(selection_bits_2);
-                // let selection_bits_3 = stack.move_var(stackvars["selection_bits_3"]);
-                // stack.drop(selection_bits_3);
-                // let selection_bits_4 = stack.move_var(stackvars["selection_bits_4"]);
-                // stack.drop(selection_bits_4);
-                // for i in 1..rounds + 1 {
-                //     stack.equals(
-                //         stackvars[&format!("prover_selection_bits_{}_tk", i)],
-                //         true,
-                //         stackvars[&format!("selection_bits_{}", i)],
-                //         true,
-                //     );
-                // }
+                for i in 1..rounds + 1 {
+                    stack.equals(
+                        stackvars[&format!("prover_selection_bits_{}_tk", i)],
+                        true,
+                        stackvars[&format!("verifier_selection_bits_{}", i)],
+                        true,
+                    );
+                }
 
                 let strip_script = stack.get_script();
 
@@ -1120,14 +1133,16 @@ impl DisputeResolutionProtocol {
                 stack.drop(step_hash);
                 let next_hash = stack.move_var(stackvars["prover_next_hash_tk2"]);
                 stack.drop(next_hash);
-                let selection_bits_0 = stack.move_var(stackvars["prover_selection_bits_0_tk2"]); //TODO: op_equals
-                stack.drop(selection_bits_0);
-                let selection_bits_1 = stack.move_var(stackvars["prover_selection_bits_1_tk2"]);
+                let selection_bits_1 = stack.move_var(stackvars["prover_selection_bits_1_tk2"]); // Drop it because its the same as the first n-ary search
                 stack.drop(selection_bits_1);
-                let selection_bits_2 = stack.move_var(stackvars["prover_selection_bits_2_tk2"]);
-                stack.drop(selection_bits_2);
-                let selection_bits_3 = stack.move_var(stackvars["prover_selection_bits_3_tk2"]);
-                stack.drop(selection_bits_3);
+                for i in 2..rounds + 1 {
+                    stack.equals(
+                        stackvars[&format!("prover_selection_bits_{}_tk2", i)],
+                        true,
+                        stackvars[&format!("verifier_selection_bits2_{}", i)],
+                        true,
+                    );
+                }
 
                 let strip_script = stack.get_script();
                 let winternitz_check = scripts::verify_winternitz_signatures_aux(
@@ -1294,29 +1309,11 @@ impl DisputeResolutionProtocol {
 
     fn get_cosign_extra_script(words: u32) -> ScriptBuf {
         //ASK: elf to try longer inputs?
+        info!("Words for cosign extra script: {}", words);
         let mut stack = StackTracker::new();
-
-        let mut verifier_inputs = Vec::new();
-        for i in 0..words {
-            let var = stack.define(4, &format!("verifier_input_{}", i));
-            verifier_inputs.push(var);
-        }
-
-        let mut prover_inputs = Vec::new();
-        for i in 0..words {
-            let var = stack.define(4, &format!("prover_input_{}", i));
-            prover_inputs.push(var);
-        }
-
-        for i in 0..words {
-            stack.equals(
-                verifier_inputs[i as usize],
-                true,
-                prover_inputs[i as usize],
-                true,
-            );
-        }
-
+        let verifier = stack.define(4 * words, "value_verifier");
+        let prover = stack.define(4 * words, "value_prover");
+        stack.equals(verifier, true, prover, true);
         stack.get_script()
     }
 }
