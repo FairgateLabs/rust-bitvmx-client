@@ -1,23 +1,20 @@
-use std::{collections::HashMap, fmt::Display, time::{Duration, Instant}};
-use tracing::{debug, warn};
+use crate::{
+    config::{ComponentsConfig, PingConfig},
+    errors::BitVMXError,
+    types::ProgramContext,
+};
 use bitvmx_job_dispatcher::helper::PingMessage;
-use crate::{config::{ComponentsConfig, PingConfig}, errors::BitVMXError, types::ProgramContext};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
+use tracing::{debug, warn};
 
-#[derive(Eq, Hash, PartialEq, Clone, Copy)]
+#[derive(Eq, Hash, PartialEq, Clone, Copy, Debug)]
 pub(crate) enum JobDispatcherType {
     ZKP,
     Emulator,
 }
-
-impl Display for JobDispatcherType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            JobDispatcherType::ZKP => write!(f, "ZKP"),
-            JobDispatcherType::Emulator => write!(f, "Emulator"),
-        }
-    }
-}
-
 
 pub(crate) struct PingHelper {
     time_since_sent_check: HashMap<JobDispatcherType, Instant>,
@@ -38,7 +35,8 @@ impl Default for PingHelper {
 }
 
 impl PingHelper {
-    pub fn new(config: PingConfig) -> Self {
+    pub fn new(config: Option<PingConfig>) -> Self {
+        let config = config.unwrap_or_default();
         let ping_timeout = Duration::from_secs(config.timeout_secs);
         let time_between_checks = Duration::from_secs(config.interval_secs);
         Self {
@@ -49,7 +47,11 @@ impl PingHelper {
         }
     }
 
-    pub fn check_job_dispatchers_liveness(&mut self, program_context: &ProgramContext, components: &ComponentsConfig) -> Result<(), BitVMXError> {
+    pub fn check_job_dispatchers_liveness(
+        &mut self,
+        program_context: &ProgramContext,
+        components: &ComponentsConfig,
+    ) -> Result<(), BitVMXError> {
         self.check_if_dispatchers_timed_out();
 
         if self.time_to_send_check.elapsed() >= self.time_between_checks {
@@ -67,16 +69,23 @@ impl PingHelper {
             .filter(|(_, time)| time.elapsed() >= self.ping_timeout)
             .map(|(dispatcher, _)| dispatcher.clone())
             .collect();
-        
+
         if !timeout_dispatcher.is_empty() {
             for dispatcher_name in timeout_dispatcher {
-                warn!("No Pong received from {} Job Dispatcher within timeout period", dispatcher_name);
+                warn!(
+                    "No Pong received from {:?} Job Dispatcher within timeout period",
+                    dispatcher_name
+                );
                 self.time_since_sent_check.remove(&dispatcher_name);
             }
         }
     }
-    
-    fn send_liveness_message_to_dispatchers(&mut self, program_context: &ProgramContext, components: &ComponentsConfig) -> Result<(), BitVMXError> {
+
+    fn send_liveness_message_to_dispatchers(
+        &mut self,
+        program_context: &ProgramContext,
+        components: &ComponentsConfig,
+    ) -> Result<(), BitVMXError> {
         let msg_to_prover = serde_json::to_string(&PingMessage::Ping)?;
 
         let msg_to_emulator = serde_json::to_string(&PingMessage::Ping)?;
@@ -86,29 +95,36 @@ impl PingHelper {
             .broker_channel
             .send(&components.prover, msg_to_prover)?;
 
-        self.time_since_sent_check.insert(JobDispatcherType::ZKP, Instant::now());
+        self.time_since_sent_check
+            .insert(JobDispatcherType::ZKP, Instant::now());
 
-        debug!("Sending Emulator dispatcher ping message: {}", msg_to_emulator);
+        debug!(
+            "Sending Emulator dispatcher ping message: {}",
+            msg_to_emulator
+        );
 
         program_context
             .broker_channel
             .send(&components.emulator, msg_to_emulator)?;
 
-        self.time_since_sent_check.insert(JobDispatcherType::Emulator, Instant::now());
-        
+        self.time_since_sent_check
+            .insert(JobDispatcherType::Emulator, Instant::now());
+
         Ok(())
     }
 
-    pub fn received_message(&mut self, dispatcher_name: JobDispatcherType, message: &PingMessage){
+    pub fn received_message(&mut self, dispatcher_name: JobDispatcherType, message: &PingMessage) {
         match message {
             PingMessage::Ping => {
                 warn!("Client should not receive Ping");
                 return;
-            },
-            PingMessage::Pong => debug!("Received Pong Message from {} Job Dispatcher", dispatcher_name),
+            }
+            PingMessage::Pong => debug!(
+                "Received Pong Message from {:?} Job Dispatcher",
+                dispatcher_name
+            ),
         }
 
         self.time_since_sent_check.remove(&dispatcher_name);
     }
-
 }

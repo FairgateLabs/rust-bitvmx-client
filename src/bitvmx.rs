@@ -172,10 +172,7 @@ impl BitVMX {
             config.components.clone(),
         );
 
-        let ping_helper = match &config.job_dipatcher_ping {
-            Some(ping_config) => PingHelper::new(ping_config.clone()),
-            None => PingHelper::default(),
-        };
+        let ping_helper = PingHelper::new(config.job_dispatcher_ping.clone());
 
         Ok(Self {
             config,
@@ -540,7 +537,8 @@ impl BitVMX {
         self.process_bitcoin_updates_with_throttle()?;
         self.process_collaboration()?;
 
-        self.ping_helper.check_job_dispatchers_liveness(&self.program_context, &self.config.components)?;
+        self.ping_helper
+            .check_job_dispatchers_liveness(&self.program_context, &self.config.components)?;
 
         Ok(())
     }
@@ -1020,15 +1018,16 @@ impl BitVMXApi for BitVMX {
     }
 
     fn handle_prover_message(&mut self, msg: String) -> Result<(), BitVMXError> {
-        if let Some(message) = serde_json::from_str::<PingMessage>(&msg).ok(){
-            self.ping_helper.received_message(JobDispatcherType::ZKP, &message);
+        if let Some(message) = serde_json::from_str::<PingMessage>(&msg).ok() {
+            self.ping_helper
+                .received_message(JobDispatcherType::ZKP, &message);
         } else {
             let result_message = ResultMessage::from_str(&msg)?;
             let parsed: serde_json::Value = result_message.result_as_value()?;
             let data = parsed.get("data").ok_or_else(|| {
-                    warn!("Missing data field in result. Raw message: {}", msg);
-                    BitVMXError::InvalidMessageFormat
-                })?;
+                warn!("Missing data field in result. Raw message: {}", msg);
+                BitVMXError::InvalidMessageFormat
+            })?;
 
             let id = Uuid::parse_str(&result_message.job_id)
                 .map_err(|_| BitVMXError::InvalidMessageFormat)?;
@@ -1090,8 +1089,9 @@ impl BitVMXApi for BitVMX {
     }
 
     fn handle_emulator_message(&mut self, msg: &String) -> Result<(), BitVMXError> {
-        if let Some(message) = serde_json::from_str::<PingMessage>(&msg).ok(){
-            self.ping_helper.received_message(JobDispatcherType::Emulator, &message);
+        if let Some(message) = serde_json::from_str::<PingMessage>(&msg).ok() {
+            self.ping_helper
+                .received_message(JobDispatcherType::Emulator, &message);
         } else {
             let result_message = ResultMessage::from_str(&msg)?;
             let parsed: serde_json::Value = result_message.result_as_value()?;
@@ -1101,7 +1101,7 @@ impl BitVMXApi for BitVMX {
             self.load_program(&job_id)?
                 .protocol
                 .dispute()?
-                .execution_result(&decoded, &self.program_context)?; 
+                .execution_result(&decoded, &self.program_context)?;
         }
         Ok(())
     }
