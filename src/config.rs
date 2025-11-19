@@ -85,6 +85,7 @@ pub struct ComponentsConfig {
 
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct PingConfig {
+    pub enabled: bool,
     pub interval_secs: u64,
     pub timeout_secs: u64,
 }

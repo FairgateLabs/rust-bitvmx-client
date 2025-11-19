@@ -21,29 +21,25 @@ pub(crate) struct PingHelper {
     time_to_send_check: Instant,
     ping_timeout: Duration,
     time_between_checks: Duration,
-}
-
-impl Default for PingHelper {
-    fn default() -> Self {
-        Self {
-            time_since_sent_check: HashMap::new(),
-            time_to_send_check: Instant::now(),
-            ping_timeout: Duration::from_secs(30),
-            time_between_checks: Duration::from_secs(120),
-        }
-    }
+    enabled: bool,
 }
 
 impl PingHelper {
     pub fn new(config: Option<PingConfig>) -> Self {
-        let config = config.unwrap_or_default();
-        let ping_timeout = Duration::from_secs(config.timeout_secs);
-        let time_between_checks = Duration::from_secs(config.interval_secs);
+        let (ping_timeout, time_between_checks, enabled) = match config {
+            Some(c) => (
+                Duration::from_secs(c.timeout_secs),
+                Duration::from_secs(c.interval_secs),
+                c.enabled,
+            ),
+            None => (Duration::from_secs(30), Duration::from_secs(120), false),
+        };
         Self {
             time_since_sent_check: HashMap::new(),
             time_to_send_check: Instant::now(),
             ping_timeout,
             time_between_checks,
+            enabled,
         }
     }
 
@@ -52,6 +48,9 @@ impl PingHelper {
         program_context: &ProgramContext,
         components: &ComponentsConfig,
     ) -> Result<(), BitVMXError> {
+        if !self.enabled {
+            return Ok(());
+        }
         self.check_if_dispatchers_timed_out();
 
         if self.time_to_send_check.elapsed() >= self.time_between_checks {
