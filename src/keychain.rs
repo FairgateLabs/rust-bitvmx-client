@@ -328,15 +328,24 @@ impl KeyChain {
 mod tests {
     use super::*;
     use std::rc::Rc;
+    use uuid::Uuid;
+
+    fn build_test_keychain() -> Result<KeyChain, BitVMXError> {
+        let mut config = Config::new(Some("config/development.yaml".to_string()))?;
+        let unique_dir = std::env::temp_dir()
+            .join("bitvmx-keychain-tests")
+            .join(Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&unique_dir).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+        config.storage.path = unique_dir.join("storage.db").to_string_lossy().to_string();
+        config.key_storage.path = unique_dir.join("keys.db").to_string_lossy().to_string();
+        let store = Rc::new(Storage::new(&config.storage)?);
+        KeyChain::new(&config, store)
+    }
 
     #[test]
     fn test_encrypt_and_decrypt_messages() -> Result<(), BitVMXError> {
-        // Create config and storage for testing
-        let config = Config::new(Some("config/development.yaml".to_string()))?;
-        let store = Rc::new(Storage::new(&config.storage)?);
-
-        // Create KeyChain using the existing constructor
-        let keychain = KeyChain::new(&config, store)?;
+        // Create KeyChain with unique database paths
+        let keychain = build_test_keychain()?;
 
         // Test message
         let original_message = b"Hello, this is a test message for encryption!".to_vec();
@@ -369,12 +378,8 @@ mod tests {
 
     #[test]
     fn test_verify_rsa_signature_valid() -> Result<(), BitVMXError> {
-        // Create config and storage for testing
-        let config = Config::new(Some("config/development.yaml".to_string()))?;
-        let store = Rc::new(Storage::new(&config.storage)?);
-
-        // Create KeyChain using the existing constructor
-        let keychain = KeyChain::new(&config, store)?;
+        // Create KeyChain with unique database paths
+        let keychain = build_test_keychain()?;
 
         // Test message
         let message = b"Hello, this is a test message for RSA signature verification!";
@@ -394,12 +399,8 @@ mod tests {
 
     #[test]
     fn test_verify_rsa_signature_invalid_signature() -> Result<(), BitVMXError> {
-        // Create config and storage for testing
-        let config = Config::new(Some("config/development.yaml".to_string()))?;
-        let store = Rc::new(Storage::new(&config.storage)?);
-
-        // Create KeyChain using the existing constructor
-        let keychain = KeyChain::new(&config, store)?;
+        // Create KeyChain with unique database paths
+        let keychain = build_test_keychain()?;
 
         // Test message
         let message = b"Hello, this is a test message for RSA signature verification!";
@@ -419,12 +420,8 @@ mod tests {
 
     #[test]
     fn test_verify_rsa_signature_wrong_message() -> Result<(), BitVMXError> {
-        // Create config and storage for testing
-        let config = Config::new(Some("config/development.yaml".to_string()))?;
-        let store = Rc::new(Storage::new(&config.storage)?);
-
-        // Create KeyChain using the existing constructor
-        let keychain = KeyChain::new(&config, store)?;
+        // Create KeyChain with unique database paths
+        let keychain = build_test_keychain()?;
 
         // Original message
         let original_message = b"Hello, this is a test message for RSA signature verification!";
@@ -450,12 +447,8 @@ mod tests {
 
     #[test]
     fn test_verify_rsa_signature_wrong_public_key() -> Result<(), BitVMXError> {
-        // Create config and storage for testing
-        let config = Config::new(Some("config/development.yaml".to_string()))?;
-        let store = Rc::new(Storage::new(&config.storage)?);
-
-        // Create KeyChain using the existing constructor
-        let keychain = KeyChain::new(&config, store)?;
+        // Create KeyChain with unique database paths
+        let keychain = build_test_keychain()?;
 
         // Test message
         let message = b"Hello, this is a test message for RSA signature verification!";
@@ -481,12 +474,8 @@ mod tests {
 
     #[test]
     fn test_verify_rsa_signature_invalid_signature_format() -> Result<(), BitVMXError> {
-        // Create config and storage for testing
-        let config = Config::new(Some("config/development.yaml".to_string()))?;
-        let store = Rc::new(Storage::new(&config.storage)?);
-
-        // Create KeyChain using the existing constructor
-        let keychain = KeyChain::new(&config, store)?;
+        // Create KeyChain with unique database paths
+        let keychain = build_test_keychain()?;
 
         // Test message
         let message = b"Hello, this is a test message for RSA signature verification!";
@@ -525,12 +514,8 @@ mod tests {
 
     #[test]
     fn test_verify_rsa_signature_empty_message() -> Result<(), BitVMXError> {
-        // Create config and storage for testing
-        let config = Config::new(Some("config/development.yaml".to_string()))?;
-        let store = Rc::new(Storage::new(&config.storage)?);
-
-        // Create KeyChain using the existing constructor
-        let keychain = KeyChain::new(&config, store)?;
+        // Create KeyChain with unique database paths
+        let keychain = build_test_keychain()?;
 
         // Empty message
         let message = b"";

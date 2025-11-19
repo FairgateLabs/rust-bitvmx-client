@@ -156,6 +156,7 @@ mod tests {
             .join(Uuid::new_v4().to_string());
         std::fs::create_dir_all(&unique_dir).map_err(|_| BitVMXError::InvalidMessageFormat)?;
         config.storage.path = unique_dir.join("storage.db").to_string_lossy().to_string();
+        config.key_storage.path = unique_dir.join("keys.db").to_string_lossy().to_string();
         let store = Rc::new(Storage::new(&config.storage)?);
         KeyChain::new(&config, store)
     }
@@ -340,17 +341,6 @@ mod tests {
             &my_pubkey_hash,
         );
         assert!(matches!(result, Err(BitVMXError::InvalidMessageFormat)));
-        Ok(())
-    }
-
-    #[ignore]
-    #[test]
-    fn test_all_signature_verifier_suite() -> Result<(), BitVMXError> {
-        verify_message_signature_accepts_valid_payload_case()?;
-        verify_message_signature_detects_tampering_case()?;
-        get_verification_key_from_announcement_case()?;
-        get_verification_key_for_self_message_case()?;
-        get_verification_key_from_shared_map_case()?;
         Ok(())
     }
 }

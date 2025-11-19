@@ -869,14 +869,16 @@ mod tests {
 
     fn ensure_timestamp_fresh_internal_rejects_future_message_case() {
         let map = HashMap::new();
-        let future = Utc::now().timestamp_millis() + MAX_TIMESTAMP_DRIFT_MS + 1;
+        // Use a larger margin to account for timing differences between test and function
+        let future = Utc::now().timestamp_millis() + MAX_TIMESTAMP_DRIFT_MS + 1000;
         let result = ensure_timestamp_fresh_internal(&map, &peer(), future);
         assert!(matches!(result, Err(BitVMXError::InvalidMessageFormat)));
     }
 
     fn ensure_timestamp_fresh_internal_rejects_stale_message_case() {
         let map = HashMap::new();
-        let past = Utc::now().timestamp_millis() - MAX_TIMESTAMP_DRIFT_MS - 1;
+        // Use a larger margin to account for timing differences between test and function
+        let past = Utc::now().timestamp_millis() - MAX_TIMESTAMP_DRIFT_MS - 1000;
         let result = ensure_timestamp_fresh_internal(&map, &peer(), past);
         assert!(matches!(result, Err(BitVMXError::InvalidMessageFormat)));
     }
@@ -924,16 +926,6 @@ mod tests {
 
     #[test]
     fn record_timestamp_internal_updates_state() {
-        record_timestamp_internal_updates_state_case();
-    }
-
-    #[ignore]
-    #[test]
-    fn test_all_bitvmx_timestamp_guards() {
-        ensure_timestamp_fresh_internal_accepts_recent_message_case();
-        ensure_timestamp_fresh_internal_rejects_future_message_case();
-        ensure_timestamp_fresh_internal_rejects_stale_message_case();
-        ensure_timestamp_fresh_internal_rejects_replay_case();
         record_timestamp_internal_updates_state_case();
     }
 }
