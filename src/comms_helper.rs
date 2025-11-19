@@ -444,21 +444,23 @@ mod tests {
         let msg_type = CommsMessageType::Keys;
         let program_id = Uuid::new_v4();
         let msg = "Hello, world!";
+        let signature = vec![0x01, 0x02, 0x03]; // Non-empty signature required
 
-        let serialized_msg = serialize_msg(version, msg_type, &program_id, msg, 0, vec![]).unwrap();
+        let serialized_msg = serialize_msg(version, msg_type, &program_id, msg, 0, signature.clone()).unwrap();
         let (
             deserialized_version,
             deserialized_msg_type,
             deserialized_program_id,
             deserialized_msg,
             _deserialized_timestamp,
-            _deserialized_signature,
+            deserialized_signature,
         ) = deserialize_msg(serialized_msg).unwrap();
 
         assert_eq!(deserialized_version, version);
         assert_eq!(deserialized_msg_type, msg_type);
         assert_eq!(deserialized_program_id, program_id);
         assert_eq!(deserialized_msg, msg);
+        assert_eq!(deserialized_signature, signature);
     }
 
     // TODO: This code section was commented out since it is no longer needed.
