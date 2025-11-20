@@ -28,6 +28,8 @@ pub struct DisputeConfiguration {
 }
 
 impl DisputeConfiguration {
+    pub const NAME: &'static str = "dispute_configuration";
+
     pub fn new(
         id: Uuid,
         operators_aggregated_pub: PublicKey,
@@ -56,10 +58,7 @@ impl DisputeConfiguration {
 
     // The structure is serialized as a whole. If there is a performance hit it could be serialized in parts.
     pub fn load(id: &Uuid, globals: &Globals) -> Result<Self, BitVMXError> {
-        let dispute_configuration = globals
-            .get_var(id, "dispute_configuration")?
-            .unwrap()
-            .string()?;
+        let dispute_configuration = globals.get_var(id, Self::NAME)?.unwrap().string()?;
 
         Ok(serde_json::from_str(&dispute_configuration)?)
     }
@@ -70,8 +69,7 @@ impl DisputeConfiguration {
         leader: u16,
     ) -> Result<Vec<String>, BitVMXError> {
         Ok(vec![
-            VariableTypes::String(serde_json::to_string(&self)?)
-                .set_msg(self.id, "dispute_configuration")?,
+            VariableTypes::String(serde_json::to_string(&self)?).set_msg(self.id, Self::NAME)?,
             IncomingBitVMXApiMessages::Setup(
                 self.id,
                 PROGRAM_TYPE_DRP.to_string(),
