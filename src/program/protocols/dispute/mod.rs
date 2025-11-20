@@ -293,15 +293,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         let config = DisputeConfiguration::load(&self.ctx.id, &context.globals)?;
         let utxo = config.protocol_connection.0.clone();
 
-        let input = config
-            .protocol_connection
-            .2
-            .clone()
-            .unwrap_or(InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::Script { leaf: 1 },
-            ));
-
         let prover_speedup_pub = keys[0].get_public("speedup")?;
         let verifier_speedup_pub = keys[1].get_public("speedup")?;
         let aggregated = computed_aggregated.get("aggregated_1").unwrap();
@@ -325,7 +316,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             EXTERNAL_START,
             (utxo.1 as usize).into(),
             START_CH,
-            input,
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
             None,
             Some(utxo.0),
         )?;
