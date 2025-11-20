@@ -86,7 +86,7 @@ pub struct DisputeResolutionProtocol {
 }
 
 const MIN_RELAY_FEE: u64 = 1;
-pub const DRP_DUST_VALUE: u64 = 500 * MIN_RELAY_FEE;
+pub const DUST: u64 = 500 * MIN_RELAY_FEE;
 
 pub fn protocol_cost() -> u64 {
     38_000 // This is a placeholder value, adjust as needed
@@ -281,8 +281,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
     ) -> Result<(), BitVMXError> {
         // TODO get this from config, all values expressed in satoshis
 
-        let speedup_dust = DRP_DUST_VALUE;
-        let fee = DRP_DUST_VALUE;
+        let speedup_dust = DUST;
+        let fee = DUST;
 
         let (prover_signs, verifier_signs) = if self.role() == ParticipantRole::Prover {
             (SignMode::Single, SignMode::Skip)
@@ -292,6 +292,15 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         let config = DisputeConfiguration::load(&self.ctx.id, &context.globals)?;
         let utxo = config.protocol_connection.0.clone();
+
+        let input = config
+            .protocol_connection
+            .2
+            .clone()
+            .unwrap_or(InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::Script { leaf: 1 },
+            ));
 
         let prover_speedup_pub = keys[0].get_public("speedup")?;
         let verifier_speedup_pub = keys[1].get_public("speedup")?;
@@ -316,7 +325,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             EXTERNAL_START,
             (utxo.1 as usize).into(),
             START_CH,
-            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
+            input,
             None,
             Some(utxo.0),
         )?;
@@ -724,7 +733,7 @@ impl DisputeResolutionProtocol {
         claim: &str,
         action_number: u32,
     ) -> Result<(), BitVMXError> {
-        let speedup_dust = DRP_DUST_VALUE;
+        let speedup_dust = DUST;
         protocol.add_transaction(&action_wins(role, action_number))?;
         protocol.add_connection(
             &format!("{:?}_ACTION_{action_number}", role),

@@ -3,7 +3,7 @@ use emulator::{
     decision::challenge::{ForceChallenge, ForceCondition},
     executor::utils::FailConfiguration,
 };
-use protocol_builder::types::OutputType;
+use protocol_builder::types::{connection::InputSpec, OutputType};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -17,7 +17,7 @@ use crate::{
 pub struct DisputeConfiguration {
     pub id: Uuid,
     pub operators_aggregated_pub: PublicKey,
-    pub protocol_connection: (PartialUtxo, Vec<usize>),
+    pub protocol_connection: (PartialUtxo, Vec<usize>, Option<InputSpec>),
     pub prover_actions: Vec<(PartialUtxo, Vec<usize>)>,
     pub prover_enablers: Vec<OutputType>,
     pub verifier_actions: Vec<(PartialUtxo, Vec<usize>)>,
@@ -31,7 +31,7 @@ impl DisputeConfiguration {
     pub fn new(
         id: Uuid,
         operators_aggregated_pub: PublicKey,
-        protocol_connection: (PartialUtxo, Vec<usize>),
+        protocol_connection: (PartialUtxo, Vec<usize>, Option<InputSpec>),
         prover_actions: Vec<(PartialUtxo, Vec<usize>)>,
         prover_enablers: Vec<OutputType>,
         verifier_actions: Vec<(PartialUtxo, Vec<usize>)>,
