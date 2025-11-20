@@ -19,8 +19,12 @@ if [ "$#" -ne 1 ]; then
   exit 1
 fi
 
+# Date pieces
+timestamp_date=$(date +%y%m%d)
+timestamp_time=$(date +%H%M)
+
 name="$1"
-LOGS_DIR="logs/examples/$name"
+LOGS_DIR="logs/${timestamp_date}/${name}_${timestamp_time}"
 rm -rf "$LOGS_DIR"
 mkdir -p "$LOGS_DIR"
 echo "Setting up example: $name"
