@@ -217,6 +217,11 @@ impl Member {
                 wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
             info!(id = self.id, program_id = ?program_id, "Dispute channel setup completed for operator index {}", i);
         }
+
+        info!(
+            id = self.id,
+            "Dispute channels {} setups completed", total_setups
+        );
         Ok(())
     }
 

@@ -1,10 +1,10 @@
 use anyhow::Result;
 use bitcoin::PublicKey;
-use protocol_builder::types::OutputType;
 use std::collections::HashMap;
 use tracing::info;
 use uuid::Uuid;
 
+use crate::wait_until_msg;
 use bitvmx_client::{
     client::BitVMXClient,
     program::{
@@ -13,17 +13,13 @@ use bitvmx_client::{
             dispute::config::DisputeConfiguration,
             union::{
                 common::{get_dispute_channel_pid, get_dispute_core_pid},
-                types::{MemberData, WT_START_ENABLER_UTXOS},
+                types::{MemberData, CLAIM_GATE_STOPPER_UTXOS, OP_COSIGN_UTXOS},
             },
         },
         variables::{PartialUtxo, VariableTypes},
     },
     types::{OutgoingBitVMXApiMessages, PROGRAM_TYPE_DRP},
 };
-
-use crate::wait_until_msg;
-
-use bitvmx_client::program::protocols::dispute::DUST as DRP_DUST_VALUE;
 
 const DRP_TIMELOCK_BLOCKS: u16 = 15; // TODO review if this is the right value
 const DRP_PROGRAM_DEFINITION: &str = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml"; // TODO move to config?
@@ -42,6 +38,10 @@ impl DisputeChannelSetup {
         let mut total_setups = 0;
         let my_address = addresses[my_index].clone();
         let prover = members[my_index].role == ParticipantRole::Prover;
+        let my_dispute_core_pid = get_dispute_core_pid(committee_id, &members[my_index].take_key);
+
+        let my_op_cosign_utxos = Self::op_cosign_utxos(my_dispute_core_pid, bitvmx)?;
+        let my_claim_gate_stoppers = Self::claim_gate_stoppers(my_dispute_core_pid, &bitvmx)?;
 
         // Iterate over partners
         for partner_index in 0..members.len() {
@@ -61,15 +61,18 @@ impl DisputeChannelSetup {
 
             // If I'm an operator, set up DisputeChannel where I'm the operator and my partner is the watchtower
             if prover {
-                // get wt start enabler utxos
-                let wt_start_enablers = Self::get_wt_start_enabler_utxos(
-                    committee_id,
-                    &bitvmx,
-                    partner_index,
-                    members,
-                )?;
-
                 Self::print_setup_info(my_index, my_index, partner_index);
+
+                let partner_dispute_core_pid =
+                    get_dispute_core_pid(committee_id, &members[partner_index].take_key);
+
+                let partner_claim_gate_stoppers =
+                    Self::claim_gate_stoppers(partner_dispute_core_pid, &bitvmx)?;
+
+                let partner_op_cosign_utxos =
+                    Self::op_cosign_utxos(partner_dispute_core_pid, &bitvmx)?;
+
+                let partner_stoppers = partner_claim_gate_stoppers[my_index].clone().unwrap();
                 Self::setup_one(
                     committee_id,
                     my_index,
@@ -78,7 +81,9 @@ impl DisputeChannelSetup {
                     partner_address,
                     &bitvmx,
                     pair_key,
-                    &wt_start_enablers,
+                    partner_stoppers.0,
+                    partner_stoppers.1,
+                    partner_op_cosign_utxos[my_index].clone().unwrap(),
                 )?;
 
                 total_setups += 1;
@@ -86,11 +91,10 @@ impl DisputeChannelSetup {
 
             // If my partner is an operator, set up DisputeChannel where they are the operator and I'm the watchtower
             if members[partner_index].role == ParticipantRole::Prover {
-                // get wt start enabler utxos
-                let wt_start_enablers =
-                    Self::get_wt_start_enabler_utxos(committee_id, &bitvmx, my_index, members)?;
-
                 Self::print_setup_info(my_index, partner_index, my_index);
+
+                let my_stoppers = my_claim_gate_stoppers[partner_index].clone().unwrap();
+
                 Self::setup_one(
                     committee_id,
                     partner_index,
@@ -99,34 +103,47 @@ impl DisputeChannelSetup {
                     &my_address,
                     &bitvmx,
                     pair_key,
-                    &wt_start_enablers,
+                    my_stoppers.0,
+                    my_stoppers.1,
+                    my_op_cosign_utxos[partner_index].clone().unwrap(),
                 )?;
 
                 total_setups += 1;
             }
         }
 
-        info!("DisputeChannel setup complete ({} setups)", total_setups);
+        info!("DisputeChannel ({} setups)", total_setups);
         Ok(total_setups)
     }
 
-    fn get_wt_start_enabler_utxos(
-        committee_id: Uuid,
+    fn claim_gate_stoppers(
+        dispute_core_pid: Uuid,
         bitvmx: &BitVMXClient,
-        wt_index: usize,
-        members: &Vec<MemberData>,
-    ) -> Result<Vec<PartialUtxo>> {
-        let dispute_core_pid = get_dispute_core_pid(committee_id, &members[wt_index].take_key);
-        bitvmx.get_var(dispute_core_pid, WT_START_ENABLER_UTXOS.to_string())?;
+    ) -> Result<Vec<Option<(PartialUtxo, PartialUtxo)>>> {
+        bitvmx.get_var(dispute_core_pid, CLAIM_GATE_STOPPER_UTXOS.to_string())?;
         std::thread::sleep(std::time::Duration::from_secs(1)); // wait a bit for the message to be processed
 
         let variable =
             wait_until_msg!(&bitvmx, OutgoingBitVMXApiMessages::Variable(_, _, _var) => _var);
 
         let data = variable.string()?;
-        let wt_start_enabler_utxos: Vec<PartialUtxo> = serde_json::from_str(&data)?;
+        let claim_stoppers: Vec<Option<(PartialUtxo, PartialUtxo)>> = serde_json::from_str(&data)?;
+        Ok(claim_stoppers)
+    }
 
-        Ok(wt_start_enabler_utxos)
+    fn op_cosign_utxos(
+        dispute_core_pid: Uuid,
+        bitvmx: &BitVMXClient,
+    ) -> Result<Vec<Option<PartialUtxo>>> {
+        bitvmx.get_var(dispute_core_pid, OP_COSIGN_UTXOS.to_string())?;
+        std::thread::sleep(std::time::Duration::from_secs(1)); // wait a bit for the message to be processed
+
+        let variable =
+            wait_until_msg!(&bitvmx, OutgoingBitVMXApiMessages::Variable(_, _, _var) => _var);
+
+        let data = variable.string()?;
+        let op_cosign_utxos: Vec<Option<PartialUtxo>> = serde_json::from_str(&data)?;
+        Ok(op_cosign_utxos)
     }
 
     fn setup_one(
@@ -137,7 +154,9 @@ impl DisputeChannelSetup {
         watchtower: &CommsAddress,
         bitvmx: &BitVMXClient,
         pair_key: PublicKey,
-        wt_start_enablers: &Vec<PartialUtxo>,
+        wt_stopper: PartialUtxo,
+        op_stopper: PartialUtxo,
+        op_cosign: PartialUtxo,
     ) -> Result<()> {
         let drp_id = get_dispute_channel_pid(committee_id, op_index, wt_index);
         let participants: Vec<CommsAddress> = vec![operator.clone(), watchtower.clone()];
@@ -150,18 +169,11 @@ impl DisputeChannelSetup {
         let dispute_configuration = DisputeConfiguration::new(
             drp_id,
             pair_key,
-            (
-                wt_start_enablers[op_index].clone(),
-                vec![], // TODO: this vec<usize> is not used by the protocol builder. what is it there for?
-            ),
-            vec![], // empty prover actions
-            vec![OutputType::taproot(DRP_DUST_VALUE, &pair_key, &[])?],
-            vec![], // empty verifier actions
-            vec![OutputType::taproot(
-                DRP_DUST_VALUE,
-                &pair_key, // Use pairwise key for 2-party dispute channel
-                &[],
-            )?],
+            (op_cosign, vec![]),
+            vec![(wt_stopper, vec![1])], // Consume leaf 1
+            vec![],
+            vec![(op_stopper, vec![1])], // Consume leaf 1
+            vec![],
             DRP_TIMELOCK_BLOCKS,
             DRP_PROGRAM_DEFINITION.to_string(),
             None, // TODO review if this is the right fail force config

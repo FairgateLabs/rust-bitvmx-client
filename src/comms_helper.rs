@@ -21,7 +21,7 @@ pub fn request<T: Serialize>(
             comms_address.address,
             serialize_msg,
         )
-        .unwrap();
+        .map_err(|e| BitVMXError::CommsEncodingError(e))?;
     Ok(())
 }
 

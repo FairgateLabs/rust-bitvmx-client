@@ -28,7 +28,8 @@ use protocol_builder::{
     builder::Protocol,
     graph::graph::GraphOptions,
     scripts::{
-        op_return, op_return_script, timelock, verify_winternitz_signature_timelock, SignMode,
+        op_return, op_return_script, timelock, verify_signature,
+        verify_winternitz_signature_timelock, SignMode,
     },
     types::{
         connection::{InputSpec, OutputSpec},
@@ -582,9 +583,17 @@ impl DisputeCoreProtocol {
                     op_claim_gate.stoppers[0].clone(),
                 )));
 
-                // FIXME: Review this output. This goes to DisputeChannel
-                let op_cosign_output =
-                    OutputType::taproot(challenge_cost, wt_dispute_key, &vec![])?;
+                // FIXME: Review this output. This goes to DisputeChannel. Need 2 scripts by now.
+                let verify_signature_1 =
+                    verify_signature(wt_dispute_key, self.get_sign_mode(data.member_index))?;
+                let verify_signature_2 =
+                    verify_signature(wt_dispute_key, self.get_sign_mode(data.member_index))?;
+
+                let op_cosign_output = OutputType::taproot(
+                    challenge_cost,
+                    wt_dispute_key,
+                    &vec![verify_signature_1, verify_signature_2],
+                )?;
 
                 op_cosign_outputs.push(Some(op_cosign_output.clone()));
 
