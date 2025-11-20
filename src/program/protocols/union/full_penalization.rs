@@ -7,7 +7,7 @@ use protocol_builder::{
     graph::graph::GraphOptions,
     scripts::{ProtocolScript, SignMode},
     types::{
-        connection::InputSpec,
+        connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
         output::SpeedupData,
         InputArgs, OutputType,
@@ -31,14 +31,14 @@ use crate::{
                 },
                 types::{
                     Committee, FullPenalizationData, StreamSettings, DISPUTE_AGGREGATED_KEY,
-                    DUST_VALUE, OPERATOR_TAKE_ENABLER, OP_CLAIM_GATE_SUCCESS,
+                    DUST_VALUE, OPERATOR_TAKE_ENABLER, OPERATOR_WON_ENABLER, OP_CLAIM_GATE_SUCCESS,
                     OP_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO, OP_DISABLER_DIRECTORY_TX,
                     OP_DISABLER_DIRECTORY_UTXO, OP_DISABLER_TX, OP_INITIAL_DEPOSIT_AMOUNT,
                     OP_INITIAL_DEPOSIT_OUT_SCRIPT, OP_INITIAL_DEPOSIT_TX, OP_INITIAL_DEPOSIT_TXID,
-                    OP_LAZY_DISABLER_TX, REIMBURSEMENT_KICKOFF_TX, SPEEDUP_VALUE,
-                    WT_CLAIM_GATE_SUCCESS, WT_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO,
-                    WT_DISABLER_DIRECTORY_TX, WT_DISABLER_TX, WT_START_ENABLER_TX,
-                    WT_START_ENABLER_UTXOS,
+                    OP_LAZY_DISABLER_TX, REIMBURSEMENT_KICKOFF_TX, REVEAL_INPUT_TX, SPEEDUP_VALUE,
+                    STOP_OP_WON_TX, WT_CLAIM_GATE_SUCCESS,
+                    WT_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO, WT_DISABLER_DIRECTORY_TX,
+                    WT_DISABLER_TX, WT_START_ENABLER_TX, WT_START_ENABLER_UTXOS,
                 },
             },
         },
@@ -266,6 +266,7 @@ impl FullPenalizationProtocol {
         disabler_directory_utxo: &PartialUtxo,
         take_enablers: &Vec<PartialUtxo>,
         initial_deposit_utxos: &Vec<PartialUtxo>,
+        operator_won_enablers: &Vec<PartialUtxo>,
         settings: &StreamSettings,
     ) -> Result<(), BitVMXError> {
         let packet_size = committee.packet_size;
@@ -415,6 +416,58 @@ impl FullPenalizationProtocol {
             )?;
         }
 
+        // DISABLER DIRECTORY output to STOP OPERATOR WON
+        protocol.add_transaction_output(
+            &op_disabler_directory_name,
+            &OutputType::taproot(DUST_VALUE, &committee.dispute_aggregated_key, &vec![])?,
+        )?;
+
+        for slot_index in 0..packet_size as usize {
+            let reveal_name = &double_indexed_name(REVEAL_INPUT_TX, op_index, slot_index);
+            let stop_op_won_name =
+                triple_indexed_name(STOP_OP_WON_TX, op_index, wt_index, slot_index);
+
+            // OP DISABLER DIRECTORY to STOP_OP_WON_TX
+            protocol.add_connection(
+                "from_dis_directory",
+                &op_disabler_directory_name,
+                OutputSpec::Last,
+                &stop_op_won_name,
+                InputSpec::Auto(
+                    SighashType::taproot_all(),
+                    SpendMode::KeyOnly {
+                        key_path_sign: SignMode::Aggregate,
+                    },
+                ),
+                None,
+                None,
+            )?;
+
+            // Connect REVEAL INPUT TX to STOP_OP_WON_TX
+            protocol.add_connection(
+                "from_reveal_input",
+                &reveal_name,
+                (operator_won_enablers[slot_index].1 as usize).into(),
+                &stop_op_won_name,
+                InputSpec::Auto(
+                    SighashType::taproot_all(),
+                    SpendMode::KeyOnly {
+                        key_path_sign: SignMode::Aggregate,
+                    },
+                ),
+                None,
+                Some(operator_won_enablers[slot_index].0),
+            )?;
+
+            protocol.add_transaction_output(
+                &stop_op_won_name,
+                &OutputType::SegwitUnspendable {
+                    value: Amount::from_sat(0),
+                    script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
+                },
+            )?;
+        }
+
         // OP DISABLER DIRECTORY output
         // Maybe this speedup here could be removed.
         // Right not it's needed to make all disable directory tx different, if not they all have same txid for a particular operator.
@@ -431,14 +484,30 @@ impl FullPenalizationProtocol {
     fn operator_take_enabler(
         &self,
         context: &ProgramContext,
-        dispute_protocol_id: Uuid,
+        dispute_core_pid: Uuid,
         slot_index: usize,
     ) -> Result<PartialUtxo, BitVMXError> {
         Ok(context
             .globals
             .get_var(
-                &dispute_protocol_id,
+                &dispute_core_pid,
                 &indexed_name(OPERATOR_TAKE_ENABLER, slot_index),
+            )?
+            .unwrap()
+            .utxo()?)
+    }
+
+    fn operator_won_enabler(
+        &self,
+        context: &ProgramContext,
+        dispute_core_pid: Uuid,
+        slot_index: usize,
+    ) -> Result<PartialUtxo, BitVMXError> {
+        Ok(context
+            .globals
+            .get_var(
+                &dispute_core_pid,
+                &indexed_name(OPERATOR_WON_ENABLER, slot_index),
             )?
             .unwrap()
             .utxo()?)
@@ -447,11 +516,11 @@ impl FullPenalizationProtocol {
     fn disabler_directory_utxo(
         &self,
         context: &ProgramContext,
-        dispute_protocol_id: Uuid,
+        dispute_core_pid: Uuid,
     ) -> Result<PartialUtxo, BitVMXError> {
         Ok(context
             .globals
-            .get_var(&dispute_protocol_id, &OP_DISABLER_DIRECTORY_UTXO)?
+            .get_var(&dispute_core_pid, &OP_DISABLER_DIRECTORY_UTXO)?
             .unwrap()
             .utxo()?)
     }
@@ -670,6 +739,26 @@ impl FullPenalizationProtocol {
                 context,
             )?;
 
+            let dispute_protocol_pid = get_dispute_core_pid(
+                data.committee_id,
+                &committee.members[operator_index].take_key,
+            );
+            let mut operator_won_enablers = vec![];
+
+            for slot_index in 0..committee.packet_size as usize {
+                let operator_won_enabler =
+                    self.operator_won_enabler(context, dispute_protocol_pid, slot_index)?;
+
+                operator_won_enablers.push(operator_won_enabler.clone());
+
+                let reveal_name = &double_indexed_name(REVEAL_INPUT_TX, operator_index, slot_index);
+                create_transaction_reference(
+                    protocol,
+                    reveal_name,
+                    &mut vec![operator_won_enabler.clone()],
+                )?;
+            }
+
             for watchtower_index in 0..member_count {
                 if operator_index == watchtower_index {
                     continue;
@@ -691,6 +780,7 @@ impl FullPenalizationProtocol {
                     &disabler_directory_utxo,
                     &take_enablers,
                     &initial_deposit_utxos,
+                    &operator_won_enablers,
                     &settings,
                 )?;
             }
