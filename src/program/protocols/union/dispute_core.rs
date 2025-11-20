@@ -49,6 +49,10 @@ const SLOT_ID_KEY: &str = "SLOT_ID_KEY";
 const SLOT_ID_KEYS: &str = "SLOT_ID_KEYS";
 const MEMBERS_SLOT_ID_KEYS: &str = "MEMBERS_SLOT_ID_KEYS";
 const CLAIM_GATE_FEE: u64 = 335; // TODO: Validate this value
+const INPUT_NOT_REVEALED_INPUT_INDEX: usize = 0;
+const INPUT_NOT_REVEALED_INPUT_LEAF: usize = 1;
+const REVEAL_INPUT_INDEX: usize = 0;
+const REVEAL_INPUT_LEAF: usize = 0;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DisputeCoreProtocol {
@@ -111,7 +115,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
             if slot_id_keys.is_empty() {
                 for _ in 0..packet_size as usize {
                     slot_id_keys.push(PublicKeyType::Winternitz(
-                        program_context.key_chain.derive_winternitz_hash160(32)?,
+                        program_context.key_chain.derive_winternitz_hash160(2)?, // Sign 2 bytes of u16 slot id.
                     ));
                 }
 
@@ -325,15 +329,19 @@ impl ProtocolHandler for DisputeCoreProtocol {
                 tx_id,
                 &tx_name,
             )?;
-        }
+        } else if tx_name.starts_with(CHALLENGE_TX) {
+            let slot_index = extract_index(&tx_name, CHALLENGE_TX)?;
 
-        // TODO: Handle challenge transaction and dispatch reveal input tx
-
-        if tx_name.starts_with(REVEAL_INPUT_TX) {
+            self.handle_challenge_tx(program_context, slot_index, &tx_status)?;
+        } else if tx_name.starts_with(REVEAL_INPUT_TX) {
             let slot_index = extract_index(&tx_name, REVEAL_INPUT_TX)?;
 
             // Handle double reveal penalization if needed
-            self.handle_double_reveal(program_context, slot_index)?;
+            if self.handle_double_reveal(program_context, slot_index)? {
+                return Ok(());
+            } else {
+                self.handle_reveal_input_tx(program_context, slot_index, &tx_status)?;
+            }
         }
 
         Ok(())
@@ -821,13 +829,24 @@ impl DisputeCoreProtocol {
         let reveal_script = protocol_builder::scripts::verify_winternitz_signature(
             &operator_dispute_key,
             operator_keys.get_winternitz(&indexed_name(SLOT_ID_KEY, dispute_core_index))?,
-            SignMode::Skip,
+            self.get_sign_mode(dispute_core_data.member_index),
         )?;
+
+        let not_reveal_script = protocol_builder::scripts::timelock(
+            settings.input_not_revealed_timelock,
+            &committee.dispute_aggregated_key,
+            SignMode::Aggregate,
+        );
 
         protocol.add_connection(
             "reveal_input",
             &challenge,
-            OutputType::taproot(AUTO_AMOUNT, dispute_aggregated_key, &[reveal_script])?.into(),
+            OutputType::taproot(
+                AUTO_AMOUNT,
+                dispute_aggregated_key,
+                &[reveal_script, not_reveal_script],
+            )?
+            .into(),
             &reveal_input,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
             None,
@@ -841,16 +860,12 @@ impl DisputeCoreProtocol {
             &challenge,
             OutputSpec::Index(0),
             &input_not_revealed,
-            InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::KeyOnly {
-                    key_path_sign: SignMode::Aggregate,
-                },
-            ),
-            Some(settings.input_not_revealed_timelock),
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
+            None,
             None,
         )?;
 
+        // TODO: Should we remove this output? If so, need to update input_not_revealed_tx with correct speedup output index
         protocol.add_transaction_output(
             &input_not_revealed,
             &OutputType::segwit_unspendable(op_return(vec![]))?,
@@ -1204,7 +1219,7 @@ impl DisputeCoreProtocol {
         )?;
 
         info!(
-            "{} connected to reimbursement tx {} and dispatched with txid: {}",
+            "{} connected to reimbursement tx {} dispatched with txid: {}",
             tx_name, reimbursement_txid, challenge_txid
         );
 
@@ -1256,6 +1271,210 @@ impl DisputeCoreProtocol {
             REVEAL_IN_PROGRESS,
             VariableTypes::Number(slot_index as u32),
         )
+    }
+
+    fn handle_reveal_input_tx(
+        &self,
+        context: &ProgramContext,
+        slot_index: usize,
+        tx_status: &TransactionStatus,
+    ) -> Result<(), BitVMXError> {
+        info!(
+            id = self.ctx.my_idx,
+            "Handling reveal input tx for slot {}", slot_index
+        );
+
+        if self.is_my_dispute_core(context)? {
+            info!(
+                id = self.ctx.my_idx,
+                "This is my dispute_core, no need to handle reveal input for slot {}", slot_index
+            );
+            return Ok(());
+        }
+
+        let witness = tx_status.tx.input[REVEAL_INPUT_INDEX].witness.clone();
+        info!(
+            id = self.ctx.my_idx,
+            "Reveal input witness for slot {}: {:?}", slot_index, witness
+        );
+
+        // TODO: Dispatch WT_INIT_CHALLENGE_TX
+
+        Ok(())
+    }
+
+    fn handle_challenge_tx(
+        &self,
+        context: &ProgramContext,
+        slot_index: usize,
+        tx_status: &TransactionStatus,
+    ) -> Result<(), BitVMXError> {
+        if self.is_my_dispute_core(context)? {
+            info!(
+                id = self.ctx.my_idx,
+                "This is my dispute_core, checking for operator take dispatch for slot {}",
+                slot_index
+            );
+            self.dispatch_reveal_tx(context, slot_index)?;
+        } else {
+            // Schedule input not revealed dispatch transaction
+            self.dispatch_input_not_revealed_tx(context, slot_index, tx_status)?;
+        }
+
+        Ok(())
+    }
+
+    fn dispatch_reveal_tx(
+        &self,
+        context: &ProgramContext,
+        slot_index: usize,
+    ) -> Result<(), BitVMXError> {
+        let tx_name = indexed_name(REVEAL_INPUT_TX, slot_index);
+        info!(
+            id = self.ctx.my_idx,
+            "Auto-dispatching {} for slot index: {}", tx_name, slot_index
+        );
+
+        let (tx, speedup) = self.reveal_input_tx(&tx_name, context, slot_index)?;
+        let txid = tx.compute_txid();
+
+        context.bitcoin_coordinator.dispatch(
+            tx,
+            speedup,
+            format!("dispute_core_reveal_input_{}:{}", self.ctx.id, tx_name),
+            None,
+        )?;
+
+        info!(
+            id = self.ctx.my_idx,
+            "{} dispatch scheduled with txid: {}", tx_name, txid
+        );
+        Ok(())
+    }
+
+    fn reveal_input_tx(
+        &self,
+        name: &str,
+        context: &ProgramContext,
+        slot_index: usize,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", name);
+
+        let protocol = self.load_protocol()?;
+
+        // Prepare signatures
+        let committee_signature = protocol
+            .input_taproot_script_spend_signature(name, REVEAL_INPUT_INDEX, REVEAL_INPUT_LEAF)?
+            .unwrap();
+
+        let script = protocol.get_script_to_spend(
+            name,
+            REVEAL_INPUT_INDEX as u32,
+            REVEAL_INPUT_LEAF as u32,
+        )?;
+        let pegout_id_key = script.get_key("value").unwrap();
+
+        let slot_id_signature = context.key_chain.key_manager.sign_winternitz_message(
+            (slot_index as u16).to_le_bytes().as_slice(),
+            WinternitzType::HASH160,
+            pegout_id_key.derivation_index(),
+        )?;
+
+        // Create input arguments
+        let mut input_args = InputArgs::new_taproot_script_args(REVEAL_INPUT_LEAF);
+        input_args.push_winternitz_signature(slot_id_signature);
+        input_args.push_taproot_signature(committee_signature)?;
+
+        let tx = protocol.transaction_to_send(&name, &[input_args])?;
+        info!(id = self.ctx.my_idx, "Signed {}", name);
+
+        // Speedup data
+        let speedup_utxo = Utxo::new(
+            tx.compute_txid(),
+            1 + self.ctx.my_idx as u32, //Speedup vout is member index + 1 (1 is because op return output)
+            SPEEDUP_VALUE,
+            &self.my_speedup_key(context)?,
+        );
+
+        Ok((tx, Some(speedup_utxo.into())))
+    }
+
+    fn dispatch_input_not_revealed_tx(
+        &self,
+        context: &ProgramContext,
+        slot_index: usize,
+        tx_status: &TransactionStatus,
+    ) -> Result<(), BitVMXError> {
+        let tx_name = indexed_name(INPUT_NOT_REVEALED_TX, slot_index);
+        info!(
+            id = self.ctx.my_idx,
+            "Auto-dispatching {} for slot index: {}", tx_name, slot_index
+        );
+
+        let (tx, speedup) = self.input_not_revealed_tx(&tx_name, context)?;
+
+        let settings = get_stream_setting(
+            &load_union_settings(context)?,
+            self.committee(context)?.stream_denomination,
+        )?;
+
+        let txid = tx.compute_txid();
+
+        context.bitcoin_coordinator.dispatch(
+            tx,
+            speedup,
+            format!(
+                "dispute_core_input_not_revealed_{}:{}",
+                self.ctx.id, tx_name
+            ),
+            Some(
+                tx_status.block_info.as_ref().unwrap().height
+                    + settings.input_not_revealed_timelock as u32
+                    + 1,
+            ),
+        )?;
+
+        info!(
+            id = self.ctx.my_idx,
+            "{} dispatch scheduled with txid: {}", tx_name, txid
+        );
+        Ok(())
+    }
+
+    fn input_not_revealed_tx(
+        &self,
+        name: &str,
+        context: &ProgramContext,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", name);
+
+        let protocol = self.load_protocol()?;
+
+        // Prepare signatures
+        let committee_signature = protocol
+            .input_taproot_script_spend_signature(
+                name,
+                INPUT_NOT_REVEALED_INPUT_INDEX,
+                INPUT_NOT_REVEALED_INPUT_LEAF,
+            )?
+            .unwrap();
+
+        // Create input arguments
+        let mut input_args = InputArgs::new_taproot_script_args(INPUT_NOT_REVEALED_INPUT_LEAF);
+        input_args.push_taproot_signature(committee_signature)?;
+
+        let tx = protocol.transaction_to_send(&name, &[input_args])?;
+        info!(id = self.ctx.my_idx, "Signed {}", name);
+
+        // Speedup data
+        let speedup_utxo = Utxo::new(
+            tx.compute_txid(),
+            1 + self.ctx.my_idx as u32, //Speedup vout is member index + 1 (1 is because op return output)
+            SPEEDUP_VALUE,
+            &self.my_speedup_key(context)?,
+        );
+
+        Ok((tx, Some(speedup_utxo.into())))
     }
 
     fn handle_double_reveal(
@@ -1522,7 +1741,7 @@ impl DisputeCoreProtocol {
 
         info!(
             id = self.ctx.my_idx,
-            "{} dispatched for slot: {} with txid: {}", tx_name, slot_index, txid
+            "{} dispatch scheduled for slot: {} with txid: {}", tx_name, slot_index, txid
         );
 
         Ok(())
