@@ -31,12 +31,13 @@ use crate::{
                 },
                 types::{
                     Committee, FullPenalizationData, StreamSettings, DISPUTE_AGGREGATED_KEY,
-                    DUST_VALUE, OPERATOR_TAKE_ENABLER, OP_DISABLER_DIRECTORY_TX,
+                    DUST_VALUE, OPERATOR_TAKE_ENABLER, OP_CLAIM_GATE_SUCCESS,
+                    OP_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO, OP_DISABLER_DIRECTORY_TX,
                     OP_DISABLER_DIRECTORY_UTXO, OP_DISABLER_TX, OP_INITIAL_DEPOSIT_AMOUNT,
                     OP_INITIAL_DEPOSIT_OUT_SCRIPT, OP_INITIAL_DEPOSIT_TX, OP_INITIAL_DEPOSIT_TXID,
                     OP_LAZY_DISABLER_TX, REIMBURSEMENT_KICKOFF_TX, SPEEDUP_VALUE,
-                    WT_DISABLER_DIRECTORY_TX, WT_DISABLER_TX, WT_START_ENABLER_TX,
-                    WT_START_ENABLER_UTXOS,
+                    WT_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO, WT_DISABLER_DIRECTORY_TX,
+                    WT_DISABLER_TX, WT_START_ENABLER_TX, WT_START_ENABLER_UTXOS,
                 },
             },
         },
@@ -772,6 +773,8 @@ impl FullPenalizationProtocol {
 
                 self.create_watchtower_disabler(
                     protocol,
+                    context,
+                    data.committee_id,
                     &committee,
                     wt_index,
                     op_index,
@@ -788,6 +791,8 @@ impl FullPenalizationProtocol {
     fn create_watchtower_disabler(
         &self,
         protocol: &mut protocol_builder::builder::Protocol,
+        context: &ProgramContext,
+        committee_id: Uuid,
         committee: &Committee,
         wt_index: usize,
         op_index: usize,
@@ -797,6 +802,15 @@ impl FullPenalizationProtocol {
     ) -> Result<(), BitVMXError> {
         let wt_disabler_directory_name =
             double_indexed_name(WT_DISABLER_DIRECTORY_TX, wt_index, op_index);
+        let op_claim_success_name = double_indexed_name(OP_CLAIM_GATE_SUCCESS, wt_index, op_index);
+        let op_claim_success_utxo =
+            self.op_claim_success_utxo(context, committee, committee_id, wt_index, op_index)?;
+
+        create_transaction_reference(
+            protocol,
+            &op_claim_success_name,
+            &mut vec![op_claim_success_utxo.clone()],
+        )?;
 
         let disabler_directory_utxo = wt_start_enabler_utxos[member_count].clone();
 
@@ -816,7 +830,20 @@ impl FullPenalizationProtocol {
             Some(disabler_directory_utxo.0),
         )?;
 
-        // TODO: Add input from dispute channel when available
+        protocol.add_connection(
+            "op_success",
+            &op_claim_success_name,
+            (op_claim_success_utxo.1 as usize).into(),
+            &wt_disabler_directory_name,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            Some(op_claim_success_utxo.0),
+        )?;
 
         for member_index in 0..member_count {
             let wt_disabler_name =
@@ -867,5 +894,47 @@ impl FullPenalizationProtocol {
         }
 
         Ok(())
+    }
+
+    fn wt_claim_success_utxo(
+        &self,
+        context: &ProgramContext,
+        committee: &Committee,
+        committee_id: Uuid,
+        wt_index: usize,
+        op_index: usize,
+    ) -> Result<PartialUtxo, BitVMXError> {
+        let dispute_core_pid =
+            get_dispute_core_pid(committee_id, &committee.members[wt_index].take_key);
+
+        context
+            .globals
+            .get_var(
+                &dispute_core_pid,
+                &double_indexed_name(WT_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO, wt_index, op_index),
+            )?
+            .unwrap()
+            .utxo()
+    }
+
+    fn op_claim_success_utxo(
+        &self,
+        context: &ProgramContext,
+        committee: &Committee,
+        committee_id: Uuid,
+        wt_index: usize,
+        op_index: usize,
+    ) -> Result<PartialUtxo, BitVMXError> {
+        let dispute_core_pid =
+            get_dispute_core_pid(committee_id, &committee.members[wt_index].take_key);
+
+        context
+            .globals
+            .get_var(
+                &dispute_core_pid,
+                &double_indexed_name(OP_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO, wt_index, op_index),
+            )?
+            .unwrap()
+            .utxo()
     }
 }
