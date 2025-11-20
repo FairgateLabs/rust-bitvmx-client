@@ -205,7 +205,6 @@ impl Member {
 
         let total_setups = DisputeChannelSetup::setup(
             self.get_my_index(addresses)?,
-            &self.keyring.dispute_aggregated_key.unwrap(),
             &self.keyring.pairwise_keys,
             &self.bitvmx,
             members,
