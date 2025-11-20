@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 
 use crate::{config::ComponentsConfig, spv_proof::BtcTxSPVProof};
 use bitcoin::{address::NetworkUnchecked, Address, PrivateKey, PublicKey, Transaction, Txid};
@@ -8,7 +10,7 @@ use bitvmx_broker::{
     channel::channel::{DualChannel, LocalChannel},
     identification::identifier::Identifier,
 };
-use bitvmx_operator_comms::operator_comms::OperatorComms;
+use bitvmx_operator_comms::operator_comms::{OperatorComms, PubKeyHash};
 use bitvmx_wallet::wallet::Destination;
 use chrono::{DateTime, Utc};
 use protocol_builder::types::Utxo;
@@ -33,6 +35,7 @@ pub struct ProgramContext {
     pub globals: Globals,
     pub witness: WitnessVars,
     pub components_config: ComponentsConfig,
+    pub participant_verification_keys: Arc<Mutex<HashMap<PubKeyHash, String>>>, // Shared RSA public keys of participants
 }
 
 impl ProgramContext {
@@ -53,6 +56,7 @@ impl ProgramContext {
             globals,
             witness,
             components_config,
+            participant_verification_keys: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
