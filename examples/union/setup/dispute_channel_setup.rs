@@ -1,10 +1,6 @@
 use anyhow::Result;
 use bitcoin::PublicKey;
-use protocol_builder::types::{
-    connection::InputSpec,
-    input::{SighashType, SpendMode},
-    OutputType,
-};
+use protocol_builder::types::OutputType;
 use std::collections::HashMap;
 use tracing::info;
 use uuid::Uuid;
@@ -157,7 +153,6 @@ impl DisputeChannelSetup {
             (
                 wt_start_enablers[op_index].clone(),
                 vec![], // TODO: this vec<usize> is not used by the protocol builder. what is it there for?
-                Some(InputSpec::Auto(SighashType::taproot_all(), SpendMode::None)),
             ),
             vec![], // empty prover actions
             vec![OutputType::taproot(DRP_DUST_VALUE, &pair_key, &[])?],

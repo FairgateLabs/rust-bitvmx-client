@@ -1,6 +1,5 @@
 use crate::{
     bitcoin::{BitcoinWrapper, HIGH_FEE_NODE_ENABLED},
-    macros::wait_for_message_blocking,
     participants::{
         committee::Committee,
         common::{calculate_taproot_key_path_sighash, get_user_take_tx},
