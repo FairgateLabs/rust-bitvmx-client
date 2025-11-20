@@ -76,6 +76,7 @@ fn build_trace_vars(rounds: u8) -> Vec<(String, usize)> {
         ("prover_write_value".to_string(), 4),
         ("prover_write_pc".to_string(), 4),
         ("prover_write_micro".to_string(), 1),
+        ("prover_witness".to_string(), 4),
         ("prover_mem_witness".to_string(), 1),
         ("prover_read_1_address".to_string(), 4),
         ("prover_read_1_value".to_string(), 4),
@@ -103,7 +104,6 @@ fn build_trace_vars(rounds: u8) -> Vec<(String, usize)> {
         vars.push((format!("verifier_selection_bits_{}", i), 1));
     }
 
-    vars.push(("prover_witness".to_string(), 4));
     vars
 }
 
@@ -1002,6 +1002,73 @@ impl DisputeResolutionProtocol {
         Self::winternitz_check_extra_script(aggregated, sign_mode, keys, var_names, None)
     }
 
+    fn get_reverse_and_strip_scripts(
+        vars: &Vec<(String, usize)>,
+        rounds: u8,
+        nary_search_type: NArySearchType,
+    ) -> (ScriptBuf, ScriptBuf) {
+        //TODO: This is a workaround to inverse the order of the stack
+        let total_size = vars.iter().map(|(_, size)| (*size as u32) * 2).sum();
+        let mut stack = StackTracker::new();
+        let all = stack.define(total_size, "all");
+        for i in 1..total_size {
+            stack.move_var_sub_n(all, total_size - i - 1);
+        }
+        let reverse_script = stack.get_script();
+        //TODO: This is a workaround to remove one nibble from the micro instructions
+        //and drop the last steps. (this can be avoided)
+        let mut stack = StackTracker::new();
+        let mut stackvars = HashMap::new();
+        for (name, size) in vars.iter() {
+            stackvars.insert(name.clone(), stack.define((size * 2) as u32, name));
+        }
+        
+        match nary_search_type {
+            NArySearchType::ConflictStep => {
+                let step_n = stack.move_var(stackvars["prover_step_number"]);
+                stack.drop(step_n);
+                let stripped = stack.move_var_sub_n(stackvars["prover_write_micro"], 0);
+                stack.drop(stripped);
+                let stripped = stack.move_var_sub_n(stackvars["prover_read_pc_micro"], 0);
+                stack.drop(stripped);
+                let last_step_1 = stack.move_var(stackvars["prover_read_1_last_step"]);
+                stack.drop(last_step_1);
+                let last_step_2 = stack.move_var(stackvars["prover_read_2_last_step"]);
+                stack.drop(last_step_2);
+                let prev_hash = stack.move_var(stackvars["prover_prev_hash_tk"]);
+                stack.drop(prev_hash);
+                let step_hash = stack.move_var(stackvars["prover_step_hash_tk"]);
+                stack.drop(step_hash);
+                for i in 1..rounds + 1 {
+                    stack.equals(
+                        stackvars[&format!("prover_selection_bits_{}_tk", i)],
+                        true,
+                        stackvars[&format!("verifier_selection_bits_{}", i)],
+                        true,
+                    );
+                }
+            }
+            NArySearchType::ReadValueChallenge => {
+                let step_hash = stack.move_var(stackvars["prover_step_hash_tk2"]);
+                stack.drop(step_hash);
+                let next_hash = stack.move_var(stackvars["prover_next_hash_tk2"]);
+                stack.drop(next_hash);
+                let selection_bits_1 = stack.move_var(stackvars["prover_selection_bits_1_tk2"]); // Drop it because its the same as the first n-ary search
+                stack.drop(selection_bits_1);
+                for i in 2..rounds + 1 {
+                    stack.equals(
+                        stackvars[&format!("prover_selection_bits_{}_tk2", i)],
+                        true,
+                        stackvars[&format!("verifier_selection_bits2_{}", i)],
+                        true,
+                    );
+                }
+            }
+        }
+
+        (reverse_script, stack.get_script())
+    }
+
     fn execute_script(
         &self,
         context: &ProgramContext,
@@ -1012,25 +1079,18 @@ impl DisputeResolutionProtocol {
     ) -> Result<Vec<ProtocolScript>, BitVMXError> {
         let prover_keys = &keys[0];
         let verifier_keys = &keys[1];
-        let (vars, skip) = match nary_search_type {
-            NArySearchType::ConflictStep => {
-                let skip = 1; //skip witness
-                let trace_vars = TRACE_VARS
-                    .get()
-                    .expect("TRACE_VARS not initialized")
-                    .read()?;
-                (trace_vars, skip)
-            }
+        let vars = match nary_search_type {
+            NArySearchType::ConflictStep => TRACE_VARS
+                .get()
+                .expect("TRACE_VARS not initialized")
+                .read()?,
             NArySearchType::ReadValueChallenge => {
-                let skip = 0;
-                let vars = TK_2NARY.get().expect("TK_2NARY not initialized").read()?;
-                (vars, skip)
+                TK_2NARY.get().expect("TK_2NARY not initialized").read()?
             }
         };
 
         let vars_names = vars
             .iter()
-            .take(vars.len() - skip) // Skip the witness (except is needed)
             .filter(|(name, _)| name.starts_with("prover"))
             .map(|(name, _)| name.as_str())
             .collect::<Vec<&str>>();
@@ -1054,97 +1114,56 @@ impl DisputeResolutionProtocol {
                 }),
         );
 
-        //TODO: This is a workacround to inverse the order of the stack
-        let total_size = vars
-            .iter()
-            .take(vars.len() - skip) // skip witness
-            .map(|(_, size)| (*size as u32) * 2)
-            .sum();
-        let mut stack = StackTracker::new();
-        let all = stack.define(total_size, "all");
-        for i in 1..total_size {
-            stack.move_var_sub_n(all, total_size - i - 1);
-        }
-        let reverse_script = stack.get_script();
-
-        //TODO: This is a workaround to remove one nibble from the micro instructions
-        //and drop the last steps. (this can be avoided)
-        let mut stack = StackTracker::new();
-        let mut stackvars = HashMap::new();
-        for (name, size) in vars.iter().take(vars.len() - skip) {
-            stackvars.insert(name.clone(), stack.define((size * 2) as u32, name));
-        }
-
-        let mut winternitz_check_list = vec![];
         let rounds = self
             .get_program_definition(context)?
             .0
             .nary_def()
             .total_rounds();
+
+        let vars_without_witness = vars
+            .iter()
+            .filter(|(var, _)| var != "prover_witness")
+            .cloned()
+            .collect();
+
+        let (reverse_script, strip_script) =
+            Self::get_reverse_and_strip_scripts(&vars, rounds, nary_search_type);
+
+        let (reverse_script_ww, strip_script_ww) =
+            Self::get_reverse_and_strip_scripts(&vars_without_witness, rounds, nary_search_type);
+
+        let mut winternitz_check_list = vec![];
         match nary_search_type {
             NArySearchType::ConflictStep => {
                 let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
                 let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
                 instruction_names.sort();
 
-                let step_n = stack.move_var(stackvars["prover_step_number"]);
-                stack.drop(step_n);
-                let stripped = stack.move_var_sub_n(stackvars["prover_write_micro"], 0);
-                stack.drop(stripped);
-                let stripped = stack.move_var_sub_n(stackvars["prover_read_pc_micro"], 0);
-                stack.drop(stripped);
-                let last_step_1 = stack.move_var(stackvars["prover_read_1_last_step"]);
-                stack.drop(last_step_1);
-                let last_step_2 = stack.move_var(stackvars["prover_read_2_last_step"]);
-                stack.drop(last_step_2);
-                let prev_hash = stack.move_var(stackvars["prover_prev_hash_tk"]);
-                stack.drop(prev_hash);
-                let step_hash = stack.move_var(stackvars["prover_step_hash_tk"]);
-                stack.drop(step_hash);
-                for i in 1..rounds + 1 {
-                    stack.equals(
-                        stackvars[&format!("prover_selection_bits_{}_tk", i)],
-                        true,
-                        stackvars[&format!("verifier_selection_bits_{}", i)],
-                        true,
-                    );
-                }
-
-                let strip_script = stack.get_script();
-
                 for (_, name) in instruction_names.iter().enumerate() {
-                    let script = mapping[name].0.clone();
+                    let (script, requires_witness) = mapping[name].clone();
+                    let (reverse, strip) = if requires_witness {
+                        (reverse_script.clone(), strip_script.clone())
+                    } else {
+                        (reverse_script_ww.clone(), strip_script_ww.clone())
+                    };
+
                     let winternitz_check = scripts::verify_winternitz_signatures_aux(
                         aggregated,
-                        &names_and_keys,
+                        &names_and_keys
+                            .iter()
+                            .filter(|(var_name, _)| {
+                                requires_witness || *var_name != "prover_witness"
+                            })
+                            .cloned()
+                            .collect(),
                         sign_mode,
                         true,
-                        Some(vec![
-                            reverse_script.clone(),
-                            strip_script.clone(),
-                            script.clone(),
-                        ]),
+                        Some(vec![reverse, strip, script]),
                     )?;
                     winternitz_check_list.push(winternitz_check);
                 }
             }
             NArySearchType::ReadValueChallenge => {
-                let step_hash = stack.move_var(stackvars["prover_step_hash_tk2"]);
-                stack.drop(step_hash);
-                let next_hash = stack.move_var(stackvars["prover_next_hash_tk2"]);
-                stack.drop(next_hash);
-                let selection_bits_1 = stack.move_var(stackvars["prover_selection_bits_1_tk2"]); // Drop it because its the same as the first n-ary search
-                stack.drop(selection_bits_1);
-                for i in 2..rounds + 1 {
-                    stack.equals(
-                        stackvars[&format!("prover_selection_bits_{}_tk2", i)],
-                        true,
-                        stackvars[&format!("verifier_selection_bits2_{}", i)],
-                        true,
-                    );
-                }
-
-                let strip_script = stack.get_script();
                 let winternitz_check = scripts::verify_winternitz_signatures_aux(
                     aggregated,
                     &names_and_keys,

@@ -863,7 +863,15 @@ pub fn handle_tx_news(
             to_u8(&values["prover_write_micro"]),
         );
         let trace_step = TraceStep::new(trace_write, program_counter);
-        let witness = None; //TODO: get the witness from the context?
+        let witness = program_context
+            .witness
+            .get_witness(&drp.ctx.id, "prover_witness")
+            .ok()
+            .flatten()
+            .map(|witness| {
+                let bytes = witness.winternitz().unwrap().message_bytes();
+                to_u32(&bytes)
+            });
         let mem_witness = MemoryWitness::from_byte(to_u8(&values["prover_mem_witness"]));
         let prover_step_hash = to_hex(&values["prover_prev_hash_tk"]);
         let prover_next_hash = to_hex(&values["prover_step_hash_tk"]);

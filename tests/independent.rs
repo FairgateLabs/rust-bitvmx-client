@@ -1106,6 +1106,18 @@ fn challenge_uninitialized_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::Uninitialized(Verifier))
 }
 
+#[ignore]
+#[test]
+fn challenge_witness_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::WitnessDiv(Prover))
+}
+
+#[ignore]
+#[test]
+fn challenge_witness_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::WitnessDiv(Verifier))
+}
+
 //ASK: Future read, correct hash, read_value and correct_hash challenges have variable parameters that need to be constant
 // #[ignore]
 // #[test]

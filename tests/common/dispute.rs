@@ -54,6 +54,7 @@ pub enum ForcedChallenges {
     Initialized(ParticipantRole),
     Uninitialized(ParticipantRole),
     FutureRead(ParticipantRole),
+    WitnessDiv(ParticipantRole),
     // 2nd n-ary search
     ReadValue(ParticipantRole),
     CorrectHash(ParticipantRole),
@@ -80,6 +81,7 @@ impl ForcedChallenges {
             | Initialized(role)
             | Uninitialized(role)
             | FutureRead(role)
+            | WitnessDiv(role)
             | ReadValue(role)
             | CorrectHash(role) => Some(role.clone()),
             No | Execution | Personalized(_) => None,
@@ -107,6 +109,7 @@ pub fn prepare_dispute(
             ForcedChallenges::ProgramCounterSection(ParticipantRole::Prover) => "pc_invalid.yaml",
             ForcedChallenges::WriteSection(ParticipantRole::Prover) => "write_invalid.yaml",
             ForcedChallenges::ReadSection(ParticipantRole::Prover) => "read_invalid.yaml",
+            ForcedChallenges::WitnessDiv(_) => "audit_09.yaml",
             _ => "hello-world.yaml",
         }
     );
@@ -677,6 +680,23 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ConfigResul
                 ForceCondition::ValidInputWrongStepOrHash,
                 None,
                 ForceChallenge::ReadValue,
+            )
+        }
+        ForcedChallenges::WitnessDiv(role) => {
+            let fail_opcode = FailConfiguration::new_fail_opcode(FailOpcode::new(&vec![
+                "2".to_string(),
+                "0x100073".to_string(),
+            ]));
+
+            get_config_with_read(
+                role,
+                fail_opcode.clone(),
+                fail_opcode,
+                ForceChallenge::No,
+                ForceCondition::Always,
+                ForceCondition::Always,
+                None,
+                ForceChallenge::No,
             )
         }
         ForcedChallenges::No => ConfigResults::default(),
