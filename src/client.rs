@@ -249,6 +249,10 @@ impl BitVMXClient {
         ))
     }
 
+    pub fn shutdown(&self, timeout: Duration) {
+        let _ = self.send_message(IncomingBitVMXApiMessages::Shutdown(timeout));
+    }
+
     fn serialize_key(s: &str) -> String {
         s.to_string()
     }

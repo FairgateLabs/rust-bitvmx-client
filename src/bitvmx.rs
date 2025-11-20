@@ -78,6 +78,7 @@ pub struct BitVMX {
     bitcoin_update: BitcoinUpdateState,
     wallet: Wallet,
     ping_helper: PingHelper,
+    shutdown: bool,
 }
 
 impl Drop for BitVMX {
@@ -189,11 +190,13 @@ impl BitVMX {
             },
             wallet,
             ping_helper,
+            shutdown: false,
         })
     }
 
     pub fn shutdown(&mut self, timeout: Duration) -> Result<(), BitVMXError> {
         info!("Shutdown requested");
+        self.shutdown = true;
         let deadline = Instant::now() + timeout;
         self.begin_shutdown();
 
@@ -525,6 +528,10 @@ impl BitVMX {
 
     pub fn tick(&mut self) -> Result<(), BitVMXError> {
         //info!("Ticking BitVMX: {}", self.count);
+        if self.shutdown {
+            return Ok(());
+        }
+
         self.count += 1;
         self.process_programs()?;
 
@@ -1450,6 +1457,10 @@ impl BitVMXApi for BitVMX {
                     }
                 };
                 self.reply(from, message)?;
+            }
+            IncomingBitVMXApiMessages::Shutdown(timeout) => {
+                info!("Shutdown message received. Initiating shutdown...");
+                self.shutdown(timeout)?;
             }
             #[cfg(feature = "testpanic")]
             IncomingBitVMXApiMessages::Test(s) => {
