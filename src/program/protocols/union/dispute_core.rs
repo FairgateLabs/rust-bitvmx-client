@@ -485,8 +485,6 @@ impl DisputeCoreProtocol {
 
             outputs.push(start_enabler_output.clone());
 
-            protocol.add_transaction_output(&WT_START_ENABLER_TX, &start_enabler_output)?;
-
             if member.role == ParticipantRole::Prover && data.member_index != member_index {
                 let init_challenge_name =
                     double_indexed_name(WT_INIT_CHALLENGE_TX, data.member_index, member_index);
