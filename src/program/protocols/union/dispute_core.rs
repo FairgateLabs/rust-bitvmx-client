@@ -468,9 +468,8 @@ impl DisputeCoreProtocol {
                     let slot_id_key =
                         keys[member_index].get_winternitz(&indexed_name(SLOT_ID_KEY, slot))?;
 
-                    // TODO: is this correct? should we use aggregated key or wt key?
                     scripts.push(scripts::start_challenge(
-                        &committee.dispute_aggregated_key,
+                        &wt_dispute_key,
                         SLOT_ID_KEY,
                         slot_id_key,
                     )?);
@@ -481,9 +480,11 @@ impl DisputeCoreProtocol {
             // Need to save claimers success for full penalization and stoppers to consume them in dispute channels
             let start_enabler_output =
                 // OutputType::taproot(AUTO_AMOUNT, &committee.dispute_aggregated_key, &scripts)?;
-                OutputType::taproot(50000, &committee.dispute_aggregated_key, &scripts)?;
+                OutputType::taproot(50000, &wt_dispute_key, &scripts)?;
 
             outputs.push(start_enabler_output.clone());
+
+            protocol.add_transaction_output(&WT_START_ENABLER_TX, &start_enabler_output)?;
 
             if member.role == ParticipantRole::Prover && data.member_index != member_index {
                 let init_challenge_name =
