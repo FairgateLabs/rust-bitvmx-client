@@ -273,7 +273,12 @@ impl ProtocolHandler for DisputeCoreProtocol {
             )?;
         }
 
-        self.save_wt_utxos(context, &mut wt_start_enabler_outputs)?;
+        self.save_wt_utxos(
+            context,
+            &mut wt_start_enabler_outputs,
+            &committee,
+            &dispute_core_data,
+        )?;
 
         Ok(())
     }
@@ -464,6 +469,8 @@ impl DisputeCoreProtocol {
                 }
             }
 
+            // TODO: Is it needed? Maybe we should remove it.
+            // Need to save claimers success for full penalization and stoppers to consume them in dispute channels
             let start_enabler_output =
                 OutputType::taproot(AUTO_AMOUNT, &committee.dispute_aggregated_key, &scripts)?;
 
@@ -1644,6 +1651,8 @@ impl DisputeCoreProtocol {
         &self,
         context: &ProgramContext,
         wt_start_enabler_outputs: &mut Vec<OutputType>,
+        committee: &Committee,
+        data: &DisputeCoreData,
     ) -> Result<(), BitVMXError> {
         let protocol = self.load_or_create_protocol();
 
@@ -1662,6 +1671,56 @@ impl DisputeCoreProtocol {
                 Some(output_value),
                 Some(wt_start_enabler_outputs[i].clone()),
             ));
+        }
+
+        let claim_success_output =
+            ClaimGate::output_from_aggregated(&committee.dispute_aggregated_key, DUST_VALUE)?;
+
+        for (member_index, member) in committee.members.clone().iter().enumerate() {
+            if member.role == ParticipantRole::Prover && data.member_index != member_index {
+                let wt_claim_name =
+                    double_indexed_name(WT_CLAIM_GATE, data.member_index, member_index);
+                let op_claim_name =
+                    double_indexed_name(OP_CLAIM_GATE, data.member_index, member_index);
+
+                let op_success = format!("{}_SUCCESS", op_claim_name);
+                let wt_success = format!("{}_SUCCESS", wt_claim_name);
+
+                let wt_success_tx = protocol.transaction_by_name(&wt_success)?;
+                let wt_success_txid = wt_success_tx.compute_txid();
+
+                context.globals.set_var(
+                    &self.ctx.id,
+                    &double_indexed_name(
+                        WT_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO,
+                        data.member_index,
+                        member_index,
+                    ),
+                    VariableTypes::Utxo((
+                        wt_success_txid,
+                        0,
+                        Some(DUST_VALUE),
+                        Some(claim_success_output.clone()),
+                    )),
+                )?;
+
+                let op_success_tx = protocol.transaction_by_name(&op_success)?;
+                let op_success_txid = op_success_tx.compute_txid();
+                context.globals.set_var(
+                    &self.ctx.id,
+                    &double_indexed_name(
+                        OP_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO,
+                        data.member_index,
+                        member_index,
+                    ),
+                    VariableTypes::Utxo((
+                        op_success_txid,
+                        0,
+                        Some(DUST_VALUE),
+                        Some(claim_success_output.clone()),
+                    )),
+                )?;
+            }
         }
 
         context.globals.set_var(
