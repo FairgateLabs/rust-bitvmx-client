@@ -33,7 +33,7 @@ impl DisputeConfiguration {
     pub fn new(
         id: Uuid,
         operators_aggregated_pub: PublicKey,
-        protocol_connection: (PartialUtxo, Vec<usize>, Option<InputSpec>),
+        protocol_connection: (PartialUtxo, Vec<usize>),
         prover_actions: Vec<(PartialUtxo, Vec<usize>)>,
         prover_enablers: Vec<OutputType>,
         verifier_actions: Vec<(PartialUtxo, Vec<usize>)>,
