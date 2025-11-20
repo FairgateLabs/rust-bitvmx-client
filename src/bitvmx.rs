@@ -1439,7 +1439,7 @@ impl BitVMXApi for BitVMX {
             }
             IncomingBitVMXApiMessages::Shutdown(timeout) => {
                 info!("Shutdown message received. Initiating shutdown...");
-                let _ = self.shutdown(timeout)?;
+                self.shutdown(timeout)?;
             }
             #[cfg(feature = "testpanic")]
             IncomingBitVMXApiMessages::Test(s) => {
