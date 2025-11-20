@@ -1,7 +1,6 @@
 use crate::setup::full_penalization_setup::FullPenalizationSetup;
 use crate::wallet::helper::print_link;
 use crate::{
-    macros::wait_for_message_blocking,
     setup::{
         accept_pegin_setup::AcceptPegInSetup, advance_funds_setup::AdvanceFunds,
         dispute_channel_setup::DisputeChannelSetup, dispute_core_setup::DisputeCoreSetup,
@@ -206,6 +205,7 @@ impl Member {
 
         let total_setups = DisputeChannelSetup::setup(
             self.get_my_index(addresses)?,
+            &self.keyring.dispute_aggregated_key.unwrap(),
             &self.keyring.pairwise_keys,
             &self.bitvmx,
             members,

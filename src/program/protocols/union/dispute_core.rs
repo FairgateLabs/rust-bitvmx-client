@@ -480,7 +480,8 @@ impl DisputeCoreProtocol {
             // TODO: Is it needed? Maybe we should remove it.
             // Need to save claimers success for full penalization and stoppers to consume them in dispute channels
             let start_enabler_output =
-                OutputType::taproot(AUTO_AMOUNT, &committee.dispute_aggregated_key, &scripts)?;
+                // OutputType::taproot(AUTO_AMOUNT, &committee.dispute_aggregated_key, &scripts)?;
+                OutputType::taproot(50000, &committee.dispute_aggregated_key, &scripts)?;
 
             outputs.push(start_enabler_output.clone());
 
