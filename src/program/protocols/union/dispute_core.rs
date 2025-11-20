@@ -4,6 +4,7 @@ use crate::{
         participant::{ParticipantKeys, ParticipantRole, PublicKeyType},
         protocols::{
             claim::ClaimGate,
+            dispute,
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
                 common::{
@@ -55,7 +56,6 @@ const REVEAL_INPUT_INDEX: usize = 0;
 const REVEAL_INPUT_LEAF: usize = 0;
 const WT_INIT_CHALLENGE_WT_STOPPER_VOUT: u32 = 3;
 const WT_INIT_CHALLENGE_OP_STOPPER_VOUT: u32 = 5;
-pub const INIT_CHALLENGE_FUNDS: u64 = 50_000;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DisputeCoreProtocol {
@@ -193,13 +193,14 @@ impl ProtocolHandler for DisputeCoreProtocol {
             &committee.dispute_aggregated_key.clone(),
         )?;
 
-        let (mut claimer_stoppers, mut disabler_directory_output) = self.create_wt_start_enabler(
-            &mut protocol,
-            &dispute_core_data,
-            &committee,
-            &keys,
-            &settings,
-        )?;
+        let (mut claimer_stoppers, mut disabler_directory_output, mut op_cosign_outputs) = self
+            .create_wt_start_enabler(
+                &mut protocol,
+                &dispute_core_data,
+                &committee,
+                &keys,
+                &settings,
+            )?;
 
         let operator_won_script = timelock(
             settings.op_won_timelock,
@@ -282,10 +283,11 @@ impl ProtocolHandler for DisputeCoreProtocol {
 
         self.save_wt_utxos(
             context,
-            &mut claimer_stoppers,
-            &mut disabler_directory_output,
             &committee,
             &dispute_core_data,
+            &mut claimer_stoppers,
+            &mut disabler_directory_output,
+            &mut op_cosign_outputs,
         )?;
 
         Ok(())
@@ -452,10 +454,19 @@ impl DisputeCoreProtocol {
         committee: &Committee,
         keys: &Vec<ParticipantKeys>,
         settings: &StreamSettings,
-    ) -> Result<(Vec<Option<(OutputType, OutputType)>>, OutputType), BitVMXError> {
+    ) -> Result<
+        (
+            Vec<Option<(OutputType, OutputType)>>,
+            OutputType,
+            Vec<Option<OutputType>>,
+        ),
+        BitVMXError,
+    > {
         let wt_speedup_key = keys[data.member_index].get_public(SPEEDUP_KEY)?;
         let wt_dispute_key = &committee.members[data.member_index].dispute_key;
         let mut claim_gate_stoppers: Vec<Option<(OutputType, OutputType)>> = vec![];
+        let mut op_cosign_outputs: Vec<Option<OutputType>> = vec![];
+        let challenge_cost = dispute::protocol_cost();
 
         for (member_index, member) in committee.members.clone().iter().enumerate() {
             let mut scripts = vec![];
@@ -493,7 +504,7 @@ impl DisputeCoreProtocol {
                 protocol.add_connection(
                     "init_challenge",
                     WT_START_ENABLER_TX,
-                    OutputType::taproot(INIT_CHALLENGE_FUNDS, &wt_dispute_key, &scripts)?.into(),
+                    OutputType::taproot(AUTO_AMOUNT, &wt_dispute_key, &scripts)?.into(),
                     &init_challenge_name,
                     InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
                     None,
@@ -571,11 +582,16 @@ impl DisputeCoreProtocol {
                     op_claim_gate.stoppers[0].clone(),
                 )));
 
+                // FIXME: Review this output. This goes to DisputeChannel
+                let op_cosign_output =
+                    OutputType::taproot(challenge_cost, wt_dispute_key, &vec![])?;
+
+                op_cosign_outputs.push(Some(op_cosign_output.clone()));
+
                 protocol.add_connection(
                     "wt_no_challenge",
                     &op_cosign_name,
-                    // FIXME: Review this output. This goes to DisputeChannel
-                    OutputType::taproot(AUTO_AMOUNT, wt_dispute_key, &vec![])?.into(),
+                    op_cosign_output.into(),
                     &wt_no_challenge_name,
                     InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
                     None,
@@ -621,6 +637,7 @@ impl DisputeCoreProtocol {
                     None,
                 )?;
 
+                // TODO: Should we add an output to recover challenge funds? it's about 38_000 sats.
                 protocol.add_transaction_output(
                     &wt_no_challenge_name,
                     &OutputType::segwit_unspendable(
@@ -634,6 +651,7 @@ impl DisputeCoreProtocol {
                 )?;
 
                 claim_gate_stoppers.push(None);
+                op_cosign_outputs.push(None);
             }
         }
 
@@ -649,7 +667,11 @@ impl DisputeCoreProtocol {
         // Add speedup output
         protocol.add_transaction_output(&WT_START_ENABLER_TX, &speedup_output)?;
 
-        Ok((claim_gate_stoppers, disabler_directory_funds_output))
+        Ok((
+            claim_gate_stoppers,
+            disabler_directory_funds_output,
+            op_cosign_outputs,
+        ))
     }
 
     fn create_op_initial_deposit(
@@ -1867,10 +1889,11 @@ impl DisputeCoreProtocol {
     fn save_wt_utxos(
         &self,
         context: &ProgramContext,
-        claimer_stoppers: &mut Vec<Option<(OutputType, OutputType)>>,
-        disabler_directory_output: &mut OutputType,
         committee: &Committee,
         data: &DisputeCoreData,
+        claimer_stoppers: &mut Vec<Option<(OutputType, OutputType)>>,
+        disabler_directory_output: &mut OutputType,
+        op_cosign_outputs: &mut Vec<Option<OutputType>>,
     ) -> Result<(), BitVMXError> {
         let protocol = self.load_or_create_protocol();
 
@@ -1900,6 +1923,7 @@ impl DisputeCoreProtocol {
             ClaimGate::output_from_aggregated(&committee.dispute_aggregated_key, DUST_VALUE)?;
 
         let mut claim_gate_stoppers = vec![];
+        let mut op_cosign_utxos = vec![];
 
         for (op_index, member) in committee.members.clone().iter().enumerate() {
             if member.role == ParticipantRole::Prover && data.member_index != op_index {
@@ -1966,8 +1990,21 @@ impl DisputeCoreProtocol {
                 );
 
                 claim_gate_stoppers.push(Some((wt_stopper, op_stopper)));
+
+                let op_cosign = double_indexed_name(OP_COSIGN_TX, data.member_index, op_index);
+                let op_cosign_tx = protocol.transaction_by_name(&op_cosign)?;
+                let op_cosign_txid = op_cosign_tx.compute_txid();
+                let op_cosign_output = op_cosign_outputs[op_index].clone().unwrap();
+                let op_cosign_vout = 0;
+                op_cosign_utxos.push(Some((
+                    op_cosign_txid,
+                    op_cosign_vout,
+                    Some(op_cosign_output.get_value().to_sat()),
+                    Some(op_cosign_output),
+                )));
             } else {
                 claim_gate_stoppers.push(None);
+                op_cosign_utxos.push(None);
             }
         }
 
@@ -1975,6 +2012,12 @@ impl DisputeCoreProtocol {
             &self.ctx.id,
             &CLAIM_GATE_STOPPER_UTXOS,
             VariableTypes::String(serde_json::to_string(&claim_gate_stoppers)?),
+        )?;
+
+        context.globals.set_var(
+            &self.ctx.id,
+            &OP_COSIGN_UTXOS,
+            VariableTypes::String(serde_json::to_string(&op_cosign_utxos)?),
         )?;
 
         Ok(())
