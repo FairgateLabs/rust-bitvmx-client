@@ -53,6 +53,9 @@ const INPUT_NOT_REVEALED_INPUT_INDEX: usize = 0;
 const INPUT_NOT_REVEALED_INPUT_LEAF: usize = 1;
 const REVEAL_INPUT_INDEX: usize = 0;
 const REVEAL_INPUT_LEAF: usize = 0;
+const WT_INIT_CHALLENGE_WT_STOPPER_VOUT: u32 = 3;
+const WT_INIT_CHALLENGE_OP_STOPPER_VOUT: u32 = 5;
+pub const INIT_CHALLENGE_FUNDS: u64 = 50_000;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DisputeCoreProtocol {
@@ -190,7 +193,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
             &committee.dispute_aggregated_key.clone(),
         )?;
 
-        let mut wt_start_enabler_outputs = self.create_wt_start_enabler(
+        let (mut claimer_stoppers, mut disabler_directory_output) = self.create_wt_start_enabler(
             &mut protocol,
             &dispute_core_data,
             &committee,
@@ -279,7 +282,8 @@ impl ProtocolHandler for DisputeCoreProtocol {
 
         self.save_wt_utxos(
             context,
-            &mut wt_start_enabler_outputs,
+            &mut claimer_stoppers,
+            &mut disabler_directory_output,
             &committee,
             &dispute_core_data,
         )?;
@@ -448,18 +452,13 @@ impl DisputeCoreProtocol {
         committee: &Committee,
         keys: &Vec<ParticipantKeys>,
         settings: &StreamSettings,
-    ) -> Result<Vec<OutputType>, BitVMXError> {
+    ) -> Result<(Vec<Option<(OutputType, OutputType)>>, OutputType), BitVMXError> {
         let wt_speedup_key = keys[data.member_index].get_public(SPEEDUP_KEY)?;
         let wt_dispute_key = &committee.members[data.member_index].dispute_key;
-        let verify_dispute_key = protocol_builder::scripts::verify_signature(
-            &committee.dispute_aggregated_key,
-            SignMode::Aggregate,
-        )?;
-        let mut outputs = vec![];
+        let mut claim_gate_stoppers: Vec<Option<(OutputType, OutputType)>> = vec![];
 
         for (member_index, member) in committee.members.clone().iter().enumerate() {
-            // NOTE: This introduce a shift between scripts and slots to open a dispute
-            let mut scripts = vec![verify_dispute_key.clone()];
+            let mut scripts = vec![];
             let op_speedup_key = keys[member_index].get_public(SPEEDUP_KEY)?;
             let op_dispute_key = &committee.members[member_index].dispute_key;
 
@@ -476,14 +475,6 @@ impl DisputeCoreProtocol {
                     )?);
                 }
             }
-
-            // TODO: Is it needed? Maybe we should remove it.
-            // Need to save claimers success for full penalization and stoppers to consume them in dispute channels
-            let start_enabler_output =
-                // OutputType::taproot(AUTO_AMOUNT, &committee.dispute_aggregated_key, &scripts)?;
-                OutputType::taproot(50000, &wt_dispute_key, &scripts)?;
-
-            outputs.push(start_enabler_output.clone());
 
             if member.role == ParticipantRole::Prover && data.member_index != member_index {
                 let init_challenge_name =
@@ -502,7 +493,7 @@ impl DisputeCoreProtocol {
                 protocol.add_connection(
                     "init_challenge",
                     WT_START_ENABLER_TX,
-                    start_enabler_output.into(),
+                    OutputType::taproot(INIT_CHALLENGE_FUNDS, &wt_dispute_key, &scripts)?.into(),
                     &init_challenge_name,
                     InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
                     None,
@@ -545,6 +536,12 @@ impl DisputeCoreProtocol {
                     None,
                 )?;
 
+                if wt_claim_gate.stoppers.len() != 1 {
+                    return Err(BitVMXError::InvalidParameter(
+                        "Expected exactly one stopper output in WT claim gate".to_string(),
+                    ));
+                }
+
                 // Create OP claim gate
                 let op_claim_gate = ClaimGate::new(
                     protocol,
@@ -563,10 +560,21 @@ impl DisputeCoreProtocol {
                     wt_claim_gate.exclusive_success_vout,
                 )?;
 
+                if op_claim_gate.stoppers.len() != 1 {
+                    return Err(BitVMXError::InvalidParameter(
+                        "Expected exactly one stopper output in OP claim gate".to_string(),
+                    ));
+                }
+
+                claim_gate_stoppers.push(Some((
+                    wt_claim_gate.stoppers[0].clone(),
+                    op_claim_gate.stoppers[0].clone(),
+                )));
+
                 protocol.add_connection(
                     "wt_no_challenge",
                     &op_cosign_name,
-                    // FIXME: Review this output. This goes to DisputeChallenge
+                    // FIXME: Review this output. This goes to DisputeChannel
                     OutputType::taproot(AUTO_AMOUNT, wt_dispute_key, &vec![])?.into(),
                     &wt_no_challenge_name,
                     InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
@@ -624,6 +632,8 @@ impl DisputeCoreProtocol {
                     WT_START_ENABLER_TX,
                     &OutputType::taproot(AUTO_AMOUNT, wt_dispute_key, &vec![])?,
                 )?;
+
+                claim_gate_stoppers.push(None);
             }
         }
 
@@ -634,14 +644,12 @@ impl DisputeCoreProtocol {
             &[],
         )?;
         protocol.add_transaction_output(&WT_START_ENABLER_TX, &disabler_directory_funds_output)?;
-        outputs.push(disabler_directory_funds_output);
 
         let speedup_output = OutputType::segwit_key(SPEEDUP_VALUE, &wt_speedup_key)?;
         // Add speedup output
         protocol.add_transaction_output(&WT_START_ENABLER_TX, &speedup_output)?;
-        outputs.push(speedup_output);
 
-        Ok(outputs)
+        Ok((claim_gate_stoppers, disabler_directory_funds_output))
     }
 
     fn create_op_initial_deposit(
@@ -1859,7 +1867,8 @@ impl DisputeCoreProtocol {
     fn save_wt_utxos(
         &self,
         context: &ProgramContext,
-        wt_start_enabler_outputs: &mut Vec<OutputType>,
+        claimer_stoppers: &mut Vec<Option<(OutputType, OutputType)>>,
+        disabler_directory_output: &mut OutputType,
         committee: &Committee,
         data: &DisputeCoreData,
     ) -> Result<(), BitVMXError> {
@@ -1868,29 +1877,34 @@ impl DisputeCoreProtocol {
         let wt_start_enabler_tx = protocol.transaction_by_name(WT_START_ENABLER_TX)?;
         let wt_start_enabler_txid = wt_start_enabler_tx.compute_txid();
 
-        // Create WT_START_ENABLER_UTXOs and save them in one array
-        let mut wt_start_enabler_utxos: Vec<PartialUtxo> = vec![];
-        for i in 0..wt_start_enabler_outputs.len() {
-            let output_value = wt_start_enabler_tx.output[i].value.to_sat();
+        let disabler_directory_vout = committee.packet_size as usize;
+        let output_value = wt_start_enabler_tx.output[disabler_directory_vout]
+            .value
+            .to_sat();
+        disabler_directory_output.set_value(Amount::from_sat(output_value));
 
-            wt_start_enabler_outputs[i].set_value(Amount::from_sat(output_value));
-            wt_start_enabler_utxos.push((
-                wt_start_enabler_txid,
-                i as u32,
-                Some(output_value),
-                Some(wt_start_enabler_outputs[i].clone()),
-            ));
-        }
+        let disabler_directory_utxo = (
+            wt_start_enabler_txid,
+            disabler_directory_vout as u32,
+            Some(output_value),
+            Some(disabler_directory_output.clone()),
+        );
+
+        context.globals.set_var(
+            &self.ctx.id,
+            &WT_DISABLER_DIRECTORY_UTXO,
+            VariableTypes::Utxo(disabler_directory_utxo),
+        )?;
 
         let claim_success_output =
             ClaimGate::output_from_aggregated(&committee.dispute_aggregated_key, DUST_VALUE)?;
 
-        for (member_index, member) in committee.members.clone().iter().enumerate() {
-            if member.role == ParticipantRole::Prover && data.member_index != member_index {
-                let wt_claim_name =
-                    double_indexed_name(WT_CLAIM_GATE, data.member_index, member_index);
-                let op_claim_name =
-                    double_indexed_name(OP_CLAIM_GATE, data.member_index, member_index);
+        let mut claim_gate_stoppers = vec![];
+
+        for (op_index, member) in committee.members.clone().iter().enumerate() {
+            if member.role == ParticipantRole::Prover && data.member_index != op_index {
+                let wt_claim_name = double_indexed_name(WT_CLAIM_GATE, data.member_index, op_index);
+                let op_claim_name = double_indexed_name(OP_CLAIM_GATE, data.member_index, op_index);
 
                 let op_success = format!("{}_SUCCESS", op_claim_name);
                 let wt_success = format!("{}_SUCCESS", wt_claim_name);
@@ -1903,7 +1917,7 @@ impl DisputeCoreProtocol {
                     &double_indexed_name(
                         WT_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO,
                         data.member_index,
-                        member_index,
+                        op_index,
                     ),
                     VariableTypes::Utxo((
                         wt_success_txid,
@@ -1920,7 +1934,7 @@ impl DisputeCoreProtocol {
                     &double_indexed_name(
                         OP_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO,
                         data.member_index,
-                        member_index,
+                        op_index,
                     ),
                     VariableTypes::Utxo((
                         op_success_txid,
@@ -1929,13 +1943,38 @@ impl DisputeCoreProtocol {
                         Some(claim_success_output.clone()),
                     )),
                 )?;
+
+                let wt_init_challenge =
+                    double_indexed_name(WT_INIT_CHALLENGE_TX, data.member_index, op_index);
+                let wt_init_challenge_tx = protocol.transaction_by_name(&wt_init_challenge)?;
+                let wt_init_challenge_txid = wt_init_challenge_tx.compute_txid();
+
+                let wt_stopper_output = claimer_stoppers[op_index].clone().unwrap().0.clone();
+                let wt_stopper: PartialUtxo = (
+                    wt_init_challenge_txid,
+                    WT_INIT_CHALLENGE_WT_STOPPER_VOUT,
+                    Some(wt_stopper_output.get_value().to_sat()),
+                    Some(wt_stopper_output),
+                );
+
+                let op_stopper_output = claimer_stoppers[op_index].clone().unwrap().1.clone();
+                let op_stopper: PartialUtxo = (
+                    wt_init_challenge_txid,
+                    WT_INIT_CHALLENGE_OP_STOPPER_VOUT,
+                    Some(op_stopper_output.get_value().to_sat()),
+                    Some(op_stopper_output),
+                );
+
+                claim_gate_stoppers.push(Some((wt_stopper, op_stopper)));
+            } else {
+                claim_gate_stoppers.push(None);
             }
         }
 
         context.globals.set_var(
             &self.ctx.id,
-            &WT_START_ENABLER_UTXOS,
-            VariableTypes::String(serde_json::to_string(&wt_start_enabler_utxos)?),
+            &CLAIM_GATE_STOPPER_UTXOS,
+            VariableTypes::String(serde_json::to_string(&claim_gate_stoppers)?),
         )?;
 
         Ok(())
