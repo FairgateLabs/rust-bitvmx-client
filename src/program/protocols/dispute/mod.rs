@@ -11,7 +11,9 @@ use std::{
 
 use bitcoin::{PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
-use bitcoin_script_riscv::riscv::instruction_mapping::create_verification_script_mapping;
+use bitcoin_script_riscv::riscv::{
+    instruction_mapping::create_verification_script_mapping, script_utils::is_lower_than,
+};
 use bitcoin_script_stack::stack::StackTracker;
 use bitvmx_cpu_definitions::challenge::EmulatorResultType;
 use console::style;
@@ -580,6 +582,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         amount = self.checked_sub(amount, fee)?;
         amount = self.checked_sub(amount, speedup_dust)?;
 
+        let reverse_script = Self::get_reverse_script(16 + 40); // sizeof prover_last_step + sizeof prover_last_hash
+        let validate_last_step_script =
+            Self::get_validate_last_step_script(program_def.0.max_steps);
+
         self.add_connection_with_scripts(
             context,
             aggregated,
@@ -590,11 +596,12 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             &PRE_COMMITMENT,
             COMMITMENT,
             &claim_verifier,
-            Self::winternitz_check(
+            Self::winternitz_check_extra_script(
                 agg_or_prover,
                 sign_mode,
                 &keys[0],
                 &vec!["prover_last_step", "prover_last_hash"],
+                Some(vec![reverse_script, validate_last_step_script]),
             )?,
             (&prover_speedup_pub, &verifier_speedup_pub),
         )?;
@@ -648,8 +655,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
             prev = next;
             let next = format!("NARY_VERIFIER_{}", i);
-            //TODO: Add a lower than value check
-            let _bits = nary_def.bits_for_round(i);
+            let bits = nary_def.bits_for_round(i);
+            let validate_selection_bits_script =
+                Self::get_validate_selection_bits_script((1 << bits) - 1);
 
             self.add_connection_with_scripts(
                 context,
@@ -661,11 +669,12 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &prev,
                 &next,
                 &claim_prover,
-                Self::winternitz_check(
+                Self::winternitz_check_extra_script(
                     agg_or_verifier,
                     sign_mode,
                     &keys[1],
                     &vec![&format!("verifier_selection_bits_{}", i)],
+                    Some(vec![validate_selection_bits_script]),
                 )?,
                 (&verifier_speedup_pub, &prover_speedup_pub),
             )?;
@@ -758,8 +767,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
             prev = next;
             let next = format!("NARY2_VERIFIER_{}", i);
-            //TODO: Add a lower than value check
-            let _bits = nary_def.bits_for_round(i);
+            let bits = nary_def.bits_for_round(i);
+            let validate_selection_bits_script =
+                Self::get_validate_selection_bits_script((1 << bits) - 1);
 
             self.add_connection_with_scripts(
                 context,
@@ -771,11 +781,12 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &prev,
                 &next,
                 &claim_prover,
-                Self::winternitz_check(
+                Self::winternitz_check_extra_script(
                     agg_or_verifier,
                     sign_mode,
                     &keys[1],
                     &vec![&format!("verifier_selection_bits2_{}", i)],
+                    Some(vec![validate_selection_bits_script]),
                 )?,
                 (&verifier_speedup_pub, &prover_speedup_pub),
             )?;
@@ -1002,19 +1013,23 @@ impl DisputeResolutionProtocol {
         Self::winternitz_check_extra_script(aggregated, sign_mode, keys, var_names, None)
     }
 
-    fn get_reverse_and_strip_scripts(
-        vars: &Vec<(String, usize)>,
-        rounds: u8,
-        nary_search_type: NArySearchType,
-    ) -> (ScriptBuf, ScriptBuf) {
+    fn get_reverse_script(total_size: u32) -> ScriptBuf {
         //TODO: This is a workaround to inverse the order of the stack
-        let total_size = vars.iter().map(|(_, size)| (*size as u32) * 2).sum();
         let mut stack = StackTracker::new();
         let all = stack.define(total_size, "all");
         for i in 1..total_size {
             stack.move_var_sub_n(all, total_size - i - 1);
         }
-        let reverse_script = stack.get_script();
+        stack.get_script()
+    }
+
+    fn get_reverse_and_strip_scripts(
+        vars: &Vec<(String, usize)>,
+        rounds: u8,
+        nary_search_type: NArySearchType,
+    ) -> (ScriptBuf, ScriptBuf) {
+        let total_size = vars.iter().map(|(_, size)| (*size as u32) * 2).sum();
+        let reverse_script = Self::get_reverse_script(total_size);
         //TODO: This is a workaround to remove one nibble from the micro instructions
         //and drop the last steps. (this can be avoided)
         let mut stack = StackTracker::new();
@@ -1022,7 +1037,7 @@ impl DisputeResolutionProtocol {
         for (name, size) in vars.iter() {
             stackvars.insert(name.clone(), stack.define((size * 2) as u32, name));
         }
-        
+
         match nary_search_type {
             NArySearchType::ConflictStep => {
                 let step_n = stack.move_var(stackvars["prover_step_number"]);
@@ -1333,6 +1348,39 @@ impl DisputeResolutionProtocol {
         let verifier = stack.define(4 * words, "value_verifier");
         let prover = stack.define(4 * words, "value_prover");
         stack.equals(verifier, true, prover, true);
+        stack.get_script()
+    }
+
+    fn get_validate_selection_bits_script(max_bits: u8) -> ScriptBuf {
+        let mut stack = StackTracker::new();
+        let selection_bits = stack.define(2, "verifier_selection_bits");
+
+        // we have to check that the most significant nibble is zero, but since we won't use the reverse script it is at position 1 instead of 0
+        stack.move_var_sub_n(selection_bits, 1);
+        stack.number(0);
+        stack.op_equalverify();
+
+        stack.number(max_bits as u32);
+        stack.op_lessthanorequal();
+        stack.op_verify();
+        stack.get_script()
+    }
+
+    fn get_validate_last_step_script(max_steps: u64) -> ScriptBuf {
+        let mut stack = StackTracker::new();
+        let last_step = stack.define(16, "prover_last_step");
+        let last_hash = stack.define(40, "prover_last_hash");
+        stack.drop(last_hash);
+
+        let zero = stack.number_u64(0);
+        stack.equality(zero, true, last_step, false, false, true);
+
+        let max_steps = stack.number_u64(max_steps);
+        stack.equality(last_step, false, max_steps, false, true, false);
+        is_lower_than(&mut stack, last_step, max_steps, true);
+        stack.op_boolor();
+        stack.op_verify();
+
         stack.get_script()
     }
 }
