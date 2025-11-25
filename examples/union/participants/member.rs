@@ -213,6 +213,8 @@ impl Member {
             addresses,
         )?;
 
+        thread::sleep(std::time::Duration::from_secs(20 * total_setups as u64));
+
         for i in 0..total_setups {
             let program_id =
                 wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
