@@ -177,3 +177,23 @@ impl AdvanceFundsRequest {
         "advance_funds_request".to_string()
     }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReimbursementResult {
+    pub committee_id: Uuid,
+    pub slot_index: usize,
+    pub txid: Txid,
+    pub challenge_result: OperatorChallengeResult,
+}
+
+impl ReimbursementResult {
+    pub fn name() -> String {
+        "reimbursement_result".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum OperatorChallengeResult {
+    OperatorTake,
+    OperatorWon,
+}
