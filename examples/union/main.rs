@@ -428,7 +428,7 @@ pub fn advance_funds(
         get_advance_funds_fee()?,
     )?;
 
-    let blocks = if NETWORK == Network::Regtest { 20 } else { 1 };
+    let blocks = if NETWORK == Network::Regtest { 30 } else { 1 };
     wait_for_blocks(&committee.bitcoin_client, blocks)?;
 
     info!("Advance funds complete.");
