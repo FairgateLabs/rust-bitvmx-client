@@ -1,5 +1,6 @@
 use crate::config::ComponentsConfig;
 use crate::program::protocols::protocol_handler::ProtocolHandler;
+use crate::timestamp_verifier::TimestampVerifier;
 use crate::{
     api::BitVMXApi,
     collaborate::Collaboration,
@@ -41,11 +42,10 @@ use bitvmx_cpu_definitions::challenge::EmulatorResultType;
 use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use bitvmx_wallet::wallet::Wallet;
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashSet, VecDeque},
     net::SocketAddr,
     rc::Rc,
     sync::{Arc, Mutex},
@@ -60,8 +60,6 @@ use uuid::Uuid;
 pub const THROTTLE_TICKS: u32 = 2;
 pub const WALLET_INDEX: u32 = 100;
 pub const WALLET_CHANGE_INDEX: u32 = 101;
-const MAX_TIMESTAMP_DRIFT_MS: i64 = 5 * 60_000;
-const ENABLE_TIMESTAMP_CHECK: bool = false; //Temporarily disabled pending the fix of the timestamp issue
 
 #[derive(Debug)]
 struct BitcoinUpdateState {
@@ -76,7 +74,7 @@ pub struct BitVMX {
     broker: BrokerSync,
     count: u32,
     pending_messages: VecDeque<(PubKeyHash, Vec<u8>)>,
-    message_timestamps: HashMap<PubKeyHash, i64>,
+    timestamp_verifier: TimestampVerifier,
     notified_request: HashSet<(Uuid, (Txid, Option<u32>))>,
     notified_rsk_pegin: HashSet<Txid>, //workaround for RSK pegin transactions because ack seems to be not working
     bitcoin_update: BitcoinUpdateState,
@@ -113,59 +111,7 @@ impl StoreKey {
     }
 }
 
-fn ensure_timestamp_fresh_internal(
-    message_timestamps: &HashMap<PubKeyHash, i64>,
-    peer: &PubKeyHash,
-    timestamp: i64,
-) -> Result<(), BitVMXError> {
-    let now = Utc::now().timestamp_millis();
-    if timestamp > now + MAX_TIMESTAMP_DRIFT_MS {
-        warn!(
-            "Rejecting message from {}: timestamp {} is too far in the future (now: {})",
-            peer, timestamp, now
-        );
-        return Err(BitVMXError::InvalidMessageFormat);
-    }
-    if timestamp < now - MAX_TIMESTAMP_DRIFT_MS {
-        warn!(
-            "Rejecting message from {}: timestamp {} is too old (now: {})",
-            peer, timestamp, now
-        );
-        return Err(BitVMXError::InvalidMessageFormat);
-    }
-    if let Some(last_timestamp) = message_timestamps.get(peer) {
-        if timestamp <= *last_timestamp {
-            warn!(
-                "Rejecting message from {}: timestamp {} not newer than last seen {}",
-                peer, timestamp, last_timestamp
-            );
-            return Err(BitVMXError::InvalidMessageFormat);
-        }
-    }
-    Ok(())
-}
-
-fn record_timestamp_internal(
-    message_timestamps: &mut HashMap<PubKeyHash, i64>,
-    peer: &PubKeyHash,
-    timestamp: i64,
-) {
-    message_timestamps.insert(peer.clone(), timestamp);
-}
-
 impl BitVMX {
-    fn ensure_timestamp_fresh(&self, peer: &PubKeyHash, timestamp: i64) -> Result<(), BitVMXError> {
-        if ENABLE_TIMESTAMP_CHECK {
-            ensure_timestamp_fresh_internal(&self.message_timestamps, peer, timestamp)
-        } else {
-            Ok(())
-        }
-    }
-
-    fn record_timestamp(&mut self, peer: &PubKeyHash, timestamp: i64) {
-        record_timestamp_internal(&mut self.message_timestamps, peer, timestamp);
-    }
-
     /// Verifies timestamp freshness, retrieves verification key, and verifies message signature.
     /// Returns the verification key on success, or an error if verification fails.
     fn verify_and_get_key(
@@ -180,7 +126,8 @@ impl BitVMX {
         context_type: &str,
     ) -> Result<String, BitVMXError> {
         // Check timestamp freshness
-        self.ensure_timestamp_fresh(&identifier.pubkey_hash, timestamp)?;
+        self.timestamp_verifier
+            .ensure_fresh(&identifier.pubkey_hash, timestamp)?;
 
         // Retrieve verification key from shared ProgramContext
         let my_pubkey_hash = self.program_context.comms.get_pubk_hash()?;
@@ -287,7 +234,7 @@ impl BitVMX {
             broker,
             count: 0,
             pending_messages: VecDeque::new(),
-            message_timestamps: HashMap::new(),
+            timestamp_verifier: TimestampVerifier::default(),
             notified_request: HashSet::new(),
             notified_rsk_pegin: HashSet::new(),
             bitcoin_update: BitcoinUpdateState {
@@ -432,7 +379,8 @@ impl BitVMX {
         }
 
         if message_consumed {
-            self.record_timestamp(&identifier.pubkey_hash, timestamp);
+            self.timestamp_verifier
+                .record(&identifier.pubkey_hash, timestamp);
         }
 
         Ok(())
@@ -858,84 +806,6 @@ impl BitVMX {
         self.wallet.sync_wallet()?;
         info!("Wallet sync completed.");
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::Duration;
-
-    fn peer() -> PubKeyHash {
-        "peer-hash".to_string()
-    }
-
-    fn ensure_timestamp_fresh_internal_accepts_recent_message_case() {
-        let map = HashMap::new();
-        let now = Utc::now().timestamp_millis();
-        ensure_timestamp_fresh_internal(&map, &peer(), now).unwrap();
-    }
-
-    fn ensure_timestamp_fresh_internal_rejects_future_message_case() {
-        let map = HashMap::new();
-        // Use a larger margin to account for timing differences between test and function
-        let future = Utc::now().timestamp_millis() + MAX_TIMESTAMP_DRIFT_MS + 1000;
-        let result = ensure_timestamp_fresh_internal(&map, &peer(), future);
-        assert!(matches!(result, Err(BitVMXError::InvalidMessageFormat)));
-    }
-
-    fn ensure_timestamp_fresh_internal_rejects_stale_message_case() {
-        let map = HashMap::new();
-        // Use a larger margin to account for timing differences between test and function
-        let past = Utc::now().timestamp_millis() - MAX_TIMESTAMP_DRIFT_MS - 1000;
-        let result = ensure_timestamp_fresh_internal(&map, &peer(), past);
-        assert!(matches!(result, Err(BitVMXError::InvalidMessageFormat)));
-    }
-
-    fn ensure_timestamp_fresh_internal_rejects_replay_case() {
-        let mut map = HashMap::new();
-        let now = Utc::now().timestamp_millis();
-        record_timestamp_internal(&mut map, &peer(), now);
-        let replay = ensure_timestamp_fresh_internal(&map, &peer(), now);
-        assert!(matches!(replay, Err(BitVMXError::InvalidMessageFormat)));
-        let older = ensure_timestamp_fresh_internal(&map, &peer(), now - 1);
-        assert!(matches!(older, Err(BitVMXError::InvalidMessageFormat)));
-    }
-
-    fn record_timestamp_internal_updates_state_case() {
-        let mut map = HashMap::new();
-        let now = Utc::now().timestamp_millis();
-        record_timestamp_internal(&mut map, &peer(), now);
-        assert_eq!(map.get(&peer()), Some(&now));
-
-        let newer = now + Duration::milliseconds(1).num_milliseconds();
-        record_timestamp_internal(&mut map, &peer(), newer);
-        assert_eq!(map.get(&peer()), Some(&newer));
-    }
-
-    #[test]
-    fn ensure_timestamp_fresh_internal_accepts_recent_message() {
-        ensure_timestamp_fresh_internal_accepts_recent_message_case();
-    }
-
-    #[test]
-    fn ensure_timestamp_fresh_internal_rejects_future_message() {
-        ensure_timestamp_fresh_internal_rejects_future_message_case();
-    }
-
-    #[test]
-    fn ensure_timestamp_fresh_internal_rejects_stale_message() {
-        ensure_timestamp_fresh_internal_rejects_stale_message_case();
-    }
-
-    #[test]
-    fn ensure_timestamp_fresh_internal_rejects_replay() {
-        ensure_timestamp_fresh_internal_rejects_replay_case();
-    }
-
-    #[test]
-    fn record_timestamp_internal_updates_state() {
-        record_timestamp_internal_updates_state_case();
     }
 }
 

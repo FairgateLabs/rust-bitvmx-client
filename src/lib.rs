@@ -11,6 +11,7 @@ pub mod program;
 pub mod shutdown;
 pub mod signature_verifier;
 pub mod spv_proof;
+pub mod timestamp_verifier;
 pub mod types;
 
 // Re-export types from the dependencies
