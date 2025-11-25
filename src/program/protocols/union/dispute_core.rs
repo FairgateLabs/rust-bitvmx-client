@@ -537,6 +537,9 @@ impl DisputeCoreProtocol {
                     None,
                 )?;
 
+                let key_pair_name = get_dispute_pair_key_name(data.member_index, member_index);
+                let key_pair = keys[data.member_index].get_public(&key_pair_name)?;
+
                 // Create WT claim gate
                 let wt_claim_gate = ClaimGate::new(
                     protocol,
@@ -547,7 +550,7 @@ impl DisputeCoreProtocol {
                     CLAIM_GATE_FEE,
                     DUST_VALUE,
                     vec![op_speedup_key],
-                    Some(vec![&committee.dispute_aggregated_key]), // FIXME: This should be the key pair aggregated.
+                    Some(vec![key_pair]),
                     settings.claim_gate_timelock,
                     1, // Single output to connect to FullPenalization
                     vec![],
@@ -560,9 +563,6 @@ impl DisputeCoreProtocol {
                         "Expected exactly one stopper output in WT claim gate".to_string(),
                     ));
                 }
-
-                let key_pair_name = get_dispute_pair_key_name(data.member_index, member_index);
-                let key_pair = keys[data.member_index].get_public(&key_pair_name)?;
 
                 // Create OP claim gate
                 let op_claim_gate = ClaimGate::new(
