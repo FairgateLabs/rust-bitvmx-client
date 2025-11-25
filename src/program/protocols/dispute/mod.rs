@@ -11,7 +11,9 @@ use std::{
 
 use bitcoin::{PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
-use bitcoin_script_riscv::riscv::instruction_mapping::create_verification_script_mapping;
+use bitcoin_script_riscv::riscv::{
+    instruction_mapping::create_verification_script_mapping, script_utils::is_lower_than,
+};
 use bitcoin_script_stack::stack::StackTracker;
 use bitvmx_cpu_definitions::challenge::EmulatorResultType;
 use console::style;
@@ -19,7 +21,6 @@ use emulator::{
     constants::REGISTERS_BASE_ADDRESS, decision::nary_search::NArySearchType,
     loader::program_definition::ProgramDefinition,
 };
-use key_manager::winternitz::WinternitzPublicKey;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
     graph::graph::GraphOptions,
@@ -77,6 +78,7 @@ fn build_trace_vars(rounds: u8) -> Vec<(String, usize)> {
         ("prover_write_value".to_string(), 4),
         ("prover_write_pc".to_string(), 4),
         ("prover_write_micro".to_string(), 1),
+        ("prover_witness".to_string(), 4),
         ("prover_mem_witness".to_string(), 1),
         ("prover_read_1_address".to_string(), 4),
         ("prover_read_1_value".to_string(), 4),
@@ -104,7 +106,6 @@ fn build_trace_vars(rounds: u8) -> Vec<(String, usize)> {
         vars.push((format!("verifier_selection_bits_{}", i), 1));
     }
 
-    vars.push(("prover_witness".to_string(), 4));
     vars
 }
 
@@ -605,6 +606,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         amount = self.checked_sub(amount, fee)?;
         amount = self.checked_sub(amount, speedup_dust)?;
 
+        let reverse_script = Self::get_reverse_script(16 + 40); // sizeof prover_last_step + sizeof prover_last_hash
+        let validate_last_step_script =
+            Self::get_validate_last_step_script(program_def.0.max_steps);
+
         self.add_connection_with_scripts(
             context,
             aggregated,
@@ -612,14 +617,15 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             timelock_blocks,
             amount,
             speedup_dust,
-            &PRE_COMMITMENT,
+            PRE_COMMITMENT,
             COMMITMENT,
             &claim_verifier,
-            Self::winternitz_check(
+            Self::winternitz_check_extra_script(
                 agg_or_prover,
                 sign_mode,
                 &keys[0],
                 &vec!["prover_last_step", "prover_last_hash"],
+                Some(vec![reverse_script, validate_last_step_script]),
             )?,
             (&prover_speedup_pub, &verifier_speedup_pub),
         )?;
@@ -673,8 +679,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
             prev = next;
             let next = format!("NARY_VERIFIER_{}", i);
-            //TODO: Add a lower than value check
-            let _bits = nary_def.bits_for_round(i);
+            let bits = nary_def.bits_for_round(i);
+            let validate_selection_bits_script =
+                Self::get_validate_selection_bits_script((1 << bits) - 1);
 
             self.add_connection_with_scripts(
                 context,
@@ -686,11 +693,12 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &prev,
                 &next,
                 &claim_prover,
-                Self::winternitz_check(
+                Self::winternitz_check_extra_script(
                     agg_or_verifier,
                     sign_mode,
                     &keys[1],
                     &vec![&format!("verifier_selection_bits_{}", i)],
+                    Some(vec![validate_selection_bits_script]),
                 )?,
                 (&verifier_speedup_pub, &prover_speedup_pub),
             )?;
@@ -783,8 +791,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
             prev = next;
             let next = format!("NARY2_VERIFIER_{}", i);
-            //TODO: Add a lower than value check
-            let _bits = nary_def.bits_for_round(i);
+            let bits = nary_def.bits_for_round(i);
+            let validate_selection_bits_script =
+                Self::get_validate_selection_bits_script((1 << bits) - 1);
 
             self.add_connection_with_scripts(
                 context,
@@ -796,11 +805,12 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &prev,
                 &next,
                 &claim_prover,
-                Self::winternitz_check(
+                Self::winternitz_check_extra_script(
                     agg_or_verifier,
                     sign_mode,
                     &keys[1],
                     &vec![&format!("verifier_selection_bits2_{}", i)],
+                    Some(vec![validate_selection_bits_script]),
                 )?,
                 (&verifier_speedup_pub, &prover_speedup_pub),
             )?;
@@ -996,15 +1006,21 @@ impl DisputeResolutionProtocol {
     fn winternitz_check_extra_script<T: AsRef<str> + std::fmt::Debug>(
         aggregated: &PublicKey,
         sign_mode: SignMode,
-        names_and_keys: &Vec<(T, &WinternitzPublicKey)>,
-        keep_message: bool,
+        keys: &ParticipantKeys,
+        var_names: &Vec<T>,
         extra_check_scripts: Option<Vec<ScriptBuf>>,
     ) -> Result<Vec<ProtocolScript>, BitVMXError> {
+        info!("Winternitz check for variables: {:?}", &var_names);
+        let names_and_keys = var_names
+            .iter()
+            .map(|v| (v, keys.get_winternitz(v.as_ref()).unwrap()))
+            .collect();
+
         let winternitz_check = scripts::verify_winternitz_signatures_aux(
             aggregated,
             &names_and_keys,
             sign_mode,
-            keep_message,
+            extra_check_scripts.is_some(),
             extra_check_scripts,
         )?;
 
@@ -1032,13 +1048,15 @@ impl DisputeResolutionProtocol {
             })
             .collect();
 
-        Self::winternitz_check_extra_script(
+        let winternitz_check = scripts::verify_winternitz_signatures_aux(
             aggregated,
-            sign_mode,
             &names_and_keys,
+            sign_mode,
             extra_check_scripts.is_some(),
             extra_check_scripts,
-        )
+        )?;
+
+        Ok(vec![winternitz_check])
     }
 
     fn winternitz_check<T: AsRef<str> + std::fmt::Debug>(
@@ -1047,11 +1065,78 @@ impl DisputeResolutionProtocol {
         keys: &ParticipantKeys,
         var_names: &Vec<T>,
     ) -> Result<Vec<ProtocolScript>, BitVMXError> {
-        let names_and_keys = var_names
-            .iter()
-            .map(|v| (v, keys.get_winternitz(v.as_ref()).unwrap()))
-            .collect();
-        Self::winternitz_check_extra_script(aggregated, sign_mode, &names_and_keys, false, None)
+        Self::winternitz_check_extra_script(aggregated, sign_mode, keys, var_names, None)
+    }
+
+    fn get_reverse_script(total_size: u32) -> ScriptBuf {
+        //TODO: This is a workaround to inverse the order of the stack
+        let mut stack = StackTracker::new();
+        let all = stack.define(total_size, "all");
+        for i in 1..total_size {
+            stack.move_var_sub_n(all, total_size - i - 1);
+        }
+        stack.get_script()
+    }
+
+    fn get_reverse_and_strip_scripts(
+        vars: &Vec<(String, usize)>,
+        rounds: u8,
+        nary_search_type: NArySearchType,
+    ) -> (ScriptBuf, ScriptBuf) {
+        let total_size = vars.iter().map(|(_, size)| (*size as u32) * 2).sum();
+        let reverse_script = Self::get_reverse_script(total_size);
+        //TODO: This is a workaround to remove one nibble from the micro instructions
+        //and drop the last steps. (this can be avoided)
+        let mut stack = StackTracker::new();
+        let mut stackvars = HashMap::new();
+        for (name, size) in vars.iter() {
+            stackvars.insert(name.clone(), stack.define((size * 2) as u32, name));
+        }
+
+        match nary_search_type {
+            NArySearchType::ConflictStep => {
+                let step_n = stack.move_var(stackvars["prover_step_number"]);
+                stack.drop(step_n);
+                let stripped = stack.move_var_sub_n(stackvars["prover_write_micro"], 0);
+                stack.drop(stripped);
+                let stripped = stack.move_var_sub_n(stackvars["prover_read_pc_micro"], 0);
+                stack.drop(stripped);
+                let last_step_1 = stack.move_var(stackvars["prover_read_1_last_step"]);
+                stack.drop(last_step_1);
+                let last_step_2 = stack.move_var(stackvars["prover_read_2_last_step"]);
+                stack.drop(last_step_2);
+                let prev_hash = stack.move_var(stackvars["prover_prev_hash_tk"]);
+                stack.drop(prev_hash);
+                let step_hash = stack.move_var(stackvars["prover_step_hash_tk"]);
+                stack.drop(step_hash);
+                for i in 1..rounds + 1 {
+                    stack.equals(
+                        stackvars[&format!("prover_selection_bits_{}_tk", i)],
+                        true,
+                        stackvars[&format!("verifier_selection_bits_{}", i)],
+                        true,
+                    );
+                }
+            }
+            NArySearchType::ReadValueChallenge => {
+                let step_hash = stack.move_var(stackvars["prover_step_hash_tk2"]);
+                stack.drop(step_hash);
+                let next_hash = stack.move_var(stackvars["prover_next_hash_tk2"]);
+                stack.drop(next_hash);
+                let selection_bits_1 = stack.move_var(stackvars["prover_selection_bits_1_tk2"]); // Drop it because its the same as the first n-ary search
+                stack.drop(selection_bits_1);
+                for i in 2..rounds + 1 {
+                    stack.equals(
+                        stackvars[&format!("prover_selection_bits_{}_tk2", i)],
+                        true,
+                        stackvars[&format!("verifier_selection_bits2_{}", i)],
+                        true,
+                    );
+                }
+            }
+        }
+
+        (reverse_script, stack.get_script())
     }
 
     fn execute_script(
@@ -1064,25 +1149,18 @@ impl DisputeResolutionProtocol {
     ) -> Result<Vec<ProtocolScript>, BitVMXError> {
         let prover_keys = &keys[0];
         let verifier_keys = &keys[1];
-        let (vars, skip) = match nary_search_type {
-            NArySearchType::ConflictStep => {
-                let skip = 1; //skip witness
-                let trace_vars = TRACE_VARS
-                    .get()
-                    .expect("TRACE_VARS not initialized")
-                    .read()?;
-                (trace_vars, skip)
-            }
+        let vars = match nary_search_type {
+            NArySearchType::ConflictStep => TRACE_VARS
+                .get()
+                .expect("TRACE_VARS not initialized")
+                .read()?,
             NArySearchType::ReadValueChallenge => {
-                let skip = 0;
-                let vars = TK_2NARY.get().expect("TK_2NARY not initialized").read()?;
-                (vars, skip)
+                TK_2NARY.get().expect("TK_2NARY not initialized").read()?
             }
         };
 
         let vars_names = vars
             .iter()
-            .take(vars.len() - skip) // Skip the witness (except is needed)
             .filter(|(name, _)| name.starts_with("prover"))
             .map(|(name, _)| name.as_str())
             .collect::<Vec<&str>>();
@@ -1106,97 +1184,56 @@ impl DisputeResolutionProtocol {
                 }),
         );
 
-        //TODO: This is a workacround to inverse the order of the stack
-        let total_size = vars
-            .iter()
-            .take(vars.len() - skip) // skip witness
-            .map(|(_, size)| (*size as u32) * 2)
-            .sum();
-        let mut stack = StackTracker::new();
-        let all = stack.define(total_size, "all");
-        for i in 1..total_size {
-            stack.move_var_sub_n(all, total_size - i - 1);
-        }
-        let reverse_script = stack.get_script();
-
-        //TODO: This is a workaround to remove one nibble from the micro instructions
-        //and drop the last steps. (this can be avoided)
-        let mut stack = StackTracker::new();
-        let mut stackvars = HashMap::new();
-        for (name, size) in vars.iter().take(vars.len() - skip) {
-            stackvars.insert(name.clone(), stack.define((size * 2) as u32, name));
-        }
-
-        let mut winternitz_check_list = vec![];
         let rounds = self
             .get_program_definition(context)?
             .0
             .nary_def()
             .total_rounds();
+
+        let vars_without_witness = vars
+            .iter()
+            .filter(|(var, _)| var != "prover_witness")
+            .cloned()
+            .collect();
+
+        let (reverse_script, strip_script) =
+            Self::get_reverse_and_strip_scripts(&vars, rounds, nary_search_type);
+
+        let (reverse_script_ww, strip_script_ww) =
+            Self::get_reverse_and_strip_scripts(&vars_without_witness, rounds, nary_search_type);
+
+        let mut winternitz_check_list = vec![];
         match nary_search_type {
             NArySearchType::ConflictStep => {
                 let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
                 let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
                 instruction_names.sort();
 
-                let step_n = stack.move_var(stackvars["prover_step_number"]);
-                stack.drop(step_n);
-                let stripped = stack.move_var_sub_n(stackvars["prover_write_micro"], 0);
-                stack.drop(stripped);
-                let stripped = stack.move_var_sub_n(stackvars["prover_read_pc_micro"], 0);
-                stack.drop(stripped);
-                let last_step_1 = stack.move_var(stackvars["prover_read_1_last_step"]);
-                stack.drop(last_step_1);
-                let last_step_2 = stack.move_var(stackvars["prover_read_2_last_step"]);
-                stack.drop(last_step_2);
-                let prev_hash = stack.move_var(stackvars["prover_prev_hash_tk"]);
-                stack.drop(prev_hash);
-                let step_hash = stack.move_var(stackvars["prover_step_hash_tk"]);
-                stack.drop(step_hash);
-                for i in 1..rounds + 1 {
-                    stack.equals(
-                        stackvars[&format!("prover_selection_bits_{}_tk", i)],
-                        true,
-                        stackvars[&format!("verifier_selection_bits_{}", i)],
-                        true,
-                    );
-                }
-
-                let strip_script = stack.get_script();
-
                 for (_, name) in instruction_names.iter().enumerate() {
-                    let script = mapping[name].0.clone();
+                    let (script, requires_witness) = mapping[name].clone();
+                    let (reverse, strip) = if requires_witness {
+                        (reverse_script.clone(), strip_script.clone())
+                    } else {
+                        (reverse_script_ww.clone(), strip_script_ww.clone())
+                    };
+
                     let winternitz_check = scripts::verify_winternitz_signatures_aux(
                         aggregated,
-                        &names_and_keys,
+                        &names_and_keys
+                            .iter()
+                            .filter(|(var_name, _)| {
+                                requires_witness || *var_name != "prover_witness"
+                            })
+                            .cloned()
+                            .collect(),
                         sign_mode,
                         true,
-                        Some(vec![
-                            reverse_script.clone(),
-                            strip_script.clone(),
-                            script.clone(),
-                        ]),
+                        Some(vec![reverse, strip, script]),
                     )?;
                     winternitz_check_list.push(winternitz_check);
                 }
             }
             NArySearchType::ReadValueChallenge => {
-                let step_hash = stack.move_var(stackvars["prover_step_hash_tk2"]);
-                stack.drop(step_hash);
-                let next_hash = stack.move_var(stackvars["prover_next_hash_tk2"]);
-                stack.drop(next_hash);
-                let selection_bits_1 = stack.move_var(stackvars["prover_selection_bits_1_tk2"]); // Drop it because its the same as the first n-ary search
-                stack.drop(selection_bits_1);
-                for i in 2..rounds + 1 {
-                    stack.equals(
-                        stackvars[&format!("prover_selection_bits_{}_tk2", i)],
-                        true,
-                        stackvars[&format!("verifier_selection_bits2_{}", i)],
-                        true,
-                    );
-                }
-
-                let strip_script = stack.get_script();
                 let winternitz_check = scripts::verify_winternitz_signatures_aux(
                     aggregated,
                     &names_and_keys,
@@ -1365,6 +1402,39 @@ impl DisputeResolutionProtocol {
         let verifier = stack.define(word_size * 2 * words, "value_verifier"); // each word is 4 bytes, each byte is 2 nibbles
         let prover = stack.define(word_size * 2 * words, "value_prover");
         stack.equals(verifier, true, prover, true);
+        stack.get_script()
+    }
+
+    fn get_validate_selection_bits_script(max_bits: u8) -> ScriptBuf {
+        let mut stack = StackTracker::new();
+        let selection_bits = stack.define(2, "verifier_selection_bits");
+
+        // we have to check that the most significant nibble is zero, but since we won't use the reverse script it is at position 1 instead of 0
+        stack.move_var_sub_n(selection_bits, 1);
+        stack.number(0);
+        stack.op_equalverify();
+
+        stack.number(max_bits as u32);
+        stack.op_lessthanorequal();
+        stack.op_verify();
+        stack.get_script()
+    }
+
+    fn get_validate_last_step_script(max_steps: u64) -> ScriptBuf {
+        let mut stack = StackTracker::new();
+        let last_step = stack.define(16, "prover_last_step");
+        let last_hash = stack.define(40, "prover_last_hash");
+        stack.drop(last_hash);
+
+        let zero = stack.number_u64(0);
+        stack.equality(zero, true, last_step, false, false, true);
+
+        let max_steps = stack.number_u64(max_steps);
+        stack.equality(last_step, false, max_steps, false, true, false);
+        is_lower_than(&mut stack, last_step, max_steps, true);
+        stack.op_boolor();
+        stack.op_verify();
+
         stack.get_script()
     }
 }
