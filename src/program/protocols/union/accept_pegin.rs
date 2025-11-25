@@ -12,8 +12,8 @@ use crate::{
                     get_operator_output_type, indexed_name,
                 },
                 types::{
-                    Committee, OperatorChallengeResult, OperatorTakeMined, PegInAccepted,
-                    PegInRequest, ACCEPT_PEGIN_TX, DISPUTE_CORE_LONG_TIMELOCK,
+                    Committee, OperatorChallengeResult, PegInAccepted, PegInRequest,
+                    ReimbursementResult, ACCEPT_PEGIN_TX, DISPUTE_CORE_LONG_TIMELOCK,
                     LAST_OPERATOR_TAKE_UTXO, OPERATOR_LEAF_INDEX, OPERATOR_TAKE_ENABLER,
                     OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX, P2TR_FEE,
                     REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, SPEEDUP_KEY, SPEEDUP_VALUE,
@@ -736,7 +736,7 @@ impl AcceptPegInProtocol {
             OperatorChallengeResult::OperatorWon
         };
 
-        let op_take_mined = OperatorTakeMined {
+        let op_take_mined = ReimbursementResult {
             committee_id: pegin_request.committee_id,
             slot_index: pegin_request.slot_index,
             txid,
@@ -750,7 +750,7 @@ impl AcceptPegInProtocol {
 
         let data = serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(
             self.ctx.id,
-            OperatorTakeMined::name(),
+            ReimbursementResult::name(),
             VariableTypes::String(serde_json::to_string(&op_take_mined)?),
         ))?;
 

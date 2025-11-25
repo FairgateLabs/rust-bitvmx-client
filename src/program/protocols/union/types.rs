@@ -179,16 +179,16 @@ impl AdvanceFundsRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OperatorTakeMined {
+pub struct ReimbursementResult {
     pub committee_id: Uuid,
     pub slot_index: usize,
     pub txid: Txid,
     pub challenge_result: OperatorChallengeResult,
 }
 
-impl OperatorTakeMined {
+impl ReimbursementResult {
     pub fn name() -> String {
-        "operator_take_mined".to_string()
+        "reimbursement_result".to_string()
     }
 }
 
