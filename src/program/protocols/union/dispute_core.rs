@@ -633,7 +633,7 @@ impl DisputeCoreProtocol {
                     &init_challenge_name,
                     OutputSpec::Index(wt_claim_gate.vout + 1),
                     &op_no_cosign_name,
-                    InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
+                    InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }), // Leaf 0 corresponds to committee dispute aggregated
                     None,
                     None,
                 )?;
@@ -651,7 +651,7 @@ impl DisputeCoreProtocol {
                     &init_challenge_name,
                     OutputSpec::Index(op_claim_gate.vout + 1),
                     &wt_no_challenge_name,
-                    InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
+                    InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }), // Leaf 0 corresponds to committee dispute aggregated
                     None,
                     None,
                 )?;
