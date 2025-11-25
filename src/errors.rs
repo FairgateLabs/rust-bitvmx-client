@@ -184,6 +184,9 @@ pub enum BitVMXError {
     #[error("Identification error: {0}")]
     IdentificationError(#[from] IdentificationError),
 
+    #[error("Job Dispatcher {0} is not responding")]
+    JobDispatcherNotResponding(String),
+
     #[error("Poisoned lock error: {0}")]
     PoisonedLockError(String),
 
