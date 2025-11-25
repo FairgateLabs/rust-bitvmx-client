@@ -51,6 +51,16 @@ mod common;
 
 const MIN_TX_FEE: f64 = 2.0;
 
+pub enum InputType {
+    Const(String, u32, String, u32),
+    Participant(String, ParticipantRole),
+}
+impl From<(&str, u32, &str, u32)> for InputType {
+    fn from(t: (&str, u32, &str, u32)) -> Self {
+        InputType::Const(t.0.to_string(), t.1, t.2.to_string(), t.3)
+    }
+}
+
 pub fn get_configs(network: Network) -> Result<Vec<Config>> {
     let config_names = match network {
         Network::Regtest => vec!["op_1", "op_2", "op_3"],
@@ -484,7 +494,7 @@ impl TestHelper {
         prog_id: Uuid,
     ) -> Result<()> {
         let set_input_1 =
-            VariableTypes::Input(input_data).set_msg(prog_id, &program_input(input_idx))?;
+            VariableTypes::Input(input_data).set_msg(prog_id, &program_input(input_idx, None))?;
         let _ = self.id_channel_pairs[participant]
             .channel
             .send(&self.id_channel_pairs[participant].id, set_input_1)?;
@@ -503,8 +513,7 @@ pub fn test_all_aux(
     independent: bool,
     network: Network,
     program: Option<String>,
-    inputs: Option<(&str, u32, &str, u32)>,
-    input_type: ParticipantRole,
+    inputs: Option<InputType>,
     force_challenge: Option<ForcedChallenges>,
     force_winner: Option<ParticipantRole>,
 ) -> Result<()> {
@@ -655,9 +664,9 @@ pub fn test_all_aux(
     send_all(&pair_0_1_channels, &prev_protocol)?;
     send_all(&pair_0_1_channels, &prev_prefix)?;
 
-    if let Some(input) = inputs {
-        let const_input = VariableTypes::Input(hex::decode(input.0).unwrap())
-            .set_msg(prog_id, &program_input(input.1))?;
+    if let Some(InputType::Const(input, index, _, _)) = &inputs {
+        let const_input = VariableTypes::Input(hex::decode(input).unwrap())
+            .set_msg(prog_id, &program_input(*index, None))?;
         let _ = send_all(&pair_0_1_channels, &const_input);
     }
 
@@ -698,27 +707,17 @@ pub fn test_all_aux(
 
     helper.wait_tx_name(1, program::protocols::dispute::START_CH)?;
 
-    let (msg, mut idx) = if let Some(input) = inputs {
-        (input.2, input.3)
-    } else {
-        ("11111111", 0)
+    // Get input
+    let (role, msg, idx) = match &inputs {
+        Some(InputType::Const(_, _, input, idx)) => (ParticipantRole::Prover, input.as_str(), *idx),
+        Some(InputType::Participant(msg, role)) => (role.clone(), msg.as_str(), 0),
+        None => (ParticipantRole::Prover, "11111111", 0),
     };
-
-    match input_type {
-        Prover => {
-            info!("Setting input and sending from prover");
-            helper.set_input_and_send(hex::decode(msg).unwrap(), idx, 0, prog_id)?;
-        }
-        Verifier => {
-            info!("Setting input and sending from verifier");
-            helper.set_input_and_send(hex::decode(msg).unwrap(), idx, 1, prog_id)?;
-            info!("Waiting for input tx to be mined");
-            let msg = helper.wait_specific_msg(idx, "SetInput")?;
-            info!("Input set by verifier: {:?}", msg);
-            idx += 1;
-            helper.set_input_and_send(msg.input().unwrap(), idx, 0, prog_id)?;
-        }
-    }
+    let participant_id = match role {
+        ParticipantRole::Prover => 0,
+        ParticipantRole::Verifier => 1,
+    };
+    helper.set_input_and_send(hex::decode(msg).unwrap(), idx, participant_id, prog_id)?;
 
     let role = match force_winner {
         Some(role) => role,
@@ -799,19 +798,19 @@ pub fn sign_winternitz_message(message_bytes: &[u8], index: u32) -> WinternitzSi
 #[ignore]
 #[test]
 fn test_independent_testnet() -> Result<()> {
-    test_all_aux(true, Network::Testnet, None, None, Prover, None, None)?;
+    test_all_aux(true, Network::Testnet, None, None, None, None)?;
     Ok(())
 }
 #[ignore]
 #[test]
 fn test_independent_regtest() -> Result<()> {
-    test_all_aux(true, Network::Regtest, None, None, Prover, None, None)?;
+    test_all_aux(true, Network::Regtest, None, None, None, None)?;
     Ok(())
 }
 #[ignore]
 #[test]
 fn test_all() -> Result<()> {
-    test_all_aux(false, Network::Regtest, None, None, Prover, None, None)?;
+    test_all_aux(false, Network::Regtest, None, None, None, None)?;
     Ok(())
 }
 
@@ -822,8 +821,7 @@ fn test_const() -> Result<()> {
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-const-pre.yaml".to_string()),
-        Some(("0000000100000002", 0, "00000003", 1)),
-        Prover,
+        Some(("0000000100000002", 0, "00000003", 1).into()),
         None,
         None,
     )?;
@@ -832,8 +830,7 @@ fn test_const() -> Result<()> {
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-const-post.yaml".to_string()),
-        Some(("0000000200000003", 1, "00000001", 0)),
-        Prover,
+        Some(("0000000200000003", 1, "00000001", 0).into()),
         None,
         None,
     )?;
@@ -869,8 +866,7 @@ fn test_const_fail_input() -> Result<()> {
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
-        Some(("00000002", 1, "00000003", 2)),
-        Prover,
+        Some(("00000002", 1, "00000003", 2).into()),
         Some(ForcedChallenges::Personalized(fail_config.clone())),
         Some(Verifier),
     )?;
@@ -878,8 +874,7 @@ fn test_const_fail_input() -> Result<()> {
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-const-post.yaml".to_string()),
-        Some(("0000000200000004", 1, "00000001", 0)),
-        Prover,
+        Some(("0000000200000004", 1, "00000001", 0).into()),
         Some(ForcedChallenges::Personalized(fail_config.clone())),
         Some(Verifier),
     )?;
@@ -887,8 +882,7 @@ fn test_const_fail_input() -> Result<()> {
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-const-pre.yaml".to_string()),
-        Some(("0000000100000002", 0, "00000004", 1)),
-        Prover,
+        Some(("0000000100000002", 0, "00000004", 1).into()),
         Some(ForcedChallenges::Personalized(fail_config)),
         Some(Verifier),
     )?;
@@ -903,8 +897,7 @@ fn test_previous_input() -> Result<()> {
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
-        Some(("00000002", 1, "00000003", 2)),
-        Prover,
+        Some(("00000002", 1, "00000003", 2).into()),
         None,
         None,
     )?;
@@ -919,11 +912,22 @@ fn test_verifier_input() -> Result<()> {
         false,
         Network::Regtest,
         Some("../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world-verifier.yaml".to_string()),
-        None,
-        Verifier,
+        Some(InputType::Participant("11111111".to_string(), Verifier)),
         None,
         None,
     )?;
+
+    // test_all_aux(
+    //     false,
+    //     Network::Regtest,
+    //     Some("../BitVMX-CPU/docker-riscv32/riscv32/build/add-test-verifier.yaml".to_string()),
+    //     Some(InputType::Participant(
+    //         "000000010000000200000003".to_string(),
+    //         Verifier,
+    //     )),
+    //     None,
+    //     None,
+    // )?;
 
     Ok(())
 }
@@ -962,15 +966,7 @@ fn test_zkp() -> Result<()> {
 }
 
 fn test_challenge(challenge: ForcedChallenges) -> Result<()> {
-    test_all_aux(
-        false,
-        Network::Regtest,
-        None,
-        None,
-        Prover,
-        Some(challenge),
-        None,
-    )?;
+    test_all_aux(false, Network::Regtest, None, None, Some(challenge), None)?;
     Ok(())
 }
 
@@ -1106,7 +1102,7 @@ fn challenge_uninitialized_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::Uninitialized(Verifier))
 }
 
-//ASK: Future read, correct hash, read_value and correct_hash challenges have variable parameters that need to be constant
+//TODO: Future read, correct hash, read_value and correct_hash challenges have variable parameters that need to be constant
 // #[ignore]
 // #[test]
 // fn challenge_future_read_prover() -> Result<()> {

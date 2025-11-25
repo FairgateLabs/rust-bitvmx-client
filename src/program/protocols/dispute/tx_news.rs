@@ -9,17 +9,17 @@ use crate::{
                 action_wins,
                 challenge::READ_VALUE_NARY_SEARCH_CHALLENGE,
                 config::{ConfigResults, DisputeConfiguration},
-                input_handler::{get_txs_configuration, unify_inputs, unify_witnesses},
-                input_tx_name, timeout_input_tx, timeout_tx, DisputeResolutionProtocol, CHALLENGE,
-                CHALLENGE_READ, COMMITMENT, EXECUTE, GET_BITS_AND_HASHES, INPUT_TX,
-                POST_COMMITMENT, PRE_COMMITMENT, PROVER_WINS, TK_2NARY, TRACE_VARS, VERIFIER_FINAL,
-                VERIFIER_WINS,
+                input_handler::{get_txs_configuration, set_input, unify_inputs, unify_witnesses},
+                input_tx_name, program_input, timeout_input_tx, timeout_tx,
+                DisputeResolutionProtocol, CHALLENGE, CHALLENGE_READ, COMMITMENT, EXECUTE,
+                GET_BITS_AND_HASHES, INPUT_TX, POST_COMMITMENT, PRE_COMMITMENT, PROVER_WINS,
+                TK_2NARY, TRACE_VARS, VERIFIER_FINAL, VERIFIER_WINS,
             },
             protocol_handler::ProtocolHandler,
         },
         variables::VariableTypes,
     },
-    types::{OutgoingBitVMXApiMessages, ProgramContext},
+    types::ProgramContext,
 };
 use bitcoin::Txid;
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
@@ -36,6 +36,7 @@ fn dispatch_timeout_tx(
     name: &str,
     current_height: u32,
 ) -> Result<(), BitVMXError> {
+    info!("Dispatching timeout tx: {}", name);
     let params = program_context
         .globals
         .get_var(&drp.ctx.id, name)?
@@ -581,12 +582,17 @@ pub fn handle_tx_news(
         .nary_def()
         .total_rounds();
 
-    let n_inputs = program_context
-        .globals
-        .get_var(&drp.ctx.id, "input_txs")?
-        .unwrap()
-        .vec_string()?
-        .len() as u32;
+    let n_inputs = {
+        let inputs = program_context
+            .globals
+            .get_var(&drp.ctx.id, "input_txs")?
+            .unwrap()
+            .vec_string()?;
+        inputs
+            .iter()
+            .filter(|owner| owner.as_str() != "skip" && owner.as_str() != "prover_prev")
+            .count() as u32
+    };
     let timeout_table = TimeoutDispatchTable::new_predefined(rounds, n_inputs);
     // timeout_table.visualize();
 
@@ -636,9 +642,22 @@ pub fn handle_tx_news(
         if drp.role() == ParticipantRole::Prover && idx != last_tx_id as u32 {
             let (def, _program_definition) = drp.get_program_definition(program_context)?;
             let full_input = unify_inputs(&drp.ctx.id, program_context, &def)?;
-            program_context.broker_channel.send(
-                &program_context.components_config.l2,
-                OutgoingBitVMXApiMessages::SetInput(full_input).to_string()?,
+            for (i, input_chunk) in full_input.chunks(4).enumerate() {
+                //TODO: what if input total size is not multiple of 4
+                set_input(
+                    &drp.ctx.id,
+                    program_context,
+                    &program_input(i as u32, Some(&ParticipantRole::Prover)),
+                    input_chunk.to_vec(),
+                )?;
+            }
+            let (tx, sp) =
+                drp.get_tx_with_speedup_data(program_context, &input_tx_name(idx + 1), 0, 0, true)?;
+            program_context.bitcoin_coordinator.dispatch(
+                tx,
+                Some(sp),
+                Context::ProgramId(drp.ctx.id).to_string()?,
+                None,
             )?;
         }
         if idx == last_tx_id as u32 {

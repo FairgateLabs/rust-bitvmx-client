@@ -91,7 +91,7 @@ pub fn get_required_keys(
                 input_txs_offsets.push(*offset);
                 if participant_role.is_prover() {
                     for i in 0..*words {
-                        required_keys.push(format!("prover_program_input_{}", offset + i));
+                        required_keys.push(program_input(offset + i, Some(participant_role)));
                     }
                 }
                 last_tx_id = input_txs.len();
@@ -105,11 +105,7 @@ pub fn get_required_keys(
                 input_txs_offsets.push(*offset);
                 input_txs_offsets.push(*offset);
                 for i in 0..*words {
-                    required_keys.push(format!(
-                        "{}_program_input_{}",
-                        participant_role.to_string(),
-                        offset + i
-                    ));
+                    required_keys.push(program_input(offset + i, Some(participant_role)));
                 }
                 last_tx_id = input_txs.len();
             }
@@ -117,7 +113,7 @@ pub fn get_required_keys(
                 //similar to split_input
                 let full_input = program_context
                     .globals
-                    .get_var(id, &program_input(idx as u32))?
+                    .get_var(id, &program_input(idx as u32, None))?
                     .unwrap()
                     .input()?;
 
@@ -182,17 +178,16 @@ pub fn split_input(
 
     let full_input = program_context
         .globals
-        .get_var(id, &program_input(idx))?
+        .get_var(id, &program_input(idx, None))?
         .unwrap()
         .input()?;
     let words = input_txs_sizes[idx as usize];
     let owner = input_txs[idx as usize].as_str();
     let offset = input_txs_offsets[idx as usize];
 
-    //TODO: rename
-    let owner = match owner {
-        "verifier" => "verifier",
-        _ => "prover",
+    let role = match owner {
+        "verifier" => ParticipantRole::Verifier,
+        _ => ParticipantRole::Prover,
     };
 
     for i in 0..words {
@@ -201,7 +196,7 @@ pub fn split_input(
             .unwrap();
         program_context.globals.set_var(
             id,
-            &format!("{}_program_input_{}", owner, i + offset),
+            &program_input(offset + i, Some(&role)),
             VariableTypes::Input(partial_input.to_vec()),
         )?;
     }
@@ -252,15 +247,14 @@ pub fn unify_witnesses(
     let offset = input_txs_offsets[idx];
     let size = input_txs_sizes[idx];
 
-    // TODO: rename
     let owner = match owner.as_str() {
-        "verifier" => "verifier",
-        _ => "prover",
+        "verifier" => ParticipantRole::Verifier,
+        _ => ParticipantRole::Prover,
     };
 
     let mut input_for_tx = vec![];
     for i in 0..size {
-        let key = format!("{}_program_input_{}", owner, offset + i);
+        let key = program_input(offset + i, Some(&owner));
         let input = program_context
             .witness
             .get_witness(id, &key)?
@@ -272,7 +266,7 @@ pub fn unify_witnesses(
     }
     program_context.globals.set_var(
         id,
-        &program_input(idx as u32),
+        &program_input(idx as u32, None),
         VariableTypes::Input(input_for_tx),
     )?;
 
@@ -325,7 +319,7 @@ pub fn unify_inputs(
             continue;
         }
 
-        let key = &program_input(idx as u32);
+        let key = &program_input(idx as u32, None);
         full_input.extend_from_slice(&program_context.globals.get_var(id, key)?.unwrap().input()?);
         info!(
             "Unifying input from tx {}: {}",

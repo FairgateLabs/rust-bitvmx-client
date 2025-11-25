@@ -19,6 +19,7 @@ use emulator::{
     constants::REGISTERS_BASE_ADDRESS, decision::nary_search::NArySearchType,
     loader::program_definition::ProgramDefinition,
 };
+use key_manager::winternitz::WinternitzPublicKey;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
     graph::graph::GraphOptions,
@@ -199,8 +200,12 @@ pub fn external_action(role: &ParticipantRole, n: u32) -> String {
 pub fn input_tx_name(index: u32) -> String {
     format!("INPUT_{}", index)
 }
-pub fn program_input(index: u32) -> String {
-    format!("program_input_{}", index)
+pub fn program_input(index: u32, role: Option<&ParticipantRole>) -> String {
+    match role {
+        Some(ParticipantRole::Prover) => format!("prover_program_input_{}", index),
+        Some(ParticipantRole::Verifier) => format!("verifier_program_input_{}", index),
+        None => format!("program_input_{}", index),
+    }
 }
 
 pub fn program_input_prev_protocol(index: u32) -> String {
@@ -513,31 +518,51 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             let words = input_txs_sizes[idx];
             let offset = input_txs_offsets[idx];
 
-            let (owner, claim, agg, keys, speedup_keys, extra_script) = if tx_owner == "verifier" {
-                (
-                    "verifier",
-                    &claim_prover,
-                    agg_or_verifier,
-                    &keys[1],
-                    (verifier_speedup_pub, prover_speedup_pub),
-                    None,
-                )
-            } else {
-                (
-                    "prover",
-                    &claim_verifier,
-                    agg_or_prover,
-                    &keys[0],
-                    (prover_speedup_pub, verifier_speedup_pub),
-                    Some(vec![Self::get_cosign_extra_script(words)]),
-                )
-            };
+            let (owner, claim, agg, ordered_keys, speedup_keys, extra_script, extra_vars) =
+                match tx_owner.as_str() {
+                    "verifier" => (
+                        ParticipantRole::Verifier,
+                        &claim_prover,
+                        agg_or_verifier,
+                        &keys.iter().cloned().rev().collect::<Vec<_>>(),
+                        (verifier_speedup_pub, prover_speedup_pub),
+                        None,
+                        vec![],
+                    ),
+                    "prover_cosign" => (
+                        ParticipantRole::Prover,
+                        &claim_verifier,
+                        agg_or_prover,
+                        &keys,
+                        (prover_speedup_pub, verifier_speedup_pub),
+                        Some(vec![Self::get_cosign_extra_script(words)]),
+                        (offset..offset + words)
+                            .map(|i| program_input(i, Some(&ParticipantRole::Verifier)))
+                            .collect(),
+                    ),
+                    "prover" => (
+                        ParticipantRole::Prover,
+                        &claim_verifier,
+                        agg_or_prover,
+                        &keys,
+                        (prover_speedup_pub, verifier_speedup_pub),
+                        None,
+                        vec![],
+                    ),
+                    _ => {
+                        return Err(BitVMXError::InvalidInput(format!(
+                            "Invalid input tx owner: {}",
+                            tx_owner
+                        )))
+                    }
+                };
 
-            let input_vars = (offset..offset + words)
-                .map(|i| format!("{}_program_input_{}", owner, i))
+            let input_var = (offset..offset + words)
+                .map(|i| program_input(i, Some(&owner)))
                 .collect::<Vec<_>>();
+            let composite_input_vars = vec![input_var, extra_vars];
+            let input_vars = composite_input_vars.iter().collect();
 
-            //TODO: Handle prover cosigning (in the script check and automatic reply to news)
             self.add_connection_with_scripts(
                 context,
                 aggregated,
@@ -548,10 +573,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &prev_tx,
                 &input_tx,
                 &claim,
-                Self::winternitz_check_extra_script(
+                Self::winternitz_check_cosigned_input_script(
                     agg,
                     sign_mode,
-                    keys,
+                    ordered_keys,
                     &input_vars,
                     extra_script,
                 )?,
@@ -971,17 +996,10 @@ impl DisputeResolutionProtocol {
     fn winternitz_check_extra_script<T: AsRef<str> + std::fmt::Debug>(
         aggregated: &PublicKey,
         sign_mode: SignMode,
-        keys: &ParticipantKeys,
-        var_names: &Vec<T>,
+        names_and_keys: &Vec<(T, &WinternitzPublicKey)>,
+        keep_message: bool,
         extra_check_scripts: Option<Vec<ScriptBuf>>,
     ) -> Result<Vec<ProtocolScript>, BitVMXError> {
-        info!("Winternitz check for variables: {:?}", &var_names);
-        let names_and_keys = var_names
-            .iter()
-            .map(|v| (v, keys.get_winternitz(v.as_ref()).unwrap()))
-            .collect();
-
-        let keep_message = extra_check_scripts.is_some(); // Because the extra script is only used for checking verifier input
         let winternitz_check = scripts::verify_winternitz_signatures_aux(
             aggregated,
             &names_and_keys,
@@ -993,13 +1011,47 @@ impl DisputeResolutionProtocol {
         Ok(vec![winternitz_check])
     }
 
+    fn winternitz_check_cosigned_input_script<T: AsRef<str> + std::fmt::Debug>(
+        aggregated: &PublicKey,
+        sign_mode: SignMode,
+        keys: &Vec<ParticipantKeys>,
+        var_names: &Vec<&Vec<T>>,
+        extra_check_scripts: Option<Vec<ScriptBuf>>,
+    ) -> Result<Vec<ProtocolScript>, BitVMXError> {
+        if keys.len() != var_names.len() {
+            return Err(BitVMXError::InvalidInput(
+                "Keys and var_names length mismatch".to_string(),
+            ));
+        }
+        let names_and_keys: Vec<_> = keys
+            .iter()
+            .zip(var_names.iter())
+            .flat_map(|(k, vars)| {
+                vars.iter()
+                    .map(move |v| (v, k.get_winternitz(v.as_ref()).unwrap()))
+            })
+            .collect();
+
+        Self::winternitz_check_extra_script(
+            aggregated,
+            sign_mode,
+            &names_and_keys,
+            extra_check_scripts.is_some(),
+            extra_check_scripts,
+        )
+    }
+
     fn winternitz_check<T: AsRef<str> + std::fmt::Debug>(
         aggregated: &PublicKey,
         sign_mode: SignMode,
         keys: &ParticipantKeys,
         var_names: &Vec<T>,
     ) -> Result<Vec<ProtocolScript>, BitVMXError> {
-        Self::winternitz_check_extra_script(aggregated, sign_mode, keys, var_names, None)
+        let names_and_keys = var_names
+            .iter()
+            .map(|v| (v, keys.get_winternitz(v.as_ref()).unwrap()))
+            .collect();
+        Self::winternitz_check_extra_script(aggregated, sign_mode, &names_and_keys, false, None)
     }
 
     fn execute_script(
@@ -1308,11 +1360,10 @@ impl DisputeResolutionProtocol {
     }
 
     fn get_cosign_extra_script(words: u32) -> ScriptBuf {
-        //ASK: elf to try longer inputs?
-        info!("Words for cosign extra script: {}", words);
+        let word_size = 4;
         let mut stack = StackTracker::new();
-        let verifier = stack.define(4 * words, "value_verifier");
-        let prover = stack.define(4 * words, "value_prover");
+        let verifier = stack.define(word_size * 2 * words, "value_verifier"); // each word is 4 bytes, each byte is 2 nibbles
+        let prover = stack.define(word_size * 2 * words, "value_prover");
         stack.equals(verifier, true, prover, true);
         stack.get_script()
     }

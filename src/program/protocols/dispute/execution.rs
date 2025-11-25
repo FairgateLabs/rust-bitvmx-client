@@ -298,7 +298,7 @@ pub fn execution_result(
                 )?;
             }
             let (tx, sp) =
-                drp.get_tx_with_speedup_data(context, GET_BITS_AND_HASHES, 0, 0, true)?; //ASK: new_tx? index?
+                drp.get_tx_with_speedup_data(context, GET_BITS_AND_HASHES, 0, 0, true)?;
 
             context.bitcoin_coordinator.dispatch(
                 tx,

@@ -186,6 +186,9 @@ pub enum BitVMXError {
 
     #[error("Poisoned lock error: {0}")]
     PoisonedLockError(String),
+
+    #[error("Invalid Input: {0}")]
+    InvalidInput(String),
 }
 
 impl<T> From<PoisonError<T>> for BitVMXError {
