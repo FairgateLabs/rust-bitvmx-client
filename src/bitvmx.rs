@@ -159,7 +159,11 @@ impl BitVMX {
                     "Message signature verification failed from {} for {} {}. Message rejected.",
                     identifier.pubkey_hash, context_type, program_id
                 );
-                return Err(BitVMXError::InvalidMessageFormat);
+                return Err(BitVMXError::InvalidSignature {
+                    peer: identifier.pubkey_hash.clone(),
+                    msg_type: format!("{:?}", msg_type),
+                    program_id: program_id.to_string(),
+                });
             }
         }
 

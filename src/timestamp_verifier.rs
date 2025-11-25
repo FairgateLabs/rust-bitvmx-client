@@ -46,18 +46,32 @@ pub(crate) fn ensure_timestamp_fresh_internal(
 ) -> Result<(), BitVMXError> {
     let now = Utc::now().timestamp_millis();
     if timestamp > now + MAX_TIMESTAMP_DRIFT_MS {
+        let drift_ms = timestamp - now;
         warn!(
-            "Rejecting message from {}: timestamp {} is too far in the future (now: {})",
-            peer, timestamp, now
+            "Rejecting message from {}: timestamp {} is too far in the future (now: {}, drift: {}ms)",
+            peer, timestamp, now, drift_ms
         );
-        return Err(BitVMXError::InvalidMessageFormat);
+        return Err(BitVMXError::TimestampTooFarInFuture {
+            peer: peer.clone(),
+            timestamp,
+            now,
+            drift_ms,
+            max_drift_ms: MAX_TIMESTAMP_DRIFT_MS,
+        });
     }
     if timestamp < now - MAX_TIMESTAMP_DRIFT_MS {
+        let drift_ms = now - timestamp;
         warn!(
-            "Rejecting message from {}: timestamp {} is too old (now: {})",
-            peer, timestamp, now
+            "Rejecting message from {}: timestamp {} is too old (now: {}, drift: {}ms)",
+            peer, timestamp, now, drift_ms
         );
-        return Err(BitVMXError::InvalidMessageFormat);
+        return Err(BitVMXError::TimestampTooOld {
+            peer: peer.clone(),
+            timestamp,
+            now,
+            drift_ms,
+            max_drift_ms: MAX_TIMESTAMP_DRIFT_MS,
+        });
     }
     if let Some(last_timestamp) = message_timestamps.get(peer) {
         if timestamp <= *last_timestamp {
@@ -65,7 +79,11 @@ pub(crate) fn ensure_timestamp_fresh_internal(
                 "Rejecting message from {}: timestamp {} not newer than last seen {}",
                 peer, timestamp, last_timestamp
             );
-            return Err(BitVMXError::InvalidMessageFormat);
+            return Err(BitVMXError::TimestampReplayAttack {
+                peer: peer.clone(),
+                timestamp,
+                last_timestamp: *last_timestamp,
+            });
         }
     }
     Ok(())
@@ -99,7 +117,10 @@ mod tests {
         // Use a larger margin to account for timing differences between test and function
         let future = Utc::now().timestamp_millis() + MAX_TIMESTAMP_DRIFT_MS + 1000;
         let result = ensure_timestamp_fresh_internal(&map, &peer(), future);
-        assert!(matches!(result, Err(BitVMXError::InvalidMessageFormat)));
+        assert!(matches!(
+            result,
+            Err(BitVMXError::TimestampTooFarInFuture { .. })
+        ));
     }
 
     fn ensure_timestamp_fresh_internal_rejects_stale_message_case() {
@@ -107,7 +128,10 @@ mod tests {
         // Use a larger margin to account for timing differences between test and function
         let past = Utc::now().timestamp_millis() - MAX_TIMESTAMP_DRIFT_MS - 1000;
         let result = ensure_timestamp_fresh_internal(&map, &peer(), past);
-        assert!(matches!(result, Err(BitVMXError::InvalidMessageFormat)));
+        assert!(matches!(
+            result,
+            Err(BitVMXError::TimestampTooOld { .. })
+        ));
     }
 
     fn ensure_timestamp_fresh_internal_rejects_replay_case() {
@@ -115,9 +139,15 @@ mod tests {
         let now = Utc::now().timestamp_millis();
         record_timestamp_internal(&mut map, &peer(), now);
         let replay = ensure_timestamp_fresh_internal(&map, &peer(), now);
-        assert!(matches!(replay, Err(BitVMXError::InvalidMessageFormat)));
+        assert!(matches!(
+            replay,
+            Err(BitVMXError::TimestampReplayAttack { .. })
+        ));
         let older = ensure_timestamp_fresh_internal(&map, &peer(), now - 1);
-        assert!(matches!(older, Err(BitVMXError::InvalidMessageFormat)));
+        assert!(matches!(
+            older,
+            Err(BitVMXError::TimestampReplayAttack { .. })
+        ));
     }
 
     fn record_timestamp_internal_updates_state_case() {

@@ -49,7 +49,17 @@ impl SignatureVerifier {
         key_chain: &KeyChain,
     ) -> Result<bool, BitVMXError> {
         // Reconstruct the message that was signed (must match request/response)
-        let message = construct_message(program_id, version, msg_type.clone(), data, timestamp)?;
+        let message = construct_message(program_id, version, msg_type.clone(), data, timestamp)
+            .map_err(|e| match e {
+                BitVMXError::InvalidMsgVersion
+                | BitVMXError::InvalidMessageType
+                | BitVMXError::SerializationError => {
+                    BitVMXError::MessageReconstructionError {
+                        reason: format!("Failed to reconstruct message: {}", e),
+                    }
+                }
+                other => other,
+            })?;
 
         // Verify the RSA signature
         let verified =
@@ -108,7 +118,11 @@ impl SignatureVerifier {
             CommsMessageType::VerificationKey => {
                 // First contact: the key comes in the message itself
                 // VerificationKeyAnnouncement is only temporary for deserialization
-                let announcement = VerificationKeyAnnouncement::from_value(data)?;
+                let announcement = VerificationKeyAnnouncement::from_value(data).map_err(|e| {
+                    BitVMXError::VerificationKeyExtractionError {
+                        reason: format!("Failed to extract verification key from message: {}", e),
+                    }
+                })?;
                 // Return the key to verify this message
                 // It will be stored in participant_verification_keys in process_comms_message
                 Ok(announcement.verification_key)
@@ -122,15 +136,18 @@ impl SignatureVerifier {
                 // Search in the HashMap of previously stored keys (from ProgramContext)
                 // These keys were stored when VerificationKey was received previously
                 let keys = participant_verification_keys.lock().unwrap();
+                let known_count = keys.len();
                 if let Some(key) = keys.get(sender_pubkey_hash) {
                     Ok(key.clone())
                 } else {
                     error!(
                         "No verification key found for sender: {}. Known keys: {}",
-                        sender_pubkey_hash,
-                        keys.len()
+                        sender_pubkey_hash, known_count
                     );
-                    Err(BitVMXError::InvalidMessageFormat)
+                    Err(BitVMXError::MissingVerificationKey {
+                        peer: sender_pubkey_hash.clone(),
+                        known_count,
+                    })
                 }
             }
         }
@@ -338,7 +355,10 @@ mod tests {
             &key_chain,
             &my_pubkey_hash,
         );
-        assert!(matches!(result, Err(BitVMXError::InvalidMessageFormat)));
+        assert!(matches!(
+            result,
+            Err(BitVMXError::MissingVerificationKey { .. })
+        ));
         Ok(())
     }
 }

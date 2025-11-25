@@ -293,7 +293,11 @@ impl Collaboration {
                                     )?;
                                     if !verified {
                                         error!("Invalid RSA signature for our own key");
-                                        return Err(BitVMXError::InvalidMessageFormat);
+                                        return Err(BitVMXError::InvalidSignature {
+                                            peer: pubkey_hash.clone(),
+                                            msg_type: "Key".to_string(),
+                                            program_id: "N/A".to_string(),
+                                        });
                                     }
                                     info!("My own key verified ({})", verified);
                                 } else {
@@ -324,15 +328,23 @@ impl Collaboration {
                                                 "Invalid RSA signature for peer: {}",
                                                 pubkey_hash
                                             );
-                                            return Err(BitVMXError::InvalidMessageFormat);
+                                            return Err(BitVMXError::InvalidSignature {
+                                                peer: pubkey_hash.clone(),
+                                                msg_type: "Key".to_string(),
+                                                program_id: "N/A".to_string(),
+                                            });
                                         }
                                         info!(
                                             "Key verified for peer: {} ({})",
                                             pubkey_hash, verified
                                         );
                                     } else {
+                                        let keys = verification_keys.len();
                                         info!("Missing verification key for peer: {}", pubkey_hash);
-                                        return Err(BitVMXError::InvalidMessageFormat);
+                                        return Err(BitVMXError::MissingVerificationKey {
+                                            peer: pubkey_hash.clone(),
+                                            known_count: keys,
+                                        });
                                     }
                                 } else {
                                     info!("Missing RSA signature for peer: {}", pubkey_hash);
