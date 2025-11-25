@@ -183,11 +183,17 @@ pub struct OperatorTakeMined {
     pub committee_id: Uuid,
     pub slot_index: usize,
     pub txid: Txid,
-    pub operator_take: bool, // true if OPERATOR_TAKE_TX, false if OPERATOR_WON_TX
+    pub challenge_result: OperatorChallengeResult,
 }
 
 impl OperatorTakeMined {
     pub fn name() -> String {
         "operator_take_mined".to_string()
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum OperatorChallengeResult {
+    OperatorTake,
+    OperatorWon,
 }

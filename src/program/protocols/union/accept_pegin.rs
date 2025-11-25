@@ -12,11 +12,11 @@ use crate::{
                     get_operator_output_type, indexed_name,
                 },
                 types::{
-                    Committee, OperatorTakeMined, PegInAccepted, PegInRequest, ACCEPT_PEGIN_TX,
-                    DISPUTE_CORE_LONG_TIMELOCK, LAST_OPERATOR_TAKE_UTXO, OPERATOR_LEAF_INDEX,
-                    OPERATOR_TAKE_ENABLER, OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX,
-                    P2TR_FEE, REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, SPEEDUP_KEY,
-                    SPEEDUP_VALUE,
+                    Committee, OperatorChallengeResult, OperatorTakeMined, PegInAccepted,
+                    PegInRequest, ACCEPT_PEGIN_TX, DISPUTE_CORE_LONG_TIMELOCK,
+                    LAST_OPERATOR_TAKE_UTXO, OPERATOR_LEAF_INDEX, OPERATOR_TAKE_ENABLER,
+                    OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX, P2TR_FEE,
+                    REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, SPEEDUP_KEY, SPEEDUP_VALUE,
                 },
             },
         },
@@ -282,12 +282,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 );
 
                 self.update_operator_take_utxo(context, utxo)?;
-                self.send_operator_take_mined(
-                    context,
-                    tx_id,
-                    pegin_request,
-                    tx_name.starts_with(OPERATOR_TAKE_TX),
-                )?;
+                self.send_operator_take_mined(context, tx_id, pegin_request, tx_name)?;
             }
         }
 
@@ -733,13 +728,19 @@ impl AcceptPegInProtocol {
         context: &ProgramContext,
         txid: Txid,
         pegin_request: PegInRequest,
-        operator_take: bool,
+        tx_name: String,
     ) -> Result<(), BitVMXError> {
+        let challenge = if tx_name.starts_with(OPERATOR_TAKE_TX) {
+            OperatorChallengeResult::OperatorTake
+        } else {
+            OperatorChallengeResult::OperatorWon
+        };
+
         let op_take_mined = OperatorTakeMined {
             committee_id: pegin_request.committee_id,
             slot_index: pegin_request.slot_index,
             txid,
-            operator_take,
+            challenge_result: challenge,
         };
 
         info!(
