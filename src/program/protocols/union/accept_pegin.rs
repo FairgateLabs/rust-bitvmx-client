@@ -12,7 +12,7 @@ use crate::{
                     get_operator_output_type, indexed_name,
                 },
                 types::{
-                    Committee, PegInAccepted, PegInRequest, ACCEPT_PEGIN_TX,
+                    Committee, OperatorTakeMined, PegInAccepted, PegInRequest, ACCEPT_PEGIN_TX,
                     DISPUTE_CORE_LONG_TIMELOCK, LAST_OPERATOR_TAKE_UTXO, OPERATOR_LEAF_INDEX,
                     OPERATOR_TAKE_ENABLER, OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX,
                     P2TR_FEE, REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, SPEEDUP_KEY,
@@ -245,9 +245,10 @@ impl ProtocolHandler for AcceptPegInProtocol {
         _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
+        let pegin_request: PegInRequest = self.pegin_request(context)?;
         info!(
             "Accept Pegin protocol for slot {} received news of transaction: {}, txid: {} with {} confirmations",
-            self.pegin_request(context)?.slot_index, tx_name, tx_id, tx_status.confirmations
+            pegin_request.slot_index, tx_name, tx_id, tx_status.confirmations
         );
 
         if tx_name.starts_with(OPERATOR_TAKE_TX) || tx_name.starts_with(OPERATOR_WON_TX) {
@@ -281,6 +282,12 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 );
 
                 self.update_operator_take_utxo(context, utxo)?;
+                self.send_operator_take_mined(
+                    context,
+                    tx_id,
+                    pegin_request,
+                    tx_name.starts_with(OPERATOR_TAKE_TX),
+                )?;
             }
         }
 
@@ -719,6 +726,37 @@ impl AcceptPegInProtocol {
             .get_var(&self.ctx.id, SPEEDUP_KEY)?
             .unwrap()
             .pubkey()?)
+    }
+
+    fn send_operator_take_mined(
+        &self,
+        context: &ProgramContext,
+        txid: Txid,
+        pegin_request: PegInRequest,
+        operator_take: bool,
+    ) -> Result<(), BitVMXError> {
+        let op_take_mined = OperatorTakeMined {
+            committee_id: pegin_request.committee_id,
+            slot_index: pegin_request.slot_index,
+            txid,
+            operator_take,
+        };
+
+        info!(
+            id = self.ctx.my_idx,
+            "Sending operator take mined data for AcceptPegInProtocol: {:#?}", op_take_mined
+        );
+
+        let data = serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(
+            self.ctx.id,
+            OperatorTakeMined::name(),
+            VariableTypes::String(serde_json::to_string(&op_take_mined)?),
+        ))?;
+
+        // Send the operator take mined data to the broker channel
+        context.broker_channel.send(L2_ID, data)?;
+
+        Ok(())
     }
 
     fn update_operator_take_utxo(
