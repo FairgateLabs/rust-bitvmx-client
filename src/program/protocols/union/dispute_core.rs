@@ -9,8 +9,9 @@ use crate::{
             union::{
                 common::{
                     create_transaction_reference, double_indexed_name, estimate_fee, extract_index,
-                    get_accept_pegin_pid, get_initial_deposit_output_type, get_stream_setting,
-                    indexed_name, load_union_settings,
+                    get_accept_pegin_pid, get_dispute_pair_key_name,
+                    get_initial_deposit_output_type, get_stream_setting, indexed_name,
+                    load_union_settings,
                 },
                 scripts,
                 types::*,
@@ -93,7 +94,8 @@ impl ProtocolHandler for DisputeCoreProtocol {
         &self,
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
-        let packet_size = self.committee(program_context)?.packet_size;
+        let committee = self.committee(program_context)?;
+        let packet_size = committee.packet_size;
         let data = self.dispute_core_data(program_context)?;
         let mut keys = vec![];
 
@@ -109,6 +111,11 @@ impl ProtocolHandler for DisputeCoreProtocol {
             SPEEDUP_KEY,
             VariableTypes::PubKey(speedup_key),
         )?;
+
+        let dispute_pair_keys =
+            self.get_dispute_pair_keys(&program_context, data.committee_id, &committee.members)?;
+
+        keys.extend(dispute_pair_keys);
 
         let prover = self.prover(program_context)?;
 
@@ -554,6 +561,9 @@ impl DisputeCoreProtocol {
                     ));
                 }
 
+                let key_pair_name = get_dispute_pair_key_name(data.member_index, member_index);
+                let key_pair = keys[data.member_index].get_public(&key_pair_name)?;
+
                 // Create OP claim gate
                 let op_claim_gate = ClaimGate::new(
                     protocol,
@@ -564,7 +574,7 @@ impl DisputeCoreProtocol {
                     CLAIM_GATE_FEE,
                     DUST_VALUE,
                     vec![wt_speedup_key],
-                    Some(vec![&committee.dispute_aggregated_key]), // FIXME: This should be the key pair aggregated.
+                    Some(vec![&key_pair]),
                     settings.claim_gate_timelock,
                     1, // Single output to connect to FullPenalization
                     vec![],
@@ -2088,6 +2098,40 @@ impl DisputeCoreProtocol {
             }
             None => Ok(vec![]),
         }
+    }
+
+    fn get_dispute_pair_keys(
+        &self,
+        context: &ProgramContext,
+        committee_id: Uuid,
+        members: &Vec<MemberData>,
+    ) -> Result<Vec<(String, PublicKeyType)>, BitVMXError> {
+        let mut keys = Vec::new();
+        let prover = members[self.ctx.my_idx].role == ParticipantRole::Prover;
+
+        for member_index in 0..members.len() {
+            if self.ctx.my_idx == member_index {
+                continue;
+            }
+
+            if prover || members[member_index].role == ParticipantRole::Prover {
+                let name = get_dispute_pair_key_name(self.ctx.my_idx, member_index);
+                let key = context
+                    .globals
+                    .get_var(&committee_id, &name)?
+                    .ok_or_else(|| {
+                        BitVMXError::InvalidParameter(format!(
+                            "Dispute pair key {} not found",
+                            name
+                        ))
+                    })?
+                    .pubkey()?;
+
+                keys.push((name, PublicKeyType::Public(key)));
+            }
+        }
+
+        Ok(keys)
     }
 
     fn members_slot_id_keys(
