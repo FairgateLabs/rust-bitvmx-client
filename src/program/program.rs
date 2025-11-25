@@ -372,8 +372,7 @@ impl Program {
         // We only process the content and store the key
 
         let pubkey_hash = comms_address.pubkey_hash.clone();
-        let announcement: VerificationKeyAnnouncement =
-            serde_json::from_value(data.clone()).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+        let announcement = VerificationKeyAnnouncement::from_value(&data)?;
 
         // Additional content integrity checks
         if announcement.pubkey_hash != pubkey_hash {

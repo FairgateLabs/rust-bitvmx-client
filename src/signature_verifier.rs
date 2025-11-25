@@ -108,9 +108,7 @@ impl SignatureVerifier {
             CommsMessageType::VerificationKey => {
                 // First contact: the key comes in the message itself
                 // VerificationKeyAnnouncement is only temporary for deserialization
-                let announcement: VerificationKeyAnnouncement =
-                    serde_json::from_value(data.clone())
-                        .map_err(|_| BitVMXError::InvalidMessageFormat)?;
+                let announcement = VerificationKeyAnnouncement::from_value(data)?;
                 // Return the key to verify this message
                 // It will be stored in participant_verification_keys in process_comms_message
                 Ok(announcement.verification_key)

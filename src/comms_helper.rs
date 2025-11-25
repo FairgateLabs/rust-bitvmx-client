@@ -182,6 +182,16 @@ pub struct VerificationKeyAnnouncement {
     pub verification_key: String,
 }
 
+impl VerificationKeyAnnouncement {
+    pub fn to_value(&self) -> Result<Value, BitVMXError> {
+        serde_json::to_value(self).map_err(|_| BitVMXError::SerializationError)
+    }
+
+    pub fn from_value(value: &Value) -> Result<Self, BitVMXError> {
+        serde_json::from_value(value.clone()).map_err(|_| BitVMXError::InvalidMessageFormat)
+    }
+}
+
 // Serialize the message into the required format
 pub fn serialize_msg<T: Serialize>(
     version: &str,
@@ -446,7 +456,8 @@ mod tests {
         let msg = "Hello, world!";
         let signature = vec![0x01, 0x02, 0x03]; // Non-empty signature required
 
-        let serialized_msg = serialize_msg(version, msg_type, &program_id, msg, 0, signature.clone()).unwrap();
+        let serialized_msg =
+            serialize_msg(version, msg_type, &program_id, msg, 0, signature.clone()).unwrap();
         let (
             deserialized_version,
             deserialized_msg_type,

@@ -168,15 +168,12 @@ impl Collaboration {
         data: Value,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-
         let pubkey_hash = comms_address.pubkey_hash.clone();
         match msg_type {
             CommsMessageType::VerificationKey => {
                 // Process the content and store the key
                 // (Message signature verification already done in BitVMX::process_msg)
-                let announcement: VerificationKeyAnnouncement =
-                    serde_json::from_value(data.clone())
-                        .map_err(|_| BitVMXError::InvalidMessageFormat)?;
+                let announcement = VerificationKeyAnnouncement::from_value(&data)?;
 
                 // Additional content integrity checks
                 if announcement.pubkey_hash != pubkey_hash {
