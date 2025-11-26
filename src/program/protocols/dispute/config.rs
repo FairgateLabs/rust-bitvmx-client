@@ -40,7 +40,7 @@ impl DisputeConfiguration {
         timelock_blocks: u16,
         program_definition: String,
         fail_force_config: Option<ConfigResults>,
-        notify_protocool: Vec<(String, Uuid)>,
+        notify_protocol: Vec<(String, Uuid)>,
     ) -> Self {
         Self {
             id,
@@ -53,7 +53,7 @@ impl DisputeConfiguration {
             timelock_blocks,
             program_definition,
             fail_force_config,
-            notify_protocol: notify_protocool,
+            notify_protocol,
         }
     }
 
