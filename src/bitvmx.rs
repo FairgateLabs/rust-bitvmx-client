@@ -125,10 +125,6 @@ impl BitVMX {
         version: &String,
         context_type: &str,
     ) -> Result<String, BitVMXError> {
-        // Check timestamp freshness
-        self.timestamp_verifier
-            .ensure_fresh(&identifier.pubkey_hash, timestamp)?;
-
         // Retrieve verification key from shared ProgramContext
         let my_pubkey_hash = self.program_context.comms.get_pubk_hash()?;
         let verification_key = SignatureVerifier::get_verification_key(
@@ -314,7 +310,7 @@ impl BitVMX {
         &mut self,
         identifier: Identifier,
         msg: Vec<u8>,
-        pend_to_back: bool,
+        is_new_message: bool,
     ) -> Result<(), BitVMXError> {
         let (version, msg_type, program_id, data, timestamp, signature) =
             deserialize_msg(msg.clone())?;
@@ -370,16 +366,13 @@ impl BitVMX {
             self.save_collaboration(&collaboration)?;
             message_consumed = true;
         } else {
-            // Message for program/collaboration that does not exist
-            if pend_to_back {
-                info!("Pending message to back: {:?}", msg_type);
-                self.pending_messages
-                    .push_back((identifier.to_string(), msg));
-            } else {
-                info!("Pending message to front: {:?}", msg_type);
-                self.pending_messages
-                    .push_front((identifier.to_string(), msg));
+            if is_new_message {
+                self.timestamp_verifier
+                    .ensure_fresh(&identifier.pubkey_hash, timestamp)?;
             }
+            info!("Pending message to back: {:?}", msg_type);
+            self.pending_messages
+                .push_back((identifier.to_string(), msg));
         }
 
         if message_consumed {
@@ -399,7 +392,7 @@ impl BitVMX {
         let comms_address = comms_address
             .parse()
             .map_err(|_| BitVMXError::InvalidCommsAddress(comms_address))?;
-        self.process_msg(comms_address, msg, true)?;
+        self.process_msg(comms_address, msg, false)?;
         Ok(())
     }
 

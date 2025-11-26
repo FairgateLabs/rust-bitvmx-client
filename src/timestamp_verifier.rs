@@ -4,8 +4,8 @@ use chrono::Utc;
 use std::collections::HashMap;
 use tracing::warn;
 
-pub const MAX_TIMESTAMP_DRIFT_MS: i64 = 5 * 60_000;
-pub const ENABLE_TIMESTAMP_CHECK: bool = false; // Temporarily disabled pending the fix of the timestamp issue
+pub const MAX_TIMESTAMP_DRIFT_MS: i64 = 1_000; // 1 second in milliseconds
+pub const ENABLE_TIMESTAMP_CHECK: bool = true; // enabled or disabled timestamp check
 
 pub struct TimestampVerifier {
     message_timestamps: HashMap<PubKeyHash, i64>,
@@ -128,10 +128,7 @@ mod tests {
         // Use a larger margin to account for timing differences between test and function
         let past = Utc::now().timestamp_millis() - MAX_TIMESTAMP_DRIFT_MS - 1000;
         let result = ensure_timestamp_fresh_internal(&map, &peer(), past);
-        assert!(matches!(
-            result,
-            Err(BitVMXError::TimestampTooOld { .. })
-        ));
+        assert!(matches!(result, Err(BitVMXError::TimestampTooOld { .. })));
     }
 
     fn ensure_timestamp_fresh_internal_rejects_replay_case() {
