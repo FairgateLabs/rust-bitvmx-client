@@ -150,6 +150,7 @@ pub fn prepare_dispute(
         TIMELOCK_BLOCKS,
         program_definition,
         Some(config_results),
+        vec![],
     );
 
     for msg in dispute_configuration.get_setup_messages(participants, 1)? {
