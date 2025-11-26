@@ -53,11 +53,9 @@ impl SignatureVerifier {
             .map_err(|e| match e {
                 BitVMXError::InvalidMsgVersion
                 | BitVMXError::InvalidMessageType
-                | BitVMXError::SerializationError => {
-                    BitVMXError::MessageReconstructionError {
-                        reason: format!("Failed to reconstruct message: {}", e),
-                    }
-                }
+                | BitVMXError::SerializationError => BitVMXError::MessageReconstructionError {
+                    reason: format!("Failed to reconstruct message: {}", e),
+                },
                 other => other,
             })?;
 

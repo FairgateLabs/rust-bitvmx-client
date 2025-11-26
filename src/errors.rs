@@ -218,20 +218,13 @@ pub enum BitVMXError {
     },
 
     #[error("Verification key not found for sender {peer}. Known keys: {known_count}")]
-    MissingVerificationKey {
-        peer: String,
-        known_count: usize,
-    },
+    MissingVerificationKey { peer: String, known_count: usize },
 
     #[error("Failed to extract verification key from VerificationKey message: {reason}")]
-    VerificationKeyExtractionError {
-        reason: String,
-    },
+    VerificationKeyExtractionError { reason: String },
 
     #[error("Failed to reconstruct message for signature verification: {reason}")]
-    MessageReconstructionError {
-        reason: String,
-    },
+    MessageReconstructionError { reason: String },
 }
 
 impl BitVMXError {
