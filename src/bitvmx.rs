@@ -131,7 +131,7 @@ impl BitVMX {
             msg_type,
             data,
             &identifier.pubkey_hash,
-            &self.program_context.participant_verification_keys,
+            &self.program_context.globals,
             &self.program_context.key_chain,
             &my_pubkey_hash,
         )?;
@@ -139,6 +139,7 @@ impl BitVMX {
         // Verify message signature (except for VerificationKey which is verified later)
         if *msg_type != CommsMessageType::VerificationKey {
             let verified = SignatureVerifier::verify_message_signature(
+                &self.program_context.globals,
                 &program_id.to_string(),
                 version,
                 msg_type,
@@ -146,8 +147,8 @@ impl BitVMX {
                 timestamp,
                 signature,
                 &identifier.pubkey_hash,
-                &verification_key,
                 &self.program_context.key_chain,
+                &my_pubkey_hash,
             )?;
 
             if !verified {
@@ -331,15 +332,7 @@ impl BitVMX {
 
             let address = program.get_address_from_pubkey_hash(&identifier.pubkey_hash.clone())?;
 
-            program.process_comms_message(
-                address,
-                version,
-                msg_type,
-                data,
-                &self.program_context,
-                timestamp,
-                signature,
-            )?;
+            program.process_comms_message(address, msg_type, data, &self.program_context)?;
             message_consumed = true;
         } else if let Some(mut collaboration) = self.get_collaboration(&program_id)? {
             // Verify message and get verification key

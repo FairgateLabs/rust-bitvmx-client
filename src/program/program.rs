@@ -10,6 +10,7 @@ use crate::{
         PubNonceMessage,
     },
     program::{participant::ParticipantKeys, protocols::protocol_handler::new_protocol_type},
+    signature_verifier::OperatorVerificationStore,
     types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramRequestInfo},
 };
 use bitcoin::{PublicKey, Transaction, Txid};
@@ -360,12 +361,8 @@ impl Program {
     pub fn receive_verification_key(
         &mut self,
         comms_address: CommsAddress,
-        _msg_type: CommsMessageType,
         data: Value,
         program_context: &ProgramContext,
-        _version: String,
-        _timestamp: i64,
-        _signature: Vec<u8>,
     ) -> Result<(), BitVMXError> {
         // The message signature verification was already done in BitVMX::process_msg
         // If we reach here, the message signature was verified and is valid
@@ -405,12 +402,12 @@ impl Program {
             pubkey_hash
         );
 
-        // Store the verification key in the shared ProgramContext
-        program_context
-            .participant_verification_keys
-            .lock()
-            .unwrap()
-            .insert(pubkey_hash.clone(), announcement.verification_key);
+        // Store the verification key using Globals
+        OperatorVerificationStore::store(
+            &program_context.globals,
+            &pubkey_hash,
+            &announcement.verification_key,
+        )?;
         Ok(())
     }
 
@@ -787,12 +784,9 @@ impl Program {
     pub fn process_comms_message(
         &mut self,
         comms_address: CommsAddress,
-        version: String,
         msg_type: CommsMessageType,
         data: Value,
         program_context: &ProgramContext,
-        timestamp: i64,
-        signature: Vec<u8>,
     ) -> Result<(), BitVMXError> {
         // The message signature verification was already done in BitVMX::process_msg
         // If we reach here, the message signature was verified and is valid
@@ -804,15 +798,7 @@ impl Program {
             CommsMessageType::VerificationKey => {
                 // Process the content and store the key
                 // (Message signature verification was already done in BitVMX::process_msg)
-                self.receive_verification_key(
-                    comms_address,
-                    msg_type,
-                    data,
-                    program_context,
-                    version.clone(),
-                    timestamp,
-                    signature.clone(),
-                )?;
+                self.receive_verification_key(comms_address, data, program_context)?;
             }
             CommsMessageType::Keys => {
                 self.receive_keys(comms_address, msg_type, data, program_context)?;

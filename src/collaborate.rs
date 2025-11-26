@@ -14,6 +14,7 @@ use crate::{
     errors::BitVMXError,
     helper::{compute_pubkey_hash, parse_keys},
     program::participant::{CommsAddress, ParticipantKeys, PublicKeyType},
+    signature_verifier::OperatorVerificationStore,
     types::{OutgoingBitVMXApiMessages, ProgramContext},
 };
 
@@ -206,12 +207,12 @@ impl Collaboration {
                     pubkey_hash
                 );
 
-                // Store the verification key in the shared ProgramContext
-                program_context
-                    .participant_verification_keys
-                    .lock()
-                    .unwrap()
-                    .insert(pubkey_hash.clone(), announcement.verification_key.clone());
+                // Store the verification key using Globals
+                OperatorVerificationStore::store(
+                    &program_context.globals,
+                    &pubkey_hash,
+                    &announcement.verification_key,
+                )?;
             }
 
             CommsMessageType::Keys => {
@@ -224,16 +225,12 @@ impl Collaboration {
                         .unwrap()
                         .1
                         .clone();
-                    let verification_key: String = program_context
-                        .participant_verification_keys
-                        .lock()
-                        .unwrap()
-                        .get(&pubkey_hash)
-                        .cloned()
-                        .ok_or_else(|| {
-                            error!("Missing verification key for participant: {}", pubkey_hash);
-                            BitVMXError::InvalidMessageFormat
-                        })?;
+                    let verification_key =
+                        OperatorVerificationStore::get(&program_context.globals, &pubkey_hash)?
+                            .ok_or_else(|| {
+                                error!("Missing verification key for participant: {}", pubkey_hash);
+                                BitVMXError::InvalidMessageFormat
+                            })?;
                     let key = keys.get_public(&self.collaboration_id.to_string())?;
 
                     // Simplified MITM protection: just store the signature for redistribution
@@ -318,16 +315,13 @@ impl Collaboration {
                             } else {
                                 // Other participant's key - verify if signature is present
                                 if let Some(signature) = keys.get_signature(pubkey_hash_str) {
-                                    let verification_keys = program_context
-                                        .participant_verification_keys
-                                        .lock()
-                                        .unwrap();
-                                    if let Some(verification_key) =
-                                        verification_keys.get(&pubkey_hash)
-                                    {
+                                    if let Some(verification_key) = OperatorVerificationStore::get(
+                                        &program_context.globals,
+                                        &pubkey_hash,
+                                    )? {
                                         let verified =
                                             program_context.key_chain.verify_rsa_signature(
-                                                verification_key,
+                                                &verification_key,
                                                 key.to_string().as_bytes(),
                                                 &signature,
                                             )?;
@@ -347,11 +341,10 @@ impl Collaboration {
                                             pubkey_hash, verified
                                         );
                                     } else {
-                                        let keys = verification_keys.len();
                                         info!("Missing verification key for peer: {}", pubkey_hash);
                                         return Err(BitVMXError::MissingVerificationKey {
                                             peer: pubkey_hash.clone(),
-                                            known_count: keys,
+                                            known_count: 0,
                                         });
                                     }
                                 } else {
