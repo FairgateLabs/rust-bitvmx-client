@@ -380,7 +380,11 @@ impl Program {
                 "Mismatched pubkey hash for peer {}: expected {}, got {}",
                 pubkey_hash, pubkey_hash, announcement.pubkey_hash
             );
-            return Err(BitVMXError::InvalidMessageFormat);
+            return Err(BitVMXError::VerificationKeyHashMismatch {
+                peer: pubkey_hash.clone(),
+                expected: pubkey_hash.clone(),
+                got: announcement.pubkey_hash.clone(),
+            });
         }
 
         let computed_hash = compute_pubkey_hash(&announcement.verification_key)?;
@@ -389,7 +393,11 @@ impl Program {
                 "Verification key fingerprint mismatch for peer {}",
                 pubkey_hash
             );
-            return Err(BitVMXError::InvalidMessageFormat);
+            return Err(BitVMXError::VerificationKeyFingerprintMismatch {
+                peer: pubkey_hash.clone(),
+                expected: announcement.pubkey_hash.clone(),
+                computed: computed_hash,
+            });
         }
 
         info!(

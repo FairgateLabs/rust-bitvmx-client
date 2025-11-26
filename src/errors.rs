@@ -225,6 +225,24 @@ pub enum BitVMXError {
 
     #[error("Failed to reconstruct message for signature verification: {reason}")]
     MessageReconstructionError { reason: String },
+
+    #[error(
+        "Verification key announcement hash mismatch for peer {peer}: expected {expected}, got {got}"
+    )]
+    VerificationKeyHashMismatch {
+        peer: String,
+        expected: String,
+        got: String,
+    },
+
+    #[error(
+        "Verification key fingerprint mismatch for peer {peer}: expected {expected}, computed {computed}"
+    )]
+    VerificationKeyFingerprintMismatch {
+        peer: String,
+        expected: String,
+        computed: String,
+    },
 }
 
 impl BitVMXError {
