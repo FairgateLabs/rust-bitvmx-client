@@ -1,8 +1,6 @@
 use crate::{
     bitvmx::Context,
-    comms_helper::{
-        publish_verification_key, request, response, CommsMessageType, VerificationKeyAnnouncement,
-    },
+    comms_helper::{request, response, CommsMessageType, VerificationKeyAnnouncement},
     config::ClientConfig,
     errors::{BitVMXError, ProgramError},
     helper::{
@@ -163,16 +161,12 @@ impl Program {
         // save my pos in the others list to have the complete message ready
         others[my_idx] = ParticipantData::new(&comms_address, Some(my_keys));
 
-        let my_verification_key = program_context.key_chain.get_rsa_public_key()?;
-
-        // Broadcast my verification key to all participants
-        publish_verification_key(
-            my_pubkey_hash.clone(),
-            my_verification_key.clone(),
+        OperatorVerificationStore::request_missing_verification_keys(
+            &program_context.globals,
             &program_context.comms,
             &program_context.key_chain,
             id,
-            peers.clone(),
+            &peers,
         )?;
 
         let mut program = Self {
@@ -799,6 +793,14 @@ impl Program {
                 // Process the content and store the key
                 // (Message signature verification was already done in BitVMX::process_msg)
                 self.receive_verification_key(comms_address, data, program_context)?;
+            }
+            CommsMessageType::VerificationKeyRequest => {
+                OperatorVerificationStore::respond_with_verification_key(
+                    &program_context.comms,
+                    &program_context.key_chain,
+                    &self.program_id,
+                    comms_address,
+                )?;
             }
             CommsMessageType::Keys => {
                 self.receive_keys(comms_address, msg_type, data, program_context)?;

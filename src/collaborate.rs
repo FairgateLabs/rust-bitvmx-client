@@ -9,7 +9,6 @@ use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use crate::{
-    comms_helper::publish_verification_key,
     comms_helper::{request, response, CommsMessageType, VerificationKeyAnnouncement},
     errors::BitVMXError,
     helper::{compute_pubkey_hash, parse_keys},
@@ -69,8 +68,6 @@ impl Collaboration {
 
         let im_leader = my_pubkey_hash == leader.pubkey_hash;
         let my_key = Self::get_or_create_my_key(program_context, peers.clone(), public_keys)?;
-        let my_verification_key = program_context.key_chain.get_rsa_public_key()?;
-
         let mut participant_keys =
             ParticipantKeys::new(vec![(id.to_string(), my_key.clone().into())], vec![]);
 
@@ -82,14 +79,12 @@ impl Collaboration {
 
         let keys = vec![(my_pubkey_hash.clone(), participant_keys)];
 
-        // Broadcast my verification key to all participants
-        publish_verification_key(
-            my_pubkey_hash.clone(),
-            my_verification_key.clone(),
+        OperatorVerificationStore::request_missing_verification_keys(
+            &program_context.globals,
             &program_context.comms,
             &program_context.key_chain,
             id,
-            peers.clone(),
+            &peers,
         )?;
 
         if !im_leader {
@@ -394,6 +389,14 @@ impl Collaboration {
                     "Collaboration id: {}: KeysAck received by {}",
                     self.collaboration_id, pubkey_hash
                 );
+            }
+            CommsMessageType::VerificationKeyRequest => {
+                OperatorVerificationStore::respond_with_verification_key(
+                    &program_context.comms,
+                    &program_context.key_chain,
+                    &self.collaboration_id,
+                    comms_address,
+                )?;
             }
             _ => {
                 return Err(BitVMXError::InvalidMessageType);

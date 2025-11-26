@@ -1,12 +1,19 @@
 use crate::{
-    comms_helper::{construct_message, CommsMessageType, VerificationKeyAnnouncement},
+    comms_helper::{
+        construct_message, request, send_verification_key_to_peer, CommsMessageType,
+        VerificationKeyAnnouncement, VerificationKeyRequestPayload,
+    },
     errors::BitVMXError,
     keychain::KeyChain,
-    program::variables::{Globals, VariableTypes},
+    program::{
+        participant::CommsAddress,
+        variables::{Globals, VariableTypes},
+    },
 };
-use bitvmx_operator_comms::operator_comms::PubKeyHash;
+use bitvmx_operator_comms::operator_comms::{OperatorComms, PubKeyHash};
 use serde_json::Value;
-use tracing::{debug, error};
+use std::collections::HashSet;
+use tracing::{debug, error, warn};
 use uuid::Uuid;
 
 /// Centralized signature verification module
@@ -44,6 +51,81 @@ impl OperatorVerificationStore {
             Some(value) => Ok(Some(value.string()?)),
             None => Ok(None),
         }
+    }
+
+    pub fn has(globals: &Globals, pubkey_hash: &PubKeyHash) -> Result<bool, BitVMXError> {
+        Ok(Self::get(globals, pubkey_hash)?.is_some())
+    }
+
+    pub fn missing(
+        globals: &Globals,
+        pubkey_hashes: &[PubKeyHash],
+    ) -> Result<Vec<PubKeyHash>, BitVMXError> {
+        let mut missing = Vec::new();
+        for hash in pubkey_hashes {
+            if !Self::has(globals, hash)? {
+                missing.push(hash.clone());
+            }
+        }
+        Ok(missing)
+    }
+
+    pub fn request_missing_verification_keys(
+        globals: &Globals,
+        comms: &OperatorComms,
+        key_chain: &KeyChain,
+        program_id: &Uuid,
+        peers: &[CommsAddress],
+    ) -> Result<(), BitVMXError> {
+        let my_pubkey_hash = comms.get_pubk_hash()?;
+        let peer_hashes: Vec<PubKeyHash> = peers
+            .iter()
+            .filter(|peer| peer.pubkey_hash != my_pubkey_hash)
+            .map(|peer| peer.pubkey_hash.clone())
+            .collect();
+
+        if peer_hashes.is_empty() {
+            return Ok(());
+        }
+
+        let missing = OperatorVerificationStore::missing(globals, &peer_hashes)?;
+        if missing.is_empty() {
+            return Ok(());
+        }
+
+        let missing_set: HashSet<_> = missing.into_iter().collect();
+        for peer in peers {
+            if peer.pubkey_hash == my_pubkey_hash {
+                continue;
+            }
+            if missing_set.contains(&peer.pubkey_hash) {
+                request(
+                    comms,
+                    key_chain,
+                    program_id,
+                    peer.clone(),
+                    CommsMessageType::VerificationKeyRequest,
+                    VerificationKeyRequestPayload {
+                        requester: my_pubkey_hash.clone(),
+                    },
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn respond_with_verification_key(
+        comms: &OperatorComms,
+        key_chain: &KeyChain,
+        program_id: &Uuid,
+        requester: CommsAddress,
+    ) -> Result<(), BitVMXError> {
+        let my_pubkey_hash = comms.get_pubk_hash()?;
+        if requester.pubkey_hash == my_pubkey_hash {
+            return Ok(());
+        }
+
+        send_verification_key_to_peer(comms, key_chain, program_id, requester, my_pubkey_hash)
     }
 }
 
@@ -178,7 +260,7 @@ impl SignatureVerifier {
                 match OperatorVerificationStore::get(globals, sender_pubkey_hash)? {
                     Some(key) => Ok(key),
                     None => {
-                        error!(
+                        warn!(
                             "No verification key found for sender: {}",
                             sender_pubkey_hash
                         );
@@ -396,6 +478,24 @@ mod tests {
             result,
             Err(BitVMXError::MissingVerificationKey { .. })
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn operator_verification_store_has_and_missing() -> Result<(), BitVMXError> {
+        let (_key_chain, globals) = build_test_env()?;
+        let stored_peer = "peer-stored".to_string();
+        let missing_peer = "peer-missing".to_string();
+
+        assert!(!OperatorVerificationStore::has(&globals, &stored_peer)?);
+        OperatorVerificationStore::store(&globals, &stored_peer, "stored-key")?;
+        assert!(OperatorVerificationStore::has(&globals, &stored_peer)?);
+
+        let missing = OperatorVerificationStore::missing(
+            &globals,
+            &[stored_peer.clone(), missing_peer.clone()],
+        )?;
+        assert_eq!(missing, vec![missing_peer]);
         Ok(())
     }
 }

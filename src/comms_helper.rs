@@ -114,6 +114,7 @@ pub enum CommsMessageType {
     PartialSignatures,
     PartialSignaturesAck,
     VerificationKey,
+    VerificationKeyRequest,
 }
 
 impl CommsMessageType {
@@ -126,6 +127,7 @@ impl CommsMessageType {
         (&CommsMessageType::PartialSignatures, [0x00, 0x05]),
         (&CommsMessageType::PartialSignaturesAck, [0x00, 0x06]),
         (&CommsMessageType::VerificationKey, [0x00, 0x07]),
+        (&CommsMessageType::VerificationKeyRequest, [0x00, 0x08]),
     ];
 
     // Convert message type to 2-byte representation
@@ -180,6 +182,33 @@ impl Version {
 pub struct VerificationKeyAnnouncement {
     pub pubkey_hash: PubKeyHash,
     pub verification_key: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct VerificationKeyRequestPayload {
+    pub requester: PubKeyHash,
+}
+
+pub fn send_verification_key_to_peer(
+    comms: &OperatorComms,
+    key_chain: &KeyChain,
+    program_id: &Uuid,
+    destination: CommsAddress,
+    my_pubkey_hash: PubKeyHash,
+) -> Result<(), BitVMXError> {
+    let announcement = VerificationKeyAnnouncement {
+        pubkey_hash: my_pubkey_hash,
+        verification_key: key_chain.get_rsa_public_key()?,
+    };
+
+    response(
+        comms,
+        key_chain,
+        program_id,
+        destination,
+        CommsMessageType::VerificationKey,
+        announcement,
+    )
 }
 
 impl VerificationKeyAnnouncement {
@@ -310,34 +339,6 @@ pub fn deserialize_msg(
     ))
 }
 
-pub fn publish_verification_key(
-    my_pubkey_hash: PubKeyHash,
-    my_verification_key: String,
-    comms: &OperatorComms,
-    key_chain: &KeyChain,
-    program_id: &Uuid,
-    participants: Vec<CommsAddress>,
-) -> Result<(), BitVMXError> {
-    let announcement = VerificationKeyAnnouncement {
-        pubkey_hash: my_pubkey_hash.clone(),
-        verification_key: my_verification_key,
-    };
-    for peer in &participants {
-        if peer.pubkey_hash == announcement.pubkey_hash {
-            continue;
-        }
-        request(
-            comms,
-            key_chain,
-            program_id,
-            peer.clone(),
-            CommsMessageType::VerificationKey,
-            announcement.clone(),
-        )?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,6 +366,10 @@ mod tests {
         assert_eq!(
             CommsMessageType::VerificationKey.to_bytes().unwrap(),
             [0x00, 0x07]
+        );
+        assert_eq!(
+            CommsMessageType::VerificationKeyRequest.to_bytes().unwrap(),
+            [0x00, 0x08]
         );
     }
 
@@ -397,6 +402,10 @@ mod tests {
         assert_eq!(
             CommsMessageType::from_bytes([0x00, 0x07]).unwrap(),
             CommsMessageType::VerificationKey
+        );
+        assert_eq!(
+            CommsMessageType::from_bytes([0x00, 0x08]).unwrap(),
+            CommsMessageType::VerificationKeyRequest
         );
     }
 

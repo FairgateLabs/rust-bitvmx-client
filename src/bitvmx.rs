@@ -13,7 +13,7 @@ use crate::{
         program::Program,
         variables::{Globals, WitnessVars},
     },
-    signature_verifier::SignatureVerifier,
+    signature_verifier::{OperatorVerificationStore, SignatureVerifier},
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus},
 };
 use bitcoin::secp256k1::Message;
@@ -125,6 +125,11 @@ impl BitVMX {
         version: &String,
         context_type: &str,
     ) -> Result<String, BitVMXError> {
+        if *msg_type == CommsMessageType::VerificationKeyRequest {
+            // Skip verification because the requester cannot be verified yet.
+            return Ok(String::new());
+        }
+
         // Retrieve verification key from shared ProgramContext
         let my_pubkey_hash = self.program_context.comms.get_pubk_hash()?;
         let verification_key = SignatureVerifier::get_verification_key(
@@ -307,6 +312,122 @@ impl BitVMX {
         Ok(program)
     }
 
+    /// Handles the MissingVerificationKey error by requesting the key and buffering the message
+    fn handle_missing_verification_key(
+        &mut self,
+        program_id: &Uuid,
+        address: &CommsAddress,
+        context_type: &str,
+        identifier: &Identifier,
+        msg: Vec<u8>,
+    ) -> Result<(), BitVMXError> {
+        warn!(
+            "Missing verification key for {}: {:?}",
+            context_type, program_id
+        );
+        OperatorVerificationStore::request_missing_verification_keys(
+            &self.program_context.globals,
+            &self.program_context.comms,
+            &self.program_context.key_chain,
+            program_id,
+            std::slice::from_ref(address),
+        )?;
+        self.pending_messages
+            .push_back((identifier.to_string(), msg));
+        Ok(())
+    }
+
+    /// Verifies the message and processes it if verification succeeds.
+    /// Returns Ok(true) if message was processed, Ok(false) if it needs to be buffered,
+    /// or Err if there was an error.
+    fn verify_and_process_message<F>(
+        &mut self,
+        identifier: &Identifier,
+        program_id: &Uuid,
+        version: &String,
+        msg_type: CommsMessageType,
+        data: Value,
+        timestamp: i64,
+        signature: &Vec<u8>,
+        context_type: &str,
+        address: &CommsAddress,
+        msg: Vec<u8>,
+        process_fn: F,
+    ) -> Result<bool, BitVMXError>
+    where
+        F: FnOnce(CommsMessageType, Value, &ProgramContext) -> Result<(), BitVMXError>,
+    {
+        match self.verify_and_get_key(
+            identifier,
+            program_id,
+            &msg_type,
+            &data,
+            timestamp,
+            signature,
+            version,
+            context_type,
+        ) {
+            Ok(_) => {
+                process_fn(msg_type, data, &self.program_context)?;
+                Ok(true)
+            }
+            Err(BitVMXError::MissingVerificationKey { .. }) => {
+                self.handle_missing_verification_key(
+                    program_id,
+                    address,
+                    context_type,
+                    identifier,
+                    msg,
+                )?;
+                Ok(false)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Processes a message for a context (Program or Collaboration).
+    /// Returns Ok(true) if message was processed, Ok(false) if it needs to be buffered,
+    /// or Err if there was an error.
+    fn process_context_message<G>(
+        &mut self,
+        identifier: &Identifier,
+        program_id: &Uuid,
+        version: &String,
+        msg_type: CommsMessageType,
+        data: Value,
+        timestamp: i64,
+        signature: &Vec<u8>,
+        context_type: &str,
+        address: CommsAddress,
+        msg: Vec<u8>,
+        process_fn: G,
+    ) -> Result<bool, BitVMXError>
+    where
+        G: FnOnce(
+            CommsAddress,
+            CommsMessageType,
+            Value,
+            &ProgramContext,
+        ) -> Result<(), BitVMXError>,
+    {
+        let address_clone = address.clone();
+        self.verify_and_process_message(
+            identifier,
+            program_id,
+            version,
+            msg_type,
+            data,
+            timestamp,
+            signature,
+            context_type,
+            &address,
+            msg,
+            |msg_type, data, program_context| {
+                process_fn(address_clone, msg_type, data, program_context)
+            },
+        )
+    }
+
     pub fn process_msg(
         &mut self,
         identifier: Identifier,
@@ -318,46 +439,48 @@ impl BitVMX {
         let mut message_consumed = false;
 
         if let Some(mut program) = self.load_program(&program_id).ok() {
-            // Verify message and get verification key
-            self.verify_and_get_key(
+            let address = program.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
+            message_consumed = self.process_context_message(
                 &identifier,
                 &program_id,
-                &msg_type,
-                &data,
-                timestamp,
-                &signature,
                 &version,
-                "program",
-            )?;
-
-            let address = program.get_address_from_pubkey_hash(&identifier.pubkey_hash.clone())?;
-
-            program.process_comms_message(address, msg_type, data, &self.program_context)?;
-            message_consumed = true;
-        } else if let Some(mut collaboration) = self.get_collaboration(&program_id)? {
-            // Verify message and get verification key
-            self.verify_and_get_key(
-                &identifier,
-                &program_id,
-                &msg_type,
-                &data,
-                timestamp,
-                &signature,
-                &version,
-                "collaboration",
-            )?;
-
-            let comms_address =
-                collaboration.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
-
-            collaboration.process_comms_message(
-                comms_address,
                 msg_type,
                 data,
-                &self.program_context,
+                timestamp,
+                &signature,
+                "program",
+                address,
+                msg,
+                |address, msg_type, data, program_context| {
+                    program.process_comms_message(address, msg_type, data, program_context)
+                },
             )?;
-            self.save_collaboration(&collaboration)?;
-            message_consumed = true;
+        } else if let Some(mut collaboration) = self.get_collaboration(&program_id)? {
+            let comms_address =
+                collaboration.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
+            message_consumed = self.process_context_message(
+                &identifier,
+                &program_id,
+                &version,
+                msg_type,
+                data,
+                timestamp,
+                &signature,
+                "collaboration",
+                comms_address,
+                msg,
+                |comms_address, msg_type, data, program_context| {
+                    collaboration.process_comms_message(
+                        comms_address.clone(),
+                        msg_type,
+                        data,
+                        program_context,
+                    )
+                },
+            )?;
+            if message_consumed {
+                self.save_collaboration(&collaboration)?;
+            }
         } else {
             if is_new_message {
                 self.timestamp_verifier
