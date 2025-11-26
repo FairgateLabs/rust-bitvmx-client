@@ -243,6 +243,8 @@ pub enum BitVMXError {
         expected: String,
         computed: String,
     },
+    #[error("Job Dispatcher {0} is not responding")]
+    JobDispatcherNotResponding(String),
 }
 
 impl BitVMXError {

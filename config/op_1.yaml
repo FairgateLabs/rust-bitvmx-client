@@ -70,3 +70,4 @@ wallet:
   db_path: /tmp/regtest/op_1/wallet.db
   start_height: 0
 
+

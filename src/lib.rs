@@ -13,6 +13,7 @@ pub mod signature_verifier;
 pub mod spv_proof;
 pub mod timestamp_verifier;
 pub mod types;
+pub mod ping_helper;
 
 // Re-export types from the dependencies
 pub use bitcoin;

@@ -83,6 +83,13 @@ pub struct ComponentsConfig {
     pub prover: Identifier,
 }
 
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct PingConfig {
+    pub enabled: bool,
+    pub interval_secs: u64,
+    pub timeout_secs: u64,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)] // enforce strict field compliance
 pub struct Config {
@@ -98,6 +105,7 @@ pub struct Config {
     pub coordinator_settings: Option<CoordinatorSettingsConfig>,
     pub coordinator: ThrotthleUpdate,
     pub wallet: WalletConfig,
+    pub job_dispatcher_ping: Option<PingConfig>,
 }
 
 impl Config {
