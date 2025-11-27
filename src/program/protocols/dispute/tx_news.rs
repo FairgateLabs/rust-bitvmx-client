@@ -15,7 +15,7 @@ use crate::{
         protocols::{
             claim::ClaimGate,
             dispute::{
-                action_wins,
+                action_wins, action_wins_prefix,
                 challenge::READ_VALUE_NARY_SEARCH_CHALLENGE,
                 config::{ConfigResults, DisputeConfiguration},
                 input_handler::{get_txs_configuration, unify_inputs, unify_witnesses},
@@ -248,8 +248,10 @@ fn auto_claim_start(
 
 fn claim_state_handle(
     drp: &DisputeResolutionProtocol,
+    tx_id: Txid,
     name: &str,
     vout: Option<u32>,
+    tx_status: TransactionStatus,
     program_context: &ProgramContext,
     current_height: u32,
     timelock_blocks: u32,
@@ -304,49 +306,54 @@ fn claim_state_handle(
         }
     }
 
-    if name == ClaimGate::tx_success(PROVER_WINS) && drp.role() == ParticipantRole::Prover {
-        //handle all actions
-        info!("Prover. Execute Action");
-        let prover_wins_action_tx = drp.get_signed_tx(
-            program_context,
-            &action_wins(&ParticipantRole::Prover, 1),
-            0,
-            0,
-            false,
-            1,
-        )?;
-        let speedup_data =
-            drp.get_speedup_data_from_tx(&prover_wins_action_tx, program_context, None)?;
-
-        program_context.bitcoin_coordinator.dispatch(
-            prover_wins_action_tx,
-            Some(speedup_data),
-            Context::ProgramId(drp.ctx.id).to_string()?,
-            None,
-        )?;
-    } else if name == ClaimGate::tx_success(VERIFIER_WINS)
-        && drp.role() == ParticipantRole::Verifier
+    if (name == ClaimGate::tx_success(PROVER_WINS) && drp.role() == ParticipantRole::Prover)
+        || (name == ClaimGate::tx_success(VERIFIER_WINS) && drp.role() == ParticipantRole::Verifier)
     {
-        //handle all actions
-        info!("Verifier. Execute Action");
-        let verifier_wins_action_tx = drp.get_signed_tx(
-            program_context,
-            &action_wins(&ParticipantRole::Verifier, 1),
-            0,
-            0,
-            false,
-            1,
-        )?;
-        let speedup_data =
-            drp.get_speedup_data_from_tx(&verifier_wins_action_tx, program_context, None)?;
+        let config = DisputeConfiguration::load(&drp.ctx.id, &program_context.globals)?;
+        let actions = match drp.role() {
+            ParticipantRole::Prover => &config.prover_actions,
+            ParticipantRole::Verifier => &config.verifier_actions,
+        };
 
-        program_context.bitcoin_coordinator.dispatch(
-            verifier_wins_action_tx,
-            Some(speedup_data),
-            Context::ProgramId(drp.ctx.id).to_string()?,
-            None,
-        )?;
+        for (i, action) in actions.iter().enumerate() {
+            info!("{}. Execute Action {}", drp.role(), i);
+            let win_action_tx = drp.get_signed_tx(
+                program_context,
+                &action_wins(&drp.role(), 1),
+                0,
+                0,
+                false,
+                action.1[0],
+            )?;
+            let speedup_data =
+                drp.get_speedup_data_from_tx(&win_action_tx, program_context, None)?;
+
+            program_context.bitcoin_coordinator.dispatch(
+                win_action_tx,
+                Some(speedup_data),
+                Context::ProgramId(drp.ctx.id).to_string()?,
+                None,
+            )?;
+        }
     }
+
+    if name.starts_with(&action_wins_prefix(&ParticipantRole::Prover))
+        || name.starts_with(&action_wins_prefix(&ParticipantRole::Verifier))
+    {
+        let config = DisputeConfiguration::load(&drp.ctx.id, &program_context.globals)?;
+        for (protocol_name, protocol_id) in config.notify_protocol {
+            let protocol = drp.load_protocol_by_name(&protocol_name, protocol_id)?;
+            protocol.notify_news(
+                tx_id,
+                vout,
+                tx_status.clone(),
+                drp.ctx.id.to_string(),
+                program_context,
+                vec![],
+            )?;
+        }
+    }
+
     Ok(())
 }
 
@@ -391,8 +398,10 @@ pub fn handle_tx_news(
 
     claim_state_handle(
         drp,
+        tx_id,
         &name,
         vout,
+        tx_status.clone(),
         program_context,
         current_height,
         timelock_blocks as u32,
