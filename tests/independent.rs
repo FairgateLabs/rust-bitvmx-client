@@ -1127,11 +1127,11 @@ fn challenge_witness_verifier() -> Result<()> {
 //     test_challenge(ForcedChallenges::FutureRead(Verifier))
 // }
 
-// #[ignore]
-// #[test]
-// fn challenge_read_value_prover() -> Result<()> {
-//     test_challenge(ForcedChallenges::ReadValue(Prover))
-// }
+#[ignore]
+#[test]
+fn challenge_read_value_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::ReadValue(Prover))
+}
 
 // #[ignore]
 // #[test]

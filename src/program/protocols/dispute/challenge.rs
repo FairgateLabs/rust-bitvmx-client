@@ -521,7 +521,7 @@ pub fn challenge_scripts(
                                     "verifier_read_selector",
                                 );
                                 stack = StackTracker::new();
-                                future_read_challenge(&mut stack, rounds, nary, nary_last_round);
+                                future_read_challenge(&mut stack);
                             }
                             "read_value_nary_search" => {
                                 let var = stack.define(8, "bits");
@@ -583,7 +583,7 @@ pub fn challenge_scripts(
                             "verifier_read_selector",
                         );
                         stack = StackTracker::new();
-                        read_value_challenge(&mut stack, rounds, nary, nary_last_round);
+                        read_value_challenge(&mut stack);
                     }
                     "correct_hash" => {
                         correct_hash_challenge(&mut stack);
@@ -683,6 +683,7 @@ pub fn get_challenge_leaf(
         ChallengeType::TraceHashZero {
             prover_trace: _,
             prover_next_hash: _,
+            prover_conflict_step_tk: _,
         } => {
             name = "trace_hash_zero";
             info!("Verifier chose {name} challenge");
@@ -780,12 +781,10 @@ pub fn get_challenge_leaf(
             set_input_u32(id, context, &format!("verifier_bits"), *bits)?;
         }
         ChallengeType::FutureRead {
-            cosigned_decisions_bits: _,
             prover_read_step_1: _,
             prover_read_step_2: _,
             read_selector,
-            nary: _,
-            nary_last_round: _,
+            prover_conflict_step_tk,
         } => {
             name = "future_read";
             info!("Verifier chose {name} challenge");
@@ -804,10 +803,8 @@ pub fn get_challenge_leaf(
             prover_hash: _,
             trace,
             prover_next_hash: _,
-            cosigned_read_bits: _,
-            cosigned_conflict_bits: _,
-            nary: _,
-            nary_last_round: _,
+            prover_write_step_tk,
+            prover_conflict_step_tk,
         } => {
             name = "read_value";
             info!("Verifier chose {name} challenge");
@@ -879,14 +876,20 @@ pub fn get_challenge_leaf(
                 trace.get_pc().get_micro(),
             )?;
         }
-
         ChallengeType::EquivocationHash {
+            prover_step_hash1,
+            prover_step_hash2,
+            prover_write_step_tk,
+            prover_conflict_step_tk,
+        } => todo!(),
+        ChallengeType::EquivocationResign {
             prover_true_hash,
             prover_wrong_hash,
-            cosigned_decisions_bits,
+            prover_challenge_step_tk,
             kind,
-            round,
-            index,
+            expected_round,
+            expected_index,
+            rounds,
             nary,
             nary_last_round,
         } => todo!(),

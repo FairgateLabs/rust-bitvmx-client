@@ -894,11 +894,7 @@ pub fn handle_tx_news(
         let mem_witness = MemoryWitness::from_byte(to_u8(&values["prover_mem_witness"]));
         let prover_step_hash = to_hex(&values["prover_prev_hash_tk"]);
         let prover_next_hash = to_hex(&values["prover_step_hash_tk"]);
-        let mut decision_bits: Vec<u32> = Vec::new();
-        for i in 1..rounds + 1 {
-            let key = format!("prover_selection_bits_{}_tk", i);
-            decision_bits.push(to_u8(&values[&*key]) as u32);
-        }
+        let conflict_step = to_u64(&values["prover_conflict_step_tk"]);
 
         let final_trace = TraceRWStep::new(
             step_number,
@@ -918,7 +914,7 @@ pub fn handle_tx_news(
                     final_trace,
                     prover_step_hash,
                     prover_next_hash,
-                    decision_bits,
+                    conflict_step,
                 ),
                 format!("{}/{}", execution_path, "execution.json").to_string(),
                 fail_force_config.main.fail_config_verifier.clone(),
@@ -1065,8 +1061,8 @@ pub fn handle_tx_news(
                 return Err(BitVMXError::VariableNotFound(drp.ctx.id, name.to_string()));
             }
         }
-        fn to_u8(bytes: &[u8]) -> u8 {
-            u8::from_be_bytes(bytes.try_into().expect("Expected 1 byte for u8"))
+        fn to_u64(bytes: &[u8]) -> u64 {
+            u64::from_be_bytes(bytes.try_into().expect("Expected 8 bytes for u64"))
         }
         fn to_hex(bytes: &[u8]) -> String {
             hex::encode(bytes)
@@ -1074,11 +1070,7 @@ pub fn handle_tx_news(
 
         let prover_step_hash = to_hex(&values["prover_step_hash_tk2"]);
         let prover_next_hash = to_hex(&values["prover_next_hash_tk2"]);
-        let mut decision_bits: Vec<u32> = Vec::new(); //TODO: not used?
-        for i in 1..rounds + 1 {
-            let key = format!("prover_selection_bits_{}_tk2", i);
-            decision_bits.push(to_u8(&values[&*key]) as u32);
-        }
+        let _prover_write_step = to_u64(&values["prover_write_step_tk2"]); //TODO: not used?
 
         let msg = serde_json::to_string(&DispatcherJob {
             job_id: drp.ctx.id.to_string(),
@@ -1230,7 +1222,7 @@ fn handle_nary_verifier(
                 })?,
                 NArySearchType::ReadValueChallenge => serde_json::to_string(&DispatcherJob {
                     job_id: drp.ctx.id.to_string(),
-                    job_type: EmulatorJobType::ProverGetCosignedBitsAndHashes(
+                    job_type: EmulatorJobType::ProverGetHashesAndStep(
                         pdf,
                         execution_path.clone(),
                         (decision) as u32,

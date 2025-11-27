@@ -92,16 +92,9 @@ fn build_trace_vars(rounds: u8) -> Vec<(String, usize)> {
         ("prover_step_number".to_string(), 8),
         ("prover_prev_hash_tk".to_string(), 20),
         ("prover_step_hash_tk".to_string(), 20),
+        ("prover_conflict_step_tk".to_string(), 8),
     ];
 
-    //TODO: if it is done this way, OP_EQUALVERIFY fails. The same with build_translation_keys_2nd_nary
-    // for i in 1..rounds + 1 {
-    //     vars.push((format!("prover_selection_bits_{}_tk", i), 1));
-    //     vars.push((format!("verifier_selection_bits_{}", i), 1));
-    // }
-    for i in 1..rounds + 1 {
-        vars.push((format!("prover_selection_bits_{}_tk", i), 1));
-    }
     for i in 1..rounds + 1 {
         vars.push((format!("verifier_selection_bits_{}", i), 1));
     }
@@ -113,12 +106,11 @@ fn build_translation_keys_2nd_nary(rounds: u8) -> Vec<(String, usize)> {
     let mut vars = vec![
         ("prover_step_hash_tk2".to_string(), 20),
         ("prover_next_hash_tk2".to_string(), 20),
+        ("prover_write_step_tk2".to_string(), 8),
     ];
 
-    for i in 1..rounds + 1 {
-        vars.push((format!("prover_selection_bits_{}_tk2", i), 1));
-    }
     for i in 2..rounds + 1 {
+        //TODO: start in 1
         vars.push((format!("verifier_selection_bits2_{}", i), 1));
     }
 
@@ -129,7 +121,7 @@ pub fn init_trace_vars(rounds: u8) -> Result<(), BitVMXError> {
     let trace_lock = TRACE_VARS.get_or_init(|| RwLock::new(Vec::new()));
     let tk_lock = TK_2NARY.get_or_init(|| RwLock::new(Vec::new()));
 
-    // Read both locks to check existing consistency
+    // Read both locks to check existing consistency //TODO: now there is no need for round parameter
     let trace = trace_lock.read()?;
     let tk = tk_lock.read()?;
     let existing_trace_rounds = trace
@@ -1109,13 +1101,13 @@ impl DisputeResolutionProtocol {
                 stack.drop(prev_hash);
                 let step_hash = stack.move_var(stackvars["prover_step_hash_tk"]);
                 stack.drop(step_hash);
+                let conflict_step = stack.move_var(stackvars["prover_conflict_step_tk"]);
+                stack.drop(conflict_step);
                 for i in 1..rounds + 1 {
-                    stack.equals(
-                        stackvars[&format!("prover_selection_bits_{}_tk", i)],
-                        true,
-                        stackvars[&format!("verifier_selection_bits_{}", i)],
-                        true,
-                    );
+                    //TODO: cosign
+                    let selection_bits =
+                        stack.move_var(stackvars[&format!("verifier_selection_bits_{}", i)]);
+                    stack.drop(selection_bits);
                 }
             }
             NArySearchType::ReadValueChallenge => {
@@ -1123,15 +1115,13 @@ impl DisputeResolutionProtocol {
                 stack.drop(step_hash);
                 let next_hash = stack.move_var(stackvars["prover_next_hash_tk2"]);
                 stack.drop(next_hash);
-                let selection_bits_1 = stack.move_var(stackvars["prover_selection_bits_1_tk2"]); // Drop it because its the same as the first n-ary search
-                stack.drop(selection_bits_1);
+                let write_step = stack.move_var(stackvars["prover_write_step_tk2"]);
+                stack.drop(write_step);
                 for i in 2..rounds + 1 {
-                    stack.equals(
-                        stackvars[&format!("prover_selection_bits_{}_tk2", i)],
-                        true,
-                        stackvars[&format!("verifier_selection_bits2_{}", i)],
-                        true,
-                    );
+                    //TODO: cosign
+                    let selection_bits_2 =
+                        stack.move_var(stackvars[&format!("verifier_selection_bits2_{}", i)]);
+                    stack.drop(selection_bits_2);
                 }
             }
         }

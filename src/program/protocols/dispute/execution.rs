@@ -130,7 +130,7 @@ pub fn execution_result(
             final_trace,
             resigned_step_hash,
             resigned_next_hash,
-            cosigned_decision_bits,
+            conflict_step,
         } => {
             info!("Final trace: {:?}", final_trace);
 
@@ -217,14 +217,7 @@ pub fn execution_result(
             }
             set_input_hex(id, context, "prover_prev_hash_tk", resigned_step_hash)?; //TODO: rename in CPU
             set_input_hex(id, context, "prover_step_hash_tk", resigned_next_hash)?; //TODO: rename in CPU
-            for decision_bit in cosigned_decision_bits.iter().enumerate() {
-                set_input_u8(
-                    id,
-                    context,
-                    &format!("prover_selection_bits_{}_tk", decision_bit.0 + 1),
-                    *decision_bit.1 as u8,
-                )?;
-            }
+            set_input_u64(id, context, "prover_conflict_step_tk", *conflict_step)?;
             let instruction = get_key_from_opcode(
                 final_trace.read_pc.opcode,
                 final_trace.read_pc.pc.get_micro(),
@@ -277,26 +270,19 @@ pub fn execution_result(
                 None,
             )?;
         }
-        EmulatorResultType::ProverGetCosignedBitsAndHashesResult {
+        EmulatorResultType::ProverGetHashesAndStepResult {
             resigned_step_hash,
             resigned_next_hash,
-            cosigned_decision_bits,
+            write_step,
         } => {
             info!(
-                "Prover got cosigned bits and hashes: {:?}, {:?}, {:?}",
-                resigned_step_hash, resigned_next_hash, cosigned_decision_bits
+                "Prover got hashes and step result: {:?}, {:?}, {:?}",
+                resigned_step_hash, resigned_next_hash, write_step
             );
 
             set_input_hex(id, context, "prover_step_hash_tk2", resigned_step_hash)?; //TODO: rename in CPU
             set_input_hex(id, context, "prover_next_hash_tk2", resigned_next_hash)?; //TODO: rename in CPU
-            for decision_bit in cosigned_decision_bits.iter().enumerate() {
-                set_input_u8(
-                    id,
-                    context,
-                    &format!("prover_selection_bits_{}_tk2", decision_bit.0 + 1), // + 2 because starts from round 2
-                    *decision_bit.1 as u8,
-                )?;
-            }
+            set_input_u64(id, context, "prover_write_step_tk2", *write_step)?;
             let (tx, sp) =
                 drp.get_tx_with_speedup_data(context, GET_BITS_AND_HASHES, 0, 0, true)?;
 
