@@ -111,6 +111,9 @@ pub enum BitVMXError {
     #[error("Invalid receive message format")]
     InvalidMessageFormat,
 
+    #[error("Invalid message: {0}")]
+    InvalidMessage(String),
+
     #[error("Invalid transaction name {0}")]
     InvalidTransactionName(String),
 
