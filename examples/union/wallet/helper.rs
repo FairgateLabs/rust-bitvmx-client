@@ -21,20 +21,18 @@ pub fn create_wallet(network: Network) -> Result<()> {
     config.key_storage.path = "/tmp/tmp_wallet/keys.db".to_string();
     config.storage.path = "/tmp/tpm_wallet/storage.db".to_string();
 
-    let key_derivation_seed: [u8; 32] = *b"1337beafdeadbeafdeadbeafdeadbeaf";
+    let mnemonic_sentence = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
     let key_manager = KeyManager::new(
         network,
-        "m/84/0/0/0/",
-        Some(key_derivation_seed),
-        None,
-        KeyStore::new(std::rc::Rc::new(Storage::new(&config.key_storage)?)),
+        mnemonic_sentence,
+        "",
         std::rc::Rc::new(Storage::new(&config.storage)?),
     )?;
 
-    let pubkey = key_manager.derive_keypair(0)?;
+    let pubkey = key_manager.derive_keypair(BitcoinKeyType::P2tr, 0)?;
     let privkey = key_manager.export_secret(&pubkey)?;
-    let change_pubkey = key_manager.derive_keypair(1)?;
+    let change_pubkey = key_manager.derive_keypair(BitcoinKeyType::P2tr, 1)?;
     let change_privkey = key_manager.export_secret(&change_pubkey)?;
     let compressed = CompressedPublicKey::try_from(pubkey).unwrap();
     let address = Address::p2wpkh(&compressed, network);
