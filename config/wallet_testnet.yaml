@@ -7,6 +7,8 @@ bitcoin:
 
 key_manager:
   network: testnet
+  mnemonic_sentence: ""
+  mnemonic_passphrase: ""
 
 key_storage:
   password: secret_password_1
