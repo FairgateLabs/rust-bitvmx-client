@@ -47,30 +47,18 @@ pub(crate) fn ensure_timestamp_fresh_internal(
     if timestamp > now + max_timestamp_drift_ms {
         let drift_ms = timestamp - now;
         warn!(
-            "Rejecting message from {}: timestamp {} is too far in the future (now: {}, drift: {}ms)",
+            "Warning: message from {} has timestamp {} too far in the future (now: {}, drift: {}ms). Accepting message despite drift.",
             peer, timestamp, now, drift_ms
         );
-        return Err(BitVMXError::TimestampTooFarInFuture {
-            peer: peer.clone(),
-            timestamp,
-            now,
-            drift_ms,
-            max_drift_ms: max_timestamp_drift_ms,
-        });
+        // Don't reject - clock skew or network delays can cause legitimate drift
     }
     if timestamp < now - max_timestamp_drift_ms {
         let drift_ms = now - timestamp;
         warn!(
-            "Rejecting message from {}: timestamp {} is too old (now: {}, drift: {}ms)",
+            "Warning: message from {} has timestamp {} too old (now: {}, drift: {}ms). Accepting message despite drift.",
             peer, timestamp, now, drift_ms
         );
-        return Err(BitVMXError::TimestampTooOld {
-            peer: peer.clone(),
-            timestamp,
-            now,
-            drift_ms,
-            max_drift_ms: max_timestamp_drift_ms,
-        });
+        // Don't reject - clock skew or network delays can cause legitimate drift
     }
     if let Some(last_timestamp) = message_timestamps.get(peer) {
         if timestamp <= *last_timestamp {
@@ -115,26 +103,25 @@ mod tests {
     }
 
     #[test]
-    fn ensure_timestamp_fresh_internal_rejects_future_message() {
+    fn ensure_timestamp_fresh_internal_warns_but_accepts_future_message() {
         let map = HashMap::new();
         // Use a larger margin to account for timing differences between test and function
         let future = Utc::now().timestamp_millis() + TEST_MAX_TIMESTAMP_DRIFT_MS + 1000;
         let result =
             ensure_timestamp_fresh_internal(&map, &peer(), future, TEST_MAX_TIMESTAMP_DRIFT_MS);
-        assert!(matches!(
-            result,
-            Err(BitVMXError::TimestampTooFarInFuture { .. })
-        ));
+        // Should accept despite drift (only warns, doesn't reject)
+        assert!(result.is_ok());
     }
 
     #[test]
-    fn ensure_timestamp_fresh_internal_rejects_stale_message() {
+    fn ensure_timestamp_fresh_internal_warns_but_accepts_stale_message() {
         let map = HashMap::new();
         // Use a larger margin to account for timing differences between test and function
         let past = Utc::now().timestamp_millis() - TEST_MAX_TIMESTAMP_DRIFT_MS - 1000;
         let result =
             ensure_timestamp_fresh_internal(&map, &peer(), past, TEST_MAX_TIMESTAMP_DRIFT_MS);
-        assert!(matches!(result, Err(BitVMXError::TimestampTooOld { .. })));
+        // Should accept despite drift (only warns, doesn't reject)
+        assert!(result.is_ok());
     }
 
     #[test]
