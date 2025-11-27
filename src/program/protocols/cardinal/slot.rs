@@ -4,6 +4,7 @@ use bitcoin::{hashes::Hash, PublicKey, Sequence, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use bitcoin_script_stack::stack::StackTracker;
 use console::style;
+use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
     graph::graph::GraphOptions,
@@ -142,7 +143,7 @@ impl ProtocolHandler for SlotProtocol {
     ) -> Result<ParticipantKeys, BitVMXError> {
         let key_chain = &mut program_context.key_chain;
 
-        let speedup = key_chain.derive_keypair()?;
+        let speedup = key_chain.derive_keypair(BitcoinKeyType::P2tr)?;
 
         program_context.globals.set_var(
             &self.ctx.id,

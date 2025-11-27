@@ -14,6 +14,7 @@ use protocol_builder::{
         InputArgs, OutputType,
     },
 };
+use key_manager::key_type::BitcoinKeyType;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -92,7 +93,7 @@ impl ProtocolHandler for TransferProtocol {
         &self,
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
-        let speedup = program_context.key_chain.derive_keypair()?;
+        let speedup = program_context.key_chain.derive_keypair(BitcoinKeyType::P2tr)?;
 
         program_context.globals.set_var(
             &self.ctx.id,
