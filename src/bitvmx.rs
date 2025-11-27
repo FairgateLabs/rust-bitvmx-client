@@ -27,6 +27,7 @@ use bitvmx_operator_comms::{
     helper::ReceiveHandlerChannel,
     operator_comms::{AllowList, OperatorComms, PubKeyHash, RoutingTable},
 };
+use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::graph::graph::GraphOptions;
 
 use crate::shutdown::GracefulShutdown;
@@ -124,6 +125,7 @@ impl BitVMX {
             config.bitcoin.clone(),
             config.wallet.clone(),
             key_chain.key_manager.clone(),
+            BitcoinKeyType::P2tr,
             WALLET_INDEX,
             Some(WALLET_CHANGE_INDEX),
         )?;
@@ -1325,7 +1327,7 @@ impl BitVMXApi for BitVMX {
             }
             IncomingBitVMXApiMessages::GetPubKey(id, new) => {
                 if new {
-                    let public = self.program_context.key_chain.derive_keypair()?;
+                    let public = self.program_context.key_chain.derive_keypair(BitcoinKeyType::P2tr)?;
                     self.reply(from, OutgoingBitVMXApiMessages::PubKey(id, public))?;
                 } else {
                     let collaboration = self
@@ -1391,15 +1393,15 @@ impl BitVMXApi for BitVMX {
                     .program_context
                     .key_chain
                     .key_manager
-                    .encrypt_rsa_message(&message, pub_key)?;
+                    .encrypt_rsa_message(&message, &pub_key)?;
                 self.reply(from, OutgoingBitVMXApiMessages::Encrypted(id, encrypted))?;
             }
-            IncomingBitVMXApiMessages::Decrypt(id, message) => {
+            IncomingBitVMXApiMessages::Decrypt(id, message, pub_key) => {
                 let decrypted = self
                     .program_context
                     .key_chain
                     .key_manager
-                    .decrypt_rsa_message(&message, 0)?; // TODO: index may not be 0 if more than one RSA key is used
+                    .decrypt_rsa_message(&message, &pub_key)?;
                 self.reply(from, OutgoingBitVMXApiMessages::Decrypted(id, decrypted))?;
             }
             IncomingBitVMXApiMessages::Backup(id, path) => {

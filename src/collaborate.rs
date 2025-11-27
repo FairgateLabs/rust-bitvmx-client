@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use bitcoin::PublicKey;
 use bitvmx_broker::identification::identifier::Identifier;
 use bitvmx_operator_comms::operator_comms::PubKeyHash;
+use key_manager::key_type::BitcoinKeyType;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{debug, info, warn};
@@ -232,7 +233,7 @@ impl Collaboration {
                 .cloned()
                 .ok_or(BitVMXError::InvalidParticipant(my_pubkey_hash.to_string()))?
         } else {
-            program_context.key_chain.derive_keypair()?
+            program_context.key_chain.derive_keypair(BitcoinKeyType::P2tr)?
         };
 
         Ok(my_key)

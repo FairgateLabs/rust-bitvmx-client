@@ -2,11 +2,7 @@ use std::{collections::HashMap, path::Path, rc::Rc};
 
 use bitcoin::{secp256k1::rand::thread_rng, PublicKey, XOnlyPublicKey};
 use key_manager::{
-    create_key_manager_from_config,
-    key_manager::KeyManager,
-    key_store::KeyStore,
-    musig2::{types::MessageId, PartialSignature, PubNonce},
-    winternitz::{WinternitzPublicKey, WinternitzType},
+    create_key_manager_from_config, key_manager::KeyManager, key_type::BitcoinKeyType, musig2::{PartialSignature, PubNonce, types::MessageId}, winternitz::{WinternitzPublicKey, WinternitzType}
 };
 
 use protocol_builder::unspendable::unspendable_key;
@@ -17,7 +13,6 @@ use crate::{
     errors::{BitVMXError, ConfigError},
 };
 
-const RSA_KEY_INDEX: usize = 0; // TODO: make this configurable
 
 pub struct KeyChain {
     pub key_manager: Rc<KeyManager>,
@@ -45,10 +40,8 @@ impl KeyChainStorageKeys {
 
 impl KeyChain {
     pub fn new(config: &Config, store: Rc<Storage>) -> Result<KeyChain, BitVMXError> {
-        let key_storage = Rc::new(Storage::new(&config.key_storage)?);
-        let keystore = KeyStore::new(key_storage);
         let key_manager =
-            create_key_manager_from_config(&config.key_manager, keystore, store.clone())?;
+            create_key_manager_from_config(&config.key_manager, config.key_storage.clone())?;
 
         let key_manager = Rc::new(key_manager);
 
@@ -62,7 +55,7 @@ impl KeyChain {
             )));
         }
         let pem_file = std::fs::read_to_string(path).unwrap();
-        let _pub_key = key_manager.import_rsa_private_key(&pem_file, RSA_KEY_INDEX)?;
+        let _pub_key = key_manager.import_rsa_private_key(&pem_file)?;
 
         Ok(Self { key_manager, store })
     }
@@ -95,10 +88,10 @@ impl KeyChain {
         Ok(next_index)
     }
 
-    pub fn derive_keypair(&mut self) -> Result<PublicKey, BitVMXError> {
+    pub fn derive_keypair(&mut self, key_type: BitcoinKeyType) -> Result<PublicKey, BitVMXError> {
         let index = self.get_new_ecdsa_index()?;
 
-        Ok(self.key_manager.derive_keypair(index)?)
+        Ok(self.key_manager.derive_keypair(key_type, index)?)
     }
 
     pub fn derive_winternitz_hash160(
@@ -294,12 +287,12 @@ mod tests {
         let rng = &mut thread_rng();
         let pub_key = keychain
             .key_manager
-            .generate_rsa_keypair(rng, RSA_KEY_INDEX + 1)?; // +1 to avoid using the default RSA key index only for testing
+            .generate_rsa_keypair(rng)?;
 
         // Encrypt the message
         let encrypted_message = keychain
             .key_manager
-            .encrypt_rsa_message(&original_message.clone(), pub_key)?;
+            .encrypt_rsa_message(&original_message.clone(), &pub_key)?;
 
         // Verify encryption changed the data
         assert_ne!(original_message, encrypted_message);
@@ -308,7 +301,7 @@ mod tests {
         // Decrypt the message
         let decrypted_message = keychain
             .key_manager
-            .decrypt_rsa_message(&encrypted_message, RSA_KEY_INDEX + 1)?;
+            .decrypt_rsa_message(&encrypted_message, &pub_key)?;
 
         // Verify decryption restored the original message
         assert_eq!(original_message, decrypted_message);
