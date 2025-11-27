@@ -237,6 +237,10 @@ impl BitVMX {
         );
 
         let ping_helper = PingHelper::new(config.job_dispatcher_ping.clone());
+        let timestamp_verifier = TimestampVerifier::new(
+            config.timestamp_verifier.enabled,
+            config.timestamp_verifier.max_drift_ms,
+        );
 
         Ok(Self {
             config,
@@ -245,7 +249,7 @@ impl BitVMX {
             broker,
             count: 0,
             pending_messages: VecDeque::new(),
-            timestamp_verifier: TimestampVerifier::default(),
+            timestamp_verifier,
             notified_request: HashSet::new(),
             notified_rsk_pegin: HashSet::new(),
             bitcoin_update: BitcoinUpdateState {

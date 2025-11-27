@@ -66,6 +66,10 @@ client:
   retry: 1
   retry_delay: 1000
 
+timestamp_verifier:
+  enabled: true
+  max_drift_ms: 1000
+
 wallet:
   receive_key: cUVFBGCCjw5JGY2DUY5HTtKoHevMHs675aFkXVLvXeE4jV7GPeGb
   change_key: cVTMy1VXsEqT4z3nT3w8vupAmqBTjZBmyyE38TYP9kju9rQWpK9F

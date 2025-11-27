@@ -4,19 +4,18 @@ use chrono::Utc;
 use std::collections::HashMap;
 use tracing::warn;
 
-pub const MAX_TIMESTAMP_DRIFT_MS: i64 = 1_000; // 1 second in milliseconds
-pub const ENABLE_TIMESTAMP_CHECK: bool = true; // enabled or disabled timestamp check
-
 pub struct TimestampVerifier {
     message_timestamps: HashMap<PubKeyHash, i64>,
     enable_check: bool,
+    max_timestamp_drift_ms: i64,
 }
 
 impl TimestampVerifier {
-    pub fn new(enable_check: bool) -> Self {
+    pub fn new(enable_check: bool, max_timestamp_drift_ms: i64) -> Self {
         Self {
             message_timestamps: HashMap::new(),
             enable_check,
+            max_timestamp_drift_ms,
         }
     }
 
@@ -25,7 +24,12 @@ impl TimestampVerifier {
             return Ok(());
         }
 
-        ensure_timestamp_fresh_internal(&self.message_timestamps, peer, timestamp)
+        ensure_timestamp_fresh_internal(
+            &self.message_timestamps,
+            peer,
+            timestamp,
+            self.max_timestamp_drift_ms,
+        )
     }
 
     pub fn record(&mut self, peer: &PubKeyHash, timestamp: i64) {
@@ -33,19 +37,14 @@ impl TimestampVerifier {
     }
 }
 
-impl Default for TimestampVerifier {
-    fn default() -> Self {
-        Self::new(ENABLE_TIMESTAMP_CHECK)
-    }
-}
-
 pub(crate) fn ensure_timestamp_fresh_internal(
     message_timestamps: &HashMap<PubKeyHash, i64>,
     peer: &PubKeyHash,
     timestamp: i64,
+    max_timestamp_drift_ms: i64,
 ) -> Result<(), BitVMXError> {
     let now = Utc::now().timestamp_millis();
-    if timestamp > now + MAX_TIMESTAMP_DRIFT_MS {
+    if timestamp > now + max_timestamp_drift_ms {
         let drift_ms = timestamp - now;
         warn!(
             "Rejecting message from {}: timestamp {} is too far in the future (now: {}, drift: {}ms)",
@@ -56,10 +55,10 @@ pub(crate) fn ensure_timestamp_fresh_internal(
             timestamp,
             now,
             drift_ms,
-            max_drift_ms: MAX_TIMESTAMP_DRIFT_MS,
+            max_drift_ms: max_timestamp_drift_ms,
         });
     }
-    if timestamp < now - MAX_TIMESTAMP_DRIFT_MS {
+    if timestamp < now - max_timestamp_drift_ms {
         let drift_ms = now - timestamp;
         warn!(
             "Rejecting message from {}: timestamp {} is too old (now: {}, drift: {}ms)",
@@ -70,7 +69,7 @@ pub(crate) fn ensure_timestamp_fresh_internal(
             timestamp,
             now,
             drift_ms,
-            max_drift_ms: MAX_TIMESTAMP_DRIFT_MS,
+            max_drift_ms: max_timestamp_drift_ms,
         });
     }
     if let Some(last_timestamp) = message_timestamps.get(peer) {
@@ -102,6 +101,8 @@ mod tests {
     use super::*;
     use chrono::Duration;
 
+    const TEST_MAX_TIMESTAMP_DRIFT_MS: i64 = 1_000;
+
     fn peer() -> PubKeyHash {
         "peer-hash".to_string()
     }
@@ -110,15 +111,16 @@ mod tests {
     fn ensure_timestamp_fresh_internal_accepts_recent_message() {
         let map = HashMap::new();
         let now = Utc::now().timestamp_millis();
-        ensure_timestamp_fresh_internal(&map, &peer(), now).unwrap();
+        ensure_timestamp_fresh_internal(&map, &peer(), now, TEST_MAX_TIMESTAMP_DRIFT_MS).unwrap();
     }
 
     #[test]
     fn ensure_timestamp_fresh_internal_rejects_future_message() {
         let map = HashMap::new();
         // Use a larger margin to account for timing differences between test and function
-        let future = Utc::now().timestamp_millis() + MAX_TIMESTAMP_DRIFT_MS + 1000;
-        let result = ensure_timestamp_fresh_internal(&map, &peer(), future);
+        let future = Utc::now().timestamp_millis() + TEST_MAX_TIMESTAMP_DRIFT_MS + 1000;
+        let result =
+            ensure_timestamp_fresh_internal(&map, &peer(), future, TEST_MAX_TIMESTAMP_DRIFT_MS);
         assert!(matches!(
             result,
             Err(BitVMXError::TimestampTooFarInFuture { .. })
@@ -129,8 +131,9 @@ mod tests {
     fn ensure_timestamp_fresh_internal_rejects_stale_message() {
         let map = HashMap::new();
         // Use a larger margin to account for timing differences between test and function
-        let past = Utc::now().timestamp_millis() - MAX_TIMESTAMP_DRIFT_MS - 1000;
-        let result = ensure_timestamp_fresh_internal(&map, &peer(), past);
+        let past = Utc::now().timestamp_millis() - TEST_MAX_TIMESTAMP_DRIFT_MS - 1000;
+        let result =
+            ensure_timestamp_fresh_internal(&map, &peer(), past, TEST_MAX_TIMESTAMP_DRIFT_MS);
         assert!(matches!(result, Err(BitVMXError::TimestampTooOld { .. })));
     }
 
@@ -139,12 +142,14 @@ mod tests {
         let mut map = HashMap::new();
         let now = Utc::now().timestamp_millis();
         record_timestamp_internal(&mut map, &peer(), now);
-        let replay = ensure_timestamp_fresh_internal(&map, &peer(), now);
+        let replay =
+            ensure_timestamp_fresh_internal(&map, &peer(), now, TEST_MAX_TIMESTAMP_DRIFT_MS);
         assert!(matches!(
             replay,
             Err(BitVMXError::TimestampReplayAttack { .. })
         ));
-        let older = ensure_timestamp_fresh_internal(&map, &peer(), now - 1);
+        let older =
+            ensure_timestamp_fresh_internal(&map, &peer(), now - 1, TEST_MAX_TIMESTAMP_DRIFT_MS);
         assert!(matches!(
             older,
             Err(BitVMXError::TimestampReplayAttack { .. })
