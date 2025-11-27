@@ -36,3 +36,4 @@ jobs:
       nightly: false
       submodule_branches: '{"rust-bitvmx-key-manager": "dev", "rust-bitvmx-protocol-builder": "keymanager-adapt", "rust-bitvmx-wallet": "keymanager-adapt", "rust-bitvmx-storage-backend": "v0.1.1-review.1"}'
     secrets: inherit
+    
