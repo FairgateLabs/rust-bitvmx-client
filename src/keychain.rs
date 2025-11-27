@@ -327,10 +327,10 @@ impl KeyChain {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::rc::Rc;
+    use std::{path::PathBuf, rc::Rc};
     use uuid::Uuid;
 
-    fn build_test_keychain() -> Result<KeyChain, BitVMXError> {
+    fn build_test_keychain() -> Result<(KeyChain, PathBuf), BitVMXError> {
         let mut config = Config::new(Some("config/development.yaml".to_string()))?;
         let unique_dir = std::env::temp_dir()
             .join("bitvmx-keychain-tests")
@@ -339,13 +339,27 @@ mod tests {
         config.storage.path = unique_dir.join("storage.db").to_string_lossy().to_string();
         config.key_storage.path = unique_dir.join("keys.db").to_string_lossy().to_string();
         let store = Rc::new(Storage::new(&config.storage)?);
-        KeyChain::new(&config, store)
+        let keychain = KeyChain::new(&config, store)?;
+        Ok((keychain, unique_dir))
+    }
+
+    fn remove_test_keychain(path: &PathBuf) {
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    struct TestKeychainCleanup(PathBuf);
+
+    impl Drop for TestKeychainCleanup {
+        fn drop(&mut self) {
+            remove_test_keychain(&self.0);
+        }
     }
 
     #[test]
     fn test_encrypt_and_decrypt_messages() -> Result<(), BitVMXError> {
         // Create KeyChain with unique database paths
-        let keychain = build_test_keychain()?;
+        let (keychain, test_dir) = build_test_keychain()?;
+        let _cleanup = TestKeychainCleanup(test_dir);
 
         // Test message
         let original_message = b"Hello, this is a test message for encryption!".to_vec();
@@ -379,7 +393,8 @@ mod tests {
     #[test]
     fn test_verify_rsa_signature_valid() -> Result<(), BitVMXError> {
         // Create KeyChain with unique database paths
-        let keychain = build_test_keychain()?;
+        let (keychain, test_dir) = build_test_keychain()?;
+        let _cleanup = TestKeychainCleanup(test_dir);
 
         // Test message
         let message = b"Hello, this is a test message for RSA signature verification!";
@@ -400,7 +415,8 @@ mod tests {
     #[test]
     fn test_verify_rsa_signature_invalid_signature() -> Result<(), BitVMXError> {
         // Create KeyChain with unique database paths
-        let keychain = build_test_keychain()?;
+        let (keychain, test_dir) = build_test_keychain()?;
+        let _cleanup = TestKeychainCleanup(test_dir);
 
         // Test message
         let message = b"Hello, this is a test message for RSA signature verification!";
@@ -421,7 +437,8 @@ mod tests {
     #[test]
     fn test_verify_rsa_signature_wrong_message() -> Result<(), BitVMXError> {
         // Create KeyChain with unique database paths
-        let keychain = build_test_keychain()?;
+        let (keychain, test_dir) = build_test_keychain()?;
+        let _cleanup = TestKeychainCleanup(test_dir);
 
         // Original message
         let original_message = b"Hello, this is a test message for RSA signature verification!";
@@ -448,7 +465,8 @@ mod tests {
     #[test]
     fn test_verify_rsa_signature_wrong_public_key() -> Result<(), BitVMXError> {
         // Create KeyChain with unique database paths
-        let keychain = build_test_keychain()?;
+        let (keychain, test_dir) = build_test_keychain()?;
+        let _cleanup = TestKeychainCleanup(test_dir);
 
         // Test message
         let message = b"Hello, this is a test message for RSA signature verification!";
@@ -475,7 +493,8 @@ mod tests {
     #[test]
     fn test_verify_rsa_signature_invalid_signature_format() -> Result<(), BitVMXError> {
         // Create KeyChain with unique database paths
-        let keychain = build_test_keychain()?;
+        let (keychain, test_dir) = build_test_keychain()?;
+        let _cleanup = TestKeychainCleanup(test_dir);
 
         // Test message
         let message = b"Hello, this is a test message for RSA signature verification!";
@@ -515,7 +534,8 @@ mod tests {
     #[test]
     fn test_verify_rsa_signature_empty_message() -> Result<(), BitVMXError> {
         // Create KeyChain with unique database paths
-        let keychain = build_test_keychain()?;
+        let (keychain, test_dir) = build_test_keychain()?;
+        let _cleanup = TestKeychainCleanup(test_dir);
 
         // Empty message
         let message = b"";
