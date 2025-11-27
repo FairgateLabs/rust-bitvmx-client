@@ -299,7 +299,8 @@ mod tests {
         Ok((key_chain, globals))
     }
 
-    fn verify_message_signature_accepts_valid_payload_case() -> Result<(), BitVMXError> {
+    #[test]
+    fn verify_message_signature_accepts_valid_payload() -> Result<(), BitVMXError> {
         let (key_chain, globals) = build_test_env()?;
         let program_id = Uuid::new_v4();
         let msg_type = CommsMessageType::Keys;
@@ -337,7 +338,8 @@ mod tests {
         Ok(())
     }
 
-    fn verify_message_signature_detects_tampering_case() -> Result<(), BitVMXError> {
+    #[test]
+    fn verify_message_signature_detects_tampering() -> Result<(), BitVMXError> {
         let (key_chain, globals) = build_test_env()?;
         let program_id = Uuid::new_v4();
         let msg_type = CommsMessageType::Keys;
@@ -376,7 +378,8 @@ mod tests {
         Ok(())
     }
 
-    fn get_verification_key_from_announcement_case() -> Result<(), BitVMXError> {
+    #[test]
+    fn get_verification_key_from_announcement() -> Result<(), BitVMXError> {
         let (key_chain, globals) = build_test_env()?;
         let sender = "peer-1".to_string();
         let my_pubkey_hash = "self".to_string();
@@ -399,7 +402,8 @@ mod tests {
         Ok(())
     }
 
-    fn get_verification_key_for_self_message_case() -> Result<(), BitVMXError> {
+    #[test]
+    fn get_verification_key_for_self_message() -> Result<(), BitVMXError> {
         let (key_chain, globals) = build_test_env()?;
         let my_pubkey_hash = "self".to_string();
         let data = json!({});
@@ -416,7 +420,8 @@ mod tests {
         Ok(())
     }
 
-    fn get_verification_key_from_shared_map_case() -> Result<(), BitVMXError> {
+    #[test]
+    fn get_verification_key_from_shared_map() -> Result<(), BitVMXError> {
         let (key_chain, globals) = build_test_env()?;
         let sender = "peer-2".to_string();
         let my_pubkey_hash = "self".to_string();
@@ -433,31 +438,6 @@ mod tests {
         )?;
         assert_eq!(key, verification_key);
         Ok(())
-    }
-
-    #[test]
-    fn verify_message_signature_accepts_valid_payload() -> Result<(), BitVMXError> {
-        verify_message_signature_accepts_valid_payload_case()
-    }
-
-    #[test]
-    fn verify_message_signature_detects_tampering() -> Result<(), BitVMXError> {
-        verify_message_signature_detects_tampering_case()
-    }
-
-    #[test]
-    fn get_verification_key_from_announcement() -> Result<(), BitVMXError> {
-        get_verification_key_from_announcement_case()
-    }
-
-    #[test]
-    fn get_verification_key_for_self_message() -> Result<(), BitVMXError> {
-        get_verification_key_for_self_message_case()
-    }
-
-    #[test]
-    fn get_verification_key_from_shared_map() -> Result<(), BitVMXError> {
-        get_verification_key_from_shared_map_case()
     }
 
     #[test]

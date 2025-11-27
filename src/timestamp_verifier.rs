@@ -106,13 +106,15 @@ mod tests {
         "peer-hash".to_string()
     }
 
-    fn ensure_timestamp_fresh_internal_accepts_recent_message_case() {
+    #[test]
+    fn ensure_timestamp_fresh_internal_accepts_recent_message() {
         let map = HashMap::new();
         let now = Utc::now().timestamp_millis();
         ensure_timestamp_fresh_internal(&map, &peer(), now).unwrap();
     }
 
-    fn ensure_timestamp_fresh_internal_rejects_future_message_case() {
+    #[test]
+    fn ensure_timestamp_fresh_internal_rejects_future_message() {
         let map = HashMap::new();
         // Use a larger margin to account for timing differences between test and function
         let future = Utc::now().timestamp_millis() + MAX_TIMESTAMP_DRIFT_MS + 1000;
@@ -123,7 +125,8 @@ mod tests {
         ));
     }
 
-    fn ensure_timestamp_fresh_internal_rejects_stale_message_case() {
+    #[test]
+    fn ensure_timestamp_fresh_internal_rejects_stale_message() {
         let map = HashMap::new();
         // Use a larger margin to account for timing differences between test and function
         let past = Utc::now().timestamp_millis() - MAX_TIMESTAMP_DRIFT_MS - 1000;
@@ -131,7 +134,8 @@ mod tests {
         assert!(matches!(result, Err(BitVMXError::TimestampTooOld { .. })));
     }
 
-    fn ensure_timestamp_fresh_internal_rejects_replay_case() {
+    #[test]
+    fn ensure_timestamp_fresh_internal_rejects_replay() {
         let mut map = HashMap::new();
         let now = Utc::now().timestamp_millis();
         record_timestamp_internal(&mut map, &peer(), now);
@@ -147,7 +151,8 @@ mod tests {
         ));
     }
 
-    fn record_timestamp_internal_updates_state_case() {
+    #[test]
+    fn record_timestamp_internal_updates_state() {
         let mut map = HashMap::new();
         let now = Utc::now().timestamp_millis();
         record_timestamp_internal(&mut map, &peer(), now);
@@ -156,30 +161,5 @@ mod tests {
         let newer = now + Duration::milliseconds(1).num_milliseconds();
         record_timestamp_internal(&mut map, &peer(), newer);
         assert_eq!(map.get(&peer()), Some(&newer));
-    }
-
-    #[test]
-    fn ensure_timestamp_fresh_internal_accepts_recent_message() {
-        ensure_timestamp_fresh_internal_accepts_recent_message_case();
-    }
-
-    #[test]
-    fn ensure_timestamp_fresh_internal_rejects_future_message() {
-        ensure_timestamp_fresh_internal_rejects_future_message_case();
-    }
-
-    #[test]
-    fn ensure_timestamp_fresh_internal_rejects_stale_message() {
-        ensure_timestamp_fresh_internal_rejects_stale_message_case();
-    }
-
-    #[test]
-    fn ensure_timestamp_fresh_internal_rejects_replay() {
-        ensure_timestamp_fresh_internal_rejects_replay_case();
-    }
-
-    #[test]
-    fn record_timestamp_internal_updates_state() {
-        record_timestamp_internal_updates_state_case();
     }
 }
