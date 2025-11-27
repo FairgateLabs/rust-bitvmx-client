@@ -38,6 +38,7 @@ use protocol_builder::{
         InputArgs, OutputType, Utxo,
     },
 };
+use key_manager::key_type::BitcoinKeyType;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -78,7 +79,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
         &self,
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
-        let speedup_key = program_context.key_chain.derive_keypair()?;
+        let speedup_key = program_context.key_chain.derive_keypair(BitcoinKeyType::P2tr)?;
         let mut keys = vec![];
 
         keys.push((
