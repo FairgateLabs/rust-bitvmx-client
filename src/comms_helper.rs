@@ -288,15 +288,23 @@ pub fn deserialize_msg(
     let timestamp = payload
         .get("timestamp")
         .and_then(|t| t.as_i64())
-        .ok_or_else(|| BitVMXError::InvalidMessage("Missing or invalid timestamp field".to_string()))?;
+        .ok_or_else(|| {
+            BitVMXError::InvalidMessage("Missing or invalid timestamp field".to_string())
+        })?;
 
     let signature_values = payload
         .get("signature")
         .and_then(|s| s.as_array())
-        .ok_or_else(|| BitVMXError::InvalidMessage("Missing or invalid signature field (expected array)".to_string()))?;
+        .ok_or_else(|| {
+            BitVMXError::InvalidMessage(
+                "Missing or invalid signature field (expected array)".to_string(),
+            )
+        })?;
 
     if signature_values.is_empty() {
-        return Err(BitVMXError::InvalidMessage("Signature array is empty".to_string()));
+        return Err(BitVMXError::InvalidMessage(
+            "Signature array is empty".to_string(),
+        ));
     }
 
     // Reject signatures that are unexpectedly large to prevent malformed payloads.
@@ -305,19 +313,25 @@ pub fn deserialize_msg(
     if signature_values.len() > MAX_SIGNATURE_LEN {
         return Err(BitVMXError::InvalidMessage(format!(
             "Signature length ({}) exceeds maximum allowed length ({})",
-            signature_values.len(), MAX_SIGNATURE_LEN
+            signature_values.len(),
+            MAX_SIGNATURE_LEN
         )));
     }
 
     let mut signature = Vec::with_capacity(signature_values.len());
     for (idx, value) in signature_values.iter().enumerate() {
         let byte = value.as_u64().ok_or_else(|| {
-            BitVMXError::InvalidMessage(format!("Signature byte at index {} is not a valid u64", idx))
+            BitVMXError::InvalidMessage(format!(
+                "Signature byte at index {} is not a valid u64",
+                idx
+            ))
         })?;
         if byte > u8::MAX as u64 {
             return Err(BitVMXError::InvalidMessage(format!(
                 "Signature byte at index {} exceeds maximum u8 value ({} > {})",
-                idx, byte, u8::MAX
+                idx,
+                byte,
+                u8::MAX
             )));
         }
         signature.push(byte as u8);
