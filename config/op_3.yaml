@@ -10,7 +10,7 @@ key_manager:
   key_derivation_path: m/101/1/0/0/
 
 key_storage:
-  password: secret_password_4
+  password: SeCrEt_p4ssw0rd_4!
   path: /tmp/regtest/op_3/keys.db
 
 storage:
