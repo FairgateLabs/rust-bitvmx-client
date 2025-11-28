@@ -233,7 +233,9 @@ impl Collaboration {
                 .cloned()
                 .ok_or(BitVMXError::InvalidParticipant(my_pubkey_hash.to_string()))?
         } else {
-            program_context.key_chain.derive_keypair(BitcoinKeyType::P2tr)?
+            program_context
+                .key_chain
+                .derive_keypair(BitcoinKeyType::P2tr)?
         };
 
         Ok(my_key)

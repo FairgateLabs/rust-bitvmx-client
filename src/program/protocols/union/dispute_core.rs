@@ -21,6 +21,7 @@ use crate::{
 use bitcoin::{Amount, OutPoint, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use core::result::Result::Ok;
+use key_manager::key_type::BitcoinKeyType;
 use key_manager::winternitz::{WinternitzPublicKey, WinternitzType};
 use protocol_builder::{
     builder::Protocol,
@@ -33,7 +34,6 @@ use protocol_builder::{
         InputArgs, OutputType, Utxo,
     },
 };
-use key_manager::key_type::BitcoinKeyType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::info;
@@ -86,7 +86,9 @@ impl ProtocolHandler for DisputeCoreProtocol {
         let data = self.dispute_core_data(program_context)?;
         let mut keys = vec![];
 
-        let speedup_key = program_context.key_chain.derive_keypair(BitcoinKeyType::P2tr)?;
+        let speedup_key = program_context
+            .key_chain
+            .derive_keypair(BitcoinKeyType::P2tr)?;
 
         keys.push((
             SPEEDUP_KEY.to_string(),

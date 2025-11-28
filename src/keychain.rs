@@ -2,7 +2,11 @@ use std::{collections::HashMap, path::Path, rc::Rc};
 
 use bitcoin::{secp256k1::rand::thread_rng, PublicKey, XOnlyPublicKey};
 use key_manager::{
-    create_key_manager_from_config, key_manager::KeyManager, key_type::BitcoinKeyType, musig2::{PartialSignature, PubNonce, types::MessageId}, winternitz::{WinternitzPublicKey, WinternitzType}
+    create_key_manager_from_config,
+    key_manager::KeyManager,
+    key_type::BitcoinKeyType,
+    musig2::{types::MessageId, PartialSignature, PubNonce},
+    winternitz::{WinternitzPublicKey, WinternitzType},
 };
 
 use protocol_builder::unspendable::unspendable_key;
@@ -12,7 +16,6 @@ use crate::{
     config::Config,
     errors::{BitVMXError, ConfigError},
 };
-
 
 pub struct KeyChain {
     pub key_manager: Rc<KeyManager>,
@@ -285,9 +288,7 @@ mod tests {
 
         // Get the public key for encryption
         let rng = &mut thread_rng();
-        let pub_key = keychain
-            .key_manager
-            .generate_rsa_keypair(rng)?;
+        let pub_key = keychain.key_manager.generate_rsa_keypair(rng)?;
 
         // Encrypt the message
         let encrypted_message = keychain

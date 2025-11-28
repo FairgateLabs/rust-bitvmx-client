@@ -1348,7 +1348,10 @@ impl BitVMXApi for BitVMX {
             }
             IncomingBitVMXApiMessages::GetPubKey(id, new) => {
                 if new {
-                    let public = self.program_context.key_chain.derive_keypair(BitcoinKeyType::P2tr)?;
+                    let public = self
+                        .program_context
+                        .key_chain
+                        .derive_keypair(BitcoinKeyType::P2tr)?;
                     self.reply(from, OutgoingBitVMXApiMessages::PubKey(id, public))?;
                 } else {
                     let collaboration = self

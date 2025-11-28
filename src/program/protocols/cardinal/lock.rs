@@ -72,7 +72,9 @@ impl ProtocolHandler for LockProtocol {
         &self,
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
-        let speedup = program_context.key_chain.derive_keypair(BitcoinKeyType::P2tr)?;
+        let speedup = program_context
+            .key_chain
+            .derive_keypair(BitcoinKeyType::P2tr)?;
 
         program_context.globals.set_var(
             &self.ctx.id,

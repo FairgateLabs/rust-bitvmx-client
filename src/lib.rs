@@ -7,11 +7,11 @@ pub mod config;
 pub mod errors;
 pub mod helper;
 pub mod keychain;
+pub mod ping_helper;
 pub mod program;
 pub mod shutdown;
 pub mod spv_proof;
 pub mod types;
-pub mod ping_helper;
 
 // Re-export types from the dependencies
 pub use bitcoin;

@@ -27,6 +27,7 @@ use crate::{
 };
 use bitcoin::{hex::FromHex, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
+use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
     graph::graph::GraphOptions,
@@ -38,7 +39,6 @@ use protocol_builder::{
         InputArgs, OutputType, Utxo,
     },
 };
-use key_manager::key_type::BitcoinKeyType;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -79,7 +79,9 @@ impl ProtocolHandler for AcceptPegInProtocol {
         &self,
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
-        let speedup_key = program_context.key_chain.derive_keypair(BitcoinKeyType::P2tr)?;
+        let speedup_key = program_context
+            .key_chain
+            .derive_keypair(BitcoinKeyType::P2tr)?;
         let mut keys = vec![];
 
         keys.push((

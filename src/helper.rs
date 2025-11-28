@@ -4,8 +4,8 @@ use bitcoin::{key::Secp256k1, PublicKey};
 #[cfg(test)]
 use key_manager::winternitz::{WinternitzPublicKey, WinternitzType};
 
-use key_manager::musig2::{types::MessageId, PartialSignature, PubNonce};
 use bitvmx_operator_comms::operator_comms::PubKeyHash;
+use key_manager::musig2::{types::MessageId, PartialSignature, PubNonce};
 use serde_json::Value;
 
 pub fn parse_keys(value: Value) -> Result<Vec<(PubKeyHash, ParticipantKeys)>, ParseError> {

@@ -3,8 +3,8 @@ use crate::{participants::member::Member, MasterWallet};
 use anyhow::{anyhow, Result};
 use bitcoin::{Address, CompressedPublicKey, Network, Txid};
 use bitvmx_wallet::wallet::{Destination, Wallet};
-use key_manager::create_key_manager_from_config;
 use core::option::Option;
+use key_manager::create_key_manager_from_config;
 use key_manager::key_type::BitcoinKeyType;
 use std::env;
 use std::io::{self, Write};
@@ -25,10 +25,8 @@ pub fn create_wallet(network: Network) -> Result<()> {
     config.key_manager.mnemonic_sentence = Some(mnemonic_sentence.to_string());
     config.key_manager.mnemonic_passphrase = Some("".to_string());
 
-    let key_manager = create_key_manager_from_config(
-        &config.key_manager,
-        &config.key_storage.clone(),
-    )?;
+    let key_manager =
+        create_key_manager_from_config(&config.key_manager, &config.key_storage.clone())?;
 
     let pubkey = key_manager.derive_keypair(BitcoinKeyType::P2tr, 0)?;
     let privkey = key_manager.export_secret(&pubkey)?;

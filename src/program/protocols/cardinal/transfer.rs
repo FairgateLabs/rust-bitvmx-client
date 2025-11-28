@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
+use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::{
     builder::ProtocolBuilder,
     errors::ProtocolBuilderError,
@@ -14,7 +15,6 @@ use protocol_builder::{
         InputArgs, OutputType,
     },
 };
-use key_manager::key_type::BitcoinKeyType;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -93,7 +93,9 @@ impl ProtocolHandler for TransferProtocol {
         &self,
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
-        let speedup = program_context.key_chain.derive_keypair(BitcoinKeyType::P2tr)?;
+        let speedup = program_context
+            .key_chain
+            .derive_keypair(BitcoinKeyType::P2tr)?;
 
         program_context.globals.set_var(
             &self.ctx.id,
