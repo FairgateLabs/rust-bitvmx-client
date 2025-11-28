@@ -238,9 +238,10 @@ impl BitVMX {
         );
 
         let ping_helper = PingHelper::new(config.job_dispatcher_ping.clone());
+        let timestamp_config = config.timestamp_verifier.as_ref().map(|c| c.clone()).unwrap_or_default();
         let timestamp_verifier = TimestampVerifier::new(
-            config.timestamp_verifier.enabled,
-            config.timestamp_verifier.max_drift_ms,
+            timestamp_config.enabled,
+            timestamp_config.max_drift_ms,
         );
 
         Ok(Self {
