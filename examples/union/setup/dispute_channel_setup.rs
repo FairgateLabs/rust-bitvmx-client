@@ -18,7 +18,7 @@ use bitvmx_client::{
         },
         variables::{PartialUtxo, VariableTypes},
     },
-    types::{OutgoingBitVMXApiMessages, PROGRAM_TYPE_DRP},
+    types::{OutgoingBitVMXApiMessages, PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_DRP},
 };
 
 const DRP_TIMELOCK_BLOCKS: u16 = 15; // TODO review if this is the right value
@@ -73,6 +73,8 @@ impl DisputeChannelSetup {
                     Self::op_cosign_utxos(partner_dispute_core_pid, &bitvmx)?;
 
                 let partner_stoppers = partner_claim_gate_stoppers[my_index].clone().unwrap();
+                let wt_takekey = &members[partner_index].take_key;
+
                 Self::setup_one(
                     committee_id,
                     my_index,
@@ -84,6 +86,7 @@ impl DisputeChannelSetup {
                     partner_stoppers.0,
                     partner_stoppers.1,
                     partner_op_cosign_utxos[my_index].clone().unwrap(),
+                    wt_takekey,
                 )?;
 
                 total_setups += 1;
@@ -94,6 +97,7 @@ impl DisputeChannelSetup {
                 Self::print_setup_info(my_index, partner_index, my_index);
 
                 let my_stoppers = my_claim_gate_stoppers[partner_index].clone().unwrap();
+                let wt_takekey = &members[my_index].take_key;
 
                 Self::setup_one(
                     committee_id,
@@ -106,6 +110,7 @@ impl DisputeChannelSetup {
                     my_stoppers.0,
                     my_stoppers.1,
                     my_op_cosign_utxos[partner_index].clone().unwrap(),
+                    wt_takekey,
                 )?;
 
                 total_setups += 1;
@@ -157,8 +162,10 @@ impl DisputeChannelSetup {
         wt_stopper: PartialUtxo,
         op_stopper: PartialUtxo,
         op_cosign: PartialUtxo,
+        wt_takekey: &PublicKey,
     ) -> Result<()> {
         let drp_id = get_dispute_channel_pid(committee_id, op_index, wt_index);
+        let dispute_core_pid = get_dispute_core_pid(committee_id, wt_takekey);
         let participants: Vec<CommsAddress> = vec![operator.clone(), watchtower.clone()];
 
         info!(
@@ -177,6 +184,7 @@ impl DisputeChannelSetup {
             DRP_TIMELOCK_BLOCKS,
             DRP_PROGRAM_DEFINITION.to_string(),
             None, // TODO review if this is the right fail force config
+            vec![(PROGRAM_TYPE_DISPUTE_CORE.to_string(), dispute_core_pid)],
         );
 
         bitvmx.set_var(

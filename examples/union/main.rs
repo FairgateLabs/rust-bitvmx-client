@@ -524,7 +524,7 @@ pub fn cli_operator_disabler() -> Result<()> {
             wait_for_blocks(&committee.bitcoin_client, 1)?;
 
             let wt_index = (op_index + 1) % committee.members.len();
-            let tx_name = double_indexed_name(OP_DISABLER_DIRECTORY_TX, op_index, wt_index);
+            let tx_name = double_indexed_name(OP_DISABLER_DIRECTORY_TX, wt_index, op_index);
 
             let tx = committee.members[wt_index]
                 .dispatch_transaction_by_name(full_penalization_pid, tx_name.clone())?;

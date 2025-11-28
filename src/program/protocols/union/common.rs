@@ -8,7 +8,8 @@ use crate::{
     errors::BitVMXError,
     program::{
         protocols::union::types::{
-            StreamSettings, UnionSettings, GLOBAL_SETTINGS_UUID, PAIRWISE_DISPUTE_KEY,
+            StreamSettings, UnionSettings, GLOBAL_SETTINGS_UUID, OP_CLAIM_GATE,
+            PAIRWISE_DISPUTE_KEY, WT_CLAIM_GATE,
         },
         variables::{PartialUtxo, VariableTypes},
     },
@@ -179,6 +180,52 @@ pub fn extract_index(full_name: &str, tx_name: &str) -> Result<usize, BitVMXErro
         })?;
 
     Ok(slot_index)
+}
+
+pub fn extract_double_index(input: &str) -> Result<(usize, usize), BitVMXError> {
+    let parts: Vec<&str> = input.split('_').collect();
+    if parts.len() < 2 {
+        return Err(BitVMXError::InvalidParameter(format!(
+            "Input '{}' does not contain two indices separated by '_'",
+            input
+        )));
+    }
+    let len = parts.len();
+
+    let index2 = parts[len - 2].parse::<usize>().map_err(|_| {
+        BitVMXError::InvalidParameter(format!(
+            "Could not parse second index from part: '{}'",
+            parts[0]
+        ))
+    })?;
+
+    let index1 = parts[len - 1].parse::<usize>().map_err(|_| {
+        BitVMXError::InvalidParameter(format!(
+            "Could not parse first index from part: '{}'",
+            parts[1]
+        ))
+    })?;
+
+    Ok((index2, index1))
+}
+
+pub fn extract_index_from_claim_gate(input: &str) -> Result<(usize, usize), BitVMXError> {
+    let prefix = if input.starts_with(WT_CLAIM_GATE) {
+        WT_CLAIM_GATE
+    } else if input.starts_with(OP_CLAIM_GATE) {
+        OP_CLAIM_GATE
+    } else {
+        return Err(BitVMXError::InvalidParameter(format!(
+            "Input '{}' does not start with expected prefixes",
+            input
+        )));
+    };
+
+    let rest = input.strip_prefix(prefix).unwrap();
+    let parts: Vec<&str> = rest.split('_').collect();
+    let a: usize = parts[0].parse().unwrap();
+    let b: usize = parts[1].parse().unwrap();
+    Ok((a, b))
 }
 
 pub fn get_operator_output_type(
