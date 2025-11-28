@@ -26,6 +26,7 @@ pub struct DisputeConfiguration {
     pub program_definition: String,
     pub fail_force_config: Option<ConfigResults>,
     pub notify_protocol: Vec<(String, Uuid)>,
+    pub auto_dispatch_input: Option<u8>,
 }
 
 impl DisputeConfiguration {
@@ -41,6 +42,7 @@ impl DisputeConfiguration {
         program_definition: String,
         fail_force_config: Option<ConfigResults>,
         notify_protocol: Vec<(String, Uuid)>,
+        auto_dispatch_input: Option<u8>,
     ) -> Self {
         Self {
             id,
@@ -54,6 +56,7 @@ impl DisputeConfiguration {
             program_definition,
             fail_force_config,
             notify_protocol,
+            auto_dispatch_input,
         }
     }
 

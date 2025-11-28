@@ -628,6 +628,7 @@ pub fn test_all_aux(
         prover_win_out_type,
         forced_challenge.clone(),
         program,
+        None,
     )?;
 
     let msg = helper.wait_msg(0)?;

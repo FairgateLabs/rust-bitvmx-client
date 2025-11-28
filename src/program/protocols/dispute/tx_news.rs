@@ -19,9 +19,9 @@ use crate::{
                 challenge::READ_VALUE_NARY_SEARCH_CHALLENGE,
                 config::{ConfigResults, DisputeConfiguration},
                 input_handler::{get_txs_configuration, unify_inputs, unify_witnesses},
-                timeout_input_tx, timeout_tx, DisputeResolutionProtocol, CHALLENGE, CHALLENGE_READ,
-                COMMITMENT, EXECUTE, INPUT_TX, PROVER_WINS, TRACE_VARS, VERIFIER_FINAL,
-                VERIFIER_WINS,
+                input_tx_name, timeout_input_tx, timeout_tx, DisputeResolutionProtocol, CHALLENGE,
+                CHALLENGE_READ, COMMITMENT, EXECUTE, INPUT_TX, PROVER_WINS, START_CH, TRACE_VARS,
+                VERIFIER_FINAL, VERIFIER_WINS,
             },
             protocol_handler::ProtocolHandler,
         },
@@ -408,6 +408,26 @@ pub fn handle_tx_news(
     )?;
 
     let fail_force_config = config.fail_force_config.unwrap_or_default();
+
+    if let Some(auto_dispatch_input) = config.auto_dispatch_input {
+        if name == START_CH && drp.role() == ParticipantRole::Prover {
+            let (tx, speedup) = drp.get_transaction_by_name(
+                &input_tx_name(auto_dispatch_input as u32),
+                program_context,
+            )?;
+
+            info!(
+                "Auto Dispatching input tx {}",
+                &input_tx_name(auto_dispatch_input as u32)
+            );
+            program_context.bitcoin_coordinator.dispatch(
+                tx,
+                speedup,
+                Context::ProgramId(drp.context().id).to_string()?,
+                None,
+            )?;
+        }
+    }
 
     if name.starts_with(INPUT_TX) && vout.is_some() {
         let idx = name.strip_prefix(INPUT_TX).unwrap().parse::<u32>()?;

@@ -100,7 +100,7 @@ pub fn wait_message_from_channel(
     } else {
         LOCAL_SLEEP_MS
     };
-    
+
     for i in 0..40000 {
         if i % 50 == 0 {
             let msg = channel.recv()?;
@@ -216,6 +216,7 @@ fn config_trace_aux() {
         "tarpc=off",
         "key_manager=off",
         "memory=off",
+        "bitvmx_broker=off",
         "broker=off",
     ];
 
