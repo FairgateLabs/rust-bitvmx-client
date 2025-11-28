@@ -60,10 +60,6 @@ client:
   # Delay between retries in milliseconds
   retry_delay: 1000
 
-timestamp_verifier:
-  enabled: true
-  max_drift_ms: 1000
-
 wallet:
   db_path: /tmp/testnet/op_4/wallet.db
   start_height: 4631993
