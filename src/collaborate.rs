@@ -9,9 +9,9 @@ use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use crate::{
-    comms_helper::{request, response, CommsMessageType, VerificationKeyAnnouncement},
+    comms_helper::{request, response, CommsMessageType},
     errors::BitVMXError,
-    helper::{compute_pubkey_hash, parse_keys},
+    helper::parse_keys,
     program::participant::{CommsAddress, ParticipantKeys, PublicKeyType},
     signature_verifier::OperatorVerificationStore,
     types::{OutgoingBitVMXApiMessages, ProgramContext},
@@ -166,50 +166,6 @@ impl Collaboration {
     ) -> Result<(), BitVMXError> {
         let pubkey_hash = comms_address.pubkey_hash.clone();
         match msg_type {
-            CommsMessageType::VerificationKey => {
-                // Process the content and store the key
-                // (Message signature verification already done in BitVMX::process_msg)
-                let announcement = VerificationKeyAnnouncement::from_value(&data)?;
-
-                // Additional content integrity checks
-                if announcement.pubkey_hash != pubkey_hash {
-                    error!(
-                        "Mismatched pubkey hash for peer {}: expected {}, got {}",
-                        pubkey_hash, pubkey_hash, announcement.pubkey_hash
-                    );
-                    return Err(BitVMXError::VerificationKeyHashMismatch {
-                        peer: pubkey_hash.clone(),
-                        expected: pubkey_hash.clone(),
-                        got: announcement.pubkey_hash.clone(),
-                    });
-                }
-
-                let computed_hash = compute_pubkey_hash(&announcement.verification_key)?;
-                if computed_hash != announcement.pubkey_hash {
-                    error!(
-                        "Verification key fingerprint mismatch for peer {}",
-                        pubkey_hash
-                    );
-                    return Err(BitVMXError::VerificationKeyFingerprintMismatch {
-                        peer: pubkey_hash.clone(),
-                        expected: announcement.pubkey_hash.clone(),
-                        computed: computed_hash,
-                    });
-                }
-
-                info!(
-                    "Verification key received and validated for peer: {}",
-                    pubkey_hash
-                );
-
-                // Store the verification key using Globals
-                OperatorVerificationStore::store(
-                    &program_context.globals,
-                    &pubkey_hash,
-                    &announcement.verification_key,
-                )?;
-            }
-
             CommsMessageType::Keys => {
                 // Message signature verification already done in BitVMX::process_msg
                 // Only process the keys and verify individual key signatures (MITM protection)
@@ -390,13 +346,11 @@ impl Collaboration {
                     self.collaboration_id, pubkey_hash
                 );
             }
-            CommsMessageType::VerificationKeyRequest => {
-                OperatorVerificationStore::respond_with_verification_key(
-                    &program_context.comms,
-                    &program_context.key_chain,
-                    &self.collaboration_id,
-                    comms_address,
-                )?;
+            CommsMessageType::VerificationKey | CommsMessageType::VerificationKeyRequest => {
+                debug!(
+                    "Collaboration id: {}: Verification key message handled upstream ({:?})",
+                    self.collaboration_id, msg_type
+                );
             }
             _ => {
                 return Err(BitVMXError::InvalidMessageType);

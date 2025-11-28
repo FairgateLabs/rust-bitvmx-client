@@ -1,11 +1,10 @@
 use crate::{
     bitvmx::Context,
-    comms_helper::{request, response, CommsMessageType, VerificationKeyAnnouncement},
+    comms_helper::{request, response, CommsMessageType},
     config::ClientConfig,
     errors::{BitVMXError, ProgramError},
     helper::{
-        compute_pubkey_hash, parse_keys, parse_nonces, parse_signatures, PartialSignatureMessage,
-        PubNonceMessage,
+        parse_keys, parse_nonces, parse_signatures, PartialSignatureMessage, PubNonceMessage,
     },
     program::{participant::ParticipantKeys, protocols::protocol_handler::new_protocol_type},
     signature_verifier::OperatorVerificationStore,
@@ -349,59 +348,6 @@ impl Program {
         self.request_helper(program_context, keys, CommsMessageType::Keys)?;
 
         self.save_retry(StoreKey::LastRequestKeys(self.program_id))?;
-        Ok(())
-    }
-
-    pub fn receive_verification_key(
-        &mut self,
-        comms_address: CommsAddress,
-        data: Value,
-        program_context: &ProgramContext,
-    ) -> Result<(), BitVMXError> {
-        // The message signature verification was already done in BitVMX::process_msg
-        // If we reach here, the message signature was verified and is valid
-        // We only process the content and store the key
-
-        let pubkey_hash = comms_address.pubkey_hash.clone();
-        let announcement = VerificationKeyAnnouncement::from_value(&data)?;
-
-        // Additional content integrity checks
-        if announcement.pubkey_hash != pubkey_hash {
-            error!(
-                "Mismatched pubkey hash for peer {}: expected {}, got {}",
-                pubkey_hash, pubkey_hash, announcement.pubkey_hash
-            );
-            return Err(BitVMXError::VerificationKeyHashMismatch {
-                peer: pubkey_hash.clone(),
-                expected: pubkey_hash.clone(),
-                got: announcement.pubkey_hash.clone(),
-            });
-        }
-
-        let computed_hash = compute_pubkey_hash(&announcement.verification_key)?;
-        if computed_hash != announcement.pubkey_hash {
-            error!(
-                "Verification key fingerprint mismatch for peer {}",
-                pubkey_hash
-            );
-            return Err(BitVMXError::VerificationKeyFingerprintMismatch {
-                peer: pubkey_hash.clone(),
-                expected: announcement.pubkey_hash.clone(),
-                computed: computed_hash,
-            });
-        }
-
-        info!(
-            "Verification key received and validated for peer: {}",
-            pubkey_hash
-        );
-
-        // Store the verification key using Globals
-        OperatorVerificationStore::store(
-            &program_context.globals,
-            &pubkey_hash,
-            &announcement.verification_key,
-        )?;
         Ok(())
     }
 
@@ -789,19 +735,6 @@ impl Program {
         debug!("{}: Message received: {:?} ", self.my_idx, msg_type);
 
         match msg_type {
-            CommsMessageType::VerificationKey => {
-                // Process the content and store the key
-                // (Message signature verification was already done in BitVMX::process_msg)
-                self.receive_verification_key(comms_address, data, program_context)?;
-            }
-            CommsMessageType::VerificationKeyRequest => {
-                OperatorVerificationStore::respond_with_verification_key(
-                    &program_context.comms,
-                    &program_context.key_chain,
-                    &self.program_id,
-                    comms_address,
-                )?;
-            }
             CommsMessageType::Keys => {
                 self.receive_keys(comms_address, msg_type, data, program_context)?;
             }
@@ -810,6 +743,12 @@ impl Program {
             }
             CommsMessageType::PartialSignatures => {
                 self.receive_signatures(comms_address, msg_type, data, program_context)?;
+            }
+            CommsMessageType::VerificationKey | CommsMessageType::VerificationKeyRequest => {
+                debug!(
+                    "{}. Verification key message handled upstream, ignoring {:?}",
+                    self.my_idx, msg_type
+                );
             }
             CommsMessageType::KeysAck
             | CommsMessageType::PublicNoncesAck
