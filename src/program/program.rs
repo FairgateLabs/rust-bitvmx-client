@@ -93,7 +93,6 @@ pub struct Program {
     pub leader: usize,
     pub protocol: ProtocolType,
     pub state: ProgramState,
-    pub key_signatures: HashMap<PubKeyHash, Vec<u8>>, // Store RSA signatures for each key
     #[serde(skip)]
     storage: Option<Rc<Storage>>,
     config: ClientConfig,
@@ -175,7 +174,6 @@ impl Program {
             leader,
             protocol,
             state: ProgramState::New,
-            key_signatures: HashMap::new(),
             storage: Some(storage),
             config: config.clone(),
         };
