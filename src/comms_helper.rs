@@ -299,6 +299,16 @@ pub fn deserialize_msg(
         return Err(BitVMXError::InvalidMessage("Signature array is empty".to_string()));
     }
 
+    // Reject signatures that are unexpectedly large to prevent malformed payloads.
+    // Check the length before inspecting every value, in case someone is sending large vectors of garbage.
+    const MAX_SIGNATURE_LEN: usize = 512;
+    if signature_values.len() > MAX_SIGNATURE_LEN {
+        return Err(BitVMXError::InvalidMessage(format!(
+            "Signature length ({}) exceeds maximum allowed length ({})",
+            signature_values.len(), MAX_SIGNATURE_LEN
+        )));
+    }
+
     let mut signature = Vec::with_capacity(signature_values.len());
     for (idx, value) in signature_values.iter().enumerate() {
         let byte = value.as_u64().ok_or_else(|| {
@@ -311,15 +321,6 @@ pub fn deserialize_msg(
             )));
         }
         signature.push(byte as u8);
-    }
-
-    // Reject signatures that are unexpectedly large to prevent malformed payloads.
-    const MAX_SIGNATURE_LEN: usize = 512;
-    if signature.len() > MAX_SIGNATURE_LEN {
-        return Err(BitVMXError::InvalidMessage(format!(
-            "Signature length ({}) exceeds maximum allowed length ({})",
-            signature.len(), MAX_SIGNATURE_LEN
-        )));
     }
 
     //TODO: CHECK THIS WITH @KEVIN
