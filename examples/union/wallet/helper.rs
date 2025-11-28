@@ -27,7 +27,7 @@ pub fn create_wallet(network: Network) -> Result<()> {
 
     let key_manager = create_key_manager_from_config(
         &config.key_manager,
-        config.key_storage.clone(),
+        &config.key_storage.clone(),
     )?;
 
     let pubkey = key_manager.derive_keypair(BitcoinKeyType::P2tr, 0)?;

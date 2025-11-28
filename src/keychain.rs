@@ -41,7 +41,7 @@ impl KeyChainStorageKeys {
 impl KeyChain {
     pub fn new(config: &Config, store: Rc<Storage>) -> Result<KeyChain, BitVMXError> {
         let key_manager =
-            create_key_manager_from_config(&config.key_manager, config.key_storage.clone())?;
+            create_key_manager_from_config(&config.key_manager, &config.key_storage.clone())?;
 
         let key_manager = Rc::new(key_manager);
 
