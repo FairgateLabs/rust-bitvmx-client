@@ -273,6 +273,65 @@ impl SignatureVerifier {
             }
         }
     }
+
+    pub fn verify_and_get_key(
+        comms: &OperatorComms,
+        globals: &Globals,
+        key_chain: &KeyChain,
+        sender_pubkey_hash: &PubKeyHash,
+        program_id: &Uuid,
+        msg_type: &CommsMessageType,
+        data: &Value,
+        timestamp: i64,
+        signature: &[u8],
+        version: &str,
+    ) -> Result<String, BitVMXError> {
+        if *msg_type == CommsMessageType::VerificationKeyRequest {
+            // Skip verification because the requester cannot be verified yet.
+            return Ok(String::new());
+        }
+
+        // Retrieve verification key from shared ProgramContext
+        let my_pubkey_hash = comms.get_pubk_hash()?;
+        let verification_key = Self::get_verification_key(
+            msg_type,
+            data,
+            sender_pubkey_hash,
+            globals,
+            key_chain,
+            &my_pubkey_hash,
+        )?;
+
+        // Verify message signature (except for VerificationKey which is verified later)
+        if *msg_type != CommsMessageType::VerificationKey {
+            let verified = Self::verify_message_signature(
+                globals,
+                &program_id.to_string(),
+                version,
+                msg_type,
+                data,
+                timestamp,
+                signature,
+                sender_pubkey_hash,
+                key_chain,
+                &my_pubkey_hash,
+            )?;
+
+            if !verified {
+                error!(
+                    "Message signature verification failed from {} for {}. Message rejected.",
+                    sender_pubkey_hash, program_id
+                );
+                return Err(BitVMXError::InvalidSignature {
+                    peer: sender_pubkey_hash.clone(),
+                    msg_type: format!("{:?}", msg_type),
+                    program_id: program_id.to_string(),
+                });
+            }
+        }
+
+        Ok(verification_key)
+    }
 }
 
 #[cfg(test)]
