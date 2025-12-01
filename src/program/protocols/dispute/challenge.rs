@@ -122,7 +122,8 @@ pub const FUTURE_READ_CHALLENGE: [(&str, usize); 4] = [
     ("verifier_read_selector", 1),
 ];
 
-pub const READ_VALUE_NARY_SEARCH_CHALLENGE: [(&str, usize); 1] = [("verifier_bits", 4)];
+pub const READ_VALUE_NARY_SEARCH_CHALLENGE: [(&str, usize); 1] =
+    [("verifier_selection_bits2_1", 1)];
 
 pub const READ_VALUE_CHALLENGE: [(&str, usize); 13] = [
     ("prover_read_1_address", 4),
@@ -207,10 +208,6 @@ pub fn challenge_scripts(
     let mut challenge_leaf_script = vec![];
 
     let mut challenge_current_leaf = 0;
-
-    let rounds = program_definitions.nary_def().total_rounds();
-    let nary = program_definitions.nary_def().nary;
-    let nary_last_round = program_definitions.nary_def().nary_last_round;
 
     match nary_search_type {
         NArySearchType::ConflictStep => {
@@ -524,7 +521,7 @@ pub fn challenge_scripts(
                                 future_read_challenge(&mut stack);
                             }
                             "read_value_nary_search" => {
-                                let var = stack.define(8, "bits");
+                                let var = stack.define(2, "bits");
                                 stack.drop(var);
                                 //TODO: Should verify if var < 2^max_bits, with max_bits from N-ary search def
                             }
@@ -620,8 +617,8 @@ pub fn get_challenge_leaf(
     match challenge {
         ChallengeType::EntryPoint {
             prover_read_pc: _,
-            prover_trace_step: _,
             real_entry_point: _,
+            prover_conflict_step_tk,
         } => {
             name = "entry_point";
             info!("Verifier chose {name} challenge");
@@ -778,7 +775,12 @@ pub fn get_challenge_leaf(
             name = "read_value_nary_search";
             info!("Verifier chose {name} challenge");
 
-            set_input_u32(id, context, &format!("verifier_bits"), *bits)?;
+            set_input_u8(
+                id,
+                context,
+                &format!("verifier_selection_bits2_1"),
+                *bits as u8, // Already checked in CPU
+            )?;
         }
         ChallengeType::FutureRead {
             prover_read_step_1: _,
@@ -892,6 +894,13 @@ pub fn get_challenge_leaf(
             rounds,
             nary,
             nary_last_round,
+        } => todo!(),
+        ChallengeType::Halt {
+            prover_last_step,
+            prover_conflict_step_tk,
+            prover_trace,
+            prover_next_hash,
+            prover_last_hash,
         } => todo!(),
         ChallengeType::No => {
             name = "";

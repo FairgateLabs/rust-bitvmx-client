@@ -967,8 +967,8 @@ pub fn handle_tx_news(
                         "Challenge will be extended with a 2nd nary search. {bits_name} are {:?}",
                         bytes
                     );
-                    assert_eq!(bytes.len(), 4);
-                    let selection_bits = u32::from_be_bytes(bytes.try_into().unwrap());
+                    assert_eq!(bytes.len(), 1);
+                    let selection_bits = bytes[0] as u32;
                     handle_nary_verifier(
                         &name,
                         drp,
@@ -1267,9 +1267,9 @@ fn handle_nary_prover(
 
     let round = name
         .strip_prefix(strip_prefix)
-        .unwrap()
-        .parse::<u32>()
-        .unwrap();
+        .map(str::trim)
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(1);
 
     let (fail_config, current_round) = match nary_search_type {
         NArySearchType::ConflictStep => (
@@ -1294,6 +1294,38 @@ fn handle_nary_prover(
     let hashes_count = nary.hashes_for_round(round as u8);
     let execution_path = drp.get_execution_path()?;
 
+    let hashes: Vec<String> =
+        if round == 1 && nary_search_type == NArySearchType::ReadValueChallenge {
+            // Retrieve first round hashes from previous n-ary search
+            program_context
+                .globals
+                .get_var(&drp.ctx.id, "first-round-hashes")?
+                .unwrap()
+                .vec_string()?
+        } else {
+            (0..hashes_count)
+                .map(|h| {
+                    hex::encode(
+                        program_context
+                            .witness
+                            .get_witness(&drp.ctx.id, &format!("{}_{}_{}", prover_hash, round, h))
+                            .unwrap()
+                            .unwrap()
+                            .winternitz()
+                            .unwrap()
+                            .message_bytes(),
+                    )
+                })
+                .collect()
+        };
+    if round == 1 && nary_search_type == NArySearchType::ConflictStep {
+        // Save the first round hashes for possible 2nd n-ary search
+        program_context.globals.set_var(
+            &drp.ctx.id,
+            "first-round-hashes",
+            VariableTypes::VecStr(hashes.clone()),
+        )?;
+    }
     let hashes: Vec<String> = (0..hashes_count)
         .map(|h| {
             hex::encode(

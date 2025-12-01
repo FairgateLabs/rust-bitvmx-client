@@ -12,7 +12,8 @@ use std::{
 use bitcoin::{PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_script_riscv::riscv::{
-    instruction_mapping::create_verification_script_mapping, script_utils::is_lower_than,
+    instruction_mapping::create_verification_script_mapping,
+    script_utils::{is_lower_than, verify_challenge_step},
 };
 use bitcoin_script_stack::stack::StackTracker;
 use bitvmx_cpu_definitions::challenge::EmulatorResultType;
@@ -109,8 +110,7 @@ fn build_translation_keys_2nd_nary(rounds: u8) -> Vec<(String, usize)> {
         ("prover_write_step_tk2".to_string(), 8),
     ];
 
-    for i in 2..rounds + 1 {
-        //TODO: start in 1
+    for i in 1..rounds + 1 {
         vars.push((format!("verifier_selection_bits2_{}", i), 1));
     }
 
@@ -1072,9 +1072,12 @@ impl DisputeResolutionProtocol {
 
     fn get_reverse_and_strip_scripts(
         vars: &Vec<(String, usize)>,
-        rounds: u8,
+        program_definitions: &ProgramDefinition,
         nary_search_type: NArySearchType,
     ) -> (ScriptBuf, ScriptBuf) {
+        let rounds = program_definitions.nary_def().total_rounds();
+        let nary = program_definitions.nary_def().nary;
+        let nary_last_round = program_definitions.nary_def().nary_last_round;
         let total_size = vars.iter().map(|(_, size)| (*size as u32) * 2).sum();
         let reverse_script = Self::get_reverse_script(total_size);
         //TODO: This is a workaround to remove one nibble from the micro instructions
@@ -1101,28 +1104,43 @@ impl DisputeResolutionProtocol {
                 stack.drop(prev_hash);
                 let step_hash = stack.move_var(stackvars["prover_step_hash_tk"]);
                 stack.drop(step_hash);
-                let conflict_step = stack.move_var(stackvars["prover_conflict_step_tk"]);
-                stack.drop(conflict_step);
                 for i in 1..rounds + 1 {
-                    //TODO: cosign
-                    let selection_bits =
-                        stack.move_var(stackvars[&format!("verifier_selection_bits_{}", i)]);
-                    stack.drop(selection_bits);
+                    let selection_bits_0 = stack
+                        .move_var_sub_n(stackvars[&format!("verifier_selection_bits_{}", i)], 0);
+                    stack.drop(selection_bits_0);
+                    stack.move_var_sub_n(stackvars[&format!("verifier_selection_bits_{}", i)], 0);
                 }
+                let selection = stack.join_in_stack(rounds as u32, None, Some("selection_bits"));
+                verify_challenge_step(
+                    &mut stack,
+                    stackvars["prover_conflict_step_tk"],
+                    selection,
+                    nary,
+                    nary_last_round,
+                    rounds,
+                );
             }
             NArySearchType::ReadValueChallenge => {
                 let step_hash = stack.move_var(stackvars["prover_step_hash_tk2"]);
                 stack.drop(step_hash);
                 let next_hash = stack.move_var(stackvars["prover_next_hash_tk2"]);
                 stack.drop(next_hash);
-                let write_step = stack.move_var(stackvars["prover_write_step_tk2"]);
-                stack.drop(write_step);
-                for i in 2..rounds + 1 {
-                    //TODO: cosign
-                    let selection_bits_2 =
-                        stack.move_var(stackvars[&format!("verifier_selection_bits2_{}", i)]);
-                    stack.drop(selection_bits_2);
+                for i in 1..rounds + 1 {
+                    let selection_bits_0 = stack
+                        .move_var_sub_n(stackvars[&format!("verifier_selection_bits2_{}", i)], 0);
+                    stack.drop(selection_bits_0);
+                    stack.move_var_sub_n(stackvars[&format!("verifier_selection_bits2_{}", i)], 0);
                 }
+                let selection = stack.join_in_stack(rounds as u32, None, Some("selection_bits"));
+                // stack.drop(selection);
+                verify_challenge_step(
+                    &mut stack,
+                    stackvars["prover_write_step_tk2"],
+                    selection,
+                    nary,
+                    nary_last_round,
+                    rounds,
+                );
             }
         }
 
@@ -1174,11 +1192,7 @@ impl DisputeResolutionProtocol {
                 }),
         );
 
-        let rounds = self
-            .get_program_definition(context)?
-            .0
-            .nary_def()
-            .total_rounds();
+        let program_def = self.get_program_definition(context)?.0;
 
         let vars_without_witness = vars
             .iter()
@@ -1187,10 +1201,13 @@ impl DisputeResolutionProtocol {
             .collect();
 
         let (reverse_script, strip_script) =
-            Self::get_reverse_and_strip_scripts(&vars, rounds, nary_search_type);
+            Self::get_reverse_and_strip_scripts(&vars, &program_def, nary_search_type);
 
-        let (reverse_script_ww, strip_script_ww) =
-            Self::get_reverse_and_strip_scripts(&vars_without_witness, rounds, nary_search_type);
+        let (reverse_script_ww, strip_script_ww) = Self::get_reverse_and_strip_scripts(
+            &vars_without_witness,
+            &program_def,
+            nary_search_type,
+        );
 
         let mut winternitz_check_list = vec![];
         match nary_search_type {
