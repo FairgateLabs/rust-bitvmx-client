@@ -5,17 +5,16 @@ use crate::timestamp_verifier::TimestampVerifier;
 use crate::{
     api::BitVMXApi,
     collaborate::Collaboration,
-    comms_helper::{deserialize_msg, CommsMessageType, VerificationKeyAnnouncement},
+    comms_helper::{deserialize_msg, CommsMessageType},
     config::Config,
     errors::BitVMXError,
-    helper::compute_pubkey_hash,
     keychain::KeyChain,
     program::{
         participant::CommsAddress,
         program::Program,
         variables::{Globals, WitnessVars},
     },
-    signature_verifier::{OperatorVerificationStore, SignatureVerifier},
+    signature_verifier::SignatureVerifier,
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus},
 };
 use bitcoin::secp256k1::Message;
@@ -266,27 +265,6 @@ impl BitVMX {
         Ok(program)
     }
 
-    /// Handles the MissingVerificationKey error by requesting the key and buffering the message
-    fn handle_missing_verification_key(
-        &mut self,
-        program_id: &Uuid,
-        address: &CommsAddress,
-        identifier: &Identifier,
-        msg: Vec<u8>,
-    ) -> Result<(), BitVMXError> {
-        warn!("Missing verification key for: {:?}", program_id);
-        OperatorVerificationStore::request_missing_verification_keys(
-            &self.program_context.globals,
-            &self.program_context.comms,
-            &self.program_context.key_chain,
-            program_id,
-            std::slice::from_ref(address),
-        )?;
-        self.pending_messages
-            .push_back((identifier.to_string(), msg));
-        Ok(())
-    }
-
     /// Step 1: Verifies the message signature.
     /// Returns Ok(true) if verification succeeded, Ok(false) if the message needs to be buffered
     /// (e.g., missing verification key), or Err if there was an error.
@@ -316,30 +294,17 @@ impl BitVMX {
         ) {
             Ok(_) => Ok(true),
             Err(BitVMXError::MissingVerificationKey { .. }) => {
-                self.handle_missing_verification_key(program_id, address, identifier, msg)?;
+                SignatureVerifier::handle_missing_verification_key(
+                    &self.program_context,
+                    program_id,
+                    address,
+                    identifier,
+                    msg,
+                    &mut self.pending_messages,
+                )?;
                 Ok(false)
             }
             Err(err) => Err(err),
-        }
-    }
-
-    /// Step 2: Handles verification messages (VerificationKey and VerificationKeyRequest).
-    /// Returns Ok(true) if the message was processed, or Err if there was an error.
-    fn handle_verification_messages(
-        &self,
-        program_id: &Uuid,
-        msg_type: &CommsMessageType,
-        data: &Value,
-        address: &CommsAddress,
-    ) -> Result<(), BitVMXError> {
-        match msg_type {
-            CommsMessageType::VerificationKey => {
-                handle_verification_key_announcement(&self.program_context, address, data)
-            }
-            CommsMessageType::VerificationKeyRequest => {
-                handle_verification_key_request(&self.program_context, program_id, address.clone())
-            }
-            _ => Ok(()),
         }
     }
 
@@ -377,7 +342,13 @@ impl BitVMX {
 
         // Step 2: Handle verification messages if applicable
         if is_verification_msg {
-            self.handle_verification_messages(program_id, msg_type, data, address)?;
+            SignatureVerifier::handle_verification_messages(
+                &self.program_context,
+                program_id,
+                msg_type,
+                data,
+                address,
+            )?;
             return Ok(Some(true));
         }
 
@@ -932,66 +903,6 @@ impl BitVMX {
         info!("Wallet sync completed.");
         Ok(())
     }
-}
-
-fn handle_verification_key_announcement(
-    program_context: &ProgramContext,
-    comms_address: &CommsAddress,
-    data: &Value,
-) -> Result<(), BitVMXError> {
-    let pubkey_hash = comms_address.pubkey_hash.clone();
-    let announcement = VerificationKeyAnnouncement::from_value(data)?;
-
-    if announcement.pubkey_hash != pubkey_hash {
-        error!(
-            "Mismatched pubkey hash for peer {}: expected {}, got {}",
-            pubkey_hash, pubkey_hash, announcement.pubkey_hash
-        );
-        return Err(BitVMXError::VerificationKeyHashMismatch {
-            peer: pubkey_hash.clone(),
-            expected: pubkey_hash.clone(),
-            got: announcement.pubkey_hash.clone(),
-        });
-    }
-
-    let computed_hash = compute_pubkey_hash(&announcement.verification_key)?;
-    if computed_hash != announcement.pubkey_hash {
-        error!(
-            "Verification key fingerprint mismatch for peer {}",
-            pubkey_hash
-        );
-        return Err(BitVMXError::VerificationKeyFingerprintMismatch {
-            peer: pubkey_hash.clone(),
-            expected: announcement.pubkey_hash.clone(),
-            computed: computed_hash,
-        });
-    }
-
-    info!(
-        "Verification key received and validated for peer: {}",
-        pubkey_hash
-    );
-
-    OperatorVerificationStore::store(
-        &program_context.globals,
-        &pubkey_hash,
-        &announcement.verification_key,
-    )?;
-
-    Ok(())
-}
-
-fn handle_verification_key_request(
-    program_context: &ProgramContext,
-    context_id: &Uuid,
-    comms_address: CommsAddress,
-) -> Result<(), BitVMXError> {
-    OperatorVerificationStore::respond_with_verification_key(
-        &program_context.comms,
-        &program_context.key_chain,
-        context_id,
-        comms_address,
-    )
 }
 
 impl GracefulShutdown for BitVMX {

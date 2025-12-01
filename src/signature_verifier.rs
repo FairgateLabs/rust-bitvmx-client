@@ -4,16 +4,19 @@ use crate::{
         VerificationKeyAnnouncement, VerificationKeyRequestPayload,
     },
     errors::BitVMXError,
+    helper::compute_pubkey_hash,
     keychain::KeyChain,
     program::{
         participant::CommsAddress,
         variables::{Globals, VariableTypes},
     },
+    types::ProgramContext,
 };
+use bitvmx_broker::identification::identifier::Identifier;
 use bitvmx_operator_comms::operator_comms::{OperatorComms, PubKeyHash};
 use serde_json::Value;
-use std::collections::HashSet;
-use tracing::{debug, error, warn};
+use std::collections::{HashSet, VecDeque};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 /// Centralized signature verification module
@@ -331,6 +334,107 @@ impl SignatureVerifier {
         }
 
         Ok(verification_key)
+    }
+
+    /// Handles verification messages (VerificationKey and VerificationKeyRequest).
+    /// Returns Ok(()) if the message was processed, or Err if there was an error.
+    pub fn handle_verification_messages(
+        program_context: &ProgramContext,
+        program_id: &Uuid,
+        msg_type: &CommsMessageType,
+        data: &Value,
+        address: &CommsAddress,
+    ) -> Result<(), BitVMXError> {
+        match msg_type {
+            CommsMessageType::VerificationKey => {
+                Self::handle_verification_key_announcement(program_context, address, data)
+            }
+            CommsMessageType::VerificationKeyRequest => {
+                Self::handle_verification_key_request(program_context, program_id, address.clone())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn handle_verification_key_announcement(
+        program_context: &ProgramContext,
+        comms_address: &CommsAddress,
+        data: &Value,
+    ) -> Result<(), BitVMXError> {
+        let pubkey_hash = comms_address.pubkey_hash.clone();
+        let announcement = VerificationKeyAnnouncement::from_value(data)?;
+
+        if announcement.pubkey_hash != pubkey_hash {
+            error!(
+                "Mismatched pubkey hash for peer {}: expected {}, got {}",
+                pubkey_hash, pubkey_hash, announcement.pubkey_hash
+            );
+            return Err(BitVMXError::VerificationKeyHashMismatch {
+                peer: pubkey_hash.clone(),
+                expected: pubkey_hash.clone(),
+                got: announcement.pubkey_hash.clone(),
+            });
+        }
+
+        let computed_hash = compute_pubkey_hash(&announcement.verification_key)?;
+        if computed_hash != announcement.pubkey_hash {
+            error!(
+                "Verification key fingerprint mismatch for peer {}",
+                pubkey_hash
+            );
+            return Err(BitVMXError::VerificationKeyFingerprintMismatch {
+                peer: pubkey_hash.clone(),
+                expected: announcement.pubkey_hash.clone(),
+                computed: computed_hash,
+            });
+        }
+
+        info!(
+            "Verification key received and validated for peer: {}",
+            pubkey_hash
+        );
+
+        OperatorVerificationStore::store(
+            &program_context.globals,
+            &pubkey_hash,
+            &announcement.verification_key,
+        )?;
+
+        Ok(())
+    }
+
+    fn handle_verification_key_request(
+        program_context: &ProgramContext,
+        context_id: &Uuid,
+        comms_address: CommsAddress,
+    ) -> Result<(), BitVMXError> {
+        OperatorVerificationStore::respond_with_verification_key(
+            &program_context.comms,
+            &program_context.key_chain,
+            context_id,
+            comms_address,
+        )
+    }
+
+    /// Handles the MissingVerificationKey error by requesting the key and buffering the message
+    pub fn handle_missing_verification_key(
+        program_context: &ProgramContext,
+        program_id: &Uuid,
+        address: &CommsAddress,
+        identifier: &Identifier,
+        msg: Vec<u8>,
+        pending_messages: &mut VecDeque<(PubKeyHash, Vec<u8>)>,
+    ) -> Result<(), BitVMXError> {
+        warn!("Missing verification key for: {:?}", program_id);
+        OperatorVerificationStore::request_missing_verification_keys(
+            &program_context.globals,
+            &program_context.comms,
+            &program_context.key_chain,
+            program_id,
+            std::slice::from_ref(address),
+        )?;
+        pending_messages.push_back((identifier.to_string(), msg));
+        Ok(())
     }
 }
 
