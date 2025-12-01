@@ -100,11 +100,15 @@ fn get_role(my_idx: usize) -> ParticipantRole {
     }
 }
 
-pub fn action_wins(role: &ParticipantRole, n: u32) -> String {
+pub fn action_wins_prefix(role: &ParticipantRole) -> String {
     match role {
-        ParticipantRole::Prover => format!("ACTION_PROVER_WINS_{n}"),
-        ParticipantRole::Verifier => format!("ACTION_VERIFIER_WINS_{n}"),
+        ParticipantRole::Prover => "ACTION_PROVER_WINS_".to_string(),
+        ParticipantRole::Verifier => "ACTION_VERIFIER_WINS_".to_string(),
     }
+}
+
+pub fn action_wins(role: &ParticipantRole, n: u32) -> String {
+    format!("{}{}", action_wins_prefix(role), n)
 }
 
 pub fn external_action(role: &ParticipantRole, n: u32) -> String {
