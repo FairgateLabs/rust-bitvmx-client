@@ -1,6 +1,6 @@
 use crate::keychain::KeyChain;
 use crate::{errors::BitVMXError, program::participant::CommsAddress};
-use bitvmx_operator_comms::operator_comms::{OperatorComms, PubKeyHash};
+use bitvmx_operator_comms::operator_comms::OperatorComms;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -180,24 +180,19 @@ impl Version {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct VerificationKeyAnnouncement {
-    pub pubkey_hash: PubKeyHash,
     pub verification_key: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct VerificationKeyRequestPayload {
-    pub requester: PubKeyHash,
-}
+pub struct VerificationKeyRequestPayload;
 
 pub fn send_verification_key_to_peer(
     comms: &OperatorComms,
     key_chain: &KeyChain,
     program_id: &Uuid,
     destination: CommsAddress,
-    my_pubkey_hash: PubKeyHash,
 ) -> Result<(), BitVMXError> {
     let announcement = VerificationKeyAnnouncement {
-        pubkey_hash: my_pubkey_hash,
         verification_key: key_chain.get_rsa_public_key()?,
     };
 

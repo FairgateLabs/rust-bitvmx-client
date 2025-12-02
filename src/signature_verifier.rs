@@ -108,9 +108,7 @@ impl OperatorVerificationStore {
                     program_id,
                     peer.clone(),
                     CommsMessageType::VerificationKeyRequest,
-                    VerificationKeyRequestPayload {
-                        requester: my_pubkey_hash.clone(),
-                    },
+                    VerificationKeyRequestPayload,
                 )?;
             }
         }
@@ -121,14 +119,9 @@ impl OperatorVerificationStore {
         comms: &OperatorComms,
         key_chain: &KeyChain,
         program_id: &Uuid,
-        requester: CommsAddress,
+        peer_address: CommsAddress,
     ) -> Result<(), BitVMXError> {
-        let my_pubkey_hash = comms.get_pubk_hash()?;
-        if requester.pubkey_hash == my_pubkey_hash {
-            return Ok(());
-        }
-
-        send_verification_key_to_peer(comms, key_chain, program_id, requester, my_pubkey_hash)
+        send_verification_key_to_peer(comms, key_chain, program_id, peer_address)
     }
 }
 
@@ -343,48 +336,37 @@ impl SignatureVerifier {
         program_id: &Uuid,
         msg_type: &CommsMessageType,
         data: &Value,
-        address: &CommsAddress,
+        peer_address: &CommsAddress,
     ) -> Result<(), BitVMXError> {
         match msg_type {
             CommsMessageType::VerificationKey => {
-                Self::handle_verification_key_announcement(program_context, address, data)
+                Self::handle_verification_key_announcement(program_context, peer_address, data)
             }
-            CommsMessageType::VerificationKeyRequest => {
-                Self::handle_verification_key_request(program_context, program_id, address.clone())
-            }
+            CommsMessageType::VerificationKeyRequest => Self::handle_verification_key_request(
+                program_context,
+                program_id,
+                peer_address.clone(),
+            ),
             _ => Ok(()),
         }
     }
 
     fn handle_verification_key_announcement(
         program_context: &ProgramContext,
-        comms_address: &CommsAddress,
+        peer_address: &CommsAddress,
         data: &Value,
     ) -> Result<(), BitVMXError> {
-        let pubkey_hash = comms_address.pubkey_hash.clone();
+        let pubkey_hash = peer_address.pubkey_hash.clone();
         let announcement = VerificationKeyAnnouncement::from_value(data)?;
 
-        if announcement.pubkey_hash != pubkey_hash {
-            error!(
-                "Mismatched pubkey hash for peer {}: expected {}, got {}",
-                pubkey_hash, pubkey_hash, announcement.pubkey_hash
-            );
-            return Err(BitVMXError::VerificationKeyHashMismatch {
-                peer: pubkey_hash.clone(),
-                expected: pubkey_hash.clone(),
-                got: announcement.pubkey_hash.clone(),
-            });
-        }
-
         let computed_hash = compute_pubkey_hash(&announcement.verification_key)?;
-        if computed_hash != announcement.pubkey_hash {
+        if computed_hash != peer_address.pubkey_hash {
             error!(
                 "Verification key fingerprint mismatch for peer {}",
                 pubkey_hash
             );
             return Err(BitVMXError::VerificationKeyFingerprintMismatch {
                 peer: pubkey_hash.clone(),
-                expected: announcement.pubkey_hash.clone(),
                 computed: computed_hash,
             });
         }
@@ -406,13 +388,13 @@ impl SignatureVerifier {
     fn handle_verification_key_request(
         program_context: &ProgramContext,
         context_id: &Uuid,
-        comms_address: CommsAddress,
+        peer_address: CommsAddress,
     ) -> Result<(), BitVMXError> {
         OperatorVerificationStore::respond_with_verification_key(
             &program_context.comms,
             &program_context.key_chain,
             context_id,
-            comms_address,
+            peer_address,
         )
     }
 

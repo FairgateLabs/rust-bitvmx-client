@@ -316,14 +316,14 @@ impl BitVMX {
     /// - Err if there was an error
     fn process_message_common(
         &mut self,
-        identifier: &Identifier,
+        peer_identifier: &Identifier,
         program_id: &Uuid,
         version: &String,
         msg_type: &CommsMessageType,
         data: &Value,
         timestamp: i64,
         signature: &Vec<u8>,
-        address: &CommsAddress,
+        peer_address: &CommsAddress,
         msg: Vec<u8>,
     ) -> Result<Option<bool>, BitVMXError> {
         let is_verification_msg = matches!(
@@ -333,7 +333,15 @@ impl BitVMX {
 
         // Step 1: Verify message signature
         let verified = self.verify_message_signature(
-            identifier, program_id, version, msg_type, data, timestamp, signature, address, msg,
+            peer_identifier,
+            program_id,
+            version,
+            msg_type,
+            data,
+            timestamp,
+            signature,
+            peer_address,
+            msg,
         )?;
 
         if !verified {
@@ -347,7 +355,7 @@ impl BitVMX {
                 program_id,
                 msg_type,
                 data,
-                address,
+                peer_address,
             )?;
             return Ok(Some(true));
         }
@@ -361,24 +369,37 @@ impl BitVMX {
     /// or Err if there was an error.
     fn process_program_message(
         &mut self,
-        identifier: &Identifier,
+        peer_identifier: &Identifier,
         program_id: &Uuid,
         version: &String,
         msg_type: CommsMessageType,
         data: Value,
         timestamp: i64,
         signature: &Vec<u8>,
-        address: CommsAddress,
+        peer_address: CommsAddress,
         msg: Vec<u8>,
         program: &mut Program,
     ) -> Result<bool, BitVMXError> {
         match self.process_message_common(
-            identifier, program_id, version, &msg_type, &data, timestamp, signature, &address, msg,
+            peer_identifier,
+            program_id,
+            version,
+            &msg_type,
+            &data,
+            timestamp,
+            signature,
+            &peer_address,
+            msg,
         )? {
             Some(result) => Ok(result), // Verification message processed or needs buffering
             None => {
                 // Step 3: Process normal messages (non-verification)
-                program.process_comms_message(address, msg_type, data, &self.program_context)?;
+                program.process_comms_message(
+                    peer_address,
+                    msg_type,
+                    data,
+                    &self.program_context,
+                )?;
                 Ok(true)
             }
         }
@@ -389,25 +410,33 @@ impl BitVMX {
     /// or Err if there was an error.
     fn process_collaboration_message(
         &mut self,
-        identifier: &Identifier,
+        peer_identifier: &Identifier,
         program_id: &Uuid,
         version: &String,
         msg_type: CommsMessageType,
         data: Value,
         timestamp: i64,
         signature: &Vec<u8>,
-        address: CommsAddress,
+        peer_address: CommsAddress,
         msg: Vec<u8>,
         collaboration: &mut Collaboration,
     ) -> Result<bool, BitVMXError> {
         match self.process_message_common(
-            identifier, program_id, version, &msg_type, &data, timestamp, signature, &address, msg,
+            peer_identifier,
+            program_id,
+            version,
+            &msg_type,
+            &data,
+            timestamp,
+            signature,
+            &peer_address,
+            msg,
         )? {
             Some(result) => Ok(result), // Verification message processed or needs buffering
             None => {
                 // Step 3: Process normal messages (non-verification)
                 collaboration.process_comms_message(
-                    address,
+                    peer_address,
                     msg_type,
                     data,
                     &self.program_context,
@@ -428,7 +457,7 @@ impl BitVMX {
         let mut message_consumed = false;
 
         if let Some(mut program) = self.load_program(&program_id).ok() {
-            let address = program.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
+            let peer_address = program.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
 
             message_consumed = self.process_program_message(
                 &identifier,
@@ -438,12 +467,12 @@ impl BitVMX {
                 data,
                 timestamp,
                 &signature,
-                address,
+                peer_address,
                 msg,
                 &mut program,
             )?;
         } else if let Some(mut collaboration) = self.get_collaboration(&program_id)? {
-            let comms_address =
+            let peer_address =
                 collaboration.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
 
             message_consumed = self.process_collaboration_message(
@@ -454,7 +483,7 @@ impl BitVMX {
                 data,
                 timestamp,
                 &signature,
-                comms_address,
+                peer_address,
                 msg,
                 &mut collaboration,
             )?;
