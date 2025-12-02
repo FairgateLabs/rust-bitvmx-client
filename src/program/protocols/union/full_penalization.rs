@@ -36,8 +36,9 @@ use crate::{
                     OP_DISABLER_DIRECTORY_UTXO, OP_DISABLER_TX, OP_INITIAL_DEPOSIT_AMOUNT,
                     OP_INITIAL_DEPOSIT_OUT_SCRIPT, OP_INITIAL_DEPOSIT_TX, OP_INITIAL_DEPOSIT_TXID,
                     OP_LAZY_DISABLER_TX, REIMBURSEMENT_KICKOFF_TX, SPEEDUP_VALUE,
-                    WT_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO, WT_DISABLER_DIRECTORY_TX,
-                    WT_DISABLER_TX, WT_START_ENABLER_TX, WT_START_ENABLER_UTXOS,
+                    WT_CLAIM_GATE_SUCCESS, WT_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO,
+                    WT_DISABLER_DIRECTORY_TX, WT_DISABLER_TX, WT_START_ENABLER_TX,
+                    WT_START_ENABLER_UTXOS,
                 },
             },
         },
@@ -256,9 +257,11 @@ impl FullPenalizationProtocol {
     fn create_operator_disabler(
         &self,
         protocol: &mut protocol_builder::builder::Protocol,
+        context: &ProgramContext,
+        committee_id: Uuid,
         committee: &Committee,
-        operator_index: usize,
-        watchtower_index: usize,
+        op_index: usize,
+        wt_index: usize,
         initial_deposit_name: &str,
         disabler_directory_utxo: &PartialUtxo,
         take_enablers: &Vec<PartialUtxo>,
@@ -267,7 +270,17 @@ impl FullPenalizationProtocol {
     ) -> Result<(), BitVMXError> {
         let packet_size = committee.packet_size;
         let op_disabler_directory_name =
-            double_indexed_name(OP_DISABLER_DIRECTORY_TX, operator_index, watchtower_index);
+            double_indexed_name(OP_DISABLER_DIRECTORY_TX, op_index, wt_index);
+
+        let wt_claim_success_name = double_indexed_name(WT_CLAIM_GATE_SUCCESS, wt_index, op_index);
+        let wt_claim_success_utxo =
+            self.wt_claim_success_utxo(context, committee, committee_id, wt_index, op_index)?;
+
+        create_transaction_reference(
+            protocol,
+            &wt_claim_success_name,
+            &mut vec![wt_claim_success_utxo.clone()],
+        )?;
 
         // Input to disabler directory from initial deposit UTXO
         protocol.add_connection(
@@ -285,12 +298,25 @@ impl FullPenalizationProtocol {
             Some(disabler_directory_utxo.0),
         )?;
 
-        // TODO: Add input to OP DISABLER DIRECTORY from dispute channel when available
+        protocol.add_connection(
+            "wt_success",
+            &wt_claim_success_name,
+            (wt_claim_success_utxo.1 as usize).into(),
+            &op_disabler_directory_name,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            Some(wt_claim_success_utxo.0),
+        )?;
 
         for slot_index in 0..packet_size as usize {
             // Create operator disabler for each slot
             let op_disabler_name =
-                triple_indexed_name(OP_DISABLER_TX, operator_index, watchtower_index, slot_index);
+                triple_indexed_name(OP_DISABLER_TX, op_index, wt_index, slot_index);
 
             let initial_deposit_utxo = &initial_deposit_utxos[slot_index];
 
@@ -337,12 +363,8 @@ impl FullPenalizationProtocol {
 
             // Create Lazy Operator disablers
             // Operator take transaction data
-            let op_lazy_disabler_name = triple_indexed_name(
-                OP_LAZY_DISABLER_TX,
-                operator_index,
-                watchtower_index,
-                slot_index,
-            );
+            let op_lazy_disabler_name =
+                triple_indexed_name(OP_LAZY_DISABLER_TX, op_index, wt_index, slot_index);
             let take_enabler = take_enablers[slot_index].clone();
 
             debug!(
@@ -352,7 +374,7 @@ impl FullPenalizationProtocol {
             // Connect REIMBURSEMENT KICKOFF to OP LAZY DISABLER
             protocol.add_connection(
                 "reimbursement_kickoff_conn",
-                &double_indexed_name(REIMBURSEMENT_KICKOFF_TX, operator_index, slot_index),
+                &double_indexed_name(REIMBURSEMENT_KICKOFF_TX, op_index, slot_index),
                 (take_enabler.1 as usize).into(),
                 &op_lazy_disabler_name,
                 InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
@@ -400,10 +422,7 @@ impl FullPenalizationProtocol {
         // Probably it's not needed to speedup DISABLER DIRECTORY due to OP DISABLER pay a lot of fees.
         protocol.add_transaction_output(
             &op_disabler_directory_name,
-            &OutputType::segwit_key(
-                SPEEDUP_VALUE,
-                &committee.members[watchtower_index].dispute_key,
-            )?,
+            &OutputType::segwit_key(SPEEDUP_VALUE, &committee.members[wt_index].dispute_key)?,
         )?;
 
         Ok(())
@@ -663,6 +682,8 @@ impl FullPenalizationProtocol {
 
                 self.create_operator_disabler(
                     protocol,
+                    context,
+                    data.committee_id,
                     &committee,
                     operator_index,
                     watchtower_index,
