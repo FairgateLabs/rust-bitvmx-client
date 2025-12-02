@@ -30,7 +30,7 @@ use crate::{
         PROGRAM_TYPE_FULL_PENALIZATION,
     },
 };
-use bitcoin::{Amount, OutPoint, PublicKey, Transaction, Txid};
+use bitcoin::{Amount, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use core::result::Result::Ok;
 use key_manager::winternitz::{WinternitzPublicKey, WinternitzType};
@@ -77,6 +77,111 @@ const OP_COSIGN_TX_TIMELOCK_LEAF: usize = 0;
 
 const WT_INIT_CHALLENGE_WT_STOPPER_VOUT: u32 = 3;
 const WT_INIT_CHALLENGE_OP_STOPPER_VOUT: u32 = 5;
+
+enum DisputeCoreTxType {
+    WtStartEnabler,
+    ProtocolFunding,
+    OperatorDisablerDirectory {
+        wt_index: usize,
+        op_index: usize,
+    },
+    WatchtowerDisablerDirectory {
+        wt_index: usize,
+        op_index: usize,
+    },
+    OperatorTake {
+        op_index: usize,
+        slot_index: usize,
+        block_height: Option<u32>,
+    },
+    Challenge {
+        slot_index: usize,
+        block_height: Option<u32>,
+    },
+    WatchtowerNoChallenge {
+        wt_index: usize,
+        op_index: usize,
+        block_height: Option<u32>,
+    },
+    OperatorNoCosign {
+        wt_index: usize,
+        op_index: usize,
+        block_height: Option<u32>,
+    },
+    OperatorCosign {
+        wt_index: usize,
+        op_index: usize,
+    },
+    RevealInput {
+        slot_index: usize,
+    },
+    InputNotRevealed {
+        slot_index: usize,
+        block_height: Option<u32>,
+    },
+    TwoDisputePenalization {
+        slot_index_prev: usize,
+        slot_index_curr: usize,
+    },
+}
+
+impl DisputeCoreTxType {
+    pub fn tx_name(&self) -> String {
+        match self {
+            DisputeCoreTxType::WtStartEnabler => WT_START_ENABLER_TX.to_string(),
+            DisputeCoreTxType::ProtocolFunding => PROTOCOL_FUNDING_TX.to_string(),
+            DisputeCoreTxType::OperatorDisablerDirectory { wt_index, op_index } => {
+                double_indexed_name(OP_DISABLER_DIRECTORY_TX, *wt_index, *op_index)
+            }
+            DisputeCoreTxType::WatchtowerDisablerDirectory { wt_index, op_index } => {
+                double_indexed_name(WT_DISABLER_DIRECTORY_TX, *wt_index, *op_index)
+            }
+            DisputeCoreTxType::OperatorTake { op_index, .. } => {
+                indexed_name(OPERATOR_TAKE_TX, *op_index)
+            }
+            DisputeCoreTxType::Challenge { slot_index, .. } => {
+                indexed_name(CHALLENGE_TX, *slot_index)
+            }
+            DisputeCoreTxType::WatchtowerNoChallenge {
+                wt_index, op_index, ..
+            } => double_indexed_name(WT_NO_CHALLENGE_TX, *wt_index, *op_index),
+            DisputeCoreTxType::OperatorNoCosign {
+                wt_index, op_index, ..
+            } => double_indexed_name(OP_NO_COSIGN_TX, *wt_index, *op_index),
+            DisputeCoreTxType::OperatorCosign { wt_index, op_index } => {
+                double_indexed_name(OP_COSIGN_TX, *wt_index, *op_index)
+            }
+            DisputeCoreTxType::RevealInput { slot_index } => {
+                indexed_name(REVEAL_INPUT_TX, *slot_index)
+            }
+            DisputeCoreTxType::InputNotRevealed { slot_index, .. } => {
+                indexed_name(INPUT_NOT_REVEALED_TX, *slot_index)
+            }
+            DisputeCoreTxType::TwoDisputePenalization {
+                slot_index_prev,
+                slot_index_curr,
+            } => {
+                let (min, max) = if slot_index_prev < slot_index_curr {
+                    (*slot_index_prev, *slot_index_curr)
+                } else {
+                    (*slot_index_curr, *slot_index_prev)
+                };
+                double_indexed_name(TWO_DISPUTE_PENALIZATION_TX, min, max)
+            }
+        }
+    }
+
+    pub fn block_height(&self) -> Option<u32> {
+        match self {
+            DisputeCoreTxType::OperatorTake { block_height, .. } => *block_height,
+            DisputeCoreTxType::Challenge { block_height, .. } => *block_height,
+            DisputeCoreTxType::WatchtowerNoChallenge { block_height, .. } => *block_height,
+            DisputeCoreTxType::OperatorNoCosign { block_height, .. } => *block_height,
+            DisputeCoreTxType::InputNotRevealed { block_height, .. } => *block_height,
+            _ => None,
+        }
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DisputeCoreProtocol {
@@ -431,10 +536,10 @@ impl ProtocolHandler for DisputeCoreProtocol {
 
         // Automatically get and dispatch the PROTOCOL_FUNDING_TX transaction
         if self.is_my_dispute_core(program_context)? {
-            self.dispatch_protocol_funding_tx(program_context)?;
+            self.dispatch(program_context, DisputeCoreTxType::ProtocolFunding)?;
 
             // TODO: Dispatched it here, but it should be dispatched just when needed (challenge case)
-            self.dispatch_wt_start_enabler_tx(program_context)?;
+            self.dispatch(program_context, DisputeCoreTxType::WtStartEnabler)?;
         } else {
             info!(
                 id = self.ctx.my_idx,
@@ -1408,43 +1513,6 @@ impl DisputeCoreProtocol {
         Ok(committee.members[data.member_index].take_key)
     }
 
-    fn dispatch_challenge_tx(
-        &self,
-        slot_id: usize,
-        context: &ProgramContext,
-        reimbursement_txid: Txid,
-        tx_status: &TransactionStatus,
-        settings: &StreamSettings,
-    ) -> Result<(), BitVMXError> {
-        let tx_name = indexed_name(CHALLENGE_TX, slot_id);
-        info!("Dispatching {}", tx_name);
-
-        let (mut challenge_tx, speedup) = self.challenge_tx(&tx_name, context)?;
-        let challenge_txid = challenge_tx.compute_txid();
-
-        // Connect the challenge transaction to the reimbursement kickoff transaction
-        if !challenge_tx.input.is_empty() {
-            challenge_tx.input[0].previous_output = OutPoint {
-                txid: reimbursement_txid,
-                vout: 0,
-            };
-        }
-
-        context.bitcoin_coordinator.dispatch(
-            challenge_tx,
-            speedup,
-            format!("dispute_core_challenge_{}:{}", self.ctx.id, tx_name), // Context string
-            Some(self.get_dispatch_height(tx_status, settings.short_timelock)?), // Dispatch after short timelock
-        )?;
-
-        info!(
-            "{} connected to reimbursement tx {} scheduled with txid: {}",
-            tx_name, reimbursement_txid, challenge_txid
-        );
-
-        Ok(())
-    }
-
     fn get_selected_operator_key(
         &self,
         slot_id: usize,
@@ -1530,11 +1598,9 @@ impl DisputeCoreProtocol {
                 "Claim stopped for watchtower: {}", wt_index
             );
         } else if tx_name.ends_with(CLAIM_GATE_SUCCESS) {
-            self.dispatch_disabler_directory_tx(
+            self.dispatch(
                 context,
-                OP_DISABLER_DIRECTORY_TX,
-                wt_index,
-                op_index,
+                DisputeCoreTxType::OperatorDisablerDirectory { wt_index, op_index },
             )?;
         } else {
             error!(
@@ -1643,11 +1709,9 @@ impl DisputeCoreProtocol {
                 "Claim stopped for operator: {}", op_index
             );
         } else if tx_name.ends_with(CLAIM_GATE_SUCCESS) {
-            self.dispatch_disabler_directory_tx(
+            self.dispatch(
                 context,
-                WT_DISABLER_DIRECTORY_TX,
-                wt_index,
-                op_index,
+                DisputeCoreTxType::WatchtowerDisablerDirectory { wt_index, op_index },
             )?;
         } else {
             error!(
@@ -1791,38 +1855,20 @@ impl DisputeCoreProtocol {
                 txid
             );
         } else {
-            let blocks = self.get_dispatch_height(tx_status, settings.wt_no_challenge_timelock)?;
+            let block_height =
+                Some(self.get_dispatch_height(tx_status, settings.wt_no_challenge_timelock)?);
+            let data = self.dispute_core_data(context)?;
 
-            self.dispatch_wt_no_challenge(context, op_index, Some(blocks))?;
+            self.dispatch(
+                context,
+                DisputeCoreTxType::WatchtowerNoChallenge {
+                    wt_index: data.member_index,
+                    op_index,
+                    block_height,
+                },
+            )?;
         }
 
-        Ok(())
-    }
-
-    fn dispatch_wt_no_challenge(
-        &self,
-        context: &ProgramContext,
-        op_index: usize,
-        blocks: Option<u32>,
-    ) -> Result<(), BitVMXError> {
-        let data = self.dispute_core_data(context)?;
-        let tx_name = double_indexed_name(WT_NO_CHALLENGE_TX, data.member_index, op_index);
-        info!(id = self.ctx.my_idx, "Auto-dispatching {}", tx_name);
-
-        let (tx, speedup) = self.wt_no_challenge_tx(&tx_name)?;
-        let txid = tx.compute_txid();
-
-        context.bitcoin_coordinator.dispatch(
-            tx,
-            speedup,
-            format!("dispute_core_wt_no_challenge_{}:{}", self.ctx.id, tx_name),
-            blocks,
-        )?;
-
-        info!(
-            id = self.ctx.my_idx,
-            "{} scheduled with txid: {}", tx_name, txid
-        );
         Ok(())
     }
 
@@ -1867,14 +1913,29 @@ impl DisputeCoreProtocol {
         info!(id = self.ctx.my_idx, "Handling {}", tx_name);
 
         let settings = self.load_stream_setting(context)?;
+        let data = self.dispute_core_data(context)?;
 
         let (_, op_index) = extract_double_index(tx_name)?;
         if self.is_my_dispute_core(context)? {
-            let blocks = self.get_dispatch_height(tx_status, settings.op_no_cosign_timelock)?;
-            self.dispatch_op_no_cosign_tx(context, op_index, Some(blocks))?;
+            let block_height =
+                Some(self.get_dispatch_height(tx_status, settings.op_no_cosign_timelock)?);
+            self.dispatch(
+                context,
+                DisputeCoreTxType::OperatorNoCosign {
+                    wt_index: data.member_index,
+                    op_index,
+                    block_height,
+                },
+            )?;
         } else {
             if op_index == self.ctx.my_idx {
-                self.dispatch_op_cosign_tx(context)?;
+                self.dispatch(
+                    context,
+                    DisputeCoreTxType::OperatorCosign {
+                        wt_index: data.member_index,
+                        op_index,
+                    },
+                )?;
             } else {
                 info!(
                     id = self.ctx.my_idx,
@@ -1885,33 +1946,6 @@ impl DisputeCoreProtocol {
             }
         }
 
-        Ok(())
-    }
-
-    fn dispatch_op_no_cosign_tx(
-        &self,
-        context: &ProgramContext,
-        op_index: usize,
-        blocks: Option<u32>,
-    ) -> Result<(), BitVMXError> {
-        let data = self.dispute_core_data(context)?;
-        let tx_name = double_indexed_name(OP_NO_COSIGN_TX, data.member_index, op_index);
-        info!(id = self.ctx.my_idx, "Auto-dispatching {}", tx_name);
-
-        let (tx, speedup) = self.op_no_cosign_tx(&tx_name)?;
-        let txid = tx.compute_txid();
-
-        context.bitcoin_coordinator.dispatch(
-            tx,
-            speedup,
-            format!("dispute_core_op_no_cosign_{}:{}", self.ctx.id, tx_name),
-            blocks,
-        )?;
-
-        info!(
-            id = self.ctx.my_idx,
-            "{} scheduled with txid: {}", tx_name, txid
-        );
         Ok(())
     }
 
@@ -1945,31 +1979,6 @@ impl DisputeCoreProtocol {
         info!(id = self.ctx.my_idx, "Signed {}", name);
 
         Ok((tx, None))
-    }
-
-    fn dispatch_op_cosign_tx(&self, context: &ProgramContext) -> Result<(), BitVMXError> {
-        let data = self.dispute_core_data(context)?;
-        let tx_name = double_indexed_name(OP_COSIGN_TX, data.member_index, self.ctx.my_idx);
-        info!(
-            id = self.ctx.my_idx,
-            "Auto-dispatching {} for member index: {}", tx_name, self.ctx.my_idx
-        );
-
-        let (tx, speedup) = self.op_cosign_tx(&tx_name, context)?;
-        let txid = tx.compute_txid();
-
-        context.bitcoin_coordinator.dispatch(
-            tx,
-            speedup,
-            format!("dispute_core_op_cosign_{}:{}", self.ctx.id, tx_name),
-            None,
-        )?;
-
-        info!(
-            id = self.ctx.my_idx,
-            "{} dispatched with txid: {}", tx_name, txid
-        );
-        Ok(())
     }
 
     fn op_cosign_tx(
@@ -2099,44 +2108,22 @@ impl DisputeCoreProtocol {
                 "This is my dispute_core, checking for operator take dispatch for slot {}",
                 slot_index
             );
-            self.dispatch_reveal_tx(context, slot_index)?;
+            self.dispatch(context, DisputeCoreTxType::RevealInput { slot_index })?;
         } else {
             // Schedule input not revealed dispatch transaction
             let settings = self.load_stream_setting(context)?;
-            let blocks =
+            let block_height =
                 Some(self.get_dispatch_height(tx_status, settings.input_not_revealed_timelock)?);
 
-            self.dispatch_input_not_revealed_tx(context, slot_index, blocks)?;
+            self.dispatch(
+                context,
+                DisputeCoreTxType::InputNotRevealed {
+                    slot_index,
+                    block_height,
+                },
+            )?;
         }
 
-        Ok(())
-    }
-
-    fn dispatch_reveal_tx(
-        &self,
-        context: &ProgramContext,
-        slot_index: usize,
-    ) -> Result<(), BitVMXError> {
-        let tx_name = indexed_name(REVEAL_INPUT_TX, slot_index);
-        info!(
-            id = self.ctx.my_idx,
-            "Auto-dispatching {} for slot index: {}", tx_name, slot_index
-        );
-
-        let (tx, speedup) = self.reveal_input_tx(&tx_name, context, slot_index)?;
-        let txid = tx.compute_txid();
-
-        context.bitcoin_coordinator.dispatch(
-            tx,
-            speedup,
-            format!("dispute_core_reveal_input_{}:{}", self.ctx.id, tx_name),
-            None,
-        )?;
-
-        info!(
-            id = self.ctx.my_idx,
-            "{} dispatch with txid: {}", tx_name, txid
-        );
         Ok(())
     }
 
@@ -2189,38 +2176,6 @@ impl DisputeCoreProtocol {
         );
 
         Ok((tx, Some(speedup_utxo.into())))
-    }
-
-    fn dispatch_input_not_revealed_tx(
-        &self,
-        context: &ProgramContext,
-        slot_index: usize,
-        blocks: Option<u32>,
-    ) -> Result<(), BitVMXError> {
-        let tx_name = indexed_name(INPUT_NOT_REVEALED_TX, slot_index);
-        info!(
-            id = self.ctx.my_idx,
-            "Auto-dispatching {} for slot index: {}", tx_name, slot_index
-        );
-
-        let (tx, speedup) = self.input_not_revealed_tx(&tx_name, context)?;
-        let txid = tx.compute_txid();
-
-        context.bitcoin_coordinator.dispatch(
-            tx,
-            speedup,
-            format!(
-                "dispute_core_input_not_revealed_{}:{}",
-                self.ctx.id, tx_name
-            ),
-            blocks,
-        )?;
-
-        info!(
-            id = self.ctx.my_idx,
-            "{} scheduled with txid: {}", tx_name, txid
-        );
-        Ok(())
     }
 
     fn input_not_revealed_tx(
@@ -2277,10 +2232,12 @@ impl DisputeCoreProtocol {
                 slot_index
             );
 
-            self.dispatch_two_dispute_penalization_tx(
+            self.dispatch(
                 context,
-                reveal_in_progress.unwrap() as usize,
-                slot_index,
+                DisputeCoreTxType::TwoDisputePenalization {
+                    slot_index_prev: reveal_in_progress.unwrap() as usize,
+                    slot_index_curr: slot_index,
+                },
             )?;
 
             info!(id = self.ctx.my_idx, "Cleaning REVEAL_IN_PROGRESS");
@@ -2291,37 +2248,6 @@ impl DisputeCoreProtocol {
 
             return Ok(true);
         }
-    }
-
-    fn dispatch_two_dispute_penalization_tx(
-        &self,
-        context: &ProgramContext,
-        slot_index_prev: usize,
-        slot_index_last: usize,
-    ) -> Result<(), BitVMXError> {
-        // Get the signed transaction
-        let (tx, speedup, name) =
-            self.two_dispute_penalization_tx(slot_index_prev, slot_index_last)?;
-        let txid = tx.compute_txid();
-
-        info!(
-            id = self.ctx.my_idx,
-            "Auto-dispatching {} txid: {}", name, txid
-        );
-
-        // Dispatch the transaction through the bitcoin coordinator
-        context.bitcoin_coordinator.dispatch(
-            tx,
-            speedup,
-            format!("dispute_core_{}:{}", self.ctx.id, name), // Context string
-            None,                                             // Dispatch immediately
-        )?;
-
-        info!(
-            id = self.ctx.my_idx,
-            "{} dispatched successfully with txid: {}", name, txid
-        );
-        Ok(())
     }
 
     fn two_dispute_penalization_tx(
@@ -2386,7 +2312,14 @@ impl DisputeCoreProtocol {
             if tx_status.confirmations == 1 {
                 let block_height =
                     self.get_dispatch_height(tx_status, settings.long_timelock + 1)?;
-                self.dispatch_operator_take_tx(context, slot_index, block_height)?;
+                self.dispatch(
+                    context,
+                    DisputeCoreTxType::OperatorTake {
+                        op_index: self.ctx.my_idx,
+                        slot_index,
+                        block_height: Some(block_height),
+                    },
+                )?;
             } else {
                 info!(
                     id = self.ctx.my_idx,
@@ -2415,8 +2348,15 @@ impl DisputeCoreProtocol {
                             "Unauthorized operator detected for slot {}, dispatching Challenge Tx",
                             slot_index
                         );
-                        self.dispatch_challenge_tx(
-                            slot_index, context, tx_id, tx_status, &settings,
+                        self.dispatch(
+                            context,
+                            DisputeCoreTxType::Challenge {
+                                slot_index,
+                                block_height: Some(self.get_dispatch_height(
+                                    tx_status,
+                                    self.load_stream_setting(context)?.short_timelock,
+                                )?),
+                            },
                         )?;
                     } else {
                         info!("Authorized operator confirmed for slot {}", slot_index);
@@ -2426,7 +2366,16 @@ impl DisputeCoreProtocol {
                 None => {
                     info!("No selected operator key found for slot {}", slot_index);
                     // If no selected operator key is set, it means that someone triggered a reimbursment kickoff transaction but there was no advances of funds
-                    self.dispatch_challenge_tx(slot_index, context, tx_id, tx_status, &settings)?;
+                    self.dispatch(
+                        context,
+                        DisputeCoreTxType::Challenge {
+                            slot_index,
+                            block_height: Some(self.get_dispatch_height(
+                                tx_status,
+                                self.load_stream_setting(context)?.short_timelock,
+                            )?),
+                        },
+                    )?;
                 }
             }
         }
@@ -2434,32 +2383,83 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn dispatch_wt_start_enabler_tx(&self, context: &ProgramContext) -> Result<(), BitVMXError> {
-        let tx_name = WT_START_ENABLER_TX;
+    fn dispatch(
+        &self,
+        context: &ProgramContext,
+        tx_type: DisputeCoreTxType,
+    ) -> Result<(), BitVMXError> {
+        let tx_name = tx_type.tx_name();
         info!(
             id = self.ctx.my_idx,
-            "Dispatching {} tx from protocol {}", tx_name, self.ctx.id
+            "Dispatch {} from protocol {}", tx_name, self.ctx.id
         );
 
-        // Get the signed transaction
-        let (tx, speedup) = self.wt_start_enabler_tx(context)?;
+        let (tx, speedup) = match tx_type {
+            DisputeCoreTxType::WtStartEnabler => self.wt_start_enabler_tx(context)?,
+            DisputeCoreTxType::ProtocolFunding => self.protocol_funding_tx(context)?,
+            DisputeCoreTxType::OperatorDisablerDirectory { .. } => {
+                let dispute_core_data: DisputeCoreData = self.dispute_core_data(context)?;
+                let protocol = self.load_protocol_by_name(
+                    PROGRAM_TYPE_FULL_PENALIZATION,
+                    get_full_penalization_pid(dispute_core_data.committee_id),
+                )?;
+                protocol.get_transaction_by_name(&tx_name, context)?
+            }
+            DisputeCoreTxType::WatchtowerDisablerDirectory { .. } => {
+                let dispute_core_data: DisputeCoreData = self.dispute_core_data(context)?;
+                let protocol = self.load_protocol_by_name(
+                    PROGRAM_TYPE_FULL_PENALIZATION,
+                    get_full_penalization_pid(dispute_core_data.committee_id),
+                )?;
+                protocol.get_transaction_by_name(&tx_name, context)?
+            }
+            DisputeCoreTxType::OperatorTake { slot_index, .. } => {
+                let dispute_core_data: DisputeCoreData = self.dispute_core_data(context)?;
+                let accept_pegin_pid =
+                    get_accept_pegin_pid(dispute_core_data.committee_id, slot_index);
+                self.save_operator_leaf_index(context, accept_pegin_pid)?;
+                let protocol =
+                    self.load_protocol_by_name(PROGRAM_TYPE_ACCEPT_PEGIN, accept_pegin_pid)?;
+
+                protocol.get_transaction_by_name(&tx_name, context)?
+            }
+            DisputeCoreTxType::Challenge { .. } => self.challenge_tx(&tx_name.clone(), context)?,
+            DisputeCoreTxType::WatchtowerNoChallenge { .. } => self.wt_no_challenge_tx(&tx_name)?,
+            DisputeCoreTxType::OperatorNoCosign { .. } => self.op_no_cosign_tx(&tx_name)?,
+            DisputeCoreTxType::OperatorCosign { .. } => self.op_cosign_tx(&tx_name, context)?,
+            DisputeCoreTxType::RevealInput { slot_index } => {
+                self.reveal_input_tx(&tx_name, context, slot_index)?
+            }
+            DisputeCoreTxType::InputNotRevealed { .. } => {
+                self.input_not_revealed_tx(&tx_name, context)?
+            }
+            DisputeCoreTxType::TwoDisputePenalization {
+                slot_index_prev,
+                slot_index_curr,
+                ..
+            } => {
+                let (tx, speedup, _) =
+                    self.two_dispute_penalization_tx(slot_index_prev, slot_index_curr)?;
+                (tx, speedup)
+            }
+        };
+
         let txid = tx.compute_txid();
-        info!(
-            id = self.ctx.my_idx,
-            "Auto-dispatching {} transaction: {}", tx_name, txid
-        );
 
         // Dispatch the transaction through the bitcoin coordinator
         context.bitcoin_coordinator.dispatch(
             tx,
             speedup,
-            format!("dispute_core_setup_{}:{}", self.ctx.id, tx_name), // Context string
-            None,                                                      // Dispatch immediately
+            format!("dispute_core_{}:{}", self.ctx.id, tx_name),
+            tx_type.block_height(),
         )?;
 
         info!(
             id = self.ctx.my_idx,
-            "{} dispatched successfully with txid: {}", tx_name, txid
+            "{} {} successfully with txid: {}",
+            tx_name,
+            get_dispatch_action(tx_type.block_height()),
+            txid
         );
 
         Ok(())
@@ -2499,109 +2499,9 @@ impl DisputeCoreProtocol {
         Ok((tx, Some(speedup_utxo.into())))
     }
 
-    fn dispatch_protocol_funding_tx(
-        &self,
-        program_context: &ProgramContext,
-    ) -> Result<(), BitVMXError> {
-        let tx_name = PROTOCOL_FUNDING_TX;
-        info!(
-            id = self.ctx.my_idx,
-            "Dispatching {} tx from protocol {}", tx_name, self.ctx.id
-        );
-
-        // Get the signed transaction
-        let (tx, speedup) = self.protocol_funding_tx(program_context)?;
-        let txid = tx.compute_txid();
-        info!(
-            id = self.ctx.my_idx,
-            "Auto-dispatching {} transaction: {}", tx_name, txid
-        );
-
-        // Dispatch the transaction through the bitcoin coordinator
-        program_context.bitcoin_coordinator.dispatch(
-            tx,
-            speedup,
-            format!("dispute_core_setup_{}:{}", self.ctx.id, tx_name), // Context string
-            None,                                                      // Dispatch immediately
-        )?;
-
-        info!(
-            id = self.ctx.my_idx,
-            "{} dispatched successfully with txid: {}", tx_name, txid
-        );
-
-        Ok(())
-    }
-
     fn is_my_dispute_core(&self, program_context: &ProgramContext) -> Result<bool, BitVMXError> {
         let dispute_core_data = self.dispute_core_data(program_context)?;
         Ok(dispute_core_data.member_index == self.ctx.my_idx)
-    }
-
-    fn dispatch_disabler_directory_tx(
-        &self,
-        context: &ProgramContext,
-        prefix: &str,
-        wt_index: usize,
-        op_index: usize,
-    ) -> Result<(), BitVMXError> {
-        let tx_name = double_indexed_name(prefix, wt_index, op_index);
-        info!(id = self.ctx.my_idx, "Dispatching {} ", tx_name);
-
-        let dispute_core_data: DisputeCoreData = self.dispute_core_data(context)?;
-        let full_penalization_pid = get_full_penalization_pid(dispute_core_data.committee_id);
-
-        let protocol =
-            self.load_protocol_by_name(PROGRAM_TYPE_FULL_PENALIZATION, full_penalization_pid)?;
-
-        let (tx, speedup) = protocol.get_transaction_by_name(&tx_name, context)?;
-        let txid = tx.compute_txid();
-
-        context
-            .bitcoin_coordinator
-            .dispatch(tx, speedup, tx_name.clone(), None)?;
-
-        info!(
-            id = self.ctx.my_idx,
-            "{} dispatched with txid: {}", tx_name, txid
-        );
-
-        Ok(())
-    }
-
-    fn dispatch_operator_take_tx(
-        &self,
-        context: &ProgramContext,
-        slot_index: usize,
-        block_height: u32,
-    ) -> Result<(), BitVMXError> {
-        let tx_name = indexed_name(OPERATOR_TAKE_TX, self.ctx.my_idx);
-        info!(
-            id = self.ctx.my_idx,
-            "Dispatching {} tx for slot: {}", tx_name, slot_index
-        );
-
-        let dispute_core_data: DisputeCoreData = self.dispute_core_data(context)?;
-        let accept_pegin_pid = get_accept_pegin_pid(dispute_core_data.committee_id, slot_index);
-        self.save_operator_leaf_index(context, accept_pegin_pid)?;
-        let protocol = self.load_protocol_by_name(PROGRAM_TYPE_ACCEPT_PEGIN, accept_pegin_pid)?;
-
-        let (tx, speedup) = protocol.get_transaction_by_name(&tx_name, context)?;
-        let txid = tx.compute_txid();
-
-        context.bitcoin_coordinator.dispatch(
-            tx,
-            speedup,
-            tx_name.clone(),
-            Some(block_height), // Dispatch immediately with input args
-        )?;
-
-        info!(
-            id = self.ctx.my_idx,
-            "{} scheduled for slot: {} with txid: {}", tx_name, slot_index, txid
-        );
-
-        Ok(())
     }
 
     fn save_operator_leaf_index(
