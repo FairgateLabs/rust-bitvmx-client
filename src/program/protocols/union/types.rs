@@ -41,7 +41,10 @@ pub const OP_DISABLER_DIRECTORY_TX: &str = "OP_DISABLER_DIRECTORY_TX";
 pub const WT_DISABLER_DIRECTORY_TX: &str = "WT_DISABLER_DIRECTORY_TX";
 pub const FUNDING_TX: &str = "FUNDING_TX";
 pub const WT_START_ENABLER_TX: &str = "WT_START_ENABLER_TX";
+pub const WT_INIT_CHALLENGE_TX: &str = "WT_INIT_CHALLENGE_TX";
 pub const PROTOCOL_FUNDING_TX: &str = "PROTOCOL_FUNDING_TX";
+pub const WT_CLAIM_GATE: &str = "WT_CLAIM_GATE";
+pub const OP_CLAIM_GATE: &str = "OP_CLAIM_GATE";
 
 // Parameters
 pub const DUST_VALUE: u64 = 540;
@@ -223,6 +226,8 @@ pub struct StreamSettings {
     pub short_timelock: u16,
     pub long_timelock: u16,
     pub op_won_timelock: u16,
+    pub claim_gate_timelock: u16,
+    pub input_not_revealed_timelock: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
