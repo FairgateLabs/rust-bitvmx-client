@@ -1,5 +1,5 @@
 use core::convert::Into;
-use std::collections::HashMap;
+use std::{collections::HashMap, vec};
 
 use bitcoin::{Amount, PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
@@ -30,15 +30,17 @@ use crate::{
                     load_union_settings, triple_indexed_name,
                 },
                 types::{
-                    Committee, FullPenalizationData, StreamSettings, DISPUTE_AGGREGATED_KEY,
-                    DUST_VALUE, OPERATOR_TAKE_ENABLER, OPERATOR_WON_ENABLER, OP_CLAIM_GATE_SUCCESS,
+                    Committee, FullPenalizationData, StreamSettings, CLAIM_GATE_STOPPER_UTXOS,
+                    DISPUTE_AGGREGATED_KEY, DUST_VALUE, OPERATOR_TAKE_ENABLER,
+                    OPERATOR_WON_ENABLER, OP_CLAIM_GATE_SUCCESS,
                     OP_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO, OP_DISABLER_DIRECTORY_TX,
                     OP_DISABLER_DIRECTORY_UTXO, OP_DISABLER_TX, OP_INITIAL_DEPOSIT_AMOUNT,
                     OP_INITIAL_DEPOSIT_OUT_SCRIPT, OP_INITIAL_DEPOSIT_TX, OP_INITIAL_DEPOSIT_TXID,
                     OP_LAZY_DISABLER_TX, REIMBURSEMENT_KICKOFF_TX, REVEAL_INPUT_TX, SPEEDUP_VALUE,
                     STOP_OP_WON_TX, WT_CLAIM_GATE_SUCCESS,
                     WT_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO, WT_DISABLER_DIRECTORY_TX,
-                    WT_DISABLER_TX, WT_START_ENABLER_TX, WT_START_ENABLER_UTXOS,
+                    WT_DISABLER_DIRECTORY_UTXO, WT_DISABLER_TX, WT_INIT_CHALLENGE_TX,
+                    WT_START_ENABLER_TX,
                 },
             },
         },
@@ -239,18 +241,18 @@ impl FullPenalizationProtocol {
         Ok(scripts)
     }
 
-    fn wt_start_enabler_utxos(
+    fn claim_gate_stopper_utxos(
         &self,
         context: &ProgramContext,
         dispute_core_pid: Uuid,
-    ) -> Result<Vec<PartialUtxo>, BitVMXError> {
+    ) -> Result<Vec<Option<(PartialUtxo, PartialUtxo)>>, BitVMXError> {
         let data = context
             .globals
-            .get_var(&dispute_core_pid, &WT_START_ENABLER_UTXOS)?
+            .get_var(&dispute_core_pid, &CLAIM_GATE_STOPPER_UTXOS)?
             .unwrap()
             .string()?;
 
-        let utxos: Vec<PartialUtxo> = serde_json::from_str(&data)?;
+        let utxos: Vec<Option<(PartialUtxo, PartialUtxo)>> = serde_json::from_str(&data)?;
         Ok(utxos)
     }
 
@@ -513,7 +515,7 @@ impl FullPenalizationProtocol {
             .utxo()?)
     }
 
-    fn disabler_directory_utxo(
+    fn op_disabler_directory_utxo(
         &self,
         context: &ProgramContext,
         dispute_core_pid: Uuid,
@@ -521,6 +523,18 @@ impl FullPenalizationProtocol {
         Ok(context
             .globals
             .get_var(&dispute_core_pid, &OP_DISABLER_DIRECTORY_UTXO)?
+            .unwrap()
+            .utxo()?)
+    }
+
+    fn wt_disabler_directory_utxo(
+        &self,
+        context: &ProgramContext,
+        dispute_core_pid: Uuid,
+    ) -> Result<PartialUtxo, BitVMXError> {
+        Ok(context
+            .globals
+            .get_var(&dispute_core_pid, &WT_DISABLER_DIRECTORY_UTXO)?
             .unwrap()
             .utxo()?)
     }
@@ -799,7 +813,7 @@ impl FullPenalizationProtocol {
         let dispute_core_pid =
             get_dispute_core_pid(committee_id, &committee.members[operator_index].take_key);
 
-        let disabler_directory_utxo = self.disabler_directory_utxo(context, dispute_core_pid)?;
+        let disabler_directory_utxo = self.op_disabler_directory_utxo(context, dispute_core_pid)?;
 
         let amount = self.op_initial_deposit_amount(context, dispute_core_pid)?;
         let op_initial_deposit_txid = self.op_initial_deposit_txid(context, dispute_core_pid)?;
@@ -862,14 +876,43 @@ impl FullPenalizationProtocol {
             let dispute_core_pid =
                 get_dispute_core_pid(data.committee_id, &committee.members[wt_index].take_key);
 
-            let wt_start_enabler_utxos = self.wt_start_enabler_utxos(context, dispute_core_pid)?;
-            let wt_start_enabler_name = indexed_name(WT_START_ENABLER_TX, wt_index);
+            let claim_gate_stoppers = self.claim_gate_stopper_utxos(context, dispute_core_pid)?;
+            let disabler_directory_utxo =
+                self.wt_disabler_directory_utxo(context, dispute_core_pid)?;
 
             create_transaction_reference(
                 protocol,
-                &wt_start_enabler_name,
-                &mut wt_start_enabler_utxos.clone(),
+                &indexed_name(WT_START_ENABLER_TX, wt_index),
+                &mut vec![disabler_directory_utxo.clone()],
             )?;
+
+            let mut wt_stoppers = vec![];
+
+            // Create watchtower WT INIT CHALLENGE TX reference just once
+            for op_index in 0..member_count {
+                if wt_index == op_index
+                    || committee.members[op_index].role != ParticipantRole::Prover
+                {
+                    wt_stoppers.push(None);
+                    continue;
+                }
+                debug!(
+                    "Creating watchtower disabler for watchtower {} with member {}",
+                    wt_index, op_index
+                );
+
+                let wt_init_challenge_name =
+                    double_indexed_name(WT_INIT_CHALLENGE_TX, wt_index, op_index);
+
+                let wt_stopper = claim_gate_stoppers[op_index].clone().unwrap().0;
+                wt_stoppers.push(Some(wt_stopper.clone()));
+
+                create_transaction_reference(
+                    protocol,
+                    &wt_init_challenge_name,
+                    &mut vec![wt_stopper],
+                )?;
+            }
 
             for op_index in 0..member_count {
                 if wt_index == op_index
@@ -889,9 +932,8 @@ impl FullPenalizationProtocol {
                     &committee,
                     wt_index,
                     op_index,
-                    member_count,
-                    &wt_start_enabler_name,
-                    &wt_start_enabler_utxos,
+                    &wt_stoppers,
+                    &disabler_directory_utxo,
                 )?;
             }
         }
@@ -907,12 +949,12 @@ impl FullPenalizationProtocol {
         committee: &Committee,
         wt_index: usize,
         op_index: usize,
-        member_count: usize,
-        wt_start_enabler_name: &str,
-        wt_start_enabler_utxos: &Vec<PartialUtxo>,
+        wt_stoppers: &Vec<Option<PartialUtxo>>,
+        disabler_directory_utxo: &PartialUtxo,
     ) -> Result<(), BitVMXError> {
         let wt_disabler_directory_name =
             double_indexed_name(WT_DISABLER_DIRECTORY_TX, wt_index, op_index);
+
         let op_claim_success_name = double_indexed_name(OP_CLAIM_GATE_SUCCESS, wt_index, op_index);
         let op_claim_success_utxo =
             self.op_claim_success_utxo(context, committee, committee_id, wt_index, op_index)?;
@@ -923,12 +965,10 @@ impl FullPenalizationProtocol {
             &mut vec![op_claim_success_utxo.clone()],
         )?;
 
-        let disabler_directory_utxo = wt_start_enabler_utxos[member_count].clone();
-
         // Funds input to disabler directory from start enabler UTXO
         protocol.add_connection(
             "funds",
-            wt_start_enabler_name,
+            &indexed_name(WT_START_ENABLER_TX, wt_index),
             (disabler_directory_utxo.1 as usize).into(),
             &wt_disabler_directory_name,
             InputSpec::Auto(
@@ -956,22 +996,28 @@ impl FullPenalizationProtocol {
             Some(op_claim_success_utxo.0),
         )?;
 
-        for member_index in 0..member_count {
+        for member_index in 0..committee.members.len() {
+            if wt_stoppers[member_index].is_none() {
+                continue;
+            }
+
+            let wt_stopper = wt_stoppers[member_index].clone().unwrap();
+
             let wt_disabler_name =
                 triple_indexed_name(WT_DISABLER_TX, wt_index, op_index, member_index);
+            let wt_init_challenge_name =
+                &double_indexed_name(WT_INIT_CHALLENGE_TX, wt_index, member_index);
 
-            let utxo = wt_start_enabler_utxos[member_index].clone();
-
-            // Connection from start enabler to WT_DISABLER
+            // Connection from WT INIT CHALLENGE sttopper to WT_DISABLER
             protocol.add_connection(
-                "from_start_enabler",
-                wt_start_enabler_name,
-                (utxo.1 as usize).into(),
+                "from_stopper",
+                wt_init_challenge_name,
+                (wt_stopper.1 as usize).into(),
                 &wt_disabler_name,
-                // First script leaf is the disabler
+                // First script leaf verify aggregated key
                 InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
                 None,
-                Some(utxo.0),
+                Some(wt_stopper.0),
             )?;
 
             // Connection from disabler directory to WT_DISABLER

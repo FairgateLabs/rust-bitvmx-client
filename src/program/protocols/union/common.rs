@@ -7,7 +7,9 @@ use uuid::Uuid;
 use crate::{
     errors::BitVMXError,
     program::{
-        protocols::union::types::{StreamSettings, UnionSettings, GLOBAL_SETTINGS_UUID},
+        protocols::union::types::{
+            StreamSettings, UnionSettings, GLOBAL_SETTINGS_UUID, PAIRWISE_DISPUTE_KEY,
+        },
         variables::{PartialUtxo, VariableTypes},
     },
     types::ProgramContext,
@@ -82,6 +84,17 @@ pub fn get_dispute_pair_aggregated_key_pid(committee_id: Uuid, idx_a: usize, idx
 
     let hash = hasher.finalize();
     Uuid::from_bytes(hash[0..16].try_into().unwrap())
+}
+
+pub fn get_dispute_pair_key_name(idx_a: usize, idx_b: usize) -> String {
+    // Ensure canonical ordering (min, max) so both parties derive the same name.
+    let (min_i, max_i) = if idx_a <= idx_b {
+        (idx_a, idx_b)
+    } else {
+        (idx_b, idx_a)
+    };
+
+    double_indexed_name(PAIRWISE_DISPUTE_KEY, min_i, max_i)
 }
 
 // Deterministic id for a dispute-channel instance (directional): from_idx -> to_idx

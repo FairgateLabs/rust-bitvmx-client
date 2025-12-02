@@ -1,7 +1,6 @@
 use crate::setup::full_penalization_setup::FullPenalizationSetup;
 use crate::wallet::helper::print_link;
 use crate::{
-    macros::wait_for_message_blocking,
     setup::{
         accept_pegin_setup::AcceptPegInSetup, advance_funds_setup::AdvanceFunds,
         dispute_channel_setup::DisputeChannelSetup, dispute_core_setup::DisputeCoreSetup,
@@ -11,6 +10,7 @@ use crate::{
 };
 use anyhow::{Error, Result};
 use bitcoin::{address::NetworkUnchecked, Amount, PublicKey, ScriptBuf, Transaction, Txid};
+use bitvmx_client::program::protocols::union::common::get_dispute_pair_key_name;
 use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
@@ -213,11 +213,18 @@ impl Member {
             addresses,
         )?;
 
+        thread::sleep(std::time::Duration::from_secs(20 * total_setups as u64));
+
         for i in 0..total_setups {
             let program_id =
                 wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
             info!(id = self.id, program_id = ?program_id, "Dispute channel setup completed for operator index {}", i);
         }
+
+        info!(
+            id = self.id,
+            "Dispute channels {} setups completed", total_setups
+        );
         Ok(())
     }
 
@@ -414,6 +421,12 @@ impl Member {
             let aggregation_id =
                 get_dispute_pair_aggregated_key_pid(committee_id, my_index, partner_index);
             let pairwise_key = self.setup_key(aggregation_id, participants.to_vec(), None)?;
+
+            self.bitvmx.set_var(
+                committee_id,
+                &get_dispute_pair_key_name(my_index, partner_index),
+                VariableTypes::PubKey(pairwise_key.clone()),
+            )?;
 
             self.keyring
                 .pairwise_keys

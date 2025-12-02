@@ -25,7 +25,7 @@ use crate::participants::member::{FundingAmount, Member};
 use crate::wallet::helper::non_regtest_warning;
 
 const FUNDING_AMOUNT_PER_SLOT: u64 = 12_000; // an approximation in satoshis
-const DISPUTE_CHANNEL_FUNDING_PER_MEMBER: u64 = 540; // Output value that connect to dispute channel
+const DISPUTE_CHANNEL_FUNDING_PER_MEMBER: u64 = 50_000;
 pub const PACKET_SIZE: u32 = 3; // number of slots per packet
 const SPEED_UP_MIN_FUNDS: u64 = 30_000; // minimum speedup funds in satoshis
 

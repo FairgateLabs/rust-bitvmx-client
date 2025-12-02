@@ -1,5 +1,4 @@
 use crate::{
-    macros::wait_for_message_blocking,
     wait_until_msg,
     wallet::helper::{non_regtest_warning, print_link},
 };

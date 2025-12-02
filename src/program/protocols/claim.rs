@@ -18,6 +18,7 @@ pub struct ClaimGate {
     stop_count: u8,
     pub cost: u64,
     pub exclusive_success_vout: Option<usize>,
+    pub stoppers: Vec<OutputType>,
 }
 
 impl ClaimGate {
@@ -122,6 +123,8 @@ impl ClaimGate {
 
         let pb = ProtocolBuilder {};
 
+        let mut claim_stoppers = vec![];
+
         // add stoppers transactions consuming the stop vout in the origin transaction and the output on the start tx
         // to penalize the claimer if he tries to start the claim before winning (consuming all the stops)
         for (i, stopper_pub) in stoppers_pub.iter().enumerate() {
@@ -134,6 +137,7 @@ impl ClaimGate {
             }
 
             let claim_stop = OutputType::taproot(amount_fee + amount_dust, aggregated, &leaves)?;
+            claim_stoppers.push(claim_stop.clone());
 
             let stopname = Self::tx_stop(claim_name, i as u8);
             protocol.add_connection(
@@ -228,6 +232,7 @@ impl ClaimGate {
             stop_count: stoppers_pub.len() as u8,
             cost,
             exclusive_success_vout,
+            stoppers: claim_stoppers,
         })
     }
 
