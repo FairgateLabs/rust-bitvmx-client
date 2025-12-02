@@ -393,6 +393,18 @@ impl BitVMX {
         )? {
             Some(result) => Ok(result), // Verification message processed or needs buffering
             None => {
+                let my_pubkey_hash = self.program_context.comms.get_pubk_hash()?;
+                let participants: Vec<_> = program
+                    .participants
+                    .iter()
+                    .filter(|p| p.comms_address.pubkey_hash != my_pubkey_hash)
+                    .map(|p| p.comms_address.pubkey_hash.clone())
+                    .collect();
+                if !SignatureVerifier::has_all_keys(&self.program_context.globals, &participants)? {
+                    info!("Missing verification keys for program: {:?}", program_id);
+                    return Ok(false);
+                }
+
                 // Step 3: Process normal messages (non-verification)
                 program.process_comms_message(
                     peer_address,
@@ -434,6 +446,21 @@ impl BitVMX {
         )? {
             Some(result) => Ok(result), // Verification message processed or needs buffering
             None => {
+                let my_pubkey_hash = self.program_context.comms.get_pubk_hash()?;
+                let participants: Vec<_> = collaboration
+                    .participants
+                    .iter()
+                    .filter(|p| p.pubkey_hash != my_pubkey_hash)
+                    .map(|p| p.pubkey_hash.clone())
+                    .collect();
+                if !SignatureVerifier::has_all_keys(&self.program_context.globals, &participants)? {
+                    info!(
+                        "Missing verification keys for collaboration: {:?}",
+                        program_id
+                    );
+                    return Ok(false);
+                }
+
                 // Step 3: Process normal messages (non-verification)
                 collaboration.process_comms_message(
                     peer_address,
@@ -468,7 +495,7 @@ impl BitVMX {
                 timestamp,
                 &signature,
                 peer_address,
-                msg,
+                msg.clone(),
                 &mut program,
             )?;
         } else if let Some(mut collaboration) = self.get_collaboration(&program_id)? {
@@ -484,13 +511,19 @@ impl BitVMX {
                 timestamp,
                 &signature,
                 peer_address,
-                msg,
+                msg.clone(),
                 &mut collaboration,
             )?;
             if message_consumed {
                 self.save_collaboration(&collaboration)?;
             }
+        }
+
+        if message_consumed {
+            self.timestamp_verifier
+                .record(&identifier.pubkey_hash, timestamp);
         } else {
+            // Message needs to be buffered (not processed or program/collaboration not found)
             if is_new_message {
                 self.timestamp_verifier
                     .ensure_fresh(&identifier.pubkey_hash, timestamp)?;
@@ -498,11 +531,6 @@ impl BitVMX {
             info!("Pending message to back: {:?}", msg_type);
             self.pending_messages
                 .push_back((identifier.to_string(), msg));
-        }
-
-        if message_consumed {
-            self.timestamp_verifier
-                .record(&identifier.pubkey_hash, timestamp);
         }
 
         Ok(())

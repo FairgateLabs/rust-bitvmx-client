@@ -73,6 +73,14 @@ impl OperatorVerificationStore {
         Ok(missing)
     }
 
+    pub fn has_all_keys(
+        globals: &Globals,
+        pubkey_hashes: &[PubKeyHash],
+    ) -> Result<bool, BitVMXError> {
+        let missing = Self::missing(globals, pubkey_hashes)?;
+        Ok(missing.is_empty())
+    }
+
     pub fn request_missing_verification_keys(
         globals: &Globals,
         comms: &OperatorComms,
@@ -396,6 +404,13 @@ impl SignatureVerifier {
             context_id,
             peer_address,
         )
+    }
+
+    pub fn has_all_keys(
+        globals: &Globals,
+        pubkey_hashes: &[PubKeyHash],
+    ) -> Result<bool, BitVMXError> {
+        OperatorVerificationStore::has_all_keys(globals, pubkey_hashes)
     }
 
     /// Handles the MissingVerificationKey error by requesting the key and buffering the message
