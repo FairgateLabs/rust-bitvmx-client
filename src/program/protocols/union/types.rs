@@ -54,6 +54,7 @@ pub const OP_CLAIM_GATE_SUCCESS: &str = "OP_CLAIM_GATE_SUCCESS";
 pub const OP_COSIGN_TX: &str = "OP_COSIGN_TX";
 pub const OP_NO_COSIGN_TX: &str = "OP_NO_COSIGN_TX";
 pub const WT_NO_CHALLENGE_TX: &str = "WT_NO_CHALLENGE_TX";
+pub const STOP_OP_WON_TX: &str = "STOP_OP_WON_TX";
 
 // Parameters
 pub const DUST_VALUE: u64 = 540;
