@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
 # Runs a specific union example
-# Usage: ./run-example.sh <example>
-# Example: ./run-example.sh committee
+# Usage: ./run-example.sh <example> [optional <challenge-winner>]
+# Example: ./run-example.sh committee 4
 # NOTE: This script setup a fresh regtest environment for each run
 # It removes previous logs and data in /tmp/regtest/
 # It also kills all existing bitvmx-client processes
@@ -10,10 +10,10 @@
 
 set -euo pipefail
 
-# Ensure exactly one argument is passed
-if [ "$#" -ne 1 ]; then
-  echo "Usage: $0 <example>"
-  echo "Example: $0 committee"
+# Ensure 1 or 2 arguments are passed
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+  echo "Usage: $0 <example> [optional <challenge-winner>]"
+  echo "Example: $0 challenge op"
   echo "Available examples:"
   cargo run -q --release --example union
   exit 1
@@ -24,6 +24,7 @@ timestamp_date=$(date +%y%m%d)
 timestamp_time=$(date +%H%M)
 
 name="$1"
+opts="$2"
 LOGS_DIR="logs/${timestamp_date}/${name}_${timestamp_time}"
 rm -rf "$LOGS_DIR"
 mkdir -p "$LOGS_DIR"
@@ -75,4 +76,4 @@ else
 fi
 
 printf "\nRunning union example: $name...\n\n\n"
-RUST_BACKTRACE=full cargo run --release --example union $name 2>&1 | sed -u -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})*)?[mGKHF]//g" > "$EXAMPLE_LOG_FILE"
+RUST_BACKTRACE=full cargo run --release --example union $name $opts 2>&1 | sed -u -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})*)?[mGKHF]//g" > "$EXAMPLE_LOG_FILE"

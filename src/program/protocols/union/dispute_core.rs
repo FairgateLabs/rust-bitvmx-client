@@ -1216,7 +1216,8 @@ impl DisputeCoreProtocol {
         // output has been added.
         if dispute_core_index == (committee.packet_size - 1) as usize {
             // Operator output for disabler directory
-            let directory_fee = estimate_fee(2, committee.packet_size as usize + 1, 1);
+            // NOTE: 2 additional outputs: speedup and stop operator won.
+            let directory_fee = estimate_fee(2, committee.packet_size as usize + 2, 1);
             let disabler_directory_amount =
                 committee.packet_size as u64 * DUST_VALUE + SPEEDUP_VALUE + directory_fee;
             protocol.add_transaction_output(

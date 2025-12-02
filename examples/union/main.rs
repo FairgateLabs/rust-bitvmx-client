@@ -74,7 +74,7 @@ pub fn main() -> Result<()> {
         Some("request_pegout") => cli_request_pegout()?,
         Some("advance_funds") => cli_advance_funds()?,
         Some("advance_funds_twice") => cli_advance_funds_twice()?,
-        Some("challenge") => cli_challenge()?,
+        Some("challenge") => cli_challenge(args.get(2))?,
         Some("input_not_revealed") => cli_input_not_revealed()?,
         Some("double_challenge") => cli_double_challenge()?,
         // Some("operator_disabler") => cli_operator_disabler()?,
@@ -253,17 +253,26 @@ pub fn cli_advance_funds_twice() -> Result<()> {
     Ok(())
 }
 
-pub fn cli_challenge() -> Result<()> {
+pub fn cli_challenge(winner: Option<&String>) -> Result<()> {
     if HIGH_FEE_NODE_ENABLED {
         // Due to self disablers does not have speedup by now
         info!("This example works better with a client node with low fees. Please disable HIGH_FEE_NODE_ENABLED and try again.");
         return Ok(());
     }
 
+    let op_wins = match winner {
+        Some(val) if val == "op" => true,
+        Some(val) if val == "wt" => false,
+        _ => {
+            error!("Please provide a winner: op/wt");
+            return Ok(());
+        }
+    };
+
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
     let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
-    challenge(&mut committee, slot_index, true)?;
+    challenge(&mut committee, slot_index, true, op_wins)?;
     Ok(())
 }
 
@@ -278,7 +287,7 @@ pub fn cli_input_not_revealed() -> Result<()> {
     let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
     wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
 
-    let op_index = challenge(&mut committee, slot_index, false)?;
+    let op_index = challenge(&mut committee, slot_index, false, false)?;
 
     // Wait some blocks to mine ADVANCE_FUNDS_TX and REIMBURSEMENT_KICKOFF_TX
     wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait() + 2)?;
@@ -840,7 +849,7 @@ pub fn advance_funds(
     if should_wait {
         wait_for_blocks(
             &committee.bitcoin_client,
-            get_blocks_to_wait() + committee.stream_settings.long_timelock as u32,
+            get_blocks_to_wait() + committee.stream_settings.long_timelock as u32 + 10,
         )?;
 
         // Wait for the FundsAdvanced message
@@ -872,7 +881,12 @@ pub fn advance_funds(
     Ok(operator_id)
 }
 
-pub fn challenge(committee: &mut Committee, slot_index: usize, should_wait: bool) -> Result<usize> {
+pub fn challenge(
+    committee: &mut Committee,
+    slot_index: usize,
+    should_wait: bool,
+    op_wins: bool,
+) -> Result<usize> {
     info!("Forcing member 0 to dispatch invalid reimbursement transaction...");
     // Force member 0 to dispatch reimbursement without proper advancement setup
     let committee_id = committee.committee_id();
@@ -902,7 +916,11 @@ pub fn challenge(committee: &mut Committee, slot_index: usize, should_wait: bool
         let drp_pid = get_dispute_channel_pid(committee_id, operator_index, wt_index);
 
         // Force someone to win
-        let data = "11111111".to_string();
+        let data = if op_wins {
+            "11111111".to_string()
+        } else {
+            "00000000".to_string()
+        };
         let input_pos = 0;
 
         let set_input_1 = VariableTypes::Input(hex::decode(data).unwrap());

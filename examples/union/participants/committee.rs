@@ -355,9 +355,9 @@ impl Committee {
 
     fn get_funding_op_disabler_directory_value(&self) -> u64 {
         // Considerate each OP disabler directory output
-        return DUST_VALUE * PACKET_SIZE as u64
+        return DUST_VALUE * (PACKET_SIZE + 1) as u64    // Additional output for stop operator won
             + SPEEDUP_VALUE
-            + estimate_fee(2, PACKET_SIZE as usize + 1, 1);
+            + estimate_fee(2, PACKET_SIZE as usize + 2, 1);
     }
 
     pub fn get_total_funds_value(&self) -> u64 {
