@@ -11,10 +11,13 @@ use crate::{
                 common::{
                     create_transaction_reference, double_indexed_name, estimate_fee,
                     extract_double_index, extract_index, extract_index_from_claim_gate,
-                    get_accept_pegin_pid, get_dispute_channel_pid, get_dispute_core_pid,
-                    get_dispute_pair_key_name, get_full_penalization_pid,
+                    get_accept_pegin_pid, get_dispatch_action, get_dispute_channel_pid,
+                    get_dispute_core_pid, get_dispute_pair_key_name, get_full_penalization_pid,
                     get_initial_deposit_output_type, get_stream_setting, indexed_name,
                     load_union_settings,
+                },
+                dispute_core_claim_gate::{
+                    ClaimGateAction, CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF,
                 },
                 scripts,
                 types::*,
@@ -71,14 +74,6 @@ const WT_INIT_CHALLENGE_TX_TIMELOCK_LEAF: usize = 1;
 
 // const OP_COSIGN_TX_CHALLENGE_LEAF: usize = 1;
 const OP_COSIGN_TX_TIMELOCK_LEAF: usize = 0;
-
-const CLAIM_GATE_START_SUCCESS_LEAF: usize = 1;
-const CLAIM_GATE_START_STOP_LEAF: usize = 0;
-
-const CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF: usize = 0;
-// const CLAIM_GATE_INIT_STOPPER_KEYPAIR_LEAF: usize = 0;
-const CLAIM_GATE_INIT_EXCLUSIVE_WIN_LEAF: usize = 0;
-const CLAIM_GATE_INIT_START_LEAF: usize = 0;
 
 const WT_INIT_CHALLENGE_WT_STOPPER_VOUT: u32 = 3;
 const WT_INIT_CHALLENGE_OP_STOPPER_VOUT: u32 = 5;
@@ -1511,18 +1506,22 @@ impl DisputeCoreProtocol {
             if self.is_my_dispute_core(context)? {
                 let settings = self.load_stream_setting(context)?;
                 let blocks = self.get_dispatch_height(tx_status, settings.claim_gate_timelock)?;
-                self.dispatch_claim_gate_success_tx(
+                self.dispatch_claim_gate(
                     context,
+                    ClaimGateAction::Success {
+                        block_height: Some(blocks),
+                    },
                     WT_CLAIM_GATE,
                     op_index,
-                    Some(blocks),
                 )?;
             } else {
-                self.dispatch_claim_gate_stop_tx(
+                self.dispatch_claim_gate(
                     context,
+                    ClaimGateAction::Stop {
+                        with_speedup: self.ctx.my_idx == wt_index,
+                    },
                     WT_CLAIM_GATE,
                     op_index,
-                    self.ctx.my_idx == op_index,
                 )?;
             }
         } else if tx_name.contains(CLAIM_GATE_STOP) {
@@ -1585,11 +1584,21 @@ impl DisputeCoreProtocol {
 
         if role == ParticipantRole::Prover {
             if self.ctx.my_idx == drp_op_index {
-                self.dispatch_claim_gate_start_tx(program_context, OP_CLAIM_GATE, drp_op_index)?;
+                self.dispatch_claim_gate(
+                    program_context,
+                    ClaimGateAction::Start,
+                    OP_CLAIM_GATE,
+                    drp_op_index,
+                )?;
             }
         } else if role == ParticipantRole::Verifier {
             if self.is_my_dispute_core(program_context)? {
-                self.dispatch_claim_gate_start_tx(program_context, WT_CLAIM_GATE, drp_op_index)?;
+                self.dispatch_claim_gate(
+                    program_context,
+                    ClaimGateAction::Start,
+                    WT_CLAIM_GATE,
+                    drp_op_index,
+                )?;
             }
         }
 
@@ -1610,18 +1619,22 @@ impl DisputeCoreProtocol {
             if self.ctx.my_idx == op_index {
                 let settings = self.load_stream_setting(context)?;
                 let blocks = self.get_dispatch_height(tx_status, settings.claim_gate_timelock)?;
-                self.dispatch_claim_gate_success_tx(
+                self.dispatch_claim_gate(
                     context,
+                    ClaimGateAction::Success {
+                        block_height: Some(blocks),
+                    },
                     OP_CLAIM_GATE,
                     op_index,
-                    Some(blocks),
                 )?;
             } else {
-                self.dispatch_claim_gate_stop_tx(
+                self.dispatch_claim_gate(
                     context,
+                    ClaimGateAction::Stop {
+                        with_speedup: self.ctx.my_idx == wt_index,
+                    },
                     OP_CLAIM_GATE,
                     op_index,
-                    self.ctx.my_idx == wt_index,
                 )?;
             }
         } else if tx_name.contains(CLAIM_GATE_STOP) {
@@ -1643,78 +1656,6 @@ impl DisputeCoreProtocol {
             );
         }
 
-        Ok(())
-    }
-
-    fn dispatch_claim_gate_start_tx(
-        &self,
-        context: &ProgramContext,
-        claim_gate_prefix: &str,
-        op_index: usize,
-    ) -> Result<(), BitVMXError> {
-        let data = self.dispute_core_data(context)?;
-        let claim_gate_name = double_indexed_name(claim_gate_prefix, data.member_index, op_index);
-        let tx_name = ClaimGate::tx_start(&claim_gate_name);
-
-        info!(id = self.ctx.my_idx, "Auto-dispatching {}", tx_name);
-
-        let (tx, speedup) = self.claim_gate_tx(
-            context,
-            &tx_name,
-            &vec![(0, CLAIM_GATE_INIT_START_LEAF)],
-            true,
-        )?;
-        let txid = tx.compute_txid();
-
-        context.bitcoin_coordinator.dispatch(
-            tx,
-            speedup,
-            format!("dispute_core_claim_gate_start_{}:{}", self.ctx.id, tx_name),
-            None,
-        )?;
-
-        info!(
-            id = self.ctx.my_idx,
-            "{} dispatched with txid: {}", tx_name, txid
-        );
-        Ok(())
-    }
-
-    fn dispatch_claim_gate_stop_tx(
-        &self,
-        context: &ProgramContext,
-        claim_gate_prefix: &str,
-        op_index: usize,
-        with_speedup: bool,
-    ) -> Result<(), BitVMXError> {
-        let data = self.dispute_core_data(context)?;
-        let claim_gate_name = double_indexed_name(claim_gate_prefix, data.member_index, op_index);
-        let tx_name = ClaimGate::tx_stop(&claim_gate_name, 0);
-
-        info!(id = self.ctx.my_idx, "Auto-dispatching {}", tx_name);
-
-        let (tx, speedup) = self.claim_gate_tx(
-            context,
-            &tx_name,
-            &vec![
-                (0, CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF),
-                (1, CLAIM_GATE_START_STOP_LEAF),
-            ],
-            with_speedup,
-        )?;
-        let txid = tx.compute_txid();
-
-        context.bitcoin_coordinator.dispatch(
-            tx,
-            speedup,
-            format!("dispute_core_claim_gate_stop_{}:{}", self.ctx.id, tx_name),
-            None,
-        )?;
-
-        info!(
-            id = self.ctx.my_idx,
-            "{} scheduled with txid: {}", tx_name, txid
-        );
         Ok(())
     }
 
@@ -1776,44 +1717,37 @@ impl DisputeCoreProtocol {
         Ok(block_height + timelock as u32)
     }
 
-    fn dispatch_claim_gate_success_tx(
+    fn dispatch_claim_gate(
         &self,
         context: &ProgramContext,
-        claim_gate_prefix: &str,
+        action: ClaimGateAction,
+        prefix: &str,
         op_index: usize,
-        blocks: Option<u32>,
     ) -> Result<(), BitVMXError> {
         let data = self.dispute_core_data(context)?;
-        let claim_gate_name = double_indexed_name(claim_gate_prefix, data.member_index, op_index);
-        let tx_name = ClaimGate::tx_success(&claim_gate_name);
-
+        let base = double_indexed_name(prefix, data.member_index, op_index);
+        let tx_name = action.tx_name(&base);
         info!(id = self.ctx.my_idx, "Auto-dispatching {}", tx_name);
 
-        let (tx, speedup) = self.claim_gate_tx(
-            context,
-            &tx_name,
-            &vec![
-                (0, CLAIM_GATE_START_SUCCESS_LEAF),
-                (1, CLAIM_GATE_INIT_EXCLUSIVE_WIN_LEAF),
-            ],
-            true,
-        )?;
+        let (tx, speedup) =
+            self.claim_gate_tx(context, &tx_name, &action.inputs(), action.with_speedup())?;
         let txid = tx.compute_txid();
 
         context.bitcoin_coordinator.dispatch(
             tx,
             speedup,
-            format!(
-                "dispute_core_claim_gate_success_{}:{}",
-                self.ctx.id, tx_name
-            ),
-            blocks,
+            format!("dispute_core_claim_gate_{}:{}", self.ctx.id, tx_name),
+            action.block_height(),
         )?;
 
         info!(
             id = self.ctx.my_idx,
-            "{} scheduled with txid: {}", tx_name, txid
+            "{} {} with txid: {}",
+            tx_name,
+            get_dispatch_action(action.block_height()),
+            txid
         );
+
         Ok(())
     }
 
@@ -2106,7 +2040,6 @@ impl DisputeCoreProtocol {
 
         let protocol = self.load_protocol()?;
 
-        // FIXME: Save the revealed witness
         let script = protocol.get_script_to_spend(
             tx_name,
             REVEAL_INPUT_TX_REVEAL_INDEX as u32,

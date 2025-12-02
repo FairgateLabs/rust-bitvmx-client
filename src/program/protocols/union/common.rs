@@ -304,3 +304,11 @@ pub fn get_stream_setting(
 
     Ok(settings.settings.get(&stream_denomination).unwrap().clone())
 }
+
+pub fn get_dispatch_action(block_height: Option<u32>) -> String {
+    if block_height.is_some() {
+        "scheduled".to_string()
+    } else {
+        "dispatched".to_string()
+    }
+}
