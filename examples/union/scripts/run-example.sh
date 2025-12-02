@@ -44,16 +44,6 @@ echo "Bitcoin regtest node setup complete."
 # Initialize log file
 echo "" > "$EXAMPLE_LOG_FILE"
 
-# Open log in VS Code if available
-if command -v code >/dev/null 2>&1; then
-  # Open log in VS Code
-  code --reuse-window "$EXAMPLE_LOG_FILE" &
-else
-  echo "VS Code not found. Open logs manually at:"
-  echo "  $EXAMPLE_LOG_FILE"
-  echo ""
-fi
-
 # Ensure cleanup of bitvmx-client processes on script exit
 function cleanup() {
   pkill -f bitvmx-client || true
@@ -73,6 +63,16 @@ done
 
 echo "Waiting for BitVMX clients to initialize..."
 sleep 20s
+
+# Open log in VS Code if available
+if command -v code >/dev/null 2>&1; then
+  # Open log in VS Code
+  code --reuse-window "$EXAMPLE_LOG_FILE" &
+else
+  echo "VS Code not found. Open logs manually at:"
+  echo "  $EXAMPLE_LOG_FILE"
+  echo ""
+fi
 
 printf "\nRunning union example: $name...\n\n\n"
 RUST_BACKTRACE=full cargo run --release --example union $name 2>&1 | sed -u -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})*)?[mGKHF]//g" > "$EXAMPLE_LOG_FILE"

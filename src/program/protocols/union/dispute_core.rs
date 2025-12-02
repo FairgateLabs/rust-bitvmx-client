@@ -1,18 +1,20 @@
 use crate::{
+    bitvmx::Context,
     errors::BitVMXError,
     program::{
         participant::{ParticipantKeys, ParticipantRole, PublicKeyType},
         protocols::{
             claim::{ClaimGate, CLAIM_GATE_START, CLAIM_GATE_STOP, CLAIM_GATE_SUCCESS},
-            dispute,
-            protocol_handler::{ProtocolContext, ProtocolHandler},
+            dispute::{self, action_wins_prefix},
+            protocol_handler::{ProtocolContext, ProtocolHandler, ProtocolType},
             union::{
                 common::{
                     create_transaction_reference, double_indexed_name, estimate_fee,
                     extract_double_index, extract_index, extract_index_from_claim_gate,
-                    get_accept_pegin_pid, get_dispute_core_pid, get_dispute_pair_key_name,
-                    get_full_penalization_pid, get_initial_deposit_output_type, get_stream_setting,
-                    indexed_name, load_union_settings,
+                    get_accept_pegin_pid, get_dispute_channel_pid, get_dispute_core_pid,
+                    get_dispute_pair_key_name, get_full_penalization_pid,
+                    get_initial_deposit_output_type, get_stream_setting, indexed_name,
+                    load_union_settings,
                 },
                 scripts,
                 types::*,
@@ -21,7 +23,7 @@ use crate::{
         variables::{PartialUtxo, VariableTypes},
     },
     types::{
-        ProgramContext, PROGRAM_TYPE_ACCEPT_PEGIN, PROGRAM_TYPE_DISPUTE_CORE,
+        ProgramContext, PROGRAM_TYPE_ACCEPT_PEGIN, PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_DRP,
         PROGRAM_TYPE_FULL_PENALIZATION,
     },
 };
@@ -45,7 +47,7 @@ use protocol_builder::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 pub const PEGOUT_ID: &str = "PEGOUT_ID";
@@ -67,8 +69,8 @@ const REVEAL_INPUT_TX_COMMITTEE_LEAF: usize = 1;
 // const WT_INIT_CHALLENGE_TX_COSIGN_LEAF: usize = 0;
 const WT_INIT_CHALLENGE_TX_TIMELOCK_LEAF: usize = 1;
 
-// const OP_COSIGN_TX_CHALLENGE_LEAF: usize = 0;
-const OP_COSIGN_TX_TIMELOCK_LEAF: usize = 1;
+// const OP_COSIGN_TX_CHALLENGE_LEAF: usize = 1;
+const OP_COSIGN_TX_TIMELOCK_LEAF: usize = 0;
 
 const CLAIM_GATE_START_SUCCESS_LEAF: usize = 1;
 const CLAIM_GATE_START_STOP_LEAF: usize = 0;
@@ -350,14 +352,25 @@ impl ProtocolHandler for DisputeCoreProtocol {
         tx_id: Txid,
         _vout: Option<u32>,
         tx_status: TransactionStatus,
-        _context: String,
+        context: String,
         program_context: &ProgramContext,
         _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
-        let tx_name = self.get_transaction_name_by_id(tx_id)?;
+        info!("Notified of transaction: {}. Context: {}", tx_id, context);
+
+        let tx_name = self.get_transaction_name_by_id(tx_id).or_else(|e| {
+            warn!(
+                "DisputeCoreProtocol.notify_news(). Error getting transaction name by id {}: {:?}",
+                tx_id, e
+            );
+            let drp = self.load_protocol_from_context(context.clone())?;
+            drp.get_transaction_name_by_id(tx_id)
+                .map_err(|pe| BitVMXError::ProtocolBuilderError(pe))
+        })?;
+
         info!(
-            "DisputeCoreProtocol received news of transaction: {}, txid: {} with {} confirmations",
-            tx_name, tx_id, tx_status.confirmations
+            "DisputeCoreProtocol received news of transaction: {}, txid: {} with {} confirmations. Context: {}",
+            tx_name, tx_id, tx_status.confirmations, context
         );
 
         if tx_name.starts_with(REIMBURSEMENT_KICKOFF_TX) {
@@ -388,6 +401,15 @@ impl ProtocolHandler for DisputeCoreProtocol {
             self.handle_wt_claim_gate_txs(program_context, &tx_name, &tx_status)?;
         } else if tx_name.starts_with(OP_CLAIM_GATE) {
             self.handle_op_claim_gate_txs(program_context, &tx_name, &tx_status)?;
+        } else if tx_name.starts_with(&action_wins_prefix(&ParticipantRole::Prover)) {
+            self.handle_action_wins(program_context, &context, &tx_name, ParticipantRole::Prover)?;
+        } else if tx_name.starts_with(&action_wins_prefix(&ParticipantRole::Verifier)) {
+            self.handle_action_wins(
+                program_context,
+                &context,
+                &tx_name,
+                ParticipantRole::Verifier,
+            )?;
         }
 
         Ok(())
@@ -420,6 +442,18 @@ impl ProtocolHandler for DisputeCoreProtocol {
 impl DisputeCoreProtocol {
     pub fn new(ctx: ProtocolContext) -> Self {
         Self { ctx }
+    }
+
+    fn load_protocol_from_context(&self, msg: String) -> Result<ProtocolType, BitVMXError> {
+        let pid = match Context::from_string(&msg)? {
+            Context::ProgramId(program_id) => program_id,
+            _ => {
+                return Err(BitVMXError::InvalidParameter(
+                    "Expected ProgramId context".to_string(),
+                ))
+            }
+        };
+        self.load_protocol_by_name(&PROGRAM_TYPE_DRP, pid)
     }
 
     fn create_wt_start_enabler_output(
@@ -640,7 +674,8 @@ impl DisputeCoreProtocol {
                 )));
 
                 // FIXME: Review this output. This goes to DisputeChannel. Need 2 scripts by now.
-                let verify_signature_1 =
+                // NOTE: DRP consumes leaf 1 hardcoded.
+                let verify_wt_signature =
                     verify_signature(wt_dispute_key, self.get_sign_mode(data.member_index))?;
 
                 let wt_not_challenge_timelock_script = timelock(
@@ -652,7 +687,7 @@ impl DisputeCoreProtocol {
                 let op_cosign_output = OutputType::taproot(
                     challenge_cost,
                     wt_dispute_key,
-                    &vec![verify_signature_1, wt_not_challenge_timelock_script],
+                    &vec![wt_not_challenge_timelock_script, verify_wt_signature],
                 )?;
 
                 op_cosign_outputs.push(Some(op_cosign_output.clone()));
@@ -752,9 +787,11 @@ impl DisputeCoreProtocol {
         )?;
         protocol.add_transaction_output(&WT_START_ENABLER_TX, &disabler_directory_funds_output)?;
 
-        let speedup_output = OutputType::segwit_key(SPEEDUP_VALUE, &wt_speedup_key)?;
         // Add speedup output
-        protocol.add_transaction_output(&WT_START_ENABLER_TX, &speedup_output)?;
+        protocol.add_transaction_output(
+            &WT_START_ENABLER_TX,
+            &OutputType::segwit_key(SPEEDUP_VALUE, &wt_speedup_key)?,
+        )?;
 
         Ok((
             claim_gate_stoppers,
@@ -1279,7 +1316,6 @@ impl DisputeCoreProtocol {
         let mut input_args = InputArgs::new_taproot_script_args(slot_index);
         let key_name = "value";
 
-        // FIXME: Inject operator witness
         let witness = context
             .witness
             .get_witness(&self.ctx.id, &key_name)?
@@ -1322,18 +1358,6 @@ impl DisputeCoreProtocol {
             .globals
             .set_var(pid, var_name, VariableTypes::Number(value))
     }
-
-    // fn get_witness(
-    //     &self,
-    //     context: &ProgramContext,
-    //     var_name: &str,
-    // ) -> Result<Vec<u8>, BitVMXError> {
-    //     Ok(context
-    //         .globals
-    //         .get_var(&self.ctx.id, var_name)?
-    //         .unwrap()
-    //         .bytes()?)
-    // }
 
     fn dispute_core_data(&self, context: &ProgramContext) -> Result<DisputeCoreData, BitVMXError> {
         let data = context
@@ -1489,12 +1513,18 @@ impl DisputeCoreProtocol {
                     Some(blocks),
                 )?;
             } else {
-                self.dispatch_claim_gate_stop_tx(context, WT_CLAIM_GATE, op_index)?;
+                self.dispatch_claim_gate_stop_tx(
+                    context,
+                    WT_CLAIM_GATE,
+                    op_index,
+                    self.ctx.my_idx == op_index,
+                )?;
             }
         } else if tx_name.contains(CLAIM_GATE_STOP) {
-            if self.ctx.my_idx == op_index {
-                self.dispatch_claim_gate_start_tx(context, OP_CLAIM_GATE, op_index)?;
-            }
+            info!(
+                id = self.ctx.my_idx,
+                "Claim stopped for watchtower: {}", wt_index
+            );
         } else if tx_name.ends_with(CLAIM_GATE_SUCCESS) {
             self.dispatch_disabler_directory_tx(
                 context,
@@ -1507,6 +1537,70 @@ impl DisputeCoreProtocol {
                 id = self.ctx.my_idx,
                 "Unknown claim gate transaction name: {}", tx_name
             );
+        }
+
+        Ok(())
+    }
+
+    fn handle_action_wins(
+        &self,
+        program_context: &ProgramContext,
+        context: &str,
+        tx_name: &str,
+        role: ParticipantRole,
+    ) -> Result<(), BitVMXError> {
+        info!(
+            id = self.ctx.my_idx,
+            "Handling wins action {}. Context: {}", tx_name, context
+        );
+
+        let pid = match Context::from_string(&context)? {
+            Context::ProgramId(pid) => pid,
+            _ => {
+                error!(
+                    id = self.ctx.my_idx,
+                    "Invalid context for handling wins action: {}", context
+                );
+                return Ok(());
+            }
+        };
+        info!(
+            id = self.ctx.my_idx,
+            "Parsed context for program_id: {}", pid
+        );
+
+        let committee_id = self.committee_id(program_context)?;
+        let committee = self.committee(program_context)?;
+        let wt_index = self.dispute_core_data(program_context)?.member_index;
+
+        // Look for the operator index that matches the DisputeChannel program ID in the context
+        let maybe_index = committee
+            .members
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.role == ParticipantRole::Prover)
+            .find(|(op_index, _)| get_dispute_channel_pid(committee_id, *op_index, wt_index) == pid)
+            .map(|(op_index, _)| op_index);
+
+        let drp_op_index = match maybe_index {
+            Some(i) => i,
+            None => {
+                error!(
+                    id = self.ctx.my_idx,
+                    "Could not find matching DisputeCore program for context: {}", context
+                );
+                return Ok(());
+            }
+        };
+
+        if role == ParticipantRole::Prover {
+            if self.ctx.my_idx == drp_op_index {
+                self.dispatch_claim_gate_start_tx(program_context, OP_CLAIM_GATE, drp_op_index)?;
+            }
+        } else if role == ParticipantRole::Verifier {
+            if self.is_my_dispute_core(program_context)? {
+                self.dispatch_claim_gate_start_tx(program_context, WT_CLAIM_GATE, drp_op_index)?;
+            }
         }
 
         Ok(())
@@ -1533,12 +1627,18 @@ impl DisputeCoreProtocol {
                     Some(blocks),
                 )?;
             } else {
-                self.dispatch_claim_gate_stop_tx(context, OP_CLAIM_GATE, op_index)?;
+                self.dispatch_claim_gate_stop_tx(
+                    context,
+                    OP_CLAIM_GATE,
+                    op_index,
+                    self.ctx.my_idx == wt_index,
+                )?;
             }
         } else if tx_name.contains(CLAIM_GATE_STOP) {
-            if self.is_my_dispute_core(context)? {
-                self.dispatch_claim_gate_start_tx(context, WT_CLAIM_GATE, op_index)?;
-            }
+            info!(
+                id = self.ctx.my_idx,
+                "Claim stopped for operator: {}", op_index
+            );
         } else if tx_name.ends_with(CLAIM_GATE_SUCCESS) {
             self.dispatch_disabler_directory_tx(
                 context,
@@ -1585,7 +1685,7 @@ impl DisputeCoreProtocol {
 
         info!(
             id = self.ctx.my_idx,
-            "{} scheduled with txid: {}", tx_name, txid
+            "{} dispatched with txid: {}", tx_name, txid
         );
         Ok(())
     }
@@ -1595,6 +1695,7 @@ impl DisputeCoreProtocol {
         context: &ProgramContext,
         claim_gate_prefix: &str,
         op_index: usize,
+        with_speedup: bool,
     ) -> Result<(), BitVMXError> {
         let data = self.dispute_core_data(context)?;
         let claim_gate_name = double_indexed_name(claim_gate_prefix, data.member_index, op_index);
@@ -1609,7 +1710,7 @@ impl DisputeCoreProtocol {
                 (0, CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF),
                 (1, CLAIM_GATE_START_STOP_LEAF),
             ],
-            true,
+            with_speedup,
         )?;
         let txid = tx.compute_txid();
 
@@ -1744,7 +1845,27 @@ impl DisputeCoreProtocol {
         let (_, op_index) = extract_double_index(tx_name)?;
 
         if self.is_my_dispute_core(context)? {
-            // TODO: Dispatch DisputeChannel start challenge
+            let drp_pid =
+                get_dispute_channel_pid(self.committee_id(context)?, op_index, self.ctx.my_idx);
+            let drp_protocol = self.load_protocol_by_name(PROGRAM_TYPE_DRP, drp_pid)?;
+
+            let (tx, speedup) =
+                drp_protocol.get_transaction_by_name(&dispute::START_CH.to_string(), context)?;
+            let txid = tx.compute_txid();
+
+            context.bitcoin_coordinator.dispatch(
+                tx,
+                speedup,
+                format!("dispute_core_start_ch_{}:{}", self.ctx.id, tx_name),
+                None,
+            )?;
+
+            info!(
+                id = self.ctx.my_idx,
+                "{} dispatched with txid: {}",
+                dispute::START_CH.to_string(),
+                txid
+            );
         } else {
             let blocks = self.get_dispatch_height(tx_status, settings.wt_no_challenge_timelock)?;
 
@@ -2693,7 +2814,7 @@ impl DisputeCoreProtocol {
         let wt_start_enabler_tx = protocol.transaction_by_name(WT_START_ENABLER_TX)?;
         let wt_start_enabler_txid = wt_start_enabler_tx.compute_txid();
 
-        let disabler_directory_vout = committee.packet_size as usize;
+        let disabler_directory_vout = committee.members.len() as usize;
         let output_value = wt_start_enabler_tx.output[disabler_directory_vout]
             .value
             .to_sat();

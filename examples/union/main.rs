@@ -21,15 +21,19 @@ use anyhow::Result;
 use bitvmx_client::{
     program::{
         participant::ParticipantRole,
-        protocols::union::{
-            common::{
-                double_indexed_name, get_accept_pegin_pid, get_dispute_core_pid,
-                get_full_penalization_pid, triple_indexed_name,
-            },
-            types::{
-                FundsAdvanced, ACCEPT_PEGIN_TX, OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX,
-                OP_INITIAL_DEPOSIT_TX, OP_LAZY_DISABLER_TX, OP_SELF_DISABLER_TX,
-                WT_DISABLER_DIRECTORY_TX, WT_DISABLER_TX, WT_SELF_DISABLER_TX, WT_START_ENABLER_TX,
+        protocols::{
+            dispute::program_input,
+            union::{
+                common::{
+                    double_indexed_name, get_accept_pegin_pid, get_dispute_channel_pid,
+                    get_dispute_core_pid, get_full_penalization_pid, triple_indexed_name,
+                },
+                types::{
+                    FundsAdvanced, ACCEPT_PEGIN_TX, OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX,
+                    OP_INITIAL_DEPOSIT_TX, OP_LAZY_DISABLER_TX, OP_SELF_DISABLER_TX,
+                    WT_DISABLER_DIRECTORY_TX, WT_DISABLER_TX, WT_SELF_DISABLER_TX,
+                    WT_START_ENABLER_TX,
+                },
             },
         },
         variables::VariableTypes,
@@ -872,6 +876,8 @@ pub fn challenge(committee: &mut Committee, slot_index: usize, should_wait: bool
     info!("Forcing member 0 to dispatch invalid reimbursement transaction...");
     // Force member 0 to dispatch reimbursement without proper advancement setup
     let committee_id = committee.committee_id();
+    let members_len = committee.members.len();
+
     let operator_index = 0;
     let member: &mut Member = &mut committee.members[operator_index];
     let operator_pubkey = member.keyring.take_pubkey.unwrap();
@@ -887,10 +893,31 @@ pub fn challenge(committee: &mut Committee, slot_index: usize, should_wait: bool
         get_advance_funds_fee()?,
     )?;
 
-    if should_wait {
-        let additional_blocks = committee.stream_settings.long_timelock + 20;
+    // Set DRP Operator input for each Watchtower
+    for wt_index in 0..members_len {
+        if wt_index == operator_index {
+            continue;
+        }
 
-        info!("Starting mining loop to ensure challenge transaction is dispatched...");
+        let drp_pid = get_dispute_channel_pid(committee_id, operator_index, wt_index);
+
+        // Force someone to win
+        let data = "11111111".to_string();
+        let input_pos = 0;
+
+        let set_input_1 = VariableTypes::Input(hex::decode(data).unwrap());
+        member
+            .bitvmx
+            .set_var(drp_pid, &program_input(input_pos), set_input_1)?;
+    }
+
+    if should_wait {
+        let additional_blocks = committee.stream_settings.long_timelock + 500;
+
+        info!(
+            "Starting mining {} blocks in loop to ensure challenges and DRP txs are dispatched...",
+            additional_blocks
+        );
         wait_for_blocks(
             &committee.bitcoin_client,
             get_blocks_to_wait() + additional_blocks as u32,

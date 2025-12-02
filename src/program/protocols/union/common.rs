@@ -221,6 +221,7 @@ pub fn extract_index_from_claim_gate(input: &str) -> Result<(usize, usize), BitV
         )));
     };
 
+    let prefix = &format!("{}_", prefix);
     let rest = input.strip_prefix(prefix).unwrap();
     let parts: Vec<&str> = rest.split('_').collect();
     let a: usize = parts[0].parse().unwrap();

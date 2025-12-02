@@ -343,14 +343,22 @@ fn claim_state_handle(
         let config = DisputeConfiguration::load(&drp.ctx.id, &program_context.globals)?;
         for (protocol_name, protocol_id) in config.notify_protocol {
             let protocol = drp.load_protocol_by_name(&protocol_name, protocol_id)?;
+            info!(
+                "Notifying protocol {} about tx {}:{:?} seen on-chain",
+                protocol_name, tx_id, vout
+            );
             protocol.notify_news(
                 tx_id,
                 vout,
                 tx_status.clone(),
-                drp.ctx.id.to_string(),
+                Context::ProgramId(drp.ctx.id).to_string()?,
                 program_context,
                 vec![],
             )?;
+            info!(
+                "Notified protocol {} about tx {}:{:?} seen on-chain",
+                protocol_name, tx_id, vout
+            );
         }
     }
 

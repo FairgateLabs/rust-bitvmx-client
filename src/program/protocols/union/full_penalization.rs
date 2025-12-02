@@ -544,9 +544,9 @@ impl FullPenalizationProtocol {
         name: &str,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        // NOTE: OP_LAZY_DISABLER_TX_<OP>_<WT>_<SLOT> it's tied to:
-        // - Operator index
+        // NOTE: OP_LAZY_DISABLER_TX_<WT>_<OP>_<SLOT> it's tied to:
         // - Watchtower index
+        // - Operator index
         // - Slot
         // Here watchtower index it's ignored and it dispatch the TX corresponding to
         // current member, due to it should sign the output script leaf in the reimbursement kickoff.
