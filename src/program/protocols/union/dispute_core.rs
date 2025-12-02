@@ -1398,6 +1398,11 @@ impl DisputeCoreProtocol {
             .pubkey()?)
     }
 
+    fn my_dispute_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+        let committee = self.committee(context)?;
+        Ok(committee.members[self.ctx.my_idx].dispute_key.clone())
+    }
+
     fn committee_id(&self, context: &ProgramContext) -> Result<Uuid, BitVMXError> {
         Ok(self.dispute_core_data(context)?.committee_id)
     }
@@ -1744,7 +1749,7 @@ impl DisputeCoreProtocol {
                     tx.compute_txid(),
                     tx.output.len() as u32 - 1,
                     SPEEDUP_VALUE,
-                    &self.my_speedup_key(context)?,
+                    &self.my_dispute_key(context)?,
                 )
                 .into(),
             )
