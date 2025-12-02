@@ -27,7 +27,7 @@ use crate::{
         },
         variables::VariableTypes,
     },
-    types::ProgramContext,
+    types::{ProgramContext, PROGRAM_TYPE_DRP},
 };
 
 fn dispatch_timeout_tx(
@@ -347,13 +347,12 @@ fn claim_state_handle(
                 "Notifying protocol {} about tx {}:{:?} seen on-chain",
                 protocol_name, tx_id, vout
             );
-            protocol.notify_news(
+            protocol.notify_external_news(
                 tx_id,
                 vout,
                 tx_status.clone(),
-                Context::ProgramId(drp.ctx.id).to_string()?,
+                Context::Protocol(drp.ctx.id, PROGRAM_TYPE_DRP.to_string()).to_string()?,
                 program_context,
-                vec![],
             )?;
             info!(
                 "Notified protocol {} about tx {}:{:?} seen on-chain",

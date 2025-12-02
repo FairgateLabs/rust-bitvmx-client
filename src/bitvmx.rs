@@ -370,6 +370,7 @@ impl BitVMX {
                     self.notified_request.insert((*request_id, (tx_id, vout)));
                 }
             }
+            Context::Protocol(_, _) => {}
         }
         Ok(true)
     }
@@ -1482,6 +1483,7 @@ impl BitVMXApi for BitVMX {
 pub enum Context {
     ProgramId(Uuid),
     RequestId(Uuid, Identifier),
+    Protocol(Uuid, String),
 }
 
 impl Context {

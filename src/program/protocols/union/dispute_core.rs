@@ -6,7 +6,7 @@ use crate::{
         protocols::{
             claim::{ClaimGate, CLAIM_GATE_START, CLAIM_GATE_STOP, CLAIM_GATE_SUCCESS},
             dispute::{self, action_wins_prefix},
-            protocol_handler::{ProtocolContext, ProtocolHandler, ProtocolType},
+            protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
                 common::{
                     create_transaction_reference, double_indexed_name, estimate_fee,
@@ -47,7 +47,7 @@ use protocol_builder::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use uuid::Uuid;
 
 pub const PEGOUT_ID: &str = "PEGOUT_ID";
@@ -358,15 +358,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
     ) -> Result<(), BitVMXError> {
         info!("Notified of transaction: {}. Context: {}", tx_id, context);
 
-        let tx_name = self.get_transaction_name_by_id(tx_id).or_else(|e| {
-            warn!(
-                "DisputeCoreProtocol.notify_news(). Error getting transaction name by id {}: {:?}",
-                tx_id, e
-            );
-            let drp = self.load_protocol_from_context(context.clone())?;
-            drp.get_transaction_name_by_id(tx_id)
-                .map_err(|pe| BitVMXError::ProtocolBuilderError(pe))
-        })?;
+        let tx_name = self.get_transaction_name_by_id(tx_id)?;
 
         info!(
             "DisputeCoreProtocol received news of transaction: {}, txid: {} with {} confirmations. Context: {}",
@@ -401,15 +393,35 @@ impl ProtocolHandler for DisputeCoreProtocol {
             self.handle_wt_claim_gate_txs(program_context, &tx_name, &tx_status)?;
         } else if tx_name.starts_with(OP_CLAIM_GATE) {
             self.handle_op_claim_gate_txs(program_context, &tx_name, &tx_status)?;
-        } else if tx_name.starts_with(&action_wins_prefix(&ParticipantRole::Prover)) {
-            self.handle_action_wins(program_context, &context, &tx_name, ParticipantRole::Prover)?;
+        }
+
+        Ok(())
+    }
+
+    fn notify_external_news(
+        &self,
+        tx_id: Txid,
+        _vout: Option<u32>,
+        _tx_status: TransactionStatus,
+        context: String,
+        program_context: &ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        let (pid, name) = match Context::from_string(&context)? {
+            Context::Protocol(program_id, name) => (program_id, name),
+            _ => {
+                return Err(BitVMXError::InvalidParameter(
+                    "Expected Context::Protocol".to_string(),
+                ))
+            }
+        };
+
+        let protocol = self.load_protocol_by_name(&name, pid)?;
+        let tx_name = protocol.get_transaction_name_by_id(tx_id)?;
+
+        if tx_name.starts_with(&action_wins_prefix(&ParticipantRole::Prover)) {
+            self.handle_action_wins(program_context, &tx_name, ParticipantRole::Prover, pid)?;
         } else if tx_name.starts_with(&action_wins_prefix(&ParticipantRole::Verifier)) {
-            self.handle_action_wins(
-                program_context,
-                &context,
-                &tx_name,
-                ParticipantRole::Verifier,
-            )?;
+            self.handle_action_wins(program_context, &tx_name, ParticipantRole::Verifier, pid)?;
         }
 
         Ok(())
@@ -442,18 +454,6 @@ impl ProtocolHandler for DisputeCoreProtocol {
 impl DisputeCoreProtocol {
     pub fn new(ctx: ProtocolContext) -> Self {
         Self { ctx }
-    }
-
-    fn load_protocol_from_context(&self, msg: String) -> Result<ProtocolType, BitVMXError> {
-        let pid = match Context::from_string(&msg)? {
-            Context::ProgramId(program_id) => program_id,
-            _ => {
-                return Err(BitVMXError::InvalidParameter(
-                    "Expected ProgramId context".to_string(),
-                ))
-            }
-        };
-        self.load_protocol_by_name(&PROGRAM_TYPE_DRP, pid)
     }
 
     fn create_wt_start_enabler_output(
@@ -1545,28 +1545,13 @@ impl DisputeCoreProtocol {
     fn handle_action_wins(
         &self,
         program_context: &ProgramContext,
-        context: &str,
         tx_name: &str,
         role: ParticipantRole,
+        pid: Uuid,
     ) -> Result<(), BitVMXError> {
         info!(
             id = self.ctx.my_idx,
-            "Handling wins action {}. Context: {}", tx_name, context
-        );
-
-        let pid = match Context::from_string(&context)? {
-            Context::ProgramId(pid) => pid,
-            _ => {
-                error!(
-                    id = self.ctx.my_idx,
-                    "Invalid context for handling wins action: {}", context
-                );
-                return Ok(());
-            }
-        };
-        info!(
-            id = self.ctx.my_idx,
-            "Parsed context for program_id: {}", pid
+            "Handling wins action {}. PID: {}", tx_name, pid
         );
 
         let committee_id = self.committee_id(program_context)?;
@@ -1587,7 +1572,7 @@ impl DisputeCoreProtocol {
             None => {
                 error!(
                     id = self.ctx.my_idx,
-                    "Could not find matching DisputeCore program for context: {}", context
+                    "Could not find matching DisputeChannel program for PID: {}", pid
                 );
                 return Ok(());
             }

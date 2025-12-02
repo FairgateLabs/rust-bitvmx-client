@@ -912,7 +912,7 @@ pub fn challenge(committee: &mut Committee, slot_index: usize, should_wait: bool
     }
 
     if should_wait {
-        let additional_blocks = committee.stream_settings.long_timelock + 500;
+        let additional_blocks = committee.stream_settings.long_timelock + 250;
 
         info!(
             "Starting mining {} blocks in loop to ensure challenges and DRP txs are dispatched...",
