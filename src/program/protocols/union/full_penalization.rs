@@ -2,7 +2,7 @@ use core::convert::Into;
 use std::{collections::HashMap, vec};
 
 use bitcoin::{Amount, PublicKey, ScriptBuf, Transaction, Txid};
-use bitcoin_coordinator::TransactionStatus;
+use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use protocol_builder::{
     graph::graph::GraphOptions,
     scripts::{ProtocolScript, SignMode},
@@ -25,9 +25,9 @@ use crate::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
                 common::{
-                    create_transaction_reference, double_indexed_name, get_dispute_core_pid,
-                    get_initial_deposit_output_type, get_stream_setting, indexed_name,
-                    load_union_settings, triple_indexed_name,
+                    create_transaction_reference, double_indexed_name, extract_double_index,
+                    get_dispute_core_pid, get_initial_deposit_output_type, get_stream_setting,
+                    indexed_name, load_union_settings, triple_indexed_name,
                 },
                 types::{
                     Committee, FullPenalizationData, StreamSettings, CLAIM_GATE_STOPPER_UTXOS,
@@ -135,7 +135,7 @@ impl ProtocolHandler for FullPenalizationProtocol {
         _vout: Option<u32>,
         tx_status: TransactionStatus,
         _context: String,
-        _program_context: &ProgramContext,
+        program_context: &ProgramContext,
         _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
@@ -143,6 +143,12 @@ impl ProtocolHandler for FullPenalizationProtocol {
             "FullPenalizationProtocol received news of transaction: {}, txid: {} with {} confirmations",
             tx_name, tx_id, tx_status.confirmations
         );
+
+        if tx_name.starts_with(OP_DISABLER_DIRECTORY_TX) {
+            self.handle_op_disabler_directory_tx(program_context, &tx_name)?;
+        } else if tx_name.starts_with(WT_DISABLER_DIRECTORY_TX) {
+            self.handle_wt_disabler_directory_tx(program_context, &tx_name)?;
+        }
 
         Ok(())
     }
@@ -539,6 +545,41 @@ impl FullPenalizationProtocol {
             .utxo()?)
     }
 
+    fn stop_operator_won_tx(
+        &self,
+        name: &str,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        info!(id = self.ctx.my_idx, "Loading {} tx", name);
+
+        let protocol = self.load_protocol()?;
+
+        let reveal_sig = protocol
+            .input_taproot_key_spend_signature(name, 0)?
+            .unwrap();
+        let mut kickoff_input = InputArgs::new_taproot_key_args();
+        kickoff_input.push_taproot_signature(reveal_sig)?;
+
+        let directory_sig = protocol
+            .input_taproot_key_spend_signature(name, 1)?
+            .unwrap();
+        let mut directory_input = InputArgs::new_taproot_key_args();
+        directory_input.push_taproot_signature(directory_sig)?;
+
+        let tx = protocol.transaction_to_send(&name, &[kickoff_input, directory_input])?;
+
+        let txid = tx.compute_txid();
+        info!(
+            id = self.ctx.my_idx,
+            "Signed {}, txid: {} with signatures: [{:?},{:?}]",
+            name,
+            txid,
+            reveal_sig,
+            directory_sig
+        );
+
+        Ok((tx, None))
+    }
+
     fn op_lazy_disabler_tx(
         &self,
         name: &str,
@@ -631,7 +672,7 @@ impl FullPenalizationProtocol {
         name: &str,
         _context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        info!(id = self.ctx.my_idx, "Loading {} tx", name);
+        debug!(id = self.ctx.my_idx, "Loading {} tx", name);
 
         let protocol = self.load_protocol()?;
 
@@ -653,7 +694,7 @@ impl FullPenalizationProtocol {
 
         let tx = protocol.transaction_to_send(&name, &[wt_start_enabler_input, directory_input])?;
 
-        info!(
+        debug!(
             id = self.ctx.my_idx,
             "Signed {}, txid: {} with signatures: [{:?},{:?}]",
             name,
@@ -972,12 +1013,17 @@ impl FullPenalizationProtocol {
         )?;
 
         for member_index in 0..committee.members.len() {
+            // Always add an output to disabler directory even if no stopper is present for this member
+            protocol.add_transaction_output(
+                &wt_disabler_directory_name,
+                &OutputType::taproot(DUST_VALUE, &committee.dispute_aggregated_key, &[])?.into(),
+            )?;
+
             if wt_stoppers[member_index].is_none() {
                 continue;
             }
 
             let wt_stopper = wt_stoppers[member_index].clone().unwrap();
-
             let wt_disabler_name =
                 triple_indexed_name(WT_DISABLER_TX, wt_index, op_index, member_index);
             let wt_init_challenge_name =
@@ -999,7 +1045,7 @@ impl FullPenalizationProtocol {
             protocol.add_connection(
                 "from_disabler_directory",
                 &wt_disabler_directory_name,
-                OutputType::taproot(DUST_VALUE, &committee.dispute_aggregated_key, &[])?.into(),
+                OutputSpec::Last,
                 &wt_disabler_name,
                 InputSpec::Auto(
                     SighashType::taproot_all(),
@@ -1023,6 +1069,98 @@ impl FullPenalizationProtocol {
             )?;
 
             // TODO: Add WT_LAZY_DISABLER once Dispute channel is available
+        }
+
+        Ok(())
+    }
+
+    fn handle_wt_disabler_directory_tx(
+        &self,
+        program_context: &ProgramContext,
+        tx_name: &str,
+    ) -> Result<(), BitVMXError> {
+        info!("Handling: {}", tx_name);
+
+        let (wt_index, op_index) = extract_double_index(tx_name)?;
+        let committee = self.committee(
+            program_context,
+            self.full_penalization_data(program_context)?.committee_id,
+        )?;
+
+        let mut txs = vec![];
+
+        for (member_index, member) in committee.members.iter().enumerate() {
+            // Disabler are just for those outputs that correspond to a Prover and not self
+            if wt_index == member_index || member.role != ParticipantRole::Prover {
+                continue;
+            }
+
+            let disabler_name =
+                triple_indexed_name(WT_DISABLER_TX, wt_index, op_index, member_index);
+            let (tx, speedup) = self.wt_disabler_tx(&disabler_name, program_context)?;
+            txs.push((disabler_name, tx, speedup));
+        }
+
+        self.dispatch_batch(program_context, txs)?;
+
+        Ok(())
+    }
+
+    fn handle_op_disabler_directory_tx(
+        &self,
+        program_context: &ProgramContext,
+        tx_name: &str,
+    ) -> Result<(), BitVMXError> {
+        info!("Handling: {}", tx_name);
+
+        let (wt_index, op_index) = extract_double_index(tx_name)?;
+        let committee = self.committee(
+            program_context,
+            self.full_penalization_data(program_context)?.committee_id,
+        )?;
+
+        let mut txs = vec![];
+
+        for slot_index in 0..committee.packet_size as usize {
+            let disabler_name = triple_indexed_name(OP_DISABLER_TX, wt_index, op_index, slot_index);
+            let (tx, speedup) = self.op_disabler_tx(&disabler_name, program_context)?;
+            txs.push((disabler_name, tx, speedup));
+
+            let stop_op_won_name =
+                triple_indexed_name(STOP_OP_WON_TX, wt_index, op_index, slot_index);
+            let (tx, speedup) = self.stop_operator_won_tx(&stop_op_won_name)?;
+            txs.push((stop_op_won_name, tx, speedup));
+
+            let lazy_disabler_name =
+                triple_indexed_name(OP_LAZY_DISABLER_TX, wt_index, op_index, slot_index);
+            let (tx, speedup) = self.op_lazy_disabler_tx(&lazy_disabler_name, program_context)?;
+            txs.push((lazy_disabler_name, tx, speedup));
+        }
+
+        self.dispatch_batch(program_context, txs)?;
+
+        Ok(())
+    }
+
+    fn dispatch_batch(
+        &self,
+        program_context: &ProgramContext,
+        txs: Vec<(String, Transaction, Option<SpeedupData>)>,
+    ) -> Result<(), BitVMXError> {
+        for (tx_name, tx, speedup) in txs {
+            // Dispatch the transaction through the bitcoin coordinator
+            let txid = tx.compute_txid();
+            program_context.bitcoin_coordinator.dispatch(
+                tx,
+                speedup,
+                format!("full_penalization_{}:{}", self.ctx.id, tx_name),
+                None,
+            )?;
+
+            info!(
+                id = self.ctx.my_idx,
+                "{} dispatched with txid: {}", tx_name, txid
+            );
         }
 
         Ok(())
