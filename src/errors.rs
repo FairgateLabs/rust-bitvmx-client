@@ -238,14 +238,8 @@ pub enum BitVMXError {
         got: String,
     },
 
-    #[error(
-        "Verification key fingerprint mismatch for peer {peer}: expected {expected}, computed {computed}"
-    )]
-    VerificationKeyFingerprintMismatch {
-        peer: String,
-        expected: String,
-        computed: String,
-    },
+    #[error("Verification key fingerprint mismatch for peer {peer}:  computed {computed}")]
+    VerificationKeyFingerprintMismatch { peer: String, computed: String },
     #[error("Job Dispatcher {0} is not responding")]
     JobDispatcherNotResponding(String),
 }

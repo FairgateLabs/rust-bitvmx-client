@@ -16,7 +16,12 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 pub fn parse_keys(value: Value) -> Result<Vec<(PubKeyHash, ParticipantKeys)>, ParseError> {
-    Ok(serde_json::from_value(value).map_err(|_| ParseError::InvalidParticipantKeys))?
+    let keys: Vec<(PubKeyHash, ParticipantKeys)> =
+        serde_json::from_value(value).map_err(|_| ParseError::InvalidParticipantKeys)?;
+    if keys.is_empty() {
+        return Err(ParseError::InvalidParticipantKeys);
+    }
+    Ok(keys)
 }
 
 pub type PubNonceMessage = Vec<(
