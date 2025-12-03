@@ -3,6 +3,7 @@ use std::{collections::HashMap, vec};
 
 use bitcoin::{Amount, PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
+use key_manager::winternitz::WinternitzType;
 use protocol_builder::{
     graph::graph::GraphOptions,
     scripts::{ProtocolScript, SignMode},
@@ -29,6 +30,7 @@ use crate::{
                     get_dispute_core_pid, get_initial_deposit_output_type, get_stream_setting,
                     indexed_name, load_union_settings, triple_indexed_name,
                 },
+                dispute_core::CHALLENGE_KEY,
                 types::{
                     Committee, FullPenalizationData, StreamSettings, CLAIM_GATE_STOPPER_UTXOS,
                     DISPUTE_AGGREGATED_KEY, DUST_VALUE, OPERATOR_TAKE_ENABLER,
@@ -37,7 +39,7 @@ use crate::{
                     OP_DISABLER_DIRECTORY_UTXO, OP_DISABLER_TX, OP_INITIAL_DEPOSIT_AMOUNT,
                     OP_INITIAL_DEPOSIT_OUT_SCRIPT, OP_INITIAL_DEPOSIT_TX, OP_INITIAL_DEPOSIT_TXID,
                     OP_LAZY_DISABLER_TX, REIMBURSEMENT_KICKOFF_TX, REVEAL_INPUT_TX, SPEEDUP_VALUE,
-                    STOP_OP_WON_TX, WT_CLAIM_GATE_SUCCESS,
+                    STOP_OP_WON_TX, TAKE_AGGREGATED_KEY, WT_CLAIM_GATE_SUCCESS,
                     WT_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO, WT_DISABLER_DIRECTORY_TX,
                     WT_DISABLER_DIRECTORY_UTXO, WT_DISABLER_TX, WT_INIT_CHALLENGE_TX,
                     WT_START_ENABLER_TX,
@@ -70,10 +72,16 @@ impl ProtocolHandler for FullPenalizationProtocol {
         let data = self.full_penalization_data(context)?;
         let committee = self.committee(context, data.committee_id)?;
 
-        Ok(vec![(
-            DISPUTE_AGGREGATED_KEY.to_string(),
-            committee.dispute_aggregated_key,
-        )])
+        Ok(vec![
+            (
+                DISPUTE_AGGREGATED_KEY.to_string(),
+                committee.dispute_aggregated_key,
+            ),
+            (
+                TAKE_AGGREGATED_KEY.to_string(),
+                committee.take_aggregated_key,
+            ),
+        ])
     }
 
     fn generate_keys(
@@ -386,7 +394,7 @@ impl FullPenalizationProtocol {
                 &double_indexed_name(REIMBURSEMENT_KICKOFF_TX, op_index, slot_index),
                 (take_enabler.1 as usize).into(),
                 &op_lazy_disabler_name,
-                InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
+                InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
                 Some(settings.short_timelock),
                 Some(take_enabler.0),
             )?;
@@ -593,20 +601,27 @@ impl FullPenalizationProtocol {
         // current member, due to it should sign the output script leaf in the reimbursement kickoff.
         info!(id = self.ctx.my_idx, "Loading {} tx", name);
 
-        let mut protocol = self.load_protocol()?;
+        let protocol = self.load_protocol()?;
         let my_index = self.ctx.my_idx;
 
-        let kickoff_sig = protocol.sign_taproot_input(
-            name,
-            0,
-            &SpendMode::Script {
-                leaf: my_index as usize,
-            },
-            context.key_chain.key_manager.as_ref(),
-            "",
+        // Prepare signatures
+        let committee_signature = protocol
+            .input_taproot_script_spend_signature(name, 0, my_index)?
+            .unwrap();
+
+        let script = protocol.get_script_to_spend(name, 0, my_index as u32)?;
+        let challenge_key = script.get_key(CHALLENGE_KEY).unwrap();
+
+        let challenge_signature = context.key_chain.key_manager.sign_winternitz_message(
+            &[1],
+            WinternitzType::HASH160,
+            challenge_key.derivation_index(),
         )?;
+
+        // Create input arguments
         let mut kickoff_input = InputArgs::new_taproot_script_args(my_index);
-        kickoff_input.push_taproot_signature(kickoff_sig[my_index].unwrap())?;
+        kickoff_input.push_winternitz_signature(challenge_signature);
+        kickoff_input.push_taproot_signature(committee_signature)?;
 
         let directory_sig = protocol
             .input_taproot_key_spend_signature(name, 1)?
@@ -622,7 +637,7 @@ impl FullPenalizationProtocol {
             "Signed {}, txid: {} with signatures: [{:?},{:?}]",
             name,
             txid,
-            kickoff_sig,
+            committee_signature,
             directory_sig
         );
 

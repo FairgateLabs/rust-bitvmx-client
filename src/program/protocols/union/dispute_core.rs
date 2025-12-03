@@ -354,14 +354,6 @@ impl ProtocolHandler for DisputeCoreProtocol {
             reimbursement_outputs =
                 self.create_reimbursement_output(&dispute_core_data, &keys, &committee, &settings)?;
 
-            let mut challenge_leaves = vec![];
-            for i in 0..committee.members.len() {
-                if i == dispute_core_data.member_index {
-                    continue;
-                }
-                challenge_leaves.push(i);
-            }
-
             for i in 0..committee.packet_size as usize {
                 self.create_dispute_core(
                     &mut protocol,
@@ -371,7 +363,6 @@ impl ProtocolHandler for DisputeCoreProtocol {
                     &keys,
                     reimbursement_outputs[i].clone(),
                     context,
-                    &challenge_leaves,
                     &reveal_output,
                     &settings,
                 )?;
@@ -982,7 +973,7 @@ impl DisputeCoreProtocol {
                     timelock(
                         settings.long_timelock,
                         &committee.members[member_index].dispute_key.clone(),
-                        SignMode::Single,
+                        self.get_sign_mode(member_index),
                     )
                 } else {
                     verify_winternitz_signature_timelock(
@@ -1016,7 +1007,6 @@ impl DisputeCoreProtocol {
         keys: &Vec<ParticipantKeys>,
         reimbursement_output: OutputType,
         context: &ProgramContext,
-        challenge_leaves: &Vec<usize>,
         reveal_output: &OutputType,
         settings: &StreamSettings,
     ) -> Result<(), BitVMXError> {
@@ -1077,12 +1067,7 @@ impl DisputeCoreProtocol {
             &reimbursement_kickoff,
             reimbursement_output.into(),
             &challenge,
-            InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::Scripts {
-                    leaves: challenge_leaves.to_vec(),
-                },
-            ),
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
             Some(settings.short_timelock),
             None,
         )?;
@@ -2276,7 +2261,7 @@ impl DisputeCoreProtocol {
             )?;
 
             info!(id = self.ctx.my_idx, "Cleaning REVEAL_IN_PROGRESS");
-            // Asumming the penalization tx was dispatched successfully and mined,
+            // Asumming the penalization tx was dispatched and mined,
             context
                 .globals
                 .unset_var(&self.ctx.id, REVEAL_IN_PROGRESS)?;
@@ -2491,7 +2476,7 @@ impl DisputeCoreProtocol {
 
         info!(
             id = self.ctx.my_idx,
-            "{} {} successfully with txid: {}",
+            "{} {} with txid: {}",
             tx_name,
             get_dispatch_action(tx_type.block_height()),
             txid
