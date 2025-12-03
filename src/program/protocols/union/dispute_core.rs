@@ -493,6 +493,10 @@ impl ProtocolHandler for DisputeCoreProtocol {
             self.handle_wt_claim_gate_txs(program_context, &tx_name, &tx_status)?;
         } else if tx_name.starts_with(OP_CLAIM_GATE) {
             self.handle_op_claim_gate_txs(program_context, &tx_name, &tx_status)?;
+        } else if tx_name.starts_with(OP_NO_COSIGN_TX) {
+            self.handle_op_no_cosign_tx(program_context, &tx_name)?;
+        } else if tx_name.starts_with(WT_NO_CHALLENGE_TX) {
+            self.handle_wt_no_challenge_tx(program_context, &tx_name)?;
         }
 
         Ok(())
@@ -1667,6 +1671,36 @@ impl DisputeCoreProtocol {
                     drp_op_index,
                 )?;
             }
+        }
+
+        Ok(())
+    }
+
+    fn handle_op_no_cosign_tx(
+        &self,
+        context: &ProgramContext,
+        tx_name: &str,
+    ) -> Result<(), BitVMXError> {
+        info!(id = self.ctx.my_idx, "Handling {}", tx_name);
+        let (_, op_index) = extract_double_index(tx_name)?;
+
+        if self.is_my_dispute_core(context)? {
+            self.dispatch_claim_gate(context, ClaimGateAction::Start, WT_CLAIM_GATE, op_index)?;
+        }
+
+        Ok(())
+    }
+
+    fn handle_wt_no_challenge_tx(
+        &self,
+        context: &ProgramContext,
+        tx_name: &str,
+    ) -> Result<(), BitVMXError> {
+        info!(id = self.ctx.my_idx, "Handling {}", tx_name);
+        let (_, op_index) = extract_double_index(tx_name)?;
+
+        if op_index == self.ctx.my_idx {
+            self.dispatch_claim_gate(context, ClaimGateAction::Start, OP_CLAIM_GATE, op_index)?;
         }
 
         Ok(())

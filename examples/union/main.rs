@@ -75,6 +75,8 @@ pub fn main() -> Result<()> {
         Some("advance_funds") => cli_advance_funds()?,
         Some("advance_funds_twice") => cli_advance_funds_twice()?,
         Some("challenge") => cli_challenge(args.get(2))?,
+        Some("op_no_cosign") => cli_op_no_cosign()?,
+        Some("wt_no_challenge") => cli_wt_no_challenge()?,
         Some("input_not_revealed") => cli_input_not_revealed()?,
         Some("double_challenge") => cli_double_challenge()?,
         // Some("operator_disabler") => cli_operator_disabler()?,
@@ -276,6 +278,69 @@ pub fn cli_challenge(winner: Option<&String>) -> Result<()> {
     Ok(())
 }
 
+pub fn cli_op_no_cosign() -> Result<()> {
+    if HIGH_FEE_NODE_ENABLED {
+        // Due to self disablers does not have speedup by now
+        info!("This example works better with a client node with low fees. Please disable HIGH_FEE_NODE_ENABLED and try again.");
+        return Ok(());
+    }
+
+    let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+
+    let op_index = challenge(&mut committee, slot_index, false, true)?;
+
+    let blocks_to_wait = 12; // Amount of blocks enough to allow WT to open a challenge but not enough to dispatch the OP_COSIGN_TX. Fine tunning may be required.
+    info!("Mining {} blocks...", blocks_to_wait);
+    wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
+
+    // Shutdown operator to avoid him to respond to challenge with OP_COSIGN_TX
+    committee.members[op_index]
+        .bitvmx
+        .shutdown(Duration::from_secs(10));
+
+    // Amount of blocks enough to allow WT to dispatch OP_NO_COSIGN_TX and following TXs
+    let blocks_to_wait = committee.stream_settings.op_no_cosign_timelock as u32 + 30;
+    info!("Mining {} blocks...", blocks_to_wait);
+    wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
+
+    Ok(())
+}
+
+pub fn cli_wt_no_challenge() -> Result<()> {
+    if HIGH_FEE_NODE_ENABLED {
+        // Due to self disablers does not have speedup by now
+        info!("This example works better with a client node with low fees. Please disable HIGH_FEE_NODE_ENABLED and try again.");
+        return Ok(());
+    }
+
+    let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+
+    let op_index = challenge(&mut committee, slot_index, false, true)?;
+
+    let blocks_to_wait = 13; // Amount of blocks enough to allow WT to open a challenge but not enough to dispatch the START_CH. Fine tunning may be required.
+    info!("Mining {} blocks...", blocks_to_wait);
+    wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
+
+    for (wt_index, _) in committee.members.iter().enumerate() {
+        if wt_index == op_index {
+            continue;
+        }
+
+        // Shutdown watchtowers to avoid them to send START_CH
+        committee.members[wt_index]
+            .bitvmx
+            .shutdown(Duration::from_secs(10));
+    }
+    // Amount of blocks enough to allow OP to dispatch WT_NO_CHALLENGE_TX and following TXs
+    let blocks_to_wait = committee.stream_settings.wt_no_challenge_timelock as u32 + 30;
+    info!("Mining {} blocks...", blocks_to_wait);
+    wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
+
+    Ok(())
+}
+
 pub fn cli_input_not_revealed() -> Result<()> {
     if HIGH_FEE_NODE_ENABLED {
         // Due to self disablers does not have speedup by now
@@ -289,20 +354,17 @@ pub fn cli_input_not_revealed() -> Result<()> {
 
     let op_index = challenge(&mut committee, slot_index, false, false)?;
 
-    // Wait some blocks to mine ADVANCE_FUNDS_TX and REIMBURSEMENT_KICKOFF_TX
-    wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait() + 2)?;
+    let blocks_to_wait = 4; // Wait some blocks to mine ADVANCE_FUNDS_TX and REIMBURSEMENT_KICKOFF_TX. Fine tunning may be required.
+    wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
 
     // Kill operator client after some blocks to simulate offline behavior
-    let timeout = Duration::from_secs(10);
-    committee.members[op_index].bitvmx.shutdown(timeout);
-
-    thread::sleep(timeout);
+    committee.members[op_index]
+        .bitvmx
+        .shutdown(Duration::from_secs(10));
 
     // Wait some blocks to be able to dispatch and mine INPUT_NOT_REVEALED_TX
-    wait_for_blocks(
-        &committee.bitcoin_client,
-        get_blocks_to_wait() + committee.stream_settings.input_not_revealed_timelock as u32 + 20,
-    )?;
+    let blocks_to_wait = committee.stream_settings.input_not_revealed_timelock as u32 + 10;
+    wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
 
     Ok(())
 }

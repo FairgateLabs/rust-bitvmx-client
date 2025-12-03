@@ -24,7 +24,12 @@ timestamp_date=$(date +%y%m%d)
 timestamp_time=$(date +%H%M)
 
 name="$1"
-opts="$2"
+if [ "$#" -eq 2 ]; then
+  cmd="$name $2"
+else
+  cmd="$name"
+fi
+
 LOGS_DIR="logs/${timestamp_date}/${name}_${timestamp_time}"
 rm -rf "$LOGS_DIR"
 mkdir -p "$LOGS_DIR"
@@ -76,4 +81,4 @@ else
 fi
 
 printf "\nRunning union example: $name...\n\n\n"
-RUST_BACKTRACE=full cargo run --release --example union $name $opts 2>&1 | sed -u -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})*)?[mGKHF]//g" > "$EXAMPLE_LOG_FILE"
+RUST_BACKTRACE=full cargo run --release --example union $cmd 2>&1 | sed -u -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})*)?[mGKHF]//g" > "$EXAMPLE_LOG_FILE"
