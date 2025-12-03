@@ -42,12 +42,14 @@ pub const PROGRAM_COUNTER_CHALLENGE: [(&str, usize); 8] = [
     ("prover_read_pc_micro", 1),
     ("prover_prev_hash_tk", 20),
 ];
-pub const HALT_CHALLENGE: [(&str, usize); 5] = [
+pub const HALT_CHALLENGE: [(&str, usize); 7] = [
     ("prover_last_step", 8),
-    ("prover_step_number", 8),
+    ("prover_conflict_step_tk", 8),
     ("prover_read_1_value", 4),
     ("prover_read_2_value", 4),
     ("prover_read_pc_opcode", 4),
+    ("prover_step_hash_tk", 20),
+    ("prover_last_hash", 20),
 ];
 pub const TRACE_HASH_CHALLENGE: [(&str, usize); 6] = [
     ("prover_prev_hash_tk", 20),
@@ -57,12 +59,13 @@ pub const TRACE_HASH_CHALLENGE: [(&str, usize); 6] = [
     ("prover_write_micro", 1),
     ("prover_step_hash_tk", 20),
 ];
-pub const TRACE_HASH_ZERO_CHALLENGE: [(&str, usize); 5] = [
+pub const TRACE_HASH_ZERO_CHALLENGE: [(&str, usize); 6] = [
     ("prover_write_address", 4),
     ("prover_write_value", 4),
     ("prover_write_pc", 4),
     ("prover_write_micro", 1),
     ("prover_step_hash_tk", 20),
+    ("prover_conflict_step_tk", 8),
 ];
 
 pub const INPUT_CHALLENGE: [(&str, usize); 7] = [
@@ -116,7 +119,7 @@ pub const UNINITIALIZED_CHALLENGE: [(&str, usize); 7] = [
 ];
 
 pub const FUTURE_READ_CHALLENGE: [(&str, usize); 4] = [
-    ("prover_step_number", 8),
+    ("prover_conflict_step_tk", 8),
     ("prover_read_1_last_step", 8),
     ("prover_read_2_last_step", 8),
     ("verifier_read_selector", 1),
@@ -125,7 +128,7 @@ pub const FUTURE_READ_CHALLENGE: [(&str, usize); 4] = [
 pub const READ_VALUE_NARY_SEARCH_CHALLENGE: [(&str, usize); 1] =
     [("verifier_selection_bits2_1", 1)];
 
-pub const READ_VALUE_CHALLENGE: [(&str, usize); 13] = [
+pub const READ_VALUE_CHALLENGE: [(&str, usize); 15] = [
     ("prover_read_1_address", 4),
     ("prover_read_1_value", 4),
     ("prover_read_1_last_step", 8),
@@ -139,6 +142,8 @@ pub const READ_VALUE_CHALLENGE: [(&str, usize); 13] = [
     ("verifier_write_pc", 4),
     ("verifier_write_micro", 1),
     ("prover_next_hash_tk2", 20),
+    ("prover_write_step_tk2", 8),
+    ("prover_conflict_step_tk", 8),
 ];
 
 pub const CORRECT_HASH_CHALLENGE: [(&str, usize); 7] = [
@@ -150,6 +155,18 @@ pub const CORRECT_HASH_CHALLENGE: [(&str, usize); 7] = [
     ("verifier_write_micro", 1),
     ("prover_next_hash_tk2", 20),
 ];
+
+pub const EQUIVOCATION_HASH_CHALLENGE: [(&str, usize); 4] = [
+    ("prover_step_hash_tk", 20),
+    ("prover_step_hash_tk2", 20),
+    ("prover_write_step_tk2", 8),
+    ("prover_conflict_step_tk", 8),
+];
+
+// pub const EQUIVOCATION_RESIGN_CHALLENGE: [(&str, usize); 2] = [
+//     ("prover_{:?}_hash_tk", 20),
+//     ("prover_challenge_step_tk", 8),
+// ];
 
 pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 13] = [
     ("entry_point", &ENTRY_POINT_CHALLENGE),
@@ -167,9 +184,10 @@ pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 13] = [
     ("read_value_nary_search", &READ_VALUE_NARY_SEARCH_CHALLENGE),
 ];
 
-pub const READ_CHALLENGES: [(&str, &'static [(&str, usize)]); 2] = [
+pub const READ_CHALLENGES: [(&str, &'static [(&str, usize)]); 3] = [
     ("read_value", &READ_VALUE_CHALLENGE),
     ("correct_hash", &CORRECT_HASH_CHALLENGE),
+    ("equivocation_hash", &EQUIVOCATION_HASH_CHALLENGE),
 ];
 
 pub fn get_verifier_keys() -> Vec<(String, usize)> {
@@ -230,7 +248,10 @@ pub fn challenge_scripts(
                             .iter()
                             .map(|(var_name, _)| {
                                 let idx = if var_name.starts_with("prover") { 0 } else { 1 };
-                                (var_name, keys[idx].get_winternitz(var_name).unwrap())
+                                let key = keys[idx].get_winternitz(var_name).unwrap_or_else(|_| {
+                                    panic!("Missing winternitz key for var_name: {}", var_name)
+                                });
+                                (var_name, key)
                             })
                             .collect::<Vec<_>>(),
                         None,
@@ -585,6 +606,9 @@ pub fn challenge_scripts(
                     "correct_hash" => {
                         correct_hash_challenge(&mut stack);
                     }
+                    "equivocation_hash" => {
+                        equivocation_hash_challenge(&mut stack);
+                    }
                     _ => panic!("Unknown challenge name: {}", challenge_name),
                 }
 
@@ -786,7 +810,7 @@ pub fn get_challenge_leaf(
             prover_read_step_1: _,
             prover_read_step_2: _,
             read_selector,
-            prover_conflict_step_tk,
+            prover_conflict_step_tk: _,
         } => {
             name = "future_read";
             info!("Verifier chose {name} challenge");
@@ -805,8 +829,8 @@ pub fn get_challenge_leaf(
             prover_hash: _,
             trace,
             prover_next_hash: _,
-            prover_write_step_tk,
-            prover_conflict_step_tk,
+            prover_write_step_tk: _,
+            prover_conflict_step_tk: _,
         } => {
             name = "read_value";
             info!("Verifier chose {name} challenge");
@@ -879,11 +903,14 @@ pub fn get_challenge_leaf(
             )?;
         }
         ChallengeType::EquivocationHash {
-            prover_step_hash1,
-            prover_step_hash2,
-            prover_write_step_tk,
-            prover_conflict_step_tk,
-        } => todo!(),
+            prover_step_hash1: _,
+            prover_step_hash2: _,
+            prover_write_step_tk: _,
+            prover_conflict_step_tk: _,
+        } => {
+            name = "equivocation_hash";
+            info!("Verifier chose {name} challenge");
+        }
         ChallengeType::EquivocationResign {
             prover_true_hash,
             prover_wrong_hash,
@@ -896,12 +923,15 @@ pub fn get_challenge_leaf(
             nary_last_round,
         } => todo!(),
         ChallengeType::Halt {
-            prover_last_step,
-            prover_conflict_step_tk,
-            prover_trace,
-            prover_next_hash,
-            prover_last_hash,
-        } => todo!(),
+            prover_last_step: _,
+            prover_conflict_step_tk: _,
+            prover_trace: _,
+            prover_next_hash: _,
+            prover_last_hash: _,
+        } => {
+            name = "halt";
+            info!("Verifier chose {name} challenge");
+        }
         ChallengeType::No => {
             name = "";
         }

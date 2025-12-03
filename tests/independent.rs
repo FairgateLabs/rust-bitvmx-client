@@ -1114,18 +1114,29 @@ fn challenge_witness_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::WitnessDiv(Verifier))
 }
 
-//TODO: Future read, correct hash, read_value and correct_hash challenges have variable parameters that need to be constant
-// #[ignore]
-// #[test]
-// fn challenge_future_read_prover() -> Result<()> {
-//     test_challenge(ForcedChallenges::FutureRead(Prover))
-// }
+#[ignore]
+#[test]
+fn challenge_future_read_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::FutureRead(Prover))
+}
 
-// #[ignore]
-// #[test]
-// fn challenge_future_read_verifier() -> Result<()> {
-//     test_challenge(ForcedChallenges::FutureRead(Verifier))
-// }
+#[ignore]
+#[test]
+fn challenge_future_read_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::FutureRead(Verifier))
+}
+
+#[ignore]
+#[test]
+fn challenge_halt_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::Halt(Prover))
+}
+
+#[ignore]
+#[test]
+fn challenge_halt_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::Halt(Verifier))
+}
 
 #[ignore]
 #[test]
@@ -1133,23 +1144,35 @@ fn challenge_read_value_prover() -> Result<()> {
     test_challenge(ForcedChallenges::ReadValue(Prover))
 }
 
-// #[ignore]
-// #[test]
-// fn challenge_read_value_verifier() -> Result<()> {
-//     test_challenge(ForcedChallenges::ReadValue(Verifier))
-// }
+#[ignore]
+#[test]
+fn challenge_read_value_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::ReadValue(Verifier))
+}
 
-// #[ignore]
-// #[test]
-// fn challenge_correct_hash_prover() -> Result<()> {
-//     test_challenge(ForcedChallenges::CorrectHash(Prover))
-// }
+#[ignore]
+#[test]
+fn challenge_correct_hash_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::CorrectHash(Prover))
+}
 
-// #[ignore]
-// #[test]
-// fn challenge_correct_hash_verifier() -> Result<()> {
-//     test_challenge(ForcedChallenges::CorrectHash(Verifier))
-// }
+#[ignore]
+#[test]
+fn challenge_correct_hash_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::CorrectHash(Verifier))
+}
+
+#[ignore]
+#[test]
+fn challenge_equivocation_hash_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::EquivocationHash(Prover))
+}
+
+#[ignore]
+#[test]
+fn challenge_equivocation_hash_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::EquivocationHash(Verifier))
+}
 
 // The forced Execution is required for testing because without it, the prover or verifier will not execute directly
 // #[ignore]

@@ -256,9 +256,9 @@ pub fn execution_result(
             }
 
             let name = match challenge {
-                ChallengeType::ReadValue { .. } | ChallengeType::CorrectHash { .. } => {
-                    CHALLENGE_READ
-                }
+                ChallengeType::ReadValue { .. }
+                | ChallengeType::CorrectHash { .. }
+                | ChallengeType::EquivocationHash { .. } => CHALLENGE_READ,
                 _ => CHALLENGE,
             };
             let (tx, sp) =

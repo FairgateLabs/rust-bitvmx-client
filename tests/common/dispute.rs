@@ -55,9 +55,12 @@ pub enum ForcedChallenges {
     Uninitialized(ParticipantRole),
     FutureRead(ParticipantRole),
     WitnessDiv(ParticipantRole),
+    Halt(ParticipantRole),
+    EquivocationResign(ParticipantRole),
     // 2nd n-ary search
     ReadValue(ParticipantRole),
     CorrectHash(ParticipantRole),
+    EquivocationHash(ParticipantRole),
     // Default
     No,
     Execution,
@@ -83,7 +86,10 @@ impl ForcedChallenges {
             | FutureRead(role)
             | WitnessDiv(role)
             | ReadValue(role)
-            | CorrectHash(role) => Some(role.clone()),
+            | CorrectHash(role)
+            | Halt(role)
+            | EquivocationResign(role)
+            | EquivocationHash(role) => Some(role.clone()),
             No | Execution | Personalized(_) => None,
         }
     }
@@ -116,6 +122,8 @@ pub fn prepare_dispute(
     let program_definition = program_path.unwrap_or(program.to_string());
 
     let config_results = get_fail_force_config(fail_force_config.clone());
+
+    info!("Fail/Force config: {:?}", config_results);
 
     let test_enabler = OutputType::segwit_key(500, aggregated_pub_key).unwrap();
 
@@ -267,7 +275,9 @@ pub fn execute_dispute(
     dispatcher_p.append(&mut dispatcher_v);
     let mut dispatchers = dispatcher_p;
     let ending_state = match forced_challenge {
-        ForcedChallenges::ReadValue(..) | ForcedChallenges::CorrectHash(..) => CHALLENGE_READ,
+        ForcedChallenges::ReadValue(..)
+        | ForcedChallenges::CorrectHash(..)
+        | ForcedChallenges::EquivocationHash(..) => CHALLENGE_READ,
         _ => EXECUTE,
     };
 
@@ -698,6 +708,45 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ConfigResul
                 ForceCondition::Always,
                 None,
                 ForceChallenge::No,
+            )
+        }
+        ForcedChallenges::Halt(role) => {
+            let fail_commitment_step = FailConfiguration::new_fail_commitment_step(1498);
+            get_config_with_read(
+                role,
+                fail_commitment_step.clone(),
+                fail_commitment_step,
+                ForceChallenge::Halt,
+                ForceCondition::ValidInputWrongStepOrHash,
+                ForceCondition::Always,
+                None,
+                ForceChallenge::No,
+            )
+        }
+        ForcedChallenges::EquivocationResign(participant_role) => todo!(),
+        ForcedChallenges::EquivocationHash(role) => {
+            let fail_read_args = vec!["1106", "0xaa000000", "0x11111100", "0xaa000000", "1100"]
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<String>>();
+
+            let fail_read_2 =
+                FailConfiguration::new_fail_reads(FailReads::new(None, Some(&fail_read_args)));
+
+            let fail_write_args = vec!["1100", "0xaa000000", "0x11111100", "0xaa000000"]
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<String>>();
+            let fail_write = FailConfiguration::new_fail_write(FailWrite::new(&fail_write_args));
+            get_config_with_read(
+                role,
+                fail_read_2.clone(),
+                fail_read_2,
+                ForceChallenge::ReadValueNArySearch,
+                ForceCondition::ValidInputWrongStepOrHash,
+                ForceCondition::ValidInputWrongStepOrHash,
+                Some(fail_write),
+                ForceChallenge::EquivocationHash,
             )
         }
         ForcedChallenges::No => ConfigResults::default(),
