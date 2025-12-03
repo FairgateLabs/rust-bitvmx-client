@@ -8,6 +8,7 @@ use crate::{
     comms_helper::{deserialize_msg, CommsMessageType},
     config::Config,
     errors::BitVMXError,
+    helper::get_others_participants_pubkey_hashes,
     keychain::KeyChain,
     program::{
         participant::CommsAddress,
@@ -394,12 +395,8 @@ impl BitVMX {
             Some(result) => Ok(result), // Verification message processed or needs buffering
             None => {
                 let my_pubkey_hash = self.program_context.comms.get_pubk_hash()?;
-                let participants: Vec<_> = program
-                    .participants
-                    .iter()
-                    .filter(|p| p.comms_address.pubkey_hash != my_pubkey_hash)
-                    .map(|p| p.comms_address.pubkey_hash.clone())
-                    .collect();
+                let participants =
+                    get_others_participants_pubkey_hashes(&my_pubkey_hash, &program.participants)?;
                 if !SignatureVerifier::has_all_keys(&self.program_context.globals, &participants)? {
                     info!("Missing verification keys for program: {:?}", program_id);
                     return Ok(false);
@@ -447,12 +444,10 @@ impl BitVMX {
             Some(result) => Ok(result), // Verification message processed or needs buffering
             None => {
                 let my_pubkey_hash = self.program_context.comms.get_pubk_hash()?;
-                let participants: Vec<_> = collaboration
-                    .participants
-                    .iter()
-                    .filter(|p| p.pubkey_hash != my_pubkey_hash)
-                    .map(|p| p.pubkey_hash.clone())
-                    .collect();
+                let participants = get_others_participants_pubkey_hashes(
+                    &my_pubkey_hash,
+                    &collaboration.participants,
+                )?;
                 if !SignatureVerifier::has_all_keys(&self.program_context.globals, &participants)? {
                     info!(
                         "Missing verification keys for collaboration: {:?}",
