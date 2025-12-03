@@ -110,6 +110,10 @@ impl OperatorVerificationStore {
                 continue;
             }
             if missing_set.contains(&peer.pubkey_hash) {
+                info!(
+                    "I'm {:?} requesting verification key from peer: {:?}",
+                    my_pubkey_hash, peer.pubkey_hash
+                );
                 request(
                     comms,
                     key_chain,
