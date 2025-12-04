@@ -222,10 +222,25 @@ pub fn extract_index_from_claim_gate(input: &str) -> Result<(usize, usize), BitV
     };
 
     let prefix = &format!("{}_", prefix);
-    let rest = input.strip_prefix(prefix).unwrap();
+    let rest = input.strip_prefix(prefix).ok_or_else(|| {
+        BitVMXError::InvalidParameter(format!(
+            "Input '{}' does not match expected format '{}{{a}}_{{b}}'",
+            input, prefix
+        ))
+    })?;
     let parts: Vec<&str> = rest.split('_').collect();
-    let a: usize = parts[0].parse().unwrap();
-    let b: usize = parts[1].parse().unwrap();
+    let a: usize = parts[0].parse().map_err(|_| {
+        BitVMXError::InvalidParameter(format!(
+            "Could not parse first index from part: '{}'",
+            parts[0]
+        ))
+    })?;
+    let b: usize = parts[1].parse().map_err(|_| {
+        BitVMXError::InvalidParameter(format!(
+            "Could not parse second index from part: '{}'",
+            parts[1]
+        ))
+    })?;
     Ok((a, b))
 }
 
