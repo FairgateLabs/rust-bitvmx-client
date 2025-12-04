@@ -2,7 +2,8 @@ use core::convert::Into;
 use std::{collections::HashMap, vec};
 
 use bitcoin::{Amount, PublicKey, ScriptBuf, Transaction, Txid};
-use bitcoin_coordinator::TransactionStatus;
+use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
+use key_manager::winternitz::WinternitzType;
 use protocol_builder::{
     graph::graph::GraphOptions,
     scripts::{ProtocolScript, SignMode},
@@ -25,10 +26,11 @@ use crate::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
                 common::{
-                    create_transaction_reference, double_indexed_name, get_dispute_core_pid,
-                    get_initial_deposit_output_type, get_stream_setting, indexed_name,
-                    load_union_settings, triple_indexed_name,
+                    create_transaction_reference, double_indexed_name, extract_double_index,
+                    get_dispute_core_pid, get_initial_deposit_output_type, get_stream_setting,
+                    indexed_name, load_union_settings, triple_indexed_name,
                 },
+                dispute_core::CHALLENGE_KEY,
                 types::{
                     Committee, FullPenalizationData, StreamSettings, CLAIM_GATE_STOPPER_UTXOS,
                     DISPUTE_AGGREGATED_KEY, DUST_VALUE, OPERATOR_TAKE_ENABLER,
@@ -37,7 +39,7 @@ use crate::{
                     OP_DISABLER_DIRECTORY_UTXO, OP_DISABLER_TX, OP_INITIAL_DEPOSIT_AMOUNT,
                     OP_INITIAL_DEPOSIT_OUT_SCRIPT, OP_INITIAL_DEPOSIT_TX, OP_INITIAL_DEPOSIT_TXID,
                     OP_LAZY_DISABLER_TX, REIMBURSEMENT_KICKOFF_TX, REVEAL_INPUT_TX, SPEEDUP_VALUE,
-                    STOP_OP_WON_TX, WT_CLAIM_GATE_SUCCESS,
+                    STOP_OP_WON_TX, TAKE_AGGREGATED_KEY, WT_CLAIM_GATE_SUCCESS,
                     WT_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO, WT_DISABLER_DIRECTORY_TX,
                     WT_DISABLER_DIRECTORY_UTXO, WT_DISABLER_TX, WT_INIT_CHALLENGE_TX,
                     WT_START_ENABLER_TX,
@@ -70,10 +72,16 @@ impl ProtocolHandler for FullPenalizationProtocol {
         let data = self.full_penalization_data(context)?;
         let committee = self.committee(context, data.committee_id)?;
 
-        Ok(vec![(
-            DISPUTE_AGGREGATED_KEY.to_string(),
-            committee.dispute_aggregated_key,
-        )])
+        Ok(vec![
+            (
+                DISPUTE_AGGREGATED_KEY.to_string(),
+                committee.dispute_aggregated_key,
+            ),
+            (
+                TAKE_AGGREGATED_KEY.to_string(),
+                committee.take_aggregated_key,
+            ),
+        ])
     }
 
     fn generate_keys(
@@ -118,12 +126,12 @@ impl ProtocolHandler for FullPenalizationProtocol {
             Ok(self.op_lazy_disabler_tx(name, context)?)
         } else if name.starts_with(OP_DISABLER_TX) {
             Ok(self.op_disabler_tx(name, context)?)
-        } else if name.starts_with(OP_DISABLER_DIRECTORY_TX) {
-            Ok(self.op_disabler_directory_tx(name, context)?)
         } else if name.starts_with(WT_DISABLER_TX) {
             Ok(self.wt_disabler_tx(name, context)?)
-        } else if name.starts_with(WT_DISABLER_DIRECTORY_TX) {
-            Ok(self.wt_disabler_directory_tx(name, context)?)
+        } else if name.starts_with(OP_DISABLER_DIRECTORY_TX)
+            || name.starts_with(WT_DISABLER_DIRECTORY_TX)
+        {
+            Ok(self.disabler_directory_tx(name)?)
         } else {
             Err(BitVMXError::InvalidTransactionName(name.to_string()))
         }
@@ -135,7 +143,7 @@ impl ProtocolHandler for FullPenalizationProtocol {
         _vout: Option<u32>,
         tx_status: TransactionStatus,
         _context: String,
-        _program_context: &ProgramContext,
+        program_context: &ProgramContext,
         _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
@@ -143,6 +151,12 @@ impl ProtocolHandler for FullPenalizationProtocol {
             "FullPenalizationProtocol received news of transaction: {}, txid: {} with {} confirmations",
             tx_name, tx_id, tx_status.confirmations
         );
+
+        if tx_name.starts_with(OP_DISABLER_DIRECTORY_TX) {
+            self.handle_op_disabler_directory_tx(program_context, &tx_name)?;
+        } else if tx_name.starts_with(WT_DISABLER_DIRECTORY_TX) {
+            self.handle_wt_disabler_directory_tx(program_context, &tx_name)?;
+        }
 
         Ok(())
     }
@@ -273,7 +287,7 @@ impl FullPenalizationProtocol {
     ) -> Result<(), BitVMXError> {
         let packet_size = committee.packet_size;
         let op_disabler_directory_name =
-            double_indexed_name(OP_DISABLER_DIRECTORY_TX, op_index, wt_index);
+            double_indexed_name(OP_DISABLER_DIRECTORY_TX, wt_index, op_index);
 
         let wt_claim_success_name = double_indexed_name(WT_CLAIM_GATE_SUCCESS, wt_index, op_index);
         let wt_claim_success_utxo =
@@ -319,7 +333,7 @@ impl FullPenalizationProtocol {
         for slot_index in 0..packet_size as usize {
             // Create operator disabler for each slot
             let op_disabler_name =
-                triple_indexed_name(OP_DISABLER_TX, op_index, wt_index, slot_index);
+                triple_indexed_name(OP_DISABLER_TX, wt_index, op_index, slot_index);
 
             let initial_deposit_utxo = &initial_deposit_utxos[slot_index];
 
@@ -367,7 +381,7 @@ impl FullPenalizationProtocol {
             // Create Lazy Operator disablers
             // Operator take transaction data
             let op_lazy_disabler_name =
-                triple_indexed_name(OP_LAZY_DISABLER_TX, op_index, wt_index, slot_index);
+                triple_indexed_name(OP_LAZY_DISABLER_TX, wt_index, op_index, slot_index);
             let take_enabler = take_enablers[slot_index].clone();
 
             debug!(
@@ -380,7 +394,7 @@ impl FullPenalizationProtocol {
                 &double_indexed_name(REIMBURSEMENT_KICKOFF_TX, op_index, slot_index),
                 (take_enabler.1 as usize).into(),
                 &op_lazy_disabler_name,
-                InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
+                InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
                 Some(settings.short_timelock),
                 Some(take_enabler.0),
             )?;
@@ -427,7 +441,7 @@ impl FullPenalizationProtocol {
         for slot_index in 0..packet_size as usize {
             let reveal_name = &double_indexed_name(REVEAL_INPUT_TX, op_index, slot_index);
             let stop_op_won_name =
-                triple_indexed_name(STOP_OP_WON_TX, op_index, wt_index, slot_index);
+                triple_indexed_name(STOP_OP_WON_TX, wt_index, op_index, slot_index);
 
             // OP DISABLER DIRECTORY to STOP_OP_WON_TX
             protocol.add_connection(
@@ -539,33 +553,75 @@ impl FullPenalizationProtocol {
             .utxo()?)
     }
 
+    fn stop_operator_won_tx(
+        &self,
+        name: &str,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        info!(id = self.ctx.my_idx, "Loading {} tx", name);
+
+        let protocol = self.load_protocol()?;
+
+        let reveal_sig = protocol
+            .input_taproot_key_spend_signature(name, 0)?
+            .unwrap();
+        let mut kickoff_input = InputArgs::new_taproot_key_args();
+        kickoff_input.push_taproot_signature(reveal_sig)?;
+
+        let directory_sig = protocol
+            .input_taproot_key_spend_signature(name, 1)?
+            .unwrap();
+        let mut directory_input = InputArgs::new_taproot_key_args();
+        directory_input.push_taproot_signature(directory_sig)?;
+
+        let tx = protocol.transaction_to_send(&name, &[kickoff_input, directory_input])?;
+
+        let txid = tx.compute_txid();
+        info!(
+            id = self.ctx.my_idx,
+            "Signed {}, txid: {} with signatures: [{:?},{:?}]",
+            name,
+            txid,
+            reveal_sig,
+            directory_sig
+        );
+
+        Ok((tx, None))
+    }
+
     fn op_lazy_disabler_tx(
         &self,
         name: &str,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        // NOTE: OP_LAZY_DISABLER_TX_<OP>_<WT>_<SLOT> it's tied to:
-        // - Operator index
+        // NOTE: OP_LAZY_DISABLER_TX_<WT>_<OP>_<SLOT> it's tied to:
         // - Watchtower index
+        // - Operator index
         // - Slot
         // Here watchtower index it's ignored and it dispatch the TX corresponding to
         // current member, due to it should sign the output script leaf in the reimbursement kickoff.
         info!(id = self.ctx.my_idx, "Loading {} tx", name);
 
-        let mut protocol = self.load_protocol()?;
+        let protocol = self.load_protocol()?;
         let my_index = self.ctx.my_idx;
 
-        let kickoff_sig = protocol.sign_taproot_input(
-            name,
-            0,
-            &SpendMode::Script {
-                leaf: my_index as usize,
-            },
-            context.key_chain.key_manager.as_ref(),
-            "",
+        // Prepare signatures
+        let committee_signature = protocol
+            .input_taproot_script_spend_signature(name, 0, my_index)?
+            .unwrap();
+
+        let script = protocol.get_script_to_spend(name, 0, my_index as u32)?;
+        let challenge_key = script.get_key(CHALLENGE_KEY).unwrap();
+
+        let challenge_signature = context.key_chain.key_manager.sign_winternitz_message(
+            &[1],
+            WinternitzType::HASH160,
+            challenge_key.derivation_index(),
         )?;
+
+        // Create input arguments
         let mut kickoff_input = InputArgs::new_taproot_script_args(my_index);
-        kickoff_input.push_taproot_signature(kickoff_sig[my_index].unwrap())?;
+        kickoff_input.push_winternitz_signature(challenge_signature);
+        kickoff_input.push_taproot_signature(committee_signature)?;
 
         let directory_sig = protocol
             .input_taproot_key_spend_signature(name, 1)?
@@ -581,7 +637,7 @@ impl FullPenalizationProtocol {
             "Signed {}, txid: {} with signatures: [{:?},{:?}]",
             name,
             txid,
-            kickoff_sig,
+            committee_signature,
             directory_sig
         );
 
@@ -631,7 +687,7 @@ impl FullPenalizationProtocol {
         name: &str,
         _context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        info!(id = self.ctx.my_idx, "Loading {} tx", name);
+        debug!(id = self.ctx.my_idx, "Loading {} tx", name);
 
         let protocol = self.load_protocol()?;
 
@@ -653,7 +709,7 @@ impl FullPenalizationProtocol {
 
         let tx = protocol.transaction_to_send(&name, &[wt_start_enabler_input, directory_input])?;
 
-        info!(
+        debug!(
             id = self.ctx.my_idx,
             "Signed {}, txid: {} with signatures: [{:?},{:?}]",
             name,
@@ -665,58 +721,33 @@ impl FullPenalizationProtocol {
         Ok((tx, None))
     }
 
-    fn op_disabler_directory_tx(
+    fn disabler_directory_tx(
         &self,
         name: &str,
-        _context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} tx", name);
 
         let protocol = self.load_protocol()?;
         let my_index = self.ctx.my_idx;
 
-        let op_initial_deposit_sig = protocol
+        // Funds input signature
+        let funds_sig = protocol
             .input_taproot_key_spend_signature(name, 0)?
             .unwrap();
-        let mut op_initial_deposit_input = InputArgs::new_taproot_key_args();
-        op_initial_deposit_input.push_taproot_signature(op_initial_deposit_sig)?;
+        let mut funds_input = InputArgs::new_taproot_key_args();
+        funds_input.push_taproot_signature(funds_sig)?;
 
-        // TODO: Add dispute channel input signature when available
-        let tx = protocol.transaction_to_send(&name, &[op_initial_deposit_input])?;
-
-        let txid = tx.compute_txid();
-        info!(
-            id = my_index,
-            "Signed {} with txid: {} with signatures: [{:?}] ", name, txid, op_initial_deposit_sig,
-        );
-
-        Ok((tx, None))
-    }
-
-    fn wt_disabler_directory_tx(
-        &self,
-        name: &str,
-        _context: &ProgramContext,
-    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        info!(id = self.ctx.my_idx, "Loading {} tx", name);
-
-        let protocol = self.load_protocol()?;
-        let my_index = self.ctx.my_idx;
-
-        let wt_start_enabler_sig = protocol
-            .input_taproot_key_spend_signature(name, 0)?
+        // CLAIM GATE SUCCESS input signature
+        let role_success_sig = protocol
+            .input_taproot_key_spend_signature(name, 1)?
             .unwrap();
-        let mut wt_start_enabler_input = InputArgs::new_taproot_key_args();
-        wt_start_enabler_input.push_taproot_signature(wt_start_enabler_sig)?;
+        let mut role_success_input = InputArgs::new_taproot_key_args();
+        role_success_input.push_taproot_signature(role_success_sig)?;
 
-        // TODO: Add dispute channel input signature when available
-        let tx = protocol.transaction_to_send(&name, &[wt_start_enabler_input])?;
-
+        let tx = protocol.transaction_to_send(&name, &[funds_input, role_success_input])?;
         let txid = tx.compute_txid();
-        info!(
-            id = my_index,
-            "Signed {} with txid: {} with signatures: [{:?}] ", name, txid, wt_start_enabler_sig,
-        );
+
+        info!(id = my_index, "Signed {} with txid: {} ", name, txid,);
 
         Ok((tx, None))
     }
@@ -997,12 +1028,17 @@ impl FullPenalizationProtocol {
         )?;
 
         for member_index in 0..committee.members.len() {
+            // Always add an output to disabler directory even if no stopper is present for this member
+            protocol.add_transaction_output(
+                &wt_disabler_directory_name,
+                &OutputType::taproot(DUST_VALUE, &committee.dispute_aggregated_key, &[])?.into(),
+            )?;
+
             if wt_stoppers[member_index].is_none() {
                 continue;
             }
 
             let wt_stopper = wt_stoppers[member_index].clone().unwrap();
-
             let wt_disabler_name =
                 triple_indexed_name(WT_DISABLER_TX, wt_index, op_index, member_index);
             let wt_init_challenge_name =
@@ -1024,7 +1060,7 @@ impl FullPenalizationProtocol {
             protocol.add_connection(
                 "from_disabler_directory",
                 &wt_disabler_directory_name,
-                OutputType::taproot(DUST_VALUE, &committee.dispute_aggregated_key, &[])?.into(),
+                OutputSpec::Last,
                 &wt_disabler_name,
                 InputSpec::Auto(
                     SighashType::taproot_all(),
@@ -1048,6 +1084,98 @@ impl FullPenalizationProtocol {
             )?;
 
             // TODO: Add WT_LAZY_DISABLER once Dispute channel is available
+        }
+
+        Ok(())
+    }
+
+    fn handle_wt_disabler_directory_tx(
+        &self,
+        program_context: &ProgramContext,
+        tx_name: &str,
+    ) -> Result<(), BitVMXError> {
+        info!("Handling: {}", tx_name);
+
+        let (wt_index, op_index) = extract_double_index(tx_name)?;
+        let committee = self.committee(
+            program_context,
+            self.full_penalization_data(program_context)?.committee_id,
+        )?;
+
+        let mut txs = vec![];
+
+        for (member_index, member) in committee.members.iter().enumerate() {
+            // Disabler are just for those outputs that correspond to a Prover and not self
+            if wt_index == member_index || member.role != ParticipantRole::Prover {
+                continue;
+            }
+
+            let disabler_name =
+                triple_indexed_name(WT_DISABLER_TX, wt_index, op_index, member_index);
+            let (tx, speedup) = self.wt_disabler_tx(&disabler_name, program_context)?;
+            txs.push((disabler_name, tx, speedup));
+        }
+
+        self.dispatch_batch(program_context, txs)?;
+
+        Ok(())
+    }
+
+    fn handle_op_disabler_directory_tx(
+        &self,
+        program_context: &ProgramContext,
+        tx_name: &str,
+    ) -> Result<(), BitVMXError> {
+        info!("Handling: {}", tx_name);
+
+        let (wt_index, op_index) = extract_double_index(tx_name)?;
+        let committee = self.committee(
+            program_context,
+            self.full_penalization_data(program_context)?.committee_id,
+        )?;
+
+        let mut txs = vec![];
+
+        for slot_index in 0..committee.packet_size as usize {
+            let disabler_name = triple_indexed_name(OP_DISABLER_TX, wt_index, op_index, slot_index);
+            let (tx, speedup) = self.op_disabler_tx(&disabler_name, program_context)?;
+            txs.push((disabler_name, tx, speedup));
+
+            let stop_op_won_name =
+                triple_indexed_name(STOP_OP_WON_TX, wt_index, op_index, slot_index);
+            let (tx, speedup) = self.stop_operator_won_tx(&stop_op_won_name)?;
+            txs.push((stop_op_won_name, tx, speedup));
+
+            let lazy_disabler_name =
+                triple_indexed_name(OP_LAZY_DISABLER_TX, wt_index, op_index, slot_index);
+            let (tx, speedup) = self.op_lazy_disabler_tx(&lazy_disabler_name, program_context)?;
+            txs.push((lazy_disabler_name, tx, speedup));
+        }
+
+        self.dispatch_batch(program_context, txs)?;
+
+        Ok(())
+    }
+
+    fn dispatch_batch(
+        &self,
+        program_context: &ProgramContext,
+        txs: Vec<(String, Transaction, Option<SpeedupData>)>,
+    ) -> Result<(), BitVMXError> {
+        for (tx_name, tx, speedup) in txs {
+            // Dispatch the transaction through the bitcoin coordinator
+            let txid = tx.compute_txid();
+            program_context.bitcoin_coordinator.dispatch(
+                tx,
+                speedup,
+                format!("full_penalization_{}:{}", self.ctx.id, tx_name),
+                None,
+            )?;
+
+            info!(
+                id = self.ctx.my_idx,
+                "{} dispatched with txid: {}", tx_name, txid
+            );
         }
 
         Ok(())

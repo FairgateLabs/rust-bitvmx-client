@@ -1,5 +1,6 @@
 use anyhow::Result;
 use bitcoin::PublicKey;
+use emulator::decision::challenge::{ForceChallenge, ForceCondition};
 use std::collections::HashMap;
 use tracing::info;
 use uuid::Uuid;
@@ -10,7 +11,10 @@ use bitvmx_client::{
     program::{
         participant::{CommsAddress, ParticipantRole},
         protocols::{
-            dispute::config::DisputeConfiguration,
+            dispute::{
+                config::{ConfigResult, ConfigResults, DisputeConfiguration},
+                TIMELOCK_BLOCKS as DRP_TIMELOCK_BLOCKS,
+            },
             union::{
                 common::{get_dispute_channel_pid, get_dispute_core_pid},
                 types::{MemberData, CLAIM_GATE_STOPPER_UTXOS, OP_COSIGN_UTXOS},
@@ -18,10 +22,9 @@ use bitvmx_client::{
         },
         variables::{PartialUtxo, VariableTypes},
     },
-    types::{OutgoingBitVMXApiMessages, PROGRAM_TYPE_DRP},
+    types::{OutgoingBitVMXApiMessages, PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_DRP},
 };
 
-const DRP_TIMELOCK_BLOCKS: u16 = 15; // TODO review if this is the right value
 const DRP_PROGRAM_DEFINITION: &str = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml"; // TODO move to config?
 
 pub struct DisputeChannelSetup;
@@ -73,6 +76,8 @@ impl DisputeChannelSetup {
                     Self::op_cosign_utxos(partner_dispute_core_pid, &bitvmx)?;
 
                 let partner_stoppers = partner_claim_gate_stoppers[my_index].clone().unwrap();
+                let wt_takekey = &members[partner_index].take_key;
+
                 Self::setup_one(
                     committee_id,
                     my_index,
@@ -84,6 +89,7 @@ impl DisputeChannelSetup {
                     partner_stoppers.0,
                     partner_stoppers.1,
                     partner_op_cosign_utxos[my_index].clone().unwrap(),
+                    wt_takekey,
                 )?;
 
                 total_setups += 1;
@@ -94,6 +100,7 @@ impl DisputeChannelSetup {
                 Self::print_setup_info(my_index, partner_index, my_index);
 
                 let my_stoppers = my_claim_gate_stoppers[partner_index].clone().unwrap();
+                let wt_takekey = &members[my_index].take_key;
 
                 Self::setup_one(
                     committee_id,
@@ -106,6 +113,7 @@ impl DisputeChannelSetup {
                     my_stoppers.0,
                     my_stoppers.1,
                     my_op_cosign_utxos[partner_index].clone().unwrap(),
+                    wt_takekey,
                 )?;
 
                 total_setups += 1;
@@ -157,8 +165,10 @@ impl DisputeChannelSetup {
         wt_stopper: PartialUtxo,
         op_stopper: PartialUtxo,
         op_cosign: PartialUtxo,
+        wt_takekey: &PublicKey,
     ) -> Result<()> {
         let drp_id = get_dispute_channel_pid(committee_id, op_index, wt_index);
+        let dispute_core_pid = get_dispute_core_pid(committee_id, wt_takekey);
         let participants: Vec<CommsAddress> = vec![operator.clone(), watchtower.clone()];
 
         info!(
@@ -166,17 +176,29 @@ impl DisputeChannelSetup {
             PROGRAM_TYPE_DRP, drp_id, op_index, wt_index,
         );
 
+        let dispute_config = ConfigResults {
+            main: ConfigResult {
+                fail_config_prover: None,
+                fail_config_verifier: None,
+                force_challenge: ForceChallenge::No,
+                force_condition: ForceCondition::Always,
+            },
+            read: ConfigResult::default(),
+        };
+
         let dispute_configuration = DisputeConfiguration::new(
             drp_id,
             pair_key,
             (op_cosign, vec![]),
-            vec![(wt_stopper, vec![1])], // Consume leaf 1
-            vec![],
             vec![(op_stopper, vec![1])], // Consume leaf 1
+            vec![],
+            vec![(wt_stopper, vec![1])], // Consume leaf 1
             vec![],
             DRP_TIMELOCK_BLOCKS,
             DRP_PROGRAM_DEFINITION.to_string(),
-            None, // TODO review if this is the right fail force config
+            Some(dispute_config), // FIXME: Remove this setting for production, use 'None' instead.
+            vec![(PROGRAM_TYPE_DISPUTE_CORE.to_string(), dispute_core_pid)],
+            Some(0),
         );
 
         bitvmx.set_var(

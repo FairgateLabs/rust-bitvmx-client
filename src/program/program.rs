@@ -832,7 +832,14 @@ impl Program {
             participant_keys,
         )?;
 
-        let name = self.protocol.get_transaction_name_by_id(tx_id)?;
+        let name = match self.protocol.get_transaction_name_by_id(tx_id) {
+            Ok(name) => name,
+            Err(_) => {
+                warn!("Txid {} not found in program {}", tx_id, self.program_id);
+                return Ok(());
+            }
+        };
+
         if vout.is_some() {
             /* DON'T SEND AUTOMATICALLY FOR NOW
             program_context.broker_channel.send(

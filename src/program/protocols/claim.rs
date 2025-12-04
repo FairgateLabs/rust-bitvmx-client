@@ -11,6 +11,10 @@ use protocol_builder::{
 
 use crate::errors::BitVMXError;
 
+pub const CLAIM_GATE_START: &str = "START";
+pub const CLAIM_GATE_STOP: &str = "STOP";
+pub const CLAIM_GATE_SUCCESS: &str = "SUCCESS";
+
 pub struct ClaimGate {
     name: String,
     from: String,
@@ -23,13 +27,13 @@ pub struct ClaimGate {
 
 impl ClaimGate {
     pub fn tx_start(claim_name: &str) -> String {
-        format!("{}_START", claim_name)
+        format!("{}_{}", claim_name, CLAIM_GATE_START)
     }
     pub fn tx_stop(claim_name: &str, stopper: u8) -> String {
-        format!("{}_STOP_{}", claim_name, stopper)
+        format!("{}_{}_{}", claim_name, CLAIM_GATE_STOP, stopper)
     }
     pub fn tx_success(claim_name: &str) -> String {
-        format!("{}_SUCCESS", claim_name)
+        format!("{}_{}", claim_name, CLAIM_GATE_SUCCESS)
     }
 
     pub fn cost(
