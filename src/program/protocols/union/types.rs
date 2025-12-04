@@ -28,7 +28,9 @@ pub const PAIRWISE_DISPUTE_KEY: &str = "PAIRWISE_DISPUTE_KEY";
 
 // Transaction names
 pub const REQUEST_PEGIN_TX: &str = "REQUEST_PEGIN_TX";
+pub const REJECT_PEGIN_TX: &str = "REJECT_PEGIN_TX";
 pub const ACCEPT_PEGIN_TX: &str = "ACCEPT_PEGIN_TX";
+pub const CANCEL_TAKE0_TX: &str = "CANCEL_TAKE0_TX";
 pub const USER_TAKE_TX: &str = "USER_TAKE_TX";
 pub const ADVANCE_FUNDS_TX: &str = "ADVANCE_FUNDS_TX";
 pub const OPERATOR_TAKE_TX: &str = "OPERATOR_TAKE_TX";
@@ -148,27 +150,37 @@ impl PegInRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RejectPeginData {
+    pub txid: Txid,
+    pub committee_id: Uuid,
+    pub member_index: usize,
+}
+
+impl RejectPeginData {
+    pub fn name() -> String {
+        "reject_pegin_data".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PegInAccepted {
     pub committee_id: Uuid,
     pub accept_pegin_txid: Txid,
     pub accept_pegin_sighash: Vec<u8>,
     pub accept_pegin_nonce: PubNonce,
     pub accept_pegin_signature: MaybeScalar,
-    pub operator_take_sighash: Vec<u8>,
-    pub operator_won_sighash: Vec<u8>,
+    pub operator_take_sighash: Option<Vec<u8>>,
+    pub operator_won_sighash: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PegOutRequest {
     pub committee_id: Uuid,
-    pub stream_id: u64,
-    pub packet_number: u64,
     pub slot_index: usize,
     pub amount: u64,
     pub pegout_id: Vec<u8>,
-    pub pegout_signature_hash: Vec<u8>,
-    pub pegout_signature_message: Vec<u8>,
     pub user_pubkey: PublicKey,
+    pub pegout_sighash: Vec<u8>,
     pub take_aggregated_key: PublicKey,
 }
 
@@ -243,6 +255,7 @@ pub struct StreamSettings {
     pub input_not_revealed_timelock: u16,
     pub op_no_cosign_timelock: u16,
     pub wt_no_challenge_timelock: u16,
+    pub cancel_take0_timelock: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
