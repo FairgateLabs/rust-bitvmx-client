@@ -917,8 +917,14 @@ pub fn request_pegout() -> Result<()> {
 
     // This is done in the contracts
     let user_take_tx = get_user_take_tx(stream_value, accept_pegin_tx.compute_txid(), user_pubkey);
-    let user_take_sighash =
-        calculate_taproot_key_path_sighash(&user_take_tx, 0, &[accept_pegin_tx.output[0].clone()])?;
+    let user_take_sighash = calculate_taproot_key_path_sighash(
+        &user_take_tx,
+        0,
+        &[
+            accept_pegin_tx.output[0].clone(),
+            accept_pegin_tx.output[1].clone(),
+        ],
+    )?;
     // End - This is done in the contracts
 
     let pegout_signature_hash = user_take_sighash; // This should be replaced with the actual peg-out signature hash
