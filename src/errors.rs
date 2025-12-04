@@ -111,6 +111,9 @@ pub enum BitVMXError {
     #[error("Invalid receive message format")]
     InvalidMessageFormat,
 
+    #[error("Invalid message: {0}")]
+    InvalidMessage(String),
+
     #[error("Invalid transaction name {0}")]
     InvalidTransactionName(String),
 
@@ -183,6 +186,60 @@ pub enum BitVMXError {
     #[error("Identification error: {0}")]
     IdentificationError(#[from] IdentificationError),
 
+    // Timestamp validation errors
+    #[error("Message timestamp {timestamp} from peer {peer} is too far in the future (now: {now}, drift: {drift_ms}ms, max allowed: {max_drift_ms}ms)")]
+    TimestampTooFarInFuture {
+        peer: String,
+        timestamp: i64,
+        now: i64,
+        drift_ms: i64,
+        max_drift_ms: i64,
+    },
+
+    #[error("Message timestamp {timestamp} from peer {peer} is too old (now: {now}, drift: {drift_ms}ms, max allowed: {max_drift_ms}ms)")]
+    TimestampTooOld {
+        peer: String,
+        timestamp: i64,
+        now: i64,
+        drift_ms: i64,
+        max_drift_ms: i64,
+    },
+
+    #[error("Replay attack detected: timestamp {timestamp} from peer {peer} is not newer than last seen timestamp {last_timestamp}")]
+    TimestampReplayAttack {
+        peer: String,
+        timestamp: i64,
+        last_timestamp: i64,
+    },
+
+    // Signature and key verification errors
+    #[error("Invalid RSA signature from peer {peer} for message type {msg_type:?} in program {program_id}")]
+    InvalidSignature {
+        peer: String,
+        msg_type: String,
+        program_id: String,
+    },
+
+    #[error("Verification key not found for sender {peer}. Known keys: {known_count}")]
+    MissingVerificationKey { peer: String, known_count: usize },
+
+    #[error("Failed to extract verification key from VerificationKey message: {reason}")]
+    VerificationKeyExtractionError { reason: String },
+
+    #[error("Failed to reconstruct message for signature verification: {reason}")]
+    MessageReconstructionError { reason: String },
+
+    #[error(
+        "Verification key announcement hash mismatch for peer {peer}: expected {expected}, got {got}"
+    )]
+    VerificationKeyHashMismatch {
+        peer: String,
+        expected: String,
+        got: String,
+    },
+
+    #[error("Verification key fingerprint mismatch for peer {peer}:  computed {computed}")]
+    VerificationKeyFingerprintMismatch { peer: String, computed: String },
     #[error("Job Dispatcher {0} is not responding")]
     JobDispatcherNotResponding(String),
 }

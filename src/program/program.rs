@@ -7,6 +7,7 @@ use crate::{
         parse_keys, parse_nonces, parse_signatures, PartialSignatureMessage, PubNonceMessage,
     },
     program::{participant::ParticipantKeys, protocols::protocol_handler::new_protocol_type},
+    signature_verifier::OperatorVerificationStore,
     types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramRequestInfo},
 };
 use bitcoin::{PublicKey, Transaction, Txid};
@@ -132,10 +133,10 @@ impl Program {
             return Err(BitVMXError::InvalidMessageFormat);
         }
 
-        let comms_address = CommsAddress::new(
-            program_context.comms.get_address(),
-            program_context.comms.get_pubk_hash()?,
-        );
+        let my_pubkey_hash = program_context.comms.get_pubk_hash()?;
+
+        let comms_address =
+            CommsAddress::new(program_context.comms.get_address(), my_pubkey_hash.clone());
 
         //FIX EXCPECT WITH PROPER ERROR (invalid message as I'm not in the list)
         let my_idx = peers
@@ -157,6 +158,14 @@ impl Program {
 
         // save my pos in the others list to have the complete message ready
         others[my_idx] = ParticipantData::new(&comms_address, Some(my_keys));
+
+        OperatorVerificationStore::request_missing_verification_keys(
+            &program_context.globals,
+            &program_context.comms,
+            &program_context.key_chain,
+            id,
+            &peers,
+        )?;
 
         let mut program = Self {
             program_id: *id,
@@ -301,6 +310,7 @@ impl Program {
 
                 request(
                     &program_context.comms,
+                    &program_context.key_chain,
                     &self.program_id,
                     dest,
                     msg_type.clone(),
@@ -721,6 +731,10 @@ impl Program {
         data: Value,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
+        // The message signature verification was already done in BitVMX::process_msg
+        // If we reach here, the message signature was verified and is valid
+        // This method only focuses on the program's business logic
+
         debug!("{}: Message received: {:?} ", self.my_idx, msg_type);
 
         match msg_type {
@@ -732,6 +746,12 @@ impl Program {
             }
             CommsMessageType::PartialSignatures => {
                 self.receive_signatures(comms_address, msg_type, data, program_context)?;
+            }
+            CommsMessageType::VerificationKey | CommsMessageType::VerificationKeyRequest => {
+                debug!(
+                    "{}. Verification key message handled upstream, ignoring {:?}",
+                    self.my_idx, msg_type
+                );
             }
             CommsMessageType::KeysAck
             | CommsMessageType::PublicNoncesAck
@@ -761,6 +781,7 @@ impl Program {
 
         response(
             &program_context.comms,
+            &program_context.key_chain,
             &self.program_id,
             comms_address,
             msg_type,
