@@ -29,10 +29,10 @@ use bitvmx_client::{
                     get_dispute_core_pid, get_full_penalization_pid, triple_indexed_name,
                 },
                 types::{
-                    FundsAdvanced, ACCEPT_PEGIN_TX, CANCEL_TAKE0_TIMELOCK, CANCEL_TAKE0_TX,
-                    OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX, OP_INITIAL_DEPOSIT_TX,
-                    OP_LAZY_DISABLER_TX, OP_SELF_DISABLER_TX, WT_DISABLER_DIRECTORY_TX,
-                    WT_DISABLER_TX, WT_SELF_DISABLER_TX, WT_START_ENABLER_TX,
+                    FundsAdvanced, ACCEPT_PEGIN_TX, CANCEL_TAKE0_TX, OP_DISABLER_DIRECTORY_TX,
+                    OP_DISABLER_TX, OP_INITIAL_DEPOSIT_TX, OP_LAZY_DISABLER_TX,
+                    OP_SELF_DISABLER_TX, WT_DISABLER_DIRECTORY_TX, WT_DISABLER_TX,
+                    WT_SELF_DISABLER_TX, WT_START_ENABLER_TX,
                 },
             },
         },
@@ -265,7 +265,10 @@ pub fn cli_cancel_take0() -> Result<()> {
 
     let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
     thread::sleep(Duration::from_secs(1));
-    wait_for_blocks(&committee.bitcoin_client, CANCEL_TAKE0_TIMELOCK as u32 + 1)?;
+    wait_for_blocks(
+        &committee.bitcoin_client,
+        committee.stream_settings.cancel_take0_timelock as u32 + 1,
+    )?;
 
     info!("Forcing member to cancel accept pegin transaction...");
     let tx = committee.members[1].dispatch_transaction_by_name(
