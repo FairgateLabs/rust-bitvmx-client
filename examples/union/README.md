@@ -31,3 +31,19 @@ For example, to run the committee setup:
 ./examples/union/scripts/run-example.sh committee
 ```
 
+- Challenge example: 
+
+In the case of `challenge` example you should provide who is the winning party `op` or `wt`:
+
+```bash
+./examples/union/scripts/run-example.sh challenge op
+```
+
+Also, in the examples that involve DRP (Dispute Resolution Protocol) you it is needed to run job dispatcher emulators in a separated terminal.
+There is a script for that as well, inside `/rust-bitvmx-workspace/rust-bitvmx-job-dispatcher/` run:
+
+```bash
+./dev/scripts/run-emulator-dispatcher-all.sh
+```
+
+NOTE: This script should be run after all BitVMX clients are running and point to the same port as the clients.

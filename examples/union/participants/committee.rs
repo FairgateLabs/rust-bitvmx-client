@@ -24,10 +24,9 @@ use crate::participants::common::{get_default_union_settings, prefixed_name};
 use crate::participants::member::{FundingAmount, Member};
 use crate::wallet::helper::non_regtest_warning;
 
-const FUNDING_AMOUNT_PER_SLOT: u64 = 9_000; // an approximation in satoshis
-const DISPUTE_CHANNEL_FUNDING_PER_MEMBER: u64 = 540; // Output value that connect to dispute channel
+const FUNDING_AMOUNT_PER_SLOT: u64 = 12_000; // an approximation in satoshis
+const DISPUTE_CHANNEL_FUNDING_PER_MEMBER: u64 = 50_000;
 pub const PACKET_SIZE: u32 = 3; // number of slots per packet
-const SPEED_UP_MIN_FUNDS: u64 = 30_000; // minimum speedup funds in satoshis
 
 pub struct Committee {
     pub members: Vec<Member>,
@@ -324,9 +323,9 @@ impl Committee {
 
     fn get_speedup_funds_value(&self) -> u64 {
         return if self.bitcoin_client.network() == Network::Regtest {
-            100_000
+            1_000_000
         } else {
-            SPEED_UP_MIN_FUNDS
+            30_000 // min speedup funds
         };
     }
 
@@ -356,9 +355,9 @@ impl Committee {
 
     fn get_funding_op_disabler_directory_value(&self) -> u64 {
         // Considerate each OP disabler directory output
-        return DUST_VALUE * PACKET_SIZE as u64
+        return DUST_VALUE * (PACKET_SIZE + 1) as u64    // Additional output for stop operator won
             + SPEEDUP_VALUE
-            + estimate_fee(2, PACKET_SIZE as usize + 1, 1);
+            + estimate_fee(2, PACKET_SIZE as usize + 2, 1);
     }
 
     pub fn get_total_funds_value(&self) -> u64 {

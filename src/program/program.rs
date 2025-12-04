@@ -203,6 +203,11 @@ impl Program {
 
             let mut aggregated_pub_keys = vec![];
 
+            debug!(
+                "Computing aggregated key '{}' with {} participants",
+                agg_name,
+                self.participants.len()
+            );
             for other in &self.participants {
                 let other_key = other
                     .keys
@@ -828,6 +833,7 @@ impl Program {
         )?;
 
         let name = self.protocol.get_transaction_name_by_id(tx_id)?;
+
         if vout.is_some() {
             /* DON'T SEND AUTOMATICALLY FOR NOW
             program_context.broker_channel.send(
