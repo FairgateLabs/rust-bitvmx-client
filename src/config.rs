@@ -99,7 +99,7 @@ pub struct TimestampVerifierConfig {
 impl Default for TimestampVerifierConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             max_drift_ms: 2000,
         }
     }
