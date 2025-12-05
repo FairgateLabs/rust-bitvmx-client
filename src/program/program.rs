@@ -37,7 +37,7 @@ pub enum StoreKey {
     Program(Uuid),
 }
 
-pub fn get_other_index_by_pubkey_hash(
+fn get_other_index_by_pubkey_hash(
     pubkey_hash: &PubKeyHash,
     others: &Vec<ParticipantData>,
 ) -> Option<usize> {
@@ -46,7 +46,7 @@ pub fn get_other_index_by_pubkey_hash(
         .position(|participant| &participant.comms_address.pubkey_hash == pubkey_hash)
 }
 
-pub fn all_keys_ready(others: &Vec<ParticipantData>) -> bool {
+fn all_keys_ready(others: &Vec<ParticipantData>) -> bool {
     for other in others {
         if other.keys.is_none() {
             return false;
@@ -55,7 +55,7 @@ pub fn all_keys_ready(others: &Vec<ParticipantData>) -> bool {
     true
 }
 
-pub fn all_nonces_ready(others: &Vec<ParticipantData>) -> bool {
+fn all_nonces_ready(others: &Vec<ParticipantData>) -> bool {
     let mut c = 0;
     for other in others {
         if other.nonces.is_some() {
@@ -65,7 +65,7 @@ pub fn all_nonces_ready(others: &Vec<ParticipantData>) -> bool {
     c >= others.len() - 1
 }
 
-pub fn all_signatures_ready(others: &Vec<ParticipantData>) -> bool {
+fn all_signatures_ready(others: &Vec<ParticipantData>) -> bool {
     let mut c = 0;
     for other in others {
         if other.partial.is_some() {
@@ -109,10 +109,11 @@ impl Program {
         Ok(program)
     }
 
-    pub fn im_leader(&self) -> bool {
+    fn im_leader(&self) -> bool {
         self.my_idx == self.leader
     }
-    pub fn save(&self) -> Result<(), ProgramError> {
+
+    fn save(&self) -> Result<(), ProgramError> {
         let key = Self::get_key(StoreKey::Program(self.program_id));
         self.storage.as_ref().unwrap().set(key, self, None)?;
         Ok(())
@@ -189,7 +190,7 @@ impl Program {
         Ok(program)
     }
 
-    pub fn prepare_aggregated_keys(
+    fn prepare_aggregated_keys(
         &mut self,
         context: &ProgramContext,
     ) -> Result<HashMap<String, PublicKey>, BitVMXError> {
@@ -252,7 +253,7 @@ impl Program {
         Ok(result)
     }
 
-    pub fn build_protocol(&mut self, context: &ProgramContext) -> Result<(), BitVMXError> {
+    fn build_protocol(&mut self, context: &ProgramContext) -> Result<(), BitVMXError> {
         let aggregated = self.prepare_aggregated_keys(context)?;
         info!(
             "{}. Building with aggregated: {:?}",
@@ -285,7 +286,7 @@ impl Program {
         return Err(BitVMXError::CommsCommunicationError);
     }
 
-    pub fn request_helper<T>(
+    fn request_helper<T>(
         &mut self,
         program_context: &ProgramContext,
         to_send: Vec<(PubKeyHash, T)>,
@@ -321,7 +322,7 @@ impl Program {
         Ok(())
     }
 
-    pub fn send_keys(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
+    fn send_keys(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
         let should_send_request =
             self.should_send_request(StoreKey::LastRequestKeys(self.program_id))?;
 
@@ -354,7 +355,7 @@ impl Program {
         Ok(())
     }
 
-    pub fn receive_keys(
+    fn receive_keys(
         &mut self,
         comms_address: CommsAddress,
         msg_type: CommsMessageType,
@@ -397,7 +398,7 @@ impl Program {
         Ok(())
     }
 
-    pub fn send_nonces(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
+    fn send_nonces(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
         let should_send_request =
             self.should_send_request(StoreKey::LastRequestNonces(self.program_id))?;
 
@@ -456,7 +457,7 @@ impl Program {
         Ok(())
     }
 
-    pub fn receive_nonces(
+    fn receive_nonces(
         &mut self,
         comms_address: CommsAddress,
         msg_type: CommsMessageType,
@@ -529,7 +530,7 @@ impl Program {
         Ok(())
     }
 
-    pub fn send_signatures(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
+    fn send_signatures(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
         let should_send_request =
             self.should_send_request(StoreKey::LastRequestSignatures(self.program_id))?;
 
@@ -592,7 +593,7 @@ impl Program {
         Ok(())
     }
 
-    pub fn receive_signatures(
+    fn receive_signatures(
         &mut self,
         comms_address: CommsAddress,
         msg_type: CommsMessageType,
@@ -682,7 +683,7 @@ impl Program {
             ProgramState::Monitoring => {
                 // After the program is ready, we need to monitor the transactions
                 let (txns_to_monitor, vouts_to_monitor) =
-                    self.get_transactions_to_monitor(program_context)?;
+                    self.protocol.get_transactions_to_monitor(program_context)?;
 
                 let context = Context::ProgramId(self.program_id);
                 let txs_to_monitor =
@@ -771,7 +772,7 @@ impl Program {
         Ok(())
     }
 
-    pub fn send_ack(
+    fn send_ack(
         &self,
         program_context: &ProgramContext,
         comms_address: CommsAddress,
@@ -878,13 +879,6 @@ impl Program {
         Ok(())
     }
 
-    pub fn get_transactions_to_monitor(
-        &self,
-        program_context: &ProgramContext,
-    ) -> Result<(Vec<Txid>, Vec<(Txid, u32)>), BitVMXError> {
-        self.protocol.get_transactions_to_monitor(program_context)
-    }
-
     fn get_key(key: StoreKey) -> String {
         let prefix = "program";
         match key {
@@ -955,7 +949,7 @@ impl Program {
     /// This function should only be called when the program is in the correct state,
     /// otherwise it will transition to the next state at the wrong time and break
     /// the program's flow
-    pub fn move_program_to_next_state(&mut self) -> Result<(), BitVMXError> {
+    fn move_program_to_next_state(&mut self) -> Result<(), BitVMXError> {
         self.state = self.state.next_state(self.im_leader());
         self.save()?;
         Ok(())
