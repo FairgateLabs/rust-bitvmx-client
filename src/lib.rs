@@ -7,6 +7,7 @@ pub mod config;
 pub mod errors;
 pub mod helper;
 pub mod keychain;
+pub mod message_queue;
 pub mod ping_helper;
 pub mod program;
 pub mod shutdown;

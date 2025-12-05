@@ -9,6 +9,7 @@ use crate::{
     config::Config,
     errors::BitVMXError,
     keychain::KeyChain,
+    message_queue::MessageQueue,
     program::{
         participant::CommsAddress,
         program::Program,
@@ -29,7 +30,7 @@ use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cer
 use bitvmx_job_dispatcher::helper::PingMessage;
 use bitvmx_operator_comms::{
     helper::ReceiveHandlerChannel,
-    operator_comms::{AllowList, OperatorComms, PubKeyHash, RoutingTable},
+    operator_comms::{AllowList, OperatorComms, RoutingTable},
 };
 use protocol_builder::graph::graph::GraphOptions;
 
@@ -47,7 +48,7 @@ use bitvmx_wallet::wallet::Wallet;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::HashSet,
     net::SocketAddr,
     rc::Rc,
     sync::{Arc, Mutex},
@@ -75,7 +76,7 @@ pub struct BitVMX {
     store: Rc<Storage>,
     broker: BrokerSync,
     count: u32,
-    pending_messages: VecDeque<(PubKeyHash, Vec<u8>)>,
+    message_queue: MessageQueue,
     timestamp_verifier: TimestampVerifier,
     notified_request: HashSet<(Uuid, (Txid, Option<u32>))>,
     notified_rsk_pegin: HashSet<Txid>, //workaround for RSK pegin transactions because ack seems to be not working
@@ -192,7 +193,7 @@ impl BitVMX {
             store: store.clone(),
             broker,
             count: 0,
-            pending_messages: VecDeque::new(),
+            message_queue: MessageQueue::new(store.clone()),
             timestamp_verifier,
             notified_request: HashSet::new(),
             notified_rsk_pegin: HashSet::new(),
@@ -388,8 +389,7 @@ impl BitVMX {
                     "Buffering message due to missing verification key: {:?} {:?}",
                     program_id, msg_type
                 );
-                self.pending_messages
-                    .push_back((identifier.to_string(), msg));
+                self.message_queue.push_back(identifier.to_string(), msg)?;
                 return Ok(());
             }
         }
@@ -468,23 +468,23 @@ impl BitVMX {
         } else {
             // Message needs to be buffered (not processed or program/collaboration not found)
             info!("Pending message to back: {:?}", msg_type);
-            self.pending_messages
-                .push_back((identifier.to_string(), msg));
+            self.message_queue.push_back(identifier.to_string(), msg)?;
         }
 
         Ok(())
     }
 
     pub fn process_pending_messages(&mut self) -> Result<(), BitVMXError> {
-        if self.pending_messages.is_empty() {
+        if self.message_queue.is_empty()? {
             return Ok(());
         }
 
-        let (comms_address, msg) = self.pending_messages.pop_front().unwrap();
-        let comms_address = comms_address
-            .parse()
-            .map_err(|_| BitVMXError::InvalidCommsAddress(comms_address))?;
-        self.process_msg(comms_address, msg, false)?;
+        if let Some((comms_address, msg)) = self.message_queue.pop_front()? {
+            let comms_address = comms_address
+                .parse()
+                .map_err(|_| BitVMXError::InvalidCommsAddress(comms_address))?;
+            self.process_msg(comms_address, msg, false)?;
+        }
         Ok(())
     }
 
@@ -920,7 +920,7 @@ impl GracefulShutdown for BitVMX {
                 warn!("drain collaboration err: {:?}", e);
             }
 
-            if self.pending_messages.is_empty() {
+            if self.message_queue.is_empty().unwrap() {
                 break;
             }
             sleep(Duration::from_millis(10));
