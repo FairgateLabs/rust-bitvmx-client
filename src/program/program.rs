@@ -35,6 +35,7 @@ pub enum StoreKey {
     LastRequestNonces(Uuid),
     LastRequestSignatures(Uuid),
     Program(Uuid),
+    ProgramState(Uuid),
 }
 
 fn get_other_index_by_pubkey_hash(
@@ -92,6 +93,7 @@ pub struct Program {
     pub participants: Vec<ParticipantData>,
     pub leader: usize,
     pub protocol: ProtocolType,
+    #[serde(skip)]
     pub state: ProgramState,
     #[serde(skip)]
     storage: Option<Rc<Storage>>,
@@ -101,8 +103,13 @@ pub struct Program {
 impl Program {
     pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Self, ProgramError> {
         let program = storage.get(Self::get_key(StoreKey::Program(*program_id)))?;
+        let program_state: ProgramState = storage
+            .get(Self::get_key(StoreKey::ProgramState(*program_id)))?
+            .unwrap_or_default();
+
         let mut program: Program = program.ok_or(ProgramError::ProgramNotFound(*program_id))?;
 
+        program.state = program_state;
         program.storage = Some(storage.clone());
         program.protocol.set_storage(storage);
 
@@ -116,6 +123,8 @@ impl Program {
     fn save(&self) -> Result<(), ProgramError> {
         let key = Self::get_key(StoreKey::Program(self.program_id));
         self.storage.as_ref().unwrap().set(key, self, None)?;
+        let key = Self::get_key(StoreKey::ProgramState(self.program_id));
+        self.storage.as_ref().unwrap().set(key, &self.state, None)?;
         Ok(())
     }
 
@@ -890,6 +899,7 @@ impl Program {
                 format!("{prefix}/{id}/last_request_signatures")
             }
             StoreKey::Program(id) => format!("{prefix}/{id}"),
+            StoreKey::ProgramState(id) => format!("{prefix}/{id}/state"),
         }
     }
 
@@ -965,4 +975,11 @@ impl Program {
             .map_err(BitVMXError::from)
             .map_err(BitVMXError::from)
     }
+}
+
+pub fn is_active_program(storage: &Rc<Storage>, uuid: &Uuid) -> Result<bool, BitVMXError> {
+    let state: ProgramState = storage
+        .get(Program::get_key(StoreKey::ProgramState(*uuid)))?
+        .unwrap_or_default();
+    Ok(state.is_active())
 }

@@ -1,5 +1,6 @@
 use crate::config::ComponentsConfig;
 use crate::ping_helper::{JobDispatcherType, PingHelper};
+use crate::program::program::is_active_program;
 use crate::program::protocols::protocol_handler::ProtocolHandler;
 use crate::timestamp_verifier::TimestampVerifier;
 use crate::{
@@ -802,8 +803,6 @@ impl BitVMX {
         if programs_ids.is_none() {
             let empty_programs: Vec<ProgramStatus> = vec![];
 
-            self.store
-                .set(StoreKey::Programs.get_key(), empty_programs.clone(), None)?;
             return Ok(empty_programs);
         }
 
@@ -811,14 +810,15 @@ impl BitVMX {
     }
 
     fn get_active_programs(&self) -> Result<Vec<Program>, BitVMXError> {
-        let programs = self.get_programs()?;
-
+        let all_programs = self
+            .get_programs()?
+            .iter()
+            .map(|p| p.program_id)
+            .collect::<Vec<Uuid>>();
         let mut active_programs = vec![];
-
-        for program_status in programs {
-            let program = self.load_program(&program_status.program_id)?;
-
-            if program.state.is_active() {
+        for program_id in all_programs {
+            if is_active_program(&self.store, &program_id)? {
+                let program = self.load_program(&program_id)?;
                 active_programs.push(program);
             }
         }
