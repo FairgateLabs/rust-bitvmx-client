@@ -273,7 +273,7 @@ impl BitVMX {
     /// Returns Ok(true) if verification succeeded, Ok(false) if the message needs to be buffered
     /// (e.g., missing verification key), or Err if there was an error.
     fn verify_message_signature(
-        &mut self,
+        &self,
         identifier: &Identifier,
         program_id: &Uuid,
         version: &String,
@@ -304,7 +304,7 @@ impl BitVMX {
     /// Returns Ok(true) if message was processed, Ok(false) if it needs to be buffered,
     /// or Err if there was an error.
     fn process_program_message(
-        &mut self,
+        &self,
         program_id: &Uuid,
         msg_type: CommsMessageType,
         data: Value,
@@ -332,7 +332,7 @@ impl BitVMX {
     /// Returns Ok(true) if message was processed, Ok(false) if it needs to be buffered,
     /// or Err if there was an error.
     fn process_collaboration_message(
-        &mut self,
+        &self,
         program_id: &Uuid,
         msg_type: CommsMessageType,
         data: Value,
@@ -784,7 +784,7 @@ impl BitVMX {
         }
         Ok(())
     }
-    pub fn process_programs(&mut self) -> Result<(), BitVMXError> {
+    pub fn process_programs(&self) -> Result<(), BitVMXError> {
         let programs = self.get_active_programs()?;
 
         for mut program in programs {
@@ -826,7 +826,7 @@ impl BitVMX {
         Ok(active_programs)
     }
 
-    fn add_new_program(&mut self, program_id: &Uuid) -> Result<(), BitVMXError> {
+    fn add_new_program(&self, program_id: &Uuid) -> Result<(), BitVMXError> {
         let mut programs = self.get_programs()?;
 
         if programs.iter().any(|p| p.program_id == *program_id) {
@@ -859,7 +859,7 @@ impl BitVMX {
     }
 
     fn mark_collaboration_as_complete(
-        &mut self,
+        &self,
         collaboration: &Collaboration,
     ) -> Result<(), BitVMXError> {
         let transaction_id = self.store.begin_transaction();
@@ -878,18 +878,14 @@ impl BitVMX {
         Ok(())
     }
 
-    fn save_collaboration(&mut self, collaboration: &Collaboration) -> Result<(), BitVMXError> {
+    fn save_collaboration(&self, collaboration: &Collaboration) -> Result<(), BitVMXError> {
         let key = StoreKey::Collaboration(collaboration.collaboration_id).get_key();
         self.store.set(key, collaboration, None)?;
         Ok(())
     }
 
     /// send replies via the broker channel
-    fn reply(
-        &mut self,
-        to: Identifier,
-        message: OutgoingBitVMXApiMessages,
-    ) -> Result<(), BitVMXError> {
+    fn reply(&self, to: Identifier, message: OutgoingBitVMXApiMessages) -> Result<(), BitVMXError> {
         debug!("> {:?}", message);
         self.program_context
             .broker_channel
