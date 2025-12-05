@@ -224,8 +224,9 @@ impl BitVMXClient {
     /// # Arguments
     /// * `id` - The ID of the message
     /// * `messages` - The messages to decrypt as bytes
-    pub fn decrypt(&self, id: Uuid, messages: Vec<u8>) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::Decrypt(id, messages))
+    /// * `public_key` - The public key associated to the private key to decrypt the messages with as PEM string
+    pub fn decrypt(&self, id: Uuid, messages: Vec<u8>, public_key: String) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::Decrypt(id, messages, public_key))
     }
 
     pub fn get_funding_address(&self, id: Uuid) -> Result<()> {

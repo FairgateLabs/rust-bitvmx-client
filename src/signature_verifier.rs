@@ -483,7 +483,7 @@ mod tests {
                 &data,
                 timestamp,
             )?;
-            key_chain.sign_rsa_message(message.as_bytes())?
+            key_chain.sign_rsa_message(message.as_bytes(), None)?
         };
 
         let verified = SignatureVerifier::verify_message_signature(
@@ -522,7 +522,7 @@ mod tests {
                 &original_data,
                 timestamp,
             )?;
-            key_chain.sign_rsa_message(message.as_bytes())?
+            key_chain.sign_rsa_message(message.as_bytes(), None)?
         };
 
         let tampered_data = json!({ "payload": "tampered" });

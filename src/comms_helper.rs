@@ -74,7 +74,7 @@ pub fn request<T: Serialize>(
         timestamp,
     )?;
 
-    let signature = &key_chain.sign_rsa_message(message.as_bytes())?;
+    let signature = &key_chain.sign_rsa_message(message.as_bytes(), None)?;
 
     let serialize_msg = serialize_msg(
         CURRENT_PROTOCOL_VERSION,

@@ -15,6 +15,7 @@ use emulator::{
     constants::REGISTERS_BASE_ADDRESS, decision::nary_search::NArySearchType,
     loader::program_definition::ProgramDefinition,
 };
+use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
     graph::graph::GraphOptions,
@@ -172,9 +173,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
     ) -> Result<ParticipantKeys, BitVMXError> {
         let program_def = self.get_program_definition(&program_context)?.0;
 
-        let aggregated_1 = program_context.key_chain.derive_keypair()?;
+        let aggregated_1 = program_context
+            .key_chain
+            .derive_keypair(BitcoinKeyType::P2tr)?;
 
-        let speedup = program_context.key_chain.derive_keypair()?;
+        let speedup = program_context
+            .key_chain
+            .derive_keypair(BitcoinKeyType::P2tr)?;
 
         program_context
             .globals

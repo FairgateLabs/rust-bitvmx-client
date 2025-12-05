@@ -32,7 +32,6 @@ use emulator::decision::challenge::{ForceChallenge, ForceCondition};
 use emulator::executor::utils::{FailConfiguration, FailReads};
 use key_manager::config::KeyManagerConfig;
 use key_manager::create_key_manager_from_config;
-use key_manager::key_store::KeyStore;
 use key_manager::winternitz::{
     self, checksum_length, to_checksummed_message, WinternitzPublicKey, WinternitzSignature,
     WinternitzType,
@@ -877,7 +876,7 @@ fn test_previous_input() -> Result<()> {
 /// This test verifies that the Bitcoin coordinator properly handles and reports
 /// transaction dispatch errors when transactions fail to be processed. The test
 /// creates two transactions chained together (causing the second one to fail because the first one was not in the mempool).
-/// This failure occurs because QuikNode takes time to update or propagate transactions.  
+/// This failure occurs because QuikNode takes time to update or propagate transactions.
 #[ignore]
 #[test]
 fn retry_failed_txs_test() -> Result<()> {
@@ -921,13 +920,11 @@ fn retry_failed_txs_test() -> Result<()> {
 
     // Create storage and key manager
     let network = Network::Regtest;
-    let config = StorageConfig::new(wallet_config.storage.path.clone(), None);
-    let storage = Rc::new(Storage::new(&config).unwrap());
-
-    let config = KeyManagerConfig::new(network.to_string(), None, None, None);
-    let key_store = KeyStore::new(storage.clone());
+    let storage_config = StorageConfig::new(wallet_config.storage.path.clone(), None);
+    let storage = Rc::new(Storage::new(&storage_config).unwrap());
+    let keymanger_config = KeyManagerConfig::new(network.to_string(), None, None);
     let key_manager =
-        Rc::new(create_key_manager_from_config(&config, key_store, storage.clone()).unwrap());
+        Rc::new(create_key_manager_from_config(&keymanger_config, &storage_config).unwrap());
 
     let config = Config::new(Some("config/development.yaml".to_string()))?;
     let settings = config.coordinator_settings.clone().unwrap();
