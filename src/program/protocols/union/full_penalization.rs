@@ -11,7 +11,7 @@ use protocol_builder::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
         output::SpeedupData,
-        InputArgs, OutputType,
+        OutputType,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -26,11 +26,15 @@ use crate::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
                 common::{
-                    create_transaction_reference, double_indexed_name, extract_double_index,
-                    get_dispute_core_pid, get_initial_deposit_output_type, get_stream_setting,
-                    indexed_name, load_union_settings, triple_indexed_name,
+                    collect_input_signatures, create_transaction_reference, double_indexed_name,
+                    extract_double_index, get_dispute_core_pid, get_initial_deposit_output_type,
+                    get_stream_setting, indexed_name, load_union_settings, triple_indexed_name,
+                    InputSigningInfo, WinternitzData,
                 },
-                dispute_core::CHALLENGE_KEY,
+                dispute_core::{
+                    CHALLENGE_KEY, OP_INITIAL_DEPOSIT_TX_DISABLER_LEAF,
+                    WT_START_ENABLER_TX_DISABLER_LEAF,
+                },
                 types::{
                     Committee, FullPenalizationData, StreamSettings, CLAIM_GATE_STOPPER_UTXOS,
                     DISPUTE_AGGREGATED_KEY, DUST_VALUE, OPERATOR_TAKE_ENABLER,
@@ -559,31 +563,21 @@ impl FullPenalizationProtocol {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} tx", name);
 
-        let protocol = self.load_protocol()?;
+        let mut protocol = self.load_protocol()?;
 
-        let reveal_sig = protocol
-            .input_taproot_key_spend_signature(name, 0)?
-            .unwrap();
-        let mut kickoff_input = InputArgs::new_taproot_key_args();
-        kickoff_input.push_taproot_signature(reveal_sig)?;
-
-        let directory_sig = protocol
-            .input_taproot_key_spend_signature(name, 1)?
-            .unwrap();
-        let mut directory_input = InputArgs::new_taproot_key_args();
-        directory_input.push_taproot_signature(directory_sig)?;
-
-        let tx = protocol.transaction_to_send(&name, &[kickoff_input, directory_input])?;
-
-        let txid = tx.compute_txid();
-        info!(
-            id = self.ctx.my_idx,
-            "Signed {}, txid: {} with signatures: [{:?},{:?}]",
+        let args = collect_input_signatures(
+            &mut protocol,
             name,
-            txid,
-            reveal_sig,
-            directory_sig
-        );
+            &vec![
+                InputSigningInfo::KeySpend { input_index: 0 },
+                InputSigningInfo::KeySpend { input_index: 1 },
+            ],
+        )?;
+
+        let tx = protocol.transaction_to_send(&name, &args)?;
+        let txid = tx.compute_txid();
+
+        info!(id = self.ctx.my_idx, "Signed {}, txid: {}", name, txid);
 
         Ok((tx, None))
     }
@@ -601,45 +595,30 @@ impl FullPenalizationProtocol {
         // current member, due to it should sign the output script leaf in the reimbursement kickoff.
         info!(id = self.ctx.my_idx, "Loading {} tx", name);
 
-        let protocol = self.load_protocol()?;
-        let my_index = self.ctx.my_idx;
+        let mut protocol = self.load_protocol()?;
 
-        // Prepare signatures
-        let committee_signature = protocol
-            .input_taproot_script_spend_signature(name, 0, my_index)?
-            .unwrap();
-
-        let script = protocol.get_script_to_spend(name, 0, my_index as u32)?;
-        let challenge_key = script.get_key(CHALLENGE_KEY).unwrap();
-
-        let challenge_signature = context.key_chain.key_manager.sign_winternitz_message(
-            &[1],
-            WinternitzType::HASH160,
-            challenge_key.derivation_index(),
+        let args = collect_input_signatures(
+            &mut protocol,
+            name,
+            &vec![
+                InputSigningInfo::ScriptSpend {
+                    input_index: 0,
+                    script_index: self.ctx.my_idx,
+                    winternitz_data: Some(WinternitzData {
+                        data: vec![1u8],
+                        key_type: WinternitzType::HASH160,
+                        key_name: CHALLENGE_KEY.to_string(),
+                        key_manager: &context.key_chain.key_manager,
+                    }),
+                },
+                InputSigningInfo::KeySpend { input_index: 1 },
+            ],
         )?;
 
-        // Create input arguments
-        let mut kickoff_input = InputArgs::new_taproot_script_args(my_index);
-        kickoff_input.push_winternitz_signature(challenge_signature);
-        kickoff_input.push_taproot_signature(committee_signature)?;
-
-        let directory_sig = protocol
-            .input_taproot_key_spend_signature(name, 1)?
-            .unwrap();
-        let mut directory_input = InputArgs::new_taproot_key_args();
-        directory_input.push_taproot_signature(directory_sig)?;
-
-        let tx = protocol.transaction_to_send(&name, &[kickoff_input, directory_input])?;
-
+        let tx = protocol.transaction_to_send(&name, &args)?;
         let txid = tx.compute_txid();
-        info!(
-            id = my_index,
-            "Signed {}, txid: {} with signatures: [{:?},{:?}]",
-            name,
-            txid,
-            committee_signature,
-            directory_sig
-        );
+
+        info!(id = self.ctx.my_idx, "Signed {}, txid: {}", name, txid);
 
         Ok((tx, None))
     }
@@ -651,33 +630,25 @@ impl FullPenalizationProtocol {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} tx", name);
 
-        let protocol = self.load_protocol()?;
+        let mut protocol = self.load_protocol()?;
 
-        // Operator inital deposit signature through script path
-        let op_deposit_script_index = 1;
-        let mut op_deposit_input = InputArgs::new_taproot_script_args(op_deposit_script_index);
-        let op_initial_deposit_sig = protocol
-            .input_taproot_script_spend_signature(name, 0, op_deposit_script_index)?
-            .unwrap();
-        op_deposit_input.push_taproot_signature(op_initial_deposit_sig)?;
-
-        // Directory key spend signature
-        let directory_sig = protocol
-            .input_taproot_key_spend_signature(name, 1)?
-            .unwrap();
-        let mut directory_input = InputArgs::new_taproot_key_args();
-        directory_input.push_taproot_signature(directory_sig)?;
-
-        let tx = protocol.transaction_to_send(&name, &[op_deposit_input, directory_input])?;
-
-        info!(
-            id = self.ctx.my_idx,
-            "Signed {}, txid: {} with signatures: [{:?},{:?}]",
+        let args = collect_input_signatures(
+            &mut protocol,
             name,
-            tx.compute_txid(),
-            op_initial_deposit_sig,
-            directory_sig
-        );
+            &vec![
+                InputSigningInfo::ScriptSpend {
+                    input_index: 0,
+                    script_index: OP_INITIAL_DEPOSIT_TX_DISABLER_LEAF,
+                    winternitz_data: None,
+                },
+                InputSigningInfo::KeySpend { input_index: 1 },
+            ],
+        )?;
+
+        let tx = protocol.transaction_to_send(&name, &args)?;
+        let txid = tx.compute_txid();
+
+        info!(id = self.ctx.my_idx, "Signed {}, txid: {}.", name, txid);
 
         Ok((tx, None))
     }
@@ -689,34 +660,25 @@ impl FullPenalizationProtocol {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         debug!(id = self.ctx.my_idx, "Loading {} tx", name);
 
-        let protocol = self.load_protocol()?;
+        let mut protocol = self.load_protocol()?;
 
-        // Watchtower start enabler signature through script path
-        let wt_start_enabler_script_index = 0;
-        let mut wt_start_enabler_input =
-            InputArgs::new_taproot_script_args(wt_start_enabler_script_index);
-        let wt_start_enabler_sig = protocol
-            .input_taproot_script_spend_signature(name, 0, wt_start_enabler_script_index)?
-            .unwrap();
-        wt_start_enabler_input.push_taproot_signature(wt_start_enabler_sig)?;
-
-        // Directory key spend signature
-        let directory_sig = protocol
-            .input_taproot_key_spend_signature(name, 1)?
-            .unwrap();
-        let mut directory_input = InputArgs::new_taproot_key_args();
-        directory_input.push_taproot_signature(directory_sig)?;
-
-        let tx = protocol.transaction_to_send(&name, &[wt_start_enabler_input, directory_input])?;
-
-        debug!(
-            id = self.ctx.my_idx,
-            "Signed {}, txid: {} with signatures: [{:?},{:?}]",
+        let args = collect_input_signatures(
+            &mut protocol,
             name,
-            tx.compute_txid(),
-            wt_start_enabler_sig,
-            directory_sig
-        );
+            &vec![
+                InputSigningInfo::ScriptSpend {
+                    input_index: 0,
+                    script_index: WT_START_ENABLER_TX_DISABLER_LEAF,
+                    winternitz_data: None,
+                },
+                InputSigningInfo::KeySpend { input_index: 1 },
+            ],
+        )?;
+
+        let tx = protocol.transaction_to_send(&name, &args)?;
+        let txid = tx.compute_txid();
+
+        debug!(id = self.ctx.my_idx, "Signed {}, txid: {}.", name, txid);
 
         Ok((tx, None))
     }
@@ -727,27 +689,21 @@ impl FullPenalizationProtocol {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} tx", name);
 
-        let protocol = self.load_protocol()?;
-        let my_index = self.ctx.my_idx;
+        let mut protocol = self.load_protocol()?;
 
-        // Funds input signature
-        let funds_sig = protocol
-            .input_taproot_key_spend_signature(name, 0)?
-            .unwrap();
-        let mut funds_input = InputArgs::new_taproot_key_args();
-        funds_input.push_taproot_signature(funds_sig)?;
+        let args = collect_input_signatures(
+            &mut protocol,
+            name,
+            &vec![
+                InputSigningInfo::KeySpend { input_index: 0 },
+                InputSigningInfo::KeySpend { input_index: 1 },
+            ],
+        )?;
 
-        // CLAIM GATE SUCCESS input signature
-        let role_success_sig = protocol
-            .input_taproot_key_spend_signature(name, 1)?
-            .unwrap();
-        let mut role_success_input = InputArgs::new_taproot_key_args();
-        role_success_input.push_taproot_signature(role_success_sig)?;
-
-        let tx = protocol.transaction_to_send(&name, &[funds_input, role_success_input])?;
+        let tx = protocol.transaction_to_send(&name, &args)?;
         let txid = tx.compute_txid();
 
-        info!(id = my_index, "Signed {} with txid: {} ", name, txid,);
+        info!(id = self.ctx.my_idx, "Signed {} with txid: {} ", name, txid,);
 
         Ok((tx, None))
     }
@@ -1097,6 +1053,14 @@ impl FullPenalizationProtocol {
         info!("Handling: {}", tx_name);
 
         let (wt_index, op_index) = extract_double_index(tx_name)?;
+        if wt_index == self.ctx.my_idx {
+            info!(
+                id = self.ctx.my_idx,
+                "Skipping dispatch of watchtowers disablers for self"
+            );
+            return Ok(());
+        }
+
         let committee = self.committee(
             program_context,
             self.full_penalization_data(program_context)?.committee_id,
@@ -1129,6 +1093,14 @@ impl FullPenalizationProtocol {
         info!("Handling: {}", tx_name);
 
         let (wt_index, op_index) = extract_double_index(tx_name)?;
+        if op_index == self.ctx.my_idx {
+            info!(
+                id = self.ctx.my_idx,
+                "Skipping dispatch of operator disablers for self"
+            );
+            return Ok(());
+        }
+
         let committee = self.committee(
             program_context,
             self.full_penalization_data(program_context)?.committee_id,
