@@ -167,13 +167,11 @@ pub const EQUIVOCATION_HASH_CHALLENGE: [(&str, usize); 4] = [
 ];
 
 // All variants of the equivocation–resign challenge, covering both step and next hashes as well as both n-ary searches.
-pub const EQUIVOCATION_RESIGN_CHALLENGE_STEP: [(&str, usize); 3] = [
+pub const EQUIVOCATION_RESIGN_CHALLENGE: [(&str, usize); 3] = [
     ("prover_step_hash_tk", 20), // This is a placeholder where the specific prover hash key will be inserted later
-    ("prover_step_hash_tk", 20),
+    ("prover_step_hash_tk", 20), // This will also be replaced with prover_next_hash_tk for some leaves
     ("prover_conflict_step_tk", 8),
 ];
-// pub const EQUIVOCATION_RESIGN_CHALLENGE_NEXT: [(&str, usize); 2] =
-//     [("prover_next_hash_tk", 20), ("prover_conflict_step_tk", 8)];
 // pub const EQUIVOCATION_RESIGN_CHALLENGE_STEP2: [(&str, usize); 2] =
 //     [("prover_step_hash_tk2", 20), ("prover_write_step_tk", 8)];
 // pub const EQUIVOCATION_RESIGN_CHALLENGE_NEXT2: [(&str, usize); 2] =
@@ -193,10 +191,7 @@ pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 14] = [
     ("uninitialized", &UNINITIALIZED_CHALLENGE),
     ("future_read", &FUTURE_READ_CHALLENGE),
     ("read_value_nary_search", &READ_VALUE_NARY_SEARCH_CHALLENGE),
-    (
-        "equivocation_resign_step",
-        &EQUIVOCATION_RESIGN_CHALLENGE_STEP,
-    ),
+    ("equivocation_resign", &EQUIVOCATION_RESIGN_CHALLENGE),
     // (
     //     "equivocation_resign_next",
     //     &EQUIVOCATION_RESIGN_CHALLENGE_NEXT,
@@ -523,38 +518,53 @@ pub fn challenge_scripts(
                         }
                         challenge_current_leaf += chunks.len() as u32;
                     }
-                    "equivocation_resign_step" => {
-                        for round in 1..rounds + 1 {
-                            let hashes = program_definitions.nary_def().hashes_for_round(round);
-                            for h in 1..hashes + 1 {
-                                let mut scripts = vec![reverse_script.clone()];
-                                stack = StackTracker::new();
-                                equivocation_resign_challenge(
-                                    &mut stack,
-                                    EquivocationKind::StepHash,
-                                    round,
-                                    h,
-                                    rounds,
-                                    nary,
-                                    nary_last_round,
-                                );
+                    "equivocation_resign" => {
+                        for kind in [EquivocationKind::StepHash, EquivocationKind::NextHash] {
+                            for round in 1..rounds + 1 {
+                                let hashes = program_definitions.nary_def().hashes_for_round(round);
+                                for h in 1..hashes + 1 {
+                                    let mut scripts = vec![reverse_script.clone()];
+                                    stack = StackTracker::new();
+                                    equivocation_resign_challenge(
+                                        &mut stack,
+                                        kind.clone(),
+                                        round,
+                                        h,
+                                        rounds,
+                                        nary,
+                                        nary_last_round,
+                                    );
+                                    scripts.push(stack.get_script());
 
-                                scripts.push(stack.get_script());
-                                let mut names_and_keys_copy = names_and_keys.clone();
-                                let key_name = format!("prover_hash_{}_{}", round, h);
-                                let key_name_ref: &str = key_name.as_str();
-                                let winternitz_key = keys[0].get_winternitz(&key_name).unwrap();
-                                names_and_keys_copy[0] = (&key_name_ref, winternitz_key);
-                                let winternitz_check = scripts::verify_winternitz_signatures_aux(
-                                    aggregated,
-                                    &names_and_keys_copy,
-                                    sign_mode,
-                                    true,
-                                    Some(scripts),
-                                )?;
-                                challenge_leaf_script.push(winternitz_check);
+                                    let mut names_and_keys_copy = names_and_keys.clone();
+                                    let key_name = format!("prover_hash_{}_{}", round, h);
+                                    let key_name_ref: &str = key_name.as_str();
+                                    let winternitz_key = keys[0].get_winternitz(&key_name).unwrap();
+                                    names_and_keys_copy[0] = (&key_name_ref, winternitz_key);
 
-                                challenge_current_leaf += 1;
+                                    names_and_keys_copy[1] = if kind == EquivocationKind::StepHash {
+                                        (
+                                            &"prover_step_hash_tk",
+                                            keys[0].get_winternitz("prover_step_hash_tk").unwrap(),
+                                        )
+                                    } else {
+                                        (
+                                            &"prover_next_hash_tk",
+                                            keys[0].get_winternitz("prover_next_hash_tk").unwrap(),
+                                        )
+                                    };
+                                    let winternitz_check =
+                                        scripts::verify_winternitz_signatures_aux(
+                                            aggregated,
+                                            &names_and_keys_copy,
+                                            sign_mode,
+                                            true,
+                                            Some(scripts),
+                                        )?;
+                                    challenge_leaf_script.push(winternitz_check);
+
+                                    challenge_current_leaf += 1;
+                                }
                             }
                         }
                     }
@@ -708,7 +718,7 @@ pub fn get_challenge_leaf(
         ChallengeType::EntryPoint {
             prover_read_pc: _,
             real_entry_point: _,
-            prover_conflict_step_tk,
+            prover_conflict_step_tk: _,
         } => {
             name = "entry_point";
             info!("Verifier chose {name} challenge");
@@ -988,12 +998,16 @@ pub fn get_challenge_leaf(
             nary: _,
             nary_last_round: _,
         } => {
-            name = "equivocation_resign_step";
+            name = "equivocation_resign";
             info!("Verifier chose {name} challenge");
-            info!(
-                "Expected round: {}, expected index: {}, kind: {:?}",
-                expected_round, expected_index, kind
-            );
+
+            if let EquivocationKind::NextHash = kind {
+                // Adjust for step hashes, which come first
+                for round in 1..program_definitions.nary_def().total_rounds() + 1 {
+                    let hashes = program_definitions.nary_def().hashes_for_round(round);
+                    dynamic_offset += hashes as u32;
+                }
+            }
 
             for round in 1..*expected_round {
                 let hashes = program_definitions.nary_def().hashes_for_round(round);
