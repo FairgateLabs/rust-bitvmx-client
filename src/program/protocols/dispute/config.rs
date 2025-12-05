@@ -26,9 +26,12 @@ pub struct DisputeConfiguration {
     pub program_definition: String,
     pub fail_force_config: Option<ConfigResults>,
     pub notify_protocol: Vec<(String, Uuid)>,
+    pub auto_dispatch_input: Option<u8>,
 }
 
 impl DisputeConfiguration {
+    pub const NAME: &'static str = "dispute_configuration";
+
     pub fn new(
         id: Uuid,
         operators_aggregated_pub: PublicKey,
@@ -41,6 +44,7 @@ impl DisputeConfiguration {
         program_definition: String,
         fail_force_config: Option<ConfigResults>,
         notify_protocol: Vec<(String, Uuid)>,
+        auto_dispatch_input: Option<u8>,
     ) -> Self {
         Self {
             id,
@@ -54,15 +58,13 @@ impl DisputeConfiguration {
             program_definition,
             fail_force_config,
             notify_protocol,
+            auto_dispatch_input,
         }
     }
 
     // The structure is serialized as a whole. If there is a performance hit it could be serialized in parts.
     pub fn load(id: &Uuid, globals: &Globals) -> Result<Self, BitVMXError> {
-        let dispute_configuration = globals
-            .get_var(id, "dispute_configuration")?
-            .unwrap()
-            .string()?;
+        let dispute_configuration = globals.get_var(id, Self::NAME)?.unwrap().string()?;
 
         Ok(serde_json::from_str(&dispute_configuration)?)
     }
@@ -73,8 +75,7 @@ impl DisputeConfiguration {
         leader: u16,
     ) -> Result<Vec<String>, BitVMXError> {
         Ok(vec![
-            VariableTypes::String(serde_json::to_string(&self)?)
-                .set_msg(self.id, "dispute_configuration")?,
+            VariableTypes::String(serde_json::to_string(&self)?).set_msg(self.id, Self::NAME)?,
             IncomingBitVMXApiMessages::Setup(
                 self.id,
                 PROGRAM_TYPE_DRP.to_string(),

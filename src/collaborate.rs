@@ -6,7 +6,7 @@ use bitvmx_operator_comms::operator_comms::PubKeyHash;
 use key_manager::key_type::BitcoinKeyType;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use crate::{
@@ -14,6 +14,7 @@ use crate::{
     errors::BitVMXError,
     helper::parse_keys,
     program::participant::{CommsAddress, ParticipantKeys, PublicKeyType},
+    signature_verifier::OperatorVerificationStore,
     types::{OutgoingBitVMXApiMessages, ProgramContext},
 };
 
@@ -24,6 +25,7 @@ pub struct Collaboration {
     pub leader: CommsAddress,
     pub im_leader: bool,
     pub keys: HashMap<PubKeyHash, PublicKey>,
+    pub key_signatures: HashMap<PubKeyHash, Vec<u8>>, // Store RSA signatures for each key
     pub my_key: PublicKey,
     pub aggregated_key: Option<PublicKey>,
     pub request_from: Identifier,
@@ -46,6 +48,7 @@ impl Collaboration {
             leader,
             im_leader,
             keys: HashMap::new(),
+            key_signatures: HashMap::new(),
             my_key,
             aggregated_key: None,
             request_from,
@@ -62,21 +65,40 @@ impl Collaboration {
         program_context: &mut ProgramContext,
         request_from: Identifier,
     ) -> Result<Self, BitVMXError> {
-        let im_leader = program_context.comms.get_pubk_hash()? == leader.pubkey_hash;
+        let my_pubkey_hash = program_context.comms.get_pubk_hash()?;
+
+        let im_leader = my_pubkey_hash == leader.pubkey_hash;
         let my_key = Self::get_or_create_my_key(program_context, peers.clone(), public_keys)?;
-        let keys = vec![(
-            program_context.comms.get_pubk_hash()?,
-            ParticipantKeys::new(vec![(id.to_string(), my_key.clone().into())], vec![]),
-        )];
+        let mut participant_keys =
+            ParticipantKeys::new(vec![(id.to_string(), my_key.clone().into())], vec![]);
+
+        // Sign the key with RSA signature for MITM protection
+        let signature = program_context
+            .key_chain
+            .sign_rsa_message(my_key.to_string().as_bytes(), None)?;
+        participant_keys.add_signature(&id.to_string(), signature);
+
+        let keys = vec![(my_pubkey_hash.clone(), participant_keys)];
+
+        OperatorVerificationStore::request_missing_verification_keys(
+            &program_context.globals,
+            &program_context.comms,
+            &program_context.key_chain,
+            id,
+            &peers,
+        )?;
+
         if !im_leader {
             request(
                 &program_context.comms,
+                &program_context.key_chain,
                 id,
                 leader.clone(),
                 crate::comms_helper::CommsMessageType::Keys,
                 keys,
             )?;
         }
+
         let mut collaboration =
             Collaboration::new(id, peers, leader, im_leader, my_key, request_from);
         if im_leader {
@@ -99,7 +121,18 @@ impl Collaboration {
                 .collect::<Vec<_>>();
 
             let pubk_hash = program_context.comms.get_pubk_hash()?;
-            let keys = vec![(pubk_hash, ParticipantKeys::new(all_keys, vec![]))];
+
+            // Create ParticipantKeys with signatures for MITM protection
+            let mut participant_keys = ParticipantKeys::new(all_keys, vec![]);
+
+            // Add signatures for all keys (simplified MITM protection)
+            for (pubkey_hash, _key) in &self.keys {
+                if let Some(signature) = self.get_key_signature(pubkey_hash) {
+                    participant_keys.add_signature(&pubkey_hash.to_string(), signature.clone());
+                }
+            }
+
+            let keys = vec![(pubk_hash, participant_keys)];
             for peer in &self.participants {
                 if peer.pubkey_hash == self.leader.pubkey_hash {
                     continue;
@@ -112,6 +145,7 @@ impl Collaboration {
                 );
                 request(
                     &program_context.comms,
+                    &program_context.key_chain,
                     &self.collaboration_id,
                     peer.clone(),
                     CommsMessageType::Keys,
@@ -134,15 +168,45 @@ impl Collaboration {
         let pubkey_hash = comms_address.pubkey_hash.clone();
         match msg_type {
             CommsMessageType::Keys => {
+                // Message signature verification already done in BitVMX::process_msg
+                // Only process the keys and verify individual key signatures (MITM protection)
                 if self.im_leader {
-                    let keys: ParticipantKeys = parse_keys(data)
+                    let keys: ParticipantKeys = parse_keys(data.clone())
                         .map_err(|_| BitVMXError::InvalidMessageFormat)?
                         .first()
                         .unwrap()
                         .1
                         .clone();
+                    let verification_key =
+                        OperatorVerificationStore::get(&program_context.globals, &pubkey_hash)?
+                            .ok_or_else(|| {
+                                error!("Missing verification key for participant: {}", pubkey_hash);
+                                BitVMXError::InvalidMessageFormat
+                            })?;
                     let key = keys.get_public(&self.collaboration_id.to_string())?;
+
+                    // Simplified MITM protection: just store the signature for redistribution
+                    if let Some(signature) = keys.get_signature(&self.collaboration_id.to_string())
+                    {
+                        let verified = program_context.key_chain.verify_rsa_signature(
+                            &verification_key,
+                            key.to_string().as_bytes(),
+                            &signature,
+                        )?;
+                        info!(
+                            "Received RSA signature from participant: {} ({})",
+                            pubkey_hash, verified
+                        );
+                        // Store the signature for redistribution to other participants
+                        self.add_key_signature(pubkey_hash.clone(), signature.clone());
+                    } else {
+                        error!("Missing RSA signature for participant: {}", pubkey_hash);
+                        return Err(BitVMXError::InvalidMessageFormat);
+                    }
+
+                    // Store the key and its signature
                     self.keys.insert(pubkey_hash.clone(), *key);
+
                     debug!("Got keys {:?}", self.keys);
 
                     if self.keys.len() == self.participants.len() {
@@ -151,33 +215,108 @@ impl Collaboration {
                             self.my_key.clone(),
                         )?;
                         self.aggregated_key = Some(aggregated.clone());
-
                         self.state = true;
                     }
                 } else {
-                    let keys: ParticipantKeys = parse_keys(data)
+                    // Message signature verification already done in BitVMX::process_msg
+                    // Only process the keys received
+                    let keys: ParticipantKeys = parse_keys(data.clone())
                         .map_err(|_| BitVMXError::InvalidMessageFormat)?
                         .first()
                         .unwrap()
                         .1
                         .clone();
 
-                    keys.mapping.iter().for_each(|(pubkey_hash, key)| {
-                        let pubkey_hash: PubKeyHash = pubkey_hash
-                            .parse()
-                            .unwrap_or(self.leader.pubkey_hash.clone()); //TODO: Handle the unwrap better
+                    // Process all received keys - simplified MITM protection
+                    for (pubkey_hash_str, key) in &keys.mapping {
+                        let pubkey_hash: PubKeyHash = pubkey_hash_str.parse().map_err(|_| {
+                            error!("Invalid pubkey hash format received: {}", pubkey_hash_str);
+                            BitVMXError::InvalidMessageFormat
+                        })?;
+
                         if let Some(key) = key.public() {
+                            let my_pubkey_hash = program_context.comms.get_pubk_hash()?;
+
+                            // Simplified MITM protection: verify keys based on their source
+                            if pubkey_hash == my_pubkey_hash {
+                                // This is our own key - verify it hasn't been tampered with
+                                if let Some(signature) = keys.get_signature(pubkey_hash_str) {
+                                    let my_verification_key =
+                                        program_context.key_chain.get_rsa_public_key()?;
+                                    let verified = program_context.key_chain.verify_rsa_signature(
+                                        &my_verification_key,
+                                        key.to_string().as_bytes(),
+                                        &signature,
+                                    )?;
+                                    if !verified {
+                                        error!("Invalid RSA signature for our own key");
+                                        return Err(BitVMXError::InvalidSignature {
+                                            peer: pubkey_hash.clone(),
+                                            msg_type: "Key".to_string(),
+                                            program_id: "N/A".to_string(),
+                                        });
+                                    }
+                                    info!("My own key verified ({})", verified);
+                                } else {
+                                    error!("Missing RSA signature for our own key");
+                                    return Err(BitVMXError::InvalidMessageFormat);
+                                }
+                            } else if pubkey_hash == self.leader.pubkey_hash {
+                                // Leader's key - we trust it since the leader's message is already verified
+                                info!("Leader's key accepted (message already verified)");
+                            } else {
+                                // Other participant's key - verify if signature is present
+                                if let Some(signature) = keys.get_signature(pubkey_hash_str) {
+                                    if let Some(verification_key) = OperatorVerificationStore::get(
+                                        &program_context.globals,
+                                        &pubkey_hash,
+                                    )? {
+                                        let verified =
+                                            program_context.key_chain.verify_rsa_signature(
+                                                &verification_key,
+                                                key.to_string().as_bytes(),
+                                                &signature,
+                                            )?;
+                                        if !verified {
+                                            info!(
+                                                "Invalid RSA signature for peer: {}",
+                                                pubkey_hash
+                                            );
+                                            return Err(BitVMXError::InvalidSignature {
+                                                peer: pubkey_hash.clone(),
+                                                msg_type: "Key".to_string(),
+                                                program_id: "N/A".to_string(),
+                                            });
+                                        }
+                                        info!(
+                                            "Key verified for peer: {} ({})",
+                                            pubkey_hash, verified
+                                        );
+                                    } else {
+                                        info!("Missing verification key for peer: {}", pubkey_hash);
+                                        return Err(BitVMXError::MissingVerificationKey {
+                                            peer: pubkey_hash.clone(),
+                                            known_count: 0,
+                                        });
+                                    }
+                                } else {
+                                    info!("Missing RSA signature for peer: {}", pubkey_hash);
+                                    return Err(BitVMXError::InvalidMessageFormat);
+                                }
+                            }
+                            // Accept all keys (our own is verified, leader's is trusted, others verified above)
                             self.keys.insert(pubkey_hash, *key);
                         } else {
-                            warn!("Key not found for peer: {}", pubkey_hash);
+                            info!("Key not found for peer: {}", pubkey_hash);
                         }
-                    });
+                    }
 
                     let aggregated = program_context.key_chain.new_musig2_session(
                         self.keys.values().cloned().collect(),
                         self.my_key.clone(),
                     )?;
                     self.aggregated_key = Some(aggregated.clone());
+
                     self.completed = true;
                 }
 
@@ -195,6 +334,7 @@ impl Collaboration {
 
                 response(
                     &program_context.comms,
+                    &program_context.key_chain,
                     &self.collaboration_id,
                     comms_address,
                     CommsMessageType::KeysAck,
@@ -205,6 +345,12 @@ impl Collaboration {
                 debug!(
                     "Collaboration id: {}: KeysAck received by {}",
                     self.collaboration_id, pubkey_hash
+                );
+            }
+            CommsMessageType::VerificationKey | CommsMessageType::VerificationKeyRequest => {
+                debug!(
+                    "Collaboration id: {}: Verification key message handled upstream ({:?})",
+                    self.collaboration_id, msg_type
                 );
             }
             _ => {
@@ -251,5 +397,13 @@ impl Collaboration {
             }
         }
         Err(BitVMXError::InvalidParticipant(pubkey_hash.to_string()))
+    }
+
+    pub fn get_key_signature(&self, pubkey_hash: &PubKeyHash) -> Option<&Vec<u8>> {
+        self.key_signatures.get(pubkey_hash)
+    }
+
+    pub fn add_key_signature(&mut self, pubkey_hash: PubKeyHash, signature: Vec<u8>) {
+        self.key_signatures.insert(pubkey_hash, signature);
     }
 }

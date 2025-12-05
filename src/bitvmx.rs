@@ -1,10 +1,11 @@
 use crate::config::ComponentsConfig;
 use crate::ping_helper::{JobDispatcherType, PingHelper};
 use crate::program::protocols::protocol_handler::ProtocolHandler;
+use crate::timestamp_verifier::TimestampVerifier;
 use crate::{
     api::BitVMXApi,
     collaborate::Collaboration,
-    comms_helper::deserialize_msg,
+    comms_helper::{deserialize_msg, CommsMessageType},
     config::Config,
     errors::BitVMXError,
     keychain::KeyChain,
@@ -13,6 +14,7 @@ use crate::{
         program::Program,
         variables::{Globals, WitnessVars},
     },
+    signature_verifier::SignatureVerifier,
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus},
 };
 use bitcoin::secp256k1::Message;
@@ -44,6 +46,7 @@ use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use bitvmx_wallet::wallet::Wallet;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::{
     collections::{HashSet, VecDeque},
     net::SocketAddr,
@@ -74,11 +77,13 @@ pub struct BitVMX {
     broker: BrokerSync,
     count: u32,
     pending_messages: VecDeque<(PubKeyHash, Vec<u8>)>,
+    timestamp_verifier: TimestampVerifier,
     notified_request: HashSet<(Uuid, (Txid, Option<u32>))>,
     notified_rsk_pegin: HashSet<Txid>, //workaround for RSK pegin transactions because ack seems to be not working
     bitcoin_update: BitcoinUpdateState,
     wallet: Wallet,
     ping_helper: PingHelper,
+    shutdown: bool,
 }
 
 impl Drop for BitVMX {
@@ -175,6 +180,13 @@ impl BitVMX {
         );
 
         let ping_helper = PingHelper::new(config.job_dispatcher_ping.clone());
+        let timestamp_config = config
+            .timestamp_verifier
+            .as_ref()
+            .map(|c| c.clone())
+            .unwrap_or_default();
+        let timestamp_verifier =
+            TimestampVerifier::new(timestamp_config.enabled, timestamp_config.max_drift_ms);
 
         Ok(Self {
             config,
@@ -183,6 +195,7 @@ impl BitVMX {
             broker,
             count: 0,
             pending_messages: VecDeque::new(),
+            timestamp_verifier,
             notified_request: HashSet::new(),
             notified_rsk_pegin: HashSet::new(),
             bitcoin_update: BitcoinUpdateState {
@@ -191,11 +204,13 @@ impl BitVMX {
             },
             wallet,
             ping_helper,
+            shutdown: false,
         })
     }
 
     pub fn shutdown(&mut self, timeout: Duration) -> Result<(), BitVMXError> {
         info!("Shutdown requested");
+        self.shutdown = true;
         let deadline = Instant::now() + timeout;
         self.begin_shutdown();
 
@@ -255,36 +270,208 @@ impl BitVMX {
         Ok(program)
     }
 
+    /// Step 1: Verifies the message signature.
+    /// Returns Ok(true) if verification succeeded, Ok(false) if the message needs to be buffered
+    /// (e.g., missing verification key), or Err if there was an error.
+    fn verify_message_signature(
+        &mut self,
+        identifier: &Identifier,
+        program_id: &Uuid,
+        version: &String,
+        msg_type: &CommsMessageType,
+        data: &Value,
+        timestamp: i64,
+        signature: &Vec<u8>,
+    ) -> Result<bool, BitVMXError> {
+        match SignatureVerifier::verify_and_get_key(
+            &self.program_context.comms,
+            &self.program_context.globals,
+            &self.program_context.key_chain,
+            &identifier.pubkey_hash,
+            program_id,
+            msg_type,
+            data,
+            timestamp,
+            signature,
+            version,
+        ) {
+            Ok(_) => Ok(true),
+            Err(BitVMXError::MissingVerificationKey { .. }) => Ok(false),
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Processes a message for a Program.
+    /// Returns Ok(true) if message was processed, Ok(false) if it needs to be buffered,
+    /// or Err if there was an error.
+    fn process_program_message(
+        &mut self,
+        program_id: &Uuid,
+        msg_type: CommsMessageType,
+        data: Value,
+        peer_address: CommsAddress,
+        program: &mut Program,
+    ) -> Result<bool, BitVMXError> {
+        let my_pubkey_hash = self.program_context.comms.get_pubk_hash()?;
+        let participants: Vec<_> = program
+            .participants
+            .iter()
+            .filter(|p| p.comms_address.pubkey_hash != my_pubkey_hash)
+            .map(|p| p.comms_address.pubkey_hash.clone())
+            .collect();
+        if !SignatureVerifier::has_all_keys(&self.program_context.globals, &participants)? {
+            info!("Missing verification keys for program: {:?}", program_id);
+            return Ok(false);
+        }
+
+        // Step 3: Process normal messages (non-verification)
+        program.process_comms_message(peer_address, msg_type, data, &self.program_context)?;
+        Ok(true)
+    }
+
+    /// Processes a message for a Collaboration.
+    /// Returns Ok(true) if message was processed, Ok(false) if it needs to be buffered,
+    /// or Err if there was an error.
+    fn process_collaboration_message(
+        &mut self,
+        program_id: &Uuid,
+        msg_type: CommsMessageType,
+        data: Value,
+        peer_address: CommsAddress,
+        collaboration: &mut Collaboration,
+    ) -> Result<bool, BitVMXError> {
+        let my_pubkey_hash = self.program_context.comms.get_pubk_hash()?;
+        let participants: Vec<_> = collaboration
+            .participants
+            .iter()
+            .filter(|p| p.pubkey_hash != my_pubkey_hash)
+            .map(|p| p.pubkey_hash.clone())
+            .collect();
+        if !SignatureVerifier::has_all_keys(&self.program_context.globals, &participants)? {
+            info!(
+                "Missing verification keys for collaboration: {:?}",
+                program_id
+            );
+            return Ok(false);
+        }
+
+        // Step 3: Process normal messages (non-verification)
+        collaboration.process_comms_message(peer_address, msg_type, data, &self.program_context)?;
+        Ok(true)
+    }
+
     pub fn process_msg(
         &mut self,
         identifier: Identifier,
         msg: Vec<u8>,
-        pend_to_back: bool,
+        is_new_message: bool,
     ) -> Result<(), BitVMXError> {
-        let (_version, msg_type, program_id, data) = deserialize_msg(msg.clone())?;
-        if let Some(mut program) = self.load_program(&program_id).ok() {
-            let address = program.get_address_from_pubkey_hash(&identifier.pubkey_hash.clone())?;
-            program.process_comms_message(address, msg_type, data, &self.program_context)?;
-        } else if let Some(mut collaboration) = self.get_collaboration(&program_id)? {
-            let comms_address =
-                collaboration.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
-            collaboration.process_comms_message(
-                comms_address,
-                msg_type,
-                data,
-                &self.program_context,
+        let (version, msg_type, program_id, data, timestamp, signature) =
+            deserialize_msg(msg.clone())?;
+
+        let is_verification_msg = matches!(
+            msg_type,
+            CommsMessageType::VerificationKey | CommsMessageType::VerificationKeyRequest
+        );
+
+        if !is_verification_msg {
+            let verified = self.verify_message_signature(
+                &identifier,
+                &program_id,
+                &version,
+                &msg_type,
+                &data,
+                timestamp,
+                &signature,
             )?;
-            self.save_collaboration(&collaboration)?;
-        } else {
-            if pend_to_back {
-                info!("Pending message to back: {:?}", msg_type);
+
+            if !verified {
+                info!(
+                    "Buffering message due to missing verification key: {:?} {:?}",
+                    program_id, msg_type
+                );
                 self.pending_messages
                     .push_back((identifier.to_string(), msg));
-            } else {
-                info!("Pending message to front: {:?}", msg_type);
-                self.pending_messages
-                    .push_front((identifier.to_string(), msg));
+                return Ok(());
             }
+        }
+
+        if is_new_message {
+            self.timestamp_verifier
+                .ensure_fresh(&identifier.pubkey_hash, timestamp)?;
+        }
+
+        let (program, collaboration, peer_address) =
+            if let Some(program) = self.load_program(&program_id).ok() {
+                let peer_address = program.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
+
+                (Some(program), None, Some(peer_address))
+            } else if let Some(collaboration) = self.get_collaboration(&program_id)? {
+                let peer_address =
+                    collaboration.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
+                (None, Some(collaboration), Some(peer_address))
+            } else {
+                (None, None, None)
+            };
+
+        let message_consumed = match peer_address {
+            Some(peer_address) => {
+                if is_verification_msg {
+                    let handled = SignatureVerifier::handle_verification_messages(
+                        &self.program_context,
+                        &program_id,
+                        &msg_type,
+                        &data,
+                        &peer_address,
+                    );
+                    if handled.is_err() {
+                        error!(
+                            "Error handling verification message: {:?}",
+                            handled.err().unwrap()
+                        );
+                        false
+                    } else {
+                        true
+                    }
+                } else {
+                    if let Some(mut program) = program {
+                        let message_consumed = self.process_program_message(
+                            &program_id,
+                            msg_type,
+                            data,
+                            peer_address,
+                            &mut program,
+                        )?;
+                        message_consumed
+                    } else if let Some(mut collaboration) = collaboration {
+                        let message_consumed = self.process_collaboration_message(
+                            &program_id,
+                            msg_type,
+                            data,
+                            peer_address,
+                            &mut collaboration,
+                        )?;
+                        if message_consumed {
+                            self.save_collaboration(&collaboration)?;
+                        }
+                        message_consumed
+                    } else {
+                        error!("Invalid state");
+                        false
+                    }
+                }
+            }
+            None => false,
+        };
+
+        if message_consumed {
+            self.timestamp_verifier
+                .record(&identifier.pubkey_hash, timestamp);
+        } else {
+            // Message needs to be buffered (not processed or program/collaboration not found)
+            info!("Pending message to back: {:?}", msg_type);
+            self.pending_messages
+                .push_back((identifier.to_string(), msg));
         }
 
         Ok(())
@@ -299,7 +486,7 @@ impl BitVMX {
         let comms_address = comms_address
             .parse()
             .map_err(|_| BitVMXError::InvalidCommsAddress(comms_address))?;
-        self.process_msg(comms_address, msg, true)?;
+        self.process_msg(comms_address, msg, false)?;
         Ok(())
     }
 
@@ -369,6 +556,7 @@ impl BitVMX {
                     self.notified_request.insert((*request_id, (tx_id, vout)));
                 }
             }
+            Context::Protocol(_, _) => {}
         }
         Ok(true)
     }
@@ -527,13 +715,17 @@ impl BitVMX {
 
     pub fn tick(&mut self) -> Result<(), BitVMXError> {
         //info!("Ticking BitVMX: {}", self.count);
+        if self.shutdown {
+            return Ok(());
+        }
+
         self.count += 1;
         self.process_programs()?;
 
         if self.count % THROTTLE_TICKS == 0 {
+            self.process_pending_messages()?;
             self.process_comms_messages()?;
             self.process_api_messages()?;
-            self.process_pending_messages()?;
         }
 
         self.process_bitcoin_updates_with_throttle()?;
@@ -1456,6 +1648,10 @@ impl BitVMXApi for BitVMX {
                 };
                 self.reply(from, message)?;
             }
+            IncomingBitVMXApiMessages::Shutdown(timeout) => {
+                info!("Shutdown message received. Initiating shutdown...");
+                self.shutdown(timeout)?;
+            }
             #[cfg(feature = "testpanic")]
             IncomingBitVMXApiMessages::Test(s) => {
                 if s == "panic" {
@@ -1476,6 +1672,7 @@ impl BitVMXApi for BitVMX {
 pub enum Context {
     ProgramId(Uuid),
     RequestId(Uuid, Identifier),
+    Protocol(Uuid, String),
 }
 
 impl Context {

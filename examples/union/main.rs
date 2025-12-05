@@ -1,6 +1,5 @@
 use crate::{
     bitcoin::{BitcoinWrapper, HIGH_FEE_NODE_ENABLED},
-    macros::wait_for_message_blocking,
     participants::{
         committee::Committee,
         common::{calculate_taproot_key_path_sighash, get_user_take_tx},
@@ -22,15 +21,19 @@ use anyhow::Result;
 use bitvmx_client::{
     program::{
         participant::ParticipantRole,
-        protocols::union::{
-            common::{
-                double_indexed_name, get_accept_pegin_pid, get_dispute_core_pid,
-                get_full_penalization_pid, triple_indexed_name,
-            },
-            types::{
-                FundsAdvanced, ACCEPT_PEGIN_TX, OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX,
-                OP_INITIAL_DEPOSIT_TX, OP_LAZY_DISABLER_TX, OP_SELF_DISABLER_TX,
-                WT_DISABLER_DIRECTORY_TX, WT_DISABLER_TX, WT_SELF_DISABLER_TX, WT_START_ENABLER_TX,
+        protocols::{
+            dispute::program_input,
+            union::{
+                common::{
+                    double_indexed_name, get_accept_pegin_pid, get_dispute_channel_pid,
+                    get_dispute_core_pid, get_full_penalization_pid, triple_indexed_name,
+                },
+                types::{
+                    FundsAdvanced, ACCEPT_PEGIN_TX, OP_DISABLER_DIRECTORY_TX, OP_DISABLER_TX,
+                    OP_INITIAL_DEPOSIT_TX, OP_LAZY_DISABLER_TX, OP_SELF_DISABLER_TX,
+                    WT_DISABLER_DIRECTORY_TX, WT_DISABLER_TX, WT_SELF_DISABLER_TX,
+                    WT_START_ENABLER_TX,
+                },
             },
         },
         variables::VariableTypes,
@@ -71,10 +74,13 @@ pub fn main() -> Result<()> {
         Some("request_pegout") => cli_request_pegout()?,
         Some("advance_funds") => cli_advance_funds()?,
         Some("advance_funds_twice") => cli_advance_funds_twice()?,
-        Some("invalid_reimbursement") => cli_invalid_reimbursement()?,
+        Some("challenge") => cli_challenge(args.get(2))?,
+        Some("op_no_cosign") => cli_op_no_cosign()?,
+        Some("wt_no_challenge") => cli_wt_no_challenge()?,
+        Some("input_not_revealed") => cli_input_not_revealed()?,
         Some("double_challenge") => cli_double_challenge()?,
-        Some("operator_disabler") => cli_operator_disabler()?,
-        Some("watchtower_disabler") => cli_watchtower_disabler()?,
+        // Some("operator_disabler") => cli_operator_disabler()?,
+        // Some("watchtower_disabler") => cli_watchtower_disabler()?,
         Some("self_disablers") => cli_self_disablers()?,
         // Utils
         Some("create_wallet") => cli_create_wallet(args.get(2))?,
@@ -115,8 +121,12 @@ fn print_usage() {
     print_cmd_help("advance_funds", "Performs an advancement of funds");
     print_cmd_help("advance_funds_twice", "Performs advancement of funds twice");
     print_cmd_help(
-        "invalid_reimbursement",
+        "challenge",
         "Forces invalid reimbursement to test challenge tx",
+    );
+    print_cmd_help(
+        "input_not_revealed",
+        "Forces INPUT_NOT_REVEALED_TX to be dispatched",
     );
     print_cmd_help(
         "double_challenge",
@@ -131,14 +141,14 @@ fn print_usage() {
         "self_disablers",
         "Dispatch WT and OP self disablers transactions",
     );
-    print_cmd_help(
-        "operator_disabler",
-        "Dispatch OP disabler directory transactions",
-    );
-    print_cmd_help(
-        "watchtower_disabler",
-        "Dispatch WT disabler directory transactions",
-    );
+    // print_cmd_help(
+    //     "operator_disabler",
+    //     "Dispatch OP disabler directory transactions",
+    // );
+    // print_cmd_help(
+    //     "watchtower_disabler",
+    //     "Dispatch WT disabler directory transactions",
+    // );
 
     // Testing commands
     println!("\nUtility commands:");
@@ -245,13 +255,120 @@ pub fn cli_advance_funds_twice() -> Result<()> {
     Ok(())
 }
 
-pub fn cli_invalid_reimbursement() -> Result<()> {
+pub fn cli_challenge(winner: Option<&String>) -> Result<()> {
+    if HIGH_FEE_NODE_ENABLED {
+        // Due to self disablers does not have speedup by now
+        info!("This example works better with a client node with low fees. Please disable HIGH_FEE_NODE_ENABLED and try again.");
+        return Ok(());
+    }
+
+    let op_wins = match winner {
+        Some(val) if val == "op" => true,
+        Some(val) if val == "wt" => false,
+        _ => {
+            error!("Please provide a winner: op/wt");
+            return Ok(());
+        }
+    };
+
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
     let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
-    invalid_reimbursement(&mut committee, slot_index)?;
+    challenge(&mut committee, slot_index, true, op_wins)?;
     Ok(())
 }
+
+pub fn cli_op_no_cosign() -> Result<()> {
+    if HIGH_FEE_NODE_ENABLED {
+        // Due to self disablers does not have speedup by now
+        info!("This example works better with a client node with low fees. Please disable HIGH_FEE_NODE_ENABLED and try again.");
+        return Ok(());
+    }
+
+    let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+
+    let op_index = challenge(&mut committee, slot_index, false, true)?;
+
+    let blocks_to_wait = 12; // Amount of blocks enough to allow WT to open a challenge but not enough to dispatch the OP_COSIGN_TX. Fine tunning may be required.
+    info!("Mining {} blocks...", blocks_to_wait);
+    wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
+
+    // Shutdown operator to avoid him to respond to challenge with OP_COSIGN_TX
+    committee.members[op_index]
+        .bitvmx
+        .shutdown(Duration::from_secs(10));
+
+    // Amount of blocks enough to allow WT to dispatch OP_NO_COSIGN_TX and following TXs
+    let blocks_to_wait = committee.stream_settings.op_no_cosign_timelock as u32 + 30;
+    info!("Mining {} blocks...", blocks_to_wait);
+    wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
+
+    Ok(())
+}
+
+pub fn cli_wt_no_challenge() -> Result<()> {
+    if HIGH_FEE_NODE_ENABLED {
+        // Due to self disablers does not have speedup by now
+        info!("This example works better with a client node with low fees. Please disable HIGH_FEE_NODE_ENABLED and try again.");
+        return Ok(());
+    }
+
+    let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+
+    let op_index = challenge(&mut committee, slot_index, false, true)?;
+
+    let blocks_to_wait = 13; // Amount of blocks enough to allow WT to open a challenge but not enough to dispatch the START_CH. Fine tunning may be required.
+    info!("Mining {} blocks...", blocks_to_wait);
+    wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
+
+    for (wt_index, _) in committee.members.iter().enumerate() {
+        if wt_index == op_index {
+            continue;
+        }
+
+        // Shutdown watchtowers to avoid them to send START_CH
+        committee.members[wt_index]
+            .bitvmx
+            .shutdown(Duration::from_secs(10));
+    }
+    // Amount of blocks enough to allow OP to dispatch WT_NO_CHALLENGE_TX and following TXs
+    let blocks_to_wait = committee.stream_settings.wt_no_challenge_timelock as u32 + 30;
+    info!("Mining {} blocks...", blocks_to_wait);
+    wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
+
+    Ok(())
+}
+
+pub fn cli_input_not_revealed() -> Result<()> {
+    if HIGH_FEE_NODE_ENABLED {
+        // Due to self disablers does not have speedup by now
+        info!("This example works better with a client node with low fees. Please disable HIGH_FEE_NODE_ENABLED and try again.");
+        return Ok(());
+    }
+
+    let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
+
+    let op_index = challenge(&mut committee, slot_index, false, false)?;
+
+    let blocks_to_wait = 4; // Wait some blocks to mine ADVANCE_FUNDS_TX and REIMBURSEMENT_KICKOFF_TX. Fine tunning may be required.
+    wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
+
+    // Kill operator client after some blocks to simulate offline behavior
+    committee.members[op_index]
+        .bitvmx
+        .shutdown(Duration::from_secs(10));
+
+    // Wait some blocks to be able to dispatch and mine INPUT_NOT_REVEALED_TX
+    let blocks_to_wait = committee.stream_settings.input_not_revealed_timelock as u32 + 10;
+    wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
+
+    Ok(())
+}
+
 pub fn cli_self_disablers() -> Result<()> {
     if HIGH_FEE_NODE_ENABLED {
         // Due to self disablers does not have speedup by now
@@ -436,6 +553,8 @@ pub fn cli_fund_members() -> Result<()> {
 }
 
 pub fn cli_operator_disabler() -> Result<()> {
+    // FIXME: This example should be updated because it needs to win a challenge to be able to dispatch disabler txs
+
     // NOTE: This example works better with a client node with low fees.
     // It require a fine timming to dispatch TXs and that's hard to reach if there is high fees
     // Key: Second reimbursement kickoff tx should be dispatched right after the first reimbursement kickoff tx is mined
@@ -480,7 +599,7 @@ pub fn cli_operator_disabler() -> Result<()> {
             wait_for_blocks(&committee.bitcoin_client, 1)?;
 
             let wt_index = (op_index + 1) % committee.members.len();
-            let tx_name = double_indexed_name(OP_DISABLER_DIRECTORY_TX, op_index, wt_index);
+            let tx_name = double_indexed_name(OP_DISABLER_DIRECTORY_TX, wt_index, op_index);
 
             let tx = committee.members[wt_index]
                 .dispatch_transaction_by_name(full_penalization_pid, tx_name.clone())?;
@@ -539,6 +658,8 @@ pub fn cli_operator_disabler() -> Result<()> {
 }
 
 pub fn cli_watchtower_disabler() -> Result<()> {
+    // FIXME: This example should be updated because it needs to win a challenge to be able to dispatch disabler txs
+
     // NOTE: This example works better with a client node with low fees.
     if HIGH_FEE_NODE_ENABLED {
         info!("This example works better with a client node with low fees. Please disable HIGH_FEE_NODE_ENABLED and try again.");
@@ -790,7 +911,7 @@ pub fn advance_funds(
     if should_wait {
         wait_for_blocks(
             &committee.bitcoin_client,
-            get_blocks_to_wait() + committee.stream_settings.long_timelock as u32,
+            get_blocks_to_wait() + committee.stream_settings.long_timelock as u32 + 10,
         )?;
 
         // Wait for the FundsAdvanced message
@@ -822,10 +943,17 @@ pub fn advance_funds(
     Ok(operator_id)
 }
 
-pub fn invalid_reimbursement(committee: &mut Committee, slot_index: usize) -> Result<()> {
+pub fn challenge(
+    committee: &mut Committee,
+    slot_index: usize,
+    should_wait: bool,
+    op_wins: bool,
+) -> Result<usize> {
     info!("Forcing member 0 to dispatch invalid reimbursement transaction...");
     // Force member 0 to dispatch reimbursement without proper advancement setup
     let committee_id = committee.committee_id();
+    let members_len = committee.members.len();
+
     let operator_index = 0;
     let member: &mut Member = &mut committee.members[operator_index];
     let operator_pubkey = member.keyring.take_pubkey.unwrap();
@@ -841,14 +969,43 @@ pub fn invalid_reimbursement(committee: &mut Committee, slot_index: usize) -> Re
         get_advance_funds_fee()?,
     )?;
 
-    info!("Starting mining loop to ensure challenge transaction is dispatched...");
-    wait_for_blocks(
-        &committee.bitcoin_client,
-        get_blocks_to_wait() + committee.stream_settings.long_timelock as u32,
-    )?;
+    // Set DRP Operator input for each Watchtower
+    for wt_index in 0..members_len {
+        if wt_index == operator_index {
+            continue;
+        }
 
-    info!("Invalid reimbursement test complete.");
-    Ok(())
+        let drp_pid = get_dispute_channel_pid(committee_id, operator_index, wt_index);
+
+        // Force someone to win
+        let data = if op_wins {
+            "11111111".to_string()
+        } else {
+            "00000000".to_string()
+        };
+        let input_pos = 0;
+
+        let set_input_1 = VariableTypes::Input(hex::decode(data).unwrap());
+        member
+            .bitvmx
+            .set_var(drp_pid, &program_input(input_pos), set_input_1)?;
+    }
+
+    if should_wait {
+        let additional_blocks = committee.stream_settings.long_timelock + 250;
+
+        info!(
+            "Starting mining {} blocks in loop to ensure challenges and DRP txs are dispatched...",
+            additional_blocks
+        );
+        wait_for_blocks(
+            &committee.bitcoin_client,
+            get_blocks_to_wait() + additional_blocks as u32,
+        )?;
+    }
+
+    info!("Challenge test complete.");
+    Ok(operator_index)
 }
 
 fn get_and_increment_slot_index() -> usize {

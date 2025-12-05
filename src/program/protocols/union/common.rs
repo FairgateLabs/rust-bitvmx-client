@@ -7,7 +7,10 @@ use uuid::Uuid;
 use crate::{
     errors::BitVMXError,
     program::{
-        protocols::union::types::{StreamSettings, UnionSettings, GLOBAL_SETTINGS_UUID},
+        protocols::union::types::{
+            StreamSettings, UnionSettings, GLOBAL_SETTINGS_UUID, OP_CLAIM_GATE,
+            PAIRWISE_DISPUTE_KEY, WT_CLAIM_GATE,
+        },
         variables::{PartialUtxo, VariableTypes},
     },
     types::ProgramContext,
@@ -82,6 +85,17 @@ pub fn get_dispute_pair_aggregated_key_pid(committee_id: Uuid, idx_a: usize, idx
 
     let hash = hasher.finalize();
     Uuid::from_bytes(hash[0..16].try_into().unwrap())
+}
+
+pub fn get_dispute_pair_key_name(idx_a: usize, idx_b: usize) -> String {
+    // Ensure canonical ordering (min, max) so both parties derive the same name.
+    let (min_i, max_i) = if idx_a <= idx_b {
+        (idx_a, idx_b)
+    } else {
+        (idx_b, idx_a)
+    };
+
+    double_indexed_name(PAIRWISE_DISPUTE_KEY, min_i, max_i)
 }
 
 // Deterministic id for a dispute-channel instance (directional): from_idx -> to_idx
@@ -168,6 +182,68 @@ pub fn extract_index(full_name: &str, tx_name: &str) -> Result<usize, BitVMXErro
     Ok(slot_index)
 }
 
+pub fn extract_double_index(input: &str) -> Result<(usize, usize), BitVMXError> {
+    let parts: Vec<&str> = input.split('_').collect();
+    if parts.len() < 2 {
+        return Err(BitVMXError::InvalidParameter(format!(
+            "Input '{}' does not contain two indices separated by '_'",
+            input
+        )));
+    }
+    let len = parts.len();
+
+    let index2 = parts[len - 2].parse::<usize>().map_err(|_| {
+        BitVMXError::InvalidParameter(format!(
+            "Could not parse second index from part: '{}'",
+            parts[0]
+        ))
+    })?;
+
+    let index1 = parts[len - 1].parse::<usize>().map_err(|_| {
+        BitVMXError::InvalidParameter(format!(
+            "Could not parse first index from part: '{}'",
+            parts[1]
+        ))
+    })?;
+
+    Ok((index2, index1))
+}
+
+pub fn extract_index_from_claim_gate(input: &str) -> Result<(usize, usize), BitVMXError> {
+    let prefix = if input.starts_with(WT_CLAIM_GATE) {
+        WT_CLAIM_GATE
+    } else if input.starts_with(OP_CLAIM_GATE) {
+        OP_CLAIM_GATE
+    } else {
+        return Err(BitVMXError::InvalidParameter(format!(
+            "Input '{}' does not start with expected prefixes",
+            input
+        )));
+    };
+
+    let prefix = &format!("{}_", prefix);
+    let rest = input.strip_prefix(prefix).ok_or_else(|| {
+        BitVMXError::InvalidParameter(format!(
+            "Input '{}' does not match expected format '{}{{a}}_{{b}}'",
+            input, prefix
+        ))
+    })?;
+    let parts: Vec<&str> = rest.split('_').collect();
+    let a: usize = parts[0].parse().map_err(|_| {
+        BitVMXError::InvalidParameter(format!(
+            "Could not parse first index from part: '{}'",
+            parts[0]
+        ))
+    })?;
+    let b: usize = parts[1].parse().map_err(|_| {
+        BitVMXError::InvalidParameter(format!(
+            "Could not parse second index from part: '{}'",
+            parts[1]
+        ))
+    })?;
+    Ok((a, b))
+}
+
 pub fn get_operator_output_type(
     dispute_key: &PublicKey,
     amount: u64,
@@ -242,4 +318,12 @@ pub fn get_stream_setting(
     }
 
     Ok(settings.settings.get(&stream_denomination).unwrap().clone())
+}
+
+pub fn get_dispatch_action(block_height: Option<u32>) -> String {
+    if block_height.is_some() {
+        "scheduled".to_string()
+    } else {
+        "dispatched".to_string()
+    }
 }

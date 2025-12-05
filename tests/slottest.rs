@@ -230,6 +230,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
             prover_win_output_type,
             forced_challenge.clone(),
             Some("./verifiers/cardinal-verifier.yaml".to_string()),
+            None,
         )?;
         let _msgs = get_all(&sub_channel.clone(), &mut instances, false)?;
         info!("Dispute setup done");
@@ -292,6 +293,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
             dispute_id,
             Some((gorth16proof, 3)),
             forced_challenge,
+            false,
         )?;
 
         //Consume other stops through timeout

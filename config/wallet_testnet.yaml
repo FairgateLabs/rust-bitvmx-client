@@ -11,7 +11,7 @@ key_manager:
   mnemonic_passphrase: ""
 
 key_storage:
-  password: secret_password_1
+  password: SeCrEt_p4ssw0rd_1!
   path: /tmp/testnet/wallet/keys.db
 
 storage:

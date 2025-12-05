@@ -516,10 +516,7 @@ impl AdvanceFundsProtocol {
             None,                                                          // Dispatch immediately
         )?;
 
-        info!(
-            "ADVANCE_FUNDS_TX dispatched successfully with txid: {}",
-            txid
-        );
+        info!("{} dispatched with txid: {}", ADVANCE_FUNDS_TX, txid);
 
         Ok(txid)
     }

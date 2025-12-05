@@ -40,6 +40,7 @@ pub fn start_challenge(
     committee_key: &PublicKey,
     slot_id_pubkey_name: &str,
     slot_id_pubkey: &WinternitzPublicKey,
+    sign_mode: SignMode,
 ) -> Result<ProtocolScript, ScriptError> {
     let script = script!(
         { XOnlyPublicKey::from(committee_key.clone()).serialize().to_vec() }
@@ -49,7 +50,7 @@ pub fn start_challenge(
         OP_PUSHNUM_1
     );
 
-    let mut protocol_script = ProtocolScript::new(script, &committee_key, SignMode::Aggregate);
+    let mut protocol_script = ProtocolScript::new(script, &committee_key, sign_mode);
 
     protocol_script.add_key(
         slot_id_pubkey_name,

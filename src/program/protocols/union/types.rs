@@ -18,6 +18,13 @@ pub const OP_INITIAL_DEPOSIT_TXID: &str = "OP_INITIAL_DEPOSIT_TXID";
 pub const OP_INITIAL_DEPOSIT_AMOUNT: &str = "OP_INITIAL_DEPOSIT_AMOUNT";
 pub const OP_INITIAL_DEPOSIT_OUT_SCRIPT: &str = "OP_INITIAL_DEPOSIT_OUT_SCRIPT";
 pub const WT_START_ENABLER_UTXOS: &str = "WT_START_ENABLER_UTXOS";
+pub const WT_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO: &str =
+    "WT_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO";
+pub const OP_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO: &str =
+    "OP_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO";
+pub const CLAIM_GATE_STOPPER_UTXOS: &str = "CLAIM_GATE_STOPPER_UTXOS";
+pub const OP_COSIGN_UTXOS: &str = "OP_COSIGN_UTXOS";
+pub const PAIRWISE_DISPUTE_KEY: &str = "PAIRWISE_DISPUTE_KEY";
 
 // Transaction names
 pub const REQUEST_PEGIN_TX: &str = "REQUEST_PEGIN_TX";
@@ -41,7 +48,16 @@ pub const OP_DISABLER_DIRECTORY_TX: &str = "OP_DISABLER_DIRECTORY_TX";
 pub const WT_DISABLER_DIRECTORY_TX: &str = "WT_DISABLER_DIRECTORY_TX";
 pub const FUNDING_TX: &str = "FUNDING_TX";
 pub const WT_START_ENABLER_TX: &str = "WT_START_ENABLER_TX";
+pub const WT_INIT_CHALLENGE_TX: &str = "WT_INIT_CHALLENGE_TX";
 pub const PROTOCOL_FUNDING_TX: &str = "PROTOCOL_FUNDING_TX";
+pub const WT_CLAIM_GATE: &str = "WT_CLAIM_GATE";
+pub const WT_CLAIM_GATE_SUCCESS: &str = "WT_CLAIM_GATE_SUCCESS";
+pub const OP_CLAIM_GATE: &str = "OP_CLAIM_GATE";
+pub const OP_CLAIM_GATE_SUCCESS: &str = "OP_CLAIM_GATE_SUCCESS";
+pub const OP_COSIGN_TX: &str = "OP_COSIGN_TX";
+pub const OP_NO_COSIGN_TX: &str = "OP_NO_COSIGN_TX";
+pub const WT_NO_CHALLENGE_TX: &str = "WT_NO_CHALLENGE_TX";
+pub const STOP_OP_WON_TX: &str = "STOP_OP_WON_TX";
 
 // Parameters
 pub const DUST_VALUE: u64 = 540;
@@ -223,6 +239,10 @@ pub struct StreamSettings {
     pub short_timelock: u16,
     pub long_timelock: u16,
     pub op_won_timelock: u16,
+    pub claim_gate_timelock: u16,
+    pub input_not_revealed_timelock: u16,
+    pub op_no_cosign_timelock: u16,
+    pub wt_no_challenge_timelock: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

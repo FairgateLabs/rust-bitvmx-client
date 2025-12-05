@@ -11,6 +11,10 @@ use protocol_builder::{
 
 use crate::errors::BitVMXError;
 
+pub const CLAIM_GATE_START: &str = "START";
+pub const CLAIM_GATE_STOP: &str = "STOP";
+pub const CLAIM_GATE_SUCCESS: &str = "SUCCESS";
+
 pub struct ClaimGate {
     name: String,
     from: String,
@@ -18,17 +22,18 @@ pub struct ClaimGate {
     stop_count: u8,
     pub cost: u64,
     pub exclusive_success_vout: Option<usize>,
+    pub stoppers: Vec<OutputType>,
 }
 
 impl ClaimGate {
     pub fn tx_start(claim_name: &str) -> String {
-        format!("{}_START", claim_name)
+        format!("{}_{}", claim_name, CLAIM_GATE_START)
     }
     pub fn tx_stop(claim_name: &str, stopper: u8) -> String {
-        format!("{}_STOP_{}", claim_name, stopper)
+        format!("{}_{}_{}", claim_name, CLAIM_GATE_STOP, stopper)
     }
     pub fn tx_success(claim_name: &str) -> String {
-        format!("{}_SUCCESS", claim_name)
+        format!("{}_{}", claim_name, CLAIM_GATE_SUCCESS)
     }
 
     pub fn cost(
@@ -122,6 +127,8 @@ impl ClaimGate {
 
         let pb = ProtocolBuilder {};
 
+        let mut claim_stoppers = vec![];
+
         // add stoppers transactions consuming the stop vout in the origin transaction and the output on the start tx
         // to penalize the claimer if he tries to start the claim before winning (consuming all the stops)
         for (i, stopper_pub) in stoppers_pub.iter().enumerate() {
@@ -134,6 +141,7 @@ impl ClaimGate {
             }
 
             let claim_stop = OutputType::taproot(amount_fee + amount_dust, aggregated, &leaves)?;
+            claim_stoppers.push(claim_stop.clone());
 
             let stopname = Self::tx_stop(claim_name, i as u8);
             protocol.add_connection(
@@ -228,6 +236,7 @@ impl ClaimGate {
             stop_count: stoppers_pub.len() as u8,
             cost,
             exclusive_success_vout,
+            stoppers: claim_stoppers,
         })
     }
 

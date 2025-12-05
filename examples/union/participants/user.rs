@@ -1,5 +1,4 @@
 use crate::{
-    macros::wait_for_message_blocking,
     wait_until_msg,
     wallet::helper::{non_regtest_warning, print_link},
 };
@@ -134,7 +133,7 @@ impl User {
 
         // Wait for Bitvmx news PeginTransactionFound message
         let (_, _) = wait_until_msg!(&self.bitvmx, PeginTransactionFound(_txid, _tx_status) => (_txid, _tx_status));
-        info!("RSK request pegin completed successfully");
+        info!("RSK request pegin completed");
         info!("Waiting for SPV proof...");
 
         // Get the SPV proof, this should be used by the union client to present to the smart contract

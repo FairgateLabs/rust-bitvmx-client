@@ -125,6 +125,7 @@ pub fn test_drp() -> Result<()> {
         prover_win_out_type,
         forced_challenge.clone(),
         None,
+        Some(0),
     )?;
     let _msgs = get_all(&channels, &mut instances, false)?;
 
@@ -137,6 +138,7 @@ pub fn test_drp() -> Result<()> {
         prog_id,
         None,
         forced_challenge,
+        true,
     )?;
 
     //prover final trace

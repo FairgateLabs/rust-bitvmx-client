@@ -25,7 +25,6 @@ pub fn configure_tracing() {
             .expect("Invalid filter");
 
         tracing_subscriber::fmt()
-            .without_time()
             .with_target(true)
             .with_env_filter(filter)
             .init();
