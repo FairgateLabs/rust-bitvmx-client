@@ -1,4 +1,4 @@
-use crate::program::protocols::claim::ClaimGate;
+use crate::program::protocols::{claim::ClaimGate, union::common::InputSigningInfo};
 
 pub const CLAIM_GATE_START_SUCCESS_LEAF: usize = 1;
 pub const CLAIM_GATE_START_STOP_LEAF: usize = 0;
@@ -23,16 +23,36 @@ impl ClaimGateAction {
         }
     }
 
-    pub fn inputs(&self) -> Vec<(usize, usize)> {
+    pub fn inputs(&self) -> Vec<InputSigningInfo> {
         match self {
-            ClaimGateAction::Start => vec![(0, CLAIM_GATE_INIT_START_LEAF)],
+            ClaimGateAction::Start => vec![InputSigningInfo::ScriptSpend {
+                input_index: 0,
+                script_index: CLAIM_GATE_INIT_START_LEAF,
+                winternitz_data: None,
+            }],
             ClaimGateAction::Stop { .. } => vec![
-                (0, CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF),
-                (1, CLAIM_GATE_START_STOP_LEAF),
+                InputSigningInfo::ScriptSpend {
+                    input_index: 0,
+                    script_index: CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF,
+                    winternitz_data: None,
+                },
+                InputSigningInfo::ScriptSpend {
+                    input_index: 1,
+                    script_index: CLAIM_GATE_START_STOP_LEAF,
+                    winternitz_data: None,
+                },
             ],
             ClaimGateAction::Success { .. } => vec![
-                (0, CLAIM_GATE_START_SUCCESS_LEAF),
-                (1, CLAIM_GATE_INIT_EXCLUSIVE_WIN_LEAF),
+                InputSigningInfo::ScriptSpend {
+                    input_index: 0,
+                    script_index: CLAIM_GATE_START_SUCCESS_LEAF,
+                    winternitz_data: None,
+                },
+                InputSigningInfo::ScriptSpend {
+                    input_index: 1,
+                    script_index: CLAIM_GATE_INIT_EXCLUSIVE_WIN_LEAF,
+                    winternitz_data: None,
+                },
             ],
         }
     }

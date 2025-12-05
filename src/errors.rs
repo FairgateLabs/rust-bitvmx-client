@@ -240,8 +240,24 @@ pub enum BitVMXError {
 
     #[error("Verification key fingerprint mismatch for peer {peer}:  computed {computed}")]
     VerificationKeyFingerprintMismatch { peer: String, computed: String },
+
     #[error("Job Dispatcher {0} is not responding")]
     JobDispatcherNotResponding(String),
+
+    #[error("Missing input signature for transaction {tx_name}, input index {input_index}, script index {script_index:?}")]
+    MissingInputSignature {
+        tx_name: String,
+        input_index: usize,
+        script_index: Option<usize>,
+    },
+
+    #[error("Error signing input for transaction {tx_name}, input index {input_index}, script index {script_index:?}: {source}")]
+    ErrorSigningInput {
+        tx_name: String,
+        input_index: usize,
+        script_index: Option<usize>,
+        source: ProtocolBuilderError,
+    },
 }
 
 impl BitVMXError {
