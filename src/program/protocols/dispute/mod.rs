@@ -91,8 +91,8 @@ fn build_trace_vars(rounds: u8) -> Vec<(String, usize)> {
         ("prover_read_pc_micro".to_string(), 1),
         ("prover_read_pc_opcode".to_string(), 4),
         ("prover_step_number".to_string(), 8),
-        ("prover_prev_hash_tk".to_string(), 20),
         ("prover_step_hash_tk".to_string(), 20),
+        ("prover_next_hash_tk".to_string(), 20),
         ("prover_conflict_step_tk".to_string(), 8),
     ];
 
@@ -318,7 +318,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         for i in 1..nary_def.total_rounds() + 1 {
             if self.role() == ParticipantRole::Prover {
                 let hashes = nary_def.hashes_for_round(i);
-                for h in 0..hashes {
+                for h in 1..hashes + 1 {
                     let key = key_chain.derive_winternitz_hash160(20)?;
                     let key2 = key_chain.derive_winternitz_hash160(20)?;
                     keys.push((format!("prover_hash_{}_{}", i, h), key.into()));
@@ -644,7 +644,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         for i in 1..nary_def.total_rounds() + 1 {
             let next = format!("NARY_PROVER_{}", i);
             let hashes = nary_def.hashes_for_round(i);
-            let vars = (0..hashes)
+            let vars = (1..hashes + 1)
                 .map(|h| format!("prover_hash_{}_{}", i, h))
                 .collect::<Vec<_>>();
 
@@ -756,7 +756,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         for i in 2..nary_def.total_rounds() + 1 {
             let next = format!("NARY2_PROVER_{}", i);
             let hashes = nary_def.hashes_for_round(i);
-            let vars = (0..hashes)
+            let vars = (1..hashes + 1)
                 .map(|h| format!("prover_hash2_{}_{}", i, h))
                 .collect::<Vec<_>>();
 
@@ -1100,10 +1100,10 @@ impl DisputeResolutionProtocol {
                 stack.drop(last_step_1);
                 let last_step_2 = stack.move_var(stackvars["prover_read_2_last_step"]);
                 stack.drop(last_step_2);
-                let prev_hash = stack.move_var(stackvars["prover_prev_hash_tk"]);
-                stack.drop(prev_hash);
                 let step_hash = stack.move_var(stackvars["prover_step_hash_tk"]);
                 stack.drop(step_hash);
+                let next_hash = stack.move_var(stackvars["prover_next_hash_tk"]);
+                stack.drop(next_hash);
                 for i in 1..rounds + 1 {
                     let selection_bits_0 = stack
                         .move_var_sub_n(stackvars[&format!("verifier_selection_bits_{}", i)], 0);

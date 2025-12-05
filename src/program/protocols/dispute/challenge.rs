@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use bitcoin::{PublicKey, ScriptBuf};
 use bitcoin_script_riscv::riscv::challenges::*;
 use bitcoin_script_stack::stack::StackTracker;
-use bitvmx_cpu_definitions::{challenge::ChallengeType, constants::CHUNK_SIZE};
+use bitvmx_cpu_definitions::{
+    challenge::{ChallengeType, EquivocationKind},
+    constants::CHUNK_SIZE,
+};
 use emulator::{
     decision::nary_search::NArySearchType, loader::program_definition::ProgramDefinition,
 };
@@ -33,14 +36,14 @@ pub const ENTRY_POINT_CHALLENGE: [(&str, usize); 3] = [
     ("prover_step_number", 8),
 ];
 pub const PROGRAM_COUNTER_CHALLENGE: [(&str, usize); 8] = [
-    ("verifier_prev_prev_hash", 20), //TODO: These could be unsinged
+    ("verifier_prev_hash", 20), //TODO: These could be unsinged //TODO: test
     ("verifier_prev_write_add", 4),
     ("verifier_prev_write_data", 4),
     ("verifier_prev_write_pc", 4),
     ("verifier_prev_write_micro", 1),
     ("prover_read_pc_address", 4),
     ("prover_read_pc_micro", 1),
-    ("prover_prev_hash_tk", 20),
+    ("prover_step_hash_tk", 20),
 ];
 pub const HALT_CHALLENGE: [(&str, usize); 7] = [
     ("prover_last_step", 8),
@@ -48,23 +51,23 @@ pub const HALT_CHALLENGE: [(&str, usize); 7] = [
     ("prover_read_1_value", 4),
     ("prover_read_2_value", 4),
     ("prover_read_pc_opcode", 4),
-    ("prover_step_hash_tk", 20),
+    ("prover_next_hash_tk", 20),
     ("prover_last_hash", 20),
 ];
 pub const TRACE_HASH_CHALLENGE: [(&str, usize); 6] = [
-    ("prover_prev_hash_tk", 20),
+    ("prover_step_hash_tk", 20),
     ("prover_write_address", 4),
     ("prover_write_value", 4),
     ("prover_write_pc", 4),
     ("prover_write_micro", 1),
-    ("prover_step_hash_tk", 20),
+    ("prover_next_hash_tk", 20),
 ];
 pub const TRACE_HASH_ZERO_CHALLENGE: [(&str, usize); 6] = [
     ("prover_write_address", 4),
     ("prover_write_value", 4),
     ("prover_write_pc", 4),
     ("prover_write_micro", 1),
-    ("prover_step_hash_tk", 20),
+    ("prover_next_hash_tk", 20),
     ("prover_conflict_step_tk", 8),
 ];
 
@@ -163,12 +166,20 @@ pub const EQUIVOCATION_HASH_CHALLENGE: [(&str, usize); 4] = [
     ("prover_conflict_step_tk", 8),
 ];
 
-// pub const EQUIVOCATION_RESIGN_CHALLENGE: [(&str, usize); 2] = [
-//     ("prover_{:?}_hash_tk", 20),
-//     ("prover_challenge_step_tk", 8),
-// ];
+// All variants of the equivocation–resign challenge, covering both step and next hashes as well as both n-ary searches.
+pub const EQUIVOCATION_RESIGN_CHALLENGE_STEP: [(&str, usize); 3] = [
+    ("prover_step_hash_tk", 20), // This is a placeholder where the specific prover hash key will be inserted later
+    ("prover_step_hash_tk", 20),
+    ("prover_conflict_step_tk", 8),
+];
+// pub const EQUIVOCATION_RESIGN_CHALLENGE_NEXT: [(&str, usize); 2] =
+//     [("prover_next_hash_tk", 20), ("prover_conflict_step_tk", 8)];
+// pub const EQUIVOCATION_RESIGN_CHALLENGE_STEP2: [(&str, usize); 2] =
+//     [("prover_step_hash_tk2", 20), ("prover_write_step_tk", 8)];
+// pub const EQUIVOCATION_RESIGN_CHALLENGE_NEXT2: [(&str, usize); 2] =
+//     [("prover_next_hash_tk", 20), ("prover_write_step_tk", 8)];
 
-pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 13] = [
+pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 14] = [
     ("entry_point", &ENTRY_POINT_CHALLENGE),
     ("program_counter", &PROGRAM_COUNTER_CHALLENGE),
     ("halt", &HALT_CHALLENGE),
@@ -182,6 +193,22 @@ pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 13] = [
     ("uninitialized", &UNINITIALIZED_CHALLENGE),
     ("future_read", &FUTURE_READ_CHALLENGE),
     ("read_value_nary_search", &READ_VALUE_NARY_SEARCH_CHALLENGE),
+    (
+        "equivocation_resign_step",
+        &EQUIVOCATION_RESIGN_CHALLENGE_STEP,
+    ),
+    // (
+    //     "equivocation_resign_next",
+    //     &EQUIVOCATION_RESIGN_CHALLENGE_NEXT,
+    // ),
+    // (
+    //     "equivocation_resign_step2",
+    //     &EQUIVOCATION_RESIGN_CHALLENGE_STEP2,
+    // ),
+    // (
+    //     "equivocation_resign_next2",
+    //     &EQUIVOCATION_RESIGN_CHALLENGE_NEXT2,
+    // ),
 ];
 
 pub const READ_CHALLENGES: [(&str, &'static [(&str, usize)]); 3] = [
@@ -226,6 +253,10 @@ pub fn challenge_scripts(
     let mut challenge_leaf_script = vec![];
 
     let mut challenge_current_leaf = 0;
+
+    let rounds = program_definitions.nary_def().total_rounds();
+    let nary = program_definitions.nary_def().nary;
+    let nary_last_round = program_definitions.nary_def().nary_last_round;
 
     match nary_search_type {
         NArySearchType::ConflictStep => {
@@ -491,6 +522,41 @@ pub fn challenge_scripts(
                             challenge_leaf_script.push(winternitz_check);
                         }
                         challenge_current_leaf += chunks.len() as u32;
+                    }
+                    "equivocation_resign_step" => {
+                        for round in 1..rounds + 1 {
+                            let hashes = program_definitions.nary_def().hashes_for_round(round);
+                            for h in 1..hashes + 1 {
+                                let mut scripts = vec![reverse_script.clone()];
+                                stack = StackTracker::new();
+                                equivocation_resign_challenge(
+                                    &mut stack,
+                                    EquivocationKind::StepHash,
+                                    round,
+                                    h,
+                                    rounds,
+                                    nary,
+                                    nary_last_round,
+                                );
+
+                                scripts.push(stack.get_script());
+                                let mut names_and_keys_copy = names_and_keys.clone();
+                                let key_name = format!("prover_hash_{}_{}", round, h);
+                                let key_name_ref: &str = key_name.as_str();
+                                let winternitz_key = keys[0].get_winternitz(&key_name).unwrap();
+                                names_and_keys_copy[0] = (&key_name_ref, winternitz_key);
+                                let winternitz_check = scripts::verify_winternitz_signatures_aux(
+                                    aggregated,
+                                    &names_and_keys_copy,
+                                    sign_mode,
+                                    true,
+                                    Some(scripts),
+                                )?;
+                                challenge_leaf_script.push(winternitz_check);
+
+                                challenge_current_leaf += 1;
+                            }
+                        }
                     }
                     _ => {
                         challenge_current_leaf += 1;
@@ -912,16 +978,29 @@ pub fn get_challenge_leaf(
             info!("Verifier chose {name} challenge");
         }
         ChallengeType::EquivocationResign {
-            prover_true_hash,
-            prover_wrong_hash,
-            prover_challenge_step_tk,
+            prover_true_hash: _,
+            prover_wrong_hash: _,
+            prover_challenge_step_tk: _,
             kind,
             expected_round,
             expected_index,
-            rounds,
-            nary,
-            nary_last_round,
-        } => todo!(),
+            rounds: _,
+            nary: _,
+            nary_last_round: _,
+        } => {
+            name = "equivocation_resign_step";
+            info!("Verifier chose {name} challenge");
+            info!(
+                "Expected round: {}, expected index: {}, kind: {:?}",
+                expected_round, expected_index, kind
+            );
+
+            for round in 1..*expected_round {
+                let hashes = program_definitions.nary_def().hashes_for_round(round);
+                dynamic_offset += hashes as u32;
+            }
+            dynamic_offset += *expected_index as u32 - 1;
+        }
         ChallengeType::Halt {
             prover_last_step: _,
             prover_conflict_step_tk: _,

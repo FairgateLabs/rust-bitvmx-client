@@ -892,8 +892,8 @@ pub fn handle_tx_news(
                 to_u32(&bytes)
             });
         let mem_witness = MemoryWitness::from_byte(to_u8(&values["prover_mem_witness"]));
-        let prover_step_hash = to_hex(&values["prover_prev_hash_tk"]);
-        let prover_next_hash = to_hex(&values["prover_step_hash_tk"]);
+        let prover_step_hash = to_hex(&values["prover_step_hash_tk"]);
+        let prover_next_hash = to_hex(&values["prover_next_hash_tk"]);
         let conflict_step = to_u64(&values["prover_conflict_step_tk"]);
 
         let final_trace = TraceRWStep::new(
@@ -1303,7 +1303,7 @@ fn handle_nary_prover(
                 .unwrap()
                 .vec_string()?
         } else {
-            (0..hashes_count)
+            (1..hashes_count + 1)
                 .map(|h| {
                     hex::encode(
                         program_context
@@ -1326,7 +1326,7 @@ fn handle_nary_prover(
             VariableTypes::VecStr(hashes.clone()),
         )?;
     }
-    let hashes: Vec<String> = (0..hashes_count)
+    let hashes: Vec<String> = (1..hashes_count + 1)
         .map(|h| {
             hex::encode(
                 program_context

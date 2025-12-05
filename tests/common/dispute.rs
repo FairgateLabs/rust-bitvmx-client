@@ -18,6 +18,7 @@ use bitvmx_client::{
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
+use bitvmx_cpu_definitions::challenge::EquivocationKind;
 use bitvmx_cpu_definitions::{
     constants::LAST_STEP_INIT,
     memory::{MemoryAccessType, MemoryWitness},
@@ -56,7 +57,7 @@ pub enum ForcedChallenges {
     FutureRead(ParticipantRole),
     WitnessDiv(ParticipantRole),
     Halt(ParticipantRole),
-    EquivocationResign(ParticipantRole),
+    EquivocationResignStep(ParticipantRole),
     // 2nd n-ary search
     ReadValue(ParticipantRole),
     CorrectHash(ParticipantRole),
@@ -88,7 +89,7 @@ impl ForcedChallenges {
             | ReadValue(role)
             | CorrectHash(role)
             | Halt(role)
-            | EquivocationResign(role)
+            | EquivocationResignStep(role)
             | EquivocationHash(role) => Some(role.clone()),
             No | Execution | Personalized(_) => None,
         }
@@ -723,7 +724,22 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ConfigResul
                 ForceChallenge::No,
             )
         }
-        ForcedChallenges::EquivocationResign(participant_role) => todo!(),
+        ForcedChallenges::EquivocationResignStep(role) => {
+            let fail_read_args = vec!["1106", "0xf000003c", "0xaa000004", "0xf000003c", "1100"]
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<String>>();
+
+            let mut fail_config =
+                FailConfiguration::new_fail_reads(FailReads::new(Some(&fail_read_args), None));
+            fail_config.fail_resign_hash = Some(1105);
+            get_config_simple(
+                role,
+                fail_config,
+                ForceChallenge::EquivocationResign(EquivocationKind::StepHash),
+                ForceCondition::ValidInputWrongStepOrHash,
+            )
+        }
         ForcedChallenges::EquivocationHash(role) => {
             let fail_read_args = vec!["1106", "0xaa000000", "0x11111100", "0xaa000000", "1100"]
                 .iter()

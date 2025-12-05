@@ -1174,6 +1174,17 @@ fn challenge_equivocation_hash_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::EquivocationHash(Verifier))
 }
 
+#[ignore]
+#[test]
+fn challenge_equivocation_resign_step_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::EquivocationResignStep(Prover))
+}
+
+#[ignore]
+#[test]
+fn challenge_equivocation_resign_step_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::EquivocationResignStep(Verifier))
+}
 // The forced Execution is required for testing because without it, the prover or verifier will not execute directly
 // #[ignore]
 // #[test]

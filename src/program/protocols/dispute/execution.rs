@@ -72,7 +72,12 @@ pub fn execution_result(
 
             assert_eq!(save_round, *round);
             for (i, h) in hashes.iter().enumerate() {
-                set_input_hex(id, context, &format!("{}_{}_{}", prover_hash, round, i), h)?;
+                set_input_hex(
+                    id,
+                    context,
+                    &format!("{}_{}_{}", prover_hash, round, i + 1),
+                    h,
+                )?;
             }
             let (tx, sp) = drp.get_tx_with_speedup_data(
                 context,
@@ -215,8 +220,8 @@ pub fn execution_result(
             if let Some(witness) = final_trace.witness {
                 set_input_u32(id, context, "prover_witness", witness)?;
             }
-            set_input_hex(id, context, "prover_prev_hash_tk", resigned_step_hash)?; //TODO: rename in CPU
-            set_input_hex(id, context, "prover_step_hash_tk", resigned_next_hash)?; //TODO: rename in CPU
+            set_input_hex(id, context, "prover_step_hash_tk", resigned_step_hash)?;
+            set_input_hex(id, context, "prover_next_hash_tk", resigned_next_hash)?;
             set_input_u64(id, context, "prover_conflict_step_tk", *conflict_step)?;
             let instruction = get_key_from_opcode(
                 final_trace.read_pc.opcode,
@@ -280,8 +285,8 @@ pub fn execution_result(
                 resigned_step_hash, resigned_next_hash, write_step
             );
 
-            set_input_hex(id, context, "prover_step_hash_tk2", resigned_step_hash)?; //TODO: rename in CPU
-            set_input_hex(id, context, "prover_next_hash_tk2", resigned_next_hash)?; //TODO: rename in CPU
+            set_input_hex(id, context, "prover_step_hash_tk2", resigned_step_hash)?;
+            set_input_hex(id, context, "prover_next_hash_tk2", resigned_next_hash)?;
             set_input_u64(id, context, "prover_write_step_tk2", *write_step)?;
             let (tx, sp) =
                 drp.get_tx_with_speedup_data(context, GET_BITS_AND_HASHES, 0, 0, true)?;
