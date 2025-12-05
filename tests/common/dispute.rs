@@ -64,6 +64,8 @@ pub enum ForcedChallenges {
     ReadValue(ParticipantRole),
     CorrectHash(ParticipantRole),
     EquivocationHash(ParticipantRole),
+    EquivocationResignStep2(ParticipantRole),
+    EquivocationResignNext2(ParticipantRole),
     // Default
     No,
     Execution,
@@ -93,7 +95,9 @@ impl ForcedChallenges {
             | Halt(role)
             | EquivocationResignStep(role)
             | EquivocationHash(role)
-            | EquivocationResignNext(role) => Some(role.clone()),
+            | EquivocationResignNext(role)
+            | EquivocationResignStep2(role)
+            | EquivocationResignNext2(role) => Some(role.clone()),
             No | Execution | Personalized(_) => None,
         }
     }
@@ -281,7 +285,9 @@ pub fn execute_dispute(
     let ending_state = match forced_challenge {
         ForcedChallenges::ReadValue(..)
         | ForcedChallenges::CorrectHash(..)
-        | ForcedChallenges::EquivocationHash(..) => CHALLENGE_READ,
+        | ForcedChallenges::EquivocationHash(..)
+        | ForcedChallenges::EquivocationResignNext2(..)
+        | ForcedChallenges::EquivocationResignStep2(..) => CHALLENGE_READ,
         _ => EXECUTE,
     };
 
@@ -782,6 +788,50 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ConfigResul
                 ForceCondition::ValidInputWrongStepOrHash,
                 Some(fail_write),
                 ForceChallenge::EquivocationHash,
+            )
+        }
+        ForcedChallenges::EquivocationResignStep2(role) => {
+            let fail_read_args = vec!["1106", "0xaa000000", "0x11111100", "0xaa000000", "769"]
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<String>>();
+
+            let fail_config =
+                FailConfiguration::new_fail_reads(FailReads::new(None, Some(&fail_read_args)));
+
+            let fail_resign = FailConfiguration::new_fail_resign_hash(768);
+
+            get_config_with_read(
+                role,
+                fail_config.clone(),
+                fail_config,
+                ForceChallenge::ReadValueNArySearch,
+                ForceCondition::ValidInputWrongStepOrHash,
+                ForceCondition::ValidInputWrongStepOrHash,
+                Some(fail_resign),
+                ForceChallenge::EquivocationResign(EquivocationKind::StepHash),
+            )
+        }
+        ForcedChallenges::EquivocationResignNext2(role) => {
+            let fail_read_args = vec!["1106", "0xaa000000", "0x11111100", "0xaa000000", "769"]
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<String>>();
+
+            let fail_config =
+                FailConfiguration::new_fail_reads(FailReads::new(None, Some(&fail_read_args)));
+
+            let fail_resign = FailConfiguration::new_fail_resign_hash(769);
+
+            get_config_with_read(
+                role,
+                fail_config.clone(),
+                fail_config,
+                ForceChallenge::ReadValueNArySearch,
+                ForceCondition::ValidInputWrongStepOrHash,
+                ForceCondition::ValidInputWrongStepOrHash,
+                Some(fail_resign),
+                ForceChallenge::EquivocationResign(EquivocationKind::NextHash),
             )
         }
         ForcedChallenges::No => ConfigResults::default(),

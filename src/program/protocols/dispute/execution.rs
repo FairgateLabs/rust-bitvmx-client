@@ -260,12 +260,25 @@ pub fn execution_result(
                 return Ok(());
             }
 
-            let name = match challenge {
-                ChallengeType::ReadValue { .. }
-                | ChallengeType::CorrectHash { .. }
-                | ChallengeType::EquivocationHash { .. } => CHALLENGE_READ,
-                _ => CHALLENGE,
+            // Check if it's the second n-ary search to set next tx name
+            let second_nary_search = context
+                .globals
+                .get_var(id, "second-nary-search-started")?
+                .and_then(|v| v.bool().ok())
+                .unwrap_or(false);
+            if let ChallengeType::ReadValueNArySearch { .. } = challenge {
+                context.globals.set_var(
+                    id,
+                    "second-nary-search-started",
+                    VariableTypes::Bool(true),
+                )?;
+            }
+            let name = if second_nary_search {
+                CHALLENGE_READ
+            } else {
+                CHALLENGE
             };
+
             let (tx, sp) =
                 drp.get_tx_with_speedup_data(context, name, 0, leaf.unwrap() as u32, true)?;
             context.bitcoin_coordinator.dispatch(

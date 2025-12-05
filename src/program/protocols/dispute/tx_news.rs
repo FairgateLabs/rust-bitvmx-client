@@ -1294,38 +1294,6 @@ fn handle_nary_prover(
     let hashes_count = nary.hashes_for_round(round as u8);
     let execution_path = drp.get_execution_path()?;
 
-    let hashes: Vec<String> =
-        if round == 1 && nary_search_type == NArySearchType::ReadValueChallenge {
-            // Retrieve first round hashes from previous n-ary search
-            program_context
-                .globals
-                .get_var(&drp.ctx.id, "first-round-hashes")?
-                .unwrap()
-                .vec_string()?
-        } else {
-            (1..hashes_count + 1)
-                .map(|h| {
-                    hex::encode(
-                        program_context
-                            .witness
-                            .get_witness(&drp.ctx.id, &format!("{}_{}_{}", prover_hash, round, h))
-                            .unwrap()
-                            .unwrap()
-                            .winternitz()
-                            .unwrap()
-                            .message_bytes(),
-                    )
-                })
-                .collect()
-        };
-    if round == 1 && nary_search_type == NArySearchType::ConflictStep {
-        // Save the first round hashes for possible 2nd n-ary search
-        program_context.globals.set_var(
-            &drp.ctx.id,
-            "first-round-hashes",
-            VariableTypes::VecStr(hashes.clone()),
-        )?;
-    }
     let hashes: Vec<String> = (1..hashes_count + 1)
         .map(|h| {
             hex::encode(
