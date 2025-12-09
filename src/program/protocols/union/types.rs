@@ -4,7 +4,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::program::{participant::ParticipantRole, variables::PartialUtxo};
+use crate::{
+    program::{participant::ParticipantRole, variables::PartialUtxo},
+    spv_proof::BtcTxSPVProof,
+};
 
 // Key names
 pub const TAKE_AGGREGATED_KEY: &str = "TAKE_AGGREGATED_KEY";
@@ -12,7 +15,6 @@ pub const DISPUTE_AGGREGATED_KEY: &str = "DISPUTE_AGGREGATED_KEY";
 pub const SELECTED_OPERATOR_PUBKEY: &str = "SELECTED_OPERATOR_PUBKEY";
 pub const REVEAL_IN_PROGRESS: &str = "REVEAL_IN_PROGRESS";
 pub const OP_INITIAL_DEPOSIT_FLAG: &str = "OP_INITIAL_DEPOSIT_FLAG";
-pub const OPERATOR_LEAF_INDEX: &str = "OPERATOR_LEAF_INDEX";
 pub const SPEEDUP_KEY: &str = "SPEEDUP_KEY";
 pub const OP_INITIAL_DEPOSIT_TXID: &str = "OP_INITIAL_DEPOSIT_TXID";
 pub const OP_INITIAL_DEPOSIT_AMOUNT: &str = "OP_INITIAL_DEPOSIT_AMOUNT";
@@ -154,8 +156,8 @@ pub struct PegInAccepted {
     pub accept_pegin_sighash: Vec<u8>,
     pub accept_pegin_nonce: PubNonce,
     pub accept_pegin_signature: MaybeScalar,
-    pub operator_take_sighash: Vec<u8>,
-    pub operator_won_sighash: Vec<u8>,
+    pub operator_take_sighash: Option<Vec<u8>>,
+    pub operator_won_sighash: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -220,6 +222,21 @@ pub struct FundsAdvanced {
 impl FundsAdvanced {
     pub fn name() -> String {
         "funds_advanced".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FundsAdvanceSPV {
+    pub txid: Txid,
+    pub committee_id: Uuid,
+    pub slot_index: usize,
+    pub pegout_id: Vec<u8>,
+    pub spv_proof: Option<BtcTxSPVProof>,
+}
+
+impl FundsAdvanceSPV {
+    pub fn name() -> String {
+        "funds_advance_spv".to_string()
     }
 }
 

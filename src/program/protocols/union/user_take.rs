@@ -3,14 +3,13 @@ use std::collections::HashMap;
 use bitcoin::{Amount, PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
-    errors::ProtocolBuilderError,
     graph::graph::GraphOptions,
     scripts::SignMode,
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
         output::SpeedupData,
-        InputArgs, OutputType,
+        OutputType,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -24,7 +23,7 @@ use crate::{
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
-                common::indexed_name,
+                common::{collect_input_signatures, indexed_name, InputSigningInfo},
                 errors::{ProtocolError, ProtocolErrorType},
                 types::{
                     PegOutAccepted, PegOutRequest, ACCEPT_PEGIN_TX, SPEEDUP_VALUE, USER_TAKE_FEE,
@@ -229,16 +228,17 @@ impl UserTakeProtocol {
             .utxo()?)
     }
 
-    pub fn user_take_tx(&self) -> Result<Transaction, ProtocolBuilderError> {
-        let signature = self
-            .load_protocol()?
-            .input_taproot_key_spend_signature(USER_TAKE_TX, 0)?
-            .unwrap();
-        let mut taproot_arg = InputArgs::new_taproot_key_args();
-        taproot_arg.push_taproot_signature(signature)?;
+    pub fn user_take_tx(&self) -> Result<Transaction, BitVMXError> {
+        let mut protocol = self.load_protocol()?;
 
-        self.load_protocol()?
-            .transaction_to_send(USER_TAKE_TX, &[taproot_arg])
+        let args = collect_input_signatures(
+            &mut protocol,
+            USER_TAKE_TX,
+            &vec![InputSigningInfo::KeySpend { input_index: 0 }],
+        )?;
+
+        let tx = protocol.transaction_to_send(USER_TAKE_TX, &args)?;
+        Ok(tx)
     }
 
     pub fn send_pegout_accepted(

@@ -9,11 +9,11 @@ use protocol_builder::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
         output::SpeedupData,
-        InputArgs, OutputType,
+        OutputType,
     },
 };
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{
@@ -24,20 +24,21 @@ use crate::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
                 common::{
-                    create_transaction_reference, get_dispute_core_pid, get_operator_output_type,
-                    indexed_name,
+                    collect_input_signatures, create_transaction_reference, get_dispute_core_pid,
+                    get_operator_output_type, indexed_name, InputSigningInfo,
                 },
                 dispute_core::PEGOUT_ID,
                 types::{
-                    AdvanceFundsRequest, Committee, FundsAdvanced, ACCEPT_PEGIN_TX,
-                    ADVANCE_FUNDS_INPUT, ADVANCE_FUNDS_TX, DUST_VALUE, LAST_OPERATOR_TAKE_UTXO,
-                    OP_INITIAL_DEPOSIT_FLAG, OP_INITIAL_DEPOSIT_TX, REIMBURSEMENT_KICKOFF_TX,
-                    USER_TAKE_FEE,
+                    AdvanceFundsRequest, Committee, FundsAdvanceSPV, FundsAdvanced,
+                    ACCEPT_PEGIN_TX, ADVANCE_FUNDS_INPUT, ADVANCE_FUNDS_TX, DUST_VALUE,
+                    LAST_OPERATOR_TAKE_UTXO, OP_INITIAL_DEPOSIT_FLAG, OP_INITIAL_DEPOSIT_TX,
+                    REIMBURSEMENT_KICKOFF_TX, USER_TAKE_FEE,
                 },
             },
         },
         variables::{PartialUtxo, VariableTypes},
     },
+    spv_proof::get_spv_proof,
     types::{OutgoingBitVMXApiMessages, ProgramContext, PROGRAM_TYPE_DISPUTE_CORE},
 };
 
@@ -106,7 +107,7 @@ impl ProtocolHandler for AdvanceFundsProtocol {
             &operator_input_tx_name,
             (input_utxo.1 as usize).into(),
             ADVANCE_FUNDS_TX,
-            InputSpec::Auto(SighashType::ecdsa_all(), SpendMode::None),
+            InputSpec::Auto(SighashType::ecdsa_all(), SpendMode::Segwit),
             None,
             Some(input_utxo.0),
         )?;
@@ -129,7 +130,7 @@ impl ProtocolHandler for AdvanceFundsProtocol {
                 &operator_take_tx_name,
                 OutputSpec::Index(op_take_utxo.1 as usize),
                 ADVANCE_FUNDS_TX,
-                InputSpec::Auto(SighashType::ecdsa_all(), SpendMode::None),
+                InputSpec::Auto(SighashType::ecdsa_all(), SpendMode::Segwit),
                 None,
                 Some(op_take_utxo.0),
             )?;
@@ -197,10 +198,10 @@ impl ProtocolHandler for AdvanceFundsProtocol {
     fn get_transaction_by_name(
         &self,
         name: &str,
-        context: &ProgramContext,
+        _context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         match name {
-            ADVANCE_FUNDS_TX => Ok(self.advance_funds_tx(context)?),
+            ADVANCE_FUNDS_TX => Ok(self.advance_funds_tx()?),
             _ => Err(BitVMXError::InvalidTransactionName(name.to_string())),
         }
     }
@@ -219,6 +220,8 @@ impl ProtocolHandler for AdvanceFundsProtocol {
             "Advance funds protocol received news of transaction: {}, txid: {} with {} confirmations",
             tx_name, tx_id, tx_status.confirmations
         );
+
+        self.send_spv(context, tx_id)?;
 
         if tx_name == ADVANCE_FUNDS_TX {
             let request: AdvanceFundsRequest = self.advance_funds_request(context)?;
@@ -503,7 +506,7 @@ impl AdvanceFundsProtocol {
         );
 
         // Get the signed transaction
-        let (tx, speedup) = self.advance_funds_tx(context)?;
+        let (tx, speedup) = self.advance_funds_tx()?;
         let txid = tx.compute_txid();
 
         info!("Auto-dispatching ADVANCE_FUNDS_TX transaction: {}", txid);
@@ -521,31 +524,18 @@ impl AdvanceFundsProtocol {
         Ok(txid)
     }
 
-    fn advance_funds_tx(
-        &self,
-        context: &ProgramContext,
-    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        let name = ADVANCE_FUNDS_TX.to_string();
+    fn advance_funds_tx(&self) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        let name = ADVANCE_FUNDS_TX;
         let mut protocol = self.load_protocol()?;
-        let mut input_0 = InputArgs::new_segwit_args();
-        let tx = protocol.transaction_by_name(&name)?;
+        let tx = protocol.transaction_by_name(name)?;
 
-        let signature =
-            protocol
-                .clone()
-                .sign_ecdsa_input(&name, 0, &context.key_chain.key_manager)?;
-        input_0.push_ecdsa_signature(signature)?;
-        let mut inputs: Vec<InputArgs> = vec![];
-        inputs.push(input_0);
-
+        let mut inputs = vec![InputSigningInfo::Edcsa { input_index: 0 }];
         if tx.input.len() > 1 {
-            let mut input_1 = InputArgs::new_segwit_args();
-            let signature = protocol.sign_ecdsa_input(&name, 1, &context.key_chain.key_manager)?;
-            input_1.push_ecdsa_signature(signature)?;
-            inputs.push(input_1);
+            inputs.push(InputSigningInfo::Edcsa { input_index: 1 });
         }
 
-        let tx2send = protocol.transaction_to_send(&name, &inputs.as_slice())?;
+        let args = collect_input_signatures(&mut protocol, name, &inputs)?;
+        let tx2send = protocol.transaction_to_send(name, &args)?;
         Ok((tx2send, None))
     }
 
@@ -571,6 +561,48 @@ impl AdvanceFundsProtocol {
         );
 
         // Send the funds advanced data to the broker channel
+        context
+            .broker_channel
+            .send(&context.components_config.l2, data)?;
+
+        Ok(())
+    }
+
+    fn send_spv(&self, context: &ProgramContext, txid: Txid) -> Result<(), BitVMXError> {
+        let tx_info = context.bitcoin_coordinator.get_transaction(txid);
+
+        let proof = match tx_info {
+            Ok(utx) => Some(get_spv_proof(txid, utx.block_info.unwrap())?),
+            Err(e) => {
+                warn!(
+                    "Failed to retrieve transaction info for txid {}: {:?}",
+                    txid, e
+                );
+                None
+            }
+        };
+
+        let request = self.advance_funds_request(context)?;
+
+        let response = FundsAdvanceSPV {
+            txid,
+            committee_id: request.committee_id,
+            slot_index: request.slot_index,
+            pegout_id: request.pegout_id,
+            spv_proof: proof,
+        };
+
+        let data = serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(
+            self.ctx.id,
+            FundsAdvanceSPV::name(),
+            VariableTypes::String(serde_json::to_string(&response)?),
+        ))?;
+
+        info!(
+            id = self.ctx.my_idx,
+            "Sending funds advance SPV data for AdvanceFunds: {}", data
+        );
+
         context
             .broker_channel
             .send(&context.components_config.l2, data)?;
