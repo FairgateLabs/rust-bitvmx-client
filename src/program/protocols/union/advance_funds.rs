@@ -13,7 +13,7 @@ use protocol_builder::{
     },
 };
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{
@@ -29,15 +29,16 @@ use crate::{
                 },
                 dispute_core::PEGOUT_ID,
                 types::{
-                    AdvanceFundsRequest, Committee, FundsAdvanced, ACCEPT_PEGIN_TX,
-                    ADVANCE_FUNDS_INPUT, ADVANCE_FUNDS_TX, DUST_VALUE, LAST_OPERATOR_TAKE_UTXO,
-                    OP_INITIAL_DEPOSIT_FLAG, OP_INITIAL_DEPOSIT_TX, REIMBURSEMENT_KICKOFF_TX,
-                    USER_TAKE_FEE,
+                    AdvanceFundsRequest, Committee, FundsAdvanceSPV, FundsAdvanced,
+                    ACCEPT_PEGIN_TX, ADVANCE_FUNDS_INPUT, ADVANCE_FUNDS_TX, DUST_VALUE,
+                    LAST_OPERATOR_TAKE_UTXO, OP_INITIAL_DEPOSIT_FLAG, OP_INITIAL_DEPOSIT_TX,
+                    REIMBURSEMENT_KICKOFF_TX, USER_TAKE_FEE,
                 },
             },
         },
         variables::{PartialUtxo, VariableTypes},
     },
+    spv_proof::get_spv_proof,
     types::{OutgoingBitVMXApiMessages, ProgramContext, PROGRAM_TYPE_DISPUTE_CORE},
 };
 
@@ -219,6 +220,8 @@ impl ProtocolHandler for AdvanceFundsProtocol {
             "Advance funds protocol received news of transaction: {}, txid: {} with {} confirmations",
             tx_name, tx_id, tx_status.confirmations
         );
+
+        self.send_spv(context, tx_id)?;
 
         if tx_name == ADVANCE_FUNDS_TX {
             let request: AdvanceFundsRequest = self.advance_funds_request(context)?;
@@ -558,6 +561,48 @@ impl AdvanceFundsProtocol {
         );
 
         // Send the funds advanced data to the broker channel
+        context
+            .broker_channel
+            .send(&context.components_config.l2, data)?;
+
+        Ok(())
+    }
+
+    fn send_spv(&self, context: &ProgramContext, txid: Txid) -> Result<(), BitVMXError> {
+        let tx_info = context.bitcoin_coordinator.get_transaction(txid);
+
+        let proof = match tx_info {
+            Ok(utx) => Some(get_spv_proof(txid, utx.block_info.unwrap())?),
+            Err(e) => {
+                warn!(
+                    "Failed to retrieve transaction info for txid {}: {:?}",
+                    txid, e
+                );
+                None
+            }
+        };
+
+        let request = self.advance_funds_request(context)?;
+
+        let response = FundsAdvanceSPV {
+            txid,
+            committee_id: request.committee_id,
+            slot_index: request.slot_index,
+            pegout_id: request.pegout_id,
+            spv_proof: proof,
+        };
+
+        let data = serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(
+            self.ctx.id,
+            FundsAdvanceSPV::name(),
+            VariableTypes::String(serde_json::to_string(&response)?),
+        ))?;
+
+        info!(
+            id = self.ctx.my_idx,
+            "Sending funds advance SPV data for AdvanceFunds: {}", data
+        );
+
         context
             .broker_channel
             .send(&context.components_config.l2, data)?;

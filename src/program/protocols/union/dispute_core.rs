@@ -651,11 +651,11 @@ impl DisputeCoreProtocol {
                     let key_name = indexed_name(SLOT_ID_KEY, slot);
                     let slot_id_key = keys[member_index].get_winternitz(&key_name)?;
 
-                    scripts.push(scripts::start_challenge(
+                    scripts.push(scripts::verify_winternitz(
                         &wt_dispute_key,
+                        self.get_sign_mode(data.member_index),
                         &key_name,
                         slot_id_key,
-                        self.get_sign_mode(data.member_index),
                     )?);
                 }
             }
@@ -1029,8 +1029,12 @@ impl DisputeCoreProtocol {
         let reveal_input = indexed_name(REVEAL_INPUT_TX, dispute_core_index);
         let input_not_revealed = indexed_name(INPUT_NOT_REVEALED_TX, dispute_core_index);
 
-        let start_reimbursement =
-            scripts::start_reimbursement(take_aggregated_key, PEGOUT_ID_KEY, pegout_id_key)?;
+        let start_reimbursement = scripts::verify_winternitz(
+            take_aggregated_key,
+            SignMode::Aggregate,
+            PEGOUT_ID_KEY,
+            pegout_id_key,
+        )?;
 
         let validate_dispute_key = protocol_builder::scripts::verify_signature(
             dispute_aggregated_key,
