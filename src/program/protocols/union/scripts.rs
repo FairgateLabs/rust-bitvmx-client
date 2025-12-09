@@ -7,60 +7,31 @@ use protocol_builder::{
 
 use bitcoin_scriptexec::treepp::*;
 
-pub fn start_reimbursement(
-    committee_key: &PublicKey,
-    pegout_id_pubkey_name: &str,
-    pegout_id_pubkey: &WinternitzPublicKey,
-) -> Result<ProtocolScript, ScriptError> {
-    let script = script!(
-        { XOnlyPublicKey::from(committee_key.clone()).serialize().to_vec() }
-        OP_CHECKSIGVERIFY
-
-        { ots_checksig(pegout_id_pubkey, false)? }
-        OP_PUSHNUM_1
-    );
-
-    let mut protocol_script = ProtocolScript::new(script, &committee_key, SignMode::Aggregate);
-
-    protocol_script.add_key(
-        pegout_id_pubkey_name,
-        pegout_id_pubkey.derivation_index()?,
-        KeyType::winternitz(pegout_id_pubkey)?,
-        0,
-    )?;
-
-    protocol_script.add_stack_item(StackItem::new_schnorr_sig(true));
-    protocol_script.add_stack_item(StackItem::new_winternitz_sig(&pegout_id_pubkey));
-
-    Ok(protocol_script)
-}
-
-// TODO: this is almost the same as start_reimbursement. DRY this up.
-pub fn start_challenge(
-    committee_key: &PublicKey,
-    slot_id_pubkey_name: &str,
-    slot_id_pubkey: &WinternitzPublicKey,
+pub fn verify_winternitz(
+    pubkey: &PublicKey,
     sign_mode: SignMode,
+    winternitz_name: &str,
+    winternitz_pubkey: &WinternitzPublicKey,
 ) -> Result<ProtocolScript, ScriptError> {
     let script = script!(
-        { XOnlyPublicKey::from(committee_key.clone()).serialize().to_vec() }
+        { XOnlyPublicKey::from(pubkey.clone()).serialize().to_vec() }
         OP_CHECKSIGVERIFY
 
-        { ots_checksig(slot_id_pubkey, false)? }
+        { ots_checksig(winternitz_pubkey, false)? }
         OP_PUSHNUM_1
     );
 
-    let mut protocol_script = ProtocolScript::new(script, &committee_key, sign_mode);
+    let mut protocol_script = ProtocolScript::new(script, &pubkey, sign_mode);
 
     protocol_script.add_key(
-        slot_id_pubkey_name,
-        slot_id_pubkey.derivation_index()?,
-        KeyType::winternitz(slot_id_pubkey)?,
+        winternitz_name,
+        winternitz_pubkey.derivation_index()?,
+        KeyType::winternitz(winternitz_pubkey)?,
         0,
     )?;
 
     protocol_script.add_stack_item(StackItem::new_schnorr_sig(true));
-    protocol_script.add_stack_item(StackItem::new_winternitz_sig(&slot_id_pubkey));
+    protocol_script.add_stack_item(StackItem::new_winternitz_sig(&winternitz_pubkey));
 
     Ok(protocol_script)
 }
