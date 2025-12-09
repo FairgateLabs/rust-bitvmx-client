@@ -392,26 +392,30 @@ impl AcceptPegInProtocol {
 
         let mut protocol = self.load_protocol()?;
 
-        let mut operator_take_sighash = vec![0; 32];
-        let mut operator_won_sighash = vec![0; 32];
+        let mut operator_take_sighash = None;
+        let mut operator_won_sighash = None;
 
         // Just send operator take and won sighash if we are a prover
         if self.committee(context, pegin_request.committee_id)?.members[self.ctx.my_idx].role
             == ParticipantRole::Prover
         {
             let operator_take_tx_name = &indexed_name(OPERATOR_TAKE_TX, self.ctx.my_idx);
-            operator_take_sighash = protocol
-                .get_hashed_message(operator_take_tx_name, OP_TAKE_PEGIN_INPUT_INDEX as u32, 0)?
-                .unwrap()
-                .as_ref()
-                .to_vec();
+            operator_take_sighash = Some(
+                protocol
+                    .get_hashed_message(operator_take_tx_name, OP_TAKE_PEGIN_INPUT_INDEX as u32, 0)?
+                    .unwrap()
+                    .as_ref()
+                    .to_vec(),
+            );
 
             let operator_won_tx_name = &indexed_name(OPERATOR_WON_TX, self.ctx.my_idx);
-            operator_won_sighash = protocol
-                .get_hashed_message(operator_won_tx_name, OP_TAKE_PEGIN_INPUT_INDEX as u32, 0)?
-                .unwrap()
-                .as_ref()
-                .to_vec();
+            operator_won_sighash = Some(
+                protocol
+                    .get_hashed_message(operator_won_tx_name, OP_TAKE_PEGIN_INPUT_INDEX as u32, 0)?
+                    .unwrap()
+                    .as_ref()
+                    .to_vec(),
+            );
         }
 
         let accept_pegin_txid = protocol
