@@ -9,12 +9,12 @@ use crate::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
                 common::{
-                    create_transaction_reference, double_indexed_name, estimate_fee,
-                    extract_double_index, extract_index, extract_index_from_claim_gate,
-                    get_accept_pegin_pid, get_dispatch_action, get_dispute_channel_pid,
-                    get_dispute_core_pid, get_dispute_pair_key_name, get_full_penalization_pid,
-                    get_initial_deposit_output_type, get_stream_setting, indexed_name,
-                    load_union_settings,
+                    collect_input_signatures, create_transaction_reference, double_indexed_name,
+                    estimate_fee, extract_double_index, extract_index,
+                    extract_index_from_claim_gate, get_accept_pegin_pid, get_dispatch_action,
+                    get_dispute_channel_pid, get_dispute_core_pid, get_dispute_pair_key_name,
+                    get_full_penalization_pid, get_initial_deposit_output_type, get_stream_setting,
+                    indexed_name, load_union_settings, InputSigningInfo, WinternitzData,
                 },
                 dispute_core_claim_gate::{
                     ClaimGateAction, CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF,
@@ -64,19 +64,20 @@ const INIT_CHALLENGE_SLOT: &str = "INIT_CHALLENGE_SLOT";
 
 const CLAIM_GATE_FEE: u64 = 335; // TODO: Validate this value
 
+pub const OP_INITIAL_DEPOSIT_TX_DISABLER_LEAF: usize = 1;
+pub const WT_START_ENABLER_TX_DISABLER_LEAF: usize = 0;
+
 const REVEAL_INPUT_TX_REVEAL_INDEX: usize = 0;
 const REVEAL_INPUT_TX_REVEAL_LEAF: usize = 0;
-
 const REVEAL_INPUT_TX_COMMITTEE_LEAF: usize = 1;
 
 // const WT_INIT_CHALLENGE_TX_COSIGN_LEAF: usize = 0;
 const WT_INIT_CHALLENGE_TX_TIMELOCK_LEAF: usize = 1;
 
-// const OP_COSIGN_TX_CHALLENGE_LEAF: usize = 1;
-const OP_COSIGN_TX_TIMELOCK_LEAF: usize = 0;
-
 const WT_INIT_CHALLENGE_WT_STOPPER_VOUT: u32 = 3;
 const WT_INIT_CHALLENGE_OP_STOPPER_VOUT: u32 = 5;
+
+const OP_COSIGN_TX_TIMELOCK_LEAF: usize = 0;
 
 enum DisputeCoreTxType {
     WtStartEnabler,
@@ -1288,12 +1289,16 @@ impl DisputeCoreProtocol {
         let tx_name = PROTOCOL_FUNDING_TX;
         let mut protocol = self.load_protocol()?;
 
-        let signature = protocol.sign_ecdsa_input(&tx_name, 0, &context.key_chain.key_manager)?;
+        let args = collect_input_signatures(
+            &mut protocol,
+            tx_name,
+            &vec![InputSigningInfo::SignEdcsa {
+                input_index: 0,
+                key_manager: context.key_chain.key_manager.as_ref(),
+            }],
+        )?;
 
-        let mut input_args = InputArgs::new_segwit_args();
-        input_args.push_ecdsa_signature(signature)?;
-
-        let tx = protocol.transaction_to_send(&tx_name, &[input_args])?;
+        let tx = protocol.transaction_to_send(&tx_name, &args)?;
 
         let txid = tx.compute_txid();
         let speedup_key = self.my_speedup_key(context)?;
@@ -1312,28 +1317,24 @@ impl DisputeCoreProtocol {
         let slot_index = extract_index(name, REIMBURSEMENT_KICKOFF_TX)?;
         info!(id = self.ctx.my_idx, "Loading {} tx", name);
 
-        let protocol = self.load_protocol()?;
+        let mut protocol = self.load_protocol()?;
 
-        // Prepare signatures
-        let committee_signature = protocol
-            .input_taproot_script_spend_signature(name, 0, leaf_index)?
-            .unwrap();
-
-        let script = protocol.get_script_to_spend(name, 0, leaf_index as u32)?;
-        let pegout_id_key = script.get_key(PEGOUT_ID_KEY).unwrap();
-
-        let pegout_id_signature = context.key_chain.key_manager.sign_winternitz_message(
-            self.pegout_id(context, slot_index)?.as_slice(),
-            WinternitzType::HASH160,
-            pegout_id_key.derivation_index(),
+        let args = collect_input_signatures(
+            &mut protocol,
+            name,
+            &vec![InputSigningInfo::ScriptSpend {
+                input_index: 0,
+                script_index: leaf_index,
+                winternitz_data: Some(WinternitzData {
+                    data: self.pegout_id(context, slot_index)?,
+                    key_name: PEGOUT_ID_KEY.to_string(),
+                    key_type: WinternitzType::HASH160,
+                    key_manager: context.key_chain.key_manager.as_ref(),
+                }),
+            }],
         )?;
 
-        // Create input arguments
-        let mut input_args = InputArgs::new_taproot_script_args(leaf_index);
-        input_args.push_winternitz_signature(pegout_id_signature);
-        input_args.push_taproot_signature(committee_signature)?;
-
-        let tx = protocol.transaction_to_send(&name, &[input_args])?;
+        let tx = protocol.transaction_to_send(&name, &args)?;
         info!(id = self.ctx.my_idx, "Signed {} tx", name);
 
         let txid = tx.compute_txid();
@@ -1351,29 +1352,24 @@ impl DisputeCoreProtocol {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", name);
 
-        let leaf_index = self.ctx.my_idx;
-        let protocol = self.load_protocol()?;
+        let mut protocol = self.load_protocol()?;
 
-        // Prepare signatures
-        let committee_signature = protocol
-            .input_taproot_script_spend_signature(name, 0, leaf_index)?
-            .unwrap();
-
-        let script = protocol.get_script_to_spend(name, 0, leaf_index as u32)?;
-        let challenge_key = script.get_key(CHALLENGE_KEY).unwrap();
-
-        let challenge_signature = context.key_chain.key_manager.sign_winternitz_message(
-            &[1],
-            WinternitzType::HASH160,
-            challenge_key.derivation_index(),
+        let args = collect_input_signatures(
+            &mut protocol,
+            name,
+            &vec![InputSigningInfo::ScriptSpend {
+                input_index: 0,
+                script_index: self.ctx.my_idx,
+                winternitz_data: Some(WinternitzData {
+                    data: vec![1u8],
+                    key_name: CHALLENGE_KEY.to_string(),
+                    key_type: WinternitzType::HASH160,
+                    key_manager: context.key_chain.key_manager.as_ref(),
+                }),
+            }],
         )?;
 
-        // Create input arguments
-        let mut input_args = InputArgs::new_taproot_script_args(leaf_index);
-        input_args.push_winternitz_signature(challenge_signature);
-        input_args.push_taproot_signature(committee_signature)?;
-
-        let tx = protocol.transaction_to_send(&name, &[input_args])?;
+        let tx = protocol.transaction_to_send(&name, &args)?;
         info!(id = self.ctx.my_idx, "Signed {} tx", name);
 
         // Speedup data
@@ -1406,6 +1402,7 @@ impl DisputeCoreProtocol {
         let mut input_args = InputArgs::new_taproot_script_args(slot_index);
         let key_name = "value";
 
+        // TODO: should we support this in collect_input_signatures?
         let witness = context
             .witness
             .get_witness(&self.ctx.id, &key_name)?
@@ -1747,23 +1744,13 @@ impl DisputeCoreProtocol {
         &self,
         context: &ProgramContext,
         name: &str,
-        inputs_and_scripts: &Vec<(usize, usize)>,
+        signing_infos: &Vec<InputSigningInfo>,
         with_speedup: bool,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", name);
 
-        let protocol = self.load_protocol()?;
-        let mut args: Vec<InputArgs> = vec![];
-
-        for (input_index, leaf_index) in inputs_and_scripts.iter() {
-            let signature = protocol
-                .input_taproot_script_spend_signature(name, *input_index, *leaf_index)?
-                .unwrap();
-
-            let mut input_args = InputArgs::new_taproot_script_args(*leaf_index);
-            input_args.push_taproot_signature(signature)?;
-            args.push(input_args);
-        }
+        let mut protocol = self.load_protocol()?;
+        let args = collect_input_signatures(&mut protocol, name, signing_infos)?;
 
         let tx = protocol.transaction_to_send(&name, &args)?;
         info!(id = self.ctx.my_idx, "Signed {}", name);
@@ -1898,27 +1885,26 @@ impl DisputeCoreProtocol {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", name);
 
-        let protocol = self.load_protocol()?;
+        let mut protocol = self.load_protocol()?;
 
-        // Timelock signature
-        let timelock_signature = protocol
-            .input_taproot_script_spend_signature(name, 0, OP_COSIGN_TX_TIMELOCK_LEAF)?
-            .unwrap();
+        let args = collect_input_signatures(
+            &mut protocol,
+            name,
+            &vec![
+                InputSigningInfo::ScriptSpend {
+                    input_index: 0,
+                    script_index: OP_COSIGN_TX_TIMELOCK_LEAF,
+                    winternitz_data: None,
+                },
+                InputSigningInfo::ScriptSpend {
+                    input_index: 1,
+                    script_index: CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF,
+                    winternitz_data: None,
+                },
+            ],
+        )?;
 
-        // Timelock args
-        let mut timelock_args = InputArgs::new_taproot_script_args(OP_COSIGN_TX_TIMELOCK_LEAF);
-        timelock_args.push_taproot_signature(timelock_signature)?;
-
-        // Stopper signature
-        let stopper_signature = protocol
-            .input_taproot_script_spend_signature(name, 1, CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF)?
-            .unwrap();
-
-        let mut stopper_args =
-            InputArgs::new_taproot_script_args(CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF);
-        stopper_args.push_taproot_signature(stopper_signature)?;
-
-        let tx = protocol.transaction_to_send(&name, &[timelock_args, stopper_args])?;
+        let tx = protocol.transaction_to_send(&name, &args)?;
         info!(id = self.ctx.my_idx, "Signed {}", name);
 
         Ok((tx, None))
@@ -1975,27 +1961,26 @@ impl DisputeCoreProtocol {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", name);
 
-        let protocol = self.load_protocol()?;
+        let mut protocol = self.load_protocol()?;
 
-        // Timelock signature
-        let timelock_signature = protocol
-            .input_taproot_script_spend_signature(name, 0, WT_INIT_CHALLENGE_TX_TIMELOCK_LEAF)?
-            .unwrap();
+        let args = collect_input_signatures(
+            &mut protocol,
+            name,
+            &vec![
+                InputSigningInfo::ScriptSpend {
+                    input_index: 0,
+                    script_index: WT_INIT_CHALLENGE_TX_TIMELOCK_LEAF,
+                    winternitz_data: None,
+                },
+                InputSigningInfo::ScriptSpend {
+                    input_index: 1,
+                    script_index: CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF,
+                    winternitz_data: None,
+                },
+            ],
+        )?;
 
-        // Timelock arguments
-        let mut timelock_args =
-            InputArgs::new_taproot_script_args(WT_INIT_CHALLENGE_TX_TIMELOCK_LEAF);
-        timelock_args.push_taproot_signature(timelock_signature)?;
-
-        // Stopper signature
-        let stopper_signature = protocol
-            .input_taproot_script_spend_signature(name, 1, CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF)?
-            .unwrap();
-        let mut stopper_args =
-            InputArgs::new_taproot_script_args(CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF);
-        stopper_args.push_taproot_signature(stopper_signature)?;
-
-        let tx = protocol.transaction_to_send(&name, &[timelock_args, stopper_args])?;
+        let tx = protocol.transaction_to_send(&name, &args)?;
         info!(id = self.ctx.my_idx, "Signed {}", name);
 
         Ok((tx, None))
@@ -2010,22 +1995,18 @@ impl DisputeCoreProtocol {
 
         let mut protocol = self.load_protocol()?;
 
-        // Prepare signature
-        let op_signature = protocol.sign_taproot_input(
+        let args = collect_input_signatures(
+            &mut protocol,
             name,
-            0,
-            &SpendMode::KeyOnly {
-                key_path_sign: SignMode::Single,
-            },
-            context.key_chain.key_manager.as_ref(),
-            "",
+            &vec![InputSigningInfo::SignTaproot {
+                input_index: 0,
+                script_index: None,
+                key_manager: context.key_chain.key_manager.as_ref(),
+                id: "".to_string(),
+            }],
         )?;
 
-        // Create input arguments
-        let mut input_args = InputArgs::new_taproot_key_args();
-        input_args.push_taproot_signature(op_signature[op_signature.len() - 1].unwrap())?;
-
-        let tx = protocol.transaction_to_send(&name, &[input_args])?;
+        let tx = protocol.transaction_to_send(&name, &args)?;
         info!(id = self.ctx.my_idx, "Signed {}", name);
 
         Ok((tx, None))
@@ -2155,36 +2136,24 @@ impl DisputeCoreProtocol {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", name);
 
-        let protocol = self.load_protocol()?;
+        let mut protocol = self.load_protocol()?;
 
-        // Prepare signatures
-        let committee_signature = protocol
-            .input_taproot_script_spend_signature(
-                name,
-                REVEAL_INPUT_TX_REVEAL_INDEX,
-                REVEAL_INPUT_TX_REVEAL_LEAF,
-            )?
-            .unwrap();
-
-        let script = protocol.get_script_to_spend(
+        let args = collect_input_signatures(
+            &mut protocol,
             name,
-            REVEAL_INPUT_TX_REVEAL_INDEX as u32,
-            REVEAL_INPUT_TX_REVEAL_LEAF as u32,
+            &vec![InputSigningInfo::ScriptSpend {
+                input_index: REVEAL_INPUT_TX_REVEAL_INDEX,
+                script_index: REVEAL_INPUT_TX_REVEAL_LEAF,
+                winternitz_data: Some(WinternitzData {
+                    data: (slot_index as u16).to_le_bytes().to_vec(),
+                    key_name: "value".to_string(),
+                    key_type: WinternitzType::HASH160,
+                    key_manager: context.key_chain.key_manager.as_ref(),
+                }),
+            }],
         )?;
-        let pegout_id_key = script.get_key("value").unwrap();
 
-        let slot_id_signature = context.key_chain.key_manager.sign_winternitz_message(
-            (slot_index as u16).to_le_bytes().as_slice(),
-            WinternitzType::HASH160,
-            pegout_id_key.derivation_index(),
-        )?;
-
-        // Create input arguments
-        let mut input_args = InputArgs::new_taproot_script_args(REVEAL_INPUT_TX_REVEAL_LEAF);
-        input_args.push_winternitz_signature(slot_id_signature);
-        input_args.push_taproot_signature(committee_signature)?;
-
-        let tx = protocol.transaction_to_send(&name, &[input_args])?;
+        let tx = protocol.transaction_to_send(&name, &args)?;
         info!(id = self.ctx.my_idx, "Signed {}", name);
 
         // Speedup data
@@ -2205,18 +2174,19 @@ impl DisputeCoreProtocol {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", name);
 
-        let protocol = self.load_protocol()?;
+        let mut protocol = self.load_protocol()?;
 
-        // Prepare signatures
-        let committee_signature = protocol
-            .input_taproot_script_spend_signature(name, 0, REVEAL_INPUT_TX_COMMITTEE_LEAF)?
-            .unwrap();
+        let args = collect_input_signatures(
+            &mut protocol,
+            name,
+            &vec![InputSigningInfo::ScriptSpend {
+                input_index: 0,
+                script_index: REVEAL_INPUT_TX_COMMITTEE_LEAF,
+                winternitz_data: None,
+            }],
+        )?;
 
-        // Create input arguments
-        let mut input_args = InputArgs::new_taproot_script_args(REVEAL_INPUT_TX_COMMITTEE_LEAF);
-        input_args.push_taproot_signature(committee_signature)?;
-
-        let tx = protocol.transaction_to_send(&name, &[input_args])?;
+        let tx = protocol.transaction_to_send(&name, &args)?;
         info!(id = self.ctx.my_idx, "Signed {}", name);
 
         // Speedup data
@@ -2284,22 +2254,18 @@ impl DisputeCoreProtocol {
             TWO_DISPUTE_PENALIZATION_TX, slot_index_prev, slot_index_last
         );
 
-        let protocol = self.load_protocol()?;
-        let signature_0 = protocol
-            .input_taproot_key_spend_signature(&name, 0)?
-            .unwrap();
+        let mut protocol = self.load_protocol()?;
 
-        let mut input_0 = InputArgs::new_taproot_key_args();
-        input_0.push_taproot_signature(signature_0)?;
+        let args = collect_input_signatures(
+            &mut protocol,
+            &name,
+            &vec![
+                InputSigningInfo::KeySpend { input_index: 0 },
+                InputSigningInfo::KeySpend { input_index: 1 },
+            ],
+        )?;
 
-        let signature_1 = protocol
-            .input_taproot_key_spend_signature(&name, 1)?
-            .unwrap();
-
-        let mut input_1 = InputArgs::new_taproot_key_args();
-        input_1.push_taproot_signature(signature_1)?;
-
-        let tx = protocol.transaction_to_send(&name, &[input_0, input_1])?;
+        let tx = protocol.transaction_to_send(&name, &args)?;
 
         Ok((tx, None, name))
     }
@@ -2437,7 +2403,7 @@ impl DisputeCoreProtocol {
                 let dispute_core_data: DisputeCoreData = self.dispute_core_data(context)?;
                 let accept_pegin_pid =
                     get_accept_pegin_pid(dispute_core_data.committee_id, slot_index);
-                self.save_operator_leaf_index(context, accept_pegin_pid)?;
+                // self.save_operator_leaf_index(context, accept_pegin_pid)?;
                 let protocol =
                     self.load_protocol_by_name(PROGRAM_TYPE_ACCEPT_PEGIN, accept_pegin_pid)?;
 
@@ -2494,18 +2460,15 @@ impl DisputeCoreProtocol {
             "Loading {} for DisputeCore", WT_START_ENABLER_TX
         );
 
-        let protocol = self.load_protocol()?;
+        let mut protocol = self.load_protocol()?;
 
-        // Prepare signature
-        let signature = protocol
-            .input_taproot_key_spend_signature(WT_START_ENABLER_TX, 0)?
-            .unwrap();
+        let args = collect_input_signatures(
+            &mut protocol,
+            WT_START_ENABLER_TX,
+            &vec![InputSigningInfo::KeySpend { input_index: 0 }],
+        )?;
 
-        // Create input arguments
-        let mut input_args = InputArgs::new_taproot_key_args();
-        input_args.push_taproot_signature(signature)?;
-
-        let tx = protocol.transaction_to_send(WT_START_ENABLER_TX, &vec![input_args])?;
+        let tx = protocol.transaction_to_send(WT_START_ENABLER_TX, &args)?;
         info!(id = self.ctx.my_idx, "Signed {}", WT_START_ENABLER_TX);
 
         // Speedup data
@@ -2522,20 +2485,6 @@ impl DisputeCoreProtocol {
     fn is_my_dispute_core(&self, program_context: &ProgramContext) -> Result<bool, BitVMXError> {
         let dispute_core_data = self.dispute_core_data(program_context)?;
         Ok(dispute_core_data.member_index == self.ctx.my_idx)
-    }
-
-    fn save_operator_leaf_index(
-        &self,
-        context: &ProgramContext,
-        accept_pegin_pid: Uuid,
-    ) -> Result<(), BitVMXError> {
-        let leaf_index = self.ctx.my_idx as u32;
-        context.globals.set_var(
-            &accept_pegin_pid,
-            &OPERATOR_LEAF_INDEX,
-            VariableTypes::Number(leaf_index),
-        )?;
-        Ok(())
     }
 
     fn save_op_utxos(
@@ -2800,16 +2749,15 @@ impl DisputeCoreProtocol {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", tx_name);
 
-        let protocol = self.load_protocol()?;
+        let mut protocol = self.load_protocol()?;
 
-        let signature = protocol
-            .input_taproot_key_spend_signature(tx_name, 0)?
-            .unwrap();
+        let args = collect_input_signatures(
+            &mut protocol,
+            tx_name,
+            &vec![InputSigningInfo::KeySpend { input_index: 0 }],
+        )?;
 
-        let mut input_args = InputArgs::new_taproot_key_args();
-        input_args.push_taproot_signature(signature)?;
-
-        let tx = protocol.transaction_to_send(&tx_name, &[input_args])?;
+        let tx = protocol.transaction_to_send(&tx_name, &args)?;
         let speedout = if with_speedup {
             Some(SpeedupData::new(Utxo::new(
                 tx.compute_txid(),

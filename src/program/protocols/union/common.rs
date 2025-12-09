@@ -1,6 +1,12 @@
 use anyhow::Error;
 use bitcoin::{Amount, PublicKey, ScriptBuf};
-use protocol_builder::{scripts::ProtocolScript, types::OutputType};
+use key_manager::{key_manager::KeyManager, winternitz};
+use protocol_builder::{
+    builder::Protocol,
+    errors::ProtocolBuilderError,
+    scripts::{ProtocolScript, SignMode},
+    types::{input::SpendMode, InputArgs, OutputType},
+};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -326,4 +332,234 @@ pub fn get_dispatch_action(block_height: Option<u32>) -> String {
     } else {
         "dispatched".to_string()
     }
+}
+
+pub struct WinternitzData<'a> {
+    pub data: Vec<u8>,
+    pub key_type: winternitz::WinternitzType,
+    pub key_name: String,
+    pub key_manager: &'a KeyManager,
+}
+
+pub enum InputSigningInfo<'a> {
+    // Used to retrieve input's signatures that have been signed in build process
+    KeySpend {
+        input_index: usize,
+    },
+    ScriptSpend {
+        input_index: usize,
+        script_index: usize,
+        winternitz_data: Option<WinternitzData<'a>>,
+    },
+    Edcsa {
+        input_index: usize,
+    },
+    // Used to sign inputs at the moment
+    SignTaproot {
+        input_index: usize,
+        script_index: Option<usize>,
+        key_manager: &'a KeyManager,
+        id: String,
+    },
+    SignEdcsa {
+        input_index: usize,
+        key_manager: &'a KeyManager,
+    },
+}
+
+impl<'a> InputSigningInfo<'a> {
+    pub fn get_input_signature(
+        &self,
+        name: &str,
+        protocol: &mut Protocol,
+    ) -> Result<InputArgs, BitVMXError> {
+        match self {
+            InputSigningInfo::KeySpend { input_index } => {
+                self.get_key_spend_signature(name, *input_index, protocol)
+            }
+            InputSigningInfo::ScriptSpend {
+                input_index,
+                script_index,
+                winternitz_data,
+            } => self.get_script_spend_signature(
+                name,
+                *input_index,
+                *script_index,
+                winternitz_data,
+                protocol,
+            ),
+            InputSigningInfo::Edcsa { input_index } => {
+                self.get_ecdsa_signature(name, *input_index, protocol)
+            }
+            InputSigningInfo::SignTaproot {
+                input_index,
+                script_index,
+                key_manager,
+                id,
+            } => self.sign_taproot(name, *input_index, *script_index, key_manager, id, protocol),
+            InputSigningInfo::SignEdcsa {
+                input_index,
+                key_manager,
+            } => self.sign_ecdsa(name, *input_index, key_manager, protocol),
+        }
+    }
+
+    pub fn get_key_spend_signature(
+        &self,
+        name: &str,
+        input_index: usize,
+        protocol: &mut Protocol,
+    ) -> Result<InputArgs, BitVMXError> {
+        let signature = protocol
+            .input_taproot_key_spend_signature(name, input_index)?
+            .ok_or_else(|| BitVMXError::MissingInputSignature {
+                tx_name: name.to_string(),
+                input_index,
+                script_index: None,
+            })?;
+
+        let mut args = InputArgs::new_taproot_key_args();
+        args.push_taproot_signature(signature)?;
+
+        Ok(args)
+    }
+
+    pub fn get_script_spend_signature(
+        &self,
+        name: &str,
+        input_index: usize,
+        script_index: usize,
+        winternitz_data: &Option<WinternitzData>,
+        protocol: &mut Protocol,
+    ) -> Result<InputArgs, BitVMXError> {
+        let signature = protocol
+            .input_taproot_script_spend_signature(name, input_index, script_index)?
+            .ok_or_else(|| BitVMXError::MissingInputSignature {
+                tx_name: name.to_string(),
+                input_index,
+                script_index: Some(script_index),
+            })?;
+
+        let mut args = InputArgs::new_taproot_script_args(script_index);
+
+        if let Some(wt_data) = winternitz_data {
+            let script =
+                protocol.get_script_to_spend(name, input_index as u32, script_index as u32)?;
+
+            // TODO: Should we use get_keys() instead and iterate over them to sign all?
+            // In that case data should be a vector of data to sign.
+            let key = script.get_key(&wt_data.key_name).ok_or_else(|| {
+                        BitVMXError::InvalidParameter(format!(
+                            "Winternitz key '{}' not found in script. Tx name: {}. Input index: {}. Script index: {}",
+                            wt_data.key_name, name, input_index, script_index
+                        ))
+                    })?;
+
+            let wt_signature = wt_data.key_manager.sign_winternitz_message(
+                wt_data.data.as_slice(),
+                wt_data.key_type,
+                key.derivation_index(),
+            )?;
+            args.push_winternitz_signature(wt_signature);
+        }
+
+        args.push_taproot_signature(signature)?;
+        Ok(args)
+    }
+
+    pub fn get_ecdsa_signature(
+        &self,
+        name: &str,
+        input_index: usize,
+        protocol: &mut Protocol,
+    ) -> Result<InputArgs, BitVMXError> {
+        let signature = protocol
+            .input_ecdsa_signature(name, input_index)?
+            .ok_or_else(|| BitVMXError::MissingInputSignature {
+                tx_name: name.to_string(),
+                input_index,
+                script_index: None,
+            })?;
+        let mut args = InputArgs::new_segwit_args();
+        args.push_ecdsa_signature(signature)?;
+        Ok(args)
+    }
+
+    pub fn sign_taproot(
+        &self,
+        name: &str,
+        input_index: usize,
+        script_index: Option<usize>,
+        key_manager: &KeyManager,
+        id: &str,
+        protocol: &mut Protocol,
+    ) -> Result<InputArgs, BitVMXError> {
+        let spend_mode = if script_index.is_some() {
+            SpendMode::Script {
+                leaf: script_index.unwrap(),
+            }
+        } else {
+            SpendMode::KeyOnly {
+                key_path_sign: SignMode::Single,
+            }
+        };
+
+        let signatures = protocol
+            .sign_taproot_input(name, input_index, &spend_mode, key_manager, &id)
+            .map_err(|e| BitVMXError::ErrorSigningInput {
+                tx_name: name.to_string(),
+                input_index,
+                script_index: None,
+                source: e,
+            })?;
+        let mut args = InputArgs::new_taproot_key_args();
+        let sig_index = if let Some(script_idx) = script_index {
+            script_idx
+        } else {
+            signatures.len() - 1
+        };
+        let signature = signatures[sig_index].ok_or_else(|| BitVMXError::ErrorSigningInput {
+            tx_name: name.to_string(),
+            input_index,
+            script_index,
+            source: ProtocolBuilderError::MissingSignature,
+        })?;
+
+        args.push_taproot_signature(signature)?;
+        Ok(args)
+    }
+
+    pub fn sign_ecdsa(
+        &self,
+        name: &str,
+        input_index: usize,
+        key_manager: &KeyManager,
+        protocol: &mut Protocol,
+    ) -> Result<InputArgs, BitVMXError> {
+        let signature = protocol
+            .sign_ecdsa_input(name, input_index, key_manager)
+            .map_err(|e| BitVMXError::ErrorSigningInput {
+                tx_name: name.to_string(),
+                input_index,
+                script_index: None,
+                source: e,
+            })?;
+        let mut args = InputArgs::new_segwit_args();
+        args.push_ecdsa_signature(signature)?;
+        Ok(args)
+    }
+}
+
+pub fn collect_input_signatures(
+    protocol: &mut Protocol,
+    name: &str,
+    signing_infos: &Vec<InputSigningInfo>,
+) -> Result<Vec<InputArgs>, BitVMXError> {
+    let mut input_args = Vec::new();
+
+    for info in signing_infos {
+        input_args.push(info.get_input_signature(name, protocol)?);
+    }
+
+    Ok(input_args)
 }
