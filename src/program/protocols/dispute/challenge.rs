@@ -34,7 +34,7 @@ use crate::{
 pub const ENTRY_POINT_CHALLENGE: [(&str, usize); 3] = [
     ("prover_read_pc_address", 4),
     ("prover_read_pc_micro", 1),
-    ("prover_step_number", 8),
+    ("prover_conflict_step_tk", 8),
 ];
 pub const PROGRAM_COUNTER_CHALLENGE: [(&str, usize); 8] = [
     ("verifier_prev_hash", 20), //TODO: These could be unsinged //TODO: test
@@ -772,7 +772,7 @@ pub fn get_challenge_leaf(
             name = "program_counter";
             info!("Verifier chose {name} challenge");
 
-            set_input_hex(id, context, &format!("verifier_prev_prev_hash"), &pre_hash)?;
+            set_input_hex(id, context, &format!("verifier_prev_hash"), &pre_hash)?;
             set_input_u32(
                 id,
                 context,

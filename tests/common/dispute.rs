@@ -680,7 +680,7 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ConfigResul
                 ForceCondition::ValidInputWrongStepOrHash,
                 ForceCondition::ValidInputWrongStepOrHash,
                 Some(fail_write),
-                ForceChallenge::TraceHash,
+                ForceChallenge::CorrectHash,
             )
         }
         ForcedChallenges::ReadValue(role) => {
