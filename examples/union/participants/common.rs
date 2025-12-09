@@ -90,6 +90,10 @@ pub fn get_default_union_settings() -> UnionSettings {
             short_timelock: 6,
             long_timelock: 12,
             op_won_timelock: 18,
+            claim_gate_timelock: 6,
+            input_not_revealed_timelock: 8,
+            op_no_cosign_timelock: 12,
+            wt_no_challenge_timelock: 12,
         },
     );
 
@@ -99,6 +103,10 @@ pub fn get_default_union_settings() -> UnionSettings {
             short_timelock: 6,
             long_timelock: 12,
             op_won_timelock: 18,
+            claim_gate_timelock: 6,
+            input_not_revealed_timelock: 8,
+            op_no_cosign_timelock: 12,
+            wt_no_challenge_timelock: 12,
         },
     );
 
@@ -108,6 +116,10 @@ pub fn get_default_union_settings() -> UnionSettings {
             short_timelock: 6,
             long_timelock: 12,
             op_won_timelock: 18,
+            claim_gate_timelock: 6,
+            input_not_revealed_timelock: 8,
+            op_no_cosign_timelock: 12,
+            wt_no_challenge_timelock: 12,
         },
     );
 

@@ -236,6 +236,7 @@ pub fn test_full() -> Result<()> {
         prover_win_output_type,
         forced_challenge.clone(),
         None,
+        None,
     )?;
 
     //WAIT SETUP READY
@@ -503,6 +504,7 @@ pub fn test_full() -> Result<()> {
         dispute_id,
         None,
         forced_challenge,
+        false,
         None,
     )?;
 

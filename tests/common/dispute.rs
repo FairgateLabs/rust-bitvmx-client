@@ -114,6 +114,7 @@ pub fn prepare_dispute(
     prover_win_output_type: OutputType,
     fail_force_config: ForcedChallenges,
     program_path: Option<String>,
+    auto_dispatch_input: Option<u8>,
 ) -> Result<()> {
     let program = format!(
         "{}/{}",
@@ -170,6 +171,8 @@ pub fn prepare_dispute(
         TIMELOCK_BLOCKS,
         program_definition,
         Some(config_results),
+        vec![],
+        auto_dispatch_input,
     );
 
     for msg in dispute_configuration.get_setup_messages(participants, 1)? {
@@ -190,12 +193,22 @@ pub fn execute_dispute(
     program_id: Uuid,
     input: Option<(String, u32)>,
     forced_challenge: ForcedChallenges,
+    auto_dispatch_input: bool,
     last_tx_to_dispatch: Option<&str>, // To force timeout
 ) -> Result<()> {
     let channels = id_channel_pairs
         .iter()
         .map(|pair| pair.channel.clone())
         .collect::<Vec<_>>();
+
+    // set input for autoinput
+    let (data, input_pos) = input.unwrap_or(("11111111".to_string(), 0));
+    if auto_dispatch_input {
+        let set_input_1 = VariableTypes::Input(hex::decode(&data).unwrap())
+            .set_msg(program_id, &program_input(input_pos, None))?;
+        let _ = channels[0].send(&id_channel_pairs[0].id, set_input_1)?;
+    }
+
     //CHALLENGERS STARTS CHALLENGE
     let _ = channels[1].send(
         &id_channel_pairs[1].id,
@@ -217,17 +230,21 @@ pub fn execute_dispute(
 
     // set input value
     //let data = "010000007bd5d42e4057965ff389683ef2304190d5e902f10190dba2887d46cccdd3389de95b00b98b086eb81f86988b252c704455eadff8f52710189e9c7d6c29b02a1ce355dcc4b00d84572a8a3414d40ecc209e5cea4e34b119b84e7455877726d3185c2847d1f4bcae30a0cd1b2da4bb3b85fa59b41dee6d9fea0258ced1e9a17c93";
-    let (data, input_pos) = input.unwrap_or(("11111111".to_string(), 0));
-    let set_input_1 = VariableTypes::Input(hex::decode(data).unwrap())
-        .set_msg(program_id, &program_input(input_pos, None))?;
-    let _ = channels[0].send(&id_channel_pairs[0].id, set_input_1)?;
+    if !auto_dispatch_input {
+        let set_input_1 = VariableTypes::Input(hex::decode(data).unwrap())
+            .set_msg(program_id, &program_input(input_pos, None))?;
+        let _ = channels[0].send(&id_channel_pairs[0].id, set_input_1)?;
 
-    // send the tx
-    let _ = channels[0].send(
-        &id_channel_pairs[0].id,
-        IncomingBitVMXApiMessages::DispatchTransactionName(program_id, input_tx_name(input_pos))
+        // send the tx
+        let _ = channels[0].send(
+            &id_channel_pairs[0].id,
+            IncomingBitVMXApiMessages::DispatchTransactionName(
+                program_id,
+                input_tx_name(input_pos),
+            )
             .to_string()?,
-    );
+        );
+    }
 
     let prover_dispatcher = bitvmx_job_dispatcher::DispatcherHandler::<EmulatorJobType>::new(
         emulator_channels[0].clone(),

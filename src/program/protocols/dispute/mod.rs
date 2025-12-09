@@ -162,7 +162,7 @@ pub struct DisputeResolutionProtocol {
 }
 
 const MIN_RELAY_FEE: u64 = 1;
-const DUST: u64 = 500 * MIN_RELAY_FEE;
+pub const DUST: u64 = 500 * MIN_RELAY_FEE;
 
 pub fn protocol_cost() -> u64 {
     38_000 // This is a placeholder value, adjust as needed
@@ -176,11 +176,15 @@ fn get_role(my_idx: usize) -> ParticipantRole {
     }
 }
 
-pub fn action_wins(role: &ParticipantRole, n: u32) -> String {
+pub fn action_wins_prefix(role: &ParticipantRole) -> String {
     match role {
-        ParticipantRole::Prover => format!("ACTION_PROVER_WINS_{n}"),
-        ParticipantRole::Verifier => format!("ACTION_VERIFIER_WINS_{n}"),
+        ParticipantRole::Prover => "ACTION_PROVER_WINS_".to_string(),
+        ParticipantRole::Verifier => "ACTION_VERIFIER_WINS_".to_string(),
     }
+}
+
+pub fn action_wins(role: &ParticipantRole, n: u32) -> String {
+    format!("{}{}", action_wins_prefix(role), n)
 }
 
 pub fn external_action(role: &ParticipantRole, n: u32) -> String {

@@ -220,6 +220,7 @@ fn config_trace_aux() {
         "tarpc=off",
         "key_manager=off",
         "memory=off",
+        "bitvmx_broker=off",
         "broker=off",
     ];
 

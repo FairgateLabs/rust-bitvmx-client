@@ -34,11 +34,13 @@ impl OperatorInstance {
 fn config_trace() {
     // Try to read from RUST_LOG environment variable first, fall back to default if not set
     let filter = EnvFilter::try_from_default_env()
-        .or_else(|_| EnvFilter::try_new("info,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitcoin_coordinator=info,tarpc=off,broker=off,bitvmx_wallet=info,bitvmx_bitcoin_rpc=off"))
+        .or_else(|_| EnvFilter::try_new("info,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitcoin_coordinator=info,tarpc=off,bitvmx_broker=off,broker=off,bitvmx_wallet=info,bitvmx_bitcoin_rpc=off"))
         .expect("Invalid filter");
 
     tracing_subscriber::fmt()
         //.without_time()
+        // .with_line_number(true)
+        // .with_file(true)
         .with_target(true)
         .with_env_filter(filter)
         .init();
@@ -131,7 +133,12 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
 
                 if instance.ready {
                     if let Err(e) = instance.bitvmx.tick() {
-                        tracing::error!("Error in tick(): {e:?}");
+                        tracing::error!("Error in tick(): {e:#?}");
+                        let mut source = std::error::Error::source(&e);
+                        while let Some(err) = source {
+                            tracing::error!("  Caused by: {err}");
+                            source = std::error::Error::source(err);
+                        }
                         // escalate fatal errors to shutdown signal
                         if e.is_fatal() {
                             info!("Fatal error detected, initiating shutdown");

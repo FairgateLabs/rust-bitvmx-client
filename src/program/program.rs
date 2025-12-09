@@ -7,6 +7,7 @@ use crate::{
         parse_keys, parse_nonces, parse_signatures, PartialSignatureMessage, PubNonceMessage,
     },
     program::{participant::ParticipantKeys, protocols::protocol_handler::new_protocol_type},
+    signature_verifier::OperatorVerificationStore,
     types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramRequestInfo},
 };
 use bitcoin::{PublicKey, Transaction, Txid};
@@ -34,9 +35,10 @@ pub enum StoreKey {
     LastRequestNonces(Uuid),
     LastRequestSignatures(Uuid),
     Program(Uuid),
+    ProgramState(Uuid),
 }
 
-pub fn get_other_index_by_pubkey_hash(
+fn get_other_index_by_pubkey_hash(
     pubkey_hash: &PubKeyHash,
     others: &Vec<ParticipantData>,
 ) -> Option<usize> {
@@ -45,7 +47,7 @@ pub fn get_other_index_by_pubkey_hash(
         .position(|participant| &participant.comms_address.pubkey_hash == pubkey_hash)
 }
 
-pub fn all_keys_ready(others: &Vec<ParticipantData>) -> bool {
+fn all_keys_ready(others: &Vec<ParticipantData>) -> bool {
     for other in others {
         if other.keys.is_none() {
             return false;
@@ -54,7 +56,7 @@ pub fn all_keys_ready(others: &Vec<ParticipantData>) -> bool {
     true
 }
 
-pub fn all_nonces_ready(others: &Vec<ParticipantData>) -> bool {
+fn all_nonces_ready(others: &Vec<ParticipantData>) -> bool {
     let mut c = 0;
     for other in others {
         if other.nonces.is_some() {
@@ -64,7 +66,7 @@ pub fn all_nonces_ready(others: &Vec<ParticipantData>) -> bool {
     c >= others.len() - 1
 }
 
-pub fn all_signatures_ready(others: &Vec<ParticipantData>) -> bool {
+fn all_signatures_ready(others: &Vec<ParticipantData>) -> bool {
     let mut c = 0;
     for other in others {
         if other.partial.is_some() {
@@ -91,6 +93,7 @@ pub struct Program {
     pub participants: Vec<ParticipantData>,
     pub leader: usize,
     pub protocol: ProtocolType,
+    #[serde(skip)]
     pub state: ProgramState,
     #[serde(skip)]
     storage: Option<Rc<Storage>>,
@@ -100,20 +103,28 @@ pub struct Program {
 impl Program {
     pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Self, ProgramError> {
         let program = storage.get(Self::get_key(StoreKey::Program(*program_id)))?;
+        let program_state: ProgramState = storage
+            .get(Self::get_key(StoreKey::ProgramState(*program_id)))?
+            .unwrap_or_default();
+
         let mut program: Program = program.ok_or(ProgramError::ProgramNotFound(*program_id))?;
 
+        program.state = program_state;
         program.storage = Some(storage.clone());
         program.protocol.set_storage(storage);
 
         Ok(program)
     }
 
-    pub fn im_leader(&self) -> bool {
+    fn im_leader(&self) -> bool {
         self.my_idx == self.leader
     }
-    pub fn save(&self) -> Result<(), ProgramError> {
+
+    fn save(&self) -> Result<(), ProgramError> {
         let key = Self::get_key(StoreKey::Program(self.program_id));
         self.storage.as_ref().unwrap().set(key, self, None)?;
+        let key = Self::get_key(StoreKey::ProgramState(self.program_id));
+        self.storage.as_ref().unwrap().set(key, &self.state, None)?;
         Ok(())
     }
 
@@ -132,10 +143,10 @@ impl Program {
             return Err(BitVMXError::InvalidMessageFormat);
         }
 
-        let comms_address = CommsAddress::new(
-            program_context.comms.get_address(),
-            program_context.comms.get_pubk_hash()?,
-        );
+        let my_pubkey_hash = program_context.comms.get_pubk_hash()?;
+
+        let comms_address =
+            CommsAddress::new(program_context.comms.get_address(), my_pubkey_hash.clone());
 
         //FIX EXCPECT WITH PROPER ERROR (invalid message as I'm not in the list)
         let my_idx = peers
@@ -157,6 +168,14 @@ impl Program {
 
         // save my pos in the others list to have the complete message ready
         others[my_idx] = ParticipantData::new(&comms_address, Some(my_keys));
+
+        OperatorVerificationStore::request_missing_verification_keys(
+            &program_context.globals,
+            &program_context.comms,
+            &program_context.key_chain,
+            id,
+            &peers,
+        )?;
 
         let mut program = Self {
             program_id: *id,
@@ -180,7 +199,7 @@ impl Program {
         Ok(program)
     }
 
-    pub fn prepare_aggregated_keys(
+    fn prepare_aggregated_keys(
         &mut self,
         context: &ProgramContext,
     ) -> Result<HashMap<String, PublicKey>, BitVMXError> {
@@ -203,6 +222,11 @@ impl Program {
 
             let mut aggregated_pub_keys = vec![];
 
+            debug!(
+                "Computing aggregated key '{}' with {} participants",
+                agg_name,
+                self.participants.len()
+            );
             for other in &self.participants {
                 let other_key = other
                     .keys
@@ -238,7 +262,7 @@ impl Program {
         Ok(result)
     }
 
-    pub fn build_protocol(&mut self, context: &ProgramContext) -> Result<(), BitVMXError> {
+    fn build_protocol(&mut self, context: &ProgramContext) -> Result<(), BitVMXError> {
         let aggregated = self.prepare_aggregated_keys(context)?;
         info!(
             "{}. Building with aggregated: {:?}",
@@ -271,7 +295,7 @@ impl Program {
         return Err(BitVMXError::CommsCommunicationError);
     }
 
-    pub fn request_helper<T>(
+    fn request_helper<T>(
         &mut self,
         program_context: &ProgramContext,
         to_send: Vec<(PubKeyHash, T)>,
@@ -296,6 +320,7 @@ impl Program {
 
                 request(
                     &program_context.comms,
+                    &program_context.key_chain,
                     &self.program_id,
                     dest,
                     msg_type.clone(),
@@ -306,7 +331,7 @@ impl Program {
         Ok(())
     }
 
-    pub fn send_keys(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
+    fn send_keys(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
         let should_send_request =
             self.should_send_request(StoreKey::LastRequestKeys(self.program_id))?;
 
@@ -339,7 +364,7 @@ impl Program {
         Ok(())
     }
 
-    pub fn receive_keys(
+    fn receive_keys(
         &mut self,
         comms_address: CommsAddress,
         msg_type: CommsMessageType,
@@ -382,7 +407,7 @@ impl Program {
         Ok(())
     }
 
-    pub fn send_nonces(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
+    fn send_nonces(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
         let should_send_request =
             self.should_send_request(StoreKey::LastRequestNonces(self.program_id))?;
 
@@ -441,7 +466,7 @@ impl Program {
         Ok(())
     }
 
-    pub fn receive_nonces(
+    fn receive_nonces(
         &mut self,
         comms_address: CommsAddress,
         msg_type: CommsMessageType,
@@ -514,7 +539,7 @@ impl Program {
         Ok(())
     }
 
-    pub fn send_signatures(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
+    fn send_signatures(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
         let should_send_request =
             self.should_send_request(StoreKey::LastRequestSignatures(self.program_id))?;
 
@@ -577,7 +602,7 @@ impl Program {
         Ok(())
     }
 
-    pub fn receive_signatures(
+    fn receive_signatures(
         &mut self,
         comms_address: CommsAddress,
         msg_type: CommsMessageType,
@@ -667,7 +692,7 @@ impl Program {
             ProgramState::Monitoring => {
                 // After the program is ready, we need to monitor the transactions
                 let (txns_to_monitor, vouts_to_monitor) =
-                    self.get_transactions_to_monitor(program_context)?;
+                    self.protocol.get_transactions_to_monitor(program_context)?;
 
                 let context = Context::ProgramId(self.program_id);
                 let txs_to_monitor =
@@ -716,6 +741,10 @@ impl Program {
         data: Value,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
+        // The message signature verification was already done in BitVMX::process_msg
+        // If we reach here, the message signature was verified and is valid
+        // This method only focuses on the program's business logic
+
         debug!("{}: Message received: {:?} ", self.my_idx, msg_type);
 
         match msg_type {
@@ -727,6 +756,12 @@ impl Program {
             }
             CommsMessageType::PartialSignatures => {
                 self.receive_signatures(comms_address, msg_type, data, program_context)?;
+            }
+            CommsMessageType::VerificationKey | CommsMessageType::VerificationKeyRequest => {
+                debug!(
+                    "{}. Verification key message handled upstream, ignoring {:?}",
+                    self.my_idx, msg_type
+                );
             }
             CommsMessageType::KeysAck
             | CommsMessageType::PublicNoncesAck
@@ -746,7 +781,7 @@ impl Program {
         Ok(())
     }
 
-    pub fn send_ack(
+    fn send_ack(
         &self,
         program_context: &ProgramContext,
         comms_address: CommsAddress,
@@ -756,6 +791,7 @@ impl Program {
 
         response(
             &program_context.comms,
+            &program_context.key_chain,
             &self.program_id,
             comms_address,
             msg_type,
@@ -828,6 +864,7 @@ impl Program {
         )?;
 
         let name = self.protocol.get_transaction_name_by_id(tx_id)?;
+
         if vout.is_some() {
             /* DON'T SEND AUTOMATICALLY FOR NOW
             program_context.broker_channel.send(
@@ -851,13 +888,6 @@ impl Program {
         Ok(())
     }
 
-    pub fn get_transactions_to_monitor(
-        &self,
-        program_context: &ProgramContext,
-    ) -> Result<(Vec<Txid>, Vec<(Txid, u32)>), BitVMXError> {
-        self.protocol.get_transactions_to_monitor(program_context)
-    }
-
     fn get_key(key: StoreKey) -> String {
         let prefix = "program";
         match key {
@@ -869,6 +899,7 @@ impl Program {
                 format!("{prefix}/{id}/last_request_signatures")
             }
             StoreKey::Program(id) => format!("{prefix}/{id}"),
+            StoreKey::ProgramState(id) => format!("{prefix}/{id}/state"),
         }
     }
 
@@ -928,7 +959,7 @@ impl Program {
     /// This function should only be called when the program is in the correct state,
     /// otherwise it will transition to the next state at the wrong time and break
     /// the program's flow
-    pub fn move_program_to_next_state(&mut self) -> Result<(), BitVMXError> {
+    fn move_program_to_next_state(&mut self) -> Result<(), BitVMXError> {
         self.state = self.state.next_state(self.im_leader());
         self.save()?;
         Ok(())
@@ -944,4 +975,11 @@ impl Program {
             .map_err(BitVMXError::from)
             .map_err(BitVMXError::from)
     }
+}
+
+pub fn is_active_program(storage: &Rc<Storage>, uuid: &Uuid) -> Result<bool, BitVMXError> {
+    let state: ProgramState = storage
+        .get(Program::get_key(StoreKey::ProgramState(*uuid)))?
+        .unwrap_or_default();
+    Ok(state.is_active())
 }

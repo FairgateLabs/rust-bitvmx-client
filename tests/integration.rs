@@ -138,6 +138,7 @@ fn test_drp_aux(last_tx_to_dispatch: Option<&str>) -> Result<()> {
         prover_win_out_type,
         forced_challenge.clone(),
         None,
+        Some(0),
     )?;
     let _msgs = get_all(&channels, &mut instances, false)?;
 
@@ -150,6 +151,7 @@ fn test_drp_aux(last_tx_to_dispatch: Option<&str>) -> Result<()> {
         prog_id,
         None,
         forced_challenge,
+        true,
         last_tx_to_dispatch,
     )?;
 

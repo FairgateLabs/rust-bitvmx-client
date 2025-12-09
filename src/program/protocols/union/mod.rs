@@ -2,6 +2,7 @@ pub mod accept_pegin;
 pub mod advance_funds;
 pub mod common;
 pub mod dispute_core;
+pub mod dispute_core_claim_gate;
 pub mod errors;
 pub mod full_penalization;
 pub mod macros;

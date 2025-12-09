@@ -205,6 +205,17 @@ pub trait ProtocolHandler {
         participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError>;
 
+    fn notify_external_news(
+        &self,
+        _tx_id: Txid,
+        _vout: Option<u32>,
+        _tx_status: TransactionStatus,
+        _context: String,
+        _program_context: &ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        Ok(())
+    }
+
     fn get_winternitz_signature_for_script(
         &self,
         protocol_script: &ProtocolScript,

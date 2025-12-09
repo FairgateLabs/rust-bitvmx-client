@@ -6,20 +6,20 @@ use crate::{
         protocols::{
             claim::ClaimGate,
             dispute::{
-                action_wins,
+                action_wins, action_wins_prefix,
                 challenge::READ_VALUE_NARY_SEARCH_CHALLENGE,
                 config::{ConfigResults, DisputeConfiguration},
                 input_handler::{get_txs_configuration, set_input, unify_inputs, unify_witnesses},
                 input_tx_name, program_input, timeout_input_tx, timeout_tx,
                 DisputeResolutionProtocol, CHALLENGE, CHALLENGE_READ, COMMITMENT, EXECUTE,
                 GET_BITS_AND_HASHES, INPUT_TX, POST_COMMITMENT, PRE_COMMITMENT, PROVER_WINS,
-                TK_2NARY, TRACE_VARS, VERIFIER_FINAL, VERIFIER_WINS,
+                START_CH, TK_2NARY, TRACE_VARS, VERIFIER_FINAL, VERIFIER_WINS,
             },
             protocol_handler::ProtocolHandler,
         },
         variables::VariableTypes,
     },
-    types::ProgramContext,
+    types::{ProgramContext, PROGRAM_TYPE_DRP},
 };
 use bitcoin::Txid;
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
@@ -449,8 +449,10 @@ fn auto_claim_start(
 
 fn claim_state_handle(
     drp: &DisputeResolutionProtocol,
+    tx_id: Txid,
     name: &str,
     vout: Option<u32>,
+    tx_status: TransactionStatus,
     program_context: &ProgramContext,
     current_height: u32,
     timelock_blocks: u32,
@@ -505,49 +507,61 @@ fn claim_state_handle(
         }
     }
 
-    if name == ClaimGate::tx_success(PROVER_WINS) && drp.role() == ParticipantRole::Prover {
-        //handle all actions
-        info!("Prover. Execute Action");
-        let prover_wins_action_tx = drp.get_signed_tx(
-            program_context,
-            &action_wins(&ParticipantRole::Prover, 1),
-            0,
-            0,
-            false,
-            1,
-        )?;
-        let speedup_data =
-            drp.get_speedup_data_from_tx(&prover_wins_action_tx, program_context, None)?;
-
-        program_context.bitcoin_coordinator.dispatch(
-            prover_wins_action_tx,
-            Some(speedup_data),
-            Context::ProgramId(drp.ctx.id).to_string()?,
-            None,
-        )?;
-    } else if name == ClaimGate::tx_success(VERIFIER_WINS)
-        && drp.role() == ParticipantRole::Verifier
+    if (name == ClaimGate::tx_success(PROVER_WINS) && drp.role() == ParticipantRole::Prover)
+        || (name == ClaimGate::tx_success(VERIFIER_WINS) && drp.role() == ParticipantRole::Verifier)
     {
-        //handle all actions
-        info!("Verifier. Execute Action");
-        let verifier_wins_action_tx = drp.get_signed_tx(
-            program_context,
-            &action_wins(&ParticipantRole::Verifier, 1),
-            0,
-            0,
-            false,
-            1,
-        )?;
-        let speedup_data =
-            drp.get_speedup_data_from_tx(&verifier_wins_action_tx, program_context, None)?;
+        let config = DisputeConfiguration::load(&drp.ctx.id, &program_context.globals)?;
+        let actions = match drp.role() {
+            ParticipantRole::Prover => &config.prover_actions,
+            ParticipantRole::Verifier => &config.verifier_actions,
+        };
 
-        program_context.bitcoin_coordinator.dispatch(
-            verifier_wins_action_tx,
-            Some(speedup_data),
-            Context::ProgramId(drp.ctx.id).to_string()?,
-            None,
-        )?;
+        for (i, action) in actions.iter().enumerate() {
+            info!("{}. Execute Action {}", drp.role(), i);
+            let win_action_tx = drp.get_signed_tx(
+                program_context,
+                &action_wins(&drp.role(), 1),
+                0,
+                0,
+                false,
+                action.1[0],
+            )?;
+            let speedup_data =
+                drp.get_speedup_data_from_tx(&win_action_tx, program_context, None)?;
+
+            program_context.bitcoin_coordinator.dispatch(
+                win_action_tx,
+                Some(speedup_data),
+                Context::ProgramId(drp.ctx.id).to_string()?,
+                None,
+            )?;
+        }
     }
+
+    if name.starts_with(&action_wins_prefix(&ParticipantRole::Prover))
+        || name.starts_with(&action_wins_prefix(&ParticipantRole::Verifier))
+    {
+        let config = DisputeConfiguration::load(&drp.ctx.id, &program_context.globals)?;
+        for (protocol_name, protocol_id) in config.notify_protocol {
+            let protocol = drp.load_protocol_by_name(&protocol_name, protocol_id)?;
+            info!(
+                "Notifying protocol {} about tx {}:{:?} seen on-chain",
+                protocol_name, tx_id, vout
+            );
+            protocol.notify_external_news(
+                tx_id,
+                vout,
+                tx_status.clone(),
+                Context::Protocol(drp.ctx.id, PROGRAM_TYPE_DRP.to_string()).to_string()?,
+                program_context,
+            )?;
+            info!(
+                "Notified protocol {} about tx {}:{:?} seen on-chain",
+                protocol_name, tx_id, vout
+            );
+        }
+    }
+
     Ok(())
 }
 
@@ -609,14 +623,36 @@ pub fn handle_tx_news(
 
     claim_state_handle(
         drp,
+        tx_id,
         &name,
         vout,
+        tx_status.clone(),
         program_context,
         current_height,
         timelock_blocks as u32,
     )?;
 
     let fail_force_config = config.fail_force_config.unwrap_or_default();
+
+    if let Some(auto_dispatch_input) = config.auto_dispatch_input {
+        if name == START_CH && drp.role() == ParticipantRole::Prover {
+            let (tx, speedup) = drp.get_transaction_by_name(
+                &input_tx_name(auto_dispatch_input as u32),
+                program_context,
+            )?;
+
+            info!(
+                "Auto Dispatching input tx {}",
+                &input_tx_name(auto_dispatch_input as u32)
+            );
+            program_context.bitcoin_coordinator.dispatch(
+                tx,
+                speedup,
+                Context::ProgramId(drp.context().id).to_string()?,
+                None,
+            )?;
+        }
+    }
 
     if name.starts_with(INPUT_TX) && vout.is_some() {
         let idx = name.strip_prefix(INPUT_TX).unwrap().parse::<u32>()?;

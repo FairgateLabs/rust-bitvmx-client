@@ -32,6 +32,11 @@ pub enum ProgramState {
     // Program has completed successfully
     //Completed,
 }
+impl Default for ProgramState {
+    fn default() -> Self {
+        ProgramState::New
+    }
+}
 
 #[derive(PartialEq, Clone, Serialize, Deserialize, Debug)]
 pub enum SettingUpState {
