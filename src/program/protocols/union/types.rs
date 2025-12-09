@@ -4,7 +4,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::program::{participant::ParticipantRole, variables::PartialUtxo};
+use crate::{
+    program::{participant::ParticipantRole, variables::PartialUtxo},
+    spv_proof::BtcTxSPVProof,
+};
 
 // Key names
 pub const TAKE_AGGREGATED_KEY: &str = "TAKE_AGGREGATED_KEY";
@@ -219,6 +222,21 @@ pub struct FundsAdvanced {
 impl FundsAdvanced {
     pub fn name() -> String {
         "funds_advanced".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FundsAdvanceSPV {
+    pub txid: Txid,
+    pub committee_id: Uuid,
+    pub slot_index: usize,
+    pub pegout_id: Vec<u8>,
+    pub spv_proof: Option<BtcTxSPVProof>,
+}
+
+impl FundsAdvanceSPV {
+    pub fn name() -> String {
+        "funds_advance_spv".to_string()
     }
 }
 
