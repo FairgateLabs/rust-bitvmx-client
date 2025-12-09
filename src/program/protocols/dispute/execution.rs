@@ -13,7 +13,7 @@ use crate::{
     program::{
         protocols::dispute::{
             challenge::get_challenge_leaf, input_handler::*, DisputeResolutionProtocol, CHALLENGE,
-            CHALLENGE_READ, EXECUTE, GET_BITS_AND_HASHES,
+            CHALLENGE_READ, EXECUTE, GET_HASHES_AND_STEP,
         },
         variables::VariableTypes,
     },
@@ -302,7 +302,7 @@ pub fn execution_result(
             set_input_hex(id, context, "prover_next_hash_tk2", resigned_next_hash)?;
             set_input_u64(id, context, "prover_write_step_tk2", *write_step)?;
             let (tx, sp) =
-                drp.get_tx_with_speedup_data(context, GET_BITS_AND_HASHES, 0, 0, true)?;
+                drp.get_tx_with_speedup_data(context, GET_HASHES_AND_STEP, 0, 0, true)?;
 
             context.bitcoin_coordinator.dispatch(
                 tx,

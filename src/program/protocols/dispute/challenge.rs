@@ -37,7 +37,7 @@ pub const ENTRY_POINT_CHALLENGE: [(&str, usize); 3] = [
     ("prover_conflict_step_tk", 8),
 ];
 pub const PROGRAM_COUNTER_CHALLENGE: [(&str, usize); 8] = [
-    ("verifier_prev_hash", 20), //TODO: These could be unsinged //TODO: test
+    ("verifier_prev_hash", 20), //TODO: These could be unsinged
     ("verifier_prev_write_add", 4),
     ("verifier_prev_write_data", 4),
     ("verifier_prev_write_pc", 4),
@@ -316,10 +316,8 @@ pub fn challenge_scripts(
 
                         for (idx, input) in inputs.iter().enumerate() {
                             match input {
-                                ProgramInputType::Verifier(_words, _offset) => {
-                                    // TODO: Implement verifier input challenge
-                                }
-                                ProgramInputType::Prover(words, offset) => {
+                                ProgramInputType::Verifier(words, offset)
+                                | ProgramInputType::Prover(words, offset) => {
                                     for j in *offset..*offset + *words {
                                         let names_and_keys = subnames
                                             .iter()

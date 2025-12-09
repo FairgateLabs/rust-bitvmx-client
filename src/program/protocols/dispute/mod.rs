@@ -66,7 +66,7 @@ pub const TIMELOCK_BLOCKS: u16 = 15;
 pub const PROVER_WINS: &str = "PROVER_WINS";
 pub const VERIFIER_WINS: &str = "VERIFIER_WINS";
 pub const CHALLENGE: &str = "CHALLENGE";
-pub const GET_BITS_AND_HASHES: &str = "GET_BITS_AND_HASHES";
+pub const GET_HASHES_AND_STEP: &str = "GET_HASHES_AND_STEP";
 pub const CHALLENGE_READ: &str = "CHALLENGE_READ"; // For the second N-ary search
 pub const TIMELOCK_BLOCKS_KEY: &str = "TIMELOCK_BLOCKS";
 pub const VERIFIER_FINAL: &str = "VERIFIER_FINAL";
@@ -823,7 +823,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             amount,
             speedup_dust,
             &prev,
-            GET_BITS_AND_HASHES,
+            GET_HASHES_AND_STEP,
             &claim_verifier,
             self.execute_script(
                 context,
@@ -845,7 +845,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             timelock_blocks,
             amount,
             speedup_dust,
-            &GET_BITS_AND_HASHES,
+            &GET_HASHES_AND_STEP,
             CHALLENGE_READ,
             &claim_prover,
             challenge_scripts(

@@ -12,7 +12,7 @@ use crate::{
                 input_handler::{get_txs_configuration, set_input, unify_inputs, unify_witnesses},
                 input_tx_name, program_input, timeout_input_tx, timeout_tx,
                 DisputeResolutionProtocol, CHALLENGE, CHALLENGE_READ, COMMITMENT, EXECUTE,
-                GET_BITS_AND_HASHES, INPUT_TX, POST_COMMITMENT, PRE_COMMITMENT, PROVER_WINS,
+                GET_HASHES_AND_STEP, INPUT_TX, POST_COMMITMENT, PRE_COMMITMENT, PROVER_WINS,
                 START_CH, TK_2NARY, TRACE_VARS, VERIFIER_FINAL, VERIFIER_WINS,
             },
             protocol_handler::ProtocolHandler,
@@ -679,7 +679,7 @@ pub fn handle_tx_news(
             let (def, _program_definition) = drp.get_program_definition(program_context)?;
             let full_input = unify_inputs(&drp.ctx.id, program_context, &def)?;
             for (i, input_chunk) in full_input.chunks(4).enumerate() {
-                //TODO: what if input total size is not multiple of 4
+                // It is assumed that each input chunk is 4 bytes
                 set_input(
                     &drp.ctx.id,
                     program_context,
@@ -930,7 +930,7 @@ pub fn handle_tx_news(
         let mem_witness = MemoryWitness::from_byte(to_u8(&values["prover_mem_witness"]));
         let prover_step_hash = to_hex(&values["prover_step_hash_tk"]);
         let prover_next_hash = to_hex(&values["prover_next_hash_tk"]);
-        let conflict_step = to_u64(&values["prover_conflict_step_tk"]);
+        let _conflict_step = to_u64(&values["prover_conflict_step_tk"]);
 
         let final_trace = TraceRWStep::new(
             step_number,
@@ -946,12 +946,9 @@ pub fn handle_tx_news(
             job_type: EmulatorJobType::VerifierChooseChallenge(
                 pdf,
                 execution_path.clone(),
-                (
-                    final_trace,
-                    prover_step_hash,
-                    prover_next_hash,
-                    conflict_step,
-                ),
+                final_trace,
+                prover_step_hash,
+                prover_next_hash,
                 format!("{}/{}", execution_path, "execution.json").to_string(),
                 fail_force_config.main.fail_config_verifier.clone(),
                 fail_force_config.main.force_challenge.clone(),
@@ -1075,7 +1072,7 @@ pub fn handle_tx_news(
         )?;
     }
 
-    if GET_BITS_AND_HASHES == name && drp.role() == ParticipantRole::Verifier && vout.is_some() {
+    if GET_HASHES_AND_STEP == name && drp.role() == ParticipantRole::Verifier && vout.is_some() {
         drp.decode_witness_from_speedup(
             tx_id,
             vout.unwrap(),
@@ -1106,7 +1103,7 @@ pub fn handle_tx_news(
 
         let prover_step_hash = to_hex(&values["prover_step_hash_tk2"]);
         let prover_next_hash = to_hex(&values["prover_next_hash_tk2"]);
-        let _prover_write_step = to_u64(&values["prover_write_step_tk2"]); //TODO: not used?
+        let _prover_write_step = to_u64(&values["prover_write_step_tk2"]);
 
         let msg = serde_json::to_string(&DispatcherJob {
             job_id: drp.ctx.id.to_string(),
@@ -1267,7 +1264,6 @@ fn handle_nary_verifier(
                     ),
                 })?,
             };
-            info!("Sending final trace or cosigned bits and hashes");
             program_context
                 .broker_channel
                 .send(&program_context.components_config.emulator, msg)?;

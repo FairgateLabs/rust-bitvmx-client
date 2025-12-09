@@ -230,7 +230,13 @@ fn run_zkp(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<()> 
     Ok(())
 }
 
-fn run_auto_mine(network: Network, rx: Receiver<()>, tx: Sender<()>, interval: u64) -> Result<()> {
+fn run_auto_mine(
+    network: Network,
+    rx: Receiver<()>,
+    tx: Sender<()>,
+    interval: u64,
+    max_mined_blocks: Option<u64>,
+) -> Result<()> {
     let config = &get_configs(network)?[0];
 
     let bitcoin_client = BitcoinClient::new(
@@ -249,6 +255,13 @@ fn run_auto_mine(network: Network, rx: Receiver<()>, tx: Sender<()>, interval: u
         }
         bitcoin_client.mine_blocks_to_address(1, &address)?;
         tx.send(())?;
+        if let Some(limit) = max_mined_blocks {
+            let current = bitcoin_client.get_blockchain_info()?.blocks;
+            if current >= limit {
+                error!("Max mined blocks reached!");
+                std::process::abort();
+            }
+        }
         thread::sleep(Duration::from_millis(interval));
     }
     Ok(())
@@ -341,7 +354,13 @@ impl TestHelper {
 
         let (disp_stop_tx, disp_stop_rx) = channel::<()>();
         let (disp_ready_tx, disp_ready_rx) = channel::<usize>();
-        let disp_handle = thread::spawn(move || run_emulator(network, disp_stop_rx, disp_ready_tx));
+        let disp_handle = thread::spawn(move || {
+            let result = run_emulator(network, disp_stop_rx, disp_ready_tx);
+            if let Err(ref e) = result {
+                error!("run_emulator failed: {:?}", e);
+            }
+            result
+        });
 
         let (zkp_stop_tx, zkp_stop_rx) = channel::<()>();
         let (zkp_ready_tx, zkp_ready_rx) = channel::<usize>();
@@ -360,7 +379,14 @@ impl TestHelper {
             let (mine_stop_tx, mine_stop_rx) = channel::<()>();
             let (mine_ready_tx, mine_ready_rx) = channel::<()>();
             let mine_handle = thread::spawn(move || {
-                run_auto_mine(network, mine_stop_rx, mine_ready_tx, automine_interval)
+                // if 500 blocks mined, stop
+                run_auto_mine(
+                    network,
+                    mine_stop_rx,
+                    mine_ready_tx,
+                    automine_interval,
+                    Some(500),
+                )
             });
             (Some(mine_handle), Some(mine_stop_tx), Some(mine_ready_rx))
         } else {
