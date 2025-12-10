@@ -286,13 +286,17 @@ impl KeyChain {
     }
 
     /// Sign a message using RSA with the default key index (for compatibility)
-    pub fn sign_rsa_message(&self, message: &[u8], pub_key_pem: Option<&str>) -> Result<Vec<u8>, BitVMXError> {
+    pub fn sign_rsa_message(
+        &self,
+        message: &[u8],
+        pub_key_pem: Option<&str>,
+    ) -> Result<Vec<u8>, BitVMXError> {
         // Sign the message using the default RSA key index
         let pub_key_pem = match pub_key_pem {
             Some(key) => key,
-            None => self.rsa_public_key.as_deref().ok_or_else(||
+            None => self.rsa_public_key.as_deref().ok_or_else(|| {
                 BitVMXError::KeyChainError("Not default key in keyChain".to_string())
-            )?,
+            })?,
         };
         self.sign_with_rsa_key(message, pub_key_pem)
     }
@@ -474,9 +478,7 @@ mod tests {
         let rng = &mut thread_rng();
 
         // Generate a different RSA keypair for testing
-        let wrong_pub_key = keychain
-            .key_manager
-            .generate_rsa_keypair(rng)?;
+        let wrong_pub_key = keychain.key_manager.generate_rsa_keypair(rng)?;
 
         // Sign the message using the default RSA key (RSA_KEY_INDEX)
         let signature = keychain.sign_rsa_message(message, None)?;
