@@ -25,6 +25,12 @@ cargo build
 
 ### Client test
 
+NOTE: BitVMX-CPU release binary should be build beforehand
+```bash
+cd BitVMX-CPU
+cargo build --release
+```
+
 Run the client tests:
 
 ```bash
@@ -47,7 +53,7 @@ This project is licensed under the MIT License - see [LICENSE](LICENSE) file for
 
 ## 🧩 Part of the BitVMX Ecosystem
 
-This repository is a component of the **BitVMX Ecosystem**, an open platform for disputable computation secured by Bitcoin.  
+This repository is a component of the **BitVMX Ecosystem**, an open platform for disputable computation secured by Bitcoin.
 You can find the index of all BitVMX open-source components at [**FairgateLabs/BitVMX**](https://github.com/FairgateLabs/BitVMX).
 
 ---
