@@ -105,7 +105,7 @@ pub fn response<T: Serialize>(
     request(comms, key_chain, program_id, comms_address, msg_type, msg) // In this version, response is identical to request. Keeping it separate for clarity.
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
 pub enum CommsMessageType {
     Keys,
     KeysAck,
@@ -115,6 +115,7 @@ pub enum CommsMessageType {
     PartialSignaturesAck,
     VerificationKey,
     VerificationKeyRequest,
+    Broadcasted,
 }
 
 impl CommsMessageType {
@@ -128,6 +129,7 @@ impl CommsMessageType {
         (&CommsMessageType::PartialSignaturesAck, [0x00, 0x06]),
         (&CommsMessageType::VerificationKey, [0x00, 0x07]),
         (&CommsMessageType::VerificationKeyRequest, [0x00, 0x08]),
+        (&CommsMessageType::Broadcasted, [0x00, 0x09]),
     ];
 
     // Convert message type to 2-byte representation
@@ -389,6 +391,10 @@ mod tests {
             CommsMessageType::VerificationKeyRequest.to_bytes().unwrap(),
             [0x00, 0x08]
         );
+        assert_eq!(
+            CommsMessageType::Broadcasted.to_bytes().unwrap(),
+            [0x00, 0x09]
+        );
     }
 
     #[test]
@@ -424,6 +430,10 @@ mod tests {
         assert_eq!(
             CommsMessageType::from_bytes([0x00, 0x08]).unwrap(),
             CommsMessageType::VerificationKeyRequest
+        );
+        assert_eq!(
+            CommsMessageType::from_bytes([0x00, 0x09]).unwrap(),
+            CommsMessageType::Broadcasted
         );
     }
 

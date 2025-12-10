@@ -776,6 +776,14 @@ impl Program {
 
                 self.move_program_to_next_state()?;
             }
+            CommsMessageType::Broadcasted => {
+                // Broadcasted messages are handled in BitVMX::process_msg, not here
+                // This should not be reached, but we handle it gracefully
+                debug!(
+                    "{}. Broadcasted message should be handled upstream in BitVMX::process_msg",
+                    self.my_idx
+                );
+            }
         }
 
         Ok(())

@@ -352,6 +352,14 @@ impl Collaboration {
                     self.collaboration_id, msg_type
                 );
             }
+            CommsMessageType::Broadcasted => {
+                // Broadcasted messages are handled in BitVMX::process_msg, not here
+                // This should not be reached, but we handle it gracefully
+                debug!(
+                    "Collaboration id: {}: Broadcasted message should be handled upstream in BitVMX::process_msg",
+                    self.collaboration_id
+                );
+            }
             _ => {
                 return Err(BitVMXError::InvalidMessageType);
             }
