@@ -1,6 +1,6 @@
 # BitVMX Client
 
-The BitVMX Client provides the core functionality for interacting with BitVMX protocol and the Bitcoin blockchain.
+The BitVMX Client provides the core functionality for interacting with the BitVMX protocol and the Bitcoin blockchain.
 
 ## ⚠️ Disclaimer
 
@@ -25,7 +25,7 @@ cargo build
 
 ### Client test
 
-NOTE: BitVMX-CPU release binary should be build beforehand
+NOTE: BitVMX-CPU release binary should be built beforehand
 ```bash
 cd BitVMX-CPU
 cargo build --release
@@ -39,7 +39,7 @@ RUST_BACKTRACE=1 cargo test --release -- --ignored test_all
 
 ### Integration test
 
-If you are running a bitcoin node, you should stop it before running the integratio test (as it handles its own node).
+If you are running a bitcoin node, you should stop it before running the integration test (as it handles its own node).
 
 ```bash
 RUST_BACKTRACE=1 cargo test --release -- --ignored test_full
