@@ -318,6 +318,9 @@ impl BitVMX {
         data: Value,
         peer_address: CommsAddress,
         program: &mut Program,
+        timestamp: i64,
+        signature: Vec<u8>,
+        version: String,
     ) -> Result<bool, BitVMXError> {
         let my_pubkey_hash = self.program_context.comms.get_pubk_hash()?;
         let participants: Vec<_> = program
@@ -331,8 +334,37 @@ impl BitVMX {
             return Ok(false);
         }
 
+        // If this operator is the leader and the message type should be broadcast, store the original message
+        if program.my_idx == program.leader {
+            let should_store = matches!(
+                msg_type,
+                CommsMessageType::Keys
+                    | CommsMessageType::PublicNonces
+                    | CommsMessageType::PartialSignatures
+            );
+            if should_store {
+                let original_msg = OriginalMessage {
+                    sender_pubkey_hash: peer_address.pubkey_hash.clone(),
+                    msg_type,
+                    data: data.clone(),
+                    original_timestamp: timestamp,
+                    original_signature: signature.clone(),
+                    version: version.clone(),
+                };
+                self.store_original_message(program_id, msg_type, original_msg)?;
+            }
+        }
+
         // Step 3: Process normal messages (non-verification)
-        program.process_comms_message(peer_address, msg_type, data, &self.program_context)?;
+        program.process_comms_message(
+            peer_address,
+            msg_type,
+            data,
+            &self.program_context,
+            timestamp,
+            signature,
+            version,
+        )?;
         Ok(true)
     }
 
@@ -346,6 +378,9 @@ impl BitVMX {
         data: Value,
         peer_address: CommsAddress,
         collaboration: &mut Collaboration,
+        timestamp: i64,
+        signature: Vec<u8>,
+        version: String,
     ) -> Result<bool, BitVMXError> {
         let my_pubkey_hash = self.program_context.comms.get_pubk_hash()?;
         let participants: Vec<_> = collaboration
@@ -362,8 +397,37 @@ impl BitVMX {
             return Ok(false);
         }
 
+        // If this operator is the leader and the message type should be broadcast, store the original message
+        if collaboration.im_leader {
+            let should_store = matches!(
+                msg_type,
+                CommsMessageType::Keys
+                    | CommsMessageType::PublicNonces
+                    | CommsMessageType::PartialSignatures
+            );
+            if should_store {
+                let original_msg = OriginalMessage {
+                    sender_pubkey_hash: peer_address.pubkey_hash.clone(),
+                    msg_type,
+                    data: data.clone(),
+                    original_timestamp: timestamp,
+                    original_signature: signature.clone(),
+                    version: version.clone(),
+                };
+                self.store_original_message(program_id, msg_type, original_msg)?;
+            }
+        }
+
         // Step 3: Process normal messages (non-verification)
-        collaboration.process_comms_message(peer_address, msg_type, data, &self.program_context)?;
+        collaboration.process_comms_message(
+            peer_address,
+            msg_type,
+            data,
+            &self.program_context,
+            timestamp,
+            signature,
+            version,
+        )?;
         Ok(true)
     }
 
@@ -453,6 +517,9 @@ impl BitVMX {
                             data,
                             peer_address,
                             &mut program,
+                            timestamp,
+                            signature,
+                            version,
                         )?;
                         message_consumed
                     } else if let Some(mut collaboration) = collaboration {
@@ -462,6 +529,9 @@ impl BitVMX {
                             data,
                             peer_address,
                             &mut collaboration,
+                            timestamp,
+                            signature,
+                            version,
                         )?;
                         if message_consumed {
                             self.save_collaboration(&collaboration)?;

@@ -740,6 +740,9 @@ impl Program {
         msg_type: CommsMessageType,
         data: Value,
         program_context: &ProgramContext,
+        _timestamp: i64,
+        _signature: Vec<u8>,
+        _version: String,
     ) -> Result<(), BitVMXError> {
         // The message signature verification was already done in BitVMX::process_msg
         // If we reach here, the message signature was verified and is valid

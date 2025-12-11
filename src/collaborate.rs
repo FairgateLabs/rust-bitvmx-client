@@ -163,6 +163,9 @@ impl Collaboration {
         msg_type: CommsMessageType,
         data: Value,
         program_context: &ProgramContext,
+        _timestamp: i64,
+        _signature: Vec<u8>,
+        _version: String,
     ) -> Result<(), BitVMXError> {
         let pubkey_hash = comms_address.pubkey_hash.clone();
         match msg_type {
