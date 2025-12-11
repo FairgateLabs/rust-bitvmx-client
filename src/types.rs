@@ -121,7 +121,7 @@ pub enum IncomingBitVMXApiMessages {
     ProofReady(Uuid),
     GetZKPExecutionResult(Uuid),
     Encrypt(Uuid, Vec<u8>, String),
-    Decrypt(Uuid, Vec<u8>),
+    Decrypt(Uuid, Vec<u8>, String),
     Backup(Uuid, String),
     #[cfg(feature = "testpanic")]
     Test(String),

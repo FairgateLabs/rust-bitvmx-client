@@ -35,6 +35,9 @@ pub enum BitVMXError {
     #[error("Error when using KeyManager: {0}")]
     KeyManagerError(#[from] KeyManagerError),
 
+    #[error("KeyChain error: {0}")]
+    KeyChainError(String),
+
     #[error("Error when using Bitcoin client: {0}")]
     BitcoinError(#[from] BitcoinClientError),
 

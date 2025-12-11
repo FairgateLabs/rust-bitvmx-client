@@ -2,13 +2,13 @@ name: 'Test action'
 on:
   push:
     branches: [ "main" ]
-    # paths-ignore:
-    #   - 'examples/union/**'
+    paths-ignore:
+      - 'examples/union/**'
   pull_request:
     branches: [ "main" ]
-    # paths-ignore:
-    #   - 'examples/union/**'
-    #   - 'src/program/protocols/union/**'
+    paths-ignore:
+      - 'examples/union/**'
+      - 'src/program/protocols/union/**'
 
 env:
   CARGO_TERM_COLOR: always
@@ -34,4 +34,5 @@ jobs:
       target_path: 'rust-bitvmx-client/target'
       cargo_features: 'testpanic'
       nightly: false
+      submodule_branches: '{}'
     secrets: inherit
