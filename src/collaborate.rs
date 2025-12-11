@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use bitcoin::PublicKey;
 use bitvmx_broker::identification::identifier::Identifier;
 use bitvmx_operator_comms::operator_comms::PubKeyHash;
+use key_manager::key_type::BitcoinKeyType;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{debug, error, info};
@@ -74,7 +75,7 @@ impl Collaboration {
         // Sign the key with RSA signature for MITM protection
         let signature = program_context
             .key_chain
-            .sign_rsa_message(my_key.to_string().as_bytes())?;
+            .sign_rsa_message(my_key.to_string().as_bytes(), None)?;
         participant_keys.add_signature(&id.to_string(), signature);
 
         let keys = vec![(my_pubkey_hash.clone(), participant_keys)];
@@ -378,7 +379,9 @@ impl Collaboration {
                 .cloned()
                 .ok_or(BitVMXError::InvalidParticipant(my_pubkey_hash.to_string()))?
         } else {
-            program_context.key_chain.derive_keypair()?
+            program_context
+                .key_chain
+                .derive_keypair(BitcoinKeyType::P2tr)?
         };
 
         Ok(my_key)

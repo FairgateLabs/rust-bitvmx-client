@@ -33,6 +33,7 @@ use crate::{
 use bitcoin::{Amount, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use core::result::Result::Ok;
+use key_manager::key_type::BitcoinKeyType;
 use key_manager::winternitz::{WinternitzPublicKey, WinternitzType};
 use protocol_builder::{
     builder::Protocol,
@@ -224,7 +225,9 @@ impl ProtocolHandler for DisputeCoreProtocol {
         let data = self.dispute_core_data(program_context)?;
         let mut keys = vec![];
 
-        let speedup_key = program_context.key_chain.derive_keypair()?;
+        let speedup_key = program_context
+            .key_chain
+            .derive_keypair(BitcoinKeyType::P2tr)?;
 
         keys.push((
             SPEEDUP_KEY.to_string(),

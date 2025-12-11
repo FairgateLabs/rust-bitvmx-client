@@ -4,7 +4,7 @@ use bitcoin::{secp256k1::rand::thread_rng, PublicKey, XOnlyPublicKey};
 use key_manager::{
     create_key_manager_from_config,
     key_manager::KeyManager,
-    key_store::KeyStore,
+    key_type::BitcoinKeyType,
     musig2::{types::MessageId, PartialSignature, PubNonce},
     winternitz::{WinternitzPublicKey, WinternitzType},
 };
@@ -17,8 +17,6 @@ use crate::{
     config::Config,
     errors::{BitVMXError, ConfigError},
 };
-
-const RSA_KEY_INDEX: usize = 0; // TODO: make this configurable
 
 pub struct KeyChain {
     pub key_manager: Rc<KeyManager>,
@@ -47,10 +45,8 @@ impl KeyChainStorageKeys {
 
 impl KeyChain {
     pub fn new(config: &Config, store: Rc<Storage>) -> Result<KeyChain, BitVMXError> {
-        let key_storage = Rc::new(Storage::new(&config.key_storage)?);
-        let keystore = KeyStore::new(key_storage);
         let key_manager =
-            create_key_manager_from_config(&config.key_manager, keystore, store.clone())?;
+            create_key_manager_from_config(&config.key_manager, &config.key_storage.clone())?;
 
         let key_manager = Rc::new(key_manager);
 
@@ -64,12 +60,12 @@ impl KeyChain {
             )));
         }
         let pem_file = std::fs::read_to_string(path).unwrap();
-        let rsa_pub_key: String = key_manager.import_rsa_private_key(&pem_file, RSA_KEY_INDEX)?;
+        let rsa_pubkey_pem = key_manager.import_rsa_private_key(&pem_file)?;
 
         Ok(Self {
             key_manager,
             store,
-            rsa_public_key: Some(rsa_pub_key),
+            rsa_public_key: Some(rsa_pubkey_pem),
         })
     }
 
@@ -101,10 +97,10 @@ impl KeyChain {
         Ok(next_index)
     }
 
-    pub fn derive_keypair(&mut self) -> Result<PublicKey, BitVMXError> {
+    pub fn derive_keypair(&mut self, key_type: BitcoinKeyType) -> Result<PublicKey, BitVMXError> {
         let index = self.get_new_ecdsa_index()?;
 
-        Ok(self.key_manager.derive_keypair(index)?)
+        Ok(self.key_manager.derive_keypair(key_type, index)?)
     }
 
     pub fn derive_winternitz_hash160(
@@ -280,19 +276,29 @@ impl KeyChain {
 
     /// Sign a message using a pre-loaded RSA private key (optimized version)
     /// This method assumes the RSA key is already loaded in the key manager at the specified index
-    fn sign_with_rsa_key(&self, message: &[u8], index: usize) -> Result<Vec<u8>, BitVMXError> {
+    fn sign_with_rsa_key(&self, message: &[u8], pub_key_pem: &str) -> Result<Vec<u8>, BitVMXError> {
         // Sign the message using the pre-loaded key
         // Sign the message using the default RSA key index
-        let signature = self.key_manager.sign_rsa_message(message, index)?;
+        let signature = self.key_manager.sign_rsa_message(message, pub_key_pem)?;
 
         // Convert signature to bytes using the signature encoding
         Ok(signature.to_bytes().to_vec())
     }
 
     /// Sign a message using RSA with the default key index (for compatibility)
-    pub fn sign_rsa_message(&self, message: &[u8]) -> Result<Vec<u8>, BitVMXError> {
+    pub fn sign_rsa_message(
+        &self,
+        message: &[u8],
+        pub_key_pem: Option<&str>,
+    ) -> Result<Vec<u8>, BitVMXError> {
         // Sign the message using the default RSA key index
-        self.sign_with_rsa_key(message, RSA_KEY_INDEX)
+        let pub_key_pem = match pub_key_pem {
+            Some(key) => key,
+            None => self.rsa_public_key.as_deref().ok_or_else(|| {
+                BitVMXError::KeyChainError("Not default key in keyChain".to_string())
+            })?,
+        };
+        self.sign_with_rsa_key(message, pub_key_pem)
     }
 
     /// Verify an RSA signature using a public key
@@ -366,14 +372,12 @@ mod tests {
 
         // Get the public key for encryption
         let rng = &mut thread_rng();
-        let pub_key = keychain
-            .key_manager
-            .generate_rsa_keypair(rng, RSA_KEY_INDEX + 1)?; // +1 to avoid using the default RSA key index only for testing
+        let pub_key = keychain.key_manager.generate_rsa_keypair(rng)?;
 
         // Encrypt the message
         let encrypted_message = keychain
             .key_manager
-            .encrypt_rsa_message(&original_message.clone(), pub_key)?;
+            .encrypt_rsa_message(&original_message.clone(), &pub_key)?;
 
         // Verify encryption changed the data
         assert_ne!(original_message, encrypted_message);
@@ -382,7 +386,7 @@ mod tests {
         // Decrypt the message
         let decrypted_message = keychain
             .key_manager
-            .decrypt_rsa_message(&encrypted_message, RSA_KEY_INDEX + 1)?;
+            .decrypt_rsa_message(&encrypted_message, &pub_key)?;
 
         // Verify decryption restored the original message
         assert_eq!(original_message, decrypted_message);
@@ -403,7 +407,7 @@ mod tests {
         let rsa_pub_key = keychain.get_rsa_public_key()?;
 
         // Sign the message using the default RSA key
-        let signature = keychain.sign_rsa_message(message)?;
+        let signature = keychain.sign_rsa_message(message, None)?;
 
         // Verify the signature - should succeed
         let is_valid = keychain.verify_rsa_signature(&rsa_pub_key, message, &signature)?;
@@ -450,7 +454,7 @@ mod tests {
         let rsa_pub_key = keychain.get_rsa_public_key()?;
 
         // Sign the original message
-        let signature = keychain.sign_rsa_message(original_message)?;
+        let signature = keychain.sign_rsa_message(original_message, None)?;
 
         // Verify the signature with the tampered message - should fail
         let is_valid = keychain.verify_rsa_signature(&rsa_pub_key, tampered_message, &signature)?;
@@ -471,14 +475,13 @@ mod tests {
         // Test message
         let message = b"Hello, this is a test message for RSA signature verification!";
 
-        // Generate a different RSA keypair for testing
         let rng = &mut thread_rng();
-        let wrong_pub_key = keychain
-            .key_manager
-            .generate_rsa_keypair(rng, RSA_KEY_INDEX + 1)?;
+
+        // Generate a different RSA keypair for testing
+        let wrong_pub_key = keychain.key_manager.generate_rsa_keypair(rng)?;
 
         // Sign the message using the default RSA key (RSA_KEY_INDEX)
-        let signature = keychain.sign_rsa_message(message)?;
+        let signature = keychain.sign_rsa_message(message, None)?;
 
         // Verify the signature with the wrong public key - should fail
         let is_valid = keychain.verify_rsa_signature(&wrong_pub_key, message, &signature)?;
@@ -544,7 +547,7 @@ mod tests {
         let rsa_pub_key = keychain.get_rsa_public_key()?;
 
         // Sign the empty message
-        let signature = keychain.sign_rsa_message(message)?;
+        let signature = keychain.sign_rsa_message(message, None)?;
 
         // Verify the signature - should succeed even with empty message
         let is_valid = keychain.verify_rsa_signature(&rsa_pub_key, message, &signature)?;
