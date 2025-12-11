@@ -257,8 +257,9 @@ pub trait ProtocolHandler {
                 {
                     let sigs = witness.winternitz()?;
                     info!(
-                        "Winternitz signature found in witness for key: {}",
-                        k.name()
+                        "Winternitz signature found in witness for key: {}, with msg: {}",
+                        k.name(),
+                        hex::encode(sigs.message_bytes())
                     );
                     wots_sigs.push(sigs);
                 } else {

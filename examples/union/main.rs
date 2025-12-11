@@ -988,7 +988,7 @@ pub fn challenge(
         let set_input_1 = VariableTypes::Input(hex::decode(data).unwrap());
         member
             .bitvmx
-            .set_var(drp_pid, &program_input(input_pos), set_input_1)?;
+            .set_var(drp_pid, &program_input(input_pos, None), set_input_1)?;
     }
 
     if should_wait {

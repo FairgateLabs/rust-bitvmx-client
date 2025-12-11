@@ -1,12 +1,3 @@
-use bitcoin::Txid;
-use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
-use bitvmx_cpu_definitions::{memory::MemoryWitness, trace::*};
-use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
-use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
-use console::style;
-use emulator::decision::nary_search::NArySearchType;
-use tracing::info;
-
 use crate::{
     bitvmx::Context,
     errors::BitVMXError,
@@ -18,10 +9,11 @@ use crate::{
                 action_wins, action_wins_prefix,
                 challenge::READ_VALUE_NARY_SEARCH_CHALLENGE,
                 config::{ConfigResults, DisputeConfiguration},
-                input_handler::{get_txs_configuration, unify_inputs, unify_witnesses},
-                input_tx_name, timeout_input_tx, timeout_tx, DisputeResolutionProtocol, CHALLENGE,
-                CHALLENGE_READ, COMMITMENT, EXECUTE, INPUT_TX, PROVER_WINS, START_CH, TRACE_VARS,
-                VERIFIER_FINAL, VERIFIER_WINS,
+                input_handler::{get_txs_configuration, set_input, unify_inputs, unify_witnesses},
+                input_tx_name, program_input, timeout_input_tx, timeout_tx,
+                DisputeResolutionProtocol, CHALLENGE, CHALLENGE_READ, COMMITMENT, EXECUTE,
+                GET_HASHES_AND_STEP, INPUT_TX, POST_COMMITMENT, PRE_COMMITMENT, PROVER_WINS,
+                START_CH, TK_2NARY, TRACE_VARS, VERIFIER_FINAL, VERIFIER_WINS,
             },
             protocol_handler::ProtocolHandler,
         },
@@ -29,6 +21,14 @@ use crate::{
     },
     types::{ProgramContext, PROGRAM_TYPE_DRP},
 };
+use bitcoin::Txid;
+use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
+use bitvmx_cpu_definitions::{memory::MemoryWitness, trace::*};
+use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
+use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
+use console::style;
+use emulator::decision::nary_search::NArySearchType;
+use tracing::info;
 
 fn dispatch_timeout_tx(
     drp: &DisputeResolutionProtocol,
@@ -36,6 +36,7 @@ fn dispatch_timeout_tx(
     name: &str,
     current_height: u32,
 ) -> Result<(), BitVMXError> {
+    info!("Dispatching timeout tx: {}", name);
     let params = program_context
         .globals
         .get_var(&drp.ctx.id, name)?
@@ -61,34 +62,99 @@ fn dispatch_timeout_tx(
     Ok(())
 }
 
+#[derive(Debug, Clone)]
+pub enum TimeoutType {
+    Timeout(String),
+    TimeoutInput(String),
+}
+
+impl TimeoutType {
+    pub fn timeout<S: Into<String>>(s: S) -> Self {
+        TimeoutType::Timeout(s.into())
+    }
+
+    pub fn timeout_input<S: Into<String>>(s: S) -> Self {
+        TimeoutType::TimeoutInput(s.into())
+    }
+
+    pub fn is_input(&self) -> bool {
+        matches!(self, TimeoutType::TimeoutInput(_))
+    }
+
+    pub fn name(&self) -> String {
+        match self {
+            TimeoutType::Timeout(name) => name.to_string(),
+            TimeoutType::TimeoutInput(name) => name.to_string(),
+        }
+    }
+}
+
 // When I see [tx_name], and vout is [has_vout],
 // if I'm [role], then I dispatch
-// [is_input] ? timeout_input_tx[timeout_name] : timeout_tx[timeout_name].#[derive(Debug, Clone)]
+// timeout_type[timeout_name].
+#[derive(Debug, Clone)]
 pub struct TimeoutDispatchRule {
     pub tx_name: String,
     pub has_vout: bool,
-    pub role: ParticipantRole,
-    pub timeout_name: String,
+    pub my_role: ParticipantRole,
+    pub timeout: TimeoutType,
     pub apply_timeout: bool,
-    pub is_input: bool,
 }
 
 impl TimeoutDispatchRule {
     pub fn new(
         tx_name: &str,
         has_vout: bool,
-        role: ParticipantRole,
-        timeout_name: &str,
+        my_role: ParticipantRole,
+        timeout: TimeoutType,
         apply_timeout: bool,
-        is_input: bool,
     ) -> Self {
         Self {
             tx_name: tx_name.to_string(),
             has_vout,
-            role,
-            timeout_name: timeout_name.to_string(),
+            my_role,
+            timeout,
             apply_timeout,
-            is_input,
+        }
+    }
+    pub fn new_without_vout(tx_name: &str, my_role: ParticipantRole, timeout: TimeoutType) -> Self {
+        Self {
+            tx_name: tx_name.to_string(),
+            has_vout: false,
+            my_role,
+            timeout,
+            apply_timeout: true,
+        }
+    }
+    pub fn new_not_apply_not_vout(
+        tx_name: &str,
+        my_role: ParticipantRole,
+        timeout: TimeoutType,
+    ) -> Self {
+        Self {
+            tx_name: tx_name.to_string(),
+            has_vout: false,
+            my_role,
+            timeout,
+            apply_timeout: false,
+        }
+    }
+    pub fn new_prover_without_vout(tx_name: &str, timeout: TimeoutType) -> Self {
+        Self {
+            tx_name: tx_name.to_string(),
+            has_vout: false,
+            my_role: ParticipantRole::Prover,
+            timeout,
+            apply_timeout: true,
+        }
+    }
+    pub fn new_verifier_without_vout(tx_name: &str, timeout: TimeoutType) -> Self {
+        Self {
+            tx_name: tx_name.to_string(),
+            has_vout: false,
+            my_role: ParticipantRole::Verifier,
+            timeout,
+            apply_timeout: true,
         }
     }
 }
@@ -101,58 +167,193 @@ impl TimeoutDispatchTable {
     pub fn new(rules: Vec<TimeoutDispatchRule>) -> Self {
         Self { rules }
     }
-    pub fn new_predefined(first_2nd_nary_prover_tx: &str, last_2nd_nary_verifier_tx: &str) -> Self {
-        Self {
-            rules: vec![
-                TimeoutDispatchRule::new(EXECUTE, false, Prover, CHALLENGE, true, false),
-                TimeoutDispatchRule::new(CHALLENGE, false, Prover, CHALLENGE, true, true),
-                TimeoutDispatchRule::new(EXECUTE, false, Verifier, EXECUTE, true, true),
-                TimeoutDispatchRule::new(
-                    CHALLENGE,
-                    false,
-                    Verifier,
-                    first_2nd_nary_prover_tx,
-                    false,
-                    false,
-                ),
-                TimeoutDispatchRule::new(
-                    last_2nd_nary_verifier_tx,
-                    false,
-                    Prover,
-                    CHALLENGE_READ,
-                    true,
-                    false,
-                ),
-                TimeoutDispatchRule::new(CHALLENGE_READ, false, Prover, CHALLENGE_READ, true, true),
-            ],
+    pub fn new_predefined(rounds: u8, n_inputs: u32) -> Self {
+        assert_ne!(rounds, 0);
+        assert_ne!(n_inputs, 0); // Inputs should be at least 1
+
+        let last_tx_first_nary = &format!("NARY_VERIFIER_{}", rounds);
+        let last_tx_second_nary = &format!("NARY2_VERIFIER_{}", rounds);
+        let to_second_nary = TimeoutType::timeout("NARY2_PROVER_2_TO");
+
+        let mut table = TimeoutDispatchTable::new(vec![]);
+
+        for i in 1..n_inputs {
+            let role = if i % 2 == 1 { Verifier } else { Prover }; //TODO: make it configurable
+            table.add_classic_to(&input_tx_name(i - 1), &input_tx_name(i), role);
+        }
+        table.add_classic_to(&input_tx_name(n_inputs - 1), PRE_COMMITMENT, Prover);
+        table.add_classic_to(PRE_COMMITMENT, COMMITMENT, Verifier);
+        table.add_classic_to(COMMITMENT, POST_COMMITMENT, Prover);
+        table.add_classic_to(POST_COMMITMENT, "NARY_PROVER_1", Verifier);
+        table.add_nary_search_table("NARY", 1, rounds);
+        table.add_classic_to(last_tx_first_nary, EXECUTE, Verifier);
+        table.add_classic_to(EXECUTE, CHALLENGE, Prover);
+        table.add_verifier_without_vout(EXECUTE, TimeoutType::timeout_input(EXECUTE));
+        table.add_not_apply_not_vout(CHALLENGE, Verifier, to_second_nary);
+        table.add_nary_search_table("NARY2", 2, rounds);
+        table.add_classic_to(&last_tx_second_nary, CHALLENGE_READ, Prover);
+        table
+    }
+
+    fn add_nary_search_table(&mut self, nary_type: &str, start_round: u8, total_rounds: u8) {
+        for round in start_round..=total_rounds {
+            let prover = format!("{}_PROVER_{}", nary_type, round);
+            let verifier = format!("{}_VERIFIER_{}", nary_type, round);
+            let next_prover = format!("{}_PROVER_{}", nary_type, round + 1);
+
+            self.add_classic_to(&prover, &verifier, Prover);
+            if round < total_rounds {
+                // If not the last round
+                self.add_classic_to(&verifier, &next_prover, Verifier);
+            }
         }
     }
+
     pub fn add_rule(&mut self, rule: TimeoutDispatchRule) {
         self.rules.push(rule);
     }
+    pub fn add_without_vout(
+        &mut self,
+        tx_name: &str,
+        my_role: ParticipantRole,
+        timeout: TimeoutType,
+    ) {
+        self.rules.push(TimeoutDispatchRule::new_without_vout(
+            tx_name, my_role, timeout,
+        ));
+    }
+    pub fn add_not_apply_not_vout(
+        &mut self,
+        tx_name: &str,
+        my_role: ParticipantRole,
+        timeout: TimeoutType,
+    ) {
+        self.rules.push(TimeoutDispatchRule::new_not_apply_not_vout(
+            tx_name, my_role, timeout,
+        ));
+    }
+    pub fn add_prover_without_vout(&mut self, tx_name: &str, timeout: TimeoutType) {
+        self.rules
+            .push(TimeoutDispatchRule::new_prover_without_vout(
+                tx_name, timeout,
+            ));
+    }
+    pub fn add_verifier_without_vout(&mut self, tx_name: &str, timeout: TimeoutType) {
+        self.rules
+            .push(TimeoutDispatchRule::new_verifier_without_vout(
+                tx_name, timeout,
+            ));
+    }
+    fn add_classic_to(&mut self, prev_tx: &str, next_tx: &str, role: ParticipantRole) {
+        self.add_without_vout(
+            prev_tx,
+            role.clone(),
+            TimeoutType::Timeout(next_tx.to_string()),
+        );
+        self.add_without_vout(
+            next_tx,
+            role,
+            TimeoutType::TimeoutInput(next_tx.to_string()),
+        );
+    }
     pub fn iter(
         &self,
-    ) -> impl Iterator<Item = (&String, &bool, &ParticipantRole, &String, &bool, &bool)> {
+    ) -> impl Iterator<Item = (&String, &bool, &ParticipantRole, &TimeoutType, &bool)> {
         self.rules.iter().map(|r| {
             (
                 &r.tx_name,
                 &r.has_vout,
-                &r.role,
-                &r.timeout_name,
+                &r.my_role,
+                &r.timeout,
                 &r.apply_timeout,
-                &r.is_input,
             )
         })
     }
+    pub fn visualize(&self) {
+        let headers = [
+            "Tx name",
+            "Timeout string",
+            "Timeout type",
+            "Role",
+            "Has vout",
+            "Apply timeout",
+        ];
+        let sep = " | ";
+
+        // Collect column strings in desired order
+        let mut cols: Vec<Vec<String>> = vec![Vec::new(); headers.len()];
+        for r in &self.rules {
+            let (timeout_type, timeout_str) = match &r.timeout {
+                TimeoutType::Timeout(s) => ("Timeout", s.clone()),
+                TimeoutType::TimeoutInput(s) => ("TimeoutInput", s.clone()),
+            };
+
+            cols[0].push(r.tx_name.clone());
+            cols[1].push(timeout_str);
+            cols[2].push(timeout_type.to_string());
+            cols[3].push(format!("{:?}", r.my_role));
+            cols[4].push(format!("{}", r.has_vout));
+            cols[5].push(format!("{}", r.apply_timeout));
+        }
+
+        // Compute column widths (based on header and content)
+        let mut widths: Vec<usize> = headers.iter().map(|h| h.len()).collect();
+        for (i, col) in cols.iter().enumerate() {
+            for cell in col {
+                widths[i] = widths[i].max(cell.len());
+            }
+        }
+
+        // Build header
+        let header_line = headers
+            .iter()
+            .enumerate()
+            .map(|(i, h)| format!("{:width$}", h, width = widths[i]))
+            .collect::<Vec<_>>()
+            .join(sep);
+
+        let total_width = header_line.len();
+        let mut output = String::new();
+
+        output.push_str(&format!("{}\n", header_line));
+        output.push_str(&format!("{}\n", "-".repeat(total_width)));
+
+        // Rows
+        for r in &self.rules {
+            let (timeout_type, timeout_str) = match &r.timeout {
+                TimeoutType::Timeout(s) => ("Timeout", s.clone()),
+                TimeoutType::TimeoutInput(s) => ("TimeoutInput", s.clone()),
+            };
+
+            let cells = [
+                &r.tx_name,
+                &timeout_str,
+                timeout_type,
+                &format!("{:?}", r.my_role),
+                &format!("{}", r.has_vout),
+                &format!("{}", r.apply_timeout),
+            ];
+
+            let row = cells
+                .iter()
+                .enumerate()
+                .map(|(i, c)| format!("{:width$}", c, width = widths[i]))
+                .collect::<Vec<_>>()
+                .join(sep);
+            output.push_str(&format!("{}\n", row));
+        }
+
+        info!("\n{}", output);
+    }
 }
 
-fn get_timeout_name(name: &str, apply_timeout: bool, is_input: bool) -> String {
+fn get_timeout_name(timeout: &TimeoutType, apply_timeout: bool) -> String {
     if !apply_timeout {
-        name.to_string()
-    } else if is_input {
-        timeout_input_tx(name)
+        timeout.name()
+    } else if timeout.is_input() {
+        timeout_input_tx(&timeout.name())
     } else {
-        timeout_tx(name)
+        timeout_tx(&timeout.name())
     }
 }
 
@@ -164,12 +365,12 @@ fn auto_dispatch_timeout(
     current_height: u32,
     timeout_table: &TimeoutDispatchTable,
 ) -> Result<(), BitVMXError> {
-    for (tx_name, tx_vout, tx_role, timeout_name, not_ignore, is_input) in timeout_table.iter() {
+    for (tx_name, tx_vout, tx_role, timeout, not_ignore) in timeout_table.iter() {
         if *tx_name == name && *tx_role == drp.role() && *tx_vout == (vout.is_some()) {
             dispatch_timeout_tx(
                 drp,
                 program_context,
-                &get_timeout_name(&timeout_name, *not_ignore, *is_input),
+                &get_timeout_name(&timeout, *not_ignore),
                 current_height,
             )?;
         }
@@ -182,26 +383,35 @@ fn cancel_timeout(
     name: &str,
     vout: Option<u32>,
     program_context: &ProgramContext,
+    timeout_table: &TimeoutDispatchTable,
 ) -> Result<(), BitVMXError> {
-    let cancel = match name {
-        EXECUTE => drp.role() == ParticipantRole::Verifier,
-        CHALLENGE => drp.role() == ParticipantRole::Prover,
-        CHALLENGE_READ => drp.role() == ParticipantRole::Prover,
-        _ => false,
-    };
+    let cancel = timeout_table
+        .iter()
+        .any(|(_tx_name, _tx_vout, tx_role, timeout, _not_ignore)| {
+            timeout.name().trim_end_matches("_TO") == name && *tx_role == drp.role()
+        });
 
     if cancel {
         let tx_to_cancel = if vout.is_none() {
-            timeout_tx(name)
+            &timeout_tx(name)
         } else {
-            timeout_input_tx(name)
+            &timeout_input_tx(name)
         };
-        info!("Cancel timeout tx: {}", tx_to_cancel);
-        let tx_id = drp.get_transaction_id_by_name(&tx_to_cancel)?;
-        program_context.bitcoin_coordinator.cancel(
-            bitcoin_coordinator::TypesToMonitor::Transactions(vec![tx_id], String::default()),
-        )?;
+        cancel_to_tx(drp, program_context, tx_to_cancel)?;
     }
+    Ok(())
+}
+
+fn cancel_to_tx(
+    drp: &DisputeResolutionProtocol,
+    program_context: &ProgramContext,
+    tx_to_cancel: &str,
+) -> Result<(), BitVMXError> {
+    info!("Cancel timeout tx: {}", tx_to_cancel);
+    let tx_id = drp.get_transaction_id_by_name(&tx_to_cancel)?;
+    program_context.bitcoin_coordinator.cancel(
+        bitcoin_coordinator::TypesToMonitor::Transactions(vec![tx_id], String::default()),
+    )?;
     Ok(())
 }
 
@@ -227,8 +437,8 @@ fn auto_claim_start(
     if vout.is_some() {
         return Ok(());
     }
-    for (_, _, tx_role, timeout_name, not_ignore, is_input) in timeout_table.iter() {
-        let timeout_name = get_timeout_name(timeout_name, *not_ignore, *is_input);
+    for (_, _, tx_role, timeout, not_ignore) in timeout_table.iter() {
+        let timeout_name = get_timeout_name(timeout, *not_ignore);
         if &timeout_name == name && *tx_role == drp.role() {
             let claim_name = ClaimGate::tx_start(get_claim_name(drp, false));
             let tx = drp.get_signed_tx(program_context, &claim_name, 0, 0, false, 0)?;
@@ -385,12 +595,30 @@ pub fn handle_tx_news(
 
     let config = DisputeConfiguration::load(&drp.ctx.id, &program_context.globals)?;
 
-    cancel_timeout(drp, &name, vout, program_context)?;
+    let rounds = drp
+        .get_program_definition(program_context)?
+        .0
+        .nary_def()
+        .total_rounds();
+
+    let n_inputs = {
+        let inputs = program_context
+            .globals
+            .get_var(&drp.ctx.id, "input_txs")?
+            .unwrap()
+            .vec_string()?;
+        inputs
+            .iter()
+            .filter(|owner| owner.as_str() != "skip" && owner.as_str() != "prover_prev")
+            .count() as u32
+    };
+
+    let timeout_table = TimeoutDispatchTable::new_predefined(rounds, n_inputs);
+    // timeout_table.visualize();
+
+    cancel_timeout(drp, &name, vout, program_context, &timeout_table)?;
 
     let timelock_blocks = config.timelock_blocks;
-
-    let timeout_table =
-        TimeoutDispatchTable::new_predefined("NARY2_PROVER_2_TO", "NARY2_VERIFIER_4"); //TODO: obtain from globals?
 
     auto_dispatch_timeout(
         drp,
@@ -444,29 +672,8 @@ pub fn handle_tx_news(
 
         let owner = input_txs[idx as usize].as_str();
 
-        if owner == drp.role().to_string() {
-            //if I'm the prover and it's the last input
-            if drp.role() == ParticipantRole::Prover && idx == last_tx_id {
-                let (def, program_definition) = drp.get_program_definition(program_context)?;
-                let full_input = unify_inputs(&drp.ctx.id, program_context, &def)?;
-
-                let execution_path = drp.get_execution_path()?;
-                let msg = serde_json::to_string(&DispatcherJob {
-                    job_id: drp.ctx.id.to_string(),
-                    job_type: EmulatorJobType::ProverExecute(
-                        program_definition,
-                        full_input,
-                        execution_path.clone(),
-                        format!("{}/{}", execution_path, "execution.json").to_string(),
-                        fail_force_config.main.fail_config_prover.clone(),
-                    ),
-                })?;
-                program_context
-                    .broker_channel
-                    .send(&program_context.components_config.emulator, msg)?;
-            }
-        } else {
-            //if it's not my input, decode the witness
+        // decode the witness
+        if owner != drp.role().to_string() {
             drp.decode_witness_from_speedup(
                 tx_id,
                 vout.unwrap(),
@@ -475,9 +682,75 @@ pub fn handle_tx_news(
                 &tx_status.tx,
                 None,
             )?;
-
             unify_witnesses(&drp.ctx.id, program_context, idx as usize)?;
         }
+
+        if drp.role() == ParticipantRole::Prover && idx != last_tx_id as u32 {
+            let (def, _program_definition) = drp.get_program_definition(program_context)?;
+            let full_input = unify_inputs(&drp.ctx.id, program_context, &def)?;
+            for (i, input_chunk) in full_input.chunks(4).enumerate() {
+                // It is assumed that each input chunk is 4 bytes
+                set_input(
+                    &drp.ctx.id,
+                    program_context,
+                    &program_input(i as u32, Some(&ParticipantRole::Prover)),
+                    input_chunk.to_vec(),
+                )?;
+            }
+            let (tx, sp) =
+                drp.get_tx_with_speedup_data(program_context, &input_tx_name(idx + 1), 0, 0, true)?;
+            program_context.bitcoin_coordinator.dispatch(
+                tx,
+                Some(sp),
+                Context::ProgramId(drp.ctx.id).to_string()?,
+                None,
+            )?;
+        }
+        if idx == last_tx_id as u32 {
+            //if it's the last input
+            if drp.role() == ParticipantRole::Verifier {
+                let (tx, sp) =
+                    drp.get_tx_with_speedup_data(program_context, PRE_COMMITMENT, 0, 0, true)?;
+                program_context.bitcoin_coordinator.dispatch(
+                    tx,
+                    Some(sp),
+                    Context::ProgramId(drp.ctx.id).to_string()?,
+                    None,
+                )?;
+            } else {
+                //Prover
+                let (def, _program_definition) = drp.get_program_definition(program_context)?;
+                let full_input = unify_inputs(&drp.ctx.id, program_context, &def)?;
+                program_context.globals.set_var(
+                    &drp.ctx.id,
+                    "full_input",
+                    VariableTypes::Input(full_input.clone()),
+                )?;
+            }
+        }
+    }
+
+    if name == PRE_COMMITMENT && drp.role() == ParticipantRole::Prover && vout.is_some() {
+        let (_def, program_definition) = drp.get_program_definition(program_context)?;
+        let execution_path = drp.get_execution_path()?;
+        let full_input = program_context
+            .globals
+            .get_var(&drp.ctx.id, "full_input")?
+            .unwrap()
+            .input()?;
+        let msg = serde_json::to_string(&DispatcherJob {
+            job_id: drp.ctx.id.to_string(),
+            job_type: EmulatorJobType::ProverExecute(
+                program_definition,
+                full_input,
+                execution_path.clone(),
+                format!("{}/{}", execution_path, "execution.json").to_string(),
+                fail_force_config.main.fail_config_prover.clone(),
+            ),
+        })?;
+        program_context
+            .broker_channel
+            .send(&program_context.components_config.emulator, msg)?;
     }
 
     if name == COMMITMENT && drp.role() == ParticipantRole::Verifier && vout.is_some() {
@@ -527,9 +800,18 @@ pub fn handle_tx_news(
         program_context
             .broker_channel
             .send(&program_context.components_config.emulator, msg)?;
+
+        let (tx, sp) =
+            drp.get_tx_with_speedup_data(program_context, POST_COMMITMENT, 0, 0, true)?;
+        program_context.bitcoin_coordinator.dispatch(
+            tx,
+            Some(sp),
+            Context::ProgramId(drp.ctx.id).to_string()?,
+            None,
+        )?;
     }
 
-    if (name == COMMITMENT || name.starts_with("NARY_VERIFIER")) && vout.is_some() {
+    if (name == POST_COMMITMENT || name.starts_with("NARY_VERIFIER")) && vout.is_some() {
         let round = name
             .strip_prefix("NARY_VERIFIER_")
             .unwrap_or("0")
@@ -544,8 +826,8 @@ pub fn handle_tx_news(
             &tx_status,
             current_height,
             &fail_force_config,
-            "selection_bits",
-            COMMITMENT,
+            "verifier_selection_bits",
+            POST_COMMITMENT,
             EXECUTE,
             0,
             round,
@@ -597,12 +879,16 @@ pub fn handle_tx_news(
 
         let mut values = std::collections::HashMap::new();
 
-        for (name, _) in TRACE_VARS.iter() {
+        let trace_vars = TRACE_VARS
+            .get()
+            .expect("TRACE_VARS not initialized")
+            .read()?;
+        for (name, _) in trace_vars.iter() {
             if *name == "prover_witness" {
                 continue;
             }
             if let Some(value) = program_context.witness.get_witness(&drp.ctx.id, name)? {
-                values.insert(*name, value.winternitz().unwrap().message_bytes());
+                values.insert(name.clone(), value.winternitz().unwrap().message_bytes());
             } else {
                 return Err(BitVMXError::VariableNotFound(drp.ctx.id, name.to_string()));
             }
@@ -615,6 +901,9 @@ pub fn handle_tx_news(
         }
         fn to_u64(bytes: &[u8]) -> u64 {
             u64::from_be_bytes(bytes.try_into().expect("Expected 8 bytes for u64"))
+        }
+        fn to_hex(bytes: &[u8]) -> String {
+            hex::encode(bytes)
         }
 
         let step_number = to_u64(&values["prover_step_number"]);
@@ -642,8 +931,19 @@ pub fn handle_tx_news(
             to_u8(&values["prover_write_micro"]),
         );
         let trace_step = TraceStep::new(trace_write, program_counter);
-        let witness = None; //TODO: get the witness from the context?
+        let witness = program_context
+            .witness
+            .get_witness(&drp.ctx.id, "prover_witness")
+            .ok()
+            .flatten()
+            .map(|witness| {
+                let bytes = witness.winternitz().unwrap().message_bytes();
+                to_u32(&bytes)
+            });
         let mem_witness = MemoryWitness::from_byte(to_u8(&values["prover_mem_witness"]));
+        let prover_step_hash = to_hex(&values["prover_step_hash_tk"]);
+        let prover_next_hash = to_hex(&values["prover_next_hash_tk"]);
+        let _conflict_step = to_u64(&values["prover_conflict_step_tk"]);
 
         let final_trace = TraceRWStep::new(
             step_number,
@@ -660,6 +960,8 @@ pub fn handle_tx_news(
                 pdf,
                 execution_path.clone(),
                 final_trace,
+                prover_step_hash,
+                prover_next_hash,
                 format!("{}/{}", execution_path, "execution.json").to_string(),
                 fail_force_config.main.fail_config_verifier.clone(),
                 fail_force_config.main.force_challenge.clone(),
@@ -707,12 +1009,12 @@ pub fn handle_tx_news(
                             BitVMXError::VariableNotFound(drp.ctx.id, bits_name.to_string())
                         })?;
                     let bytes = witness.winternitz()?.message_bytes();
-
                     info!(
                         "Challenge will be extended with a 2nd nary search. {bits_name} are {:?}",
                         bytes
                     );
-
+                    assert_eq!(bytes.len(), 1);
+                    let selection_bits = bytes[0] as u32;
                     handle_nary_verifier(
                         &name,
                         drp,
@@ -722,10 +1024,10 @@ pub fn handle_tx_news(
                         &tx_status,
                         current_height,
                         &fail_force_config,
-                        "selection_bits2",
+                        "verifier_selection_bits2",
                         CHALLENGE,
                         CHALLENGE_READ,
-                        bytes[0],
+                        selection_bits,
                         1, // round 2
                         NArySearchType::ReadValueChallenge,
                     )?;
@@ -758,7 +1060,7 @@ pub fn handle_tx_news(
             &tx_status,
             current_height,
             &fail_force_config,
-            "selection_bits2",
+            "verifier_selection_bits2",
             CHALLENGE,
             CHALLENGE_READ,
             0, // Will be ignored
@@ -781,6 +1083,56 @@ pub fn handle_tx_news(
             "prover_hash2",
             NArySearchType::ReadValueChallenge,
         )?;
+    }
+
+    if GET_HASHES_AND_STEP == name && drp.role() == ParticipantRole::Verifier && vout.is_some() {
+        drp.decode_witness_from_speedup(
+            tx_id,
+            vout.unwrap(),
+            &name,
+            program_context,
+            &tx_status.tx,
+            None,
+        )?;
+        let (_program_definition, pdf) = drp.get_program_definition(program_context)?;
+        let execution_path = drp.get_execution_path()?;
+
+        let mut values = std::collections::HashMap::new();
+
+        let trace_vars = TK_2NARY.get().expect("TK_2NARY not initialized").read()?;
+        for (name, _) in trace_vars.iter() {
+            if let Some(value) = program_context.witness.get_witness(&drp.ctx.id, name)? {
+                values.insert(name.clone(), value.winternitz().unwrap().message_bytes());
+            } else {
+                return Err(BitVMXError::VariableNotFound(drp.ctx.id, name.to_string()));
+            }
+        }
+        fn to_u64(bytes: &[u8]) -> u64 {
+            u64::from_be_bytes(bytes.try_into().expect("Expected 8 bytes for u64"))
+        }
+        fn to_hex(bytes: &[u8]) -> String {
+            hex::encode(bytes)
+        }
+
+        let prover_step_hash = to_hex(&values["prover_step_hash_tk2"]);
+        let prover_next_hash = to_hex(&values["prover_next_hash_tk2"]);
+        let _prover_write_step = to_u64(&values["prover_write_step_tk2"]);
+
+        let msg = serde_json::to_string(&DispatcherJob {
+            job_id: drp.ctx.id.to_string(),
+            job_type: EmulatorJobType::VerifierChooseChallengeForReadChallenge(
+                pdf,
+                execution_path.clone(),
+                format!("{}/{}", execution_path, "execution.json").to_string(),
+                prover_step_hash,
+                prover_next_hash,
+                fail_force_config.read.fail_config_verifier.clone(),
+                fail_force_config.read.force_challenge.clone(),
+            ),
+        })?;
+        program_context
+            .broker_channel
+            .send(&program_context.components_config.emulator, msg)?;
     }
 
     if name == CHALLENGE_READ && drp.role() == ParticipantRole::Prover && vout.is_some() {
@@ -836,7 +1188,7 @@ fn handle_nary_verifier(
     selection_bits: &str,             // "selection_bits"
     prev_name: &str,                  // COMMITMENT
     post_name: &str,                  // EXECUTE
-    decision_start_value: u8,         // 0
+    decision_start_value: u32,        // 0
     mut round: u32,                   // current round
     nary_search_type: NArySearchType, // ConflictStep
 ) -> Result<(), BitVMXError> {
@@ -872,8 +1224,8 @@ fn handle_nary_verifier(
                 .unwrap()
                 .winternitz()?
                 .message_bytes();
-            let bits = bits[0];
-            bits
+            assert!(bits.len() == 1);
+            bits[0] as u32
         };
 
         round += 1;
@@ -893,7 +1245,7 @@ fn handle_nary_verifier(
                     pdf,
                     execution_path.clone(),
                     round as u8,
-                    decision as u32,
+                    decision,
                     format!("{}/{}", execution_path, "execution.json").to_string(),
                     prover_config,
                     nary_search_type,
@@ -903,54 +1255,35 @@ fn handle_nary_verifier(
                 .broker_channel
                 .send(&program_context.components_config.emulator, msg)?;
         } else {
-            match nary_search_type {
-                NArySearchType::ConflictStep => {
-                    let msg = serde_json::to_string(&DispatcherJob {
-                        job_id: drp.ctx.id.to_string(),
-                        job_type: EmulatorJobType::ProverFinalTrace(
-                            pdf,
-                            execution_path.clone(),
-                            (decision + 1) as u32,
-                            format!("{}/{}", execution_path, "execution.json").to_string(),
-                            fail_force_config.main.fail_config_prover.clone(),
-                        ),
-                    })?;
-                    program_context
-                        .broker_channel
-                        .send(&program_context.components_config.emulator, msg)?;
-                }
-                NArySearchType::ReadValueChallenge => {
-                    info!("The dispute has ended after the 2nd n-ary search.");
-                    // TODO: implement transaction to end the dispute after the 2nd n-ary search
-                }
-            }
+            let msg = match nary_search_type {
+                NArySearchType::ConflictStep => serde_json::to_string(&DispatcherJob {
+                    job_id: drp.ctx.id.to_string(),
+                    job_type: EmulatorJobType::ProverFinalTrace(
+                        pdf,
+                        execution_path.clone(),
+                        (decision + 1) as u32,
+                        format!("{}/{}", execution_path, "execution.json").to_string(),
+                        fail_force_config.main.fail_config_prover.clone(),
+                    ),
+                })?,
+                NArySearchType::ReadValueChallenge => serde_json::to_string(&DispatcherJob {
+                    job_id: drp.ctx.id.to_string(),
+                    job_type: EmulatorJobType::ProverGetHashesAndStep(
+                        pdf,
+                        execution_path.clone(),
+                        (decision) as u32,
+                        format!("{}/{}", execution_path, "execution.json").to_string(),
+                        fail_force_config.read.fail_config_prover.clone(),
+                    ),
+                })?,
+            };
+            program_context
+                .broker_channel
+                .send(&program_context.components_config.emulator, msg)?;
         }
     } else {
         if round == nary.total_rounds() as u32 && nary_search_type == NArySearchType::ConflictStep {
             dispatch_timeout_tx(drp, program_context, &timeout_tx(post_name), current_height)?;
-        }
-        // TODO: this is a temporary solution to force the verifier to choose the challenge after the last n-ary search round
-        // After a transaction to end the dispute is implemented, this can be removed
-        if round == nary.total_rounds() as u32
-            && drp.role() == ParticipantRole::Verifier
-            && nary_search_type == NArySearchType::ReadValueChallenge
-        {
-            info!("Forcing the verifier to choose the challenge after the last n-ary search round");
-            let execution_path = drp.get_execution_path()?;
-            info!("Path is {execution_path}");
-            let msg = serde_json::to_string(&DispatcherJob {
-                job_id: drp.ctx.id.to_string(),
-                job_type: EmulatorJobType::VerifierChooseChallengeForReadChallenge(
-                    pdf,
-                    execution_path.clone(),
-                    format!("{}/{}", execution_path, "execution.json").to_string(),
-                    fail_force_config.read.fail_config_verifier.clone(),
-                    fail_force_config.read.force_challenge.clone(),
-                ),
-            })?;
-            program_context
-                .broker_channel
-                .send(&program_context.components_config.emulator, msg)?;
         }
     }
     Ok(())
@@ -979,9 +1312,9 @@ fn handle_nary_prover(
 
     let round = name
         .strip_prefix(strip_prefix)
-        .unwrap()
-        .parse::<u32>()
-        .unwrap();
+        .map(str::trim)
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(1);
 
     let (fail_config, current_round) = match nary_search_type {
         NArySearchType::ConflictStep => (
@@ -1006,7 +1339,7 @@ fn handle_nary_prover(
     let hashes_count = nary.hashes_for_round(round as u8);
     let execution_path = drp.get_execution_path()?;
 
-    let hashes: Vec<String> = (0..hashes_count)
+    let hashes: Vec<String> = (1..hashes_count + 1)
         .map(|h| {
             hex::encode(
                 program_context

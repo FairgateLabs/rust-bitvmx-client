@@ -18,6 +18,8 @@ use bitvmx_client::{
     program::{participant::CommsAddress, protocols::protocol_handler::external_fund_tx},
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
+use bitvmx_job_dispatcher::DispatcherHandler;
+use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use bitvmx_operator_comms::operator_comms::AllowList;
 use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
 use protocol_builder::{
@@ -27,6 +29,8 @@ use protocol_builder::{
 use std::sync::Once;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
+
+use crate::common::dispute::process_dispatcher_non_blocking;
 
 /// Number of blocks to mine initially in tests to ensure sufficient coin maturity
 pub const INITIAL_BLOCK_COUNT: u64 = 101;
@@ -261,7 +265,25 @@ pub fn mine_and_wait(
     instances: &mut Vec<BitVMX>,
     wallet: &Wallet,
 ) -> Result<Vec<OutgoingBitVMXApiMessages>> {
-    mine_and_wait_blocks(_bitcoin_client, channels, instances, wallet, 10)
+    mine_and_wait_blocks(_bitcoin_client, channels, instances, wallet, 10, None)
+}
+
+pub fn mine_and_wait_with_dispatcher(
+    _bitcoin_client: &BitcoinClient,
+    channels: &Vec<DualChannel>,
+    instances: &mut Vec<BitVMX>,
+    wallet: &Wallet,
+    dispatchers: &mut Vec<DispatcherHandler<EmulatorJobType>>,
+    multiple_dispatcher_tries: bool,
+) -> Result<Vec<OutgoingBitVMXApiMessages>> {
+    mine_and_wait_blocks(
+        _bitcoin_client,
+        channels,
+        instances,
+        wallet,
+        10,
+        Some((dispatchers, multiple_dispatcher_tries)),
+    )
 }
 
 pub fn mine_and_wait_blocks(
@@ -270,10 +292,20 @@ pub fn mine_and_wait_blocks(
     instances: &mut Vec<BitVMX>,
     wallet: &Wallet,
     blocks: u32,
+    dispatchers: Option<(&mut Vec<DispatcherHandler<EmulatorJobType>>, bool)>,
 ) -> Result<Vec<OutgoingBitVMXApiMessages>> {
     //MINE AND WAIT
     let iters = blocks * 10;
+    let (dispatchers, multiple_tries) = match dispatchers {
+        Some((d, t)) => (d, t),
+        None => (&mut vec![], false),
+    };
+    let mut result = false;
+    wallet.mine(blocks as u64)?;
     for i in 0..iters {
+        if dispatchers.len() > 0 && (!result || multiple_tries) {
+            result = process_dispatcher_non_blocking(dispatchers, instances)?;
+        }
         if i % 10 == 0 {
             wallet.mine(1)?;
         }

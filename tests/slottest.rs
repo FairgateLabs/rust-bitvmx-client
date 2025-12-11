@@ -216,7 +216,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
         let lock_tx = "90531051d96babfc1fd5973ef01e5d69746be907654c0b99cf1a853206647906";
         let const_input_data = format!("{}{}", success, lock_tx);
         let const_input = VariableTypes::Input(hex::decode(const_input_data).unwrap())
-            .set_msg(dispute_id, &program_input(0))?;
+            .set_msg(dispute_id, &program_input(0, None))?;
         let _ = send_all(&sub_id_channel_pairs, &const_input);
 
         prepare_dispute(
@@ -294,6 +294,7 @@ pub fn test_slot(and_drp: bool) -> Result<()> {
             Some((gorth16proof, 3)),
             forced_challenge,
             false,
+            None,
         )?;
 
         //Consume other stops through timeout

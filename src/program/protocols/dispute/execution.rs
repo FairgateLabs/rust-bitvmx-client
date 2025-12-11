@@ -13,7 +13,7 @@ use crate::{
     program::{
         protocols::dispute::{
             challenge::get_challenge_leaf, input_handler::*, DisputeResolutionProtocol, CHALLENGE,
-            CHALLENGE_READ, COMMITMENT, EXECUTE,
+            CHALLENGE_READ, COMMITMENT, EXECUTE, GET_HASHES_AND_STEP,
         },
         variables::VariableTypes,
     },
@@ -44,7 +44,7 @@ pub fn execution_result(
             context.bitcoin_coordinator.dispatch(
                 tx,
                 Some(sp),
-                Context::ProgramId(*id).to_string()?,
+                Context::ProgramId(drp.ctx.id).to_string()?,
                 None,
             )?;
         }
@@ -78,7 +78,12 @@ pub fn execution_result(
 
             assert_eq!(save_round, *round);
             for (i, h) in hashes.iter().enumerate() {
-                set_input_hex(id, context, &format!("{}_{}_{}", prover_hash, round, i), h)?;
+                set_input_hex(
+                    id,
+                    context,
+                    &format!("{}_{}_{}", prover_hash, round, i + 1),
+                    h,
+                )?;
             }
             let (tx, sp) = drp.get_tx_with_speedup_data(
                 context,
@@ -106,9 +111,9 @@ pub fn execution_result(
 
             let (nary_verifier, selection_bits) =
                 if context.globals.get_var(id, "current_round2")?.is_some() {
-                    ("NARY2_VERIFIER", "selection_bits2") // 2nd n-ary search
+                    ("NARY2_VERIFIER", "verifier_selection_bits2") // 2nd n-ary search
                 } else {
-                    ("NARY_VERIFIER", "selection_bits") // 1st n-ary search
+                    ("NARY_VERIFIER", "verifier_selection_bits") // 1st n-ary search
                 };
 
             set_input_u8(
@@ -132,7 +137,12 @@ pub fn execution_result(
                 None,
             )?;
         }
-        EmulatorResultType::ProverFinalTraceResult { final_trace } => {
+        EmulatorResultType::ProverFinalTraceResult {
+            final_trace,
+            resigned_step_hash,
+            resigned_next_hash,
+            conflict_step,
+        } => {
             info!("Final trace: {:?}", final_trace);
 
             set_input_u32(
@@ -216,6 +226,9 @@ pub fn execution_result(
             if let Some(witness) = final_trace.witness {
                 set_input_u32(id, context, "prover_witness", witness)?;
             }
+            set_input_hex(id, context, "prover_step_hash_tk", resigned_step_hash)?;
+            set_input_hex(id, context, "prover_next_hash_tk", resigned_next_hash)?;
+            set_input_u64(id, context, "prover_conflict_step_tk", *conflict_step)?;
             let instruction = get_key_from_opcode(
                 final_trace.read_pc.opcode,
                 final_trace.read_pc.pc.get_micro(),
@@ -253,14 +266,50 @@ pub fn execution_result(
                 return Ok(());
             }
 
-            let name = match challenge {
-                ChallengeType::ReadValue { .. } | ChallengeType::CorrectHash { .. } => {
-                    CHALLENGE_READ
-                }
-                _ => CHALLENGE,
+            // Check if it's the second n-ary search to set next tx name
+            let second_nary_search = context
+                .globals
+                .get_var(id, "second-nary-search-started")?
+                .and_then(|v| v.bool().ok())
+                .unwrap_or(false);
+            if let ChallengeType::ReadValueNArySearch { .. } = challenge {
+                context.globals.set_var(
+                    id,
+                    "second-nary-search-started",
+                    VariableTypes::Bool(true),
+                )?;
+            }
+            let name = if second_nary_search {
+                CHALLENGE_READ
+            } else {
+                CHALLENGE
             };
+
             let (tx, sp) =
                 drp.get_tx_with_speedup_data(context, name, 0, leaf.unwrap() as u32, true)?;
+            context.bitcoin_coordinator.dispatch(
+                tx,
+                Some(sp),
+                Context::ProgramId(*id).to_string()?,
+                None,
+            )?;
+        }
+        EmulatorResultType::ProverGetHashesAndStepResult {
+            resigned_step_hash,
+            resigned_next_hash,
+            write_step,
+        } => {
+            info!(
+                "Prover got hashes and step result: {:?}, {:?}, {:?}",
+                resigned_step_hash, resigned_next_hash, write_step
+            );
+
+            set_input_hex(id, context, "prover_step_hash_tk2", resigned_step_hash)?;
+            set_input_hex(id, context, "prover_next_hash_tk2", resigned_next_hash)?;
+            set_input_u64(id, context, "prover_write_step_tk2", *write_step)?;
+            let (tx, sp) =
+                drp.get_tx_with_speedup_data(context, GET_HASHES_AND_STEP, 0, 0, true)?;
+
             context.bitcoin_coordinator.dispatch(
                 tx,
                 Some(sp),
