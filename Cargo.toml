@@ -32,25 +32,25 @@ bitcoincore-rpc = { version = "0.19.0" }
 bitcoin-script = { git = "https://github.com/FairgateLabs/rust-bitcoin-script/", branch = "bitvmx" }
 bitcoin-scriptexec = { git = "https://github.com/FairgateLabs/rust-bitcoin-scriptexec/", branch = "bitvmx" }
 
-bitvmx-key-manager = { git = "https://github.com/FairgateLabs/rust-bitvmx-key-manager.git", branch = "dev" }
-bitvmx-protocol-builder = { git = "https://github.com/FairgateLabs/rust-bitvmx-protocol-builder.git", branch = "keymanager-adapt" }
+bitvmx-key-manager = { git = "https://github.com/FairgateLabs/rust-bitvmx-key-manager.git", branch = "v.0.0.2" }
+bitvmx-protocol-builder = { git = "https://github.com/FairgateLabs/rust-bitvmx-protocol-builder.git", branch = "v.0.0.2" }
 bitcoin-coordinator = { git = "https://github.com/FairgateLabs/rust-bitcoin-coordinator.git", branch = "v.0.0.2" }
 bitvmx-operator-comms = { git = "https://github.com/FairgateLabs/rust-bitvmx-operator-comms.git", branch = "v.0.0.2" }
-rust-bitvmx-storage-backend = { git = "https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git", tag = "v0.1.1-review.1" }
+rust-bitvmx-storage-backend = { git = "https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git", branch = "v.0.0.2" }
 bitvmx-settings = { git = "https://github.com/FairgateLabs/rust-bitvmx-settings.git", branch = "v.0.0.2" }
 bitvmx-bitcoin-rpc = { git = "https://github.com/FairgateLabs/rust-bitvmx-bitcoin-rpc.git", branch = "v.0.0.2" }
 bitvmx-broker = { git = "https://github.com/FairgateLabs/rust-bitvmx-broker.git", branch = "v.0.0.2", features = [
     "storagebackend",
 ] }
-emulator = { git = "https://github.com/FairgateLabs/BitVMX-CPU", rev = "655926348d343a98454493474401e6dbc864a2e7" }
-bitcoin-script-riscv = { git = "https://github.com/FairgateLabs/BitVMX-CPU", rev = "655926348d343a98454493474401e6dbc864a2e7" }
-bitvmx-cpu-definitions = { git = "https://github.com/FairgateLabs/BitVMX-CPU", rev = "655926348d343a98454493474401e6dbc864a2e7" }
+emulator = { git = "https://github.com/FairgateLabs/BitVMX-CPU", branch = "v.0.0.2" }
+bitcoin-script-riscv = { git = "https://github.com/FairgateLabs/BitVMX-CPU", branch = "v.0.0.2" }
+bitvmx-cpu-definitions = { git = "https://github.com/FairgateLabs/BitVMX-CPU", branch = "v.0.0.2" }
 bitcoin-script-stack = { git = "https://github.com/FairgateLabs/rust-bitcoin-script-stack", features = [
     "interactive",
 ], branch = "v2" }
 
-bitvmx-wallet = { git = "https://github.com/FairgateLabs/rust-bitvmx-wallet.git", branch = "keymanager-adapt" }
-bitvmx-job-dispatcher-types = { git = "https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher", rev = "7f7afb0d30ad659fc61590c60c1b4109eacd501a", features = [
+bitvmx-wallet = { git = "https://github.com/FairgateLabs/rust-bitvmx-wallet.git", branch = "v.0.0.2" }
+bitvmx-job-dispatcher-types = { git = "https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher", branch = "v.0.0.2", features = [
     "emulator",
     "prover",
 ] }
