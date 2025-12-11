@@ -385,28 +385,33 @@ fn cancel_timeout(
     program_context: &ProgramContext,
     timeout_table: &TimeoutDispatchTable,
 ) -> Result<(), BitVMXError> {
-    if name.ends_with("_TO") {
-        // Timeout txs do not cancel other timeout txs
-        return Ok(());
-    }
     let cancel = timeout_table
         .iter()
         .any(|(_tx_name, _tx_vout, tx_role, timeout, _not_ignore)| {
-            timeout.name() == name && *tx_role == drp.role()
+            timeout.name().trim_end_matches("_TO") == name && *tx_role == drp.role()
         });
 
     if cancel {
         let tx_to_cancel = if vout.is_none() {
-            timeout_tx(name)
+            &timeout_tx(name)
         } else {
-            timeout_input_tx(name)
+            &timeout_input_tx(name)
         };
-        info!("Cancel timeout tx: {}", tx_to_cancel);
-        let tx_id = drp.get_transaction_id_by_name(&tx_to_cancel)?;
-        program_context.bitcoin_coordinator.cancel(
-            bitcoin_coordinator::TypesToMonitor::Transactions(vec![tx_id], String::default()),
-        )?;
+        cancel_to_tx(drp, program_context, tx_to_cancel)?;
     }
+    Ok(())
+}
+
+fn cancel_to_tx(
+    drp: &DisputeResolutionProtocol,
+    program_context: &ProgramContext,
+    tx_to_cancel: &str,
+) -> Result<(), BitVMXError> {
+    info!("Cancel timeout tx: {}", tx_to_cancel);
+    let tx_id = drp.get_transaction_id_by_name(&tx_to_cancel)?;
+    program_context.bitcoin_coordinator.cancel(
+        bitcoin_coordinator::TypesToMonitor::Transactions(vec![tx_id], String::default()),
+    )?;
     Ok(())
 }
 
