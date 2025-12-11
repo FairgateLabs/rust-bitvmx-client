@@ -13,7 +13,7 @@ use crate::{
     program::{
         protocols::dispute::{
             challenge::get_challenge_leaf, input_handler::*, DisputeResolutionProtocol, CHALLENGE,
-            CHALLENGE_READ, EXECUTE, GET_HASHES_AND_STEP,
+            CHALLENGE_READ, COMMITMENT, EXECUTE, GET_HASHES_AND_STEP,
         },
         variables::VariableTypes,
     },
@@ -40,7 +40,13 @@ pub fn execution_result(
 
             set_input_hex(id, context, "prover_last_hash", last_hash)?;
 
-            // Now the tx is sent in the tx_news when all inputs are ready
+            let (tx, sp) = drp.get_tx_with_speedup_data(context, COMMITMENT, 0, 0, true)?;
+            context.bitcoin_coordinator.dispatch(
+                tx,
+                Some(sp),
+                Context::ProgramId(drp.ctx.id).to_string()?,
+                None,
+            )?;
         }
         EmulatorResultType::VerifierCheckExecutionResult { step } => {
             info!("Verifier execution result: Step: {:?}", step);

@@ -719,35 +719,38 @@ pub fn handle_tx_news(
                 )?;
             } else {
                 //Prover
-                let (def, program_definition) = drp.get_program_definition(program_context)?;
+                let (def, _program_definition) = drp.get_program_definition(program_context)?;
                 let full_input = unify_inputs(&drp.ctx.id, program_context, &def)?;
-                info!("Full input: {:?}", full_input);
-                let execution_path = drp.get_execution_path()?;
-                let msg = serde_json::to_string(&DispatcherJob {
-                    job_id: drp.ctx.id.to_string(),
-                    job_type: EmulatorJobType::ProverExecute(
-                        program_definition,
-                        full_input,
-                        execution_path.clone(),
-                        format!("{}/{}", execution_path, "execution.json").to_string(),
-                        fail_force_config.main.fail_config_prover.clone(),
-                    ),
-                })?;
-                program_context
-                    .broker_channel
-                    .send(&program_context.components_config.emulator, msg)?;
+                program_context.globals.set_var(
+                    &drp.ctx.id,
+                    "full_input",
+                    VariableTypes::Input(full_input.clone()),
+                )?;
             }
         }
     }
 
     if name == PRE_COMMITMENT && drp.role() == ParticipantRole::Prover && vout.is_some() {
-        let (tx, sp) = drp.get_tx_with_speedup_data(program_context, COMMITMENT, 0, 0, true)?;
-        program_context.bitcoin_coordinator.dispatch(
-            tx,
-            Some(sp),
-            Context::ProgramId(drp.ctx.id).to_string()?,
-            None,
-        )?;
+        let (_def, program_definition) = drp.get_program_definition(program_context)?;
+        let execution_path = drp.get_execution_path()?;
+        let full_input = program_context
+            .globals
+            .get_var(&drp.ctx.id, "full_input")?
+            .unwrap()
+            .input()?;
+        let msg = serde_json::to_string(&DispatcherJob {
+            job_id: drp.ctx.id.to_string(),
+            job_type: EmulatorJobType::ProverExecute(
+                program_definition,
+                full_input,
+                execution_path.clone(),
+                format!("{}/{}", execution_path, "execution.json").to_string(),
+                fail_force_config.main.fail_config_prover.clone(),
+            ),
+        })?;
+        program_context
+            .broker_channel
+            .send(&program_context.components_config.emulator, msg)?;
     }
 
     if name == COMMITMENT && drp.role() == ParticipantRole::Verifier && vout.is_some() {
