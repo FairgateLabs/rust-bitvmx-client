@@ -376,6 +376,12 @@ impl BitVMX {
         let (version, msg_type, program_id, data, timestamp, signature) =
             deserialize_msg(msg.clone())?;
 
+        // Handle Broadcasted messages specially - they contain original messages to process recursively
+        if msg_type == CommsMessageType::Broadcasted {
+            return self
+                .process_broadcasted_message(identifier, program_id, data, timestamp, signature);
+        }
+
         let is_verification_msg = matches!(
             msg_type,
             CommsMessageType::VerificationKey | CommsMessageType::VerificationKeyRequest
@@ -1054,6 +1060,121 @@ impl BitVMX {
         );
 
         Ok(())
+    }
+
+    /// Process a BroadcastedMessage by recursively processing each original message
+    /// This function:
+    /// 1. Deserializes the BroadcastedMessage
+    /// 2. Validates the BroadcastedMessage structure
+    /// 3. Verifies the leader's signature (already done in process_msg)
+    /// 4. For each OriginalMessage:
+    ///    - Verifies the original message signature
+    ///    - Reconstructs the serialized message
+    ///    - Recursively calls process_msg to process the original message
+    fn process_broadcasted_message(
+        &mut self,
+        leader_identifier: Identifier,
+        program_id: Uuid,
+        data: Value,
+        _leader_timestamp: i64,
+        _leader_signature: Vec<u8>,
+    ) -> Result<(), BitVMXError> {
+        // Deserialize BroadcastedMessage from data
+        let broadcasted_msg: BroadcastedMessage =
+            serde_json::from_value(data.clone()).map_err(|e| {
+                error!("Failed to deserialize BroadcastedMessage: {:?}", e);
+                BitVMXError::InvalidMessageFormat
+            })?;
+
+        // Validate the BroadcastedMessage structure
+        broadcasted_msg.validate()?;
+
+        info!(
+            "Processing BroadcastedMessage from leader {} for context {} with {} original messages",
+            leader_identifier.pubkey_hash,
+            program_id,
+            broadcasted_msg.original_messages.len()
+        );
+
+        // Process each original message recursively
+        for original_msg in &broadcasted_msg.original_messages {
+            // Verify the original message signature
+            let original_verified = self.verify_original_message_signature(
+                &original_msg.sender_pubkey_hash,
+                &program_id,
+                &original_msg.version,
+                &original_msg.msg_type,
+                &original_msg.data,
+                original_msg.original_timestamp,
+                &original_msg.original_signature,
+            )?;
+
+            if !original_verified {
+                warn!(
+                    "Original message from {} failed signature verification, skipping",
+                    original_msg.sender_pubkey_hash
+                );
+                continue;
+            }
+
+            // Reconstruct the serialized message from OriginalMessage
+            let serialized_original = crate::comms_helper::serialize_msg(
+                &original_msg.version,
+                original_msg.msg_type,
+                &program_id,
+                &original_msg.data,
+                original_msg.original_timestamp,
+                original_msg.original_signature.clone(),
+            )?;
+
+            // Create Identifier from sender_pubkey_hash (parse as string)
+            let sender_identifier = original_msg
+                .sender_pubkey_hash
+                .parse::<Identifier>()
+                .map_err(|_| BitVMXError::InvalidMessageFormat)?;
+
+            // Recursively process the original message
+            // Use is_new_message=false since this is a replayed message
+            self.process_msg(sender_identifier, serialized_original, false)?;
+        }
+
+        info!(
+            "Successfully processed BroadcastedMessage from leader {} with {} original messages",
+            leader_identifier.pubkey_hash,
+            broadcasted_msg.original_messages.len()
+        );
+
+        Ok(())
+    }
+
+    /// Verify the signature of an original message
+    /// This is similar to verify_message_signature but works with OriginalMessage data
+    fn verify_original_message_signature(
+        &self,
+        sender_pubkey_hash: &PubKeyHash,
+        program_id: &Uuid,
+        version: &String,
+        msg_type: &CommsMessageType,
+        data: &Value,
+        timestamp: i64,
+        signature: &Vec<u8>,
+    ) -> Result<bool, BitVMXError> {
+        match SignatureVerifier::verify_and_get_key(
+            &self.program_context.comms,
+            &self.program_context.globals,
+            &self.program_context.key_chain,
+            sender_pubkey_hash,
+            program_id,
+            msg_type,
+            data,
+            timestamp,
+            signature,
+            version,
+        ) {
+            Ok(_) => Ok(true),
+            Err(BitVMXError::MissingVerificationKey { .. }) => Ok(false),
+            Err(err) => Err(err),
+        }
     }
 }
 
