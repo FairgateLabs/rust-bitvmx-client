@@ -6,10 +6,11 @@ use crate::timestamp_verifier::TimestampVerifier;
 use crate::{
     api::BitVMXApi,
     collaborate::Collaboration,
-    comms_helper::{deserialize_msg, CommsMessageType},
+    comms_helper::{deserialize_msg, request, CommsMessageType},
     config::Config,
     errors::BitVMXError,
     keychain::KeyChain,
+    leader_broadcast::{BroadcastedMessage, OriginalMessage},
     message_queue::MessageQueue,
     program::{
         participant::CommsAddress,
@@ -29,10 +30,12 @@ use bitcoin_coordinator::{
 };
 use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
 use bitvmx_job_dispatcher::helper::PingMessage;
+use bitvmx_operator_comms::operator_comms::PubKeyHash;
 use bitvmx_operator_comms::{
     helper::ReceiveHandlerChannel,
     operator_comms::{AllowList, OperatorComms, RoutingTable},
 };
+use chrono::Utc;
 use protocol_builder::graph::graph::GraphOptions;
 
 use crate::shutdown::GracefulShutdown;
@@ -101,6 +104,7 @@ enum StoreKey {
     ZKPStatus(Uuid),
     ZKPFrom(Uuid),
     ZKPJournal(Uuid),
+    OriginalMessages(Uuid, CommsMessageType),
 }
 
 impl StoreKey {
@@ -113,6 +117,9 @@ impl StoreKey {
             StoreKey::ZKPStatus(id) => format!("bitvmx/zkp/{}/status", id),
             StoreKey::ZKPFrom(id) => format!("bitvmx/zkp/{}/from", id),
             StoreKey::ZKPJournal(id) => format!("bitvmx/zkp/{}/journal", id),
+            StoreKey::OriginalMessages(context_id, msg_type) => {
+                format!("bitvmx/original_messages/{}/{:?}", context_id, msg_type)
+            }
         }
     }
 }
@@ -898,6 +905,154 @@ impl BitVMX {
         info!("Starting wallet sync...");
         self.wallet.sync_wallet()?;
         info!("Wallet sync completed.");
+        Ok(())
+    }
+
+    // ============================================================================
+    // Leader Broadcast Helper Functions
+    // ============================================================================
+
+    /// Store an original message received from a non-leader participant
+    /// Messages are stored by context_id (program_id or collaboration_id) and message type
+    fn store_original_message(
+        &self,
+        context_id: &Uuid,
+        msg_type: CommsMessageType,
+        original_msg: OriginalMessage,
+    ) -> Result<(), BitVMXError> {
+        let key = StoreKey::OriginalMessages(*context_id, msg_type).get_key();
+        let mut messages: Vec<OriginalMessage> = self.store.get(&key)?.unwrap_or_else(|| vec![]);
+
+        // Check if message from this sender already exists
+        if messages
+            .iter()
+            .any(|m| m.sender_pubkey_hash == original_msg.sender_pubkey_hash)
+        {
+            warn!(
+                "Original message from {} already stored for context {} and type {:?}",
+                original_msg.sender_pubkey_hash, context_id, msg_type
+            );
+            return Ok(()); // Don't error, just skip duplicate
+        }
+
+        messages.push(original_msg);
+        self.store.set(&key, messages, None)?;
+        Ok(())
+    }
+
+    /// Get all original messages stored for a given context and message type
+    fn get_original_messages(
+        &self,
+        context_id: &Uuid,
+        msg_type: CommsMessageType,
+    ) -> Result<Vec<OriginalMessage>, BitVMXError> {
+        let key = StoreKey::OriginalMessages(*context_id, msg_type).get_key();
+        let messages: Vec<OriginalMessage> = self.store.get(&key)?.unwrap_or_else(|| vec![]);
+        Ok(messages)
+    }
+
+    /// Check if all expected messages have been received
+    /// expected_participants should be a list of pubkey_hashes of non-leader participants
+    fn has_all_expected_messages(
+        &self,
+        context_id: &Uuid,
+        msg_type: CommsMessageType,
+        expected_participants: &[PubKeyHash],
+    ) -> Result<bool, BitVMXError> {
+        let messages = self.get_original_messages(context_id, msg_type)?;
+        let received_senders: std::collections::HashSet<&PubKeyHash> =
+            messages.iter().map(|m| &m.sender_pubkey_hash).collect();
+
+        for expected in expected_participants {
+            if !received_senders.contains(expected) {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+
+    /// Clear all stored original messages for a given context and message type
+    fn clear_original_messages(
+        &self,
+        context_id: &Uuid,
+        msg_type: CommsMessageType,
+    ) -> Result<(), BitVMXError> {
+        let key = StoreKey::OriginalMessages(*context_id, msg_type).get_key();
+        self.store.delete(&key)?;
+        Ok(())
+    }
+
+    /// Get list of non-leader participants from a list of all participants
+    /// Returns CommsAddress of all participants except the leader
+    fn get_non_leader_participants(
+        all_participants: &[CommsAddress],
+        leader_pubkey_hash: &PubKeyHash,
+    ) -> Vec<CommsAddress> {
+        all_participants
+            .iter()
+            .filter(|p| &p.pubkey_hash != leader_pubkey_hash)
+            .cloned()
+            .collect()
+    }
+
+    /// Broadcast stored original messages to all non-leader participants
+    /// This function:
+    /// 1. Retrieves all stored original messages for the context and message type
+    /// 2. Creates a BroadcastedMessage
+    /// 3. Sends it to all non-leader participants
+    /// 4. Clears the stored messages after successful broadcast
+    fn broadcast_to_non_leaders(
+        &self,
+        context_id: &Uuid,
+        msg_type: CommsMessageType,
+        non_leader_participants: &[CommsAddress],
+    ) -> Result<(), BitVMXError> {
+        // Get all stored original messages
+        let original_messages = self.get_original_messages(context_id, msg_type)?;
+
+        if original_messages.is_empty() {
+            warn!(
+                "No original messages to broadcast for context {} and type {:?}",
+                context_id, msg_type
+            );
+            return Ok(());
+        }
+
+        // Create BroadcastedMessage
+        let broadcast_timestamp = Utc::now().timestamp_millis();
+        let broadcasted_msg = BroadcastedMessage {
+            original_msg_type: msg_type,
+            original_messages: original_messages.clone(),
+            broadcast_timestamp,
+        };
+
+        // Validate the broadcasted message
+        broadcasted_msg.validate()?;
+
+        // Send to all non-leader participants
+        for participant in non_leader_participants {
+            request(
+                &self.program_context.comms,
+                &self.program_context.key_chain,
+                context_id,
+                participant.clone(),
+                CommsMessageType::Broadcasted,
+                &broadcasted_msg,
+            )?;
+        }
+
+        // Clear stored messages after successful broadcast
+        self.clear_original_messages(context_id, msg_type)?;
+
+        info!(
+            "Successfully broadcasted {} messages to {} non-leaders for context {} and type {:?}",
+            original_messages.len(),
+            non_leader_participants.len(),
+            context_id,
+            msg_type
+        );
+
         Ok(())
     }
 }
