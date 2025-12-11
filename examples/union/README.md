@@ -1,6 +1,6 @@
 ## Bridge example
 
-//TODO this need to be updated
+//TODO this needs to be updated
 
 To run this example, first `cd` into rust-bitvmx-client root and start a bitcoin node:
 ```bash
