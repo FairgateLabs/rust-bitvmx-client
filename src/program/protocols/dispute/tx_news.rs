@@ -383,13 +383,17 @@ fn cancel_timeout(
     name: &str,
     vout: Option<u32>,
     program_context: &ProgramContext,
+    timeout_table: &TimeoutDispatchTable,
 ) -> Result<(), BitVMXError> {
-    let cancel = match name {
-        EXECUTE => drp.role() == ParticipantRole::Verifier,
-        CHALLENGE => drp.role() == ParticipantRole::Prover,
-        CHALLENGE_READ => drp.role() == ParticipantRole::Prover,
-        _ => false,
-    };
+    if name.ends_with("_TO") {
+        // Timeout txs do not cancel other timeout txs
+        return Ok(());
+    }
+    let cancel = timeout_table
+        .iter()
+        .any(|(_tx_name, _tx_vout, tx_role, timeout, _not_ignore)| {
+            timeout.name() == name && *tx_role == drp.role()
+        });
 
     if cancel {
         let tx_to_cancel = if vout.is_none() {
@@ -586,10 +590,6 @@ pub fn handle_tx_news(
 
     let config = DisputeConfiguration::load(&drp.ctx.id, &program_context.globals)?;
 
-    cancel_timeout(drp, &name, vout, program_context)?;
-
-    let timelock_blocks = config.timelock_blocks;
-
     let rounds = drp
         .get_program_definition(program_context)?
         .0
@@ -607,8 +607,13 @@ pub fn handle_tx_news(
             .filter(|owner| owner.as_str() != "skip" && owner.as_str() != "prover_prev")
             .count() as u32
     };
+
     let timeout_table = TimeoutDispatchTable::new_predefined(rounds, n_inputs);
     // timeout_table.visualize();
+
+    cancel_timeout(drp, &name, vout, program_context, &timeout_table)?;
+
+    let timelock_blocks = config.timelock_blocks;
 
     auto_dispatch_timeout(
         drp,
