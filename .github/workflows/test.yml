@@ -34,5 +34,5 @@ jobs:
       target_path: 'rust-bitvmx-client/target'
       cargo_features: 'testpanic'
       nightly: false
-      submodule_branches: '{"rust-bitvmx-key-manager": "dev", "rust-bitvmx-protocol-builder": "keymanager-adapt", "rust-bitvmx-wallet": "keymanager-adapt", "rust-bitvmx-storage-backend": "v0.1.1-review.1"}'
+      submodule_branches: '{}'
     secrets: inherit
