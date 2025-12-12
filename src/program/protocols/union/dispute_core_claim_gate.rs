@@ -23,7 +23,7 @@ impl ClaimGateAction {
         }
     }
 
-    pub fn inputs(&self) -> Vec<InputSigningInfo> {
+    pub fn inputs(&self) -> Vec<InputSigningInfo<'_>> {
         match self {
             ClaimGateAction::Start => vec![InputSigningInfo::ScriptSpend {
                 input_index: 0,

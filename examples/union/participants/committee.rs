@@ -347,17 +347,23 @@ impl Committee {
     }
 
     fn get_funding_wt_disabler_directory_value(&self) -> u64 {
+        let operator_counts = self
+            .members
+            .iter()
+            .filter(|m| m.role == ParticipantRole::Prover)
+            .count() as u64;
+
         // Considerate each WT disabler directory output
-        return DUST_VALUE * self.members.len() as u64
+        return DUST_VALUE * operator_counts * 2 as u64
             + SPEEDUP_VALUE
-            + estimate_fee(2, self.members.len(), 1);
+            + estimate_fee(2, operator_counts as usize * 2, 1);
     }
 
     fn get_funding_op_disabler_directory_value(&self) -> u64 {
         // Considerate each OP disabler directory output
-        return DUST_VALUE * (PACKET_SIZE + 1) as u64    // Additional output for stop operator won
+        return DUST_VALUE * PACKET_SIZE as u64
             + SPEEDUP_VALUE
-            + estimate_fee(2, PACKET_SIZE as usize + 2, 1);
+            + estimate_fee(2, PACKET_SIZE as usize + 1, 1);
     }
 
     pub fn get_total_funds_value(&self) -> u64 {
