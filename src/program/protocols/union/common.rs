@@ -13,8 +13,9 @@ use uuid::Uuid;
 use crate::{
     errors::BitVMXError,
     program::{
+        participant::ParticipantRole,
         protocols::union::types::{
-            StreamSettings, UnionSettings, GLOBAL_SETTINGS_UUID, OP_CLAIM_GATE,
+            PenalizedMember, StreamSettings, UnionSettings, GLOBAL_SETTINGS_UUID, OP_CLAIM_GATE,
             PAIRWISE_DISPUTE_KEY, WT_CLAIM_GATE,
         },
         variables::{PartialUtxo, VariableTypes},
@@ -567,4 +568,33 @@ pub fn collect_input_signatures(
     }
 
     Ok(input_args)
+}
+
+pub fn save_penalized_member(
+    context: &ProgramContext,
+    committee_id: Uuid,
+    data: &PenalizedMember,
+) -> Result<(), BitVMXError> {
+    context.globals.set_var(
+        &committee_id,
+        &data.storage_name(),
+        VariableTypes::String(serde_json::to_string(data)?),
+    )?;
+    Ok(())
+}
+
+pub fn load_penalized_member(
+    context: &ProgramContext,
+    committee_id: Uuid,
+    member_index: usize,
+    role: ParticipantRole,
+) -> Result<Option<PenalizedMember>, BitVMXError> {
+    let storage_name = PenalizedMember::name(member_index, &role);
+    let var = match context.globals.get_var(&committee_id, &storage_name)? {
+        Some(v) => v,
+        None => return Ok(None),
+    };
+
+    let data: PenalizedMember = serde_json::from_str(&var.string()?)?;
+    Ok(Some(data))
 }

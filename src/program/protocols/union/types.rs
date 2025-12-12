@@ -6,7 +6,10 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::{
-    program::{participant::ParticipantRole, variables::PartialUtxo},
+    program::{
+        participant::ParticipantRole, protocols::union::common::indexed_name,
+        variables::PartialUtxo,
+    },
     spv_proof::BtcTxSPVProof,
 };
 
@@ -28,6 +31,8 @@ pub const OP_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO: &str =
 pub const WT_INIT_CHALLENGE_UTXOS: &str = "WT_INIT_CHALLENGE_UTXOS";
 pub const OP_COSIGN_UTXOS: &str = "OP_COSIGN_UTXOS";
 pub const PAIRWISE_DISPUTE_KEY: &str = "PAIRWISE_DISPUTE_KEY";
+pub const OPERATOR_PENALIZED: &str = "OPERATOR_PENALIZED";
+pub const WATCHTOWER_PENALIZED: &str = "WATCHTOWER_PENALIZED";
 
 // Transaction names
 pub const REQUEST_PEGIN_TX: &str = "REQUEST_PEGIN_TX";
@@ -287,4 +292,24 @@ pub struct WtInitChallengeUtxos {
     pub op_cosign: PartialUtxo,
     pub wt_stopper: PartialUtxo,
     pub op_stopper: PartialUtxo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PenalizedMember {
+    pub member_index: usize,
+    pub role: ParticipantRole,
+    pub challenger_index: usize,
+}
+
+impl PenalizedMember {
+    pub fn storage_name(&self) -> String {
+        PenalizedMember::name(self.member_index, &self.role)
+    }
+
+    pub fn name(index: usize, role: &ParticipantRole) -> String {
+        match role {
+            ParticipantRole::Verifier => indexed_name(WATCHTOWER_PENALIZED, index),
+            ParticipantRole::Prover => indexed_name(OPERATOR_PENALIZED, index),
+        }
+    }
 }

@@ -14,7 +14,8 @@ use crate::{
                     extract_index_from_claim_gate, get_accept_pegin_pid, get_dispatch_action,
                     get_dispute_channel_pid, get_dispute_core_pid, get_dispute_pair_key_name,
                     get_full_penalization_pid, get_initial_deposit_output_type, get_stream_setting,
-                    indexed_name, load_union_settings, InputSigningInfo, WinternitzData,
+                    indexed_name, load_penalized_member, load_union_settings, triple_indexed_name,
+                    InputSigningInfo, WinternitzData,
                 },
                 dispute_core_claim_gate::{
                     ClaimGateAction, CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF,
@@ -131,6 +132,26 @@ enum DisputeCoreTxType {
         slot_index_prev: usize,
         slot_index_curr: usize,
     },
+    PenalizationStopOperatorWon {
+        wt_index: usize,
+        op_index: usize,
+        slot_index: usize,
+    },
+    PenalizationOperatorLazyDisabler {
+        wt_index: usize,
+        op_index: usize,
+        slot_index: usize,
+    },
+    PenalizationWatchtowerCosignDisabler {
+        wt_index: usize,
+        op_disabler_directory_index: usize,
+        op_index: usize,
+    },
+    PenalizationWatchtowerDisabler {
+        wt_index: usize,
+        op_disabler_directory_index: usize,
+        op_index: usize,
+    },
 }
 
 impl DisputeCoreTxType {
@@ -179,6 +200,36 @@ impl DisputeCoreTxType {
                 };
                 double_indexed_name(TWO_DISPUTE_PENALIZATION_TX, min, max)
             }
+            DisputeCoreTxType::PenalizationStopOperatorWon {
+                wt_index,
+                op_index,
+                slot_index,
+            } => triple_indexed_name(STOP_OP_WON_TX, *wt_index, *op_index, *slot_index),
+            DisputeCoreTxType::PenalizationOperatorLazyDisabler {
+                wt_index,
+                op_index,
+                slot_index,
+            } => triple_indexed_name(OP_LAZY_DISABLER_TX, *wt_index, *op_index, *slot_index),
+            DisputeCoreTxType::PenalizationWatchtowerCosignDisabler {
+                wt_index,
+                op_disabler_directory_index,
+                op_index,
+            } => triple_indexed_name(
+                WT_COSIGN_DISABLER_TX,
+                *wt_index,
+                *op_disabler_directory_index,
+                *op_index,
+            ),
+            DisputeCoreTxType::PenalizationWatchtowerDisabler {
+                wt_index,
+                op_disabler_directory_index,
+                op_index,
+            } => triple_indexed_name(
+                WT_DISABLER_TX,
+                *wt_index,
+                *op_disabler_directory_index,
+                *op_index,
+            ),
         }
     }
 
@@ -1965,6 +2016,42 @@ impl DisputeCoreProtocol {
                 },
             )?;
         } else {
+            match load_penalized_member(
+                context,
+                data.committee_id,
+                data.member_index,
+                ParticipantRole::Verifier,
+            )? {
+                Some(penalized_member) => {
+                    info!(
+                    id = self.ctx.my_idx,
+                    "Operator already penalized for member index: {}, skipping OP_COSIGN dispatch",
+                    data.member_index
+                );
+
+                    self.dispatch(
+                        context,
+                        DisputeCoreTxType::PenalizationWatchtowerDisabler {
+                            wt_index: penalized_member.challenger_index,
+                            op_disabler_directory_index: penalized_member.member_index,
+                            op_index,
+                        },
+                    )?;
+
+                    self.dispatch(
+                        context,
+                        DisputeCoreTxType::PenalizationWatchtowerCosignDisabler {
+                            wt_index: penalized_member.challenger_index,
+                            op_disabler_directory_index: penalized_member.member_index,
+                            op_index,
+                        },
+                    )?;
+
+                    return Ok(());
+                }
+                None => {}
+            }
+
             if op_index == self.ctx.my_idx {
                 self.dispatch(
                     context,
@@ -2076,9 +2163,36 @@ impl DisputeCoreProtocol {
             return Ok(());
         }
 
-        let committee = self.committee(context)?;
         let data = self.dispute_core_data(context)?;
 
+        match load_penalized_member(
+            context,
+            data.committee_id,
+            data.member_index,
+            ParticipantRole::Prover,
+        )? {
+            Some(penalized_member) => {
+                info!(
+                    id = self.ctx.my_idx,
+                    "Operator already penalized for member index: {}, skipping WT_INIT_CHALLENGE_TX dispatch",
+                    data.member_index
+                );
+
+                self.dispatch(
+                    context,
+                    DisputeCoreTxType::PenalizationStopOperatorWon {
+                        wt_index: penalized_member.challenger_index,
+                        op_index: penalized_member.member_index,
+                        slot_index,
+                    },
+                )?;
+
+                return Ok(());
+            }
+            None => {}
+        }
+
+        let committee = self.committee(context)?;
         let wt_dispute_core_id = get_dispute_core_pid(
             data.committee_id,
             &committee.members[self.ctx.my_idx].take_key,
@@ -2364,6 +2478,35 @@ impl DisputeCoreProtocol {
                 "Not my dispute_core, skipping operator take dispatch for slot {}", slot_index
             );
 
+            let data = self.dispute_core_data(context)?;
+            // Check if operator already penalized
+            match load_penalized_member(
+                context,
+                data.committee_id,
+                data.member_index,
+                ParticipantRole::Prover,
+            )? {
+                Some(penalized_member) => {
+                    info!(
+                    id = self.ctx.my_idx,
+                    "Operator already penalized for member index: {}, skipping CHALLENGE_TX dispatch",
+                    data.member_index
+                );
+
+                    self.dispatch(
+                        context,
+                        DisputeCoreTxType::PenalizationOperatorLazyDisabler {
+                            wt_index: penalized_member.challenger_index,
+                            op_index: penalized_member.member_index,
+                            slot_index,
+                        },
+                    )?;
+
+                    return Ok(());
+                }
+                None => {}
+            }
+
             // Handle challenge if needed
             match self.get_selected_operator_key(slot_index, context)? {
                 Some(selected_operator_key) => {
@@ -2471,6 +2614,17 @@ impl DisputeCoreProtocol {
                 let (tx, speedup, _) =
                     self.two_dispute_penalization_tx(slot_index_prev, slot_index_curr)?;
                 (tx, speedup)
+            }
+            DisputeCoreTxType::PenalizationStopOperatorWon { .. }
+            | DisputeCoreTxType::PenalizationOperatorLazyDisabler { .. }
+            | DisputeCoreTxType::PenalizationWatchtowerDisabler { .. }
+            | DisputeCoreTxType::PenalizationWatchtowerCosignDisabler { .. } => {
+                let dispute_core_data: DisputeCoreData = self.dispute_core_data(context)?;
+                let protocol = self.load_protocol_by_name(
+                    PROGRAM_TYPE_FULL_PENALIZATION,
+                    get_full_penalization_pid(dispute_core_data.committee_id),
+                )?;
+                protocol.get_transaction_by_name(&tx_name, context)?
             }
         };
 
