@@ -96,6 +96,11 @@ enum DisputeCoreTxType {
         slot_index: usize,
         block_height: Option<u32>,
     },
+    OperatorWon {
+        op_index: usize,
+        slot_index: usize,
+        block_height: Option<u32>,
+    },
     Challenge {
         slot_index: usize,
         block_height: Option<u32>,
@@ -141,6 +146,9 @@ impl DisputeCoreTxType {
             DisputeCoreTxType::OperatorTake { op_index, .. } => {
                 indexed_name(OPERATOR_TAKE_TX, *op_index)
             }
+            DisputeCoreTxType::OperatorWon { op_index, .. } => {
+                indexed_name(OPERATOR_WON_TX, *op_index)
+            }
             DisputeCoreTxType::Challenge { slot_index, .. } => {
                 indexed_name(CHALLENGE_TX, *slot_index)
             }
@@ -176,6 +184,7 @@ impl DisputeCoreTxType {
     pub fn block_height(&self) -> Option<u32> {
         match self {
             DisputeCoreTxType::OperatorTake { block_height, .. } => *block_height,
+            DisputeCoreTxType::OperatorWon { block_height, .. } => *block_height,
             DisputeCoreTxType::Challenge { block_height, .. } => *block_height,
             DisputeCoreTxType::WatchtowerNoChallenge { block_height, .. } => *block_height,
             DisputeCoreTxType::OperatorNoCosign { block_height, .. } => *block_height,
@@ -2034,8 +2043,21 @@ impl DisputeCoreProtocol {
         if self.is_my_dispute_core(context)? {
             info!(
                 id = self.ctx.my_idx,
-                "This is my dispute_core, no need to handle reveal input for slot {}", slot_index
+                "This is my dispute_core, schedulling OPERATOR_WON_TX for slot {}", slot_index
             );
+
+            let settings = self.load_stream_setting(context)?;
+            self.dispatch(
+                context,
+                DisputeCoreTxType::OperatorWon {
+                    op_index: self.ctx.my_idx,
+                    slot_index,
+                    block_height: Some(
+                        self.get_dispatch_height(tx_status, settings.op_won_timelock)?,
+                    ),
+                },
+            )?;
+
             return Ok(());
         }
 
@@ -2406,11 +2428,11 @@ impl DisputeCoreProtocol {
                 )?;
                 protocol.get_transaction_by_name(&tx_name, context)?
             }
-            DisputeCoreTxType::OperatorTake { slot_index, .. } => {
+            DisputeCoreTxType::OperatorTake { slot_index, .. }
+            | DisputeCoreTxType::OperatorWon { slot_index, .. } => {
                 let dispute_core_data: DisputeCoreData = self.dispute_core_data(context)?;
                 let accept_pegin_pid =
                     get_accept_pegin_pid(dispute_core_data.committee_id, slot_index);
-                // self.save_operator_leaf_index(context, accept_pegin_pid)?;
                 let protocol =
                     self.load_protocol_by_name(PROGRAM_TYPE_ACCEPT_PEGIN, accept_pegin_pid)?;
 
