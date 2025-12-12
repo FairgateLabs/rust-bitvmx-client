@@ -39,24 +39,16 @@ use bitvmx_operator_comms::{
 use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::graph::graph::GraphOptions;
 
-use crate::shutdown::GracefulShutdown;
-use crate::spv_proof::get_spv_proof;
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
     channel::channel::LocalChannel,
     rpc::{sync_server::BrokerSync, BrokerConfig},
 };
-use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
 use bitvmx_cpu_definitions::challenge::EmulatorResultType;
 use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
-use bitvmx_job_dispatcher::helper::PingMessage;
+
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
-use bitvmx_operator_comms::{
-    helper::ReceiveHandlerChannel,
-    operator_comms::{AllowList, OperatorComms, RoutingTable},
-};
 use bitvmx_wallet::wallet::Wallet;
-use protocol_builder::graph::graph::GraphOptions;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
