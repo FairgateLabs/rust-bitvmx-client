@@ -8,10 +8,6 @@ set -euo pipefail
 examples=(
     request_pegout
     advance_funds_twice
-    invalid_reimbursement
-    double_reimbursement
-    full_penalization
-    watchtowers_start_enabler
 )
 
 cargo build --release

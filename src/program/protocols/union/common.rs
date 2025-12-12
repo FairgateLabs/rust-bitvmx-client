@@ -137,19 +137,24 @@ pub fn create_transaction_reference(
 
     // Sort UTXOs by index
     utxos.sort_by_key(|utxo| utxo.1);
-    let mut last_index = 0;
-    let mut add_initial_outputs = utxos[0].1 > 0;
 
-    for utxo in utxos {
-        // If there is a gap in the indices, add unknown outputs
-        if utxo.1 - last_index > 1 || add_initial_outputs {
-            protocol.add_unknown_outputs(tx_name, utxo.1 - last_index)?;
-            add_initial_outputs = false;
+    let mut last_index = 0;
+
+    for (i, utxo) in utxos.iter().enumerate() {
+        let index = utxo.1;
+
+        // Handle missing outputs BEFORE the first UTXO
+        if i == 0 && index > 0 {
+            protocol.add_unknown_outputs(tx_name, index)?;
+        } else if index > last_index + 1 {
+            let gap = index - last_index - 1;
+            protocol.add_unknown_outputs(tx_name, gap)?;
         }
 
-        // Add the UTXO as an output
-        protocol.add_transaction_output(tx_name, &utxo.clone().3.unwrap())?;
-        last_index = utxo.1;
+        // Add the UTXO
+        protocol.add_transaction_output(tx_name, &utxo.3.clone().unwrap())?;
+
+        last_index = index;
     }
 
     Ok(())
