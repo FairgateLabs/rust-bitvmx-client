@@ -1616,8 +1616,8 @@ impl BitVMXApi for BitVMX {
                     .decrypt_rsa_message(&message, &pub_key)?;
                 self.reply(from, OutgoingBitVMXApiMessages::Decrypted(id, decrypted))?;
             }
-            IncomingBitVMXApiMessages::Backup(id, path) => {
-                let message = match self.store.backup(&path) {
+            IncomingBitVMXApiMessages::Backup(id, backup_path, dek_path, password) => {
+                let message = match self.store.backup(&backup_path, &dek_path, password) {
                     Ok(_) => OutgoingBitVMXApiMessages::BackupResult(
                         id,
                         true,
