@@ -2,6 +2,8 @@ use crate::config::ComponentsConfig;
 use crate::ping_helper::{JobDispatcherType, PingHelper};
 use crate::program::program::is_active_program;
 use crate::program::protocols::protocol_handler::ProtocolHandler;
+use crate::shutdown::GracefulShutdown;
+use crate::spv_proof::get_spv_proof;
 use crate::timestamp_verifier::TimestampVerifier;
 use crate::{
     api::BitVMXApi,
@@ -10,6 +12,7 @@ use crate::{
     config::Config,
     errors::BitVMXError,
     keychain::KeyChain,
+    leader_broadcast::{LeaderBroadcastHelper, OriginalMessage},
     message_queue::MessageQueue,
     program::{
         participant::CommsAddress,
@@ -36,8 +39,6 @@ use bitvmx_operator_comms::{
 use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::graph::graph::GraphOptions;
 
-use crate::shutdown::GracefulShutdown;
-use crate::spv_proof::get_spv_proof;
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
     channel::channel::LocalChannel,
@@ -45,6 +46,7 @@ use bitvmx_broker::{
 };
 use bitvmx_cpu_definitions::challenge::EmulatorResultType;
 use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
+
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use bitvmx_wallet::wallet::Wallet;
 use serde::{Deserialize, Serialize};
@@ -86,6 +88,7 @@ pub struct BitVMX {
     wallet: Wallet,
     ping_helper: PingHelper,
     shutdown: bool,
+    leader_broadcast_helper: LeaderBroadcastHelper,
 }
 
 impl Drop for BitVMX {
@@ -190,6 +193,8 @@ impl BitVMX {
         let timestamp_verifier =
             TimestampVerifier::new(timestamp_config.enabled, timestamp_config.max_drift_ms);
 
+        let leader_broadcast_helper = LeaderBroadcastHelper::new(store.clone());
+
         Ok(Self {
             config,
             program_context,
@@ -207,6 +212,7 @@ impl BitVMX {
             wallet,
             ping_helper,
             shutdown: false,
+            leader_broadcast_helper,
         })
     }
 
@@ -313,6 +319,9 @@ impl BitVMX {
         data: Value,
         peer_address: CommsAddress,
         program: &mut Program,
+        timestamp: i64,
+        signature: Vec<u8>,
+        version: String,
     ) -> Result<bool, BitVMXError> {
         let my_pubkey_hash = self.program_context.comms.get_pubk_hash()?;
         let participants: Vec<_> = program
@@ -326,8 +335,41 @@ impl BitVMX {
             return Ok(false);
         }
 
+        // If this operator is the leader and the message type should be broadcast, store the original message
+        if program.my_idx == program.leader {
+            let should_store = matches!(
+                msg_type,
+                CommsMessageType::Keys
+                    | CommsMessageType::PublicNonces
+                    | CommsMessageType::PartialSignatures
+            );
+            if should_store {
+                let original_msg = OriginalMessage {
+                    sender_pubkey_hash: peer_address.pubkey_hash.clone(),
+                    msg_type,
+                    data: data.clone(),
+                    original_timestamp: timestamp,
+                    original_signature: signature.clone(),
+                    version: version.clone(),
+                };
+                self.leader_broadcast_helper.store_original_message(
+                    program_id,
+                    msg_type,
+                    original_msg,
+                )?;
+            }
+        }
+
         // Step 3: Process normal messages (non-verification)
-        program.process_comms_message(peer_address, msg_type, data, &self.program_context)?;
+        program.process_comms_message(
+            peer_address,
+            msg_type,
+            data,
+            &self.program_context,
+            timestamp,
+            signature,
+            version,
+        )?;
         Ok(true)
     }
 
@@ -341,6 +383,9 @@ impl BitVMX {
         data: Value,
         peer_address: CommsAddress,
         collaboration: &mut Collaboration,
+        timestamp: i64,
+        signature: Vec<u8>,
+        version: String,
     ) -> Result<bool, BitVMXError> {
         let my_pubkey_hash = self.program_context.comms.get_pubk_hash()?;
         let participants: Vec<_> = collaboration
@@ -356,9 +401,45 @@ impl BitVMX {
             );
             return Ok(false);
         }
+        // If this operator is the leader and the message type should be broadcast, store the original message
+        if collaboration.im_leader {
+            let should_store = matches!(
+                msg_type,
+                CommsMessageType::Keys
+                    | CommsMessageType::PublicNonces
+                    | CommsMessageType::PartialSignatures
+            );
+            if should_store {
+                let original_msg = OriginalMessage {
+                    sender_pubkey_hash: peer_address.pubkey_hash.clone(),
+                    msg_type,
+                    data: data.clone(),
+                    original_timestamp: timestamp,
+                    original_signature: signature.clone(),
+                    version: version.clone(),
+                };
+                info!(
+                    "Storing original message from peer: {:?}, msg_type: {:?}",
+                    peer_address, msg_type
+                );
+                self.leader_broadcast_helper.store_original_message(
+                    program_id,
+                    msg_type,
+                    original_msg,
+                )?;
+            }
+        }
 
         // Step 3: Process normal messages (non-verification)
-        collaboration.process_comms_message(peer_address, msg_type, data, &self.program_context)?;
+        collaboration.process_comms_message(
+            peer_address,
+            msg_type,
+            data,
+            &self.program_context,
+            timestamp,
+            signature,
+            version,
+        )?;
         Ok(true)
     }
 
@@ -371,11 +452,22 @@ impl BitVMX {
         let (version, msg_type, program_id, data, timestamp, signature) =
             deserialize_msg(msg.clone())?;
 
+        // Handle Broadcasted messages specially - they contain original messages to process recursively
+        if msg_type == CommsMessageType::Broadcasted {
+            info!("Processing Broadcasted message...");
+            return self.leader_broadcast_helper.process_broadcasted_message(
+                &self.program_context,
+                identifier,
+                program_id,
+                data,
+                &self.message_queue,
+            );
+        }
+
         let is_verification_msg = matches!(
             msg_type,
             CommsMessageType::VerificationKey | CommsMessageType::VerificationKeyRequest
         );
-
         if !is_verification_msg {
             let verified = self.verify_message_signature(
                 &identifier,
@@ -386,7 +478,6 @@ impl BitVMX {
                 timestamp,
                 &signature,
             )?;
-
             if !verified {
                 info!(
                     "Buffering message due to missing verification key: {:?} {:?}",
@@ -396,12 +487,10 @@ impl BitVMX {
                 return Ok(());
             }
         }
-
         if is_new_message {
             self.timestamp_verifier
                 .ensure_fresh(&identifier.pubkey_hash, timestamp)?;
         }
-
         let (program, collaboration, peer_address) =
             if let Some(program) = self.load_program(&program_id).ok() {
                 let peer_address = program.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
@@ -442,6 +531,9 @@ impl BitVMX {
                             data,
                             peer_address,
                             &mut program,
+                            timestamp,
+                            signature,
+                            version,
                         )?;
                         message_consumed
                     } else if let Some(mut collaboration) = collaboration {
@@ -451,6 +543,9 @@ impl BitVMX {
                             data,
                             peer_address,
                             &mut collaboration,
+                            timestamp,
+                            signature,
+                            version,
                         )?;
                         if message_consumed {
                             self.save_collaboration(&collaboration)?;
@@ -473,7 +568,6 @@ impl BitVMX {
             info!("Pending message to back: {:?}", msg_type);
             self.message_queue.push_back(identifier.to_string(), msg)?;
         }
-
         Ok(())
     }
 
@@ -482,11 +576,17 @@ impl BitVMX {
             return Ok(());
         }
 
-        if let Some((comms_address, msg)) = self.message_queue.pop_front()? {
-            let comms_address = comms_address
-                .parse()
-                .map_err(|_| BitVMXError::InvalidCommsAddress(comms_address))?;
-            self.process_msg(comms_address, msg, false)?;
+        if let Some((identifier_str, msg)) = self.message_queue.pop_front()? {
+            // Parse the identifier string back to Identifier
+            // All messages in the queue are stored as Identifier strings (from identifier.to_string())
+            let identifier = identifier_str.parse::<Identifier>().map_err(|e| {
+                error!(
+                    "Failed to parse Identifier from '{}': {}",
+                    identifier_str, e
+                );
+                BitVMXError::InvalidCommsAddress(format!("{}: {}", identifier_str, e))
+            })?;
+            self.process_msg(identifier, msg, false)?;
         }
         Ok(())
     }
@@ -707,7 +807,7 @@ impl BitVMX {
         let collaborations = self.store.partial_compare(&"bitvmx/collaboration/")?;
         for (_, collaboration) in collaborations.iter() {
             let mut collaboration: Collaboration = serde_json::from_str(collaboration)?;
-            if collaboration.tick(&self.program_context)? {
+            if collaboration.tick(&self.program_context, &self.leader_broadcast_helper)? {
                 self.mark_collaboration_as_complete(&collaboration)?;
             };
         }
