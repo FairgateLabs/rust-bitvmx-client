@@ -2058,7 +2058,7 @@ impl DisputeCoreProtocol {
         if self.is_my_dispute_core(context)? {
             info!(
                 id = self.ctx.my_idx,
-                "This is my dispute_core, schedulling OPERATOR_WON_TX for slot {}", slot_index
+                "This is my dispute_core, scheduling OPERATOR_WON_TX for slot {}", slot_index
             );
 
             let settings = self.load_stream_setting(context)?;
