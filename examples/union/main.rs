@@ -1122,14 +1122,3 @@ fn wait_for_blocks(bitcoin_client: &BitcoinWrapper, mut blocks: u32) -> Result<(
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use crate::pegin;
-
-    #[test]
-    fn test_union_pegin() {
-        pegin().expect("Failed to run peg-in");
-        //thread::sleep(Duration::from_secs(10));
-    }
-}
