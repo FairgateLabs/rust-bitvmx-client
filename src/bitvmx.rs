@@ -2,15 +2,17 @@ use crate::config::ComponentsConfig;
 use crate::ping_helper::{JobDispatcherType, PingHelper};
 use crate::program::program::is_active_program;
 use crate::program::protocols::protocol_handler::ProtocolHandler;
+use crate::shutdown::GracefulShutdown;
+use crate::spv_proof::get_spv_proof;
 use crate::timestamp_verifier::TimestampVerifier;
 use crate::{
     api::BitVMXApi,
     collaborate::Collaboration,
-    comms_helper::{deserialize_msg, request, CommsMessageType},
+    comms_helper::{deserialize_msg, CommsMessageType},
     config::Config,
     errors::BitVMXError,
     keychain::KeyChain,
-    leader_broadcast::{BroadcastedMessage, OriginalMessage},
+    leader_broadcast::{LeaderBroadcastHelper, OriginalMessage},
     message_queue::MessageQueue,
     program::{
         participant::CommsAddress,
@@ -28,27 +30,22 @@ use bitcoin_coordinator::{
     types::{AckCoordinatorNews, AckNews, CoordinatorNews},
     AckMonitorNews, MonitorNews, TypesToMonitor,
 };
-use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
-use bitvmx_job_dispatcher::helper::PingMessage;
-use bitvmx_operator_comms::operator_comms::PubKeyHash;
-use bitvmx_operator_comms::{
-    helper::ReceiveHandlerChannel,
-    operator_comms::{AllowList, OperatorComms, RoutingTable},
-};
-use chrono::Utc;
-use protocol_builder::graph::graph::GraphOptions;
-
-use crate::shutdown::GracefulShutdown;
-use crate::spv_proof::get_spv_proof;
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
     channel::channel::LocalChannel,
     rpc::{sync_server::BrokerSync, BrokerConfig},
 };
+use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
 use bitvmx_cpu_definitions::challenge::EmulatorResultType;
 use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
+use bitvmx_job_dispatcher::helper::PingMessage;
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
+use bitvmx_operator_comms::{
+    helper::ReceiveHandlerChannel,
+    operator_comms::{AllowList, OperatorComms, RoutingTable},
+};
 use bitvmx_wallet::wallet::Wallet;
+use protocol_builder::graph::graph::GraphOptions;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -88,6 +85,7 @@ pub struct BitVMX {
     wallet: Wallet,
     ping_helper: PingHelper,
     shutdown: bool,
+    leader_broadcast_helper: LeaderBroadcastHelper,
 }
 
 impl Drop for BitVMX {
@@ -104,7 +102,6 @@ enum StoreKey {
     ZKPStatus(Uuid),
     ZKPFrom(Uuid),
     ZKPJournal(Uuid),
-    OriginalMessages(Uuid, CommsMessageType),
 }
 
 impl StoreKey {
@@ -117,9 +114,6 @@ impl StoreKey {
             StoreKey::ZKPStatus(id) => format!("bitvmx/zkp/{}/status", id),
             StoreKey::ZKPFrom(id) => format!("bitvmx/zkp/{}/from", id),
             StoreKey::ZKPJournal(id) => format!("bitvmx/zkp/{}/journal", id),
-            StoreKey::OriginalMessages(context_id, msg_type) => {
-                format!("bitvmx/original_messages/{}/{:?}", context_id, msg_type)
-            }
         }
     }
 }
@@ -195,6 +189,8 @@ impl BitVMX {
         let timestamp_verifier =
             TimestampVerifier::new(timestamp_config.enabled, timestamp_config.max_drift_ms);
 
+        let leader_broadcast_helper = LeaderBroadcastHelper::new(store.clone());
+
         Ok(Self {
             config,
             program_context,
@@ -212,6 +208,7 @@ impl BitVMX {
             wallet,
             ping_helper,
             shutdown: false,
+            leader_broadcast_helper,
         })
     }
 
@@ -351,7 +348,11 @@ impl BitVMX {
                     original_signature: signature.clone(),
                     version: version.clone(),
                 };
-                self.store_original_message(program_id, msg_type, original_msg)?;
+                self.leader_broadcast_helper.store_original_message(
+                    program_id,
+                    msg_type,
+                    original_msg,
+                )?;
             }
         }
 
@@ -396,7 +397,6 @@ impl BitVMX {
             );
             return Ok(false);
         }
-
         // If this operator is the leader and the message type should be broadcast, store the original message
         if collaboration.im_leader {
             let should_store = matches!(
@@ -414,7 +414,15 @@ impl BitVMX {
                     original_signature: signature.clone(),
                     version: version.clone(),
                 };
-                self.store_original_message(program_id, msg_type, original_msg)?;
+                info!(
+                    "Storing original message from peer: {:?}, msg_type: {:?}",
+                    peer_address, msg_type
+                );
+                self.leader_broadcast_helper.store_original_message(
+                    program_id,
+                    msg_type,
+                    original_msg,
+                )?;
             }
         }
 
@@ -442,15 +450,20 @@ impl BitVMX {
 
         // Handle Broadcasted messages specially - they contain original messages to process recursively
         if msg_type == CommsMessageType::Broadcasted {
-            return self
-                .process_broadcasted_message(identifier, program_id, data, timestamp, signature);
+            info!("Processing Broadcasted message...");
+            return self.leader_broadcast_helper.process_broadcasted_message(
+                &self.program_context,
+                identifier,
+                program_id,
+                data,
+                &self.message_queue,
+            );
         }
 
         let is_verification_msg = matches!(
             msg_type,
             CommsMessageType::VerificationKey | CommsMessageType::VerificationKeyRequest
         );
-
         if !is_verification_msg {
             let verified = self.verify_message_signature(
                 &identifier,
@@ -461,7 +474,6 @@ impl BitVMX {
                 timestamp,
                 &signature,
             )?;
-
             if !verified {
                 info!(
                     "Buffering message due to missing verification key: {:?} {:?}",
@@ -471,12 +483,10 @@ impl BitVMX {
                 return Ok(());
             }
         }
-
         if is_new_message {
             self.timestamp_verifier
                 .ensure_fresh(&identifier.pubkey_hash, timestamp)?;
         }
-
         let (program, collaboration, peer_address) =
             if let Some(program) = self.load_program(&program_id).ok() {
                 let peer_address = program.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
@@ -554,7 +564,6 @@ impl BitVMX {
             info!("Pending message to back: {:?}", msg_type);
             self.message_queue.push_back(identifier.to_string(), msg)?;
         }
-
         Ok(())
     }
 
@@ -563,11 +572,17 @@ impl BitVMX {
             return Ok(());
         }
 
-        if let Some((comms_address, msg)) = self.message_queue.pop_front()? {
-            let comms_address = comms_address
-                .parse()
-                .map_err(|_| BitVMXError::InvalidCommsAddress(comms_address))?;
-            self.process_msg(comms_address, msg, false)?;
+        if let Some((identifier_str, msg)) = self.message_queue.pop_front()? {
+            // Parse the identifier string back to Identifier
+            // All messages in the queue are stored as Identifier strings (from identifier.to_string())
+            let identifier = identifier_str.parse::<Identifier>().map_err(|e| {
+                error!(
+                    "Failed to parse Identifier from '{}': {}",
+                    identifier_str, e
+                );
+                BitVMXError::InvalidCommsAddress(format!("{}: {}", identifier_str, e))
+            })?;
+            self.process_msg(identifier, msg, false)?;
         }
         Ok(())
     }
@@ -788,7 +803,7 @@ impl BitVMX {
         let collaborations = self.store.partial_compare(&"bitvmx/collaboration/")?;
         for (_, collaboration) in collaborations.iter() {
             let mut collaboration: Collaboration = serde_json::from_str(collaboration)?;
-            if collaboration.tick(&self.program_context)? {
+            if collaboration.tick(&self.program_context, &self.leader_broadcast_helper)? {
                 self.mark_collaboration_as_complete(&collaboration)?;
             };
         }
@@ -982,269 +997,6 @@ impl BitVMX {
         self.wallet.sync_wallet()?;
         info!("Wallet sync completed.");
         Ok(())
-    }
-
-    // ============================================================================
-    // Leader Broadcast Helper Functions
-    // ============================================================================
-
-    /// Store an original message received from a non-leader participant
-    /// Messages are stored by context_id (program_id or collaboration_id) and message type
-    fn store_original_message(
-        &self,
-        context_id: &Uuid,
-        msg_type: CommsMessageType,
-        original_msg: OriginalMessage,
-    ) -> Result<(), BitVMXError> {
-        let key = StoreKey::OriginalMessages(*context_id, msg_type).get_key();
-        let mut messages: Vec<OriginalMessage> = self.store.get(&key)?.unwrap_or_else(|| vec![]);
-
-        // Check if message from this sender already exists
-        if messages
-            .iter()
-            .any(|m| m.sender_pubkey_hash == original_msg.sender_pubkey_hash)
-        {
-            warn!(
-                "Original message from {} already stored for context {} and type {:?}",
-                original_msg.sender_pubkey_hash, context_id, msg_type
-            );
-            return Ok(()); // Don't error, just skip duplicate
-        }
-
-        messages.push(original_msg);
-        self.store.set(&key, messages, None)?;
-        Ok(())
-    }
-
-    /// Get all original messages stored for a given context and message type
-    fn get_original_messages(
-        &self,
-        context_id: &Uuid,
-        msg_type: CommsMessageType,
-    ) -> Result<Vec<OriginalMessage>, BitVMXError> {
-        let key = StoreKey::OriginalMessages(*context_id, msg_type).get_key();
-        let messages: Vec<OriginalMessage> = self.store.get(&key)?.unwrap_or_else(|| vec![]);
-        Ok(messages)
-    }
-
-    /// Check if all expected messages have been received
-    /// expected_participants should be a list of pubkey_hashes of non-leader participants
-    fn has_all_expected_messages(
-        &self,
-        context_id: &Uuid,
-        msg_type: CommsMessageType,
-        expected_participants: &[PubKeyHash],
-    ) -> Result<bool, BitVMXError> {
-        let messages = self.get_original_messages(context_id, msg_type)?;
-        let received_senders: std::collections::HashSet<&PubKeyHash> =
-            messages.iter().map(|m| &m.sender_pubkey_hash).collect();
-
-        for expected in expected_participants {
-            if !received_senders.contains(expected) {
-                return Ok(false);
-            }
-        }
-
-        Ok(true)
-    }
-
-    /// Clear all stored original messages for a given context and message type
-    fn clear_original_messages(
-        &self,
-        context_id: &Uuid,
-        msg_type: CommsMessageType,
-    ) -> Result<(), BitVMXError> {
-        let key = StoreKey::OriginalMessages(*context_id, msg_type).get_key();
-        self.store.delete(&key)?;
-        Ok(())
-    }
-
-    /// Get list of non-leader participants from a list of all participants
-    /// Returns CommsAddress of all participants except the leader
-    fn get_non_leader_participants(
-        all_participants: &[CommsAddress],
-        leader_pubkey_hash: &PubKeyHash,
-    ) -> Vec<CommsAddress> {
-        all_participants
-            .iter()
-            .filter(|p| &p.pubkey_hash != leader_pubkey_hash)
-            .cloned()
-            .collect()
-    }
-
-    /// Broadcast stored original messages to all non-leader participants
-    /// This function:
-    /// 1. Retrieves all stored original messages for the context and message type
-    /// 2. Creates a BroadcastedMessage
-    /// 3. Sends it to all non-leader participants
-    /// 4. Clears the stored messages after successful broadcast
-    fn broadcast_to_non_leaders(
-        &self,
-        context_id: &Uuid,
-        msg_type: CommsMessageType,
-        non_leader_participants: &[CommsAddress],
-    ) -> Result<(), BitVMXError> {
-        // Get all stored original messages
-        let original_messages = self.get_original_messages(context_id, msg_type)?;
-
-        if original_messages.is_empty() {
-            warn!(
-                "No original messages to broadcast for context {} and type {:?}",
-                context_id, msg_type
-            );
-            return Ok(());
-        }
-
-        // Create BroadcastedMessage
-        let broadcast_timestamp = Utc::now().timestamp_millis();
-        let broadcasted_msg = BroadcastedMessage {
-            original_msg_type: msg_type,
-            original_messages: original_messages.clone(),
-            broadcast_timestamp,
-        };
-
-        // Validate the broadcasted message
-        broadcasted_msg.validate()?;
-
-        // Send to all non-leader participants
-        for participant in non_leader_participants {
-            request(
-                &self.program_context.comms,
-                &self.program_context.key_chain,
-                context_id,
-                participant.clone(),
-                CommsMessageType::Broadcasted,
-                &broadcasted_msg,
-            )?;
-        }
-
-        // Clear stored messages after successful broadcast
-        self.clear_original_messages(context_id, msg_type)?;
-
-        info!(
-            "Successfully broadcasted {} messages to {} non-leaders for context {} and type {:?}",
-            original_messages.len(),
-            non_leader_participants.len(),
-            context_id,
-            msg_type
-        );
-
-        Ok(())
-    }
-
-    /// Process a BroadcastedMessage by recursively processing each original message
-    /// This function:
-    /// 1. Deserializes the BroadcastedMessage
-    /// 2. Validates the BroadcastedMessage structure
-    /// 3. Verifies the leader's signature (already done in process_msg)
-    /// 4. For each OriginalMessage:
-    ///    - Verifies the original message signature
-    ///    - Reconstructs the serialized message
-    ///    - Recursively calls process_msg to process the original message
-    fn process_broadcasted_message(
-        &mut self,
-        leader_identifier: Identifier,
-        program_id: Uuid,
-        data: Value,
-        _leader_timestamp: i64,
-        _leader_signature: Vec<u8>,
-    ) -> Result<(), BitVMXError> {
-        // Deserialize BroadcastedMessage from data
-        let broadcasted_msg: BroadcastedMessage =
-            serde_json::from_value(data.clone()).map_err(|e| {
-                error!("Failed to deserialize BroadcastedMessage: {:?}", e);
-                BitVMXError::InvalidMessageFormat
-            })?;
-
-        // Validate the BroadcastedMessage structure
-        broadcasted_msg.validate()?;
-
-        info!(
-            "Processing BroadcastedMessage from leader {} for context {} with {} original messages",
-            leader_identifier.pubkey_hash,
-            program_id,
-            broadcasted_msg.original_messages.len()
-        );
-
-        // Process each original message recursively
-        for original_msg in &broadcasted_msg.original_messages {
-            // Verify the original message signature
-            let original_verified = self.verify_original_message_signature(
-                &original_msg.sender_pubkey_hash,
-                &program_id,
-                &original_msg.version,
-                &original_msg.msg_type,
-                &original_msg.data,
-                original_msg.original_timestamp,
-                &original_msg.original_signature,
-            )?;
-
-            if !original_verified {
-                warn!(
-                    "Original message from {} failed signature verification, skipping",
-                    original_msg.sender_pubkey_hash
-                );
-                continue;
-            }
-
-            // Reconstruct the serialized message from OriginalMessage
-            let serialized_original = crate::comms_helper::serialize_msg(
-                &original_msg.version,
-                original_msg.msg_type,
-                &program_id,
-                &original_msg.data,
-                original_msg.original_timestamp,
-                original_msg.original_signature.clone(),
-            )?;
-
-            // Create Identifier from sender_pubkey_hash (parse as string)
-            let sender_identifier = original_msg
-                .sender_pubkey_hash
-                .parse::<Identifier>()
-                .map_err(|_| BitVMXError::InvalidMessageFormat)?;
-
-            // Recursively process the original message
-            // Use is_new_message=false since this is a replayed message
-            self.process_msg(sender_identifier, serialized_original, false)?;
-        }
-
-        info!(
-            "Successfully processed BroadcastedMessage from leader {} with {} original messages",
-            leader_identifier.pubkey_hash,
-            broadcasted_msg.original_messages.len()
-        );
-
-        Ok(())
-    }
-
-    /// Verify the signature of an original message
-    /// This is similar to verify_message_signature but works with OriginalMessage data
-    fn verify_original_message_signature(
-        &self,
-        sender_pubkey_hash: &PubKeyHash,
-        program_id: &Uuid,
-        version: &String,
-        msg_type: &CommsMessageType,
-        data: &Value,
-        timestamp: i64,
-        signature: &Vec<u8>,
-    ) -> Result<bool, BitVMXError> {
-        match SignatureVerifier::verify_and_get_key(
-            &self.program_context.comms,
-            &self.program_context.globals,
-            &self.program_context.key_chain,
-            sender_pubkey_hash,
-            program_id,
-            msg_type,
-            data,
-            timestamp,
-            signature,
-            version,
-        ) {
-            Ok(_) => Ok(true),
-            Err(BitVMXError::MissingVerificationKey { .. }) => Ok(false),
-            Err(err) => Err(err),
-        }
     }
 }
 
