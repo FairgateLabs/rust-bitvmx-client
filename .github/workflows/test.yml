@@ -35,4 +35,4 @@ jobs:
       cargo_features: 'testpanic'
       nightly: false
       submodule_branches: '{}'
-    secrets: inherit
+    secrets: inherit 
