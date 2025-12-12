@@ -873,14 +873,14 @@ impl FullPenalizationProtocol {
                 &mut vec![disabler_directory_utxo.clone()],
             )?;
 
-            let mut wt_stoppers = vec![];
+            let mut op_stoppers = vec![];
 
             // Create watchtower WT INIT CHALLENGE TX reference just once
             for op_index in 0..member_count {
                 if wt_index == op_index
                     || committee.members[op_index].role != ParticipantRole::Prover
                 {
-                    wt_stoppers.push(None);
+                    op_stoppers.push(None);
                     continue;
                 }
                 debug!(
@@ -891,13 +891,13 @@ impl FullPenalizationProtocol {
                 let wt_init_challenge_name =
                     double_indexed_name(WT_INIT_CHALLENGE_TX, wt_index, op_index);
 
-                let wt_stopper = claim_gate_stoppers[op_index].clone().unwrap().0;
-                wt_stoppers.push(Some(wt_stopper.clone()));
+                let op_stopper = claim_gate_stoppers[op_index].clone().unwrap().1;
+                op_stoppers.push(Some(op_stopper.clone()));
 
                 create_transaction_reference(
                     protocol,
                     &wt_init_challenge_name,
-                    &mut vec![wt_stopper],
+                    &mut vec![op_stopper],
                 )?;
             }
 
@@ -919,7 +919,7 @@ impl FullPenalizationProtocol {
                     &committee,
                     wt_index,
                     op_index,
-                    &wt_stoppers,
+                    &op_stoppers,
                     &disabler_directory_utxo,
                 )?;
             }
@@ -936,7 +936,7 @@ impl FullPenalizationProtocol {
         committee: &Committee,
         wt_index: usize,
         op_index: usize,
-        wt_stoppers: &Vec<Option<PartialUtxo>>,
+        op_stoppers: &Vec<Option<PartialUtxo>>,
         disabler_directory_utxo: &PartialUtxo,
     ) -> Result<(), BitVMXError> {
         let wt_disabler_directory_name =
@@ -990,26 +990,28 @@ impl FullPenalizationProtocol {
                 &OutputType::taproot(DUST_VALUE, &committee.dispute_aggregated_key, &[])?.into(),
             )?;
 
-            if wt_stoppers[member_index].is_none() {
+            if op_stoppers[member_index].is_none() {
                 continue;
             }
 
-            let wt_stopper = wt_stoppers[member_index].clone().unwrap();
+            // WT_DISABLER_TX
+            let op_stopper = op_stoppers[member_index].clone().unwrap();
             let wt_disabler_name =
                 triple_indexed_name(WT_DISABLER_TX, wt_index, op_index, member_index);
             let wt_init_challenge_name =
                 &double_indexed_name(WT_INIT_CHALLENGE_TX, wt_index, member_index);
 
             // Connection from WT INIT CHALLENGE sttopper to WT_DISABLER
+            // Need to consume op_stopper to prevent WT to disabler it
             protocol.add_connection(
                 "from_stopper",
                 wt_init_challenge_name,
-                (wt_stopper.1 as usize).into(),
+                (op_stopper.1 as usize).into(),
                 &wt_disabler_name,
                 // First script leaf verify aggregated key
                 InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
                 None,
-                Some(wt_stopper.0),
+                Some(op_stopper.0),
             )?;
 
             // Connection from disabler directory to WT_DISABLER
@@ -1038,8 +1040,6 @@ impl FullPenalizationProtocol {
                     script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
                 },
             )?;
-
-            // TODO: Add WT_LAZY_DISABLER once Dispute channel is available
         }
 
         Ok(())
