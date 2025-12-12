@@ -121,7 +121,7 @@ pub enum IncomingBitVMXApiMessages {
     ProofReady(Uuid),
     GetZKPExecutionResult(Uuid),
     Encrypt(Uuid, Vec<u8>, String),
-    Decrypt(Uuid, Vec<u8>),
+    Decrypt(Uuid, Vec<u8>, String),
     Backup(Uuid, String),
     #[cfg(feature = "testpanic")]
     Test(String),
@@ -179,6 +179,7 @@ pub enum OutgoingBitVMXApiMessages {
     WalletNotReady(Uuid),
     WalletError(Uuid, String),
     ProtocolVisualization(Uuid, String),
+    SetInput(Vec<u8>),
 }
 
 impl OutgoingBitVMXApiMessages {
@@ -285,6 +286,13 @@ impl OutgoingBitVMXApiMessages {
         }
     }
 
+    pub fn input(&self) -> Option<Vec<u8>> {
+        match self {
+            OutgoingBitVMXApiMessages::SetInput(input) => Some(input.clone()),
+            _ => None,
+        }
+    }
+
     pub fn name(&self) -> String {
         match self {
             OutgoingBitVMXApiMessages::Pong(_) => "Pong".to_string(),
@@ -331,6 +339,7 @@ impl OutgoingBitVMXApiMessages {
             OutgoingBitVMXApiMessages::ProtocolVisualization(_, _) => {
                 "ProtocolVisualization".to_string()
             }
+            OutgoingBitVMXApiMessages::SetInput(_) => "SetInput".to_string(),
         }
     }
 }

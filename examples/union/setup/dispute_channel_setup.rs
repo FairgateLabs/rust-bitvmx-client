@@ -17,7 +17,9 @@ use bitvmx_client::{
             },
             union::{
                 common::{get_dispute_channel_pid, get_dispute_core_pid},
-                types::{MemberData, CLAIM_GATE_STOPPER_UTXOS, OP_COSIGN_UTXOS},
+                types::{
+                    MemberData, WtInitChallengeUtxos, OP_COSIGN_UTXOS, WT_INIT_CHALLENGE_UTXOS,
+                },
             },
         },
         variables::{PartialUtxo, VariableTypes},
@@ -44,7 +46,7 @@ impl DisputeChannelSetup {
         let my_dispute_core_pid = get_dispute_core_pid(committee_id, &members[my_index].take_key);
 
         let my_op_cosign_utxos = Self::op_cosign_utxos(my_dispute_core_pid, bitvmx)?;
-        let my_claim_gate_stoppers = Self::claim_gate_stoppers(my_dispute_core_pid, &bitvmx)?;
+        let my_claim_gate_stoppers = Self::wt_init_challenge_utxos(my_dispute_core_pid, &bitvmx)?;
 
         // Iterate over partners
         for partner_index in 0..members.len() {
@@ -70,7 +72,7 @@ impl DisputeChannelSetup {
                     get_dispute_core_pid(committee_id, &members[partner_index].take_key);
 
                 let partner_claim_gate_stoppers =
-                    Self::claim_gate_stoppers(partner_dispute_core_pid, &bitvmx)?;
+                    Self::wt_init_challenge_utxos(partner_dispute_core_pid, &bitvmx)?;
 
                 let partner_op_cosign_utxos =
                     Self::op_cosign_utxos(partner_dispute_core_pid, &bitvmx)?;
@@ -86,8 +88,8 @@ impl DisputeChannelSetup {
                     partner_address,
                     &bitvmx,
                     pair_key,
-                    partner_stoppers.0,
-                    partner_stoppers.1,
+                    partner_stoppers.wt_stopper,
+                    partner_stoppers.op_stopper,
                     partner_op_cosign_utxos[my_index].clone().unwrap(),
                     wt_takekey,
                 )?;
@@ -110,8 +112,8 @@ impl DisputeChannelSetup {
                     &my_address,
                     &bitvmx,
                     pair_key,
-                    my_stoppers.0,
-                    my_stoppers.1,
+                    my_stoppers.wt_stopper,
+                    my_stoppers.op_stopper,
                     my_op_cosign_utxos[partner_index].clone().unwrap(),
                     wt_takekey,
                 )?;
@@ -124,18 +126,18 @@ impl DisputeChannelSetup {
         Ok(total_setups)
     }
 
-    fn claim_gate_stoppers(
+    fn wt_init_challenge_utxos(
         dispute_core_pid: Uuid,
         bitvmx: &BitVMXClient,
-    ) -> Result<Vec<Option<(PartialUtxo, PartialUtxo)>>> {
-        bitvmx.get_var(dispute_core_pid, CLAIM_GATE_STOPPER_UTXOS.to_string())?;
+    ) -> Result<Vec<Option<WtInitChallengeUtxos>>> {
+        bitvmx.get_var(dispute_core_pid, WT_INIT_CHALLENGE_UTXOS.to_string())?;
         std::thread::sleep(std::time::Duration::from_secs(1)); // wait a bit for the message to be processed
 
         let variable =
             wait_until_msg!(&bitvmx, OutgoingBitVMXApiMessages::Variable(_, _, _var) => _var);
 
         let data = variable.string()?;
-        let claim_stoppers: Vec<Option<(PartialUtxo, PartialUtxo)>> = serde_json::from_str(&data)?;
+        let claim_stoppers: Vec<Option<WtInitChallengeUtxos>> = serde_json::from_str(&data)?;
         Ok(claim_stoppers)
     }
 

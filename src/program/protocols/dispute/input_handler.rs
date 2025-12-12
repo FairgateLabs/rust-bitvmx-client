@@ -17,7 +17,7 @@ use crate::{
 
 pub enum ProgramInputType {
     Prover(u32, u32),
-    //Verifier(u32, u32), // Not yet supported
+    Verifier(u32, u32),
     ProverPrev(u32, u32),
     //VerifierPrev(u32, u32), // Not yet supported
     Const(u32, u32),
@@ -41,9 +41,9 @@ pub fn generate_input_owner_list(
             "prover" => {
                 input_mapping.push(ProgramInputType::Prover(words, total_words));
             }
-            /*"verifier" => {
+            "verifier" => {
                 input_mapping.push(ProgramInputType::Verifier(words, total_words));
-            }*/
+            }
             "prover_prev" => {
                 input_mapping.push(ProgramInputType::ProverPrev(words, total_words));
             }
@@ -91,13 +91,13 @@ pub fn get_required_keys(
                 input_txs_offsets.push(*offset);
                 if participant_role.is_prover() {
                     for i in 0..*words {
-                        required_keys.push(format!("prover_program_input_{}", offset + i));
+                        required_keys.push(program_input(offset + i, Some(participant_role)));
                     }
                 }
                 last_tx_id = input_txs.len();
             }
             // if the input is owned by the verifier then the prover needs to cosign it
-            /*ProgramInputType::Verifier(words, offset) => {
+            ProgramInputType::Verifier(words, offset) => {
                 input_txs.push("verifier".to_string());
                 input_txs.push("prover_cosign".to_string());
                 input_txs_sizes.push(*words);
@@ -105,19 +105,15 @@ pub fn get_required_keys(
                 input_txs_offsets.push(*offset);
                 input_txs_offsets.push(*offset);
                 for i in 0..*words {
-                    required_keys.push(format!(
-                        "{}_program_input_{}",
-                        participant_role.to_string(),
-                        offset + i
-                    ));
+                    required_keys.push(program_input(offset + i, Some(participant_role)));
                 }
                 last_tx_id = input_txs.len();
-            }*/
+            }
             ProgramInputType::Const(words, offset) => {
                 //similar to split_input
                 let full_input = program_context
                     .globals
-                    .get_var(id, &program_input(idx as u32))?
+                    .get_var(id, &program_input(idx as u32, None))?
                     .unwrap()
                     .input()?;
 
@@ -182,12 +178,17 @@ pub fn split_input(
 
     let full_input = program_context
         .globals
-        .get_var(id, &program_input(idx))?
+        .get_var(id, &program_input(idx, None))?
         .unwrap()
         .input()?;
     let words = input_txs_sizes[idx as usize];
     let owner = input_txs[idx as usize].as_str();
     let offset = input_txs_offsets[idx as usize];
+
+    let role = match owner {
+        "verifier" => ParticipantRole::Verifier,
+        _ => ParticipantRole::Prover,
+    };
 
     for i in 0..words {
         let partial_input = full_input
@@ -195,7 +196,7 @@ pub fn split_input(
             .unwrap();
         program_context.globals.set_var(
             id,
-            &format!("{}_program_input_{}", owner, i + offset),
+            &program_input(offset + i, Some(&role)),
             VariableTypes::Input(partial_input.to_vec()),
         )?;
     }
@@ -246,9 +247,14 @@ pub fn unify_witnesses(
     let offset = input_txs_offsets[idx];
     let size = input_txs_sizes[idx];
 
+    let owner = match owner.as_str() {
+        "verifier" => ParticipantRole::Verifier,
+        _ => ParticipantRole::Prover,
+    };
+
     let mut input_for_tx = vec![];
     for i in 0..size {
-        let key = format!("{}_program_input_{}", owner, offset + i);
+        let key = program_input(offset + i, Some(&owner));
         let input = program_context
             .witness
             .get_witness(id, &key)?
@@ -260,7 +266,7 @@ pub fn unify_witnesses(
     }
     program_context.globals.set_var(
         id,
-        &program_input(idx as u32),
+        &program_input(idx as u32, None),
         VariableTypes::Input(input_for_tx),
     )?;
 
@@ -313,7 +319,7 @@ pub fn unify_inputs(
             continue;
         }
 
-        let key = &program_input(idx as u32);
+        let key = &program_input(idx as u32, None);
         full_input.extend_from_slice(&program_context.globals.get_var(id, key)?.unwrap().input()?);
         info!(
             "Unifying input from tx {}: {}",

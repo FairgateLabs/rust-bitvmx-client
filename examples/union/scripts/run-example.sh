@@ -68,7 +68,7 @@ for i in $(seq 1 $OP_COUNT); do
 done
 
 echo "Waiting for BitVMX clients to initialize..."
-sleep 20s
+sleep 10s
 
 # Open log in VS Code if available
 if command -v code >/dev/null 2>&1; then

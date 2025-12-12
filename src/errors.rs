@@ -12,6 +12,7 @@ use key_manager::{
     musig2::errors::Musig2SignerError,
 };
 use protocol_builder::errors::{ProtocolBuilderError, ScriptError, UnspendableKeyError};
+use std::sync::PoisonError;
 use std::time::Duration;
 use storage_backend::error::StorageError;
 use thiserror::Error;
@@ -33,6 +34,9 @@ pub enum BitVMXError {
 
     #[error("Error when using KeyManager: {0}")]
     KeyManagerError(#[from] KeyManagerError),
+
+    #[error("KeyChain error: {0}")]
+    KeyChainError(String),
 
     #[error("Error when using Bitcoin client: {0}")]
     BitcoinError(#[from] BitcoinClientError),
@@ -258,6 +262,18 @@ pub enum BitVMXError {
         script_index: Option<usize>,
         source: ProtocolBuilderError,
     },
+
+    #[error("Poisoned lock error: {0}")]
+    PoisonedLockError(String),
+
+    #[error("Invalid Input: {0}")]
+    InvalidInput(String),
+}
+
+impl<T> From<PoisonError<T>> for BitVMXError {
+    fn from(err: PoisonError<T>) -> Self {
+        BitVMXError::PoisonedLockError(format!("Lock poisoned: {err}"))
+    }
 }
 
 impl BitVMXError {

@@ -1,5 +1,6 @@
 use bitcoin::{PublicKey, Txid};
 use key_manager::musig2::{secp::MaybeScalar, PubNonce};
+use protocol_builder::types::OutputType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -24,7 +25,7 @@ pub const WT_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO: &str =
     "WT_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO";
 pub const OP_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO: &str =
     "OP_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO";
-pub const CLAIM_GATE_STOPPER_UTXOS: &str = "CLAIM_GATE_STOPPER_UTXOS";
+pub const WT_INIT_CHALLENGE_UTXOS: &str = "WT_INIT_CHALLENGE_UTXOS";
 pub const OP_COSIGN_UTXOS: &str = "OP_COSIGN_UTXOS";
 pub const PAIRWISE_DISPUTE_KEY: &str = "PAIRWISE_DISPUTE_KEY";
 
@@ -45,6 +46,7 @@ pub const OP_SELF_DISABLER_TX: &str = "OP_SELF_DISABLER_TX";
 pub const WT_SELF_DISABLER_TX: &str = "WT_SELF_DISABLER_TX";
 pub const OP_DISABLER_TX: &str = "OP_DISABLER_TX";
 pub const WT_DISABLER_TX: &str = "WT_DISABLER_TX";
+pub const WT_COSIGN_DISABLER_TX: &str = "WT_COSIGN_DISABLER_TX";
 pub const OP_LAZY_DISABLER_TX: &str = "OP_LAZY_DISABLER_TX";
 pub const OP_DISABLER_DIRECTORY_TX: &str = "OP_DISABLER_DIRECTORY_TX";
 pub const WT_DISABLER_DIRECTORY_TX: &str = "WT_DISABLER_DIRECTORY_TX";
@@ -271,4 +273,18 @@ impl UnionSettings {
     pub fn name() -> String {
         "union_settings".to_string()
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WtInitChallengeOutputs {
+    pub op_cosign: OutputType,
+    pub wt_stopper: OutputType,
+    pub op_stopper: OutputType,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WtInitChallengeUtxos {
+    pub op_cosign: PartialUtxo,
+    pub wt_stopper: PartialUtxo,
+    pub op_stopper: PartialUtxo,
 }

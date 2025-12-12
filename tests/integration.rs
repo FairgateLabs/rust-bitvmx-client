@@ -23,6 +23,19 @@ mod common;
 #[ignore]
 #[test]
 pub fn test_drp() -> Result<()> {
+    test_drp_aux(None)?;
+    Ok(())
+}
+
+//cargo test --release  -- test_to --ignored
+#[ignore]
+#[test]
+pub fn test_to() -> Result<()> {
+    test_drp_aux(Some("NARY_VERIFIER_3"))?;
+    Ok(())
+}
+
+fn test_drp_aux(last_tx_to_dispatch: Option<&str>) -> Result<()> {
     config_trace();
 
     let (bitcoin_client, bitcoind, mut wallet) = prepare_bitcoin()?;
@@ -139,6 +152,7 @@ pub fn test_drp() -> Result<()> {
         None,
         forced_challenge,
         true,
+        last_tx_to_dispatch,
     )?;
 
     //prover final trace

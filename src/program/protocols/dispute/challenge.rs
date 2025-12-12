@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use bitcoin::{PublicKey, ScriptBuf};
 use bitcoin_script_riscv::riscv::challenges::*;
 use bitcoin_script_stack::stack::StackTracker;
-use bitvmx_cpu_definitions::{challenge::ChallengeType, constants::CHUNK_SIZE};
+use bitvmx_cpu_definitions::{
+    challenge::{ChallengeType, EquivocationKind},
+    constants::CHUNK_SIZE,
+};
 use emulator::{
     decision::nary_search::NArySearchType, loader::program_definition::ProgramDefinition,
 };
@@ -17,8 +20,8 @@ use crate::{
         participant::{ParticipantKeys, ParticipantRole},
         protocols::dispute::{
             input_handler::{
-                generate_input_owner_list, set_input_hex, set_input_u32, set_input_u64,
-                set_input_u8, ProgramInputType,
+                generate_input_owner_list, set_input_hex, set_input_u32, set_input_u8,
+                ProgramInputType,
             },
             program_input_prev_prefix, program_input_prev_protocol, program_input_word,
         },
@@ -27,44 +30,47 @@ use crate::{
     types::ProgramContext,
 };
 
+// 1st n-ary search challenges
 pub const ENTRY_POINT_CHALLENGE: [(&str, usize); 3] = [
     ("prover_read_pc_address", 4),
     ("prover_read_pc_micro", 1),
-    ("prover_step_number", 8),
+    ("prover_conflict_step_tk", 8),
 ];
 pub const PROGRAM_COUNTER_CHALLENGE: [(&str, usize); 8] = [
-    ("verifier_prev_prev_hash", 20), //TODO: These could be unsinged
+    ("verifier_prev_hash", 20), //TODO: These could be unsinged
     ("verifier_prev_write_add", 4),
     ("verifier_prev_write_data", 4),
     ("verifier_prev_write_pc", 4),
     ("verifier_prev_write_micro", 1),
     ("prover_read_pc_address", 4),
     ("prover_read_pc_micro", 1),
-    ("verifier_prev_hash", 20), //TODO: Fix, this hash is from prover translation keys
+    ("prover_step_hash_tk", 20),
 ];
-pub const HALT_CHALLENGE: [(&str, usize); 5] = [
+pub const HALT_CHALLENGE: [(&str, usize); 7] = [
     ("prover_last_step", 8),
-    ("prover_step_number", 8),
+    ("prover_conflict_step_tk", 8),
     ("prover_read_1_value", 4),
     ("prover_read_2_value", 4),
     ("prover_read_pc_opcode", 4),
+    ("prover_next_hash_tk", 20),
+    ("prover_last_hash", 20),
 ];
 pub const TRACE_HASH_CHALLENGE: [(&str, usize); 6] = [
-    ("verifier_prev_hash", 20), //TODO: this should be from prover translation keys
+    ("prover_step_hash_tk", 20),
     ("prover_write_address", 4),
     ("prover_write_value", 4),
     ("prover_write_pc", 4),
     ("prover_write_micro", 1),
-    ("verifier_step_hash", 20), //TODO: this should be from prover translation keys
+    ("prover_next_hash_tk", 20),
 ];
-pub const TRACE_HASH_ZERO_CHALLENGE: [(&str, usize); 5] = [
+pub const TRACE_HASH_ZERO_CHALLENGE: [(&str, usize); 6] = [
     ("prover_write_address", 4),
     ("prover_write_value", 4),
     ("prover_write_pc", 4),
     ("prover_write_micro", 1),
-    ("verifier_step_hash", 20), //TODO: this should be from prover translation keys
+    ("prover_next_hash_tk", 20),
+    ("prover_conflict_step_tk", 8),
 ];
-
 pub const INPUT_CHALLENGE: [(&str, usize); 7] = [
     ("prover_program_input", 4),
     ("prover_read_1_address", 4),
@@ -74,10 +80,8 @@ pub const INPUT_CHALLENGE: [(&str, usize); 7] = [
     ("prover_read_2_value", 4),
     ("prover_read_2_last_step", 8),
 ];
-
 pub const OPCODE_CHALLENGE: [(&str, usize); 2] =
     [("prover_read_pc_address", 4), ("prover_read_pc_opcode", 4)];
-
 pub const ADDRESSES_SECTIONS_CHALLENGE: [(&str, usize); 5] = [
     ("prover_read_1_address", 4),
     ("prover_read_2_address", 4),
@@ -85,7 +89,6 @@ pub const ADDRESSES_SECTIONS_CHALLENGE: [(&str, usize); 5] = [
     ("prover_mem_witness", 1),
     ("prover_read_pc_address", 4),
 ];
-
 pub const ROM_CHALLENGE: [(&str, usize); 6] = [
     ("prover_read_1_address", 4),
     ("prover_read_1_value", 4),
@@ -94,7 +97,6 @@ pub const ROM_CHALLENGE: [(&str, usize); 6] = [
     ("prover_read_2_value", 4),
     ("prover_read_2_last_step", 8),
 ];
-
 pub const INITIALIZED_CHALLENGE: [(&str, usize); 7] = [
     ("prover_read_1_address", 4),
     ("prover_read_1_value", 4),
@@ -104,7 +106,6 @@ pub const INITIALIZED_CHALLENGE: [(&str, usize); 7] = [
     ("prover_read_2_last_step", 8),
     ("verifier_read_selector", 1),
 ];
-
 pub const UNINITIALIZED_CHALLENGE: [(&str, usize); 7] = [
     ("prover_read_1_address", 4),
     ("prover_read_1_value", 4),
@@ -114,16 +115,16 @@ pub const UNINITIALIZED_CHALLENGE: [(&str, usize); 7] = [
     ("prover_read_2_last_step", 8),
     ("verifier_read_selector", 1),
 ];
-
 pub const FUTURE_READ_CHALLENGE: [(&str, usize); 4] = [
-    ("prover_step_number", 8),
+    ("prover_conflict_step_tk", 8),
     ("prover_read_1_last_step", 8),
     ("prover_read_2_last_step", 8),
     ("verifier_read_selector", 1),
 ];
+pub const READ_VALUE_NARY_SEARCH_CHALLENGE: [(&str, usize); 1] =
+    [("verifier_selection_bits2_1", 1)];
 
-pub const READ_VALUE_NARY_SEARCH_CHALLENGE: [(&str, usize); 1] = [("verifier_bits", 1)];
-
+// 2nd n-ary search challenges
 pub const READ_VALUE_CHALLENGE: [(&str, usize); 15] = [
     ("prover_read_1_address", 4),
     ("prover_read_1_value", 4),
@@ -132,27 +133,43 @@ pub const READ_VALUE_CHALLENGE: [(&str, usize); 15] = [
     ("prover_read_2_value", 4),
     ("prover_read_2_last_step", 8),
     ("verifier_read_selector", 1),
-    ("verifier_step_hash", 20), //TODO: this should be from prover translation keys
+    ("prover_step_hash_tk2", 20),
     ("verifier_write_addr", 4),
     ("verifier_write_value", 4),
     ("verifier_write_pc", 4),
     ("verifier_write_micro", 1),
-    ("verifier_next_hash", 20), //TODO: this should be from prover translation keys
-    ("verifier_write_step", 8), //TODO: this should be from prover translation keys
-    ("verifier_conflict_step", 8), //TODO: this should be from prover translation keys
+    ("prover_next_hash_tk2", 20),
+    ("prover_write_step_tk2", 8),
+    ("prover_conflict_step_tk", 8),
 ];
-
 pub const CORRECT_HASH_CHALLENGE: [(&str, usize); 7] = [
-    ("verifier_prover_hash", 20), //TODO: this should be from prover translation keys
+    ("prover_step_hash_tk2", 20),
     ("verifier_hash", 20),
     ("verifier_write_addr", 4),
     ("verifier_write_value", 4),
     ("verifier_write_pc", 4),
     ("verifier_write_micro", 1),
-    ("verifier_next_hash", 20), //TODO: this should be from prover translation keys
+    ("prover_next_hash_tk2", 20),
+];
+pub const EQUIVOCATION_HASH_CHALLENGE: [(&str, usize); 4] = [
+    ("prover_step_hash_tk", 20),
+    ("prover_step_hash_tk2", 20),
+    ("prover_write_step_tk2", 8),
+    ("prover_conflict_step_tk", 8),
+];
+// All variants of the equivocation–resign challenge, covering both step and next hashes as well as both n-ary searches.
+pub const EQUIVOCATION_RESIGN_CHALLENGE: [(&str, usize); 3] = [
+    ("prover_step_hash_tk", 20), // This is a placeholder where the specific prover hash key will be inserted later
+    ("prover_step_hash_tk", 20), // This will also be replaced with prover_next_hash_tk for some leaves
+    ("prover_conflict_step_tk", 8),
+];
+pub const EQUIVOCATION_RESIGN_CHALLENGE2: [(&str, usize); 3] = [
+    ("prover_step_hash_tk2", 20), // This is a placeholder where the specific prover hash key will be inserted later
+    ("prover_step_hash_tk2", 20), // This will also be replaced with prover_next_hash_tk2 for some leaves
+    ("prover_write_step_tk2", 8),
 ];
 
-pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 13] = [
+pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 14] = [
     ("entry_point", &ENTRY_POINT_CHALLENGE),
     ("program_counter", &PROGRAM_COUNTER_CHALLENGE),
     ("halt", &HALT_CHALLENGE),
@@ -166,11 +183,14 @@ pub const CHALLENGES: [(&str, &'static [(&str, usize)]); 13] = [
     ("uninitialized", &UNINITIALIZED_CHALLENGE),
     ("future_read", &FUTURE_READ_CHALLENGE),
     ("read_value_nary_search", &READ_VALUE_NARY_SEARCH_CHALLENGE),
+    ("equivocation_resign", &EQUIVOCATION_RESIGN_CHALLENGE),
 ];
 
-pub const READ_CHALLENGES: [(&str, &'static [(&str, usize)]); 2] = [
+pub const READ_CHALLENGES: [(&str, &'static [(&str, usize)]); 4] = [
     ("read_value", &READ_VALUE_CHALLENGE),
     ("correct_hash", &CORRECT_HASH_CHALLENGE),
+    ("equivocation_hash", &EQUIVOCATION_HASH_CHALLENGE),
+    ("equivocation_resign2", &EQUIVOCATION_RESIGN_CHALLENGE2),
 ];
 
 pub fn get_verifier_keys() -> Vec<(String, usize)> {
@@ -210,6 +230,10 @@ pub fn challenge_scripts(
 
     let mut challenge_current_leaf = 0;
 
+    let rounds = program_definitions.nary_def().total_rounds();
+    let nary = program_definitions.nary_def().nary;
+    let nary_last_round = program_definitions.nary_def().nary_last_round;
+
     match nary_search_type {
         NArySearchType::ConflictStep => {
             for (challenge_name, subnames) in CHALLENGES.iter() {
@@ -231,7 +255,10 @@ pub fn challenge_scripts(
                             .iter()
                             .map(|(var_name, _)| {
                                 let idx = if var_name.starts_with("prover") { 0 } else { 1 };
-                                (var_name, keys[idx].get_winternitz(var_name).unwrap())
+                                let key = keys[idx].get_winternitz(var_name).unwrap_or_else(|_| {
+                                    panic!("Missing winternitz key for var_name: {}", var_name)
+                                });
+                                (var_name, key)
                             })
                             .collect::<Vec<_>>(),
                         None,
@@ -289,8 +316,8 @@ pub fn challenge_scripts(
 
                         for (idx, input) in inputs.iter().enumerate() {
                             match input {
-                                //ProgramInputType::Verifier(words, offset)
-                                ProgramInputType::Prover(words, offset) => {
+                                ProgramInputType::Verifier(words, offset)
+                                | ProgramInputType::Prover(words, offset) => {
                                     for j in *offset..*offset + *words {
                                         let names_and_keys = subnames
                                             .iter()
@@ -470,6 +497,56 @@ pub fn challenge_scripts(
                         }
                         challenge_current_leaf += chunks.len() as u32;
                     }
+                    "equivocation_resign" => {
+                        for kind in [EquivocationKind::StepHash, EquivocationKind::NextHash] {
+                            for round in 1..rounds + 1 {
+                                let hashes = program_definitions.nary_def().hashes_for_round(round);
+                                for h in 1..hashes + 1 {
+                                    let mut scripts = vec![reverse_script.clone()];
+                                    stack = StackTracker::new();
+                                    equivocation_resign_challenge(
+                                        &mut stack,
+                                        kind.clone(),
+                                        round,
+                                        h,
+                                        rounds,
+                                        nary,
+                                        nary_last_round,
+                                    );
+                                    scripts.push(stack.get_script());
+
+                                    let mut names_and_keys_copy = names_and_keys.clone();
+                                    let key_name = format!("prover_hash_{}_{}", round, h);
+                                    let key_name_ref: &str = key_name.as_str();
+                                    let winternitz_key = keys[0].get_winternitz(&key_name).unwrap();
+                                    names_and_keys_copy[0] = (&key_name_ref, winternitz_key);
+
+                                    names_and_keys_copy[1] = if kind == EquivocationKind::StepHash {
+                                        (
+                                            &"prover_step_hash_tk",
+                                            keys[0].get_winternitz("prover_step_hash_tk").unwrap(),
+                                        )
+                                    } else {
+                                        (
+                                            &"prover_next_hash_tk",
+                                            keys[0].get_winternitz("prover_next_hash_tk").unwrap(),
+                                        )
+                                    };
+                                    let winternitz_check =
+                                        scripts::verify_winternitz_signatures_aux(
+                                            aggregated,
+                                            &names_and_keys_copy,
+                                            sign_mode,
+                                            true,
+                                            Some(scripts),
+                                        )?;
+                                    challenge_leaf_script.push(winternitz_check);
+
+                                    challenge_current_leaf += 1;
+                                }
+                            }
+                        }
+                    }
                     _ => {
                         challenge_current_leaf += 1;
                         let mut scripts = vec![reverse_script.clone()];
@@ -548,7 +625,10 @@ pub fn challenge_scripts(
                     .iter()
                     .map(|(var_name, _)| {
                         let idx = if var_name.starts_with("prover") { 0 } else { 1 };
-                        (var_name, keys[idx].get_winternitz(var_name).unwrap())
+                        let key = keys[idx].get_winternitz(var_name).unwrap_or_else(|_| {
+                            panic!("Missing winternitz key for var_name: {}", var_name)
+                        });
+                        (var_name, key)
                     })
                     .collect::<Vec<_>>();
 
@@ -566,37 +646,96 @@ pub fn challenge_scripts(
                     VariableTypes::Number(challenge_current_leaf),
                 )?;
 
-                challenge_current_leaf += 1;
-                let mut scripts = vec![reverse_script.clone()];
-                stack = StackTracker::new();
-
                 match *challenge_name {
-                    "read_value" => {
-                        extract_nibble(
-                            &mut stack,
-                            &mut scripts,
-                            "read_value",
-                            "verifier_read_selector",
-                        );
+                    "equivocation_resign2" => {
+                        for kind in [EquivocationKind::StepHash, EquivocationKind::NextHash] {
+                            for round in 1..rounds + 1 {
+                                let hashes = program_definitions.nary_def().hashes_for_round(round);
+                                for h in 1..hashes + 1 {
+                                    let mut scripts = vec![reverse_script.clone()];
+                                    stack = StackTracker::new();
+                                    equivocation_resign_challenge(
+                                        &mut stack,
+                                        kind.clone(),
+                                        round,
+                                        h,
+                                        rounds,
+                                        nary,
+                                        nary_last_round,
+                                    );
+                                    scripts.push(stack.get_script());
+
+                                    let mut names_and_keys_copy = names_and_keys.clone();
+                                    let key_name = if round == 1 {
+                                        format!("prover_hash_{}_{}", round, h) // Hashes from round 1 are the same from the first n-ary search
+                                    } else {
+                                        format!("prover_hash2_{}_{}", round, h)
+                                    };
+                                    let key_name_ref: &str = key_name.as_str();
+                                    let winternitz_key = keys[0].get_winternitz(&key_name).unwrap();
+                                    names_and_keys_copy[0] = (&key_name_ref, winternitz_key);
+
+                                    names_and_keys_copy[1] = if kind == EquivocationKind::StepHash {
+                                        (
+                                            &"prover_step_hash_tk2",
+                                            keys[0].get_winternitz("prover_step_hash_tk2").unwrap(),
+                                        )
+                                    } else {
+                                        (
+                                            &"prover_next_hash_tk2",
+                                            keys[0].get_winternitz("prover_next_hash_tk2").unwrap(),
+                                        )
+                                    };
+                                    let winternitz_check =
+                                        scripts::verify_winternitz_signatures_aux(
+                                            aggregated,
+                                            &names_and_keys_copy,
+                                            sign_mode,
+                                            true,
+                                            Some(scripts),
+                                        )?;
+                                    challenge_leaf_script.push(winternitz_check);
+
+                                    challenge_current_leaf += 1;
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        challenge_current_leaf += 1;
+                        let mut scripts = vec![reverse_script.clone()];
                         stack = StackTracker::new();
-                        read_value_challenge(&mut stack);
+                        match *challenge_name {
+                            "read_value" => {
+                                extract_nibble(
+                                    &mut stack,
+                                    &mut scripts,
+                                    "read_value",
+                                    "verifier_read_selector",
+                                );
+                                stack = StackTracker::new();
+                                read_value_challenge(&mut stack);
+                            }
+                            "correct_hash" => {
+                                correct_hash_challenge(&mut stack);
+                            }
+                            "equivocation_hash" => {
+                                equivocation_hash_challenge(&mut stack);
+                            }
+                            _ => panic!("Unknown challenge name: {}", challenge_name),
+                        }
+                        scripts.push(stack.get_script());
+                        let winternitz_check = scripts::verify_winternitz_signatures_aux(
+                            aggregated,
+                            &names_and_keys,
+                            sign_mode,
+                            true,
+                            Some(scripts),
+                        )?;
+
+                        challenge_leaf_script.push(winternitz_check);
                     }
-                    "correct_hash" => {
-                        correct_hash_challenge(&mut stack);
-                    }
-                    _ => panic!("Unknown challenge name: {}", challenge_name),
                 }
-
-                scripts.push(stack.get_script());
-                let winternitz_check = scripts::verify_winternitz_signatures_aux(
-                    aggregated,
-                    &names_and_keys,
-                    sign_mode,
-                    true,
-                    Some(scripts),
-                )?;
-
-                challenge_leaf_script.push(winternitz_check);
             }
         }
     }
@@ -614,71 +753,71 @@ pub fn get_challenge_leaf(
     let mut dynamic_offset: u32 = 0; // For offset inside a specific challenge
 
     match challenge {
-        ChallengeType::EntryPoint(_trace_read_pc, _prover_trace_step, _entrypoint) => {
+        ChallengeType::EntryPoint {
+            prover_read_pc: _,
+            real_entry_point: _,
+            prover_conflict_step_tk: _,
+        } => {
             name = "entry_point";
             info!("Verifier chose {name} challenge");
         }
-        ChallengeType::ProgramCounter(
-            pre_pre_hash,
-            pre_step,
-            prover_step_hash,
-            _prover_pc_read,
-        ) => {
+        ChallengeType::ProgramCounter {
+            pre_hash,
+            trace,
+            prover_step_hash: _,
+            prover_pc_read: _,
+        } => {
             name = "program_counter";
             info!("Verifier chose {name} challenge");
 
-            set_input_hex(
-                id,
-                context,
-                &format!("verifier_prev_prev_hash"),
-                &pre_pre_hash,
-            )?;
+            set_input_hex(id, context, &format!("verifier_prev_hash"), &pre_hash)?;
             set_input_u32(
                 id,
                 context,
                 &format!("verifier_prev_write_add"),
-                pre_step.get_write().address,
+                trace.get_write().address,
             )?;
             set_input_u32(
                 id,
                 context,
                 &format!("verifier_prev_write_data"),
-                pre_step.get_write().value,
+                trace.get_write().value,
             )?;
             set_input_u32(
                 id,
                 context,
                 &format!("verifier_prev_write_pc"),
-                pre_step.get_pc().get_address(),
+                trace.get_pc().get_address(),
             )?;
             set_input_u8(
                 id,
                 context,
                 &format!("verifier_prev_write_micro"),
-                pre_step.get_pc().get_micro(),
-            )?;
-            set_input_hex(
-                id,
-                context,
-                &format!("verifier_prev_hash"), //TODO: fix
-                &prover_step_hash,
+                trace.get_pc().get_micro(),
             )?;
         }
-        ChallengeType::TraceHash(prover_prev_hash, _prover_trace_step, prover_step_hash) => {
+        ChallengeType::TraceHash {
+            prover_step_hash: _,
+            prover_trace: _,
+            prover_next_hash: _,
+        } => {
             name = "trace_hash";
             info!("Verifier chose {name} challenge");
-
-            //TODO: fix
-            set_input_hex(id, context, "verifier_prev_hash", &prover_prev_hash)?;
-            //TODO: fix
-            set_input_hex(id, context, "verifier_step_hash", &prover_step_hash)?;
         }
-        ChallengeType::TraceHashZero(_prover_trace_step, prover_step_hash) => {
+        ChallengeType::TraceHashZero {
+            prover_trace: _,
+            prover_next_hash: _,
+            prover_conflict_step_tk: _,
+        } => {
             name = "trace_hash_zero";
             info!("Verifier chose {name} challenge");
-            set_input_hex(id, context, "verifier_step_hash", &prover_step_hash)?;
         }
-        ChallengeType::InputData(_read_1, _read_2, address, _input_for_address) => {
+        ChallengeType::InputData {
+            prover_read_1: _,
+            prover_read_2: _,
+            address,
+            input_for_address: _,
+        } => {
             name = "input";
             info!("Verifier chose {name} challenge");
 
@@ -688,34 +827,49 @@ pub fn get_challenge_leaf(
                 .start;
             dynamic_offset = (address - base_addr) / 4;
         }
-        ChallengeType::Opcode(_pc_read, chunk_index, _opcodes_chunk) => {
+        ChallengeType::Opcode {
+            prover_pc_read: _,
+            chunk_index,
+            chunk: _,
+        } => {
             name = "opcode";
             info!("Verifier chose {name} challenge");
 
             dynamic_offset = *chunk_index;
         }
-        ChallengeType::AddressesSections(
-            _read_1,
-            _read_2,
-            _write,
-            _memory_witness,
-            _program_counter,
-            _,
-            _,
-            _,
-            _,
-        ) => {
+        ChallengeType::AddressesSections {
+            prover_read_1: _,
+            prover_read_2: _,
+            prover_write: _,
+            prover_witness: _,
+            prover_pc: _,
+            read_write_sections: _,
+            read_only_sections: _,
+            register_sections: _,
+            code_sections: _,
+        } => {
             name = "addresses_sections";
             info!("Verifier chose {name} challenge");
         }
-        ChallengeType::RomData(_read_1, _read_2, address, _input_for_address) => {
+        ChallengeType::RomData {
+            prover_read_1: _,
+            prover_read_2: _,
+            address,
+            input_for_address: _,
+        } => {
             name = "rom";
             info!("Verifier chose {name} challenge");
 
             let base_addr = program.find_section_by_name(".rodata").unwrap().start;
             dynamic_offset = address - base_addr;
         }
-        ChallengeType::InitializedData(_read_1, _read_2, read_selector, chunk_index, _chunk) => {
+        ChallengeType::InitializedData {
+            prover_read_1: _,
+            prover_read_2: _,
+            read_selector,
+            chunk_index,
+            chunk: _,
+        } => {
             name = "initialized";
             info!("Verifier chose {name} challenge");
 
@@ -727,7 +881,12 @@ pub fn get_challenge_leaf(
             )?;
             dynamic_offset = *chunk_index;
         }
-        ChallengeType::UninitializedData(_read_1, _read_2, read_selector, _section_definition) => {
+        ChallengeType::UninitializedData {
+            prover_read_1: _,
+            prover_read_2: _,
+            read_selector,
+            sections: _,
+        } => {
             name = "uninitialized";
             info!("Verifier chose {name} challenge");
 
@@ -738,21 +897,91 @@ pub fn get_challenge_leaf(
                 *read_selector as u8,
             )?;
         }
-        ChallengeType::ReadValueNArySearch(bits) => {
+        ChallengeType::FutureRead {
+            prover_read_step_1: _,
+            prover_read_step_2: _,
+            read_selector,
+            prover_conflict_step_tk: _,
+        } => {
+            name = "future_read";
+            info!("Verifier chose {name} challenge");
+
+            set_input_u8(
+                id,
+                context,
+                &format!("verifier_read_selector"),
+                *read_selector as u8,
+            )?;
+        }
+        ChallengeType::EquivocationResign {
+            prover_true_hash: _,
+            prover_wrong_hash: _,
+            prover_challenge_step_tk: _,
+            kind,
+            expected_round,
+            expected_index,
+            rounds: _,
+            nary: _,
+            nary_last_round: _,
+        } => {
+            let second_nary_search = context
+                .globals
+                .get_var(id, "second-nary-search-started")?
+                .and_then(|v| v.bool().ok())
+                .unwrap_or(false);
+            if second_nary_search {
+                name = "equivocation_resign2";
+            } else {
+                name = "equivocation_resign";
+            }
+            info!("Verifier chose {name} challenge");
+
+            if let EquivocationKind::NextHash = kind {
+                // Adjust for step hashes, which come first
+                for round in 1..program_definitions.nary_def().total_rounds() + 1 {
+                    let hashes = program_definitions.nary_def().hashes_for_round(round);
+                    dynamic_offset += hashes as u32;
+                }
+            }
+
+            for round in 1..*expected_round {
+                let hashes = program_definitions.nary_def().hashes_for_round(round);
+                dynamic_offset += hashes as u32;
+            }
+            dynamic_offset += *expected_index as u32 - 1;
+        }
+        ChallengeType::Halt {
+            prover_last_step: _,
+            prover_conflict_step_tk: _,
+            prover_trace: _,
+            prover_next_hash: _,
+            prover_last_hash: _,
+        } => {
+            name = "halt";
+            info!("Verifier chose {name} challenge");
+        }
+        ChallengeType::ReadValueNArySearch { bits } => {
             name = "read_value_nary_search";
             info!("Verifier chose {name} challenge");
 
-            set_input_u8(id, context, &format!("verifier_bits"), *bits as u8)?;
+            set_input_u8(
+                id,
+                context,
+                &format!("verifier_selection_bits2_1"),
+                *bits as u8, // Already checked in CPU
+            )?;
         }
+
+        // 2nd N-ary search challenges
         ChallengeType::ReadValue {
-            read_1: _,
-            read_2: _,
+            prover_read_1: _,
+            prover_read_2: _,
             read_selector,
-            step_hash,
+            prover_hash: _,
             trace,
-            next_hash,
-            write_step,
-            conflict_step,
+            prover_next_hash: _,
+            prover_write_step_tk: _,
+            prover_conflict_step_tk: _,
         } => {
             name = "read_value";
             info!("Verifier chose {name} challenge");
@@ -763,8 +992,6 @@ pub fn get_challenge_leaf(
                 &format!("verifier_read_selector"),
                 *read_selector as u8,
             )?;
-
-            set_input_hex(id, context, &format!("verifier_step_hash"), &step_hash)?;
             set_input_u32(
                 id,
                 context,
@@ -789,25 +1016,15 @@ pub fn get_challenge_leaf(
                 &format!("verifier_write_micro"),
                 trace.get_pc().get_micro(),
             )?;
-            set_input_hex(id, context, &format!("verifier_next_hash"), &next_hash)?;
-            set_input_u64(id, context, &format!("verifier_write_step"), *write_step)?;
-            set_input_u64(
-                id,
-                context,
-                &format!("verifier_conflict_step"),
-                *conflict_step,
-            )?;
         }
         ChallengeType::CorrectHash {
-            prover_hash,
+            prover_step_hash: _,
             verifier_hash,
             trace,
-            next_hash,
+            prover_next_hash: _,
         } => {
             name = "correct_hash";
             info!("Verifier chose {name} challenge");
-
-            set_input_hex(id, context, &format!("verifier_prover_hash"), &prover_hash)?;
             set_input_hex(id, context, &format!("verifier_hash"), &verifier_hash)?;
             set_input_u32(
                 id,
@@ -833,23 +1050,15 @@ pub fn get_challenge_leaf(
                 &format!("verifier_write_micro"),
                 trace.get_pc().get_micro(),
             )?;
-            set_input_hex(id, context, &format!("verifier_next_hash"), &next_hash)?;
         }
-        ChallengeType::FutureRead {
-            step: _,
-            read_step_1: _,
-            read_step_2: _,
-            read_selector,
+        ChallengeType::EquivocationHash {
+            prover_step_hash1: _,
+            prover_step_hash2: _,
+            prover_write_step_tk: _,
+            prover_conflict_step_tk: _,
         } => {
-            name = "future_read";
+            name = "equivocation_hash";
             info!("Verifier chose {name} challenge");
-
-            set_input_u8(
-                id,
-                context,
-                &format!("verifier_read_selector"),
-                *read_selector as u8,
-            )?;
         }
         ChallengeType::No => {
             name = "";

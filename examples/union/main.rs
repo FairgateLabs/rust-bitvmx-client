@@ -988,7 +988,7 @@ pub fn challenge(
         let set_input_1 = VariableTypes::Input(hex::decode(data).unwrap());
         member
             .bitvmx
-            .set_var(drp_pid, &program_input(input_pos), set_input_1)?;
+            .set_var(drp_pid, &program_input(input_pos, None), set_input_1)?;
     }
 
     if should_wait {
@@ -1121,15 +1121,4 @@ fn wait_for_blocks(bitcoin_client: &BitcoinWrapper, mut blocks: u32) -> Result<(
         }
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::pegin;
-
-    #[test]
-    fn test_union_pegin() {
-        pegin().expect("Failed to run peg-in");
-        //thread::sleep(Duration::from_secs(10));
-    }
 }

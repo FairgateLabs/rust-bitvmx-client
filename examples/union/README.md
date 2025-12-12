@@ -1,5 +1,7 @@
 ## Bridge example
 
+//TODO this needs to be updated
+
 To run this example, first `cd` into rust-bitvmx-client root and start a bitcoin node:
 ```bash
 cargo run --release --example union setup_bitcoin_node
@@ -31,7 +33,7 @@ For example, to run the committee setup:
 ./examples/union/scripts/run-example.sh committee
 ```
 
-- Challenge example: 
+- Challenge example:
 
 In the case of `challenge` example you should provide who is the winning party `op` or `wt`:
 

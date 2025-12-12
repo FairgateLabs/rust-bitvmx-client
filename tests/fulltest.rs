@@ -505,6 +505,7 @@ pub fn test_full() -> Result<()> {
         None,
         forced_challenge,
         false,
+        None,
     )?;
 
     //Consume other stops through timeout
