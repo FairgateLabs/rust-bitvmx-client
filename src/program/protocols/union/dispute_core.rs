@@ -2326,7 +2326,7 @@ impl DisputeCoreProtocol {
         // Speedup data
         let speedup_utxo = Utxo::new(
             tx.compute_txid(),
-            1 + self.ctx.my_idx as u32, //Speedup vout is member index + 1 (1 is because op return output)
+            tx.output.len() as u32 - 1,
             SPEEDUP_VALUE,
             &self.my_speedup_key(context)?,
         );
