@@ -70,6 +70,7 @@ pub fn main() -> Result<()> {
         Some("advance_funds") => cli_advance_funds()?,
         Some("advance_funds_twice") => cli_advance_funds_twice()?,
         Some("challenge") => cli_challenge(args.get(2))?,
+        Some("wt_disabler") => cli_wt_disabler()?,
         Some("op_no_cosign") => cli_op_no_cosign()?,
         Some("wt_no_challenge") => cli_wt_no_challenge()?,
         Some("input_not_revealed") => cli_input_not_revealed()?,
@@ -118,6 +119,18 @@ fn print_usage() {
         "Forces challenge. It receives `op` or `wt` as argument to decide the winner",
     );
     print_cmd_help(
+        "wt_disabler",
+        "Forces an already disabler watchtower to open a new challenge to dispatch WT_DISABLER_TX",
+    );
+    print_cmd_help(
+        "op_no_cosign",
+        "Forces to dispatch OP_NO_COSIGN_TX after a challenge",
+    );
+    print_cmd_help(
+        "wt_no_challenge",
+        "Forces to dispatch WT_NO_CHALLENGE_TX after a challenge",
+    );
+    print_cmd_help(
         "input_not_revealed",
         "Forces INPUT_NOT_REVEALED_TX to be dispatched",
     );
@@ -125,7 +138,6 @@ fn print_usage() {
         "double_challenge",
         "Forces to send TWO_DISPUTE_PENALIZATION_TX to test double challenge handling",
     );
-
     print_cmd_help(
         "watchtowers_start_enabler",
         "Dispatch WT start enabler transactions",
@@ -259,7 +271,42 @@ pub fn cli_challenge(winner: Option<&String>) -> Result<()> {
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
     let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
-    challenge(&mut committee, slot_index, true, op_wins)?;
+    let op_index = 1;
+    challenge(&mut committee, op_index, slot_index, true, op_wins)?;
+    Ok(())
+}
+
+pub fn cli_wt_disabler() -> Result<()> {
+    if HIGH_FEE_NODE_ENABLED {
+        // Due to self disablers does not have speedup by now
+        info!("This example works better with a client node with low fees. Please disable HIGH_FEE_NODE_ENABLED and try again.");
+        return Ok(());
+    }
+
+    let (mut committee, mut user, _) = pegin_setup(2, NETWORK == Network::Regtest)?;
+    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+
+    // First challenge where WT are penalized. Operator 0 wins.
+    let op_index = 1;
+    challenge(&mut committee, op_index, slot_index, false, true)?;
+    let additional_blocks = 200;
+
+    info!(
+        "Starting mining {} blocks in loop to ensure challenges and DRP txs are dispatched...",
+        additional_blocks
+    );
+    wait_for_blocks(
+        &committee.bitcoin_client,
+        get_blocks_to_wait() + additional_blocks as u32,
+    )?;
+
+    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+
+    // Now Operator 1 is challenged
+    // In this second challenge WTs are already penalized. WT_DISABLERs should be dispatched.
+    let op_index = 0;
+    challenge(&mut committee, op_index, slot_index, true, true)?;
+
     Ok(())
 }
 
@@ -273,7 +320,8 @@ pub fn cli_op_no_cosign() -> Result<()> {
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
     let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
-    let op_index = challenge(&mut committee, slot_index, false, true)?;
+    let op_index = 1;
+    challenge(&mut committee, op_index, slot_index, false, true)?;
 
     let blocks_to_wait = 12; // Amount of blocks enough to allow WT to open a challenge but not enough to dispatch the OP_COSIGN_TX. Fine tunning may be required.
     info!("Mining {} blocks...", blocks_to_wait);
@@ -301,8 +349,9 @@ pub fn cli_wt_no_challenge() -> Result<()> {
 
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
     let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    let op_index = 1;
 
-    let op_index = challenge(&mut committee, slot_index, false, true)?;
+    challenge(&mut committee, op_index, slot_index, false, true)?;
 
     let blocks_to_wait = 13; // Amount of blocks enough to allow WT to open a challenge but not enough to dispatch the START_CH. Fine tunning may be required.
     info!("Mining {} blocks...", blocks_to_wait);
@@ -337,7 +386,8 @@ pub fn cli_input_not_revealed() -> Result<()> {
     let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
     wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
 
-    let op_index = challenge(&mut committee, slot_index, false, false)?;
+    let op_index = 1;
+    challenge(&mut committee, op_index, slot_index, false, false)?;
 
     let blocks_to_wait = 4; // Wait some blocks to mine ADVANCE_FUNDS_TX and REIMBURSEMENT_KICKOFF_TX. Fine tunning may be required.
     wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
@@ -758,6 +808,7 @@ pub fn advance_funds(
 
 pub fn challenge(
     committee: &mut Committee,
+    operator_index: usize,
     slot_index: usize,
     should_wait: bool,
     op_wins: bool,
@@ -767,7 +818,6 @@ pub fn challenge(
     let committee_id = committee.committee_id();
     let members_len = committee.members.len();
 
-    let operator_index = 0;
     let member: &mut Member = &mut committee.members[operator_index];
     let operator_pubkey = member.keyring.take_pubkey.unwrap();
 

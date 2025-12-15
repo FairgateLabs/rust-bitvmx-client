@@ -17,9 +17,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ### Removed
 
-- `operator_disabler` and `watchtower_disabler` examples. Both are part of `challenge` example now.
-- Remove deprecated examples from `run-all.sh` script.
+- `operator_disabler` example. It's part of `challenge` example now.
+- Deprecated examples from `run-all.sh` script.
+
+### Changed 
+
+- Renamed `watchtower_disabler` example to `wt_disabler`.
 
 ### Fixed
 
 - `DisputeChannelSetup::setup` to support current DRP implementation.
+- `wt_disabler` example. Updated to works with current DRP implementation.

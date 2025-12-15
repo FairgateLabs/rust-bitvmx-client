@@ -33,6 +33,7 @@ pub const OP_COSIGN_UTXOS: &str = "OP_COSIGN_UTXOS";
 pub const PAIRWISE_DISPUTE_KEY: &str = "PAIRWISE_DISPUTE_KEY";
 pub const OPERATOR_PENALIZED: &str = "OPERATOR_PENALIZED";
 pub const WATCHTOWER_PENALIZED: &str = "WATCHTOWER_PENALIZED";
+pub const MY_IDX: &str = "MY_IDX";
 
 // Transaction names
 pub const REQUEST_PEGIN_TX: &str = "REQUEST_PEGIN_TX";

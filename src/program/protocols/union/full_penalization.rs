@@ -33,7 +33,7 @@ use crate::{
                 },
                 dispute_core::{
                     CHALLENGE_KEY, OP_INITIAL_DEPOSIT_TX_DISABLER_LEAF,
-                    WT_START_ENABLER_TX_DISABLER_LEAF,
+                    WT_INIT_CHALLENGE_TX_COSIGN_DISABLER_LEAF, WT_START_ENABLER_TX_DISABLER_LEAF,
                 },
                 types::{
                     Committee, FullPenalizationData, PenalizedMember, StreamSettings,
@@ -136,6 +136,8 @@ impl ProtocolHandler for FullPenalizationProtocol {
             || name.starts_with(WT_DISABLER_DIRECTORY_TX)
         {
             Ok(self.disabler_directory_tx(name)?)
+        } else if name.starts_with(WT_COSIGN_DISABLER_TX) {
+            Ok(self.wt_cosign_disabler(name)?)
         } else {
             Err(BitVMXError::InvalidTransactionName(name.to_string()))
         }
@@ -677,6 +679,35 @@ impl FullPenalizationProtocol {
         Ok((tx, None))
     }
 
+    fn wt_cosign_disabler(
+        &self,
+        name: &str,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        debug!(id = self.ctx.my_idx, "Loading {} tx", name);
+
+        let mut protocol = self.load_protocol()?;
+
+        let args = collect_input_signatures(
+            &mut protocol,
+            name,
+            &vec![
+                InputSigningInfo::ScriptSpend {
+                    input_index: 0,
+                    script_index: WT_INIT_CHALLENGE_TX_COSIGN_DISABLER_LEAF,
+                    winternitz_data: None,
+                },
+                InputSigningInfo::KeySpend { input_index: 1 },
+            ],
+        )?;
+
+        let tx = protocol.transaction_to_send(&name, &args)?;
+        let txid = tx.compute_txid();
+
+        debug!(id = self.ctx.my_idx, "Signed {}, txid: {}.", name, txid);
+
+        Ok((tx, None))
+    }
+
     fn disabler_directory_tx(
         &self,
         name: &str,
@@ -1043,7 +1074,12 @@ impl FullPenalizationProtocol {
                 (wt_init_challenge_cosign.1 as usize).into(),
                 &wt_cosign_disabler_name,
                 // Leaf 2 verify aggregated key
-                InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 2 }),
+                InputSpec::Auto(
+                    SighashType::taproot_all(),
+                    SpendMode::Script {
+                        leaf: WT_INIT_CHALLENGE_TX_COSIGN_DISABLER_LEAF,
+                    },
+                ),
                 None,
                 Some(wt_init_challenge_cosign.0),
             )?;
