@@ -42,6 +42,7 @@ use key_manager::winternitz::{
 };
 use protocol_builder::scripts::{self, SignMode};
 use protocol_builder::types::Utxo;
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::mpsc::channel;
 use std::time::Duration;
@@ -51,7 +52,7 @@ use std::{
 };
 use storage_backend::storage::Storage;
 use storage_backend::storage_config::StorageConfig;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 mod common;
@@ -66,6 +67,40 @@ impl From<(&str, u32, &str, u32)> for InputType {
     fn from(t: (&str, u32, &str, u32)) -> Self {
         InputType::Const(t.0.to_string(), t.1, t.2.to_string(), t.3)
     }
+}
+
+/// Checks if BitVMX-CPU is properly built and required files exist
+/// Returns an error if dependencies are missing
+fn check_bitvmx_cpu_built() -> Result<()> {
+    let emulator_binary = "../BitVMX-CPU/target/release/emulator";
+    let program_dir = "../BitVMX-CPU/docker-riscv32/riscv32/build";
+
+    if !Path::new(emulator_binary).exists() {
+        warn!(
+            "⚠️  BitVMX-CPU emulator binary not found at: {}\n\
+             Please build BitVMX-CPU first by running:\n\
+             cd ../BitVMX-CPU && cargo build --release --bin emulator\n\
+             Or use the provided script: ./scripts/build-emulator.sh",
+            emulator_binary
+        );
+        return Err(anyhow::anyhow!(
+            "BitVMX-CPU emulator not built. Run: cd ../BitVMX-CPU && cargo build --release --bin emulator"
+        ));
+    }
+
+    if !Path::new(program_dir).exists() {
+        warn!(
+            "⚠️  BitVMX-CPU program directory not found at: {}\n\
+             Please ensure BitVMX-CPU is properly set up.",
+            program_dir
+        );
+        return Err(anyhow::anyhow!(
+            "BitVMX-CPU program directory not found at: {}",
+            program_dir
+        ));
+    }
+
+    Ok(())
 }
 
 pub fn get_configs(network: Network) -> Result<Vec<Config>> {
@@ -844,6 +879,9 @@ fn test_independent_regtest() -> Result<()> {
 #[ignore]
 #[test]
 fn test_all() -> Result<()> {
+    // Check if BitVMX-CPU is built before running the test
+    check_bitvmx_cpu_built()?;
+
     test_all_aux(false, Network::Regtest, None, None, None, None)?;
     Ok(())
 }
@@ -851,6 +889,9 @@ fn test_all() -> Result<()> {
 #[ignore]
 #[test]
 fn test_const() -> Result<()> {
+    // Check if BitVMX-CPU is built before running the test
+    check_bitvmx_cpu_built()?;
+
     test_all_aux(
         false,
         Network::Regtest,
@@ -875,6 +916,9 @@ fn test_const() -> Result<()> {
 #[ignore]
 #[test]
 fn test_const_fail_input() -> Result<()> {
+    // Check if BitVMX-CPU is built before running the test
+    check_bitvmx_cpu_built()?;
+
     let main_config = ConfigResult {
         fail_config_prover: Some(FailConfiguration::new_fail_reads(FailReads::new(
             None,
@@ -927,6 +971,9 @@ fn test_const_fail_input() -> Result<()> {
 #[ignore]
 #[test]
 fn test_previous_input() -> Result<()> {
+    // Check if BitVMX-CPU is built before running the test
+    check_bitvmx_cpu_built()?;
+
     test_all_aux(
         false,
         Network::Regtest,
@@ -1090,6 +1137,9 @@ fn test_zkp() -> Result<()> {
 }
 
 fn test_challenge(challenge: ForcedChallenges) -> Result<()> {
+    // Check if BitVMX-CPU is built before running the test
+    check_bitvmx_cpu_built()?;
+
     test_all_aux(false, Network::Regtest, None, None, Some(challenge), None)?;
     Ok(())
 }
