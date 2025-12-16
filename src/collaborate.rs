@@ -10,7 +10,7 @@ use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use crate::{
-    comms_helper::{request, response, CommsMessageType},
+    comms_helper::{response, CommsMessageType},
     errors::BitVMXError,
     helper::parse_keys,
     program::participant::{CommsAddress, ParticipantKeys},
@@ -25,7 +25,6 @@ pub struct Collaboration {
     pub leader: CommsAddress,
     pub im_leader: bool,
     pub keys: HashMap<PubKeyHash, PublicKey>,
-    pub key_signatures: HashMap<PubKeyHash, Vec<u8>>, // Store RSA signatures for each key
     pub my_key: PublicKey,
     pub aggregated_key: Option<PublicKey>,
     pub request_from: Identifier,
@@ -48,7 +47,6 @@ impl Collaboration {
             leader,
             im_leader,
             keys: HashMap::new(),
-            key_signatures: HashMap::new(),
             my_key,
             aggregated_key: None,
             request_from,
@@ -94,13 +92,14 @@ impl Collaboration {
             &peers,
         )?;
 
-        request(
+        program_context.leader_broadcast_helper.request_or_store(
             &program_context.comms,
             &program_context.key_chain,
             id,
             leader.clone(),
             crate::comms_helper::CommsMessageType::Keys,
             keys,
+            im_leader,
         )?;
 
         let mut collaboration =
@@ -182,8 +181,6 @@ impl Collaboration {
                         "Received RSA signature from participant: {} ({})",
                         pubkey_hash, verified
                     );
-                    // Store the signature for redistribution to other participants
-                    self.add_key_signature(pubkey_hash.clone(), signature.clone());
                 } else {
                     error!("Missing RSA signature for participant: {}", pubkey_hash);
                     return Err(BitVMXError::InvalidMessageFormat);
@@ -287,13 +284,5 @@ impl Collaboration {
             }
         }
         Err(BitVMXError::InvalidParticipant(pubkey_hash.to_string()))
-    }
-
-    pub fn get_key_signature(&self, pubkey_hash: &PubKeyHash) -> Option<&Vec<u8>> {
-        self.key_signatures.get(pubkey_hash)
-    }
-
-    pub fn add_key_signature(&mut self, pubkey_hash: PubKeyHash, signature: Vec<u8>) {
-        self.key_signatures.insert(pubkey_hash, signature);
     }
 }

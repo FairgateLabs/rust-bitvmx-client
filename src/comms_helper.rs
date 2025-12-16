@@ -55,6 +55,31 @@ pub fn construct_message(
     ))
 }
 
+pub fn prepare_message<T: Serialize>(
+    key_chain: &KeyChain,
+    program_id: &Uuid,
+    msg_type: CommsMessageType,
+    msg: T,
+) -> Result<(String, Value, i64, Vec<u8>), BitVMXError> {
+    let msg_value = serde_json::to_value(&msg).map_err(|_| BitVMXError::SerializationError)?;
+    let timestamp = Utc::now().timestamp_millis();
+    let message = construct_message(
+        &program_id.to_string(),
+        CURRENT_PROTOCOL_VERSION,
+        msg_type,
+        &msg_value,
+        timestamp,
+    )?;
+
+    let signature = &key_chain.sign_rsa_message(message.as_bytes(), None)?;
+    Ok((
+        CURRENT_PROTOCOL_VERSION.to_string(),
+        msg_value,
+        timestamp,
+        signature.to_vec(),
+    ))
+}
+
 pub fn request<T: Serialize>(
     comms: &OperatorComms,
     key_chain: &KeyChain,
@@ -333,21 +358,6 @@ pub fn deserialize_msg(
         }
         signature.push(byte as u8);
     }
-
-    //TODO: CHECK THIS WITH @KEVIN
-    // Validate that "msg" is a byte array by filtering out invalid values
-    // let message = to_vec(&msg)
-    //     .unwrap()
-    //     .iter()
-    //     .filter_map(|v| {
-    //         v.as_u64()
-    //             .and_then(|b| if b <= 255 { Some(b as u8) } else { None })
-    //     })
-    //     .collect();
-
-    // if message.len() != msg.len() {
-    //     return Err(BitVMXError::InvalidMessageFormat); // Ensure no invalid bytes after filtering previously
-    // }
 
     Ok((
         version,
