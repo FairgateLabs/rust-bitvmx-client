@@ -232,12 +232,9 @@ impl Committee {
         &mut self,
         user_pubkey: PublicKey,
         slot_index: usize,
-        stream_id: u64,
-        packet_number: u64,
         amount: u64,
         pegout_id: Vec<u8>,
-        pegout_signature_hash: Vec<u8>,
-        pegout_signature_message: Vec<u8>,
+        user_take_sighash: Vec<u8>,
     ) -> Result<PartialUtxo> {
         let committee_id = self.committee_id.clone();
         let addresses = self.get_addresses();
@@ -245,14 +242,11 @@ impl Committee {
         self.all(|op: &mut Member| {
             op.request_pegout(
                 committee_id,
-                stream_id,
-                packet_number,
                 slot_index,
                 amount,
                 pegout_id.clone(),
-                pegout_signature_hash.clone(),
-                pegout_signature_message.clone(),
                 user_pubkey,
+                user_take_sighash.as_slice(),
                 &addresses,
             )
         })?;
@@ -423,6 +417,13 @@ impl Committee {
             .get(&stream_denomination)
             .unwrap()
             .clone())
+    }
+
+    pub fn get_dispute_keys(&self) -> Vec<PublicKey> {
+        self.members
+            .iter()
+            .map(|m| m.keyring.dispute_pubkey.unwrap())
+            .collect()
     }
 
     fn all<F, R>(&mut self, f: F) -> Result<Vec<R>>
