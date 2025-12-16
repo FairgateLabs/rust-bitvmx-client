@@ -28,17 +28,17 @@ use crate::{
                 common::{
                     collect_input_signatures, create_transaction_reference, double_indexed_name,
                     extract_double_index, get_dispute_core_pid, get_initial_deposit_output_type,
-                    get_stream_setting, indexed_name, load_union_settings, triple_indexed_name,
-                    InputSigningInfo, WinternitzData,
+                    get_stream_setting, indexed_name, load_union_settings, save_penalized_member,
+                    triple_indexed_name, InputSigningInfo, WinternitzData,
                 },
                 dispute_core::{
                     CHALLENGE_KEY, OP_INITIAL_DEPOSIT_TX_DISABLER_LEAF,
-                    WT_START_ENABLER_TX_DISABLER_LEAF,
+                    WT_INIT_CHALLENGE_TX_COSIGN_DISABLER_LEAF, WT_START_ENABLER_TX_DISABLER_LEAF,
                 },
                 types::{
-                    Committee, FullPenalizationData, StreamSettings, WtInitChallengeUtxos,
-                    DISPUTE_AGGREGATED_KEY, DUST_VALUE, OPERATOR_TAKE_ENABLER,
-                    OPERATOR_WON_ENABLER, OP_CLAIM_GATE_SUCCESS,
+                    Committee, FullPenalizationData, PenalizedMember, StreamSettings,
+                    WtInitChallengeUtxos, DISPUTE_AGGREGATED_KEY, DUST_VALUE,
+                    OPERATOR_TAKE_ENABLER, OPERATOR_WON_ENABLER, OP_CLAIM_GATE_SUCCESS,
                     OP_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO, OP_DISABLER_DIRECTORY_TX,
                     OP_DISABLER_DIRECTORY_UTXO, OP_DISABLER_TX, OP_INITIAL_DEPOSIT_AMOUNT,
                     OP_INITIAL_DEPOSIT_OUT_SCRIPT, OP_INITIAL_DEPOSIT_TX, OP_INITIAL_DEPOSIT_TXID,
@@ -136,6 +136,8 @@ impl ProtocolHandler for FullPenalizationProtocol {
             || name.starts_with(WT_DISABLER_DIRECTORY_TX)
         {
             Ok(self.disabler_directory_tx(name)?)
+        } else if name.starts_with(WT_COSIGN_DISABLER_TX) {
+            Ok(self.wt_cosign_disabler(name)?)
         } else {
             Err(BitVMXError::InvalidTransactionName(name.to_string()))
         }
@@ -677,6 +679,35 @@ impl FullPenalizationProtocol {
         Ok((tx, None))
     }
 
+    fn wt_cosign_disabler(
+        &self,
+        name: &str,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        debug!(id = self.ctx.my_idx, "Loading {} tx", name);
+
+        let mut protocol = self.load_protocol()?;
+
+        let args = collect_input_signatures(
+            &mut protocol,
+            name,
+            &vec![
+                InputSigningInfo::ScriptSpend {
+                    input_index: 0,
+                    script_index: WT_INIT_CHALLENGE_TX_COSIGN_DISABLER_LEAF,
+                    winternitz_data: None,
+                },
+                InputSigningInfo::KeySpend { input_index: 1 },
+            ],
+        )?;
+
+        let tx = protocol.transaction_to_send(&name, &args)?;
+        let txid = tx.compute_txid();
+
+        debug!(id = self.ctx.my_idx, "Signed {}, txid: {}.", name, txid);
+
+        Ok((tx, None))
+    }
+
     fn disabler_directory_tx(
         &self,
         name: &str,
@@ -1043,7 +1074,12 @@ impl FullPenalizationProtocol {
                 (wt_init_challenge_cosign.1 as usize).into(),
                 &wt_cosign_disabler_name,
                 // Leaf 2 verify aggregated key
-                InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 2 }),
+                InputSpec::Auto(
+                    SighashType::taproot_all(),
+                    SpendMode::Script {
+                        leaf: WT_INIT_CHALLENGE_TX_COSIGN_DISABLER_LEAF,
+                    },
+                ),
                 None,
                 Some(wt_init_challenge_cosign.0),
             )?;
@@ -1087,6 +1123,17 @@ impl FullPenalizationProtocol {
         info!("Handling: {}", tx_name);
 
         let (wt_index, op_index) = extract_double_index(tx_name)?;
+
+        save_penalized_member(
+            program_context,
+            self.full_penalization_data(program_context)?.committee_id,
+            &PenalizedMember {
+                member_index: wt_index,
+                role: ParticipantRole::Verifier,
+                challenger_index: op_index,
+            },
+        )?;
+
         if wt_index == self.ctx.my_idx {
             info!(
                 id = self.ctx.my_idx,
@@ -1127,6 +1174,17 @@ impl FullPenalizationProtocol {
         info!("Handling: {}", tx_name);
 
         let (wt_index, op_index) = extract_double_index(tx_name)?;
+
+        save_penalized_member(
+            program_context,
+            self.full_penalization_data(program_context)?.committee_id,
+            &PenalizedMember {
+                member_index: op_index,
+                role: ParticipantRole::Prover,
+                challenger_index: wt_index,
+            },
+        )?;
+
         if op_index == self.ctx.my_idx {
             info!(
                 id = self.ctx.my_idx,

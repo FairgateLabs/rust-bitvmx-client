@@ -8,14 +8,16 @@ use protocol_builder::{
     types::{input::SpendMode, InputArgs, OutputType},
 };
 use sha2::{Digest, Sha256};
+use tracing::info;
 use uuid::Uuid;
 
 use crate::{
     errors::BitVMXError,
     program::{
+        participant::ParticipantRole,
         protocols::union::types::{
-            StreamSettings, UnionSettings, GLOBAL_SETTINGS_UUID, OP_CLAIM_GATE,
-            PAIRWISE_DISPUTE_KEY, WT_CLAIM_GATE,
+            PenalizedMember, StreamSettings, UnionSettings, GLOBAL_SETTINGS_UUID, MY_IDX,
+            OP_CLAIM_GATE, PAIRWISE_DISPUTE_KEY, WT_CLAIM_GATE,
         },
         variables::{PartialUtxo, VariableTypes},
     },
@@ -567,4 +569,56 @@ pub fn collect_input_signatures(
     }
 
     Ok(input_args)
+}
+
+pub fn save_penalized_member(
+    context: &ProgramContext,
+    committee_id: Uuid,
+    data: &PenalizedMember,
+) -> Result<(), BitVMXError> {
+    let name = data.storage_name();
+    info!(
+        "Updating penalized member data in storage: {}. Data: {:?}",
+        name, data
+    );
+
+    context.globals.set_var(
+        &committee_id,
+        &name,
+        VariableTypes::String(serde_json::to_string(data)?),
+    )?;
+    Ok(())
+}
+
+pub fn load_penalized_member(
+    context: &ProgramContext,
+    committee_id: Uuid,
+    member_index: usize,
+    role: ParticipantRole,
+) -> Result<Option<PenalizedMember>, BitVMXError> {
+    let storage_name = PenalizedMember::name(member_index, &role);
+    let var = match context.globals.get_var(&committee_id, &storage_name)? {
+        Some(v) => v,
+        None => return Ok(None),
+    };
+
+    let data: PenalizedMember = serde_json::from_str(&var.string()?)?;
+    Ok(Some(data))
+}
+
+pub fn set_my_idx(context: &ProgramContext, pid: Uuid, my_idx: usize) -> Result<(), BitVMXError> {
+    context
+        .globals
+        .set_var(&pid, MY_IDX, VariableTypes::Number(my_idx as u32))?;
+    Ok(())
+}
+
+pub fn get_my_idx(context: &ProgramContext, pid: Uuid) -> Result<usize, BitVMXError> {
+    match context.globals.get_var(&pid, MY_IDX)? {
+        Some(var) => Ok(var.number()? as usize),
+        None => Err(BitVMXError::InvalidParameter(format!(
+            "My index not found for protocol {}",
+            pid
+        ))),
+    }
 }
