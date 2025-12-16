@@ -55,6 +55,7 @@ bitvmx-job-dispatcher-types = { git = "https://github.com/FairgateLabs/rust-bitv
     "prover",
 ] }
 bitvmx-job-dispatcher = { git = "https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher", branch = "v.0.0.2" }
+redact = { version = "0.1", features = ["serde"] }
 
 
 [dev-dependencies]
