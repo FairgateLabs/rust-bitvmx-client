@@ -181,6 +181,7 @@ impl LeaderBroadcastHelper {
 
     /// Check if all expected messages have been received
     /// expected_participants should be a list of pubkey_hashes of non-leader participants
+    /// Returns an error if duplicate messages (same sender) are detected
     pub fn has_all_expected_messages(
         &self,
         context_id: &Uuid,
@@ -188,6 +189,15 @@ impl LeaderBroadcastHelper {
         expected_participants: &[PubKeyHash],
     ) -> Result<bool, BitVMXError> {
         let messages = self.get_original_messages(context_id, msg_type)?;
+
+        // Check for duplicate messages (same sender_pubkey_hash)
+        let mut seen_senders = std::collections::HashSet::new();
+        for msg in &messages {
+            if !seen_senders.insert(&msg.sender_pubkey_hash) {
+                return Err(BitVMXError::InvalidMessageFormat);
+            }
+        }
+
         let received_senders: std::collections::HashSet<&PubKeyHash> =
             messages.iter().map(|m| &m.sender_pubkey_hash).collect();
 
