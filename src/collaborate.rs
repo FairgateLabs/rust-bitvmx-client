@@ -13,7 +13,6 @@ use crate::{
     comms_helper::{request, response, CommsMessageType},
     errors::BitVMXError,
     helper::parse_keys,
-    leader_broadcast::LeaderBroadcastHelper,
     program::participant::{CommsAddress, ParticipantKeys},
     signature_verifier::OperatorVerificationStore,
     types::{OutgoingBitVMXApiMessages, ProgramContext},
@@ -114,11 +113,7 @@ impl Collaboration {
         Ok(collaboration)
     }
 
-    pub fn tick(
-        &mut self,
-        program_context: &ProgramContext,
-        leader_broadcast_helper: &LeaderBroadcastHelper,
-    ) -> Result<bool, BitVMXError> {
+    pub fn tick(&mut self, program_context: &ProgramContext) -> Result<bool, BitVMXError> {
         if self.state && self.im_leader {
             info!("Broadcastiing keys to peers");
 
@@ -130,12 +125,14 @@ impl Collaboration {
                 .map(|p| p.clone())
                 .collect();
 
-            leader_broadcast_helper.broadcast_to_non_leaders(
-                program_context,
-                &self.collaboration_id,
-                CommsMessageType::Keys,
-                &participants,
-            )?;
+            program_context
+                .leader_broadcast_helper
+                .broadcast_to_non_leaders(
+                    program_context,
+                    &self.collaboration_id,
+                    CommsMessageType::Keys,
+                    &participants,
+                )?;
 
             self.state = false;
             self.completed = true;

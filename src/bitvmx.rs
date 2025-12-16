@@ -88,7 +88,6 @@ pub struct BitVMX {
     wallet: Wallet,
     ping_helper: PingHelper,
     shutdown: bool,
-    leader_broadcast_helper: LeaderBroadcastHelper,
 }
 
 impl Drop for BitVMX {
@@ -174,6 +173,8 @@ impl BitVMX {
 
         bitcoin_coordinator.monitor(TypesToMonitor::NewBlock)?;
 
+        let leader_broadcast_helper = LeaderBroadcastHelper::new(store.clone());
+
         let program_context = ProgramContext::new(
             comms,
             key_chain,
@@ -182,6 +183,7 @@ impl BitVMX {
             Globals::new(store.clone()),
             WitnessVars::new(store.clone()),
             config.components.clone(),
+            leader_broadcast_helper,
         );
 
         let ping_helper = PingHelper::new(config.job_dispatcher_ping.clone());
@@ -192,8 +194,6 @@ impl BitVMX {
             .unwrap_or_default();
         let timestamp_verifier =
             TimestampVerifier::new(timestamp_config.enabled, timestamp_config.max_drift_ms);
-
-        let leader_broadcast_helper = LeaderBroadcastHelper::new(store.clone());
 
         Ok(Self {
             config,
@@ -212,7 +212,6 @@ impl BitVMX {
             wallet,
             ping_helper,
             shutdown: false,
-            leader_broadcast_helper,
         })
     }
 
@@ -352,11 +351,9 @@ impl BitVMX {
                     original_signature: signature.clone(),
                     version: version.clone(),
                 };
-                self.leader_broadcast_helper.store_original_message(
-                    program_id,
-                    msg_type,
-                    original_msg,
-                )?;
+                self.program_context
+                    .leader_broadcast_helper
+                    .store_original_message(program_id, msg_type, original_msg)?;
             }
         }
 
@@ -422,11 +419,9 @@ impl BitVMX {
                     "Storing original message from peer: {:?}, msg_type: {:?}",
                     peer_address, msg_type
                 );
-                self.leader_broadcast_helper.store_original_message(
-                    program_id,
-                    msg_type,
-                    original_msg,
-                )?;
+                self.program_context
+                    .leader_broadcast_helper
+                    .store_original_message(program_id, msg_type, original_msg)?;
             }
         }
 
@@ -455,13 +450,16 @@ impl BitVMX {
         // Handle Broadcasted messages specially - they contain original messages to process recursively
         if msg_type == CommsMessageType::Broadcasted {
             info!("Processing Broadcasted message...");
-            return self.leader_broadcast_helper.process_broadcasted_message(
-                &self.program_context,
-                identifier,
-                program_id,
-                data,
-                &self.message_queue,
-            );
+            return self
+                .program_context
+                .leader_broadcast_helper
+                .process_broadcasted_message(
+                    &self.program_context,
+                    identifier,
+                    program_id,
+                    data,
+                    &self.message_queue,
+                );
         }
 
         let is_verification_msg = matches!(
@@ -807,7 +805,7 @@ impl BitVMX {
         let collaborations = self.store.partial_compare(&"bitvmx/collaboration/")?;
         for (_, collaboration) in collaborations.iter() {
             let mut collaboration: Collaboration = serde_json::from_str(collaboration)?;
-            if collaboration.tick(&self.program_context, &self.leader_broadcast_helper)? {
+            if collaboration.tick(&self.program_context)? {
                 self.mark_collaboration_as_complete(&collaboration)?;
             };
         }

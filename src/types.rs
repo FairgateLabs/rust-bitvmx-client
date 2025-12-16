@@ -19,6 +19,7 @@ use uuid::Uuid;
 use crate::{
     errors::BitVMXError,
     keychain::KeyChain,
+    leader_broadcast::LeaderBroadcastHelper,
     program::{
         participant::CommsAddress,
         variables::{Globals, VariableTypes, WitnessTypes, WitnessVars},
@@ -33,6 +34,7 @@ pub struct ProgramContext {
     pub globals: Globals,
     pub witness: WitnessVars,
     pub components_config: ComponentsConfig,
+    pub leader_broadcast_helper: LeaderBroadcastHelper,
 }
 
 impl ProgramContext {
@@ -44,6 +46,7 @@ impl ProgramContext {
         globals: Globals,
         witness: WitnessVars,
         components_config: ComponentsConfig,
+        leader_broadcast_helper: LeaderBroadcastHelper,
     ) -> Self {
         Self {
             comms,
@@ -53,6 +56,7 @@ impl ProgramContext {
             globals,
             witness,
             components_config,
+            leader_broadcast_helper,
         }
     }
 }
