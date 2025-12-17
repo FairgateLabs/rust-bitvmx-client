@@ -72,7 +72,11 @@ impl From<(&str, u32, &str, u32)> for InputType {
 /// Checks if BitVMX-CPU is properly built and required files exist
 /// Returns an error if dependencies are missing
 fn check_bitvmx_cpu_built() -> Result<()> {
+    #[cfg(not(target_os = "windows"))]
     let emulator_binary = "../BitVMX-CPU/target/release/emulator";
+    #[cfg(target_os = "windows")]
+    let emulator_binary = "../BitVMX-CPU/target/release/emulator.exe";
+
     let program_dir = "../BitVMX-CPU/docker-riscv32/riscv32/build";
 
     if !Path::new(emulator_binary).exists() {
