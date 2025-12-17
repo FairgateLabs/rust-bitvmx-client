@@ -740,6 +740,9 @@ impl Program {
         msg_type: CommsMessageType,
         data: Value,
         program_context: &ProgramContext,
+        _timestamp: i64,
+        _signature: Vec<u8>,
+        _version: String,
     ) -> Result<(), BitVMXError> {
         // The message signature verification was already done in BitVMX::process_msg
         // If we reach here, the message signature was verified and is valid
@@ -775,6 +778,14 @@ impl Program {
                 }
 
                 self.move_program_to_next_state()?;
+            }
+            CommsMessageType::Broadcasted => {
+                // Broadcasted messages are handled in BitVMX::process_msg, not here
+                // This should not be reached, but we handle it gracefully
+                debug!(
+                    "{}. Broadcasted message should be handled upstream in BitVMX::process_msg",
+                    self.my_idx
+                );
             }
         }
 

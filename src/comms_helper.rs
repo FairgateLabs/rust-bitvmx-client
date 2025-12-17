@@ -55,6 +55,31 @@ pub fn construct_message(
     ))
 }
 
+pub fn prepare_message<T: Serialize>(
+    key_chain: &KeyChain,
+    program_id: &Uuid,
+    msg_type: CommsMessageType,
+    msg: T,
+) -> Result<(String, Value, i64, Vec<u8>), BitVMXError> {
+    let msg_value = serde_json::to_value(&msg).map_err(|_| BitVMXError::SerializationError)?;
+    let timestamp = Utc::now().timestamp_millis();
+    let message = construct_message(
+        &program_id.to_string(),
+        CURRENT_PROTOCOL_VERSION,
+        msg_type,
+        &msg_value,
+        timestamp,
+    )?;
+
+    let signature = &key_chain.sign_rsa_message(message.as_bytes(), None)?;
+    Ok((
+        CURRENT_PROTOCOL_VERSION.to_string(),
+        msg_value,
+        timestamp,
+        signature.to_vec(),
+    ))
+}
+
 pub fn request<T: Serialize>(
     comms: &OperatorComms,
     key_chain: &KeyChain,
@@ -105,7 +130,7 @@ pub fn response<T: Serialize>(
     request(comms, key_chain, program_id, comms_address, msg_type, msg) // In this version, response is identical to request. Keeping it separate for clarity.
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
 pub enum CommsMessageType {
     Keys,
     KeysAck,
@@ -115,6 +140,7 @@ pub enum CommsMessageType {
     PartialSignaturesAck,
     VerificationKey,
     VerificationKeyRequest,
+    Broadcasted,
 }
 
 impl CommsMessageType {
@@ -128,6 +154,7 @@ impl CommsMessageType {
         (&CommsMessageType::PartialSignaturesAck, [0x00, 0x06]),
         (&CommsMessageType::VerificationKey, [0x00, 0x07]),
         (&CommsMessageType::VerificationKeyRequest, [0x00, 0x08]),
+        (&CommsMessageType::Broadcasted, [0x00, 0x09]),
     ];
 
     // Convert message type to 2-byte representation
@@ -208,11 +235,23 @@ pub fn send_verification_key_to_peer(
 
 impl VerificationKeyAnnouncement {
     pub fn to_value(&self) -> Result<Value, BitVMXError> {
-        serde_json::to_value(self).map_err(|_| BitVMXError::SerializationError)
+        serde_json::to_value(self).map_err(|_| {
+            BitVMXError::InvalidMessage(
+                format!(
+                    "Failed to serialize VerificationKeyAnnouncement: {:?}",
+                    self
+                )
+                .to_string(),
+            )
+        })
     }
 
     pub fn from_value(value: &Value) -> Result<Self, BitVMXError> {
-        serde_json::from_value(value.clone()).map_err(|_| BitVMXError::InvalidMessageFormat)
+        serde_json::from_value(value.clone()).map_err(|_| {
+            BitVMXError::InvalidMessage(
+                format!("Invalid VerificationKeyAnnouncement: {:?}", value).to_string(),
+            )
+        })
     }
 }
 
@@ -252,7 +291,9 @@ pub fn deserialize_msg(
 ) -> Result<(String, CommsMessageType, Uuid, Value, i64, Vec<u8>), BitVMXError> {
     // Minimum length check: 4 bytes (2 for version + 2 for message type) + payload
     if data.len() < MIN_EXPECTED_MSG_LEN || data.len() > MAX_EXPECTED_MSG_LEN {
-        return Err(BitVMXError::InvalidMessageFormat);
+        return Err(BitVMXError::InvalidMessage(
+            format!("Invalid message length: {}", data.len()).to_string(),
+        ));
     }
 
     // Extract the version (first 2 bytes) and message type (next 2 bytes)
@@ -265,20 +306,26 @@ pub fn deserialize_msg(
     let msg_type = CommsMessageType::from_bytes(msg_type_bytes)?;
 
     // Validate and parse JSON payload
-    let payload: Value =
-        serde_json::from_slice(json_payload).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+    let payload: Value = serde_json::from_slice(json_payload).map_err(|_| {
+        BitVMXError::InvalidMessage(format!("Invalid JSON payload: {:?}", json_payload).to_string())
+    })?;
 
     // Extract program ID and message
-    let program_id = payload
-        .get("program_id")
-        .and_then(|id| id.as_str())
-        .ok_or(BitVMXError::InvalidMessageFormat)?;
+    let program_id =
+        payload
+            .get("program_id")
+            .and_then(|id| id.as_str())
+            .ok_or(BitVMXError::InvalidMessage(
+                format!("Missing program ID").to_string(),
+            ))?;
 
-    let data = payload
-        .get("msg")
-        .ok_or(BitVMXError::InvalidMessageFormat)?;
+    let data = payload.get("msg").ok_or(BitVMXError::InvalidMessage(
+        format!("Missing message").to_string(),
+    ))?;
     // Convert program ID to Uuid
-    let program_id = Uuid::parse_str(program_id).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+    let program_id = Uuid::parse_str(program_id).map_err(|_| {
+        BitVMXError::InvalidMessage(format!("Invalid program ID: {:?}", program_id).to_string())
+    })?;
 
     let timestamp = payload
         .get("timestamp")
@@ -332,21 +379,6 @@ pub fn deserialize_msg(
         signature.push(byte as u8);
     }
 
-    //TODO: CHECK THIS WITH @KEVIN
-    // Validate that "msg" is a byte array by filtering out invalid values
-    // let message = to_vec(&msg)
-    //     .unwrap()
-    //     .iter()
-    //     .filter_map(|v| {
-    //         v.as_u64()
-    //             .and_then(|b| if b <= 255 { Some(b as u8) } else { None })
-    //     })
-    //     .collect();
-
-    // if message.len() != msg.len() {
-    //     return Err(BitVMXError::InvalidMessageFormat); // Ensure no invalid bytes after filtering previously
-    // }
-
     Ok((
         version,
         msg_type,
@@ -389,6 +421,10 @@ mod tests {
             CommsMessageType::VerificationKeyRequest.to_bytes().unwrap(),
             [0x00, 0x08]
         );
+        assert_eq!(
+            CommsMessageType::Broadcasted.to_bytes().unwrap(),
+            [0x00, 0x09]
+        );
     }
 
     #[test]
@@ -424,6 +460,10 @@ mod tests {
         assert_eq!(
             CommsMessageType::from_bytes([0x00, 0x08]).unwrap(),
             CommsMessageType::VerificationKeyRequest
+        );
+        assert_eq!(
+            CommsMessageType::from_bytes([0x00, 0x09]).unwrap(),
+            CommsMessageType::Broadcasted
         );
     }
 

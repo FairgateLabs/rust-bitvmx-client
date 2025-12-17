@@ -309,8 +309,11 @@ impl KeyChain {
         signature: &[u8],
     ) -> Result<bool, BitVMXError> {
         // Create a Signature from the bytes using try_from
-        let rsa_signature = key_manager::rsa::Signature::try_from(signature)
-            .map_err(|_e| BitVMXError::InvalidMessageFormat)?;
+        let rsa_signature = key_manager::rsa::Signature::try_from(signature).map_err(|_e| {
+            BitVMXError::InvalidMessage(
+                format!("Invalid RSA signature: {:?}", hex::encode(signature)).to_string(),
+            )
+        })?;
 
         // Verify the signature using SignatureVerifier with the provided RSA public key
         Ok(
@@ -326,7 +329,9 @@ impl KeyChain {
         Ok(self
             .rsa_public_key
             .clone()
-            .ok_or(BitVMXError::InvalidMessageFormat)?)
+            .ok_or(BitVMXError::InvalidMessage(
+                "No RSA public key found".to_string(),
+            ))?)
     }
 }
 
@@ -341,7 +346,11 @@ mod tests {
         let unique_dir = std::env::temp_dir()
             .join("bitvmx-keychain-tests")
             .join(Uuid::new_v4().to_string());
-        std::fs::create_dir_all(&unique_dir).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+        std::fs::create_dir_all(&unique_dir).map_err(|_| {
+            BitVMXError::InvalidMessage(
+                format!("Failed to create directory: {:?}", unique_dir).to_string(),
+            )
+        })?;
         config.storage.path = unique_dir.join("storage.db").to_string_lossy().to_string();
         config.key_storage.path = unique_dir.join("keys.db").to_string_lossy().to_string();
         let store = Rc::new(Storage::new(&config.storage)?);
@@ -514,8 +523,9 @@ mod tests {
 
         // Should return an error when signature format is invalid, or false if parsing succeeds but verification fails
         match result {
-            Err(BitVMXError::InvalidMessageFormat) => {
+            Err(BitVMXError::InvalidMessage(e)) => {
                 // Expected error type when signature format cannot be parsed
+                assert!(e.contains("Invalid RSA signature"));
             }
             Ok(false) => {
                 // Also acceptable: signature parsed but verification failed
@@ -525,7 +535,7 @@ mod tests {
             }
             Err(e) => {
                 panic!(
-                    "Expected InvalidMessageFormat error or Ok(false), got different error: {:?}",
+                    "Expected InvalidMessage error or Ok(false), got different error: {:?}",
                     e
                 );
             }
