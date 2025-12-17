@@ -150,9 +150,23 @@ impl OriginalMessage {
 // Leader Broadcast Helper
 // ============================================================================
 
-/// Helper function to generate storage key for original messages
-fn get_original_messages_key(context_id: &Uuid, msg_type: CommsMessageType) -> String {
-    format!("bitvmx/original_messages/{}/{:?}", context_id, msg_type)
+/// Helper function to generate storage key prefix for original messages
+/// Used to iterate over all messages for a given context and message type
+fn get_original_messages_prefix(context_id: &Uuid, msg_type: CommsMessageType) -> String {
+    format!("bitvmx/original_messages/{}/{:?}/", context_id, msg_type)
+}
+
+/// Helper function to generate storage key for a specific original message
+/// Format: bitvmx/original_messages/{context_id}/{msg_type}/{pub_key_hash}
+fn get_original_message_key(
+    context_id: &Uuid,
+    msg_type: CommsMessageType,
+    pub_key_hash: &PubKeyHash,
+) -> String {
+    format!(
+        "bitvmx/original_messages/{}/{:?}/{}",
+        context_id, msg_type, pub_key_hash
+    )
 }
 
 /// Helper for managing leader broadcast functionality
@@ -198,21 +212,19 @@ impl LeaderBroadcastHelper {
     }
 
     /// Store an original message received from a non-leader participant
-    /// Messages are stored by context_id (program_id or collaboration_id) and message type
+    /// Messages are stored individually by context_id, message type, and pub_key_hash
+    /// This avoids serializing/deserializing all messages when adding a new one
     pub fn store_original_message(
         &self,
         context_id: &Uuid,
         msg_type: CommsMessageType,
         original_msg: OriginalMessage,
     ) -> Result<(), BitVMXError> {
-        let key = get_original_messages_key(context_id, msg_type);
-        let mut messages: Vec<OriginalMessage> = self.store.get(&key)?.unwrap_or_else(|| vec![]);
+        let key = get_original_message_key(context_id, msg_type, &original_msg.sender_pubkey_hash);
 
         // Check if message from this sender already exists
-        if messages
-            .iter()
-            .any(|m| m.sender_pubkey_hash == original_msg.sender_pubkey_hash)
-        {
+        let existing: Option<OriginalMessage> = self.store.get(&key)?;
+        if existing.is_some() {
             warn!(
                 "Original message from {} already stored for context {} and type {:?}",
                 original_msg.sender_pubkey_hash, context_id, msg_type
@@ -220,19 +232,33 @@ impl LeaderBroadcastHelper {
             return Ok(()); // Don't error, just skip duplicate
         }
 
-        messages.push(original_msg);
-        self.store.set(&key, messages, None)?;
+        // Store the message directly - O(1) operation, only serializes this one message
+        self.store.set(&key, original_msg, None)?;
         Ok(())
     }
 
     /// Get all original messages stored for a given context and message type
+    /// Iterates over all keys with the prefix to collect individual messages
+    /// Each message is deserialized individually, avoiding large bulk operations
     pub fn get_original_messages(
         &self,
         context_id: &Uuid,
         msg_type: CommsMessageType,
     ) -> Result<Vec<OriginalMessage>, BitVMXError> {
-        let key = get_original_messages_key(context_id, msg_type);
-        let messages: Vec<OriginalMessage> = self.store.get(&key)?.unwrap_or_else(|| vec![]);
+        let prefix = get_original_messages_prefix(context_id, msg_type);
+        let stored_messages = self.store.partial_compare(&prefix)?;
+
+        let mut messages = Vec::new();
+        for (_, msg_json) in stored_messages.iter() {
+            // Deserialize each message individually
+            let msg: OriginalMessage = serde_json::from_str(msg_json).map_err(|e| {
+                BitVMXError::InvalidMessage(
+                    format!("Failed to deserialize original message: {:?}", e).to_string(),
+                )
+            })?;
+            messages.push(msg);
+        }
+
         Ok(messages)
     }
 
@@ -270,13 +296,20 @@ impl LeaderBroadcastHelper {
     }
 
     /// Clear all stored original messages for a given context and message type
+    /// Deletes all individual message keys with the matching prefix
     pub fn clear_original_messages(
         &self,
         context_id: &Uuid,
         msg_type: CommsMessageType,
     ) -> Result<(), BitVMXError> {
-        let key = get_original_messages_key(context_id, msg_type);
-        self.store.delete(&key)?;
+        let prefix = get_original_messages_prefix(context_id, msg_type);
+        let stored_messages = self.store.partial_compare(&prefix)?;
+
+        // Delete each individual message key
+        for (key, _) in stored_messages.iter() {
+            self.store.delete(key)?;
+        }
+
         Ok(())
     }
 
