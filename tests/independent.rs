@@ -585,6 +585,9 @@ pub fn test_all_aux(
     force_challenge: Option<ForcedChallenges>,
     force_winner: Option<ParticipantRole>,
 ) -> Result<()> {
+    // Check if BitVMX-CPU is built before running the test
+    check_bitvmx_cpu_built()?;
+
     config_trace();
 
     let mut helper = TestHelper::new(network, independent, Some(1000))?;
@@ -879,9 +882,6 @@ fn test_independent_regtest() -> Result<()> {
 #[ignore]
 #[test]
 fn test_all() -> Result<()> {
-    // Check if BitVMX-CPU is built before running the test
-    check_bitvmx_cpu_built()?;
-
     test_all_aux(false, Network::Regtest, None, None, None, None)?;
     Ok(())
 }
@@ -889,9 +889,6 @@ fn test_all() -> Result<()> {
 #[ignore]
 #[test]
 fn test_const() -> Result<()> {
-    // Check if BitVMX-CPU is built before running the test
-    check_bitvmx_cpu_built()?;
-
     test_all_aux(
         false,
         Network::Regtest,
@@ -916,9 +913,6 @@ fn test_const() -> Result<()> {
 #[ignore]
 #[test]
 fn test_const_fail_input() -> Result<()> {
-    // Check if BitVMX-CPU is built before running the test
-    check_bitvmx_cpu_built()?;
-
     let main_config = ConfigResult {
         fail_config_prover: Some(FailConfiguration::new_fail_reads(FailReads::new(
             None,
@@ -971,9 +965,6 @@ fn test_const_fail_input() -> Result<()> {
 #[ignore]
 #[test]
 fn test_previous_input() -> Result<()> {
-    // Check if BitVMX-CPU is built before running the test
-    check_bitvmx_cpu_built()?;
-
     test_all_aux(
         false,
         Network::Regtest,
@@ -1137,9 +1128,6 @@ fn test_zkp() -> Result<()> {
 }
 
 fn test_challenge(challenge: ForcedChallenges) -> Result<()> {
-    // Check if BitVMX-CPU is built before running the test
-    check_bitvmx_cpu_built()?;
-
     test_all_aux(false, Network::Regtest, None, None, Some(challenge), None)?;
     Ok(())
 }
