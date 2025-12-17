@@ -96,7 +96,7 @@ pub fn create_lockreq_ready(
         compressed: true,
         inner: user_pk,
     };
-    let user_address: bitcoin::Address = bitcoin_client.get_new_address(user_pubkey, network);
+    let user_address: bitcoin::Address = bitcoin_client.get_new_address(user_pubkey, network)?;
     info!(
         "User Address({}): {:?}",
         user_address.address_type().unwrap(),
