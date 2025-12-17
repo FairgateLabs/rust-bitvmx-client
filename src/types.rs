@@ -12,8 +12,8 @@ use bitvmx_operator_comms::operator_comms::OperatorComms;
 use bitvmx_wallet::wallet::Destination;
 use chrono::{DateTime, Utc};
 use protocol_builder::types::Utxo;
+use redact::Secret;
 use serde::{Deserialize, Serialize};
-
 use uuid::Uuid;
 
 use crate::{
@@ -122,7 +122,8 @@ pub enum IncomingBitVMXApiMessages {
     GetZKPExecutionResult(Uuid),
     Encrypt(Uuid, Vec<u8>, String),
     Decrypt(Uuid, Vec<u8>, String),
-    Backup(Uuid, String),
+    #[serde(skip)]
+    Backup(Uuid, String, String, Secret<String>),
     #[cfg(feature = "testpanic")]
     Test(String),
     GetFundingAddress(Uuid),

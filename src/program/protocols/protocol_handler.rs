@@ -91,6 +91,11 @@ pub trait ProtocolHandler {
             message_index,
         )?;
         if ret.is_none() {
+            error!(
+                "Invalid transaction name when getting hashed message: {}. Protocol ID: {}",
+                transaction_name,
+                self.context().id
+            );
             return Err(BitVMXError::InvalidTransactionName(
                 transaction_name.to_string(),
             ));

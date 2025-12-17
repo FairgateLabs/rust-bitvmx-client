@@ -13,8 +13,9 @@ use crate::{
                     estimate_fee, extract_double_index, extract_index,
                     extract_index_from_claim_gate, get_accept_pegin_pid, get_dispatch_action,
                     get_dispute_channel_pid, get_dispute_core_pid, get_dispute_pair_key_name,
-                    get_full_penalization_pid, get_initial_deposit_output_type, get_stream_setting,
-                    indexed_name, load_union_settings, InputSigningInfo, WinternitzData,
+                    get_full_penalization_pid, get_initial_deposit_output_type, get_my_idx,
+                    get_stream_setting, indexed_name, load_penalized_member, load_union_settings,
+                    set_my_idx, triple_indexed_name, InputSigningInfo, WinternitzData,
                 },
                 dispute_core_claim_gate::{
                     ClaimGateAction, CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF,
@@ -74,6 +75,7 @@ const REVEAL_INPUT_TX_COMMITTEE_LEAF: usize = 1;
 
 // const WT_INIT_CHALLENGE_TX_COSIGN_LEAF: usize = 0;
 const WT_INIT_CHALLENGE_TX_TIMELOCK_LEAF: usize = 1;
+pub const WT_INIT_CHALLENGE_TX_COSIGN_DISABLER_LEAF: usize = 2;
 
 const WT_INIT_CHALLENGE_COSIGN_VOUT: u32 = 0;
 const WT_INIT_CHALLENGE_WT_STOPPER_VOUT: u32 = 3;
@@ -131,6 +133,26 @@ enum DisputeCoreTxType {
         slot_index_prev: usize,
         slot_index_curr: usize,
     },
+    PenalizationStopOperatorWon {
+        wt_index: usize,
+        op_index: usize,
+        slot_index: usize,
+    },
+    PenalizationOperatorLazyDisabler {
+        wt_index: usize,
+        op_index: usize,
+        slot_index: usize,
+    },
+    PenalizationWatchtowerCosignDisabler {
+        wt_index: usize,
+        op_disabler_directory_index: usize,
+        op_index: usize,
+    },
+    PenalizationWatchtowerDisabler {
+        wt_index: usize,
+        op_disabler_directory_index: usize,
+        op_index: usize,
+    },
 }
 
 impl DisputeCoreTxType {
@@ -179,6 +201,36 @@ impl DisputeCoreTxType {
                 };
                 double_indexed_name(TWO_DISPUTE_PENALIZATION_TX, min, max)
             }
+            DisputeCoreTxType::PenalizationStopOperatorWon {
+                wt_index,
+                op_index,
+                slot_index,
+            } => triple_indexed_name(STOP_OP_WON_TX, *wt_index, *op_index, *slot_index),
+            DisputeCoreTxType::PenalizationOperatorLazyDisabler {
+                wt_index,
+                op_index,
+                slot_index,
+            } => triple_indexed_name(OP_LAZY_DISABLER_TX, *wt_index, *op_index, *slot_index),
+            DisputeCoreTxType::PenalizationWatchtowerCosignDisabler {
+                wt_index,
+                op_disabler_directory_index,
+                op_index,
+            } => triple_indexed_name(
+                WT_COSIGN_DISABLER_TX,
+                *wt_index,
+                *op_disabler_directory_index,
+                *op_index,
+            ),
+            DisputeCoreTxType::PenalizationWatchtowerDisabler {
+                wt_index,
+                op_disabler_directory_index,
+                op_index,
+            } => triple_indexed_name(
+                WT_DISABLER_TX,
+                *wt_index,
+                *op_disabler_directory_index,
+                *op_index,
+            ),
         }
     }
 
@@ -320,6 +372,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         info!("Building DisputeCoreProtocol for program {}", self.ctx.id);
+        set_my_idx(context, self.ctx.id, self.ctx.my_idx)?;
         let dispute_core_data = self.dispute_core_data(context)?;
         self.validate_keys(&keys, context, dispute_core_data.committee_id)?;
 
@@ -1637,8 +1690,11 @@ impl DisputeCoreProtocol {
         role: ParticipantRole,
         pid: Uuid,
     ) -> Result<(), BitVMXError> {
+        // Need to load my_idx from storage because self.ctx.my_idx has my index on DRP
+        let my_idx = get_my_idx(program_context, self.ctx.id)?;
+
         info!(
-            id = self.ctx.my_idx,
+            id = my_idx,
             "Handling wins action {}. PID: {}", tx_name, pid
         );
 
@@ -1651,7 +1707,6 @@ impl DisputeCoreProtocol {
             .members
             .iter()
             .enumerate()
-            .filter(|(_, m)| m.role == ParticipantRole::Prover)
             .find(|(op_index, _)| get_dispute_channel_pid(committee_id, *op_index, wt_index) == pid)
             .map(|(op_index, _)| op_index);
 
@@ -1659,15 +1714,20 @@ impl DisputeCoreProtocol {
             Some(i) => i,
             None => {
                 error!(
-                    id = self.ctx.my_idx,
+                    id = my_idx,
                     "Could not find matching DisputeChannel program for PID: {}", pid
                 );
                 return Ok(());
             }
         };
 
+        info!(
+            id = my_idx,
+            "DisputeChannel operator index for PID {} is {}", pid, drp_op_index
+        );
+
         if role == ParticipantRole::Prover {
-            if self.ctx.my_idx == drp_op_index {
+            if my_idx == drp_op_index {
                 self.dispatch_claim_gate(
                     program_context,
                     ClaimGateAction::Start,
@@ -1676,7 +1736,7 @@ impl DisputeCoreProtocol {
                 )?;
             }
         } else if role == ParticipantRole::Verifier {
-            if self.is_my_dispute_core(program_context)? {
+            if my_idx == wt_index {
                 self.dispatch_claim_gate(
                     program_context,
                     ClaimGateAction::Start,
@@ -1965,6 +2025,42 @@ impl DisputeCoreProtocol {
                 },
             )?;
         } else {
+            match load_penalized_member(
+                context,
+                data.committee_id,
+                data.member_index,
+                ParticipantRole::Verifier,
+            )? {
+                Some(penalized_member) => {
+                    info!(
+                    id = self.ctx.my_idx,
+                    "Watchtower already penalized for member index: {}, skipping OP_COSIGN dispatch",
+                    data.member_index
+                );
+
+                    self.dispatch(
+                        context,
+                        DisputeCoreTxType::PenalizationWatchtowerDisabler {
+                            wt_index: penalized_member.member_index,
+                            op_disabler_directory_index: penalized_member.challenger_index,
+                            op_index,
+                        },
+                    )?;
+
+                    self.dispatch(
+                        context,
+                        DisputeCoreTxType::PenalizationWatchtowerCosignDisabler {
+                            wt_index: penalized_member.member_index,
+                            op_disabler_directory_index: penalized_member.challenger_index,
+                            op_index,
+                        },
+                    )?;
+
+                    return Ok(());
+                }
+                None => {}
+            }
+
             if op_index == self.ctx.my_idx {
                 self.dispatch(
                     context,
@@ -2076,9 +2172,36 @@ impl DisputeCoreProtocol {
             return Ok(());
         }
 
-        let committee = self.committee(context)?;
         let data = self.dispute_core_data(context)?;
 
+        match load_penalized_member(
+            context,
+            data.committee_id,
+            data.member_index,
+            ParticipantRole::Prover,
+        )? {
+            Some(penalized_member) => {
+                info!(
+                    id = self.ctx.my_idx,
+                    "Operator already penalized for member index: {}, skipping WT_INIT_CHALLENGE_TX dispatch",
+                    data.member_index
+                );
+
+                self.dispatch(
+                    context,
+                    DisputeCoreTxType::PenalizationStopOperatorWon {
+                        wt_index: penalized_member.challenger_index,
+                        op_index: penalized_member.member_index,
+                        slot_index,
+                    },
+                )?;
+
+                return Ok(());
+            }
+            None => {}
+        }
+
+        let committee = self.committee(context)?;
         let wt_dispute_core_id = get_dispute_core_pid(
             data.committee_id,
             &committee.members[self.ctx.my_idx].take_key,
@@ -2203,7 +2326,7 @@ impl DisputeCoreProtocol {
         // Speedup data
         let speedup_utxo = Utxo::new(
             tx.compute_txid(),
-            1 + self.ctx.my_idx as u32, //Speedup vout is member index + 1 (1 is because op return output)
+            tx.output.len() as u32 - 1,
             SPEEDUP_VALUE,
             &self.my_speedup_key(context)?,
         );
@@ -2364,6 +2487,35 @@ impl DisputeCoreProtocol {
                 "Not my dispute_core, skipping operator take dispatch for slot {}", slot_index
             );
 
+            let data = self.dispute_core_data(context)?;
+            // Check if operator already penalized
+            match load_penalized_member(
+                context,
+                data.committee_id,
+                data.member_index,
+                ParticipantRole::Prover,
+            )? {
+                Some(penalized_member) => {
+                    info!(
+                    id = self.ctx.my_idx,
+                    "Operator already penalized for member index: {}, skipping CHALLENGE_TX dispatch",
+                    data.member_index
+                );
+
+                    self.dispatch(
+                        context,
+                        DisputeCoreTxType::PenalizationOperatorLazyDisabler {
+                            wt_index: penalized_member.challenger_index,
+                            op_index: penalized_member.member_index,
+                            slot_index,
+                        },
+                    )?;
+
+                    return Ok(());
+                }
+                None => {}
+            }
+
             // Handle challenge if needed
             match self.get_selected_operator_key(slot_index, context)? {
                 Some(selected_operator_key) => {
@@ -2471,6 +2623,17 @@ impl DisputeCoreProtocol {
                 let (tx, speedup, _) =
                     self.two_dispute_penalization_tx(slot_index_prev, slot_index_curr)?;
                 (tx, speedup)
+            }
+            DisputeCoreTxType::PenalizationStopOperatorWon { .. }
+            | DisputeCoreTxType::PenalizationOperatorLazyDisabler { .. }
+            | DisputeCoreTxType::PenalizationWatchtowerDisabler { .. }
+            | DisputeCoreTxType::PenalizationWatchtowerCosignDisabler { .. } => {
+                let dispute_core_data: DisputeCoreData = self.dispute_core_data(context)?;
+                let protocol = self.load_protocol_by_name(
+                    PROGRAM_TYPE_FULL_PENALIZATION,
+                    get_full_penalization_pid(dispute_core_data.committee_id),
+                )?;
+                protocol.get_transaction_by_name(&tx_name, context)?
             }
         };
 
