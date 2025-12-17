@@ -156,7 +156,7 @@ impl Collaboration {
                 // Only process the keys and verify individual key signatures (MITM protection)
 
                 let keys: ParticipantKeys = parse_keys(data.clone())
-                    .map_err(|_| BitVMXError::InvalidMessageFormat)?
+                    .map_err(|_| BitVMXError::InvalidMessage("Invalid keys".to_string()))?
                     .first()
                     .unwrap()
                     .1
@@ -166,7 +166,13 @@ impl Collaboration {
                     OperatorVerificationStore::get(&program_context.globals, &pubkey_hash)?
                         .ok_or_else(|| {
                             error!("Missing verification key for participant: {}", pubkey_hash);
-                            BitVMXError::InvalidMessageFormat
+                            BitVMXError::InvalidMessage(
+                                format!(
+                                    "Missing verification key for participant: {}",
+                                    pubkey_hash
+                                )
+                                .to_string(),
+                            )
                         })?;
                 let key = keys.get_public(&self.collaboration_id.to_string())?;
 
@@ -183,7 +189,10 @@ impl Collaboration {
                     );
                 } else {
                     error!("Missing RSA signature for participant: {}", pubkey_hash);
-                    return Err(BitVMXError::InvalidMessageFormat);
+                    return Err(BitVMXError::InvalidMessage(
+                        format!("Missing RSA signature for participant: {}", pubkey_hash)
+                            .to_string(),
+                    ));
                 }
 
                 // Store the key and its signature

@@ -56,13 +56,17 @@ impl BroadcastedMessage {
     pub fn validate(&self) -> Result<(), BitVMXError> {
         // Validate that there is at least one original message
         if self.original_messages.is_empty() {
-            return Err(BitVMXError::InvalidMessageFormat);
+            return Err(BitVMXError::InvalidMessage(
+                format!("No original messages").to_string(),
+            ));
         }
 
         // Validate that all original messages have the same type as original_msg_type
         for msg in &self.original_messages {
             if msg.msg_type != self.original_msg_type {
-                return Err(BitVMXError::InvalidMessageFormat);
+                return Err(BitVMXError::InvalidMessage(
+                    format!("Original message type mismatch: {:?}", msg.msg_type).to_string(),
+                ));
             }
         }
 
@@ -70,13 +74,21 @@ impl BroadcastedMessage {
         let mut seen_senders = std::collections::HashSet::new();
         for msg in &self.original_messages {
             if !seen_senders.insert(&msg.sender_pubkey_hash) {
-                return Err(BitVMXError::InvalidMessageFormat);
+                return Err(BitVMXError::InvalidMessage(
+                    format!("Duplicate original message: {:?}", msg.sender_pubkey_hash).to_string(),
+                ));
             }
         }
 
         // Validate that the broadcast timestamp is reasonable (not negative, not too far in the future)
         if self.broadcast_timestamp < 0 {
-            return Err(BitVMXError::InvalidMessageFormat);
+            return Err(BitVMXError::InvalidMessage(
+                format!(
+                    "Broadcast timestamp is negative: {:?}",
+                    self.broadcast_timestamp
+                )
+                .to_string(),
+            ));
         }
 
         // Validate each original message
@@ -93,27 +105,41 @@ impl OriginalMessage {
     pub fn validate(&self) -> Result<(), BitVMXError> {
         // Validate that the timestamp is not negative
         if self.original_timestamp < 0 {
-            return Err(BitVMXError::InvalidMessageFormat);
+            return Err(BitVMXError::InvalidMessage(
+                format!(
+                    "Original timestamp is negative: {:?}",
+                    self.original_timestamp
+                )
+                .to_string(),
+            ));
         }
 
         // Validate that the signature is not empty
         if self.original_signature.is_empty() {
-            return Err(BitVMXError::InvalidMessageFormat);
+            return Err(BitVMXError::InvalidMessage(
+                format!("Original signature is empty: {:?}", self.original_signature).to_string(),
+            ));
         }
 
         // Validate that the version is not empty
         if self.version.is_empty() {
-            return Err(BitVMXError::InvalidMessageFormat);
+            return Err(BitVMXError::InvalidMessage(
+                format!("Version is empty: {:?}", self.version).to_string(),
+            ));
         }
 
         // Validate that the pubkey_hash is not empty
         if self.sender_pubkey_hash.is_empty() {
-            return Err(BitVMXError::InvalidMessageFormat);
+            return Err(BitVMXError::InvalidMessage(
+                format!("Sender pubkey hash is empty: {:?}", self.sender_pubkey_hash).to_string(),
+            ));
         }
 
         // Validate that the message type is not Broadcasted (cannot broadcast a broadcast)
         if self.msg_type == CommsMessageType::Broadcasted {
-            return Err(BitVMXError::InvalidMessageFormat);
+            return Err(BitVMXError::InvalidMessage(
+                format!("Message type is Broadcasted: {:?}", self.msg_type).to_string(),
+            ));
         }
 
         Ok(())
@@ -225,7 +251,9 @@ impl LeaderBroadcastHelper {
         let mut seen_senders = std::collections::HashSet::new();
         for msg in &messages {
             if !seen_senders.insert(&msg.sender_pubkey_hash) {
-                return Err(BitVMXError::InvalidMessageFormat);
+                return Err(BitVMXError::InvalidMessage(
+                    format!("Duplicate original message: {:?}", msg.sender_pubkey_hash).to_string(),
+                ));
             }
         }
 
@@ -336,7 +364,9 @@ impl LeaderBroadcastHelper {
         let broadcasted_msg: BroadcastedMessage =
             serde_json::from_value(data.clone()).map_err(|e| {
                 error!("Failed to deserialize BroadcastedMessage: {:?}", e);
-                BitVMXError::InvalidMessageFormat
+                BitVMXError::InvalidMessage(
+                    format!("Failed to deserialize BroadcastedMessage: {:?}", e).to_string(),
+                )
             })?;
 
         // Validate the BroadcastedMessage structure
