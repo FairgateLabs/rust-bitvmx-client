@@ -168,14 +168,12 @@ impl ProtocolHandler for AcceptPegInProtocol {
 
         let mut take0_scripts = vec![];
         let members = self.committee(context, pegin_request.committee_id)?.members;
-        let settings = self.load_stream_setting(context)?;
 
         for (i, member) in members.iter().enumerate() {
-            take0_scripts.push(timelock(
-                settings.cancel_take0_timelock,
+            take0_scripts.push(verify_signature(
                 &member.dispute_key,
                 self.get_sign_mode(i),
-            ))
+            )?)
         }
 
         // Etake0
@@ -187,7 +185,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
             etake_output.clone().into(),
             CANCEL_TAKE0_TX,
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
-            Some(settings.cancel_take0_timelock),
+            None,
             None,
         )?;
 
