@@ -1,4 +1,5 @@
 use crate::{
+    bitcoin::HIGH_FEE_NODE_ENABLED,
     wait_until_msg,
     wallet::helper::{non_regtest_warning, print_link},
 };
@@ -186,7 +187,7 @@ impl User {
             }
         };
         let input_value = input_utxo.2.unwrap();
-        let change_value = input_value - (stream_value + fee + DUST_VALUE);
+        let change_value = input_value - (stream_value + fee + 2 * DUST_VALUE);
 
         info!(
             "Creating request pegin transaction with value: {} sats, total fee: {} sats. Input value: {}. Change: {}",
@@ -263,7 +264,7 @@ impl User {
         );
 
         let reject_output = TxOut {
-            value: Amount::from_sat(DUST_VALUE),
+            value: Amount::from_sat(2 * DUST_VALUE),
             script_pubkey: reject_script_pubkey,
         };
 
@@ -518,12 +519,18 @@ impl User {
 
     fn get_extra_fee(&self) -> u64 {
         match self.network {
-            Network::Regtest => 1500,
+            Network::Regtest => {
+                if HIGH_FEE_NODE_ENABLED {
+                    4000
+                } else {
+                    200
+                }
+            }
             _ => 0,
         }
     }
 
     pub fn get_request_pegin_fees(&self) -> u64 {
-        return self.get_extra_fee() + OP_RETURN_FEE + KEY_SPEND_FEE + DUST_VALUE;
+        return self.get_extra_fee() + OP_RETURN_FEE + KEY_SPEND_FEE + 2 * DUST_VALUE;
     }
 }
