@@ -164,3 +164,4 @@ This table shows the mapping between request messages and their expected respons
 - UUID-based correlation IDs ensure that multiple concurrent operations can be tracked independently
 - Some operations (like `SetFundingUtxo`, `SetupKey`) don't have direct response messages
 - The system supports both named and unnamed transaction dispatching with different correlation ID patterns
+
