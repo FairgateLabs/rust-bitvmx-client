@@ -191,7 +191,8 @@ impl TimeoutDispatchTable {
         table.add_verifier_without_vout(EXECUTE, TimeoutType::timeout_input(EXECUTE));
         table.add_not_apply_not_vout(CHALLENGE, Verifier, to_second_nary);
         table.add_nary_search_table("NARY2", 2, rounds);
-        table.add_classic_to(&last_tx_second_nary, CHALLENGE_READ, Prover);
+        table.add_classic_to(&last_tx_second_nary, GET_HASHES_AND_STEP, Verifier);
+        table.add_classic_to(GET_HASHES_AND_STEP, CHALLENGE_READ, Prover);
         table
     }
 
