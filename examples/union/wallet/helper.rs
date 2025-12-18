@@ -3,6 +3,7 @@ use crate::{participants::member::Member, MasterWallet};
 use anyhow::{anyhow, Result};
 use bitcoin::{Address, CompressedPublicKey, Network, Txid};
 use bitvmx_wallet::wallet::{Destination, Wallet};
+use redact::Secret;
 use core::option::Option;
 use key_manager::create_key_manager_from_config;
 use key_manager::key_type::BitcoinKeyType;
@@ -22,8 +23,8 @@ pub fn create_wallet(network: Network) -> Result<()> {
     config.storage.path = "/tmp/tpm_wallet/storage.db".to_string();
 
     let mnemonic_sentence = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-    config.key_manager.mnemonic_sentence = Some(mnemonic_sentence.to_string().into());
-    config.key_manager.mnemonic_passphrase = Some("".to_string().into());
+    config.key_manager.mnemonic_sentence = Some(Secret::new(mnemonic_sentence.to_string().into()));
+    config.key_manager.mnemonic_passphrase = Some(Secret::new("".to_string().into()));
 
     let key_manager =
         create_key_manager_from_config(&config.key_manager, &config.key_storage.clone())?;
