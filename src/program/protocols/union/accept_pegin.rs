@@ -25,9 +25,7 @@ use crate::{
     },
     types::{OutgoingBitVMXApiMessages, ProgramContext},
 };
-use bitcoin::{
-    hex::FromHex, script::PushBytesBuf, Amount, PublicKey, ScriptBuf, Transaction, Txid,
-};
+use bitcoin::{hex::FromHex, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::{
@@ -177,31 +175,35 @@ impl ProtocolHandler for AcceptPegInProtocol {
         }
 
         // Etake0
-        let etake_output = OutputType::taproot(DUST_VALUE, &take_aggregated_key, &take0_scripts)?;
+        // TODO: Optimize output value calculation. It should pay CANCEL_TAKE0_TX fee + SPEEDUP_VALUE
+        let etake_output =
+            OutputType::taproot(2 * SPEEDUP_VALUE, &take_aggregated_key, &take0_scripts)?;
+        protocol.add_transaction_output(ACCEPT_PEGIN_TX, &etake_output)?;
 
-        protocol.add_connection(
-            "cancel_take0_conn",
-            ACCEPT_PEGIN_TX,
-            etake_output.clone().into(),
-            CANCEL_TAKE0_TX,
-            InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
-            None,
-            None,
-        )?;
+        let committee = self.committee(context, pegin_request.committee_id)?;
 
-        // NOTE: Need to add some bytes to OP_RETURN to reach the minimum tx size
-        let message = "disable_user_take_tx";
-        let mut data = PushBytesBuf::with_capacity(message.len());
-        data.extend_from_slice(message.as_bytes())
-            .map_err(|_| BitVMXError::SerializationError)?;
+        for (op_index, member) in committee.members.iter().enumerate() {
+            if member.role == ParticipantRole::Verifier {
+                continue;
+            }
 
-        protocol.add_transaction_output(
-            CANCEL_TAKE0_TX,
-            &OutputType::SegwitUnspendable {
-                value: Amount::from_sat(0),
-                script_pubkey: ScriptBuf::new_op_return(&data),
-            },
-        )?;
+            let cancel_name = &indexed_name(CANCEL_TAKE0_TX, op_index);
+
+            protocol.add_connection(
+                "cancel_take0_conn",
+                ACCEPT_PEGIN_TX,
+                OutputSpec::Last,
+                cancel_name,
+                InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
+                None,
+                None,
+            )?;
+
+            protocol.add_transaction_output(
+                cancel_name,
+                &OutputType::segwit_key(SPEEDUP_VALUE, keys[op_index].get_public(SPEEDUP_KEY)?)?,
+            )?;
+        }
 
         // Speed up transaction (User pay for it)
         let pb = ProtocolBuilder {};
@@ -319,8 +321,8 @@ impl ProtocolHandler for AcceptPegInProtocol {
             self.operator_take_tx(context, name)
         } else if name.starts_with(OPERATOR_WON_TX) {
             self.operator_won_tx(context, name)
-        } else if name == CANCEL_TAKE0_TX {
-            self.cancel_take0_tx(context)
+        } else if name.starts_with(CANCEL_TAKE0_TX) {
+            self.cancel_take0_tx(context, name)
         } else {
             Err(BitVMXError::InvalidTransactionName(name.to_string()))
         }
@@ -742,9 +744,9 @@ impl AcceptPegInProtocol {
 
     fn cancel_take0_tx(
         &self,
-        _context: &ProgramContext,
+        context: &ProgramContext,
+        name: &str,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        let name = CANCEL_TAKE0_TX;
         info!(
             id = self.ctx.my_idx,
             "Loading {} for AcceptPegInProtocol. Member leaf index: {}", name, self.ctx.my_idx
@@ -763,8 +765,13 @@ impl AcceptPegInProtocol {
         )?;
 
         let tx = protocol.transaction_to_send(name, &args)?;
+        let txid = tx.compute_txid();
 
-        Ok((tx, None))
+        let speedup_key = self.my_speedup_key(context)?;
+        let speedup_vout = (tx.output.len() - 1) as u32;
+        let speedup_utxo = Utxo::new(txid, speedup_vout, SPEEDUP_VALUE, &speedup_key);
+
+        Ok((tx, Some(speedup_utxo.into())))
     }
 
     fn operator_won_tx(

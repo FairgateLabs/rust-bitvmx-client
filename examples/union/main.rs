@@ -24,7 +24,10 @@ use bitvmx_client::{
         protocols::{
             dispute::program_input,
             union::{
-                common::{get_accept_pegin_pid, get_dispute_channel_pid, get_dispute_core_pid},
+                common::{
+                    get_accept_pegin_pid, get_dispute_channel_pid, get_dispute_core_pid,
+                    indexed_name,
+                },
                 types::{
                     FundsAdvanced, ACCEPT_PEGIN_TX, CANCEL_TAKE0_TX, OP_SELF_DISABLER_TX,
                     WT_SELF_DISABLER_TX, WT_START_ENABLER_TX,
@@ -265,20 +268,19 @@ pub fn cli_cancel_take0() -> Result<()> {
 
     wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
 
+    let op_index = 1;
+    let cancel_name = indexed_name(CANCEL_TAKE0_TX, op_index);
+
     info!("Forcing member to cancel accept pegin transaction...");
-    let tx = committee.members[1].dispatch_transaction_by_name(
+    let tx = committee.members[op_index].dispatch_transaction_by_name(
         get_accept_pegin_pid(committee.committee_id(), slot_index),
-        CANCEL_TAKE0_TX.to_string(),
+        cancel_name.clone(),
     )?;
 
-    info!(
-        "{} dispatched. Txid: {}",
-        CANCEL_TAKE0_TX,
-        tx.compute_txid()
-    );
+    info!("{} dispatched. Txid: {}", cancel_name, tx.compute_txid());
 
     thread::sleep(Duration::from_secs(1));
-    wait_for_blocks(&committee.bitcoin_client, 3)?;
+    wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
 
     Ok(())
 }
