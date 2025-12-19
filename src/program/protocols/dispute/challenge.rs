@@ -237,6 +237,11 @@ pub fn challenge_scripts(
     match nary_search_type {
         NArySearchType::ConflictStep => {
             for (challenge_name, subnames) in CHALLENGES.iter() {
+                let mut subnames: Vec<(&str, usize)> = subnames.to_vec();
+                // The verifier to challenge needs this variable from the prover so we add it to every challenge
+                // we then drop it in the reverse script
+                subnames.push(("prover_continue", 1));
+
                 let total_len = subnames.iter().map(|(_, size)| *size).sum::<usize>() as u32 * 2;
 
                 let (names_and_keys, alternate_reverse) = if *challenge_name == "input" {
@@ -247,6 +252,7 @@ pub fn challenge_scripts(
                     for i in 1..total_len {
                         stack.move_var_sub_n(all, total_len - i - 1);
                     }
+                    stack.op_2drop(); // drop prover_continue
                     let reverse_script = stack.get_script();
                     (vec![], Some(reverse_script))
                 } else {
@@ -271,6 +277,7 @@ pub fn challenge_scripts(
                 for i in 1..total_len {
                     stack.move_var_sub_n(all, total_len - i - 1);
                 }
+                stack.op_2drop(); // drop prover_continue
                 let reverse_script = stack.get_script();
 
                 context.globals.set_var(
@@ -619,6 +626,9 @@ pub fn challenge_scripts(
         }
         NArySearchType::ReadValueChallenge => {
             for (challenge_name, subnames) in READ_CHALLENGES.iter() {
+                let mut subnames: Vec<(&str, usize)> = subnames.to_vec();
+                subnames.push(("prover_continue2", 1));
+
                 let total_len = subnames.iter().map(|(_, size)| *size).sum::<usize>() as u32 * 2;
 
                 let names_and_keys = subnames
@@ -638,6 +648,7 @@ pub fn challenge_scripts(
                 for i in 1..total_len {
                     stack.move_var_sub_n(all, total_len - i - 1);
                 }
+                stack.op_2drop(); // drop prover_continue2
                 let reverse_script = stack.get_script();
 
                 context.globals.set_var(

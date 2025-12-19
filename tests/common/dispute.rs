@@ -29,6 +29,7 @@ use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 
 use bitvmx_wallet::wallet::{RegtestWallet, Wallet};
 use console::style;
+use emulator::executor::utils::FailSelectionBits;
 use emulator::{
     decision::challenge::{ForceChallenge, ForceCondition},
     executor::utils::{FailConfiguration, FailExecute, FailOpcode, FailReads, FailWrite},
@@ -60,12 +61,14 @@ pub enum ForcedChallenges {
     Halt(ParticipantRole),
     EquivocationResignStep(ParticipantRole),
     EquivocationResignNext(ParticipantRole),
+    ProverChallengeStep(ParticipantRole),
     // 2nd n-ary search
     ReadValue(ParticipantRole),
     CorrectHash(ParticipantRole),
     EquivocationHash(ParticipantRole),
     EquivocationResignStep2(ParticipantRole),
     EquivocationResignNext2(ParticipantRole),
+    ProverChallengeStep2(ParticipantRole),
     // Default
     No,
     Execution,
@@ -94,6 +97,8 @@ impl ForcedChallenges {
             | CorrectHash(role)
             | Halt(role)
             | EquivocationResignStep(role)
+            | ProverChallengeStep(role)
+            | ProverChallengeStep2(role)
             | EquivocationHash(role)
             | EquivocationResignNext(role)
             | EquivocationResignStep2(role)
@@ -850,6 +855,102 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ConfigResul
                 Some(fail_resign),
                 ForceChallenge::EquivocationResign(EquivocationKind::NextHash),
             )
+        }
+        ForcedChallenges::ProverChallengeStep(role) => {
+            let fail_read_args = vec!["1106", "0xf000003c", "0xaa000004", "0xf000003c", "1107"]
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<String>>();
+
+            let fail_future_read =
+                FailConfiguration::new_fail_reads(FailReads::new(Some(&fail_read_args), None));
+
+            match role {
+                ParticipantRole::Prover => ConfigResults {
+                    main: ConfigResult {
+                        // We want to test that if the prover tries to challenge the selected step when it doesn't correspond, he fails.
+                        // If he doesn't try to challenge, the test should fail. To achieve that, we make the verifier also fail on a future read,
+                        // so if the prover gives his trace instead of challenging, he will win because the verifier lied on the read step.
+                        // And since the test expected the verifier to win, it will fail.
+                        fail_config_prover: Some(
+                            FailConfiguration::new_fail_prover_challenge_step(),
+                        ),
+                        fail_config_verifier: Some(fail_future_read),
+                        force_challenge: ForceChallenge::No,
+                        force_condition: ForceCondition::ValidInputWrongStepOrHash,
+                    },
+                    read: ConfigResult {
+                        fail_config_prover: None,
+                        fail_config_verifier: None,
+                        force_challenge: ForceChallenge::No,
+                        force_condition: ForceCondition::No,
+                    },
+                },
+                ParticipantRole::Verifier => ConfigResults {
+                    main: ConfigResult {
+                        // Same logic as before but inverted, if the prover doesn't challenge the step, he will fail cause he will fail to correctly resign the hash
+                        fail_config_prover: Some(FailConfiguration::new_fail_resign_hash(1792)),
+                        fail_config_verifier: Some(FailConfiguration::new_fail_selection_bits(
+                            Some(1),
+                            7,
+                        )),
+                        force_challenge: ForceChallenge::No,
+                        force_condition: ForceCondition::ValidInputStepAndHash,
+                    },
+                    read: ConfigResult {
+                        fail_config_prover: None,
+                        fail_config_verifier: None,
+                        force_challenge: ForceChallenge::No,
+                        force_condition: ForceCondition::No,
+                    },
+                },
+            }
+        }
+        ForcedChallenges::ProverChallengeStep2(role) => {
+            let fail_read_args = vec!["1106", "0xf000003c", "0xaa000004", "0xf000003c", "1100"]
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<String>>();
+
+            let fail_read_1 =
+                FailConfiguration::new_fail_reads(FailReads::new(Some(&fail_read_args), None));
+            match role {
+                ParticipantRole::Prover => ConfigResults {
+                    main: ConfigResult {
+                        fail_config_prover: None,
+                        fail_config_verifier: Some(fail_read_1.clone()),
+                        force_challenge: ForceChallenge::No,
+                        force_condition: ForceCondition::ValidInputWrongStepOrHash,
+                    },
+                    read: ConfigResult {
+                        fail_config_prover: Some(
+                            FailConfiguration::new_fail_prover_challenge_step(),
+                        ),
+                        fail_config_verifier: Some(fail_read_1.clone()),
+                        force_challenge: ForceChallenge::No,
+                        force_condition: ForceCondition::No,
+                    },
+                },
+                ParticipantRole::Verifier => ConfigResults {
+                    main: ConfigResult {
+                        fail_config_prover: None,
+                        // the fail is in the first nary search but since round is None it will fail in the ReadNArySearch challenge's bits corresponding to the second nary search
+                        fail_config_verifier: Some({
+                            let mut fail_read_1 = fail_read_1.clone();
+                            fail_read_1.fail_selection_bits = Some(FailSelectionBits::new(None, 7));
+                            fail_read_1
+                        }),
+                        force_challenge: ForceChallenge::ReadValueNArySearch,
+                        force_condition: ForceCondition::ValidInputStepAndHash,
+                    },
+                    read: ConfigResult {
+                        fail_config_prover: Some(FailConfiguration::new_fail_resign_hash(1873)),
+                        fail_config_verifier: Some(fail_read_1),
+                        force_challenge: ForceChallenge::No,
+                        force_condition: ForceCondition::No,
+                    },
+                },
+            }
         }
         ForcedChallenges::No => ConfigResults::default(),
         ForcedChallenges::Execution => ConfigResults {

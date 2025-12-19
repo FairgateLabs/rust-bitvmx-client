@@ -2,7 +2,9 @@ use bitcoin_coordinator::coordinator::BitcoinCoordinatorApi;
 use bitcoin_script_riscv::riscv::instruction_mapping::{
     create_verification_script_mapping, get_key_from_opcode,
 };
-use bitvmx_cpu_definitions::challenge::{ChallengeType, EmulatorResultType};
+use bitvmx_cpu_definitions::challenge::{
+    ChallengeType, EmulatorResultType, ProverFinalTraceType, ProverHashesAndStepType,
+};
 use emulator::constants::REGISTERS_BASE_ADDRESS;
 use tracing::info;
 use uuid::Uuid;
@@ -137,125 +139,136 @@ pub fn execution_result(
                 None,
             )?;
         }
-        EmulatorResultType::ProverFinalTraceResult {
-            final_trace,
-            resigned_step_hash,
-            resigned_next_hash,
-            conflict_step,
-        } => {
-            info!("Final trace: {:?}", final_trace);
+        EmulatorResultType::ProverFinalTraceResult { prover_final_trace } => {
+            info!("Final trace: {:?}", prover_final_trace);
+            if let ProverFinalTraceType::ChallengeStep = prover_final_trace {
+                info!("Prover will challenge the selected step");
+                let (tx, sp) = drp.get_tx_with_speedup_data(context, EXECUTE, 0, 0, true)?;
 
-            set_input_u32(
-                id,
-                context,
-                "prover_write_address",
-                final_trace.trace_step.get_write().address,
-            )?;
-            set_input_u32(
-                id,
-                context,
-                "prover_write_value",
-                final_trace.trace_step.get_write().value,
-            )?;
-            set_input_u32(
-                id,
-                context,
-                "prover_write_pc",
-                final_trace.trace_step.get_pc().get_address(),
-            )?;
-            set_input_u8(
-                id,
-                context,
-                "prover_write_micro",
-                final_trace.trace_step.get_pc().get_micro(),
-            )?;
+                context.bitcoin_coordinator.dispatch(
+                    tx,
+                    Some(sp),
+                    Context::ProgramId(*id).to_string()?,
+                    None,
+                )?;
+            } else {
+                let (final_trace, resigned_step_hash, resigned_next_hash, conflict_step) =
+                    prover_final_trace
+                        .as_final_trace_with_hashes_and_step()
+                        .unwrap();
+                set_input_u32(
+                    id,
+                    context,
+                    "prover_write_address",
+                    final_trace.trace_step.get_write().address,
+                )?;
+                set_input_u32(
+                    id,
+                    context,
+                    "prover_write_value",
+                    final_trace.trace_step.get_write().value,
+                )?;
+                set_input_u32(
+                    id,
+                    context,
+                    "prover_write_pc",
+                    final_trace.trace_step.get_pc().get_address(),
+                )?;
+                set_input_u8(
+                    id,
+                    context,
+                    "prover_write_micro",
+                    final_trace.trace_step.get_pc().get_micro(),
+                )?;
 
-            set_input_u8(
-                id,
-                context,
-                "prover_mem_witness",
-                final_trace.mem_witness.byte(),
-            )?;
+                set_input_u8(
+                    id,
+                    context,
+                    "prover_mem_witness",
+                    final_trace.mem_witness.byte(),
+                )?;
 
-            set_input_u32(
-                id,
-                context,
-                "prover_read_1_address",
-                final_trace.read_1.address,
-            )?;
-            set_input_u32(id, context, "prover_read_1_value", final_trace.read_1.value)?;
-            set_input_u64(
-                id,
-                context,
-                "prover_read_1_last_step",
-                final_trace.read_1.last_step,
-            )?;
-            set_input_u32(
-                id,
-                context,
-                "prover_read_2_address",
-                final_trace.read_2.address,
-            )?;
-            set_input_u32(id, context, "prover_read_2_value", final_trace.read_2.value)?;
-            set_input_u64(
-                id,
-                context,
-                "prover_read_2_last_step",
-                final_trace.read_2.last_step,
-            )?;
+                set_input_u32(
+                    id,
+                    context,
+                    "prover_read_1_address",
+                    final_trace.read_1.address,
+                )?;
+                set_input_u32(id, context, "prover_read_1_value", final_trace.read_1.value)?;
+                set_input_u64(
+                    id,
+                    context,
+                    "prover_read_1_last_step",
+                    final_trace.read_1.last_step,
+                )?;
+                set_input_u32(
+                    id,
+                    context,
+                    "prover_read_2_address",
+                    final_trace.read_2.address,
+                )?;
+                set_input_u32(id, context, "prover_read_2_value", final_trace.read_2.value)?;
+                set_input_u64(
+                    id,
+                    context,
+                    "prover_read_2_last_step",
+                    final_trace.read_2.last_step,
+                )?;
 
-            set_input_u32(
-                id,
-                context,
-                "prover_read_pc_address",
-                final_trace.read_pc.pc.get_address(),
-            )?;
-            set_input_u8(
-                id,
-                context,
-                "prover_read_pc_micro",
-                final_trace.read_pc.pc.get_micro(),
-            )?;
-            set_input_u32(
-                id,
-                context,
-                "prover_read_pc_opcode",
-                final_trace.read_pc.opcode,
-            )?;
-            set_input_u64(id, context, "prover_step_number", final_trace.step_number)?;
-            if let Some(witness) = final_trace.witness {
-                set_input_u32(id, context, "prover_witness", witness)?;
-            }
-            set_input_hex(id, context, "prover_step_hash_tk", resigned_step_hash)?;
-            set_input_hex(id, context, "prover_next_hash_tk", resigned_next_hash)?;
-            set_input_u64(id, context, "prover_conflict_step_tk", *conflict_step)?;
-            let instruction = get_key_from_opcode(
-                final_trace.read_pc.opcode,
-                final_trace.read_pc.pc.get_micro(),
-            )
-            .ok_or_else(|| {
-                BitVMXError::InstructionNotFound(format!(
-                    "{}_{}",
+                set_input_u32(
+                    id,
+                    context,
+                    "prover_read_pc_address",
+                    final_trace.read_pc.pc.get_address(),
+                )?;
+                set_input_u8(
+                    id,
+                    context,
+                    "prover_read_pc_micro",
+                    final_trace.read_pc.pc.get_micro(),
+                )?;
+                set_input_u32(
+                    id,
+                    context,
+                    "prover_read_pc_opcode",
                     final_trace.read_pc.opcode,
-                    final_trace.read_pc.pc.get_micro()
-                ))
-            })?;
-            let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
-            let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
-            instruction_names.sort();
-            let index = instruction_names
-                .iter()
-                .position(|i| i == &instruction)
-                .ok_or_else(|| BitVMXError::InstructionNotFound(instruction.to_string()))?;
+                )?;
+                set_input_u64(id, context, "prover_step_number", final_trace.step_number)?;
+                if let Some(witness) = final_trace.witness {
+                    set_input_u32(id, context, "prover_witness", witness)?;
+                }
+                set_input_hex(id, context, "prover_step_hash_tk", &resigned_step_hash)?;
+                set_input_hex(id, context, "prover_next_hash_tk", &resigned_next_hash)?;
+                set_input_u64(id, context, "prover_conflict_step_tk", conflict_step)?;
+                let instruction = get_key_from_opcode(
+                    final_trace.read_pc.opcode,
+                    final_trace.read_pc.pc.get_micro(),
+                )
+                .ok_or_else(|| {
+                    BitVMXError::InstructionNotFound(format!(
+                        "{}_{}",
+                        final_trace.read_pc.opcode,
+                        final_trace.read_pc.pc.get_micro()
+                    ))
+                })?;
+                let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
+                let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
+                instruction_names.sort();
+                let index = instruction_names
+                    .iter()
+                    .position(|i| i == &instruction)
+                    .ok_or_else(|| BitVMXError::InstructionNotFound(instruction.to_string()))?;
+                // first index leaf is the challenge_step, we have to skip it
+                let (tx, sp) =
+                    drp.get_tx_with_speedup_data(context, EXECUTE, 0, (index + 1) as u32, true)?;
 
-            let (tx, sp) = drp.get_tx_with_speedup_data(context, EXECUTE, 0, index as u32, true)?;
-
-            context.bitcoin_coordinator.dispatch(
-                tx,
-                Some(sp),
-                Context::ProgramId(*id).to_string()?,
-                None,
-            )?;
+                context.bitcoin_coordinator.dispatch(
+                    tx,
+                    Some(sp),
+                    Context::ProgramId(*id).to_string()?,
+                    None,
+                )?;
+            }
         }
         EmulatorResultType::VerifierChooseChallengeResult { challenge } => {
             info!("Verifier choose challenge result: {:?}", challenge);
@@ -295,27 +308,41 @@ pub fn execution_result(
             )?;
         }
         EmulatorResultType::ProverGetHashesAndStepResult {
-            resigned_step_hash,
-            resigned_next_hash,
-            write_step,
+            prover_hashes_and_step,
         } => {
-            info!(
-                "Prover got hashes and step result: {:?}, {:?}, {:?}",
-                resigned_step_hash, resigned_next_hash, write_step
-            );
+            if let ProverHashesAndStepType::ChallengeStep = prover_hashes_and_step {
+                info!("Prover will challenge step of second nary search");
+                let (tx, sp) =
+                    drp.get_tx_with_speedup_data(context, GET_HASHES_AND_STEP, 0, 0, true)?;
 
-            set_input_hex(id, context, "prover_step_hash_tk2", resigned_step_hash)?;
-            set_input_hex(id, context, "prover_next_hash_tk2", resigned_next_hash)?;
-            set_input_u64(id, context, "prover_write_step_tk2", *write_step)?;
-            let (tx, sp) =
-                drp.get_tx_with_speedup_data(context, GET_HASHES_AND_STEP, 0, 0, true)?;
+                context.bitcoin_coordinator.dispatch(
+                    tx,
+                    Some(sp),
+                    Context::ProgramId(*id).to_string()?,
+                    None,
+                )?;
+            } else {
+                let (resigned_step_hash, resigned_next_hash, write_step) =
+                    prover_hashes_and_step.as_hashes_with_step().unwrap();
 
-            context.bitcoin_coordinator.dispatch(
-                tx,
-                Some(sp),
-                Context::ProgramId(*id).to_string()?,
-                None,
-            )?;
+                info!(
+                    "Prover got hashes and step result: {:?}, {:?}, {:?}",
+                    resigned_step_hash, resigned_next_hash, write_step
+                );
+
+                set_input_hex(id, context, "prover_step_hash_tk2", &resigned_step_hash)?;
+                set_input_hex(id, context, "prover_next_hash_tk2", &resigned_next_hash)?;
+                set_input_u64(id, context, "prover_write_step_tk2", write_step)?;
+                let (tx, sp) =
+                    drp.get_tx_with_speedup_data(context, GET_HASHES_AND_STEP, 0, 1, true)?;
+
+                context.bitcoin_coordinator.dispatch(
+                    tx,
+                    Some(sp),
+                    Context::ProgramId(*id).to_string()?,
+                    None,
+                )?;
+            }
         }
     }
     Ok(())

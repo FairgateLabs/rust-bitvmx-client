@@ -1345,6 +1345,31 @@ fn challenge_equivocation_resign_next2_prover() -> Result<()> {
 fn challenge_equivocation_resign_next2_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::EquivocationResignNext2(Verifier))
 }
+
+#[ignore]
+#[test]
+fn challenge_prover_challenge_step_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::ProverChallengeStep(Prover))
+}
+
+#[ignore]
+#[test]
+fn challenge_prover_challenge_step_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::ProverChallengeStep(Verifier))
+}
+
+#[ignore]
+#[test]
+fn challenge_prover_challenge_step2_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::ProverChallengeStep2(Prover))
+}
+
+#[ignore]
+#[test]
+fn challenge_prover_challenge_step2_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::ProverChallengeStep2(Verifier))
+}
+
 // The forced Execution is required for testing because without it, the prover or verifier will not execute directly
 // #[ignore]
 // #[test]
