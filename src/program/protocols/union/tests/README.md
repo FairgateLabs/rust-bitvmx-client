@@ -181,9 +181,6 @@ assert_roundtrip_index()        // Encode/decode consistency
 ## Documentation
 
 - **TEST_GUIDE.md** - Detailed explanations of what each test validates and why
-- **ARCHITECTURE.md** - Test infrastructure design and file organization
-- **FINAL_SUMMARY.md** - Complete refactoring summary and decisions
-
 ---
 
 ## Development
