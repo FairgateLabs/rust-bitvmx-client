@@ -13,7 +13,9 @@ use bitcoin::{PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_script_riscv::riscv::{
     instruction_mapping::create_verification_script_mapping,
-    script_utils::{is_lower_than, verify_challenge_step},
+    script_utils::{
+        is_lower_than, var_to_decisions_in_altstack, verify_challenge_step, StackTables,
+    },
 };
 use bitcoin_script_stack::stack::StackTracker;
 use bitvmx_cpu_definitions::challenge::EmulatorResultType;
@@ -47,7 +49,9 @@ use crate::{
                 challenge::{challenge_scripts, get_verifier_keys},
                 config::DisputeConfiguration,
                 execution::execution_result,
-                input_handler::{get_required_keys, get_txs_configuration, split_input},
+                input_handler::{
+                    get_required_keys, get_txs_configuration, set_input_u8, split_input,
+                },
             },
             protocol_handler::{ProtocolContext, ProtocolHandler},
         },
@@ -73,7 +77,11 @@ pub const TIMELOCK_BLOCKS_KEY: &str = "TIMELOCK_BLOCKS";
 pub const VERIFIER_FINAL: &str = "VERIFIER_FINAL";
 
 pub static TRACE_VARS: OnceLock<RwLock<Vec<(String, usize)>>> = OnceLock::new();
+pub static PROVER_CHALLENGE_STEP1: OnceLock<RwLock<Vec<(String, usize)>>> = OnceLock::new();
+
 pub static TK_2NARY: OnceLock<RwLock<Vec<(String, usize)>>> = OnceLock::new();
+pub static PROVER_CHALLENGE_STEP2: OnceLock<RwLock<Vec<(String, usize)>>> = OnceLock::new();
+
 fn build_trace_vars(rounds: u8) -> Vec<(String, usize)> {
     let mut vars = vec![
         ("prover_write_address".to_string(), 4),
@@ -95,7 +103,20 @@ fn build_trace_vars(rounds: u8) -> Vec<(String, usize)> {
         ("prover_step_hash_tk".to_string(), 20),
         ("prover_next_hash_tk".to_string(), 20),
         ("prover_conflict_step_tk".to_string(), 8),
+        // the verifier needs this to continue with the challenge, if the prover chooses to challenge the step,
+        // he won't sign this variable and the verifier won't be able to continue
+        ("prover_continue".to_string(), 1),
     ];
+
+    for i in 1..rounds + 1 {
+        vars.push((format!("verifier_selection_bits_{}", i), 1));
+    }
+
+    vars
+}
+
+fn build_challenge_step_vars(rounds: u8) -> Vec<(String, usize)> {
+    let mut vars = vec![("verifier_last_step_tk".to_string(), 8)];
 
     for i in 1..rounds + 1 {
         vars.push((format!("verifier_selection_bits_{}", i), 1));
@@ -109,7 +130,22 @@ fn build_translation_keys_2nd_nary(rounds: u8) -> Vec<(String, usize)> {
         ("prover_step_hash_tk2".to_string(), 20),
         ("prover_next_hash_tk2".to_string(), 20),
         ("prover_write_step_tk2".to_string(), 8),
+        ("prover_continue2".to_string(), 1),
     ];
+
+    for i in 1..rounds + 1 {
+        vars.push((format!("verifier_selection_bits2_{}", i), 1));
+    }
+
+    vars
+}
+
+fn build_challenge_step_vars_2nd_nary(rounds: u8) -> Vec<(String, usize)> {
+    let mut vars = vec![];
+
+    for i in 1..rounds + 1 {
+        vars.push((format!("verifier_selection_bits_{}", i), 1));
+    }
 
     for i in 1..rounds + 1 {
         vars.push((format!("verifier_selection_bits2_{}", i), 1));
@@ -120,32 +156,53 @@ fn build_translation_keys_2nd_nary(rounds: u8) -> Vec<(String, usize)> {
 
 pub fn init_trace_vars(rounds: u8) -> Result<(), BitVMXError> {
     let trace_lock = TRACE_VARS.get_or_init(|| RwLock::new(Vec::new()));
+    let challenge_step_lock = PROVER_CHALLENGE_STEP1.get_or_init(|| RwLock::new(Vec::new()));
+
     let tk_lock = TK_2NARY.get_or_init(|| RwLock::new(Vec::new()));
+    let challenge_step2_lock = PROVER_CHALLENGE_STEP2.get_or_init(|| RwLock::new(Vec::new()));
 
     // Read both locks to check existing consistency //TODO: now there is no need for round parameter
     let trace = trace_lock.read()?;
+    let challenge_step = challenge_step_lock.read()?;
+
     let tk = tk_lock.read()?;
+    let challenge_step2 = challenge_step2_lock.read()?;
+
     let existing_trace_rounds = trace
         .iter()
-        .filter(|(name, _)| name.starts_with("prover_selection_bits_"))
+        .filter(|(name, _)| name.starts_with("verifier_selection_bits_"))
         .count() as u8;
+
+    let existing_step_rounds = challenge_step
+        .iter()
+        .filter(|(name, _)| name.starts_with("verifier_selection_bits_"))
+        .count() as u8;
+
     let existing_tk_rounds = tk
         .iter()
-        .filter(|(name, _)| name.starts_with("prover_selection_bits_"))
+        .filter(|(name, _)| name.starts_with("verifier_selection_bits2_"))
         .count() as u8;
-    let is_consistent = !trace.is_empty()
-        && !tk.is_empty()
-        && existing_trace_rounds == rounds
+
+    let existing_step2_rounds = challenge_step2
+        .iter()
+        .filter(|(name, _)| name.starts_with("verifier_selection_bits_"))
+        .count() as u8;
+
+    let is_consistent = existing_trace_rounds == rounds
         && existing_tk_rounds == rounds
-        && existing_trace_rounds == existing_tk_rounds;
+        && existing_step_rounds == rounds
+        && existing_step2_rounds == rounds;
+
     if is_consistent {
         return Ok(()); // already consistent
     }
 
     drop(trace);
+    drop(challenge_step);
     drop(tk);
+    drop(challenge_step2);
 
-    // Rebuild both in a consistent state
+    // Rebuild all in a consistent state
     {
         let mut trace = trace_lock.write().unwrap();
         *trace = build_trace_vars(rounds);
@@ -153,6 +210,14 @@ pub fn init_trace_vars(rounds: u8) -> Result<(), BitVMXError> {
     {
         let mut tk = tk_lock.write().unwrap();
         *tk = build_translation_keys_2nd_nary(rounds);
+    }
+    {
+        let mut challenge_step = challenge_step_lock.write().unwrap();
+        *challenge_step = build_challenge_step_vars(rounds);
+    }
+    {
+        let mut challenge_step2 = challenge_step2_lock.write().unwrap();
+        *challenge_step2 = build_challenge_step_vars_2nd_nary(rounds);
     }
     Ok(())
 }
@@ -279,6 +344,11 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             keys.push((required_input, key.into()));
         }
 
+        if self.role() == ParticipantRole::Prover {
+            set_input_u8(&self.ctx.id, &program_context, "prover_continue", 0)?;
+            set_input_u8(&self.ctx.id, &program_context, "prover_continue2", 0)?;
+        }
+
         let key_chain = &mut program_context.key_chain;
 
         if self.role() == ParticipantRole::Prover {
@@ -309,6 +379,11 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         }
 
         if self.role() == ParticipantRole::Verifier {
+            keys.push((
+                "verifier_last_step_tk".to_string(),
+                key_chain.derive_winternitz_hash160(8)?.into(),
+            ));
+
             keys.extend_from_slice(
                 get_verifier_keys()
                     .iter()
@@ -643,9 +718,16 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             COMMITMENT,
             POST_COMMITMENT,
             &claim_prover,
-            Self::winternitz_check(agg_or_verifier, sign_mode, &keys[1], &Vec::<&str>::new())?,
+            Self::winternitz_check_cosigned_input_script(
+                agg_or_verifier,
+                sign_mode,
+                &keys,
+                &vec![&vec!["prover_last_step"], &vec!["verifier_last_step_tk"]],
+                Some(vec![Self::get_verify_last_step_script()]),
+            )?,
             (&verifier_speedup_pub, prover_speedup_pub),
         )?;
+
         amount = self.checked_sub(amount, fee)?;
         amount = self.checked_sub(amount, speedup_dust)?;
 
@@ -1099,6 +1181,8 @@ impl DisputeResolutionProtocol {
 
         match nary_search_type {
             NArySearchType::ConflictStep => {
+                let prover_continue = stack.move_var(stackvars["prover_continue"]);
+                stack.drop(prover_continue);
                 let step_n = stack.move_var(stackvars["prover_step_number"]);
                 stack.drop(step_n);
                 let stripped = stack.move_var_sub_n(stackvars["prover_write_micro"], 0);
@@ -1130,6 +1214,8 @@ impl DisputeResolutionProtocol {
                 );
             }
             NArySearchType::ReadValueChallenge => {
+                let prover_continue = stack.move_var(stackvars["prover_continue2"]);
+                stack.drop(prover_continue);
                 let step_hash = stack.move_var(stackvars["prover_step_hash_tk2"]);
                 stack.drop(step_hash);
                 let next_hash = stack.move_var(stackvars["prover_next_hash_tk2"]);
@@ -1154,6 +1240,130 @@ impl DisputeResolutionProtocol {
         }
 
         (reverse_script, stack.get_script())
+    }
+
+    fn challenge_step_script(
+        &self,
+        context: &ProgramContext,
+        aggregated: &PublicKey,
+        sign_mode: SignMode,
+        keys: &Vec<ParticipantKeys>,
+        nary_search_type: NArySearchType,
+    ) -> Result<ProtocolScript, BitVMXError> {
+        let prover_keys = &keys[0];
+        let verifier_keys = &keys[1];
+
+        let challenge_step_vars = match nary_search_type {
+            NArySearchType::ConflictStep => PROVER_CHALLENGE_STEP1
+                .get()
+                .expect("PROVER_CHALLENGE_STEP1 not initialized")
+                .read()?,
+            _ => PROVER_CHALLENGE_STEP2
+                .get()
+                .expect("PROVER_CHALLENGE_STEP2 not initialized")
+                .read()?,
+        };
+
+        let challenge_names_and_keys: Vec<(&str, &key_manager::winternitz::WinternitzPublicKey)> =
+            challenge_step_vars
+                .iter()
+                .map(|(name, _)| {
+                    let key_provider = if name.starts_with("prover") {
+                        prover_keys
+                    } else {
+                        verifier_keys
+                    };
+                    (name.as_str(), key_provider.get_winternitz(name).unwrap())
+                })
+                .collect();
+
+        let mut stack = StackTracker::new();
+        let mut stackvars = HashMap::new();
+        for (name, size) in challenge_step_vars.iter() {
+            stackvars.insert(name.clone(), stack.define((size * 2) as u32, name));
+        }
+
+        let program_def = self.get_program_definition(context)?.0;
+        let rounds = program_def.nary_def().total_rounds();
+        let nary = program_def.nary_def().nary;
+        let nary_last_round = program_def.nary_def().nary_last_round;
+        let total_size = challenge_step_vars
+            .iter()
+            .map(|(_, size)| (*size as u32) * 2)
+            .sum();
+        let reverse_script = Self::get_reverse_script(total_size);
+
+        if nary_search_type == NArySearchType::ConflictStep {
+            let tables = &StackTables::new(&mut stack, false, false, 0b111, 0b111, 0);
+
+            for i in 1..rounds + 1 {
+                let selection_bits_0 =
+                    stack.move_var_sub_n(stackvars[&format!("verifier_selection_bits_{}", i)], 0);
+                stack.drop(selection_bits_0);
+                stack.move_var_sub_n(stackvars[&format!("verifier_selection_bits_{}", i)], 0);
+            }
+            let selection = stack.join_in_stack(rounds as u32, None, Some("selection_bits"));
+
+            // Convert the last step to the same format as the selection bits to be able to compare them.
+            var_to_decisions_in_altstack(
+                &mut stack,
+                tables,
+                stackvars["verifier_last_step_tk"],
+                nary,
+                nary_last_round,
+                rounds,
+            );
+            let last_step = stack.from_altstack_joined(rounds as u32, "last_step");
+
+            // The prover can challenge only if the selected step is greater or equal than the commited last_step
+            // It's invalid for the selected step to be equal because the nary search is off by one, the trace the verifier is asking
+            // corresponds to the 'selected_step+1' step and 'last_step+1' is an invalid step.
+            stack.equality(last_step, false, selection, false, true, false); // last_step == selection
+            is_lower_than(&mut stack, last_step, selection, true); // last_step < selection
+            stack.op_boolor(); // last_step == selection || last_step < selection -> last_step <= selection
+            stack.op_verify(); // verify(last_step <= selection)
+            tables.drop(&mut stack);
+        } else {
+            for i in 1..rounds + 1 {
+                let selection_bits_0 =
+                    stack.move_var_sub_n(stackvars[&format!("verifier_selection_bits_{}", i)], 0);
+                stack.drop(selection_bits_0);
+                stack.move_var_sub_n(stackvars[&format!("verifier_selection_bits_{}", i)], 0);
+            }
+
+            let selection_first_nary =
+                stack.join_in_stack(rounds as u32, None, Some("selection_bits_1"));
+
+            for i in 1..rounds + 1 {
+                let selection_bits_0 =
+                    stack.move_var_sub_n(stackvars[&format!("verifier_selection_bits2_{}", i)], 0);
+                stack.drop(selection_bits_0);
+                stack.move_var_sub_n(stackvars[&format!("verifier_selection_bits2_{}", i)], 0);
+            }
+
+            let selection_second_nary =
+                stack.join_in_stack(rounds as u32, None, Some("selection_bits_2"));
+            // The prover can challenge only if the selected step in the second nary search is greater than the one in the first nary search.
+            // Note that this time the prover can't challenge if the selected step is the same in both searches, the verifier has to challenge
+            // if in the second nary search the prover changed the hash of the selected step in the first nary search.
+            is_lower_than(
+                &mut stack,
+                selection_first_nary,
+                selection_second_nary,
+                true,
+            );
+            stack.op_verify();
+        };
+
+        let winternitz_check = scripts::verify_winternitz_signatures_aux(
+            aggregated,
+            &challenge_names_and_keys.iter().cloned().collect(),
+            sign_mode,
+            true,
+            Some(vec![reverse_script, stack.get_script()]),
+        )?;
+
+        Ok(winternitz_check)
     }
 
     fn execute_script(
@@ -1218,7 +1428,14 @@ impl DisputeResolutionProtocol {
             nary_search_type,
         );
 
-        let mut winternitz_check_list = vec![];
+        let mut winternitz_check_list = vec![self.challenge_step_script(
+            context,
+            aggregated,
+            sign_mode,
+            keys,
+            nary_search_type,
+        )?];
+
         match nary_search_type {
             NArySearchType::ConflictStep => {
                 let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
@@ -1450,6 +1667,17 @@ impl DisputeResolutionProtocol {
         is_lower_than(&mut stack, last_step, max_steps, true);
         stack.op_boolor();
         stack.op_verify();
+
+        stack.get_script()
+    }
+
+    fn get_verify_last_step_script() -> ScriptBuf {
+        let mut stack = StackTracker::new();
+        // vars are swaped and inverted because we won't use the reverse script but it doesn't matter since a == b iff rev(b) == rev(a)
+        let verifier_last_step = stack.define(16, "verifier_last_step_tk");
+        let prover_last_step = stack.define(16, "prover_last_step");
+
+        stack.equals(verifier_last_step, true, prover_last_step, true);
 
         stack.get_script()
     }

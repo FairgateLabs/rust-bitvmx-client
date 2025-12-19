@@ -9,7 +9,9 @@ use crate::{
                 action_wins, action_wins_prefix,
                 challenge::READ_VALUE_NARY_SEARCH_CHALLENGE,
                 config::{ConfigResults, DisputeConfiguration},
-                input_handler::{get_txs_configuration, set_input, unify_inputs, unify_witnesses},
+                input_handler::{
+                    get_txs_configuration, set_input, set_input_u64, unify_inputs, unify_witnesses,
+                },
                 input_tx_name, program_input, timeout_input_tx, timeout_tx,
                 DisputeResolutionProtocol, CHALLENGE, CHALLENGE_READ, COMMITMENT, EXECUTE,
                 GET_HASHES_AND_STEP, INPUT_TX, POST_COMMITMENT, PRE_COMMITMENT, PROVER_WINS,
@@ -191,7 +193,8 @@ impl TimeoutDispatchTable {
         table.add_verifier_without_vout(EXECUTE, TimeoutType::timeout_input(EXECUTE));
         table.add_not_apply_not_vout(CHALLENGE, Verifier, to_second_nary);
         table.add_nary_search_table("NARY2", 2, rounds);
-        table.add_classic_to(&last_tx_second_nary, CHALLENGE_READ, Prover);
+        table.add_classic_to(&last_tx_second_nary, GET_HASHES_AND_STEP, Verifier);
+        table.add_classic_to(GET_HASHES_AND_STEP, CHALLENGE_READ, Prover);
         table
     }
 
@@ -782,6 +785,12 @@ pub fn handle_tx_news(
             .winternitz()?
             .message_bytes();
         let last_step = u64::from_be_bytes(last_step.try_into().unwrap());
+        set_input_u64(
+            &drp.ctx.id,
+            program_context,
+            "verifier_last_step_tk",
+            last_step,
+        )?;
 
         let msg = serde_json::to_string(&DispatcherJob {
             job_id: drp.ctx.id.to_string(),
@@ -817,6 +826,18 @@ pub fn handle_tx_news(
             .unwrap_or("0")
             .parse::<u32>()
             .unwrap();
+
+        if round == 0 {
+            drp.decode_witness_from_speedup(
+                tx_id,
+                vout.unwrap(),
+                &name,
+                program_context,
+                &tx_status.tx,
+                None,
+            )?;
+        }
+
         handle_nary_verifier(
             &name,
             drp,
@@ -862,6 +883,11 @@ pub fn handle_tx_news(
             &tx_status.tx,
             None,
         )?;
+
+        // leaf 0 is prover_challenge_step, we lost
+        if leaf == 0 {
+            return Ok(());
+        }
 
         let params = program_context
             .globals
@@ -995,13 +1021,15 @@ pub fn handle_tx_news(
 
         match leaf {
             l if l == read_value_nary_search_leaf => {
-                let expected_names: Vec<&str> = READ_VALUE_NARY_SEARCH_CHALLENGE
+                let mut expected_names: Vec<&str> = READ_VALUE_NARY_SEARCH_CHALLENGE
                     .iter()
                     .map(|(name, _)| *name)
                     .collect();
 
-                if names.len() == 1 && names == expected_names {
-                    let bits_name = &names[0];
+                expected_names.insert(0, "prover_continue");
+
+                if names == expected_names {
+                    let bits_name = &names[1];
                     let witness = program_context
                         .witness
                         .get_witness(&drp.ctx.id, bits_name)?
@@ -1086,7 +1114,7 @@ pub fn handle_tx_news(
     }
 
     if GET_HASHES_AND_STEP == name && drp.role() == ParticipantRole::Verifier && vout.is_some() {
-        drp.decode_witness_from_speedup(
+        let (_, leaf) = drp.decode_witness_from_speedup(
             tx_id,
             vout.unwrap(),
             &name,
@@ -1094,6 +1122,12 @@ pub fn handle_tx_news(
             &tx_status.tx,
             None,
         )?;
+
+        // leaf 0 is prover_challenge_step2, we lost
+        if leaf == 0 {
+            return Ok(());
+        }
+
         let (_program_definition, pdf) = drp.get_program_definition(program_context)?;
         let execution_path = drp.get_execution_path()?;
 
