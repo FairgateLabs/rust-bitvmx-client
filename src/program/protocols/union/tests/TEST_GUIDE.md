@@ -1,265 +1,428 @@
 # Test Guide - Union Protocol
 
-This guide explains what each test suite validates and why it matters for the union protocol implementation.
+This guide explains what we're actually testing and why it matters. If you're reviewing these tests or adding new ones, this doc will help you understand the reasoning behind design decisions.
+
+**TL;DR:** These tests caught real bugs during development. They're not just checking "does it work?" but "does it work correctly in edge cases that will bite us in production?"
+
+## Structure
+
+```
+tests/
+├── helpers/
+│   ├── test_helpers.rs      - Core utilities (pubkey, committee, amounts)
+│   ├── test_generators.rs   - Test data generators
+│   ├── test_validators.rs   - Independent validators
+│   ├── test_enums.rs        - Test constants
+│   └── test_assertions.rs   - Custom assertions
+├── unit/
+│   ├── common_utilities.rs  - Protocol ID generation
+│   ├── indexed_names.rs     - Name formatting & parsing
+│   ├── fee_estimation.rs    - Fee calculation
+│   └── output_builders.rs   - Output construction
+├── scripts/
+│   └── run_union_tests.sh   - Test runner
+└── Documentation
+    ├── README.md            - Quick start
+    └── TEST_GUIDE.md        - This file
+```
+
+## Design Principles
+
+**Why these tests exist:**
+- Caught real bugs during development (Unicode parsing, overflow, ID collisions)
+- Prevent regressions when refactoring
+- Document expected behavior better than comments
+
+**Key patterns we use:**
+- **Generator functions over hardcoded arrays:** Makes it easier to add edge cases when bugs appear
+- **Oracle pattern:** Independent validators catch bugs in both production code and tests
+- **Bitcoin protocol constants:** Real values (dust threshold, max supply) not made-up test numbers
+- **Security focus:** Unicode homograph attacks, overflow, collision resistance
+- **Speed matters:** Few representative cases > exhaustive coverage (tests run in <30s)
+
+**Running tests:** See [README.md](./README.md)
 
 ---
 
-## Common Utilities Tests
+## Common Utilities (Protocol ID Generation)
 
-These tests validate the helper functions that generate unique protocol IDs and manage protocol state. Every protocol in the system needs a unique identifier to track its transactions and participants.
+**The problem:** Every protocol instance (dispute, peg-in, withdrawal) needs a unique ID that all parties can independently calculate. If Alice and Bob calculate different IDs for the same protocol, they can't coordinate. If two different protocols get the same ID, their state gets mixed up.
 
-### Dispute Core Protocol IDs
+**What we test:**
+- **Determinism:** Call the function twice with same inputs → get same ID
+- **Uniqueness:** Different inputs (committee, slot, keys) → different IDs
+- **No collisions:** Dispute IDs never collide with peg-in IDs, even with same inputs
 
-These tests verify that dispute protocols get stable, unique identifiers based on their committee and participant.
+### Dispute Core IDs
 
-**What they check:**
-- Same committee + same participant → always generates the same ID
-- Different committees → different IDs (even with same participant)
-- Different participants in same committee → different IDs
-- Multiple key types (operators, watchtowers, verifiers) → all get unique IDs
-- Calling the function multiple times → returns consistent results
+IDs for the main dispute protocol between operators/watchtowers.
 
-**Why it matters:** Dispute protocols need deterministic IDs so all parties can independently derive the same identifier and track the protocol state correctly.
+**Key properties tested:**
+- Committee changes → ID changes (federation "alpha" ≠ "beta")
+- Participant key changes → ID changes (operator_1 ≠ operator_2)
+- Same inputs called multiple times → same ID every time
+- Unicode committee labels work correctly (important for internationalization)
 
-### Accept Peg-In Protocol IDs
+**Why this matters:** If two operators calculate different IDs for the same dispute, they'll be looking at different on-chain protocols and fail to coordinate.
 
-Tests for generating IDs when users deposit funds from another chain.
+### Peg-In IDs
 
-**What they check:**
-- Same slot → same ID every time
-- Different slots → different IDs
-- Edge cases: slot 0 and maximum slot value work correctly
-- Same slot on different committees → different IDs
+IDs for deposits coming from other chains (like Ethereum → Bitcoin).
 
-**Why it matters:** Each peg-in needs a unique identifier that's consistent across all committee members so they can coordinate the acceptance process.
+**Key properties:**
+- Each slot gets a unique ID (slot 0 ≠ slot 1)
+- Same slot always generates same ID (deterministic)
+- Different committees get different IDs (mainnet ≠ testnet)
+- Edge cases work: slot 0, slot MAX, consecutive slots (0..200)
 
-### User Take Protocol IDs
+**Real scenario:** User deposits 1 BTC in slot 42. All committee members need to independently compute the same ID for slot 42 to track this deposit. If one member gets a different ID, they won't see the deposit.
 
-Tests for generating IDs when users withdraw their funds.
+### Take IDs (User Withdrawals)
 
-**What they check:**
-- Repeated calls with same parameters → consistent ID
-- User take vs accept peg-in → different IDs (even for same slot/committee)
-- Each slot → unique ID
-- Same slot across committees → different IDs per committee
+IDs for users withdrawing funds back to other chains.
 
-**Why it matters:** User withdrawals must be distinguishable from deposits and tracked separately for each committee and slot.
+**Critical distinction:** A take in slot 5 MUST have a different ID than a peg-in in slot 5, even with the same committee. Otherwise we'd confuse deposits with withdrawals.
 
-### Aggregated Keys Protocol IDs
+**Tests verify:**
+- Takes and peg-ins in same slot have different IDs (collision prevention)
+- Different slots → different take IDs
+- 100 consecutive slots all get unique IDs (no accidental patterns)
 
-Tests for IDs used in multi-signature aggregated key protocols.
+### Aggregated Key IDs
 
-**What they check:**
-- Take key ID generation → stable and deterministic
-- Dispute key ID generation → stable and deterministic
-- Take keys vs dispute keys → always different
-- Different committees → different key IDs
+IDs for multi-signature protocols.
 
-**Why it matters:** The system uses aggregated keys for both normal operations ("take") and disputes. These need separate identifiers to avoid confusion.
+**Tests:**
+- Take key stability
+- Dispute key stability
+- Take vs dispute distinction
+- Committee separation
 
-### Pairwise Keys Protocol IDs
+**Why:** Normal operations and disputes need separate ID spaces.
 
-Tests for IDs representing relationships between two participants.
+### Pairwise Key IDs
 
-**What they check:**
-- Order doesn't matter: pair(A, B) == pair(B, A)
-- Different pairs → different IDs
-- Self-pairs (A, A) → valid and stable
-- Extreme index values → handled correctly
-- Internal normalization logic → works correctly across many combinations
+IDs for protocols between two specific operators (used in multi-signature schemes).
 
-**Why it matters:** Pairwise relationships (like operator-watchtower pairs) need symmetric IDs so both parties derive the same identifier regardless of who initiates.
+**Symmetry is critical:** pair(operator_3, operator_7) MUST equal pair(operator_7, operator_3) because it doesn't matter who initiates the protocol. If these produced different IDs, operators 3 and 7 would be trying to use different on-chain protocols and fail.
 
-### Dispute Channels Protocol IDs
+**Tests cover:**
+- Order independence: (A,B) == (B,A) for all combinations
+- Self-pairs work: (5,5) is valid and distinct from (5,6)
+- Edge cases: (0,0), (MAX, MAX), (0, MAX)
+- Large numbers of pairs are all unique (no accidental collisions)
 
-Tests for directional communication channels between parties in disputes.
+### Dispute Channel IDs
 
-**What they check:**
-- Direction matters: channel(A→B) ≠ channel(B→A)
-- Same direction → same ID consistently
-- All combinations → unique IDs
-- Forward vs reverse → different IDs
-- Committee isolation → maintained
+Directional communication for challenges (operator A challenges operator B).
 
-**Why it matters:** Dispute channels are directional (challenges flow from one party to another), so A→B must differ from B→A to track dispute flow correctly.
+**Asymmetry is required:** channel(A→B) MUST be different from channel(B→A) because:
+- A challenging B is a different protocol than B challenging A
+- They need separate on-chain state
+- If they had the same ID, challenges would get confused
 
-### Full Penalization Protocol IDs
+**Real scenario:** Operator 3 catches operator 7 cheating and opens a challenge. This uses channel(3→7). If operator 7 later challenges operator 3, that's a completely separate dispute using channel(7→3).
 
-Tests for IDs used when fully penalizing a misbehaving party.
+**Tests verify:** All (i,j) pairs where i≠j get unique IDs, and (i,j) ≠ (j,i).
 
-**What they check:**
-- Same committee → same ID consistently
-- Different committees → different IDs
-- Doesn't collide with other protocol types
+### Penalization IDs
 
-**Why it matters:** Full penalization is a distinct protocol that needs its own identifier space to avoid confusion with partial penalties or disputes.
+IDs for full penalization protocols.
 
-### Cross-Function Properties
+**Tests:**
+- Committee consistency
+- Committee isolation
+- No collisions with other protocols
 
-Integration tests that verify the entire ID generation system works together.
+**Why:** Separate ID space prevents confusion with disputes.
 
-**What they check:**
-- No collisions across different protocol types
-- Multiple committees stay completely isolated
-- Slot-based protocols maintain uniqueness across all slots
-- Mixed usage scenarios work correctly
-- Same public key across committees/protocols → properly separated
+### Integration
 
-**Why it matters:** The real system uses all these ID types together. These tests ensure there are no unexpected collisions or conflicts when everything runs simultaneously.
+System-wide validation.
+
+**Tests:**
+- No cross-protocol collisions
+- Committee isolation maintained
+- Slot uniqueness preserved
+- Mixed scenarios work
+- Proper separation across all dimensions
+
+**Why:** All ID types must coexist without conflicts.
 
 ---
 
-## Indexed Names Tests
+## Indexed Names (Transaction Name Formatting)
 
-These tests validate the helper functions that create and parse transaction names with indices. The protocol uses indexed names like `"transaction_5"` or `"channel_3_7"` to identify specific instances of transactions.
+**The problem:** Bitcoin transactions need human-readable names that encode indices. We use formats like `"transaction_5"`, `"pair_3_7"`, etc. These names must be:
+- Parseable back to the original index (roundtrip)
+- Unique (no collisions)
+- Secure (reject Unicode tricks)
+
+**Why security matters:** An attacker could try `"tx_①"` (circled digit 1) instead of `"tx_1"`. If we parse this incorrectly, they could confuse the system about which transaction is which.
 
 ### Single Index Names
 
-Basic name generation with one index, like `"transaction_5"`.
+Format: `"prefix_42"`
 
-**What they test:**
-- Correct format: prefix + underscore + number
-- Prefixes stay unchanged (including case)
-- Index 0 works without off-by-one errors
-- Sequential indices all work
-- Prefixes with underscores don't break anything
+**What we test:**
+- Roundtrip: `indexed_name("tx", 5)` → `"tx_5"` → `extract_index()` → `5`
+- Zero works: `"tx_0"` is valid
+- Large numbers work: `"tx_18446744073709551615"` (usize::MAX on 64-bit)
+- Case preserved: `"MixedCase_5"` keeps the case
+- Empty prefix works: `"_5"` is technically valid
 
-**Example:** `indexed_name("slot", 42)` → `"slot_42"`
+### Double Index
 
-### Double Index Names
+Pair names like `"channel_3_7"`.
 
-Names with two indices for representing pairs, like `"channel_3_7"`.
-
-**What they test:**
-- Correct format: prefix_index1_index2
-- Different pairs get different names
-- Same index twice (like 5_5) is valid
-- Works across large index ranges
+**Tests:** Format, uniqueness, self-pairs (5,5), large ranges
 
 **Example:** `double_indexed_name("pair", 0, 1)` → `"pair_0_1"`
 
-### Triple Index Names
+### Triple Index
 
-Names with three indices for complex scenarios, like `"challenge_1_2_3"`.
+Complex names like `"challenge_1_2_3"`.
 
-**What they test:**
-- Correct format with three indices
-- Order matters (1_2_3 ≠ 1_3_2)
-- All zeros works correctly
+**Tests:** Format, order sensitivity, zero handling
 
 **Example:** `triple_indexed_name("coord", 1, 2, 3)` → `"coord_1_2_3"`
 
-### Index Extraction
+### Extraction
 
-Parsing names back into their components.
+Parse names back to indices.
 
-**What they test:**
-- Can extract index from generated name
-- Roundtrip works: generate → extract → matches original
-- Handles index 0 correctly
-- Works with multi-digit numbers
-- Works when prefix has underscores
+**Tests:** Extraction, roundtrips, zero, multi-digit, complex prefixes
 
 **Example:** `extract_index("slot_42", "slot")` → `42`
 
-### Double Index Extraction
+### Double Extraction
 
-Parsing names with two indices.
+Parse pair indices.
 
-**What they test:**
-- Extracts both indices correctly
-- Roundtrip works for pairs
-- Rejects single-index names (error handling)
-- Rejects malformed input
-- Works with complex prefixes
+**Tests:** Both indices, roundtrips, rejects singles, malformed input, complex prefixes
 
 **Example:** `extract_double_index("pair_3_7")` → `(3, 7)`
 
-### Error Handling
+### Error Handling (Security-Critical)
 
-Tests that bad inputs are properly rejected.
+**Philosophy:** Reject early and loudly. Better to fail a test than silently parse garbage.
 
-**What gets rejected:**
-- Wrong prefix: `extract_index("wrong_5", "expected")` → error
-- Non-numeric: `"transaction_abc"` → error
-- Missing underscore: `"transaction5"` → error
-- Empty index: `"transaction_"` → error
-- Negative numbers: `"tx_-5"` → error
-- Decimals: `"item_3.14"` → error
-- Hex notation: `"tx_0x10"` → error
-- Whitespace: `"tx_ 5"` → error
+**What we reject and why:**
 
-**Why it matters:** The system needs to fail fast on invalid names instead of silently producing wrong results.
+| Input | Why it's dangerous |
+|-------|-------------------|
+| `"prefix_①"` | Unicode circled digit (homograph attack) |
+| `"prefix_\u{0660}"` | Arabic-Indic digit (looks like 0 to humans) |
+| `"prefix_01"` | Leading zero (could be interpreted as octal) |
+| `"prefix_5.5"` | Decimal point (not an integer) |
+| `"prefix_0x10"` | Hex notation (ambiguous) |
+| `"prefix_-5"` | Negative (indices are unsigned) |
+| `"prefix_"` | Empty index (ambiguous) |
+| `"prefix_ 5"` | Whitespace (invisible to users) |
 
-### Boundary Conditions
+**Real attack vector:** Rust's `char::is_numeric()` returns true for Unicode digits, but `str::parse::<usize>()` rejects them. If we used the wrong check, we'd accept `"tx_①"` as valid but fail to parse it later.
 
-Tests with extreme values to catch edge cases.
+### Boundaries
 
-**What they test:**
-- Maximum possible index (`usize::MAX`)
-- Near-maximum values
-- Powers of 2 (1, 2, 4, 8, ..., 1024)
-- Powers of 10 (1, 10, 100, 1000, ...)
-- Double indices with extreme values (0 and MAX)
-- Triple indices with mixed magnitudes
+Extreme value testing.
 
-**Why it matters:** The system must handle the full range of possible indices without overflows or errors.
+**Tests:** usize::MAX, near-max, powers of 2/10, mixed magnitudes
 
-### Special Prefix Cases
+**Why:** Must handle full range without overflow.
 
-Tests with unusual but valid prefixes.
+### Special Prefixes
 
-**What they handle:**
-- Prefixes starting with numbers: `"123prefix"`
-- Hyphens: `"tx-name"`
-- Dots: `"protocol.v1"`
-- Multiple underscores: `"my__name"`
-- Mixed case: `"CamelCase"`, `"UPPERCASE"`
+Unusual but valid prefixes.
 
-**Why it matters:** Real transaction names might use various naming conventions, and the system should handle them all.
+**Tests:** Numeric start (`"123prefix"`), hyphens, dots, multiple underscores, mixed case
 
-### Real World Scenarios
+**Why:** Support various naming conventions.
 
-Tests that simulate actual protocol usage patterns.
+### Real Scenarios
 
-**Scenarios tested:**
-- All operator-watchtower pairs in a network
-- Committee slots for a full committee
-- Challenge rounds with steps
-- Transaction versioning (like semantic versioning)
-- Sequential block references
-- All possible dispute channels between participants
+Production usage patterns.
 
-**Why it matters:** These tests verify the naming system works correctly in realistic, complex scenarios that will actually happen in production.
+**Tests:** Operator-watchtower pairs, committee slots, challenge rounds, versioning, block references, dispute channels
 
-### Naming Collision Prevention
+**Why:** Verify realistic complex scenarios.
 
-Tests that ensure names never accidentally collide.
+### Collision Prevention
 
-**What they verify:**
-- 100 consecutive indices → all unique
-- 10×10 grid of double indices → all unique
-- Single-indexed vs double-indexed → always different
-- Double-indexed vs triple-indexed → always different
+Uniqueness guarantees.
 
-**Why it matters:** Name collisions would cause the system to confuse different transactions, leading to serious bugs. These tests provide strong guarantees that collisions won't happen.
+**Tests:** 100 consecutive unique, 10×10 grid unique, type separation (single/double/triple)
+
+**Why:** Prevent transaction confusion.
+
+
 
 ---
 
-## Summary
+## Fee Estimation
 
-**Common Utilities (37 tests)** - Validates protocol ID generation
-- Ensures every protocol gets a unique, deterministic identifier
-- Tests all protocol types: disputes, peg-ins, withdrawals, keys, channels, penalties
-- Verifies committee isolation and cross-protocol uniqueness
+**Formula:** `fee = (BASE_WEIGHT + inputs×INPUT_WEIGHT + outputs×OUTPUT_WEIGHT) × rate`
 
-**Indexed Names (57 tests)** - Validates transaction naming
-- Tests name generation with 1, 2, or 3 indices
-- Tests parsing names back into indices
-- Comprehensive error handling for invalid inputs
-- Collision prevention across all name types
+**Real-world impact:**
+- Too low → transaction stuck in mempool forever
+- Too high → wasting user funds (overpaying miners)
+- Wrong formula → all transactions broken
 
-**Total: 94 tests covering the core helper functions used throughout the union protocol.**
+### What We Test
 
-These are unit tests for the foundation layer. Higher-level protocol tests (Accept Peg-in, User Take, Dispute Core, etc.) will be added in future test suites.
+**Monotonicity (fees should increase predictably):**
+- Adding an input increases the fee
+- Adding an output increases the fee
+- Increasing rate multiplies the fee proportionally
+- Inputs cost more than outputs (INPUT_WEIGHT > OUTPUT_WEIGHT)
 
+**Formula correctness:**
+- Empty transaction (0 inputs, 0 outputs) costs exactly `BASE_WEIGHT × rate`
+- Single input adds exactly `INPUT_WEIGHT × rate`
+- Single output adds exactly `OUTPUT_WEIGHT × rate`
+- We test this across multiple rate values to catch scaling bugs
+
+**Edge cases:**
+- Zero rate → zero fee (technically valid, though useless)
+- Very high rates don't overflow
+- Large transaction (1000+ inputs/outputs) calculates correctly
+- Overflow with extreme values panics safely (we verify the panic happens)
+
+**Determinism:**
+- Call it twice → same result
+- All operators must calculate identical fees for coordination
+
+---
+
+## Output Builders (Bitcoin Transaction Outputs)
+
+**What we're building:** Bitcoin transaction outputs that either:
+1. Pay operators (P2WPKH - standard SegWit)
+2. Lock deposits in Taproot (with optional dispute paths)
+
+**Why this is critical:** Get this wrong → funds locked forever or unspendable.
+
+### Operator Outputs (P2WPKH)
+
+Standard SegWit outputs for paying operators their share.
+
+**What we validate:**
+- Script is exactly `OP_0 <20-byte-pubkey-hash>` (P2WPKH format)
+- Amount is encoded correctly
+- Different keys → different scripts (no collisions)
+- Same key+amount called twice → identical output (deterministic)
+- Works with dust amounts (546 sats) and max supply (21M BTC)
+
+**Deep validation:** We don't just check the output type, we verify the actual script bytes match what Bitcoin Core would generate.
+
+### Taproot Deposits
+
+Taproot outputs that lock user deposits. Can have dispute scripts for slashing.
+
+**Two modes:**
+1. **Keypath-only:** Just a public key (looks like a normal send, privacy-preserving)
+2. **With scripts:** Includes timelock paths for disputes (visible when spent via script)
+
+**Tests cover:**
+- Keypath-only outputs work (empty script array)
+- Adding scripts changes the output (script tree affects Taproot commitment)
+- Different timelock values → different outputs
+- Multiple scripts with different keys all work
+- Deterministic: same inputs → same output
+
+**JSON comparison workaround:** `OutputType` doesn't implement `PartialEq` (probably to avoid footguns with script comparison), so we serialize to JSON and compare strings. Not elegant, but reliable.
+
+---
+
+## Helper Architecture
+
+### Core Utilities (`test_helpers.rs`)
+
+**Deterministic fixtures:**
+- `test_pubkey("alice")` → Always the same secp256k1 key for "alice"
+- `test_committee("mainnet")` → Always the same UUID for "mainnet"
+- Why deterministic? Tests must be reproducible across machines/runs
+
+**Bitcoin constants:**
+- `DUST_THRESHOLD = 546` (smallest economical output)
+- `BASE_TX_WEIGHT = 46` (empty transaction overhead)
+- `INPUT_WEIGHT = 68`, `OUTPUT_WEIGHT = 34` (P2WPKH weights)
+- These are Bitcoin protocol specs, not arbitrary test values
+
+### Generators (`test_generators.rs`)
+
+**Design philosophy:** Generate cases algorithmically, don't hardcode arrays.
+
+**Key generators:**
+- `generate_test_slots()` → [0, 1, 10, 20, ..., 100] (edge cases + sampling)
+- `generate_boundary_indices()` → [1, 10, 100, 1000, MAX-1, MAX]
+- `generate_unicode_digit_tests()` → Unicode digits that must be rejected
+- `generate_fee_test_cases()` → Combinations of (inputs, outputs, rate)
+
+**Why generators?** When we find a new bug, we add one line to the generator instead of updating 20 hardcoded test arrays.
+
+### Test Constants (`test_enums.rs`)
+
+**Curated edge cases discovered through:**
+- Real bugs found in development
+- Security research on Unicode attacks
+- Bitcoin protocol corner cases
+
+Examples:
+- `INVALID_PATTERNS`: `"prefix_01"` (leading zero), `"prefix_0x10"` (hex)
+- `UNICODE_INVALID_PATTERNS`: `"prefix_①"` (circled digit), `"prefix_\u{0660}"` (Arabic)
+
+### Custom Assertions (`test_assertions.rs`)
+
+**Better error messages than bare `assert!`:**
+- `assert_all_unique(ids, "Protocol IDs")` → "Protocol IDs: Found 3 duplicates in 50 items"
+- `assert_roundtrip(prefix, idx, make_fn, parse_fn)` → Tests encode→decode is lossless
+
+### Oracle Validators (`test_validators.rs`)
+
+**The oracle pattern:** Independent implementation to verify production code.
+
+`NameValidator` implements name parsing separately from production. If both agree → high confidence. If they disagree → at least one has a bug.
+
+Why? Testing production code against itself can miss systematic errors (both encoder and decoder have same bug).
+
+---
+
+## Future Improvements
+
+**High priority (when Cargo.toml becomes modifiable):**
+
+1. **Property-based testing with `proptest`:**
+   - Current: We test ~20 Unicode digits manually
+   - With proptest: Test ALL Unicode digit ranges automatically
+   - Would catch edge cases we haven't thought of
+   - Blocked on: Can't modify Cargo.toml in current phase
+
+2. **Fuzzing with `cargo-fuzz`:**
+   - Feed random/malicious inputs to parsers
+   - Has found real bugs in Bitcoin Core and other critical systems
+   - Would stress test error handling paths
+
+**Medium priority (nice to have):**
+
+3. **Formal grammar for name format:**
+   - Document the parsing rules in BNF or similar
+   - Make it easier to implement parsers in other languages
+   - Reference for security audits
+
+4. **Performance benchmarks:**
+   - ID generation happens frequently in protocol execution
+   - Benchmark with criterion.rs to catch performance regressions
+   - Identify optimization opportunities
+
+5. **Coverage tracking:**
+   - Use tarpaulin or similar to measure test coverage
+   - Current estimate: ~90% coverage on tested modules
+   - Find untested edge cases
+
+**Low priority (probably overkill):**
+- Mutation testing (extremely slow, questionable value)
+- Snapshot testing for outputs (brittle, hard to maintain)
+
+---
+
+For quick start and running instructions, see [README.md](./README.md)
