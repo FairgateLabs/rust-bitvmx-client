@@ -10,6 +10,10 @@ pub const OUTPUT_WEIGHT: u64 = 34;
 pub const SATOSHIS_PER_BITCOIN: u64 = 100_000_000;
 pub const MAX_BITCOIN_SUPPLY: u64 = 21_000_000 * SATOSHIS_PER_BITCOIN;
 
+/// ⚠️ TEST-ONLY: Deterministic keys generated from predictable strings.
+/// NEVER use in production - these keys are publicly known and completely insecure.
+/// Real Bitcoin keys MUST use cryptographically secure random number generation.
+#[cfg(test)]
 pub fn test_pubkey(seed: &str) -> PublicKey {
     let secp = Secp256k1::new();
     let mut hasher = Sha256::new();
@@ -20,6 +24,9 @@ pub fn test_pubkey(seed: &str) -> PublicKey {
     PublicKey::new(Secp256k1PublicKey::from_secret_key(&secp, &secret))
 }
 
+/// ⚠️ TEST-ONLY: Deterministic committee IDs for reproducible tests.
+/// NEVER use in production - use secure random UUIDs for real committees.
+#[cfg(test)]
 pub fn test_committee(label: &str) -> Uuid {
     let mut hasher = Sha256::new();
     hasher.update(b"test_committee:");

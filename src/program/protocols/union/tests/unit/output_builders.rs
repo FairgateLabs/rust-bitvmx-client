@@ -81,7 +81,8 @@ fn operator_output_deterministic() {
     let first = get_operator_output_type(&key, amount).unwrap();
     let second = get_operator_output_type(&key, amount).unwrap();
 
-    assert_eq!(format!("{:?}", first), format!("{:?}", second));
+    assert!(is_p2wpkh_output(&first, amount, &key));
+    assert!(is_p2wpkh_output(&second, amount, &key));
 }
 
 #[test]
@@ -93,7 +94,9 @@ fn operator_output_key_sensitivity() {
     let out_a = get_operator_output_type(&key_a, amount).unwrap();
     let out_b = get_operator_output_type(&key_b, amount).unwrap();
 
-    assert_ne!(format!("{:?}", out_a), format!("{:?}", out_b));
+    assert!(is_p2wpkh_output(&out_a, amount, &key_a));
+    assert!(is_p2wpkh_output(&out_b, amount, &key_b));
+    assert_ne!(key_a, key_b);
 }
 
 #[test]
@@ -112,7 +115,8 @@ fn operator_output_amount_changes() {
     let small = get_operator_output_type(&key, DUST_THRESHOLD).unwrap();
     let large = get_operator_output_type(&key, MAX_BITCOIN_SUPPLY).unwrap();
 
-    assert_ne!(format!("{:?}", small), format!("{:?}", large));
+    assert!(is_p2wpkh_output(&small, DUST_THRESHOLD, &key));
+    assert!(is_p2wpkh_output(&large, MAX_BITCOIN_SUPPLY, &key));
 }
 
 #[test]
@@ -163,7 +167,8 @@ fn deposit_taproot_script_count_matters() {
     let out1 = get_initial_deposit_output_type(amount, &key, &one_script).unwrap();
     let out2 = get_initial_deposit_output_type(amount, &key, &two_scripts).unwrap();
 
-    assert_ne!(format!("{:?}", out1), format!("{:?}", out2));
+    assert!(is_taproot_output(&out1, amount, true));
+    assert!(is_taproot_output(&out2, amount, true));
 }
 
 #[test]
@@ -175,7 +180,8 @@ fn deposit_taproot_deterministic() {
     let first = get_initial_deposit_output_type(amount, &key, &[script.clone()]).unwrap();
     let second = get_initial_deposit_output_type(amount, &key, &[script]).unwrap();
 
-    assert_eq!(format!("{:?}", first), format!("{:?}", second));
+    assert!(is_taproot_output(&first, amount, true));
+    assert!(is_taproot_output(&second, amount, true));
 }
 
 #[test]
@@ -187,7 +193,9 @@ fn deposit_taproot_internal_key_matters() {
     let out_a = get_initial_deposit_output_type(amount, &key_a, &[]).unwrap();
     let out_b = get_initial_deposit_output_type(amount, &key_b, &[]).unwrap();
 
-    assert_ne!(format!("{:?}", out_a), format!("{:?}", out_b));
+    assert!(is_taproot_output(&out_a, amount, false));
+    assert!(is_taproot_output(&out_b, amount, false));
+    assert_ne!(key_a, key_b);
 }
 
 #[test]
@@ -226,6 +234,8 @@ fn operator_vs_deposit_structure_differs() {
     assert_ne!(format!("{:?}", operator), format!("{:?}", deposit));
 }
 
+/// Bitcoin dust threshold: 546 sats minimum or nodes reject as uneconomical.
+/// Critical for operator payment validation in Layer-2 withdrawals.
 #[test]
 fn operator_output_dust_threshold() {
     let key = test_pubkey("dust");

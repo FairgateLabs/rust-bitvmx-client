@@ -13,6 +13,7 @@ use crate::program::protocols::union::common::{
 };
 use uuid::Uuid;
 
+/// Determinism is critical here - same inputs must always give same ID
 #[test]
 fn dispute_core_is_deterministic() {
     let committee = test_committee("alpha");
@@ -340,6 +341,7 @@ fn pair_aggregated_key_normalized() {
     assert_eq!(same, same2);
 }
 
+/// Order shouldn't matter: key(A,B) == key(B,A)
 #[test]
 fn pair_aggregated_key_commutative() {
     let committee = test_committee("ordering");

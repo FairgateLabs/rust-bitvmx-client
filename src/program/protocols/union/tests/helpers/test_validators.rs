@@ -3,6 +3,19 @@ use crate::errors::BitVMXError;
 use std::num::ParseIntError;
 use std::fmt;
 
+/// Independent validation oracle for transaction name parsing.
+///
+/// WHY THIS DUPLICATES PRODUCTION LOGIC:
+/// Protocol implementations require independent verification to catch
+/// regressions when production code changes. This oracle validates
+/// against the protocol specification, not the current implementation.
+///
+/// This follows Bitcoin Core's testing methodology where consensus-critical
+/// code has independent validation logic to catch implementation bugs.
+///
+/// EXAMPLE: If someone refactors production name validation and accidentally
+/// allows "tx__5" (double underscore), this independent oracle catches it
+/// even if the new production tests pass.
 #[derive(Debug, PartialEq, Eq)]
 pub enum NameValidationError {
     MissingPrefix,

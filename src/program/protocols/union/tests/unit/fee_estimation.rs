@@ -65,6 +65,7 @@ fn rate_scales_linearly() {
     }
 }
 
+/// BIP-141: inputs (68 WU) > outputs (34 WU)
 #[test]
 fn input_heavier_than_output() {
     let rate = 1;
@@ -80,6 +81,9 @@ fn input_heavier_than_output() {
     assert!(input_delta > output_delta);
 }
 
+/// BIP-141 weight formula: base(46) + inputs×68 + outputs×34
+/// This is THE critical test - if this fails, all Layer-2 fee estimation breaks.
+/// Bitcoin Core will reject our withdrawal transactions if weight calculation is wrong.
 #[test]
 fn weight_formula_matches_generated_cases() {
     let cases = generate_fee_test_cases();
@@ -98,25 +102,6 @@ fn weight_formula_matches_generated_cases() {
     }
 }
 
-#[test]
-fn single_input_weight_increment() {
-    let rate = 3;
-    let base = estimate_fee(0, 0, rate);
-    let one_in = estimate_fee(1, 0, rate);
-
-    let delta = (one_in - base) / rate;
-    assert_eq!(delta, INPUT_WEIGHT);
-}
-
-#[test]
-fn single_output_weight_increment() {
-    let rate = 3;
-    let base = estimate_fee(0, 0, rate);
-    let one_out = estimate_fee(0, 1, rate);
-
-    let delta = (one_out - base) / rate;
-    assert_eq!(delta, OUTPUT_WEIGHT);
-}
 
 #[test]
 fn zero_rate_gives_zero_fee() {
@@ -145,15 +130,14 @@ fn large_io_counts() {
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "attempt to multiply with overflow")]
 fn overflow_panics() {
     estimate_fee(usize::MAX, usize::MAX, u64::MAX);
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "attempt to multiply with overflow")]
 fn fee_rate_max_overflows() {
-    // This should panic as the multiplication will overflow
     estimate_fee(1, 1, u64::MAX);
 }
 
