@@ -11,7 +11,7 @@ pub fn configure_tracing() {
             "bitvmx_broker=off",
             "bitcoin_indexer=off",
             "bitcoin_coordinator=info",
-            "operator_comms=off",
+            "bitvmx_operator_comms=off",
             "tarpc=off",
             "key_manager=off",
             "memory=off",

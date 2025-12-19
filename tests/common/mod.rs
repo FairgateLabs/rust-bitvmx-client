@@ -216,7 +216,7 @@ fn config_trace_aux() {
         "bitcoin_indexer=off",
         "bitcoin_coordinator=info",
         "bitvmx_wallet=info",
-        "operator_comms=off",
+        "bitvmx_operator_comms=off",
         "tarpc=off",
         "key_manager=off",
         "memory=off",
