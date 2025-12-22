@@ -10,3 +10,6 @@ pub mod pairwise_penalization;
 pub mod scripts;
 pub mod types;
 pub mod user_take;
+
+#[cfg(test)]
+mod tests;
