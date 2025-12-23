@@ -1059,8 +1059,7 @@ impl DisputeCoreProtocol {
                 } else {
                     verify_winternitz_signature_timelock(
                         settings.short_timelock,
-                        // NOTE: This should be take_aggregated_key due to if any member leave we want to keep signing this output in each accept pegin protocol.
-                        &committee.take_aggregated_key,
+                        &committee.dispute_aggregated_key,
                         CHALLENGE_KEY,
                         keys[member_index].get_winternitz(&key_name)?,
                         SignMode::Aggregate,

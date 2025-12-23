@@ -9,6 +9,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 ### Added
 
 - `PenalizedMember` struct to store penalized operators and watchtowers and dispatch disabler transactions if needed.
+- `RejectPegin` protocol to allow the committee to reject a pegin request.
+- `CANCEL_TAKE0_TX` transactions to consume `ACCEPT_PEGIN_TX` output enabler.
+
+### Changed
+
+- Update `ACCEPT_PEGIN_TX`:
+  - Add enabler input connected to request pegin tx.
+  - Add enabler output with operator dispute keys.
+- Update `USER_TAKE_TX`: Add enabler input connected to `ACCEPT_PEGIN_TX` enabler output.
 
 
 ## [v0.3.0] - 2025-12-15
