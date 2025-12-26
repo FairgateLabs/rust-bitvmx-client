@@ -10,6 +10,7 @@ use crate::{
 };
 use anyhow::{Error, Result};
 use bitcoin::{address::NetworkUnchecked, Amount, PublicKey, ScriptBuf, Transaction, Txid};
+use bitvmx_broker::identification::allow_list::AllowList;
 use bitvmx_client::program::protocols::union::common::get_dispute_pair_key_name;
 use bitvmx_client::{
     client::BitVMXClient,
@@ -28,7 +29,6 @@ use bitvmx_client::{
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages::*},
 };
-use bitvmx_operator_comms::operator_comms::AllowList;
 use bitvmx_wallet::wallet::Destination;
 use core::clone::Clone;
 use protocol_builder::types::{OutputType, Utxo};

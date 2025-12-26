@@ -9,7 +9,7 @@ use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{
     channel::channel::DualChannel,
-    identification::identifier::Identifier,
+    identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{tls_helper::Cert, BrokerConfig},
 };
 use bitvmx_client::{
@@ -20,7 +20,6 @@ use bitvmx_client::{
 };
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
-use bitvmx_operator_comms::operator_comms::AllowList;
 use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
 use protocol_builder::{
     scripts::{self, ProtocolScript, SignMode},
@@ -221,7 +220,6 @@ fn config_trace_aux() {
         "key_manager=off",
         "memory=off",
         "bitvmx_broker=off",
-        "broker=off",
     ];
 
     let filter = EnvFilter::builder()

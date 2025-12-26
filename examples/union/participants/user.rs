@@ -14,7 +14,7 @@ use bitcoin::{
     TxIn, TxOut, Txid, Witness, XOnlyPublicKey,
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
-use bitvmx_operator_comms::operator_comms::AllowList;
+use bitvmx_broker::identification::allow_list::AllowList;
 use protocol_builder::scripts::{build_taproot_spend_info, op_return_script, timelock, SignMode};
 use std::str::FromStr;
 use tracing::{error, info};

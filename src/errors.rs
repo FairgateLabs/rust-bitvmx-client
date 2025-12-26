@@ -4,7 +4,6 @@ use bitcoincore_rpc::bitcoin::{key::ParsePublicKeyError, sighash::SighashTypePar
 use bitvmx_broker::{identification::errors::IdentificationError, rpc::errors::BrokerError};
 use bitvmx_cpu_definitions::challenge::EmulatorResultError;
 use bitvmx_job_dispatcher::dispatcher_error::DispatcherError;
-use bitvmx_operator_comms::helper::OperatorCommsError;
 use config as settings;
 use emulator::{loader::program_definition::ProgramDefinitionError, EmulatorError};
 use key_manager::{
@@ -79,11 +78,6 @@ pub enum BitVMXError {
 
     #[error("Job type error {0}")]
     DispatcherError(#[from] DispatcherError),
-
-    // #[error("Failed to create communications key")]
-    // CommunicationsKeyGenerationError(#[from] DecodingError),
-    #[error("Failed to encode Comms data: {0}")]
-    CommsEncodingError(#[from] OperatorCommsError),
 
     #[error("Failed to use Comms layer")]
     CommsCommunicationError,

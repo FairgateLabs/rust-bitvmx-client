@@ -1,4 +1,4 @@
-use bitvmx_operator_comms::operator_comms::OperatorComms;
+use bitvmx_broker::channel::queue_channel::QueueChannel;
 
 pub trait GracefulShutdown {
     /// Signal the component to stop accepting new work immediately.
@@ -13,7 +13,7 @@ pub trait GracefulShutdown {
 
 // Temporary no-op implementations for subcomponents. Replace with real logic later.
 
-impl GracefulShutdown for OperatorComms {
+impl GracefulShutdown for QueueChannel {
     fn begin_shutdown(&mut self) {
         // TODO: stop accepting new Comms work and close listeners
     }

@@ -30,12 +30,11 @@ use bitcoin_coordinator::{
     types::{AckCoordinatorNews, AckNews, CoordinatorNews},
     AckMonitorNews, MonitorNews, TypesToMonitor,
 };
+use bitvmx_broker::channel::queue_channel::{QueueChannel, ReceiveHandlerChannel};
+use bitvmx_broker::identification::allow_list::AllowList;
+use bitvmx_broker::identification::routing::RoutingTable;
 use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
 use bitvmx_job_dispatcher::helper::PingMessage;
-use bitvmx_operator_comms::{
-    helper::ReceiveHandlerChannel,
-    operator_comms::{AllowList, OperatorComms, RoutingTable},
-};
 use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::graph::graph::GraphOptions;
 
@@ -124,15 +123,17 @@ impl BitVMX {
     pub fn new(config: Config) -> Result<Self, BitVMXError> {
         let store = Rc::new(Storage::new(&config.storage)?);
         let key_chain = KeyChain::new(&config, store.clone())?;
-        let allow_list = AllowList::from_file(&config.broker.allow_list)?;
-        let routing_table = RoutingTable::load_from_file(&config.broker.routing_table)?;
-        let comms = OperatorComms::new(
+
+        let comms = QueueChannel::new(
+            "comms",
             config.comms.address,
             &config.comms.priv_key,
-            allow_list.clone(),
-            routing_table.clone(),
+            store.clone(),
             Some(config.comms.storage_path.clone()),
+            &config.broker.allow_list, //TODO: should be different from broker
+            &config.broker.routing_table,
         )?;
+
         let wallet = Wallet::from_derive_keypair(
             config.bitcoin.clone(),
             config.wallet.clone(),
@@ -151,6 +152,8 @@ impl BitVMX {
 
         //TODO: This could be moved to a simplified helper inside brokerstorage new
         //Also the broker could be run independently if needed
+        let allow_list = AllowList::from_file(&config.broker.allow_list)?;
+        let routing_table = RoutingTable::load_from_file(&config.broker.routing_table)?;
         let broker_backend = Storage::new(&config.broker.storage)?;
         let broker_backend = Arc::new(Mutex::new(broker_backend));
         let broker_storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
@@ -590,6 +593,9 @@ impl BitVMX {
     }
 
     pub fn process_comms_messages(&mut self) -> Result<(), BitVMXError> {
+        //Send enqueued messages
+        self.program_context.comms.tick()?;
+
         let message = self.program_context.comms.check_receive();
 
         if message.is_none() {

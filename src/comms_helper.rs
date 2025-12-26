@@ -1,6 +1,6 @@
 use crate::keychain::KeyChain;
 use crate::{errors::BitVMXError, program::participant::CommsAddress};
-use bitvmx_operator_comms::operator_comms::OperatorComms;
+use bitvmx_broker::channel::queue_channel::QueueChannel;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -81,7 +81,7 @@ pub fn prepare_message<T: Serialize>(
 }
 
 pub fn request<T: Serialize>(
-    comms: &OperatorComms,
+    comms: &QueueChannel,
     key_chain: &KeyChain,
     program_id: &Uuid,
     comms_address: CommsAddress,
@@ -109,18 +109,16 @@ pub fn request<T: Serialize>(
         timestamp,
         signature.to_vec(),
     )?;
-    comms
-        .send(
-            &comms_address.pubkey_hash,
-            comms_address.address,
-            serialize_msg,
-        )
-        .map_err(|e| BitVMXError::CommsEncodingError(e))?;
+    comms.send(
+        &comms_address.pubkey_hash,
+        comms_address.address,
+        serialize_msg,
+    )?;
     Ok(())
 }
 
 pub fn response<T: Serialize>(
-    comms: &OperatorComms,
+    comms: &QueueChannel,
     key_chain: &KeyChain,
     program_id: &Uuid,
     comms_address: CommsAddress,
@@ -214,7 +212,7 @@ pub struct VerificationKeyAnnouncement {
 pub struct VerificationKeyRequestPayload;
 
 pub fn send_verification_key_to_peer(
-    comms: &OperatorComms,
+    comms: &QueueChannel,
     key_chain: &KeyChain,
     program_id: &Uuid,
     destination: CommsAddress,

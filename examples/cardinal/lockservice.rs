@@ -7,7 +7,7 @@ use bitcoin::{
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
     channel::channel::{DualChannel, LocalChannel},
-    identification::identifier::Identifier,
+    identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{
         sync_server::BrokerSync,
         tls_helper::{init_tls, Cert},
@@ -26,7 +26,6 @@ use bitvmx_client::{
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
 
-use bitvmx_operator_comms::operator_comms::AllowList;
 use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
 use protocol_builder::types::Utxo;
 use storage_backend::{storage::Storage, storage_config::StorageConfig};

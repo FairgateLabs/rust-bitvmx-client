@@ -12,8 +12,10 @@ use crate::{
     },
     types::ProgramContext,
 };
-use bitvmx_broker::identification::identifier::{Identifier, PubkHash};
-use bitvmx_operator_comms::operator_comms::OperatorComms;
+use bitvmx_broker::{
+    channel::queue_channel::QueueChannel,
+    identification::identifier::{Identifier, PubkHash},
+};
 use serde_json::Value;
 use std::collections::{HashSet, VecDeque};
 use tracing::{debug, error, info, warn};
@@ -83,7 +85,7 @@ impl OperatorVerificationStore {
 
     pub fn request_missing_verification_keys(
         globals: &Globals,
-        comms: &OperatorComms,
+        comms: &QueueChannel,
         key_chain: &KeyChain,
         program_id: &Uuid,
         peers: &[CommsAddress],
@@ -128,7 +130,7 @@ impl OperatorVerificationStore {
     }
 
     pub fn respond_with_verification_key(
-        comms: &OperatorComms,
+        comms: &QueueChannel,
         key_chain: &KeyChain,
         program_id: &Uuid,
         peer_address: CommsAddress,
@@ -283,7 +285,7 @@ impl SignatureVerifier {
     }
 
     pub fn verify_and_get_key(
-        comms: &OperatorComms,
+        comms: &QueueChannel,
         globals: &Globals,
         key_chain: &KeyChain,
         sender_pubkey_hash: &PubkHash,

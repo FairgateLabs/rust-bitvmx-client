@@ -5,8 +5,8 @@ use crate::message_queue::MessageQueue;
 use crate::program::participant::CommsAddress;
 use crate::signature_verifier::SignatureVerifier;
 use crate::types::ProgramContext;
+use bitvmx_broker::channel::queue_channel::QueueChannel;
 use bitvmx_broker::identification::identifier::{Identifier, PubkHash};
-use bitvmx_operator_comms::operator_comms::OperatorComms;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -185,7 +185,7 @@ impl LeaderBroadcastHelper {
     // If I'm not the leader, send the message to the leader
     pub fn request_or_store<T: Serialize>(
         &self,
-        comms: &OperatorComms,
+        comms: &QueueChannel,
         key_chain: &KeyChain,
         program_id: &Uuid,
         comms_address: CommsAddress,

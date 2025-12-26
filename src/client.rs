@@ -11,10 +11,9 @@ use anyhow::Result;
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitvmx_broker::{
     channel::channel::DualChannel,
-    identification::identifier::Identifier,
+    identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{self, tls_helper::Cert},
 };
-use bitvmx_operator_comms::operator_comms::AllowList;
 use bitvmx_wallet::wallet::Destination;
 use std::time::{Duration, Instant};
 use std::{

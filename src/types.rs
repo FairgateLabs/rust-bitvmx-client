@@ -5,10 +5,12 @@ use bitcoin::{address::NetworkUnchecked, Address, PrivateKey, PublicKey, Transac
 use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TransactionStatus};
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
-    channel::channel::{DualChannel, LocalChannel},
+    channel::{
+        channel::{DualChannel, LocalChannel},
+        queue_channel::QueueChannel,
+    },
     identification::identifier::Identifier,
 };
-use bitvmx_operator_comms::operator_comms::OperatorComms;
 use bitvmx_wallet::wallet::Destination;
 use chrono::{DateTime, Utc};
 use protocol_builder::types::Utxo;
@@ -28,7 +30,7 @@ use crate::{
 
 pub struct ProgramContext {
     pub key_chain: KeyChain,
-    pub comms: OperatorComms,
+    pub comms: QueueChannel,
     pub bitcoin_coordinator: BitcoinCoordinator,
     pub broker_channel: LocalChannel<BrokerStorage>,
     pub globals: Globals,
@@ -39,7 +41,7 @@ pub struct ProgramContext {
 
 impl ProgramContext {
     pub fn new(
-        comms: OperatorComms,
+        comms: QueueChannel,
         key_chain: KeyChain,
         bitcoin_coordinator: BitcoinCoordinator,
         broker_channel: LocalChannel<BrokerStorage>,
