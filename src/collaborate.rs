@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 
 use bitcoin::PublicKey;
-use bitvmx_broker::identification::identifier::Identifier;
-use bitvmx_operator_comms::operator_comms::PubKeyHash;
+use bitvmx_broker::identification::identifier::{Identifier, PubkHash};
 use key_manager::key_type::BitcoinKeyType;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -24,7 +23,7 @@ pub struct Collaboration {
     pub participants: Vec<CommsAddress>,
     pub leader: CommsAddress,
     pub im_leader: bool,
-    pub keys: HashMap<PubKeyHash, PublicKey>,
+    pub keys: HashMap<PubkHash, PublicKey>,
     pub my_key: PublicKey,
     pub aggregated_key: Option<PublicKey>,
     pub request_from: Identifier,
@@ -245,7 +244,7 @@ impl Collaboration {
 
     pub fn get_address_from_pubkey_hash(
         &self,
-        pubkey_hash: &PubKeyHash,
+        pubkey_hash: &PubkHash,
     ) -> Result<CommsAddress, BitVMXError> {
         for participant in &self.participants {
             if &participant.pubkey_hash == pubkey_hash {

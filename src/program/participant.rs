@@ -1,5 +1,5 @@
 use bitcoin::PublicKey;
-use bitvmx_operator_comms::operator_comms::PubKeyHash;
+use bitvmx_broker::identification::identifier::PubkHash;
 use key_manager::winternitz::WinternitzPublicKey;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr};
@@ -145,11 +145,11 @@ impl ParticipantKeys {
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, Debug)]
 pub struct CommsAddress {
     pub address: SocketAddr,
-    pub pubkey_hash: PubKeyHash,
+    pub pubkey_hash: PubkHash,
 }
 
 impl CommsAddress {
-    pub fn new(address: SocketAddr, pubkey_hash: PubKeyHash) -> Self {
+    pub fn new(address: SocketAddr, pubkey_hash: PubkHash) -> Self {
         Self {
             address,
             pubkey_hash,

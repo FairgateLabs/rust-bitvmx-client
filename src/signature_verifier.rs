@@ -12,8 +12,8 @@ use crate::{
     },
     types::ProgramContext,
 };
-use bitvmx_broker::identification::identifier::Identifier;
-use bitvmx_operator_comms::operator_comms::{OperatorComms, PubKeyHash};
+use bitvmx_broker::identification::identifier::{Identifier, PubkHash};
+use bitvmx_operator_comms::operator_comms::OperatorComms;
 use serde_json::Value;
 use std::collections::{HashSet, VecDeque};
 use tracing::{debug, error, info, warn};
@@ -30,13 +30,13 @@ pub struct OperatorVerificationStore;
 const GLOBAL_VERIFICATIONS_KEYS_UUID: Uuid = Uuid::from_u128(0xfeedfeedfeedfeedfeedfeedfeedfeed);
 
 impl OperatorVerificationStore {
-    fn storage_key(pubkey_hash: &PubKeyHash) -> String {
+    fn storage_key(pubkey_hash: &PubkHash) -> String {
         format!("operator_verification_key_{}", pubkey_hash)
     }
 
     pub fn store(
         globals: &Globals,
-        pubkey_hash: &PubKeyHash,
+        pubkey_hash: &PubkHash,
         verification_key: &str,
     ) -> Result<(), BitVMXError> {
         globals.set_var(
@@ -46,7 +46,7 @@ impl OperatorVerificationStore {
         )
     }
 
-    pub fn get(globals: &Globals, pubkey_hash: &PubKeyHash) -> Result<Option<String>, BitVMXError> {
+    pub fn get(globals: &Globals, pubkey_hash: &PubkHash) -> Result<Option<String>, BitVMXError> {
         match globals.get_var(
             &GLOBAL_VERIFICATIONS_KEYS_UUID,
             &Self::storage_key(pubkey_hash),
@@ -56,14 +56,14 @@ impl OperatorVerificationStore {
         }
     }
 
-    pub fn has(globals: &Globals, pubkey_hash: &PubKeyHash) -> Result<bool, BitVMXError> {
+    pub fn has(globals: &Globals, pubkey_hash: &PubkHash) -> Result<bool, BitVMXError> {
         Ok(Self::get(globals, pubkey_hash)?.is_some())
     }
 
     pub fn missing(
         globals: &Globals,
-        pubkey_hashes: &[PubKeyHash],
-    ) -> Result<Vec<PubKeyHash>, BitVMXError> {
+        pubkey_hashes: &[PubkHash],
+    ) -> Result<Vec<PubkHash>, BitVMXError> {
         let mut missing = Vec::new();
         for hash in pubkey_hashes {
             if !Self::has(globals, hash)? {
@@ -75,7 +75,7 @@ impl OperatorVerificationStore {
 
     pub fn has_all_keys(
         globals: &Globals,
-        pubkey_hashes: &[PubKeyHash],
+        pubkey_hashes: &[PubkHash],
     ) -> Result<bool, BitVMXError> {
         let missing = Self::missing(globals, pubkey_hashes)?;
         Ok(missing.is_empty())
@@ -89,7 +89,7 @@ impl OperatorVerificationStore {
         peers: &[CommsAddress],
     ) -> Result<(), BitVMXError> {
         let my_pubkey_hash = comms.get_pubk_hash()?;
-        let peer_hashes: Vec<PubKeyHash> = peers
+        let peer_hashes: Vec<PubkHash> = peers
             .iter()
             .filter(|peer| peer.pubkey_hash != my_pubkey_hash)
             .map(|peer| peer.pubkey_hash.clone())
@@ -167,9 +167,9 @@ impl SignatureVerifier {
         data: &Value,
         timestamp: i64,
         signature: &[u8],
-        sender_pubkey_hash: &PubKeyHash,
+        sender_pubkey_hash: &PubkHash,
         key_chain: &KeyChain,
-        my_pubkey_hash: &PubKeyHash,
+        my_pubkey_hash: &PubkHash,
     ) -> Result<bool, BitVMXError> {
         // Reconstruct the message that was signed
         let message = construct_message(program_id, version, msg_type.clone(), data, timestamp)
@@ -241,10 +241,10 @@ impl SignatureVerifier {
     pub fn get_verification_key(
         msg_type: &CommsMessageType,
         data: &Value,
-        sender_pubkey_hash: &PubKeyHash,
+        sender_pubkey_hash: &PubkHash,
         globals: &Globals,
         key_chain: &KeyChain,
-        my_pubkey_hash: &PubKeyHash,
+        my_pubkey_hash: &PubkHash,
     ) -> Result<String, BitVMXError> {
         match msg_type {
             CommsMessageType::VerificationKey => {
@@ -286,7 +286,7 @@ impl SignatureVerifier {
         comms: &OperatorComms,
         globals: &Globals,
         key_chain: &KeyChain,
-        sender_pubkey_hash: &PubKeyHash,
+        sender_pubkey_hash: &PubkHash,
         program_id: &Uuid,
         msg_type: &CommsMessageType,
         data: &Value,
@@ -412,7 +412,7 @@ impl SignatureVerifier {
 
     pub fn has_all_keys(
         globals: &Globals,
-        pubkey_hashes: &[PubKeyHash],
+        pubkey_hashes: &[PubkHash],
     ) -> Result<bool, BitVMXError> {
         OperatorVerificationStore::has_all_keys(globals, pubkey_hashes)
     }
@@ -424,7 +424,7 @@ impl SignatureVerifier {
         address: &CommsAddress,
         identifier: &Identifier,
         msg: Vec<u8>,
-        pending_messages: &mut VecDeque<(PubKeyHash, Vec<u8>)>,
+        pending_messages: &mut VecDeque<(PubkHash, Vec<u8>)>,
     ) -> Result<(), BitVMXError> {
         warn!("Missing verification key for: {:?}", program_id);
         OperatorVerificationStore::request_missing_verification_keys(

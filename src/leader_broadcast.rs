@@ -5,8 +5,8 @@ use crate::message_queue::MessageQueue;
 use crate::program::participant::CommsAddress;
 use crate::signature_verifier::SignatureVerifier;
 use crate::types::ProgramContext;
-use bitvmx_broker::identification::identifier::Identifier;
-use bitvmx_operator_comms::operator_comms::{OperatorComms, PubKeyHash};
+use bitvmx_broker::identification::identifier::{Identifier, PubkHash};
+use bitvmx_operator_comms::operator_comms::OperatorComms;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -33,7 +33,7 @@ pub struct BroadcastedMessage {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct OriginalMessage {
     /// Hash of the original sender's pubkey
-    pub sender_pubkey_hash: PubKeyHash,
+    pub sender_pubkey_hash: PubkHash,
 
     /// Type of original message (must match original_msg_type of BroadcastedMessage)
     pub msg_type: CommsMessageType,
@@ -161,7 +161,7 @@ fn get_original_messages_prefix(context_id: &Uuid, msg_type: CommsMessageType) -
 fn get_original_message_key(
     context_id: &Uuid,
     msg_type: CommsMessageType,
-    pub_key_hash: &PubKeyHash,
+    pub_key_hash: &PubkHash,
 ) -> String {
     format!(
         "bitvmx/original_messages/{}/{:?}/{}",
@@ -269,7 +269,7 @@ impl LeaderBroadcastHelper {
         &self,
         context_id: &Uuid,
         msg_type: CommsMessageType,
-        expected_participants: &[PubKeyHash],
+        expected_participants: &[PubkHash],
     ) -> Result<bool, BitVMXError> {
         let messages = self.get_original_messages(context_id, msg_type)?;
 
@@ -283,7 +283,7 @@ impl LeaderBroadcastHelper {
             }
         }
 
-        let received_senders: std::collections::HashSet<&PubKeyHash> =
+        let received_senders: std::collections::HashSet<&PubkHash> =
             messages.iter().map(|m| &m.sender_pubkey_hash).collect();
 
         for expected in expected_participants {
@@ -467,7 +467,7 @@ impl LeaderBroadcastHelper {
     /// This is similar to verify_message_signature but works with OriginalMessage data
     fn verify_original_message_signature(
         program_context: &ProgramContext,
-        sender_pubkey_hash: &PubKeyHash,
+        sender_pubkey_hash: &PubkHash,
         program_id: &Uuid,
         version: &String,
         msg_type: &CommsMessageType,
@@ -498,7 +498,7 @@ impl LeaderBroadcastHelper {
 /// Returns CommsAddress of all participants except the leader
 pub fn get_non_leader_participants(
     all_participants: &[CommsAddress],
-    leader_pubkey_hash: &PubKeyHash,
+    leader_pubkey_hash: &PubkHash,
 ) -> Vec<CommsAddress> {
     all_participants
         .iter()

@@ -12,7 +12,7 @@ use crate::{
 };
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus, TypesToMonitor};
-use bitvmx_operator_comms::operator_comms::PubKeyHash;
+use bitvmx_broker::identification::identifier::PubkHash;
 use chrono::Utc;
 use console::style;
 use key_manager::musig2::{types::MessageId, PartialSignature, PubNonce};
@@ -39,7 +39,7 @@ pub enum StoreKey {
 }
 
 fn get_other_index_by_pubkey_hash(
-    pubkey_hash: &PubKeyHash,
+    pubkey_hash: &PubkHash,
     others: &Vec<ParticipantData>,
 ) -> Option<usize> {
     others
@@ -285,7 +285,7 @@ impl Program {
 
     pub fn get_address_from_pubkey_hash(
         &self,
-        pubkey_hash: &PubKeyHash,
+        pubkey_hash: &PubkHash,
     ) -> Result<CommsAddress, BitVMXError> {
         for p in &self.participants {
             if &p.comms_address.pubkey_hash == pubkey_hash {
@@ -298,7 +298,7 @@ impl Program {
     fn request_helper<T>(
         &mut self,
         program_context: &ProgramContext,
-        to_send: Vec<(PubKeyHash, T)>,
+        to_send: Vec<(PubkHash, T)>,
         msg_type: CommsMessageType,
     ) -> Result<(), BitVMXError>
     where
