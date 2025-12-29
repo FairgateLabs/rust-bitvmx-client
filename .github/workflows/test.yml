@@ -1,11 +1,11 @@
 name: 'Test action'
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "dev" ]
     paths-ignore:
       - 'examples/union/**'
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "dev" ]
     paths-ignore:
       - 'examples/union/**'
       - 'src/program/protocols/union/**'
