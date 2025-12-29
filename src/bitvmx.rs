@@ -596,21 +596,21 @@ impl BitVMX {
         //Send enqueued messages
         self.program_context.comms.tick()?;
 
-        let message = self.program_context.comms.check_receive();
-
-        if message.is_none() {
+        let messages = self.program_context.comms.check_receive();
+        if messages.is_err() {
+            error!("Error receiving messages: {:?}", messages.err().unwrap());
             return Ok(());
         }
 
-        let message = message.unwrap();
-        match message {
-            ReceiveHandlerChannel::Msg(identifier, msg) => {
-                self.process_msg(identifier, msg, true)?;
-                return Ok(());
+        for message in messages.unwrap() {
+            match message {
+                ReceiveHandlerChannel::Msg(identifier, msg) => {
+                    self.process_msg(identifier, msg, true)?;
+                }
+                ReceiveHandlerChannel::Error(e) => {
+                    info!("Error receiving message {}", e);
+                }
             }
-            ReceiveHandlerChannel::Error(e) => {
-                info!("Error receiving message {}", e);
-            } //TODO: handle error
         }
 
         Ok(())
