@@ -199,6 +199,7 @@ impl DisputeChannelSetup {
             DRP_TIMELOCK_BLOCKS,
             DRP_PROGRAM_DEFINITION.to_string(),
             Some(dispute_config), // FIXME: Remove this setting for production, use 'None' instead.
+            false,
             vec![(PROGRAM_TYPE_DISPUTE_CORE.to_string(), dispute_core_pid)],
             Some(0),
         );

@@ -851,6 +851,26 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 .map(|h| format!("prover_hash2_{}_{}", i, h))
                 .collect::<Vec<_>>();
 
+            let winternitz_check = if i == 2 {
+                Self::winternitz_check_cosigned_input_script(
+                    agg_or_prover,
+                    sign_mode,
+                    &keys,
+                    &vec![
+                        &vars.iter().map(|s| s.as_str()).collect(),
+                        &vec!["verifier_selection_bits2_1"],
+                    ],
+                    None,
+                )?
+            } else {
+                Self::winternitz_check(
+                    agg_or_prover,
+                    sign_mode,
+                    &keys[0],
+                    &vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
+                )?
+            };
+
             self.add_connection_with_scripts(
                 context,
                 aggregated,
@@ -861,12 +881,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &prev,
                 &next,
                 &claim_verifier,
-                Self::winternitz_check(
-                    agg_or_prover,
-                    sign_mode,
-                    &keys[0],
-                    &vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
-                )?,
+                winternitz_check,
                 (&prover_speedup_pub, &verifier_speedup_pub),
             )?;
             amount = self.checked_sub(amount, fee)?;

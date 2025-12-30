@@ -62,6 +62,7 @@ pub enum ForcedChallenges {
     EquivocationResignStep(ParticipantRole),
     EquivocationResignNext(ParticipantRole),
     ProverChallengeStep(ParticipantRole),
+    VerifierOutOfBoundsBits,
     // 2nd n-ary search
     ReadValue(ParticipantRole),
     CorrectHash(ParticipantRole),
@@ -69,6 +70,7 @@ pub enum ForcedChallenges {
     EquivocationResignStep2(ParticipantRole),
     EquivocationResignNext2(ParticipantRole),
     ProverChallengeStep2(ParticipantRole),
+    ProverForceSecondNary,
     // Default
     No,
     Execution,
@@ -104,6 +106,8 @@ impl ForcedChallenges {
             | EquivocationResignStep2(role)
             | EquivocationResignNext2(role) => Some(role.clone()),
             No | Execution | Personalized(_) => None,
+            ProverForceSecondNary => Some(ParticipantRole::Prover),
+            VerifierOutOfBoundsBits => Some(ParticipantRole::Verifier),
         }
     }
 }
@@ -176,6 +180,7 @@ pub fn prepare_dispute(
         TIMELOCK_BLOCKS,
         program_definition,
         Some(config_results),
+        matches!(fail_force_config, ForcedChallenges::ProverForceSecondNary),
         vec![],
         auto_dispatch_input,
     );
@@ -952,6 +957,43 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ConfigResul
                 },
             }
         }
+        ForcedChallenges::ProverForceSecondNary => {
+            let future_read_args = vec!["1106", "0xf000003c", "0xaa000004", "0xf000003c", "1107"]
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<String>>();
+
+            let fail_future_read =
+                FailConfiguration::new_fail_reads(FailReads::new(Some(&future_read_args), None));
+
+            ConfigResults {
+                main: ConfigResult {
+                    // The prover will fail with a future read, the verifier will successfully challenge it
+                    fail_config_prover: Some(fail_future_read),
+                    fail_config_verifier: None,
+                    force_challenge: ForceChallenge::No,
+                    force_condition: ForceCondition::Always,
+                },
+                read: ConfigResult {
+                    fail_config_prover: None,
+                    // In this test we want to check that the prover is unable to continue with the second nary if another challenge was selected.
+                    // If somehow he is able to start it, we make the verifier fail and emit invalid selection bits for the second nary search.
+                    // This way the prover will win and the test will fail since we expected the verifier to win.
+                    fail_config_verifier: Some(FailConfiguration::new_fail_selection_bits(
+                        Some(2),
+                        16,
+                    )),
+                    force_challenge: ForceChallenge::No,
+                    force_condition: ForceCondition::No,
+                },
+            }
+        }
+        ForcedChallenges::VerifierOutOfBoundsBits => get_config_simple(
+            ParticipantRole::Verifier,
+            FailConfiguration::new_fail_selection_bits(Some(2), 16),
+            ForceChallenge::No,
+            ForceCondition::Always,
+        ),
         ForcedChallenges::No => ConfigResults::default(),
         ForcedChallenges::Execution => ConfigResults {
             main: ConfigResult {

@@ -1412,6 +1412,17 @@ fn challenge_prover_challenge_step2_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::ProverChallengeStep2(Verifier))
 }
 
+#[ignore]
+#[test]
+fn challenge_prover_force_second_nary() -> Result<()> {
+    test_challenge(ForcedChallenges::ProverForceSecondNary)
+}
+
+#[ignore]
+#[test]
+fn challenge_verifier_out_of_bounds_bits() -> Result<()> {
+    test_challenge(ForcedChallenges::VerifierOutOfBoundsBits)
+}
 // The forced Execution is required for testing because without it, the prover or verifier will not execute directly
 // #[ignore]
 // #[test]

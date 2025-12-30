@@ -25,6 +25,7 @@ pub struct DisputeConfiguration {
     pub timelock_blocks: u16,
     pub program_definition: String,
     pub fail_force_config: Option<ConfigResults>,
+    pub prover_force_second_nary: bool,
     pub notify_protocol: Vec<(String, Uuid)>,
     pub auto_dispatch_input: Option<u8>,
 }
@@ -43,6 +44,7 @@ impl DisputeConfiguration {
         timelock_blocks: u16,
         program_definition: String,
         fail_force_config: Option<ConfigResults>,
+        prover_force_second_nary: bool,
         notify_protocol: Vec<(String, Uuid)>,
         auto_dispatch_input: Option<u8>,
     ) -> Self {
@@ -59,6 +61,7 @@ impl DisputeConfiguration {
             fail_force_config,
             notify_protocol,
             auto_dispatch_input,
+            prover_force_second_nary,
         }
     }
 
