@@ -8,7 +8,7 @@ use crate::{
             dispute::{
                 action_wins, action_wins_prefix,
                 challenge::READ_VALUE_NARY_SEARCH_CHALLENGE,
-                config::{ConfigResults, DisputeConfiguration},
+                config::{DisputeConfiguration, ForceFailConfiguration},
                 input_handler::{
                     get_txs_configuration, set_input, set_input_u64, unify_inputs, unify_witnesses,
                 },
@@ -757,7 +757,7 @@ pub fn handle_tx_news(
     }
 
     if name == COMMITMENT && drp.role() == ParticipantRole::Verifier && vout.is_some() {
-        drp.decode_witness_from_speedup(
+        let (_, leaf) = drp.decode_witness_from_speedup(
             tx_id,
             vout.unwrap(),
             &name,
@@ -765,6 +765,17 @@ pub fn handle_tx_news(
             &tx_status.tx,
             None,
         )?;
+
+        let params = program_context
+            .globals
+            .get_var(&drp.ctx.id, &timeout_input_tx(&name))?
+            .unwrap()
+            .vec_number()?;
+        let timeout_leaf = params[1];
+        if leaf == timeout_leaf {
+            info!("Verifier consumed the timeout input for {name}");
+            return Ok(());
+        }
 
         let execution_path = drp.get_execution_path()?;
 
@@ -1008,6 +1019,13 @@ pub fn handle_tx_news(
             None,
         )?;
 
+        let params = program_context
+            .globals
+            .get_var(&drp.ctx.id, &timeout_input_tx(&name))?
+            .unwrap()
+            .vec_number()?;
+        let timeout_leaf = params[1];
+
         let read_value_nary_search_leaf = program_context
             .globals
             .get_var(
@@ -1017,9 +1035,10 @@ pub fn handle_tx_news(
             .unwrap()
             .number()? as u32;
 
-        //TODO: if the verifier is able to execute the challenge, the prover can react only to the read challenge nary search
-
         match leaf {
+            l if l == timeout_leaf => {
+                info!("Prover consumed the timeout input for {name}");
+            }
             l if l == read_value_nary_search_leaf => {
                 let mut expected_names: Vec<&str> = READ_VALUE_NARY_SEARCH_CHALLENGE
                     .iter()
@@ -1068,7 +1087,28 @@ pub fn handle_tx_news(
                 }
             }
             _ => {
-                info!("Challenge ended successfully");
+                if fail_force_config.prover_force_second_nary {
+                    // for testing purposes we will try to start the second nary search but it should fail
+                    let selection_bits = 0;
+                    handle_nary_verifier(
+                        &name,
+                        drp,
+                        program_context,
+                        tx_id,
+                        vout,
+                        &tx_status,
+                        current_height,
+                        &fail_force_config,
+                        "verifier_selection_bits2",
+                        CHALLENGE,
+                        CHALLENGE_READ,
+                        selection_bits,
+                        1, // round 2
+                        NArySearchType::ReadValueChallenge,
+                    )?;
+                } else {
+                    info!("Challenge ended successfully");
+                }
             }
         }
     }
@@ -1125,6 +1165,17 @@ pub fn handle_tx_news(
 
         // leaf 0 is prover_challenge_step2, we lost
         if leaf == 0 {
+            return Ok(());
+        }
+
+        let params = program_context
+            .globals
+            .get_var(&drp.ctx.id, &timeout_input_tx(&name))?
+            .unwrap()
+            .vec_number()?;
+        let timeout_leaf = params[1];
+        if leaf == timeout_leaf {
+            info!("Verifier consumed the timeout input for {name}");
             return Ok(());
         }
 
@@ -1218,7 +1269,7 @@ fn handle_nary_verifier(
     vout: Option<u32>,
     tx_status: &TransactionStatus,
     current_height: u32,
-    fail_force_config: &ConfigResults,
+    fail_force_config: &ForceFailConfiguration,
     selection_bits: &str,             // "selection_bits"
     prev_name: &str,                  // COMMITMENT
     post_name: &str,                  // EXECUTE
@@ -1243,7 +1294,7 @@ fn handle_nary_verifier(
         let decision = if name == prev_name {
             decision_start_value
         } else {
-            drp.decode_witness_from_speedup(
+            let (_, leaf) = drp.decode_witness_from_speedup(
                 tx_id,
                 vout.unwrap(),
                 &name,
@@ -1251,6 +1302,17 @@ fn handle_nary_verifier(
                 &tx_status.tx,
                 None,
             )?;
+
+            let params = program_context
+                .globals
+                .get_var(&drp.ctx.id, &timeout_input_tx(name))?
+                .unwrap()
+                .vec_number()?;
+            let timeout_leaf = params[1];
+            if leaf == timeout_leaf {
+                info!("Prover consumed the timeout input for {name}");
+                return Ok(());
+            }
 
             let bits = program_context
                 .witness
@@ -1330,12 +1392,12 @@ fn handle_nary_prover(
     tx_id: Txid,
     vout: Option<u32>,
     tx_status: &TransactionStatus,
-    fail_force_config: &ConfigResults,
+    fail_force_config: &ForceFailConfiguration,
     strip_prefix: &str,               // "NARY_PROVER_"
     prover_hash: &str,                // "prover_hash"
     nary_search_type: NArySearchType, // ConflictStep
 ) -> Result<(), BitVMXError> {
-    drp.decode_witness_from_speedup(
+    let (_, leaf) = drp.decode_witness_from_speedup(
         tx_id,
         vout.unwrap(),
         &name,
@@ -1343,6 +1405,17 @@ fn handle_nary_prover(
         &tx_status.tx,
         None,
     )?;
+
+    let params = program_context
+        .globals
+        .get_var(&drp.ctx.id, &timeout_input_tx(name))?
+        .unwrap()
+        .vec_number()?;
+    let timeout_leaf = params[1];
+    if leaf == timeout_leaf {
+        info!("Verifier consumed the timeout input for {name}");
+        return Ok(());
+    }
 
     let round = name
         .strip_prefix(strip_prefix)

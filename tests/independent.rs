@@ -14,7 +14,7 @@ use bitvmx_client::program::participant::{
     CommsAddress,
     ParticipantRole::{self, Prover, Verifier},
 };
-use bitvmx_client::program::protocols::dispute::config::{ConfigResult, ConfigResults};
+use bitvmx_client::program::protocols::dispute::config::{ConfigResult, ForceFailConfiguration};
 use bitvmx_client::program::protocols::dispute::{
     action_wins, input_tx_name, program_input, program_input_prev_prefix,
     program_input_prev_protocol, protocol_cost,
@@ -933,7 +933,8 @@ fn test_const_fail_input() -> Result<()> {
         force_condition: ForceCondition::ValidInputWrongStepOrHash,
     };
 
-    let fail_config = ConfigResults {
+    let fail_config = ForceFailConfiguration {
+        prover_force_second_nary: false,
         main: main_config,
         read: ConfigResult::default(),
     };
@@ -1412,6 +1413,23 @@ fn challenge_prover_challenge_step2_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::ProverChallengeStep2(Verifier))
 }
 
+#[ignore]
+#[test]
+fn challenge_prover_force_second_nary() -> Result<()> {
+    test_challenge(ForcedChallenges::ProverForceSecondNary)
+}
+
+#[ignore]
+#[test]
+fn challenge_verifier_out_of_bounds_bits() -> Result<()> {
+    test_challenge(ForcedChallenges::VerifierOutOfBoundsBits)
+}
+
+#[ignore]
+#[test]
+fn challenge_verifier_out_of_bounds_bits_in_challenge() -> Result<()> {
+    test_challenge(ForcedChallenges::VerifierOutOfBoundsBitsInChallenge)
+}
 // The forced Execution is required for testing because without it, the prover or verifier will not execute directly
 // #[ignore]
 // #[test]

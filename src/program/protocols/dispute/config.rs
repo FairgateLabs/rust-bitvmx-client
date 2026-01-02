@@ -24,7 +24,7 @@ pub struct DisputeConfiguration {
     pub verifier_enablers: Vec<OutputType>,
     pub timelock_blocks: u16,
     pub program_definition: String,
-    pub fail_force_config: Option<ConfigResults>,
+    pub fail_force_config: Option<ForceFailConfiguration>,
     pub notify_protocol: Vec<(String, Uuid)>,
     pub auto_dispatch_input: Option<u8>,
 }
@@ -42,7 +42,7 @@ impl DisputeConfiguration {
         verifier_enablers: Vec<OutputType>,
         timelock_blocks: u16,
         program_definition: String,
-        fail_force_config: Option<ConfigResults>,
+        fail_force_config: Option<ForceFailConfiguration>,
         notify_protocol: Vec<(String, Uuid)>,
         auto_dispatch_input: Option<u8>,
     ) -> Self {
@@ -96,7 +96,8 @@ pub struct ConfigResult {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct ConfigResults {
+pub struct ForceFailConfiguration {
+    pub prover_force_second_nary: bool,
     pub main: ConfigResult,
     pub read: ConfigResult, // for read challenge (2nd n-ary search)
 }
@@ -112,9 +113,10 @@ impl Default for ConfigResult {
     }
 }
 
-impl Default for ConfigResults {
+impl Default for ForceFailConfiguration {
     fn default() -> Self {
         Self {
+            prover_force_second_nary: false,
             main: ConfigResult::default(),
             read: ConfigResult::default(),
         }
