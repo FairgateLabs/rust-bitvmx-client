@@ -1019,6 +1019,13 @@ pub fn handle_tx_news(
             None,
         )?;
 
+        let params = program_context
+            .globals
+            .get_var(&drp.ctx.id, &timeout_input_tx(&name))?
+            .unwrap()
+            .vec_number()?;
+        let timeout_leaf = params[1];
+
         let read_value_nary_search_leaf = program_context
             .globals
             .get_var(
@@ -1029,6 +1036,9 @@ pub fn handle_tx_news(
             .number()? as u32;
 
         match leaf {
+            l if l == timeout_leaf => {
+                info!("Prover consumed the timeout input for {name}");
+            }
             l if l == read_value_nary_search_leaf => {
                 let mut expected_names: Vec<&str> = READ_VALUE_NARY_SEARCH_CHALLENGE
                     .iter()
