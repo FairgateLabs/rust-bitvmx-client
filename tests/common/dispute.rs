@@ -63,6 +63,7 @@ pub enum ForcedChallenges {
     EquivocationResignNext(ParticipantRole),
     ProverChallengeStep(ParticipantRole),
     VerifierOutOfBoundsBits,
+    VerifierOutOfBoundsBitsInChallenge,
     // 2nd n-ary search
     ReadValue(ParticipantRole),
     CorrectHash(ParticipantRole),
@@ -107,7 +108,7 @@ impl ForcedChallenges {
             | EquivocationResignNext2(role) => Some(role.clone()),
             No | Execution | Personalized(_) => None,
             ProverForceSecondNary => Some(ParticipantRole::Prover),
-            VerifierOutOfBoundsBits => Some(ParticipantRole::Verifier),
+            VerifierOutOfBoundsBits | VerifierOutOfBoundsBitsInChallenge => Some(ParticipantRole::Verifier),
         }
     }
 }
@@ -996,6 +997,12 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ForceFailCo
             ParticipantRole::Verifier,
             FailConfiguration::new_fail_selection_bits(Some(2), 16),
             ForceChallenge::No,
+            ForceCondition::Always,
+        ),
+        ForcedChallenges::VerifierOutOfBoundsBitsInChallenge => get_config_simple(
+            ParticipantRole::Verifier,
+            FailConfiguration::new_fail_selection_bits(None, 16),
+            ForceChallenge::ReadValueNArySearch,
             ForceCondition::Always,
         ),
         ForcedChallenges::No => ForceFailConfiguration::default(),

@@ -1653,7 +1653,7 @@ impl DisputeResolutionProtocol {
         stack.get_script()
     }
 
-    fn get_validate_selection_bits_script(max_bits: u8) -> ScriptBuf {
+    pub fn get_validate_selection_bits_script(max_bits: u8) -> ScriptBuf {
         let mut stack = StackTracker::new();
         let selection_bits = stack.define(2, "verifier_selection_bits");
 

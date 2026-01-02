@@ -1424,6 +1424,12 @@ fn challenge_prover_force_second_nary() -> Result<()> {
 fn challenge_verifier_out_of_bounds_bits() -> Result<()> {
     test_challenge(ForcedChallenges::VerifierOutOfBoundsBits)
 }
+
+#[ignore]
+#[test]
+fn challenge_verifier_out_of_bounds_bits_in_challenge() -> Result<()> {
+    test_challenge(ForcedChallenges::VerifierOutOfBoundsBitsInChallenge)
+}
 // The forced Execution is required for testing because without it, the prover or verifier will not execute directly
 // #[ignore]
 // #[test]
