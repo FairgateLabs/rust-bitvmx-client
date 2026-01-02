@@ -8,7 +8,7 @@ use crate::{
             dispute::{
                 action_wins, action_wins_prefix,
                 challenge::READ_VALUE_NARY_SEARCH_CHALLENGE,
-                config::{ConfigResults, DisputeConfiguration},
+                config::{DisputeConfiguration, ForceFailConfiguration},
                 input_handler::{
                     get_txs_configuration, set_input, set_input_u64, unify_inputs, unify_witnesses,
                 },
@@ -1077,7 +1077,7 @@ pub fn handle_tx_news(
                 }
             }
             _ => {
-                if config.prover_force_second_nary {
+                if fail_force_config.prover_force_second_nary {
                     // for testing purposes we will try to start the second nary search but it should fail
                     let selection_bits = 0;
                     handle_nary_verifier(
@@ -1259,7 +1259,7 @@ fn handle_nary_verifier(
     vout: Option<u32>,
     tx_status: &TransactionStatus,
     current_height: u32,
-    fail_force_config: &ConfigResults,
+    fail_force_config: &ForceFailConfiguration,
     selection_bits: &str,             // "selection_bits"
     prev_name: &str,                  // COMMITMENT
     post_name: &str,                  // EXECUTE
@@ -1382,7 +1382,7 @@ fn handle_nary_prover(
     tx_id: Txid,
     vout: Option<u32>,
     tx_status: &TransactionStatus,
-    fail_force_config: &ConfigResults,
+    fail_force_config: &ForceFailConfiguration,
     strip_prefix: &str,               // "NARY_PROVER_"
     prover_hash: &str,                // "prover_hash"
     nary_search_type: NArySearchType, // ConflictStep

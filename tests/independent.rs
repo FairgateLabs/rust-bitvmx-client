@@ -14,7 +14,7 @@ use bitvmx_client::program::participant::{
     CommsAddress,
     ParticipantRole::{self, Prover, Verifier},
 };
-use bitvmx_client::program::protocols::dispute::config::{ConfigResult, ConfigResults};
+use bitvmx_client::program::protocols::dispute::config::{ConfigResult, ForceFailConfiguration};
 use bitvmx_client::program::protocols::dispute::{
     action_wins, input_tx_name, program_input, program_input_prev_prefix,
     program_input_prev_protocol, protocol_cost,
@@ -933,7 +933,8 @@ fn test_const_fail_input() -> Result<()> {
         force_condition: ForceCondition::ValidInputWrongStepOrHash,
     };
 
-    let fail_config = ConfigResults {
+    let fail_config = ForceFailConfiguration {
+        prover_force_second_nary: false,
         main: main_config,
         read: ConfigResult::default(),
     };

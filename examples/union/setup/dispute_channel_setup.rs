@@ -12,7 +12,7 @@ use bitvmx_client::{
         participant::{CommsAddress, ParticipantRole},
         protocols::{
             dispute::{
-                config::{ConfigResult, ConfigResults, DisputeConfiguration},
+                config::{ConfigResult, ForceFailConfiguration, DisputeConfiguration},
                 TIMELOCK_BLOCKS as DRP_TIMELOCK_BLOCKS,
             },
             union::{
@@ -178,7 +178,8 @@ impl DisputeChannelSetup {
             PROGRAM_TYPE_DRP, drp_id, op_index, wt_index,
         );
 
-        let dispute_config = ConfigResults {
+        let dispute_config = ForceFailConfiguration {
+            prover_force_second_nary: false,
             main: ConfigResult {
                 fail_config_prover: None,
                 fail_config_verifier: None,
@@ -199,7 +200,6 @@ impl DisputeChannelSetup {
             DRP_TIMELOCK_BLOCKS,
             DRP_PROGRAM_DEFINITION.to_string(),
             Some(dispute_config), // FIXME: Remove this setting for production, use 'None' instead.
-            false,
             vec![(PROGRAM_TYPE_DISPUTE_CORE.to_string(), dispute_core_pid)],
             Some(0),
         );
