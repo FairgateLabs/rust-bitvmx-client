@@ -3,7 +3,7 @@ use std::thread;
 
 use anyhow::Result;
 use bitcoin::Network;
-use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
+use bitcoind::{bitcoind::{Bitcoind, BitcoindFlags}, config::BitcoindConfig};
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
 use bitvmx_client::config::Config;
@@ -118,25 +118,29 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind)> {
     // Wallet::clear_db(&config.wallet)?;
 
     info!("Starting bitcoind");
+    let bitcoind_config = BitcoindConfig::new(
+        "bitcoin-regtest",
+        "bitcoin/bitcoin:29.1",
+        None,
+        config.bitcoin.clone(),
+    );
+
     let bitcoind = match HIGH_FEE_NODE_ENABLED {
         true => {
             // Config to trigger speedup transactions in Regtest
-            Bitcoind::new_with_flags(
-                "bitcoin-regtest",
-                "bitcoin/bitcoin:29.1",
-                config.bitcoin.clone(),
-                BitcoindFlags {
+            Bitcoind::new(
+                bitcoind_config,
+                Some(BitcoindFlags {
                     min_relay_tx_fee: 0.00001,
                     block_min_tx_fee: 0.00008,
                     debug: 1,
                     fallback_fee: 0.0002,
-                },
+                }),
             )
         }
         false => Bitcoind::new(
-            "bitcoin-regtest",
-            "bitcoin/bitcoin:29.1",
-            config.bitcoin.clone(),
+            bitcoind_config,
+            None
         ),
     };
 

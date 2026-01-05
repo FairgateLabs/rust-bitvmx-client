@@ -5,7 +5,7 @@ pub mod dispute;
 
 use anyhow::Result;
 use bitcoin::{Amount, PublicKey, XOnlyPublicKey};
-use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
+use bitcoind::{bitcoind::{Bitcoind, BitcoindFlags}, config::BitcoindConfig};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{
     channel::channel::DualChannel,
@@ -145,17 +145,23 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
         std::thread::sleep(std::time::Duration::from_secs(2));
         None
     } else {
-        let bitcoind_instance = Bitcoind::new_with_flags(
+        let bitcoind_config = BitcoindConfig::new(
             "bitcoin-regtest",
             "bitcoin/bitcoin:29.1",
-            wallet_config.bitcoin.clone(),
-            BitcoindFlags {
+            None,
+            config.bitcoin.clone(),
+        );
+
+        let bitcoind_instance = Bitcoind::new(
+            bitcoind_config,
+            Some(BitcoindFlags {
                 min_relay_tx_fee: 0.00001,
                 block_min_tx_fee: 0.00002,
                 debug: 1,
                 fallback_fee: 0.0002,
-            },
+            }),
         );
+
         info!("Starting bitcoind");
         bitcoind_instance.start()?;
         Some(bitcoind_instance)
