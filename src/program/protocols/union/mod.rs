@@ -7,6 +7,7 @@ pub mod errors;
 pub mod full_penalization;
 pub mod macros;
 pub mod pairwise_penalization;
+pub mod reject_pegin;
 pub mod scripts;
 pub mod types;
 pub mod user_take;
