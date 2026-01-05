@@ -170,11 +170,11 @@ impl ProtocolHandler for AcceptPegInProtocol {
         let members = self.committee(context, pegin_request.committee_id)?.members;
         let settings = self.load_stream_setting(context)?;
 
-        for member in &members {
+        for (i, member) in members.iter().enumerate() {
             take0_scripts.push(timelock(
                 settings.cancel_take0_timelock,
                 &member.dispute_key,
-                SignMode::Single,
+                self.get_sign_mode(i),
             ))
         }
 
@@ -186,7 +186,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
             ACCEPT_PEGIN_TX,
             etake_output.clone().into(),
             CANCEL_TAKE0_TX,
-            InputSpec::Auto(SighashType::taproot_all(), SpendMode::None),
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
             Some(settings.cancel_take0_timelock),
             None,
         )?;
@@ -744,7 +744,7 @@ impl AcceptPegInProtocol {
 
     fn cancel_take0_tx(
         &self,
-        context: &ProgramContext,
+        _context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         let name = CANCEL_TAKE0_TX;
         info!(
@@ -757,15 +757,14 @@ impl AcceptPegInProtocol {
         let args = collect_input_signatures(
             &mut protocol,
             name,
-            &vec![InputSigningInfo::SignTaproot {
+            &vec![InputSigningInfo::ScriptSpend {
                 input_index: 0,
-                script_index: Some(self.ctx.my_idx),
-                key_manager: context.key_chain.key_manager.as_ref(),
-                id: "".to_string(),
+                script_index: self.ctx.my_idx,
+                winternitz_data: None,
             }],
         )?;
 
-        let tx = self.load_protocol()?.transaction_to_send(name, &args)?;
+        let tx = protocol.transaction_to_send(name, &args)?;
 
         Ok((tx, None))
     }
@@ -945,5 +944,13 @@ impl AcceptPegInProtocol {
             self.committee(context, request.committee_id)?
                 .stream_denomination,
         )
+    }
+
+    fn get_sign_mode(&self, index: usize) -> SignMode {
+        if index == self.ctx.my_idx {
+            SignMode::Single
+        } else {
+            SignMode::Skip
+        }
     }
 }
