@@ -104,6 +104,7 @@ pub fn get_default_union_settings() -> UnionSettings {
             input_not_revealed_timelock: 8,
             op_no_cosign_timelock: 12,
             wt_no_challenge_timelock: 12,
+            request_pegin_timelock: 12,
         },
     );
 
@@ -117,6 +118,7 @@ pub fn get_default_union_settings() -> UnionSettings {
             input_not_revealed_timelock: 8,
             op_no_cosign_timelock: 12,
             wt_no_challenge_timelock: 12,
+            request_pegin_timelock: 12,
         },
     );
 
@@ -130,6 +132,7 @@ pub fn get_default_union_settings() -> UnionSettings {
             input_not_revealed_timelock: 8,
             op_no_cosign_timelock: 12,
             wt_no_challenge_timelock: 12,
+            request_pegin_timelock: 12,
         },
     );
 

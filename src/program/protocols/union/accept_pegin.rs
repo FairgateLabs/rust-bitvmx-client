@@ -112,11 +112,13 @@ impl ProtocolHandler for AcceptPegInProtocol {
 
         let take_aggregated_key = &pegin_request.take_aggregated_key;
         let mut protocol = self.load_or_create_protocol();
+        let settings = self.load_stream_setting(context)?;
 
         let leaves = self.request_pegin_leaves(
             pegin_request.amount,
             pegin_request.rootstock_address,
             pegin_request.reimbursement_pubkey,
+            &settings,
         )?;
 
         let mut enabler_scripts = vec![];
@@ -264,8 +266,6 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 reveal_tx_name,
                 &mut vec![operator_won_enabler.clone()],
             )?;
-
-            let settings = self.load_stream_setting(context)?;
 
             self.create_operator_won_transaction(
                 &mut protocol,
@@ -816,9 +816,8 @@ impl AcceptPegInProtocol {
         amount: u64,
         rootstock_address: String,
         reimbursement_pubkey: PublicKey,
+        settings: &StreamSettings,
     ) -> Result<Vec<ProtocolScript>, BitVMXError> {
-        pub const TIMELOCK_BLOCKS: u16 = 1;
-
         let mut address_bytes = [0u8; 20];
         address_bytes.copy_from_slice(
             Vec::from_hex(&rootstock_address.to_string())
@@ -829,7 +828,11 @@ impl AcceptPegInProtocol {
         // // Taproot output
         let op_data = [address_bytes.as_slice(), amount.to_be_bytes().as_slice()].concat();
         let script_op_return = op_return_script(op_data)?;
-        let script_timelock = timelock(TIMELOCK_BLOCKS, &reimbursement_pubkey, SignMode::Single);
+        let script_timelock = timelock(
+            settings.request_pegin_timelock,
+            &reimbursement_pubkey,
+            SignMode::Single,
+        );
 
         let leaves = vec![script_timelock, script_op_return];
 
