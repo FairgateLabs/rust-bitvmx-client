@@ -1095,7 +1095,6 @@ impl DisputeCoreProtocol {
         let operator_dispute_key = &committee.members[dispute_core_data.member_index].dispute_key;
 
         // Aggregated keys
-        let take_aggregated_key = &committee.take_aggregated_key;
         let dispute_aggregated_key = &committee.dispute_aggregated_key;
 
         // Pegout ID key
@@ -1109,7 +1108,7 @@ impl DisputeCoreProtocol {
         let input_not_revealed = indexed_name(INPUT_NOT_REVEALED_TX, dispute_core_index);
 
         let start_reimbursement = scripts::verify_winternitz(
-            take_aggregated_key,
+            dispute_aggregated_key,
             SignMode::Aggregate,
             PEGOUT_ID_KEY,
             pegout_id_key,
