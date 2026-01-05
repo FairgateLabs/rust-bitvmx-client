@@ -150,7 +150,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
         protocol.add_connection(
             "accept_enabler_conn",
             REQUEST_PEGIN_TX,
-            OutputType::taproot(DUST_VALUE, &take_aggregated_key, &enabler_scripts)?.into(),
+            OutputType::taproot(2 * DUST_VALUE, &take_aggregated_key, &enabler_scripts)?.into(),
             ACCEPT_PEGIN_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
