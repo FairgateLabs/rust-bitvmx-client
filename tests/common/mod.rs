@@ -146,8 +146,8 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
         None
     } else {
         let bitcoind_config = BitcoindConfig::new(
-            "bitcoin-regtest",
-            "bitcoin/bitcoin:29.1",
+            "bitcoin-regtest".to_string(),
+            "bitcoin/bitcoin:29.1".to_string(),
             None,
             config.bitcoin.clone(),
         );

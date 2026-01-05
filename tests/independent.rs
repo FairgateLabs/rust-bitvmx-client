@@ -347,8 +347,8 @@ impl TestHelper {
             clear_db(&wallet_config.key_storage.path);
             Wallet::clear_db(&wallet_config.wallet)?;
             let bitcoind_config = BitcoindConfig::new(
-                "bitcoin-regtest",
-                "bitcoin/bitcoin:29.1",
+                "bitcoin-regtest".to_string(),
+                "bitcoin/bitcoin:29.1".to_string(),
                 None,
                 config.bitcoin.clone(),
             );
