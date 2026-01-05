@@ -23,14 +23,14 @@ use crate::{
     },
     types::{ProgramContext, PROGRAM_TYPE_DRP},
 };
-use bitcoin::Txid;
+use bitcoin::{script::read_scriptint, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use bitvmx_cpu_definitions::{memory::MemoryWitness, trace::*};
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use console::style;
 use emulator::decision::nary_search::NArySearchType;
-use tracing::info;
+use tracing::{info, warn};
 
 fn dispatch_timeout_tx(
     drp: &DisputeResolutionProtocol,
@@ -647,6 +647,40 @@ pub fn handle_tx_news(
 
     let fail_force_config = config.fail_force_config.unwrap_or_default();
 
+    if vout.is_some() {
+        let transaction = &tx_status.tx;
+        let input_index = drp.find_prevout(tx_id, vout.unwrap(), transaction)?;
+        let witness = transaction.input[input_index as usize].witness.clone();
+
+        let leaf = read_scriptint(witness.third_to_last().unwrap()).unwrap() as u32;
+
+        let params = program_context
+            .globals
+            .get_var(&drp.ctx.id, &timeout_input_tx(&name))?
+            .ok_or(BitVMXError::VariableNotFound(
+                drp.ctx.id,
+                timeout_input_tx(&name),
+            ))?
+            .vec_number()?;
+
+        let timeout_leaf = params[1];
+
+        if leaf == timeout_leaf {
+            let role = timeout_table
+                .iter()
+                .find_map(|(_, _, role, timeout_type, _)| match timeout_type {
+                    TimeoutType::TimeoutInput(timeout_name) if timeout_name == &name => {
+                        Some(role.to_string())
+                    }
+                    _ => None,
+                })
+                .unwrap_or("Unknown role".to_string());
+
+            warn!("{role} consumed timeout input for {name}");
+            return Ok(());
+        }
+    }
+
     if let Some(auto_dispatch_input) = config.auto_dispatch_input {
         if name == START_CH && drp.role() == ParticipantRole::Prover {
             let (tx, speedup) = drp.get_transaction_by_name(
@@ -757,7 +791,7 @@ pub fn handle_tx_news(
     }
 
     if name == COMMITMENT && drp.role() == ParticipantRole::Verifier && vout.is_some() {
-        let (_, leaf) = drp.decode_witness_from_speedup(
+        drp.decode_witness_from_speedup(
             tx_id,
             vout.unwrap(),
             &name,
@@ -765,17 +799,6 @@ pub fn handle_tx_news(
             &tx_status.tx,
             None,
         )?;
-
-        let params = program_context
-            .globals
-            .get_var(&drp.ctx.id, &timeout_input_tx(&name))?
-            .unwrap()
-            .vec_number()?;
-        let timeout_leaf = params[1];
-        if leaf == timeout_leaf {
-            info!("Verifier consumed the timeout input for {name}");
-            return Ok(());
-        }
 
         let execution_path = drp.get_execution_path()?;
 
@@ -900,17 +923,6 @@ pub fn handle_tx_news(
             return Ok(());
         }
 
-        let params = program_context
-            .globals
-            .get_var(&drp.ctx.id, &timeout_input_tx(EXECUTE))?
-            .unwrap()
-            .vec_number()?;
-        let timeout_leaf = params[1];
-        if leaf == timeout_leaf {
-            info!("Verifier consumed the timeout input for EXECUTE");
-            return Ok(());
-        }
-
         let (_program_definition, pdf) = drp.get_program_definition(program_context)?;
         let execution_path = drp.get_execution_path()?;
 
@@ -1019,13 +1031,6 @@ pub fn handle_tx_news(
             None,
         )?;
 
-        let params = program_context
-            .globals
-            .get_var(&drp.ctx.id, &timeout_input_tx(&name))?
-            .unwrap()
-            .vec_number()?;
-        let timeout_leaf = params[1];
-
         let read_value_nary_search_leaf = program_context
             .globals
             .get_var(
@@ -1036,9 +1041,6 @@ pub fn handle_tx_news(
             .number()? as u32;
 
         match leaf {
-            l if l == timeout_leaf => {
-                info!("Prover consumed the timeout input for {name}");
-            }
             l if l == read_value_nary_search_leaf => {
                 let mut expected_names: Vec<&str> = READ_VALUE_NARY_SEARCH_CHALLENGE
                     .iter()
@@ -1168,17 +1170,6 @@ pub fn handle_tx_news(
             return Ok(());
         }
 
-        let params = program_context
-            .globals
-            .get_var(&drp.ctx.id, &timeout_input_tx(&name))?
-            .unwrap()
-            .vec_number()?;
-        let timeout_leaf = params[1];
-        if leaf == timeout_leaf {
-            info!("Verifier consumed the timeout input for {name}");
-            return Ok(());
-        }
-
         let (_program_definition, pdf) = drp.get_program_definition(program_context)?;
         let execution_path = drp.get_execution_path()?;
 
@@ -1294,7 +1285,7 @@ fn handle_nary_verifier(
         let decision = if name == prev_name {
             decision_start_value
         } else {
-            let (_, leaf) = drp.decode_witness_from_speedup(
+            drp.decode_witness_from_speedup(
                 tx_id,
                 vout.unwrap(),
                 &name,
@@ -1302,17 +1293,6 @@ fn handle_nary_verifier(
                 &tx_status.tx,
                 None,
             )?;
-
-            let params = program_context
-                .globals
-                .get_var(&drp.ctx.id, &timeout_input_tx(name))?
-                .unwrap()
-                .vec_number()?;
-            let timeout_leaf = params[1];
-            if leaf == timeout_leaf {
-                info!("Prover consumed the timeout input for {name}");
-                return Ok(());
-            }
 
             let bits = program_context
                 .witness
