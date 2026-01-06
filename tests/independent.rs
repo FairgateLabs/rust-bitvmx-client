@@ -16,8 +16,7 @@ use bitvmx_client::program::participant::{
 };
 use bitvmx_client::program::protocols::dispute::config::{ConfigResult, ForceFailConfiguration};
 use bitvmx_client::program::protocols::dispute::{
-    action_wins, input_tx_name, program_input, program_input_prev_prefix,
-    program_input_prev_protocol, protocol_cost,
+    COMMITMENT, POST_COMMITMENT, PRE_COMMITMENT, action_wins, input_tx_name, program_input, program_input_prev_prefix, program_input_prev_protocol, protocol_cost
 };
 use bitvmx_client::program::variables::{VariableTypes, WitnessTypes};
 use bitvmx_client::types::{
@@ -935,6 +934,7 @@ fn test_const_fail_input() -> Result<()> {
 
     let fail_config = ForceFailConfiguration {
         prover_force_second_nary: false,
+        fail_input_tx: None,
         main: main_config,
         read: ConfigResult::default(),
     };
@@ -1430,6 +1430,79 @@ fn challenge_verifier_out_of_bounds_bits() -> Result<()> {
 fn challenge_verifier_out_of_bounds_bits_in_challenge() -> Result<()> {
     test_challenge(ForcedChallenges::VerifierOutOfBoundsBitsInChallenge)
 }
+
+#[ignore]
+#[test]
+fn test_input_timeout_hashes_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::InputTimeOut("NARY_PROVER_1".to_string(), ParticipantRole::Prover))
+}
+
+#[ignore]
+#[test]
+fn test_input_timeout_pre_commitment_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::InputTimeOut(PRE_COMMITMENT.to_string(), ParticipantRole::Verifier))
+}
+
+#[ignore]
+#[test]
+fn test_input_timeout_commitment_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::InputTimeOut(COMMITMENT.to_string(), ParticipantRole::Prover))
+}
+
+#[ignore]
+#[test]
+fn test_input_timeout_post_commitment_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::InputTimeOut(POST_COMMITMENT.to_string(), ParticipantRole::Verifier))
+}
+
+#[ignore]
+#[test]
+fn test_input_timeout_input_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::InputTimeOut(input_tx_name(0), ParticipantRole::Prover))
+}
+
+#[ignore]
+#[test]
+fn test_input_timeout_input_prover_with_previous() -> Result<()> {
+    test_all_aux(
+        false,
+        Network::Regtest,
+        Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
+        Some(("00000002", 1, "00000003", 2).into()),
+        Some(ForcedChallenges::InputTimeOut(input_tx_name(2), ParticipantRole::Prover)),
+        None,
+    )?;
+    Ok(())
+}
+
+#[ignore]
+#[test]
+fn test_input_timeout_input_verifier() -> Result<()> {
+    test_all_aux(
+        false,
+        Network::Regtest,
+        Some("../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world-verifier.yaml".to_string()),
+        Some(InputType::Participant("11111111".to_string(), Verifier)),
+        Some(ForcedChallenges::InputTimeOut(input_tx_name(0), ParticipantRole::Verifier)),
+        None,
+    )?;
+    Ok(())
+}
+
+#[ignore]
+#[test]
+fn test_input_timeout_input_prover_cosign() -> Result<()> {
+    test_all_aux(
+        false,
+        Network::Regtest,
+        Some("../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world-verifier.yaml".to_string()),
+        Some(InputType::Participant("11111111".to_string(), Verifier)),
+        Some(ForcedChallenges::InputTimeOut(input_tx_name(1), ParticipantRole::Prover)),
+        None,
+    )?;
+    Ok(())
+}
+
 // The forced Execution is required for testing because without it, the prover or verifier will not execute directly
 // #[ignore]
 // #[test]

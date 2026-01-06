@@ -169,9 +169,9 @@ impl TimeoutDispatchTable {
     pub fn new(rules: Vec<TimeoutDispatchRule>) -> Self {
         Self { rules }
     }
-    pub fn new_predefined(rounds: u8, n_inputs: u32) -> Self {
+    pub fn new_predefined(rounds: u8, inputs: Vec<(usize, &String)>) -> Self {
         assert_ne!(rounds, 0);
-        assert_ne!(n_inputs, 0); // Inputs should be at least 1
+        assert_ne!(inputs.len(), 0); // Inputs should be at least 1
 
         let last_tx_first_nary = &format!("NARY_VERIFIER_{}", rounds);
         let last_tx_second_nary = &format!("NARY2_VERIFIER_{}", rounds);
@@ -179,18 +179,47 @@ impl TimeoutDispatchTable {
 
         let mut table = TimeoutDispatchTable::new(vec![]);
 
-        for i in 1..n_inputs {
-            let role = if i % 2 == 1 { Verifier } else { Prover }; //TODO: make it configurable
-            table.add_classic_to(&input_tx_name(i - 1), &input_tx_name(i), role);
+        let &(first_index, first_owner) = inputs.first().unwrap();
+        if first_owner == "verifier" {
+            table.add_prover_without_vout(
+                &input_tx_name(first_index as u32),
+                TimeoutType::timeout_input(&input_tx_name(first_index as u32)),
+            );
+        } else {
+            table.add_verifier_without_vout(
+                &input_tx_name(first_index as u32),
+                TimeoutType::timeout_input(&input_tx_name(first_index as u32)),
+            );
         }
-        table.add_classic_to(&input_tx_name(n_inputs - 1), PRE_COMMITMENT, Prover);
+
+        for window in inputs.windows(2) {
+            let (prev_index, prev_owner) = window[0];
+            let (next_index, next_owner) = window[1];
+
+            assert_ne!(prev_owner, next_owner);
+
+            let role = if prev_owner == "verifier" {
+                Verifier
+            } else {
+                Prover
+            };
+
+            table.add_classic_to(
+                &input_tx_name(prev_index as u32),
+                &input_tx_name(next_index as u32),
+                role,
+            );
+        }
+        let &(last_index, last_owner) = inputs.last().unwrap();
+        assert!(last_owner.starts_with("prover"));
+
+        table.add_classic_to(&input_tx_name(last_index as u32), PRE_COMMITMENT, Prover);
         table.add_classic_to(PRE_COMMITMENT, COMMITMENT, Verifier);
         table.add_classic_to(COMMITMENT, POST_COMMITMENT, Prover);
         table.add_classic_to(POST_COMMITMENT, "NARY_PROVER_1", Verifier);
         table.add_nary_search_table("NARY", 1, rounds);
         table.add_classic_to(last_tx_first_nary, EXECUTE, Verifier);
         table.add_classic_to(EXECUTE, CHALLENGE, Prover);
-        table.add_verifier_without_vout(EXECUTE, TimeoutType::timeout_input(EXECUTE));
         table.add_not_apply_not_vout(CHALLENGE, Verifier, to_second_nary);
         table.add_nary_search_table("NARY2", 2, rounds);
         table.add_classic_to(&last_tx_second_nary, GET_HASHES_AND_STEP, Verifier);
@@ -604,19 +633,19 @@ pub fn handle_tx_news(
         .nary_def()
         .total_rounds();
 
-    let n_inputs = {
-        let inputs = program_context
-            .globals
-            .get_var(&drp.ctx.id, "input_txs")?
-            .unwrap()
-            .vec_string()?;
-        inputs
-            .iter()
-            .filter(|owner| owner.as_str() != "skip" && owner.as_str() != "prover_prev")
-            .count() as u32
-    };
+    let inputs = program_context
+        .globals
+        .get_var(&drp.ctx.id, "input_txs")?
+        .unwrap()
+        .vec_string()?;
 
-    let timeout_table = TimeoutDispatchTable::new_predefined(rounds, n_inputs);
+    let inputs = inputs
+        .iter()
+        .enumerate()
+        .filter(|(_, owner)| owner.as_str() != "skip" && owner.as_str() != "prover_prev")
+        .collect();
+
+    let timeout_table = TimeoutDispatchTable::new_predefined(rounds, inputs);
     // timeout_table.visualize();
 
     cancel_timeout(drp, &name, vout, program_context, &timeout_table)?;

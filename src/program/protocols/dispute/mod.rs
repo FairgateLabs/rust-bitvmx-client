@@ -37,7 +37,7 @@ use protocol_builder::{
     },
 };
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
     errors::BitVMXError,
@@ -472,6 +472,15 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         };
 
         let config = DisputeConfiguration::load(&self.ctx.id, &context.globals)?;
+        config.fail_force_config.map(|fail_force_config| {
+            fail_force_config.fail_input_tx.map(|fail_input_tx| {
+                context.globals.set_var(
+                    &self.ctx.id,
+                    format!("fail_input_{fail_input_tx}").as_str(),
+                    VariableTypes::Bool(true),
+                )
+            })
+        });
         let utxo = config.protocol_connection.0.clone();
 
         let prover_speedup_pub = keys[0].get_public("speedup")?;
@@ -1080,7 +1089,7 @@ impl DisputeResolutionProtocol {
         context: &ProgramContext,
         name: &str,
         _input_index: u32,
-        leaf_index: u32,
+        mut leaf_index: u32,
         leaf_identification: bool,
     ) -> Result<(Transaction, SpeedupData), BitVMXError> {
         let tx = self.get_signed_tx(context, name, 0, 0, leaf_identification, 0)?;
@@ -1089,6 +1098,18 @@ impl DisputeResolutionProtocol {
         info!("Scripts length: {}", scripts.len());
         let wots_sigs =
             self.get_winternitz_signature_for_script(&scripts[leaf_index as usize], context)?;
+
+        if context
+            .globals
+            .get_var(&self.ctx.id, format!("fail_input_{name}").as_str())?
+            .is_some_and(|var| matches!(var, VariableTypes::Bool(true)))
+        {
+            // last script is timeout, we don't want to fail on timeouts.
+            if leaf_index != scripts.len() as u32 - 1 {
+                warn!("Failing input {name}");
+                leaf_index += 1;
+            }
+        };
 
         let speedup_data = SpeedupData::new_with_input(
             self.partial_utxo_from(&tx, 0),

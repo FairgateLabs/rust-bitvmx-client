@@ -44,6 +44,7 @@ use super::{mine_and_wait, send_all, wait_message_from_channel};
 
 #[derive(Clone, Debug)]
 pub enum ForcedChallenges {
+    InputTimeOut(String, ParticipantRole),
     // 1st n-ary search
     TraceHash(ParticipantRole),
     TraceHashZero(ParticipantRole),
@@ -107,8 +108,11 @@ impl ForcedChallenges {
             | EquivocationResignStep2(role)
             | EquivocationResignNext2(role) => Some(role.clone()),
             No | Execution | Personalized(_) => None,
-            ProverForceSecondNary => Some(ParticipantRole::Prover),
-            VerifierOutOfBoundsBits | VerifierOutOfBoundsBitsInChallenge => Some(ParticipantRole::Verifier),
+            ProverForceSecondNary  => Some(ParticipantRole::Prover),
+            VerifierOutOfBoundsBits | VerifierOutOfBoundsBitsInChallenge => {
+                Some(ParticipantRole::Verifier)
+            }
+            InputTimeOut(_, role) => Some(role.clone()),
         }
     }
 }
@@ -460,6 +464,15 @@ fn wait_msg_channel(
 pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ForceFailConfiguration {
     //TODO: check all cases after refactor
     match fail_force_config {
+        ForcedChallenges::InputTimeOut(name, _) => ForceFailConfiguration {
+            prover_force_second_nary: false,
+            fail_input_tx: Some(name),
+            main: ConfigResult {
+                force_condition: ForceCondition::Always,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
         ForcedChallenges::TraceHash(role) => get_config_simple(
             role,
             FailConfiguration::new_fail_hash(100),
@@ -873,6 +886,7 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ForceFailCo
             match role {
                 ParticipantRole::Prover => ForceFailConfiguration {
                     prover_force_second_nary: false,
+                    fail_input_tx: None,
                     main: ConfigResult {
                         // We want to test that if the prover tries to challenge the selected step when it doesn't correspond, he fails.
                         // If he doesn't try to challenge, the test should fail. To achieve that, we make the verifier also fail on a future read,
@@ -894,6 +908,7 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ForceFailCo
                 },
                 ParticipantRole::Verifier => ForceFailConfiguration {
                     prover_force_second_nary: false,
+                    fail_input_tx: None,
                     main: ConfigResult {
                         // Same logic as before but inverted, if the prover doesn't challenge the step, he will fail cause he will fail to correctly resign the hash
                         fail_config_prover: Some(FailConfiguration::new_fail_resign_hash(1792)),
@@ -924,6 +939,7 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ForceFailCo
             match role {
                 ParticipantRole::Prover => ForceFailConfiguration {
                     prover_force_second_nary: false,
+                    fail_input_tx: None,
                     main: ConfigResult {
                         fail_config_prover: None,
                         fail_config_verifier: Some(fail_read_1.clone()),
@@ -941,6 +957,7 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ForceFailCo
                 },
                 ParticipantRole::Verifier => ForceFailConfiguration {
                     prover_force_second_nary: false,
+                    fail_input_tx: None,
                     main: ConfigResult {
                         fail_config_prover: None,
                         // the fail is in the first nary search but since round is None it will fail in the ReadNArySearch challenge's bits corresponding to the second nary search
@@ -972,6 +989,7 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ForceFailCo
 
             ForceFailConfiguration {
                 prover_force_second_nary: true,
+                fail_input_tx: None,
                 main: ConfigResult {
                     // The prover will fail with a future read, the verifier will successfully challenge it
                     fail_config_prover: Some(fail_future_read),
@@ -1008,6 +1026,7 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ForceFailCo
         ForcedChallenges::No => ForceFailConfiguration::default(),
         ForcedChallenges::Execution => ForceFailConfiguration {
             prover_force_second_nary: false,
+            fail_input_tx: None,
             main: ConfigResult {
                 fail_config_prover: None,
                 fail_config_verifier: None,
@@ -1033,6 +1052,7 @@ fn get_config_with_read(
     match role {
         ParticipantRole::Prover => ForceFailConfiguration {
             prover_force_second_nary: false,
+            fail_input_tx: None,
             main: ConfigResult {
                 fail_config_prover: Some(fail_prover),
                 fail_config_verifier: None,
@@ -1048,6 +1068,7 @@ fn get_config_with_read(
         },
         ParticipantRole::Verifier => ForceFailConfiguration {
             prover_force_second_nary: false,
+            fail_input_tx: None,
             main: ConfigResult {
                 fail_config_prover: None,
                 fail_config_verifier: Some(fail_verifier),

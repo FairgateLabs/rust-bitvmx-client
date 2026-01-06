@@ -98,6 +98,7 @@ pub struct ConfigResult {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ForceFailConfiguration {
     pub prover_force_second_nary: bool,
+    pub fail_input_tx: Option<String>,
     pub main: ConfigResult,
     pub read: ConfigResult, // for read challenge (2nd n-ary search)
 }
@@ -117,6 +118,7 @@ impl Default for ForceFailConfiguration {
     fn default() -> Self {
         Self {
             prover_force_second_nary: false,
+            fail_input_tx: None,
             main: ConfigResult::default(),
             read: ConfigResult::default(),
         }

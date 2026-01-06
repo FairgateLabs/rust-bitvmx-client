@@ -180,6 +180,7 @@ impl DisputeChannelSetup {
 
         let dispute_config = ForceFailConfiguration {
             prover_force_second_nary: false,
+            fail_input_tx: None,
             main: ConfigResult {
                 fail_config_prover: None,
                 fail_config_verifier: None,
