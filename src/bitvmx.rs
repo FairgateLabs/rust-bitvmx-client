@@ -124,7 +124,7 @@ impl BitVMX {
         let store = Rc::new(Storage::new(&config.storage)?);
         let key_chain = KeyChain::new(&config, store.clone())?;
 
-        let comms = QueueChannel::new(
+        let comms = QueueChannel::new_with_paths(
             "comms",
             config.comms.address,
             &config.comms.priv_key,
@@ -153,7 +153,7 @@ impl BitVMX {
         //TODO: This could be moved to a simplified helper inside brokerstorage new
         //Also the broker could be run independently if needed
         let allow_list = AllowList::from_file(&config.broker.allow_list)?;
-        let routing_table = RoutingTable::load_from_file(&config.broker.routing_table)?;
+        let routing_table = RoutingTable::from_file(&config.broker.routing_table)?;
         let broker_backend = Storage::new(&config.broker.storage)?;
         let broker_backend = Arc::new(Mutex::new(broker_backend));
         let broker_storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
