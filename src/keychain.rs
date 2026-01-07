@@ -149,7 +149,9 @@ impl KeyChain {
         key_type: WinternitzType,
         quantity: u32,
     ) -> Result<Vec<WinternitzPublicKey>, BitVMXError> {
-        Ok(self.key_manager.next_multiple_winternitz(size_in_bytes, key_type, quantity)?)
+        Ok(self
+            .key_manager
+            .next_multiple_winternitz(size_in_bytes, key_type, quantity)?)
     }
 
     pub fn add_nonces(
