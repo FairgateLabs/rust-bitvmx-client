@@ -83,21 +83,6 @@ impl KeyChain {
         Ok(next_index)
     }
 
-    // TODO remove
-    // pub fn get_new_winternitz_index(&self) -> Result<Index, BitVMXError> {
-    //     let key = KeyChainStorageKeys::WinternitzIndex.get_key();
-    //     let index: Option<Index> = self.store.get(&key)?;
-
-    //     let next_index = match index {
-    //         Some(current_index) => current_index + 1,
-    //         None => 0,
-    //     };
-
-    //     self.store.set(&key, next_index, None)?;
-
-    //     Ok(next_index)
-    // }
-
     pub fn derive_keypair(&mut self, key_type: BitcoinKeyType) -> Result<PublicKey, BitVMXError> {
         let index = self.get_new_ecdsa_index()?;
 
