@@ -223,11 +223,12 @@ impl Member {
         for i in 0..total_setups {
             info!(
                 id = self.id,
-                "Waiting for dispute channel setup {} to complete...", i
+                "Waiting for dispute channel setup {} to complete...",
+                i + 1
             );
             let program_id =
                 wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
-            info!(id = self.id, program_id = ?program_id, "Dispute channel setup completed. Number: {}. Missing: {}", i, total_setups - i - 1);
+            info!(id = self.id, program_id = ?program_id, "Dispute channel setup completed. Number: {}. Missing: {}", i + 1, total_setups - i - 1);
         }
 
         info!(
