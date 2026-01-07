@@ -83,19 +83,20 @@ impl KeyChain {
         Ok(next_index)
     }
 
-    pub fn get_new_winternitz_index(&self) -> Result<Index, BitVMXError> {
-        let key = KeyChainStorageKeys::WinternitzIndex.get_key();
-        let index: Option<Index> = self.store.get(&key)?;
+    // TODO remove
+    // pub fn get_new_winternitz_index(&self) -> Result<Index, BitVMXError> {
+    //     let key = KeyChainStorageKeys::WinternitzIndex.get_key();
+    //     let index: Option<Index> = self.store.get(&key)?;
 
-        let next_index = match index {
-            Some(current_index) => current_index + 1,
-            None => 0,
-        };
+    //     let next_index = match index {
+    //         Some(current_index) => current_index + 1,
+    //         None => 0,
+    //     };
 
-        self.store.set(&key, next_index, None)?;
+    //     self.store.set(&key, next_index, None)?;
 
-        Ok(next_index)
-    }
+    //     Ok(next_index)
+    // }
 
     pub fn derive_keypair(&mut self, key_type: BitcoinKeyType) -> Result<PublicKey, BitVMXError> {
         let index = self.get_new_ecdsa_index()?;
@@ -107,22 +108,18 @@ impl KeyChain {
         &mut self,
         message_bytes: usize,
     ) -> Result<WinternitzPublicKey, BitVMXError> {
-        let index = self.get_new_winternitz_index()?;
-
         Ok(self
             .key_manager
-            .derive_winternitz(message_bytes, WinternitzType::HASH160, index)?)
+            .next_winternitz(message_bytes, WinternitzType::HASH160)?)
     }
 
     pub fn derive_winternitz_sha256(
         &mut self,
         message_bytes: usize,
     ) -> Result<WinternitzPublicKey, BitVMXError> {
-        let index = self.get_new_winternitz_index()?;
-
         Ok(self
             .key_manager
-            .derive_winternitz(message_bytes, WinternitzType::SHA256, index)?)
+            .next_winternitz(message_bytes, WinternitzType::SHA256)?)
     }
 
     pub fn derive_winternitz_sha256_keys(
@@ -152,17 +149,7 @@ impl KeyChain {
         key_type: WinternitzType,
         quantity: u32,
     ) -> Result<Vec<WinternitzPublicKey>, BitVMXError> {
-        let mut keys = Vec::new();
-
-        for _ in 0..quantity {
-            let index = self.get_new_winternitz_index()?;
-            let pk = self
-                .key_manager
-                .derive_winternitz(size_in_bytes, key_type, index)?;
-            keys.push(pk);
-        }
-
-        Ok(keys)
+        Ok(self.key_manager.next_multiple_winternitz(size_in_bytes, key_type, quantity)?)
     }
 
     pub fn add_nonces(
