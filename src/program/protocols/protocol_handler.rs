@@ -246,7 +246,6 @@ pub trait ProtocolHandler {
                     .key_chain
                     .key_manager
                     .sign_winternitz_message_by_index(
-                        // TODO discuss can we replace this with sign_winternitz_message_by_pubkey ?
                         &message,
                         WinternitzType::HASH160,
                         protocol_script
