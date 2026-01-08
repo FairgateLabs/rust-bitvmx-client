@@ -462,7 +462,7 @@ impl<'a> InputSigningInfo<'a> {
                         ))
                     })?;
 
-            let wt_signature = wt_data.key_manager.sign_winternitz_message(
+            let wt_signature = wt_data.key_manager.sign_winternitz_message_by_index(
                 wt_data.data.as_slice(),
                 wt_data.key_type,
                 key.derivation_index(),
