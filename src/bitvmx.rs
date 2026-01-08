@@ -613,6 +613,30 @@ impl BitVMX {
             }
         }
 
+        let deadletter_messages = self.program_context.comms.check_deadletter();
+        if deadletter_messages.is_err() {
+            error!(
+                "Error receiving deadletter messages: {:?}",
+                deadletter_messages.err().unwrap()
+            );
+            return Ok(());
+        }
+        for deadletter in deadletter_messages.unwrap() {
+            match deadletter {
+                (ReceiveHandlerChannel::Msg(identifier, _msg), ctx) => {
+                    let context = Context::from_string(&ctx)?;
+                    warn!(
+                        "Processing deadletter message for context: {:?} and identifier: {:?}",
+                        context, identifier
+                    );
+                    // TODO: Add a function in protocol handler to process deadletter messages
+                }
+                (ReceiveHandlerChannel::Error(e), _) => {
+                    info!("Error receiving deadletter message {}", e);
+                }
+            }
+        }
+
         Ok(())
     }
 
