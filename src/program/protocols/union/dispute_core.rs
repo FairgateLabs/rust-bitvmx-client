@@ -26,9 +26,10 @@ use crate::{
         },
         variables::{PartialUtxo, VariableTypes},
     },
+    spv_proof::get_spv_proof,
     types::{
-        ProgramContext, PROGRAM_TYPE_ACCEPT_PEGIN, PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_DRP,
-        PROGRAM_TYPE_FULL_PENALIZATION,
+        OutgoingBitVMXApiMessages, ProgramContext, PROGRAM_TYPE_ACCEPT_PEGIN,
+        PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_DRP, PROGRAM_TYPE_FULL_PENALIZATION,
     },
 };
 use bitcoin::{Amount, PublicKey, Transaction, Txid};
@@ -52,7 +53,7 @@ use protocol_builder::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 pub const PEGOUT_ID: &str = "PEGOUT_ID";
@@ -2559,6 +2560,53 @@ impl DisputeCoreProtocol {
                 }
             }
         }
+
+        self.send_reimbursement_kickoff_spv(context, tx_id, slot_index)?;
+
+        Ok(())
+    }
+
+    fn send_reimbursement_kickoff_spv(
+        &self,
+        context: &ProgramContext,
+        txid: Txid,
+        slot_index: usize,
+    ) -> Result<(), BitVMXError> {
+        let tx_info = context.bitcoin_coordinator.get_transaction(txid);
+
+        let proof = match tx_info {
+            Ok(utx) => Some(get_spv_proof(txid, utx.block_info.unwrap())?),
+            Err(e) => {
+                warn!(
+                    "Failed to retrieve transaction info for txid {}: {:?}",
+                    txid, e
+                );
+                None
+            }
+        };
+
+        let response = UnionSPVNotification {
+            txid,
+            committee_id: self.dispute_core_data(context)?.committee_id,
+            slot_index,
+            spv_proof: proof,
+            tx_type: UnionTxType::ReimbursementKickoff,
+        };
+
+        let data = serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(
+            self.ctx.id,
+            UnionSPVNotification::name(),
+            VariableTypes::String(serde_json::to_string(&response)?),
+        ))?;
+
+        info!(
+            id = self.ctx.my_idx,
+            "Sending reimbursement kickoff SPV data: {}", data
+        );
+
+        context
+            .broker_channel
+            .send(&context.components_config.l2, data)?;
 
         Ok(())
     }
