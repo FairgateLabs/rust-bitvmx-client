@@ -245,7 +245,7 @@ pub trait ProtocolHandler {
                 let winternitz_signature = program_context
                     .key_chain
                     .key_manager
-                    .sign_winternitz_message(
+                    .sign_winternitz_message_by_index(
                         &message,
                         WinternitzType::HASH160,
                         protocol_script
