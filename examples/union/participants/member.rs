@@ -213,12 +213,21 @@ impl Member {
             addresses,
         )?;
 
-        thread::sleep(std::time::Duration::from_secs(20 * total_setups as u64));
+        let sleep_time = 30 * total_setups as u64;
+        info!(
+            id = self.id,
+            "Waiting {} seconds for dispute channel setups to complete...", sleep_time
+        );
+        thread::sleep(std::time::Duration::from_secs(sleep_time));
 
         for i in 0..total_setups {
+            info!(
+                id = self.id,
+                "Waiting for dispute channel setup {} to complete...", i
+            );
             let program_id =
                 wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
-            info!(id = self.id, program_id = ?program_id, "Dispute channel setup completed for operator index {}", i);
+            info!(id = self.id, program_id = ?program_id, "Dispute channel setup completed. Number: {}. Missing: {}", i, total_setups - i - 1);
         }
 
         info!(
