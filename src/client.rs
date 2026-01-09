@@ -73,6 +73,10 @@ impl BitVMXClient {
         self.send_message(IncomingBitVMXApiMessages::DispatchTransaction(id, tx))
     }
 
+    pub fn dispatch_transaction_name(&self, id: Uuid, name: String) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::DispatchTransactionName(id, name))
+    }
+
     pub fn setup_key(
         &self,
         id: Uuid,

@@ -3,7 +3,7 @@ use anyhow::Result;
 use bitcoin::{Amount, Network};
 use bitcoin_coordinator::coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi};
 use bitcoin_coordinator::types::CoordinatorNews;
-use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
+use bitcoind::{bitcoind::{Bitcoind, BitcoindFlags}, config::BitcoindConfig};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::channel::channel::DualChannel;
 use bitvmx_broker::identification::allow_list::AllowList;
@@ -347,19 +347,19 @@ impl TestHelper {
             clear_db(&wallet_config.key_storage.path);
             Wallet::clear_db(&wallet_config.wallet)?;
 
-            let bitcoind = Bitcoind::new_with_flags(
-                "bitcoin-regtest",
-                "bitcoin/bitcoin:29.1",
+            let bitcoind_instance = Bitcoind::new(
+                BitcoindConfig::default(),
                 wallet_config.bitcoin.clone(),
-                BitcoindFlags {
+                Some(BitcoindFlags {
                     min_relay_tx_fee: 0.00001,
                     block_min_tx_fee: 0.00001 * MIN_TX_FEE,
                     debug: 1,
                     fallback_fee: 0.0002,
-                },
+                }),
             );
-            bitcoind.start()?;
-            Some(bitcoind)
+            
+            bitcoind_instance.start()?;
+            Some(bitcoind_instance)
         };
 
         let mut wallet =
@@ -1005,9 +1005,9 @@ fn retry_failed_txs_test() -> Result<()> {
     Wallet::clear_db(&wallet_config.wallet)?;
 
     let bitcoind = Bitcoind::new(
-        "bitcoin-regtest",
-        "bitcoin/bitcoin:29.1",
+        BitcoindConfig::default(),
         wallet_config.bitcoin.clone(),
+        None,
     );
 
     bitcoind.start()?;

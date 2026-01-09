@@ -6,9 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ## [Unreleased]
 
+### Added
+
+- `cancel_take0` example to demonstrate the use of `CANCEL_TAKE0_TX` transaction.
+- `reject_pegin` example to demonstrate the use of `RejectPegin` protocol.
+- `Member.reject_pegin` function to execute the `RejectPegin` protocol.
+
 ### Changed 
 
 - Renamed `watchtower_disabler` example to `wt_disabler`.
+- `User.request_pegin` to support new request pegin tx structure. It now receive dispute keys as parameters.
+
+### Removed
+
+- Removed unused parameters from `UserTakeSetup`: `stream_id`, `packet_number`, `pegout_signature_hash` and `pegout_signature_message`.
 
 ### Fixed
 

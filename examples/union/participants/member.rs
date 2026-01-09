@@ -1,9 +1,9 @@
-use crate::setup::full_penalization_setup::FullPenalizationSetup;
 use crate::wallet::helper::print_link;
 use crate::{
     setup::{
         accept_pegin_setup::AcceptPegInSetup, advance_funds_setup::AdvanceFunds,
         dispute_channel_setup::DisputeChannelSetup, dispute_core_setup::DisputeCoreSetup,
+        full_penalization_setup::FullPenalizationSetup, reject_pegin_setup::RejectPegin,
         user_take_setup::UserTakeSetup,
     },
     wait_until_msg,
@@ -213,12 +213,22 @@ impl Member {
             addresses,
         )?;
 
-        thread::sleep(std::time::Duration::from_secs(20 * total_setups as u64));
+        let sleep_time = 30 * total_setups as u64;
+        info!(
+            id = self.id,
+            "Waiting {} seconds for dispute channel setups to complete...", sleep_time
+        );
+        thread::sleep(std::time::Duration::from_secs(sleep_time));
 
         for i in 0..total_setups {
+            info!(
+                id = self.id,
+                "Waiting for dispute channel setup {} to complete...",
+                i + 1
+            );
             let program_id =
                 wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
-            info!(id = self.id, program_id = ?program_id, "Dispute channel setup completed for operator index {}", i);
+            info!(id = self.id, program_id = ?program_id, "Dispute channel setup completed. Number: {}. Missing: {}", i + 1, total_setups - i - 1);
         }
 
         info!(
@@ -294,26 +304,20 @@ impl Member {
     pub fn request_pegout(
         &mut self,
         committee_id: Uuid,
-        stream_id: u64,
-        packet_number: u64,
         slot_index: usize,
         amount: u64,
         pegout_id: Vec<u8>,
-        pegout_signature_hash: Vec<u8>,
-        pegout_signature_message: Vec<u8>,
         user_pubkey: PublicKey,
+        user_take_sighash: &[u8],
         addresses: &Vec<CommsAddress>,
     ) -> Result<()> {
         UserTakeSetup::setup(
             committee_id,
-            stream_id,
-            packet_number,
             slot_index,
             amount,
             pegout_id,
-            pegout_signature_hash,
-            pegout_signature_message,
             user_pubkey,
+            user_take_sighash,
             self.keyring.take_aggregated_key.unwrap(),
             &self.id,
             &self.bitvmx,
@@ -602,7 +606,10 @@ impl Member {
             protocol_id,
             tx_name.clone()
         );
-        self.bitvmx.dispatch_transaction(protocol_id, tx.clone())?;
+
+        // This method also dispatch speedup transactions if applicable
+        self.bitvmx
+            .dispatch_transaction_name(protocol_id, tx_name)?;
         thread::sleep(std::time::Duration::from_secs(1));
         Ok(tx)
     }
@@ -668,5 +675,25 @@ impl Member {
 
         let loaded_settings: UnionSettings = serde_json::from_str(&settings_str)?;
         Ok(loaded_settings)
+    }
+
+    pub fn reject_pegin(
+        &self,
+        committee_id: Uuid,
+        request_pegin_txid: Txid,
+        member_index: usize,
+    ) -> Result<()> {
+        RejectPegin::setup(
+            &self.bitvmx,
+            Uuid::new_v4(),
+            committee_id,
+            member_index,
+            request_pegin_txid,
+            self.address()?.clone(),
+        )?;
+
+        let program_id = wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
+        info!(id = self.id, program_id = ?program_id, "RejectPegin setup completed for operator index {}", member_index);
+        Ok(())
     }
 }
