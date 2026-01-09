@@ -5,13 +5,7 @@
 1. **Configure your local SSH Key**  
    You should have access to private GitHub Repos.
 
-2. **Ensure operator config files exist**  
-   Config files should be present in `config/` directory:
-   - `config/op_1.yaml` (broker_port: 22222)
-   - `config/op_2.yaml` (broker_port: 33333)
-   - `config/op_3.yaml` (broker_port: 44444)
-
-3. **Docker BuildKit enabled**  
+2. **Docker BuildKit enabled**  
    If your Docker does not have BuildKit activated by default:
    ```bash
    export DOCKER_BUILDKIT=1
