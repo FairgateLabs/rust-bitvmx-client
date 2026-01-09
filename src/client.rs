@@ -132,10 +132,6 @@ impl BitVMXClient {
         ))
     }
 
-    pub fn subscribe_utxo(&self, id: Uuid) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::SubscribeUTXO(id))
-    }
-
     pub fn subscribe_to_rsk_pegin(&self) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::SubscribeToRskPegin())
     }
