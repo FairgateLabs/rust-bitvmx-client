@@ -264,10 +264,10 @@ pub fn cli_cancel_take0() -> Result<()> {
 
     let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
     thread::sleep(Duration::from_secs(1));
-    wait_for_blocks(
-        &committee.bitcoin_client,
-        committee.stream_settings.cancel_take0_timelock as u32 + 1,
-    )?;
+    let blocks_to_wait =
+        get_blocks_to_wait() + committee.stream_settings.cancel_take0_timelock as u32;
+
+    wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
 
     info!("Forcing member to cancel accept pegin transaction...");
     let tx = committee.members[1].dispatch_transaction_by_name(
