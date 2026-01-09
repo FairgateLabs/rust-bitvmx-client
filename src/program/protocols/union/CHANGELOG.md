@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - `PenalizedMember` struct to store penalized operators and watchtowers and dispatch disabler transactions if needed.
 - `RejectPegin` protocol to allow the committee to reject a pegin request.
 - `CANCEL_TAKE0_TX` transactions to consume `ACCEPT_PEGIN_TX` output enabler.
+- `request_pegin_timelock` to `StreamSettings`. It defines the time the user block funds while the committee accepts the pegin request.
 
 ### Changed
 

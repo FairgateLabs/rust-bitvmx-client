@@ -102,6 +102,7 @@ impl User {
         committee_public_key: &PublicKey,
         stream_value: u64,
         dispute_keys: &[PublicKey],
+        request_pegin_timelock: u16,
     ) -> Result<Txid> {
         info!(id = self.id, "Requesting pegin");
 
@@ -117,6 +118,7 @@ impl User {
             stream_value,
             packet_number,
             dispute_keys,
+            request_pegin_timelock,
         )?;
 
         let txid = match self.bitcoin_client.send_transaction(&signed_transaction) {
@@ -174,8 +176,8 @@ impl User {
         stream_value: u64,
         packet_number: u64,
         dispute_keys: &[PublicKey],
+        request_pegin_timelock: u16,
     ) -> Result<Transaction> {
-        pub const TIMELOCK_BLOCKS: u16 = 1;
         let fee = KEY_SPEND_FEE + OP_RETURN_FEE + self.get_extra_fee();
 
         // Fund the user address with enough to cover the taproot output + fees
@@ -216,7 +218,7 @@ impl User {
         ]
         .concat();
         let script_op_return = op_return_script(op_data)?;
-        let script_timelock = timelock(TIMELOCK_BLOCKS, &self.public_key, SignMode::Single);
+        let script_timelock = timelock(request_pegin_timelock, &self.public_key, SignMode::Single);
 
         let taproot_spend_info = build_taproot_spend_info(
             &self.secp,

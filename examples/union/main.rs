@@ -231,6 +231,7 @@ pub fn cli_request_pegin() -> Result<()> {
         committee.public_key()?,
         &mut user,
         committee.get_dispute_keys().as_slice(),
+        committee.stream_settings.request_pegin_timelock,
     )?;
     Ok(())
 }
@@ -242,6 +243,7 @@ pub fn cli_reject_pegin() -> Result<()> {
         committee.public_key()?,
         &mut user,
         committee.get_dispute_keys().as_slice(),
+        committee.stream_settings.request_pegin_timelock,
     )?;
 
     let member_index = 1;
@@ -701,9 +703,15 @@ pub fn request_pegin(
     committee_public_key: PublicKey,
     user: &mut User,
     dispute_keys: &[PublicKey],
+    request_pegin_timelock: u16,
 ) -> Result<(Txid, u64)> {
     let amount: u64 = STREAM_DENOMINATION; // This should be replaced with the actual amount of the peg-in request
-    let request_pegin_txid = user.request_pegin(&committee_public_key, amount, dispute_keys)?;
+    let request_pegin_txid = user.request_pegin(
+        &committee_public_key,
+        amount,
+        dispute_keys,
+        request_pegin_timelock,
+    )?;
 
     thread::sleep(Duration::from_secs(5)); // wait for the bitcoin node to update
     wait_for_blocks(
@@ -727,6 +735,7 @@ pub fn request_and_accept_pegin(
         committee.public_key()?,
         user,
         committee.get_dispute_keys().as_slice(),
+        committee.stream_settings.request_pegin_timelock,
     )?;
 
     // This came from the contracts
