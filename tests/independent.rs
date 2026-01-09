@@ -350,11 +350,11 @@ impl TestHelper {
                 "bitcoin-regtest".to_string(),
                 "bitcoin/bitcoin:29.1".to_string(),
                 None,
-                config.bitcoin.clone(),
             );
 
             let bitcoind_instance = Bitcoind::new(
                 bitcoind_config,
+                wallet_config.bitcoin.clone(),
                 Some(BitcoindFlags {
                     min_relay_tx_fee: 0.00001,
                     block_min_tx_fee: 0.00001 * MIN_TX_FEE,
@@ -363,8 +363,8 @@ impl TestHelper {
                 }),
             );
             
-            bitcoind.start()?;
-            Some(bitcoind)
+            bitcoind_instance.start()?;
+            Some(bitcoind_instance)
         };
 
         let mut wallet =
@@ -1010,9 +1010,9 @@ fn retry_failed_txs_test() -> Result<()> {
     Wallet::clear_db(&wallet_config.wallet)?;
 
     let bitcoind = Bitcoind::new(
-        "bitcoin-regtest",
-        "bitcoin/bitcoin:29.1",
+        BitcoindConfig::default(),
         wallet_config.bitcoin.clone(),
+        None,
     );
 
     bitcoind.start()?;

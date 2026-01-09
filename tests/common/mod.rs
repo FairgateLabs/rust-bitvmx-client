@@ -149,11 +149,11 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
             "bitcoin-regtest".to_string(),
             "bitcoin/bitcoin:29.1".to_string(),
             None,
-            config.bitcoin.clone(),
         );
 
         let bitcoind_instance = Bitcoind::new(
             bitcoind_config,
+            wallet_config.bitcoin.clone(),
             Some(BitcoindFlags {
                 min_relay_tx_fee: 0.00001,
                 block_min_tx_fee: 0.00002,
