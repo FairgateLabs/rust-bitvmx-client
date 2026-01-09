@@ -15,14 +15,19 @@ use bitcoin::{
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::identification::allow_list::AllowList;
-use protocol_builder::scripts::{build_taproot_spend_info, op_return_script, timelock, SignMode};
+use protocol_builder::scripts::{
+    build_taproot_spend_info, op_return_script, timelock, verify_signature, SignMode,
+};
 use std::str::FromStr;
 use tracing::{error, info};
 
 use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
-    program::{protocols::union::types::SPEEDUP_VALUE, variables::PartialUtxo},
+    program::{
+        protocols::union::types::{DUST_VALUE, SPEEDUP_VALUE},
+        variables::PartialUtxo,
+    },
     spv_proof::BtcTxSPVProof,
     types::OutgoingBitVMXApiMessages::*,
 };
@@ -95,6 +100,7 @@ impl User {
         &mut self,
         committee_public_key: &PublicKey,
         stream_value: u64,
+        dispute_keys: &[PublicKey],
     ) -> Result<Txid> {
         info!(id = self.id, "Requesting pegin");
 
@@ -105,8 +111,12 @@ impl User {
         let packet_number = 0;
 
         // We'll create a transaction that will be detected as RSK pegin by the transaction monitor.
-        let signed_transaction =
-            self.create_request_pegin_tx(*committee_public_key, stream_value, packet_number)?;
+        let signed_transaction = self.create_request_pegin_tx(
+            *committee_public_key,
+            stream_value,
+            packet_number,
+            dispute_keys,
+        )?;
 
         let txid = match self.bitcoin_client.send_transaction(&signed_transaction) {
             Ok(txid) => txid,
@@ -148,34 +158,6 @@ impl User {
         Ok(self.public_key)
     }
 
-    pub fn create_and_send_request_pegin_tx(
-        &mut self,
-        aggregated_pubkey: PublicKey,
-        stream_value: u64,
-        packet_number: u64,
-    ) -> Result<Txid> {
-        // We'll create a transaction that will be detected as RSK pegin by the transaction monitor.
-        let signed_transaction =
-            self.create_request_pegin_tx(aggregated_pubkey, stream_value, packet_number)?;
-
-        let txid = match self.bitcoin_client.send_transaction(&signed_transaction) {
-            Ok(txid) => txid,
-            Err(e) => {
-                error!("Failed to send request pegin transaction: {}", e);
-                return Err(anyhow::anyhow!(
-                    "Failed to send request pegin transaction: {}",
-                    e
-                ));
-            }
-        };
-
-        // Get the transaction and verify it was created
-        let request_pegin_tx = self.bitcoin_client.get_transaction(&txid)?.unwrap();
-        let request_pegin_txid = request_pegin_tx.compute_txid();
-
-        Ok(request_pegin_txid)
-    }
-
     pub fn dispatch_tx(&self, tx: Transaction) -> Result<Txid> {
         let txid = self
             .bitcoin_client
@@ -190,6 +172,7 @@ impl User {
         aggregated_key: PublicKey,
         stream_value: u64,
         packet_number: u64,
+        dispute_keys: &[PublicKey],
     ) -> Result<Transaction> {
         pub const TIMELOCK_BLOCKS: u16 = 1;
         let fee = KEY_SPEND_FEE + OP_RETURN_FEE + self.get_extra_fee();
@@ -203,7 +186,7 @@ impl User {
             }
         };
         let input_value = input_utxo.2.unwrap();
-        let change_value = input_value - (stream_value + fee);
+        let change_value = input_value - (stream_value + fee + DUST_VALUE);
 
         info!(
             "Creating request pegin transaction with value: {} sats, total fee: {} sats. Input value: {}. Change: {}",
@@ -262,7 +245,33 @@ impl User {
             script_pubkey: op_return_script(op_return_data)?.get_script().clone(),
         };
 
-        let mut outputs = Vec::<TxOut>::from([taproot_output.clone(), op_return_output.clone()]);
+        let mut reject_pegin_scripts = vec![];
+        for key in dispute_keys {
+            reject_pegin_scripts.push(verify_signature(key, SignMode::Single)?)
+        }
+
+        let reject_spend_info = build_taproot_spend_info(
+            &self.secp,
+            &aggregated_key.into(),
+            &reject_pegin_scripts.as_slice(),
+        )?;
+
+        let reject_script_pubkey = ScriptBuf::new_p2tr(
+            &self.secp,
+            reject_spend_info.internal_key(),
+            reject_spend_info.merkle_root(),
+        );
+
+        let reject_output = TxOut {
+            value: Amount::from_sat(DUST_VALUE),
+            script_pubkey: reject_script_pubkey,
+        };
+
+        let mut outputs = Vec::<TxOut>::from([
+            taproot_output.clone(),
+            op_return_output.clone(),
+            reject_output.clone(),
+        ]);
 
         // Change output
         if change_value > 546 {
@@ -515,6 +524,6 @@ impl User {
     }
 
     pub fn get_request_pegin_fees(&self) -> u64 {
-        return self.get_extra_fee() + OP_RETURN_FEE + KEY_SPEND_FEE;
+        return self.get_extra_fee() + OP_RETURN_FEE + KEY_SPEND_FEE + DUST_VALUE;
     }
 }
