@@ -3,18 +3,24 @@ use std::collections::HashMap;
 use crate::{
     errors::BitVMXError,
     program::{
-        participant::ParticipantKeys,
+        participant::{ParticipantKeys, PublicKeyType},
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
-            union::types::{
-                Committee, RejectPeginData, DUST_VALUE, REJECT_PEGIN_TX, REQUEST_PEGIN_TX,
+            union::{
+                common::{collect_input_signatures, InputSigningInfo},
+                types::{
+                    Committee, RejectPeginData, DUST_VALUE, REJECT_PEGIN_TX, REQUEST_PEGIN_TX,
+                    SPEEDUP_KEY, SPEEDUP_VALUE,
+                },
             },
         },
+        variables::VariableTypes,
     },
     types::ProgramContext,
 };
-use bitcoin::{script::PushBytesBuf, Amount, PublicKey, ScriptBuf, Transaction, Txid};
+use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
+use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::{
     builder::Protocol,
     graph::graph::GraphOptions,
@@ -23,7 +29,7 @@ use protocol_builder::{
         connection::InputSpec,
         input::{SighashType, SpendMode},
         output::SpeedupData,
-        InputArgs, OutputType,
+        OutputType, Utxo,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -51,8 +57,21 @@ impl ProtocolHandler for RejectPegInProtocol {
         Ok([].to_vec())
     }
 
-    fn generate_keys(&self, _context: &mut ProgramContext) -> Result<ParticipantKeys, BitVMXError> {
-        Ok(ParticipantKeys::new(vec![], vec![]))
+    fn generate_keys(&self, context: &mut ProgramContext) -> Result<ParticipantKeys, BitVMXError> {
+        let keys = &mut vec![];
+        let speedup_key = context.key_chain.derive_keypair(BitcoinKeyType::P2tr)?;
+
+        keys.push((
+            SPEEDUP_KEY.to_string(),
+            PublicKeyType::Public(speedup_key.clone()),
+        ));
+
+        context.globals.set_var(
+            &self.ctx.id,
+            SPEEDUP_KEY,
+            VariableTypes::PubKey(speedup_key),
+        )?;
+        Ok(ParticipantKeys::new(keys.to_vec(), vec![]))
     }
 
     fn build(
@@ -81,7 +100,7 @@ impl ProtocolHandler for RejectPegInProtocol {
         protocol.add_connection(
             "accept_enabler_conn",
             REQUEST_PEGIN_TX,
-            OutputType::taproot(DUST_VALUE, &take_aggregated_key, &enabler_scripts)?.into(),
+            OutputType::taproot(2 * DUST_VALUE, &take_aggregated_key, &enabler_scripts)?.into(),
             REJECT_PEGIN_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
@@ -93,18 +112,11 @@ impl ProtocolHandler for RejectPegInProtocol {
             Some(pegin_request_txid),
         )?;
 
-        // NOTE: Need to add some bytes to OP_RETURN to reach the minimum tx size
-        let message = "disable_request_pegin";
-        let mut data = PushBytesBuf::with_capacity(message.len());
-        data.extend_from_slice(message.as_bytes())
-            .map_err(|_| BitVMXError::SerializationError)?;
+        let speedup_key = self.my_speedup_key(context)?;
 
         protocol.add_transaction_output(
             REJECT_PEGIN_TX,
-            &OutputType::SegwitUnspendable {
-                value: Amount::from_sat(0),
-                script_pubkey: ScriptBuf::new_op_return(&data),
-            },
+            &OutputType::segwit_key(SPEEDUP_VALUE, &speedup_key)?,
         )?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
@@ -199,19 +211,28 @@ impl RejectPegInProtocol {
             "Loading {} for RejectPeginProtocol. Member leaf index: {}", name, member_leaf_index
         );
 
-        let protocol: Protocol = self.load_protocol()?;
-        let enabler_signature = protocol
-            .input_taproot_script_spend_signature(name, 0, member_leaf_index)?
-            .unwrap();
+        let mut protocol: Protocol = self.load_protocol()?;
 
-        let mut enabler_input = InputArgs::new_taproot_script_args(member_leaf_index);
-        enabler_input.push_taproot_signature(enabler_signature)?;
+        let args = collect_input_signatures(
+            &mut protocol,
+            name,
+            &vec![InputSigningInfo::ScriptSpend {
+                input_index: 0,
+                script_index: member_leaf_index,
+                winternitz_data: None,
+            }],
+        )?;
 
-        let tx = self
-            .load_protocol()?
-            .transaction_to_send(name, &[enabler_input])?;
+        let tx = self.load_protocol()?.transaction_to_send(name, &args)?;
 
-        Ok((tx, None))
+        let speedup_utxo = Utxo::new(
+            tx.compute_txid(),
+            (tx.output.len() - 1) as u32,
+            SPEEDUP_VALUE,
+            &self.my_speedup_key(context)?,
+        );
+
+        Ok((tx, Some(speedup_utxo.into())))
     }
 
     fn committee(
@@ -227,5 +248,13 @@ impl RejectPegInProtocol {
 
         let committee: Committee = serde_json::from_str(&committee)?;
         Ok(committee)
+    }
+
+    fn my_speedup_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+        Ok(context
+            .globals
+            .get_var(&self.ctx.id, SPEEDUP_KEY)?
+            .unwrap()
+            .pubkey()?)
     }
 }
