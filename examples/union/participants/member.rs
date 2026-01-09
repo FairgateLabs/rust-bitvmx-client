@@ -596,7 +596,10 @@ impl Member {
             protocol_id,
             tx_name.clone()
         );
-        self.bitvmx.dispatch_transaction(protocol_id, tx.clone())?;
+
+        // This method also dispatch speedup transactions if applicable
+        self.bitvmx
+            .dispatch_transaction_name(protocol_id, tx_name)?;
         thread::sleep(std::time::Duration::from_secs(1));
         Ok(tx)
     }
