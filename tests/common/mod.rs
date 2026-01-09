@@ -145,14 +145,8 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
         std::thread::sleep(std::time::Duration::from_secs(2));
         None
     } else {
-        let bitcoind_config = BitcoindConfig::new(
-            "bitcoin-regtest".to_string(),
-            "bitcoin/bitcoin:29.1".to_string(),
-            None,
-        );
-
         let bitcoind_instance = Bitcoind::new(
-            bitcoind_config,
+            BitcoindConfig::default(),
             wallet_config.bitcoin.clone(),
             Some(BitcoindFlags {
                 min_relay_tx_fee: 0.00001,

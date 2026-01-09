@@ -90,9 +90,9 @@ pub fn stop_existing_bitcoind() -> Result<()> {
 
     // Create a temporary Bitcoind instance to check if one is running and stop it
     let temp_bitcoind = Bitcoind::new(
-        "bitcoin-regtest",
-        "bitcoin/bitcoin:29.1",
-        config.bitcoin.clone(),
+        BitcoindConfig::default(),
+        config.bitcoin,
+        None,
     );
 
     // Attempt to stop any existing instance
@@ -118,18 +118,14 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind)> {
     // Wallet::clear_db(&config.wallet)?;
 
     info!("Starting bitcoind");
-    let bitcoind_config = BitcoindConfig::new(
-        "bitcoin-regtest".to_string(),
-        "bitcoin/bitcoin:29.1".to_string(),
-        None,
-        config.bitcoin.clone(),
-    );
+    let bitcoind_config = BitcoindConfig::default();
 
     let bitcoind = match HIGH_FEE_NODE_ENABLED {
         true => {
             // Config to trigger speedup transactions in Regtest
             Bitcoind::new(
                 bitcoind_config,
+                config.bitcoin.clone(),
                 Some(BitcoindFlags {
                     min_relay_tx_fee: 0.00001,
                     block_min_tx_fee: 0.00008,
@@ -140,6 +136,7 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind)> {
         }
         false => Bitcoind::new(
             bitcoind_config,
+            config.bitcoin.clone(),
             None
         ),
     };
