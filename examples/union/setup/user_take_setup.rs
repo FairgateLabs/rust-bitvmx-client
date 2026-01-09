@@ -18,14 +18,11 @@ impl UserTakeSetup {
     #[allow(clippy::too_many_arguments)]
     pub fn setup(
         committee_id: Uuid,
-        stream_id: u64,
-        packet_number: u64,
         slot_index: usize,
         amount: u64,
         pegout_id: Vec<u8>,
-        pegout_signature_hash: Vec<u8>,
-        pegout_signature_message: Vec<u8>,
         user_pubkey: PublicKey,
+        user_take_sighash: &[u8],
         take_aggregated_key: PublicKey,
         my_id: &str,
         bitvmx: &BitVMXClient,
@@ -39,14 +36,11 @@ impl UserTakeSetup {
 
         let pegout_request = PegOutRequest {
             committee_id,
-            stream_id,
-            packet_number,
             slot_index,
             amount,
             pegout_id,
-            pegout_signature_hash,
-            pegout_signature_message,
             user_pubkey: user_pubkey.clone(),
+            pegout_sighash: user_take_sighash.to_vec(),
             take_aggregated_key,
         };
 
