@@ -519,11 +519,11 @@ impl<'a> InputSigningInfo<'a> {
                 script_index: None,
                 source: e,
             })?;
-        let mut args = InputArgs::new_taproot_key_args();
-        let sig_index = if let Some(script_idx) = script_index {
-            script_idx
+
+        let (sig_index, mut args) = if let Some(script_idx) = script_index {
+            (script_idx, InputArgs::new_taproot_script_args(script_idx))
         } else {
-            signatures.len() - 1
+            (signatures.len() - 1, InputArgs::new_taproot_key_args())
         };
         let signature = signatures[sig_index].ok_or_else(|| BitVMXError::ErrorSigningInput {
             tx_name: name.to_string(),

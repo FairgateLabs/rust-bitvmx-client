@@ -26,8 +26,8 @@ use crate::{
                 common::{collect_input_signatures, indexed_name, InputSigningInfo},
                 errors::{ProtocolError, ProtocolErrorType},
                 types::{
-                    PegOutAccepted, PegOutRequest, ACCEPT_PEGIN_TX, SPEEDUP_VALUE, USER_TAKE_FEE,
-                    USER_TAKE_TX,
+                    PegOutAccepted, PegOutRequest, ACCEPT_PEGIN_TX, CANCEL_TAKE0_TX, SPEEDUP_VALUE,
+                    USER_TAKE_FEE, USER_TAKE_TX,
                 },
             },
         },
@@ -101,6 +101,28 @@ impl ProtocolHandler for UserTakeProtocol {
             Some(accept_pegin_utxo.0),
         )?;
 
+        let etake_utxo = self.etake_utxo(
+            context,
+            &pegout_request.committee_id,
+            pegout_request.slot_index,
+        )?;
+
+        // Connect the user take transaction with the Accept pegin Etake0 enabler output
+        protocol.add_connection(
+            "user_take",
+            ACCEPT_PEGIN_TX,
+            OutputSpec::Auto(etake_utxo.3.unwrap()),
+            USER_TAKE_TX,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::KeyOnly {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            Some(etake_utxo.0),
+        )?;
+
         // Add the user output to the user take transaction
         let user_amount =
             self.checked_sub(accept_pegin_utxo.2.unwrap(), USER_TAKE_FEE + SPEEDUP_VALUE)?;
@@ -135,12 +157,12 @@ impl ProtocolHandler for UserTakeProtocol {
             .as_ref()
             .to_vec();
 
-        if user_take_sighash != pegout_request.pegout_signature_hash {
+        if user_take_sighash != pegout_request.pegout_sighash {
             let error = ProtocolError {
                 uuid: self.ctx.id,
                 protocol_name: self.ctx.protocol_name.clone(),
                 source: ProtocolErrorType::InvalidSighash {
-                    expected: hex::encode(pegout_request.pegout_signature_hash),
+                    expected: hex::encode(pegout_request.pegout_sighash),
                     found: hex::encode(user_take_sighash.clone()),
                 },
             };
@@ -234,11 +256,27 @@ impl UserTakeProtocol {
         let args = collect_input_signatures(
             &mut protocol,
             USER_TAKE_TX,
-            &vec![InputSigningInfo::KeySpend { input_index: 0 }],
+            &vec![
+                InputSigningInfo::KeySpend { input_index: 0 },
+                InputSigningInfo::KeySpend { input_index: 1 },
+            ],
         )?;
 
         let tx = protocol.transaction_to_send(USER_TAKE_TX, &args)?;
         Ok(tx)
+    }
+
+    fn etake_utxo(
+        &self,
+        context: &ProgramContext,
+        committee_id: &Uuid,
+        slot_index: usize,
+    ) -> Result<PartialUtxo, BitVMXError> {
+        Ok(context
+            .globals
+            .get_var(committee_id, &indexed_name(CANCEL_TAKE0_TX, slot_index))?
+            .unwrap()
+            .utxo()?)
     }
 
     pub fn send_pegout_accepted(

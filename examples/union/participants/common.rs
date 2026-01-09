@@ -24,7 +24,7 @@ pub fn get_user_take_tx(
     accept_pegin_txid: Txid,
     user_pubkey: PublicKey,
 ) -> Transaction {
-    let txin = bitcoin::TxIn {
+    let txin_0 = bitcoin::TxIn {
         previous_output: bitcoin::OutPoint {
             txid: accept_pegin_txid,
             vout: 0,
@@ -34,19 +34,29 @@ pub fn get_user_take_tx(
         witness: Witness::default(),                // Filled in after, at signing time.
     };
 
+    let txin_1 = bitcoin::TxIn {
+        previous_output: bitcoin::OutPoint {
+            txid: accept_pegin_txid,
+            vout: 1,
+        },
+        script_sig: ScriptBuf::default(), // For a p2wpkh script_sig is empty.
+        sequence: Sequence::ENABLE_RBF_NO_LOCKTIME, // we want to be able to replace this transaction
+        witness: Witness::default(),                // Filled in after, at signing time.
+    };
+
     let accept_pegin_input = stream_value - P2TR_FEE - SPEEDUP_VALUE;
-    let user_take_output_value = accept_pegin_input - SPEEDUP_VALUE - USER_TAKE_FEE;
+    let user_take_output_value = accept_pegin_input - 2 * SPEEDUP_VALUE - USER_TAKE_FEE;
 
     // Build two P2WPKH outputs paying to the user's public key (1000 sats each)
     let wpkh = user_pubkey.wpubkey_hash().expect("key is compressed");
     let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
 
-    let tx_out1 = TxOut {
+    let tx_out0 = TxOut {
         value: Amount::from_sat(user_take_output_value),
         script_pubkey: script_pubkey.clone().into(),
     };
 
-    let tx_out2 = TxOut {
+    let tx_out1 = TxOut {
         value: Amount::from_sat(SPEEDUP_VALUE),
         script_pubkey: script_pubkey.into(),
     };
@@ -54,8 +64,8 @@ pub fn get_user_take_tx(
     Transaction {
         version: transaction::Version::TWO,  // Post BIP-68.
         lock_time: absolute::LockTime::ZERO, // Ignore the transaction lvl absolute locktime.
-        input: vec![txin],
-        output: vec![tx_out1, tx_out2],
+        input: vec![txin_0, txin_1],
+        output: vec![tx_out0, tx_out1],
     }
 }
 
@@ -94,6 +104,7 @@ pub fn get_default_union_settings() -> UnionSettings {
             input_not_revealed_timelock: 8,
             op_no_cosign_timelock: 12,
             wt_no_challenge_timelock: 12,
+            request_pegin_timelock: 12,
         },
     );
 
@@ -107,6 +118,7 @@ pub fn get_default_union_settings() -> UnionSettings {
             input_not_revealed_timelock: 8,
             op_no_cosign_timelock: 12,
             wt_no_challenge_timelock: 12,
+            request_pegin_timelock: 12,
         },
     );
 
@@ -120,6 +132,7 @@ pub fn get_default_union_settings() -> UnionSettings {
             input_not_revealed_timelock: 8,
             op_no_cosign_timelock: 12,
             wt_no_challenge_timelock: 12,
+            request_pegin_timelock: 12,
         },
     );
 
