@@ -14,11 +14,10 @@ use crate::{
                 },
                 types::{
                     Committee, PegInAccepted, PegInRequest, StreamSettings, ACCEPT_PEGIN_TX,
-                    CANCEL_TAKE0_TX, DUST_VALUE, LAST_OPERATOR_TAKE_UTXO, LAST_OPERATOR_TAKE_UTXO,
-                    OPERATOR_LEAF_INDEX, OPERATOR_TAKE_ENABLER, OPERATOR_TAKE_TX,
-                    OPERATOR_WON_ENABLER, OPERATOR_WON_TX, P2TR_FEE, REIMBURSEMENT_KICKOFF_TX,
-                    REQUEST_PEGIN_TX, REVEAL_IN_PROGRESS, SPEEDUP_KEY, SPEEDUP_VALUE,
-                    TAKE_AGGREGATED_KEY,
+                    CANCEL_TAKE0_TX, DUST_VALUE, LAST_OPERATOR_TAKE_UTXO, OPERATOR_TAKE_ENABLER,
+                    OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX, P2TR_FEE,
+                    REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, REVEAL_IN_PROGRESS, SPEEDUP_KEY,
+                    SPEEDUP_VALUE, TAKE_AGGREGATED_KEY,
                 },
             },
         },
@@ -743,45 +742,30 @@ impl AcceptPegInProtocol {
         Ok((tx, Some(speedup_utxo.into())))
     }
 
-    fn operator_leaf_index(&self, context: &ProgramContext) -> Result<usize, BitVMXError> {
-        Ok(context
-            .globals
-            .get_var(&self.ctx.id, OPERATOR_LEAF_INDEX)?
-            .unwrap()
-            .number()? as usize)
-    }
-
     fn cancel_take0_tx(
         &self,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        let member_leaf_index = self.ctx.my_idx;
         let name = CANCEL_TAKE0_TX;
-
         info!(
             id = self.ctx.my_idx,
-            "Loading {} for AcceptPegInProtocol. Member leaf index: {}", name, member_leaf_index
+            "Loading {} for AcceptPegInProtocol. Member leaf index: {}", name, self.ctx.my_idx
         );
 
         let mut protocol: Protocol = self.load_protocol()?;
 
-        // TODO: Update to use collect signatures
-        let enabler_signature = protocol.sign_taproot_input(
+        let args = collect_input_signatures(
+            &mut protocol,
             name,
-            0,
-            &SpendMode::Script {
-                leaf: member_leaf_index,
-            },
-            context.key_chain.key_manager.as_ref(),
-            "",
+            &vec![InputSigningInfo::SignTaproot {
+                input_index: 0,
+                script_index: Some(self.ctx.my_idx),
+                key_manager: context.key_chain.key_manager.as_ref(),
+                id: "".to_string(),
+            }],
         )?;
 
-        let mut enabler_input = InputArgs::new_taproot_script_args(member_leaf_index);
-        enabler_input.push_taproot_signature(enabler_signature[member_leaf_index].unwrap())?;
-
-        let tx = self
-            .load_protocol()?
-            .transaction_to_send(name, &[enabler_input])?;
+        let tx = self.load_protocol()?.transaction_to_send(name, &args)?;
 
         Ok((tx, None))
     }
