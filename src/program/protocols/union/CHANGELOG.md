@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - `RejectPegin` protocol to allow the committee to reject a pegin request.
 - `CANCEL_TAKE0_TX` transactions to consume `ACCEPT_PEGIN_TX` output enabler.
 - `request_pegin_timelock` to `StreamSettings`. It defines the time the user block funds while the committee accepts the pegin request.
+- `UnionSPVNotification` message to notify Union Client about SPV proofs related to advance funds and challenge transactions.
 
 ### Changed
 

@@ -261,6 +261,30 @@ impl FundsAdvanceSPV {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum UnionTxType {
+    ReimbursementKickoff,
+    OperatorTake,
+    OperatorWon,
+    Challenge,
+    RevealInput,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnionSPVNotification {
+    pub txid: Txid,
+    pub committee_id: Uuid,
+    pub slot_index: usize,
+    pub spv_proof: Option<BtcTxSPVProof>,
+    pub tx_type: UnionTxType,
+}
+
+impl UnionSPVNotification {
+    pub fn name() -> String {
+        "union_spv_notification".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FullPenalizationData {
     pub committee_id: Uuid,
 }

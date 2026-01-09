@@ -13,20 +13,22 @@ use crate::{
                     indexed_name, load_union_settings, InputSigningInfo,
                 },
                 types::{
-                    Committee, PegInAccepted, PegInRequest, StreamSettings, ACCEPT_PEGIN_TX,
-                    CANCEL_TAKE0_TX, DUST_VALUE, LAST_OPERATOR_TAKE_UTXO, OPERATOR_TAKE_ENABLER,
-                    OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX, P2TR_FEE,
-                    REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, REVEAL_IN_PROGRESS, SPEEDUP_KEY,
-                    SPEEDUP_VALUE, TAKE_AGGREGATED_KEY,
+                    Committee, PegInAccepted, PegInRequest, StreamSettings, UnionSPVNotification,
+                    UnionTxType, ACCEPT_PEGIN_TX, CANCEL_TAKE0_TX, DUST_VALUE,
+                    LAST_OPERATOR_TAKE_UTXO, OPERATOR_TAKE_ENABLER, OPERATOR_TAKE_TX,
+                    OPERATOR_WON_ENABLER, OPERATOR_WON_TX, P2TR_FEE, REIMBURSEMENT_KICKOFF_TX,
+                    REQUEST_PEGIN_TX, REVEAL_IN_PROGRESS, SPEEDUP_KEY, SPEEDUP_VALUE,
+                    TAKE_AGGREGATED_KEY,
                 },
             },
         },
         variables::{PartialUtxo, VariableTypes},
     },
+    spv_proof::get_spv_proof,
     types::{OutgoingBitVMXApiMessages, ProgramContext},
 };
 use bitcoin::{hex::FromHex, PublicKey, Transaction, Txid};
-use bitcoin_coordinator::TransactionStatus;
+use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
@@ -344,13 +346,15 @@ impl ProtocolHandler for AcceptPegInProtocol {
         );
 
         if tx_name.starts_with(OPERATOR_TAKE_TX) || tx_name.starts_with(OPERATOR_WON_TX) {
-            let operator_index = match tx_name.clone() {
-                name if name.starts_with(OPERATOR_TAKE_TX) => {
-                    extract_index(&tx_name.clone(), OPERATOR_TAKE_TX)?
-                }
-                name if name.starts_with(OPERATOR_WON_TX) => {
-                    extract_index(&tx_name.clone(), OPERATOR_WON_TX)?
-                }
+            let (operator_index, tx_type) = match tx_name.clone() {
+                name if name.starts_with(OPERATOR_TAKE_TX) => (
+                    extract_index(&tx_name.clone(), OPERATOR_TAKE_TX)?,
+                    UnionTxType::OperatorTake,
+                ),
+                name if name.starts_with(OPERATOR_WON_TX) => (
+                    extract_index(&tx_name.clone(), OPERATOR_WON_TX)?,
+                    UnionTxType::OperatorWon,
+                ),
                 _ => {
                     return Err(BitVMXError::InvalidTransactionName(format!(
                         "{} is not supported to call update_operator_take_utxo",
@@ -379,6 +383,8 @@ impl ProtocolHandler for AcceptPegInProtocol {
 
                 self.update_operator_take_utxo(context, utxo)?;
             }
+
+            self.send_spv_notification(context, tx_id, tx_type)?;
         }
 
         Ok(())
@@ -960,5 +966,52 @@ impl AcceptPegInProtocol {
         } else {
             SignMode::Skip
         }
+    }
+
+    fn send_spv_notification(
+        &self,
+        context: &ProgramContext,
+        txid: Txid,
+        tx_type: UnionTxType,
+    ) -> Result<(), BitVMXError> {
+        let tx_info = context.bitcoin_coordinator.get_transaction(txid);
+
+        let proof = match tx_info {
+            Ok(utx) => Some(get_spv_proof(txid, utx.block_info.unwrap())?),
+            Err(e) => {
+                warn!(
+                    "Failed to retrieve transaction info for txid {}: {:?}",
+                    txid, e
+                );
+                None
+            }
+        };
+
+        let request = self.pegin_request(context)?;
+
+        let response = UnionSPVNotification {
+            txid,
+            committee_id: request.committee_id,
+            slot_index: request.slot_index,
+            spv_proof: proof,
+            tx_type: tx_type.clone(),
+        };
+
+        let data = serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(
+            self.ctx.id,
+            UnionSPVNotification::name(),
+            VariableTypes::String(serde_json::to_string(&response)?),
+        ))?;
+
+        info!(
+            id = self.ctx.my_idx,
+            "Sending {:#?} SPV data: {}", tx_type, data
+        );
+
+        context
+            .broker_channel
+            .send(&context.components_config.l2, data)?;
+
+        Ok(())
     }
 }
