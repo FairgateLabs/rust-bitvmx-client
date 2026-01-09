@@ -280,7 +280,6 @@ pub struct StreamSettings {
     pub input_not_revealed_timelock: u16,
     pub op_no_cosign_timelock: u16,
     pub wt_no_challenge_timelock: u16,
-    pub cancel_take0_timelock: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
