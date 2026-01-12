@@ -25,6 +25,7 @@ use crate::program::protocols::union::full_penalization::FullPenalizationProtoco
 
 #[cfg(feature = "cardinal")]
 use super::cardinal::{lock::LockProtocol, slot::SlotProtocol, transfer::TransferProtocol};
+use super::collaboration::CollaborationProtocol;
 use super::dispute::DisputeResolutionProtocol;
 
 #[cfg(feature = "union")]
@@ -44,7 +45,7 @@ use crate::types::{
 #[cfg(feature = "cardinal")]
 use crate::types::{PROGRAM_TYPE_LOCK, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TRANSFER};
 
-use crate::types::{ProgramContext, PROGRAM_TYPE_DRP};
+use crate::types::{ProgramContext, PROGRAM_TYPE_COLLABORATION, PROGRAM_TYPE_DRP};
 
 use crate::program::variables::WitnessTypes;
 use crate::program::{variables::VariableTypes, witness};
@@ -553,6 +554,7 @@ impl ProtocolContext {
 #[enum_dispatch(ProtocolHandler)]
 #[derive(Clone, Serialize, Deserialize)]
 pub enum ProtocolType {
+    CollaborationProtocol,
     DisputeResolutionProtocol,
     #[cfg(feature = "cardinal")]
     LockProtocol,
@@ -586,6 +588,9 @@ pub fn new_protocol_type(
     let ctx = ProtocolContext::new(id, &protocol_name, my_idx, storage);
 
     match name {
+        PROGRAM_TYPE_COLLABORATION => Ok(ProtocolType::CollaborationProtocol(
+            CollaborationProtocol::new(ctx),
+        )),
         PROGRAM_TYPE_DRP => Ok(ProtocolType::DisputeResolutionProtocol(
             DisputeResolutionProtocol::new(ctx),
         )),
@@ -635,4 +640,23 @@ pub fn external_fund_tx(
         internal_key,
         &spending_scripts,
     )?)
+}
+
+// Import SetupEngine types for UsesSetupSteps trait
+use crate::program::setup::{SetupStep, UsesSetupSteps};
+
+/// Implementation of UsesSetupSteps for ProtocolType.
+///
+/// This allows protocols to opt-in to the new SetupEngine-based setup system
+/// by returning their setup steps. Protocols that don't implement this yet
+/// return None, allowing gradual migration.
+impl UsesSetupSteps for ProtocolType {
+    fn setup_steps(&self) -> Option<Vec<Box<dyn SetupStep>>> {
+        // Delegate to protocol-specific implementations
+        match self {
+            ProtocolType::CollaborationProtocol(p) => p.setup_steps(),
+            // Other protocols not migrated yet return None
+            _ => None,
+        }
+    }
 }
