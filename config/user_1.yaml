@@ -66,7 +66,7 @@ client:
   retry_delay: 1000
 
 wallet:
-  receive_key: cRN57Z48ckBrksAn6TGv8SxCkhGxmHX2BybZZp3M8Wh5imnMxdwX
+  receive_key: cUKnd1JTShif7XhRZxjdHWYSGxaNszTj9aghUbc1Ri1i9eCT8rh4
   change_key: cP1ZRRhFSgaQ4dEqpERzt43eVkEJGko2VeWuedAz34M6H9Vjc6zo
   db_path: /tmp/regtest/user_1/wallet.db
   start_height: 0
