@@ -1,4 +1,5 @@
 use crate::config::ComponentsConfig;
+use crate::message_queue::QueuedMessage;
 use crate::ping_helper::{JobDispatcherType, PingHelper};
 use crate::program::program::is_active_program;
 use crate::program::protocols::protocol_handler::ProtocolHandler;
@@ -441,14 +442,10 @@ impl BitVMX {
         Ok(true)
     }
 
-    pub fn process_msg(
-        &mut self,
-        identifier: Identifier,
-        msg: Vec<u8>,
-        is_new_message: bool,
-    ) -> Result<(), BitVMXError> {
+    pub fn process_msg(&mut self, msg: QueuedMessage) -> Result<(), BitVMXError> {
+        let is_new_message = msg.retries == 0;
         let (version, msg_type, program_id, data, timestamp, signature) =
-            deserialize_msg(msg.clone())?;
+            deserialize_msg(msg.data.clone())?;
 
         // Handle Broadcasted messages specially - they contain original messages to process recursively
         if msg_type == CommsMessageType::Broadcasted {
@@ -458,7 +455,7 @@ impl BitVMX {
                 .leader_broadcast_helper
                 .process_broadcasted_message(
                     &self.program_context,
-                    identifier,
+                    msg.identifier,
                     program_id,
                     data,
                     &self.message_queue,
@@ -471,7 +468,7 @@ impl BitVMX {
         );
         if !is_verification_msg {
             let verified = self.verify_message_signature(
-                &identifier,
+                &msg.identifier,
                 &program_id,
                 &version,
                 &msg_type,
@@ -484,26 +481,27 @@ impl BitVMX {
                     "Buffering message due to missing verification key: {:?} {:?}",
                     program_id, msg_type
                 );
-                self.message_queue.push_back(identifier.to_string(), msg)?;
+                self.message_queue.push_back(msg)?;
                 return Ok(());
             }
         }
         if is_new_message {
             self.timestamp_verifier
-                .ensure_fresh(&identifier.pubkey_hash, timestamp)?;
+                .ensure_fresh(&msg.identifier.pubkey_hash, timestamp)?;
         }
-        let (program, collaboration, peer_address) =
-            if let Some(program) = self.load_program(&program_id).ok() {
-                let peer_address = program.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
+        let (program, collaboration, peer_address) = if let Some(program) =
+            self.load_program(&program_id).ok()
+        {
+            let peer_address = program.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
 
-                (Some(program), None, Some(peer_address))
-            } else if let Some(collaboration) = self.get_collaboration(&program_id)? {
-                let peer_address =
-                    collaboration.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
-                (None, Some(collaboration), Some(peer_address))
-            } else {
-                (None, None, None)
-            };
+            (Some(program), None, Some(peer_address))
+        } else if let Some(collaboration) = self.get_collaboration(&program_id)? {
+            let peer_address =
+                collaboration.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
+            (None, Some(collaboration), Some(peer_address))
+        } else {
+            (None, None, None)
+        };
 
         let message_consumed = match peer_address {
             Some(peer_address) => {
@@ -563,11 +561,11 @@ impl BitVMX {
 
         if message_consumed {
             self.timestamp_verifier
-                .record(&identifier.pubkey_hash, timestamp);
+                .record(&msg.identifier.pubkey_hash, timestamp);
         } else {
             // Message needs to be buffered (not processed or program/collaboration not found)
             info!("Pending message to back: {:?}", msg_type);
-            self.message_queue.push_back(identifier.to_string(), msg)?;
+            self.message_queue.push_back(msg)?;
         }
         Ok(())
     }
@@ -577,17 +575,8 @@ impl BitVMX {
             return Ok(());
         }
 
-        if let Some((identifier_str, msg)) = self.message_queue.pop_front()? {
-            // Parse the identifier string back to Identifier
-            // All messages in the queue are stored as Identifier strings (from identifier.to_string())
-            let identifier = identifier_str.parse::<Identifier>().map_err(|e| {
-                error!(
-                    "Failed to parse Identifier from '{}': {}",
-                    identifier_str, e
-                );
-                BitVMXError::InvalidCommsAddress(format!("{}: {}", identifier_str, e))
-            })?;
-            self.process_msg(identifier, msg, false)?;
+        if let Some(msg) = self.message_queue.pop_front()? {
+            self.process_msg(msg)?;
         }
         Ok(())
     }
@@ -605,7 +594,8 @@ impl BitVMX {
         for message in messages.unwrap() {
             match message {
                 ReceiveHandlerChannel::Msg(identifier, msg) => {
-                    self.process_msg(identifier, msg, true)?;
+                    let msg: QueuedMessage = QueuedMessage::new(identifier, msg);
+                    self.process_msg(msg)?;
                 }
                 ReceiveHandlerChannel::Error(e) => {
                     info!("Error receiving message {}", e);

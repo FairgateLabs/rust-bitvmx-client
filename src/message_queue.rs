@@ -1,17 +1,32 @@
 use crate::errors::BitVMXError;
+use bitvmx_broker::identification::identifier::Identifier;
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 use storage_backend::storage::{KeyValueStore, Storage};
+use tracing::warn;
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct QueuedMessage {
-    pub identifier: String,
-    pub msg: Vec<u8>,
+    pub identifier: Identifier,
+    pub data: Vec<u8>,
+    pub retries: u8,
+}
+
+impl QueuedMessage {
+    pub fn new(identifier: Identifier, data: Vec<u8>) -> Self {
+        Self {
+            identifier,
+            data,
+            retries: 0,
+        }
+    }
 }
 
 const QUEUE_IDS_KEY: &str = "bitvmx/message_queue/ids";
 const MSG_KEY_PREFIX: &str = "bitvmx/message_queue/msg/";
+pub const MAX_MESSAGE_RETRIES: u8 = 3; // Maximum number of retries for sending messages
+                                       // until message is dropped from pending queue
 
 pub struct MessageQueue {
     storage: Rc<Storage>,
@@ -34,9 +49,25 @@ impl MessageQueue {
         Ok(())
     }
 
-    pub fn push_back(&self, identifier: String, msg: Vec<u8>) -> Result<(), BitVMXError> {
+    pub fn push_back(&self, mut queued_msg: QueuedMessage) -> Result<(), BitVMXError> {
+        queued_msg.retries += 1;
+
+        if queued_msg.retries > MAX_MESSAGE_RETRIES {
+            // TODO: Notify about dropped message
+            warn!("Dropping message after {} retries", queued_msg.retries);
+            return Ok(());
+        }
+
+        self.push(queued_msg)
+    }
+
+    pub fn push_new(&self, identifier: Identifier, msg: Vec<u8>) -> Result<(), BitVMXError> {
+        let queued_msg = QueuedMessage::new(identifier, msg);
+        self.push(queued_msg)
+    }
+
+    fn push(&self, queued_msg: QueuedMessage) -> Result<(), BitVMXError> {
         let id = Uuid::new_v4();
-        let queued_msg = QueuedMessage { identifier, msg };
 
         // Save message content
         self.storage
@@ -51,7 +82,7 @@ impl MessageQueue {
         Ok(())
     }
 
-    pub fn pop_front(&self) -> Result<Option<(String, Vec<u8>)>, BitVMXError> {
+    pub fn pop_front(&self) -> Result<Option<QueuedMessage>, BitVMXError> {
         let mut ids = self.get_queue_ids()?;
         if ids.is_empty() {
             return Ok(None);
@@ -68,10 +99,7 @@ impl MessageQueue {
             .delete(&key)
             .map_err(BitVMXError::StorageError)?;
 
-        match queued_msg {
-            Some(m) => Ok(Some((m.identifier, m.msg))),
-            None => Ok(None), // Should not happen if consistency is maintained
-        }
+        Ok(queued_msg)
     }
 
     pub fn is_empty(&self) -> Result<bool, BitVMXError> {
