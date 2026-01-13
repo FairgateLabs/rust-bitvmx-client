@@ -823,6 +823,14 @@ impl Program {
                     self.my_idx
                 );
             }
+            CommsMessageType::SetupStepData => {
+                // SetupStepData is only used by ProgramV2 with SetupEngine
+                // Program (legacy) doesn't support this message type
+                debug!(
+                    "{}. SetupStepData message received but Program (legacy) doesn't support it - use ProgramV2",
+                    self.my_idx
+                );
+            }
         }
 
         Ok(())

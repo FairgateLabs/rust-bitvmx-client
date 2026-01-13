@@ -141,6 +141,9 @@ pub enum CommsMessageType {
     VerificationKey,
     VerificationKeyRequest,
     Broadcasted,
+    /// Generic message type for SetupEngine step data
+    /// Used by ProgramV2 - the actual step type is determined by SetupEngine
+    SetupStepData,
 }
 
 impl CommsMessageType {
@@ -155,6 +158,7 @@ impl CommsMessageType {
         (&CommsMessageType::VerificationKey, [0x00, 0x07]),
         (&CommsMessageType::VerificationKeyRequest, [0x00, 0x08]),
         (&CommsMessageType::Broadcasted, [0x00, 0x09]),
+        (&CommsMessageType::SetupStepData, [0x00, 0x0A]),
     ];
 
     // Convert message type to 2-byte representation
