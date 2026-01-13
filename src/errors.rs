@@ -175,6 +175,9 @@ pub enum BitVMXError {
     #[error("No public nonces found for aggregated public key {0} and id {1}")]
     MissingPublicNonces(String, String),
 
+    #[error("Missing parameter: {0}")]
+    MissingParameter(String),
+
     #[error("Wallet error {0}")]
     WalletError(#[from] bitvmx_wallet::wallet::errors::WalletError),
 
