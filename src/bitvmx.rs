@@ -32,6 +32,7 @@ use bitcoin_coordinator::{
     AckMonitorNews, MonitorNews, TypesToMonitor,
 };
 use bitvmx_broker::channel::queue_channel::{QueueChannel, ReceiveHandlerChannel};
+use bitvmx_broker::channel::retry_helper::RetryPolicy;
 use bitvmx_broker::identification::allow_list::AllowList;
 use bitvmx_broker::identification::routing::RoutingTable;
 use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
@@ -199,13 +200,15 @@ impl BitVMX {
         let timestamp_verifier =
             TimestampVerifier::new(timestamp_config.enabled, timestamp_config.max_drift_ms);
 
+        let message_queue = MessageQueue::new(store.clone(), RetryPolicy::default());
+
         Ok(Self {
             config,
             program_context,
             store: store.clone(),
             broker,
             count: 0,
-            message_queue: MessageQueue::new(store.clone()),
+            message_queue,
             timestamp_verifier,
             notified_request: HashSet::new(),
             notified_rsk_pegin: HashSet::new(),
@@ -443,7 +446,7 @@ impl BitVMX {
     }
 
     pub fn process_msg(&mut self, msg: QueuedMessage) -> Result<(), BitVMXError> {
-        let is_new_message = msg.retries == 0;
+        let is_new_message = msg.retry_state.get_attempts() == 0;
         let (version, msg_type, program_id, data, timestamp, signature) =
             deserialize_msg(msg.data.clone())?;
 
@@ -594,7 +597,7 @@ impl BitVMX {
         for message in messages.unwrap() {
             match message {
                 ReceiveHandlerChannel::Msg(identifier, msg) => {
-                    let msg: QueuedMessage = QueuedMessage::new(identifier, msg);
+                    let msg: QueuedMessage = QueuedMessage::new(identifier, msg)?;
                     self.process_msg(msg)?;
                 }
                 ReceiveHandlerChannel::Error(e) => {

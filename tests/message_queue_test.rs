@@ -1,7 +1,9 @@
+use bitvmx_broker::channel::retry_helper::RetryPolicy;
 use bitvmx_broker::identification::identifier::Identifier;
-use bitvmx_client::message_queue::{MessageQueue, QueuedMessage, MAX_MESSAGE_RETRIES};
-use std::fs;
+use bitvmx_client::message_queue::{MessageQueue, QueuedMessage};
 use std::rc::Rc;
+use std::time::{Duration, Instant};
+use std::{fs, thread};
 use storage_backend::storage::Storage;
 use storage_backend::storage_config::StorageConfig;
 use uuid::Uuid;
@@ -16,17 +18,15 @@ fn test_message_queue_persistence() {
 
     // Create storage and queue
     let storage = Rc::new(Storage::new(&config).unwrap());
-    let queue = MessageQueue::new(storage.clone());
+    let queue = MessageQueue::new(storage.clone(), RetryPolicy::default());
 
     // Push messages
     let msg1 = vec![1, 2, 3];
     let msg2 = vec![4, 5, 6];
     let id1 = Identifier::new("id1".to_string(), 0);
     let id2 = Identifier::new("id2".to_string(), 0);
-    let queued_message1 = QueuedMessage::new(id1.clone(), msg1.clone());
-    let queued_message2 = QueuedMessage::new(id2.clone(), msg2.clone());
-    queue.push_back(queued_message1).unwrap();
-    queue.push_back(queued_message2).unwrap();
+    queue.push_new(id1.clone(), msg1.clone()).unwrap();
+    queue.push_new(id2.clone(), msg2.clone()).unwrap();
 
     // Verify pop
     let msg = queue.pop_front().unwrap().unwrap();
@@ -38,7 +38,7 @@ fn test_message_queue_persistence() {
     drop(storage);
 
     let storage = Rc::new(Storage::new(&config).unwrap());
-    let queue = MessageQueue::new(storage.clone());
+    let queue = MessageQueue::new(storage.clone(), RetryPolicy::default());
 
     // Verify persistence
     let msg = queue.pop_front().unwrap().unwrap();
@@ -64,16 +64,16 @@ fn test_queue_no_starvation() {
 
     // Create storage and queue
     let storage = Rc::new(Storage::new(&config).unwrap());
-    let queue = MessageQueue::new(storage.clone());
+    let retry_policy = RetryPolicy::default();
+    let queue = MessageQueue::new(storage.clone(), retry_policy.clone());
 
     // Create poison message and valid message
     let poison_id = Identifier::new("poison".to_string(), 0);
     let good_id = Identifier::new("good".to_string(), 0);
     let poison_msg = vec![0xde, 0xad, 0xbe, 0xef];
     let good_msg = vec![1, 2, 3, 4];
-    let poison = QueuedMessage::new(poison_id.clone(), poison_msg.clone());
-    let good = QueuedMessage::new(good_id.clone(), good_msg.clone());
-
+    let poison = QueuedMessage::new(poison_id.clone(), poison_msg.clone()).unwrap();
+    let good = QueuedMessage::new(good_id.clone(), good_msg.clone()).unwrap();
     // Push poison first, then valid message
     queue
         .push_new(poison.identifier.clone(), poison.data.clone())
@@ -83,40 +83,38 @@ fn test_queue_no_starvation() {
         .unwrap();
 
     // Simulate repeated processing failures → requeue
-    for attempt in 0..=MAX_MESSAGE_RETRIES {
-        // Process poison (should fail and be requeued)
-        let msg = queue.pop_front().unwrap().unwrap();
-        println!("Processing msg attempt {}: {:?}", attempt, msg);
-        assert_eq!(msg.identifier, poison_id);
-        assert_eq!(msg.retries, attempt);
-        queue.push_back(msg).unwrap();
+    let start = Instant::now();
+    let timeout =
+        Duration::from_millis(retry_policy.max_delay_ms * retry_policy.max_attempts as u64);
 
-        // Process good (shlould fail until last attempt)
-        if attempt < MAX_MESSAGE_RETRIES {
-            let msg = queue.pop_front().unwrap().unwrap();
-            println!("Processing msg attempt {}: {:?}", attempt, msg);
-            assert_eq!(msg.identifier, good_id);
-            assert_eq!(msg.data, good_msg);
-            assert_eq!(msg.retries, attempt);
-            queue.push_back(msg).unwrap();
+    let mut good_seen = false;
+    let mut counter = 0;
+    while start.elapsed() < timeout {
+        if let Some(msg) = queue.pop_front().unwrap() {
+            if msg.identifier == poison_id {
+                counter += 1;
+                queue.push_back(msg).unwrap();
+            } else if msg.identifier == good_id {
+                assert_eq!(msg.data, good_msg);
+                assert!(!good_seen, "Good message seen multiple times");
+                good_seen = true;
+            }
         }
+        if queue.is_empty().unwrap() {
+            break; // Poison message exhausted retries and dropped
+        }
+        thread::sleep(Duration::from_millis(10));
     }
 
-    //Trying good message last attempt, should succeed
-    let msg = queue.pop_front().unwrap().unwrap();
-    assert_eq!(msg.identifier, good_id);
-    assert_eq!(msg.data, good_msg);
-    assert_eq!(msg.retries, MAX_MESSAGE_RETRIES);
-
-    // Queue should now be empty, poison message dropped
-    assert!(queue.pop_front().unwrap().is_none());
-
-    // Persistence check
-    drop(queue);
-    drop(storage);
-    let storage = Rc::new(Storage::new(&config).unwrap());
-    let queue = MessageQueue::new(storage.clone());
-    assert!(queue.pop_front().unwrap().is_none());
+    assert!(
+        queue.pop_front().unwrap().is_none(),
+        "Queue not empty after poison retries exhausted"
+    );
+    assert!(good_seen, "Good message was never processed");
+    assert_eq!(
+        counter, retry_policy.max_attempts as usize,
+        "Poison message was not retried the expected number of times"
+    );
 
     // Cleanup
     drop(queue);

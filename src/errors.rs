@@ -262,6 +262,9 @@ pub enum BitVMXError {
 
     #[error("Invalid Input: {0}")]
     InvalidInput(String),
+
+    #[error("Time error: {0}")]
+    TimeError(#[from] std::time::SystemTimeError),
 }
 
 impl<T> From<PoisonError<T>> for BitVMXError {

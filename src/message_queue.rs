@@ -1,5 +1,8 @@
 use crate::errors::BitVMXError;
-use bitvmx_broker::identification::identifier::Identifier;
+use bitvmx_broker::{
+    channel::retry_helper::{now_ms, RetryPolicy, RetryState},
+    identification::identifier::Identifier,
+};
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 use storage_backend::storage::{KeyValueStore, Storage};
@@ -10,31 +13,33 @@ use uuid::Uuid;
 pub struct QueuedMessage {
     pub identifier: Identifier,
     pub data: Vec<u8>,
-    pub retries: u8,
+    pub retry_state: RetryState,
 }
 
 impl QueuedMessage {
-    pub fn new(identifier: Identifier, data: Vec<u8>) -> Self {
-        Self {
+    pub fn new(identifier: Identifier, data: Vec<u8>) -> Result<Self, BitVMXError> {
+        Ok(Self {
             identifier,
             data,
-            retries: 0,
-        }
+            retry_state: RetryState::new(now_ms()?),
+        })
     }
 }
 
 const QUEUE_IDS_KEY: &str = "bitvmx/message_queue/ids";
 const MSG_KEY_PREFIX: &str = "bitvmx/message_queue/msg/";
-pub const MAX_MESSAGE_RETRIES: u8 = 3; // Maximum number of retries for sending messages
-                                       // until message is dropped from pending queue
 
 pub struct MessageQueue {
     storage: Rc<Storage>,
+    retry_policy: RetryPolicy,
 }
 
 impl MessageQueue {
-    pub fn new(storage: Rc<Storage>) -> Self {
-        Self { storage }
+    pub fn new(storage: Rc<Storage>, retry_policy: RetryPolicy) -> Self {
+        Self {
+            storage,
+            retry_policy,
+        }
     }
 
     fn get_queue_ids(&self) -> Result<Vec<Uuid>, BitVMXError> {
@@ -50,11 +55,16 @@ impl MessageQueue {
     }
 
     pub fn push_back(&self, mut queued_msg: QueuedMessage) -> Result<(), BitVMXError> {
-        queued_msg.retries += 1;
+        queued_msg
+            .retry_state
+            .record_attempt(&self.retry_policy, now_ms()?);
 
-        if queued_msg.retries > MAX_MESSAGE_RETRIES {
-            // TODO: Notify about dropped message
-            warn!("Dropping message after {} retries", queued_msg.retries);
+        if self.retry_policy.is_exhausted(&queued_msg.retry_state) {
+            warn!(
+                "Dropping message after {} attempts: {:?}",
+                queued_msg.retry_state.get_attempts(),
+                queued_msg.identifier
+            );
             return Ok(());
         }
 
@@ -62,7 +72,7 @@ impl MessageQueue {
     }
 
     pub fn push_new(&self, identifier: Identifier, msg: Vec<u8>) -> Result<(), BitVMXError> {
-        let queued_msg = QueuedMessage::new(identifier, msg);
+        let queued_msg = QueuedMessage::new(identifier, msg)?;
         self.push(queued_msg)
     }
 
@@ -88,18 +98,36 @@ impl MessageQueue {
             return Ok(None);
         }
 
-        let id = ids.remove(0);
+        let now = now_ms()?;
+        let original_len = ids.len();
+
+        for _ in 0..original_len {
+            let id = ids.remove(0);
+            let key = format!("{}{}", MSG_KEY_PREFIX, id);
+
+            let queued_msg: Option<QueuedMessage> = self.storage.get(&key)?;
+            let Some(msg) = queued_msg else {
+                continue; // Empty message, skip //TODO: Is this possible?
+            };
+
+            // If not ready, rotate to back of queue
+            if !msg.retry_state.is_ready(now) {
+                ids.push(id);
+                continue;
+            }
+
+            // If ready, return message
+            self.save_queue_ids(ids)?;
+            self.storage
+                .delete(&key)
+                .map_err(BitVMXError::StorageError)?;
+
+            return Ok(Some(msg));
+        }
+
+        // If we reach here, no messages were ready
         self.save_queue_ids(ids)?;
-
-        let key = format!("{}{}", MSG_KEY_PREFIX, id);
-        let queued_msg: Option<QueuedMessage> = self.storage.get(&key)?;
-
-        // Clean up message content
-        self.storage
-            .delete(&key)
-            .map_err(BitVMXError::StorageError)?;
-
-        Ok(queued_msg)
+        Ok(None)
     }
 
     pub fn is_empty(&self) -> Result<bool, BitVMXError> {
