@@ -1233,7 +1233,8 @@ impl FullPenalizationProtocol {
                 tx,
                 speedup,
                 format!("full_penalization_{}:{}", self.ctx.id, tx_name),
-                None,
+                None, // Receive news on every confirmation.
+                None, // Dispatch immediately
             )?;
 
             info!(
