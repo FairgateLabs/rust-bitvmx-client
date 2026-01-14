@@ -3,7 +3,10 @@ use anyhow::Result;
 use bitcoin::{Amount, Network};
 use bitcoin_coordinator::coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi};
 use bitcoin_coordinator::types::CoordinatorNews;
-use bitcoind::{bitcoind::{Bitcoind, BitcoindFlags}, config::BitcoindConfig};
+use bitcoind::{
+    bitcoind::{Bitcoind, BitcoindFlags},
+    config::BitcoindConfig,
+};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::channel::channel::DualChannel;
 use bitvmx_broker::identification::allow_list::AllowList;
@@ -357,7 +360,7 @@ impl TestHelper {
                     fallback_fee: 0.0002,
                 }),
             );
-            
+
             bitcoind_instance.start()?;
             Some(bitcoind_instance)
         };
@@ -1045,8 +1048,8 @@ fn retry_failed_txs_test() -> Result<()> {
         Some(settings.clone()),
     )?);
 
-    coordinator.dispatch(tx1, None, "test_1".to_string(), None)?;
-    coordinator.dispatch(tx2, None, "test_2".to_string(), None)?;
+    coordinator.dispatch(tx1, None, "test_1".to_string(), None, None)?;
+    coordinator.dispatch(tx2, None, "test_2".to_string(), None, None)?;
 
     for _ in 0..10 {
         coordinator.tick()?;

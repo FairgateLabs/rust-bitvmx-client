@@ -1899,6 +1899,7 @@ impl DisputeCoreProtocol {
             speedup,
             format!("dispute_core_claim_gate_{}:{}", self.ctx.id, tx_name),
             action.block_height(),
+            None, // Receive news on every confirmation.
         )?;
 
         info!(
@@ -1943,6 +1944,7 @@ impl DisputeCoreProtocol {
                 speedup,
                 format!("dispute_core_start_ch_{}:{}", self.ctx.id, tx_name),
                 None,
+                None, // Receive news on every confirmation.
             )?;
 
             info!(
@@ -2251,9 +2253,13 @@ impl DisputeCoreProtocol {
         let (tx, speedup) = protocol.get_transaction_by_name(&init_challenge_name, context)?;
         let txid = tx.compute_txid();
 
-        context
-            .bitcoin_coordinator
-            .dispatch(tx, speedup, init_challenge_name.clone(), None)?;
+        context.bitcoin_coordinator.dispatch(
+            tx,
+            speedup,
+            init_challenge_name.clone(),
+            None,
+            None,
+        )?;
 
         info!(
             id = self.ctx.my_idx,
@@ -2691,6 +2697,7 @@ impl DisputeCoreProtocol {
             speedup,
             format!("dispute_core_{}:{}", self.ctx.id, tx_name),
             tx_type.block_height(),
+            None, // Receive news on every confirmation.
         )?;
 
         info!(

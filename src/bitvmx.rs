@@ -1241,6 +1241,7 @@ impl BitVMXApi for BitVMX {
             .monitor(TypesToMonitor::Transactions(
                 vec![txid],
                 Context::RequestId(id, from).to_string()?,
+                None, // Receive news on every confirmation.
             ))?;
 
         Ok(())
@@ -1254,7 +1255,7 @@ impl BitVMXApi for BitVMX {
         // Enable RSK pegin transaction monitoring
         self.program_context
             .bitcoin_coordinator
-            .monitor(TypesToMonitor::RskPeginTransaction)?;
+            .monitor(TypesToMonitor::RskPegin(None))?;
         Ok(())
     }
 
@@ -1324,6 +1325,7 @@ impl BitVMXApi for BitVMX {
             None,
             Context::RequestId(id, from).to_string()?,
             None,
+            None, // Receive news on every confirmation.
         )?;
 
         Ok(())

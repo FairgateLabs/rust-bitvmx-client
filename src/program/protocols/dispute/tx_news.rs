@@ -60,6 +60,7 @@ fn dispatch_timeout_tx(
         Some(speedup_data),
         Context::ProgramId(drp.ctx.id).to_string()?,
         Some(current_height + timelock_blocks),
+        None, // Receive news on every confirmation.
     )?;
     Ok(())
 }
@@ -413,7 +414,7 @@ fn cancel_to_tx(
     info!("Cancel timeout tx: {}", tx_to_cancel);
     let tx_id = drp.get_transaction_id_by_name(&tx_to_cancel)?;
     program_context.bitcoin_coordinator.cancel(
-        bitcoin_coordinator::TypesToMonitor::Transactions(vec![tx_id], String::default()),
+        bitcoin_coordinator::TypesToMonitor::Transactions(vec![tx_id], String::default(), None),
     )?;
     Ok(())
 }
@@ -452,6 +453,7 @@ fn auto_claim_start(
                 Some(speedup_data),
                 Context::ProgramId(drp.ctx.id).to_string()?,
                 None,
+                None, // Receive news on every confirmation.
             )?;
         }
     }
@@ -495,6 +497,7 @@ fn claim_state_handle(
                 Some(speedup_data),
                 Context::ProgramId(drp.ctx.id).to_string()?,
                 Some(current_height + timelock_blocks),
+                None, // Receive news on every confirmation.
             )?;
         }
         //other start
@@ -515,6 +518,7 @@ fn claim_state_handle(
                 Some(speedup_data),
                 Context::ProgramId(drp.ctx.id).to_string()?,
                 None,
+                None, // Receive news on every confirmation.
             )?;
         }
     }
@@ -546,6 +550,7 @@ fn claim_state_handle(
                 Some(speedup_data),
                 Context::ProgramId(drp.ctx.id).to_string()?,
                 None,
+                None, // Receive news on every confirmation.
             )?;
         }
     }
@@ -663,6 +668,7 @@ pub fn handle_tx_news(
                 speedup,
                 Context::ProgramId(drp.context().id).to_string()?,
                 None,
+                None, // Receive news on every confirmation.
             )?;
         }
     }
@@ -707,6 +713,7 @@ pub fn handle_tx_news(
                 Some(sp),
                 Context::ProgramId(drp.ctx.id).to_string()?,
                 None,
+                None, // Receive news on every confirmation.
             )?;
         }
         if idx == last_tx_id as u32 {
@@ -719,6 +726,7 @@ pub fn handle_tx_news(
                     Some(sp),
                     Context::ProgramId(drp.ctx.id).to_string()?,
                     None,
+                    None, // Receive news on every confirmation.
                 )?;
             } else {
                 //Prover
@@ -817,6 +825,7 @@ pub fn handle_tx_news(
             Some(sp),
             Context::ProgramId(drp.ctx.id).to_string()?,
             None,
+            None, // Receive news on every confirmation.
         )?;
     }
 
@@ -1191,6 +1200,7 @@ pub fn handle_tx_news(
             Some(speedup_data),
             Context::ProgramId(drp.ctx.id).to_string()?,
             Some(current_height + 2 * timelock_blocks as u32),
+            None, // Receive news on every confirmation.
         )?;
     }
 
@@ -1204,6 +1214,7 @@ pub fn handle_tx_news(
             Some(speedup_data),
             Context::ProgramId(drp.ctx.id).to_string()?,
             None,
+            None, // Receive news on every confirmation.
         )?;
     }
 

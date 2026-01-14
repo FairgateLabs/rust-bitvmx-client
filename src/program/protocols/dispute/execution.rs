@@ -48,6 +48,7 @@ pub fn execution_result(
                 Some(sp),
                 Context::ProgramId(drp.ctx.id).to_string()?,
                 None,
+                None, // Receive news on every confirmation.
             )?;
         }
         EmulatorResultType::VerifierCheckExecutionResult { step } => {
@@ -100,6 +101,7 @@ pub fn execution_result(
                 Some(sp),
                 Context::ProgramId(*id).to_string()?,
                 None,
+                None, // Receive news on every confirmation.
             )?;
         }
         EmulatorResultType::VerifierChooseSegmentResult { v_decision, round } => {
@@ -137,6 +139,7 @@ pub fn execution_result(
                 Some(sp),
                 Context::ProgramId(*id).to_string()?,
                 None,
+                None, // Receive news on every confirmation.
             )?;
         }
         EmulatorResultType::ProverFinalTraceResult { prover_final_trace } => {
@@ -150,6 +153,7 @@ pub fn execution_result(
                     Some(sp),
                     Context::ProgramId(*id).to_string()?,
                     None,
+                    None, // Receive news on every confirmation.
                 )?;
             } else {
                 let (final_trace, resigned_step_hash, resigned_next_hash, conflict_step) =
@@ -267,6 +271,7 @@ pub fn execution_result(
                     Some(sp),
                     Context::ProgramId(*id).to_string()?,
                     None,
+                    None, // Receive news on every confirmation.
                 )?;
             }
         }
@@ -305,6 +310,7 @@ pub fn execution_result(
                 Some(sp),
                 Context::ProgramId(*id).to_string()?,
                 None,
+                None, // Receive news on every confirmation.
             )?;
         }
         EmulatorResultType::ProverGetHashesAndStepResult {
@@ -320,6 +326,7 @@ pub fn execution_result(
                     Some(sp),
                     Context::ProgramId(*id).to_string()?,
                     None,
+                    None, // Receive news on every confirmation.
                 )?;
             } else {
                 let (resigned_step_hash, resigned_next_hash, write_step) =
@@ -341,6 +348,7 @@ pub fn execution_result(
                     Some(sp),
                     Context::ProgramId(*id).to_string()?,
                     None,
+                    None, // Receive news on every confirmation.
                 )?;
             }
         }
