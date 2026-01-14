@@ -17,10 +17,11 @@ use crate::{
     program::{
         participant::CommsAddress,
         program::Program,
+        program_v2::ProgramV2,
         variables::{Globals, WitnessVars},
     },
     signature_verifier::SignatureVerifier,
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus, ProgramVersion},
 };
 use bitcoin::secp256k1::Message;
 use bitcoin::{PublicKey, Transaction, Txid};
@@ -236,15 +237,7 @@ impl BitVMX {
         self.broker.drain_until_idle(deadline);
 
         // Drain active programs: ensure we don't schedule new work and persist state
-        if let Ok(programs) = self.get_programs() {
-            for status in programs {
-                if let Ok(mut program) = self.load_program(&status.program_id) {
-                    program.begin_shutdown();
-                    program.drain_until_idle(deadline);
-                    program.shutdown_now();
-                }
-            }
-        }
+        // Programs automatically save their state during tick(), so no explicit save needed here
         // Finalize subcomponents shutdown first
         self.program_context.comms.shutdown_now();
         self.program_context.bitcoin_coordinator.shutdown_now();
@@ -274,6 +267,11 @@ impl BitVMX {
 
     pub fn load_program(&self, program_id: &Uuid) -> Result<Program, BitVMXError> {
         let program = Program::load(self.store.clone(), program_id)?;
+        Ok(program)
+    }
+
+    pub fn load_program_v2(&self, program_id: &Uuid) -> Result<ProgramV2, BitVMXError> {
+        let program = ProgramV2::load(self.store.clone(), program_id)?;
         Ok(program)
     }
 
@@ -885,11 +883,28 @@ impl BitVMX {
         }
         Ok(())
     }
-    pub fn process_programs(&self) -> Result<(), BitVMXError> {
-        let programs = self.get_active_programs()?;
+    pub fn process_programs(&mut self) -> Result<(), BitVMXError> {
+        let all_programs = self.get_programs()?;
 
-        for mut program in programs {
-            program.tick(&self.program_context)?
+        for status in all_programs {
+            let program_id = status.program_id;
+
+            // Check if program is active before processing
+            if !is_active_program(&self.store, &program_id)? {
+                continue;
+            }
+
+            // Dispatch to the appropriate version
+            match status.version {
+                ProgramVersion::Legacy => {
+                    let mut program = self.load_program(&program_id)?;
+                    program.tick(&mut self.program_context)?;
+                }
+                ProgramVersion::V2 => {
+                    let mut program = self.load_program_v2(&program_id)?;
+                    program.tick(&mut self.program_context)?;
+                }
+            }
         }
         Ok(())
     }
@@ -909,34 +924,74 @@ impl BitVMX {
         Ok(programs_ids.unwrap())
     }
 
-    fn get_active_programs(&self) -> Result<Vec<Program>, BitVMXError> {
-        let all_programs = self
-            .get_programs()?
-            .iter()
-            .map(|p| p.program_id)
-            .collect::<Vec<Uuid>>();
-        let mut active_programs = vec![];
-        for program_id in all_programs {
-            if is_active_program(&self.store, &program_id)? {
-                let program = self.load_program(&program_id)?;
-                active_programs.push(program);
-            }
-        }
-
-        Ok(active_programs)
-    }
-
-    fn add_new_program(&self, program_id: &Uuid) -> Result<(), BitVMXError> {
+    fn add_new_program(&self, program_id: &Uuid, version: ProgramVersion) -> Result<(), BitVMXError> {
         let mut programs = self.get_programs()?;
 
         if programs.iter().any(|p| p.program_id == *program_id) {
             return Err(BitVMXError::ProgramAlreadyExists(*program_id));
         }
 
-        programs.push(ProgramStatus::new(*program_id));
+        let status = match version {
+            ProgramVersion::Legacy => ProgramStatus::new(*program_id),
+            ProgramVersion::V2 => ProgramStatus::new_v2(*program_id),
+        };
+        programs.push(status);
 
         self.store
             .set(StoreKey::Programs.get_key(), programs, None)?;
+
+        Ok(())
+    }
+
+    fn setup_internal(
+        &mut self,
+        id: Uuid,
+        program_type: String,
+        peer_address: Vec<CommsAddress>,
+        leader: u16,
+        use_v2: bool,
+    ) -> Result<(), BitVMXError> {
+        if self.program_exists(&id)? {
+            warn!("Program already exists");
+            return Err(BitVMXError::ProgramAlreadyExists(id));
+        }
+
+        let version = if use_v2 {
+            ProgramVersion::V2
+        } else {
+            ProgramVersion::Legacy
+        };
+
+        info!("Setting up program: {:?} type {} version {:?}", id, program_type, version);
+
+        if use_v2 {
+            ProgramV2::setup(
+                id,
+                &program_type,
+                peer_address,
+                leader as usize,
+                &mut self.program_context,
+                self.store.clone(),
+                &self.config.client,
+            )?;
+        } else {
+            Program::setup(
+                &id,
+                &program_type,
+                peer_address,
+                leader as usize,
+                &mut self.program_context,
+                self.store.clone(),
+                &self.config.client,
+            )?;
+        }
+
+        self.add_new_program(&id, version)?;
+        info!(
+            "Program Setup Finished {} with version {:?}",
+            self.program_context.comms.get_pubk_hash()?,
+            version
+        );
 
         Ok(())
     }
@@ -1235,28 +1290,17 @@ impl BitVMXApi for BitVMX {
         peer_address: Vec<CommsAddress>,
         leader: u16,
     ) -> Result<(), BitVMXError> {
-        if self.program_exists(&id)? {
-            warn!("Program already exists");
-            return Err(BitVMXError::ProgramAlreadyExists(id));
-        }
+        self.setup_internal(id, program_type, peer_address, leader, false)
+    }
 
-        info!("Setting up program: {:?} type {}", id, program_type);
-        Program::setup(
-            &id,
-            &program_type,
-            peer_address,
-            leader as usize,
-            &mut self.program_context,
-            self.store.clone(),
-            &self.config.client,
-        )?;
-        self.add_new_program(&id)?;
-        info!(
-            "Program Setup Finished {}",
-            self.program_context.comms.get_pubk_hash()?
-        );
-
-        Ok(())
+    fn setup_v2(
+        &mut self,
+        id: Uuid,
+        program_type: String,
+        peer_address: Vec<CommsAddress>,
+        leader: u16,
+    ) -> Result<(), BitVMXError> {
+        self.setup_internal(id, program_type, peer_address, leader, true)
     }
 
     fn get_transaction(
@@ -1588,6 +1632,9 @@ impl BitVMXApi for BitVMX {
             }
             IncomingBitVMXApiMessages::Setup(id, program_type, participants, leader) => {
                 BitVMXApi::setup(self, id, program_type, participants, leader)?
+            }
+            IncomingBitVMXApiMessages::SetupV2(id, program_type, participants, leader) => {
+                BitVMXApi::setup_v2(self, id, program_type, participants, leader)?
             }
             IncomingBitVMXApiMessages::SubscribeToTransaction(uuid, txid) => {
                 BitVMXApi::subscribe_to_tx(self, from, uuid, txid)?
