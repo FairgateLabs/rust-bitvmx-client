@@ -109,8 +109,9 @@ impl ProtocolHandler for AcceptPegInProtocol {
         let pegin_request: PegInRequest = self.pegin_request(context)?;
         let pegin_request_txid = pegin_request.txid;
 
+        // Enabler outputs get compensated from input to output so they are removed from the user output calculation
         let user_output_amount =
-            self.checked_sub(pegin_request.amount, P2TR_FEE + SPEEDUP_VALUE + DUST_VALUE)?;
+            self.checked_sub(pegin_request.amount, P2TR_FEE + SPEEDUP_VALUE)?;
 
         let take_aggregated_key = &pegin_request.take_aggregated_key;
         let mut protocol = self.load_or_create_protocol();
