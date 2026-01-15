@@ -448,8 +448,8 @@ impl LeaderBroadcastHelper {
                 "Pending message to back: {:?} from {}",
                 original_msg.msg_type, original_msg.sender_pubkey_hash
             );
-            message_queue.push_back(
-                Identifier::new(original_msg.sender_pubkey_hash.clone(), 0).to_string(),
+            message_queue.push_new(
+                Identifier::new(original_msg.sender_pubkey_hash.clone(), 0),
                 full_message,
             )?;
         }
