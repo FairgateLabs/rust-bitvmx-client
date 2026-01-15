@@ -100,7 +100,6 @@ This table shows the mapping between request messages and their expected respons
 | Request Message | Expected Response Message | Notes |
 |---|---|---|
 | `SubscribeToTransaction(uuid, txid)` | `Transaction(uuid, transaction_status, name)` | Subscribe to transaction updates |
-| `SubscribeUTXO()` | `SpendingUTXOTransactionFound(uuid, txid, vout, transaction_status)` | Subscribe to UTXO spending |
 | `SubscribeToRskPegin()` | `PeginTransactionFound(txid, transaction_status)` | Subscribe to RSK pegin transactions |
 
 #### Speed up
@@ -150,8 +149,8 @@ This table shows the mapping between request messages and their expected respons
 
 #### Subscription Messages
 
-- `SubscribeUTXO()` and `SubscribeToRskPegin()` are subscription messages that don't have direct request/response pairs
-- They generate events when relevant transactions are found
+- `SubscribeToRskPegin()` is a subscription message that doesn't have direct request/response pairs
+- It generates events when relevant transactions are found
 
 #### Error Handling
 
