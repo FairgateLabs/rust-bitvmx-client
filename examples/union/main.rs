@@ -16,7 +16,7 @@ use crate::{
         master_wallet::MasterWallet,
     },
 };
-use ::bitcoin::{Network, OutPoint, PublicKey, Transaction, Txid};
+use ::bitcoin::{hex::DisplayHex, Network, OutPoint, PublicKey, Transaction, Txid};
 use anyhow::Result;
 use bitvmx_client::{
     program::{
@@ -228,10 +228,8 @@ pub fn cli_request_pegin() -> Result<()> {
     let (committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
 
     request_pegin(
-        committee.public_key()?,
+        &committee,
         &mut user,
-        committee.get_dispute_keys().as_slice(),
-        committee.stream_settings.request_pegin_timelock,
     )?;
     Ok(())
 }
@@ -240,10 +238,8 @@ pub fn cli_reject_pegin() -> Result<()> {
     let (committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
 
     let (txid, _) = request_pegin(
-        committee.public_key()?,
+        &committee,
         &mut user,
-        committee.get_dispute_keys().as_slice(),
-        committee.stream_settings.request_pegin_timelock,
     )?;
 
     let member_index = 1;
@@ -699,17 +695,71 @@ pub fn dispatch_wt_start_enabler(committee: &Committee) -> Result<()> {
     Ok(())
 }
 
+pub fn db_print_dispute_keys(committee: &Committee) -> Result<()> {
+    // Return immediately when debug printing is disabled
+    if !crate::participants::common::DEBUG_TX {
+        return Ok(());
+    }
+
+    info!("Members Dispute/Covenant Keys (ECDSA):");
+    for (i, member) in committee.members.iter().enumerate() {
+        info!("Member {} (id: {}):", i, member.id);
+
+        if let Some(covenant_key) = member.keyring.dispute_pubkey {
+            info!("    compressed: 0x{}", covenant_key.to_bytes().as_slice().to_lower_hex_string());
+        }
+        info!("  ---");
+    }
+
+    info!("Committee Aggregated Keys:");
+    info!("  - Dispute Aggregated Key (compressed): 0x{}", committee.public_key()?.to_bytes().as_slice().to_lower_hex_string());
+    info!("");
+    info!("============================================================");
+
+    Ok(())
+}
+
+/// Print detailed accept-pegin transaction info when DEBUG_TX is enabled
+pub fn db_print_accept_pegin_tx(
+    tx: &Transaction,
+    request_pegin_txid: Txid,
+    amount: u64,
+    slot_index: usize,
+    rootstock_address: &str,
+    reimbursement_pubkey: PublicKey,
+    accept_pegin_sighash: &[u8],
+) -> Result<()> {
+    use crate::participants::common::db_print_transaction;
+
+    db_print_transaction("ACCEPT PEGIN TRANSACTION DETAILS", tx, || {
+        info!("Parameters Used:");
+        info!("  - Request Pegin TxId: 0x{}", request_pegin_txid);
+        info!("  - Request Pegin Amount: {} satoshis", amount);
+        info!("  - Slot Index: {}", slot_index);
+        info!("  - Rootstock Address: 0x{}", rootstock_address);
+        info!("  - Reimbursement Pubkey: {}", reimbursement_pubkey);
+        info!("  - Accept Pegin Sighash: 0x{}", accept_pegin_sighash.to_lower_hex_string());
+        info!("");
+    });
+
+    Ok(())
+}
+
 pub fn request_pegin(
-    committee_public_key: PublicKey,
+    committee: &Committee,
     user: &mut User,
-    dispute_keys: &[PublicKey],
-    request_pegin_timelock: u16,
 ) -> Result<(Txid, u64)> {
-    let amount: u64 = STREAM_DENOMINATION; // This should be replaced with the actual amount of the peg-in request
+    let amount: u64 = STREAM_DENOMINATION;
+    let committee_public_key = committee.public_key()?;
+    let dispute_keys = committee.get_dispute_keys();
+    let request_pegin_timelock = committee.stream_settings.request_pegin_timelock;
+
+    db_print_dispute_keys(committee)?;
+
     let request_pegin_txid = user.request_pegin(
         &committee_public_key,
         amount,
-        dispute_keys,
+        dispute_keys.as_slice(),
         request_pegin_timelock,
     )?;
 
@@ -732,10 +782,8 @@ pub fn request_and_accept_pegin(
     user: &mut User,
 ) -> Result<(usize, u64, Transaction)> {
     let (request_pegin_txid, amount) = request_pegin(
-        committee.public_key()?,
+        committee,
         user,
-        committee.get_dispute_keys().as_slice(),
-        committee.stream_settings.request_pegin_timelock,
     )?;
 
     // This came from the contracts
@@ -748,7 +796,7 @@ pub fn request_and_accept_pegin(
         committee.committee_id(),
         request_pegin_txid,
         amount,
-        accept_pegin_sighash,
+        accept_pegin_sighash.clone(),
         slot_index,
         rootstock_address.clone(),
         reimbursement_pubkey.clone(),
@@ -761,6 +809,18 @@ pub fn request_and_accept_pegin(
     thread::sleep(Duration::from_secs(1));
 
     let accept_pegin_txid = accept_pegin_tx.compute_txid();
+
+    db_print_accept_pegin_tx(
+        &accept_pegin_tx,
+        request_pegin_txid,
+        amount,
+        slot_index,
+        &rootstock_address,
+        reimbursement_pubkey.clone(),
+        &accept_pegin_sighash,
+    )?;
+
+
     info!("Accept peg-in TX dispatched. Txid: {}", accept_pegin_txid);
     print_link(NETWORK, accept_pegin_txid);
 

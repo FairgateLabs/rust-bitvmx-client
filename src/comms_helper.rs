@@ -1,3 +1,4 @@
+use crate::bitvmx::Context;
 use crate::keychain::KeyChain;
 use crate::{errors::BitVMXError, program::participant::CommsAddress};
 use bitvmx_broker::channel::queue_channel::QueueChannel;
@@ -110,6 +111,7 @@ pub fn request<T: Serialize>(
         signature.to_vec(),
     )?;
     comms.send(
+        &Context::ProgramId(*program_id).to_string()?,
         &comms_address.pubkey_hash,
         comms_address.address,
         serialize_msg,

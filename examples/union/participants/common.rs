@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use bitcoin::{
     absolute::{self},
     hashes::Hash,
+    hex::DisplayHex,
     sighash::{Prevouts, SighashCache, TaprootError},
     transaction, Amount, PublicKey, ScriptBuf, Sequence, TapSighash, TapSighashType, Transaction,
     TxOut, Txid, Witness,
@@ -11,6 +12,108 @@ use bitvmx_client::program::protocols::union::types::{
     StreamSettings, UnionSettings, P2TR_FEE, SPEEDUP_VALUE, USER_TAKE_FEE,
 };
 use tracing::info;
+
+pub const DEBUG_TX: bool = false;
+
+/// Generic transaction debug printer that can be used for any transaction type
+pub fn db_print_transaction<F>(title: &str, tx: &Transaction, print_params: F)
+where
+    F: FnOnce(),
+{
+    if !DEBUG_TX {
+        return;
+    }
+
+    info!("=== {} ===", title);
+
+    // Print transaction-specific parameters using the closure
+    print_params();
+
+    info!("Transaction Structure:");
+    info!("  - Version: {}", tx.version.0);
+    info!("  - Number of Inputs: {}", tx.input.len());
+    info!("  - Number of Outputs: {}", tx.output.len());
+    info!("  - Locktime: {}", tx.lock_time);
+    info!("");
+    info!("Transaction Details:");
+    info!("  - TxId: 0x{}", tx.compute_txid());
+    info!("");
+
+    // Log each input
+    for (i, input) in tx.input.iter().enumerate() {
+        info!("Input {}:", i);
+        info!("  - Previous TxId: 0x{}", input.previous_output.txid);
+        info!("  - Previous Vout: {}", input.previous_output.vout);
+        info!("  - ScriptSig: {}", input.script_sig.as_bytes().to_lower_hex_string());
+        info!("  - Sequence: 0x{:08X} ({})", input.sequence.0, input.sequence.0);
+        info!("  - Witness items: {}", input.witness.len());
+        for (j, witness_item) in input.witness.iter().enumerate() {
+            info!("    Witness {}: {}", j, witness_item.to_lower_hex_string());
+        }
+    }
+    info!("");
+
+    // Log each output
+    for (i, output) in tx.output.iter().enumerate() {
+        info!("Output {}:", i);
+        info!("  - Value: {} satoshis", output.value.to_sat());
+        info!("  - ScriptPubKey: {}", output.script_pubkey.as_bytes().to_lower_hex_string());
+    }
+    info!("");
+
+    info!("Solidity Transaction Format:");
+    info!("{}", format_transaction_solidity(tx));
+    info!("==========================================");
+    info!("");
+}
+
+/// Format a Bitcoin transaction in Solidity syntax for cross-system verification
+pub fn format_transaction_solidity(tx: &Transaction) -> String {
+    let mut output = String::new();
+
+    // Declare inputs array
+    output.push_str(&format!("        BtcTxIn[] memory inputs = new BtcTxIn[]({});\n", tx.input.len()));
+
+    // Assign each input
+    for (i, input) in tx.input.iter().enumerate() {
+        output.push_str(&format!("        inputs[{}] = BtcTxIn({{\n", i));
+        output.push_str(&format!("            txId: 0x{},\n", input.previous_output.txid));
+        output.push_str(&format!("            vout: {},\n", input.previous_output.vout));
+        output.push_str(&format!("            scriptSig: hex\"{}\",\n", input.script_sig.as_bytes().to_lower_hex_string()));
+        output.push_str(&format!("            sequence: {}\n", input.sequence.0));
+        output.push_str("        });\n");
+        if i < tx.input.len() - 1 {
+            output.push_str("\n");
+        }
+    }
+
+    output.push_str("\n");
+
+    // Declare outputs array
+    output.push_str(&format!("        BtcTxOut[] memory outputs = new BtcTxOut[]({});\n", tx.output.len()));
+
+    // Assign each output
+    for (i, out) in tx.output.iter().enumerate() {
+        output.push_str(&format!("        outputs[{}] = BtcTxOut({{\n", i));
+        output.push_str(&format!("            amount: {},\n", out.value.to_sat()));
+        output.push_str(&format!("            scriptPubKey: hex\"{}\"\n", out.script_pubkey.as_bytes().to_lower_hex_string()));
+        output.push_str("        });\n");
+        if i < tx.output.len() - 1 {
+            output.push_str("\n");
+        }
+    }
+
+    output.push_str("\n");
+
+    // Return statement
+    output.push_str(&format!(
+        "        return BtcTransaction({{version: {}, inputs: inputs, outputs: outputs, locktime: {}}});",
+        tx.version.0,
+        tx.lock_time
+    ));
+
+    output
+}
 
 pub fn prefixed_name(prefix: &str, name: &str) -> String {
     if prefix.is_empty() {
