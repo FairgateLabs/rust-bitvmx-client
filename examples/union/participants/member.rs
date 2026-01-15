@@ -138,6 +138,61 @@ impl Member {
         Ok((take_pubkey, dispute_pubkey, communication_pubkey))
     }
 
+
+    // pub fn setup_member_keys(&mut self) -> Result<(PublicKey, PublicKey, PublicKey)> {
+    //     // For regtest/testing, use deterministic UUIDs based on member id so keys are reproducible
+    //     // This allows cross-system testing with smart contracts
+    //     let is_deterministic = self.config.bitcoin.network == bitcoin::Network::Regtest;
+
+    //     let (take_key_id, dispute_key_id, comm_key_id) = if is_deterministic {
+    //         // Use deterministic UUIDs based on member ID for reproducibility
+    //         // Hash the member ID string to get a u32
+    //         let id_hash: u32 = self.id.bytes().fold(0u32, |acc, b| acc.wrapping_add(b as u32));
+
+    //         (
+    //             Uuid::parse_str(&format!("00000000-0000-0000-0000-{:012x}", (id_hash as u64) << 8 | 1)).unwrap(),
+    //             Uuid::parse_str(&format!("00000000-0000-0000-0000-{:012x}", (id_hash as u64) << 8 | 2)).unwrap(),
+    //             Uuid::parse_str(&format!("00000000-0000-0000-0000-{:012x}", (id_hash as u64) << 8 | 3)).unwrap(),
+    //         )
+    //     } else {
+    //         (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4())
+    //     };
+
+    //     self.bitvmx.get_pubkey(take_key_id, true)?;
+    //     let take_pubkey = wait_until_msg!(&self.bitvmx, PubKey(_, _key) => _key);
+    //     debug!(id = self.id, take_pubkey = ?take_pubkey, take_key_uuid = ?take_key_id, "Take pubkey");
+
+    //     self.bitvmx.get_pubkey(dispute_key_id, true)?;
+    //     let dispute_pubkey = wait_until_msg!(&self.bitvmx, PubKey(_, _key) => _key);
+    //     debug!(id = self.id, dispute_pubkey = ?dispute_pubkey, dispute_key_uuid = ?dispute_key_id, "Dispute pubkey");
+
+    //     self.bitvmx.get_pubkey(comm_key_id, true)?;
+    //     let communication_pubkey = wait_until_msg!(&self.bitvmx, PubKey(_, _key) => _key);
+    //     debug!(id = self.id, communication_pubkey = ?communication_pubkey, comm_key_uuid = ?comm_key_id, "Communication pubkey");
+
+    //     self.keyring.take_pubkey = Some(take_pubkey);
+    //     self.keyring.dispute_pubkey = Some(dispute_pubkey);
+    //     self.keyring.communication_pubkey = Some(communication_pubkey);
+
+    //     info!(
+    //         "Member keys setup complete: take_pubkey: {}, dispute_pubkey: {}, communication_pubkey: {}",
+    //         take_pubkey.to_string(),
+    //         dispute_pubkey.to_string(),
+    //         communication_pubkey.to_string()
+    //     );
+
+    //     if is_deterministic {
+    //         if crate::participants::common::DEBUG_TX {
+    //             info!("Deterministic key UUIDs used (for reproducibility):");
+    //             info!("  - Take key UUID: {}", take_key_id);
+    //             info!("  - Dispute key UUID: {}", dispute_key_id);
+    //             info!("  - Communication key UUID: {}", comm_key_id);
+    //         }
+    //     }
+
+    //     Ok((take_pubkey, dispute_pubkey, communication_pubkey))
+    // }
+
     pub fn setup_committee_keys(
         &mut self,
         addresses: &Vec<CommsAddress>,

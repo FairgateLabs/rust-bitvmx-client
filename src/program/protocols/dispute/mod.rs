@@ -955,7 +955,12 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         let output_type = OutputType::taproot(amount, aggregated, &vec![timeout_leaf])?;
 
         protocol.add_connection(
-            &format!("{}__{}", CHALLENGE_READ, VERIFIER_FINAL),
+            &format!(
+                "{}_TL_{}_{}",
+                CHALLENGE_READ,
+                2 * timelock_blocks,
+                VERIFIER_FINAL
+            ),
             CHALLENGE_READ,
             output_type.into(),
             VERIFIER_FINAL,
