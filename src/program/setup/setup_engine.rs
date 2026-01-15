@@ -59,7 +59,7 @@ pub enum StepState {
 }
 
 /// Tracks the state of the setup engine.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SetupEngineState {
     /// Index of the current active step (0-based)
     pub current_step_index: usize,
@@ -256,11 +256,24 @@ impl SetupEngine {
             ));
         }
 
-        if self.state.current_step_state != StepState::WaitingForParticipants {
+        // Allow receiving data if we're in ReadyToSend (we've generated our data but haven't sent yet)
+        // or WaitingForParticipants (we've sent our data and are waiting for others)
+        // This handles the case where messages arrive in any order
+        if self.state.current_step_state != StepState::WaitingForParticipants 
+            && self.state.current_step_state != StepState::ReadyToSend {
             return Err(BitVMXError::InvalidMessage(format!(
-                "Cannot receive data: step is not waiting for participants (current: {:?})",
+                "Cannot receive data: step is not ready to receive (current: {:?}). Must be ReadyToSend or WaitingForParticipants",
                 self.state.current_step_state
             )));
+        }
+        
+        // If we're in ReadyToSend, transition to WaitingForParticipants when we receive the first message
+        // This handles the case where we receive a message before sending our own
+        if self.state.current_step_state == StepState::ReadyToSend {
+            info!(
+                "SetupEngine::receive_current_step_data() - Received message while in ReadyToSend, transitioning to WaitingForParticipants"
+            );
+            self.state.current_step_state = StepState::WaitingForParticipants;
         }
 
         let step_name = self
@@ -300,11 +313,12 @@ impl SetupEngine {
         // Mark participant as completed
         self.state.mark_participant_completed(participant_idx);
 
-        debug!(
-            "SetupEngine: Step '{}': {}/{} participants completed",
+        info!(
+            "SetupEngine::receive_current_step_data() - Step '{}': {}/{} participants completed (participant {} just completed)",
             step_name,
             self.state.participants_completed.len(),
-            participants.len()
+            participants.len(),
+            participant_idx
         );
 
         Ok(())
@@ -341,13 +355,20 @@ impl SetupEngine {
 
         if !can_advance {
             debug!(
-                "SetupEngine: Step '{}' cannot advance yet ({}/{} participants)",
+                "SetupEngine::try_advance_current_step() - Step '{}' cannot advance yet ({}/{} participants completed)",
                 step_name,
                 self.state.participants_completed.len(),
                 participants.len()
             );
             return Ok(false);
         }
+        
+        info!(
+            "SetupEngine::try_advance_current_step() - Step '{}' can advance! ({}/{} participants completed)",
+            step_name,
+            self.state.participants_completed.len(),
+            participants.len()
+        );
 
         info!(
             "SetupEngine: Step '{}' completed, advancing to next step",
@@ -393,26 +414,60 @@ impl SetupEngine {
         context: &mut ProgramContext,
     ) -> Result<Option<Vec<u8>>, BitVMXError> {
         if self.is_complete() {
+            debug!("SetupEngine::tick() - Setup already complete");
             return Ok(None);
         }
 
+        // Clone step name to owned String before any mutable borrows
+        let step_name = self.current_step_name().unwrap_or("unknown").to_string();
+        let current_state = self.state.current_step_state.clone();
+        
+        debug!(
+            "SetupEngine::tick() - Step '{}' ({}/{}), state: {:?}, completed: {}/{}",
+            step_name,
+            self.state.current_step_index + 1,
+            self.total_steps(),
+            current_state,
+            self.state.participants_completed.len(),
+            participants.len()
+        );
+
         match self.state.current_step_state {
             StepState::Pending => {
+                info!("SetupEngine::tick() - Step '{}' is Pending, generating data", step_name);
                 // Generate data for this step
                 let data = self.generate_current_step_data(protocol, context)?;
+                if let Some(ref d) = data {
+                    info!("SetupEngine::tick() - Generated {} bytes for step '{}'", d.len(), step_name);
+                } else {
+                    info!("SetupEngine::tick() - Step '{}' generated no data", step_name);
+                }
                 Ok(data)
             }
             StepState::ReadyToSend => {
+                debug!("SetupEngine::tick() - Step '{}' is ReadyToSend, waiting for send", step_name);
                 // Data is ready but hasn't been sent yet
                 // The caller should send it and call mark_current_step_sent()
                 Ok(None)
             }
             StepState::WaitingForParticipants => {
+                debug!(
+                    "SetupEngine::tick() - Step '{}' is WaitingForParticipants (completed: {}/{}), trying to advance",
+                    step_name,
+                    self.state.participants_completed.len(),
+                    participants.len()
+                );
                 // Try to advance if possible
-                self.try_advance_current_step(protocol, participants, context)?;
+                let advanced = self.try_advance_current_step(protocol, participants, context)?;
+                if advanced {
+                    info!("SetupEngine::tick() - Step '{}' advanced successfully", step_name);
+                }
                 Ok(None)
             }
-            _ => Ok(None),
+            _ => {
+                debug!("SetupEngine::tick() - Step '{}' in state {:?}, no action", step_name, current_state);
+                Ok(None)
+            }
         }
     }
 }

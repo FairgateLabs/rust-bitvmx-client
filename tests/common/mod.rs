@@ -28,6 +28,7 @@ use protocol_builder::{
     scripts::{self, ProtocolScript, SignMode},
     types::{OutputType, Utxo},
 };
+use std::process::Command;
 use std::sync::Once;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -43,6 +44,61 @@ pub const CI_SLEEP_MS: u64 = 1000;
 
 pub fn clear_db(path: &str) {
     let _ = std::fs::remove_dir_all(path);
+}
+
+/// Check if Docker is available and running
+pub fn check_docker_available() -> Result<bool> {
+    // Check if docker command exists and daemon is running
+    let output = Command::new("docker")
+        .arg("info")
+        .output();
+    
+    match output {
+        Ok(result) => Ok(result.status.success()),
+        Err(_) => Ok(false),
+    }
+}
+
+/// Ensure Docker is available, returning a helpful error if not
+pub fn ensure_docker_available() -> Result<()> {
+    if !check_docker_available()? {
+        let docker_host = std::env::var("DOCKER_HOST").ok();
+        let docker_sock_standard = std::path::Path::new("/var/run/docker.sock").exists();
+        let docker_sock_macos = std::env::var("HOME")
+            .ok()
+            .map(|home| std::path::Path::new(&format!("{}/.docker/run/docker.sock", home)).exists())
+            .unwrap_or(false);
+        
+        let mut error_msg = "\n❌ Docker daemon is not running or not accessible.\n\n".to_string();
+        error_msg.push_str("To fix this issue:\n\n");
+        
+        if cfg!(target_os = "macos") {
+            error_msg.push_str("On macOS, Docker Desktop uses a non-standard socket location.\n");
+            error_msg.push_str("Option 1: Set DOCKER_HOST environment variable:\n");
+            error_msg.push_str("  export DOCKER_HOST=unix://$HOME/.docker/run/docker.sock\n");
+            
+            if !docker_sock_macos {
+                error_msg.push_str("Option 2: Create a symlink (requires sudo):\n");
+                error_msg.push_str("  sudo ln -sf ~/.docker/run/docker.sock /var/run/docker.sock\n\n");
+            }
+            
+            if docker_sock_macos && !docker_sock_standard {
+                error_msg.push_str("Note: Docker Desktop socket found at ~/.docker/run/docker.sock\n");
+                error_msg.push_str("      but not accessible at /var/run/docker.sock\n");
+            }
+        } else {
+            error_msg.push_str("1. Make sure Docker is installed\n");
+            error_msg.push_str("2. Start Docker daemon\n");
+            error_msg.push_str("3. Verify with: docker info\n\n");
+        }
+        
+        if docker_host.is_some() {
+            error_msg.push_str(&format!("Current DOCKER_HOST: {}\n", docker_host.unwrap()));
+        }
+        
+        anyhow::bail!(error_msg);
+    }
+    Ok(())
 }
 
 pub fn init_bitvmx(

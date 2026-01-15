@@ -347,6 +347,71 @@ impl BitVMX {
         Ok(true)
     }
 
+    /// Processes a message for a ProgramV2.
+    /// Returns Ok(true) if message was processed, Ok(false) if it needs to be buffered,
+    /// or Err if there was an error.
+    fn process_program_v2_message(
+        &mut self,
+        program_id: &Uuid,
+        msg_type: CommsMessageType,
+        data: Value,
+        peer_address: CommsAddress,
+        program_v2: &mut ProgramV2,
+        timestamp: i64,
+        signature: Vec<u8>,
+        version: String,
+    ) -> Result<bool, BitVMXError> {
+        info!(
+            "BitVMX::process_program_v2_message() - Processing {:?} message for program {} from {}",
+            msg_type, program_id, peer_address.pubkey_hash
+        );
+        
+        let my_pubkey_hash = self.program_context.comms.get_pubk_hash()?;
+        let participants: Vec<_> = program_v2
+            .participants
+            .iter()
+            .filter(|p| p.comms_address.pubkey_hash != my_pubkey_hash)
+            .map(|p| p.comms_address.pubkey_hash.clone())
+            .collect();
+        if !SignatureVerifier::has_all_keys(&self.program_context.globals, &participants)? {
+            info!("BitVMX::process_program_v2_message() - Missing verification keys for program: {:?} (participants: {:?})", program_id, participants);
+            return Ok(false);
+        }
+        
+        info!("BitVMX::process_program_v2_message() - All verification keys present, processing message");
+
+        // If this operator is the leader and the message type should be broadcast, store the original message
+        if program_v2.my_idx == program_v2.leader {
+            let should_store = matches!(
+                msg_type,
+                CommsMessageType::SetupStepData
+            );
+            if should_store {
+                let original_msg = OriginalMessage {
+                    sender_pubkey_hash: peer_address.pubkey_hash.clone(),
+                    msg_type,
+                    data: data.clone(),
+                    original_timestamp: timestamp,
+                    original_signature: signature.clone(),
+                    version: version.clone(),
+                };
+                self.program_context
+                    .leader_broadcast_helper
+                    .store_original_message(program_id, msg_type, original_msg)?;
+            }
+        }
+
+        // Process the message
+        let data_bytes: Vec<u8> = serde_json::from_value(data)?;
+        program_v2.process_comms_message(
+            &peer_address.pubkey_hash,
+            &msg_type,
+            data_bytes,
+            &mut self.program_context,
+        )?;
+        Ok(true)
+    }
+
     /// Processes a message for a Collaboration.
     /// Returns Ok(true) if message was processed, Ok(false) if it needs to be buffered,
     /// or Err if there was an error.
@@ -462,19 +527,20 @@ impl BitVMX {
             self.timestamp_verifier
                 .ensure_fresh(&msg.identifier.pubkey_hash, timestamp)?;
         }
-        let (program, collaboration, peer_address) = if let Some(program) =
-            self.load_program(&program_id).ok()
-        {
-            let peer_address = program.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
-
-            (Some(program), None, Some(peer_address))
-        } else if let Some(collaboration) = self.get_collaboration(&program_id)? {
-            let peer_address =
-                collaboration.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
-            (None, Some(collaboration), Some(peer_address))
-        } else {
-            (None, None, None)
-        };
+        let (program, program_v2, collaboration, peer_address) =
+            if let Some(program) = self.load_program(&program_id).ok() {
+                let peer_address = program.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
+                (Some(program), None, None, Some(peer_address))
+            } else if let Some(program_v2) = self.load_program_v2(&program_id).ok() {
+                let peer_address = program_v2.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
+                (None, Some(program_v2), None, Some(peer_address))
+            } else if let Some(collaboration) = self.get_collaboration(&program_id)? {
+                let peer_address =
+                    collaboration.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
+                (None, None, Some(collaboration), Some(peer_address))
+            } else {
+                (None, None, None, None)
+            };
 
         let message_consumed = match peer_address {
             Some(peer_address) => {
@@ -504,6 +570,21 @@ impl BitVMX {
                             signature,
                             version,
                         )?;
+                        message_consumed
+                    } else if let Some(mut program_v2) = program_v2 {
+                        let message_consumed = self.process_program_v2_message(
+                            &program_id,
+                            msg_type,
+                            data,
+                            peer_address,
+                            &mut program_v2,
+                            timestamp,
+                            signature,
+                            version,
+                        )?;
+                        if message_consumed {
+                            program_v2.save()?;
+                        }
                         message_consumed
                     } else if let Some(mut collaboration) = collaboration {
                         let message_consumed = self.process_collaboration_message(
