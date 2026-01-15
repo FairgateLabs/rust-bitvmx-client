@@ -173,6 +173,15 @@ impl ProtocolHandler for CollaborationProtocol {
         // No additional setup needed after keys are aggregated
         Ok(())
     }
+
+    fn get_transactions_to_monitor(
+        &self,
+        _program_context: &ProgramContext,
+    ) -> Result<(Vec<Txid>, Vec<(Txid, u32)>), BitVMXError> {
+        // CollaborationProtocol has no Bitcoin transactions to monitor
+        // It only generates an aggregated MuSig2 key
+        Ok((vec![], vec![]))
+    }
 }
 
 /// Implementation of UsesSetupSteps for CollaborationProtocol

@@ -20,11 +20,11 @@ use crate::{
     program::{
         participant::ParticipantData,
         protocols::protocol_handler::{new_protocol_type, ProtocolHandler, ProtocolType},
-        setup::{SetupEngine, UsesSetupSteps},
+        setup::{SetupEngine, SetupEngineState, StepState, UsesSetupSteps},
         state::ProgramState,
     },
     signature_verifier::OperatorVerificationStore,
-    types::ProgramContext,
+    types::{OutgoingBitVMXApiMessages, ProgramContext},
 };
 use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus, TypesToMonitor};
@@ -32,7 +32,7 @@ use bitvmx_operator_comms::operator_comms::PubKeyHash;
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 use storage_backend::storage::{KeyValueStore, Storage};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use super::participant::{CommsAddress, ParticipantKeys};
@@ -49,8 +49,11 @@ pub struct ProgramV2 {
     pub participants: Vec<ParticipantData>,
     pub leader: usize,
     pub protocol: ProtocolType,
-    #[serde(skip)]
     pub state: ProgramState,
+    /// Serializable state of the SetupEngine (saved separately since SetupEngine contains trait objects)
+    setup_engine_state: Option<SetupEngineState>,
+    /// Flag to track if SetupCompleted message has been sent to avoid sending it multiple times
+    setup_completed_sent: bool,
     #[serde(skip)]
     pub setup_engine: Option<SetupEngine>,
     #[serde(skip)]
@@ -67,10 +70,10 @@ impl ProgramV2 {
     /// Tries to create a SetupEngine for the protocol if it supports it
     fn try_create_setup_engine(protocol: &ProtocolType) -> Option<SetupEngine> {
         if let Some(steps) = protocol.setup_steps() {
-            info!("Protocol supports SetupEngine with {} steps", steps.len());
+            debug!("Protocol supports SetupEngine with {} steps", steps.len());
             Some(SetupEngine::new(steps))
         } else {
-            info!("Protocol does not use SetupEngine");
+            debug!("Protocol does not use SetupEngine");
             None
         }
     }
@@ -139,6 +142,8 @@ impl ProgramV2 {
             leader,
             protocol,
             state: ProgramState::New,
+            setup_engine_state: None,  // Will be set when saving
+            setup_completed_sent: false,
             setup_engine,
             storage: Some(storage.clone()),
             config: config.clone(),
@@ -183,12 +188,35 @@ impl ProgramV2 {
             .get(&key)?
             .ok_or(ProgramError::ProgramNotFound(*program_id))?;
 
+        // Only log at info level if state changed or if not in waiting state
+        // This reduces log spam when program is waiting for data
+        let is_waiting = matches!(program.state, ProgramState::SettingUpV2) 
+            && program.setup_engine_state.as_ref()
+                .map(|s| s.current_step_state == StepState::WaitingForParticipants)
+                .unwrap_or(false);
+
+        if is_waiting {
+            debug!("🔄 ProgramV2::load() - Loaded program {} with state: {:?} (waiting for participants)", program_id, program.state);
+        } else {
+            info!("🔄 ProgramV2::load() - Loaded program {} with state: {:?}", program_id, program.state);
+        }
+
         program.storage = Some(storage.clone());
         program.protocol.set_storage(storage.clone());
 
         // State is already loaded as part of the program struct
         // Recreate SetupEngine if protocol supports it
         program.setup_engine = Self::try_create_setup_engine(&program.protocol);
+
+        // Restore SetupEngine state if it was saved
+        if let (Some(engine), Some(saved_state)) = (&mut program.setup_engine, &program.setup_engine_state) {
+            if !is_waiting {
+                info!("🔄 ProgramV2::load() - Restoring SetupEngine state for program {}", program_id);
+            } else {
+                debug!("🔄 ProgramV2::load() - Restoring SetupEngine state for program {} (waiting)", program_id);
+            }
+            *engine.state_mut() = saved_state.clone();
+        }
 
         Ok(program)
     }
@@ -197,13 +225,20 @@ impl ProgramV2 {
     ///
     /// Following Program legacy pattern, this saves the complete program struct
     /// which includes the state as a field
-    pub fn save(&self) -> Result<(), ProgramError> {
+    pub fn save(&mut self) -> Result<(), ProgramError> {
         let storage = self
             .storage
-            .as_ref()
+            .clone()
             .ok_or_else(|| {
                 ProgramError::ProgramNotFound(self.program_id)
             })?;
+
+        // Save SetupEngine state before serializing (since SetupEngine itself can't be serialized)
+        if let Some(engine) = &self.setup_engine {
+            self.setup_engine_state = Some(engine.state().clone());
+        }
+
+        info!("💾 ProgramV2::save() - Saving program {} with state: {:?}", self.program_id, self.state);
 
         storage.set(&self.storage_key(), self, None)?;
         Ok(())
@@ -211,28 +246,126 @@ impl ProgramV2 {
 
     /// Main tick function - drives the program forward
     pub fn tick(&mut self, program_context: &mut ProgramContext) -> Result<(), BitVMXError> {
+        let mut state_changed = false;
+        
         match &self.state {
             ProgramState::New => {
                 info!("ProgramV2: State is New, transitioning to SettingUpV2");
                 // Use SettingUpV2 - SetupEngine manages the actual setup flow
                 // No SettingUpState needed - SetupEngine tracks its own state
                 self.state = ProgramState::SettingUpV2;
+                state_changed = true;
             }
             ProgramState::SettingUpV2 => {
                 // SetupEngine drives the entire setup flow
                 if let Some(engine) = &mut self.setup_engine {
+                    // Clone step name to owned String before any mutable borrows
+                    let current_step_name = engine.current_step_name().unwrap_or("unknown").to_string();
+                    let current_state = engine.state().current_step_state.clone();
+                    let participants_completed = engine.state().participants_completed.len();
+                    let total_participants = self.participants.len();
+                    
+                    // If we're waiting for participants and haven't received all data yet,
+                    // there's nothing to do - early return to avoid unnecessary processing
+                    if engine.state().current_step_state == StepState::WaitingForParticipants {
+                        // Check if we can advance (this will return false if not all participants have sent data)
+                        let can_advance = engine.current_step()
+                            .map(|step| {
+                                step.can_advance(&self.protocol, &self.participants, program_context)
+                                    .unwrap_or(false)
+                            })
+                            .unwrap_or(false);
+                        
+                        if !can_advance {
+                            // Still waiting for data from other participants - no changes, no need to save
+                            debug!(
+                                "ProgramV2::tick() - Step '{}' ({}/{}), state: {:?}, completed: {}/{} - Waiting for participants, early return",
+                                current_step_name,
+                                engine.state().current_step_index + 1,
+                                engine.total_steps(),
+                                current_state,
+                                participants_completed,
+                                total_participants
+                            );
+                            return Ok(());
+                        } else {
+                            info!(
+                                "ProgramV2::tick() - Step '{}' ({}/{}), state: {:?}, completed: {}/{} - Can advance!",
+                                current_step_name,
+                                engine.state().current_step_index + 1,
+                                engine.total_steps(),
+                                current_state,
+                                participants_completed,
+                                total_participants
+                            );
+                        }
+                    } else {
+                        info!(
+                            "ProgramV2::tick() - Step '{}' ({}/{}), state: {:?}, completed: {}/{}",
+                            current_step_name,
+                            engine.state().current_step_index + 1,
+                            engine.total_steps(),
+                            current_state,
+                            participants_completed,
+                            total_participants
+                        );
+                    }
+                    
+                    // Save engine state before tick to detect changes
+                    let engine_state_before = engine.state().clone();
+                    
                     // Use SetupEngine to drive setup
                     let data_to_send = engine.tick(&mut self.protocol, &self.participants, program_context)?;
                     let is_complete = engine.is_complete();
 
+                    // Check if engine state changed
+                    let engine_state_after = engine.state().clone();
+                    if engine_state_before != engine_state_after {
+                        info!(
+                            "ProgramV2: SetupEngine state changed - before: {:?}, after: {:?}",
+                            engine_state_before.current_step_state,
+                            engine_state_after.current_step_state
+                        );
+                        state_changed = true;
+                    }
+
                     // Send data if generated
                     if let Some(data) = data_to_send {
+                        info!(
+                            "ProgramV2: Generated {} bytes of data for step '{}', broadcasting to {} participants",
+                            data.len(),
+                            current_step_name,
+                            self.participants.len() - 1
+                        );
+
+                        // IMPORTANT: Store our own data in globals BEFORE sending to others
+                        // The step's can_advance() method checks that ALL participants' data exists in globals
+                        if let Some(engine) = &mut self.setup_engine {
+                            if let Some(step) = engine.current_step() {
+                                let my_participant = &self.participants[self.my_idx];
+                                step.verify_received(&data, my_participant, &self.protocol, &self.participants, program_context)?;
+                                info!(
+                                    "ProgramV2: Stored our own data (participant {}) in globals for step '{}'",
+                                    self.my_idx,
+                                    current_step_name
+                                );
+                            }
+                        }
+
                         // Send the data to other participants
                         self.broadcast_setup_data(data, program_context)?;
 
-                        // Mark as sent
+                        // Mark as sent and mark ourselves as completed
                         if let Some(engine) = &mut self.setup_engine {
                             engine.mark_current_step_sent()?;
+                            // Mark ourselves as completed since we've sent our data
+                            engine.state_mut().mark_participant_completed(self.my_idx);
+                            info!(
+                                "ProgramV2: Marked ourselves (participant {}) as completed for step '{}'",
+                                self.my_idx,
+                                current_step_name
+                            );
+                            state_changed = true;
                         }
                     }
 
@@ -241,6 +374,7 @@ impl ProgramV2 {
                         info!("ProgramV2: SetupEngine completed all steps, building protocol");
                         self.build_protocol(&program_context)?;
                         self.state = ProgramState::Monitoring;
+                        state_changed = true;
                         info!("ProgramV2: Protocol built, transitioning to Monitoring state");
                     }
                 } else {
@@ -285,12 +419,36 @@ impl ProgramV2 {
 
                 // Transition to Ready state - monitoring is now active
                 self.state = ProgramState::Ready;
+                state_changed = true;
                 info!("ProgramV2: Monitoring setup complete, transitioning to Ready state");
+
+                // Send SetupCompleted message to API channel (only once)
+                if !self.setup_completed_sent {
+                    match OutgoingBitVMXApiMessages::SetupCompleted(self.program_id).to_string() {
+                        Ok(msg) => {
+                            let result = program_context.broker_channel.send(
+                                &program_context.components_config.l2,
+                                msg,
+                            );
+                            if let Err(e) = result {
+                                warn!("ProgramV2: Error sending setup completed message: {:?}", e);
+                            } else {
+                                info!("ProgramV2: Sent SetupCompleted message for program {}", self.program_id);
+                                self.setup_completed_sent = true;
+                                state_changed = true;  // Save the flag
+                            }
+                        }
+                        Err(e) => {
+                            warn!("ProgramV2: Error serializing SetupCompleted message: {:?}", e);
+                        }
+                    }
+                }
             }
             ProgramState::Ready => {
                 // Protocol is ready and monitoring is active
                 // Just waiting for blockchain events via notify_news()
                 debug!("ProgramV2: In Ready state - monitoring active, waiting for events");
+                // No changes in Ready state - don't save
             }
             ProgramState::SettingUp(_) => {
                 // This should never happen for ProgramV2 - we use SettingUpV2
@@ -302,8 +460,10 @@ impl ProgramV2 {
             }
         }
 
-        // Save program (includes state) at the end of every tick
-        self.save()?;
+        // Only save if there were actual changes to avoid infinite load-save loops
+        if state_changed {
+            self.save()?;
+        }
         Ok(())
     }
 
@@ -324,8 +484,9 @@ impl ProgramV2 {
 
         for participant in &self.participants {
             if participant.comms_address.pubkey_hash != my_pubkey_hash {
-                debug!(
-                    "ProgramV2: Sending setup data to {}",
+                info!(
+                    "ProgramV2::broadcast_setup_data() - Sending {} bytes to participant {}",
+                    data.len(),
                     participant.comms_address.pubkey_hash
                 );
 
@@ -355,6 +516,14 @@ impl ProgramV2 {
         from: &PubKeyHash,
         program_context: &mut ProgramContext,
     ) -> Result<(), BitVMXError> {
+        let mut state_changed = false;
+        
+        info!(
+            "ProgramV2::receive_setup_data() - Received {} bytes from participant {}",
+            data.len(),
+            from
+        );
+        
         // Find the participant
         let from_participant = self
             .participants
@@ -366,6 +535,17 @@ impl ProgramV2 {
             .clone();
 
         if let Some(engine) = &mut self.setup_engine {
+            // Clone step name to owned String before any mutable borrows
+            let step_name = engine.current_step_name().unwrap_or("unknown").to_string();
+            let participants_completed_before = engine.state().participants_completed.len();
+            
+            info!(
+                "ProgramV2::receive_setup_data() - Processing data for step '{}' (completed before: {}/{})",
+                step_name,
+                participants_completed_before,
+                self.participants.len()
+            );
+            
             engine.receive_current_step_data(
                 data,
                 &from_participant,
@@ -373,12 +553,59 @@ impl ProgramV2 {
                 &self.participants,
                 program_context,
             )?;
+            state_changed = true; // Receiving data changes the engine state
+
+            let participants_completed_after = engine.state().participants_completed.len();
+            info!(
+                "ProgramV2::receive_setup_data() - After processing: {}/{} participants completed",
+                participants_completed_after,
+                self.participants.len()
+            );
 
             // Try to advance after receiving data
-            engine.try_advance_current_step(&self.protocol, &self.participants, program_context)?;
+            let engine_state_before_advance = engine.state().current_step_state.clone();
+            let participants_completed_count = engine.state().participants_completed.len();
+            let total_participants = self.participants.len();
+            
+            info!(
+                "ProgramV2::receive_setup_data() - Attempting to advance step '{}' (state: {:?}, completed: {}/{})",
+                step_name,
+                engine_state_before_advance,
+                participants_completed_count,
+                total_participants
+            );
+            
+            let advanced = engine.try_advance_current_step(&self.protocol, &self.participants, program_context)?;
+            if advanced {
+                info!(
+                    "ProgramV2::receive_setup_data() - Step '{}' advanced after receiving data",
+                    step_name
+                );
+                state_changed = true;
+            } else {
+                info!(
+                    "ProgramV2::receive_setup_data() - Step '{}' could not advance (state: {:?}, completed: {}/{})",
+                    step_name,
+                    engine_state_before_advance,
+                    engine.state().participants_completed.len(),
+                    self.participants.len()
+                );
+            }
         }
 
-        self.save()?;
+        // Only save if we haven't completed all steps yet
+        // If all steps are complete, let tick() handle the transition to Monitoring/Ready
+        // to avoid race conditions where we save in SettingUpV2 while tick() is transitioning to Ready
+        if state_changed {
+            if let Some(engine) = &self.setup_engine {
+                if !engine.is_complete() {
+                    self.save()?;
+                    info!("ProgramV2::receive_setup_data() - Saved program state (setup not yet complete)");
+                } else {
+                    info!("ProgramV2::receive_setup_data() - Setup complete, skipping save to avoid race with tick()");
+                }
+            }
+        }
         Ok(())
     }
 
@@ -463,10 +690,16 @@ impl ProgramV2 {
         data: Vec<u8>,
         program_context: &mut ProgramContext,
     ) -> Result<(), BitVMXError> {
-        debug!("ProgramV2: Message received: {:?}", msg_type);
+        info!(
+            "ProgramV2::process_comms_message() - Received {:?} message ({} bytes) from {}",
+            msg_type,
+            data.len(),
+            comms_address
+        );
 
         match msg_type {
             CommsMessageType::SetupStepData => {
+                info!("ProgramV2::process_comms_message() - Routing SetupStepData to receive_setup_data()");
                 self.receive_setup_data(&data, comms_address, program_context)?;
             }
             CommsMessageType::VerificationKey | CommsMessageType::VerificationKeyRequest => {
