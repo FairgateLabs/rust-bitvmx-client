@@ -24,6 +24,7 @@ use crate::{
                 ProgramInputType,
             },
             program_input_prev_prefix, program_input_prev_protocol, program_input_word,
+            DisputeResolutionProtocol,
         },
         variables::VariableTypes,
     },
@@ -230,9 +231,10 @@ pub fn challenge_scripts(
 
     let mut challenge_current_leaf = 0;
 
-    let rounds = program_definitions.nary_def().total_rounds();
-    let nary = program_definitions.nary_def().nary;
-    let nary_last_round = program_definitions.nary_def().nary_last_round;
+    let nary_def = program_definitions.nary_def();
+    let rounds = nary_def.total_rounds();
+    let nary = nary_def.nary;
+    let nary_last_round = nary_def.nary_last_round;
 
     match nary_search_type {
         NArySearchType::ConflictStep => {
@@ -604,9 +606,15 @@ pub fn challenge_scripts(
                                 future_read_challenge(&mut stack);
                             }
                             "read_value_nary_search" => {
-                                let var = stack.define(2, "bits");
-                                stack.drop(var);
-                                //TODO: Should verify if var < 2^max_bits, with max_bits from N-ary search def
+                                let bits = stack.define(2, "bits");
+                                // the reverse script was used, but the function that verifies the bits doesn't expect the reverse
+                                stack.move_var_sub_n(bits, 0);
+                                let bits = nary_def.bits_for_round(1);
+                                let verification_script =
+                                    DisputeResolutionProtocol::get_validate_selection_bits_script(
+                                        (1 << bits) - 1,
+                                    );
+                                stack.custom(verification_script, 1, false, 0, "");
                             }
                             _ => panic!("Unknown challenge name: {}", challenge_name),
                         };
