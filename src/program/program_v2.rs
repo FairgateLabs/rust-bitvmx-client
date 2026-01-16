@@ -14,9 +14,10 @@
 
 use crate::{
     bitvmx::Context,
-    comms_helper::{request, CommsMessageType},
+    comms_helper::{prepare_message, request, CommsMessageType},
     config::ClientConfig,
     errors::{BitVMXError, ProgramError},
+    leader_broadcast::OriginalMessage,
     program::{
         participant::ParticipantData,
         protocols::protocol_handler::{new_protocol_type, ProtocolHandler, ProtocolType},
@@ -467,11 +468,16 @@ impl ProgramV2 {
         Ok(())
     }
 
-    /// Broadcasts setup data to all participants
+    /// Broadcasts setup data using leader broadcast pattern
     ///
     /// Uses `CommsMessageType::SetupStepData` which is a generic message type for
     /// any SetupEngine step data. The actual step type (keys, nonces, signatures, etc.)
     /// is determined by the SetupEngine's current step, not by the message type.
+    ///
+    /// Leader broadcast pattern:
+    /// - Non-leaders send their data only to the leader
+    /// - Leader stores its own data + collects data from non-leaders
+    /// - When all data is received, leader broadcasts to all non-leaders
     ///
     /// This is different from Program (legacy) which uses specific message types
     /// (Keys, PublicNonces, PartialSignatures) for each step.
@@ -480,27 +486,56 @@ impl ProgramV2 {
         data: Vec<u8>,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let my_pubkey_hash = program_context.comms.get_pubk_hash()?;
+        let my_idx = self.my_idx;
+        let is_leader = my_idx == self.leader;
 
-        for participant in &self.participants {
-            if participant.comms_address.pubkey_hash != my_pubkey_hash {
-                info!(
-                    "ProgramV2::broadcast_setup_data() - Sending {} bytes to participant {}",
-                    data.len(),
-                    participant.comms_address.pubkey_hash
-                );
+        if is_leader {
+            // Leader: Store own message for later broadcast
+            info!(
+                "ProgramV2::broadcast_setup_data() - Leader storing own {} bytes",
+                data.len()
+            );
 
-                // Use SetupStepData message type for generic SetupEngine data
-                // The actual step type (keys, nonces, etc.) is determined by SetupEngine
-                request(
-                    &program_context.comms,
-                    &program_context.key_chain,
-                    &self.program_id,
-                    participant.comms_address.clone(),
-                    CommsMessageType::SetupStepData,
-                    data.clone(),
-                )?;
-            }
+            // Prepare the message (serialize + sign)
+            let (version, data_value, timestamp, signature) = prepare_message(
+                &program_context.key_chain,
+                &self.program_id,
+                CommsMessageType::SetupStepData,
+                data,
+            )?;
+
+            // Create OriginalMessage
+            let original_msg = OriginalMessage {
+                sender_pubkey_hash: program_context.comms.get_pubk_hash()?,
+                msg_type: CommsMessageType::SetupStepData,
+                data: data_value,
+                original_timestamp: timestamp,
+                original_signature: signature,
+                version,
+            };
+
+            // Store leader's own message
+            program_context
+                .leader_broadcast_helper
+                .store_original_message(&self.program_id, CommsMessageType::SetupStepData, original_msg)?;
+        } else {
+            // Non-leader: Send only to leader
+            let leader_address = &self.participants[self.leader].comms_address;
+
+            info!(
+                "ProgramV2::broadcast_setup_data() - Non-leader sending {} bytes to leader {}",
+                data.len(),
+                leader_address.pubkey_hash
+            );
+
+            request(
+                &program_context.comms,
+                &program_context.key_chain,
+                &self.program_id,
+                leader_address.clone(),
+                CommsMessageType::SetupStepData,
+                data,
+            )?;
         }
 
         Ok(())
@@ -517,13 +552,25 @@ impl ProgramV2 {
         program_context: &mut ProgramContext,
     ) -> Result<(), BitVMXError> {
         let mut state_changed = false;
-        
+
         info!(
             "ProgramV2::receive_setup_data() - Received {} bytes from participant {}",
             data.len(),
             from
         );
-        
+
+        // Check if setup is already complete - if so, ignore the message
+        // This can happen when a non-leader receives the broadcast containing their own message
+        if let Some(engine) = &self.setup_engine {
+            if engine.is_complete() {
+                info!(
+                    "ProgramV2::receive_setup_data() - Setup already complete, ignoring message from {}",
+                    from
+                );
+                return Ok(());
+            }
+        }
+
         // Find the participant
         let from_participant = self
             .participants
@@ -561,6 +608,53 @@ impl ProgramV2 {
                 participants_completed_after,
                 self.participants.len()
             );
+
+            // Leader broadcast: If I'm the leader and have all messages, broadcast to non-leaders
+            if self.my_idx == self.leader {
+                use crate::comms_helper::CommsMessageType;
+                use crate::leader_broadcast::get_non_leader_participants;
+
+                // Get list of all participant pubkey hashes (including leader)
+                let all_participant_hashes: Vec<_> = self
+                    .participants
+                    .iter()
+                    .map(|p| p.comms_address.pubkey_hash.clone())
+                    .collect();
+
+                // Check if we have all messages
+                let has_all = program_context
+                    .leader_broadcast_helper
+                    .has_all_expected_messages(
+                        &self.program_id,
+                        CommsMessageType::SetupStepData,
+                        &all_participant_hashes,
+                    )?;
+
+                if has_all {
+                    info!(
+                        "ProgramV2::receive_setup_data() - Leader has all messages, broadcasting to non-leaders"
+                    );
+
+                    // Get non-leader participants
+                    let my_pubkey_hash = program_context.comms.get_pubk_hash()?;
+                    let non_leaders = get_non_leader_participants(&self.participants.iter().map(|p| p.comms_address.clone()).collect::<Vec<_>>(), &my_pubkey_hash);
+
+                    // Broadcast to all non-leaders
+                    program_context
+                        .leader_broadcast_helper
+                        .broadcast_to_non_leaders(
+                            program_context,
+                            &self.program_id,
+                            CommsMessageType::SetupStepData,
+                            &non_leaders,
+                        )?;
+
+                    info!(
+                        "ProgramV2::receive_setup_data() - Leader successfully broadcasted messages to {} non-leaders",
+                        non_leaders.len()
+                    );
+                }
+            }
 
             // Try to advance after receiving data
             let engine_state_before_advance = engine.state().current_step_state.clone();
