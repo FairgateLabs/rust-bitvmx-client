@@ -112,16 +112,18 @@ pub fn test_collaboration() -> Result<()> {
     wallet.sync_wallet()?;
     info!("Wallet ready with {} BTC", 10);
 
-    // Initialize 2 BitVMX instances (prover and verifier)
-    let (bitvmx_prover, _address_prover, bridge_prover, _) = init_bitvmx("op_1", false)?;
-    let (bitvmx_verifier, _address_verifier, bridge_verifier, _) = init_bitvmx("op_2", false)?;
+    // Initialize 3 BitVMX instances (1 leader + 2 non-leaders)
+    let (bitvmx_op1, _address_op1, bridge_op1, _) = init_bitvmx("op_1", false)?;
+    let (bitvmx_op2, _address_op2, bridge_op2, _) = init_bitvmx("op_2", false)?;
+    let (bitvmx_op3, _address_op3, bridge_op3, _) = init_bitvmx("op_3", false)?;
 
-    let mut instances = vec![bitvmx_prover, bitvmx_verifier];
-    let channels = vec![bridge_prover.clone(), bridge_verifier.clone()];
+    let mut instances = vec![bitvmx_op1, bitvmx_op2, bitvmx_op3];
+    let channels = vec![bridge_op1.clone(), bridge_op2.clone(), bridge_op3.clone()];
 
     let identifiers = [
         instances[0].get_components_config().bitvmx.clone(),
         instances[1].get_components_config().bitvmx.clone(),
+        instances[2].get_components_config().bitvmx.clone(),
     ];
 
     let id_channel_pairs: Vec<ParticipantChannel> = identifiers
@@ -155,8 +157,9 @@ pub fn test_collaboration() -> Result<()> {
         .map(|msg| msg.comm_info().unwrap().1)
         .collect::<Vec<_>>();
 
-    info!("Prover address: {:?}", addresses[0]);
-    info!("Verifier address: {:?}", addresses[1]);
+    info!("Op1 (Leader) address: {:?}", addresses[0]);
+    info!("Op2 (Non-leader) address: {:?}", addresses[1]);
+    info!("Op3 (Non-leader) address: {:?}", addresses[2]);
 
     info!("================================================");
     info!("Setting up aggregated public key");
@@ -168,7 +171,7 @@ pub fn test_collaboration() -> Result<()> {
         aggregation_id,
         addresses.clone(),
         None,
-        0, // Prover is leader (index 0)
+        0, // Op1 is leader (index 0)
     )
     .to_string()?;
     send_all(&id_channel_pairs, &command)?;
@@ -199,14 +202,14 @@ pub fn test_collaboration() -> Result<()> {
     // Create CollaborationConfig (uses ProgramV2 with SetupEngine)
     let collaboration_config = CollaborationConfig::new(program_id);
 
-    // Call setup_v2 through the API (prover is leader, index 0)
+    // Call setup_v2 through the API (op1 is leader, index 0)
     collaboration_config.setup(&id_channel_pairs, addresses.clone(), 0)?;
 
     info!("================================================");
     info!("Waiting for setup completion");
     info!("================================================");
 
-    // Wait for setup to complete - both participants should respond with ProgramSetupComplete
+    // Wait for setup to complete - all participants should respond with ProgramSetupComplete
     let setup_responses = get_all(&channels, &mut instances, false)?;
 
     for (i, response) in setup_responses.iter().enumerate() {
@@ -248,11 +251,11 @@ pub fn test_collaboration() -> Result<()> {
     )
     .to_string()?;
 
-    // Query the aggregated key from both participants
+    // Query the aggregated key from all participants
     send_all(&id_channel_pairs, &get_key_command)?;
     let key_responses = get_all(&channels, &mut instances, false)?;
 
-    // Both participants should return the same aggregated key
+    // All participants should return the same aggregated key
     let mut aggregated_keys = Vec::new();
     for (i, response) in key_responses.iter().enumerate() {
         if let Some((_, key_name, key_value)) = response.variable() {
@@ -272,12 +275,14 @@ pub fn test_collaboration() -> Result<()> {
         }
     }
 
-    // Verify both participants have the same aggregated key
-    assert_eq!(aggregated_keys.len(), 2, "Should have 2 aggregated keys");
+    // Verify all three participants have the same aggregated key
+    assert_eq!(aggregated_keys.len(), 3, "Should have 3 aggregated keys");
     assert_eq!(aggregated_keys[0], aggregated_keys[1],
-        "Both participants should compute the same aggregated MuSig2 key");
+        "All participants should compute the same aggregated MuSig2 key");
+    assert_eq!(aggregated_keys[0], aggregated_keys[2],
+        "All participants should compute the same aggregated MuSig2 key");
 
-    info!("✅ Collaboration successful! Both participants computed the same aggregated key");
+    info!("✅ Collaboration successful! All three participants computed the same aggregated key");
     info!("   Aggregated MuSig2 Key: {}", aggregated_keys[0]);
 
     info!("================================================");
