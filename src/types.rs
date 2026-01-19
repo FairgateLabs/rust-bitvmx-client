@@ -113,7 +113,6 @@ pub enum IncomingBitVMXApiMessages {
     GetHashedMessage(Uuid, String, u32, u32),
     Setup(ProgramId, String, Vec<CommsAddress>, u16),
     SubscribeToTransaction(Uuid, Txid),
-    SubscribeUTXO(Uuid),
     SubscribeToRskPegin(),
     GetSPVProof(Txid),
     DispatchTransaction(Uuid, Transaction),

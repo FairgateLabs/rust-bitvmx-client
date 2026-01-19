@@ -1246,10 +1246,6 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn subscribe_utxo(&mut self, uuid: Uuid) -> Result<Uuid, BitVMXError> {
-        Ok(uuid)
-    }
-
     fn subscribe_to_rsk_pegin(&mut self) -> Result<(), BitVMXError> {
         // Enable RSK pegin transaction monitoring
         self.program_context
@@ -1621,9 +1617,6 @@ impl BitVMXApi for BitVMX {
             }
             IncomingBitVMXApiMessages::SubscribeToTransaction(uuid, txid) => {
                 BitVMXApi::subscribe_to_tx(self, from, uuid, txid)?
-            }
-            IncomingBitVMXApiMessages::SubscribeUTXO(uuid) => {
-                BitVMXApi::subscribe_utxo(self, uuid)?;
             }
 
             IncomingBitVMXApiMessages::SubscribeToRskPegin() => {
