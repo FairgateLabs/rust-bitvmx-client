@@ -511,7 +511,9 @@ impl ProtocolHandler for SlotProtocol {
 
         //=======================
         // Connect the funding tx with the first tx. SETUP_TX
-        let amount = fund_utxo.2.unwrap();
+        let amount = fund_utxo.2.ok_or(BitVMXError::MissingParameter(
+            "Funding UTXO amount is required".to_string(),
+        ))?;
         let spending = vec![scripts::check_aggregated_signature(
             &operators_aggregated_pub,
             SignMode::Aggregate,
