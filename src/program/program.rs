@@ -122,9 +122,15 @@ impl Program {
 
     fn save(&self) -> Result<(), ProgramError> {
         let key = Self::get_key(StoreKey::Program(self.program_id));
-        self.storage.as_ref().unwrap().set(key, self, None)?;
+        self.storage
+            .as_ref()
+            .ok_or(ProgramError::StorageUnavailable)?
+            .set(key, self, None)?;
         let key = Self::get_key(StoreKey::ProgramState(self.program_id));
-        self.storage.as_ref().unwrap().set(key, &self.state, None)?;
+        self.storage
+            .as_ref()
+            .ok_or(ProgramError::StorageUnavailable)?
+            .set(key, &self.state, None)?;
         Ok(())
     }
 
@@ -210,13 +216,13 @@ impl Program {
         for agg_name in &self.participants[self.my_idx]
             .keys
             .as_ref()
-            .unwrap()
+            .ok_or(BitVMXError::KeysNotFound(self.program_id))?
             .aggregated
         {
             let agg_key = self.participants[self.my_idx]
                 .keys
                 .as_ref()
-                .unwrap()
+                .ok_or(BitVMXError::KeysNotFound(self.program_id))?
                 .get_public(agg_name)
                 .map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
@@ -231,7 +237,7 @@ impl Program {
                 let other_key = other
                     .keys
                     .as_ref()
-                    .unwrap()
+                    .ok_or(BitVMXError::KeysNotFound(self.program_id))?
                     .get_public(agg_name)
                     .map_err(|_| BitVMXError::InvalidMessageFormat)?;
                 aggregated_pub_keys.push(*other_key);
@@ -257,7 +263,7 @@ impl Program {
         self.participants[self.my_idx]
             .keys
             .as_mut()
-            .unwrap()
+            .ok_or(BitVMXError::KeysNotFound(self.program_id))?
             .computed_aggregated = result.clone();
         Ok(result)
     }
@@ -272,8 +278,13 @@ impl Program {
         let keys: Vec<ParticipantKeys> = self
             .participants
             .iter()
-            .map(|p| p.keys.as_ref().unwrap().clone())
-            .collect();
+            .map(|p| {
+                p.keys
+                    .as_ref()
+                    .ok_or(BitVMXError::KeysNotFound(self.program_id))
+                    .map(|k| k.clone())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         info!("Building protocol for: {} {}", self.program_id, self.my_idx);
         self.protocol.build(keys, aggregated, &context)?;
@@ -345,7 +356,10 @@ impl Program {
             for other in &self.participants {
                 keys.push((
                     other.comms_address.pubkey_hash.clone(),
-                    other.keys.clone().unwrap(),
+                    other
+                        .keys
+                        .clone()
+                        .ok_or(BitVMXError::KeysNotFound(self.program_id))?,
                 ));
             }
             keys
@@ -355,7 +369,10 @@ impl Program {
                     .comms_address
                     .pubkey_hash
                     .clone(),
-                self.participants[self.my_idx].keys.clone().unwrap(),
+                self.participants[self.my_idx]
+                    .keys
+                    .clone()
+                    .ok_or(BitVMXError::KeysNotFound(self.program_id))?,
             )]
         };
         self.request_helper(program_context, keys, CommsMessageType::Keys)?;
@@ -421,7 +438,7 @@ impl Program {
         for aggregated in self.participants[self.my_idx]
             .keys
             .as_ref()
-            .unwrap()
+            .ok_or(BitVMXError::KeysNotFound(self.program_id))?
             .computed_aggregated
             .values()
         {
@@ -444,7 +461,7 @@ impl Program {
                 "{}. Sending nonces for aggregated key: {} {:?} {:?}",
                 self.my_idx, aggregated, my_pub, nonces
             );
-            public_nonce_msg.push((aggregated.clone(), my_pub, nonces.unwrap()));
+            public_nonce_msg.push((aggregated.clone(), my_pub, nonces?));
         }
 
         self.participants[self.my_idx].nonces = Some(public_nonce_msg);
@@ -452,13 +469,11 @@ impl Program {
 
         let mut nonces = vec![];
         for other in &self.participants {
-            if other.nonces.is_some() {
-                nonces.push((
-                    other.comms_address.pubkey_hash.clone(),
-                    other.nonces.clone().unwrap(),
-                ));
+            if let Some(nonce) = &other.nonces {
+                nonces.push((other.comms_address.pubkey_hash.clone(), nonce.clone()));
             }
         }
+
         self.request_helper(program_context, nonces, CommsMessageType::PublicNonces)?;
 
         self.save_retry(StoreKey::LastRequestNonces(self.program_id))?;
@@ -503,8 +518,10 @@ impl Program {
 
             for (idx, participant) in self.participants.iter().enumerate() {
                 if idx != self.my_idx {
-                    for (aggregated, participant_pub_key, nonces) in
-                        participant.nonces.as_ref().unwrap()
+                    for (aggregated, participant_pub_key, nonces) in participant
+                        .nonces
+                        .as_ref()
+                        .ok_or(BitVMXError::NoncesNotFound(self.program_id))?
                     {
                         debug!(
                             "will get nonces for: {} {:?} {:?} {:?} ",
@@ -552,7 +569,7 @@ impl Program {
         for aggregated in self.participants[self.my_idx]
             .keys
             .as_ref()
-            .unwrap()
+            .ok_or(BitVMXError::KeysNotFound(self.program_id))?
             .computed_aggregated
             .values()
         {
@@ -576,7 +593,7 @@ impl Program {
                 "{}. Sending partial signatures for aggregated key: {} {:?} {:?}",
                 self.my_idx, aggregated, my_pub, signatures
             );
-            partial_sig_msg.push((aggregated.clone(), my_pub, signatures.unwrap()));
+            partial_sig_msg.push((aggregated.clone(), my_pub, signatures?));
         }
 
         self.participants[self.my_idx].partial = Some(partial_sig_msg);
@@ -587,7 +604,10 @@ impl Program {
             if other.partial.is_some() {
                 partials.push((
                     other.comms_address.pubkey_hash.clone(),
-                    other.partial.clone().unwrap(),
+                    other
+                        .partial
+                        .clone()
+                        .ok_or(BitVMXError::PartialSignaturesNotFound(self.program_id))?,
                 ));
             }
         }
@@ -637,8 +657,10 @@ impl Program {
 
             for (idx, participant) in self.participants.iter().enumerate() {
                 if idx != self.my_idx {
-                    for (aggregated, other_pub_key, signatures) in
-                        participant.partial.as_ref().unwrap()
+                    for (aggregated, other_pub_key, signatures) in participant
+                        .partial
+                        .as_ref()
+                        .ok_or(BitVMXError::PartialSignaturesNotFound(self.program_id))?
                     {
                         debug!(
                             "Program {}: agg: {}, other: {} Received signatures: {:?}",
@@ -862,8 +884,12 @@ impl Program {
         let participant_keys = self
             .participants
             .iter()
-            .map(|p| p.keys.as_ref().unwrap())
-            .collect::<Vec<_>>();
+            .map(|p| {
+                p.keys
+                    .as_ref()
+                    .ok_or(BitVMXError::KeysNotFound(self.program_id))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         self.protocol.notify_news(
             tx_id,
@@ -918,7 +944,7 @@ impl Program {
         let retries = self
             .storage
             .as_ref()
-            .unwrap()
+            .ok_or(BitVMXError::StorageUnavailable(self.program_id.to_string()))?
             .get(Self::get_key(key.clone()))?
             .unwrap_or(ProgramRequestInfo::default())
             .retries
@@ -931,7 +957,7 @@ impl Program {
 
         self.storage
             .as_ref()
-            .unwrap()
+            .ok_or(BitVMXError::StorageUnavailable(self.program_id.to_string()))?
             .set(Self::get_key(key), last_request, None)?;
 
         Ok(())
@@ -942,7 +968,7 @@ impl Program {
         let last_request: ProgramRequestInfo = self
             .storage
             .as_ref()
-            .unwrap()
+            .ok_or(BitVMXError::StorageUnavailable(self.program_id.to_string()))?
             .get(Self::get_key(key.clone()))?
             .unwrap_or(ProgramRequestInfo::default());
 

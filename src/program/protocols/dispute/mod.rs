@@ -204,19 +204,19 @@ pub fn init_trace_vars(rounds: u8) -> Result<(), BitVMXError> {
 
     // Rebuild all in a consistent state
     {
-        let mut trace = trace_lock.write().unwrap();
+        let mut trace = trace_lock.write()?;
         *trace = build_trace_vars(rounds);
     }
     {
-        let mut tk = tk_lock.write().unwrap();
+        let mut tk = tk_lock.write()?;
         *tk = build_translation_keys_2nd_nary(rounds);
     }
     {
-        let mut challenge_step = challenge_step_lock.write().unwrap();
+        let mut challenge_step = challenge_step_lock.write()?;
         *challenge_step = build_challenge_step_vars(rounds);
     }
     {
-        let mut challenge_step2 = challenge_step2_lock.write().unwrap();
+        let mut challenge_step2 = challenge_step2_lock.write()?;
         *challenge_step2 = build_challenge_step_vars_2nd_nary(rounds);
     }
     Ok(())
@@ -384,16 +384,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 key_chain.derive_winternitz_hash160(8)?.into(),
             ));
 
-            keys.extend_from_slice(
-                get_verifier_keys()
-                    .iter()
-                    .map(|(name, size)| {
-                        let key = key_chain.derive_winternitz_hash160(*size).unwrap();
-                        (name.to_string(), PublicKeyType::Winternitz(key))
-                    })
-                    .collect::<Vec<(String, PublicKeyType)>>()
-                    .as_slice(),
-            );
+            let ver_keys = get_verifier_keys()
+                .iter()
+                .map(|(name, size)| {
+                    let key = key_chain.derive_winternitz_hash160(*size)?;
+                    Ok::<_, BitVMXError>((name.to_string(), PublicKeyType::Winternitz(key)))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            keys.extend_from_slice(&ver_keys);
         }
 
         //generate keys for the nary search
@@ -428,7 +426,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         if name.starts_with(INPUT_TX) {
-            let idx = name.strip_prefix(INPUT_TX).unwrap().parse::<u32>()?;
+            let idx = name
+                .strip_prefix(INPUT_TX)
+                .ok_or(BitVMXError::InvalidStringOperation(name.to_string()))?
+                .parse::<u32>()?;
             split_input(&self.ctx.id, idx, context)?;
             let (tx, speedup) =
                 self.get_tx_with_speedup_data(context, &input_tx_name(idx), 0, 0, true)?;
@@ -476,7 +477,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         let prover_speedup_pub = keys[0].get_public("speedup")?;
         let verifier_speedup_pub = keys[1].get_public("speedup")?;
-        let aggregated = computed_aggregated.get("aggregated_1").unwrap();
+        let aggregated = computed_aggregated
+            .get("aggregated_1")
+            .ok_or(BitVMXError::NotFound("aggregated_1".to_string()))?;
         let (agg_or_prover, agg_or_verifier, sign_mode) =
             (prover_speedup_pub, verifier_speedup_pub, SignMode::Single);
 

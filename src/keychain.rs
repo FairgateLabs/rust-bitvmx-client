@@ -59,7 +59,7 @@ impl KeyChain {
                 )
             )));
         }
-        let pem_file = std::fs::read_to_string(path).unwrap();
+        let pem_file = std::fs::read_to_string(path)?;
         let rsa_pubkey_pem = key_manager.import_rsa_private_key(&pem_file)?;
 
         Ok(Self {

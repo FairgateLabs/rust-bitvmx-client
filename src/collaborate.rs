@@ -148,7 +148,7 @@ impl Collaboration {
                 let keys: ParticipantKeys = parse_keys(data.clone())
                     .map_err(|_| BitVMXError::InvalidMessage("Invalid keys".to_string()))?
                     .first()
-                    .unwrap()
+                    .ok_or_else(|| BitVMXError::InvalidMessage("Invalid keys".to_string()))?
                     .1
                     .clone();
 
@@ -167,13 +167,13 @@ impl Collaboration {
                     self.state = true;
                 }
 
-                if self.aggregated_key.is_some() {
+                if let Some(aggregated_key) = &self.aggregated_key {
                     info!("Aggregated generated ({})", self.im_leader);
                     program_context.broker_channel.send(
                         &self.request_from,
                         OutgoingBitVMXApiMessages::AggregatedPubkey(
                             self.collaboration_id,
-                            self.aggregated_key.unwrap().clone(),
+                            aggregated_key.clone(),
                         )
                         .to_string()?,
                     )?;
@@ -220,7 +220,7 @@ impl Collaboration {
         peers: Vec<CommsAddress>,
         public_keys: Option<Vec<PublicKey>>,
     ) -> Result<PublicKey, BitVMXError> {
-        let my_key = if public_keys.is_some() {
+        let my_key = if let Some(public_keys) = &public_keys {
             // find my position in the peers list
             let my_pubkey_hash = program_context.comms.get_pubk_hash()?;
             let my_position = peers
@@ -229,7 +229,6 @@ impl Collaboration {
                 .ok_or(BitVMXError::InvalidParticipant(my_pubkey_hash.to_string()))?;
 
             public_keys
-                .unwrap()
                 .get(my_position)
                 .cloned()
                 .ok_or(BitVMXError::InvalidParticipant(my_pubkey_hash.to_string()))?

@@ -52,24 +52,21 @@ impl LockProtocolConfiguration {
     }
 
     pub fn new_from_globals(id: Uuid, globals: &Globals) -> Result<Self, BitVMXError> {
-        let operators_aggregated_pub = globals
-            .get_var(&id, "operators_aggregated_pub")?
-            .unwrap()
-            .pubkey()?;
-        let ops_agg_happy_path = globals
-            .get_var(&id, "operators_aggregated_happy_path")?
-            .unwrap()
-            .pubkey()?;
-        let unspendable = globals.get_var(&id, "unspendable")?.unwrap().pubkey()?;
-        let user_pubkey = globals.get_var(&id, "user_pubkey")?.unwrap().pubkey()?;
-        let secret = globals.get_var(&id, "secret")?.unwrap().secret()?;
-        let ordinal_utxo = globals.get_var(&id, "ordinal_utxo")?.unwrap().utxo()?;
-        let protocol_utxo = globals.get_var(&id, "protocol_utxo")?.unwrap().utxo()?;
-        let timelock_blocks = globals.get_var(&id, "timelock_blocks")?.unwrap().number()? as u16;
-        let eol_timelock_duration = globals
-            .get_var(&id, EOL_TIMELOCK_DURATION)?
-            .unwrap()
-            .number()? as u16;
+        let get = |key: &str| {
+            globals
+                .get_var(&id, key)?
+                .ok_or(BitVMXError::VariableNotFound(id, key.to_string()))
+        };
+
+        let operators_aggregated_pub = get("operators_aggregated_pub")?.pubkey()?;
+        let ops_agg_happy_path = get("operators_aggregated_happy_path")?.pubkey()?;
+        let unspendable = get("unspendable")?.pubkey()?;
+        let user_pubkey = get("user_pubkey")?.pubkey()?;
+        let secret = get("secret")?.secret()?;
+        let ordinal_utxo = get("ordinal_utxo")?.utxo()?;
+        let protocol_utxo = get("protocol_utxo")?.utxo()?;
+        let timelock_blocks = get("timelock_blocks")?.number()? as u16;
+        let eol_timelock_duration = get(EOL_TIMELOCK_DURATION)?.number()? as u16;
 
         Ok(Self::new(
             id,

@@ -31,6 +31,9 @@ pub enum BitVMXError {
     #[error("Error parsing int")]
     ParseIntError(#[from] std::num::ParseIntError),
 
+    #[error("Error parsing from script int")]
+    ScriptIntParseError(#[from] bitcoin::script::Error),
+
     #[error("Error when using KeyManager: {0}")]
     KeyManagerError(#[from] KeyManagerError),
 
@@ -175,6 +178,21 @@ pub enum BitVMXError {
     #[error("No public nonces found for aggregated public key {0} and id {1}")]
     MissingPublicNonces(String, String),
 
+    #[error("Missing nonces for program id {0}")]
+    NoncesNotFound(Uuid),
+
+    #[error("Missing partial signatures for program id {0}")]
+    PartialSignaturesNotFound(Uuid),
+
+    #[error("Storage unavailable/not found for protocol {0}")]
+    StorageUnavailable(String),
+
+    #[error("Missing block info")]
+    MissingBlockInfo,
+
+    #[error("Not found {0}")]
+    NotFound(String),
+
     #[error("Wallet error {0}")]
     WalletError(#[from] bitvmx_wallet::wallet::errors::WalletError),
 
@@ -183,6 +201,9 @@ pub enum BitVMXError {
 
     #[error("Identification error: {0}")]
     IdentificationError(#[from] IdentificationError),
+
+    #[error("IO error: {0}")]
+    IOError(#[from] std::io::Error),
 
     // Timestamp validation errors
     #[error("Message timestamp {timestamp} from peer {peer} is too far in the future (now: {now}, drift: {drift_ms}ms, max allowed: {max_drift_ms}ms)")]
@@ -262,6 +283,24 @@ pub enum BitVMXError {
 
     #[error("Invalid Input: {0}")]
     InvalidInput(String),
+
+    #[error("Merkle tree is invalid")]
+    InvalidMerkleTree,
+
+    #[error("Section not found: {0}")]
+    SectionNotFound(String),
+
+    #[error("Script not found for program id {0}")]
+    ScriptNotFound(Uuid),
+
+    #[error("TryFromSlice error: {0}")]
+    TryFromSliceError(#[from] std::array::TryFromSliceError),
+
+    #[error("Excecution error: {0}")]
+    ExecutionError(#[from] emulator::ExecutionResult),
+
+    #[error("Invalid string operation: {0}")]
+    InvalidStringOperation(String),
 }
 
 impl<T> From<PoisonError<T>> for BitVMXError {
@@ -334,6 +373,9 @@ pub enum ProgramError {
 
     #[error("Program not found in storage. Program id: {0}")]
     ProgramNotFound(Uuid),
+
+    #[error("Storage unavailable")]
+    StorageUnavailable,
 }
 
 #[derive(Error, Debug)]

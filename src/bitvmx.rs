@@ -508,21 +508,18 @@ impl BitVMX {
         let message_consumed = match peer_address {
             Some(peer_address) => {
                 if is_verification_msg {
-                    let handled = SignatureVerifier::handle_verification_messages(
+                    match SignatureVerifier::handle_verification_messages(
                         &self.program_context,
                         &program_id,
                         &msg_type,
                         &data,
                         &peer_address,
-                    );
-                    if handled.is_err() {
-                        error!(
-                            "Error handling verification message: {:?}",
-                            handled.err().unwrap()
-                        );
-                        false
-                    } else {
-                        true
+                    ) {
+                        Ok(_) => true,
+                        Err(e) => {
+                            error!("Error handling verification message: {:?}", e);
+                            false
+                        }
                     }
                 } else {
                     if let Some(mut program) = program {
@@ -596,13 +593,15 @@ impl BitVMX {
         //Send enqueued messages
         self.program_context.comms.tick()?;
 
-        let messages = self.program_context.comms.check_receive();
-        if messages.is_err() {
-            error!("Error receiving messages: {:?}", messages.err().unwrap());
-            return Ok(());
-        }
+        let messages = match self.program_context.comms.check_receive() {
+            Ok(messages) => messages,
+            Err(e) => {
+                error!("Error receiving messages: {:?}", e);
+                return Ok(());
+            }
+        };
 
-        for message in messages.unwrap() {
+        for message in messages {
             match message {
                 ReceiveHandlerChannel::Msg(identifier, msg) => {
                     self.process_msg(identifier, msg, true)?;
@@ -613,15 +612,14 @@ impl BitVMX {
             }
         }
 
-        let deadletter_messages = self.program_context.comms.check_deadletter();
-        if deadletter_messages.is_err() {
-            error!(
-                "Error receiving deadletter messages: {:?}",
-                deadletter_messages.err().unwrap()
-            );
-            return Ok(());
-        }
-        for deadletter in deadletter_messages.unwrap() {
+        let deadletter_messages = match self.program_context.comms.check_deadletter() {
+            Ok(messages) => messages,
+            Err(e) => {
+                error!("Error receiving deadletter messages: {:?}", e);
+                return Ok(());
+            }
+        };
+        for deadletter in deadletter_messages {
             match deadletter {
                 (ReceiveHandlerChannel::Msg(identifier, _msg), ctx) => {
                     let context = Context::from_string(&ctx)?;
@@ -867,9 +865,8 @@ impl BitVMX {
     }
 
     pub fn process_wallet_updates(&mut self) -> Result<(), BitVMXError> {
-        let result = self.wallet.tick();
-        if result.is_err() {
-            error!("Error updating wallet: {:?}", result.err().unwrap());
+        if let Err(e) = self.wallet.tick() {
+            error!("Error updating wallet: {:?}", e);
         }
         Ok(())
     }
@@ -892,14 +889,11 @@ impl BitVMX {
         if should_update {
             let updated = self.process_bitcoin_updates();
             self.bitcoin_update.last_update = now;
-            if updated.is_err() {
-                error!(
-                    "Critical error processing bitcoin updates: {:?}",
-                    updated.err().unwrap()
-                );
+            if let Err(e) = updated {
+                error!("Critical error processing bitcoin updates: {:?}", e);
                 return Ok(());
             }
-            if updated.unwrap() {
+            if updated? {
                 self.bitcoin_update.was_synced = true;
 
                 // info!(
@@ -930,13 +924,7 @@ impl BitVMX {
             .get(StoreKey::Programs.get_key())
             .map_err(BitVMXError::StorageError)?;
 
-        if programs_ids.is_none() {
-            let empty_programs: Vec<ProgramStatus> = vec![];
-
-            return Ok(empty_programs);
-        }
-
-        Ok(programs_ids.unwrap())
+        Ok(programs_ids.unwrap_or_default())
     }
 
     fn get_active_programs(&self) -> Result<Vec<Program>, BitVMXError> {
@@ -1046,6 +1034,7 @@ impl GracefulShutdown for BitVMX {
                 warn!("drain collaboration err: {:?}", e);
             }
 
+            //TODO: handle error
             if self.message_queue.is_empty().unwrap() {
                 break;
             }
@@ -1431,20 +1420,24 @@ impl BitVMXApi for BitVMX {
             .get_transaction(txid);
 
         match tx_info {
-            Ok(utx) => {
-                let proof = get_spv_proof(txid, utx.block_info.unwrap())?;
-
-                self.reply(from, OutgoingBitVMXApiMessages::SPVProof(txid, Some(proof)))?;
-            }
+            Ok(utx) => match utx.block_info {
+                Some(block_info) => {
+                    let proof = get_spv_proof(txid, block_info)?;
+                    self.reply(from, OutgoingBitVMXApiMessages::SPVProof(txid, Some(proof)))?;
+                }
+                None => {
+                    warn!("Missing block info for txid {}", txid);
+                    self.reply(from, OutgoingBitVMXApiMessages::SPVProof(txid, None))?;
+                }
+            },
             Err(e) => {
                 warn!(
                     "Failed to retrieve transaction info for txid {}: {:?}",
                     txid, e
                 );
-
                 self.reply(from, OutgoingBitVMXApiMessages::SPVProof(txid, None))?;
             }
-        };
+        }
 
         Ok(())
     }
@@ -1503,19 +1496,20 @@ impl BitVMXApi for BitVMX {
             }
             IncomingBitVMXApiMessages::GetFundingAddress(id) => {
                 debug!("Getting funding address uuid: {:?}", id);
-                let result = self.wallet.receive_address();
-                if result.is_err() {
-                    let error = result.as_ref().err().unwrap();
-                    error!("Error getting funding address uuid: {:?}: {:?}", id, error);
-                    self.program_context.broker_channel.send(
-                        &from,
-                        serde_json::to_string(&OutgoingBitVMXApiMessages::WalletError(
-                            id,
-                            error.to_string(),
-                        ))?,
-                    )?;
-                }
-                let address = result?;
+                let address = match self.wallet.receive_address() {
+                    Ok(address) => address,
+                    Err(e) => {
+                        error!("Error getting funding address uuid: {:?}: {:?}", id, e);
+                        self.program_context.broker_channel.send(
+                            &from,
+                            serde_json::to_string(&OutgoingBitVMXApiMessages::WalletError(
+                                id,
+                                e.to_string(),
+                            ))?,
+                        )?;
+                        return Ok(());
+                    }
+                };
 
                 self.program_context.broker_channel.send(
                     &from,

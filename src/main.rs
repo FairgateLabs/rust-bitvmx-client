@@ -67,7 +67,7 @@ fn init_bitvmx(opn: &str, fresh: bool) -> Result<BitVMX> {
         clear_db(&config.comms.storage_path);
 
         if config.bitcoin.network == Network::Regtest {
-            Wallet::clear_db(&config.wallet).unwrap();
+            Wallet::clear_db(&config.wallet)?;
         }
     }
 

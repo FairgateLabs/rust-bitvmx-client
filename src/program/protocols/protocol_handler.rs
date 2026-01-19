@@ -86,22 +86,19 @@ pub trait ProtocolHandler {
         input_index: u32,
         message_index: u32,
     ) -> Result<String, BitVMXError> {
-        let ret = self.load_protocol()?.get_hashed_message(
-            transaction_name,
-            input_index,
-            message_index,
-        )?;
-        if ret.is_none() {
-            error!(
-                "Invalid transaction name when getting hashed message: {}. Protocol ID: {}",
-                transaction_name,
-                self.context().id
-            );
-            return Err(BitVMXError::InvalidTransactionName(
-                transaction_name.to_string(),
-            ));
-        }
-        Ok(format!("{}", ret.unwrap()))
+        let ret = self
+            .load_protocol()?
+            .get_hashed_message(transaction_name, input_index, message_index)?
+            .ok_or_else(|| {
+                error!(
+                    "Invalid transaction name when getting hashed message: {}. Protocol ID: {}",
+                    transaction_name,
+                    self.context().id
+                );
+                BitVMXError::InvalidTransactionName(transaction_name.to_string())
+            })?;
+
+        Ok(format!("{}", ret))
     }
 
     fn get_transaction_by_id(&self, txid: &Txid) -> Result<Transaction, ProtocolBuilderError> {
@@ -173,7 +170,12 @@ pub trait ProtocolHandler {
     fn load_protocol(&self) -> Result<Protocol, ProtocolBuilderError> {
         match Protocol::load(
             &self.context().protocol_name,
-            self.context().storage.clone().unwrap(),
+            self.context()
+                .storage
+                .clone()
+                .ok_or(ProtocolBuilderError::MissingStorage(
+                    self.context().protocol_name.clone(),
+                ))?,
         )? {
             Some(protocol) => Ok(protocol),
             None => Err(ProtocolBuilderError::MissingProtocol(
@@ -191,7 +193,9 @@ pub trait ProtocolHandler {
     }
 
     fn save_protocol(&self, protocol: Protocol) -> Result<(), ProtocolBuilderError> {
-        protocol.save(self.context().storage.clone().unwrap())?;
+        protocol.save(self.context().storage.clone().ok_or(
+            ProtocolBuilderError::MissingStorage(self.context().protocol_name.clone()),
+        )?)?;
         Ok(())
     }
 
@@ -251,7 +255,7 @@ pub trait ProtocolHandler {
                         WinternitzType::HASH160,
                         protocol_script
                             .get_key(k.name())
-                            .unwrap()
+                            .ok_or(BitVMXError::KeysNotFound(self.context().id))?
                             .derivation_index(),
                     )?;
 
@@ -320,7 +324,10 @@ pub trait ProtocolHandler {
         if total_inputs > 1 {
             let signature = protocol
                 .input_taproot_script_spend_signature(name, 1, second_leaf_index)?
-                .unwrap();
+                .expect(&format!(
+                    "Failed to get taproot signature for tx {} input {} leaf {}",
+                    name, input_index, leaf_index
+                ));
             let mut spending_args = InputArgs::new_taproot_script_args(second_leaf_index);
             spending_args.push_taproot_signature(signature)?;
             args.push(spending_args);
@@ -351,7 +358,11 @@ pub trait ProtocolHandler {
         let leaf = match leaf {
             Some(idx) => idx,
             None => {
-                let leaf = read_scriptint(witness.third_to_last().unwrap()).unwrap() as u32;
+                let leaf = read_scriptint(
+                    witness
+                        .third_to_last()
+                        .expect("Failed to get third to last witness element"),
+                )? as u32;
                 program_context.globals.set_var(
                     &self.context().id,
                     &format!("{}_{}_leaf_index", name, input_index),
@@ -375,19 +386,16 @@ pub trait ProtocolHandler {
         let mut names = vec![];
         let mut sizes = vec![];
         //TODO: make the script save the size so we don't need to get it from participant keys or variables
-        script.get_keys().iter().rev().for_each(|k| {
+        for k in script.get_keys().iter().rev() {
             names.push(k.name().to_string());
-            let size = k.key_type().winternitz_message_size();
-            if size.is_err() {
-                error!(
-                    "Failed to get key size for {}: {}",
-                    k.name(),
-                    size.err().unwrap()
-                );
-                return;
-            }
-            sizes.push(message_bytes_length(size.unwrap()));
-        });
+
+            let size = k.key_type().winternitz_message_size().map_err(|e| {
+                error!("Failed to get key size for {}: {}", k.name(), e);
+                e
+            })?;
+            sizes.push(message_bytes_length(size));
+        }
+
         info!("Decoding data for {}", name);
         info!("Names: {:?}", names);
         info!("Sizes: {:?}", sizes);
@@ -461,7 +469,10 @@ pub trait ProtocolHandler {
         program_context
             .globals
             .get_var(&self.context().id, "speedup")?
-            .unwrap()
+            .ok_or(BitVMXError::VariableNotFound(
+                self.context().id,
+                "speedup".to_string(),
+            ))?
             .pubkey()
     }
 
@@ -492,7 +503,13 @@ pub trait ProtocolHandler {
             protocol_id,
             name,
             self.context().my_idx,
-            self.context().storage.as_ref().unwrap().clone(),
+            self.context()
+                .storage
+                .as_ref()
+                .ok_or(BitVMXError::StorageUnavailable(
+                    self.context().protocol_name.clone(),
+                ))?
+                .clone(),
         )
     }
 
