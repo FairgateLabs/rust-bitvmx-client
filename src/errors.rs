@@ -178,6 +178,9 @@ pub enum BitVMXError {
     #[error("No public nonces found for aggregated public key {0} and id {1}")]
     MissingPublicNonces(String, String),
 
+    #[error("Missing parameter: {0}")]
+    MissingParameter(String),
+
     #[error("Missing nonces for program id {0}")]
     NoncesNotFound(Uuid),
 

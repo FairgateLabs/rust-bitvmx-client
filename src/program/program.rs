@@ -717,8 +717,11 @@ impl Program {
                     self.protocol.get_transactions_to_monitor(program_context)?;
 
                 let context = Context::ProgramId(self.program_id);
-                let txs_to_monitor =
-                    TypesToMonitor::Transactions(txns_to_monitor.clone(), context.to_string()?);
+                let txs_to_monitor = TypesToMonitor::Transactions(
+                    txns_to_monitor.clone(),
+                    context.to_string()?,
+                    None,
+                );
 
                 program_context
                     .bitcoin_coordinator
@@ -729,8 +732,12 @@ impl Program {
                         "Monitoring vout {} of txid {} for program {}",
                         vout, txid, self.program_id
                     );
-                    let vout_to_monitor =
-                        TypesToMonitor::SpendingUTXOTransaction(txid, vout, context.to_string()?);
+                    let vout_to_monitor = TypesToMonitor::SpendingUTXOTransaction(
+                        txid,
+                        vout,
+                        context.to_string()?,
+                        None, // Receive news on every confirmation.
+                    );
 
                     program_context
                         .bitcoin_coordinator
@@ -867,7 +874,8 @@ impl Program {
             tx_to_dispatch,
             speedup,
             context.to_string()?,
-            None,
+            None, // Dispatch immediately
+            None, // Receive news on every confirmation.
         )?;
 
         Ok(())
