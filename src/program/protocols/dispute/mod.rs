@@ -1042,7 +1042,9 @@ impl DisputeResolutionProtocol {
             None,
         )?;
 
-        let output_type = utxo_action.3.as_ref().unwrap();
+        let output_type = utxo_action.3.as_ref().ok_or(BitVMXError::MissingParameter(
+            "UTXO output type is required".to_string(),
+        ))?;
         protocol.add_external_transaction(&external_action(role, action_number))?;
         protocol.add_unknown_outputs(&external_action(role, action_number), utxo_action.1)?;
         protocol.add_transaction_output(&external_action(role, action_number), &output_type)?;
@@ -1108,8 +1110,8 @@ impl DisputeResolutionProtocol {
         info!("Winternitz check for variables: {:?}", &var_names);
         let names_and_keys = var_names
             .iter()
-            .map(|v| (v, keys.get_winternitz(v.as_ref()).unwrap()))
-            .collect();
+            .map(|v| Ok::<_, BitVMXError>((v, keys.get_winternitz(v.as_ref())?)))
+            .collect::<Result<Vec<_>, _>>()?;
 
         let winternitz_check = scripts::verify_winternitz_signatures_aux(
             aggregated,
@@ -1137,11 +1139,12 @@ impl DisputeResolutionProtocol {
         let names_and_keys: Vec<_> = keys
             .iter()
             .zip(var_names.iter())
-            .flat_map(|(k, vars)| {
+            .map(|(k, vars)| {
                 vars.iter()
-                    .map(move |v| (v, k.get_winternitz(v.as_ref()).unwrap()))
+                    .map(move |v| Ok::<_, BitVMXError>((v, k.get_winternitz(v.as_ref())?)))
             })
-            .collect();
+            .flatten()
+            .collect::<Result<Vec<_>, _>>()?;
 
         let winternitz_check = scripts::verify_winternitz_signatures_aux(
             aggregated,
@@ -1285,9 +1288,9 @@ impl DisputeResolutionProtocol {
                     } else {
                         verifier_keys
                     };
-                    (name.as_str(), key_provider.get_winternitz(name).unwrap())
+                    Ok::<_, BitVMXError>((name.as_str(), key_provider.get_winternitz(name)?))
                 })
-                .collect();
+                .collect::<Result<Vec<_>, _>>()?;
 
         let mut stack = StackTracker::new();
         let mut stackvars = HashMap::new();
@@ -1407,8 +1410,8 @@ impl DisputeResolutionProtocol {
         let mut names_and_keys: Vec<(&str, &key_manager::winternitz::WinternitzPublicKey)> =
             vars_names
                 .iter()
-                .map(|v| (*v, prover_keys.get_winternitz(v).unwrap()))
-                .collect();
+                .map(|v| Ok::<_, BitVMXError>((*v, prover_keys.get_winternitz(v)?)))
+                .collect::<Result<Vec<_>, _>>()?;
 
         names_and_keys.extend(
             vars.iter()
