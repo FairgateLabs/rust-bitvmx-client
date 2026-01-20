@@ -37,7 +37,7 @@ use protocol_builder::{
     },
 };
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
     errors::BitVMXError,
@@ -472,6 +472,15 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         };
 
         let config = DisputeConfiguration::load(&self.ctx.id, &context.globals)?;
+        config.fail_force_config.map(|fail_force_config| {
+            fail_force_config.fail_input_tx.map(|fail_input_tx| {
+                context.globals.set_var(
+                    &self.ctx.id,
+                    format!("fail_input_{fail_input_tx}").as_str(),
+                    VariableTypes::Bool(true),
+                )
+            })
+        });
         let utxo = config.protocol_connection.0.clone();
 
         let prover_speedup_pub = keys[0].get_public("speedup")?;
@@ -855,6 +864,26 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 .map(|h| format!("prover_hash2_{}_{}", i, h))
                 .collect::<Vec<_>>();
 
+            let winternitz_check = if i == 2 {
+                Self::winternitz_check_cosigned_input_script(
+                    agg_or_prover,
+                    sign_mode,
+                    &keys,
+                    &vec![
+                        &vars.iter().map(|s| s.as_str()).collect(),
+                        &vec!["verifier_selection_bits2_1"],
+                    ],
+                    None,
+                )?
+            } else {
+                Self::winternitz_check(
+                    agg_or_prover,
+                    sign_mode,
+                    &keys[0],
+                    &vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
+                )?
+            };
+
             self.add_connection_with_scripts(
                 context,
                 aggregated,
@@ -865,12 +894,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &prev,
                 &next,
                 &claim_verifier,
-                Self::winternitz_check(
-                    agg_or_prover,
-                    sign_mode,
-                    &keys[0],
-                    &vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
-                )?,
+                winternitz_check,
                 (&prover_speedup_pub, &verifier_speedup_pub),
             )?;
             amount = self.checked_sub(amount, fee)?;
@@ -1074,7 +1098,7 @@ impl DisputeResolutionProtocol {
         context: &ProgramContext,
         name: &str,
         _input_index: u32,
-        leaf_index: u32,
+        mut leaf_index: u32,
         leaf_identification: bool,
     ) -> Result<(Transaction, SpeedupData), BitVMXError> {
         let tx = self.get_signed_tx(context, name, 0, 0, leaf_identification, 0)?;
@@ -1083,6 +1107,18 @@ impl DisputeResolutionProtocol {
         info!("Scripts length: {}", scripts.len());
         let wots_sigs =
             self.get_winternitz_signature_for_script(&scripts[leaf_index as usize], context)?;
+
+        if context
+            .globals
+            .get_var(&self.ctx.id, format!("fail_input_{name}").as_str())?
+            .is_some_and(|var| matches!(var, VariableTypes::Bool(true)))
+        {
+            // last script is timeout, we don't want to fail on timeouts.
+            if leaf_index != scripts.len() as u32 - 1 {
+                warn!("Failing input {name}");
+                leaf_index += 1;
+            }
+        };
 
         let speedup_data = SpeedupData::new_with_input(
             self.partial_utxo_from(&tx, 0),
@@ -1647,7 +1683,7 @@ impl DisputeResolutionProtocol {
         stack.get_script()
     }
 
-    fn get_validate_selection_bits_script(max_bits: u8) -> ScriptBuf {
+    pub fn get_validate_selection_bits_script(max_bits: u8) -> ScriptBuf {
         let mut stack = StackTracker::new();
         let selection_bits = stack.define(2, "verifier_selection_bits");
 

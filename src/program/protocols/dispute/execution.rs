@@ -6,7 +6,7 @@ use bitvmx_cpu_definitions::challenge::{
     ChallengeType, EmulatorResultType, ProverFinalTraceType, ProverHashesAndStepType,
 };
 use emulator::constants::REGISTERS_BASE_ADDRESS;
-use tracing::info;
+use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::{
@@ -72,12 +72,13 @@ pub fn execution_result(
                 .unwrap_or(context.globals.get_var(id, "current_round")?.unwrap()) // 1st n-ary search
                 .number()? as u8;
 
-            let (nary_prover, prover_hash) =
-                if context.globals.get_var(id, "current_round2")?.is_some() {
-                    ("NARY2_PROVER", "prover_hash2") // 2nd n-ary search
-                } else {
-                    ("NARY_PROVER", "prover_hash") // 1st n-ary search
-                };
+            let is_second_nary_search = context.globals.get_var(id, "current_round2")?.is_some();
+
+            let (nary_prover, prover_hash) = if is_second_nary_search {
+                ("NARY2_PROVER", "prover_hash2") // 2nd n-ary search
+            } else {
+                ("NARY_PROVER", "prover_hash") // 1st n-ary search
+            };
 
             assert_eq!(save_round, *round);
             for (i, h) in hashes.iter().enumerate() {
@@ -88,13 +89,25 @@ pub fn execution_result(
                     h,
                 )?;
             }
-            let (tx, sp) = drp.get_tx_with_speedup_data(
+
+            let tx_with_speedup = drp.get_tx_with_speedup_data(
                 context,
                 &format!("{}_{}", nary_prover, round),
                 0,
                 0,
                 true,
-            )?;
+            );
+
+            if is_second_nary_search
+                && *round == 2 // second nary search starts at the second round for the prover, since the first hashes are shared with the first nary search
+                && matches!(tx_with_speedup, Err(BitVMXError::KeysNotFound(_)))
+            {
+                error!("Could not start second nary search, this is expected if the verifier didn't select the ReadNAryValue Challenge since we don't have the required signature for verifier_selection_bits2_1 to continue");
+                return Ok(());
+            }
+
+            let (tx, sp) = tx_with_speedup?;
+
             info!("Dispatching tx {:?}", tx);
             context.bitcoin_coordinator.dispatch(
                 tx,

@@ -8,7 +8,7 @@ use crate::{
             dispute::{
                 action_wins, action_wins_prefix,
                 challenge::READ_VALUE_NARY_SEARCH_CHALLENGE,
-                config::{ConfigResults, DisputeConfiguration},
+                config::{DisputeConfiguration, ForceFailConfiguration},
                 input_handler::{
                     get_txs_configuration, set_input, set_input_u64, unify_inputs, unify_witnesses,
                 },
@@ -23,14 +23,14 @@ use crate::{
     },
     types::{ProgramContext, PROGRAM_TYPE_DRP},
 };
-use bitcoin::Txid;
+use bitcoin::{script::read_scriptint, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use bitvmx_cpu_definitions::{memory::MemoryWitness, trace::*};
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use console::style;
 use emulator::decision::nary_search::NArySearchType;
-use tracing::info;
+use tracing::{info, warn};
 
 fn dispatch_timeout_tx(
     drp: &DisputeResolutionProtocol,
@@ -170,9 +170,9 @@ impl TimeoutDispatchTable {
     pub fn new(rules: Vec<TimeoutDispatchRule>) -> Self {
         Self { rules }
     }
-    pub fn new_predefined(rounds: u8, n_inputs: u32) -> Self {
+    pub fn new_predefined(rounds: u8, inputs: Vec<(usize, &String)>) -> Self {
         assert_ne!(rounds, 0);
-        assert_ne!(n_inputs, 0); // Inputs should be at least 1
+        assert_ne!(inputs.len(), 0); // Inputs should be at least 1
 
         let last_tx_first_nary = &format!("NARY_VERIFIER_{}", rounds);
         let last_tx_second_nary = &format!("NARY2_VERIFIER_{}", rounds);
@@ -180,18 +180,47 @@ impl TimeoutDispatchTable {
 
         let mut table = TimeoutDispatchTable::new(vec![]);
 
-        for i in 1..n_inputs {
-            let role = if i % 2 == 1 { Verifier } else { Prover }; //TODO: make it configurable
-            table.add_classic_to(&input_tx_name(i - 1), &input_tx_name(i), role);
+        let &(first_index, first_owner) = inputs.first().unwrap();
+        if first_owner == "verifier" {
+            table.add_prover_without_vout(
+                &input_tx_name(first_index as u32),
+                TimeoutType::timeout_input(&input_tx_name(first_index as u32)),
+            );
+        } else {
+            table.add_verifier_without_vout(
+                &input_tx_name(first_index as u32),
+                TimeoutType::timeout_input(&input_tx_name(first_index as u32)),
+            );
         }
-        table.add_classic_to(&input_tx_name(n_inputs - 1), PRE_COMMITMENT, Prover);
+
+        for window in inputs.windows(2) {
+            let (prev_index, prev_owner) = window[0];
+            let (next_index, next_owner) = window[1];
+
+            assert_ne!(prev_owner, next_owner);
+
+            let role = if prev_owner == "verifier" {
+                Verifier
+            } else {
+                Prover
+            };
+
+            table.add_classic_to(
+                &input_tx_name(prev_index as u32),
+                &input_tx_name(next_index as u32),
+                role,
+            );
+        }
+        let &(last_index, last_owner) = inputs.last().unwrap();
+        assert!(last_owner.starts_with("prover"));
+
+        table.add_classic_to(&input_tx_name(last_index as u32), PRE_COMMITMENT, Prover);
         table.add_classic_to(PRE_COMMITMENT, COMMITMENT, Verifier);
         table.add_classic_to(COMMITMENT, POST_COMMITMENT, Prover);
         table.add_classic_to(POST_COMMITMENT, "NARY_PROVER_1", Verifier);
         table.add_nary_search_table("NARY", 1, rounds);
         table.add_classic_to(last_tx_first_nary, EXECUTE, Verifier);
         table.add_classic_to(EXECUTE, CHALLENGE, Prover);
-        table.add_verifier_without_vout(EXECUTE, TimeoutType::timeout_input(EXECUTE));
         table.add_not_apply_not_vout(CHALLENGE, Verifier, to_second_nary);
         table.add_nary_search_table("NARY2", 2, rounds);
         table.add_classic_to(&last_tx_second_nary, GET_HASHES_AND_STEP, Verifier);
@@ -609,19 +638,19 @@ pub fn handle_tx_news(
         .nary_def()
         .total_rounds();
 
-    let n_inputs = {
-        let inputs = program_context
-            .globals
-            .get_var(&drp.ctx.id, "input_txs")?
-            .unwrap()
-            .vec_string()?;
-        inputs
-            .iter()
-            .filter(|owner| owner.as_str() != "skip" && owner.as_str() != "prover_prev")
-            .count() as u32
-    };
+    let inputs = program_context
+        .globals
+        .get_var(&drp.ctx.id, "input_txs")?
+        .unwrap()
+        .vec_string()?;
 
-    let timeout_table = TimeoutDispatchTable::new_predefined(rounds, n_inputs);
+    let inputs = inputs
+        .iter()
+        .enumerate()
+        .filter(|(_, owner)| owner.as_str() != "skip" && owner.as_str() != "prover_prev")
+        .collect();
+
+    let timeout_table = TimeoutDispatchTable::new_predefined(rounds, inputs);
     // timeout_table.visualize();
 
     cancel_timeout(drp, &name, vout, program_context, &timeout_table)?;
@@ -651,6 +680,40 @@ pub fn handle_tx_news(
     )?;
 
     let fail_force_config = config.fail_force_config.unwrap_or_default();
+
+    if vout.is_some() {
+        let transaction = &tx_status.tx;
+        let input_index = drp.find_prevout(tx_id, vout.unwrap(), transaction)?;
+        let witness = transaction.input[input_index as usize].witness.clone();
+
+        let leaf = read_scriptint(witness.third_to_last().unwrap()).unwrap() as u32;
+
+        let params = program_context
+            .globals
+            .get_var(&drp.ctx.id, &timeout_input_tx(&name))?
+            .ok_or(BitVMXError::VariableNotFound(
+                drp.ctx.id,
+                timeout_input_tx(&name),
+            ))?
+            .vec_number()?;
+
+        let timeout_leaf = params[1];
+
+        if leaf == timeout_leaf {
+            let role = timeout_table
+                .iter()
+                .find_map(|(_, _, role, timeout_type, _)| match timeout_type {
+                    TimeoutType::TimeoutInput(timeout_name) if timeout_name == &name => {
+                        Some(role.to_string())
+                    }
+                    _ => None,
+                })
+                .unwrap_or("Unknown role".to_string());
+
+            warn!("{role} consumed timeout input for {name}");
+            return Ok(());
+        }
+    }
 
     if let Some(auto_dispatch_input) = config.auto_dispatch_input {
         if name == START_CH && drp.role() == ParticipantRole::Prover {
@@ -898,17 +961,6 @@ pub fn handle_tx_news(
             return Ok(());
         }
 
-        let params = program_context
-            .globals
-            .get_var(&drp.ctx.id, &timeout_input_tx(EXECUTE))?
-            .unwrap()
-            .vec_number()?;
-        let timeout_leaf = params[1];
-        if leaf == timeout_leaf {
-            info!("Verifier consumed the timeout input for EXECUTE");
-            return Ok(());
-        }
-
         let (_program_definition, pdf) = drp.get_program_definition(program_context)?;
         let execution_path = drp.get_execution_path()?;
 
@@ -1026,8 +1078,6 @@ pub fn handle_tx_news(
             .unwrap()
             .number()? as u32;
 
-        //TODO: if the verifier is able to execute the challenge, the prover can react only to the read challenge nary search
-
         match leaf {
             l if l == read_value_nary_search_leaf => {
                 let mut expected_names: Vec<&str> = READ_VALUE_NARY_SEARCH_CHALLENGE
@@ -1077,7 +1127,28 @@ pub fn handle_tx_news(
                 }
             }
             _ => {
-                info!("Challenge ended successfully");
+                if fail_force_config.prover_force_second_nary {
+                    // for testing purposes we will try to start the second nary search but it should fail
+                    let selection_bits = 0;
+                    handle_nary_verifier(
+                        &name,
+                        drp,
+                        program_context,
+                        tx_id,
+                        vout,
+                        &tx_status,
+                        current_height,
+                        &fail_force_config,
+                        "verifier_selection_bits2",
+                        CHALLENGE,
+                        CHALLENGE_READ,
+                        selection_bits,
+                        1, // round 2
+                        NArySearchType::ReadValueChallenge,
+                    )?;
+                } else {
+                    info!("Challenge ended successfully");
+                }
             }
         }
     }
@@ -1229,7 +1300,7 @@ fn handle_nary_verifier(
     vout: Option<u32>,
     tx_status: &TransactionStatus,
     current_height: u32,
-    fail_force_config: &ConfigResults,
+    fail_force_config: &ForceFailConfiguration,
     selection_bits: &str,             // "selection_bits"
     prev_name: &str,                  // COMMITMENT
     post_name: &str,                  // EXECUTE
@@ -1341,12 +1412,12 @@ fn handle_nary_prover(
     tx_id: Txid,
     vout: Option<u32>,
     tx_status: &TransactionStatus,
-    fail_force_config: &ConfigResults,
+    fail_force_config: &ForceFailConfiguration,
     strip_prefix: &str,               // "NARY_PROVER_"
     prover_hash: &str,                // "prover_hash"
     nary_search_type: NArySearchType, // ConflictStep
 ) -> Result<(), BitVMXError> {
-    drp.decode_witness_from_speedup(
+    let (_, leaf) = drp.decode_witness_from_speedup(
         tx_id,
         vout.unwrap(),
         &name,
@@ -1354,6 +1425,17 @@ fn handle_nary_prover(
         &tx_status.tx,
         None,
     )?;
+
+    let params = program_context
+        .globals
+        .get_var(&drp.ctx.id, &timeout_input_tx(name))?
+        .unwrap()
+        .vec_number()?;
+    let timeout_leaf = params[1];
+    if leaf == timeout_leaf {
+        info!("Verifier consumed the timeout input for {name}");
+        return Ok(());
+    }
 
     let round = name
         .strip_prefix(strip_prefix)
