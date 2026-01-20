@@ -148,7 +148,7 @@ impl Collaboration {
                 let keys: ParticipantKeys = parse_keys(data.clone())
                     .map_err(|_| BitVMXError::InvalidMessage("Invalid keys".to_string()))?
                     .first()
-                    .unwrap()
+                    .ok_or(BitVMXError::InvalidMessage("No keys found".to_string()))?
                     .1
                     .clone();
 

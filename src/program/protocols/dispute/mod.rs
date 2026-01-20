@@ -485,9 +485,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         let mut protocol = self.load_or_create_protocol();
 
-        let mut amount = utxo.2.unwrap();
+        let mut amount = utxo.2.ok_or(BitVMXError::MissingParameter(
+            "UTXO amount is required".to_string(),
+        ))?;
         info!("Protocol amount: {}", amount);
-        let output_type = utxo.3.unwrap();
+        let output_type = utxo.3.ok_or(BitVMXError::MissingParameter(
+            "UTXO output type is required".to_string(),
+        ))?;
 
         protocol.add_external_transaction(EXTERNAL_START)?;
         protocol.add_unknown_outputs(EXTERNAL_START, utxo.1)?;

@@ -1234,20 +1234,17 @@ impl BitVMXApi for BitVMX {
             .monitor(TypesToMonitor::Transactions(
                 vec![txid],
                 Context::RequestId(id, from).to_string()?,
+                None, // Receive news on every confirmation.
             ))?;
 
         Ok(())
-    }
-
-    fn subscribe_utxo(&mut self, uuid: Uuid) -> Result<Uuid, BitVMXError> {
-        Ok(uuid)
     }
 
     fn subscribe_to_rsk_pegin(&mut self) -> Result<(), BitVMXError> {
         // Enable RSK pegin transaction monitoring
         self.program_context
             .bitcoin_coordinator
-            .monitor(TypesToMonitor::RskPeginTransaction)?;
+            .monitor(TypesToMonitor::RskPegin(None))?;
         Ok(())
     }
 
@@ -1317,6 +1314,7 @@ impl BitVMXApi for BitVMX {
             None,
             Context::RequestId(id, from).to_string()?,
             None,
+            None, // Receive news on every confirmation.
         )?;
 
         Ok(())
@@ -1614,9 +1612,6 @@ impl BitVMXApi for BitVMX {
             }
             IncomingBitVMXApiMessages::SubscribeToTransaction(uuid, txid) => {
                 BitVMXApi::subscribe_to_tx(self, from, uuid, txid)?
-            }
-            IncomingBitVMXApiMessages::SubscribeUTXO(uuid) => {
-                BitVMXApi::subscribe_utxo(self, uuid)?;
             }
 
             IncomingBitVMXApiMessages::SubscribeToRskPegin() => {
