@@ -1,10 +1,7 @@
 use bitcoin::{consensus::encode::FromHexError, network::ParseNetworkError};
 use bitcoin_coordinator::errors::BitcoinCoordinatorError;
 use bitcoincore_rpc::bitcoin::{key::ParsePublicKeyError, sighash::SighashTypeParseError};
-use bitvmx_broker::{
-    channel::retry_helper::RetryPolicyError, identification::errors::IdentificationError,
-    rpc::errors::BrokerError,
-};
+use bitvmx_broker::{identification::errors::IdentificationError, rpc::errors::BrokerError};
 use bitvmx_cpu_definitions::challenge::EmulatorResultError;
 use bitvmx_job_dispatcher::dispatcher_error::DispatcherError;
 use config as settings;
@@ -271,9 +268,6 @@ pub enum BitVMXError {
 
     #[error("Time error: {0}")]
     TimeError(#[from] std::time::SystemTimeError),
-
-    #[error("Retry policy error: {0}")]
-    RetryPolicyError(#[from] RetryPolicyError),
 }
 
 impl<T> From<PoisonError<T>> for BitVMXError {

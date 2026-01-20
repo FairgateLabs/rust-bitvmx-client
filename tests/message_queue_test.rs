@@ -18,7 +18,7 @@ fn test_message_queue_persistence() {
 
     // Create storage and queue
     let storage = Rc::new(Storage::new(&config).unwrap());
-    let queue = MessageQueue::new(storage.clone(), RetryPolicy::default().unwrap());
+    let queue = MessageQueue::new(storage.clone(), RetryPolicy::default());
 
     // Push messages
     let msg1 = vec![1, 2, 3];
@@ -38,7 +38,7 @@ fn test_message_queue_persistence() {
     drop(storage);
 
     let storage = Rc::new(Storage::new(&config).unwrap());
-    let queue = MessageQueue::new(storage.clone(), RetryPolicy::default().unwrap());
+    let queue = MessageQueue::new(storage.clone(), RetryPolicy::default());
 
     // Verify persistence
     let msg = queue.pop_front().unwrap().unwrap();
@@ -64,7 +64,7 @@ fn test_queue_no_starvation() {
 
     // Create storage and queue
     let storage = Rc::new(Storage::new(&config).unwrap());
-    let retry_policy = RetryPolicy::default().unwrap();
+    let retry_policy = RetryPolicy::default();
     let queue = MessageQueue::new(storage.clone(), retry_policy.clone());
 
     // Create poison message and valid message
