@@ -304,6 +304,9 @@ pub enum BitVMXError {
 
     #[error("Invalid string operation: {0}")]
     InvalidStringOperation(String),
+
+    #[error("Time error: {0}")]
+    TimeError(#[from] std::time::SystemTimeError),
 }
 
 impl<T> From<PoisonError<T>> for BitVMXError {
