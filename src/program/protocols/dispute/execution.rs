@@ -82,7 +82,12 @@ pub fn execution_result(
                 ("NARY_PROVER", "prover_hash") // 1st n-ary search
             };
 
-            assert_eq!(save_round, *round);
+            if save_round != *round {
+                return Err(BitVMXError::InvalidState(format!(
+                    "Saved round {} does not match the expected round {}",
+                    save_round, round
+                )));
+            }
             for (i, h) in hashes.iter().enumerate() {
                 set_input_hex(
                     id,
@@ -128,7 +133,12 @@ pub fn execution_result(
                 )?) // 1st n-ary search
                 .number()? as u8;
 
-            assert_eq!(save_round, *round);
+            if save_round != *round {
+                return Err(BitVMXError::InvalidState(format!(
+                    "Saved round {} does not match the expected round {}",
+                    save_round, round
+                )));
+            }
 
             let (nary_verifier, selection_bits) =
                 if context.globals.get_var(id, "current_round2")?.is_some() {

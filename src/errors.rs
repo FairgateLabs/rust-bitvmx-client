@@ -28,6 +28,12 @@ pub enum BitVMXError {
     #[error("Invalid parameter in configuration. {0}")]
     InvalidParameter(String),
 
+    #[error("Invalid leaf: {0}")]
+    InvalidLeaf(String),
+
+    #[error("Invalid state: {0}")]
+    InvalidState(String),
+
     #[error("Error parsing int")]
     ParseIntError(#[from] std::num::ParseIntError),
 

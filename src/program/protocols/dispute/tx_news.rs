@@ -201,7 +201,9 @@ impl TimeoutDispatchTable {
             let (prev_index, prev_owner) = window[0];
             let (next_index, next_owner) = window[1];
 
-            assert_ne!(prev_owner, next_owner);
+            if prev_owner == next_owner {
+                return Err(Self::invalid_inputs(&inputs));
+            }
 
             let role = if prev_owner == "verifier" {
                 Verifier
@@ -217,7 +219,9 @@ impl TimeoutDispatchTable {
         }
         let &(last_index, last_owner) =
             inputs.last().ok_or_else(|| Self::invalid_inputs(&inputs))?;
-        assert!(last_owner.starts_with("prover"));
+        if !last_owner.starts_with("prover") {
+            return Err(Self::invalid_inputs(&inputs));
+        }
 
         table.add_classic_to(&input_tx_name(last_index as u32), PRE_COMMITMENT, Prover);
         table.add_classic_to(PRE_COMMITMENT, COMMITMENT, Verifier);
@@ -1146,10 +1150,14 @@ pub fn handle_tx_news(
                                 })?;
                             let bytes = witness.winternitz()?.message_bytes();
                             info!(
-                        "Challenge will be extended with a 2nd nary search. {bits_name} are {:?}",
-                        bytes
-                    );
-                            assert_eq!(bytes.len(), 1);
+                                "Challenge will be extended with a 2nd nary search. {bits_name} are {:?}",
+                                bytes
+                            );
+                            if bytes.len() != 1 {
+                                return Err(BitVMXError::InvalidState(
+                                    "Expected exactly one byte for selection bits".to_string(),
+                                ));
+                            }
                             let selection_bits = bytes[0] as u32;
                             handle_nary_verifier(
                                 &name,
@@ -1168,11 +1176,11 @@ pub fn handle_tx_news(
                                 NArySearchType::ReadValueChallenge,
                             )?;
                         } else {
-                            panic!(
+                            return Err(BitVMXError::InvalidLeaf(format!(
                                 "The challenge leaf does not match the expected witness names.\n\
-                 Expected: {:?}, got: {:?}",
+                                Expected: {:?}, got: {:?}",
                                 expected_names, names
-                            );
+                            )));
                         }
                     }
                     _ => {
@@ -1399,7 +1407,11 @@ fn handle_nary_verifier(
                 })?
                 .winternitz()?
                 .message_bytes();
-            assert!(bits.len() == 1);
+            if bits.len() != 1 {
+                return Err(BitVMXError::InvalidState(
+                    "Expected exactly one byte for selection bits".to_string(),
+                ));
+            }
             bits[0] as u32
         };
 

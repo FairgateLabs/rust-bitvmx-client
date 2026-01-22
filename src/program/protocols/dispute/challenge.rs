@@ -263,12 +263,10 @@ pub fn challenge_scripts(
                             .iter()
                             .map(|(var_name, _)| {
                                 let idx = if var_name.starts_with("prover") { 0 } else { 1 };
-                                let key = keys[idx].get_winternitz(var_name).unwrap_or_else(|_| {
-                                    panic!("Missing winternitz key for var_name: {}", var_name)
-                                });
-                                (var_name, key)
+                                let key = keys[idx].get_winternitz(var_name)?;
+                                Ok((var_name, key))
                             })
-                            .collect::<Vec<_>>(),
+                            .collect::<Result<Vec<_>, BitVMXError>>()?,
                         None,
                     )
                 };
@@ -644,7 +642,11 @@ pub fn challenge_scripts(
                                     );
                                 stack.custom(verification_script, 1, false, 0, "");
                             }
-                            _ => panic!("Unknown challenge name: {}", challenge_name),
+                            _ => {
+                                return Err(BitVMXError::ChallengeNotFound(
+                                    challenge_name.to_string(),
+                                ))
+                            }
                         };
                         scripts.push(stack.get_script());
                         let winternitz_check = scripts::verify_winternitz_signatures_aux(
@@ -671,12 +673,10 @@ pub fn challenge_scripts(
                     .iter()
                     .map(|(var_name, _)| {
                         let idx = if var_name.starts_with("prover") { 0 } else { 1 };
-                        let key = keys[idx].get_winternitz(var_name).unwrap_or_else(|_| {
-                            panic!("Missing winternitz key for var_name: {}", var_name)
-                        });
-                        (var_name, key)
+                        let key = keys[idx].get_winternitz(var_name)?;
+                        Ok((var_name, key))
                     })
-                    .collect::<Vec<_>>();
+                    .collect::<Result<Vec<_>, BitVMXError>>()?;
 
                 //TODO: This is a workaround to reverse the order of the stack
                 let mut stack = StackTracker::new();
@@ -769,7 +769,11 @@ pub fn challenge_scripts(
                             "equivocation_hash" => {
                                 equivocation_hash_challenge(&mut stack);
                             }
-                            _ => panic!("Unknown challenge name: {}", challenge_name),
+                            _ => {
+                                return Err(BitVMXError::ChallengeNotFound(
+                                    challenge_name.to_string(),
+                                ))
+                            }
                         }
                         scripts.push(stack.get_script());
                         let winternitz_check = scripts::verify_winternitz_signatures_aux(

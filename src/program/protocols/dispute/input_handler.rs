@@ -34,7 +34,6 @@ pub fn generate_input_owner_list(
                 "Input size cannot be zero and need to be a multiple of 4".to_string(),
             ));
         }
-        assert!(input.size % 4 == 0, "Input size must be a multiple of 4");
         let words = (input.size / 4) as u32;
 
         match input.owner.as_str() {
