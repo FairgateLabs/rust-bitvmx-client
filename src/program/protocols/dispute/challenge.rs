@@ -518,7 +518,7 @@ pub fn challenge_scripts(
                                 &mut scripts,
                                 "initialized",
                                 "verifier_read_selector",
-                            );
+                            )?;
                             stack = StackTracker::new();
                             initialized_challenge(&mut stack, initialized_chunk);
 
@@ -618,7 +618,7 @@ pub fn challenge_scripts(
                                     &mut scripts,
                                     "uninitialized",
                                     "verifier_read_selector",
-                                );
+                                )?;
                                 stack = StackTracker::new();
                                 let ranges = program.get_uninitialized_ranges(program_definitions);
                                 uninitialized_challenge(&mut stack, &ranges);
@@ -629,7 +629,7 @@ pub fn challenge_scripts(
                                     &mut scripts,
                                     "future_read",
                                     "verifier_read_selector",
-                                );
+                                )?;
                                 stack = StackTracker::new();
                                 future_read_challenge(&mut stack);
                             }
@@ -759,7 +759,7 @@ pub fn challenge_scripts(
                                     &mut scripts,
                                     "read_value",
                                     "verifier_read_selector",
-                                );
+                                )?;
                                 stack = StackTracker::new();
                                 read_value_challenge(&mut stack);
                             }
@@ -1141,13 +1141,13 @@ pub fn extract_nibble(
     scripts: &mut Vec<ScriptBuf>,
     challenge_type: &str,
     var_name: &str,
-) {
+) -> Result<(), BitVMXError> {
     let challenge = CHALLENGES
         .iter()
         .chain(READ_CHALLENGES.iter())
         .find(|(name, _)| *name == challenge_type)
         .map(|(_, vars)| *vars)
-        .expect(&format!("Unknown challenge type {challenge_type}"));
+        .ok_or_else(|| BitVMXError::ChallengeNotFound(challenge_type.to_string()))?;
     let mut stackvars = HashMap::new();
     for (name, size) in challenge.iter() {
         stackvars.insert(*name, stack.define((size * 2) as u32, name));
@@ -1155,4 +1155,5 @@ pub fn extract_nibble(
     let read_selector = stack.move_var_sub_n(stackvars[var_name], 0);
     stack.drop(read_selector);
     scripts.push(stack.get_script());
+    Ok(())
 }

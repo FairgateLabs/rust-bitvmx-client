@@ -154,11 +154,15 @@ impl Program {
         let comms_address =
             CommsAddress::new(program_context.comms.get_address(), my_pubkey_hash.clone());
 
-        //FIX EXCPECT WITH PROPER ERROR (invalid message as I'm not in the list)
         let my_idx = peers
             .iter()
             .position(|peer| peer.pubkey_hash == comms_address.pubkey_hash)
-            .expect("Peer not found in the list");
+            .ok_or_else(|| {
+                BitVMXError::InvalidMessage(format!(
+                    "Peer with pubkey hash {} not found in the list",
+                    comms_address.pubkey_hash
+                ))
+            })?;
 
         info!("my_pos: {}", my_idx);
         info!("Leader pos: {}", leader);

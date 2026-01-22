@@ -316,6 +316,9 @@ pub enum BitVMXError {
 
     #[error("Time error: {0}")]
     TimeError(#[from] std::time::SystemTimeError),
+
+    #[error("Initialization error: {0}")]
+    InitializationError(String),
 }
 
 impl<T> From<PoisonError<T>> for BitVMXError {

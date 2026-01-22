@@ -305,10 +305,11 @@ pub trait ProtocolHandler {
 
         let signature = protocol
             .input_taproot_script_spend_signature(name, input_index as usize, leaf_index as usize)?
-            .expect(&format!(
-                "Failed to get taproot signature for tx {} input {} leaf {}",
-                name, input_index, leaf_index
-            ));
+            .ok_or_else(|| BitVMXError::MissingInputSignature {
+                tx_name: name.to_string(),
+                input_index: input_index as usize,
+                script_index: None,
+            })?;
         spending_args.push_taproot_signature(signature)?;
 
         if leaf_identification {
@@ -324,10 +325,11 @@ pub trait ProtocolHandler {
         if total_inputs > 1 {
             let signature = protocol
                 .input_taproot_script_spend_signature(name, 1, second_leaf_index)?
-                .expect(&format!(
-                    "Failed to get taproot signature for tx {} input {} leaf {}",
-                    name, input_index, leaf_index
-                ));
+                .ok_or_else(|| BitVMXError::MissingInputSignature {
+                    tx_name: name.to_string(),
+                    input_index: 1,
+                    script_index: None,
+                })?;
             let mut spending_args = InputArgs::new_taproot_script_args(second_leaf_index);
             spending_args.push_taproot_signature(signature)?;
             args.push(spending_args);
@@ -361,7 +363,7 @@ pub trait ProtocolHandler {
                 let leaf = read_scriptint(
                     witness
                         .third_to_last()
-                        .expect("Failed to get third to last witness element"),
+                        .ok_or_else(|| BitVMXError::InvalidWitness(witness.clone()))?,
                 )? as u32;
                 program_context.globals.set_var(
                     &self.context().id,

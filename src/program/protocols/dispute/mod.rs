@@ -360,10 +360,16 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
             let trace = TRACE_VARS
                 .get()
-                .expect("TRACE_VARS not initialized")
+                .ok_or_else(|| {
+                    BitVMXError::InitializationError("TRACE_VARS not initialized".to_string())
+                })?
                 .read()?;
-            let tk = TK_2NARY.get().expect("TK_2NARY not initialized").read()?;
-
+            let tk = TK_2NARY
+                .get()
+                .ok_or_else(|| {
+                    BitVMXError::InitializationError("TK_2NARY not initialized".to_string())
+                })?
+                .read()?;
             for (name, size) in trace.iter() {
                 if name.starts_with("prover") {
                     let key = key_chain.derive_winternitz_hash160(*size)?;
@@ -497,13 +503,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         let mut protocol = self.load_or_create_protocol();
 
-        let mut amount = utxo.2.ok_or_else(|| BitVMXError::MissingParameter(
-            "UTXO amount is required".to_string(),
-        ))?;
+        let mut amount = utxo
+            .2
+            .ok_or_else(|| BitVMXError::MissingParameter("UTXO amount is required".to_string()))?;
         info!("Protocol amount: {}", amount);
-        let output_type = utxo.3.ok_or_else(|| BitVMXError::MissingParameter(
-            "UTXO output type is required".to_string(),
-        ))?;
+        let output_type = utxo.3.ok_or_else(|| {
+            BitVMXError::MissingParameter("UTXO output type is required".to_string())
+        })?;
 
         protocol.add_external_transaction(EXTERNAL_START)?;
         protocol.add_unknown_outputs(EXTERNAL_START, utxo.1)?;
@@ -1066,9 +1072,9 @@ impl DisputeResolutionProtocol {
             None,
         )?;
 
-        let output_type = utxo_action.3.as_ref().ok_or_else(|| BitVMXError::MissingParameter(
-            "UTXO output type is required".to_string(),
-        ))?;
+        let output_type = utxo_action.3.as_ref().ok_or_else(|| {
+            BitVMXError::MissingParameter("UTXO output type is required".to_string())
+        })?;
         protocol.add_external_transaction(&external_action(role, action_number))?;
         protocol.add_unknown_outputs(&external_action(role, action_number), utxo_action.1)?;
         protocol.add_transaction_output(&external_action(role, action_number), &output_type)?;
@@ -1307,11 +1313,19 @@ impl DisputeResolutionProtocol {
         let challenge_step_vars = match nary_search_type {
             NArySearchType::ConflictStep => PROVER_CHALLENGE_STEP1
                 .get()
-                .expect("PROVER_CHALLENGE_STEP1 not initialized")
+                .ok_or_else(|| {
+                    BitVMXError::InitializationError(
+                        "PROVER_CHALLENGE_STEP1 not initialized".to_string(),
+                    )
+                })?
                 .read()?,
             _ => PROVER_CHALLENGE_STEP2
                 .get()
-                .expect("PROVER_CHALLENGE_STEP2 not initialized")
+                .ok_or_else(|| {
+                    BitVMXError::InitializationError(
+                        "PROVER_CHALLENGE_STEP2 not initialized".to_string(),
+                    )
+                })?
                 .read()?,
         };
 
@@ -1430,11 +1444,16 @@ impl DisputeResolutionProtocol {
         let vars = match nary_search_type {
             NArySearchType::ConflictStep => TRACE_VARS
                 .get()
-                .expect("TRACE_VARS not initialized")
+                .ok_or_else(|| {
+                    BitVMXError::InitializationError("TRACE_VARS not initialized".to_string())
+                })?
                 .read()?,
-            NArySearchType::ReadValueChallenge => {
-                TK_2NARY.get().expect("TK_2NARY not initialized").read()?
-            }
+            NArySearchType::ReadValueChallenge => TK_2NARY
+                .get()
+                .ok_or_else(|| {
+                    BitVMXError::InitializationError("TK_2NARY not initialized".to_string())
+                })?
+                .read()?,
         };
 
         let vars_names = vars
@@ -1453,13 +1472,11 @@ impl DisputeResolutionProtocol {
             vars.iter()
                 .filter(|(name, _)| name.starts_with("verifier_selection_bits"))
                 .map(|(name, _)| {
-                    (
-                        name.as_str(),
-                        verifier_keys
-                            .get_winternitz(name)
-                            .expect("Missing verifier selection_bits winternitz key"),
-                    )
-                }),
+                    verifier_keys
+                        .get_winternitz(name)
+                        .map(|k| (name.as_str(), k))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
         );
 
         let program_def = self.get_program_definition(context)?.0;
