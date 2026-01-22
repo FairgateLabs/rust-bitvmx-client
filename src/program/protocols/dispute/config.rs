@@ -66,7 +66,7 @@ impl DisputeConfiguration {
     pub fn load(id: &Uuid, globals: &Globals) -> Result<Self, BitVMXError> {
         let dispute_configuration = globals
             .get_var(id, Self::NAME)?
-            .ok_or(BitVMXError::VariableNotFound(*id, Self::NAME.to_string()))?
+            .ok_or_else(|| BitVMXError::VariableNotFound(*id, Self::NAME.to_string()))?
             .string()?;
 
         Ok(serde_json::from_str(&dispute_configuration)?)

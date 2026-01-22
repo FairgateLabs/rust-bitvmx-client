@@ -1631,10 +1631,10 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::GetKeyPair(id) => {
                 let collaboration = self
                     .get_collaboration(&id)?
-                    .ok_or(BitVMXError::ProgramNotFound(id))?;
+                    .ok_or_else(|| BitVMXError::ProgramNotFound(id))?;
                 let aggregated = collaboration
                     .aggregated_key
-                    .ok_or(BitVMXError::ProgramNotFound(id))?;
+                    .ok_or_else(|| BitVMXError::ProgramNotFound(id))?;
                 let pair = self
                     .program_context
                     .key_chain
@@ -1654,10 +1654,10 @@ impl BitVMXApi for BitVMX {
                 } else {
                     let collaboration = self
                         .get_collaboration(&id)?
-                        .ok_or(BitVMXError::ProgramNotFound(id))?;
+                        .ok_or_else(|| BitVMXError::ProgramNotFound(id))?;
                     let aggregated = collaboration
                         .aggregated_key
-                        .ok_or(BitVMXError::ProgramNotFound(id))?;
+                        .ok_or_else(|| BitVMXError::ProgramNotFound(id))?;
                     let pubkey = self
                         .program_context
                         .key_chain

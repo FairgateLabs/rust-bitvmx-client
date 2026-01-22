@@ -303,9 +303,7 @@ impl KeyChain {
         Ok(self
             .rsa_public_key
             .clone()
-            .ok_or(BitVMXError::InvalidMessage(
-                "No RSA public key found".to_string(),
-            ))?)
+            .ok_or_else(|| BitVMXError::InvalidMessage("No RSA public key found".to_string()))?)
     }
 }
 

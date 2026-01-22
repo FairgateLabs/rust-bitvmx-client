@@ -226,12 +226,12 @@ impl Collaboration {
             let my_position = peers
                 .iter()
                 .position(|p| p.pubkey_hash == my_pubkey_hash)
-                .ok_or(BitVMXError::InvalidParticipant(my_pubkey_hash.to_string()))?;
+                .ok_or_else(|| BitVMXError::InvalidParticipant(my_pubkey_hash.to_string()))?;
 
             public_keys
                 .get(my_position)
                 .cloned()
-                .ok_or(BitVMXError::InvalidParticipant(my_pubkey_hash.to_string()))?
+                .ok_or_else(|| BitVMXError::InvalidParticipant(my_pubkey_hash.to_string()))?
         } else {
             program_context
                 .key_chain

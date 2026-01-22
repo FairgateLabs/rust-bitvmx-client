@@ -182,7 +182,7 @@ fn build_merkle_branch(
 
         let hash = clean_merkle_tree
             .get((level_offset + target_offset) as usize)
-            .ok_or(BitVMXError::InvalidMerkleTree)?;
+            .ok_or_else(|| BitVMXError::InvalidMerkleTree)?;
         hashes.push(to_swapped_bytes32(hash));
 
         level_offset += level_size;
@@ -195,11 +195,14 @@ fn build_merkle_branch(
 }
 
 fn get_merkle_tree_root_hex(merkle_tree: &Vec<Option<[u8; 32]>>) -> Result<String, BitVMXError> {
-    let last = merkle_tree.last().ok_or(BitVMXError::InvalidMerkleTree)?;
-    Ok(
-        to_swapped_bytes32(last.as_ref().ok_or(BitVMXError::InvalidMerkleTree)?)
-            .to_hex_string(Case::Lower),
+    let last = merkle_tree
+        .last()
+        .ok_or_else(|| BitVMXError::InvalidMerkleTree)?;
+    Ok(to_swapped_bytes32(
+        last.as_ref()
+            .ok_or_else(|| BitVMXError::InvalidMerkleTree)?,
     )
+    .to_hex_string(Case::Lower))
 }
 
 #[cfg(test)]

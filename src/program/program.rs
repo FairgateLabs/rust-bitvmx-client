@@ -216,13 +216,13 @@ impl Program {
         for agg_name in &self.participants[self.my_idx]
             .keys
             .as_ref()
-            .ok_or(BitVMXError::KeysNotFound(self.program_id))?
+            .ok_or_else(|| BitVMXError::KeysNotFound(self.program_id))?
             .aggregated
         {
             let agg_key = self.participants[self.my_idx]
                 .keys
                 .as_ref()
-                .ok_or(BitVMXError::KeysNotFound(self.program_id))?
+                .ok_or_else(|| BitVMXError::KeysNotFound(self.program_id))?
                 .get_public(agg_name)
                 .map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
@@ -237,7 +237,7 @@ impl Program {
                 let other_key = other
                     .keys
                     .as_ref()
-                    .ok_or(BitVMXError::KeysNotFound(self.program_id))?
+                    .ok_or_else(|| BitVMXError::KeysNotFound(self.program_id))?
                     .get_public(agg_name)
                     .map_err(|_| BitVMXError::InvalidMessageFormat)?;
                 aggregated_pub_keys.push(*other_key);
@@ -263,7 +263,7 @@ impl Program {
         self.participants[self.my_idx]
             .keys
             .as_mut()
-            .ok_or(BitVMXError::KeysNotFound(self.program_id))?
+            .ok_or_else(|| BitVMXError::KeysNotFound(self.program_id))?
             .computed_aggregated = result.clone();
         Ok(result)
     }
@@ -281,7 +281,7 @@ impl Program {
             .map(|p| {
                 p.keys
                     .as_ref()
-                    .ok_or(BitVMXError::KeysNotFound(self.program_id))
+                    .ok_or_else(|| BitVMXError::KeysNotFound(self.program_id))
                     .map(|k| k.clone())
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -359,7 +359,7 @@ impl Program {
                     other
                         .keys
                         .clone()
-                        .ok_or(BitVMXError::KeysNotFound(self.program_id))?,
+                        .ok_or_else(|| BitVMXError::KeysNotFound(self.program_id))?,
                 ));
             }
             keys
@@ -372,7 +372,7 @@ impl Program {
                 self.participants[self.my_idx]
                     .keys
                     .clone()
-                    .ok_or(BitVMXError::KeysNotFound(self.program_id))?,
+                    .ok_or_else(|| BitVMXError::KeysNotFound(self.program_id))?,
             )]
         };
         self.request_helper(program_context, keys, CommsMessageType::Keys)?;
@@ -408,7 +408,7 @@ impl Program {
             parse_keys(data).map_err(|_| BitVMXError::InvalidMessageFormat)?
         {
             let other_pos = get_other_index_by_pubkey_hash(&pubkey_hash, &self.participants)
-                .ok_or(BitVMXError::InvalidParticipant(pubkey_hash))?;
+                .ok_or_else(|| BitVMXError::InvalidParticipant(pubkey_hash))?;
             self.participants[other_pos].keys = Some(keys);
         }
 
@@ -438,7 +438,7 @@ impl Program {
         for aggregated in self.participants[self.my_idx]
             .keys
             .as_ref()
-            .ok_or(BitVMXError::KeysNotFound(self.program_id))?
+            .ok_or_else(|| BitVMXError::KeysNotFound(self.program_id))?
             .computed_aggregated
             .values()
         {
@@ -504,7 +504,7 @@ impl Program {
 
         for (pubkey_hash, particpant_nonces) in nonces_msg {
             let other_pos = get_other_index_by_pubkey_hash(&pubkey_hash, &self.participants)
-                .ok_or(BitVMXError::InvalidParticipant(pubkey_hash))?;
+                .ok_or_else(|| BitVMXError::InvalidParticipant(pubkey_hash))?;
             debug!("{}. Got nonces for pos: {}", self.my_idx, other_pos);
             self.participants[other_pos].nonces = Some(particpant_nonces);
         }
@@ -521,7 +521,7 @@ impl Program {
                     for (aggregated, participant_pub_key, nonces) in participant
                         .nonces
                         .as_ref()
-                        .ok_or(BitVMXError::NoncesNotFound(self.program_id))?
+                        .ok_or_else(|| BitVMXError::NoncesNotFound(self.program_id))?
                     {
                         debug!(
                             "will get nonces for: {} {:?} {:?} {:?} ",
@@ -569,7 +569,7 @@ impl Program {
         for aggregated in self.participants[self.my_idx]
             .keys
             .as_ref()
-            .ok_or(BitVMXError::KeysNotFound(self.program_id))?
+            .ok_or_else(|| BitVMXError::KeysNotFound(self.program_id))?
             .computed_aggregated
             .values()
         {
@@ -607,7 +607,7 @@ impl Program {
                     other
                         .partial
                         .clone()
-                        .ok_or(BitVMXError::PartialSignaturesNotFound(self.program_id))?,
+                        .ok_or_else(|| BitVMXError::PartialSignaturesNotFound(self.program_id))?,
                 ));
             }
         }
@@ -643,7 +643,7 @@ impl Program {
         let partial_msg = parse_signatures(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
         for (pubkey_hash, particpant_partials) in partial_msg {
             let other_pos = get_other_index_by_pubkey_hash(&pubkey_hash, &self.participants)
-                .ok_or(BitVMXError::InvalidParticipant(pubkey_hash))?;
+                .ok_or_else(|| BitVMXError::InvalidParticipant(pubkey_hash))?;
             debug!("{}. Got partials for pos: {}", self.my_idx, other_pos);
             self.participants[other_pos].partial = Some(particpant_partials);
         }
@@ -660,7 +660,7 @@ impl Program {
                     for (aggregated, other_pub_key, signatures) in participant
                         .partial
                         .as_ref()
-                        .ok_or(BitVMXError::PartialSignaturesNotFound(self.program_id))?
+                        .ok_or_else(|| BitVMXError::PartialSignaturesNotFound(self.program_id))?
                     {
                         debug!(
                             "Program {}: agg: {}, other: {} Received signatures: {:?}",
@@ -895,7 +895,7 @@ impl Program {
             .map(|p| {
                 p.keys
                     .as_ref()
-                    .ok_or(BitVMXError::KeysNotFound(self.program_id))
+                    .ok_or_else(|| BitVMXError::KeysNotFound(self.program_id))
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -952,7 +952,7 @@ impl Program {
         let retries = self
             .storage
             .as_ref()
-            .ok_or(BitVMXError::StorageUnavailable(self.program_id.to_string()))?
+            .ok_or_else(|| BitVMXError::StorageUnavailable(self.program_id.to_string()))?
             .get(Self::get_key(key.clone()))?
             .unwrap_or(ProgramRequestInfo::default())
             .retries
@@ -965,7 +965,7 @@ impl Program {
 
         self.storage
             .as_ref()
-            .ok_or(BitVMXError::StorageUnavailable(self.program_id.to_string()))?
+            .ok_or_else(|| BitVMXError::StorageUnavailable(self.program_id.to_string()))?
             .set(Self::get_key(key), last_request, None)?;
 
         Ok(())
@@ -976,7 +976,7 @@ impl Program {
         let last_request: ProgramRequestInfo = self
             .storage
             .as_ref()
-            .ok_or(BitVMXError::StorageUnavailable(self.program_id.to_string()))?
+            .ok_or_else(|| BitVMXError::StorageUnavailable(self.program_id.to_string()))?
             .get(Self::get_key(key.clone()))?
             .unwrap_or(ProgramRequestInfo::default());
 

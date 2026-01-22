@@ -310,9 +310,11 @@ pub fn challenge_scripts(
                     "input" => {
                         let base_addr = program
                             .find_section_by_name(&program_definitions.input_section_name)
-                            .ok_or(BitVMXError::SectionNotFound(
-                                program_definitions.input_section_name.clone(),
-                            ))?
+                            .ok_or_else(|| {
+                                BitVMXError::SectionNotFound(
+                                    program_definitions.input_section_name.clone(),
+                                )
+                            })?
                             .start;
 
                         let (inputs, _) = generate_input_owner_list(&program_definitions)?;
@@ -377,18 +379,22 @@ pub fn challenge_scripts(
                                     let previous_protocol = context
                                         .globals
                                         .get_var(id, &program_input_prev_protocol(idx as u32))?
-                                        .ok_or(BitVMXError::VariableNotFound(
-                                            *id,
-                                            program_input_prev_protocol(idx as u32),
-                                        ))?
+                                        .ok_or_else(|| {
+                                            BitVMXError::VariableNotFound(
+                                                *id,
+                                                program_input_prev_protocol(idx as u32),
+                                            )
+                                        })?
                                         .uuid()?;
                                     let previous_prefix = context
                                         .globals
                                         .get_var(id, &program_input_prev_prefix(idx as u32))?
-                                        .ok_or(BitVMXError::VariableNotFound(
-                                            *id,
-                                            program_input_prev_prefix(idx as u32),
-                                        ))?
+                                        .ok_or_else(|| {
+                                            BitVMXError::VariableNotFound(
+                                                *id,
+                                                program_input_prev_prefix(idx as u32),
+                                            )
+                                        })?
                                         .string()?;
 
                                     for j in 0..*words {
@@ -402,10 +408,12 @@ pub fn challenge_scripts(
                                         let pubkey = context
                                             .globals
                                             .get_var(&previous_protocol, &key)?
-                                            .ok_or(BitVMXError::VariableNotFound(
-                                                previous_protocol,
-                                                key.clone(),
-                                            ))?
+                                            .ok_or_else(|| {
+                                                BitVMXError::VariableNotFound(
+                                                    previous_protocol,
+                                                    key.clone(),
+                                                )
+                                            })?
                                             .wots_pubkey()?;
                                         //we copy the var so the prover is able to decode it when it sees the challenge tx
                                         if role == ParticipantRole::Prover {
@@ -443,7 +451,7 @@ pub fn challenge_scripts(
                                         let address = base_addr + j * 4;
                                         let mut scripts = vec![alternate_reverse
                                             .as_ref()
-                                            .ok_or(BitVMXError::ScriptNotFound(*id))?
+                                            .ok_or_else(|| BitVMXError::ScriptNotFound(*id))?
                                             .clone()];
                                         stack = StackTracker::new();
 
@@ -451,7 +459,9 @@ pub fn challenge_scripts(
                                         let value = context
                                             .globals
                                             .get_var(id, &key)?
-                                            .ok_or(BitVMXError::VariableNotFound(*id, key.clone()))?
+                                            .ok_or_else(|| {
+                                                BitVMXError::VariableNotFound(*id, key.clone())
+                                            })?
                                             .input()?;
 
                                         let value =
@@ -860,9 +870,9 @@ pub fn get_challenge_leaf(
 
             let base_addr = program
                 .find_section_by_name(&program_definitions.input_section_name)
-                .ok_or(BitVMXError::SectionNotFound(
-                    program_definitions.input_section_name.clone(),
-                ))?
+                .ok_or_else(|| {
+                    BitVMXError::SectionNotFound(program_definitions.input_section_name.clone())
+                })?
                 .start;
             dynamic_offset = (address - base_addr) / 4;
         }
@@ -901,7 +911,7 @@ pub fn get_challenge_leaf(
 
             let base_addr = program
                 .find_section_by_name(".rodata")
-                .ok_or(BitVMXError::SectionNotFound(".rodata".to_string()))?
+                .ok_or_else(|| BitVMXError::SectionNotFound(".rodata".to_string()))?
                 .start;
             dynamic_offset = address - base_addr;
         }
@@ -1116,7 +1126,7 @@ pub fn get_challenge_leaf(
     let leaf_start = context
         .globals
         .get_var(id, &leaf_start_var)?
-        .ok_or(BitVMXError::VariableNotFound(*id, leaf_start_var.clone()))?
+        .ok_or_else(|| BitVMXError::VariableNotFound(*id, leaf_start_var.clone()))?
         .number()? as u32;
 
     info!(

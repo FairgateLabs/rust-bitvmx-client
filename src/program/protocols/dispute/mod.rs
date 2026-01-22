@@ -428,7 +428,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         if name.starts_with(INPUT_TX) {
             let idx = name
                 .strip_prefix(INPUT_TX)
-                .ok_or(BitVMXError::InvalidStringOperation(name.to_string()))?
+                .ok_or_else(|| BitVMXError::InvalidStringOperation(name.to_string()))?
                 .parse::<u32>()?;
             split_input(&self.ctx.id, idx, context)?;
             let (tx, speedup) =
@@ -488,7 +488,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         let verifier_speedup_pub = keys[1].get_public("speedup")?;
         let aggregated = computed_aggregated
             .get("aggregated_1")
-            .ok_or(BitVMXError::NotFound("aggregated_1".to_string()))?;
+            .ok_or_else(|| BitVMXError::NotFound("aggregated_1".to_string()))?;
         let (agg_or_prover, agg_or_verifier, sign_mode) =
             (prover_speedup_pub, verifier_speedup_pub, SignMode::Single);
 
@@ -497,11 +497,11 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         let mut protocol = self.load_or_create_protocol();
 
-        let mut amount = utxo.2.ok_or(BitVMXError::MissingParameter(
+        let mut amount = utxo.2.ok_or_else(|| BitVMXError::MissingParameter(
             "UTXO amount is required".to_string(),
         ))?;
         info!("Protocol amount: {}", amount);
-        let output_type = utxo.3.ok_or(BitVMXError::MissingParameter(
+        let output_type = utxo.3.ok_or_else(|| BitVMXError::MissingParameter(
             "UTXO output type is required".to_string(),
         ))?;
 
@@ -1066,7 +1066,7 @@ impl DisputeResolutionProtocol {
             None,
         )?;
 
-        let output_type = utxo_action.3.as_ref().ok_or(BitVMXError::MissingParameter(
+        let output_type = utxo_action.3.as_ref().ok_or_else(|| BitVMXError::MissingParameter(
             "UTXO output type is required".to_string(),
         ))?;
         protocol.add_external_transaction(&external_action(role, action_number))?;

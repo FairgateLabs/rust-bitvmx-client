@@ -123,18 +123,18 @@ impl ParticipantKeys {
         Ok(self
             .mapping
             .get(name)
-            .ok_or(BitVMXError::InvalidMessageFormat)?
+            .ok_or_else(|| BitVMXError::InvalidMessageFormat)?
             .winternitz()
-            .ok_or(BitVMXError::InvalidMessageFormat)?)
+            .ok_or_else(|| BitVMXError::InvalidMessageFormat)?)
     }
 
     pub fn get_public(&self, name: &str) -> Result<&PublicKey, BitVMXError> {
         Ok(self
             .mapping
             .get(name)
-            .ok_or(BitVMXError::InvalidMessageFormat)?
+            .ok_or_else(|| BitVMXError::InvalidMessageFormat)?
             .public()
-            .ok_or(BitVMXError::InvalidMessageFormat)?)
+            .ok_or_else(|| BitVMXError::InvalidMessageFormat)?)
     }
 
     pub fn speedup(&self) -> Result<&PublicKey, BitVMXError> {

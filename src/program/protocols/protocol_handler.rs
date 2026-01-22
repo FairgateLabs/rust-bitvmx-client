@@ -255,7 +255,7 @@ pub trait ProtocolHandler {
                         WinternitzType::HASH160,
                         protocol_script
                             .get_key(k.name())
-                            .ok_or(BitVMXError::KeysNotFound(self.context().id))?
+                            .ok_or_else(|| BitVMXError::KeysNotFound(self.context().id))?
                             .derivation_index(),
                     )?;
 
@@ -469,10 +469,7 @@ pub trait ProtocolHandler {
         program_context
             .globals
             .get_var(&self.context().id, "speedup")?
-            .ok_or(BitVMXError::VariableNotFound(
-                self.context().id,
-                "speedup".to_string(),
-            ))?
+            .ok_or_else(|| BitVMXError::VariableNotFound(self.context().id, "speedup".to_string()))?
             .pubkey()
     }
 
@@ -506,9 +503,9 @@ pub trait ProtocolHandler {
             self.context()
                 .storage
                 .as_ref()
-                .ok_or(BitVMXError::StorageUnavailable(
-                    self.context().protocol_name.clone(),
-                ))?
+                .ok_or_else(|| {
+                    BitVMXError::StorageUnavailable(self.context().protocol_name.clone())
+                })?
                 .clone(),
         )
     }

@@ -1,4 +1,4 @@
-use bitcoin::{consensus::encode::FromHexError, network::ParseNetworkError};
+use bitcoin::{consensus::encode::FromHexError, network::ParseNetworkError, Witness};
 use bitcoin_coordinator::errors::BitcoinCoordinatorError;
 use bitcoincore_rpc::bitcoin::{key::ParsePublicKeyError, sighash::SighashTypeParseError};
 use bitvmx_broker::{identification::errors::IdentificationError, rpc::errors::BrokerError};
@@ -79,6 +79,9 @@ pub enum BitVMXError {
     #[error("Invalid witness type")]
     InvalidWitnessType,
 
+    #[error("Invalid witness: {0:?}")]
+    InvalidWitness(Witness),
+
     #[error("Job type error {0}")]
     DispatcherError(#[from] DispatcherError),
 
@@ -117,6 +120,9 @@ pub enum BitVMXError {
 
     #[error("Invalid transaction name {0}")]
     InvalidTransactionName(String),
+
+    #[error("Invalid transaction status {0}")]
+    InvalidTransactionStatus(String),
 
     #[error("Failed to process message")]
     MessageProcessingError,
@@ -286,6 +292,9 @@ pub enum BitVMXError {
 
     #[error("Invalid Input: {0}")]
     InvalidInput(String),
+
+    #[error("Invalid Input(s): {0:?}")]
+    InvalidInputs(Vec<(usize, String)>),
 
     #[error("Merkle tree is invalid")]
     InvalidMerkleTree,
