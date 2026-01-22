@@ -1008,7 +1008,9 @@ pub fn handle_tx_news(
 
                 let trace_vars = TRACE_VARS
                     .get()
-                    .expect("TRACE_VARS not initialized")
+                    .ok_or_else(|| {
+                        BitVMXError::InitializationError("TRACE_VARS not initialized".to_string())
+                    })?
                     .read()?;
                 for (name, _) in trace_vars.iter() {
                     if *name == "prover_witness" {
@@ -1020,60 +1022,59 @@ pub fn handle_tx_news(
                         return Err(BitVMXError::VariableNotFound(drp.ctx.id, name.to_string()));
                     }
                 }
-                fn to_u8(bytes: &[u8]) -> u8 {
-                    u8::from_be_bytes(bytes.try_into().expect("Expected 1 byte for u8"))
+                fn to_u8(bytes: &[u8]) -> Result<u8, BitVMXError> {
+                    Ok(u8::from_be_bytes(bytes.try_into()?))
                 }
-                fn to_u32(bytes: &[u8]) -> u32 {
-                    u32::from_be_bytes(bytes.try_into().expect("Expected 4 bytes for u32"))
+                fn to_u32(bytes: &[u8]) -> Result<u32, BitVMXError> {
+                    Ok(u32::from_be_bytes(bytes.try_into()?))
                 }
-                fn to_u64(bytes: &[u8]) -> u64 {
-                    u64::from_be_bytes(bytes.try_into().expect("Expected 8 bytes for u64"))
+                fn to_u64(bytes: &[u8]) -> Result<u64, BitVMXError> {
+                    Ok(u64::from_be_bytes(bytes.try_into()?))
                 }
                 fn to_hex(bytes: &[u8]) -> String {
                     hex::encode(bytes)
                 }
 
-                let step_number = to_u64(&values["prover_step_number"]);
+                let step_number = to_u64(&values["prover_step_number"])?;
                 let trace_read1 = TraceRead::new(
-                    to_u32(&values["prover_read_1_address"]),
-                    to_u32(&values["prover_read_1_value"]),
-                    to_u64(&values["prover_read_1_last_step"]),
+                    to_u32(&values["prover_read_1_address"])?,
+                    to_u32(&values["prover_read_1_value"])?,
+                    to_u64(&values["prover_read_1_last_step"])?,
                 );
                 let trace_read2 = TraceRead::new(
-                    to_u32(&values["prover_read_2_address"]),
-                    to_u32(&values["prover_read_2_value"]),
-                    to_u64(&values["prover_read_2_last_step"]),
+                    to_u32(&values["prover_read_2_address"])?,
+                    to_u32(&values["prover_read_2_value"])?,
+                    to_u64(&values["prover_read_2_last_step"])?,
                 );
                 let program_counter = ProgramCounter::new(
-                    to_u32(&values["prover_read_pc_address"]),
-                    to_u8(&values["prover_read_pc_micro"]),
+                    to_u32(&values["prover_read_pc_address"])?,
+                    to_u8(&values["prover_read_pc_micro"])?,
                 );
                 let read_pc =
-                    TraceReadPC::new(program_counter, to_u32(&values["prover_read_pc_opcode"]));
+                    TraceReadPC::new(program_counter, to_u32(&values["prover_read_pc_opcode"])?);
                 let trace_write = TraceWrite::new(
-                    to_u32(&values["prover_write_address"]),
-                    to_u32(&values["prover_write_value"]),
+                    to_u32(&values["prover_write_address"])?,
+                    to_u32(&values["prover_write_value"])?,
                 );
                 let program_counter = ProgramCounter::new(
-                    to_u32(&values["prover_write_pc"]),
-                    to_u8(&values["prover_write_micro"]),
+                    to_u32(&values["prover_write_pc"])?,
+                    to_u8(&values["prover_write_micro"])?,
                 );
                 let trace_step = TraceStep::new(trace_write, program_counter);
-                let witness = program_context
+                let witness = if let Some(witness) = program_context
                     .witness
-                    .get_witness(&drp.ctx.id, "prover_witness")
-                    .ok()
-                    .flatten()
-                    .and_then(|witness| {
-                        witness.winternitz().ok().map(|w| {
-                            let bytes = w.message_bytes();
-                            to_u32(&bytes)
-                        })
-                    });
-                let mem_witness = MemoryWitness::from_byte(to_u8(&values["prover_mem_witness"]));
+                    .get_witness(&drp.ctx.id, "prover_witness")?
+                {
+                    let bytes = witness.winternitz()?.message_bytes();
+                    Some(to_u32(&bytes)?)
+                } else {
+                    None
+                };
+
+                let mem_witness = MemoryWitness::from_byte(to_u8(&values["prover_mem_witness"])?);
                 let prover_step_hash = to_hex(&values["prover_step_hash_tk"]);
                 let prover_next_hash = to_hex(&values["prover_next_hash_tk"]);
-                let _conflict_step = to_u64(&values["prover_conflict_step_tk"]);
+                let _conflict_step = to_u64(&values["prover_conflict_step_tk"])?;
 
                 let final_trace = TraceRWStep::new(
                     step_number,
@@ -1259,7 +1260,12 @@ pub fn handle_tx_news(
 
                 let mut values = std::collections::HashMap::new();
 
-                let trace_vars = TK_2NARY.get().expect("TK_2NARY not initialized").read()?;
+                let trace_vars = TK_2NARY
+                    .get()
+                    .ok_or_else(|| {
+                        BitVMXError::InitializationError("TK_2NARY not initialized".to_string())
+                    })?
+                    .read()?;
                 for (name, _) in trace_vars.iter() {
                     if let Some(value) = program_context.witness.get_witness(&drp.ctx.id, name)? {
                         values.insert(name.clone(), value.winternitz()?.message_bytes());
@@ -1267,8 +1273,8 @@ pub fn handle_tx_news(
                         return Err(BitVMXError::VariableNotFound(drp.ctx.id, name.to_string()));
                     }
                 }
-                fn to_u64(bytes: &[u8]) -> u64 {
-                    u64::from_be_bytes(bytes.try_into().expect("Expected 8 bytes for u64"))
+                fn to_u64(bytes: &[u8]) -> Result<u64, BitVMXError> {
+                    Ok(u64::from_be_bytes(bytes.try_into()?))
                 }
                 fn to_hex(bytes: &[u8]) -> String {
                     hex::encode(bytes)
@@ -1276,7 +1282,7 @@ pub fn handle_tx_news(
 
                 let prover_step_hash = to_hex(&values["prover_step_hash_tk2"]);
                 let prover_next_hash = to_hex(&values["prover_next_hash_tk2"]);
-                let _prover_write_step = to_u64(&values["prover_write_step_tk2"]);
+                let _prover_write_step = to_u64(&values["prover_write_step_tk2"])?;
 
                 let msg = serde_json::to_string(&DispatcherJob {
                     job_id: drp.ctx.id.to_string(),
