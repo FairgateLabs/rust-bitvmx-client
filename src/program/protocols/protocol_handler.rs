@@ -57,8 +57,11 @@ pub trait ProtocolHandler {
     fn context_mut(&mut self) -> &mut ProtocolContext;
     fn get_pregenerated_aggregated_keys(
         &self,
-        context: &ProgramContext,
-    ) -> Result<Vec<(String, PublicKey)>, BitVMXError>;
+        _context: &ProgramContext,
+    ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
+        // Default implementation: no pregenerated keys
+        Ok(vec![])
+    }
 
     fn generate_keys(
         &self,
@@ -147,7 +150,15 @@ pub trait ProtocolHandler {
         &self,
         program_context: &ProgramContext,
     ) -> Result<(Vec<Txid>, Vec<(Txid, u32)>), BitVMXError> {
-        let protocol = self.load_protocol()?;
+        // Try to load protocol, but if it doesn't exist (e.g., protocols without transactions),
+        // return empty vectors
+        let protocol = match self.load_protocol() {
+            Ok(p) => p,
+            Err(_) => {
+                // Protocol doesn't exist or has no transactions - return empty
+                return Ok((vec![], vec![]));
+            }
+        };
         let txs = protocol.get_transaction_ids();
         let tx_names_and_vout = program_context
             .globals
@@ -220,18 +231,27 @@ pub trait ProtocolHandler {
     fn get_transaction_by_name(
         &self,
         name: &str,
-        context: &ProgramContext,
-    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError>;
+        _context: &ProgramContext,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        // Default implementation: protocol has no transactions
+        Err(BitVMXError::InvalidTransactionName(format!(
+            "Protocol '{}' has no transactions",
+            name
+        )))
+    }
 
     fn notify_news(
         &self,
-        tx_id: Txid,
-        vout: Option<u32>,
-        tx_status: TransactionStatus,
-        context: String,
-        program_context: &ProgramContext,
-        participant_keys: Vec<&ParticipantKeys>,
-    ) -> Result<(), BitVMXError>;
+        _tx_id: Txid,
+        _vout: Option<u32>,
+        _tx_status: TransactionStatus,
+        _context: String,
+        _program_context: &ProgramContext,
+        _participant_keys: Vec<&ParticipantKeys>,
+    ) -> Result<(), BitVMXError> {
+        // Default implementation: no-op for protocols that don't need to handle news
+        Ok(())
+    }
 
     fn notify_external_news(
         &self,
@@ -529,7 +549,10 @@ pub trait ProtocolHandler {
         )
     }
 
-    fn setup_complete(&self, program_context: &ProgramContext) -> Result<(), BitVMXError>;
+    fn setup_complete(&self, _program_context: &ProgramContext) -> Result<(), BitVMXError> {
+        // Default implementation: no additional setup needed
+        Ok(())
+    }
 
     /// Returns the list of setup steps for this protocol.
     ///

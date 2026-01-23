@@ -10,9 +10,7 @@
 /// - No on-chain transactions needed
 /// - Just key exchange and aggregation
 /// - Result is stored in globals for later use
-use bitcoin::{PublicKey, Transaction, Txid};
-use bitcoin_coordinator::TransactionStatus;
-use protocol_builder::types::output::SpeedupData;
+use bitcoin::PublicKey;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -47,14 +45,6 @@ impl ProtocolHandler for AggregatedKeyProtocol {
 
     fn context_mut(&mut self) -> &mut ProtocolContext {
         &mut self.ctx
-    }
-
-    fn get_pregenerated_aggregated_keys(
-        &self,
-        _context: &ProgramContext,
-    ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
-        // No pregenerated keys for aggregated key protocol
-        Ok(vec![])
     }
 
     fn generate_keys(
@@ -144,43 +134,6 @@ impl ProtocolHandler for AggregatedKeyProtocol {
         );
 
         Ok(())
-    }
-
-    fn get_transaction_by_name(
-        &self,
-        _name: &str,
-        _context: &ProgramContext,
-    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
-        Err(BitVMXError::InvalidTransactionName(
-            "AggregatedKeyProtocol has no transactions".to_string(),
-        ))
-    }
-
-    fn notify_news(
-        &self,
-        _tx_id: Txid,
-        _vout: Option<u32>,
-        _tx_status: TransactionStatus,
-        _context: String,
-        _program_context: &ProgramContext,
-        _participant_keys: Vec<&ParticipantKeys>,
-    ) -> Result<(), BitVMXError> {
-        // No transactions to monitor
-        Ok(())
-    }
-
-    fn setup_complete(&self, _program_context: &ProgramContext) -> Result<(), BitVMXError> {
-        // No additional setup needed after keys are aggregated
-        Ok(())
-    }
-
-    fn get_transactions_to_monitor(
-        &self,
-        _program_context: &ProgramContext,
-    ) -> Result<(Vec<Txid>, Vec<(Txid, u32)>), BitVMXError> {
-        // AggregatedKeyProtocol has no Bitcoin transactions to monitor
-        // It only generates an aggregated MuSig2 key
-        Ok((vec![], vec![]))
     }
 
     // Override setup_steps to only use KeysStep
