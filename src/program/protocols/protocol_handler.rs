@@ -49,7 +49,7 @@ use crate::types::{ProgramContext, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_DRP
 
 use crate::program::variables::WitnessTypes;
 use crate::program::{variables::VariableTypes, witness};
-use crate::program::setup::{SetupStep, template_steps::{KeysStep, NoncesStep, SignaturesStep}};
+use crate::program::setup::{SetupStep, steps::{KeysStep, NoncesStep, SignaturesStep}};
 
 #[enum_dispatch]
 pub trait ProtocolHandler {

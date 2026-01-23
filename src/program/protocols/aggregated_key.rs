@@ -21,7 +21,7 @@ use crate::{
     program::{
         participant::ParticipantKeys,
         protocols::protocol_handler::{ProtocolContext, ProtocolHandler},
-        setup::{template_steps::KeysStep, SetupStep},
+        setup::{steps::KeysStep, SetupStep},
         variables::VariableTypes,
     },
     types::ProgramContext,
