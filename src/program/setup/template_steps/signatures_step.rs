@@ -249,7 +249,6 @@ impl SetupStep for SignaturesStep {
 
     fn exchange_config(&self) -> ExchangeConfig {
         ExchangeConfig {
-            use_broadcasting: true,
             verify_signatures: true,
             timeout_ms: None,
             max_retries: 3,
