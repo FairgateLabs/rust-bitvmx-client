@@ -49,6 +49,7 @@ use crate::types::{ProgramContext, PROGRAM_TYPE_COLLABORATION, PROGRAM_TYPE_DRP}
 
 use crate::program::variables::WitnessTypes;
 use crate::program::{variables::VariableTypes, witness};
+use crate::program::setup::{SetupStep, template_steps::{KeysStep, NoncesStep, SignaturesStep}};
 
 #[enum_dispatch]
 pub trait ProtocolHandler {
@@ -529,6 +530,20 @@ pub trait ProtocolHandler {
     }
 
     fn setup_complete(&self, program_context: &ProgramContext) -> Result<(), BitVMXError>;
+
+    /// Returns the list of setup steps for this protocol.
+    ///
+    /// By default, returns the standard steps: keys, nonces, signatures.
+    /// Protocols can override this method to customize their setup flow.
+    ///
+    /// Returns None if the protocol doesn't use the SetupEngine system.
+    fn setup_steps(&self) -> Option<Vec<Box<dyn SetupStep>>> {
+        Some(vec![
+            Box::new(KeysStep::new()),
+            Box::new(NoncesStep::new()),
+            Box::new(SignaturesStep::new()),
+        ])
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -642,21 +657,3 @@ pub fn external_fund_tx(
     )?)
 }
 
-// Import SetupEngine types for UsesSetupSteps trait
-use crate::program::setup::{SetupStep, UsesSetupSteps};
-
-/// Implementation of UsesSetupSteps for ProtocolType.
-///
-/// This allows protocols to opt-in to the new SetupEngine-based setup system
-/// by returning their setup steps. Protocols that don't implement this yet
-/// return None, allowing gradual migration.
-impl UsesSetupSteps for ProtocolType {
-    fn setup_steps(&self) -> Option<Vec<Box<dyn SetupStep>>> {
-        // Delegate to protocol-specific implementations
-        match self {
-            ProtocolType::CollaborationProtocol(p) => p.setup_steps(),
-            // Other protocols not migrated yet return None
-            _ => None,
-        }
-    }
-}

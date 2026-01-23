@@ -4,7 +4,7 @@
 /// - Uses SetupEngine for orchestrating setup steps
 /// - Delegates aggregation responsibility to protocols
 /// - Provides cleaner separation of concerns
-/// - Allows protocols to opt-in gradually via UsesSetupSteps trait
+/// - Protocols define their setup steps via ProtocolHandler::setup_steps()
 ///
 /// Key differences from Program:
 /// - No prepare_aggregated_keys() - protocols do their own aggregation
@@ -21,7 +21,7 @@ use crate::{
     program::{
         participant::ParticipantData,
         protocols::protocol_handler::{new_protocol_type, ProtocolHandler, ProtocolType},
-        setup::{SetupEngine, SetupEngineState, StepState, UsesSetupSteps},
+        setup::{SetupEngine, SetupEngineState, StepState},
         state::ProgramState,
     },
     signature_verifier::OperatorVerificationStore,
@@ -68,7 +68,7 @@ impl ProgramV2 {
         format!("program_v2_{}", self.program_id)
     }
 
-    /// Tries to create a SetupEngine for the protocol if it supports it
+    /// Creates a SetupEngine for the protocol using its setup_steps() method
     fn try_create_setup_engine(protocol: &ProtocolType) -> Option<SetupEngine> {
         if let Some(steps) = protocol.setup_steps() {
             debug!("Protocol supports SetupEngine with {} steps", steps.len());
@@ -381,7 +381,7 @@ impl ProgramV2 {
                 } else {
                     error!("ProgramV2: Protocol doesn't use SetupEngine - this shouldn't happen");
                     return Err(BitVMXError::InvalidMessage(
-                        "Protocol must implement UsesSetupSteps for ProgramV2".to_string(),
+                        "Protocol must return setup steps for ProgramV2".to_string(),
                     ));
                 }
             }

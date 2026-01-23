@@ -21,7 +21,7 @@ use crate::{
     program::{
         participant::ParticipantKeys,
         protocols::protocol_handler::{ProtocolContext, ProtocolHandler},
-        setup::{template_steps::KeysStep, SetupStep, UsesSetupSteps},
+        setup::{template_steps::KeysStep, SetupStep},
         variables::VariableTypes,
     },
     types::ProgramContext,
@@ -182,18 +182,12 @@ impl ProtocolHandler for CollaborationProtocol {
         // It only generates an aggregated MuSig2 key
         Ok((vec![], vec![]))
     }
-}
 
-/// Implementation of UsesSetupSteps for CollaborationProtocol
-///
-/// This protocol uses a single step: KeysStep
-/// The aggregation is computed by ProgramV2 after the step completes,
-/// and stored by build() method.
-impl UsesSetupSteps for CollaborationProtocol {
+    // Override setup_steps to only use KeysStep
+    // No Nonces or Signatures needed - we're only generating a key, not signing
     fn setup_steps(&self) -> Option<Vec<Box<dyn SetupStep>>> {
         Some(vec![
             Box::new(KeysStep::new()),
-            // No Nonces or Signatures needed - we're only generating a key, not signing
         ])
     }
 }

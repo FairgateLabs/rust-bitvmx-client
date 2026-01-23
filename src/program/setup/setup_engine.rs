@@ -8,41 +8,6 @@ use tracing::{debug, info};
 
 use super::SetupStep;
 
-/// Trait for protocols that use the new SetupStep-based setup system.
-///
-/// Protocols implementing this trait can define their setup flow as a sequence
-/// of steps (e.g., keys, nonces, signatures) that will be orchestrated by the
-/// SetupEngine.
-///
-/// This allows for a clean separation between protocol-specific logic and the
-/// generic setup orchestration.
-///
-/// # Gradual Migration
-///
-/// This trait is optional - protocols that don't implement it return None.
-/// This allows gradual migration from the old setup system to the new one.
-pub trait UsesSetupSteps {
-    /// Returns the list of setup steps for this protocol, if it uses the new system.
-    ///
-    /// Steps will be executed in order. Each step must complete before moving
-    /// to the next one.
-    ///
-    /// Returns None if the protocol doesn't use the SetupEngine system yet.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// fn setup_steps(&self) -> Option<Vec<Box<dyn SetupStep>>> {
-    ///     Some(vec![
-    ///         Box::new(KeysStep::new()),
-    ///         Box::new(NoncesStep::new()),
-    ///         Box::new(SignaturesStep::new()),
-    ///     ])
-    /// }
-    /// ```
-    fn setup_steps(&self) -> Option<Vec<Box<dyn SetupStep>>>;
-}
-
 /// Current state of a setup step in the engine.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum StepState {
