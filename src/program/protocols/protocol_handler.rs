@@ -12,6 +12,7 @@ use protocol_builder::{builder::Protocol, errors::ProtocolBuilderError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::rc::Rc;
+use storage_backend::error::StorageError;
 use storage_backend::storage::Storage;
 use tracing::{error, info};
 use uuid::Uuid;
@@ -173,9 +174,7 @@ pub trait ProtocolHandler {
             self.context()
                 .storage
                 .clone()
-                .ok_or(ProtocolBuilderError::MissingStorage(
-                    self.context().protocol_name.clone(),
-                ))?,
+                .ok_or_else(|| StorageError::NotFound(self.context().protocol_name.clone()))?,
         )? {
             Some(protocol) => Ok(protocol),
             None => Err(ProtocolBuilderError::MissingProtocol(
@@ -193,9 +192,12 @@ pub trait ProtocolHandler {
     }
 
     fn save_protocol(&self, protocol: Protocol) -> Result<(), ProtocolBuilderError> {
-        protocol.save(self.context().storage.clone().ok_or(
-            ProtocolBuilderError::MissingStorage(self.context().protocol_name.clone()),
-        )?)?;
+        protocol.save(
+            self.context()
+                .storage
+                .clone()
+                .ok_or_else(|| StorageError::NotFound(self.context().protocol_name.clone()))?,
+        )?;
         Ok(())
     }
 

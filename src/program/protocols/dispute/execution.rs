@@ -69,9 +69,14 @@ pub fn execution_result(
             let save_round = context
                 .globals
                 .get_var(id, "current_round2")? // 2nd n-ary search
-                .unwrap_or(context.globals.get_var(id, "current_round")?.ok_or(
-                    BitVMXError::VariableNotFound(*id, "current_round".to_string()),
-                )?) // 1st n-ary search
+                .unwrap_or(
+                    context
+                        .globals
+                        .get_var(id, "current_round")?
+                        .ok_or_else(|| {
+                            BitVMXError::VariableNotFound(*id, "current_round".to_string())
+                        })?,
+                ) // 1st n-ary search
                 .number()? as u8;
 
             let is_second_nary_search = context.globals.get_var(id, "current_round2")?.is_some();
@@ -128,9 +133,14 @@ pub fn execution_result(
             let save_round = context
                 .globals
                 .get_var(id, "current_round2")? // 2nd n-ary search
-                .unwrap_or(context.globals.get_var(id, "current_round")?.ok_or(
-                    BitVMXError::VariableNotFound(*id, "current_round".to_string()),
-                )?) // 1st n-ary search
+                .unwrap_or(
+                    context
+                        .globals
+                        .get_var(id, "current_round")?
+                        .ok_or_else(|| {
+                            BitVMXError::VariableNotFound(*id, "current_round".to_string())
+                        })?,
+                ) // 1st n-ary search
                 .number()? as u8;
 
             if save_round != *round {

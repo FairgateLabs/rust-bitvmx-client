@@ -107,7 +107,8 @@ impl Program {
             .get(Self::get_key(StoreKey::ProgramState(*program_id)))?
             .unwrap_or_default();
 
-        let mut program: Program = program.ok_or(ProgramError::ProgramNotFound(*program_id))?;
+        let mut program: Program =
+            program.ok_or_else(|| ProgramError::ProgramNotFound(*program_id))?;
 
         program.state = program_state;
         program.storage = Some(storage.clone());
