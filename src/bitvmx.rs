@@ -803,6 +803,20 @@ impl BitVMX {
                         max_allowed,
                     ));
                 }
+                CoordinatorNews::TransactionAlreadyInMempool(tx_id, _) => {
+                    // TODO: Complete what to do here
+                    ack_news = AckNews::Coordinator(
+                        AckCoordinatorNews::TransactionAlreadyInMempool(tx_id),
+                    );
+                }
+                CoordinatorNews::MempoolRejection(tx_id, _context_data, _counter) => {
+                    // TODO: Complete what to do here
+                    ack_news = AckNews::Coordinator(AckCoordinatorNews::MempoolRejection(tx_id));
+                }
+                CoordinatorNews::NetworkError(tx_id, _context_data, _counter) => {
+                    // TODO: Complete what to do here
+                    ack_news = AckNews::Coordinator(AckCoordinatorNews::NetworkError(tx_id));
+                }
             }
 
             self.program_context

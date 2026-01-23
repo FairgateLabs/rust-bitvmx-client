@@ -19,7 +19,8 @@ use bitvmx_client::program::participant::{
 };
 use bitvmx_client::program::protocols::dispute::config::{ConfigResult, ForceFailConfiguration};
 use bitvmx_client::program::protocols::dispute::{
-    COMMITMENT, POST_COMMITMENT, PRE_COMMITMENT, action_wins, input_tx_name, program_input, program_input_prev_prefix, program_input_prev_protocol, protocol_cost
+    action_wins, input_tx_name, program_input, program_input_prev_prefix,
+    program_input_prev_protocol, protocol_cost, COMMITMENT, POST_COMMITMENT, PRE_COMMITMENT,
 };
 use bitvmx_client::program::variables::{VariableTypes, WitnessTypes};
 use bitvmx_client::types::{
@@ -357,6 +358,7 @@ impl TestHelper {
                     block_min_tx_fee: 0.00001 * MIN_TX_FEE,
                     debug: 1,
                     fallback_fee: 0.0002,
+                    maxmempool: None,
                 }),
             );
 
@@ -1437,31 +1439,46 @@ fn challenge_verifier_out_of_bounds_bits_in_challenge() -> Result<()> {
 #[ignore]
 #[test]
 fn test_input_timeout_hashes_prover() -> Result<()> {
-    test_challenge(ForcedChallenges::InputTimeOut("NARY_PROVER_1".to_string(), ParticipantRole::Prover))
+    test_challenge(ForcedChallenges::InputTimeOut(
+        "NARY_PROVER_1".to_string(),
+        ParticipantRole::Prover,
+    ))
 }
 
 #[ignore]
 #[test]
 fn test_input_timeout_pre_commitment_verifier() -> Result<()> {
-    test_challenge(ForcedChallenges::InputTimeOut(PRE_COMMITMENT.to_string(), ParticipantRole::Verifier))
+    test_challenge(ForcedChallenges::InputTimeOut(
+        PRE_COMMITMENT.to_string(),
+        ParticipantRole::Verifier,
+    ))
 }
 
 #[ignore]
 #[test]
 fn test_input_timeout_commitment_prover() -> Result<()> {
-    test_challenge(ForcedChallenges::InputTimeOut(COMMITMENT.to_string(), ParticipantRole::Prover))
+    test_challenge(ForcedChallenges::InputTimeOut(
+        COMMITMENT.to_string(),
+        ParticipantRole::Prover,
+    ))
 }
 
 #[ignore]
 #[test]
 fn test_input_timeout_post_commitment_verifier() -> Result<()> {
-    test_challenge(ForcedChallenges::InputTimeOut(POST_COMMITMENT.to_string(), ParticipantRole::Verifier))
+    test_challenge(ForcedChallenges::InputTimeOut(
+        POST_COMMITMENT.to_string(),
+        ParticipantRole::Verifier,
+    ))
 }
 
 #[ignore]
 #[test]
 fn test_input_timeout_input_prover() -> Result<()> {
-    test_challenge(ForcedChallenges::InputTimeOut(input_tx_name(0), ParticipantRole::Prover))
+    test_challenge(ForcedChallenges::InputTimeOut(
+        input_tx_name(0),
+        ParticipantRole::Prover,
+    ))
 }
 
 #[ignore]
@@ -1472,7 +1489,10 @@ fn test_input_timeout_input_prover_with_previous() -> Result<()> {
         Network::Regtest,
         Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
         Some(("00000002", 1, "00000003", 2).into()),
-        Some(ForcedChallenges::InputTimeOut(input_tx_name(2), ParticipantRole::Prover)),
+        Some(ForcedChallenges::InputTimeOut(
+            input_tx_name(2),
+            ParticipantRole::Prover,
+        )),
         None,
     )?;
     Ok(())
@@ -1486,7 +1506,10 @@ fn test_input_timeout_input_verifier() -> Result<()> {
         Network::Regtest,
         Some("../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world-verifier.yaml".to_string()),
         Some(InputType::Participant("11111111".to_string(), Verifier)),
-        Some(ForcedChallenges::InputTimeOut(input_tx_name(0), ParticipantRole::Verifier)),
+        Some(ForcedChallenges::InputTimeOut(
+            input_tx_name(0),
+            ParticipantRole::Verifier,
+        )),
         None,
     )?;
     Ok(())
@@ -1500,7 +1523,10 @@ fn test_input_timeout_input_prover_cosign() -> Result<()> {
         Network::Regtest,
         Some("../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world-verifier.yaml".to_string()),
         Some(InputType::Participant("11111111".to_string(), Verifier)),
-        Some(ForcedChallenges::InputTimeOut(input_tx_name(1), ParticipantRole::Prover)),
+        Some(ForcedChallenges::InputTimeOut(
+            input_tx_name(1),
+            ParticipantRole::Prover,
+        )),
         None,
     )?;
     Ok(())
