@@ -1109,8 +1109,7 @@ pub fn get_challenge_leaf(
     let leaf_start_var = format!("challenge_leaf_start_{}", name);
     let leaf_start = context
         .globals
-        .get_var(id, &leaf_start_var)?
-        .ok_or_else(|| BitVMXError::VariableNotFound(*id, leaf_start_var.clone()))?
+        .get_var_or_err(id, &leaf_start_var)?
         .number()? as u32;
 
     info!(

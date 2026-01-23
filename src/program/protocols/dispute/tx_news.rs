@@ -41,8 +41,7 @@ fn dispatch_timeout_tx(
     info!("Dispatching timeout tx: {}", name);
     let params = program_context
         .globals
-        .get_var(&drp.ctx.id, name)?
-        .ok_or_else(|| BitVMXError::VariableNotFound(drp.ctx.id, name.to_string()))?
+        .get_var_or_err(&drp.ctx.id, name)?
         .vec_number()?;
     let input = params[0];
     let leaf = params[1];
@@ -661,8 +660,7 @@ pub fn handle_tx_news(
 
     let inputs = program_context
         .globals
-        .get_var(&drp.ctx.id, "input_txs")?
-        .ok_or_else(|| BitVMXError::VariableNotFound(drp.ctx.id, "input_txs".to_string()))?
+        .get_var_or_err(&drp.ctx.id, "input_txs")?
         .vec_string()?;
 
     let inputs = inputs
@@ -737,8 +735,7 @@ pub fn handle_tx_news(
 
             let params = program_context
                 .globals
-                .get_var(&drp.ctx.id, &timeout_input_tx(&name))?
-                .ok_or_else(|| BitVMXError::VariableNotFound(drp.ctx.id, timeout_input_tx(&name)))?
+                .get_var_or_err(&drp.ctx.id, &timeout_input_tx(&name))?
                 .vec_number()?;
 
             let timeout_leaf = params[1];
@@ -845,10 +842,7 @@ pub fn handle_tx_news(
                 let execution_path = drp.get_execution_path()?;
                 let full_input = program_context
                     .globals
-                    .get_var(&drp.ctx.id, "full_input")?
-                    .ok_or_else(|| {
-                        BitVMXError::VariableNotFound(drp.ctx.id, "full_input".to_string())
-                    })?
+                    .get_var_or_err(&drp.ctx.id, "full_input")?
                     .input()?;
                 let msg = serde_json::to_string(&DispatcherJob {
                     job_id: drp.ctx.id.to_string(),
@@ -882,19 +876,13 @@ pub fn handle_tx_news(
 
                 let last_hash = program_context
                     .witness
-                    .get_witness(&drp.ctx.id, "prover_last_hash")?
-                    .ok_or_else(|| {
-                        BitVMXError::VariableNotFound(drp.ctx.id, "prover_last_hash".to_string())
-                    })?
+                    .get_witness_or_err(&drp.ctx.id, "prover_last_hash")?
                     .winternitz()?
                     .message_bytes();
 
                 let last_step = program_context
                     .witness
-                    .get_witness(&drp.ctx.id, "prover_last_step")?
-                    .ok_or_else(|| {
-                        BitVMXError::VariableNotFound(drp.ctx.id, "prover_last_step".to_string())
-                    })?
+                    .get_witness_or_err(&drp.ctx.id, "prover_last_step")?
                     .winternitz()?
                     .message_bytes();
                 let last_step_len = last_step.len();
@@ -1020,11 +1008,12 @@ pub fn handle_tx_news(
                     if *name == "prover_witness" {
                         continue;
                     }
-                    if let Some(value) = program_context.witness.get_witness(&drp.ctx.id, name)? {
-                        values.insert(name.clone(), value.winternitz()?.message_bytes());
-                    } else {
-                        return Err(BitVMXError::VariableNotFound(drp.ctx.id, name.to_string()));
-                    }
+                    let value = program_context
+                        .witness
+                        .get_witness_or_err(&drp.ctx.id, name)?
+                        .winternitz()?
+                        .message_bytes();
+                    values.insert(name.clone(), value);
                 }
                 fn to_u8(bytes: &[u8]) -> Result<u8, BitVMXError> {
                     Ok(u8::from_be_bytes(bytes.try_into()?))
@@ -1119,16 +1108,10 @@ pub fn handle_tx_news(
 
                 let read_value_nary_search_leaf = program_context
                     .globals
-                    .get_var(
+                    .get_var_or_err(
                         &drp.ctx.id,
                         &format!("challenge_leaf_start_{}", "read_value_nary_search"),
                     )?
-                    .ok_or_else(|| {
-                        BitVMXError::VariableNotFound(
-                            drp.ctx.id,
-                            format!("challenge_leaf_start_{}", "read_value_nary_search"),
-                        )
-                    })?
                     .number()? as u32;
 
                 match leaf {
@@ -1144,10 +1127,7 @@ pub fn handle_tx_news(
                             let bits_name = &names[1];
                             let witness = program_context
                                 .witness
-                                .get_witness(&drp.ctx.id, bits_name)?
-                                .ok_or_else(|| {
-                                    BitVMXError::VariableNotFound(drp.ctx.id, bits_name.to_string())
-                                })?;
+                                .get_witness_or_err(&drp.ctx.id, bits_name)?;
                             let bytes = witness.winternitz()?.message_bytes();
                             info!(
                                 "Challenge will be extended with a 2nd nary search. {bits_name} are {:?}",
@@ -1275,11 +1255,12 @@ pub fn handle_tx_news(
                     })?
                     .read()?;
                 for (name, _) in trace_vars.iter() {
-                    if let Some(value) = program_context.witness.get_witness(&drp.ctx.id, name)? {
-                        values.insert(name.clone(), value.winternitz()?.message_bytes());
-                    } else {
-                        return Err(BitVMXError::VariableNotFound(drp.ctx.id, name.to_string()));
-                    }
+                    let value = program_context
+                        .witness
+                        .get_witness_or_err(&drp.ctx.id, name)?
+                        .winternitz()?
+                        .message_bytes();
+                    values.insert(name.clone(), value);
                 }
                 fn to_u64(bytes: &[u8]) -> Result<u64, BitVMXError> {
                     Ok(u64::from_be_bytes(bytes.try_into()?))
@@ -1398,13 +1379,7 @@ fn handle_nary_verifier(
 
             let bits = program_context
                 .witness
-                .get_witness(&drp.ctx.id, &format!("{}_{}", selection_bits, round))?
-                .ok_or_else(|| {
-                    BitVMXError::VariableNotFound(
-                        drp.ctx.id,
-                        format!("{}_{}", selection_bits, round),
-                    )
-                })?
+                .get_witness_or_err(&drp.ctx.id, &format!("{}_{}", selection_bits, round))?
                 .winternitz()?
                 .message_bytes();
             if bits.len() != 1 {
@@ -1493,8 +1468,7 @@ fn handle_nary_prover(
 
     let params = program_context
         .globals
-        .get_var(&drp.ctx.id, &timeout_input_tx(name))?
-        .ok_or_else(|| BitVMXError::VariableNotFound(drp.ctx.id, timeout_input_tx(name)))?
+        .get_var_or_err(&drp.ctx.id, &timeout_input_tx(name))?
         .vec_number()?;
     let timeout_leaf = params[1];
     if leaf == timeout_leaf {
@@ -1537,8 +1511,7 @@ fn handle_nary_prover(
 
             let bytes = program_context
                 .witness
-                .get_witness(&drp.ctx.id, &name)?
-                .ok_or_else(|| BitVMXError::VariableNotFound(drp.ctx.id, name.clone()))?
+                .get_witness_or_err(&drp.ctx.id, &name)?
                 .winternitz()?
                 .message_bytes();
 

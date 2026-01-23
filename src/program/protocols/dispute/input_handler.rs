@@ -246,8 +246,7 @@ pub fn unify_witnesses(
         let key = program_input(offset + i, Some(&owner));
         let input = program_context
             .witness
-            .get_witness(id, &key)?
-            .ok_or_else(|| BitVMXError::VariableNotFound(*id, key))?
+            .get_witness_or_err(id, &key)?
             .winternitz()?
             .message_bytes();
         info!("Unifying input for tx {}: {}", idx, hex::encode(&input));
@@ -294,8 +293,7 @@ pub fn unify_inputs(
                 );
                 let signature = &program_context
                     .witness
-                    .get_witness(&previous_protocol, &key)?
-                    .ok_or_else(|| BitVMXError::VariableNotFound(previous_protocol, key.clone()))?
+                    .get_witness_or_err(&previous_protocol, &key)?
                     .winternitz()?;
                 //copy the witness to the current program so the when needed it can be used to sign txs
                 program_context
