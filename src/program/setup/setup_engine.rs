@@ -440,7 +440,7 @@ impl SetupEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::program::setup::template_steps::{KeysStep, NoncesStep, SignaturesStep};
+    use crate::program::setup::steps::{KeysStep, NoncesStep, SignaturesStep};
 
     #[test]
     fn test_setup_engine_creation() {
