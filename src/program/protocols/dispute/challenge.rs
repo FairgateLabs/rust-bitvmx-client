@@ -376,23 +376,14 @@ pub fn challenge_scripts(
                                 ProgramInputType::ProverPrev(words, offset) => {
                                     let previous_protocol = context
                                         .globals
-                                        .get_var(id, &program_input_prev_protocol(idx as u32))?
-                                        .ok_or_else(|| {
-                                            BitVMXError::VariableNotFound(
-                                                *id,
-                                                program_input_prev_protocol(idx as u32),
-                                            )
-                                        })?
+                                        .get_var_or_err(
+                                            id,
+                                            &program_input_prev_protocol(idx as u32),
+                                        )?
                                         .uuid()?;
                                     let previous_prefix = context
                                         .globals
-                                        .get_var(id, &program_input_prev_prefix(idx as u32))?
-                                        .ok_or_else(|| {
-                                            BitVMXError::VariableNotFound(
-                                                *id,
-                                                program_input_prev_prefix(idx as u32),
-                                            )
-                                        })?
+                                        .get_var_or_err(id, &program_input_prev_prefix(idx as u32))?
                                         .string()?;
 
                                     for j in 0..*words {
@@ -405,13 +396,7 @@ pub fn challenge_scripts(
                                         );
                                         let pubkey = context
                                             .globals
-                                            .get_var(&previous_protocol, &key)?
-                                            .ok_or_else(|| {
-                                                BitVMXError::VariableNotFound(
-                                                    previous_protocol,
-                                                    key.clone(),
-                                                )
-                                            })?
+                                            .get_var_or_err(&previous_protocol, &key)?
                                             .wots_pubkey()?;
                                         //we copy the var so the prover is able to decode it when it sees the challenge tx
                                         if role == ParticipantRole::Prover {
@@ -454,13 +439,8 @@ pub fn challenge_scripts(
                                         stack = StackTracker::new();
 
                                         let key = program_input_word(idx as u32, j);
-                                        let value = context
-                                            .globals
-                                            .get_var(id, &key)?
-                                            .ok_or_else(|| {
-                                                BitVMXError::VariableNotFound(*id, key.clone())
-                                            })?
-                                            .input()?;
+                                        let value =
+                                            context.globals.get_var_or_err(id, &key)?.input()?;
 
                                         let value =
                                             u32::from_be_bytes(value.as_slice().try_into()?);

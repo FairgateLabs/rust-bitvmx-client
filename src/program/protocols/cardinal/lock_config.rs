@@ -52,11 +52,7 @@ impl LockProtocolConfiguration {
     }
 
     pub fn new_from_globals(id: Uuid, globals: &Globals) -> Result<Self, BitVMXError> {
-        let get = |key: &str| {
-            globals
-                .get_var(&id, key)?
-                .ok_or(BitVMXError::VariableNotFound(id, key.to_string()))
-        };
+        let get = |key: &str| globals.get_var_or_err(&id, key);
 
         let operators_aggregated_pub = get("operators_aggregated_pub")?.pubkey()?;
         let ops_agg_happy_path = get("operators_aggregated_happy_path")?.pubkey()?;

@@ -472,8 +472,7 @@ pub trait ProtocolHandler {
     fn get_speedup_key(&self, program_context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
         program_context
             .globals
-            .get_var(&self.context().id, "speedup")?
-            .ok_or_else(|| BitVMXError::VariableNotFound(self.context().id, "speedup".to_string()))?
+            .get_var_or_err(&self.context().id, "speedup")?
             .pubkey()
     }
 

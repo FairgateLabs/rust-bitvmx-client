@@ -112,10 +112,7 @@ pub fn get_required_keys(
                 //similar to split_input
                 let full_input = program_context
                     .globals
-                    .get_var(id, &program_input(idx as u32, None))?
-                    .ok_or_else(|| {
-                        BitVMXError::VariableNotFound(*id, program_input(idx as u32, None))
-                    })?
+                    .get_var_or_err(id, &program_input(idx as u32, None))?
                     .input()?;
 
                 for i in 0..*words {
@@ -183,8 +180,7 @@ pub fn split_input(
 
     let full_input = program_context
         .globals
-        .get_var(id, &program_input(idx, None))?
-        .ok_or_else(|| BitVMXError::VariableNotFound(*id, program_input(idx, None)))?
+        .get_var_or_err(id, &program_input(idx, None))?
         .input()?;
     let words = input_txs_sizes[idx as usize];
     let owner = input_txs[idx as usize].as_str();
@@ -214,12 +210,7 @@ pub fn get_txs_configuration(
     id: &Uuid,
     program_context: &ProgramContext,
 ) -> Result<(Vec<String>, Vec<u32>, Vec<u32>, u32), BitVMXError> {
-    let get = |key: &str| {
-        program_context
-            .globals
-            .get_var(id, key)?
-            .ok_or_else(|| BitVMXError::VariableNotFound(*id, key.to_string()))
-    };
+    let get = |key: &str| program_context.globals.get_var_or_err(id, key);
 
     let input_txs = get("input_txs")?.vec_string()?;
     let input_txs_sizes = get("input_txs_sizes")?.vec_number()?;
@@ -283,17 +274,11 @@ pub fn unify_inputs(
         if input_txs[idx] == "prover_prev" {
             let previous_protocol = program_context
                 .globals
-                .get_var(id, &program_input_prev_protocol(idx as u32))?
-                .ok_or_else(|| {
-                    BitVMXError::VariableNotFound(*id, program_input_prev_protocol(idx as u32))
-                })?
+                .get_var_or_err(id, &program_input_prev_protocol(idx as u32))?
                 .uuid()?;
             let previous_prefix = program_context
                 .globals
-                .get_var(id, &program_input_prev_prefix(idx as u32))?
-                .ok_or_else(|| {
-                    BitVMXError::VariableNotFound(*id, program_input_prev_prefix(idx as u32))
-                })?
+                .get_var_or_err(id, &program_input_prev_prefix(idx as u32))?
                 .string()?;
 
             info!(
@@ -322,13 +307,7 @@ pub fn unify_inputs(
         }
 
         let key = &program_input(idx as u32, None);
-        full_input.extend_from_slice(
-            &program_context
-                .globals
-                .get_var(id, key)?
-                .ok_or_else(|| BitVMXError::VariableNotFound(*id, key.clone()))?
-                .input()?,
-        );
+        full_input.extend_from_slice(&program_context.globals.get_var_or_err(id, key)?.input()?);
         info!(
             "Unifying input from tx {}: {}",
             key,
