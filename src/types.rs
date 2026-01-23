@@ -401,7 +401,7 @@ pub struct ParticipantChannel {
     pub channel: DualChannel,
 }
 
-pub const PROGRAM_TYPE_COLLABORATION: &str = "collaboration";
+pub const PROGRAM_TYPE_AGGREGATED_KEY: &str = "aggregated_key";
 pub const PROGRAM_TYPE_LOCK: &str = "lock";
 pub const PROGRAM_TYPE_DRP: &str = "drp";
 pub const PROGRAM_TYPE_SLOT: &str = "slot";

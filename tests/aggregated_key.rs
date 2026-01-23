@@ -5,7 +5,7 @@ use bitcoin::Amount;
 use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_client::program::variables::VariableTypes;
-use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel, PROGRAM_TYPE_COLLABORATION};
+use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel, PROGRAM_TYPE_AGGREGATED_KEY};
 use bitvmx_wallet::wallet::{RegtestWallet, Wallet};
 use common::{
     clear_db, config_trace, ensure_docker_available, get_all, init_bitvmx, init_utxo, send_all, INITIAL_BLOCK_COUNT, LOCAL_SLEEP_MS,
@@ -17,12 +17,12 @@ mod common;
 
 const MIN_TX_FEE: f64 = 2.0;
 
-/// Helper struct to configure and setup a collaboration protocol test
-pub struct CollaborationConfig {
+/// Helper struct to configure and setup an aggregated key protocol test
+pub struct AggregatedKeyConfig {
     pub id: Uuid,
 }
 
-impl CollaborationConfig {
+impl AggregatedKeyConfig {
     pub fn new(id: Uuid) -> Self {
         Self { id }
     }
@@ -38,7 +38,7 @@ impl CollaborationConfig {
         // Each participant receives the same setup message through the broker
         let setup_msg = IncomingBitVMXApiMessages::SetupV2(
             self.id,
-            PROGRAM_TYPE_COLLABORATION.to_string(),
+            PROGRAM_TYPE_AGGREGATED_KEY.to_string(),
             addresses,
             leader,
         );
@@ -51,14 +51,14 @@ impl CollaborationConfig {
     }
 }
 
-/// Test collaboration protocol (implemented with ProgramV2 and SetupEngine)
+/// Test aggregated key protocol (implemented with ProgramV2 and SetupEngine)
 #[ignore]
 #[test]
-pub fn test_collaboration() -> Result<()> {
+pub fn test_aggregated_key() -> Result<()> {
     config_trace();
 
     info!("================================================");
-    info!("Starting Collaboration Protocol Test");
+    info!("Starting Aggregated Key Protocol Test");
     info!("================================================");
 
     // Load wallet configuration
@@ -165,7 +165,7 @@ pub fn test_collaboration() -> Result<()> {
     info!("Setting up aggregated public key");
     info!("================================================");
 
-    // Setup aggregated public key for the collaboration
+    // Setup aggregated public key for the aggregated key protocol
     let aggregation_id = Uuid::new_v4();
     let command = IncomingBitVMXApiMessages::SetupKey(
         aggregation_id,
@@ -182,7 +182,7 @@ pub fn test_collaboration() -> Result<()> {
     info!("Aggregated public key: {}", aggregated_pub_key);
 
     info!("================================================");
-    info!("Funding collaboration protocol UTXO");
+    info!("Funding aggregated key protocol UTXO");
     info!("================================================");
 
     // Create a UTXO that can be spent by the aggregated key
@@ -192,18 +192,18 @@ pub fn test_collaboration() -> Result<()> {
     info!("Funded UTXO: {:?}", utxo);
 
     info!("================================================");
-    info!("Setting up Collaboration Protocol with ProgramV2");
+    info!("Setting up Aggregated Key Protocol with ProgramV2");
     info!("================================================");
 
     // Create program ID
     let program_id = Uuid::new_v4();
     info!("Program ID: {}", program_id);
 
-    // Create CollaborationConfig (uses ProgramV2 with SetupEngine)
-    let collaboration_config = CollaborationConfig::new(program_id);
+    // Create AggregatedKeyConfig (uses ProgramV2 with SetupEngine)
+    let aggregated_key_config = AggregatedKeyConfig::new(program_id);
 
     // Call setup_v2 through the API (op1 is leader, index 0)
-    collaboration_config.setup(&id_channel_pairs, addresses.clone(), 0)?;
+    aggregated_key_config.setup(&id_channel_pairs, addresses.clone(), 0)?;
 
     info!("================================================");
     info!("Waiting for setup completion");
@@ -229,7 +229,7 @@ pub fn test_collaboration() -> Result<()> {
     info!("Processing final tick to reach Ready state");
     info!("================================================");
 
-    // CollaborationProtocol has no transactions to monitor, so we just need
+    // AggregatedKeyProtocol has no transactions to monitor, so we just need
     // to tick the instances a few times to let them transition to Ready state
     for _ in 0..10 {
         for instance in instances.iter_mut() {
@@ -239,10 +239,10 @@ pub fn test_collaboration() -> Result<()> {
     }
 
     info!("================================================");
-    info!("Verifying Collaboration Result - Aggregated MuSig2 Key");
+    info!("Verifying Aggregated Key Result - Aggregated MuSig2 Key");
     info!("================================================");
 
-    // The CollaborationProtocol stores the final aggregated key in globals
+    // The AggregatedKeyProtocol stores the final aggregated key in globals
     // under the variable name "final_aggregated_key"
     // IMPORTANT: Use program_id so GetVar knows which program's globals to query
     let get_key_command = IncomingBitVMXApiMessages::GetVar(
@@ -282,7 +282,7 @@ pub fn test_collaboration() -> Result<()> {
     assert_eq!(aggregated_keys[0], aggregated_keys[2],
         "All participants should compute the same aggregated MuSig2 key");
 
-    info!("✅ Collaboration successful! All three participants computed the same aggregated key");
+    info!("✅ Aggregated key protocol successful! All three participants computed the same aggregated key");
     info!("   Aggregated MuSig2 Key: {}", aggregated_keys[0]);
 
     info!("================================================");

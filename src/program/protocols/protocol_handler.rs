@@ -25,7 +25,7 @@ use crate::program::protocols::union::full_penalization::FullPenalizationProtoco
 
 #[cfg(feature = "cardinal")]
 use super::cardinal::{lock::LockProtocol, slot::SlotProtocol, transfer::TransferProtocol};
-use super::collaboration::CollaborationProtocol;
+use super::aggregated_key::AggregatedKeyProtocol;
 use super::dispute::DisputeResolutionProtocol;
 
 #[cfg(feature = "union")]
@@ -45,7 +45,7 @@ use crate::types::{
 #[cfg(feature = "cardinal")]
 use crate::types::{PROGRAM_TYPE_LOCK, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TRANSFER};
 
-use crate::types::{ProgramContext, PROGRAM_TYPE_COLLABORATION, PROGRAM_TYPE_DRP};
+use crate::types::{ProgramContext, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_DRP};
 
 use crate::program::variables::WitnessTypes;
 use crate::program::{variables::VariableTypes, witness};
@@ -569,7 +569,7 @@ impl ProtocolContext {
 #[enum_dispatch(ProtocolHandler)]
 #[derive(Clone, Serialize, Deserialize)]
 pub enum ProtocolType {
-    CollaborationProtocol,
+    AggregatedKeyProtocol,
     DisputeResolutionProtocol,
     #[cfg(feature = "cardinal")]
     LockProtocol,
@@ -603,8 +603,8 @@ pub fn new_protocol_type(
     let ctx = ProtocolContext::new(id, &protocol_name, my_idx, storage);
 
     match name {
-        PROGRAM_TYPE_COLLABORATION => Ok(ProtocolType::CollaborationProtocol(
-            CollaborationProtocol::new(ctx),
+        PROGRAM_TYPE_AGGREGATED_KEY => Ok(ProtocolType::AggregatedKeyProtocol(
+            AggregatedKeyProtocol::new(ctx),
         )),
         PROGRAM_TYPE_DRP => Ok(ProtocolType::DisputeResolutionProtocol(
             DisputeResolutionProtocol::new(ctx),

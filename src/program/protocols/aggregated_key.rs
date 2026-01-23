@@ -1,6 +1,6 @@
-/// CollaborationProtocol - Simple protocol for generating an aggregated MuSig2 key
+/// AggregatedKeyProtocol - Simple protocol for generating an aggregated MuSig2 key
 ///
-/// This protocol is used when multiple parties want to collaborate to create a single
+/// This protocol is used when multiple parties want to create a single
 /// aggregated public key using MuSig2. Unlike full BitVMX protocols, this doesn't create
 /// any Bitcoin transactions - it only orchestrates the key exchange.
 ///
@@ -27,20 +27,20 @@ use crate::{
     types::ProgramContext,
 };
 
-/// CollaborationProtocol - Manages aggregated key generation
+/// AggregatedKeyProtocol - Manages aggregated key generation
 #[derive(Clone, Serialize, Deserialize)]
-pub struct CollaborationProtocol {
+pub struct AggregatedKeyProtocol {
     ctx: ProtocolContext,
 }
 
-impl CollaborationProtocol {
-    /// Creates a new CollaborationProtocol instance
+impl AggregatedKeyProtocol {
+    /// Creates a new AggregatedKeyProtocol instance
     pub fn new(ctx: ProtocolContext) -> Self {
         Self { ctx }
     }
 }
 
-impl ProtocolHandler for CollaborationProtocol {
+impl ProtocolHandler for AggregatedKeyProtocol {
     fn context(&self) -> &ProtocolContext {
         &self.ctx
     }
@@ -53,7 +53,7 @@ impl ProtocolHandler for CollaborationProtocol {
         &self,
         _context: &ProgramContext,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
-        // No pregenerated keys for collaboration
+        // No pregenerated keys for aggregated key protocol
         Ok(vec![])
     }
 
@@ -66,7 +66,7 @@ impl ProtocolHandler for CollaborationProtocol {
             .key_chain
             .derive_keypair(key_manager::key_type::BitcoinKeyType::P2tr)?;
 
-        // Return participant keys with a single aggregated key named after the collaboration ID
+        // Return participant keys with a single aggregated key named after the protocol ID
         let aggregated_name = self.ctx.id.to_string();
         Ok(ParticipantKeys::new(
             vec![(aggregated_name.clone(), key.into())],
@@ -80,7 +80,7 @@ impl ProtocolHandler for CollaborationProtocol {
         _computed_aggregated: HashMap<String, PublicKey>, // ⚠️ Ignored - we compute our own
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        // CollaborationProtocol performs its own MuSig2 aggregation
+        // AggregatedKeyProtocol performs its own MuSig2 aggregation
         // This is the NEW pattern where protocols are responsible for aggregation
 
         let key_name = self.ctx.id.to_string();
@@ -139,7 +139,7 @@ impl ProtocolHandler for CollaborationProtocol {
         )?;
 
         tracing::info!(
-            "CollaborationProtocol: Computed and stored final aggregated key: {}",
+            "AggregatedKeyProtocol: Computed and stored final aggregated key: {}",
             aggregated_key
         );
 
@@ -152,7 +152,7 @@ impl ProtocolHandler for CollaborationProtocol {
         _context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         Err(BitVMXError::InvalidTransactionName(
-            "CollaborationProtocol has no transactions".to_string(),
+            "AggregatedKeyProtocol has no transactions".to_string(),
         ))
     }
 
@@ -178,7 +178,7 @@ impl ProtocolHandler for CollaborationProtocol {
         &self,
         _program_context: &ProgramContext,
     ) -> Result<(Vec<Txid>, Vec<(Txid, u32)>), BitVMXError> {
-        // CollaborationProtocol has no Bitcoin transactions to monitor
+        // AggregatedKeyProtocol has no Bitcoin transactions to monitor
         // It only generates an aggregated MuSig2 key
         Ok((vec![], vec![]))
     }
@@ -191,3 +191,4 @@ impl ProtocolHandler for CollaborationProtocol {
         ])
     }
 }
+
