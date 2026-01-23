@@ -69,7 +69,7 @@ pub fn execution_result(
             let save_round = context
                 .globals
                 .get_var(id, "current_round2")? // 2nd n-ary search
-                .unwrap_or(context.globals.get_var(id, "current_round")?.unwrap()) // 1st n-ary search
+                .unwrap_or(context.globals.get_var_or_err(id, "current_round")?) // 1st n-ary search
                 .number()? as u8;
 
             let is_second_nary_search = context.globals.get_var(id, "current_round2")?.is_some();
@@ -80,7 +80,12 @@ pub fn execution_result(
                 ("NARY_PROVER", "prover_hash") // 1st n-ary search
             };
 
-            assert_eq!(save_round, *round);
+            if save_round != *round {
+                return Err(BitVMXError::InvalidState(format!(
+                    "Saved round {} does not match the expected round {}",
+                    save_round, round
+                )));
+            }
             for (i, h) in hashes.iter().enumerate() {
                 set_input_hex(
                     id,
@@ -121,10 +126,15 @@ pub fn execution_result(
             let save_round = context
                 .globals
                 .get_var(id, "current_round2")? // 2nd n-ary search
-                .unwrap_or(context.globals.get_var(id, "current_round")?.unwrap()) // 1st n-ary search
+                .unwrap_or(context.globals.get_var_or_err(id, "current_round")?) // 1st n-ary search
                 .number()? as u8;
 
-            assert_eq!(save_round, *round);
+            if save_round != *round {
+                return Err(BitVMXError::InvalidState(format!(
+                    "Saved round {} does not match the expected round {}",
+                    save_round, round
+                )));
+            }
 
             let (nary_verifier, selection_bits) =
                 if context.globals.get_var(id, "current_round2")?.is_some() {
@@ -170,9 +180,7 @@ pub fn execution_result(
                 )?;
             } else {
                 let (final_trace, resigned_step_hash, resigned_next_hash, conflict_step) =
-                    prover_final_trace
-                        .as_final_trace_with_hashes_and_step()
-                        .unwrap();
+                    prover_final_trace.as_final_trace_with_hashes_and_step()?;
                 set_input_u32(
                     id,
                     context,
@@ -292,10 +300,10 @@ pub fn execution_result(
             info!("Verifier choose challenge result: {:?}", challenge);
 
             let program_definitions = drp.get_program_definition(context)?;
-            let leaf = get_challenge_leaf(id, context, &program_definitions.0, challenge)?;
-            if leaf.is_none() {
+            let Some(leaf) = get_challenge_leaf(id, context, &program_definitions.0, challenge)?
+            else {
                 return Ok(());
-            }
+            };
 
             // Check if it's the second n-ary search to set next tx name
             let second_nary_search = context
@@ -316,8 +324,7 @@ pub fn execution_result(
                 CHALLENGE
             };
 
-            let (tx, sp) =
-                drp.get_tx_with_speedup_data(context, name, 0, leaf.unwrap() as u32, true)?;
+            let (tx, sp) = drp.get_tx_with_speedup_data(context, name, 0, leaf as u32, true)?;
             context.bitcoin_coordinator.dispatch(
                 tx,
                 Some(sp),
@@ -343,7 +350,7 @@ pub fn execution_result(
                 )?;
             } else {
                 let (resigned_step_hash, resigned_next_hash, write_step) =
-                    prover_hashes_and_step.as_hashes_with_step().unwrap();
+                    prover_hashes_and_step.as_hashes_with_step()?;
 
                 info!(
                     "Prover got hashes and step result: {:?}, {:?}, {:?}",

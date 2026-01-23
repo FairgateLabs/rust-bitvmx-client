@@ -137,13 +137,14 @@ impl Globals {
         Ok(value)
     }
 
+    pub fn get_var_or_err(&self, uuid: &Uuid, key: &str) -> Result<VariableTypes, BitVMXError> {
+        self.get_var(uuid, key)?
+            .ok_or_else(|| BitVMXError::VariableNotFound(*uuid, key.to_string()))
+    }
+
     pub fn copy_var(&self, from: &Uuid, to: &Uuid, key: &str) -> Result<(), BitVMXError> {
-        let value = self.get_var(from, key)?;
-        if let Some(value) = value {
-            self.set_var(to, key, value)?;
-        } else {
-            return Err(BitVMXError::VariableNotFound(from.clone(), key.to_string()));
-        }
+        let value = self.get_var_or_err(from, key)?;
+        self.set_var(to, key, value)?;
         Ok(())
     }
 
@@ -204,13 +205,14 @@ impl WitnessVars {
         Ok(value)
     }
 
+    pub fn get_witness_or_err(&self, uuid: &Uuid, key: &str) -> Result<WitnessTypes, BitVMXError> {
+        self.get_witness(uuid, key)?
+            .ok_or_else(|| BitVMXError::VariableNotFound(*uuid, key.to_string()))
+    }
+
     pub fn copy_witness(&self, from: &Uuid, to: &Uuid, key: &str) -> Result<(), BitVMXError> {
-        let value = self.get_witness(from, key)?;
-        if let Some(value) = value {
-            self.set_witness(to, key, value)?;
-        } else {
-            return Err(BitVMXError::VariableNotFound(from.clone(), key.to_string()));
-        }
+        let value = self.get_witness_or_err(from, key)?;
+        self.set_witness(to, key, value)?;
         Ok(())
     }
 }

@@ -1,4 +1,4 @@
-use bitcoin::{consensus::encode::FromHexError, network::ParseNetworkError};
+use bitcoin::{consensus::encode::FromHexError, network::ParseNetworkError, Witness};
 use bitcoin_coordinator::errors::BitcoinCoordinatorError;
 use bitcoincore_rpc::bitcoin::{key::ParsePublicKeyError, sighash::SighashTypeParseError};
 use bitvmx_broker::{identification::errors::IdentificationError, rpc::errors::BrokerError};
@@ -19,38 +19,130 @@ use uuid::Uuid;
 
 #[derive(Error, Debug)]
 pub enum BitVMXError {
-    #[error("Error on dispute resolution protocol setup: {0}")]
-    DisputeResolutionProtocolSetup(String),
-
+    /* =========================
+     * Configuration & Init
+     * ========================= */
     #[error("Invalid configuration")]
     ConfigurationError(#[from] ConfigError),
 
     #[error("Invalid parameter in configuration. {0}")]
     InvalidParameter(String),
 
+    #[error("Initialization error: {0}")]
+    InitializationError(String),
+
+    #[error("This feature is not implemented yet {0}")]
+    NotImplemented(String),
+
+    /* =========================
+     * IO / System / Time
+     * ========================= */
+    #[error("IO error: {0}")]
+    IOError(#[from] std::io::Error),
+
+    #[error("Time error: {0}")]
+    TimeError(#[from] std::time::SystemTimeError),
+
+    #[error("Poisoned lock error: {0}")]
+    PoisonedLockError(String),
+
+    #[error("Problem creating directory {0}: {1}")]
+    DirectoryCreationError(String, std::io::Error),
+
+    /* =========================
+     * Parsing / Serialization
+     * ========================= */
     #[error("Error parsing int")]
     ParseIntError(#[from] std::num::ParseIntError),
 
+    #[error("Error parsing from script int")]
+    ScriptIntParseError(#[from] bitcoin::script::Error),
+
+    #[error("Error decoding hex string: {0}")]
+    FromHexError(#[from] hex::FromHexError),
+
+    #[error("Serialization error {0}")]
+    SerdeSerializationError(#[from] serde_json::Error),
+
+    #[error("Failed to serialize or deserialize message")]
+    SerializationError,
+
+    #[error("TryFromSlice error: {0}")]
+    TryFromSliceError(#[from] std::array::TryFromSliceError),
+
+    /* =========================
+     * Cryptography / Keys / Signatures
+     * ========================= */
     #[error("Error when using KeyManager: {0}")]
     KeyManagerError(#[from] KeyManagerError),
 
     #[error("KeyChain error: {0}")]
     KeyChainError(String),
 
-    #[error("Error when using Bitcoin client: {0}")]
-    BitcoinError(#[from] BitcoinClientError),
-
     #[error("Error when creating unspendable key: {0}")]
     UnspendableKeyError(#[from] UnspendableKeyError),
 
-    #[error("Error when creating protocol: {0}")]
-    ProtocolBuilderError(#[from] ProtocolBuilderError),
+    #[error("Failed in MuSig2 signer {0}")]
+    MuSig2SignerError(#[from] Musig2SignerError),
 
-    #[error("Error decoding hex string: {0}")]
-    FromHexError(#[from] hex::FromHexError),
+    #[error("Failed to process a Winternitz signature: {0}")]
+    WinternitzError(#[from] WinternitzError),
+
+    #[error("Invalid RSA signature from peer {peer} for message type {msg_type:?} in program {program_id}")]
+    InvalidSignature {
+        peer: String,
+        msg_type: String,
+        program_id: String,
+    },
+
+    #[error("Missing verification key for sender {peer}. Known keys: {known_count}")]
+    MissingVerificationKey { peer: String, known_count: usize },
+
+    #[error("Failed to extract verification key from VerificationKey message: {reason}")]
+    VerificationKeyExtractionError { reason: String },
+
+    #[error("Failed to reconstruct message for signature verification: {reason}")]
+    MessageReconstructionError { reason: String },
+
+    #[error("Verification key announcement hash mismatch for peer {peer}: expected {expected}, got {got}")]
+    VerificationKeyHashMismatch {
+        peer: String,
+        expected: String,
+        got: String,
+    },
+
+    #[error("Verification key fingerprint mismatch for peer {peer}:  computed {computed}")]
+    VerificationKeyFingerprintMismatch { peer: String, computed: String },
+
+    /* =========================
+     * Wallet / Storage
+     * ========================= */
+    #[error("Wallet error {0}")]
+    WalletError(#[from] bitvmx_wallet::wallet::errors::WalletError),
 
     #[error("Error when creating the storagge: {0}")]
     StorageError(#[from] StorageError),
+
+    #[error("Storage unavailable/not found for protocol {0}")]
+    StorageUnavailable(String),
+
+    /* =========================
+     * Program / Protocol
+     * ========================= */
+    #[error("Error when creating protocol: {0}")]
+    ProtocolBuilderError(#[from] ProtocolBuilderError),
+
+    #[error("Dispute resolution protocol setup error: {0}")]
+    DisputeResolutionProtocolSetup(String),
+
+    #[error("ProgramDefinition Error {0}")]
+    ProgramDefinitionError(#[from] ProgramDefinitionError),
+
+    #[error("Program already exists")]
+    ProgramAlreadyExists(Uuid),
+
+    #[error("Program {0} is not ready to run. Please install it first.")]
+    ProgramNotReady(Uuid),
 
     #[error("Cannot find program with id {0}")]
     ProgramNotFound(Uuid),
@@ -61,23 +153,50 @@ pub enum BitVMXError {
     #[error("A program error has occurred: {0}")]
     ProgramError(#[from] ProgramError),
 
-    #[error("Failed to process a Winternitz signature: {0}")]
-    WinternitzError(#[from] WinternitzError),
+    /* =========================
+     * Execution / Emulator / ZKP
+     * ========================= */
+    #[error("Emulator Error {0}")]
+    EmulatorError(#[from] EmulatorError),
 
-    #[error("Program {0} is not ready to run. Please install it first.")]
-    ProgramNotReady(Uuid),
+    #[error("Emulator Result Error {0}")]
+    EmulatorResultError(#[from] EmulatorResultError),
 
-    #[error("Cannot find the variable {0}.{1}")]
-    VariableNotFound(Uuid, String),
+    #[error("Execution error: {0}")]
+    ExecutionError(#[from] emulator::ExecutionResult),
 
-    #[error("Invalid variable type: {0}")]
-    InvalidVariableType(String),
+    #[error("Inconsistent data retrieved of ZKP execution result from job {0}")]
+    InconsistentZKPData(Uuid),
 
+    /* =========================
+     * Witness / Merkle / Scripts
+     * ========================= */
     #[error("Invalid witness type")]
     InvalidWitnessType,
 
+    #[error("Invalid witness: {0:?}")]
+    InvalidWitness(Witness),
+
+    #[error("Invalid merkle tree")]
+    InvalidMerkleTree,
+
+    #[error("Script not found for program id {0}")]
+    ScriptNotFound(Uuid),
+
+    #[error("Error creating script {0}")]
+    ScriptError(#[from] ScriptError),
+
+    #[error("Invalid leaf: {0}")]
+    InvalidLeaf(String),
+
+    /* =========================
+     * Messaging / Dispatcher / Comms
+     * ========================= */
     #[error("Job type error {0}")]
     DispatcherError(#[from] DispatcherError),
+
+    #[error("Job Dispatcher {0} is not responding")]
+    JobDispatcherNotResponding(String),
 
     #[error("Failed to use Comms layer")]
     CommsCommunicationError,
@@ -85,17 +204,11 @@ pub enum BitVMXError {
     #[error("Invalid Comms address: {0}")]
     InvalidCommsAddress(String),
 
-    #[error("Keys not found in program {0}")]
-    KeysNotFound(Uuid),
-
-    #[error("Failed to use Bitcoin Coordinator: {0}")]
-    BitcoinCoordinatorError(#[from] BitcoinCoordinatorError),
-
     #[error("Broker channel error")]
     BrokerError(#[from] BrokerError),
 
-    #[error("Serialization error {0}")]
-    SerdeSerializationError(#[from] serde_json::Error),
+    #[error("Client error")]
+    ClientError(#[from] ClientError),
 
     #[error("Invalid parser version")]
     InvalidMsgVersion,
@@ -103,91 +216,21 @@ pub enum BitVMXError {
     #[error("Invalid message type")]
     InvalidMessageType,
 
-    #[error("Failed to serialize or deserialize message")]
-    SerializationError,
-
     #[error("Invalid receive message format")]
     InvalidMessageFormat,
 
     #[error("Invalid message: {0}")]
     InvalidMessage(String),
 
-    #[error("Invalid transaction name {0}")]
-    InvalidTransactionName(String),
-
     #[error("Failed to process message")]
     MessageProcessingError,
-
-    #[error("Failed in MuSig2 signer {0}")]
-    MuSig2SignerError(#[from] Musig2SignerError),
-
-    #[error("Program already exists")]
-    ProgramAlreadyExists(Uuid),
-
-    #[error("Error creating script {0}")]
-    ScriptError(#[from] ScriptError),
-
-    #[error("Client error")]
-    ClientError(#[from] ClientError),
-
-    #[error("This feature is not implemented yet {0}")]
-    NotImplemented(String),
-
-    #[error("Emulator Error {0}")]
-    EmulatorError(#[from] EmulatorError),
-
-    #[error("Emulator Result Error {0}")]
-    EmulatorResultError(#[from] EmulatorResultError),
-
-    #[error("ProgramDefinition Error {0}")]
-    ProgramDefinitionError(#[from] ProgramDefinitionError),
-
-    #[error("Instrucion {0} not found")]
-    InstructionNotFound(String),
-
-    #[error("Challenge {0} not found")]
-    ChallengeNotFound(String),
-
-    #[error("Challenge with idx {0} not found")]
-    ChallengeIdxNotFound(u32),
-
-    #[error("Rom data {0} not found")]
-    RomDataNotFound(u32),
-
-    #[error("Insufficient amount to send the transaction")]
-    InsufficientAmount,
-
-    #[error("Transaction not found in block")]
-    TransactionNotFoundInBlock,
-
-    #[error("Inconsistent data retrieved of ZKP execution result from job {0}")]
-    InconsistentZKPData(Uuid),
-
-    #[error("Problem creating directory {0}: {1}")]
-    DirectoryCreationError(String, std::io::Error),
-
-    #[error("Peer id {0} not found in the list of participants")]
-    InvalidParticipant(String),
-
-    #[error("No signatures found for aggregated public key {0} and id {1}")]
-    MissingPartialSignatures(String, String),
-
-    #[error("No public nonces found for aggregated public key {0} and id {1}")]
-    MissingPublicNonces(String, String),
-
-    #[error("Missing parameter: {0}")]
-    MissingParameter(String),
-
-    #[error("Wallet error {0}")]
-    WalletError(#[from] bitvmx_wallet::wallet::errors::WalletError),
-
-    #[error("Invalid List: {0}")]
-    InvalidList(String),
 
     #[error("Identification error: {0}")]
     IdentificationError(#[from] IdentificationError),
 
-    // Timestamp validation errors
+    /* =========================
+     * Timestamp / Replay
+     * ========================= */
     #[error("Message timestamp {timestamp} from peer {peer} is too far in the future (now: {now}, drift: {drift_ms}ms, max allowed: {max_drift_ms}ms)")]
     TimestampTooFarInFuture {
         peer: String,
@@ -213,37 +256,26 @@ pub enum BitVMXError {
         last_timestamp: i64,
     },
 
-    // Signature and key verification errors
-    #[error("Invalid RSA signature from peer {peer} for message type {msg_type:?} in program {program_id}")]
-    InvalidSignature {
-        peer: String,
-        msg_type: String,
-        program_id: String,
-    },
+    /* =========================
+     * Bitcoin / Transactions
+     * ========================= */
+    #[error("Error when using Bitcoin client: {0}")]
+    BitcoinError(#[from] BitcoinClientError),
 
-    #[error("Verification key not found for sender {peer}. Known keys: {known_count}")]
-    MissingVerificationKey { peer: String, known_count: usize },
+    #[error("Failed to use Bitcoin Coordinator: {0}")]
+    BitcoinCoordinatorError(#[from] BitcoinCoordinatorError),
 
-    #[error("Failed to extract verification key from VerificationKey message: {reason}")]
-    VerificationKeyExtractionError { reason: String },
+    #[error("Invalid transaction name {0}")]
+    InvalidTransactionName(String),
 
-    #[error("Failed to reconstruct message for signature verification: {reason}")]
-    MessageReconstructionError { reason: String },
+    #[error("Invalid transaction status {0}")]
+    InvalidTransactionStatus(String),
 
-    #[error(
-        "Verification key announcement hash mismatch for peer {peer}: expected {expected}, got {got}"
-    )]
-    VerificationKeyHashMismatch {
-        peer: String,
-        expected: String,
-        got: String,
-    },
+    #[error("Transaction not found in block")]
+    TransactionNotFoundInBlock,
 
-    #[error("Verification key fingerprint mismatch for peer {peer}:  computed {computed}")]
-    VerificationKeyFingerprintMismatch { peer: String, computed: String },
-
-    #[error("Job Dispatcher {0} is not responding")]
-    JobDispatcherNotResponding(String),
+    #[error("Insufficient amount to send the transaction")]
+    InsufficientAmount,
 
     #[error("Missing input signature for transaction {tx_name}, input index {input_index}, script index {script_index:?}")]
     MissingInputSignature {
@@ -260,14 +292,74 @@ pub enum BitVMXError {
         source: ProtocolBuilderError,
     },
 
-    #[error("Poisoned lock error: {0}")]
-    PoisonedLockError(String),
+    /* =========================
+     * Validation / State / Logic
+     * ========================= */
+    #[error("Invalid state: {0}")]
+    InvalidState(String),
 
-    #[error("Invalid Input: {0}")]
+    #[error("Invalid variable type: {0}")]
+    InvalidVariableType(String),
+
+    #[error("Invalid string operation: {0}")]
+    InvalidStringOperation(String),
+
+    #[error("Peer id {0} not found in the list of participants")]
+    InvalidParticipant(String),
+
+    #[error("Invalid input: {0}")]
     InvalidInput(String),
 
-    #[error("Time error: {0}")]
-    TimeError(#[from] std::time::SystemTimeError),
+    #[error("Invalid inputs: {0:?}")]
+    InvalidInputs(Vec<(usize, String)>),
+
+    #[error("Invalid list: {0}")]
+    InvalidList(String),
+
+    /* =========================
+     * Missing / Not Found
+     * ========================= */
+    #[error("Variable {0}.{1} not found")]
+    VariableNotFound(Uuid, String),
+
+    #[error("Keys not found in program {0}")]
+    KeysNotFound(Uuid),
+
+    #[error("Missing block info")]
+    MissingBlockInfo,
+
+    #[error("Missing parameter: {0}")]
+    MissingParameter(String),
+
+    #[error("Missing nonces for program id {0}")]
+    NoncesNotFound(Uuid),
+
+    #[error("Missing partial signatures for program id {0}")]
+    PartialSignaturesNotFound(Uuid),
+
+    #[error("No signatures found for aggregated public key {0} and id {1}")]
+    MissingPartialSignatures(String, String),
+
+    #[error("No public nonces found for aggregated public key {0} and id {1}")]
+    MissingPublicNonces(String, String),
+
+    #[error("Section not found: {0}")]
+    SectionNotFound(String),
+
+    #[error("Challenge {0} not found")]
+    ChallengeNotFound(String),
+
+    #[error("Challenge with idx {0} not found")]
+    ChallengeIdxNotFound(u32),
+
+    #[error("Rom data {0} not found")]
+    RomDataNotFound(u32),
+
+    #[error("Instruction {0} not found")]
+    InstructionNotFound(String),
+
+    #[error("Not found {0}")]
+    NotFound(String),
 }
 
 impl<T> From<PoisonError<T>> for BitVMXError {
@@ -340,6 +432,9 @@ pub enum ProgramError {
 
     #[error("Program not found in storage. Program id: {0}")]
     ProgramNotFound(Uuid),
+
+    #[error("Storage unavailable")]
+    StorageUnavailable,
 }
 
 #[derive(Error, Debug)]

@@ -64,8 +64,7 @@ impl DisputeConfiguration {
 
     // The structure is serialized as a whole. If there is a performance hit it could be serialized in parts.
     pub fn load(id: &Uuid, globals: &Globals) -> Result<Self, BitVMXError> {
-        let dispute_configuration = globals.get_var(id, Self::NAME)?.unwrap().string()?;
-
+        let dispute_configuration = globals.get_var_or_err(id, Self::NAME)?.string()?;
         Ok(serde_json::from_str(&dispute_configuration)?)
     }
 

@@ -41,8 +41,7 @@ fn dispatch_timeout_tx(
     info!("Dispatching timeout tx: {}", name);
     let params = program_context
         .globals
-        .get_var(&drp.ctx.id, name)?
-        .unwrap()
+        .get_var_or_err(&drp.ctx.id, name)?
         .vec_number()?;
     let input = params[0];
     let leaf = params[1];
@@ -170,9 +169,10 @@ impl TimeoutDispatchTable {
     pub fn new(rules: Vec<TimeoutDispatchRule>) -> Self {
         Self { rules }
     }
-    pub fn new_predefined(rounds: u8, inputs: Vec<(usize, &String)>) -> Self {
-        assert_ne!(rounds, 0);
-        assert_ne!(inputs.len(), 0); // Inputs should be at least 1
+    pub fn new_predefined(rounds: u8, inputs: Vec<(usize, &String)>) -> Result<Self, BitVMXError> {
+        if rounds == 0 || inputs.is_empty() {
+            return Err(Self::invalid_inputs(&inputs));
+        }
 
         let last_tx_first_nary = &format!("NARY_VERIFIER_{}", rounds);
         let last_tx_second_nary = &format!("NARY2_VERIFIER_{}", rounds);
@@ -180,7 +180,10 @@ impl TimeoutDispatchTable {
 
         let mut table = TimeoutDispatchTable::new(vec![]);
 
-        let &(first_index, first_owner) = inputs.first().unwrap();
+        let &(first_index, first_owner) = inputs
+            .first()
+            .ok_or_else(|| Self::invalid_inputs(&inputs))?;
+
         if first_owner == "verifier" {
             table.add_prover_without_vout(
                 &input_tx_name(first_index as u32),
@@ -197,7 +200,9 @@ impl TimeoutDispatchTable {
             let (prev_index, prev_owner) = window[0];
             let (next_index, next_owner) = window[1];
 
-            assert_ne!(prev_owner, next_owner);
+            if prev_owner == next_owner {
+                return Err(Self::invalid_inputs(&inputs));
+            }
 
             let role = if prev_owner == "verifier" {
                 Verifier
@@ -211,8 +216,11 @@ impl TimeoutDispatchTable {
                 role,
             );
         }
-        let &(last_index, last_owner) = inputs.last().unwrap();
-        assert!(last_owner.starts_with("prover"));
+        let &(last_index, last_owner) =
+            inputs.last().ok_or_else(|| Self::invalid_inputs(&inputs))?;
+        if !last_owner.starts_with("prover") {
+            return Err(Self::invalid_inputs(&inputs));
+        }
 
         table.add_classic_to(&input_tx_name(last_index as u32), PRE_COMMITMENT, Prover);
         table.add_classic_to(PRE_COMMITMENT, COMMITMENT, Verifier);
@@ -225,7 +233,7 @@ impl TimeoutDispatchTable {
         table.add_nary_search_table("NARY2", 2, rounds);
         table.add_classic_to(&last_tx_second_nary, GET_HASHES_AND_STEP, Verifier);
         table.add_classic_to(GET_HASHES_AND_STEP, CHALLENGE_READ, Prover);
-        table
+        Ok(table)
     }
 
     fn add_nary_search_table(&mut self, nary_type: &str, start_round: u8, total_rounds: u8) {
@@ -377,6 +385,10 @@ impl TimeoutDispatchTable {
         }
 
         info!("\n{}", output);
+    }
+
+    fn invalid_inputs(inputs: &[(usize, &String)]) -> BitVMXError {
+        BitVMXError::InvalidInputs(inputs.iter().map(|(i, s)| (*i, (*s).clone())).collect())
     }
 }
 
@@ -619,7 +631,15 @@ pub fn handle_tx_news(
     program_context: &ProgramContext,
 ) -> Result<(), BitVMXError> {
     let name = drp.get_transaction_name_by_id(tx_id)?;
-    let current_height = tx_status.block_info.as_ref().unwrap().height;
+    let current_height = tx_status
+        .block_info
+        .as_ref()
+        .ok_or_else(|| {
+            BitVMXError::InvalidTransactionStatus(
+                "TransactionStatus missing block_info".to_string(),
+            )
+        })?
+        .height;
     info!(
         "Program {}: Transaction name: {}  id: {}:{:?} has been seen on-chain {}. Height: {}",
         drp.ctx.id,
@@ -640,8 +660,7 @@ pub fn handle_tx_news(
 
     let inputs = program_context
         .globals
-        .get_var(&drp.ctx.id, "input_txs")?
-        .unwrap()
+        .get_var_or_err(&drp.ctx.id, "input_txs")?
         .vec_string()?;
 
     let inputs = inputs
@@ -650,7 +669,7 @@ pub fn handle_tx_news(
         .filter(|(_, owner)| owner.as_str() != "skip" && owner.as_str() != "prover_prev")
         .collect();
 
-    let timeout_table = TimeoutDispatchTable::new_predefined(rounds, inputs);
+    let timeout_table = TimeoutDispatchTable::new_predefined(rounds, inputs)?;
     // timeout_table.visualize();
 
     cancel_timeout(drp, &name, vout, program_context, &timeout_table)?;
@@ -681,40 +700,6 @@ pub fn handle_tx_news(
 
     let fail_force_config = config.fail_force_config.unwrap_or_default();
 
-    if vout.is_some() {
-        let transaction = &tx_status.tx;
-        let input_index = drp.find_prevout(tx_id, vout.unwrap(), transaction)?;
-        let witness = transaction.input[input_index as usize].witness.clone();
-
-        let leaf = read_scriptint(witness.third_to_last().unwrap()).unwrap() as u32;
-
-        let params = program_context
-            .globals
-            .get_var(&drp.ctx.id, &timeout_input_tx(&name))?
-            .ok_or(BitVMXError::VariableNotFound(
-                drp.ctx.id,
-                timeout_input_tx(&name),
-            ))?
-            .vec_number()?;
-
-        let timeout_leaf = params[1];
-
-        if leaf == timeout_leaf {
-            let role = timeout_table
-                .iter()
-                .find_map(|(_, _, role, timeout_type, _)| match timeout_type {
-                    TimeoutType::TimeoutInput(timeout_name) if timeout_name == &name => {
-                        Some(role.to_string())
-                    }
-                    _ => None,
-                })
-                .unwrap_or("Unknown role".to_string());
-
-            warn!("{role} consumed timeout input for {name}");
-            return Ok(());
-        }
-    }
-
     if let Some(auto_dispatch_input) = config.auto_dispatch_input {
         if name == START_CH && drp.role() == ParticipantRole::Prover {
             let (tx, speedup) = drp.get_transaction_by_name(
@@ -736,54 +721,204 @@ pub fn handle_tx_news(
         }
     }
 
-    if name.starts_with(INPUT_TX) && vout.is_some() {
-        let idx = name.strip_prefix(INPUT_TX).unwrap().parse::<u32>()?;
+    match vout {
+        Some(vout) => {
+            let transaction = &tx_status.tx;
+            let input_index = drp.find_prevout(tx_id, vout, transaction)?;
+            let witness = transaction.input[input_index as usize].witness.clone();
 
-        let (input_txs, _input_txs_sizes, _input_txs_offsets, last_tx_id) =
-            get_txs_configuration(&drp.ctx.id, program_context)?;
+            let leaf = read_scriptint(
+                witness
+                    .third_to_last()
+                    .ok_or_else(|| BitVMXError::InvalidWitness(witness.clone()))?,
+            )? as u32;
 
-        let owner = input_txs[idx as usize].as_str();
+            let params = program_context
+                .globals
+                .get_var_or_err(&drp.ctx.id, &timeout_input_tx(&name))?
+                .vec_number()?;
 
-        // decode the witness
-        if owner != drp.role().to_string() {
-            drp.decode_witness_from_speedup(
-                tx_id,
-                vout.unwrap(),
-                &name,
-                program_context,
-                &tx_status.tx,
-                None,
-            )?;
-            unify_witnesses(&drp.ctx.id, program_context, idx as usize)?;
-        }
+            let timeout_leaf = params[1];
 
-        if drp.role() == ParticipantRole::Prover && idx != last_tx_id as u32 {
-            let (def, _program_definition) = drp.get_program_definition(program_context)?;
-            let full_input = unify_inputs(&drp.ctx.id, program_context, &def)?;
-            for (i, input_chunk) in full_input.chunks(4).enumerate() {
-                // It is assumed that each input chunk is 4 bytes
-                set_input(
+            if leaf == timeout_leaf {
+                let role = timeout_table
+                    .iter()
+                    .find_map(|(_, _, role, timeout_type, _)| match timeout_type {
+                        TimeoutType::TimeoutInput(timeout_name) if timeout_name == &name => {
+                            Some(role.to_string())
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or("Unknown role".to_string());
+
+                warn!("{role} consumed timeout input for {name}");
+                return Ok(());
+            }
+
+            if name.starts_with(INPUT_TX) {
+                let idx = name
+                    .strip_prefix(INPUT_TX)
+                    .ok_or_else(|| BitVMXError::InvalidStringOperation(name.clone()))?
+                    .parse::<u32>()?;
+
+                let (input_txs, _input_txs_sizes, _input_txs_offsets, last_tx_id) =
+                    get_txs_configuration(&drp.ctx.id, program_context)?;
+
+                let owner = input_txs[idx as usize].as_str();
+
+                // decode the witness
+                if owner != drp.role().to_string() {
+                    drp.decode_witness_from_speedup(
+                        tx_id,
+                        vout,
+                        &name,
+                        program_context,
+                        &tx_status.tx,
+                        None,
+                    )?;
+                    unify_witnesses(&drp.ctx.id, program_context, idx as usize)?;
+                }
+
+                if drp.role() == ParticipantRole::Prover && idx != last_tx_id as u32 {
+                    let (def, _program_definition) = drp.get_program_definition(program_context)?;
+                    let full_input = unify_inputs(&drp.ctx.id, program_context, &def)?;
+                    for (i, input_chunk) in full_input.chunks(4).enumerate() {
+                        // It is assumed that each input chunk is 4 bytes
+                        set_input(
+                            &drp.ctx.id,
+                            program_context,
+                            &program_input(i as u32, Some(&ParticipantRole::Prover)),
+                            input_chunk.to_vec(),
+                        )?;
+                    }
+                    let (tx, sp) = drp.get_tx_with_speedup_data(
+                        program_context,
+                        &input_tx_name(idx + 1),
+                        0,
+                        0,
+                        true,
+                    )?;
+                    program_context.bitcoin_coordinator.dispatch(
+                        tx,
+                        Some(sp),
+                        Context::ProgramId(drp.ctx.id).to_string()?,
+                        None,
+                        None, // Receive news on every confirmation.
+                    )?;
+                }
+                if idx == last_tx_id as u32 {
+                    //if it's the last input
+                    if drp.role() == ParticipantRole::Verifier {
+                        let (tx, sp) = drp.get_tx_with_speedup_data(
+                            program_context,
+                            PRE_COMMITMENT,
+                            0,
+                            0,
+                            true,
+                        )?;
+                        program_context.bitcoin_coordinator.dispatch(
+                            tx,
+                            Some(sp),
+                            Context::ProgramId(drp.ctx.id).to_string()?,
+                            None,
+                            None, // Receive news on every confirmation.
+                        )?;
+                    } else {
+                        //Prover
+                        let (def, _program_definition) =
+                            drp.get_program_definition(program_context)?;
+                        let full_input = unify_inputs(&drp.ctx.id, program_context, &def)?;
+                        program_context.globals.set_var(
+                            &drp.ctx.id,
+                            "full_input",
+                            VariableTypes::Input(full_input.clone()),
+                        )?;
+                    }
+                }
+            }
+
+            if name == PRE_COMMITMENT && drp.role() == ParticipantRole::Prover {
+                let (_def, program_definition) = drp.get_program_definition(program_context)?;
+                let execution_path = drp.get_execution_path()?;
+                let full_input = program_context
+                    .globals
+                    .get_var_or_err(&drp.ctx.id, "full_input")?
+                    .input()?;
+                let msg = serde_json::to_string(&DispatcherJob {
+                    job_id: drp.ctx.id.to_string(),
+                    job_type: EmulatorJobType::ProverExecute(
+                        program_definition,
+                        full_input,
+                        execution_path.clone(),
+                        format!("{}/{}", execution_path, "execution.json").to_string(),
+                        fail_force_config.main.fail_config_prover.clone(),
+                    ),
+                })?;
+                program_context
+                    .broker_channel
+                    .send(&program_context.components_config.emulator, msg)?;
+            }
+
+            if name == COMMITMENT && drp.role() == ParticipantRole::Verifier {
+                drp.decode_witness_from_speedup(
+                    tx_id,
+                    vout,
+                    &name,
+                    program_context,
+                    &tx_status.tx,
+                    None,
+                )?;
+
+                let execution_path = drp.get_execution_path()?;
+
+                let (def, program_definition) = drp.get_program_definition(program_context)?;
+                let input_program = unify_inputs(&drp.ctx.id, program_context, &def)?;
+
+                let last_hash = program_context
+                    .witness
+                    .get_witness_or_err(&drp.ctx.id, "prover_last_hash")?
+                    .winternitz()?
+                    .message_bytes();
+
+                let last_step = program_context
+                    .witness
+                    .get_witness_or_err(&drp.ctx.id, "prover_last_step")?
+                    .winternitz()?
+                    .message_bytes();
+                let last_step_len = last_step.len();
+                let last_step = u64::from_be_bytes(last_step.try_into().map_err(|_| {
+                    BitVMXError::InvalidParameter(format!(
+                        "Invalid last_step length: {}",
+                        last_step_len
+                    ))
+                })?);
+                set_input_u64(
                     &drp.ctx.id,
                     program_context,
-                    &program_input(i as u32, Some(&ParticipantRole::Prover)),
-                    input_chunk.to_vec(),
+                    "verifier_last_step_tk",
+                    last_step,
                 )?;
-            }
-            let (tx, sp) =
-                drp.get_tx_with_speedup_data(program_context, &input_tx_name(idx + 1), 0, 0, true)?;
-            program_context.bitcoin_coordinator.dispatch(
-                tx,
-                Some(sp),
-                Context::ProgramId(drp.ctx.id).to_string()?,
-                None,
-                None, // Receive news on every confirmation.
-            )?;
-        }
-        if idx == last_tx_id as u32 {
-            //if it's the last input
-            if drp.role() == ParticipantRole::Verifier {
+
+                let msg = serde_json::to_string(&DispatcherJob {
+                    job_id: drp.ctx.id.to_string(),
+                    job_type: EmulatorJobType::VerifierCheckExecution(
+                        program_definition,
+                        input_program,
+                        execution_path.clone(),
+                        last_step,
+                        hex::encode(last_hash),
+                        format!("{}/{}", execution_path, "execution.json").to_string(),
+                        fail_force_config.main.force_condition.clone(),
+                        fail_force_config.main.fail_config_verifier.clone(),
+                    ),
+                })?;
+
+                program_context
+                    .broker_channel
+                    .send(&program_context.components_config.emulator, msg)?;
+
                 let (tx, sp) =
-                    drp.get_tx_with_speedup_data(program_context, PRE_COMMITMENT, 0, 0, true)?;
+                    drp.get_tx_with_speedup_data(program_context, POST_COMMITMENT, 0, 0, true)?;
                 program_context.bitcoin_coordinator.dispatch(
                     tx,
                     Some(sp),
@@ -791,504 +926,412 @@ pub fn handle_tx_news(
                     None,
                     None, // Receive news on every confirmation.
                 )?;
-            } else {
-                //Prover
-                let (def, _program_definition) = drp.get_program_definition(program_context)?;
-                let full_input = unify_inputs(&drp.ctx.id, program_context, &def)?;
-                program_context.globals.set_var(
-                    &drp.ctx.id,
-                    "full_input",
-                    VariableTypes::Input(full_input.clone()),
+            }
+
+            if name == POST_COMMITMENT || name.starts_with("NARY_VERIFIER") {
+                let round = name
+                    .strip_prefix("NARY_VERIFIER_")
+                    .unwrap_or("0")
+                    .parse::<u32>()?;
+
+                if round == 0 {
+                    drp.decode_witness_from_speedup(
+                        tx_id,
+                        vout,
+                        &name,
+                        program_context,
+                        &tx_status.tx,
+                        None,
+                    )?;
+                }
+
+                handle_nary_verifier(
+                    &name,
+                    drp,
+                    program_context,
+                    tx_id,
+                    vout,
+                    &tx_status,
+                    current_height,
+                    &fail_force_config,
+                    "verifier_selection_bits",
+                    POST_COMMITMENT,
+                    EXECUTE,
+                    0,
+                    round,
+                    NArySearchType::ConflictStep,
+                )?;
+            }
+
+            if (name.starts_with("NARY_PROVER")) && drp.role() == ParticipantRole::Verifier {
+                handle_nary_prover(
+                    &name,
+                    drp,
+                    program_context,
+                    tx_id,
+                    vout,
+                    &tx_status,
+                    &fail_force_config,
+                    "NARY_PROVER_",
+                    "prover_hash",
+                    NArySearchType::ConflictStep,
+                )?;
+            }
+
+            if name == EXECUTE && drp.role() == ParticipantRole::Verifier {
+                let (_, leaf) = drp.decode_witness_from_speedup(
+                    tx_id,
+                    vout,
+                    &name,
+                    program_context,
+                    &tx_status.tx,
+                    None,
+                )?;
+
+                // leaf 0 is prover_challenge_step, we lost
+                if leaf == 0 {
+                    return Ok(());
+                }
+
+                let (_program_definition, pdf) = drp.get_program_definition(program_context)?;
+                let execution_path = drp.get_execution_path()?;
+
+                let mut values = std::collections::HashMap::new();
+
+                let trace_vars = TRACE_VARS
+                    .get()
+                    .ok_or_else(|| {
+                        BitVMXError::InitializationError("TRACE_VARS not initialized".to_string())
+                    })?
+                    .read()?;
+                for (name, _) in trace_vars.iter() {
+                    if *name == "prover_witness" {
+                        continue;
+                    }
+                    let value = program_context
+                        .witness
+                        .get_witness_or_err(&drp.ctx.id, name)?
+                        .winternitz()?
+                        .message_bytes();
+                    values.insert(name.clone(), value);
+                }
+                fn to_u8(bytes: &[u8]) -> Result<u8, BitVMXError> {
+                    Ok(u8::from_be_bytes(bytes.try_into()?))
+                }
+                fn to_u32(bytes: &[u8]) -> Result<u32, BitVMXError> {
+                    Ok(u32::from_be_bytes(bytes.try_into()?))
+                }
+                fn to_u64(bytes: &[u8]) -> Result<u64, BitVMXError> {
+                    Ok(u64::from_be_bytes(bytes.try_into()?))
+                }
+                fn to_hex(bytes: &[u8]) -> String {
+                    hex::encode(bytes)
+                }
+
+                let step_number = to_u64(&values["prover_step_number"])?;
+                let trace_read1 = TraceRead::new(
+                    to_u32(&values["prover_read_1_address"])?,
+                    to_u32(&values["prover_read_1_value"])?,
+                    to_u64(&values["prover_read_1_last_step"])?,
+                );
+                let trace_read2 = TraceRead::new(
+                    to_u32(&values["prover_read_2_address"])?,
+                    to_u32(&values["prover_read_2_value"])?,
+                    to_u64(&values["prover_read_2_last_step"])?,
+                );
+                let program_counter = ProgramCounter::new(
+                    to_u32(&values["prover_read_pc_address"])?,
+                    to_u8(&values["prover_read_pc_micro"])?,
+                );
+                let read_pc =
+                    TraceReadPC::new(program_counter, to_u32(&values["prover_read_pc_opcode"])?);
+                let trace_write = TraceWrite::new(
+                    to_u32(&values["prover_write_address"])?,
+                    to_u32(&values["prover_write_value"])?,
+                );
+                let program_counter = ProgramCounter::new(
+                    to_u32(&values["prover_write_pc"])?,
+                    to_u8(&values["prover_write_micro"])?,
+                );
+                let trace_step = TraceStep::new(trace_write, program_counter);
+                let witness = if let Some(witness) = program_context
+                    .witness
+                    .get_witness(&drp.ctx.id, "prover_witness")?
+                {
+                    let bytes = witness.winternitz()?.message_bytes();
+                    Some(to_u32(&bytes)?)
+                } else {
+                    None
+                };
+
+                let mem_witness = MemoryWitness::from_byte(to_u8(&values["prover_mem_witness"])?);
+                let prover_step_hash = to_hex(&values["prover_step_hash_tk"]);
+                let prover_next_hash = to_hex(&values["prover_next_hash_tk"]);
+                let _conflict_step = to_u64(&values["prover_conflict_step_tk"])?;
+
+                let final_trace = TraceRWStep::new(
+                    step_number,
+                    trace_read1,
+                    trace_read2,
+                    read_pc,
+                    trace_step,
+                    witness,
+                    mem_witness,
+                );
+                let msg = serde_json::to_string(&DispatcherJob {
+                    job_id: drp.ctx.id.to_string(),
+                    job_type: EmulatorJobType::VerifierChooseChallenge(
+                        pdf,
+                        execution_path.clone(),
+                        final_trace,
+                        prover_step_hash,
+                        prover_next_hash,
+                        format!("{}/{}", execution_path, "execution.json").to_string(),
+                        fail_force_config.main.fail_config_verifier.clone(),
+                        fail_force_config.main.force_challenge.clone(),
+                    ),
+                })?;
+                program_context
+                    .broker_channel
+                    .send(&program_context.components_config.emulator, msg)?;
+            }
+
+            if name == CHALLENGE && drp.role() == ParticipantRole::Prover {
+                let (names, leaf) = drp.decode_witness_from_speedup(
+                    tx_id,
+                    vout,
+                    &name,
+                    program_context,
+                    &tx_status.tx,
+                    None,
+                )?;
+
+                let read_value_nary_search_leaf = program_context
+                    .globals
+                    .get_var_or_err(
+                        &drp.ctx.id,
+                        &format!("challenge_leaf_start_{}", "read_value_nary_search"),
+                    )?
+                    .number()? as u32;
+
+                match leaf {
+                    l if l == read_value_nary_search_leaf => {
+                        let mut expected_names: Vec<&str> = READ_VALUE_NARY_SEARCH_CHALLENGE
+                            .iter()
+                            .map(|(name, _)| *name)
+                            .collect();
+
+                        expected_names.insert(0, "prover_continue");
+
+                        if names == expected_names {
+                            let bits_name = &names[1];
+                            let witness = program_context
+                                .witness
+                                .get_witness_or_err(&drp.ctx.id, bits_name)?;
+                            let bytes = witness.winternitz()?.message_bytes();
+                            info!(
+                                "Challenge will be extended with a 2nd nary search. {bits_name} are {:?}",
+                                bytes
+                            );
+                            if bytes.len() != 1 {
+                                return Err(BitVMXError::InvalidState(
+                                    "Expected exactly one byte for selection bits".to_string(),
+                                ));
+                            }
+                            let selection_bits = bytes[0] as u32;
+                            handle_nary_verifier(
+                                &name,
+                                drp,
+                                program_context,
+                                tx_id,
+                                vout,
+                                &tx_status,
+                                current_height,
+                                &fail_force_config,
+                                "verifier_selection_bits2",
+                                CHALLENGE,
+                                CHALLENGE_READ,
+                                selection_bits,
+                                1, // round 2
+                                NArySearchType::ReadValueChallenge,
+                            )?;
+                        } else {
+                            return Err(BitVMXError::InvalidLeaf(format!(
+                                "The challenge leaf does not match the expected witness names.\n\
+                                Expected: {:?}, got: {:?}",
+                                expected_names, names
+                            )));
+                        }
+                    }
+                    _ => {
+                        if fail_force_config.prover_force_second_nary {
+                            // for testing purposes we will try to start the second nary search but it should fail
+                            let selection_bits = 0;
+                            handle_nary_verifier(
+                                &name,
+                                drp,
+                                program_context,
+                                tx_id,
+                                vout,
+                                &tx_status,
+                                current_height,
+                                &fail_force_config,
+                                "verifier_selection_bits2",
+                                CHALLENGE,
+                                CHALLENGE_READ,
+                                selection_bits,
+                                1, // round 2
+                                NArySearchType::ReadValueChallenge,
+                            )?;
+                        } else {
+                            info!("Challenge ended successfully");
+                        }
+                    }
+                }
+            }
+
+            if name.starts_with("NARY2_VERIFIER") {
+                let round = name
+                    .strip_prefix("NARY2_VERIFIER_")
+                    .ok_or_else(|| BitVMXError::InvalidStringOperation(name.clone()))?
+                    .parse::<u32>()?;
+                handle_nary_verifier(
+                    &name,
+                    drp,
+                    program_context,
+                    tx_id,
+                    vout,
+                    &tx_status,
+                    current_height,
+                    &fail_force_config,
+                    "verifier_selection_bits2",
+                    CHALLENGE,
+                    CHALLENGE_READ,
+                    0, // Will be ignored
+                    round,
+                    NArySearchType::ReadValueChallenge,
+                )?;
+            }
+
+            if name.starts_with("NARY2_PROVER") && drp.role() == ParticipantRole::Verifier {
+                handle_nary_prover(
+                    &name,
+                    drp,
+                    program_context,
+                    tx_id,
+                    vout,
+                    &tx_status,
+                    &fail_force_config,
+                    "NARY2_PROVER_",
+                    "prover_hash2",
+                    NArySearchType::ReadValueChallenge,
+                )?;
+            }
+
+            if GET_HASHES_AND_STEP == name && drp.role() == ParticipantRole::Verifier {
+                let (_, leaf) = drp.decode_witness_from_speedup(
+                    tx_id,
+                    vout,
+                    &name,
+                    program_context,
+                    &tx_status.tx,
+                    None,
+                )?;
+
+                // leaf 0 is prover_challenge_step2, we lost
+                if leaf == 0 {
+                    return Ok(());
+                }
+
+                let (_program_definition, pdf) = drp.get_program_definition(program_context)?;
+                let execution_path = drp.get_execution_path()?;
+
+                let mut values = std::collections::HashMap::new();
+
+                let trace_vars = TK_2NARY
+                    .get()
+                    .ok_or_else(|| {
+                        BitVMXError::InitializationError("TK_2NARY not initialized".to_string())
+                    })?
+                    .read()?;
+                for (name, _) in trace_vars.iter() {
+                    let value = program_context
+                        .witness
+                        .get_witness_or_err(&drp.ctx.id, name)?
+                        .winternitz()?
+                        .message_bytes();
+                    values.insert(name.clone(), value);
+                }
+                fn to_u64(bytes: &[u8]) -> Result<u64, BitVMXError> {
+                    Ok(u64::from_be_bytes(bytes.try_into()?))
+                }
+                fn to_hex(bytes: &[u8]) -> String {
+                    hex::encode(bytes)
+                }
+
+                let prover_step_hash = to_hex(&values["prover_step_hash_tk2"]);
+                let prover_next_hash = to_hex(&values["prover_next_hash_tk2"]);
+                let _prover_write_step = to_u64(&values["prover_write_step_tk2"])?;
+
+                let msg = serde_json::to_string(&DispatcherJob {
+                    job_id: drp.ctx.id.to_string(),
+                    job_type: EmulatorJobType::VerifierChooseChallengeForReadChallenge(
+                        pdf,
+                        execution_path.clone(),
+                        format!("{}/{}", execution_path, "execution.json").to_string(),
+                        prover_step_hash,
+                        prover_next_hash,
+                        fail_force_config.read.fail_config_verifier.clone(),
+                        fail_force_config.read.force_challenge.clone(),
+                    ),
+                })?;
+                program_context
+                    .broker_channel
+                    .send(&program_context.components_config.emulator, msg)?;
+            }
+
+            if name == CHALLENGE_READ && drp.role() == ParticipantRole::Prover {
+                info!("The challenge has ended after the 2nd n-ary search.");
+                drp.decode_witness_from_speedup(
+                    tx_id,
+                    vout,
+                    &name,
+                    program_context,
+                    &tx_status.tx,
+                    None,
+                )?;
+            }
+        }
+        None => {
+            if CHALLENGE_READ == name && ParticipantRole::Verifier == drp.role() {
+                let verifier_final_tx =
+                    drp.get_signed_tx(program_context, &VERIFIER_FINAL, 0, 0, false, 0)?;
+                let speedup_data =
+                    drp.get_speedup_data_from_tx(&verifier_final_tx, program_context, None)?;
+                program_context.bitcoin_coordinator.dispatch(
+                    verifier_final_tx,
+                    Some(speedup_data),
+                    Context::ProgramId(drp.ctx.id).to_string()?,
+                    Some(current_height + 2 * timelock_blocks as u32),
+                    None, // Receive news on every confirmation.
+                )?;
+            }
+
+            if VERIFIER_FINAL == name && ParticipantRole::Verifier == drp.role() {
+                let claim_name = ClaimGate::tx_start(VERIFIER_WINS);
+                let tx = drp.get_signed_tx(program_context, &claim_name, 0, 0, false, 0)?;
+                let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
+                info!("{claim_name}: {:?}", tx);
+                program_context.bitcoin_coordinator.dispatch(
+                    tx,
+                    Some(speedup_data),
+                    Context::ProgramId(drp.ctx.id).to_string()?,
+                    None,
+                    None, // Receive news on every confirmation.
                 )?;
             }
         }
     }
-
-    if name == PRE_COMMITMENT && drp.role() == ParticipantRole::Prover && vout.is_some() {
-        let (_def, program_definition) = drp.get_program_definition(program_context)?;
-        let execution_path = drp.get_execution_path()?;
-        let full_input = program_context
-            .globals
-            .get_var(&drp.ctx.id, "full_input")?
-            .unwrap()
-            .input()?;
-        let msg = serde_json::to_string(&DispatcherJob {
-            job_id: drp.ctx.id.to_string(),
-            job_type: EmulatorJobType::ProverExecute(
-                program_definition,
-                full_input,
-                execution_path.clone(),
-                format!("{}/{}", execution_path, "execution.json").to_string(),
-                fail_force_config.main.fail_config_prover.clone(),
-            ),
-        })?;
-        program_context
-            .broker_channel
-            .send(&program_context.components_config.emulator, msg)?;
-    }
-
-    if name == COMMITMENT && drp.role() == ParticipantRole::Verifier && vout.is_some() {
-        drp.decode_witness_from_speedup(
-            tx_id,
-            vout.unwrap(),
-            &name,
-            program_context,
-            &tx_status.tx,
-            None,
-        )?;
-
-        let execution_path = drp.get_execution_path()?;
-
-        let (def, program_definition) = drp.get_program_definition(program_context)?;
-        let input_program = unify_inputs(&drp.ctx.id, program_context, &def)?;
-
-        let last_hash = program_context
-            .witness
-            .get_witness(&drp.ctx.id, "prover_last_hash")?
-            .unwrap()
-            .winternitz()?
-            .message_bytes();
-
-        let last_step = program_context
-            .witness
-            .get_witness(&drp.ctx.id, "prover_last_step")?
-            .unwrap()
-            .winternitz()?
-            .message_bytes();
-        let last_step = u64::from_be_bytes(last_step.try_into().unwrap());
-        set_input_u64(
-            &drp.ctx.id,
-            program_context,
-            "verifier_last_step_tk",
-            last_step,
-        )?;
-
-        let msg = serde_json::to_string(&DispatcherJob {
-            job_id: drp.ctx.id.to_string(),
-            job_type: EmulatorJobType::VerifierCheckExecution(
-                program_definition,
-                input_program,
-                execution_path.clone(),
-                last_step,
-                hex::encode(last_hash),
-                format!("{}/{}", execution_path, "execution.json").to_string(),
-                fail_force_config.main.force_condition.clone(),
-                fail_force_config.main.fail_config_verifier.clone(),
-            ),
-        })?;
-
-        program_context
-            .broker_channel
-            .send(&program_context.components_config.emulator, msg)?;
-
-        let (tx, sp) =
-            drp.get_tx_with_speedup_data(program_context, POST_COMMITMENT, 0, 0, true)?;
-        program_context.bitcoin_coordinator.dispatch(
-            tx,
-            Some(sp),
-            Context::ProgramId(drp.ctx.id).to_string()?,
-            None,
-            None, // Receive news on every confirmation.
-        )?;
-    }
-
-    if (name == POST_COMMITMENT || name.starts_with("NARY_VERIFIER")) && vout.is_some() {
-        let round = name
-            .strip_prefix("NARY_VERIFIER_")
-            .unwrap_or("0")
-            .parse::<u32>()
-            .unwrap();
-
-        if round == 0 {
-            drp.decode_witness_from_speedup(
-                tx_id,
-                vout.unwrap(),
-                &name,
-                program_context,
-                &tx_status.tx,
-                None,
-            )?;
-        }
-
-        handle_nary_verifier(
-            &name,
-            drp,
-            program_context,
-            tx_id,
-            vout,
-            &tx_status,
-            current_height,
-            &fail_force_config,
-            "verifier_selection_bits",
-            POST_COMMITMENT,
-            EXECUTE,
-            0,
-            round,
-            NArySearchType::ConflictStep,
-        )?;
-    }
-
-    if (name.starts_with("NARY_PROVER"))
-        && drp.role() == ParticipantRole::Verifier
-        && vout.is_some()
-    {
-        handle_nary_prover(
-            &name,
-            drp,
-            program_context,
-            tx_id,
-            vout,
-            &tx_status,
-            &fail_force_config,
-            "NARY_PROVER_",
-            "prover_hash",
-            NArySearchType::ConflictStep,
-        )?;
-    }
-
-    if name == EXECUTE && drp.role() == ParticipantRole::Verifier && vout.is_some() {
-        let (_, leaf) = drp.decode_witness_from_speedup(
-            tx_id,
-            vout.unwrap(),
-            &name,
-            program_context,
-            &tx_status.tx,
-            None,
-        )?;
-
-        // leaf 0 is prover_challenge_step, we lost
-        if leaf == 0 {
-            return Ok(());
-        }
-
-        let (_program_definition, pdf) = drp.get_program_definition(program_context)?;
-        let execution_path = drp.get_execution_path()?;
-
-        let mut values = std::collections::HashMap::new();
-
-        let trace_vars = TRACE_VARS
-            .get()
-            .expect("TRACE_VARS not initialized")
-            .read()?;
-        for (name, _) in trace_vars.iter() {
-            if *name == "prover_witness" {
-                continue;
-            }
-            if let Some(value) = program_context.witness.get_witness(&drp.ctx.id, name)? {
-                values.insert(name.clone(), value.winternitz().unwrap().message_bytes());
-            } else {
-                return Err(BitVMXError::VariableNotFound(drp.ctx.id, name.to_string()));
-            }
-        }
-        fn to_u8(bytes: &[u8]) -> u8 {
-            u8::from_be_bytes(bytes.try_into().expect("Expected 1 byte for u8"))
-        }
-        fn to_u32(bytes: &[u8]) -> u32 {
-            u32::from_be_bytes(bytes.try_into().expect("Expected 4 bytes for u32"))
-        }
-        fn to_u64(bytes: &[u8]) -> u64 {
-            u64::from_be_bytes(bytes.try_into().expect("Expected 8 bytes for u64"))
-        }
-        fn to_hex(bytes: &[u8]) -> String {
-            hex::encode(bytes)
-        }
-
-        let step_number = to_u64(&values["prover_step_number"]);
-        let trace_read1 = TraceRead::new(
-            to_u32(&values["prover_read_1_address"]),
-            to_u32(&values["prover_read_1_value"]),
-            to_u64(&values["prover_read_1_last_step"]),
-        );
-        let trace_read2 = TraceRead::new(
-            to_u32(&values["prover_read_2_address"]),
-            to_u32(&values["prover_read_2_value"]),
-            to_u64(&values["prover_read_2_last_step"]),
-        );
-        let program_counter = ProgramCounter::new(
-            to_u32(&values["prover_read_pc_address"]),
-            to_u8(&values["prover_read_pc_micro"]),
-        );
-        let read_pc = TraceReadPC::new(program_counter, to_u32(&values["prover_read_pc_opcode"]));
-        let trace_write = TraceWrite::new(
-            to_u32(&values["prover_write_address"]),
-            to_u32(&values["prover_write_value"]),
-        );
-        let program_counter = ProgramCounter::new(
-            to_u32(&values["prover_write_pc"]),
-            to_u8(&values["prover_write_micro"]),
-        );
-        let trace_step = TraceStep::new(trace_write, program_counter);
-        let witness = program_context
-            .witness
-            .get_witness(&drp.ctx.id, "prover_witness")
-            .ok()
-            .flatten()
-            .map(|witness| {
-                let bytes = witness.winternitz().unwrap().message_bytes();
-                to_u32(&bytes)
-            });
-        let mem_witness = MemoryWitness::from_byte(to_u8(&values["prover_mem_witness"]));
-        let prover_step_hash = to_hex(&values["prover_step_hash_tk"]);
-        let prover_next_hash = to_hex(&values["prover_next_hash_tk"]);
-        let _conflict_step = to_u64(&values["prover_conflict_step_tk"]);
-
-        let final_trace = TraceRWStep::new(
-            step_number,
-            trace_read1,
-            trace_read2,
-            read_pc,
-            trace_step,
-            witness,
-            mem_witness,
-        );
-        let msg = serde_json::to_string(&DispatcherJob {
-            job_id: drp.ctx.id.to_string(),
-            job_type: EmulatorJobType::VerifierChooseChallenge(
-                pdf,
-                execution_path.clone(),
-                final_trace,
-                prover_step_hash,
-                prover_next_hash,
-                format!("{}/{}", execution_path, "execution.json").to_string(),
-                fail_force_config.main.fail_config_verifier.clone(),
-                fail_force_config.main.force_challenge.clone(),
-            ),
-        })?;
-        program_context
-            .broker_channel
-            .send(&program_context.components_config.emulator, msg)?;
-    }
-
-    if name == CHALLENGE && drp.role() == ParticipantRole::Prover && vout.is_some() {
-        let (names, leaf) = drp.decode_witness_from_speedup(
-            tx_id,
-            vout.unwrap(),
-            &name,
-            program_context,
-            &tx_status.tx,
-            None,
-        )?;
-
-        let read_value_nary_search_leaf = program_context
-            .globals
-            .get_var(
-                &drp.ctx.id,
-                &format!("challenge_leaf_start_{}", "read_value_nary_search"),
-            )?
-            .unwrap()
-            .number()? as u32;
-
-        match leaf {
-            l if l == read_value_nary_search_leaf => {
-                let mut expected_names: Vec<&str> = READ_VALUE_NARY_SEARCH_CHALLENGE
-                    .iter()
-                    .map(|(name, _)| *name)
-                    .collect();
-
-                expected_names.insert(0, "prover_continue");
-
-                if names == expected_names {
-                    let bits_name = &names[1];
-                    let witness = program_context
-                        .witness
-                        .get_witness(&drp.ctx.id, bits_name)?
-                        .ok_or_else(|| {
-                            BitVMXError::VariableNotFound(drp.ctx.id, bits_name.to_string())
-                        })?;
-                    let bytes = witness.winternitz()?.message_bytes();
-                    info!(
-                        "Challenge will be extended with a 2nd nary search. {bits_name} are {:?}",
-                        bytes
-                    );
-                    assert_eq!(bytes.len(), 1);
-                    let selection_bits = bytes[0] as u32;
-                    handle_nary_verifier(
-                        &name,
-                        drp,
-                        program_context,
-                        tx_id,
-                        vout,
-                        &tx_status,
-                        current_height,
-                        &fail_force_config,
-                        "verifier_selection_bits2",
-                        CHALLENGE,
-                        CHALLENGE_READ,
-                        selection_bits,
-                        1, // round 2
-                        NArySearchType::ReadValueChallenge,
-                    )?;
-                } else {
-                    panic!(
-                        "The challenge leaf does not match the expected witness names.\n\
-                 Expected: {:?}, got: {:?}",
-                        expected_names, names
-                    );
-                }
-            }
-            _ => {
-                if fail_force_config.prover_force_second_nary {
-                    // for testing purposes we will try to start the second nary search but it should fail
-                    let selection_bits = 0;
-                    handle_nary_verifier(
-                        &name,
-                        drp,
-                        program_context,
-                        tx_id,
-                        vout,
-                        &tx_status,
-                        current_height,
-                        &fail_force_config,
-                        "verifier_selection_bits2",
-                        CHALLENGE,
-                        CHALLENGE_READ,
-                        selection_bits,
-                        1, // round 2
-                        NArySearchType::ReadValueChallenge,
-                    )?;
-                } else {
-                    info!("Challenge ended successfully");
-                }
-            }
-        }
-    }
-
-    if name.starts_with("NARY2_VERIFIER") && vout.is_some() {
-        let round = name
-            .strip_prefix("NARY2_VERIFIER_")
-            .unwrap()
-            .parse::<u32>()
-            .unwrap();
-        handle_nary_verifier(
-            &name,
-            drp,
-            program_context,
-            tx_id,
-            vout,
-            &tx_status,
-            current_height,
-            &fail_force_config,
-            "verifier_selection_bits2",
-            CHALLENGE,
-            CHALLENGE_READ,
-            0, // Will be ignored
-            round,
-            NArySearchType::ReadValueChallenge,
-        )?;
-    }
-
-    if name.starts_with("NARY2_PROVER") && drp.role() == ParticipantRole::Verifier && vout.is_some()
-    {
-        handle_nary_prover(
-            &name,
-            drp,
-            program_context,
-            tx_id,
-            vout,
-            &tx_status,
-            &fail_force_config,
-            "NARY2_PROVER_",
-            "prover_hash2",
-            NArySearchType::ReadValueChallenge,
-        )?;
-    }
-
-    if GET_HASHES_AND_STEP == name && drp.role() == ParticipantRole::Verifier && vout.is_some() {
-        let (_, leaf) = drp.decode_witness_from_speedup(
-            tx_id,
-            vout.unwrap(),
-            &name,
-            program_context,
-            &tx_status.tx,
-            None,
-        )?;
-
-        // leaf 0 is prover_challenge_step2, we lost
-        if leaf == 0 {
-            return Ok(());
-        }
-
-        let (_program_definition, pdf) = drp.get_program_definition(program_context)?;
-        let execution_path = drp.get_execution_path()?;
-
-        let mut values = std::collections::HashMap::new();
-
-        let trace_vars = TK_2NARY.get().expect("TK_2NARY not initialized").read()?;
-        for (name, _) in trace_vars.iter() {
-            if let Some(value) = program_context.witness.get_witness(&drp.ctx.id, name)? {
-                values.insert(name.clone(), value.winternitz().unwrap().message_bytes());
-            } else {
-                return Err(BitVMXError::VariableNotFound(drp.ctx.id, name.to_string()));
-            }
-        }
-        fn to_u64(bytes: &[u8]) -> u64 {
-            u64::from_be_bytes(bytes.try_into().expect("Expected 8 bytes for u64"))
-        }
-        fn to_hex(bytes: &[u8]) -> String {
-            hex::encode(bytes)
-        }
-
-        let prover_step_hash = to_hex(&values["prover_step_hash_tk2"]);
-        let prover_next_hash = to_hex(&values["prover_next_hash_tk2"]);
-        let _prover_write_step = to_u64(&values["prover_write_step_tk2"]);
-
-        let msg = serde_json::to_string(&DispatcherJob {
-            job_id: drp.ctx.id.to_string(),
-            job_type: EmulatorJobType::VerifierChooseChallengeForReadChallenge(
-                pdf,
-                execution_path.clone(),
-                format!("{}/{}", execution_path, "execution.json").to_string(),
-                prover_step_hash,
-                prover_next_hash,
-                fail_force_config.read.fail_config_verifier.clone(),
-                fail_force_config.read.force_challenge.clone(),
-            ),
-        })?;
-        program_context
-            .broker_channel
-            .send(&program_context.components_config.emulator, msg)?;
-    }
-
-    if name == CHALLENGE_READ && drp.role() == ParticipantRole::Prover && vout.is_some() {
-        info!("The challenge has ended after the 2nd n-ary search.");
-        drp.decode_witness_from_speedup(
-            tx_id,
-            vout.unwrap(),
-            &name,
-            program_context,
-            &tx_status.tx,
-            None,
-        )?;
-    }
-
-    if CHALLENGE_READ == name && ParticipantRole::Verifier == drp.role() && vout.is_none() {
-        let verifier_final_tx =
-            drp.get_signed_tx(program_context, &VERIFIER_FINAL, 0, 0, false, 0)?;
-        let speedup_data =
-            drp.get_speedup_data_from_tx(&verifier_final_tx, program_context, None)?;
-        program_context.bitcoin_coordinator.dispatch(
-            verifier_final_tx,
-            Some(speedup_data),
-            Context::ProgramId(drp.ctx.id).to_string()?,
-            Some(current_height + 2 * timelock_blocks as u32),
-            None, // Receive news on every confirmation.
-        )?;
-    }
-
-    if VERIFIER_FINAL == name && ParticipantRole::Verifier == drp.role() && vout.is_none() {
-        let claim_name = ClaimGate::tx_start(VERIFIER_WINS);
-        let tx = drp.get_signed_tx(program_context, &claim_name, 0, 0, false, 0)?;
-        let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
-        info!("{claim_name}: {:?}", tx);
-        program_context.bitcoin_coordinator.dispatch(
-            tx,
-            Some(speedup_data),
-            Context::ProgramId(drp.ctx.id).to_string()?,
-            None,
-            None, // Receive news on every confirmation.
-        )?;
-    }
-
     Ok(())
 }
 
@@ -1297,7 +1340,7 @@ fn handle_nary_verifier(
     drp: &DisputeResolutionProtocol,
     program_context: &ProgramContext,
     tx_id: Txid,
-    vout: Option<u32>,
+    vout: u32,
     tx_status: &TransactionStatus,
     current_height: u32,
     fail_force_config: &ForceFailConfiguration,
@@ -1327,7 +1370,7 @@ fn handle_nary_verifier(
         } else {
             drp.decode_witness_from_speedup(
                 tx_id,
-                vout.unwrap(),
+                vout,
                 &name,
                 program_context,
                 &tx_status.tx,
@@ -1336,11 +1379,14 @@ fn handle_nary_verifier(
 
             let bits = program_context
                 .witness
-                .get_witness(&drp.ctx.id, &format!("{}_{}", selection_bits, round))?
-                .unwrap()
+                .get_witness_or_err(&drp.ctx.id, &format!("{}_{}", selection_bits, round))?
                 .winternitz()?
                 .message_bytes();
-            assert!(bits.len() == 1);
+            if bits.len() != 1 {
+                return Err(BitVMXError::InvalidState(
+                    "Expected exactly one byte for selection bits".to_string(),
+                ));
+            }
             bits[0] as u32
         };
 
@@ -1410,26 +1456,19 @@ fn handle_nary_prover(
     drp: &DisputeResolutionProtocol,
     program_context: &ProgramContext,
     tx_id: Txid,
-    vout: Option<u32>,
+    vout: u32,
     tx_status: &TransactionStatus,
     fail_force_config: &ForceFailConfiguration,
     strip_prefix: &str,               // "NARY_PROVER_"
     prover_hash: &str,                // "prover_hash"
     nary_search_type: NArySearchType, // ConflictStep
 ) -> Result<(), BitVMXError> {
-    let (_, leaf) = drp.decode_witness_from_speedup(
-        tx_id,
-        vout.unwrap(),
-        &name,
-        program_context,
-        &tx_status.tx,
-        None,
-    )?;
+    let (_, leaf) =
+        drp.decode_witness_from_speedup(tx_id, vout, &name, program_context, &tx_status.tx, None)?;
 
     let params = program_context
         .globals
-        .get_var(&drp.ctx.id, &timeout_input_tx(name))?
-        .unwrap()
+        .get_var_or_err(&drp.ctx.id, &timeout_input_tx(name))?
         .vec_number()?;
     let timeout_leaf = params[1];
     if leaf == timeout_leaf {
@@ -1466,20 +1505,19 @@ fn handle_nary_prover(
     let hashes_count = nary.hashes_for_round(round as u8);
     let execution_path = drp.get_execution_path()?;
 
-    let hashes: Vec<String> = (1..hashes_count + 1)
-        .map(|h| {
-            hex::encode(
-                program_context
-                    .witness
-                    .get_witness(&drp.ctx.id, &format!("{}_{}_{}", prover_hash, round, h))
-                    .unwrap()
-                    .unwrap()
-                    .winternitz()
-                    .unwrap()
-                    .message_bytes(),
-            )
+    let hashes: Vec<String> = (1..=hashes_count)
+        .map(|h| -> Result<String, BitVMXError> {
+            let name = format!("{}_{}_{}", prover_hash, round, h);
+
+            let bytes = program_context
+                .witness
+                .get_witness_or_err(&drp.ctx.id, &name)?
+                .winternitz()?
+                .message_bytes();
+
+            Ok(hex::encode(bytes))
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
 
     let msg = serde_json::to_string(&DispatcherJob {
         job_id: drp.ctx.id.to_string(),

@@ -263,12 +263,10 @@ pub fn challenge_scripts(
                             .iter()
                             .map(|(var_name, _)| {
                                 let idx = if var_name.starts_with("prover") { 0 } else { 1 };
-                                let key = keys[idx].get_winternitz(var_name).unwrap_or_else(|_| {
-                                    panic!("Missing winternitz key for var_name: {}", var_name)
-                                });
-                                (var_name, key)
+                                let key = keys[idx].get_winternitz(var_name)?;
+                                Ok((var_name, key))
                             })
-                            .collect::<Vec<_>>(),
+                            .collect::<Result<Vec<_>, BitVMXError>>()?,
                         None,
                     )
                 };
@@ -310,7 +308,11 @@ pub fn challenge_scripts(
                     "input" => {
                         let base_addr = program
                             .find_section_by_name(&program_definitions.input_section_name)
-                            .unwrap()
+                            .ok_or_else(|| {
+                                BitVMXError::SectionNotFound(
+                                    program_definitions.input_section_name.clone(),
+                                )
+                            })?
                             .start;
 
                         let (inputs, _) = generate_input_owner_list(&program_definitions)?;
@@ -319,9 +321,12 @@ pub fn challenge_scripts(
                             .skip(1)
                             .map(|(var_name, _)| {
                                 let idx = if var_name.starts_with("prover") { 0 } else { 1 };
-                                (*var_name, keys[idx].get_winternitz(&var_name).unwrap())
+                                Ok::<_, BitVMXError>((
+                                    *var_name,
+                                    keys[idx].get_winternitz(var_name)?,
+                                ))
                             })
-                            .collect::<Vec<_>>();
+                            .collect::<Result<Vec<_>, _>>()?;
 
                         for (idx, input) in inputs.iter().enumerate() {
                             match input {
@@ -342,12 +347,13 @@ pub fn challenge_scripts(
                                                 } else {
                                                     1
                                                 };
-                                                (
+
+                                                Ok::<_, BitVMXError>((
                                                     var_name.clone(),
-                                                    keys[idx].get_winternitz(&var_name).unwrap(),
-                                                )
+                                                    keys[idx].get_winternitz(&var_name)?,
+                                                ))
                                             })
-                                            .collect::<Vec<_>>();
+                                            .collect::<Result<Vec<_>, _>>()?;
 
                                         let address = base_addr + j * 4;
                                         let mut scripts = vec![reverse_script.clone()];
@@ -370,13 +376,14 @@ pub fn challenge_scripts(
                                 ProgramInputType::ProverPrev(words, offset) => {
                                     let previous_protocol = context
                                         .globals
-                                        .get_var(id, &program_input_prev_protocol(idx as u32))?
-                                        .unwrap()
+                                        .get_var_or_err(
+                                            id,
+                                            &program_input_prev_protocol(idx as u32),
+                                        )?
                                         .uuid()?;
                                     let previous_prefix = context
                                         .globals
-                                        .get_var(id, &program_input_prev_prefix(idx as u32))?
-                                        .unwrap()
+                                        .get_var_or_err(id, &program_input_prev_prefix(idx as u32))?
                                         .string()?;
 
                                     for j in 0..*words {
@@ -389,11 +396,8 @@ pub fn challenge_scripts(
                                         );
                                         let pubkey = context
                                             .globals
-                                            .get_var(&previous_protocol, &key)
-                                            .unwrap()
-                                            .unwrap()
-                                            .wots_pubkey()
-                                            .unwrap();
+                                            .get_var_or_err(&previous_protocol, &key)?
+                                            .wots_pubkey()?;
                                         //we copy the var so the prover is able to decode it when it sees the challenge tx
                                         if role == ParticipantRole::Prover {
                                             context.globals.copy_var(
@@ -428,16 +432,18 @@ pub fn challenge_scripts(
                                 ProgramInputType::Const(words, offset) => {
                                     for j in *offset..*offset + *words {
                                         let address = base_addr + j * 4;
-                                        let mut scripts =
-                                            vec![alternate_reverse.as_ref().unwrap().clone()];
+                                        let mut scripts = vec![alternate_reverse
+                                            .as_ref()
+                                            .ok_or_else(|| BitVMXError::ScriptNotFound(*id))?
+                                            .clone()];
                                         stack = StackTracker::new();
 
                                         let key = program_input_word(idx as u32, j);
                                         let value =
-                                            context.globals.get_var(id, &key)?.unwrap().input()?;
-                                        let value = u32::from_be_bytes(
-                                            value.as_slice().try_into().unwrap(),
-                                        );
+                                            context.globals.get_var_or_err(id, &key)?.input()?;
+
+                                        let value =
+                                            u32::from_be_bytes(value.as_slice().try_into()?);
 
                                         rom_challenge(&mut stack, address, value);
                                         scripts.push(stack.get_script());
@@ -463,7 +469,7 @@ pub fn challenge_scripts(
                             let step = 4; //TODO: make this configurable
                             for i in (0..rodata_words).step_by(step) {
                                 let address = base_addr + i;
-                                let value = program.read_mem(address, false).unwrap();
+                                let value = program.read_mem(address, false)?;
                                 let mut scripts = vec![reverse_script.clone()];
                                 stack = StackTracker::new();
                                 rom_challenge(&mut stack, address, value);
@@ -490,7 +496,7 @@ pub fn challenge_scripts(
                                 &mut scripts,
                                 "initialized",
                                 "verifier_read_selector",
-                            );
+                            )?;
                             stack = StackTracker::new();
                             initialized_challenge(&mut stack, initialized_chunk);
 
@@ -527,18 +533,18 @@ pub fn challenge_scripts(
                                     let mut names_and_keys_copy = names_and_keys.clone();
                                     let key_name = format!("prover_hash_{}_{}", round, h);
                                     let key_name_ref: &str = key_name.as_str();
-                                    let winternitz_key = keys[0].get_winternitz(&key_name).unwrap();
+                                    let winternitz_key = keys[0].get_winternitz(&key_name)?;
                                     names_and_keys_copy[0] = (&key_name_ref, winternitz_key);
 
                                     names_and_keys_copy[1] = if kind == EquivocationKind::StepHash {
                                         (
                                             &"prover_step_hash_tk",
-                                            keys[0].get_winternitz("prover_step_hash_tk").unwrap(),
+                                            keys[0].get_winternitz("prover_step_hash_tk")?,
                                         )
                                     } else {
                                         (
                                             &"prover_next_hash_tk",
-                                            keys[0].get_winternitz("prover_next_hash_tk").unwrap(),
+                                            keys[0].get_winternitz("prover_next_hash_tk")?,
                                         )
                                     };
                                     let winternitz_check =
@@ -590,7 +596,7 @@ pub fn challenge_scripts(
                                     &mut scripts,
                                     "uninitialized",
                                     "verifier_read_selector",
-                                );
+                                )?;
                                 stack = StackTracker::new();
                                 let ranges = program.get_uninitialized_ranges(program_definitions);
                                 uninitialized_challenge(&mut stack, &ranges);
@@ -601,7 +607,7 @@ pub fn challenge_scripts(
                                     &mut scripts,
                                     "future_read",
                                     "verifier_read_selector",
-                                );
+                                )?;
                                 stack = StackTracker::new();
                                 future_read_challenge(&mut stack);
                             }
@@ -616,7 +622,11 @@ pub fn challenge_scripts(
                                     );
                                 stack.custom(verification_script, 1, false, 0, "");
                             }
-                            _ => panic!("Unknown challenge name: {}", challenge_name),
+                            _ => {
+                                return Err(BitVMXError::ChallengeNotFound(
+                                    challenge_name.to_string(),
+                                ))
+                            }
                         };
                         scripts.push(stack.get_script());
                         let winternitz_check = scripts::verify_winternitz_signatures_aux(
@@ -643,12 +653,10 @@ pub fn challenge_scripts(
                     .iter()
                     .map(|(var_name, _)| {
                         let idx = if var_name.starts_with("prover") { 0 } else { 1 };
-                        let key = keys[idx].get_winternitz(var_name).unwrap_or_else(|_| {
-                            panic!("Missing winternitz key for var_name: {}", var_name)
-                        });
-                        (var_name, key)
+                        let key = keys[idx].get_winternitz(var_name)?;
+                        Ok((var_name, key))
                     })
-                    .collect::<Vec<_>>();
+                    .collect::<Result<Vec<_>, BitVMXError>>()?;
 
                 //TODO: This is a workaround to reverse the order of the stack
                 let mut stack = StackTracker::new();
@@ -691,18 +699,18 @@ pub fn challenge_scripts(
                                         format!("prover_hash2_{}_{}", round, h)
                                     };
                                     let key_name_ref: &str = key_name.as_str();
-                                    let winternitz_key = keys[0].get_winternitz(&key_name).unwrap();
+                                    let winternitz_key = keys[0].get_winternitz(&key_name)?;
                                     names_and_keys_copy[0] = (&key_name_ref, winternitz_key);
 
                                     names_and_keys_copy[1] = if kind == EquivocationKind::StepHash {
                                         (
                                             &"prover_step_hash_tk2",
-                                            keys[0].get_winternitz("prover_step_hash_tk2").unwrap(),
+                                            keys[0].get_winternitz("prover_step_hash_tk2")?,
                                         )
                                     } else {
                                         (
                                             &"prover_next_hash_tk2",
-                                            keys[0].get_winternitz("prover_next_hash_tk2").unwrap(),
+                                            keys[0].get_winternitz("prover_next_hash_tk2")?,
                                         )
                                     };
                                     let winternitz_check =
@@ -731,7 +739,7 @@ pub fn challenge_scripts(
                                     &mut scripts,
                                     "read_value",
                                     "verifier_read_selector",
-                                );
+                                )?;
                                 stack = StackTracker::new();
                                 read_value_challenge(&mut stack);
                             }
@@ -741,7 +749,11 @@ pub fn challenge_scripts(
                             "equivocation_hash" => {
                                 equivocation_hash_challenge(&mut stack);
                             }
-                            _ => panic!("Unknown challenge name: {}", challenge_name),
+                            _ => {
+                                return Err(BitVMXError::ChallengeNotFound(
+                                    challenge_name.to_string(),
+                                ))
+                            }
                         }
                         scripts.push(stack.get_script());
                         let winternitz_check = scripts::verify_winternitz_signatures_aux(
@@ -842,7 +854,9 @@ pub fn get_challenge_leaf(
 
             let base_addr = program
                 .find_section_by_name(&program_definitions.input_section_name)
-                .unwrap()
+                .ok_or_else(|| {
+                    BitVMXError::SectionNotFound(program_definitions.input_section_name.clone())
+                })?
                 .start;
             dynamic_offset = (address - base_addr) / 4;
         }
@@ -879,7 +893,10 @@ pub fn get_challenge_leaf(
             name = "rom";
             info!("Verifier chose {name} challenge");
 
-            let base_addr = program.find_section_by_name(".rodata").unwrap().start;
+            let base_addr = program
+                .find_section_by_name(".rodata")
+                .ok_or_else(|| BitVMXError::SectionNotFound(".rodata".to_string()))?
+                .start;
             dynamic_offset = address - base_addr;
         }
         ChallengeType::InitializedData {
@@ -1089,10 +1106,10 @@ pub fn get_challenge_leaf(
         return Ok(None);
     }
 
+    let leaf_start_var = format!("challenge_leaf_start_{}", name);
     let leaf_start = context
         .globals
-        .get_var(id, &format!("challenge_leaf_start_{}", name))?
-        .unwrap()
+        .get_var_or_err(id, &leaf_start_var)?
         .number()? as u32;
 
     info!(
@@ -1107,13 +1124,13 @@ pub fn extract_nibble(
     scripts: &mut Vec<ScriptBuf>,
     challenge_type: &str,
     var_name: &str,
-) {
+) -> Result<(), BitVMXError> {
     let challenge = CHALLENGES
         .iter()
         .chain(READ_CHALLENGES.iter())
         .find(|(name, _)| *name == challenge_type)
         .map(|(_, vars)| *vars)
-        .expect(&format!("Unknown challenge type {challenge_type}"));
+        .ok_or_else(|| BitVMXError::ChallengeNotFound(challenge_type.to_string()))?;
     let mut stackvars = HashMap::new();
     for (name, size) in challenge.iter() {
         stackvars.insert(*name, stack.define((size * 2) as u32, name));
@@ -1121,4 +1138,5 @@ pub fn extract_nibble(
     let read_selector = stack.move_var_sub_n(stackvars[var_name], 0);
     stack.drop(read_selector);
     scripts.push(stack.get_script());
+    Ok(())
 }

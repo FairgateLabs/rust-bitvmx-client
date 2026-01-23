@@ -108,7 +108,7 @@ impl ForcedChallenges {
             | EquivocationResignStep2(role)
             | EquivocationResignNext2(role) => Some(role.clone()),
             No | Execution | Personalized(_) => None,
-            ProverForceSecondNary  => Some(ParticipantRole::Prover),
+            ProverForceSecondNary => Some(ParticipantRole::Prover),
             VerifierOutOfBoundsBits | VerifierOutOfBoundsBitsInChallenge => {
                 Some(ParticipantRole::Verifier)
             }
@@ -462,7 +462,6 @@ fn wait_msg_channel(
 }
 
 pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ForceFailConfiguration {
-    //TODO: check all cases after refactor
     match fail_force_config {
         ForcedChallenges::InputTimeOut(name, _) => ForceFailConfiguration {
             prover_force_second_nary: false,
