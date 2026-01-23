@@ -202,7 +202,6 @@ impl SetupStep for KeysStep {
 
     fn exchange_config(&self) -> ExchangeConfig {
         ExchangeConfig {
-            use_broadcasting: true,
             verify_signatures: true,
             timeout_ms: None,
             max_retries: 3,

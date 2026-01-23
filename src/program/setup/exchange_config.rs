@@ -1,9 +1,6 @@
 /// Configuration for how data is exchanged in a step
 #[derive(Debug, Clone)]
 pub struct ExchangeConfig {
-    /// Use leader broadcasting to reduce N² to N messages (default: true)
-    pub use_broadcasting: bool,
-
     /// Verify RSA signatures of messages (default: true)
     pub verify_signatures: bool,
 
@@ -17,7 +14,6 @@ pub struct ExchangeConfig {
 impl Default for ExchangeConfig {
     fn default() -> Self {
         Self {
-            use_broadcasting: true,
             verify_signatures: true,
             timeout_ms: None,
             max_retries: 3,
