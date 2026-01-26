@@ -5,7 +5,10 @@ pub mod dispute;
 
 use anyhow::Result;
 use bitcoin::{Amount, PublicKey, XOnlyPublicKey};
-use bitcoind::{bitcoind::{Bitcoind, BitcoindFlags}, config::BitcoindConfig};
+use bitcoind::{
+    bitcoind::{Bitcoind, BitcoindFlags},
+    config::BitcoindConfig,
+};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{
     channel::channel::DualChannel,
@@ -153,6 +156,7 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
                 block_min_tx_fee: 0.00002,
                 debug: 1,
                 fallback_fee: 0.0002,
+                maxmempool: None,
             }),
         );
 
