@@ -22,6 +22,7 @@ use tracing::debug;
 /// - Own keys: "my_keys"
 /// - Participant i keys: "participant_{i}_keys"
 /// - All keys aggregated: "all_participant_keys"
+#[derive(Default)]
 pub struct KeysStep;
 
 impl KeysStep {
@@ -206,11 +207,5 @@ impl SetupStep for KeysStep {
             timeout_ms: None,
             max_retries: 3,
         }
-    }
-}
-
-impl Default for KeysStep {
-    fn default() -> Self {
-        Self::new()
     }
 }

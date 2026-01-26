@@ -22,6 +22,7 @@ use tracing::{debug, warn};
 /// The nonces are stored in globals with the following conventions:
 /// - Own nonces: "my_nonces"
 /// - Participant i nonces: "participant_{i}_nonces"
+#[derive(Default)]
 pub struct NoncesStep;
 
 impl NoncesStep {
@@ -241,11 +242,5 @@ impl SetupStep for NoncesStep {
             timeout_ms: None,
             max_retries: 3,
         }
-    }
-}
-
-impl Default for NoncesStep {
-    fn default() -> Self {
-        Self::new()
     }
 }
