@@ -22,6 +22,7 @@ use tracing::{debug, warn};
 /// The signatures are stored in globals with the following conventions:
 /// - Own signatures: "my_signatures"
 /// - Participant i signatures: "participant_{i}_signatures"
+#[derive(Default)]
 pub struct SignaturesStep;
 
 impl SignaturesStep {
@@ -253,11 +254,5 @@ impl SetupStep for SignaturesStep {
             timeout_ms: None,
             max_retries: 3,
         }
-    }
-}
-
-impl Default for SignaturesStep {
-    fn default() -> Self {
-        Self::new()
     }
 }
