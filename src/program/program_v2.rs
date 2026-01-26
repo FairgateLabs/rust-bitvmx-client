@@ -224,8 +224,11 @@ impl ProgramV2 {
 
     /// Saves the program to storage
     ///
-    /// Following Program legacy pattern, this saves the complete program struct
-    /// which includes the state as a field
+    /// This method:
+    /// 1. Extracts the SetupEngine state (which cannot be serialized) into `setup_engine_state`
+    /// 2. Saves the entire program struct (including state as a field) in a single storage key
+    ///
+    /// Note: Fields marked with `#[serde(skip)]` (setup_engine, storage) are excluded from serialization
     pub fn save(&mut self) -> Result<(), ProgramError> {
         let storage = self
             .storage
