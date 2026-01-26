@@ -6,7 +6,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
-use super::SetupStep;
+use super::{SetupStep, steps::{SetupStepName, create_setup_step}};
 
 /// Current state of a setup step in the engine.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -93,10 +93,15 @@ pub struct SetupEngine {
 }
 
 impl SetupEngine {
-    /// Creates a new SetupEngine with the given steps.
+    /// Creates a new SetupEngine with the given step names.
     ///
-    /// Steps will be executed in the order provided.
-    pub fn new(steps: Vec<Box<dyn SetupStep>>) -> Self {
+    /// Steps will be created from the names using the factory and executed in the order provided.
+    pub fn new(step_names: Vec<SetupStepName>) -> Self {
+        let steps: Vec<Box<dyn SetupStep>> = step_names
+            .iter()
+            .map(|name| create_setup_step(name))
+            .collect();
+        
         Self {
             steps,
             state: SetupEngineState::new(),
@@ -440,17 +445,16 @@ impl SetupEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::program::setup::steps::{KeysStep, NoncesStep, SignaturesStep};
 
     #[test]
     fn test_setup_engine_creation() {
-        let steps: Vec<Box<dyn SetupStep>> = vec![
-            Box::new(KeysStep::new()),
-            Box::new(NoncesStep::new()),
-            Box::new(SignaturesStep::new()),
+        let step_names = vec![
+            SetupStepName::Keys,
+            SetupStepName::Nonces,
+            SetupStepName::Signatures,
         ];
 
-        let engine = SetupEngine::new(steps);
+        let engine = SetupEngine::new(step_names);
 
         assert_eq!(engine.total_steps(), 3);
         assert_eq!(engine.state().current_step_index, 0);
@@ -483,9 +487,9 @@ mod tests {
 
     #[test]
     fn test_engine_completion() {
-        let steps: Vec<Box<dyn SetupStep>> = vec![Box::new(KeysStep::new())];
+        let step_names = vec![SetupStepName::Keys];
 
-        let mut engine = SetupEngine::new(steps);
+        let mut engine = SetupEngine::new(step_names);
         assert!(!engine.is_complete());
 
         // Simulate advancing past all steps
@@ -496,8 +500,8 @@ mod tests {
 
     #[test]
     fn test_mark_current_step_sent() {
-        let steps: Vec<Box<dyn SetupStep>> = vec![Box::new(KeysStep::new())];
-        let mut engine = SetupEngine::new(steps);
+        let step_names = vec![SetupStepName::Keys];
+        let mut engine = SetupEngine::new(step_names);
 
         // Cannot mark as sent when in Pending state
         let result = engine.mark_current_step_sent();
