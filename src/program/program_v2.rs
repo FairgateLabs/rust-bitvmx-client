@@ -70,9 +70,9 @@ impl ProgramV2 {
 
     /// Creates a SetupEngine for the protocol using its setup_steps() method
     fn try_create_setup_engine(protocol: &ProtocolType) -> Option<SetupEngine> {
-        if let Some(steps) = protocol.setup_steps() {
-            debug!("Protocol supports SetupEngine with {} steps", steps.len());
-            Some(SetupEngine::new(steps))
+        if let Some(step_names) = protocol.setup_steps() {
+            debug!("Protocol supports SetupEngine with {} steps", step_names.len());
+            Some(SetupEngine::new(step_names))
         } else {
             debug!("Protocol does not use SetupEngine");
             None

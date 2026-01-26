@@ -49,7 +49,7 @@ use crate::types::{ProgramContext, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_DRP
 
 use crate::program::variables::WitnessTypes;
 use crate::program::{variables::VariableTypes, witness};
-use crate::program::setup::{SetupStep, steps::{KeysStep, NoncesStep, SignaturesStep}};
+use crate::program::setup::steps::SetupStepName;
 
 #[enum_dispatch]
 pub trait ProtocolHandler {
@@ -554,17 +554,19 @@ pub trait ProtocolHandler {
         Ok(())
     }
 
-    /// Returns the list of setup steps for this protocol.
+    /// Returns the list of setup step names for this protocol.
     ///
     /// By default, returns the standard steps: keys, nonces, signatures.
     /// Protocols can override this method to customize their setup flow.
     ///
     /// Returns None if the protocol doesn't use the SetupEngine system.
-    fn setup_steps(&self) -> Option<Vec<Box<dyn SetupStep>>> {
+    ///
+    /// The steps will be created by the factory when needed.
+    fn setup_steps(&self) -> Option<Vec<SetupStepName>> {
         Some(vec![
-            Box::new(KeysStep::new()),
-            Box::new(NoncesStep::new()),
-            Box::new(SignaturesStep::new()),
+            SetupStepName::Keys,
+            SetupStepName::Nonces,
+            SetupStepName::Signatures,
         ])
     }
 }
