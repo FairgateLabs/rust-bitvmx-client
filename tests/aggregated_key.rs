@@ -1,21 +1,15 @@
 #![cfg(test)]
 
 use anyhow::Result;
-use bitcoin::Amount;
-use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
-use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_client::program::variables::VariableTypes;
 use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel, PROGRAM_TYPE_AGGREGATED_KEY};
-use bitvmx_wallet::wallet::{RegtestWallet, Wallet};
 use common::{
-    clear_db, config_trace, ensure_docker_available, get_all, init_bitvmx, init_utxo, send_all, INITIAL_BLOCK_COUNT, LOCAL_SLEEP_MS,
+    config_trace, get_all, init_bitvmx, prepare_bitcoin, send_all, LOCAL_SLEEP_MS,
 };
 use tracing::info;
 use uuid::Uuid;
 
 mod common;
-
-const MIN_TX_FEE: f64 = 2.0;
 
 /// Helper struct to configure and setup an aggregated key protocol test
 pub struct AggregatedKeyConfig {
@@ -57,60 +51,7 @@ impl AggregatedKeyConfig {
 pub fn test_aggregated_key() -> Result<()> {
     config_trace();
 
-    info!("================================================");
-    info!("Starting Aggregated Key Protocol Test");
-    info!("================================================");
-
-    // Load wallet configuration
-    let wallet_config = bitvmx_settings::settings::load_config_file::<
-        bitvmx_wallet::wallet::config::Config,
-    >(Some("config/wallet_regtest.yaml".to_string()))?;
-
-    // Clear all databases for fresh start
-    clear_db(&wallet_config.storage.path);
-    clear_db(&wallet_config.key_storage.path);
-    Wallet::clear_db(&wallet_config.wallet)?;
-
-    // Check Docker availability before starting bitcoind
-    info!("Checking Docker availability...");
-    ensure_docker_available()?;
-    info!("Docker is available");
-
-    // Start local bitcoind
-    info!("Starting local bitcoind...");
-    let _bitcoind = Bitcoind::new_with_flags(
-        "bitcoin-regtest",
-        "bitcoin/bitcoin:29.1",
-        wallet_config.bitcoin.clone(),
-        BitcoindFlags {
-            min_relay_tx_fee: 0.00001,
-            block_min_tx_fee: 0.00001 * MIN_TX_FEE,
-            debug: 1,
-            fallback_fee: 0.0002,
-        },
-    );
-    _bitcoind.start()?;
-    info!("Bitcoind started successfully");
-
-    // Initialize wallet
-    let bitcoin_client = BitcoinClient::new(
-        &wallet_config.bitcoin.url,
-        &wallet_config.bitcoin.username,
-        &wallet_config.bitcoin.password,
-    )?;
-
-    let address = bitcoin_client.init_wallet(&wallet_config.bitcoin.wallet)?;
-    info!("Mining initial {} blocks...", INITIAL_BLOCK_COUNT);
-    bitcoin_client.mine_blocks_to_address(INITIAL_BLOCK_COUNT, &address)?;
-
-    let mut wallet = Wallet::from_config(
-        wallet_config.bitcoin.clone(),
-        wallet_config.wallet.clone(),
-    )?;
-
-    bitcoin_client.fund_address(&wallet.receive_address()?, Amount::from_int_btc(10))?;
-    wallet.sync_wallet()?;
-    info!("Wallet ready with {} BTC", 10);
+    let (_bitcoin_client, bitcoind, _wallet) = prepare_bitcoin()?;
 
     // Initialize 3 BitVMX instances (1 leader + 2 non-leaders)
     let (bitvmx_op1, _address_op1, bridge_op1, _) = init_bitvmx("op_1", false)?;
@@ -180,16 +121,6 @@ pub fn test_aggregated_key() -> Result<()> {
     let aggregated_pub_key = msgs[0].aggregated_pub_key().unwrap();
 
     info!("Aggregated public key: {}", aggregated_pub_key);
-
-    info!("================================================");
-    info!("Funding aggregated key protocol UTXO");
-    info!("================================================");
-
-    // Create a UTXO that can be spent by the aggregated key
-    let amount = 100_000u64; // 100k sats
-    let utxo = init_utxo(&mut wallet, aggregated_pub_key, None, amount)?;
-
-    info!("Funded UTXO: {:?}", utxo);
 
     info!("================================================");
     info!("Setting up Aggregated Key Protocol with ProgramV2");
@@ -288,6 +219,11 @@ pub fn test_aggregated_key() -> Result<()> {
     info!("================================================");
     info!("Test completed successfully!");
     info!("================================================");
+
+    info!("Stopping bitcoind");
+    if let Some(bitcoind) = bitcoind {
+        bitcoind.stop()?;
+    }
 
     Ok(())
 }
