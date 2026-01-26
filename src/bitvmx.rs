@@ -3,7 +3,6 @@ use crate::message_queue::QueuedMessage;
 use crate::ping_helper::{JobDispatcherType, PingHelper};
 use crate::program::program::is_active_program;
 use crate::program::protocols::protocol_handler::ProtocolHandler;
-use crate::shutdown::GracefulShutdown;
 use crate::spv_proof::get_spv_proof;
 use crate::timestamp_verifier::TimestampVerifier;
 use crate::{
@@ -222,43 +221,14 @@ impl BitVMX {
         })
     }
 
-    pub fn shutdown(&mut self, timeout: Duration) -> Result<(), BitVMXError> {
+    pub fn shutdown(&mut self) -> Result<(), BitVMXError> {
         info!("Shutdown requested");
         self.shutdown = true;
-        let deadline = Instant::now() + timeout;
-        self.begin_shutdown();
 
         // Begin shutdown on subcomponents
-        self.program_context.comms.begin_shutdown();
-        self.program_context.bitcoin_coordinator.begin_shutdown();
-        self.broker.begin_shutdown();
-        // Drain global in-flight
-        self.drain_until_idle(deadline);
+        self.broker.close();
+        self.program_context.comms.close();
 
-        // Drain subcomponents best-effort
-        self.program_context.comms.drain_until_idle(deadline);
-        self.program_context
-            .bitcoin_coordinator
-            .drain_until_idle(deadline);
-        self.broker.drain_until_idle(deadline);
-
-        // Drain active programs: ensure we don't schedule new work and persist state
-        if let Ok(programs) = self.get_programs() {
-            for status in programs {
-                if let Ok(mut program) = self.load_program(&status.program_id) {
-                    program.begin_shutdown();
-                    program.drain_until_idle(deadline);
-                    program.shutdown_now();
-                }
-            }
-        }
-        // Finalize subcomponents shutdown first
-        self.program_context.comms.shutdown_now();
-        self.program_context.bitcoin_coordinator.shutdown_now();
-        self.broker.shutdown_now();
-
-        // Finalize BitVMX shutdown
-        self.shutdown_now();
         info!("Shutdown completed");
         Ok(())
     }
@@ -833,10 +803,12 @@ impl BitVMX {
         Ok(())
     }
 
-    pub fn tick(&mut self) -> Result<(), BitVMXError> {
+    /// Main tick function to be called periodically. Returns false if BitVMX is shutdown.
+    pub fn tick(&mut self) -> Result<bool, BitVMXError> {
         //info!("Ticking BitVMX: {}", self.count);
         if self.shutdown {
-            return Ok(());
+            info!("BitVMX is shutdown, stopping tick processing.");
+            return Ok(false);
         }
 
         self.count += 1;
@@ -854,7 +826,7 @@ impl BitVMX {
         self.ping_helper
             .check_job_dispatchers_liveness(&self.program_context, &self.config.components)?;
 
-        Ok(())
+        Ok(true)
     }
 
     pub fn process_wallet_updates(&mut self) -> Result<(), BitVMXError> {
@@ -1010,33 +982,6 @@ impl BitVMX {
         self.wallet.sync_wallet()?;
         info!("Wallet sync completed.");
         Ok(())
-    }
-}
-
-impl GracefulShutdown for BitVMX {
-    fn begin_shutdown(&mut self) {
-        // Future: signal programs/protocols/coordinator to quiesce
-    }
-
-    fn drain_until_idle(&mut self, deadline: Instant) {
-        while Instant::now() < deadline {
-            if let Err(e) = self.process_pending_messages() {
-                warn!("drain pending msg err: {:?}", e);
-            }
-            if let Err(e) = self.process_collaboration() {
-                warn!("drain collaboration err: {:?}", e);
-            }
-
-            //TODO: handle error
-            if self.message_queue.is_empty().unwrap() {
-                break;
-            }
-            sleep(Duration::from_millis(10));
-        }
-    }
-
-    fn shutdown_now(&mut self) {
-        self.broker.close();
     }
 }
 
@@ -1754,9 +1699,9 @@ impl BitVMXApi for BitVMX {
                 };
                 self.reply(from, message)?;
             }
-            IncomingBitVMXApiMessages::Shutdown(timeout) => {
+            IncomingBitVMXApiMessages::Shutdown() => {
                 info!("Shutdown message received. Initiating shutdown...");
-                self.shutdown(timeout)?;
+                self.shutdown()?;
             }
             #[cfg(feature = "testpanic")]
             IncomingBitVMXApiMessages::Test(s) => {
