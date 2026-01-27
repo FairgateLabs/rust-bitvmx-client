@@ -26,7 +26,7 @@ concurrency:
 jobs:
   test:
     if: ${{ !contains(github.event.pull_request.title, '[cov]') }}
-    uses: FairgateLabs/BitVMX-CI/.github/workflows/ci_local_template.yml@main
+    uses: FairgateLabs/BitVMX-CI/.github/workflows/ci_local_template.yml@ci_improvement
     with:
       repo: 'FairgateLabs/rust-bitvmx-workspace'
       submodule_path: 'rust-bitvmx-client'
