@@ -11,8 +11,10 @@
 /// - Just key exchange and aggregation
 /// - Result is stored in globals for later use
 use bitcoin::PublicKey;
+use bitvmx_broker::identification::identifier::Identifier;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use storage_backend::storage::KeyValueStore;
 
 use crate::{
     errors::BitVMXError,
@@ -22,7 +24,7 @@ use crate::{
         setup::steps::SetupStepName,
         variables::VariableTypes,
     },
-    types::ProgramContext,
+    types::{OutgoingBitVMXApiMessages, ProgramContext},
 };
 
 /// AggregatedKeyProtocol - Manages aggregated key generation
@@ -70,6 +72,12 @@ impl ProtocolHandler for AggregatedKeyProtocol {
         _computed_aggregated: HashMap<String, PublicKey>, // ⚠️ Ignored - we compute our own
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
+        tracing::info!(
+            "AggregatedKeyProtocol::build() called for program {} with {} participant keys",
+            self.ctx.id,
+            keys.len()
+        );
+        
         // AggregatedKeyProtocol performs its own MuSig2 aggregation
         // This is the NEW pattern where protocols are responsible for aggregation
 
@@ -122,18 +130,62 @@ impl ProtocolHandler for AggregatedKeyProtocol {
             .new_musig2_session(aggregated_pub_keys, *my_key)?;
 
         // Store the aggregated key in globals for easy retrieval
+        let key_str = aggregated_key.to_string();
         context.globals.set_var(
             &self.ctx.id,
             "final_aggregated_key",
-            VariableTypes::String(aggregated_key.to_string()),
+            VariableTypes::String(key_str.clone()),
         )?;
 
         tracing::info!(
-            "AggregatedKeyProtocol: Computed and stored final aggregated key: {}",
-            aggregated_key
+            "AggregatedKeyProtocol: Computed and stored final aggregated key: {} (program_id: {})",
+            key_str,
+            self.ctx.id
         );
+        
+        // Verify the variable was stored correctly
+        let stored_var = context.globals.get_var(&self.ctx.id, "final_aggregated_key")?;
+        if stored_var.is_none() {
+            tracing::error!(
+                "AggregatedKeyProtocol: ERROR - Variable was not stored correctly! program_id: {}",
+                self.ctx.id
+            );
+        } else {
+            tracing::info!(
+                "AggregatedKeyProtocol: Verified variable stored successfully for program_id: {}",
+                self.ctx.id
+            );
+        }
+
+        // Send AggregatedPubkey message to the requester (similar to Collaboration)
+        // Read the 'from' identifier from storage
+        if let Some(storage) = &self.ctx.storage {
+            let from_key = format!("bitvmx/aggregated_key/{}/from", self.ctx.id);
+            let from: Option<Identifier> = storage.get(&from_key)?;
+            if let Some(from) = from {
+                tracing::info!(
+                    "AggregatedKeyProtocol: Sending AggregatedPubkey to requester: {}",
+                    aggregated_key
+                );
+                context.broker_channel.send(
+                    &from,
+                    OutgoingBitVMXApiMessages::AggregatedPubkey(self.ctx.id, aggregated_key)
+                        .to_string()?,
+                )?;
+            } else {
+                tracing::debug!(
+                    "AggregatedKeyProtocol: No 'from' identifier found in storage, skipping AggregatedPubkey message"
+                );
+            }
+        }
 
         Ok(())
+    }
+
+    // AggregatedKeyProtocol is used internally by SetupKey, which only expects
+    // the AggregatedPubkey response. Suppress SetupCompleted to maintain backward compatibility.
+    fn send_setup_completed(&self) -> bool {
+        false
     }
 
     // Override setup_steps to only use KeysStep
