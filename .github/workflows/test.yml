@@ -33,6 +33,5 @@ jobs:
       cargo_lock_path: 'rust-bitvmx-client/Cargo.lock'
       target_path: 'rust-bitvmx-client/target'
       cargo_features: 'testpanic'
-      nightly: false
       submodule_branches: '{}'
     secrets: inherit
