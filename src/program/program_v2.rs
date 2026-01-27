@@ -243,7 +243,13 @@ impl ProgramV2 {
 
         info!("💾 ProgramV2::save() - Saving program {} with state: {:?}", self.program_id, self.state);
 
+        // Write state to the legacy key so is_active_program() works for ProgramV2
+        // This allows process_programs() to skip V2 programs that have reached Ready state
+        let legacy_state_key = format!("program/{}/state", self.program_id);
+        storage.set(&legacy_state_key, &self.state, None)?;
+
         storage.set(&self.storage_key(), self, None)?;
+
         Ok(())
     }
 
@@ -277,7 +283,15 @@ impl ProgramV2 {
                     }
 
                     // Check if setup is complete
-                    if engine.is_complete() {
+                    let is_complete = engine.is_complete();
+                    info!(
+                        "ProgramV2: SetupEngine check - is_complete: {}, current_step_index: {}, total_steps: {}",
+                        is_complete,
+                        engine.state().current_step_index,
+                        engine.total_steps()
+                    );
+                    
+                    if is_complete {
                         info!("ProgramV2: SetupEngine completed all steps, building protocol");
                         self.build_protocol(&program_context)?;
                         self.state = ProgramState::Monitoring;
@@ -330,7 +344,9 @@ impl ProgramV2 {
                 info!("ProgramV2: Monitoring setup complete, transitioning to Ready state");
 
                 // Send SetupCompleted message to API channel (only once)
-                if !self.setup_completed_sent {
+                // Some protocols (e.g., AggregatedKeyProtocol) suppress this to maintain
+                // backward compatibility with callers that don't expect it.
+                if !self.setup_completed_sent && self.protocol.send_setup_completed() {
                     match OutgoingBitVMXApiMessages::SetupCompleted(self.program_id).to_string() {
                         Ok(msg) => {
                             let result = program_context.broker_channel.send(

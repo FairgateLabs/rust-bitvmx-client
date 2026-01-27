@@ -21,7 +21,7 @@ use crate::{
         variables::{Globals, WitnessVars},
     },
     signature_verifier::SignatureVerifier,
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus, ProgramVersion},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus, ProgramVersion, PROGRAM_TYPE_AGGREGATED_KEY},
 };
 use bitcoin::secp256k1::Message;
 use bitcoin::{PublicKey, Transaction, Txid};
@@ -102,6 +102,7 @@ enum StoreKey {
     ZKPStatus(Uuid),
     ZKPFrom(Uuid),
     ZKPJournal(Uuid),
+    AggregatedKeyFrom(Uuid),
 }
 
 impl StoreKey {
@@ -114,6 +115,7 @@ impl StoreKey {
             StoreKey::ZKPStatus(id) => format!("bitvmx/zkp/{}/status", id),
             StoreKey::ZKPFrom(id) => format!("bitvmx/zkp/{}/from", id),
             StoreKey::ZKPJournal(id) => format!("bitvmx/zkp/{}/journal", id),
+            StoreKey::AggregatedKeyFrom(id) => format!("bitvmx/aggregated_key/{}/from", id),
         }
     }
 }
@@ -582,9 +584,10 @@ impl BitVMX {
                             signature,
                             version,
                         )?;
-                        if message_consumed {
-                            program_v2.save()?;
-                        }
+                        // Note: ProgramV2 handles its own saving internally in receive_setup_data().
+                        // Do NOT save here - it would overwrite the state with SettingUpV2 after
+                        // receive_setup_data() intentionally skipped saving (when setup engine completed),
+                        // causing tick() to re-enter build() and send duplicate messages.
                         message_consumed
                     } else if let Some(mut collaboration) = collaboration {
                         let message_consumed = self.process_collaboration_message(
@@ -1155,7 +1158,7 @@ impl BitVMXApi for BitVMX {
         from: Identifier,
         id: Uuid,
         participants: Vec<CommsAddress>,
-        participants_keys: Option<Vec<PublicKey>>,
+        _participants_keys: Option<Vec<PublicKey>>,
         leader_idx: u16,
     ) -> Result<(), BitVMXError> {
         info!("Setting up key for program: {:?}", id);
@@ -1169,31 +1172,62 @@ impl BitVMXApi for BitVMX {
             return Err(BitVMXError::InvalidMessageFormat);
         }
 
-        let leader = participants[leader_idx as usize].clone();
-        let collab = Collaboration::setup_aggregated_key(
-            &id,
+        // Store the 'from' parameter for later use when sending AggregatedPubkey
+        self.store
+            .set(StoreKey::AggregatedKeyFrom(id).get_key(), from, None)?;
+
+        // TODO: participants_keys is ignored for now - will be implemented later
+        // For now, each participant will generate their own key
+
+        // Use ProgramV2 with AggregatedKeyProtocol instead of Collaboration
+        ProgramV2::setup(
+            id,
+            PROGRAM_TYPE_AGGREGATED_KEY,
             participants,
-            participants_keys,
-            leader,
+            leader_idx as usize,
             &mut self.program_context,
-            from,
+            self.store.clone(),
+            &self.config.client,
         )?;
-        self.save_collaboration(&collab)?;
+
+        // Add the program to the programs list
+        self.add_new_program(&id, ProgramVersion::V2)?;
+
         info!("Key setup finished for program: {:?}", id);
         Ok(())
     }
 
     fn get_aggregated_pubkey(&mut self, from: Identifier, id: Uuid) -> Result<(), BitVMXError> {
-        info!("Getting aggregated pubkey for collaboration: {:?}", id);
+        info!("Getting aggregated pubkey for program: {:?}", id);
 
-        let response = if let Some(collaboration) = self.get_collaboration(&id)? {
-            if let Some(aggregated_pubkey) = &collaboration.aggregated_key {
-                OutgoingBitVMXApiMessages::AggregatedPubkey(id, aggregated_pubkey.clone())
+        // First try to read from globals (new protocol-based approach)
+        let response = if let Some(key_var) = self.program_context.globals.get_var(&id, "final_aggregated_key")? {
+            if let Ok(key_str) = key_var.string() {
+                // Convert String to PublicKey
+                match key_str.parse::<PublicKey>() {
+                    Ok(aggregated_pubkey) => {
+                        info!("Found aggregated pubkey in globals for program: {:?}", id);
+                        OutgoingBitVMXApiMessages::AggregatedPubkey(id, aggregated_pubkey)
+                    }
+                    Err(e) => {
+                        warn!("Failed to parse aggregated key from globals: {}", e);
+                        OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(id)
+                    }
+                }
             } else {
                 OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(id)
             }
         } else {
-            OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(id)
+            // Fallback to Collaboration for backward compatibility
+            if let Some(collaboration) = self.get_collaboration(&id)? {
+                if let Some(aggregated_pubkey) = &collaboration.aggregated_key {
+                    OutgoingBitVMXApiMessages::AggregatedPubkey(id, aggregated_pubkey.clone())
+                } else {
+                    OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(id)
+                }
+            } else {
+                OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(id)
+            }
         };
 
         self.reply(from, response)?;

@@ -2,48 +2,14 @@
 
 use anyhow::Result;
 use bitvmx_client::program::variables::VariableTypes;
-use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel, PROGRAM_TYPE_AGGREGATED_KEY};
+use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel};
 use common::{
-    config_trace, get_all, init_bitvmx, prepare_bitcoin, send_all, LOCAL_SLEEP_MS,
+    config_trace, get_all, init_bitvmx, prepare_bitcoin, send_all,
 };
 use tracing::info;
 use uuid::Uuid;
 
 mod common;
-
-/// Helper struct to configure and setup an aggregated key protocol test
-pub struct AggregatedKeyConfig {
-    pub id: Uuid,
-}
-
-impl AggregatedKeyConfig {
-    pub fn new(id: Uuid) -> Self {
-        Self { id }
-    }
-
-    /// Send setup messages to all participants
-    pub fn setup(
-        &self,
-        id_channel_pairs: &Vec<ParticipantChannel>,
-        addresses: Vec<bitvmx_client::program::participant::CommsAddress>,
-        leader: u16,
-    ) -> Result<()> {
-        // Send setup message once - it will be processed by all participants
-        // Each participant receives the same setup message through the broker
-        let setup_msg = IncomingBitVMXApiMessages::SetupV2(
-            self.id,
-            PROGRAM_TYPE_AGGREGATED_KEY.to_string(),
-            addresses,
-            leader,
-        );
-
-        let msg_str = setup_msg.to_string()
-            .map_err(|e| anyhow::anyhow!("Failed to serialize setup message: {}", e))?;
-
-        send_all(id_channel_pairs, &msg_str)?;
-        Ok(())
-    }
-}
 
 /// Test aggregated key protocol (implemented with ProgramV2 and SetupEngine)
 #[ignore]
@@ -122,52 +88,9 @@ pub fn test_aggregated_key() -> Result<()> {
 
     info!("Aggregated public key: {}", aggregated_pub_key);
 
-    info!("================================================");
-    info!("Setting up Aggregated Key Protocol with ProgramV2");
-    info!("================================================");
-
-    // Create program ID
-    let program_id = Uuid::new_v4();
-    info!("Program ID: {}", program_id);
-
-    // Create AggregatedKeyConfig (uses ProgramV2 with SetupEngine)
-    let aggregated_key_config = AggregatedKeyConfig::new(program_id);
-
-    // Call setup_v2 through the API (op1 is leader, index 0)
-    aggregated_key_config.setup(&id_channel_pairs, addresses.clone(), 0)?;
-
-    info!("================================================");
-    info!("Waiting for setup completion");
-    info!("================================================");
-
-    // Wait for setup to complete - all participants should respond with ProgramSetupComplete
-    let setup_responses = get_all(&channels, &mut instances, false)?;
-
-    for (i, response) in setup_responses.iter().enumerate() {
-        info!("Setup response from participant {}: {:?}", i, response);
-        // Verify setup completed successfully
-        assert!(
-            matches!(response, OutgoingBitVMXApiMessages::SetupCompleted(_)),
-            "Setup should complete successfully"
-        );
-    }
-
-    info!("================================================");
-    info!("Setup completed! SetupEngine successfully exchanged keys");
-    info!("================================================");
-
-    info!("================================================");
-    info!("Processing final tick to reach Ready state");
-    info!("================================================");
-
-    // AggregatedKeyProtocol has no transactions to monitor, so we just need
-    // to tick the instances a few times to let them transition to Ready state
-    for _ in 0..10 {
-        for instance in instances.iter_mut() {
-            instance.tick()?;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(LOCAL_SLEEP_MS));
-    }
+    // AggregatedKeyProtocol suppresses SetupCompleted (send_setup_completed() returns false)
+    // because SetupKey callers only expect the AggregatedPubkey response.
+    // No need to drain any extra messages here.
 
     info!("================================================");
     info!("Verifying Aggregated Key Result - Aggregated MuSig2 Key");
@@ -175,9 +98,9 @@ pub fn test_aggregated_key() -> Result<()> {
 
     // The AggregatedKeyProtocol stores the final aggregated key in globals
     // under the variable name "final_aggregated_key"
-    // IMPORTANT: Use program_id so GetVar knows which program's globals to query
+    // IMPORTANT: Use aggregation_id so GetVar knows which program's globals to query
     let get_key_command = IncomingBitVMXApiMessages::GetVar(
-        program_id,
+        aggregation_id,
         "final_aggregated_key".to_string(),
     )
     .to_string()?;
@@ -213,7 +136,7 @@ pub fn test_aggregated_key() -> Result<()> {
     assert_eq!(aggregated_keys[0], aggregated_keys[2],
         "All participants should compute the same aggregated MuSig2 key");
 
-    info!("✅ Aggregated key protocol successful! All three participants computed the same aggregated key");
+    info!("Aggregated key protocol successful! All three participants computed the same aggregated key");
     info!("   Aggregated MuSig2 Key: {}", aggregated_keys[0]);
 
     info!("================================================");

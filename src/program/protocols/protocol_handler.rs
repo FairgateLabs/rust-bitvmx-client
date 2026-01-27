@@ -554,6 +554,15 @@ pub trait ProtocolHandler {
         Ok(())
     }
 
+    /// Whether ProgramV2 should send a SetupCompleted message when this protocol finishes setup.
+    ///
+    /// Defaults to `true`. Protocols that are used internally (e.g., AggregatedKeyProtocol
+    /// created by SetupKey) should return `false` to maintain backward compatibility,
+    /// since the caller only expects the protocol-specific response (e.g., AggregatedPubkey).
+    fn send_setup_completed(&self) -> bool {
+        true
+    }
+
     /// Returns the list of setup step names for this protocol.
     ///
     /// By default, returns the standard steps: keys, nonces, signatures.
