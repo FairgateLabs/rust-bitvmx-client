@@ -1119,6 +1119,8 @@ impl DisputeResolutionProtocol {
         let wots_sigs =
             self.get_winternitz_signature_for_script(&scripts[leaf_index as usize], context)?;
 
+        // NOTE: This logic exists to support a specific failure case used in tests,
+        // where inputs are intentionally marked as failed via `fail_input_{name}`.
         if context
             .globals
             .get_var(&self.ctx.id, format!("fail_input_{name}").as_str())?

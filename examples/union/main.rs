@@ -227,20 +227,14 @@ pub fn cli_watchtowers_start_enabler() -> Result<()> {
 pub fn cli_request_pegin() -> Result<()> {
     let (committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
 
-    request_pegin(
-        &committee,
-        &mut user,
-    )?;
+    request_pegin(&committee, &mut user)?;
     Ok(())
 }
 
 pub fn cli_reject_pegin() -> Result<()> {
     let (committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
 
-    let (txid, _) = request_pegin(
-        &committee,
-        &mut user,
-    )?;
+    let (txid, _) = request_pegin(&committee, &mut user)?;
 
     let member_index = 1;
     committee.members[member_index].reject_pegin(committee.committee_id(), txid, member_index)?;
@@ -386,9 +380,7 @@ pub fn cli_op_no_cosign() -> Result<()> {
     wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
 
     // Shutdown operator to avoid him to respond to challenge with OP_COSIGN_TX
-    committee.members[op_index]
-        .bitvmx
-        .shutdown(Duration::from_secs(10));
+    committee.members[op_index].bitvmx.shutdown();
 
     // Amount of blocks enough to allow WT to dispatch OP_NO_COSIGN_TX and following TXs
     let blocks_to_wait = committee.stream_settings.op_no_cosign_timelock as u32 + 30;
@@ -421,9 +413,7 @@ pub fn cli_wt_no_challenge() -> Result<()> {
         }
 
         // Shutdown watchtowers to avoid them to send START_CH
-        committee.members[wt_index]
-            .bitvmx
-            .shutdown(Duration::from_secs(10));
+        committee.members[wt_index].bitvmx.shutdown();
     }
     // Amount of blocks enough to allow OP to dispatch WT_NO_CHALLENGE_TX and following TXs
     let blocks_to_wait = committee.stream_settings.wt_no_challenge_timelock as u32 + 30;
@@ -451,9 +441,7 @@ pub fn cli_input_not_revealed() -> Result<()> {
     wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
 
     // Kill operator client after some blocks to simulate offline behavior
-    committee.members[op_index]
-        .bitvmx
-        .shutdown(Duration::from_secs(10));
+    committee.members[op_index].bitvmx.shutdown();
 
     // Wait some blocks to be able to dispatch and mine INPUT_NOT_REVEALED_TX
     let blocks_to_wait = committee.stream_settings.input_not_revealed_timelock as u32 + 10;
@@ -706,13 +694,23 @@ pub fn db_print_dispute_keys(committee: &Committee) -> Result<()> {
         info!("Member {} (id: {}):", i, member.id);
 
         if let Some(covenant_key) = member.keyring.dispute_pubkey {
-            info!("    compressed: 0x{}", covenant_key.to_bytes().as_slice().to_lower_hex_string());
+            info!(
+                "    compressed: 0x{}",
+                covenant_key.to_bytes().as_slice().to_lower_hex_string()
+            );
         }
         info!("  ---");
     }
 
     info!("Committee Aggregated Keys:");
-    info!("  - Dispute Aggregated Key (compressed): 0x{}", committee.public_key()?.to_bytes().as_slice().to_lower_hex_string());
+    info!(
+        "  - Dispute Aggregated Key (compressed): 0x{}",
+        committee
+            .public_key()?
+            .to_bytes()
+            .as_slice()
+            .to_lower_hex_string()
+    );
     info!("");
     info!("============================================================");
 
@@ -738,17 +736,17 @@ pub fn db_print_accept_pegin_tx(
         info!("  - Slot Index: {}", slot_index);
         info!("  - Rootstock Address: 0x{}", rootstock_address);
         info!("  - Reimbursement Pubkey: {}", reimbursement_pubkey);
-        info!("  - Accept Pegin Sighash: 0x{}", accept_pegin_sighash.to_lower_hex_string());
+        info!(
+            "  - Accept Pegin Sighash: 0x{}",
+            accept_pegin_sighash.to_lower_hex_string()
+        );
         info!("");
     });
 
     Ok(())
 }
 
-pub fn request_pegin(
-    committee: &Committee,
-    user: &mut User,
-) -> Result<(Txid, u64)> {
+pub fn request_pegin(committee: &Committee, user: &mut User) -> Result<(Txid, u64)> {
     let amount: u64 = STREAM_DENOMINATION;
     let committee_public_key = committee.public_key()?;
     let dispute_keys = committee.get_dispute_keys();
@@ -781,10 +779,7 @@ pub fn request_and_accept_pegin(
     committee: &mut Committee,
     user: &mut User,
 ) -> Result<(usize, u64, Transaction)> {
-    let (request_pegin_txid, amount) = request_pegin(
-        committee,
-        user,
-    )?;
+    let (request_pegin_txid, amount) = request_pegin(committee, user)?;
 
     // This came from the contracts
     let rootstock_address = user.get_rsk_address();
@@ -819,7 +814,6 @@ pub fn request_and_accept_pegin(
         reimbursement_pubkey.clone(),
         &accept_pegin_sighash,
     )?;
-
 
     info!("Accept peg-in TX dispatched. Txid: {}", accept_pegin_txid);
     print_link(NETWORK, accept_pegin_txid);
