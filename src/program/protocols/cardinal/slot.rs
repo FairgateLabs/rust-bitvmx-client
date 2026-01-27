@@ -294,7 +294,7 @@ impl ProtocolHandler for SlotProtocol {
                             txid,
                             i + 2, // the first stop is at pos 2
                             Context::ProgramId(self.ctx.id).to_string()?,
-                            Some(self.bitcoin_requested_confirmations()),
+                            self.requested_confirmations(program_context),
                         ),
                     )?;
                 }

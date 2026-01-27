@@ -69,8 +69,16 @@ pub trait ProtocolHandler {
 
     // Default to 1 confirmation for Bitcoin transactions
     // Each protocol should override if different
-    fn bitcoin_requested_confirmations(&self) -> u32 {
-        1
+    fn requested_confirmations(&self, program_context: &ProgramContext) -> Option<u32> {
+        Some(
+            program_context
+                .globals
+                .get_var(&self.context().id, "requested_confirmations")
+                .unwrap_or(None)
+                .unwrap_or(VariableTypes::Number(1))
+                .number()
+                .unwrap_or(1) as u32,
+        )
     }
 
     fn build(

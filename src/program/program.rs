@@ -721,11 +721,13 @@ impl Program {
                 let (txns_to_monitor, vouts_to_monitor) =
                     self.protocol.get_transactions_to_monitor(program_context)?;
 
+                let confirmations = self.protocol.requested_confirmations(program_context);
+
                 let context = Context::ProgramId(self.program_id);
                 let txs_to_monitor = TypesToMonitor::Transactions(
                     txns_to_monitor.clone(),
                     context.to_string()?,
-                    None,
+                    confirmations,
                 );
 
                 program_context
