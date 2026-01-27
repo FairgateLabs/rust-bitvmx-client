@@ -227,9 +227,6 @@ pub struct DisputeResolutionProtocol {
     ctx: ProtocolContext,
 }
 
-const MIN_RELAY_FEE: u64 = 1;
-pub const DUST: u64 = 500 * MIN_RELAY_FEE;
-
 pub fn protocol_cost() -> u64 {
     38_000 // This is a placeholder value, adjust as needed
 }
@@ -469,8 +466,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
     ) -> Result<(), BitVMXError> {
         // TODO get this from config, all values expressed in satoshis
 
-        let speedup_dust = DUST;
-        let fee = DUST;
+        let dust = OutputType::generic_dust_limit(None).to_sat();
+        let speedup_dust = dust;
+        let fee = dust;
 
         let (prover_signs, verifier_signs) = if self.role() == ParticipantRole::Prover {
             (SignMode::Single, SignMode::Skip)
@@ -1055,7 +1053,7 @@ impl DisputeResolutionProtocol {
         claim: &str,
         action_number: u32,
     ) -> Result<(), BitVMXError> {
-        let speedup_dust = DUST;
+        let speedup_dust = OutputType::generic_dust_limit(None).to_sat();
         protocol.add_transaction(&action_wins(role, action_number))?;
         protocol.add_connection(
             &format!("{:?}_ACTION_{action_number}", role),
