@@ -60,9 +60,13 @@ pub trait BitVMXApi {
         from: Identifier,
         id: Uuid,
         txid: Txid,
+        confirmation_threshold: Option<u32>,
     ) -> Result<(), BitVMXError>;
 
-    fn subscribe_to_rsk_pegin(&mut self) -> Result<(), BitVMXError>;
+    fn subscribe_to_rsk_pegin(
+        &mut self,
+        confirmation_threshold: Option<u32>,
+    ) -> Result<(), BitVMXError>;
 
     fn get_var(&mut self, from: Identifier, id: Uuid, key: &str) -> Result<(), BitVMXError>;
 

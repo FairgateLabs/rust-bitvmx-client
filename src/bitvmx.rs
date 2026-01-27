@@ -1172,6 +1172,7 @@ impl BitVMXApi for BitVMX {
         from: Identifier,
         id: Uuid,
         txid: Txid,
+        confirmation_threshold: Option<u32>,
     ) -> Result<(), BitVMXError> {
         info!(
             "Subscribing to transaction: {:?} from: {} id: {}",
@@ -1182,17 +1183,20 @@ impl BitVMXApi for BitVMX {
             .monitor(TypesToMonitor::Transactions(
                 vec![txid],
                 Context::RequestId(id, from).to_string()?,
-                None, // Receive news on every confirmation.
+                confirmation_threshold,
             ))?;
 
         Ok(())
     }
 
-    fn subscribe_to_rsk_pegin(&mut self) -> Result<(), BitVMXError> {
+    fn subscribe_to_rsk_pegin(
+        &mut self,
+        confirmation_threshold: Option<u32>,
+    ) -> Result<(), BitVMXError> {
         // Enable RSK pegin transaction monitoring
         self.program_context
             .bitcoin_coordinator
-            .monitor(TypesToMonitor::RskPegin(None))?;
+            .monitor(TypesToMonitor::RskPegin(confirmation_threshold))?;
         Ok(())
     }
 
@@ -1563,12 +1567,14 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::Setup(id, program_type, participants, leader) => {
                 BitVMXApi::setup(self, id, program_type, participants, leader)?
             }
-            IncomingBitVMXApiMessages::SubscribeToTransaction(uuid, txid) => {
-                BitVMXApi::subscribe_to_tx(self, from, uuid, txid)?
-            }
+            IncomingBitVMXApiMessages::SubscribeToTransaction(
+                uuid,
+                txid,
+                confirmation_threshold,
+            ) => BitVMXApi::subscribe_to_tx(self, from, uuid, txid, confirmation_threshold)?,
 
-            IncomingBitVMXApiMessages::SubscribeToRskPegin() => {
-                BitVMXApi::subscribe_to_rsk_pegin(self)?
+            IncomingBitVMXApiMessages::SubscribeToRskPegin(confirmation_threshold) => {
+                BitVMXApi::subscribe_to_rsk_pegin(self, confirmation_threshold)?
             }
 
             IncomingBitVMXApiMessages::GetSPVProof(txid) => {

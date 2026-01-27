@@ -67,6 +67,12 @@ pub trait ProtocolHandler {
         self.context_mut().storage = Some(storage);
     }
 
+    // Default to 1 confirmation for Bitcoin transactions
+    // Each protocol should override if different
+    fn bitcoin_requested_confirmations(&self) -> u32 {
+        1
+    }
+
     fn build(
         &self,
         _keys: Vec<ParticipantKeys>,

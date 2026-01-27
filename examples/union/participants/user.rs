@@ -107,7 +107,8 @@ impl User {
         info!(id = self.id, "Requesting pegin");
 
         // Enable RSK pegin monitoring using the public API
-        self.bitvmx.subscribe_to_rsk_pegin()?;
+        //TOOD: Define proper confirmation threshold
+        self.bitvmx.subscribe_to_rsk_pegin(Some(1))?;
 
         // Create a proper RSK pegin transaction and send it as if it was a user transaction
         let packet_number = 0;
@@ -467,7 +468,10 @@ impl User {
 
         info!(
             "  - Reimbursement Key (x-only): 0x{}",
-            reimbursement_xpk.serialize().as_slice().to_lower_hex_string()
+            reimbursement_xpk
+                .serialize()
+                .as_slice()
+                .to_lower_hex_string()
         );
 
         let reimbursement_compressed = self.public_key.to_bytes();
@@ -489,16 +493,23 @@ impl User {
     ) {
         use crate::participants::common::db_print_transaction;
 
-        db_print_transaction("REQUEST PEGIN TRANSACTION DETAILS", signed_transaction, || {
-            info!("");
-            info!("Parameters Used:");
-            info!("  - Denomination: {} satoshis", stream_value);
-            info!("  - Packet Number: {}", packet_number);
-            info!("  - RSK Address: 0x{}", self.rsk_address);
-            self.db_print_reimbursement_keys(reimbursement_xpk);
-            info!("  - Request Pegin Timelock: {} blocks", request_pegin_timelock);
-            info!("");
-        });
+        db_print_transaction(
+            "REQUEST PEGIN TRANSACTION DETAILS",
+            signed_transaction,
+            || {
+                info!("");
+                info!("Parameters Used:");
+                info!("  - Denomination: {} satoshis", stream_value);
+                info!("  - Packet Number: {}", packet_number);
+                info!("  - RSK Address: 0x{}", self.rsk_address);
+                self.db_print_reimbursement_keys(reimbursement_xpk);
+                info!(
+                    "  - Request Pegin Timelock: {} blocks",
+                    request_pegin_timelock
+                );
+                info!("");
+            },
+        );
     }
 
     fn sign_p2wpkh_transaction(
