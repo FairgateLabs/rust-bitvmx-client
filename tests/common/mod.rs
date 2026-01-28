@@ -147,7 +147,6 @@ pub fn tick(instance: &mut BitVMX) {
     instance.process_api_messages().unwrap();
     instance.process_comms_messages().unwrap();
     instance.process_programs().unwrap();
-    instance.process_collaboration().unwrap();
     instance.process_pending_messages().unwrap();
 }
 
