@@ -203,47 +203,43 @@ pub fn test_aggregated_key_single_participant() -> Result<()> {
     info!("Op1 (sole participant) address: {:?}", addresses[0]);
 
     info!("================================================");
-    info!("Setting up single-participant AggregatedKeyProtocol via SetupV2");
+    info!("Setting up single-participant AggregatedKeyProtocol via SetupKey");
     info!("================================================");
 
-    let program_id = Uuid::new_v4();
-    info!("Program ID: {}", program_id);
+    let aggregation_id = Uuid::new_v4();
+    info!("Aggregation ID: {}", aggregation_id);
 
-    let aggregated_key_config = AggregatedKeyConfig::new(program_id);
-    aggregated_key_config.setup(&id_channel_pairs, addresses.clone(), 0)?;
+    // Use SetupKey API (same as multi-participant test)
+    let command = IncomingBitVMXApiMessages::SetupKey(
+        aggregation_id,
+        addresses.clone(),
+        None,
+        0, // Op1 is leader (and only participant)
+    )
+    .to_string()?;
+    send_all(&id_channel_pairs, &command)?;
 
     info!("================================================");
-    info!("Waiting for setup completion (single participant)");
+    info!("Waiting for AggregatedPubkey response (single participant)");
     info!("================================================");
 
     // SetupEngine should handle single participant naturally:
-    // Tick 1: Generate keys, store own data, broadcast to 0 others, mark self complete
-    // Tick 2: can_advance() -> true, on_step_complete(), build_protocol()
-    // Tick 3: Monitoring -> Ready, sends SetupCompleted
-    let setup_responses = get_all(&channels, &mut instances, false)?;
+    // - Generate keys, store own data, broadcast to 0 others, mark self complete
+    // - can_advance() -> true, on_step_complete(), build_protocol()
+    // - AggregatedKeyProtocol::build() uses own key directly (no MuSig2 aggregation needed)
+    // - Sends AggregatedPubkey message
+    let msgs = get_all(&channels, &mut instances, false)?;
+    let aggregated_pub_key = msgs[0].aggregated_pub_key().unwrap();
 
-    for (i, response) in setup_responses.iter().enumerate() {
-        info!("Setup response from participant {}: {:?}", i, response);
-        assert!(
-            matches!(response, OutgoingBitVMXApiMessages::SetupCompleted(_)),
-            "Setup should complete successfully for single participant"
-        );
-    }
+    info!("Single participant aggregated public key: {}", aggregated_pub_key);
 
     info!("================================================");
-    info!("Verifying Aggregated Key Result");
+    info!("Verifying Aggregated Key in Globals");
     info!("================================================");
 
-    // Tick a few times to ensure Ready state
-    for _ in 0..10 {
-        for instance in instances.iter_mut() {
-            instance.tick()?;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(LOCAL_SLEEP_MS));
-    }
-
+    // Verify the key is stored in globals
     let get_key_command = IncomingBitVMXApiMessages::GetVar(
-        program_id,
+        aggregation_id,
         "final_aggregated_key".to_string(),
     )
     .to_string()?;
@@ -257,8 +253,11 @@ pub fn test_aggregated_key_single_participant() -> Result<()> {
                 "Variable name should be 'final_aggregated_key'");
 
             if let VariableTypes::String(key_str) = key_value {
-                info!("Single participant aggregated key: {}", key_str);
+                info!("Participant {} final aggregated key from globals: {}", i, key_str);
                 assert!(!key_str.is_empty(), "Key should not be empty");
+                // Verify it matches the AggregatedPubkey message
+                assert_eq!(key_str, aggregated_pub_key.to_string(),
+                    "Key in globals should match AggregatedPubkey message");
             } else {
                 panic!("Expected String variable type for aggregated key");
             }
