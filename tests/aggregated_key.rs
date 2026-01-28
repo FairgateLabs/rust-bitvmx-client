@@ -151,3 +151,130 @@ pub fn test_aggregated_key() -> Result<()> {
     Ok(())
 }
 
+/// Test single-participant aggregated key protocol
+/// Verifies that SetupEngine handles a single participant naturally
+/// without any special-case bypass in ProgramV2::setup()
+#[ignore]
+#[test]
+pub fn test_aggregated_key_single_participant() -> Result<()> {
+    config_trace();
+
+    let (_bitcoin_client, bitcoind, _wallet) = prepare_bitcoin()?;
+
+    // Initialize just 1 BitVMX instance
+    let (bitvmx_op1, _address_op1, bridge_op1, _) = init_bitvmx("op_1", false)?;
+
+    let mut instances = vec![bitvmx_op1];
+    let channels = vec![bridge_op1.clone()];
+
+    let identifiers = [
+        instances[0].get_components_config().bitvmx.clone(),
+    ];
+
+    let id_channel_pairs: Vec<ParticipantChannel> = identifiers
+        .clone()
+        .into_iter()
+        .zip(channels.clone().into_iter())
+        .map(|(identifier, channel)| ParticipantChannel { id: identifier, channel })
+        .collect();
+
+    info!("================================================");
+    info!("Syncing Bitcoin blockchain");
+    info!("================================================");
+
+    for _ in 0..101 {
+        for instance in instances.iter_mut() {
+            instance.process_bitcoin_updates()?;
+        }
+    }
+
+    info!("================================================");
+    info!("Getting participant address");
+    info!("================================================");
+
+    let command = IncomingBitVMXApiMessages::GetCommInfo(Uuid::new_v4()).to_string()?;
+    send_all(&id_channel_pairs, &command)?;
+    let comm_info: Vec<OutgoingBitVMXApiMessages> = get_all(&channels, &mut instances, false)?;
+    let addresses = comm_info
+        .iter()
+        .map(|msg| msg.comm_info().unwrap().1)
+        .collect::<Vec<_>>();
+
+    info!("Op1 (sole participant) address: {:?}", addresses[0]);
+
+    info!("================================================");
+    info!("Setting up single-participant AggregatedKeyProtocol via SetupV2");
+    info!("================================================");
+
+    let program_id = Uuid::new_v4();
+    info!("Program ID: {}", program_id);
+
+    let aggregated_key_config = AggregatedKeyConfig::new(program_id);
+    aggregated_key_config.setup(&id_channel_pairs, addresses.clone(), 0)?;
+
+    info!("================================================");
+    info!("Waiting for setup completion (single participant)");
+    info!("================================================");
+
+    // SetupEngine should handle single participant naturally:
+    // Tick 1: Generate keys, store own data, broadcast to 0 others, mark self complete
+    // Tick 2: can_advance() -> true, on_step_complete(), build_protocol()
+    // Tick 3: Monitoring -> Ready, sends SetupCompleted
+    let setup_responses = get_all(&channels, &mut instances, false)?;
+
+    for (i, response) in setup_responses.iter().enumerate() {
+        info!("Setup response from participant {}: {:?}", i, response);
+        assert!(
+            matches!(response, OutgoingBitVMXApiMessages::SetupCompleted(_)),
+            "Setup should complete successfully for single participant"
+        );
+    }
+
+    info!("================================================");
+    info!("Verifying Aggregated Key Result");
+    info!("================================================");
+
+    // Tick a few times to ensure Ready state
+    for _ in 0..10 {
+        for instance in instances.iter_mut() {
+            instance.tick()?;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(LOCAL_SLEEP_MS));
+    }
+
+    let get_key_command = IncomingBitVMXApiMessages::GetVar(
+        program_id,
+        "final_aggregated_key".to_string(),
+    )
+    .to_string()?;
+
+    send_all(&id_channel_pairs, &get_key_command)?;
+    let key_responses = get_all(&channels, &mut instances, false)?;
+
+    for (i, response) in key_responses.iter().enumerate() {
+        if let Some((_, key_name, key_value)) = response.variable() {
+            assert_eq!(key_name, "final_aggregated_key",
+                "Variable name should be 'final_aggregated_key'");
+
+            if let VariableTypes::String(key_str) = key_value {
+                info!("Single participant aggregated key: {}", key_str);
+                assert!(!key_str.is_empty(), "Key should not be empty");
+            } else {
+                panic!("Expected String variable type for aggregated key");
+            }
+        } else {
+            panic!("Participant {} did not return the aggregated key variable", i);
+        }
+    }
+
+    info!("================================================");
+    info!("Single-participant test completed successfully!");
+    info!("================================================");
+
+    if let Some(bitcoind) = bitcoind {
+        bitcoind.stop()?;
+    }
+
+    Ok(())
+}
+

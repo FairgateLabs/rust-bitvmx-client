@@ -123,11 +123,17 @@ impl ProtocolHandler for AggregatedKeyProtocol {
             ))
         })?;
 
-        // 🎯 THIS IS WHERE new_musig2_session IS CALLED
-        // The protocol is responsible for its own MuSig2 aggregation
-        let aggregated_key = context
-            .key_chain
-            .new_musig2_session(aggregated_pub_keys, *my_key)?;
+        // Compute the aggregated key
+        // MuSig2 requires at least 2 participants; with a single participant,
+        // the aggregated key is simply that participant's own public key.
+        let aggregated_key = if aggregated_pub_keys.len() == 1 {
+            tracing::info!("AggregatedKeyProtocol: Single participant, using own key directly");
+            *my_key
+        } else {
+            context
+                .key_chain
+                .new_musig2_session(aggregated_pub_keys, *my_key)?
+        };
 
         // Store the aggregated key in globals for easy retrieval
         let key_str = aggregated_key.to_string();
