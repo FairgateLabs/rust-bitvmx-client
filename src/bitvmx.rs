@@ -52,7 +52,6 @@ use bitvmx_wallet::wallet::Wallet;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    collections::HashSet,
     net::SocketAddr,
     rc::Rc,
     sync::{Arc, Mutex},
@@ -82,8 +81,6 @@ pub struct BitVMX {
     count: u32,
     message_queue: MessageQueue,
     timestamp_verifier: TimestampVerifier,
-    notified_request: HashSet<(Uuid, (Txid, Option<u32>))>,
-    notified_rsk_pegin: HashSet<Txid>, //workaround for RSK pegin transactions because ack seems to be not working
     bitcoin_update: BitcoinUpdateState,
     wallet: Wallet,
     ping_helper: PingHelper,
@@ -209,8 +206,6 @@ impl BitVMX {
             count: 0,
             message_queue,
             timestamp_verifier,
-            notified_request: HashSet::new(),
-            notified_rsk_pegin: HashSet::new(),
             bitcoin_update: BitcoinUpdateState {
                 last_update: Instant::now(),
                 was_synced: false,
@@ -616,35 +611,17 @@ impl BitVMX {
 
         match &context {
             Context::ProgramId(program_id) => {
-                if !self
-                    .notified_request
-                    .contains(&(*program_id, (tx_id, vout)))
-                {
-                    let program = self.load_program(program_id)?;
+                let program = self.load_program(program_id)?;
 
-                    program.notify_news(
-                        tx_id,
-                        vout,
-                        tx_status,
-                        context_data,
-                        &self.program_context,
-                    )?;
-                    self.notified_request.insert((*program_id, (tx_id, vout)));
-                }
+                program.notify_news(tx_id, vout, tx_status, context_data, &self.program_context)?;
             }
             Context::RequestId(request_id, from) => {
-                if !self
-                    .notified_request
-                    .contains(&(*request_id, (tx_id, vout)))
-                {
-                    info!("Sending News: {:?} for context: {:?}", tx_id, context);
-                    self.program_context.broker_channel.send(
-                        from,
-                        OutgoingBitVMXApiMessages::Transaction(*request_id, tx_status, None)
-                            .to_string()?,
-                    )?;
-                    self.notified_request.insert((*request_id, (tx_id, vout)));
-                }
+                info!("Sending News: {:?} for context: {:?}", tx_id, context);
+                self.program_context.broker_channel.send(
+                    from,
+                    OutgoingBitVMXApiMessages::Transaction(*request_id, tx_status, None)
+                        .to_string()?,
+                )?;
             }
             Context::Protocol(_, _) => {}
         }
@@ -689,12 +666,9 @@ impl BitVMX {
                     let data = serde_json::to_string(
                         &OutgoingBitVMXApiMessages::PeginTransactionFound(tx_id, tx_status),
                     )?;
-                    if !self.notified_rsk_pegin.contains(&tx_id) {
-                        self.program_context
-                            .broker_channel
-                            .send(&self.config.components.l2, data)?;
-                        self.notified_rsk_pegin.insert(tx_id);
-                    }
+                    self.program_context
+                        .broker_channel
+                        .send(&self.config.components.l2, data)?;
                     ack_news = AckNews::Monitor(AckMonitorNews::RskPeginTransaction(tx_id));
                 }
                 MonitorNews::NewBlock(block_id, block_height) => {
