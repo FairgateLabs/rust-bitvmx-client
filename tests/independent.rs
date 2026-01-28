@@ -1051,8 +1051,8 @@ fn retry_failed_txs_test() -> Result<()> {
         Some(settings.clone()),
     )?);
 
-    coordinator.dispatch(tx1, None, "test_1".to_string(), None, None)?;
-    coordinator.dispatch(tx2, None, "test_2".to_string(), None, None)?;
+    coordinator.dispatch(tx1, None, "test_1".to_string(), None, Some(1))?;
+    coordinator.dispatch(tx2, None, "test_2".to_string(), None, Some(1))?;
 
     for _ in 0..10 {
         coordinator.tick()?;

@@ -743,7 +743,7 @@ impl Program {
                         txid,
                         vout,
                         context.to_string()?,
-                        None, // Receive news on every confirmation.
+                        confirmations,
                     );
 
                     program_context
@@ -882,7 +882,7 @@ impl Program {
             speedup,
             context.to_string()?,
             None, // Dispatch immediately
-            None, // Receive news on every confirmation.
+            self.protocol.requested_confirmations(program_context),
         )?;
 
         Ok(())

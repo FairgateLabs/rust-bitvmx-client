@@ -367,7 +367,7 @@ impl AdvanceFundsProtocol {
             speedup,
             format!("dispute_core_setup_{}:{}", self.ctx.id, tx_name), // Context string
             None,
-            None, // Receive news on every confirmation.
+            self.requested_confirmations(context),
         )?;
 
         info!("{} dispatched with txid: {}", tx_name, txid);
@@ -406,7 +406,7 @@ impl AdvanceFundsProtocol {
             speedup,
             tx_name.clone(), // Context string
             block_height,    // Dispatch immediately
-            None,            // Receive news on every confirmation.
+            self.requested_confirmations(context),
         )?;
 
         info!("{} dispatched with txid: {}", tx_name, txid);
@@ -519,7 +519,7 @@ impl AdvanceFundsProtocol {
             speedup,
             format!("advance_funds_{}:{}", self.ctx.id, ADVANCE_FUNDS_TX), // Context string
             None,
-            None, // Receive news on every confirmation.
+            self.requested_confirmations(context),
         )?;
 
         info!("{} dispatched with txid: {}", ADVANCE_FUNDS_TX, txid);

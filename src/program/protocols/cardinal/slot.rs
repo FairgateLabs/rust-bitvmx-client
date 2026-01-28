@@ -275,7 +275,7 @@ impl ProtocolHandler for SlotProtocol {
                     Some(speedup_data),
                     Context::ProgramId(self.ctx.id).to_string()?,
                     None,
-                    None, // Receive news on every confirmation.
+                    self.requested_confirmations(program_context),
                 )?;
 
                 let total_operators = program_context
@@ -370,7 +370,7 @@ impl ProtocolHandler for SlotProtocol {
                             Some(speedup_data),
                             Context::ProgramId(self.ctx.id).to_string()?,
                             None,
-                            None, // Receive news on every confirmation.
+                            self.requested_confirmations(program_context),
                         )?;
                     } else {
                         info!("The stop for the operator {} has been consumed", i);
@@ -408,7 +408,7 @@ impl ProtocolHandler for SlotProtocol {
                         Some(speedup_data),
                         Context::ProgramId(self.ctx.id).to_string()?,
                         None,
-                        None, // Receive news on every confirmation.
+                        self.requested_confirmations(program_context),
                     )?;
                 }
             }
@@ -449,7 +449,7 @@ impl ProtocolHandler for SlotProtocol {
                 Some(speedup_data),
                 Context::ProgramId(self.ctx.id).to_string()?,
                 Some(tx_status.block_info.unwrap().height + timelock_blocks),
-                None, // Receive news on every confirmation.
+                self.requested_confirmations(program_context),
             )?;
         }
 

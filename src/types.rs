@@ -115,7 +115,7 @@ pub enum IncomingBitVMXApiMessages {
     SubscribeToTransaction(Uuid, Txid, Option<u32>),
     SubscribeToRskPegin(Option<u32>),
     GetSPVProof(Txid),
-    DispatchTransaction(Uuid, Transaction),
+    DispatchTransaction(Uuid, Transaction, Option<u32>),
     DispatchTransactionName(Uuid, String),
     SetupKey(Uuid, Vec<CommsAddress>, Option<Vec<PublicKey>>, u16),
     GetAggregatedPubkey(Uuid),

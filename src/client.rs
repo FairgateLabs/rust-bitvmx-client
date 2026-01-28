@@ -69,8 +69,17 @@ impl BitVMXClient {
         ))
     }
 
-    pub fn dispatch_transaction(&self, id: Uuid, tx: Transaction) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::DispatchTransaction(id, tx))
+    pub fn dispatch_transaction(
+        &self,
+        id: Uuid,
+        tx: Transaction,
+        confirmation_threshold: Option<u32>,
+    ) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::DispatchTransaction(
+            id,
+            tx,
+            confirmation_threshold,
+        ))
     }
 
     pub fn dispatch_transaction_name(&self, id: Uuid, name: String) -> Result<()> {

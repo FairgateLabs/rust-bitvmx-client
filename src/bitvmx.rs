@@ -1258,6 +1258,7 @@ impl BitVMXApi for BitVMX {
         from: Identifier,
         id: Uuid,
         tx: Transaction,
+        confirmation_threshold: Option<u32>,
     ) -> Result<(), BitVMXError> {
         info!("Dispatching transaction: {:?} for instance: {:?}", tx, id);
 
@@ -1266,7 +1267,7 @@ impl BitVMXApi for BitVMX {
             None,
             Context::RequestId(id, from).to_string()?,
             None,
-            None, // Receive news on every confirmation.
+            confirmation_threshold,
         )?;
 
         Ok(())
@@ -1519,7 +1520,8 @@ impl BitVMXApi for BitVMX {
                 };
 
                 let txid = tx.compute_txid();
-                self.dispatch_transaction(from.clone(), id, tx.clone())?;
+                //TODO: Is this confirmation threshold of 1 appropriate here?
+                self.dispatch_transaction(from.clone(), id, tx.clone(), Some(1))?;
                 self.wallet.update_with_tx(&tx)?;
 
                 self.program_context.broker_channel.send(
@@ -1584,8 +1586,8 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::DispatchTransactionName(id, tx) => {
                 BitVMXApi::dispatch_transaction_name(self, id, &tx)?
             }
-            IncomingBitVMXApiMessages::DispatchTransaction(id, tx) => {
-                BitVMXApi::dispatch_transaction(self, from, id, tx)?;
+            IncomingBitVMXApiMessages::DispatchTransaction(id, tx, confirmation_threshold) => {
+                BitVMXApi::dispatch_transaction(self, from, id, tx, confirmation_threshold)?;
             }
             IncomingBitVMXApiMessages::SetupKey(
                 id,

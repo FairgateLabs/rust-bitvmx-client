@@ -1899,7 +1899,7 @@ impl DisputeCoreProtocol {
             speedup,
             format!("dispute_core_claim_gate_{}:{}", self.ctx.id, tx_name),
             action.block_height(),
-            None, // Receive news on every confirmation.
+            self.requested_confirmations(context),
         )?;
 
         info!(
@@ -1944,7 +1944,7 @@ impl DisputeCoreProtocol {
                 speedup,
                 format!("dispute_core_start_ch_{}:{}", self.ctx.id, tx_name),
                 None,
-                None, // Receive news on every confirmation.
+                self.requested_confirmations(context),
             )?;
 
             info!(
@@ -2258,7 +2258,7 @@ impl DisputeCoreProtocol {
             speedup,
             init_challenge_name.clone(),
             None,
-            None,
+            self.requested_confirmations(context),
         )?;
 
         info!(
@@ -2697,7 +2697,7 @@ impl DisputeCoreProtocol {
             speedup,
             format!("dispute_core_{}:{}", self.ctx.id, tx_name),
             tx_type.block_height(),
-            None, // Receive news on every confirmation.
+            self.requested_confirmations(context),
         )?;
 
         info!(

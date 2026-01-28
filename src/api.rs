@@ -30,6 +30,7 @@ pub trait BitVMXApi {
         from: Identifier,
         id: Uuid,
         tx: Transaction,
+        confirmation_threshold: Option<u32>,
     ) -> Result<(), BitVMXError>;
 
     fn handle_message(&mut self, msg: String, from: Identifier) -> Result<(), BitVMXError>;

@@ -172,8 +172,8 @@ impl ProtocolHandler for RejectPegInProtocol {
             tx,
             speedup,
             format!("reject_pegin_{}:{}", self.ctx.id, REJECT_PEGIN_TX), // Context string
-            None, // Receive news on every confirmation.
-            None, // Dispatch immediately
+            None,                                                        // Dispatch immediately
+            self.requested_confirmations(context),
         )?;
 
         info!(
