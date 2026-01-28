@@ -149,31 +149,6 @@ impl ProgramV2 {
             config: config.clone(),
         };
 
-        // Handle single-participant protocols
-        // For protocols with only one participant, we can skip setup and go straight to building
-        if program.participants.len() == 1 {
-            info!("ProgramV2: Single participant protocol - building immediately");
-
-            // Generate keys for the protocol (normally done by SetupEngine's KeysStep)
-            let my_keys = program.protocol.generate_keys(context)?;
-
-            // Store keys in the format expected by build_protocol
-            let all_keys = vec![my_keys];
-            let all_keys_json = serde_json::to_string(&all_keys)
-                .map_err(|e| BitVMXError::InvalidMessage(format!("Failed to serialize keys: {}", e)))?;
-
-            context.globals.set_var(
-                &program.protocol.context().id,
-                "all_participant_keys",
-                crate::program::variables::VariableTypes::String(all_keys_json),
-            )?;
-
-            // Now build and sign
-            program.build_protocol(context)?;
-            program.protocol.sign(&context.key_chain)?;
-            program.state = ProgramState::Monitoring;
-        }
-
         // Save initial program (includes state)
         program.save()?;
 
