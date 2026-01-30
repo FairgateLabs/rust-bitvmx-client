@@ -35,8 +35,6 @@ use crate::{
 pub struct TransferProtocol {
     ctx: ProtocolContext,
 }
-pub const MIN_RELAY_FEE: u64 = 1;
-pub const DUST: u64 = 500 * MIN_RELAY_FEE;
 
 pub const ASSET_TX: &str = "ASSET_TX";
 pub const GID_TX: &str = "GID_TX_";
@@ -145,6 +143,8 @@ impl ProtocolHandler for TransferProtocol {
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
+        let dust = OutputType::generic_dust_limit(None).to_sat();
+
         let tc = TransferConfig::new_from_globals(self.ctx.id, &context.globals)?;
 
         let operator_txs = tc.get_utxos(self.context().storage.as_ref().unwrap().clone())?;
@@ -228,7 +228,7 @@ impl ProtocolHandler for TransferProtocol {
 
                 // add one output to test
                 let speedup_key = keys[op as usize].get_public("speedup")?;
-                pb.add_speedup_output(&mut protocol, &txname, DUST, speedup_key)?;
+                pb.add_speedup_output(&mut protocol, &txname, dust, speedup_key)?;
             }
         }
 

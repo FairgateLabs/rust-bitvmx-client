@@ -4,6 +4,7 @@ use bitcoin::PublicKey;
 use protocol_builder::{
     builder::Protocol,
     scripts::{self, SignMode},
+    types::OutputType,
 };
 use storage_backend::storage::Storage;
 use tracing::info;
@@ -14,9 +15,8 @@ use crate::{
     program::{
         protocols::{
             cardinal::{
-                slot,
-                transfer::{pub_too_group, DUST},
-                LOCKED_ASSET_UTXO, OPERATORS_AGGREGATED_PUB, OPERATOR_COUNT, UNSPENDABLE,
+                slot, transfer::pub_too_group, LOCKED_ASSET_UTXO, OPERATORS_AGGREGATED_PUB,
+                OPERATOR_COUNT, UNSPENDABLE,
             },
             claim::ClaimGate,
             protocol_handler::external_fund_tx,
@@ -168,6 +168,7 @@ impl TransferConfig {
         &self,
         storage: Rc<Storage>,
     ) -> Result<Vec<(Vec<PartialUtxo>, PartialUtxo)>, BitVMXError> {
+        let dust = OutputType::generic_dust_limit(None).to_sat();
         let mut operator_txs = Vec::new();
         if let Some((utxo_0, utxo_1)) = &self.sample_utxos {
             for _op in 0..self.operator_count {
@@ -194,9 +195,9 @@ impl TransferConfig {
                 let verify_aggregated_action =
                     scripts::check_aggregated_signature(&self.aggregated_pub, SignMode::Aggregate);
                 let output_action =
-                    external_fund_tx(&self.aggregated_pub, vec![verify_aggregated_action], DUST)?;
+                    external_fund_tx(&self.aggregated_pub, vec![verify_aggregated_action], dust)?;
 
-                let operator_won_tx = (tx_id, vout, Some(DUST), Some(output_action));
+                let operator_won_tx = (tx_id, vout, Some(dust), Some(output_action));
 
                 let mut gidtxs = vec![];
 
@@ -213,9 +214,9 @@ impl TransferConfig {
                     let output_action = external_fund_tx(
                         &self.aggregated_pub,
                         vec![verify_aggregated_action],
-                        DUST,
+                        dust,
                     )?;
-                    gidtxs.push((tx_id, vout, Some(DUST), Some(output_action)));
+                    gidtxs.push((tx_id, vout, Some(dust), Some(output_action)));
                 }
                 operator_txs.push((gidtxs, operator_won_tx));
             }
