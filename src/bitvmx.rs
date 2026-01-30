@@ -647,8 +647,8 @@ impl BitVMX {
 
             match monitor_news {
                 MonitorNews::Transaction(tx_id, tx_status, context_data) => {
-                    self.handle_news(tx_id, tx_status, context_data, None)?;
-                    ack_news = AckNews::Monitor(AckMonitorNews::Transaction(tx_id));
+                    self.handle_news(tx_id, tx_status, context_data.clone(), None)?;
+                    ack_news = AckNews::Monitor(AckMonitorNews::Transaction(tx_id, context_data));
                 }
                 MonitorNews::SpendingUTXOTransaction(
                     tx_id,
@@ -656,10 +656,11 @@ impl BitVMX {
                     tx_status,
                     context_data,
                 ) => {
-                    self.handle_news(tx_id, tx_status, context_data, Some(output_index))?;
+                    self.handle_news(tx_id, tx_status, context_data.clone(), Some(output_index))?;
                     ack_news = AckNews::Monitor(AckMonitorNews::SpendingUTXOTransaction(
                         tx_id,
                         output_index,
+                        context_data,
                     ));
                 }
                 MonitorNews::RskPeginTransaction(tx_id, tx_status) => {
