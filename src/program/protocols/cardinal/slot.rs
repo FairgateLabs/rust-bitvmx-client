@@ -49,26 +49,27 @@ pub const CERT_HASH_TX: &str = "CERT_HASH_TX_";
 pub const GID_TX: &str = "GID_TX_";
 pub const OP_WINS: &str = "OP_WINS_";
 
-pub const MIN_RELAY_FEE: u64 = 1;
-pub const DUST: u64 = 500 * MIN_RELAY_FEE;
-
 pub fn slot_protocol_dust_cost(participants: u8) -> u64 {
-    participants as u64 * (amount_for_operator(participants) + DUST) + DUST
+    let dust = OutputType::generic_dust_limit(None).to_sat();
+    participants as u64 * (amount_for_operator(participants) + dust) + dust
 }
 
 pub fn amount_for_operator(operators: u8) -> u64 {
+    let dust = OutputType::generic_dust_limit(None).to_sat();
+
     let protocol_cost = dispute::protocol_cost();
-    let claim_gate_cost = ClaimGate::cost(DUST, DUST, operators as u8 - 1, 1, false);
-    let amount_for_operator = DUST
-        + DUST
-        + (DUST * 8) // sending the cert hash tx
+    let claim_gate_cost = ClaimGate::cost(dust, dust, operators as u8 - 1, 1, false);
+    let amount_for_operator = dust
+        + dust
+        + (dust * 8) // sending the cert hash tx
         + claim_gate_cost
         + (operators -1) as u64 * protocol_cost;
     amount_for_operator
 }
 
 pub fn dust_claim_stop() -> u64 {
-    2 * DUST
+    let dust = OutputType::generic_dust_limit(None).to_sat();
+    2 * dust
 }
 
 pub fn claim_name(op: usize) -> String {
@@ -482,6 +483,8 @@ impl ProtocolHandler for SlotProtocol {
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
+        let dust = OutputType::generic_dust_limit(None).to_sat();
+
         let SlotProtocolConfiguration {
             operators_aggregated_pub,
             operators_pairs,
@@ -604,7 +607,7 @@ impl ProtocolHandler for SlotProtocol {
                 pb.add_speedup_output(
                     &mut protocol,
                     &gidtotx,
-                    DUST,
+                    dust,
                     other_key.get_public("speedup")?,
                 )?;
             }
@@ -630,8 +633,8 @@ impl ProtocolHandler for SlotProtocol {
                 &claim_name(i),
                 (claimer, claimer_sign),
                 &operators_aggregated_pub,
-                DUST,
-                DUST,
+                dust,
+                dust,
                 stopper_keys,
                 Some(subset_cov),
                 timelock_blocks,
@@ -697,18 +700,18 @@ impl ProtocolHandler for SlotProtocol {
                     pb.add_speedup_output(
                         &mut protocol,
                         &tx_name,
-                        DUST,
+                        dust,
                         key.get_public("speedup")?,
                     )?;
                 }
             }
 
-            pb.add_speedup_output(&mut protocol, &certhashtx, DUST, key.get_public("speedup")?)?;
+            pb.add_speedup_output(&mut protocol, &certhashtx, dust, key.get_public("speedup")?)?;
         }
 
         // Add the speedup output for the SETUP_TX
         for k in keys {
-            pb.add_speedup_output(&mut protocol, SETUP_TX, DUST, k.get_public("speedup")?)?;
+            pb.add_speedup_output(&mut protocol, SETUP_TX, dust, k.get_public("speedup")?)?;
         }
         info!("Going to build");
 
@@ -734,6 +737,8 @@ impl SlotProtocol {
         &self,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        let dust = OutputType::generic_dust_limit(None).to_sat();
+
         let signature = self
             .load_protocol()?
             .input_taproot_key_spend_signature(SETUP_TX, 0)?
@@ -757,7 +762,7 @@ impl SlotProtocol {
             .get_var(&self.ctx.id, OPERATORS)?
             .unwrap()
             .number()?;
-        let speedup_utxo = Utxo::new(txid, operators + self.ctx.my_idx as u32, DUST, &speedup);
+        let speedup_utxo = Utxo::new(txid, operators + self.ctx.my_idx as u32, dust, &speedup);
 
         //debug!("Transaction to send: {:?}", tx);
         Ok((tx, Some(speedup_utxo.into())))
@@ -826,7 +831,8 @@ impl SlotProtocol {
         //put timelock as zero so the index matches the gid
 
         //3 dust, one for the tx, one for the connection output and one for the speedup output
-        let output_type = OutputType::taproot(3 * DUST, &operators_aggregated_pub, &leaves)?;
+        let dust = OutputType::generic_dust_limit(None).to_sat();
+        let output_type = OutputType::taproot(3 * dust, &operators_aggregated_pub, &leaves)?;
 
         protocol.add_transaction_output(&certhashtx, &output_type)?;
 
@@ -844,6 +850,8 @@ impl SlotProtocol {
     ) -> Result<(), BitVMXError> {
         // create txs that consumes the gid
         // it requires 2 dust
+        let dust = OutputType::generic_dust_limit(None).to_sat();
+
         for gid in 1..=gid_max {
             let gidtx = group_id_tx(i, gid);
 
@@ -863,7 +871,7 @@ impl SlotProtocol {
 
             protocol.add_transaction_output(
                 &gidtx,
-                &OutputType::taproot(DUST, &operators_aggregated_pub, &[gid_spend])?,
+                &OutputType::taproot(dust, &operators_aggregated_pub, &[gid_spend])?,
             )?;
 
             protocol.add_connection(
@@ -885,7 +893,7 @@ impl SlotProtocol {
                 .add_transaction_output(&gidtx, &OutputType::segwit_unspendable(differenciator)?)?;
 
             let pb = ProtocolBuilder {};
-            pb.add_speedup_output(protocol, &gidtx, DUST, key.get_public("speedup")?)?;
+            pb.add_speedup_output(protocol, &gidtx, dust, key.get_public("speedup")?)?;
         }
 
         Ok(())

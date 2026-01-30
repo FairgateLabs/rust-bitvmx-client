@@ -39,10 +39,9 @@ pub struct LockProtocol {
     ctx: ProtocolContext,
 }
 
-pub const MIN_RELAY_FEE: u64 = 1;
-pub const DUST: u64 = 500 * MIN_RELAY_FEE;
 pub fn lock_protocol_dust_cost(participants: u8) -> u64 {
-    DUST * ((2 * participants as u64) + 3)
+    let dust = OutputType::generic_dust_limit(None).to_sat();
+    dust * ((2 * participants as u64) + 3)
 }
 
 impl ProtocolHandler for LockProtocol {
@@ -131,6 +130,8 @@ impl ProtocolHandler for LockProtocol {
         _computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
+        let dust = OutputType::generic_dust_limit(None).to_sat();
+
         let LockProtocolConfiguration {
             operators_aggregated_pub,
             operators_aggregated_pub_happy_path,
@@ -229,7 +230,7 @@ impl ProtocolHandler for LockProtocol {
         let taproot_script_protocol_fee_addres_signature_in_tx_lock =
             scripts::check_aggregated_signature(&operators_aggregated_pub, SignMode::Aggregate);
 
-        let amount = self.checked_sub(protocol_utxo.2.unwrap(), DUST * (keys.len() as u64 + 1))?;
+        let amount = self.checked_sub(protocol_utxo.2.unwrap(), dust * (keys.len() as u64 + 1))?;
         // [Protocol fees taproot output]
         // taproot output sending the fee (incentive to bridge) to the fee address
         protocol.add_transaction_output(
@@ -242,19 +243,19 @@ impl ProtocolHandler for LockProtocol {
         )?;
 
         //compute the speedup outputs of the happy_path
-        let amount = self.checked_sub(amount, keys.len() as u64 * DUST)?;
+        let amount = self.checked_sub(amount, keys.len() as u64 * dust)?;
         self.add_happy_path(
             &mut protocol,
             &operators_aggregated_pub_happy_path,
             &operators_aggregated_pub,
             ordinal_utxo.2.unwrap(),
-            self.checked_sub(amount, DUST)?,
+            self.checked_sub(amount, dust)?,
         )?;
 
         let pb = ProtocolBuilder {};
         for k in keys {
-            pb.add_speedup_output(&mut protocol, LOCK_TX, DUST, k.get_public("speedup")?)?;
-            pb.add_speedup_output(&mut protocol, HAPPY_PATH_TX, DUST, k.get_public("speedup")?)?;
+            pb.add_speedup_output(&mut protocol, LOCK_TX, dust, k.get_public("speedup")?)?;
+            pb.add_speedup_output(&mut protocol, HAPPY_PATH_TX, dust, k.get_public("speedup")?)?;
         }
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
@@ -325,6 +326,8 @@ impl LockProtocol {
         &self,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        let dust = OutputType::generic_dust_limit(None).to_sat();
+
         //Gets the
         let secret = context
             .witness
@@ -359,7 +362,7 @@ impl LockProtocol {
             .get_var(&self.ctx.id, "speedup")?
             .unwrap()
             .pubkey()?;
-        let speedup_utxo = Utxo::new(txid, 2 + self.ctx.my_idx as u32, DUST, &speedup);
+        let speedup_utxo = Utxo::new(txid, 2 + self.ctx.my_idx as u32, dust, &speedup);
 
         debug!("Transaction to send: {:?}", tx);
         Ok((tx, Some(speedup_utxo.into())))
@@ -369,6 +372,8 @@ impl LockProtocol {
         &self,
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        let dust = OutputType::generic_dust_limit(None).to_sat();
+
         let signature = self
             .load_protocol()?
             .input_taproot_script_spend_signature(HAPPY_PATH_TX, 0, 1)?
@@ -393,7 +398,7 @@ impl LockProtocol {
             .get_var(&self.ctx.id, "speedup")?
             .unwrap()
             .pubkey()?;
-        let speedup_utxo = Utxo::new(txid, 2 + self.ctx.my_idx as u32, DUST, &speedup);
+        let speedup_utxo = Utxo::new(txid, 2 + self.ctx.my_idx as u32, dust, &speedup);
 
         debug!("Transaction to send: {:?}", tx);
         Ok((tx, Some(speedup_utxo.into())))
