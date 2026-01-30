@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
+    bitvmx::Context,
     errors::BitVMXError,
     program::{
         participant::{ParticipantKeys, PublicKeyType},
@@ -171,7 +172,7 @@ impl ProtocolHandler for RejectPegInProtocol {
         context.bitcoin_coordinator.dispatch(
             tx,
             speedup,
-            format!("reject_pegin_{}:{}", self.ctx.id, REJECT_PEGIN_TX), // Context string
+            Context::ProgramId(self.ctx.id).to_string()?,
             None,                                                        // Dispatch immediately
             self.requested_confirmations(context),
         )?;

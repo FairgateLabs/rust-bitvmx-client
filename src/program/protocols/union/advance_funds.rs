@@ -17,6 +17,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{
+    bitvmx::Context,
     errors::BitVMXError,
     program::{
         participant::ParticipantKeys,
@@ -365,7 +366,7 @@ impl AdvanceFundsProtocol {
         context.bitcoin_coordinator.dispatch(
             tx.clone(),
             speedup,
-            format!("dispute_core_setup_{}:{}", self.ctx.id, tx_name), // Context string
+            Context::ProgramId(self.ctx.id).to_string()?,
             None,
             self.requested_confirmations(context),
         )?;
@@ -404,7 +405,7 @@ impl AdvanceFundsProtocol {
         context.bitcoin_coordinator.dispatch(
             tx.clone(),
             speedup,
-            tx_name.clone(), // Context string
+            Context::ProgramId(self.ctx.id).to_string()?,
             block_height,    // Dispatch immediately
             self.requested_confirmations(context),
         )?;
@@ -517,7 +518,7 @@ impl AdvanceFundsProtocol {
         context.bitcoin_coordinator.dispatch(
             tx,
             speedup,
-            format!("advance_funds_{}:{}", self.ctx.id, ADVANCE_FUNDS_TX), // Context string
+            Context::ProgramId(self.ctx.id).to_string()?,
             None,
             self.requested_confirmations(context),
         )?;

@@ -1897,7 +1897,7 @@ impl DisputeCoreProtocol {
         context.bitcoin_coordinator.dispatch(
             tx,
             speedup,
-            format!("dispute_core_claim_gate_{}:{}", self.ctx.id, tx_name),
+            Context::ProgramId(self.ctx.id).to_string()?,
             action.block_height(),
             self.requested_confirmations(context),
         )?;
@@ -1942,7 +1942,7 @@ impl DisputeCoreProtocol {
             context.bitcoin_coordinator.dispatch(
                 tx,
                 speedup,
-                format!("dispute_core_start_ch_{}:{}", self.ctx.id, tx_name),
+                Context::ProgramId(self.ctx.id).to_string()?,
                 None,
                 self.requested_confirmations(context),
             )?;
@@ -2256,7 +2256,7 @@ impl DisputeCoreProtocol {
         context.bitcoin_coordinator.dispatch(
             tx,
             speedup,
-            init_challenge_name.clone(),
+            Context::ProgramId(self.ctx.id).to_string()?,
             None,
             self.requested_confirmations(context),
         )?;
@@ -2695,7 +2695,7 @@ impl DisputeCoreProtocol {
         context.bitcoin_coordinator.dispatch(
             tx,
             speedup,
-            format!("dispute_core_{}:{}", self.ctx.id, tx_name),
+            Context::ProgramId(self.ctx.id).to_string()?,
             tx_type.block_height(),
             self.requested_confirmations(context),
         )?;
