@@ -35,7 +35,7 @@ use bitvmx_broker::channel::retry_helper::RetryPolicy;
 use bitvmx_broker::identification::allow_list::AllowList;
 use bitvmx_broker::identification::routing::RoutingTable;
 use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
-use bitvmx_job_dispatcher::helper::PingMessage;
+use dispatcher_utils::PingMessage;
 use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::graph::graph::GraphOptions;
 
