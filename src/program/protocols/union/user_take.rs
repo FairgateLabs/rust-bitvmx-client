@@ -8,7 +8,7 @@ use protocol_builder::{
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
-        output::SpeedupData,
+        output::{AmountMode, SpeedupData},
         OutputType,
     },
 };
@@ -136,6 +136,7 @@ impl ProtocolHandler for UserTakeProtocol {
                 value: Amount::from_sat(user_amount),
                 script_pubkey: script_pubkey.clone(),
                 public_key: user_pubkey,
+                amount_mode: AmountMode::from(user_amount),
             },
         )?;
 
@@ -145,6 +146,7 @@ impl ProtocolHandler for UserTakeProtocol {
                 value: Amount::from_sat(SPEEDUP_VALUE),
                 script_pubkey: script_pubkey.clone(),
                 public_key: user_pubkey,
+                amount_mode: AmountMode::from(SPEEDUP_VALUE),
             },
         )?;
 

@@ -31,6 +31,7 @@ use bitvmx_client::{
 };
 use bitvmx_wallet::wallet::Destination;
 use core::clone::Clone;
+use protocol_builder::types::output::AmountMode;
 use protocol_builder::types::{OutputType, Utxo};
 use std::collections::HashMap;
 use std::thread;
@@ -137,7 +138,6 @@ impl Member {
 
         Ok((take_pubkey, dispute_pubkey, communication_pubkey))
     }
-
 
     // pub fn setup_member_keys(&mut self) -> Result<(PublicKey, PublicKey, PublicKey)> {
     //     // For regtest/testing, use deterministic UUIDs based on member id so keys are reproducible
@@ -599,16 +599,19 @@ impl Member {
             value: Amount::from_sat(amounts.speedup),
             script_pubkey: script_pubkey.clone(),
             public_key: public_key,
+            amount_mode: AmountMode::from(amounts.speedup),
         };
         let operator_funding_ot = OutputType::SegwitPublicKey {
             value: Amount::from_sat(amounts.protocol_funding),
             script_pubkey: script_pubkey.clone(),
             public_key: public_key,
+            amount_mode: AmountMode::from(amounts.protocol_funding),
         };
         let advance_funds_ot = OutputType::SegwitPublicKey {
             value: Amount::from_sat(amounts.advance_funds),
             script_pubkey: script_pubkey.clone(),
             public_key: public_key,
+            amount_mode: AmountMode::from(amounts.advance_funds),
         };
 
         // Output indexes should match the order in the Destination::Batch above

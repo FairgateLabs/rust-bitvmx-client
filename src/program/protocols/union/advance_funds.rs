@@ -8,7 +8,7 @@ use protocol_builder::{
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
-        output::SpeedupData,
+        output::{AmountMode, SpeedupData},
         OutputType,
     },
 };
@@ -151,6 +151,7 @@ impl ProtocolHandler for AdvanceFundsProtocol {
                 value: Amount::from_sat(user_amount),
                 script_pubkey: user_script_pubkey.clone(),
                 public_key: request.user_pubkey,
+                amount_mode: AmountMode::from(user_amount),
             },
         )?;
 
@@ -186,6 +187,7 @@ impl ProtocolHandler for AdvanceFundsProtocol {
                     value: Amount::from_sat(op_change),
                     script_pubkey: op_script_pubkey.clone(),
                     public_key: request.my_take_pubkey,
+                    amount_mode: AmountMode::from(op_change),
                 },
             )?;
         }
