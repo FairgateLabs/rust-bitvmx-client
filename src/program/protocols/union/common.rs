@@ -5,7 +5,7 @@ use protocol_builder::{
     builder::Protocol,
     errors::ProtocolBuilderError,
     scripts::{ProtocolScript, SignMode},
-    types::{input::SpendMode, InputArgs, OutputType},
+    types::{input::SpendMode, output::AmountMode, InputArgs, OutputType},
 };
 use sha2::{Digest, Sha256};
 use tracing::info;
@@ -268,6 +268,7 @@ pub fn get_operator_output_type(
         value: Amount::from_sat(amount),
         script_pubkey,
         public_key: *dispute_key,
+        amount_mode: AmountMode::from(amount),
     })
 }
 

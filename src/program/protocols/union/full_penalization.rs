@@ -10,7 +10,7 @@ use protocol_builder::{
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
-        output::SpeedupData,
+        output::{AmountMode, SpeedupData},
         OutputType,
     },
 };
@@ -381,6 +381,7 @@ impl FullPenalizationProtocol {
                 &OutputType::SegwitUnspendable {
                     value: Amount::from_sat(0),
                     script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
+                    amount_mode: AmountMode::from(0),
                 },
             )?;
 
@@ -435,6 +436,7 @@ impl FullPenalizationProtocol {
                 &OutputType::SegwitUnspendable {
                     value: Amount::from_sat(0),
                     script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
+                    amount_mode: AmountMode::from(0),
                 },
             )?;
 
@@ -480,6 +482,7 @@ impl FullPenalizationProtocol {
                 &OutputType::SegwitUnspendable {
                     value: Amount::from_sat(0),
                     script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
+                    amount_mode: AmountMode::from(0),
                 },
             )?;
         }
@@ -1059,6 +1062,7 @@ impl FullPenalizationProtocol {
                 &OutputType::SegwitUnspendable {
                     value: Amount::from_sat(0),
                     script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
+                    amount_mode: AmountMode::from(0),
                 },
             )?;
 
@@ -1108,6 +1112,7 @@ impl FullPenalizationProtocol {
                 &OutputType::SegwitUnspendable {
                     value: Amount::from_sat(0),
                     script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
+                    amount_mode: AmountMode::from(0),
                 },
             )?;
         }
