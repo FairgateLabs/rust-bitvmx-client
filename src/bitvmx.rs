@@ -52,7 +52,6 @@ use bitvmx_wallet::wallet::Wallet;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    collections::HashSet,
     net::SocketAddr,
     rc::Rc,
     sync::{Arc, Mutex},
@@ -82,8 +81,6 @@ pub struct BitVMX {
     count: u32,
     message_queue: MessageQueue,
     timestamp_verifier: TimestampVerifier,
-    notified_request: HashSet<(Uuid, (Txid, Option<u32>))>,
-    notified_rsk_pegin: HashSet<Txid>, //workaround for RSK pegin transactions because ack seems to be not working
     bitcoin_update: BitcoinUpdateState,
     wallet: Wallet,
     ping_helper: PingHelper,
@@ -209,8 +206,6 @@ impl BitVMX {
             count: 0,
             message_queue,
             timestamp_verifier,
-            notified_request: HashSet::new(),
-            notified_rsk_pegin: HashSet::new(),
             bitcoin_update: BitcoinUpdateState {
                 last_update: Instant::now(),
                 was_synced: false,
@@ -616,35 +611,17 @@ impl BitVMX {
 
         match &context {
             Context::ProgramId(program_id) => {
-                if !self
-                    .notified_request
-                    .contains(&(*program_id, (tx_id, vout)))
-                {
-                    let program = self.load_program(program_id)?;
+                let program = self.load_program(program_id)?;
 
-                    program.notify_news(
-                        tx_id,
-                        vout,
-                        tx_status,
-                        context_data,
-                        &self.program_context,
-                    )?;
-                    self.notified_request.insert((*program_id, (tx_id, vout)));
-                }
+                program.notify_news(tx_id, vout, tx_status, context_data, &self.program_context)?;
             }
             Context::RequestId(request_id, from) => {
-                if !self
-                    .notified_request
-                    .contains(&(*request_id, (tx_id, vout)))
-                {
-                    info!("Sending News: {:?} for context: {:?}", tx_id, context);
-                    self.program_context.broker_channel.send(
-                        from,
-                        OutgoingBitVMXApiMessages::Transaction(*request_id, tx_status, None)
-                            .to_string()?,
-                    )?;
-                    self.notified_request.insert((*request_id, (tx_id, vout)));
-                }
+                info!("Sending News: {:?} for context: {:?}", tx_id, context);
+                self.program_context.broker_channel.send(
+                    from,
+                    OutgoingBitVMXApiMessages::Transaction(*request_id, tx_status, None)
+                        .to_string()?,
+                )?;
             }
             Context::Protocol(_, _) => {}
         }
@@ -670,8 +647,8 @@ impl BitVMX {
 
             match monitor_news {
                 MonitorNews::Transaction(tx_id, tx_status, context_data) => {
-                    self.handle_news(tx_id, tx_status, context_data, None)?;
-                    ack_news = AckNews::Monitor(AckMonitorNews::Transaction(tx_id));
+                    self.handle_news(tx_id, tx_status, context_data.clone(), None)?;
+                    ack_news = AckNews::Monitor(AckMonitorNews::Transaction(tx_id, context_data));
                 }
                 MonitorNews::SpendingUTXOTransaction(
                     tx_id,
@@ -679,22 +656,20 @@ impl BitVMX {
                     tx_status,
                     context_data,
                 ) => {
-                    self.handle_news(tx_id, tx_status, context_data, Some(output_index))?;
+                    self.handle_news(tx_id, tx_status, context_data.clone(), Some(output_index))?;
                     ack_news = AckNews::Monitor(AckMonitorNews::SpendingUTXOTransaction(
                         tx_id,
                         output_index,
+                        context_data,
                     ));
                 }
                 MonitorNews::RskPeginTransaction(tx_id, tx_status) => {
                     let data = serde_json::to_string(
                         &OutgoingBitVMXApiMessages::PeginTransactionFound(tx_id, tx_status),
                     )?;
-                    if !self.notified_rsk_pegin.contains(&tx_id) {
-                        self.program_context
-                            .broker_channel
-                            .send(&self.config.components.l2, data)?;
-                        self.notified_rsk_pegin.insert(tx_id);
-                    }
+                    self.program_context
+                        .broker_channel
+                        .send(&self.config.components.l2, data)?;
                     ack_news = AckNews::Monitor(AckMonitorNews::RskPeginTransaction(tx_id));
                 }
                 MonitorNews::NewBlock(block_id, block_height) => {
@@ -1172,6 +1147,7 @@ impl BitVMXApi for BitVMX {
         from: Identifier,
         id: Uuid,
         txid: Txid,
+        confirmation_threshold: Option<u32>,
     ) -> Result<(), BitVMXError> {
         info!(
             "Subscribing to transaction: {:?} from: {} id: {}",
@@ -1182,17 +1158,20 @@ impl BitVMXApi for BitVMX {
             .monitor(TypesToMonitor::Transactions(
                 vec![txid],
                 Context::RequestId(id, from).to_string()?,
-                None, // Receive news on every confirmation.
+                confirmation_threshold,
             ))?;
 
         Ok(())
     }
 
-    fn subscribe_to_rsk_pegin(&mut self) -> Result<(), BitVMXError> {
+    fn subscribe_to_rsk_pegin(
+        &mut self,
+        confirmation_threshold: Option<u32>,
+    ) -> Result<(), BitVMXError> {
         // Enable RSK pegin transaction monitoring
         self.program_context
             .bitcoin_coordinator
-            .monitor(TypesToMonitor::RskPegin(None))?;
+            .monitor(TypesToMonitor::RskPegin(confirmation_threshold))?;
         Ok(())
     }
 
@@ -1254,6 +1233,7 @@ impl BitVMXApi for BitVMX {
         from: Identifier,
         id: Uuid,
         tx: Transaction,
+        confirmation_threshold: Option<u32>,
     ) -> Result<(), BitVMXError> {
         info!("Dispatching transaction: {:?} for instance: {:?}", tx, id);
 
@@ -1262,7 +1242,7 @@ impl BitVMXApi for BitVMX {
             None,
             Context::RequestId(id, from).to_string()?,
             None,
-            None, // Receive news on every confirmation.
+            confirmation_threshold,
         )?;
 
         Ok(())
@@ -1515,7 +1495,8 @@ impl BitVMXApi for BitVMX {
                 };
 
                 let txid = tx.compute_txid();
-                self.dispatch_transaction(from.clone(), id, tx.clone())?;
+                //TODO: Is this confirmation threshold of 1 appropriate here?
+                self.dispatch_transaction(from.clone(), id, tx.clone(), Some(1))?;
                 self.wallet.update_with_tx(&tx)?;
 
                 self.program_context.broker_channel.send(
@@ -1563,12 +1544,14 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::Setup(id, program_type, participants, leader) => {
                 BitVMXApi::setup(self, id, program_type, participants, leader)?
             }
-            IncomingBitVMXApiMessages::SubscribeToTransaction(uuid, txid) => {
-                BitVMXApi::subscribe_to_tx(self, from, uuid, txid)?
-            }
+            IncomingBitVMXApiMessages::SubscribeToTransaction(
+                uuid,
+                txid,
+                confirmation_threshold,
+            ) => BitVMXApi::subscribe_to_tx(self, from, uuid, txid, confirmation_threshold)?,
 
-            IncomingBitVMXApiMessages::SubscribeToRskPegin() => {
-                BitVMXApi::subscribe_to_rsk_pegin(self)?
+            IncomingBitVMXApiMessages::SubscribeToRskPegin(confirmation_threshold) => {
+                BitVMXApi::subscribe_to_rsk_pegin(self, confirmation_threshold)?
             }
 
             IncomingBitVMXApiMessages::GetSPVProof(txid) => {
@@ -1578,8 +1561,8 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::DispatchTransactionName(id, tx) => {
                 BitVMXApi::dispatch_transaction_name(self, id, &tx)?
             }
-            IncomingBitVMXApiMessages::DispatchTransaction(id, tx) => {
-                BitVMXApi::dispatch_transaction(self, from, id, tx)?;
+            IncomingBitVMXApiMessages::DispatchTransaction(id, tx, confirmation_threshold) => {
+                BitVMXApi::dispatch_transaction(self, from, id, tx, confirmation_threshold)?;
             }
             IncomingBitVMXApiMessages::SetupKey(
                 id,

@@ -13,9 +13,12 @@ use crate::{
     bitvmx::Context,
     errors::BitVMXError,
     program::{
-        protocols::dispute::{
-            challenge::get_challenge_leaf, input_handler::*, DisputeResolutionProtocol, CHALLENGE,
-            CHALLENGE_READ, COMMITMENT, EXECUTE, GET_HASHES_AND_STEP,
+        protocols::{
+            dispute::{
+                challenge::get_challenge_leaf, input_handler::*, DisputeResolutionProtocol,
+                CHALLENGE, CHALLENGE_READ, COMMITMENT, EXECUTE, GET_HASHES_AND_STEP,
+            },
+            protocol_handler::ProtocolHandler,
         },
         variables::VariableTypes,
     },
@@ -48,7 +51,7 @@ pub fn execution_result(
                 Some(sp),
                 Context::ProgramId(drp.ctx.id).to_string()?,
                 None,
-                None, // Receive news on every confirmation.
+                drp.requested_confirmations(context),
             )?;
         }
         EmulatorResultType::VerifierCheckExecutionResult { step } => {
@@ -119,7 +122,7 @@ pub fn execution_result(
                 Some(sp),
                 Context::ProgramId(*id).to_string()?,
                 None,
-                None, // Receive news on every confirmation.
+                drp.requested_confirmations(context),
             )?;
         }
         EmulatorResultType::VerifierChooseSegmentResult { v_decision, round } => {
@@ -162,7 +165,7 @@ pub fn execution_result(
                 Some(sp),
                 Context::ProgramId(*id).to_string()?,
                 None,
-                None, // Receive news on every confirmation.
+                drp.requested_confirmations(context),
             )?;
         }
         EmulatorResultType::ProverFinalTraceResult { prover_final_trace } => {
@@ -176,7 +179,7 @@ pub fn execution_result(
                     Some(sp),
                     Context::ProgramId(*id).to_string()?,
                     None,
-                    None, // Receive news on every confirmation.
+                    drp.requested_confirmations(context),
                 )?;
             } else {
                 let (final_trace, resigned_step_hash, resigned_next_hash, conflict_step) =
@@ -292,7 +295,7 @@ pub fn execution_result(
                     Some(sp),
                     Context::ProgramId(*id).to_string()?,
                     None,
-                    None, // Receive news on every confirmation.
+                    drp.requested_confirmations(context),
                 )?;
             }
         }
@@ -330,7 +333,7 @@ pub fn execution_result(
                 Some(sp),
                 Context::ProgramId(*id).to_string()?,
                 None,
-                None, // Receive news on every confirmation.
+                drp.requested_confirmations(context),
             )?;
         }
         EmulatorResultType::ProverGetHashesAndStepResult {
@@ -346,7 +349,7 @@ pub fn execution_result(
                     Some(sp),
                     Context::ProgramId(*id).to_string()?,
                     None,
-                    None, // Receive news on every confirmation.
+                    drp.requested_confirmations(context),
                 )?;
             } else {
                 let (resigned_step_hash, resigned_next_hash, write_step) =
@@ -368,7 +371,7 @@ pub fn execution_result(
                     Some(sp),
                     Context::ProgramId(*id).to_string()?,
                     None,
-                    None, // Receive news on every confirmation.
+                    drp.requested_confirmations(context),
                 )?;
             }
         }

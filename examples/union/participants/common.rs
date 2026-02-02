@@ -148,7 +148,7 @@ pub fn get_user_take_tx(
     };
 
     let accept_pegin_input = stream_value - P2TR_FEE - SPEEDUP_VALUE;
-    let user_take_output_value = accept_pegin_input - 2 * SPEEDUP_VALUE - USER_TAKE_FEE;
+    let user_take_output_value = accept_pegin_input - SPEEDUP_VALUE - USER_TAKE_FEE;
 
     // Build two P2WPKH outputs paying to the user's public key (1000 sats each)
     let wpkh = user_pubkey.wpubkey_hash().expect("key is compressed");

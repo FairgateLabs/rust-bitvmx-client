@@ -69,8 +69,17 @@ impl BitVMXClient {
         ))
     }
 
-    pub fn dispatch_transaction(&self, id: Uuid, tx: Transaction) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::DispatchTransaction(id, tx))
+    pub fn dispatch_transaction(
+        &self,
+        id: Uuid,
+        tx: Transaction,
+        confirmation_threshold: Option<u32>,
+    ) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::DispatchTransaction(
+            id,
+            tx,
+            confirmation_threshold,
+        ))
     }
 
     pub fn dispatch_transaction_name(&self, id: Uuid, name: String) -> Result<()> {
@@ -130,14 +139,23 @@ impl BitVMXClient {
         ))
     }
 
-    pub fn subscribe_to_transaction(&self, request_id: Uuid, txid: Txid) -> Result<()> {
+    pub fn subscribe_to_transaction(
+        &self,
+        request_id: Uuid,
+        txid: Txid,
+        confirmation_threshold: Option<u32>,
+    ) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::SubscribeToTransaction(
-            request_id, txid,
+            request_id,
+            txid,
+            confirmation_threshold,
         ))
     }
 
-    pub fn subscribe_to_rsk_pegin(&self) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::SubscribeToRskPegin())
+    pub fn subscribe_to_rsk_pegin(&self, confirmation_threshold: Option<u32>) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SubscribeToRskPegin(
+            confirmation_threshold,
+        ))
     }
 
     pub fn get_spv_proof(&self, txid: Txid) -> Result<()> {

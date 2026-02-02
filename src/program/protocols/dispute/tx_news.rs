@@ -59,7 +59,7 @@ fn dispatch_timeout_tx(
         Some(speedup_data),
         Context::ProgramId(drp.ctx.id).to_string()?,
         Some(current_height + timelock_blocks),
-        None, // Receive news on every confirmation.
+        drp.requested_confirmations(program_context),
     )?;
     Ok(())
 }
@@ -494,7 +494,7 @@ fn auto_claim_start(
                 Some(speedup_data),
                 Context::ProgramId(drp.ctx.id).to_string()?,
                 None,
-                None, // Receive news on every confirmation.
+                drp.requested_confirmations(program_context),
             )?;
         }
     }
@@ -538,7 +538,7 @@ fn claim_state_handle(
                 Some(speedup_data),
                 Context::ProgramId(drp.ctx.id).to_string()?,
                 Some(current_height + timelock_blocks),
-                None, // Receive news on every confirmation.
+                drp.requested_confirmations(program_context),
             )?;
         }
         //other start
@@ -559,7 +559,7 @@ fn claim_state_handle(
                 Some(speedup_data),
                 Context::ProgramId(drp.ctx.id).to_string()?,
                 None,
-                None, // Receive news on every confirmation.
+                drp.requested_confirmations(program_context),
             )?;
         }
     }
@@ -591,7 +591,7 @@ fn claim_state_handle(
                 Some(speedup_data),
                 Context::ProgramId(drp.ctx.id).to_string()?,
                 None,
-                None, // Receive news on every confirmation.
+                drp.requested_confirmations(program_context),
             )?;
         }
     }
@@ -716,7 +716,7 @@ pub fn handle_tx_news(
                 speedup,
                 Context::ProgramId(drp.context().id).to_string()?,
                 None,
-                None, // Receive news on every confirmation.
+                drp.requested_confirmations(program_context),
             )?;
         }
     }
@@ -803,7 +803,7 @@ pub fn handle_tx_news(
                         Some(sp),
                         Context::ProgramId(drp.ctx.id).to_string()?,
                         None,
-                        None, // Receive news on every confirmation.
+                        drp.requested_confirmations(program_context),
                     )?;
                 }
                 if idx == last_tx_id as u32 {
@@ -821,7 +821,7 @@ pub fn handle_tx_news(
                             Some(sp),
                             Context::ProgramId(drp.ctx.id).to_string()?,
                             None,
-                            None, // Receive news on every confirmation.
+                            drp.requested_confirmations(program_context),
                         )?;
                     } else {
                         //Prover
@@ -924,7 +924,7 @@ pub fn handle_tx_news(
                     Some(sp),
                     Context::ProgramId(drp.ctx.id).to_string()?,
                     None,
-                    None, // Receive news on every confirmation.
+                    drp.requested_confirmations(program_context),
                 )?;
             }
 
@@ -1313,7 +1313,7 @@ pub fn handle_tx_news(
                     Some(speedup_data),
                     Context::ProgramId(drp.ctx.id).to_string()?,
                     Some(current_height + 2 * timelock_blocks as u32),
-                    None, // Receive news on every confirmation.
+                    drp.requested_confirmations(program_context),
                 )?;
             }
 
@@ -1327,7 +1327,7 @@ pub fn handle_tx_news(
                     Some(speedup_data),
                     Context::ProgramId(drp.ctx.id).to_string()?,
                     None,
-                    None, // Receive news on every confirmation.
+                    drp.requested_confirmations(program_context),
                 )?;
             }
         }
