@@ -23,9 +23,10 @@ use crate::keychain::KeyChain;
 #[cfg(feature = "union")]
 use crate::program::protocols::union::full_penalization::FullPenalizationProtocol;
 
+use super::aggregated_key::AggregatedKeyProtocol;
 #[cfg(feature = "cardinal")]
 use super::cardinal::{lock::LockProtocol, slot::SlotProtocol, transfer::TransferProtocol};
-use super::aggregated_key::AggregatedKeyProtocol;
+use super::cooperative_signature::CooperativeSignatureProtocol;
 use super::dispute::DisputeResolutionProtocol;
 
 #[cfg(feature = "union")]
@@ -45,11 +46,14 @@ use crate::types::{
 #[cfg(feature = "cardinal")]
 use crate::types::{PROGRAM_TYPE_LOCK, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TRANSFER};
 
-use crate::types::{ProgramContext, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_DRP};
+use crate::types::{
+    ProgramContext, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_COOPERATIVE_SIGNATURE,
+    PROGRAM_TYPE_DRP,
+};
 
+use crate::program::setup::steps::SetupStepName;
 use crate::program::variables::WitnessTypes;
 use crate::program::{variables::VariableTypes, witness};
-use crate::program::setup::steps::SetupStepName;
 
 #[enum_dispatch]
 pub trait ProtocolHandler {
@@ -604,6 +608,7 @@ impl ProtocolContext {
 #[derive(Clone, Serialize, Deserialize)]
 pub enum ProtocolType {
     AggregatedKeyProtocol,
+    CooperativeSignatureProtocol,
     DisputeResolutionProtocol,
     #[cfg(feature = "cardinal")]
     LockProtocol,
@@ -639,6 +644,9 @@ pub fn new_protocol_type(
     match name {
         PROGRAM_TYPE_AGGREGATED_KEY => Ok(ProtocolType::AggregatedKeyProtocol(
             AggregatedKeyProtocol::new(ctx),
+        )),
+        PROGRAM_TYPE_COOPERATIVE_SIGNATURE => Ok(ProtocolType::CooperativeSignatureProtocol(
+            CooperativeSignatureProtocol::new(ctx),
         )),
         PROGRAM_TYPE_DRP => Ok(ProtocolType::DisputeResolutionProtocol(
             DisputeResolutionProtocol::new(ctx),
@@ -690,4 +698,3 @@ pub fn external_fund_tx(
         &spending_scripts,
     )?)
 }
-

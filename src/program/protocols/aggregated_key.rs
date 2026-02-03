@@ -68,72 +68,24 @@ impl ProtocolHandler for AggregatedKeyProtocol {
 
     fn build(
         &self,
-        keys: Vec<ParticipantKeys>,
-        _computed_aggregated: HashMap<String, PublicKey>, // ⚠️ Ignored - we compute our own
+        _keys: Vec<ParticipantKeys>,
+        computed_aggregated: HashMap<String, PublicKey>,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         tracing::info!(
-            "AggregatedKeyProtocol::build() called for program {} with {} participant keys",
+            "AggregatedKeyProtocol::build() called for program {}",
             self.ctx.id,
-            keys.len()
         );
-        
-        // AggregatedKeyProtocol performs its own MuSig2 aggregation
-        // This is the NEW pattern where protocols are responsible for aggregation
 
         let key_name = self.ctx.id.to_string();
 
-        // Collect all public keys from all participants for this aggregated key
-        let mut aggregated_pub_keys: Vec<PublicKey> = Vec::new();
-
-        for participant_keys in &keys {
-            if let Some(agg_key) = participant_keys.mapping.get(&key_name) {
-                // Extract the PublicKey from PublicKeyType
-                if let Some(public_key) = agg_key.public() {
-                    aggregated_pub_keys.push(*public_key);
-                } else {
-                    return Err(BitVMXError::InvalidMessage(format!(
-                        "Key '{}' is not a PublicKey type",
-                        key_name
-                    )));
-                }
-            } else {
-                return Err(BitVMXError::InvalidMessage(format!(
-                    "Participant missing key '{}' for aggregation",
-                    key_name
-                )));
-            }
-        }
-
-        // Get the local private key for this aggregation
-        let my_key_type = keys[self.ctx.my_idx]
-            .mapping
-            .get(&key_name)
-            .ok_or_else(|| {
-                BitVMXError::InvalidMessage(format!(
-                    "My key '{}' not found in participant keys",
-                    key_name
-                ))
-            })?;
-
-        let my_key = my_key_type.public().ok_or_else(|| {
+        // Use the pre-computed aggregated key from KeysStep
+        let aggregated_key = computed_aggregated.get(&key_name).ok_or_else(|| {
             BitVMXError::InvalidMessage(format!(
-                "My key '{}' is not a PublicKey type",
+                "Pre-computed aggregated key '{}' not found",
                 key_name
             ))
         })?;
-
-        // Compute the aggregated key
-        // MuSig2 requires at least 2 participants; with a single participant,
-        // the aggregated key is simply that participant's own public key.
-        let aggregated_key = if aggregated_pub_keys.len() == 1 {
-            tracing::info!("AggregatedKeyProtocol: Single participant, using own key directly");
-            *my_key
-        } else {
-            context
-                .key_chain
-                .new_musig2_session(aggregated_pub_keys, *my_key)?
-        };
 
         // Store the aggregated key in globals for easy retrieval
         let key_str = aggregated_key.to_string();
@@ -144,24 +96,10 @@ impl ProtocolHandler for AggregatedKeyProtocol {
         )?;
 
         tracing::info!(
-            "AggregatedKeyProtocol: Computed and stored final aggregated key: {} (program_id: {})",
+            "AggregatedKeyProtocol: Stored final aggregated key: {} (program_id: {})",
             key_str,
             self.ctx.id
         );
-        
-        // Verify the variable was stored correctly
-        let stored_var = context.globals.get_var(&self.ctx.id, "final_aggregated_key")?;
-        if stored_var.is_none() {
-            tracing::error!(
-                "AggregatedKeyProtocol: ERROR - Variable was not stored correctly! program_id: {}",
-                self.ctx.id
-            );
-        } else {
-            tracing::info!(
-                "AggregatedKeyProtocol: Verified variable stored successfully for program_id: {}",
-                self.ctx.id
-            );
-        }
 
         // Send AggregatedPubkey message to the requester (similar to Collaboration)
         // Read the 'from' identifier from storage
@@ -171,11 +109,11 @@ impl ProtocolHandler for AggregatedKeyProtocol {
             if let Some(from) = from {
                 tracing::info!(
                     "AggregatedKeyProtocol: Sending AggregatedPubkey to requester: {}",
-                    aggregated_key
+                    *aggregated_key
                 );
                 context.broker_channel.send(
                     &from,
-                    OutgoingBitVMXApiMessages::AggregatedPubkey(self.ctx.id, aggregated_key)
+                    OutgoingBitVMXApiMessages::AggregatedPubkey(self.ctx.id, *aggregated_key)
                         .to_string()?,
                 )?;
             } else {

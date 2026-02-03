@@ -402,6 +402,7 @@ pub struct ParticipantChannel {
 }
 
 pub const PROGRAM_TYPE_AGGREGATED_KEY: &str = "aggregated_key";
+pub const PROGRAM_TYPE_COOPERATIVE_SIGNATURE: &str = "cooperative_signature";
 pub const PROGRAM_TYPE_LOCK: &str = "lock";
 pub const PROGRAM_TYPE_DRP: &str = "drp";
 pub const PROGRAM_TYPE_SLOT: &str = "slot";
