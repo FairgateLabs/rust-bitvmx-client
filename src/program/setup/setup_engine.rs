@@ -5,7 +5,7 @@ use crate::{
     program::{participant::ParticipantData, protocols::protocol_handler::ProtocolType},
     types::ProgramContext,
 };
-use bitvmx_operator_comms::operator_comms::PubKeyHash;
+use bitvmx_broker::identification::identifier::PubkHash as PubKeyHash;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 use uuid::Uuid;
