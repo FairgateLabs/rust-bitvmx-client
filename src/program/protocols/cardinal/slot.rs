@@ -659,7 +659,7 @@ impl ProtocolHandler for SlotProtocol {
             let pair_agg_check =
                 scripts::check_aggregated_signature(&operators_pairs[0], SignMode::Aggregate);
             let start_challenge = OutputType::taproot(
-                dispute::protocol_cost(),
+                dispute::protocol_cost().into(),
                 &operators_aggregated_pub,
                 &[ops_agg_check, pair_agg_check],
             )?;
@@ -793,7 +793,7 @@ impl SlotProtocol {
         )?;
 
         let output_type = OutputType::taproot(
-            amount_for_sequence,
+            amount_for_sequence.into(),
             &operators_aggregated_pub,
             &[winternitz_check.clone()],
         )?;
@@ -832,7 +832,8 @@ impl SlotProtocol {
 
         //3 dust, one for the tx, one for the connection output and one for the speedup output
         let dust = OutputType::generic_dust_limit(None).to_sat();
-        let output_type = OutputType::taproot(3 * dust, &operators_aggregated_pub, &leaves)?;
+        let output_type =
+            OutputType::taproot((3 * dust).into(), &operators_aggregated_pub, &leaves)?;
 
         protocol.add_transaction_output(&certhashtx, &output_type)?;
 
@@ -871,7 +872,7 @@ impl SlotProtocol {
 
             protocol.add_transaction_output(
                 &gidtx,
-                &OutputType::taproot(dust, &operators_aggregated_pub, &[gid_spend])?,
+                &OutputType::taproot(dust.into(), &operators_aggregated_pub, &[gid_spend])?,
             )?;
 
             protocol.add_connection(

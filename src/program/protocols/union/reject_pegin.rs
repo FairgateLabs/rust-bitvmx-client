@@ -101,7 +101,12 @@ impl ProtocolHandler for RejectPegInProtocol {
         protocol.add_connection(
             "accept_enabler_conn",
             REQUEST_PEGIN_TX,
-            OutputType::taproot(2 * DUST_VALUE, &take_aggregated_key, &enabler_scripts)?.into(),
+            OutputType::taproot(
+                (2 * DUST_VALUE).into(),
+                &take_aggregated_key,
+                &enabler_scripts,
+            )?
+            .into(),
             REJECT_PEGIN_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
@@ -117,7 +122,7 @@ impl ProtocolHandler for RejectPegInProtocol {
 
         protocol.add_transaction_output(
             REJECT_PEGIN_TX,
-            &OutputType::segwit_key(SPEEDUP_VALUE, &speedup_key)?,
+            &OutputType::segwit_key(SPEEDUP_VALUE.into(), &speedup_key)?,
         )?;
 
         protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
@@ -173,7 +178,7 @@ impl ProtocolHandler for RejectPegInProtocol {
             tx,
             speedup,
             Context::ProgramId(self.ctx.id).to_string()?,
-            None,                                                        // Dispatch immediately
+            None, // Dispatch immediately
             self.requested_confirmations(context),
         )?;
 

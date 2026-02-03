@@ -171,10 +171,10 @@ impl ProtocolHandler for LockProtocol {
         let leaves = vec![timelock_script.clone(), reveal_secret_script.clone()];
 
         let output_type_ordinal =
-            OutputType::taproot(ordinal_utxo.2.unwrap(), &unspendable, &leaves)?;
+            OutputType::taproot(ordinal_utxo.2.unwrap().into(), &unspendable, &leaves)?;
 
         let output_type_protocol =
-            OutputType::taproot(protocol_utxo.2.unwrap(), &unspendable, &leaves)?;
+            OutputType::taproot(protocol_utxo.2.unwrap().into(), &unspendable, &leaves)?;
 
         let mut protocol = self.load_or_create_protocol();
         protocol.add_external_transaction(LOCK_REQ_TX)?;
@@ -217,7 +217,7 @@ impl ProtocolHandler for LockProtocol {
         protocol.add_transaction_output(
             LOCK_TX,
             &OutputType::taproot(
-                ordinal_utxo.2.unwrap(),
+                ordinal_utxo.2.unwrap().into(),
                 &operators_aggregated_pub,
                 &[
                     taproot_script_eol_timelock_expired_tx_lock.clone(),
@@ -236,7 +236,7 @@ impl ProtocolHandler for LockProtocol {
         protocol.add_transaction_output(
             LOCK_TX,
             &OutputType::taproot(
-                amount,
+                amount.into(),
                 &operators_aggregated_pub,
                 &[taproot_script_protocol_fee_addres_signature_in_tx_lock],
             )?,
@@ -312,11 +312,19 @@ impl LockProtocol {
 
         protocol.add_transaction_output(
             HAPPY_PATH_TX,
-            &OutputType::taproot(amount_ordinal, &unspendable, &[happy_path_check.clone()])?,
+            &OutputType::taproot(
+                amount_ordinal.into(),
+                &unspendable,
+                &[happy_path_check.clone()],
+            )?,
         )?;
         protocol.add_transaction_output(
             HAPPY_PATH_TX,
-            &OutputType::taproot(amount_protocol, &unspendable, &[happy_path_check.clone()])?,
+            &OutputType::taproot(
+                amount_protocol.into(),
+                &unspendable,
+                &[happy_path_check.clone()],
+            )?,
         )?;
 
         Ok(())

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use bitcoin::{Amount, PublicKey, ScriptBuf, Transaction, Txid};
+use bitcoin::{PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use protocol_builder::{
     graph::graph::GraphOptions,
@@ -8,7 +8,7 @@ use protocol_builder::{
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
-        output::{AmountMode, SpeedupData},
+        output::SpeedupData,
         OutputType,
     },
 };
@@ -148,10 +148,9 @@ impl ProtocolHandler for AdvanceFundsProtocol {
         protocol.add_transaction_output(
             ADVANCE_FUNDS_TX,
             &OutputType::SegwitPublicKey {
-                value: Amount::from_sat(user_amount),
+                value: user_amount.into(),
                 script_pubkey: user_script_pubkey.clone(),
                 public_key: request.user_pubkey,
-                amount_mode: AmountMode::from(user_amount),
             },
         )?;
 
@@ -184,10 +183,9 @@ impl ProtocolHandler for AdvanceFundsProtocol {
             protocol.add_transaction_output(
                 ADVANCE_FUNDS_TX,
                 &OutputType::SegwitPublicKey {
-                    value: Amount::from_sat(op_change),
+                    value: op_change.into(),
                     script_pubkey: op_script_pubkey.clone(),
                     public_key: request.my_take_pubkey,
-                    amount_mode: AmountMode::from(op_change),
                 },
             )?;
         }
@@ -408,7 +406,7 @@ impl AdvanceFundsProtocol {
             tx.clone(),
             speedup,
             Context::ProgramId(self.ctx.id).to_string()?,
-            block_height,    // Dispatch immediately
+            block_height, // Dispatch immediately
             self.requested_confirmations(context),
         )?;
 

@@ -631,7 +631,7 @@ pub fn external_fund_tx(
     amount: u64,
 ) -> Result<OutputType, BitVMXError> {
     Ok(OutputType::taproot(
-        amount,
+        amount.into(),
         internal_key,
         &spending_scripts,
     )?)

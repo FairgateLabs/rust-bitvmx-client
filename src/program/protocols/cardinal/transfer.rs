@@ -220,7 +220,7 @@ impl ProtocolHandler for TransferProtocol {
                 protocol.add_transaction_output(
                     &txname,
                     &OutputType::taproot(
-                        tc.locked_asset_utxo.2.unwrap(),
+                        tc.locked_asset_utxo.2.unwrap().into(),
                         &tc.unspendable,
                         &[asset_output],
                     )?, // We do not need prevouts cause the tx is in the graph,
