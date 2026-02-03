@@ -8,7 +8,7 @@ use protocol_builder::{
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
-        output::SpeedupData,
+        output::{AmountMode, SpeedupData},
         OutputType,
     },
 };
@@ -17,6 +17,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{
+    bitvmx::Context,
     errors::BitVMXError,
     program::{
         participant::ParticipantKeys,
@@ -150,6 +151,7 @@ impl ProtocolHandler for AdvanceFundsProtocol {
                 value: Amount::from_sat(user_amount),
                 script_pubkey: user_script_pubkey.clone(),
                 public_key: request.user_pubkey,
+                amount_mode: AmountMode::from(user_amount),
             },
         )?;
 
@@ -185,6 +187,7 @@ impl ProtocolHandler for AdvanceFundsProtocol {
                     value: Amount::from_sat(op_change),
                     script_pubkey: op_script_pubkey.clone(),
                     public_key: request.my_take_pubkey,
+                    amount_mode: AmountMode::from(op_change),
                 },
             )?;
         }
@@ -365,8 +368,9 @@ impl AdvanceFundsProtocol {
         context.bitcoin_coordinator.dispatch(
             tx.clone(),
             speedup,
-            format!("dispute_core_setup_{}:{}", self.ctx.id, tx_name), // Context string
-            None,                                                      // Dispatch immediately
+            Context::ProgramId(self.ctx.id).to_string()?,
+            None,
+            self.requested_confirmations(context),
         )?;
 
         info!("{} dispatched with txid: {}", tx_name, txid);
@@ -403,8 +407,9 @@ impl AdvanceFundsProtocol {
         context.bitcoin_coordinator.dispatch(
             tx.clone(),
             speedup,
-            tx_name.clone(), // Context string
+            Context::ProgramId(self.ctx.id).to_string()?,
             block_height,    // Dispatch immediately
+            self.requested_confirmations(context),
         )?;
 
         info!("{} dispatched with txid: {}", tx_name, txid);
@@ -515,8 +520,9 @@ impl AdvanceFundsProtocol {
         context.bitcoin_coordinator.dispatch(
             tx,
             speedup,
-            format!("advance_funds_{}:{}", self.ctx.id, ADVANCE_FUNDS_TX), // Context string
-            None,                                                          // Dispatch immediately
+            Context::ProgramId(self.ctx.id).to_string()?,
+            None,
+            self.requested_confirmations(context),
         )?;
 
         info!("{} dispatched with txid: {}", ADVANCE_FUNDS_TX, txid);

@@ -26,9 +26,10 @@ use crate::{
         },
         variables::{PartialUtxo, VariableTypes},
     },
+    spv_proof::get_spv_proof,
     types::{
-        ProgramContext, PROGRAM_TYPE_ACCEPT_PEGIN, PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_DRP,
-        PROGRAM_TYPE_FULL_PENALIZATION,
+        OutgoingBitVMXApiMessages, ProgramContext, PROGRAM_TYPE_ACCEPT_PEGIN,
+        PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_DRP, PROGRAM_TYPE_FULL_PENALIZATION,
     },
 };
 use bitcoin::{Amount, PublicKey, Transaction, Txid};
@@ -46,13 +47,13 @@ use protocol_builder::{
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
-        output::{SpeedupData, AUTO_AMOUNT, RECOVER_AMOUNT},
+        output::{AmountMode, SpeedupData},
         InputArgs, OutputType, Utxo,
     },
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 pub const PEGOUT_ID: &str = "PEGOUT_ID";
@@ -405,7 +406,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
         );
 
         let mut reveal_output: OutputType = OutputType::taproot(
-            AUTO_AMOUNT,
+            AmountMode::Auto.into(),
             &committee.dispute_aggregated_key,
             &[operator_won_script],
         )?;
@@ -647,7 +648,7 @@ impl DisputeCoreProtocol {
             "initial_deposit",
             &PROTOCOL_FUNDING_TX,
             OutputSpec::Auto(OutputType::taproot(
-                AUTO_AMOUNT,
+                AmountMode::Auto.into(),
                 dispute_aggregated_key,
                 &[],
             )?),
@@ -680,7 +681,7 @@ impl DisputeCoreProtocol {
 
         protocol.add_transaction_output(
             &WT_SELF_DISABLER_TX,
-            &OutputType::segwit_key(RECOVER_AMOUNT, watchtower_dispute_key)?,
+            &OutputType::segwit_key(AmountMode::Recover.into(), watchtower_dispute_key)?,
         )?;
 
         return Ok(());
@@ -743,7 +744,7 @@ impl DisputeCoreProtocol {
                 protocol.add_connection(
                     "init_challenge",
                     WT_START_ENABLER_TX,
-                    OutputType::taproot(AUTO_AMOUNT, &wt_dispute_key, &scripts)?.into(),
+                    OutputType::taproot(AmountMode::Auto.into(), &wt_dispute_key, &scripts)?.into(),
                     &init_challenge_name,
                     InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
                     None,
@@ -764,7 +765,7 @@ impl DisputeCoreProtocol {
                 );
 
                 let init_challenge_output = OutputType::taproot(
-                    AUTO_AMOUNT,
+                    AmountMode::Auto.into(),
                     op_dispute_key,
                     &vec![
                         // FIXME: Leaf 0 should be cosign script here
@@ -940,7 +941,7 @@ impl DisputeCoreProtocol {
             } else {
                 protocol.add_transaction_output(
                     WT_START_ENABLER_TX,
-                    &OutputType::taproot(AUTO_AMOUNT, wt_dispute_key, &vec![])?,
+                    &OutputType::taproot(AmountMode::Auto.into(), wt_dispute_key, &vec![])?,
                 )?;
 
                 wt_init_challenge_outputs.push(None);
@@ -987,7 +988,7 @@ impl DisputeCoreProtocol {
             "initial_deposit",
             &PROTOCOL_FUNDING_TX,
             OutputSpec::Auto(OutputType::taproot(
-                AUTO_AMOUNT,
+                AmountMode::Auto.into(),
                 dispute_aggregated_key,
                 &[],
             )?),
@@ -1020,7 +1021,7 @@ impl DisputeCoreProtocol {
 
         protocol.add_transaction_output(
             &OP_SELF_DISABLER_TX,
-            &OutputType::segwit_key(RECOVER_AMOUNT, operator_dispute_key)?,
+            &OutputType::segwit_key(AmountMode::Recover.into(), operator_dispute_key)?,
         )?;
 
         Ok(())
@@ -1059,8 +1060,7 @@ impl DisputeCoreProtocol {
                 } else {
                     verify_winternitz_signature_timelock(
                         settings.short_timelock,
-                        // NOTE: This should be take_aggregated_key due to if any member leave we want to keep signing this output in each accept pegin protocol.
-                        &committee.take_aggregated_key,
+                        &committee.dispute_aggregated_key,
                         CHALLENGE_KEY,
                         keys[member_index].get_winternitz(&key_name)?,
                         SignMode::Aggregate,
@@ -1070,7 +1070,7 @@ impl DisputeCoreProtocol {
             }
 
             outputs.push(OutputType::taproot(
-                AUTO_AMOUNT,
+                AmountMode::Auto.into(),
                 &committee.take_aggregated_key,
                 scripts.as_slice(),
             )?)
@@ -1096,7 +1096,6 @@ impl DisputeCoreProtocol {
         let operator_dispute_key = &committee.members[dispute_core_data.member_index].dispute_key;
 
         // Aggregated keys
-        let take_aggregated_key = &committee.take_aggregated_key;
         let dispute_aggregated_key = &committee.dispute_aggregated_key;
 
         // Pegout ID key
@@ -1110,7 +1109,7 @@ impl DisputeCoreProtocol {
         let input_not_revealed = indexed_name(INPUT_NOT_REVEALED_TX, dispute_core_index);
 
         let start_reimbursement = scripts::verify_winternitz(
-            take_aggregated_key,
+            dispute_aggregated_key,
             SignMode::Aggregate,
             PEGOUT_ID_KEY,
             pegout_id_key,
@@ -1136,7 +1135,7 @@ impl DisputeCoreProtocol {
             "start_dispute_core",
             &OP_INITIAL_DEPOSIT_TX,
             get_initial_deposit_output_type(
-                AUTO_AMOUNT,
+                AmountMode::Auto.into(),
                 operator_dispute_key,
                 &[start_reimbursement, validate_dispute_key],
             )?
@@ -1173,7 +1172,7 @@ impl DisputeCoreProtocol {
             "reveal_input",
             &challenge,
             OutputType::taproot(
-                AUTO_AMOUNT,
+                AmountMode::Auto.into(),
                 dispute_aggregated_key,
                 &[reveal_script, not_reveal_script],
             )?
@@ -1265,7 +1264,7 @@ impl DisputeCoreProtocol {
 
             protocol.add_transaction_output(
                 &two_dispute_penalization,
-                &OutputType::taproot(AUTO_AMOUNT, &take_aggregated_key, &[])?,
+                &OutputType::taproot(AmountMode::Auto.into(), &take_aggregated_key, &[])?,
             )?;
         }
 
@@ -1305,20 +1304,20 @@ impl DisputeCoreProtocol {
 
             protocol.add_transaction_output(
                 &OP_INITIAL_DEPOSIT_TX,
-                &OutputType::segwit_key(AUTO_AMOUNT, operator_speedup_key)?,
+                &OutputType::segwit_key(AmountMode::Auto.into(), operator_speedup_key)?,
             )?;
         }
 
         // Add a speedup output to the reimbursement_kickoff transaction.
         protocol.add_transaction_output(
             &reimbursement_kickoff,
-            &OutputType::segwit_key(AUTO_AMOUNT, operator_speedup_key)?,
+            &OutputType::segwit_key(AmountMode::Auto.into(), operator_speedup_key)?,
         )?;
 
         // Add one speedup ouput per committee member to the challenge and input_not_revealed transactions.
         for i in 0..keys.len() {
             let speedup_output =
-                OutputType::segwit_key(AUTO_AMOUNT, keys[i].get_public(SPEEDUP_KEY)?)?;
+                OutputType::segwit_key(AmountMode::Auto.into(), keys[i].get_public(SPEEDUP_KEY)?)?;
             protocol.add_transaction_output(&challenge, &speedup_output)?;
             protocol.add_transaction_output(&input_not_revealed, &speedup_output)?;
         }
@@ -1326,7 +1325,7 @@ impl DisputeCoreProtocol {
         // Add a speedup output to the reveal_input transaction.
         protocol.add_transaction_output(
             &reveal_input,
-            &OutputType::segwit_key(AUTO_AMOUNT, operator_speedup_key)?,
+            &OutputType::segwit_key(AmountMode::Auto.into(), operator_speedup_key)?,
         )?;
 
         Ok(())
@@ -1898,8 +1897,9 @@ impl DisputeCoreProtocol {
         context.bitcoin_coordinator.dispatch(
             tx,
             speedup,
-            format!("dispute_core_claim_gate_{}:{}", self.ctx.id, tx_name),
+            Context::ProgramId(self.ctx.id).to_string()?,
             action.block_height(),
+            self.requested_confirmations(context),
         )?;
 
         info!(
@@ -1942,8 +1942,9 @@ impl DisputeCoreProtocol {
             context.bitcoin_coordinator.dispatch(
                 tx,
                 speedup,
-                format!("dispute_core_start_ch_{}:{}", self.ctx.id, tx_name),
+                Context::ProgramId(self.ctx.id).to_string()?,
                 None,
+                self.requested_confirmations(context),
             )?;
 
             info!(
@@ -2252,9 +2253,13 @@ impl DisputeCoreProtocol {
         let (tx, speedup) = protocol.get_transaction_by_name(&init_challenge_name, context)?;
         let txid = tx.compute_txid();
 
-        context
-            .bitcoin_coordinator
-            .dispatch(tx, speedup, init_challenge_name.clone(), None)?;
+        context.bitcoin_coordinator.dispatch(
+            tx,
+            speedup,
+            Context::ProgramId(self.ctx.id).to_string()?,
+            None,
+            self.requested_confirmations(context),
+        )?;
 
         info!(
             id = self.ctx.my_idx,
@@ -2562,6 +2567,53 @@ impl DisputeCoreProtocol {
             }
         }
 
+        self.send_reimbursement_kickoff_spv(context, tx_id, slot_index)?;
+
+        Ok(())
+    }
+
+    fn send_reimbursement_kickoff_spv(
+        &self,
+        context: &ProgramContext,
+        txid: Txid,
+        slot_index: usize,
+    ) -> Result<(), BitVMXError> {
+        let tx_info = context.bitcoin_coordinator.get_transaction(txid);
+
+        let proof = match tx_info {
+            Ok(utx) => Some(get_spv_proof(txid, utx.block_info.unwrap())?),
+            Err(e) => {
+                warn!(
+                    "Failed to retrieve transaction info for txid {}: {:?}",
+                    txid, e
+                );
+                None
+            }
+        };
+
+        let response = UnionSPVNotification {
+            txid,
+            committee_id: self.dispute_core_data(context)?.committee_id,
+            slot_index,
+            spv_proof: proof,
+            tx_type: UnionTxType::ReimbursementKickoff,
+        };
+
+        let data = serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(
+            self.ctx.id,
+            UnionSPVNotification::name(),
+            VariableTypes::String(serde_json::to_string(&response)?),
+        ))?;
+
+        info!(
+            id = self.ctx.my_idx,
+            "Sending reimbursement kickoff SPV data: {}", data
+        );
+
+        context
+            .broker_channel
+            .send(&context.components_config.l2, data)?;
+
         Ok(())
     }
 
@@ -2643,8 +2695,9 @@ impl DisputeCoreProtocol {
         context.bitcoin_coordinator.dispatch(
             tx,
             speedup,
-            format!("dispute_core_{}:{}", self.ctx.id, tx_name),
+            Context::ProgramId(self.ctx.id).to_string()?,
             tx_type.block_height(),
+            self.requested_confirmations(context),
         )?;
 
         info!(

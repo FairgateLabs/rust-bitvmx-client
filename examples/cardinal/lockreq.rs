@@ -3,14 +3,13 @@ use bitcoin::{absolute, secp256k1};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{
     channel::channel::DualChannel,
-    identification::identifier::Identifier,
+    identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{
         tls_helper::{init_tls, Cert},
         BrokerConfig,
     },
 };
 use bitvmx_client::program::protocols::cardinal::lock::lock_protocol_dust_cost;
-use bitvmx_operator_comms::operator_comms::AllowList;
 use protocol_builder::scripts::{
     build_taproot_spend_info, reveal_secret, timelock, ProtocolScript, SignMode,
 };

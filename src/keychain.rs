@@ -59,7 +59,7 @@ impl KeyChain {
                 )
             )));
         }
-        let pem_file = std::fs::read_to_string(path).unwrap();
+        let pem_file = std::fs::read_to_string(path)?;
         let rsa_pubkey_pem = key_manager.import_rsa_private_key(&pem_file)?;
 
         Ok(Self {
@@ -83,20 +83,6 @@ impl KeyChain {
         Ok(next_index)
     }
 
-    pub fn get_new_winternitz_index(&self) -> Result<Index, BitVMXError> {
-        let key = KeyChainStorageKeys::WinternitzIndex.get_key();
-        let index: Option<Index> = self.store.get(&key)?;
-
-        let next_index = match index {
-            Some(current_index) => current_index + 1,
-            None => 0,
-        };
-
-        self.store.set(&key, next_index, None)?;
-
-        Ok(next_index)
-    }
-
     pub fn derive_keypair(&mut self, key_type: BitcoinKeyType) -> Result<PublicKey, BitVMXError> {
         let index = self.get_new_ecdsa_index()?;
 
@@ -107,22 +93,18 @@ impl KeyChain {
         &mut self,
         message_bytes: usize,
     ) -> Result<WinternitzPublicKey, BitVMXError> {
-        let index = self.get_new_winternitz_index()?;
-
         Ok(self
             .key_manager
-            .derive_winternitz(message_bytes, WinternitzType::HASH160, index)?)
+            .next_winternitz(message_bytes, WinternitzType::HASH160)?)
     }
 
     pub fn derive_winternitz_sha256(
         &mut self,
         message_bytes: usize,
     ) -> Result<WinternitzPublicKey, BitVMXError> {
-        let index = self.get_new_winternitz_index()?;
-
         Ok(self
             .key_manager
-            .derive_winternitz(message_bytes, WinternitzType::SHA256, index)?)
+            .next_winternitz(message_bytes, WinternitzType::SHA256)?)
     }
 
     pub fn derive_winternitz_sha256_keys(
@@ -152,17 +134,9 @@ impl KeyChain {
         key_type: WinternitzType,
         quantity: u32,
     ) -> Result<Vec<WinternitzPublicKey>, BitVMXError> {
-        let mut keys = Vec::new();
-
-        for _ in 0..quantity {
-            let index = self.get_new_winternitz_index()?;
-            let pk = self
-                .key_manager
-                .derive_winternitz(size_in_bytes, key_type, index)?;
-            keys.push(pk);
-        }
-
-        Ok(keys)
+        Ok(self
+            .key_manager
+            .next_multiple_winternitz(size_in_bytes, key_type, quantity)?)
     }
 
     pub fn add_nonces(
@@ -329,9 +303,7 @@ impl KeyChain {
         Ok(self
             .rsa_public_key
             .clone()
-            .ok_or(BitVMXError::InvalidMessage(
-                "No RSA public key found".to_string(),
-            ))?)
+            .ok_or_else(|| BitVMXError::InvalidMessage("No RSA public key found".to_string()))?)
     }
 }
 

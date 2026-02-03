@@ -3,9 +3,13 @@ use anyhow::Result;
 use bitcoin::{Amount, Network};
 use bitcoin_coordinator::coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi};
 use bitcoin_coordinator::types::CoordinatorNews;
-use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
+use bitcoind::{
+    bitcoind::{Bitcoind, BitcoindFlags},
+    config::BitcoindConfig,
+};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::channel::channel::DualChannel;
+use bitvmx_broker::identification::allow_list::AllowList;
 use bitvmx_broker::rpc::tls_helper::Cert;
 use bitvmx_broker::rpc::BrokerConfig;
 use bitvmx_client::program;
@@ -13,10 +17,10 @@ use bitvmx_client::program::participant::{
     CommsAddress,
     ParticipantRole::{self, Prover, Verifier},
 };
-use bitvmx_client::program::protocols::dispute::config::{ConfigResult, ConfigResults};
+use bitvmx_client::program::protocols::dispute::config::{ConfigResult, ForceFailConfiguration};
 use bitvmx_client::program::protocols::dispute::{
     action_wins, input_tx_name, program_input, program_input_prev_prefix,
-    program_input_prev_protocol, protocol_cost,
+    program_input_prev_protocol, protocol_cost, COMMITMENT, POST_COMMITMENT, PRE_COMMITMENT,
 };
 use bitvmx_client::program::variables::{VariableTypes, WitnessTypes};
 use bitvmx_client::types::{
@@ -26,7 +30,6 @@ use bitvmx_client::{bitvmx::BitVMX, config::Config};
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
-use bitvmx_operator_comms::operator_comms::AllowList;
 use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
 use common::dispute::{prepare_dispute, ForcedChallenges};
 use common::{clear_db, init_utxo_new, INITIAL_BLOCK_COUNT};
@@ -347,19 +350,20 @@ impl TestHelper {
             clear_db(&wallet_config.key_storage.path);
             Wallet::clear_db(&wallet_config.wallet)?;
 
-            let bitcoind = Bitcoind::new_with_flags(
-                "bitcoin-regtest",
-                "bitcoin/bitcoin:29.1",
+            let bitcoind_instance = Bitcoind::new(
+                BitcoindConfig::default(),
                 wallet_config.bitcoin.clone(),
-                BitcoindFlags {
+                Some(BitcoindFlags {
                     min_relay_tx_fee: 0.00001,
                     block_min_tx_fee: 0.00001 * MIN_TX_FEE,
                     debug: 1,
                     fallback_fee: 0.0002,
-                },
+                    maxmempool: None,
+                }),
             );
-            bitcoind.start()?;
-            Some(bitcoind)
+
+            bitcoind_instance.start()?;
+            Some(bitcoind_instance)
         };
 
         let mut wallet =
@@ -933,7 +937,9 @@ fn test_const_fail_input() -> Result<()> {
         force_condition: ForceCondition::ValidInputWrongStepOrHash,
     };
 
-    let fail_config = ConfigResults {
+    let fail_config = ForceFailConfiguration {
+        prover_force_second_nary: false,
+        fail_input_tx: None,
         main: main_config,
         read: ConfigResult::default(),
     };
@@ -1005,9 +1011,9 @@ fn retry_failed_txs_test() -> Result<()> {
     Wallet::clear_db(&wallet_config.wallet)?;
 
     let bitcoind = Bitcoind::new(
-        "bitcoin-regtest",
-        "bitcoin/bitcoin:29.1",
+        BitcoindConfig::default(),
         wallet_config.bitcoin.clone(),
+        None,
     );
 
     bitcoind.start()?;
@@ -1045,8 +1051,8 @@ fn retry_failed_txs_test() -> Result<()> {
         Some(settings.clone()),
     )?);
 
-    coordinator.dispatch(tx1, None, "test_1".to_string(), None)?;
-    coordinator.dispatch(tx2, None, "test_2".to_string(), None)?;
+    coordinator.dispatch(tx1, None, "test_1".to_string(), None, Some(1))?;
+    coordinator.dispatch(tx2, None, "test_2".to_string(), None, Some(1))?;
 
     for _ in 0..10 {
         coordinator.tick()?;
@@ -1410,6 +1416,120 @@ fn challenge_prover_challenge_step2_prover() -> Result<()> {
 #[test]
 fn challenge_prover_challenge_step2_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::ProverChallengeStep2(Verifier))
+}
+
+#[ignore]
+#[test]
+fn challenge_prover_force_second_nary() -> Result<()> {
+    test_challenge(ForcedChallenges::ProverForceSecondNary)
+}
+
+#[ignore]
+#[test]
+fn challenge_verifier_out_of_bounds_bits() -> Result<()> {
+    test_challenge(ForcedChallenges::VerifierOutOfBoundsBits)
+}
+
+#[ignore]
+#[test]
+fn challenge_verifier_out_of_bounds_bits_in_challenge() -> Result<()> {
+    test_challenge(ForcedChallenges::VerifierOutOfBoundsBitsInChallenge)
+}
+
+#[ignore]
+#[test]
+fn test_input_timeout_hashes_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::InputTimeOut(
+        "NARY_PROVER_1".to_string(),
+        ParticipantRole::Prover,
+    ))
+}
+
+#[ignore]
+#[test]
+fn test_input_timeout_pre_commitment_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::InputTimeOut(
+        PRE_COMMITMENT.to_string(),
+        ParticipantRole::Verifier,
+    ))
+}
+
+#[ignore]
+#[test]
+fn test_input_timeout_commitment_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::InputTimeOut(
+        COMMITMENT.to_string(),
+        ParticipantRole::Prover,
+    ))
+}
+
+#[ignore]
+#[test]
+fn test_input_timeout_post_commitment_verifier() -> Result<()> {
+    test_challenge(ForcedChallenges::InputTimeOut(
+        POST_COMMITMENT.to_string(),
+        ParticipantRole::Verifier,
+    ))
+}
+
+#[ignore]
+#[test]
+fn test_input_timeout_input_prover() -> Result<()> {
+    test_challenge(ForcedChallenges::InputTimeOut(
+        input_tx_name(0),
+        ParticipantRole::Prover,
+    ))
+}
+
+#[ignore]
+#[test]
+fn test_input_timeout_input_prover_with_previous() -> Result<()> {
+    test_all_aux(
+        false,
+        Network::Regtest,
+        Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
+        Some(("00000002", 1, "00000003", 2).into()),
+        Some(ForcedChallenges::InputTimeOut(
+            input_tx_name(2),
+            ParticipantRole::Prover,
+        )),
+        None,
+    )?;
+    Ok(())
+}
+
+#[ignore]
+#[test]
+fn test_input_timeout_input_verifier() -> Result<()> {
+    test_all_aux(
+        false,
+        Network::Regtest,
+        Some("../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world-verifier.yaml".to_string()),
+        Some(InputType::Participant("11111111".to_string(), Verifier)),
+        Some(ForcedChallenges::InputTimeOut(
+            input_tx_name(0),
+            ParticipantRole::Verifier,
+        )),
+        None,
+    )?;
+    Ok(())
+}
+
+#[ignore]
+#[test]
+fn test_input_timeout_input_prover_cosign() -> Result<()> {
+    test_all_aux(
+        false,
+        Network::Regtest,
+        Some("../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world-verifier.yaml".to_string()),
+        Some(InputType::Participant("11111111".to_string(), Verifier)),
+        Some(ForcedChallenges::InputTimeOut(
+            input_tx_name(1),
+            ParticipantRole::Prover,
+        )),
+        None,
+    )?;
+    Ok(())
 }
 
 // The forced Execution is required for testing because without it, the prover or verifier will not execute directly

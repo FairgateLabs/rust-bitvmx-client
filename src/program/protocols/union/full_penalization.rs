@@ -10,7 +10,7 @@ use protocol_builder::{
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
-        output::SpeedupData,
+        output::{AmountMode, SpeedupData},
         OutputType,
     },
 };
@@ -19,6 +19,7 @@ use tracing::{debug, info};
 use uuid::Uuid;
 
 use crate::{
+    bitvmx::Context,
     errors::BitVMXError,
     program::{
         participant::{ParticipantKeys, ParticipantRole},
@@ -381,6 +382,7 @@ impl FullPenalizationProtocol {
                 &OutputType::SegwitUnspendable {
                     value: Amount::from_sat(0),
                     script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
+                    amount_mode: AmountMode::from(0),
                 },
             )?;
 
@@ -435,6 +437,7 @@ impl FullPenalizationProtocol {
                 &OutputType::SegwitUnspendable {
                     value: Amount::from_sat(0),
                     script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
+                    amount_mode: AmountMode::from(0),
                 },
             )?;
 
@@ -480,6 +483,7 @@ impl FullPenalizationProtocol {
                 &OutputType::SegwitUnspendable {
                     value: Amount::from_sat(0),
                     script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
+                    amount_mode: AmountMode::from(0),
                 },
             )?;
         }
@@ -1059,6 +1063,7 @@ impl FullPenalizationProtocol {
                 &OutputType::SegwitUnspendable {
                     value: Amount::from_sat(0),
                     script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
+                    amount_mode: AmountMode::from(0),
                 },
             )?;
 
@@ -1108,6 +1113,7 @@ impl FullPenalizationProtocol {
                 &OutputType::SegwitUnspendable {
                     value: Amount::from_sat(0),
                     script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
+                    amount_mode: AmountMode::from(0),
                 },
             )?;
         }
@@ -1232,8 +1238,9 @@ impl FullPenalizationProtocol {
             program_context.bitcoin_coordinator.dispatch(
                 tx,
                 speedup,
-                format!("full_penalization_{}:{}", self.ctx.id, tx_name),
+                Context::ProgramId(self.ctx.id).to_string()?,
                 None,
+                self.requested_confirmations(program_context),
             )?;
 
             info!(

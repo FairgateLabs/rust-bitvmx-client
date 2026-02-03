@@ -41,7 +41,7 @@ pub fn get_spv_proof(txid: Txid, block_info: FullBlock) -> Result<BtcTxSPVProof,
     let merkle_tree = build_merkle_tree_store(&block_info.txs, false);
 
     // Build the merkle branch with hashes in pc endianes
-    let branch = build_merkle_branch(&merkle_tree, block_info.txs.len() as u32, tx_index as u32);
+    let branch = build_merkle_branch(&merkle_tree, block_info.txs.len() as u32, tx_index as u32)?;
     debug!(
         "Merkle Tree Root: {:#?}",
         get_merkle_tree_root_hex(&merkle_tree)
@@ -158,7 +158,7 @@ fn build_merkle_branch(
     merkle_tree: &Vec<Option<[u8; 32]>>,
     tx_count: u32,
     tx_index: u32,
-) -> MerkleBranch {
+) -> Result<MerkleBranch, BitVMXError> {
     let mut hashes = Vec::new();
     let mut path = 0;
     let mut path_index = 0;
@@ -182,7 +182,7 @@ fn build_merkle_branch(
 
         let hash = clean_merkle_tree
             .get((level_offset + target_offset) as usize)
-            .unwrap();
+            .ok_or_else(|| BitVMXError::InvalidMerkleTree)?;
         hashes.push(to_swapped_bytes32(hash));
 
         level_offset += level_size;
@@ -191,11 +191,18 @@ fn build_merkle_branch(
         level_size = (level_size + 1) / 2;
     }
 
-    MerkleBranch { hashes, path }
+    Ok(MerkleBranch { hashes, path })
 }
 
-fn get_merkle_tree_root_hex(merkle_tree: &Vec<Option<[u8; 32]>>) -> String {
-    return to_swapped_bytes32(&merkle_tree.last().unwrap().unwrap()).to_hex_string(Case::Lower);
+fn get_merkle_tree_root_hex(merkle_tree: &Vec<Option<[u8; 32]>>) -> Result<String, BitVMXError> {
+    let last = merkle_tree
+        .last()
+        .ok_or_else(|| BitVMXError::InvalidMerkleTree)?;
+    Ok(to_swapped_bytes32(
+        last.as_ref()
+            .ok_or_else(|| BitVMXError::InvalidMerkleTree)?,
+    )
+    .to_hex_string(Case::Lower))
 }
 
 #[cfg(test)]
@@ -254,7 +261,8 @@ mod tests {
 
         // Act
         let merkle_tree = build_merkle_tree_store(&txids, false);
-        let branch = build_merkle_branch(&merkle_tree, txids.len() as u32, tx_index as u32);
+        let branch =
+            build_merkle_branch(&merkle_tree, txids.len() as u32, tx_index as u32).unwrap();
 
         // Assert
         assert_eq!(
@@ -266,7 +274,7 @@ mod tests {
         let expected_merkle_root =
             "f3e94742aca4b5ef85488dc37c06c3282295ffec960994b2c0d5ac2a25a95766";
         assert_eq!(
-            get_merkle_tree_root_hex(&merkle_tree),
+            get_merkle_tree_root_hex(&merkle_tree).unwrap(),
             expected_merkle_root,
             "Merkle root is wrong"
         );
@@ -327,7 +335,8 @@ mod tests {
                 })
                 .collect::<Vec<String>>()
         );
-        let branch = build_merkle_branch(&merkle_tree, txids.len() as u32, tx_index as u32);
+        let branch =
+            build_merkle_branch(&merkle_tree, txids.len() as u32, tx_index as u32).unwrap();
 
         // Assert
         debug!(
@@ -345,7 +354,7 @@ mod tests {
         );
         assert_eq!(branch.path, tx_index, "Merkle Branch Path is wrong");
         assert_eq!(
-            get_merkle_tree_root_hex(&merkle_tree),
+            get_merkle_tree_root_hex(&merkle_tree).unwrap(),
             "7fe79307aeb300d910d9c4bec5bacb4c7e114c7dfd6789e19f3a733debb3bb6a",
             "Merkle root is wrong"
         );

@@ -11,10 +11,9 @@ use anyhow::Result;
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitvmx_broker::{
     channel::channel::DualChannel,
-    identification::identifier::Identifier,
+    identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{self, tls_helper::Cert},
 };
-use bitvmx_operator_comms::operator_comms::AllowList;
 use bitvmx_wallet::wallet::Destination;
 use std::time::{Duration, Instant};
 use std::{
@@ -70,8 +69,21 @@ impl BitVMXClient {
         ))
     }
 
-    pub fn dispatch_transaction(&self, id: Uuid, tx: Transaction) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::DispatchTransaction(id, tx))
+    pub fn dispatch_transaction(
+        &self,
+        id: Uuid,
+        tx: Transaction,
+        confirmation_threshold: Option<u32>,
+    ) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::DispatchTransaction(
+            id,
+            tx,
+            confirmation_threshold,
+        ))
+    }
+
+    pub fn dispatch_transaction_name(&self, id: Uuid, name: String) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::DispatchTransactionName(id, name))
     }
 
     pub fn setup_key(
@@ -127,18 +139,23 @@ impl BitVMXClient {
         ))
     }
 
-    pub fn subscribe_to_transaction(&self, request_id: Uuid, txid: Txid) -> Result<()> {
+    pub fn subscribe_to_transaction(
+        &self,
+        request_id: Uuid,
+        txid: Txid,
+        confirmation_threshold: Option<u32>,
+    ) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::SubscribeToTransaction(
-            request_id, txid,
+            request_id,
+            txid,
+            confirmation_threshold,
         ))
     }
 
-    pub fn subscribe_utxo(&self, id: Uuid) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::SubscribeUTXO(id))
-    }
-
-    pub fn subscribe_to_rsk_pegin(&self) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::SubscribeToRskPegin())
+    pub fn subscribe_to_rsk_pegin(&self, confirmation_threshold: Option<u32>) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SubscribeToRskPegin(
+            confirmation_threshold,
+        ))
     }
 
     pub fn get_spv_proof(&self, txid: Txid) -> Result<()> {
@@ -250,8 +267,8 @@ impl BitVMXClient {
         ))
     }
 
-    pub fn shutdown(&self, timeout: Duration) {
-        let _ = self.send_message(IncomingBitVMXApiMessages::Shutdown(timeout));
+    pub fn shutdown(&self) {
+        let _ = self.send_message(IncomingBitVMXApiMessages::Shutdown());
     }
 
     fn serialize_key(s: &str) -> String {

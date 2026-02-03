@@ -67,7 +67,7 @@ fn init_bitvmx(opn: &str, fresh: bool) -> Result<BitVMX> {
         clear_db(&config.comms.storage_path);
 
         if config.bitcoin.network == Network::Regtest {
-            Wallet::clear_db(&config.wallet).unwrap();
+            Wallet::clear_db(&config.wallet)?;
         }
     }
 
@@ -120,7 +120,7 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
 
     // Main processing loop wrapped in catch_unwind to ensure coordinated shutdown on panic
     let loop_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        loop {
+        'main: loop {
             // Check if Ctrl+C was pressed to gracefully shutdown
             if rx.try_recv().is_ok() {
                 info!("Ctrl+C received, shutting down");
@@ -132,21 +132,28 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
                 let _span = info_span!("", id = instance.name).entered();
 
                 if instance.ready {
-                    if let Err(e) = instance.bitvmx.tick() {
-                        tracing::error!("Error in tick(): {e:#?}");
-                        let mut source = std::error::Error::source(&e);
-                        while let Some(err) = source {
-                            tracing::error!("  Caused by: {err}");
-                            source = std::error::Error::source(err);
+                    match instance.bitvmx.tick() {
+                        Ok(true) => {
+                            thread::sleep(Duration::from_millis(10));
                         }
-                        // escalate fatal errors to shutdown signal
-                        if e.is_fatal() {
-                            info!("Fatal error detected, initiating shutdown");
-                            return; // break out to shutdown
+                        Ok(false) => {
+                            info!("BitVMX requested shutdown");
+                            break 'main;
                         }
-                        thread::sleep(Duration::from_millis(100));
-                    } else {
-                        thread::sleep(Duration::from_millis(10));
+                        Err(e) => {
+                            tracing::error!("Error in tick(): {e:#?}");
+                            let mut source = std::error::Error::source(&e);
+                            while let Some(err) = source {
+                                tracing::error!("  Caused by: {err}");
+                                source = std::error::Error::source(err);
+                            }
+                            // escalate fatal errors to shutdown signal
+                            if e.is_fatal() {
+                                info!("Fatal error detected, initiating shutdown");
+                                return; // break out to shutdown
+                            }
+                            thread::sleep(Duration::from_millis(100));
+                        }
                     }
                 } else {
                     // Still syncing with Bitcoin blockchain. Process bitcoin updates to catch up to the
@@ -183,12 +190,6 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
 
     if loop_result.is_err() {
         info!("Panic captured in main loop, initiating shutdown");
-    }
-
-    // Coordinated shutdown: give each instance a chance to finish and persist state
-    for instance in instances.iter_mut() {
-        let _span = info_span!("", id = instance.name).entered();
-        let _ = instance.bitvmx.shutdown(Duration::from_secs(5));
     }
 
     Ok(())

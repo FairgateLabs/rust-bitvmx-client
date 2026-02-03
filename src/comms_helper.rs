@@ -1,6 +1,7 @@
+use crate::bitvmx::Context;
 use crate::keychain::KeyChain;
 use crate::{errors::BitVMXError, program::participant::CommsAddress};
-use bitvmx_operator_comms::operator_comms::OperatorComms;
+use bitvmx_broker::channel::queue_channel::QueueChannel;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -81,7 +82,7 @@ pub fn prepare_message<T: Serialize>(
 }
 
 pub fn request<T: Serialize>(
-    comms: &OperatorComms,
+    comms: &QueueChannel,
     key_chain: &KeyChain,
     program_id: &Uuid,
     comms_address: CommsAddress,
@@ -109,18 +110,17 @@ pub fn request<T: Serialize>(
         timestamp,
         signature.to_vec(),
     )?;
-    comms
-        .send(
-            &comms_address.pubkey_hash,
-            comms_address.address,
-            serialize_msg,
-        )
-        .map_err(|e| BitVMXError::CommsEncodingError(e))?;
+    comms.send(
+        &Context::ProgramId(*program_id).to_string()?,
+        &comms_address.pubkey_hash,
+        comms_address.address,
+        serialize_msg,
+    )?;
     Ok(())
 }
 
 pub fn response<T: Serialize>(
-    comms: &OperatorComms,
+    comms: &QueueChannel,
     key_chain: &KeyChain,
     program_id: &Uuid,
     comms_address: CommsAddress,
@@ -163,7 +163,7 @@ impl CommsMessageType {
             .iter()
             .find(|(kind, _)| kind == &self)
             .map(|(_, bytes)| *bytes)
-            .ok_or(BitVMXError::InvalidMessageType)
+            .ok_or_else(|| BitVMXError::InvalidMessageType)
     }
 
     // Convert 2-byte representation to message type
@@ -173,7 +173,7 @@ impl CommsMessageType {
             .find(|(_, kind_bytes)| kind_bytes == &bytes)
             .map(|(kind, _)| *kind)
             .cloned()
-            .ok_or(BitVMXError::InvalidMessageType)
+            .ok_or_else(|| BitVMXError::InvalidMessageType)
     }
 }
 
@@ -192,7 +192,7 @@ impl Version {
             .iter()
             .find(|(v, _)| *v == version)
             .map(|(_, bytes)| *bytes)
-            .ok_or(BitVMXError::InvalidMsgVersion)
+            .ok_or_else(|| BitVMXError::InvalidMsgVersion)
     }
 
     // Convert 2-byte representation to version string
@@ -201,7 +201,7 @@ impl Version {
             .iter()
             .find(|(_, version_bytes)| version_bytes == &bytes)
             .map(|(version, _)| version.to_string())
-            .ok_or(BitVMXError::InvalidMsgVersion)
+            .ok_or_else(|| BitVMXError::InvalidMsgVersion)
     }
 }
 
@@ -214,7 +214,7 @@ pub struct VerificationKeyAnnouncement {
 pub struct VerificationKeyRequestPayload;
 
 pub fn send_verification_key_to_peer(
-    comms: &OperatorComms,
+    comms: &QueueChannel,
     key_chain: &KeyChain,
     program_id: &Uuid,
     destination: CommsAddress,
@@ -311,17 +311,14 @@ pub fn deserialize_msg(
     })?;
 
     // Extract program ID and message
-    let program_id =
-        payload
-            .get("program_id")
-            .and_then(|id| id.as_str())
-            .ok_or(BitVMXError::InvalidMessage(
-                format!("Missing program ID").to_string(),
-            ))?;
+    let program_id = payload
+        .get("program_id")
+        .and_then(|id| id.as_str())
+        .ok_or_else(|| BitVMXError::InvalidMessage(format!("Missing program ID").to_string()))?;
 
-    let data = payload.get("msg").ok_or(BitVMXError::InvalidMessage(
-        format!("Missing message").to_string(),
-    ))?;
+    let data = payload
+        .get("msg")
+        .ok_or_else(|| BitVMXError::InvalidMessage(format!("Missing message").to_string()))?;
     // Convert program ID to Uuid
     let program_id = Uuid::parse_str(program_id).map_err(|_| {
         BitVMXError::InvalidMessage(format!("Invalid program ID: {:?}", program_id).to_string())

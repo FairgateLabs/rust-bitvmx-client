@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 
 use bitcoin::PublicKey;
-use bitvmx_broker::identification::identifier::Identifier;
-use bitvmx_operator_comms::operator_comms::PubKeyHash;
+use bitvmx_broker::identification::identifier::{Identifier, PubkHash};
 use key_manager::key_type::BitcoinKeyType;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -24,7 +23,7 @@ pub struct Collaboration {
     pub participants: Vec<CommsAddress>,
     pub leader: CommsAddress,
     pub im_leader: bool,
-    pub keys: HashMap<PubKeyHash, PublicKey>,
+    pub keys: HashMap<PubkHash, PublicKey>,
     pub my_key: PublicKey,
     pub aggregated_key: Option<PublicKey>,
     pub request_from: Identifier,
@@ -149,7 +148,7 @@ impl Collaboration {
                 let keys: ParticipantKeys = parse_keys(data.clone())
                     .map_err(|_| BitVMXError::InvalidMessage("Invalid keys".to_string()))?
                     .first()
-                    .unwrap()
+                    .ok_or_else(|| BitVMXError::InvalidMessage("Invalid keys".to_string()))?
                     .1
                     .clone();
 
@@ -168,13 +167,13 @@ impl Collaboration {
                     self.state = true;
                 }
 
-                if self.aggregated_key.is_some() {
+                if let Some(aggregated_key) = &self.aggregated_key {
                     info!("Aggregated generated ({})", self.im_leader);
                     program_context.broker_channel.send(
                         &self.request_from,
                         OutgoingBitVMXApiMessages::AggregatedPubkey(
                             self.collaboration_id,
-                            self.aggregated_key.unwrap().clone(),
+                            aggregated_key.clone(),
                         )
                         .to_string()?,
                     )?;
@@ -221,19 +220,18 @@ impl Collaboration {
         peers: Vec<CommsAddress>,
         public_keys: Option<Vec<PublicKey>>,
     ) -> Result<PublicKey, BitVMXError> {
-        let my_key = if public_keys.is_some() {
+        let my_key = if let Some(public_keys) = &public_keys {
             // find my position in the peers list
             let my_pubkey_hash = program_context.comms.get_pubk_hash()?;
             let my_position = peers
                 .iter()
                 .position(|p| p.pubkey_hash == my_pubkey_hash)
-                .ok_or(BitVMXError::InvalidParticipant(my_pubkey_hash.to_string()))?;
+                .ok_or_else(|| BitVMXError::InvalidParticipant(my_pubkey_hash.to_string()))?;
 
             public_keys
-                .unwrap()
                 .get(my_position)
                 .cloned()
-                .ok_or(BitVMXError::InvalidParticipant(my_pubkey_hash.to_string()))?
+                .ok_or_else(|| BitVMXError::InvalidParticipant(my_pubkey_hash.to_string()))?
         } else {
             program_context
                 .key_chain
@@ -245,7 +243,7 @@ impl Collaboration {
 
     pub fn get_address_from_pubkey_hash(
         &self,
-        pubkey_hash: &PubKeyHash,
+        pubkey_hash: &PubkHash,
     ) -> Result<CommsAddress, BitVMXError> {
         for participant in &self.participants {
             if &participant.pubkey_hash == pubkey_hash {

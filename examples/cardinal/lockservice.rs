@@ -7,7 +7,7 @@ use bitcoin::{
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
     channel::channel::{DualChannel, LocalChannel},
-    identification::identifier::Identifier,
+    identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{
         sync_server::BrokerSync,
         tls_helper::{init_tls, Cert},
@@ -26,7 +26,6 @@ use bitvmx_client::{
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
 
-use bitvmx_operator_comms::operator_comms::AllowList;
 use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
 use protocol_builder::types::Utxo;
 use storage_backend::{storage::Storage, storage_config::StorageConfig};
@@ -297,8 +296,9 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>, identifier: Identifier)
         //need lockreq txid to subscribe to it
 
         let lockreqtx_on_chain = Uuid::new_v4();
-        let command = IncomingBitVMXApiMessages::SubscribeToTransaction(lockreqtx_on_chain, txid)
-            .to_string()?;
+        let command =
+            IncomingBitVMXApiMessages::SubscribeToTransaction(lockreqtx_on_chain, txid, Some(1))
+                .to_string()?;
         send_all(&id_channel_pairs, &command)?;
         info!("Subscribe to lockreq transaction: {}", lockreqtx_on_chain);
 

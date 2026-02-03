@@ -1,11 +1,12 @@
 use crate::{
+    bitcoin::HIGH_FEE_NODE_ENABLED,
     wait_until_msg,
     wallet::helper::{non_regtest_warning, print_link},
 };
 use anyhow::Result;
 use bitcoin::{
     absolute,
-    hex::FromHex,
+    hex::{DisplayHex, FromHex},
     key::Secp256k1,
     secp256k1::{self, All, Message, SecretKey},
     sighash::SighashCache,
@@ -14,15 +15,20 @@ use bitcoin::{
     TxIn, TxOut, Txid, Witness, XOnlyPublicKey,
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
-use bitvmx_operator_comms::operator_comms::AllowList;
-use protocol_builder::scripts::{build_taproot_spend_info, op_return_script, timelock, SignMode};
+use bitvmx_broker::identification::allow_list::AllowList;
+use protocol_builder::scripts::{
+    build_taproot_spend_info, op_return_script, timelock, verify_signature, SignMode,
+};
 use std::str::FromStr;
 use tracing::{error, info};
 
 use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
-    program::{protocols::union::types::SPEEDUP_VALUE, variables::PartialUtxo},
+    program::{
+        protocols::union::types::{DUST_VALUE, SPEEDUP_VALUE},
+        variables::PartialUtxo,
+    },
     spv_proof::BtcTxSPVProof,
     types::OutgoingBitVMXApiMessages::*,
 };
@@ -95,18 +101,26 @@ impl User {
         &mut self,
         committee_public_key: &PublicKey,
         stream_value: u64,
+        dispute_keys: &[PublicKey],
+        request_pegin_timelock: u16,
     ) -> Result<Txid> {
         info!(id = self.id, "Requesting pegin");
 
         // Enable RSK pegin monitoring using the public API
-        self.bitvmx.subscribe_to_rsk_pegin()?;
+        //TOOD: Define proper confirmation threshold
+        self.bitvmx.subscribe_to_rsk_pegin(Some(1))?;
 
         // Create a proper RSK pegin transaction and send it as if it was a user transaction
         let packet_number = 0;
 
         // We'll create a transaction that will be detected as RSK pegin by the transaction monitor.
-        let signed_transaction =
-            self.create_request_pegin_tx(*committee_public_key, stream_value, packet_number)?;
+        let signed_transaction = self.create_request_pegin_tx(
+            *committee_public_key,
+            stream_value,
+            packet_number,
+            dispute_keys,
+            request_pegin_timelock,
+        )?;
 
         let txid = match self.bitcoin_client.send_transaction(&signed_transaction) {
             Ok(txid) => txid,
@@ -148,34 +162,6 @@ impl User {
         Ok(self.public_key)
     }
 
-    pub fn create_and_send_request_pegin_tx(
-        &mut self,
-        aggregated_pubkey: PublicKey,
-        stream_value: u64,
-        packet_number: u64,
-    ) -> Result<Txid> {
-        // We'll create a transaction that will be detected as RSK pegin by the transaction monitor.
-        let signed_transaction =
-            self.create_request_pegin_tx(aggregated_pubkey, stream_value, packet_number)?;
-
-        let txid = match self.bitcoin_client.send_transaction(&signed_transaction) {
-            Ok(txid) => txid,
-            Err(e) => {
-                error!("Failed to send request pegin transaction: {}", e);
-                return Err(anyhow::anyhow!(
-                    "Failed to send request pegin transaction: {}",
-                    e
-                ));
-            }
-        };
-
-        // Get the transaction and verify it was created
-        let request_pegin_tx = self.bitcoin_client.get_transaction(&txid)?.unwrap();
-        let request_pegin_txid = request_pegin_tx.compute_txid();
-
-        Ok(request_pegin_txid)
-    }
-
     pub fn dispatch_tx(&self, tx: Transaction) -> Result<Txid> {
         let txid = self
             .bitcoin_client
@@ -190,8 +176,9 @@ impl User {
         aggregated_key: PublicKey,
         stream_value: u64,
         packet_number: u64,
+        dispute_keys: &[PublicKey],
+        request_pegin_timelock: u16,
     ) -> Result<Transaction> {
-        pub const TIMELOCK_BLOCKS: u16 = 1;
         let fee = KEY_SPEND_FEE + OP_RETURN_FEE + self.get_extra_fee();
 
         // Fund the user address with enough to cover the taproot output + fees
@@ -203,7 +190,7 @@ impl User {
             }
         };
         let input_value = input_utxo.2.unwrap();
-        let change_value = input_value - (stream_value + fee);
+        let change_value = input_value - (stream_value + fee + 2 * DUST_VALUE);
 
         info!(
             "Creating request pegin transaction with value: {} sats, total fee: {} sats. Input value: {}. Change: {}",
@@ -232,7 +219,7 @@ impl User {
         ]
         .concat();
         let script_op_return = op_return_script(op_data)?;
-        let script_timelock = timelock(TIMELOCK_BLOCKS, &self.public_key, SignMode::Single);
+        let script_timelock = timelock(request_pegin_timelock, &self.public_key, SignMode::Single);
 
         let taproot_spend_info = build_taproot_spend_info(
             &self.secp,
@@ -262,7 +249,33 @@ impl User {
             script_pubkey: op_return_script(op_return_data)?.get_script().clone(),
         };
 
-        let mut outputs = Vec::<TxOut>::from([taproot_output.clone(), op_return_output.clone()]);
+        let mut reject_pegin_scripts = vec![];
+        for key in dispute_keys {
+            reject_pegin_scripts.push(verify_signature(key, SignMode::Single)?)
+        }
+
+        let reject_spend_info = build_taproot_spend_info(
+            &self.secp,
+            &aggregated_key.into(),
+            &reject_pegin_scripts.as_slice(),
+        )?;
+
+        let reject_script_pubkey = ScriptBuf::new_p2tr(
+            &self.secp,
+            reject_spend_info.internal_key(),
+            reject_spend_info.merkle_root(),
+        );
+
+        let reject_output = TxOut {
+            value: Amount::from_sat(2 * DUST_VALUE),
+            script_pubkey: reject_script_pubkey,
+        };
+
+        let mut outputs = Vec::<TxOut>::from([
+            taproot_output.clone(),
+            op_return_output.clone(),
+            reject_output.clone(),
+        ]);
 
         // Change output
         if change_value > 546 {
@@ -294,6 +307,15 @@ impl User {
             "Request pegin TX size: {} vbytes",
             signed_transaction.vsize()
         );
+
+        self.db_print_request_pegin_tx(
+            &signed_transaction,
+            stream_value,
+            packet_number,
+            request_pegin_timelock,
+            reimbursement_xpk,
+        );
+
         self.pop_request_pegin_utxo();
         Ok(signed_transaction)
     }
@@ -438,6 +460,58 @@ impl User {
         Ok(address_bytes)
     }
 
+    /// Print reimbursement keys (x-only and compressed+parity) when debug is enabled
+    fn db_print_reimbursement_keys(&self, reimbursement_xpk: XOnlyPublicKey) {
+        if !crate::participants::common::DEBUG_TX {
+            return;
+        }
+
+        info!(
+            "  - Reimbursement Key (x-only): 0x{}",
+            reimbursement_xpk
+                .serialize()
+                .as_slice()
+                .to_lower_hex_string()
+        );
+
+        let reimbursement_compressed = self.public_key.to_bytes();
+        let parity = reimbursement_compressed[0];
+        info!(
+            "  - Reimbursement Key (compressed): 0x{} (parity: 0x{:02x})",
+            reimbursement_compressed.as_slice().to_lower_hex_string(),
+            parity
+        );
+    }
+
+    fn db_print_request_pegin_tx(
+        &self,
+        signed_transaction: &Transaction,
+        stream_value: u64,
+        packet_number: u64,
+        request_pegin_timelock: u16,
+        reimbursement_xpk: XOnlyPublicKey,
+    ) {
+        use crate::participants::common::db_print_transaction;
+
+        db_print_transaction(
+            "REQUEST PEGIN TRANSACTION DETAILS",
+            signed_transaction,
+            || {
+                info!("");
+                info!("Parameters Used:");
+                info!("  - Denomination: {} satoshis", stream_value);
+                info!("  - Packet Number: {}", packet_number);
+                info!("  - RSK Address: 0x{}", self.rsk_address);
+                self.db_print_reimbursement_keys(reimbursement_xpk);
+                info!(
+                    "  - Request Pegin Timelock: {} blocks",
+                    request_pegin_timelock
+                );
+                info!("");
+            },
+        );
+    }
+
     fn sign_p2wpkh_transaction(
         &self,
         transaction: &mut Transaction,
@@ -509,12 +583,18 @@ impl User {
 
     fn get_extra_fee(&self) -> u64 {
         match self.network {
-            Network::Regtest => 1500,
+            Network::Regtest => {
+                if HIGH_FEE_NODE_ENABLED {
+                    4000
+                } else {
+                    200
+                }
+            }
             _ => 0,
         }
     }
 
     pub fn get_request_pegin_fees(&self) -> u64 {
-        return self.get_extra_fee() + OP_RETURN_FEE + KEY_SPEND_FEE;
+        return self.get_extra_fee() + OP_RETURN_FEE + KEY_SPEND_FEE + 2 * DUST_VALUE;
     }
 }

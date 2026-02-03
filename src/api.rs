@@ -30,6 +30,7 @@ pub trait BitVMXApi {
         from: Identifier,
         id: Uuid,
         tx: Transaction,
+        confirmation_threshold: Option<u32>,
     ) -> Result<(), BitVMXError>;
 
     fn handle_message(&mut self, msg: String, from: Identifier) -> Result<(), BitVMXError>;
@@ -60,11 +61,13 @@ pub trait BitVMXApi {
         from: Identifier,
         id: Uuid,
         txid: Txid,
+        confirmation_threshold: Option<u32>,
     ) -> Result<(), BitVMXError>;
 
-    fn subscribe_utxo(&mut self, uuid: Uuid) -> Result<Uuid, BitVMXError>;
-
-    fn subscribe_to_rsk_pegin(&mut self) -> Result<(), BitVMXError>;
+    fn subscribe_to_rsk_pegin(
+        &mut self,
+        confirmation_threshold: Option<u32>,
+    ) -> Result<(), BitVMXError>;
 
     fn get_var(&mut self, from: Identifier, id: Uuid, key: &str) -> Result<(), BitVMXError>;
 

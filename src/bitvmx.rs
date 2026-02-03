@@ -1,8 +1,8 @@
 use crate::config::ComponentsConfig;
+use crate::message_queue::QueuedMessage;
 use crate::ping_helper::{JobDispatcherType, PingHelper};
 use crate::program::program::is_active_program;
 use crate::program::protocols::protocol_handler::ProtocolHandler;
-use crate::shutdown::GracefulShutdown;
 use crate::spv_proof::get_spv_proof;
 use crate::timestamp_verifier::TimestampVerifier;
 use crate::{
@@ -30,12 +30,12 @@ use bitcoin_coordinator::{
     types::{AckCoordinatorNews, AckNews, CoordinatorNews},
     AckMonitorNews, MonitorNews, TypesToMonitor,
 };
+use bitvmx_broker::channel::queue_channel::{QueueChannel, ReceiveHandlerChannel};
+use bitvmx_broker::channel::retry_helper::RetryPolicy;
+use bitvmx_broker::identification::allow_list::AllowList;
+use bitvmx_broker::identification::routing::RoutingTable;
 use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
 use bitvmx_job_dispatcher::helper::PingMessage;
-use bitvmx_operator_comms::{
-    helper::ReceiveHandlerChannel,
-    operator_comms::{AllowList, OperatorComms, RoutingTable},
-};
 use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::graph::graph::GraphOptions;
 
@@ -52,7 +52,6 @@ use bitvmx_wallet::wallet::Wallet;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    collections::HashSet,
     net::SocketAddr,
     rc::Rc,
     sync::{Arc, Mutex},
@@ -82,8 +81,6 @@ pub struct BitVMX {
     count: u32,
     message_queue: MessageQueue,
     timestamp_verifier: TimestampVerifier,
-    notified_request: HashSet<(Uuid, (Txid, Option<u32>))>,
-    notified_rsk_pegin: HashSet<Txid>, //workaround for RSK pegin transactions because ack seems to be not working
     bitcoin_update: BitcoinUpdateState,
     wallet: Wallet,
     ping_helper: PingHelper,
@@ -124,15 +121,17 @@ impl BitVMX {
     pub fn new(config: Config) -> Result<Self, BitVMXError> {
         let store = Rc::new(Storage::new(&config.storage)?);
         let key_chain = KeyChain::new(&config, store.clone())?;
-        let allow_list = AllowList::from_file(&config.broker.allow_list)?;
-        let routing_table = RoutingTable::load_from_file(&config.broker.routing_table)?;
-        let comms = OperatorComms::new(
+
+        let comms = QueueChannel::new_with_paths(
+            "comms",
             config.comms.address,
             &config.comms.priv_key,
-            allow_list.clone(),
-            routing_table.clone(),
+            store.clone(),
             Some(config.comms.storage_path.clone()),
+            &config.broker.allow_list, //TODO: should be different from broker
+            &config.broker.routing_table,
         )?;
+
         let wallet = Wallet::from_derive_keypair(
             config.bitcoin.clone(),
             config.wallet.clone(),
@@ -151,6 +150,8 @@ impl BitVMX {
 
         //TODO: This could be moved to a simplified helper inside brokerstorage new
         //Also the broker could be run independently if needed
+        let allow_list = AllowList::from_file(&config.broker.allow_list)?;
+        let routing_table = RoutingTable::from_file(&config.broker.routing_table)?;
         let broker_backend = Storage::new(&config.broker.storage)?;
         let broker_backend = Arc::new(Mutex::new(broker_backend));
         let broker_storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
@@ -195,16 +196,16 @@ impl BitVMX {
         let timestamp_verifier =
             TimestampVerifier::new(timestamp_config.enabled, timestamp_config.max_drift_ms);
 
+        let message_queue = MessageQueue::new(store.clone(), RetryPolicy::default());
+
         Ok(Self {
             config,
             program_context,
             store: store.clone(),
             broker,
             count: 0,
-            message_queue: MessageQueue::new(store.clone()),
+            message_queue,
             timestamp_verifier,
-            notified_request: HashSet::new(),
-            notified_rsk_pegin: HashSet::new(),
             bitcoin_update: BitcoinUpdateState {
                 last_update: Instant::now(),
                 was_synced: false,
@@ -215,43 +216,14 @@ impl BitVMX {
         })
     }
 
-    pub fn shutdown(&mut self, timeout: Duration) -> Result<(), BitVMXError> {
+    pub fn shutdown(&mut self) -> Result<(), BitVMXError> {
         info!("Shutdown requested");
         self.shutdown = true;
-        let deadline = Instant::now() + timeout;
-        self.begin_shutdown();
 
         // Begin shutdown on subcomponents
-        self.program_context.comms.begin_shutdown();
-        self.program_context.bitcoin_coordinator.begin_shutdown();
-        self.broker.begin_shutdown();
-        // Drain global in-flight
-        self.drain_until_idle(deadline);
+        self.broker.close();
+        self.program_context.comms.close();
 
-        // Drain subcomponents best-effort
-        self.program_context.comms.drain_until_idle(deadline);
-        self.program_context
-            .bitcoin_coordinator
-            .drain_until_idle(deadline);
-        self.broker.drain_until_idle(deadline);
-
-        // Drain active programs: ensure we don't schedule new work and persist state
-        if let Ok(programs) = self.get_programs() {
-            for status in programs {
-                if let Ok(mut program) = self.load_program(&status.program_id) {
-                    program.begin_shutdown();
-                    program.drain_until_idle(deadline);
-                    program.shutdown_now();
-                }
-            }
-        }
-        // Finalize subcomponents shutdown first
-        self.program_context.comms.shutdown_now();
-        self.program_context.bitcoin_coordinator.shutdown_now();
-        self.broker.shutdown_now();
-
-        // Finalize BitVMX shutdown
-        self.shutdown_now();
         info!("Shutdown completed");
         Ok(())
     }
@@ -438,14 +410,10 @@ impl BitVMX {
         Ok(true)
     }
 
-    pub fn process_msg(
-        &mut self,
-        identifier: Identifier,
-        msg: Vec<u8>,
-        is_new_message: bool,
-    ) -> Result<(), BitVMXError> {
+    pub fn process_msg(&mut self, msg: QueuedMessage) -> Result<(), BitVMXError> {
+        let is_new_message = msg.retry_state.get_attempts() == 0;
         let (version, msg_type, program_id, data, timestamp, signature) =
-            deserialize_msg(msg.clone())?;
+            deserialize_msg(msg.data.clone())?;
 
         // Handle Broadcasted messages specially - they contain original messages to process recursively
         if msg_type == CommsMessageType::Broadcasted {
@@ -455,7 +423,7 @@ impl BitVMX {
                 .leader_broadcast_helper
                 .process_broadcasted_message(
                     &self.program_context,
-                    identifier,
+                    msg.identifier,
                     program_id,
                     data,
                     &self.message_queue,
@@ -468,7 +436,7 @@ impl BitVMX {
         );
         if !is_verification_msg {
             let verified = self.verify_message_signature(
-                &identifier,
+                &msg.identifier,
                 &program_id,
                 &version,
                 &msg_type,
@@ -481,45 +449,43 @@ impl BitVMX {
                     "Buffering message due to missing verification key: {:?} {:?}",
                     program_id, msg_type
                 );
-                self.message_queue.push_back(identifier.to_string(), msg)?;
+                self.message_queue.push_back(msg)?;
                 return Ok(());
             }
         }
         if is_new_message {
             self.timestamp_verifier
-                .ensure_fresh(&identifier.pubkey_hash, timestamp)?;
+                .ensure_fresh(&msg.identifier.pubkey_hash, timestamp)?;
         }
-        let (program, collaboration, peer_address) =
-            if let Some(program) = self.load_program(&program_id).ok() {
-                let peer_address = program.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
+        let (program, collaboration, peer_address) = if let Some(program) =
+            self.load_program(&program_id).ok()
+        {
+            let peer_address = program.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
 
-                (Some(program), None, Some(peer_address))
-            } else if let Some(collaboration) = self.get_collaboration(&program_id)? {
-                let peer_address =
-                    collaboration.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
-                (None, Some(collaboration), Some(peer_address))
-            } else {
-                (None, None, None)
-            };
+            (Some(program), None, Some(peer_address))
+        } else if let Some(collaboration) = self.get_collaboration(&program_id)? {
+            let peer_address =
+                collaboration.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
+            (None, Some(collaboration), Some(peer_address))
+        } else {
+            (None, None, None)
+        };
 
         let message_consumed = match peer_address {
             Some(peer_address) => {
                 if is_verification_msg {
-                    let handled = SignatureVerifier::handle_verification_messages(
+                    match SignatureVerifier::handle_verification_messages(
                         &self.program_context,
                         &program_id,
                         &msg_type,
                         &data,
                         &peer_address,
-                    );
-                    if handled.is_err() {
-                        error!(
-                            "Error handling verification message: {:?}",
-                            handled.err().unwrap()
-                        );
-                        false
-                    } else {
-                        true
+                    ) {
+                        Ok(_) => true,
+                        Err(e) => {
+                            error!("Error handling verification message: {:?}", e);
+                            false
+                        }
                     }
                 } else {
                     if let Some(mut program) = program {
@@ -560,11 +526,11 @@ impl BitVMX {
 
         if message_consumed {
             self.timestamp_verifier
-                .record(&identifier.pubkey_hash, timestamp);
+                .record(&msg.identifier.pubkey_hash, timestamp);
         } else {
             // Message needs to be buffered (not processed or program/collaboration not found)
             info!("Pending message to back: {:?}", msg_type);
-            self.message_queue.push_back(identifier.to_string(), msg)?;
+            self.message_queue.push_back(msg)?;
         }
         Ok(())
     }
@@ -574,37 +540,57 @@ impl BitVMX {
             return Ok(());
         }
 
-        if let Some((identifier_str, msg)) = self.message_queue.pop_front()? {
-            // Parse the identifier string back to Identifier
-            // All messages in the queue are stored as Identifier strings (from identifier.to_string())
-            let identifier = identifier_str.parse::<Identifier>().map_err(|e| {
-                error!(
-                    "Failed to parse Identifier from '{}': {}",
-                    identifier_str, e
-                );
-                BitVMXError::InvalidCommsAddress(format!("{}: {}", identifier_str, e))
-            })?;
-            self.process_msg(identifier, msg, false)?;
+        if let Some(msg) = self.message_queue.pop_front()? {
+            self.process_msg(msg)?;
         }
         Ok(())
     }
 
     pub fn process_comms_messages(&mut self) -> Result<(), BitVMXError> {
-        let message = self.program_context.comms.check_receive();
+        //Send enqueued messages
+        self.program_context.comms.tick()?;
 
-        if message.is_none() {
-            return Ok(());
-        }
-
-        let message = message.unwrap();
-        match message {
-            ReceiveHandlerChannel::Msg(identifier, msg) => {
-                self.process_msg(identifier, msg, true)?;
+        let messages = match self.program_context.comms.check_receive() {
+            Ok(messages) => messages,
+            Err(e) => {
+                error!("Error receiving messages: {:?}", e);
                 return Ok(());
             }
-            ReceiveHandlerChannel::Error(e) => {
-                info!("Error receiving message {}", e);
-            } //TODO: handle error
+        };
+
+        for message in messages {
+            match message {
+                ReceiveHandlerChannel::Msg(identifier, msg) => {
+                    let msg: QueuedMessage = QueuedMessage::new(identifier, msg)?;
+                    self.process_msg(msg)?;
+                }
+                ReceiveHandlerChannel::Error(e) => {
+                    info!("Error receiving message {}", e);
+                }
+            }
+        }
+
+        let deadletter_messages = match self.program_context.comms.check_deadletter() {
+            Ok(messages) => messages,
+            Err(e) => {
+                error!("Error receiving deadletter messages: {:?}", e);
+                return Ok(());
+            }
+        };
+        for deadletter in deadletter_messages {
+            match deadletter {
+                (ReceiveHandlerChannel::Msg(identifier, _msg), ctx) => {
+                    let context = Context::from_string(&ctx)?;
+                    warn!(
+                        "Processing deadletter message for context: {:?} and identifier: {:?}",
+                        context, identifier
+                    );
+                    // TODO: Add a function in protocol handler to process deadletter messages
+                }
+                (ReceiveHandlerChannel::Error(e), _) => {
+                    info!("Error receiving deadletter message {}", e);
+                }
+            }
         }
 
         Ok(())
@@ -625,35 +611,17 @@ impl BitVMX {
 
         match &context {
             Context::ProgramId(program_id) => {
-                if !self
-                    .notified_request
-                    .contains(&(*program_id, (tx_id, vout)))
-                {
-                    let program = self.load_program(program_id)?;
+                let program = self.load_program(program_id)?;
 
-                    program.notify_news(
-                        tx_id,
-                        vout,
-                        tx_status,
-                        context_data,
-                        &self.program_context,
-                    )?;
-                    self.notified_request.insert((*program_id, (tx_id, vout)));
-                }
+                program.notify_news(tx_id, vout, tx_status, context_data, &self.program_context)?;
             }
             Context::RequestId(request_id, from) => {
-                if !self
-                    .notified_request
-                    .contains(&(*request_id, (tx_id, vout)))
-                {
-                    info!("Sending News: {:?} for context: {:?}", tx_id, context);
-                    self.program_context.broker_channel.send(
-                        from,
-                        OutgoingBitVMXApiMessages::Transaction(*request_id, tx_status, None)
-                            .to_string()?,
-                    )?;
-                    self.notified_request.insert((*request_id, (tx_id, vout)));
-                }
+                info!("Sending News: {:?} for context: {:?}", tx_id, context);
+                self.program_context.broker_channel.send(
+                    from,
+                    OutgoingBitVMXApiMessages::Transaction(*request_id, tx_status, None)
+                        .to_string()?,
+                )?;
             }
             Context::Protocol(_, _) => {}
         }
@@ -679,8 +647,8 @@ impl BitVMX {
 
             match monitor_news {
                 MonitorNews::Transaction(tx_id, tx_status, context_data) => {
-                    self.handle_news(tx_id, tx_status, context_data, None)?;
-                    ack_news = AckNews::Monitor(AckMonitorNews::Transaction(tx_id));
+                    self.handle_news(tx_id, tx_status, context_data.clone(), None)?;
+                    ack_news = AckNews::Monitor(AckMonitorNews::Transaction(tx_id, context_data));
                 }
                 MonitorNews::SpendingUTXOTransaction(
                     tx_id,
@@ -688,22 +656,20 @@ impl BitVMX {
                     tx_status,
                     context_data,
                 ) => {
-                    self.handle_news(tx_id, tx_status, context_data, Some(output_index))?;
+                    self.handle_news(tx_id, tx_status, context_data.clone(), Some(output_index))?;
                     ack_news = AckNews::Monitor(AckMonitorNews::SpendingUTXOTransaction(
                         tx_id,
                         output_index,
+                        context_data,
                     ));
                 }
                 MonitorNews::RskPeginTransaction(tx_id, tx_status) => {
                     let data = serde_json::to_string(
                         &OutgoingBitVMXApiMessages::PeginTransactionFound(tx_id, tx_status),
                     )?;
-                    if !self.notified_rsk_pegin.contains(&tx_id) {
-                        self.program_context
-                            .broker_channel
-                            .send(&self.config.components.l2, data)?;
-                        self.notified_rsk_pegin.insert(tx_id);
-                    }
+                    self.program_context
+                        .broker_channel
+                        .send(&self.config.components.l2, data)?;
                     ack_news = AckNews::Monitor(AckMonitorNews::RskPeginTransaction(tx_id));
                 }
                 MonitorNews::NewBlock(block_id, block_height) => {
@@ -782,6 +748,20 @@ impl BitVMX {
                         max_allowed,
                     ));
                 }
+                CoordinatorNews::TransactionAlreadyInMempool(tx_id, _) => {
+                    // TODO: Complete what to do here
+                    ack_news = AckNews::Coordinator(
+                        AckCoordinatorNews::TransactionAlreadyInMempool(tx_id),
+                    );
+                }
+                CoordinatorNews::MempoolRejection(tx_id, _context_data, _counter) => {
+                    // TODO: Complete what to do here
+                    ack_news = AckNews::Coordinator(AckCoordinatorNews::MempoolRejection(tx_id));
+                }
+                CoordinatorNews::NetworkError(tx_id, _context_data, _counter) => {
+                    // TODO: Complete what to do here
+                    ack_news = AckNews::Coordinator(AckCoordinatorNews::NetworkError(tx_id));
+                }
             }
 
             self.program_context
@@ -812,10 +792,12 @@ impl BitVMX {
         Ok(())
     }
 
-    pub fn tick(&mut self) -> Result<(), BitVMXError> {
+    /// Main tick function to be called periodically. Returns false if BitVMX is shutdown.
+    pub fn tick(&mut self) -> Result<bool, BitVMXError> {
         //info!("Ticking BitVMX: {}", self.count);
         if self.shutdown {
-            return Ok(());
+            info!("BitVMX is shutdown, stopping tick processing.");
+            return Ok(false);
         }
 
         self.count += 1;
@@ -833,13 +815,12 @@ impl BitVMX {
         self.ping_helper
             .check_job_dispatchers_liveness(&self.program_context, &self.config.components)?;
 
-        Ok(())
+        Ok(true)
     }
 
     pub fn process_wallet_updates(&mut self) -> Result<(), BitVMXError> {
-        let result = self.wallet.tick();
-        if result.is_err() {
-            error!("Error updating wallet: {:?}", result.err().unwrap());
+        if let Err(e) = self.wallet.tick() {
+            error!("Error updating wallet: {:?}", e);
         }
         Ok(())
     }
@@ -862,14 +843,11 @@ impl BitVMX {
         if should_update {
             let updated = self.process_bitcoin_updates();
             self.bitcoin_update.last_update = now;
-            if updated.is_err() {
-                error!(
-                    "Critical error processing bitcoin updates: {:?}",
-                    updated.err().unwrap()
-                );
+            if let Err(e) = updated {
+                error!("Critical error processing bitcoin updates: {:?}", e);
                 return Ok(());
             }
-            if updated.unwrap() {
+            if updated? {
                 self.bitcoin_update.was_synced = true;
 
                 // info!(
@@ -900,13 +878,7 @@ impl BitVMX {
             .get(StoreKey::Programs.get_key())
             .map_err(BitVMXError::StorageError)?;
 
-        if programs_ids.is_none() {
-            let empty_programs: Vec<ProgramStatus> = vec![];
-
-            return Ok(empty_programs);
-        }
-
-        Ok(programs_ids.unwrap())
+        Ok(programs_ids.unwrap_or_default())
     }
 
     fn get_active_programs(&self) -> Result<Vec<Program>, BitVMXError> {
@@ -999,32 +971,6 @@ impl BitVMX {
         self.wallet.sync_wallet()?;
         info!("Wallet sync completed.");
         Ok(())
-    }
-}
-
-impl GracefulShutdown for BitVMX {
-    fn begin_shutdown(&mut self) {
-        // Future: signal programs/protocols/coordinator to quiesce
-    }
-
-    fn drain_until_idle(&mut self, deadline: Instant) {
-        while Instant::now() < deadline {
-            if let Err(e) = self.process_pending_messages() {
-                warn!("drain pending msg err: {:?}", e);
-            }
-            if let Err(e) = self.process_collaboration() {
-                warn!("drain collaboration err: {:?}", e);
-            }
-
-            if self.message_queue.is_empty().unwrap() {
-                break;
-            }
-            sleep(Duration::from_millis(10));
-        }
-    }
-
-    fn shutdown_now(&mut self) {
-        self.broker.close();
     }
 }
 
@@ -1201,6 +1147,7 @@ impl BitVMXApi for BitVMX {
         from: Identifier,
         id: Uuid,
         txid: Txid,
+        confirmation_threshold: Option<u32>,
     ) -> Result<(), BitVMXError> {
         info!(
             "Subscribing to transaction: {:?} from: {} id: {}",
@@ -1211,20 +1158,20 @@ impl BitVMXApi for BitVMX {
             .monitor(TypesToMonitor::Transactions(
                 vec![txid],
                 Context::RequestId(id, from).to_string()?,
+                confirmation_threshold,
             ))?;
 
         Ok(())
     }
 
-    fn subscribe_utxo(&mut self, uuid: Uuid) -> Result<Uuid, BitVMXError> {
-        Ok(uuid)
-    }
-
-    fn subscribe_to_rsk_pegin(&mut self) -> Result<(), BitVMXError> {
+    fn subscribe_to_rsk_pegin(
+        &mut self,
+        confirmation_threshold: Option<u32>,
+    ) -> Result<(), BitVMXError> {
         // Enable RSK pegin transaction monitoring
         self.program_context
             .bitcoin_coordinator
-            .monitor(TypesToMonitor::RskPeginTransaction)?;
+            .monitor(TypesToMonitor::RskPegin(confirmation_threshold))?;
         Ok(())
     }
 
@@ -1286,6 +1233,7 @@ impl BitVMXApi for BitVMX {
         from: Identifier,
         id: Uuid,
         tx: Transaction,
+        confirmation_threshold: Option<u32>,
     ) -> Result<(), BitVMXError> {
         info!("Dispatching transaction: {:?} for instance: {:?}", tx, id);
 
@@ -1294,6 +1242,7 @@ impl BitVMXApi for BitVMX {
             None,
             Context::RequestId(id, from).to_string()?,
             None,
+            confirmation_threshold,
         )?;
 
         Ok(())
@@ -1401,20 +1350,24 @@ impl BitVMXApi for BitVMX {
             .get_transaction(txid);
 
         match tx_info {
-            Ok(utx) => {
-                let proof = get_spv_proof(txid, utx.block_info.unwrap())?;
-
-                self.reply(from, OutgoingBitVMXApiMessages::SPVProof(txid, Some(proof)))?;
-            }
+            Ok(utx) => match utx.block_info {
+                Some(block_info) => {
+                    let proof = get_spv_proof(txid, block_info)?;
+                    self.reply(from, OutgoingBitVMXApiMessages::SPVProof(txid, Some(proof)))?;
+                }
+                None => {
+                    warn!("Missing block info for txid {}", txid);
+                    self.reply(from, OutgoingBitVMXApiMessages::SPVProof(txid, None))?;
+                }
+            },
             Err(e) => {
                 warn!(
                     "Failed to retrieve transaction info for txid {}: {:?}",
                     txid, e
                 );
-
                 self.reply(from, OutgoingBitVMXApiMessages::SPVProof(txid, None))?;
             }
-        };
+        }
 
         Ok(())
     }
@@ -1473,19 +1426,20 @@ impl BitVMXApi for BitVMX {
             }
             IncomingBitVMXApiMessages::GetFundingAddress(id) => {
                 debug!("Getting funding address uuid: {:?}", id);
-                let result = self.wallet.receive_address();
-                if result.is_err() {
-                    let error = result.as_ref().err().unwrap();
-                    error!("Error getting funding address uuid: {:?}: {:?}", id, error);
-                    self.program_context.broker_channel.send(
-                        &from,
-                        serde_json::to_string(&OutgoingBitVMXApiMessages::WalletError(
-                            id,
-                            error.to_string(),
-                        ))?,
-                    )?;
-                }
-                let address = result?;
+                let address = match self.wallet.receive_address() {
+                    Ok(address) => address,
+                    Err(e) => {
+                        error!("Error getting funding address uuid: {:?}: {:?}", id, e);
+                        self.program_context.broker_channel.send(
+                            &from,
+                            serde_json::to_string(&OutgoingBitVMXApiMessages::WalletError(
+                                id,
+                                e.to_string(),
+                            ))?,
+                        )?;
+                        return Ok(());
+                    }
+                };
 
                 self.program_context.broker_channel.send(
                     &from,
@@ -1541,7 +1495,8 @@ impl BitVMXApi for BitVMX {
                 };
 
                 let txid = tx.compute_txid();
-                self.dispatch_transaction(from.clone(), id, tx.clone())?;
+                //TODO: Is this confirmation threshold of 1 appropriate here?
+                self.dispatch_transaction(from.clone(), id, tx.clone(), Some(1))?;
                 self.wallet.update_with_tx(&tx)?;
 
                 self.program_context.broker_channel.send(
@@ -1589,15 +1544,14 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::Setup(id, program_type, participants, leader) => {
                 BitVMXApi::setup(self, id, program_type, participants, leader)?
             }
-            IncomingBitVMXApiMessages::SubscribeToTransaction(uuid, txid) => {
-                BitVMXApi::subscribe_to_tx(self, from, uuid, txid)?
-            }
-            IncomingBitVMXApiMessages::SubscribeUTXO(uuid) => {
-                BitVMXApi::subscribe_utxo(self, uuid)?;
-            }
+            IncomingBitVMXApiMessages::SubscribeToTransaction(
+                uuid,
+                txid,
+                confirmation_threshold,
+            ) => BitVMXApi::subscribe_to_tx(self, from, uuid, txid, confirmation_threshold)?,
 
-            IncomingBitVMXApiMessages::SubscribeToRskPegin() => {
-                BitVMXApi::subscribe_to_rsk_pegin(self)?
+            IncomingBitVMXApiMessages::SubscribeToRskPegin(confirmation_threshold) => {
+                BitVMXApi::subscribe_to_rsk_pegin(self, confirmation_threshold)?
             }
 
             IncomingBitVMXApiMessages::GetSPVProof(txid) => {
@@ -1607,8 +1561,8 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::DispatchTransactionName(id, tx) => {
                 BitVMXApi::dispatch_transaction_name(self, id, &tx)?
             }
-            IncomingBitVMXApiMessages::DispatchTransaction(id, tx) => {
-                BitVMXApi::dispatch_transaction(self, from, id, tx)?;
+            IncomingBitVMXApiMessages::DispatchTransaction(id, tx, confirmation_threshold) => {
+                BitVMXApi::dispatch_transaction(self, from, id, tx, confirmation_threshold)?;
             }
             IncomingBitVMXApiMessages::SetupKey(
                 id,
@@ -1619,10 +1573,10 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::GetKeyPair(id) => {
                 let collaboration = self
                     .get_collaboration(&id)?
-                    .ok_or(BitVMXError::ProgramNotFound(id))?;
+                    .ok_or_else(|| BitVMXError::ProgramNotFound(id))?;
                 let aggregated = collaboration
                     .aggregated_key
-                    .ok_or(BitVMXError::ProgramNotFound(id))?;
+                    .ok_or_else(|| BitVMXError::ProgramNotFound(id))?;
                 let pair = self
                     .program_context
                     .key_chain
@@ -1642,10 +1596,10 @@ impl BitVMXApi for BitVMX {
                 } else {
                     let collaboration = self
                         .get_collaboration(&id)?
-                        .ok_or(BitVMXError::ProgramNotFound(id))?;
+                        .ok_or_else(|| BitVMXError::ProgramNotFound(id))?;
                     let aggregated = collaboration
                         .aggregated_key
-                        .ok_or(BitVMXError::ProgramNotFound(id))?;
+                        .ok_or_else(|| BitVMXError::ProgramNotFound(id))?;
                     let pubkey = self
                         .program_context
                         .key_chain
@@ -1742,9 +1696,9 @@ impl BitVMXApi for BitVMX {
                 };
                 self.reply(from, message)?;
             }
-            IncomingBitVMXApiMessages::Shutdown(timeout) => {
+            IncomingBitVMXApiMessages::Shutdown() => {
                 info!("Shutdown message received. Initiating shutdown...");
-                self.shutdown(timeout)?;
+                self.shutdown()?;
             }
             #[cfg(feature = "testpanic")]
             IncomingBitVMXApiMessages::Test(s) => {

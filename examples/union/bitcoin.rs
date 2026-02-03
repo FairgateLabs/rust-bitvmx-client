@@ -3,7 +3,10 @@ use std::thread;
 
 use anyhow::Result;
 use bitcoin::Network;
-use bitcoind::bitcoind::{Bitcoind, BitcoindFlags};
+use bitcoind::{
+    bitcoind::{Bitcoind, BitcoindFlags},
+    config::BitcoindConfig,
+};
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
 use bitvmx_client::config::Config;
@@ -89,11 +92,7 @@ pub fn stop_existing_bitcoind() -> Result<()> {
     let config = Config::new(Some("config/development.yaml".to_string()))?;
 
     // Create a temporary Bitcoind instance to check if one is running and stop it
-    let temp_bitcoind = Bitcoind::new(
-        "bitcoin-regtest",
-        "bitcoin/bitcoin:29.1",
-        config.bitcoin.clone(),
-    );
+    let temp_bitcoind = Bitcoind::new(BitcoindConfig::default(), config.bitcoin, None);
 
     // Attempt to stop any existing instance
     match temp_bitcoind.stop() {
@@ -118,26 +117,24 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind)> {
     // Wallet::clear_db(&config.wallet)?;
 
     info!("Starting bitcoind");
+    let bitcoind_config = BitcoindConfig::default();
+
     let bitcoind = match HIGH_FEE_NODE_ENABLED {
         true => {
             // Config to trigger speedup transactions in Regtest
-            Bitcoind::new_with_flags(
-                "bitcoin-regtest",
-                "bitcoin/bitcoin:29.1",
+            Bitcoind::new(
+                bitcoind_config,
                 config.bitcoin.clone(),
-                BitcoindFlags {
+                Some(BitcoindFlags {
                     min_relay_tx_fee: 0.00001,
                     block_min_tx_fee: 0.00008,
                     debug: 1,
                     fallback_fee: 0.0002,
-                },
+                    maxmempool: None,
+                }),
             )
         }
-        false => Bitcoind::new(
-            "bitcoin-regtest",
-            "bitcoin/bitcoin:29.1",
-            config.bitcoin.clone(),
-        ),
+        false => Bitcoind::new(bitcoind_config, config.bitcoin.clone(), None),
     };
 
     bitcoind.start()?;

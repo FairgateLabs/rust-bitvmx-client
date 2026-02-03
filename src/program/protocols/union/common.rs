@@ -5,7 +5,7 @@ use protocol_builder::{
     builder::Protocol,
     errors::ProtocolBuilderError,
     scripts::{ProtocolScript, SignMode},
-    types::{input::SpendMode, InputArgs, OutputType},
+    types::{input::SpendMode, output::AmountMode, InputArgs, OutputType},
 };
 use sha2::{Digest, Sha256};
 use tracing::info;
@@ -268,6 +268,7 @@ pub fn get_operator_output_type(
         value: Amount::from_sat(amount),
         script_pubkey,
         public_key: *dispute_key,
+        amount_mode: AmountMode::from(amount),
     })
 }
 
@@ -462,7 +463,7 @@ impl<'a> InputSigningInfo<'a> {
                         ))
                     })?;
 
-            let wt_signature = wt_data.key_manager.sign_winternitz_message(
+            let wt_signature = wt_data.key_manager.sign_winternitz_message_by_index(
                 wt_data.data.as_slice(),
                 wt_data.key_type,
                 key.derivation_index(),
@@ -519,11 +520,11 @@ impl<'a> InputSigningInfo<'a> {
                 script_index: None,
                 source: e,
             })?;
-        let mut args = InputArgs::new_taproot_key_args();
-        let sig_index = if let Some(script_idx) = script_index {
-            script_idx
+
+        let (sig_index, mut args) = if let Some(script_idx) = script_index {
+            (script_idx, InputArgs::new_taproot_script_args(script_idx))
         } else {
-            signatures.len() - 1
+            (signatures.len() - 1, InputArgs::new_taproot_key_args())
         };
         let signature = signatures[sig_index].ok_or_else(|| BitVMXError::ErrorSigningInput {
             tx_name: name.to_string(),

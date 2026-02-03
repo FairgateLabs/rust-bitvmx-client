@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use bitcoin::PublicKey;
+use bitvmx_broker::identification::allow_list::AllowList;
 use bitvmx_client::types::{OutgoingBitVMXApiMessages, PROGRAM_TYPE_LIGHT_DRP};
 use bitvmx_client::{client::BitVMXClient, config::Config, program::participant::CommsAddress};
 use bitvmx_operator_comms::operator_comms::AllowList;

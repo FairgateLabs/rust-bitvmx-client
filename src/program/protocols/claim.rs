@@ -184,11 +184,11 @@ impl ClaimGate {
             None,
         )?;
 
-        if exclusive_success_vout.is_some() {
+        if let Some(exclusive_success_vout) = exclusive_success_vout {
             protocol.add_connection(
                 &format!("{}_EXCLUSIVE_{}", from, &success),
                 &from,
-                OutputSpec::Index(exclusive_success_vout.unwrap()),
+                OutputSpec::Index(exclusive_success_vout),
                 &success,
                 InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
                 None,

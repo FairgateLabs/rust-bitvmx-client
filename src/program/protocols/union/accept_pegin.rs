@@ -13,7 +13,8 @@ use crate::{
                     indexed_name, load_union_settings, InputSigningInfo,
                 },
                 types::{
-                    Committee, PegInAccepted, PegInRequest, StreamSettings, ACCEPT_PEGIN_TX,
+                    Committee, PegInAccepted, PegInRequest, StreamSettings, UnionSPVNotification,
+                    UnionTxType, ACCEPT_PEGIN_TX, CANCEL_TAKE0_TX, DUST_VALUE,
                     LAST_OPERATOR_TAKE_UTXO, OPERATOR_TAKE_ENABLER, OPERATOR_TAKE_TX,
                     OPERATOR_WON_ENABLER, OPERATOR_WON_TX, P2TR_FEE, REIMBURSEMENT_KICKOFF_TX,
                     REQUEST_PEGIN_TX, REVEAL_IN_PROGRESS, SPEEDUP_KEY, SPEEDUP_VALUE,
@@ -23,15 +24,16 @@ use crate::{
         },
         variables::{PartialUtxo, VariableTypes},
     },
+    spv_proof::get_spv_proof,
     types::{OutgoingBitVMXApiMessages, ProgramContext},
 };
 use bitcoin::{hex::FromHex, PublicKey, Transaction, Txid};
-use bitcoin_coordinator::TransactionStatus;
+use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
     graph::graph::GraphOptions,
-    scripts::{op_return_script, timelock, ProtocolScript, SignMode},
+    scripts::{op_return_script, timelock, verify_signature, ProtocolScript, SignMode},
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
@@ -106,24 +108,52 @@ impl ProtocolHandler for AcceptPegInProtocol {
     ) -> Result<(), BitVMXError> {
         let pegin_request: PegInRequest = self.pegin_request(context)?;
         let pegin_request_txid = pegin_request.txid;
+
+        // Enabler outputs get compensated from input to output so they are removed from the user output calculation
         let user_output_amount =
             self.checked_sub(pegin_request.amount, P2TR_FEE + SPEEDUP_VALUE)?;
 
         let take_aggregated_key = &pegin_request.take_aggregated_key;
-
         let mut protocol = self.load_or_create_protocol();
+        let settings = self.load_stream_setting(context)?;
 
         let leaves = self.request_pegin_leaves(
             pegin_request.amount,
             pegin_request.rootstock_address,
             pegin_request.reimbursement_pubkey,
+            &settings,
         )?;
+
+        let mut enabler_scripts = vec![];
+        let members = self.committee(context, pegin_request.committee_id)?.members;
+        for member in &members {
+            enabler_scripts.push(verify_signature(&member.dispute_key, SignMode::Single)?)
+        }
 
         // External connection from request peg-in to accept peg-in
         protocol.add_connection(
-            "accept_pegin_request",
+            "pegin_funds_conn",
             REQUEST_PEGIN_TX,
             OutputType::taproot(pegin_request.amount, &take_aggregated_key, &leaves)?.into(),
+            ACCEPT_PEGIN_TX,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::KeyOnly {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            Some(pegin_request_txid),
+        )?;
+
+        // Add OP_RETURN output
+        protocol.add_unknown_outputs(REQUEST_PEGIN_TX, 1)?;
+
+        // External connection from request peg-in to accept peg-in
+        protocol.add_connection(
+            "accept_enabler_conn",
+            REQUEST_PEGIN_TX,
+            OutputType::taproot(2 * DUST_VALUE, &take_aggregated_key, &enabler_scripts)?.into(),
             ACCEPT_PEGIN_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
@@ -138,6 +168,47 @@ impl ProtocolHandler for AcceptPegInProtocol {
         let accept_pegin_output =
             OutputType::taproot(user_output_amount, &take_aggregated_key, &[])?;
         protocol.add_transaction_output(ACCEPT_PEGIN_TX, &accept_pegin_output)?;
+
+        let mut take0_scripts = vec![];
+        let members = self.committee(context, pegin_request.committee_id)?.members;
+
+        for (i, member) in members.iter().enumerate() {
+            take0_scripts.push(verify_signature(
+                &member.dispute_key,
+                self.get_sign_mode(i),
+            )?)
+        }
+
+        // Etake0
+        // TODO: Optimize output value calculation. It should pay CANCEL_TAKE0_TX fee + SPEEDUP_VALUE
+        let etake_output =
+            OutputType::taproot(2 * SPEEDUP_VALUE, &take_aggregated_key, &take0_scripts)?;
+        protocol.add_transaction_output(ACCEPT_PEGIN_TX, &etake_output)?;
+
+        let committee = self.committee(context, pegin_request.committee_id)?;
+
+        for (op_index, member) in committee.members.iter().enumerate() {
+            if member.role == ParticipantRole::Verifier {
+                continue;
+            }
+
+            let cancel_name = &indexed_name(CANCEL_TAKE0_TX, op_index);
+
+            protocol.add_connection(
+                "cancel_take0_conn",
+                ACCEPT_PEGIN_TX,
+                OutputSpec::Last,
+                cancel_name,
+                InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
+                None,
+                None,
+            )?;
+
+            protocol.add_transaction_output(
+                cancel_name,
+                &OutputType::segwit_key(SPEEDUP_VALUE, keys[op_index].get_public(SPEEDUP_KEY)?)?,
+            )?;
+        }
 
         // Speed up transaction (User pay for it)
         let pb = ProtocolBuilder {};
@@ -199,8 +270,6 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 &mut vec![operator_won_enabler.clone()],
             )?;
 
-            let settings = self.load_stream_setting(context)?;
-
             self.create_operator_won_transaction(
                 &mut protocol,
                 operator_index,
@@ -218,9 +287,9 @@ impl ProtocolHandler for AcceptPegInProtocol {
 
         let tx = protocol.transaction_by_name(ACCEPT_PEGIN_TX)?;
         let txid = tx.compute_txid();
-        let output_index = 0;
 
         // Save Accept Pegin transaction under committee_id to be used in user take
+        let output_index = 0;
         context.globals.set_var(
             &pegin_request.committee_id,
             &indexed_name(ACCEPT_PEGIN_TX, pegin_request.slot_index),
@@ -230,6 +299,12 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 Some(tx.output.get(output_index as usize).unwrap().value.to_sat()),
                 Some(accept_pegin_output),
             )),
+        )?;
+
+        context.globals.set_var(
+            &pegin_request.committee_id,
+            &indexed_name(CANCEL_TAKE0_TX, pegin_request.slot_index),
+            VariableTypes::Utxo((txid, 1, Some(DUST_VALUE), Some(etake_output))),
         )?;
 
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
@@ -249,6 +324,8 @@ impl ProtocolHandler for AcceptPegInProtocol {
             self.operator_take_tx(context, name)
         } else if name.starts_with(OPERATOR_WON_TX) {
             self.operator_won_tx(context, name)
+        } else if name.starts_with(CANCEL_TAKE0_TX) {
+            self.cancel_take0_tx(context, name)
         } else {
             Err(BitVMXError::InvalidTransactionName(name.to_string()))
         }
@@ -270,13 +347,15 @@ impl ProtocolHandler for AcceptPegInProtocol {
         );
 
         if tx_name.starts_with(OPERATOR_TAKE_TX) || tx_name.starts_with(OPERATOR_WON_TX) {
-            let operator_index = match tx_name.clone() {
-                name if name.starts_with(OPERATOR_TAKE_TX) => {
-                    extract_index(&tx_name.clone(), OPERATOR_TAKE_TX)?
-                }
-                name if name.starts_with(OPERATOR_WON_TX) => {
-                    extract_index(&tx_name.clone(), OPERATOR_WON_TX)?
-                }
+            let (operator_index, tx_type) = match tx_name.clone() {
+                name if name.starts_with(OPERATOR_TAKE_TX) => (
+                    extract_index(&tx_name.clone(), OPERATOR_TAKE_TX)?,
+                    UnionTxType::OperatorTake,
+                ),
+                name if name.starts_with(OPERATOR_WON_TX) => (
+                    extract_index(&tx_name.clone(), OPERATOR_WON_TX)?,
+                    UnionTxType::OperatorWon,
+                ),
                 _ => {
                     return Err(BitVMXError::InvalidTransactionName(format!(
                         "{} is not supported to call update_operator_take_utxo",
@@ -305,6 +384,8 @@ impl ProtocolHandler for AcceptPegInProtocol {
 
                 self.update_operator_take_utxo(context, utxo)?;
             }
+
+            self.send_spv_notification(context, tx_id, tx_type)?;
         }
 
         Ok(())
@@ -610,12 +691,16 @@ impl AcceptPegInProtocol {
         let args = collect_input_signatures(
             &mut protocol,
             ACCEPT_PEGIN_TX,
-            &vec![InputSigningInfo::KeySpend { input_index: 0 }],
+            &vec![
+                InputSigningInfo::KeySpend { input_index: 0 },
+                InputSigningInfo::KeySpend { input_index: 1 },
+            ],
         )?;
 
         let tx = self
             .load_protocol()?
             .transaction_to_send(ACCEPT_PEGIN_TX, &args)?;
+
         Ok((tx, None))
     }
 
@@ -664,6 +749,38 @@ impl AcceptPegInProtocol {
         Ok((tx, Some(speedup_utxo.into())))
     }
 
+    fn cancel_take0_tx(
+        &self,
+        context: &ProgramContext,
+        name: &str,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        info!(
+            id = self.ctx.my_idx,
+            "Loading {} for AcceptPegInProtocol. Member leaf index: {}", name, self.ctx.my_idx
+        );
+
+        let mut protocol: Protocol = self.load_protocol()?;
+
+        let args = collect_input_signatures(
+            &mut protocol,
+            name,
+            &vec![InputSigningInfo::ScriptSpend {
+                input_index: 0,
+                script_index: self.ctx.my_idx,
+                winternitz_data: None,
+            }],
+        )?;
+
+        let tx = protocol.transaction_to_send(name, &args)?;
+        let txid = tx.compute_txid();
+
+        let speedup_key = self.my_speedup_key(context)?;
+        let speedup_vout = (tx.output.len() - 1) as u32;
+        let speedup_utxo = Utxo::new(txid, speedup_vout, SPEEDUP_VALUE, &speedup_key);
+
+        Ok((tx, Some(speedup_utxo.into())))
+    }
+
     fn operator_won_tx(
         &self,
         context: &ProgramContext,
@@ -706,9 +823,8 @@ impl AcceptPegInProtocol {
         amount: u64,
         rootstock_address: String,
         reimbursement_pubkey: PublicKey,
+        settings: &StreamSettings,
     ) -> Result<Vec<ProtocolScript>, BitVMXError> {
-        pub const TIMELOCK_BLOCKS: u16 = 1;
-
         let mut address_bytes = [0u8; 20];
         address_bytes.copy_from_slice(
             Vec::from_hex(&rootstock_address.to_string())
@@ -719,7 +835,11 @@ impl AcceptPegInProtocol {
         // // Taproot output
         let op_data = [address_bytes.as_slice(), amount.to_be_bytes().as_slice()].concat();
         let script_op_return = op_return_script(op_data)?;
-        let script_timelock = timelock(TIMELOCK_BLOCKS, &reimbursement_pubkey, SignMode::Single);
+        let script_timelock = timelock(
+            settings.request_pegin_timelock,
+            &reimbursement_pubkey,
+            SignMode::Single,
+        );
 
         let leaves = vec![script_timelock, script_op_return];
 
@@ -839,5 +959,60 @@ impl AcceptPegInProtocol {
             self.committee(context, request.committee_id)?
                 .stream_denomination,
         )
+    }
+
+    fn get_sign_mode(&self, index: usize) -> SignMode {
+        if index == self.ctx.my_idx {
+            SignMode::Single
+        } else {
+            SignMode::Skip
+        }
+    }
+
+    fn send_spv_notification(
+        &self,
+        context: &ProgramContext,
+        txid: Txid,
+        tx_type: UnionTxType,
+    ) -> Result<(), BitVMXError> {
+        let tx_info = context.bitcoin_coordinator.get_transaction(txid);
+
+        let proof = match tx_info {
+            Ok(utx) => Some(get_spv_proof(txid, utx.block_info.unwrap())?),
+            Err(e) => {
+                warn!(
+                    "Failed to retrieve transaction info for txid {}: {:?}",
+                    txid, e
+                );
+                None
+            }
+        };
+
+        let request = self.pegin_request(context)?;
+
+        let response = UnionSPVNotification {
+            txid,
+            committee_id: request.committee_id,
+            slot_index: request.slot_index,
+            spv_proof: proof,
+            tx_type: tx_type.clone(),
+        };
+
+        let data = serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(
+            self.ctx.id,
+            UnionSPVNotification::name(),
+            VariableTypes::String(serde_json::to_string(&response)?),
+        ))?;
+
+        info!(
+            id = self.ctx.my_idx,
+            "Sending {:#?} SPV data: {}", tx_type, data
+        );
+
+        context
+            .broker_channel
+            .send(&context.components_config.l2, data)?;
+
+        Ok(())
     }
 }

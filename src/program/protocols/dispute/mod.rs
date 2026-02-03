@@ -37,7 +37,7 @@ use protocol_builder::{
     },
 };
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
     errors::BitVMXError,
@@ -204,19 +204,19 @@ pub fn init_trace_vars(rounds: u8) -> Result<(), BitVMXError> {
 
     // Rebuild all in a consistent state
     {
-        let mut trace = trace_lock.write().unwrap();
+        let mut trace = trace_lock.write()?;
         *trace = build_trace_vars(rounds);
     }
     {
-        let mut tk = tk_lock.write().unwrap();
+        let mut tk = tk_lock.write()?;
         *tk = build_translation_keys_2nd_nary(rounds);
     }
     {
-        let mut challenge_step = challenge_step_lock.write().unwrap();
+        let mut challenge_step = challenge_step_lock.write()?;
         *challenge_step = build_challenge_step_vars(rounds);
     }
     {
-        let mut challenge_step2 = challenge_step2_lock.write().unwrap();
+        let mut challenge_step2 = challenge_step2_lock.write()?;
         *challenge_step2 = build_challenge_step_vars_2nd_nary(rounds);
     }
     Ok(())
@@ -226,9 +226,6 @@ pub fn init_trace_vars(rounds: u8) -> Result<(), BitVMXError> {
 pub struct DisputeResolutionProtocol {
     ctx: ProtocolContext,
 }
-
-const MIN_RELAY_FEE: u64 = 1;
-pub const DUST: u64 = 500 * MIN_RELAY_FEE;
 
 pub fn protocol_cost() -> u64 {
     38_000 // This is a placeholder value, adjust as needed
@@ -360,10 +357,16 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
             let trace = TRACE_VARS
                 .get()
-                .expect("TRACE_VARS not initialized")
+                .ok_or_else(|| {
+                    BitVMXError::InitializationError("TRACE_VARS not initialized".to_string())
+                })?
                 .read()?;
-            let tk = TK_2NARY.get().expect("TK_2NARY not initialized").read()?;
-
+            let tk = TK_2NARY
+                .get()
+                .ok_or_else(|| {
+                    BitVMXError::InitializationError("TK_2NARY not initialized".to_string())
+                })?
+                .read()?;
             for (name, size) in trace.iter() {
                 if name.starts_with("prover") {
                     let key = key_chain.derive_winternitz_hash160(*size)?;
@@ -384,16 +387,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 key_chain.derive_winternitz_hash160(8)?.into(),
             ));
 
-            keys.extend_from_slice(
-                get_verifier_keys()
-                    .iter()
-                    .map(|(name, size)| {
-                        let key = key_chain.derive_winternitz_hash160(*size).unwrap();
-                        (name.to_string(), PublicKeyType::Winternitz(key))
-                    })
-                    .collect::<Vec<(String, PublicKeyType)>>()
-                    .as_slice(),
-            );
+            let ver_keys = get_verifier_keys()
+                .iter()
+                .map(|(name, size)| {
+                    let key = key_chain.derive_winternitz_hash160(*size)?;
+                    Ok::<_, BitVMXError>((name.to_string(), PublicKeyType::Winternitz(key)))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            keys.extend_from_slice(&ver_keys);
         }
 
         //generate keys for the nary search
@@ -428,7 +429,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         if name.starts_with(INPUT_TX) {
-            let idx = name.strip_prefix(INPUT_TX).unwrap().parse::<u32>()?;
+            let idx = name
+                .strip_prefix(INPUT_TX)
+                .ok_or_else(|| BitVMXError::InvalidStringOperation(name.to_string()))?
+                .parse::<u32>()?;
             split_input(&self.ctx.id, idx, context)?;
             let (tx, speedup) =
                 self.get_tx_with_speedup_data(context, &input_tx_name(idx), 0, 0, true)?;
@@ -462,8 +466,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
     ) -> Result<(), BitVMXError> {
         // TODO get this from config, all values expressed in satoshis
 
-        let speedup_dust = DUST;
-        let fee = DUST;
+        let dust = OutputType::generic_dust_limit(None).to_sat();
+        let speedup_dust = dust;
+        let fee = dust;
 
         let (prover_signs, verifier_signs) = if self.role() == ParticipantRole::Prover {
             (SignMode::Single, SignMode::Skip)
@@ -472,11 +477,22 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         };
 
         let config = DisputeConfiguration::load(&self.ctx.id, &context.globals)?;
+        config.fail_force_config.map(|fail_force_config| {
+            fail_force_config.fail_input_tx.map(|fail_input_tx| {
+                context.globals.set_var(
+                    &self.ctx.id,
+                    format!("fail_input_{fail_input_tx}").as_str(),
+                    VariableTypes::Bool(true),
+                )
+            })
+        });
         let utxo = config.protocol_connection.0.clone();
 
         let prover_speedup_pub = keys[0].get_public("speedup")?;
         let verifier_speedup_pub = keys[1].get_public("speedup")?;
-        let aggregated = computed_aggregated.get("aggregated_1").unwrap();
+        let aggregated = computed_aggregated
+            .get("aggregated_1")
+            .ok_or_else(|| BitVMXError::NotFound("aggregated_1".to_string()))?;
         let (agg_or_prover, agg_or_verifier, sign_mode) =
             (prover_speedup_pub, verifier_speedup_pub, SignMode::Single);
 
@@ -485,9 +501,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         let mut protocol = self.load_or_create_protocol();
 
-        let mut amount = utxo.2.unwrap();
+        let mut amount = utxo
+            .2
+            .ok_or_else(|| BitVMXError::MissingParameter("UTXO amount is required".to_string()))?;
         info!("Protocol amount: {}", amount);
-        let output_type = utxo.3.unwrap();
+        let output_type = utxo.3.ok_or_else(|| {
+            BitVMXError::MissingParameter("UTXO output type is required".to_string())
+        })?;
 
         protocol.add_external_transaction(EXTERNAL_START)?;
         protocol.add_unknown_outputs(EXTERNAL_START, utxo.1)?;
@@ -851,6 +871,26 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 .map(|h| format!("prover_hash2_{}_{}", i, h))
                 .collect::<Vec<_>>();
 
+            let winternitz_check = if i == 2 {
+                Self::winternitz_check_cosigned_input_script(
+                    agg_or_prover,
+                    sign_mode,
+                    &keys,
+                    &vec![
+                        &vars.iter().map(|s| s.as_str()).collect(),
+                        &vec!["verifier_selection_bits2_1"],
+                    ],
+                    None,
+                )?
+            } else {
+                Self::winternitz_check(
+                    agg_or_prover,
+                    sign_mode,
+                    &keys[0],
+                    &vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
+                )?
+            };
+
             self.add_connection_with_scripts(
                 context,
                 aggregated,
@@ -861,12 +901,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 &prev,
                 &next,
                 &claim_verifier,
-                Self::winternitz_check(
-                    agg_or_prover,
-                    sign_mode,
-                    &keys[0],
-                    &vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
-                )?,
+                winternitz_check,
                 (&prover_speedup_pub, &verifier_speedup_pub),
             )?;
             amount = self.checked_sub(amount, fee)?;
@@ -955,7 +990,12 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         let output_type = OutputType::taproot(amount, aggregated, &vec![timeout_leaf])?;
 
         protocol.add_connection(
-            &format!("{}__{}", CHALLENGE_READ, VERIFIER_FINAL),
+            &format!(
+                "{}_TL_{}_{}",
+                CHALLENGE_READ,
+                2 * timelock_blocks,
+                VERIFIER_FINAL
+            ),
             CHALLENGE_READ,
             output_type.into(),
             VERIFIER_FINAL,
@@ -1013,7 +1053,7 @@ impl DisputeResolutionProtocol {
         claim: &str,
         action_number: u32,
     ) -> Result<(), BitVMXError> {
-        let speedup_dust = DUST;
+        let speedup_dust = OutputType::generic_dust_limit(None).to_sat();
         protocol.add_transaction(&action_wins(role, action_number))?;
         protocol.add_connection(
             &format!("{:?}_ACTION_{action_number}", role),
@@ -1030,7 +1070,9 @@ impl DisputeResolutionProtocol {
             None,
         )?;
 
-        let output_type = utxo_action.3.as_ref().unwrap();
+        let output_type = utxo_action.3.as_ref().ok_or_else(|| {
+            BitVMXError::MissingParameter("UTXO output type is required".to_string())
+        })?;
         protocol.add_external_transaction(&external_action(role, action_number))?;
         protocol.add_unknown_outputs(&external_action(role, action_number), utxo_action.1)?;
         protocol.add_transaction_output(&external_action(role, action_number), &output_type)?;
@@ -1065,7 +1107,7 @@ impl DisputeResolutionProtocol {
         context: &ProgramContext,
         name: &str,
         _input_index: u32,
-        leaf_index: u32,
+        mut leaf_index: u32,
         leaf_identification: bool,
     ) -> Result<(Transaction, SpeedupData), BitVMXError> {
         let tx = self.get_signed_tx(context, name, 0, 0, leaf_identification, 0)?;
@@ -1074,6 +1116,20 @@ impl DisputeResolutionProtocol {
         info!("Scripts length: {}", scripts.len());
         let wots_sigs =
             self.get_winternitz_signature_for_script(&scripts[leaf_index as usize], context)?;
+
+        // NOTE: This logic exists to support a specific failure case used in tests,
+        // where inputs are intentionally marked as failed via `fail_input_{name}`.
+        if context
+            .globals
+            .get_var(&self.ctx.id, format!("fail_input_{name}").as_str())?
+            .is_some_and(|var| matches!(var, VariableTypes::Bool(true)))
+        {
+            // last script is timeout, we don't want to fail on timeouts.
+            if leaf_index != scripts.len() as u32 - 1 {
+                warn!("Failing input {name}");
+                leaf_index += 1;
+            }
+        };
 
         let speedup_data = SpeedupData::new_with_input(
             self.partial_utxo_from(&tx, 0),
@@ -1096,8 +1152,8 @@ impl DisputeResolutionProtocol {
         info!("Winternitz check for variables: {:?}", &var_names);
         let names_and_keys = var_names
             .iter()
-            .map(|v| (v, keys.get_winternitz(v.as_ref()).unwrap()))
-            .collect();
+            .map(|v| Ok::<_, BitVMXError>((v, keys.get_winternitz(v.as_ref())?)))
+            .collect::<Result<Vec<_>, _>>()?;
 
         let winternitz_check = scripts::verify_winternitz_signatures_aux(
             aggregated,
@@ -1125,11 +1181,12 @@ impl DisputeResolutionProtocol {
         let names_and_keys: Vec<_> = keys
             .iter()
             .zip(var_names.iter())
-            .flat_map(|(k, vars)| {
+            .map(|(k, vars)| {
                 vars.iter()
-                    .map(move |v| (v, k.get_winternitz(v.as_ref()).unwrap()))
+                    .map(move |v| Ok::<_, BitVMXError>((v, k.get_winternitz(v.as_ref())?)))
             })
-            .collect();
+            .flatten()
+            .collect::<Result<Vec<_>, _>>()?;
 
         let winternitz_check = scripts::verify_winternitz_signatures_aux(
             aggregated,
@@ -1256,11 +1313,19 @@ impl DisputeResolutionProtocol {
         let challenge_step_vars = match nary_search_type {
             NArySearchType::ConflictStep => PROVER_CHALLENGE_STEP1
                 .get()
-                .expect("PROVER_CHALLENGE_STEP1 not initialized")
+                .ok_or_else(|| {
+                    BitVMXError::InitializationError(
+                        "PROVER_CHALLENGE_STEP1 not initialized".to_string(),
+                    )
+                })?
                 .read()?,
             _ => PROVER_CHALLENGE_STEP2
                 .get()
-                .expect("PROVER_CHALLENGE_STEP2 not initialized")
+                .ok_or_else(|| {
+                    BitVMXError::InitializationError(
+                        "PROVER_CHALLENGE_STEP2 not initialized".to_string(),
+                    )
+                })?
                 .read()?,
         };
 
@@ -1273,9 +1338,9 @@ impl DisputeResolutionProtocol {
                     } else {
                         verifier_keys
                     };
-                    (name.as_str(), key_provider.get_winternitz(name).unwrap())
+                    Ok::<_, BitVMXError>((name.as_str(), key_provider.get_winternitz(name)?))
                 })
-                .collect();
+                .collect::<Result<Vec<_>, _>>()?;
 
         let mut stack = StackTracker::new();
         let mut stackvars = HashMap::new();
@@ -1379,11 +1444,16 @@ impl DisputeResolutionProtocol {
         let vars = match nary_search_type {
             NArySearchType::ConflictStep => TRACE_VARS
                 .get()
-                .expect("TRACE_VARS not initialized")
+                .ok_or_else(|| {
+                    BitVMXError::InitializationError("TRACE_VARS not initialized".to_string())
+                })?
                 .read()?,
-            NArySearchType::ReadValueChallenge => {
-                TK_2NARY.get().expect("TK_2NARY not initialized").read()?
-            }
+            NArySearchType::ReadValueChallenge => TK_2NARY
+                .get()
+                .ok_or_else(|| {
+                    BitVMXError::InitializationError("TK_2NARY not initialized".to_string())
+                })?
+                .read()?,
         };
 
         let vars_names = vars
@@ -1395,20 +1465,18 @@ impl DisputeResolutionProtocol {
         let mut names_and_keys: Vec<(&str, &key_manager::winternitz::WinternitzPublicKey)> =
             vars_names
                 .iter()
-                .map(|v| (*v, prover_keys.get_winternitz(v).unwrap()))
-                .collect();
+                .map(|v| Ok::<_, BitVMXError>((*v, prover_keys.get_winternitz(v)?)))
+                .collect::<Result<Vec<_>, _>>()?;
 
         names_and_keys.extend(
             vars.iter()
                 .filter(|(name, _)| name.starts_with("verifier_selection_bits"))
                 .map(|(name, _)| {
-                    (
-                        name.as_str(),
-                        verifier_keys
-                            .get_winternitz(name)
-                            .expect("Missing verifier selection_bits winternitz key"),
-                    )
-                }),
+                    verifier_keys
+                        .get_winternitz(name)
+                        .map(|k| (name.as_str(), k))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
         );
 
         let program_def = self.get_program_definition(context)?.0;
@@ -1638,7 +1706,7 @@ impl DisputeResolutionProtocol {
         stack.get_script()
     }
 
-    fn get_validate_selection_bits_script(max_bits: u8) -> ScriptBuf {
+    pub fn get_validate_selection_bits_script(max_bits: u8) -> ScriptBuf {
         let mut stack = StackTracker::new();
         let selection_bits = stack.define(2, "verifier_selection_bits");
 

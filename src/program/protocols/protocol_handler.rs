@@ -12,6 +12,7 @@ use protocol_builder::{builder::Protocol, errors::ProtocolBuilderError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::rc::Rc;
+use storage_backend::error::StorageError;
 use storage_backend::storage::Storage;
 use tracing::{error, info};
 use uuid::Uuid;
@@ -31,14 +32,14 @@ use super::light_drp::LightDisputeResolutionProtocol;
 use crate::program::protocols::union::{
     accept_pegin::AcceptPegInProtocol, advance_funds::AdvanceFundsProtocol,
     dispute_core::DisputeCoreProtocol, pairwise_penalization::PairwisePenalizationProtocol,
-    user_take::UserTakeProtocol,
+    reject_pegin::RejectPegInProtocol, user_take::UserTakeProtocol,
 };
 
 #[cfg(feature = "union")]
 use crate::types::{
     PROGRAM_TYPE_ACCEPT_PEGIN, PROGRAM_TYPE_ADVANCE_FUNDS, PROGRAM_TYPE_DISPUTE_CORE,
     PROGRAM_TYPE_FULL_PENALIZATION, PROGRAM_TYPE_LIGHT_DRP, PROGRAM_TYPE_PAIRWISE_PENALIZATION,
-    PROGRAM_TYPE_USER_TAKE,
+    PROGRAM_TYPE_REJECT_PEGIN, PROGRAM_TYPE_USER_TAKE,
 };
 
 #[cfg(feature = "cardinal")]
@@ -67,6 +68,20 @@ pub trait ProtocolHandler {
         self.context_mut().storage = Some(storage);
     }
 
+    // Default to 1 confirmation for Bitcoin transactions
+    // Each protocol should override if different
+    fn requested_confirmations(&self, program_context: &ProgramContext) -> Option<u32> {
+        Some(
+            program_context
+                .globals
+                .get_var(&self.context().id, "requested_confirmations")
+                .unwrap_or(None)
+                .unwrap_or(VariableTypes::Number(1))
+                .number()
+                .unwrap_or(1) as u32,
+        )
+    }
+
     fn build(
         &self,
         _keys: Vec<ParticipantKeys>,
@@ -87,22 +102,19 @@ pub trait ProtocolHandler {
         input_index: u32,
         message_index: u32,
     ) -> Result<String, BitVMXError> {
-        let ret = self.load_protocol()?.get_hashed_message(
-            transaction_name,
-            input_index,
-            message_index,
-        )?;
-        if ret.is_none() {
-            error!(
-                "Invalid transaction name when getting hashed message: {}. Protocol ID: {}",
-                transaction_name,
-                self.context().id
-            );
-            return Err(BitVMXError::InvalidTransactionName(
-                transaction_name.to_string(),
-            ));
-        }
-        Ok(format!("{}", ret.unwrap()))
+        let ret = self
+            .load_protocol()?
+            .get_hashed_message(transaction_name, input_index, message_index)?
+            .ok_or_else(|| {
+                error!(
+                    "Invalid transaction name when getting hashed message: {}. Protocol ID: {}",
+                    transaction_name,
+                    self.context().id
+                );
+                BitVMXError::InvalidTransactionName(transaction_name.to_string())
+            })?;
+
+        Ok(format!("{}", ret))
     }
 
     fn get_transaction_by_id(&self, txid: &Txid) -> Result<Transaction, ProtocolBuilderError> {
@@ -174,7 +186,10 @@ pub trait ProtocolHandler {
     fn load_protocol(&self) -> Result<Protocol, ProtocolBuilderError> {
         match Protocol::load(
             &self.context().protocol_name,
-            self.context().storage.clone().unwrap(),
+            self.context()
+                .storage
+                .clone()
+                .ok_or_else(|| StorageError::NotFound(self.context().protocol_name.clone()))?,
         )? {
             Some(protocol) => Ok(protocol),
             None => Err(ProtocolBuilderError::MissingProtocol(
@@ -192,7 +207,12 @@ pub trait ProtocolHandler {
     }
 
     fn save_protocol(&self, protocol: Protocol) -> Result<(), ProtocolBuilderError> {
-        protocol.save(self.context().storage.clone().unwrap())?;
+        protocol.save(
+            self.context()
+                .storage
+                .clone()
+                .ok_or_else(|| StorageError::NotFound(self.context().protocol_name.clone()))?,
+        )?;
         Ok(())
     }
 
@@ -247,12 +267,12 @@ pub trait ProtocolHandler {
                 let winternitz_signature = program_context
                     .key_chain
                     .key_manager
-                    .sign_winternitz_message(
+                    .sign_winternitz_message_by_index(
                         &message,
                         WinternitzType::HASH160,
                         protocol_script
                             .get_key(k.name())
-                            .unwrap()
+                            .ok_or_else(|| BitVMXError::KeysNotFound(self.context().id))?
                             .derivation_index(),
                     )?;
 
@@ -302,10 +322,11 @@ pub trait ProtocolHandler {
 
         let signature = protocol
             .input_taproot_script_spend_signature(name, input_index as usize, leaf_index as usize)?
-            .expect(&format!(
-                "Failed to get taproot signature for tx {} input {} leaf {}",
-                name, input_index, leaf_index
-            ));
+            .ok_or_else(|| BitVMXError::MissingInputSignature {
+                tx_name: name.to_string(),
+                input_index: input_index as usize,
+                script_index: None,
+            })?;
         spending_args.push_taproot_signature(signature)?;
 
         if leaf_identification {
@@ -321,7 +342,11 @@ pub trait ProtocolHandler {
         if total_inputs > 1 {
             let signature = protocol
                 .input_taproot_script_spend_signature(name, 1, second_leaf_index)?
-                .unwrap();
+                .ok_or_else(|| BitVMXError::MissingInputSignature {
+                    tx_name: name.to_string(),
+                    input_index: 1,
+                    script_index: None,
+                })?;
             let mut spending_args = InputArgs::new_taproot_script_args(second_leaf_index);
             spending_args.push_taproot_signature(signature)?;
             args.push(spending_args);
@@ -352,7 +377,11 @@ pub trait ProtocolHandler {
         let leaf = match leaf {
             Some(idx) => idx,
             None => {
-                let leaf = read_scriptint(witness.third_to_last().unwrap()).unwrap() as u32;
+                let leaf = read_scriptint(
+                    witness
+                        .third_to_last()
+                        .ok_or_else(|| BitVMXError::InvalidWitness(witness.clone()))?,
+                )? as u32;
                 program_context.globals.set_var(
                     &self.context().id,
                     &format!("{}_{}_leaf_index", name, input_index),
@@ -376,19 +405,16 @@ pub trait ProtocolHandler {
         let mut names = vec![];
         let mut sizes = vec![];
         //TODO: make the script save the size so we don't need to get it from participant keys or variables
-        script.get_keys().iter().rev().for_each(|k| {
+        for k in script.get_keys().iter().rev() {
             names.push(k.name().to_string());
-            let size = k.key_type().winternitz_message_size();
-            if size.is_err() {
-                error!(
-                    "Failed to get key size for {}: {}",
-                    k.name(),
-                    size.err().unwrap()
-                );
-                return;
-            }
-            sizes.push(message_bytes_length(size.unwrap()));
-        });
+
+            let size = k.key_type().winternitz_message_size().map_err(|e| {
+                error!("Failed to get key size for {}: {}", k.name(), e);
+                e
+            })?;
+            sizes.push(message_bytes_length(size));
+        }
+
         info!("Decoding data for {}", name);
         info!("Names: {:?}", names);
         info!("Sizes: {:?}", sizes);
@@ -461,8 +487,7 @@ pub trait ProtocolHandler {
     fn get_speedup_key(&self, program_context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
         program_context
             .globals
-            .get_var(&self.context().id, "speedup")?
-            .unwrap()
+            .get_var_or_err(&self.context().id, "speedup")?
             .pubkey()
     }
 
@@ -493,7 +518,13 @@ pub trait ProtocolHandler {
             protocol_id,
             name,
             self.context().my_idx,
-            self.context().storage.as_ref().unwrap().clone(),
+            self.context()
+                .storage
+                .as_ref()
+                .ok_or_else(|| {
+                    BitVMXError::StorageUnavailable(self.context().protocol_name.clone())
+                })?
+                .clone(),
         )
     }
 
@@ -543,6 +574,8 @@ pub enum ProtocolType {
     PairwisePenalizationProtocol,
     #[cfg(feature = "union")]
     FullPenalizationProtocol,
+    #[cfg(feature = "union")]
+    RejectPegInProtocol,
 }
 
 pub fn new_protocol_type(
@@ -580,6 +613,10 @@ pub fn new_protocol_type(
         #[cfg(feature = "union")]
         PROGRAM_TYPE_PAIRWISE_PENALIZATION => Ok(ProtocolType::PairwisePenalizationProtocol(
             PairwisePenalizationProtocol::new(ctx),
+        )),
+        #[cfg(feature = "union")]
+        PROGRAM_TYPE_REJECT_PEGIN => Ok(ProtocolType::RejectPegInProtocol(
+            RejectPegInProtocol::new(ctx),
         )),
         #[cfg(feature = "union")]
         PROGRAM_TYPE_DISPUTE_CORE => Ok(ProtocolType::DisputeCoreProtocol(

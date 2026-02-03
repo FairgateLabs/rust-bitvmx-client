@@ -1,14 +1,16 @@
-use std::{str::FromStr, time::Duration};
+use std::str::FromStr;
 
 use crate::{config::ComponentsConfig, spv_proof::BtcTxSPVProof};
 use bitcoin::{address::NetworkUnchecked, Address, PrivateKey, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TransactionStatus};
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
-    channel::channel::{DualChannel, LocalChannel},
+    channel::{
+        channel::{DualChannel, LocalChannel},
+        queue_channel::QueueChannel,
+    },
     identification::identifier::Identifier,
 };
-use bitvmx_operator_comms::operator_comms::OperatorComms;
 use bitvmx_wallet::wallet::Destination;
 use chrono::{DateTime, Utc};
 use protocol_builder::types::Utxo;
@@ -28,7 +30,7 @@ use crate::{
 
 pub struct ProgramContext {
     pub key_chain: KeyChain,
-    pub comms: OperatorComms,
+    pub comms: QueueChannel,
     pub bitcoin_coordinator: BitcoinCoordinator,
     pub broker_channel: LocalChannel<BrokerStorage>,
     pub globals: Globals,
@@ -39,7 +41,7 @@ pub struct ProgramContext {
 
 impl ProgramContext {
     pub fn new(
-        comms: OperatorComms,
+        comms: QueueChannel,
         key_chain: KeyChain,
         bitcoin_coordinator: BitcoinCoordinator,
         broker_channel: LocalChannel<BrokerStorage>,
@@ -110,11 +112,10 @@ pub enum IncomingBitVMXApiMessages {
     GetTransactionInfoByName(Uuid, String),
     GetHashedMessage(Uuid, String, u32, u32),
     Setup(ProgramId, String, Vec<CommsAddress>, u16),
-    SubscribeToTransaction(Uuid, Txid),
-    SubscribeUTXO(Uuid),
-    SubscribeToRskPegin(),
+    SubscribeToTransaction(Uuid, Txid, Option<u32>),
+    SubscribeToRskPegin(Option<u32>),
     GetSPVProof(Txid),
-    DispatchTransaction(Uuid, Transaction),
+    DispatchTransaction(Uuid, Transaction, Option<u32>),
     DispatchTransactionName(Uuid, String),
     SetupKey(Uuid, Vec<CommsAddress>, Option<Vec<PublicKey>>, u16),
     GetAggregatedPubkey(Uuid),
@@ -134,7 +135,7 @@ pub enum IncomingBitVMXApiMessages {
     GetFundingBalance(Uuid),
     SendFunds(Uuid, Destination, Option<u64>),
     GetProtocolVisualization(Uuid),
-    Shutdown(Duration),
+    Shutdown(),
 }
 impl IncomingBitVMXApiMessages {
     pub fn to_string(&self) -> Result<String, BitVMXError> {
@@ -380,6 +381,7 @@ pub const PROGRAM_TYPE_TRANSFER: &str = "transfer";
 pub const PROGRAM_TYPE_ACCEPT_PEGIN: &str = "accept_pegin";
 pub const PROGRAM_TYPE_USER_TAKE: &str = "take";
 pub const PROGRAM_TYPE_ADVANCE_FUNDS: &str = "advance_funds";
+pub const PROGRAM_TYPE_REJECT_PEGIN: &str = "reject_pegin";
 pub const PROGRAM_TYPE_DISPUTE_CORE: &str = "dispute_core";
 pub const PROGRAM_TYPE_PAIRWISE_PENALIZATION: &str = "pairwise_penalization";
 pub const PROGRAM_TYPE_FULL_PENALIZATION: &str = "full_penalization";

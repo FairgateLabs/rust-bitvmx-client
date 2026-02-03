@@ -1,11 +1,11 @@
 use crate::errors::BitVMXError;
-use bitvmx_operator_comms::operator_comms::PubKeyHash;
+use bitvmx_broker::identification::identifier::PubkHash;
 use chrono::Utc;
 use std::collections::HashMap;
 use tracing::warn;
 
 pub struct TimestampVerifier {
-    message_timestamps: HashMap<PubKeyHash, i64>,
+    message_timestamps: HashMap<PubkHash, i64>,
     enable_check: bool,
     max_timestamp_drift_ms: i64,
 }
@@ -19,7 +19,7 @@ impl TimestampVerifier {
         }
     }
 
-    pub fn ensure_fresh(&self, peer: &PubKeyHash, timestamp: i64) -> Result<(), BitVMXError> {
+    pub fn ensure_fresh(&self, peer: &PubkHash, timestamp: i64) -> Result<(), BitVMXError> {
         if !self.enable_check {
             return Ok(());
         }
@@ -32,14 +32,14 @@ impl TimestampVerifier {
         )
     }
 
-    pub fn record(&mut self, peer: &PubKeyHash, timestamp: i64) {
+    pub fn record(&mut self, peer: &PubkHash, timestamp: i64) {
         record_timestamp_internal(&mut self.message_timestamps, peer, timestamp);
     }
 }
 
 pub(crate) fn ensure_timestamp_fresh_internal(
-    message_timestamps: &HashMap<PubKeyHash, i64>,
-    peer: &PubKeyHash,
+    message_timestamps: &HashMap<PubkHash, i64>,
+    peer: &PubkHash,
     timestamp: i64,
     max_timestamp_drift_ms: i64,
 ) -> Result<(), BitVMXError> {
@@ -77,8 +77,8 @@ pub(crate) fn ensure_timestamp_fresh_internal(
 }
 
 pub(crate) fn record_timestamp_internal(
-    message_timestamps: &mut HashMap<PubKeyHash, i64>,
-    peer: &PubKeyHash,
+    message_timestamps: &mut HashMap<PubkHash, i64>,
+    peer: &PubkHash,
     timestamp: i64,
 ) {
     message_timestamps.insert(peer.clone(), timestamp);
@@ -91,7 +91,7 @@ mod tests {
 
     const TEST_MAX_TIMESTAMP_DRIFT_MS: i64 = 1_000;
 
-    fn peer() -> PubKeyHash {
+    fn peer() -> PubkHash {
         "peer-hash".to_string()
     }
 

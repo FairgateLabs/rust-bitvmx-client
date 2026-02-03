@@ -244,7 +244,8 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     // OPERATORS WAITS FOR LOCKREQ TX
     let lockreqtx_on_chain = Uuid::new_v4();
     let command =
-        IncomingBitVMXApiMessages::SubscribeToTransaction(lockreqtx_on_chain, txid).to_string()?;
+        IncomingBitVMXApiMessages::SubscribeToTransaction(lockreqtx_on_chain, txid, Some(1))
+            .to_string()?;
     send_all(&id_channel_pairs, &command)?;
     mine_and_wait(&bitcoin_client, &channels, &mut instances, &wallet)?;
 

@@ -1,7 +1,7 @@
 use anyhow::{Ok, Result};
 use bitvmx_broker::{
     channel::channel::DualChannel,
-    identification::identifier::Identifier,
+    identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{
         tls_helper::{init_tls, Cert},
         BrokerConfig,
@@ -9,7 +9,6 @@ use bitvmx_broker::{
 };
 
 use bitcoin::Txid;
-use bitvmx_operator_comms::operator_comms::AllowList;
 use tracing::info;
 
 use crate::common::get_bitcoin_client;

@@ -1,11 +1,11 @@
 use crate::{errors::ParseError, program::participant::ParticipantKeys};
 #[cfg(test)]
 use bitcoin::{key::Secp256k1, PublicKey};
+use bitvmx_broker::identification::identifier::PubkHash;
 #[cfg(test)]
 use key_manager::winternitz::{WinternitzPublicKey, WinternitzType};
 
 use crate::errors::BitVMXError;
-use bitvmx_operator_comms::operator_comms::PubKeyHash;
 use key_manager::musig2::{types::MessageId, PartialSignature, PubNonce};
 use rsa::{
     pkcs1::DecodeRsaPublicKey,
@@ -15,8 +15,8 @@ use rsa::{
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-pub fn parse_keys(value: Value) -> Result<Vec<(PubKeyHash, ParticipantKeys)>, ParseError> {
-    let keys: Vec<(PubKeyHash, ParticipantKeys)> =
+pub fn parse_keys(value: Value) -> Result<Vec<(PubkHash, ParticipantKeys)>, ParseError> {
+    let keys: Vec<(PubkHash, ParticipantKeys)> =
         serde_json::from_value(value).map_err(|_| ParseError::InvalidParticipantKeys)?;
     if keys.is_empty() {
         return Err(ParseError::InvalidParticipantKeys);
@@ -30,7 +30,7 @@ pub type PubNonceMessage = Vec<(
     Vec<(MessageId, PubNonce)>,
 )>;
 
-pub fn parse_nonces(data: Value) -> Result<Vec<(PubKeyHash, PubNonceMessage)>, ParseError> {
+pub fn parse_nonces(data: Value) -> Result<Vec<(PubkHash, PubNonceMessage)>, ParseError> {
     Ok(serde_json::from_value(data).map_err(|_| ParseError::InvalidNonces))?
 }
 
@@ -42,11 +42,11 @@ pub type PartialSignatureMessage = Vec<(
 
 pub fn parse_signatures(
     data: Value,
-) -> Result<Vec<(PubKeyHash, PartialSignatureMessage)>, ParseError> {
+) -> Result<Vec<(PubkHash, PartialSignatureMessage)>, ParseError> {
     Ok(serde_json::from_value(data).map_err(|_| ParseError::InvalidPartialSignatures))?
 }
 
-pub fn compute_pubkey_hash(verification_key: &str) -> Result<PubKeyHash, BitVMXError> {
+pub fn compute_pubkey_hash(verification_key: &str) -> Result<PubkHash, BitVMXError> {
     let rsa_pubkey = RsaPublicKey::from_public_key_pem(verification_key)
         .or_else(|_| RsaPublicKey::from_pkcs1_pem(verification_key))
         .map_err(|_| {
