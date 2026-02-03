@@ -27,6 +27,7 @@ use super::aggregated_key::AggregatedKeyProtocol;
 #[cfg(feature = "cardinal")]
 use super::cardinal::{lock::LockProtocol, slot::SlotProtocol, transfer::TransferProtocol};
 use super::dispute::DisputeResolutionProtocol;
+use super::light_drp::LightDisputeResolutionProtocol;
 
 #[cfg(feature = "union")]
 use crate::program::protocols::union::{
@@ -38,8 +39,8 @@ use crate::program::protocols::union::{
 #[cfg(feature = "union")]
 use crate::types::{
     PROGRAM_TYPE_ACCEPT_PEGIN, PROGRAM_TYPE_ADVANCE_FUNDS, PROGRAM_TYPE_DISPUTE_CORE,
-    PROGRAM_TYPE_FULL_PENALIZATION, PROGRAM_TYPE_PAIRWISE_PENALIZATION, PROGRAM_TYPE_REJECT_PEGIN,
-    PROGRAM_TYPE_USER_TAKE,
+    PROGRAM_TYPE_FULL_PENALIZATION, PROGRAM_TYPE_LIGHT_DRP, PROGRAM_TYPE_PAIRWISE_PENALIZATION,
+    PROGRAM_TYPE_REJECT_PEGIN, PROGRAM_TYPE_USER_TAKE,
 };
 
 #[cfg(feature = "cardinal")]
@@ -658,6 +659,7 @@ impl ProtocolContext {
 pub enum ProtocolType {
     AggregatedKeyProtocol,
     DisputeResolutionProtocol,
+    LightDisputeResolutionProtocol,
     #[cfg(feature = "cardinal")]
     LockProtocol,
     #[cfg(feature = "cardinal")]
@@ -695,6 +697,9 @@ pub fn new_protocol_type(
         )),
         PROGRAM_TYPE_DRP => Ok(ProtocolType::DisputeResolutionProtocol(
             DisputeResolutionProtocol::new(ctx),
+        )),
+        PROGRAM_TYPE_LIGHT_DRP => Ok(ProtocolType::LightDisputeResolutionProtocol(
+            LightDisputeResolutionProtocol::new(ctx),
         )),
         #[cfg(feature = "cardinal")]
         PROGRAM_TYPE_LOCK => Ok(ProtocolType::LockProtocol(LockProtocol::new(ctx))),

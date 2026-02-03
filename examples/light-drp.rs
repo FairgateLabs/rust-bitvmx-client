@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use bitcoin::PublicKey;
-use bitvmx_client::types::OutgoingBitVMXApiMessages;
+use bitvmx_client::types::{OutgoingBitVMXApiMessages, PROGRAM_TYPE_LIGHT_DRP};
 use bitvmx_client::{client::BitVMXClient, config::Config, program::participant::CommsAddress};
 use bitvmx_operator_comms::operator_comms::AllowList;
 use tracing::{info, info_span};
@@ -24,11 +24,23 @@ pub fn main() -> Result<()> {
         Operator::new("op_4")?,
     ];
 
-    info!("Getting peer info for operators...");
+    info!("Getting peer info for operators");
     all(&mut operators, |o| o.get_peer_info())?;
-    info!("done");
-
     all(&mut operators, |o| o.say_hi())?;
+
+    // collect addresses
+    let addresses: Vec<CommsAddress> = operators
+        .iter()
+        .map(|o| o.address.clone().unwrap())
+        .collect();
+
+    // protocol id must be the same for all operators
+    let protocol_id = Uuid::new_v4();
+
+    // setup light DRP for all operators
+    all(&mut operators, |o| {
+        o.setup_light_drp(protocol_id, addresses.clone())
+    })?;
 
     Ok(())
 }
@@ -79,6 +91,18 @@ impl Operator {
             self.id,
             self.address.as_ref().unwrap()
         );
+
+        Ok(())
+    }
+
+    pub fn setup_light_drp(&self, protocol_id: Uuid, addresses: Vec<CommsAddress>) -> Result<()> {
+        info!(id = self.id, "Setting up light DRP");
+        self.bitvmx.setup(
+            protocol_id,
+            PROGRAM_TYPE_LIGHT_DRP.to_string(),
+            addresses,
+            0,
+        )?;
 
         Ok(())
     }
