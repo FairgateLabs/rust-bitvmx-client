@@ -28,7 +28,7 @@ use crate::{
 };
 use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus, TypesToMonitor};
-use bitvmx_operator_comms::operator_comms::PubKeyHash;
+use bitvmx_broker::identification::identifier::PubkHash as PubKeyHash;
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 use storage_backend::storage::{KeyValueStore, Storage};
@@ -299,7 +299,7 @@ impl ProgramV2 {
                         txns_to_monitor.len(),
                         self.program_id
                     );
-                    let txs_to_monitor = TypesToMonitor::Transactions(txns_to_monitor, context_str.clone());
+                    let txs_to_monitor = TypesToMonitor::Transactions(txns_to_monitor, context_str.clone(), None);
                     program_context.bitcoin_coordinator.monitor(txs_to_monitor)?;
                 }
 
@@ -309,7 +309,7 @@ impl ProgramV2 {
                         "ProgramV2: Monitoring vout {} of txid {} for program {}",
                         vout, txid, self.program_id
                     );
-                    let vout_to_monitor = TypesToMonitor::SpendingUTXOTransaction(txid, vout, context_str.clone());
+                    let vout_to_monitor = TypesToMonitor::SpendingUTXOTransaction(txid, vout, context_str.clone(), None);
                     program_context.bitcoin_coordinator.monitor(vout_to_monitor)?;
                 }
 
@@ -557,6 +557,7 @@ impl ProgramV2 {
             tx,
             speedup,
             context.to_string()?,
+            None,
             None,
         )?;
 

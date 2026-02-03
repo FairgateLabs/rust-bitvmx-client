@@ -43,7 +43,10 @@ pub const LOCAL_SLEEP_MS: u64 = 40;
 pub const CI_SLEEP_MS: u64 = 1000;
 
 pub fn clear_db(path: &str) {
-    let _ = std::fs::remove_dir_all(path);
+    // Only try to remove if the path exists
+    if std::path::Path::new(path).exists() {
+        let _ = std::fs::remove_dir_all(path);
+    }
 }
 
 /// Check if Docker is available and running
@@ -194,7 +197,8 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
     // Clear indexer, monitor, key manager and wallet data.
     clear_db(&wallet_config.storage.path);
     clear_db(&wallet_config.key_storage.path);
-    Wallet::clear_db(&wallet_config.wallet)?;
+    // Wallet::clear_db may fail if the directory doesn't exist, which is fine
+    let _ = Wallet::clear_db(&wallet_config.wallet);
 
     let is_ci = std::env::var("GITHUB_ACTIONS").is_ok();
 
@@ -203,6 +207,39 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
         std::thread::sleep(std::time::Duration::from_secs(2));
         None
     } else {
+        // Clean up any existing bitcoin-regtest container before starting a new one
+        // This prevents conflicts when running tests sequentially or in parallel
+        info!("Cleaning up any existing bitcoin-regtest container");
+        // Try multiple times to ensure cleanup succeeds (handles race conditions)
+        for attempt in 0..3 {
+            let _ = Command::new("docker")
+                .args(&["stop", "bitcoin-regtest"])
+                .output();
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            
+            let _ = Command::new("docker")
+                .args(&["rm", "-f", "bitcoin-regtest"])
+                .output();
+            
+            // Check if container still exists
+            let check_output = Command::new("docker")
+                .args(&["ps", "-a", "--filter", "name=bitcoin-regtest", "--format", "{{.Names}}"])
+                .output();
+            
+            if let Ok(output) = check_output {
+                let container_exists = String::from_utf8_lossy(&output.stdout).contains("bitcoin-regtest");
+                if !container_exists {
+                    break; // Container successfully removed
+                }
+            }
+            
+            if attempt < 2 {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+        }
+        // Final delay to ensure Docker has processed the removal
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        
         let bitcoind_instance = Bitcoind::new(
             BitcoindConfig::default(),
             wallet_config.bitcoin.clone(),

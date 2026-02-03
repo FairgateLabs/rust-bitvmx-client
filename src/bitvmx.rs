@@ -1,5 +1,4 @@
 use crate::config::ComponentsConfig;
-use crate::message_queue::QueuedMessage;
 use crate::ping_helper::{JobDispatcherType, PingHelper};
 use crate::program::program::is_active_program;
 use crate::program::protocols::protocol_handler::ProtocolHandler;
@@ -20,7 +19,10 @@ use crate::{
         variables::{Globals, WitnessVars},
     },
     signature_verifier::SignatureVerifier,
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus, ProgramVersion, PROGRAM_TYPE_AGGREGATED_KEY},
+    types::{
+        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus,
+        ProgramVersion, PROGRAM_TYPE_AGGREGATED_KEY,
+    },
 };
 use bitcoin::secp256k1::Message;
 use bitcoin::{PublicKey, Transaction, Txid};
@@ -362,7 +364,7 @@ impl BitVMX {
             "BitVMX::process_program_v2_message() - Processing {:?} message for program {} from {}",
             msg_type, program_id, peer_address.pubkey_hash
         );
-        
+
         let my_pubkey_hash = self.program_context.comms.get_pubk_hash()?;
         let participants: Vec<_> = program_v2
             .participants
@@ -374,15 +376,12 @@ impl BitVMX {
             info!("BitVMX::process_program_v2_message() - Missing verification keys for program: {:?} (participants: {:?})", program_id, participants);
             return Ok(false);
         }
-        
+
         info!("BitVMX::process_program_v2_message() - All verification keys present, processing message");
 
         // If this operator is the leader and the message type should be broadcast, store the original message
         if program_v2.my_idx == program_v2.leader {
-            let should_store = matches!(
-                msg_type,
-                CommsMessageType::SetupStepData
-            );
+            let should_store = matches!(msg_type, CommsMessageType::SetupStepData);
             if should_store {
                 let original_msg = OriginalMessage {
                     sender_pubkey_hash: peer_address.pubkey_hash.clone(),
@@ -460,16 +459,17 @@ impl BitVMX {
             self.timestamp_verifier
                 .ensure_fresh(&identifier.pubkey_hash, timestamp)?;
         }
-        let (program, program_v2, peer_address) =
-            if let Some(program) = self.load_program(&program_id).ok() {
-                let peer_address = program.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
-                (Some(program), None, Some(peer_address))
-            } else if let Some(program_v2) = self.load_program_v2(&program_id).ok() {
-                let peer_address = program_v2.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
-                (None, Some(program_v2), Some(peer_address))
-            } else {
-                (None, None, None)
-            };
+        let (program, program_v2, peer_address) = if let Some(program) =
+            self.load_program(&program_id).ok()
+        {
+            let peer_address = program.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
+            (Some(program), None, Some(peer_address))
+        } else if let Some(program_v2) = self.load_program_v2(&program_id).ok() {
+            let peer_address = program_v2.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
+            (None, Some(program_v2), Some(peer_address))
+        } else {
+            (None, None, None)
+        };
 
         let message_consumed = match peer_address {
             Some(peer_address) => {
@@ -802,7 +802,7 @@ impl BitVMX {
         self.ping_helper
             .check_job_dispatchers_liveness(&self.program_context, &self.config.components)?;
 
-        Ok(true)
+        Ok(())
     }
 
     pub fn process_wallet_updates(&mut self) -> Result<(), BitVMXError> {
@@ -885,7 +885,11 @@ impl BitVMX {
         Ok(programs_ids.unwrap_or_default())
     }
 
-    fn add_new_program(&self, program_id: &Uuid, version: ProgramVersion) -> Result<(), BitVMXError> {
+    fn add_new_program(
+        &self,
+        program_id: &Uuid,
+        version: ProgramVersion,
+    ) -> Result<(), BitVMXError> {
         let mut programs = self.get_programs()?;
 
         if programs.iter().any(|p| p.program_id == *program_id) {
@@ -923,7 +927,10 @@ impl BitVMX {
             ProgramVersion::Legacy
         };
 
-        info!("Setting up program: {:?} type {} version {:?}", id, program_type, version);
+        info!(
+            "Setting up program: {:?} type {} version {:?}",
+            id, program_type, version
+        );
 
         if use_v2 {
             ProgramV2::setup(
@@ -980,28 +987,6 @@ impl BitVMX {
     }
 }
 
-impl GracefulShutdown for BitVMX {
-    fn begin_shutdown(&mut self) {
-        // Future: signal programs/protocols/coordinator to quiesce
-    }
-
-    fn drain_until_idle(&mut self, deadline: Instant) {
-        while Instant::now() < deadline {
-            if let Err(e) = self.process_pending_messages() {
-                warn!("drain pending msg err: {:?}", e);
-            }
-
-            if self.message_queue.is_empty().unwrap() {
-                break;
-            }
-            sleep(Duration::from_millis(10));
-        }
-    }
-
-    fn shutdown_now(&mut self) {
-        self.broker.close();
-    }
-}
 impl BitVMXApi for BitVMX {
     fn ping(&mut self, from: Identifier, uuid: Uuid) -> Result<Uuid, BitVMXError> {
         self.reply(from, OutgoingBitVMXApiMessages::Pong(uuid))?;
@@ -1083,7 +1068,11 @@ impl BitVMXApi for BitVMX {
         info!("Getting aggregated pubkey for program: {:?}", id);
 
         // Read from globals (protocol-based approach via AggregatedKeyProtocol)
-        let response = if let Some(key_var) = self.program_context.globals.get_var(&id, "final_aggregated_key")? {
+        let response = if let Some(key_var) = self
+            .program_context
+            .globals
+            .get_var(&id, "final_aggregated_key")?
+        {
             if let Ok(key_str) = key_var.string() {
                 // Convert String to PublicKey
                 match key_str.parse::<PublicKey>() {
@@ -1587,14 +1576,14 @@ impl BitVMXApi for BitVMX {
                 BitVMXApi::setup_v2(self, id, program_type, participants, leader)?
             }
             IncomingBitVMXApiMessages::SubscribeToTransaction(uuid, txid) => {
-                BitVMXApi::subscribe_to_tx(self, from, uuid, txid)?
+                BitVMXApi::subscribe_to_tx(self, from, uuid, txid, None)?
             }
-            IncomingBitVMXApiMessages::SubscribeUTXO(uuid) => {
-                BitVMXApi::subscribe_utxo(self, uuid)?;
+            IncomingBitVMXApiMessages::SubscribeUTXO(_uuid) => {
+                // TODO: Implement SubscribeUTXO functionality
+                warn!("SubscribeUTXO is not yet implemented");
             }
-
-            IncomingBitVMXApiMessages::SubscribeToRskPegin(confirmation_threshold) => {
-                BitVMXApi::subscribe_to_rsk_pegin(self, confirmation_threshold)?
+            IncomingBitVMXApiMessages::SubscribeToRskPegin() => {
+                BitVMXApi::subscribe_to_rsk_pegin(self, None)?
             }
 
             IncomingBitVMXApiMessages::GetSPVProof(txid) => {

@@ -120,7 +120,7 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
 
     // Main processing loop wrapped in catch_unwind to ensure coordinated shutdown on panic
     let loop_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        'main: loop {
+        loop {
             // Check if Ctrl+C was pressed to gracefully shutdown
             if rx.try_recv().is_ok() {
                 info!("Ctrl+C received, shutting down");
@@ -133,12 +133,8 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
 
                 if instance.ready {
                     match instance.bitvmx.tick() {
-                        Ok(true) => {
+                        Ok(()) => {
                             thread::sleep(Duration::from_millis(10));
-                        }
-                        Ok(false) => {
-                            info!("BitVMX requested shutdown");
-                            break 'main;
                         }
                         Err(e) => {
                             tracing::error!("Error in tick(): {e:#?}");
