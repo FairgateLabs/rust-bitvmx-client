@@ -384,3 +384,4 @@ pub const PROGRAM_TYPE_DISPUTE_CORE: &str = "dispute_core";
 pub const PROGRAM_TYPE_PAIRWISE_PENALIZATION: &str = "pairwise_penalization";
 pub const PROGRAM_TYPE_FULL_PENALIZATION: &str = "full_penalization";
 pub const PROGRAM_TYPE_PACKET: &str = "packet";
+pub const PROGRAM_TYPE_LIGHT_DRP: &str = "light_drp";
