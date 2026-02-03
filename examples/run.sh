@@ -1,4 +1,29 @@
 #!/usr/bin/env bash
+#
+#   Set up a local testing environment and run BitVMX examples.
+#   It initializes a Bitcoin regtest node, starts multiple BitVMX client operator
+#   instances, and then runs the specified example.
+#
+# USAGE:
+#   ./run.sh <example-name>
+#
+# ARGUMENTS:
+#   example-name    The name of the example to run (e.g., light-drp)
+#
+# EXAMPLES:
+#   ./run.sh light-drp      # Run the light dispute resolution protocol example
+#
+# LOGS:
+#   All logs are stored in logs/<example-name>/:
+#     - example.log           - Output from the example itself
+#     - bitvmx_op_1.log       - Output from operator 1
+#     - bitvmx_op_2.log       - Output from operator 2
+#     - bitvmx_op_3.log       - Output from operator 3
+#     - bitvmx_op_4.log       - Output from operator 4
+#
+# CLEANUP:
+#   The script automatically kills all bitvmx-client processes on exit (via trap).
+#
 
 set -euo pipefail
 
