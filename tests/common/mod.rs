@@ -2,6 +2,7 @@
 #![cfg(test)]
 
 pub mod dispute;
+pub mod helper;
 
 use anyhow::Result;
 use bitcoin::{Amount, PublicKey, XOnlyPublicKey};
@@ -28,9 +29,8 @@ use protocol_builder::{
     scripts::{self, ProtocolScript, SignMode},
     types::{OutputType, Utxo},
 };
-use std::process::Command;
-use std::sync::Once;
-use tracing::info;
+use std::{path::Path, process::Command, sync::Once};
+use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 use crate::common::dispute::process_dispatcher_non_blocking;
@@ -328,6 +328,44 @@ fn config_trace_aux() {
         .with_target(true)
         .with_env_filter(filter)
         .init();
+}
+
+/// Checks if BitVMX-CPU is properly built and required files exist
+/// Returns an error if dependencies are missing
+pub fn check_bitvmx_cpu_built() -> Result<()> {
+    #[cfg(not(target_os = "windows"))]
+    let emulator_binary = "../BitVMX-CPU/target/release/emulator";
+    #[cfg(target_os = "windows")]
+    let emulator_binary = "../BitVMX-CPU/target/release/emulator.exe";
+
+    let program_dir = "../BitVMX-CPU/docker-riscv32/riscv32/build";
+
+    if !Path::new(emulator_binary).exists() {
+        warn!(
+            "⚠️  BitVMX-CPU emulator binary not found at: {}\n\
+             Please build BitVMX-CPU first by running:\n\
+             cd ../BitVMX-CPU && cargo build --release --bin emulator\n\
+             Or use the provided script: ./scripts/build-emulator.sh",
+            emulator_binary
+        );
+        return Err(anyhow::anyhow!(
+            "BitVMX-CPU emulator not built. Run: cd ../BitVMX-CPU && cargo build --release --bin emulator"
+        ));
+    }
+
+    if !Path::new(program_dir).exists() {
+        warn!(
+            "⚠️  BitVMX-CPU program directory not found at: {}\n\
+             Please ensure BitVMX-CPU is properly set up.",
+            program_dir
+        );
+        return Err(anyhow::anyhow!(
+            "BitVMX-CPU program directory not found at: {}",
+            program_dir
+        ));
+    }
+
+    Ok(())
 }
 
 pub fn send_all(id_channel_pairs: &Vec<ParticipantChannel>, msg: &str) -> Result<()> {
