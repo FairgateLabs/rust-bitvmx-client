@@ -77,9 +77,6 @@ impl ProtocolHandler for AggregatedKeyProtocol {
             self.ctx.id,
             keys.len()
         );
-        
-        // AggregatedKeyProtocol performs its own MuSig2 aggregation
-        // This is the NEW pattern where protocols are responsible for aggregation
 
         let key_name = self.ctx.id.to_string();
 
