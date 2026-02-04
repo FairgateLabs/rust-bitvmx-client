@@ -297,7 +297,7 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>, identifier: Identifier)
 
         let lockreqtx_on_chain = Uuid::new_v4();
         let command =
-            IncomingBitVMXApiMessages::SubscribeToTransaction(lockreqtx_on_chain, txid)
+            IncomingBitVMXApiMessages::SubscribeToTransaction(lockreqtx_on_chain, txid, Some(1))
                 .to_string()?;
         send_all(&id_channel_pairs, &command)?;
         info!("Subscribe to lockreq transaction: {}", lockreqtx_on_chain);

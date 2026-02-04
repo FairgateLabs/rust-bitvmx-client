@@ -11,7 +11,7 @@ use crate::{
     errors::BitVMXError,
     keychain::KeyChain,
     leader_broadcast::{LeaderBroadcastHelper, OriginalMessage},
-    message_queue::MessageQueue,
+    message_queue::{MessageQueue, QueuedMessage},
     program::{
         participant::CommsAddress,
         program::Program,
@@ -408,14 +408,10 @@ impl BitVMX {
         Ok(true)
     }
 
-    pub fn process_msg(
-        &mut self,
-        identifier: Identifier,
-        msg: Vec<u8>,
-        is_new_message: bool,
-    ) -> Result<(), BitVMXError> {
+    pub fn process_msg(&mut self, msg: QueuedMessage) -> Result<(), BitVMXError> {
+        let is_new_message = msg.retry_state.get_attempts() == 0;
         let (version, msg_type, program_id, data, timestamp, signature) =
-            deserialize_msg(msg.clone())?;
+            deserialize_msg(msg.data.clone())?;
 
         // Handle Broadcasted messages specially - they contain original messages to process recursively
         if msg_type == CommsMessageType::Broadcasted {
@@ -425,7 +421,7 @@ impl BitVMX {
                 .leader_broadcast_helper
                 .process_broadcasted_message(
                     &self.program_context,
-                    identifier,
+                    msg.identifier,
                     program_id,
                     data,
                     &self.message_queue,
@@ -438,7 +434,7 @@ impl BitVMX {
         );
         if !is_verification_msg {
             let verified = self.verify_message_signature(
-                &identifier,
+                &msg.identifier,
                 &program_id,
                 &version,
                 &msg_type,
@@ -451,21 +447,21 @@ impl BitVMX {
                     "Buffering message due to missing verification key: {:?} {:?}",
                     program_id, msg_type
                 );
-                self.message_queue.push_new(identifier, msg)?;
+                self.message_queue.push_back(msg)?;
                 return Ok(());
             }
         }
         if is_new_message {
             self.timestamp_verifier
-                .ensure_fresh(&identifier.pubkey_hash, timestamp)?;
+                .ensure_fresh(&msg.identifier.pubkey_hash, timestamp)?;
         }
         let (program, program_v2, peer_address) = if let Some(program) =
             self.load_program(&program_id).ok()
         {
-            let peer_address = program.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
+            let peer_address = program.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
             (Some(program), None, Some(peer_address))
         } else if let Some(program_v2) = self.load_program_v2(&program_id).ok() {
-            let peer_address = program_v2.get_address_from_pubkey_hash(&identifier.pubkey_hash)?;
+            let peer_address = program_v2.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
             (None, Some(program_v2), Some(peer_address))
         } else {
             (None, None, None)
@@ -527,11 +523,11 @@ impl BitVMX {
 
         if message_consumed {
             self.timestamp_verifier
-                .record(&identifier.pubkey_hash, timestamp);
+                .record(&msg.identifier.pubkey_hash, timestamp);
         } else {
             // Message needs to be buffered (not processed or program not found)
             info!("Pending message to back: {:?}", msg_type);
-            self.message_queue.push_new(identifier, msg)?;
+            self.message_queue.push_back(msg)?;
         }
         Ok(())
     }
@@ -541,9 +537,8 @@ impl BitVMX {
             return Ok(());
         }
 
-        if let Some(queued_msg) = self.message_queue.pop_front()? {
-            let is_new_message = queued_msg.retry_state.get_attempts() == 0;
-            self.process_msg(queued_msg.identifier, queued_msg.data, is_new_message)?;
+        if let Some(msg) = self.message_queue.pop_front()? {
+            self.process_msg(msg)?;
         }
         Ok(())
     }
@@ -563,7 +558,8 @@ impl BitVMX {
         for message in messages {
             match message {
                 ReceiveHandlerChannel::Msg(identifier, msg) => {
-                    self.process_msg(identifier, msg, true)?;
+                    let msg: QueuedMessage = QueuedMessage::new(identifier, msg)?;
+                    self.process_msg(msg)?;
                 }
                 ReceiveHandlerChannel::Error(e) => {
                     info!("Error receiving message {}", e);
@@ -781,11 +777,11 @@ impl BitVMX {
         Ok(())
     }
 
-    pub fn tick(&mut self) -> Result<(), BitVMXError> {
+    pub fn tick(&mut self) -> Result<bool, BitVMXError> {
         //info!("Ticking BitVMX: {}", self.count);
         if self.shutdown {
             info!("BitVMX is shutdown, stopping tick processing.");
-            return Ok(());
+            return Ok(false);
         }
 
         self.count += 1;
@@ -802,7 +798,7 @@ impl BitVMX {
         self.ping_helper
             .check_job_dispatchers_liveness(&self.program_context, &self.config.components)?;
 
-        Ok(())
+        Ok(true)
     }
 
     pub fn process_wallet_updates(&mut self) -> Result<(), BitVMXError> {
@@ -1575,17 +1571,16 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::SetupV2(id, program_type, participants, leader) => {
                 BitVMXApi::setup_v2(self, id, program_type, participants, leader)?
             }
-            IncomingBitVMXApiMessages::SubscribeToTransaction(uuid, txid) => {
-                BitVMXApi::subscribe_to_tx(self, from, uuid, txid, None)?
+            IncomingBitVMXApiMessages::SubscribeToTransaction(uuid, txid, confirmation_threshold) => {
+                BitVMXApi::subscribe_to_tx(self, from, uuid, txid, confirmation_threshold)?
             }
             IncomingBitVMXApiMessages::SubscribeUTXO(_uuid) => {
                 // TODO: Implement SubscribeUTXO functionality
                 warn!("SubscribeUTXO is not yet implemented");
             }
-            IncomingBitVMXApiMessages::SubscribeToRskPegin() => {
-                BitVMXApi::subscribe_to_rsk_pegin(self, None)?
+            IncomingBitVMXApiMessages::SubscribeToRskPegin(confirmation_threshold) => {
+                BitVMXApi::subscribe_to_rsk_pegin(self, confirmation_threshold)?
             }
-
             IncomingBitVMXApiMessages::GetSPVProof(txid) => {
                 BitVMXApi::get_spv_proof(self, from, txid)?
             }

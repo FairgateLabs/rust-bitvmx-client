@@ -24,11 +24,13 @@ fn shutdown_without_errors() -> Result<()> {
         _ => panic!("expected Pong"),
     }
 
-    bitvmx.tick()?; // should succeed
+    let result = bitvmx.tick()?;
+    assert!(result, "expected continue from tick");
 
     // Now shutdown cleanly
     bitvmx.shutdown()?;
-    bitvmx.tick()?; // should succeed even after shutdown
+    let result = bitvmx.tick()?; // should indicate stop
+    assert!(!result, "expected stop from tick after shutdown");
 
     Ok(())
 }
