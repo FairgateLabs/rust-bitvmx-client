@@ -150,7 +150,7 @@ impl Globals {
 
     pub fn unset_var(&self, uuid: &Uuid, key: &str) -> Result<(), BitVMXError> {
         let key = format!("{}:var:{}", uuid, key);
-        Ok(self.storage.delete(&key)?)
+        Ok(self.storage.remove(&key, None)?)
     }
 }
 
