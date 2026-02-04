@@ -173,7 +173,7 @@ impl ProtocolHandler for RejectPegInProtocol {
             tx,
             speedup,
             Context::ProgramId(self.ctx.id).to_string()?,
-            None,                                                        // Dispatch immediately
+            None, // Dispatch immediately
             self.requested_confirmations(context),
         )?;
 
