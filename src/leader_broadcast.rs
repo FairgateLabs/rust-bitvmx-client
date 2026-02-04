@@ -307,7 +307,7 @@ impl LeaderBroadcastHelper {
 
         // Delete each individual message key
         for (key, _) in stored_messages.iter() {
-            self.store.delete(key)?;
+            self.store.remove(key, None)?;
         }
 
         Ok(())
