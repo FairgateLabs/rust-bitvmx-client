@@ -134,7 +134,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
         protocol.add_connection(
             "pegin_funds_conn",
             REQUEST_PEGIN_TX,
-            OutputType::taproot(pegin_request.amount.into(), &take_aggregated_key, &leaves)?.into(),
+            OutputType::taproot(pegin_request.amount, &take_aggregated_key, &leaves)?.into(),
             ACCEPT_PEGIN_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
@@ -153,12 +153,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
         protocol.add_connection(
             "accept_enabler_conn",
             REQUEST_PEGIN_TX,
-            OutputType::taproot(
-                (2 * DUST_VALUE).into(),
-                &take_aggregated_key,
-                &enabler_scripts,
-            )?
-            .into(),
+            OutputType::taproot(2 * DUST_VALUE, &take_aggregated_key, &enabler_scripts)?.into(),
             ACCEPT_PEGIN_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),
@@ -171,7 +166,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
         )?;
 
         let accept_pegin_output =
-            OutputType::taproot(user_output_amount.into(), &take_aggregated_key, &[])?;
+            OutputType::taproot(user_output_amount, &take_aggregated_key, &[])?;
         protocol.add_transaction_output(ACCEPT_PEGIN_TX, &accept_pegin_output)?;
 
         let mut take0_scripts = vec![];
@@ -186,11 +181,8 @@ impl ProtocolHandler for AcceptPegInProtocol {
 
         // Etake0
         // TODO: Optimize output value calculation. It should pay CANCEL_TAKE0_TX fee + SPEEDUP_VALUE
-        let etake_output = OutputType::taproot(
-            (2 * SPEEDUP_VALUE).into(),
-            &take_aggregated_key,
-            &take0_scripts,
-        )?;
+        let etake_output =
+            OutputType::taproot(2 * SPEEDUP_VALUE, &take_aggregated_key, &take0_scripts)?;
         protocol.add_transaction_output(ACCEPT_PEGIN_TX, &etake_output)?;
 
         let committee = self.committee(context, pegin_request.committee_id)?;
@@ -214,10 +206,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
 
             protocol.add_transaction_output(
                 cancel_name,
-                &OutputType::segwit_key(
-                    SPEEDUP_VALUE.into(),
-                    keys[op_index].get_public(SPEEDUP_KEY)?,
-                )?,
+                &OutputType::segwit_key(SPEEDUP_VALUE, keys[op_index].get_public(SPEEDUP_KEY)?)?,
             )?;
         }
 

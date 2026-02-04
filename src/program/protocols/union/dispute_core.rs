@@ -447,7 +447,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
         protocol.add_transaction_output(
             &PROTOCOL_FUNDING_TX,
             &OutputType::segwit_key(
-                SPEEDUP_VALUE.into(),
+                SPEEDUP_VALUE,
                 keys[dispute_core_data.member_index].get_public(SPEEDUP_KEY)?,
             )?,
         )?;
@@ -855,7 +855,7 @@ impl DisputeCoreProtocol {
                 );
 
                 let op_cosign_output = OutputType::taproot(
-                    challenge_cost.into(),
+                    challenge_cost,
                     wt_dispute_key,
                     &vec![wt_not_challenge_timelock_script, verify_wt_signature],
                 )?;
@@ -936,7 +936,7 @@ impl DisputeCoreProtocol {
 
                 protocol.add_transaction_output(
                     &init_challenge_name,
-                    &OutputType::segwit_key(SPEEDUP_VALUE.into(), &wt_speedup_key)?,
+                    &OutputType::segwit_key(SPEEDUP_VALUE, &wt_speedup_key)?,
                 )?;
             } else {
                 protocol.add_transaction_output(
@@ -958,7 +958,7 @@ impl DisputeCoreProtocol {
         let wt_disabler_directory_fee = estimate_fee(2, op_count as usize * 2, 1);
 
         let disabler_directory_funds_output = OutputType::taproot(
-            (DUST_VALUE * op_count * 2 as u64 + wt_disabler_directory_fee).into(),
+            DUST_VALUE * op_count * 2 as u64 + wt_disabler_directory_fee,
             &committee.dispute_aggregated_key,
             &[],
         )?;
@@ -967,7 +967,7 @@ impl DisputeCoreProtocol {
         // Add speedup output
         protocol.add_transaction_output(
             &WT_START_ENABLER_TX,
-            &OutputType::segwit_key(SPEEDUP_VALUE.into(), &wt_speedup_key)?,
+            &OutputType::segwit_key(SPEEDUP_VALUE, &wt_speedup_key)?,
         )?;
 
         Ok((
@@ -1296,7 +1296,7 @@ impl DisputeCoreProtocol {
             protocol.add_transaction_output(
                 &OP_INITIAL_DEPOSIT_TX,
                 &OutputType::taproot(
-                    disabler_directory_amount.into(),
+                    disabler_directory_amount,
                     &committee.dispute_aggregated_key,
                     &[],
                 )?,
@@ -1357,7 +1357,7 @@ impl DisputeCoreProtocol {
             protocol
                 .add_transaction_output(
                     &PROTOCOL_FUNDING_TX,
-                    &OutputType::segwit_key(change.into(), member_change_key)?,
+                    &OutputType::segwit_key(change, member_change_key)?,
                 )
                 .map_err(|e| BitVMXError::ProtocolBuilderError(e))?;
         }
@@ -2836,7 +2836,7 @@ impl DisputeCoreProtocol {
             op_disabler_directory_outout as u32,
             Some(output_value),
             Some(OutputType::taproot(
-                output_value.into(),
+                output_value,
                 dispute_aggregated_key,
                 &[],
             )?),

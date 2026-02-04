@@ -987,7 +987,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         amount = self.checked_sub(amount, speedup_dust)?;
 
         let timeout_leaf = scripts::timelock(2 * timelock_blocks, &aggregated, SignMode::Aggregate);
-        let output_type = OutputType::taproot(amount.into(), aggregated, &vec![timeout_leaf])?;
+        let output_type = OutputType::taproot(amount, aggregated, &vec![timeout_leaf])?;
 
         protocol.add_connection(
             &format!(
@@ -1594,7 +1594,7 @@ impl DisputeResolutionProtocol {
         timeout_leaf.set_assert_leaf_id(1);
         let connector_leaves = vec![connection_leaf, timeout_leaf];
 
-        let output_type = OutputType::taproot(amount.into(), aggregated, &connector_leaves)?;
+        let output_type = OutputType::taproot(amount, aggregated, &connector_leaves)?;
 
         // connector from -> to
         protocol.add_connection(
@@ -1608,7 +1608,7 @@ impl DisputeResolutionProtocol {
         )?;
 
         // creates the speedup output where the input will be commited
-        let output_type = OutputType::taproot(amount_speedup.into(), &aggregated, &leaves)?;
+        let output_type = OutputType::taproot(amount_speedup, &aggregated, &leaves)?;
         protocol.add_transaction_output(to, &output_type)?;
         let last = protocol.get_output_count(to)? - 1;
         self.add_vout_to_monitor(context, to, last)?;

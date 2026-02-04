@@ -148,7 +148,7 @@ pub fn prepare_dispute(
 
     info!("Fail/Force config: {:?}", config_results);
 
-    let test_enabler = OutputType::segwit_key(540.into(), aggregated_pub_key).unwrap();
+    let test_enabler = OutputType::segwit_key(540, aggregated_pub_key).unwrap();
 
     let dispute_configuration = DisputeConfiguration::new(
         program_id,

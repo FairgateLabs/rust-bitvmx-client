@@ -55,8 +55,7 @@ impl ClaimGate {
     ) -> Result<OutputType, BitVMXError> {
         let verify_aggregated_action =
             scripts::check_aggregated_signature(aggregated, SignMode::Aggregate);
-        let output_action =
-            OutputType::taproot(dust.into(), aggregated, &[verify_aggregated_action])?;
+        let output_action = OutputType::taproot(dust, aggregated, &[verify_aggregated_action])?;
         Ok(output_action)
     }
 
@@ -80,11 +79,8 @@ impl ClaimGate {
         let exclusive_success_vout = if add_exclusive_success {
             let verify_aggregated =
                 scripts::check_aggregated_signature(&aggregated, SignMode::Aggregate);
-            let exclusive_output = OutputType::taproot(
-                amount_dust.into(),
-                aggregated,
-                &vec![verify_aggregated.clone()],
-            )?;
+            let exclusive_output =
+                OutputType::taproot(amount_dust, aggregated, &vec![verify_aggregated.clone()])?;
 
             let vout_idx = protocol.transaction_by_name(from)?.output.len();
             protocol.add_transaction_output(&from, &exclusive_output)?;
@@ -98,8 +94,7 @@ impl ClaimGate {
         // as the claimer is the one who will be able to spend it
         let claim_start_check = scripts::check_signature(claimer.0, claimer.1);
         let claim_start = OutputType::taproot(
-            (amount_fee + amount_fee + ((2 + (outputs.len() as u64 + action_count)) * amount_dust))
-                .into(),
+            amount_fee + amount_fee + ((2 + (outputs.len() as u64 + action_count)) * amount_dust),
             aggregated,
             &vec![claim_start_check],
         )?;
@@ -124,7 +119,7 @@ impl ClaimGate {
         let timeout = scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
 
         let start_tx_output = OutputType::taproot(
-            (amount_fee + ((1 + outputs.len() as u64 + action_count) * amount_dust)).into(),
+            amount_fee + ((1 + outputs.len() as u64 + action_count) * amount_dust),
             aggregated,
             &vec![verify_aggregated.clone(), timeout],
         )?;
@@ -145,8 +140,7 @@ impl ClaimGate {
                 }
             }
 
-            let claim_stop =
-                OutputType::taproot((amount_fee + amount_dust).into(), aggregated, &leaves)?;
+            let claim_stop = OutputType::taproot(amount_fee + amount_dust, aggregated, &leaves)?;
             claim_stoppers.push(claim_stop.clone());
 
             let stopname = Self::tx_stop(claim_name, i as u8);

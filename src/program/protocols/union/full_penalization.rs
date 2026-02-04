@@ -361,8 +361,7 @@ impl FullPenalizationProtocol {
             protocol.add_connection(
                 "from_disabler_directory",
                 &op_disabler_directory_name,
-                OutputType::taproot(DUST_VALUE.into(), &committee.dispute_aggregated_key, &[])?
-                    .into(),
+                OutputType::taproot(DUST_VALUE, &committee.dispute_aggregated_key, &[])?.into(),
                 &op_disabler_name,
                 InputSpec::Auto(
                     SighashType::taproot_all(),
@@ -493,10 +492,7 @@ impl FullPenalizationProtocol {
         // Probably it's not needed to speedup DISABLER DIRECTORY due to OP DISABLER pay a lot of fees.
         protocol.add_transaction_output(
             &op_disabler_directory_name,
-            &OutputType::segwit_key(
-                SPEEDUP_VALUE.into(),
-                &committee.members[wt_index].dispute_key,
-            )?,
+            &OutputType::segwit_key(SPEEDUP_VALUE, &committee.members[wt_index].dispute_key)?,
         )?;
 
         Ok(())
@@ -1044,8 +1040,7 @@ impl FullPenalizationProtocol {
             protocol.add_connection(
                 "from_disabler_directory",
                 &wt_disabler_directory_name,
-                OutputType::taproot(DUST_VALUE.into(), &committee.dispute_aggregated_key, &[])?
-                    .into(),
+                OutputType::taproot(DUST_VALUE, &committee.dispute_aggregated_key, &[])?.into(),
                 &wt_disabler_name,
                 InputSpec::Auto(
                     SighashType::taproot_all(),
@@ -1094,8 +1089,7 @@ impl FullPenalizationProtocol {
             protocol.add_connection(
                 "from_disabler_directory",
                 &wt_disabler_directory_name,
-                OutputType::taproot(DUST_VALUE.into(), &committee.dispute_aggregated_key, &[])?
-                    .into(),
+                OutputType::taproot(DUST_VALUE, &committee.dispute_aggregated_key, &[])?.into(),
                 &wt_cosign_disabler_name,
                 InputSpec::Auto(
                     SighashType::taproot_all(),
