@@ -988,8 +988,12 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         amount = self.checked_sub(amount, fee)?;
         amount = self.checked_sub(amount, speedup_dust)?;
 
-        let timeout_leaf = scripts::timelock(2 * timelock_blocks, &aggregated, SignMode::Aggregate);
-        let output_type = OutputType::taproot(amount, aggregated, &vec![timeout_leaf])?;
+        let verifier_final =
+            scripts::timelock(2 * timelock_blocks, &aggregated, SignMode::Aggregate);
+        let speedup_timeout = scripts::check_aggregated_signature(&aggregated, SignMode::Aggregate);
+
+        let output_type =
+            OutputType::taproot(amount, aggregated, &vec![speedup_timeout, verifier_final])?;
 
         protocol.add_connection(
             &format!(
@@ -1001,7 +1005,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             CHALLENGE_READ,
             output_type.into(),
             VERIFIER_FINAL,
-            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
             Some(2 * timelock_blocks),
             None,
         )?;

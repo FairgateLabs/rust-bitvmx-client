@@ -1295,7 +1295,7 @@ pub fn handle_tx_news(
         None => {
             if CHALLENGE_READ == name && ParticipantRole::Verifier == drp.role() {
                 let verifier_final_tx =
-                    drp.get_signed(program_context, &VERIFIER_FINAL, vec![0.into()])?;
+                    drp.get_signed(program_context, &VERIFIER_FINAL, vec![1.into()])?;
                 let speedup_data =
                     drp.get_speedup_data_from_tx(&verifier_final_tx, program_context, None)?;
                 program_context.bitcoin_coordinator.dispatch(
