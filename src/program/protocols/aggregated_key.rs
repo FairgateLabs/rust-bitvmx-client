@@ -147,20 +147,6 @@ impl ProtocolHandler for AggregatedKeyProtocol {
             self.ctx.id
         );
         
-        // Verify the variable was stored correctly
-        let stored_var = context.globals.get_var(&self.ctx.id, "final_aggregated_key")?;
-        if stored_var.is_none() {
-            tracing::error!(
-                "AggregatedKeyProtocol: ERROR - Variable was not stored correctly! program_id: {}",
-                self.ctx.id
-            );
-        } else {
-            tracing::info!(
-                "AggregatedKeyProtocol: Verified variable stored successfully for program_id: {}",
-                self.ctx.id
-            );
-        }
-
         // Send AggregatedPubkey message to the requester (similar to Collaboration)
         // Read the 'from' identifier from storage
         if let Some(storage) = &self.ctx.storage {
