@@ -1006,6 +1006,16 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             None,
         )?;
 
+        protocol.add_connection(
+            &format!("{}__CONNECTOR__INPUT_TO", CHALLENGE_READ),
+            CHALLENGE_READ,
+            OutputSpec::Last,
+            &timeout_input_tx(CHALLENGE_READ),
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
+            None,
+            None,
+        )?;
+
         pb.add_speedup_output(
             &mut protocol,
             VERIFIER_FINAL,
@@ -1619,7 +1629,7 @@ impl DisputeResolutionProtocol {
         context.globals.set_var(
             &self.ctx.id,
             &timeout_tx(to),
-            VariableTypes::VecNumber(vec![0, 1, timelock_blocks as u32 * 2]),
+            VariableTypes::VecNumber(vec![1, timelock_blocks as u32 * 2]),
         )?;
 
         // add the timeout tx to penalize the non-acting party
@@ -1635,7 +1645,7 @@ impl DisputeResolutionProtocol {
 
         // if the previous party does not present the input in time, the other party can also consume the connector output of the connection
         // so is not forced to reply (as the reply will have a timelock that would allow the dihonest party to start a claim)
-        /*if from != START_CH {
+        if from != START_CH {
             protocol.add_connection(
                 &format!("{}__CONNECTOR__INPUT_TO", from),
                 from,
@@ -1645,7 +1655,7 @@ impl DisputeResolutionProtocol {
                 None, //There is no timelock here as the timelock is already enforced by the other input of the timeout_input_tx
                 None,
             )?;
-        }*/
+        }
 
         //connect the opositte party claim gate to the timeout tx
         claim_gate.add_claimer_win_connection(protocol, &timeout_tx(to))?;
@@ -1656,7 +1666,7 @@ impl DisputeResolutionProtocol {
         context.globals.set_var(
             &self.ctx.id,
             &timeout_input_tx(to),
-            VariableTypes::VecNumber(vec![0, leaves.len() as u32 - 1, timelock_blocks as u32]),
+            VariableTypes::VecNumber(vec![leaves.len() as u32 - 1, timelock_blocks as u32]),
         )?;
 
         // add the timeout tx to penalize the party for not commiting the input

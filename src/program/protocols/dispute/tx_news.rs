@@ -43,9 +43,8 @@ fn dispatch_timeout_tx(
         .globals
         .get_var_or_err(&drp.ctx.id, name)?
         .vec_number()?;
-    let input = params[0];
-    let leaf = params[1];
-    let timelock_blocks = params[2];
+    let leaf = params[0];
+    let timelock_blocks = params[1];
 
     info!(
         "Current block: {}. Will try to dispatch timeout tx: {} in {} blocks. ",
