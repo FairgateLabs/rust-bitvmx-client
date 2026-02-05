@@ -17,7 +17,7 @@ use crate::{
 pub struct DisputeConfiguration {
     pub id: Uuid,
     pub operators_aggregated_pub: PublicKey,
-    pub protocol_connection: (PartialUtxo, Vec<usize>),
+    pub protocol_connection: (PartialUtxo, usize),
     pub prover_actions: Vec<(PartialUtxo, Vec<usize>)>,
     pub prover_enablers: Vec<OutputType>,
     pub verifier_actions: Vec<(PartialUtxo, Vec<usize>)>,
@@ -35,7 +35,7 @@ impl DisputeConfiguration {
     pub fn new(
         id: Uuid,
         operators_aggregated_pub: PublicKey,
-        protocol_connection: (PartialUtxo, Vec<usize>),
+        protocol_connection: (PartialUtxo, usize),
         prover_actions: Vec<(PartialUtxo, Vec<usize>)>,
         prover_enablers: Vec<OutputType>,
         verifier_actions: Vec<(PartialUtxo, Vec<usize>)>,

@@ -197,7 +197,7 @@ impl ProtocolHandler for SlotProtocol {
                     VariableTypes::Input(partial_input.to_vec()),
                 )?;
             }
-            let tx = self.get_signed_tx(program_context, name, 0, 0, false, 0)?;
+            let tx = self.get_signed(program_context, name, vec![0.into()])?;
             let speedup_utxo = self.get_speedup_data_from_tx(&tx, program_context, None)?;
 
             return Ok((tx, Some(speedup_utxo.into())));
@@ -253,13 +253,10 @@ impl ProtocolHandler for SlotProtocol {
                         .map_err(|_| BitVMXError::InvalidMessageFormat)?,
                 );
 
-                let gid_selection_tx = self.get_signed_tx(
+                let gid_selection_tx = self.get_signed(
                     program_context,
                     &group_id_tx(operator as usize, gid as u8),
-                    0,
-                    gid as u32,
-                    false,
-                    0,
+                    vec![(gid as u32).into()],
                 )?;
                 info!(
                     "Operator {} is going to send the group id {}. Txid: {}",
@@ -356,13 +353,10 @@ impl ProtocolHandler for SlotProtocol {
                     if i != vout.unwrap() - 2 {
                         info!("Sending tx to consume the stop for {}", i);
 
-                        let tx = self.get_signed_tx(
+                        let tx = self.get_signed(
                             program_context,
                             &start_challenge_to(operator as usize, i as usize),
-                            0,
-                            0,
-                            false,
-                            0,
+                            vec![0.into()],
                         )?;
                         let speedup_data =
                             self.get_speedup_data_from_tx(&tx, program_context, None)?;
@@ -389,13 +383,10 @@ impl ProtocolHandler for SlotProtocol {
                     info!("All stops have been consumed");
                     info!("Ready to send claim win start");
 
-                    let tx = self.get_signed_tx(
+                    let tx = self.get_signed(
                         program_context,
                         &ClaimGate::tx_start(&claim_name(operator as usize)),
-                        0,
-                        0,
-                        false,
-                        0,
+                        vec![0.into()],
                     )?;
 
                     info!(
@@ -436,13 +427,10 @@ impl ProtocolHandler for SlotProtocol {
 
             info!("Prover sending SUCCESS tx");
 
-            let tx = self.get_signed_tx(
+            let tx = self.get_signed(
                 program_context,
                 &ClaimGate::tx_success(&claim_name(operator as usize)),
-                0,
-                1,
-                false,
-                0,
+                vec![1.into()],
             )?;
             let speedup_data = self.get_speedup_data_from_tx(&tx, program_context, None)?;
             program_context.bitcoin_coordinator.dispatch(

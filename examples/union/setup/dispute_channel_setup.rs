@@ -12,7 +12,7 @@ use bitvmx_client::{
         participant::{CommsAddress, ParticipantRole},
         protocols::{
             dispute::{
-                config::{ConfigResult, ForceFailConfiguration, DisputeConfiguration},
+                config::{ConfigResult, DisputeConfiguration, ForceFailConfiguration},
                 TIMELOCK_BLOCKS as DRP_TIMELOCK_BLOCKS,
             },
             union::{
@@ -193,7 +193,7 @@ impl DisputeChannelSetup {
         let dispute_configuration = DisputeConfiguration::new(
             drp_id,
             pair_key,
-            (op_cosign, vec![]),
+            (op_cosign, 1),              // Consume leaf 1
             vec![(op_stopper, vec![1])], // Consume leaf 1
             vec![],
             vec![(wt_stopper, vec![1])], // Consume leaf 1

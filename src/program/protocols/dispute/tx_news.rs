@@ -52,7 +52,7 @@ fn dispatch_timeout_tx(
         current_height, name, timelock_blocks
     );
 
-    let tx = drp.get_signed_tx(program_context, name, input, leaf, true, 0)?;
+    let tx = drp.get_signed(program_context, name, vec![(leaf, true).into()])?;
     let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
     program_context.bitcoin_coordinator.dispatch(
         tx,
@@ -486,7 +486,7 @@ fn auto_claim_start(
         let timeout_name = get_timeout_name(timeout, *not_ignore);
         if &timeout_name == name && *tx_role == drp.role() {
             let claim_name = ClaimGate::tx_start(get_claim_name(drp, false));
-            let tx = drp.get_signed_tx(program_context, &claim_name, 0, 0, false, 0)?;
+            let tx = drp.get_signed(program_context, &claim_name, vec![0.into()])?;
             let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
             info!("{claim_name}: {:?}", tx);
             program_context.bitcoin_coordinator.dispatch(
@@ -523,13 +523,10 @@ fn claim_state_handle(
         if name == ClaimGate::tx_start(my_claim) {
             info!("{my_claim} SUCCESS dispatch");
 
-            let prover_wins_tx = drp.get_signed_tx(
+            let prover_wins_tx = drp.get_signed(
                 program_context,
                 &ClaimGate::tx_success(&my_claim),
-                0,
-                1,
-                false,
-                0,
+                vec![1.into()],
             )?;
             let speedup_data =
                 drp.get_speedup_data_from_tx(&prover_wins_tx, program_context, None)?;
@@ -544,13 +541,10 @@ fn claim_state_handle(
         //other start
         else {
             info!("{other_claim} STOP dispatch attempt");
-            let prover_win_stop = drp.get_signed_tx(
+            let prover_win_stop = drp.get_signed(
                 program_context,
                 &ClaimGate::tx_stop(&other_claim, 0),
-                0,
-                0,
-                false,
-                0,
+                vec![0.into()],
             )?;
             let speedup_data =
                 drp.get_speedup_data_from_tx(&prover_win_stop, program_context, None)?;
@@ -575,13 +569,10 @@ fn claim_state_handle(
 
         for (i, action) in actions.iter().enumerate() {
             info!("{}. Execute Action {}", drp.role(), i);
-            let win_action_tx = drp.get_signed_tx(
+            let win_action_tx = drp.get_signed(
                 program_context,
                 &action_wins(&drp.role(), 1),
-                0,
-                0,
-                false,
-                action.1[0],
+                vec![0.into(), (action.1[0] as u32).into()],
             )?;
             let speedup_data =
                 drp.get_speedup_data_from_tx(&win_action_tx, program_context, None)?;
@@ -1305,7 +1296,7 @@ pub fn handle_tx_news(
         None => {
             if CHALLENGE_READ == name && ParticipantRole::Verifier == drp.role() {
                 let verifier_final_tx =
-                    drp.get_signed_tx(program_context, &VERIFIER_FINAL, 0, 0, false, 0)?;
+                    drp.get_signed(program_context, &VERIFIER_FINAL, vec![0.into()])?;
                 let speedup_data =
                     drp.get_speedup_data_from_tx(&verifier_final_tx, program_context, None)?;
                 program_context.bitcoin_coordinator.dispatch(
@@ -1319,7 +1310,7 @@ pub fn handle_tx_news(
 
             if VERIFIER_FINAL == name && ParticipantRole::Verifier == drp.role() {
                 let claim_name = ClaimGate::tx_start(VERIFIER_WINS);
-                let tx = drp.get_signed_tx(program_context, &claim_name, 0, 0, false, 0)?;
+                let tx = drp.get_signed(program_context, &claim_name, vec![0.into()])?;
                 let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
                 info!("{claim_name}: {:?}", tx);
                 program_context.bitcoin_coordinator.dispatch(

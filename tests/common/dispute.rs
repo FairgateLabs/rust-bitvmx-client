@@ -160,7 +160,7 @@ pub fn prepare_dispute(
                 Some(initial_utxo.amount),
                 Some(initial_output_type),
             ),
-            vec![1],
+            1,
         ),
         vec![(
             (
