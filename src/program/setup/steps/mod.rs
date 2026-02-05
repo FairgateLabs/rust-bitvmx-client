@@ -80,10 +80,3 @@ pub fn create_setup_step(name: &SetupStepName) -> Box<dyn SetupStep> {
     }
 }
 
-/// Factory function to create a SetupStep from a string name.
-///
-/// Returns an error if the step name is not recognized.
-pub fn create_setup_step_from_str(name: &str) -> Result<Box<dyn SetupStep>, BitVMXError> {
-    let step_name = SetupStepName::from_str(name)?;
-    Ok(create_setup_step(&step_name))
-}

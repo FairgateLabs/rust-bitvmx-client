@@ -54,6 +54,12 @@ pub struct ProgramV2 {
     setup_engine_state: Option<SetupEngineState>,
     /// Flag to track if SetupCompleted message has been sent to avoid sending it multiple times
     setup_completed_sent: bool,
+    /// Flag to track if build_protocol() was already called (prevents duplicate builds on crash recovery)
+    protocol_built: bool,
+    /// All participant keys collected during setup (populated by build_protocol)
+    all_participant_keys: Option<Vec<ParticipantKeys>>,
+    /// Flag to track if monitoring has been registered with bitcoin coordinator
+    monitoring_registered: bool,
     #[serde(skip)]
     pub setup_engine: Option<SetupEngine>,
     #[serde(skip)]
@@ -144,6 +150,9 @@ impl ProgramV2 {
             state: ProgramState::New,
             setup_engine_state: None,  // Will be set when saving
             setup_completed_sent: false,
+            protocol_built: false,
+            all_participant_keys: None,
+            monitoring_registered: false,
             setup_engine,
             storage: Some(storage.clone()),
             config: config.clone(),
@@ -171,9 +180,9 @@ impl ProgramV2 {
                 .unwrap_or(false);
 
         if is_waiting {
-            debug!("🔄 ProgramV2::load() - Loaded program {} with state: {:?} (waiting for participants)", program_id, program.state);
+            debug!("ProgramV2::load() - Loaded program {} with state: {:?} (waiting for participants)", program_id, program.state);
         } else {
-            info!("🔄 ProgramV2::load() - Loaded program {} with state: {:?}", program_id, program.state);
+            info!("ProgramV2::load() - Loaded program {} with state: {:?}", program_id, program.state);
         }
 
         program.storage = Some(storage.clone());
@@ -186,11 +195,13 @@ impl ProgramV2 {
         // Restore SetupEngine state if it was saved
         if let (Some(engine), Some(saved_state)) = (&mut program.setup_engine, &program.setup_engine_state) {
             if !is_waiting {
-                info!("🔄 ProgramV2::load() - Restoring SetupEngine state for program {}", program_id);
+                info!("ProgramV2::load() - Restoring SetupEngine state for program {}", program_id);
             } else {
-                debug!("🔄 ProgramV2::load() - Restoring SetupEngine state for program {} (waiting)", program_id);
+                debug!("ProgramV2::load() - Restoring SetupEngine state for program {} (waiting)", program_id);
             }
-            *engine.state_mut() = saved_state.clone();
+            engine.restore_state(saved_state.clone()).map_err(|e| {
+                ProgramError::InvalidProgramStoragePath(format!("Failed to restore engine state: {}", e))
+            })?;
         }
 
         Ok(program)
@@ -207,16 +218,14 @@ impl ProgramV2 {
         let storage = self
             .storage
             .clone()
-            .ok_or_else(|| {
-                ProgramError::ProgramNotFound(self.program_id)
-            })?;
+            .ok_or(ProgramError::StorageUnavailable)?;
 
         // Save SetupEngine state before serializing (since SetupEngine itself can't be serialized)
         if let Some(engine) = &self.setup_engine {
             self.setup_engine_state = Some(engine.state().clone());
         }
 
-        info!("💾 ProgramV2::save() - Saving program {} with state: {:?}", self.program_id, self.state);
+        info!("ProgramV2::save() - Saving program {} with state: {:?}", self.program_id, self.state);
 
         // Write state to the legacy key so is_active_program() works for ProgramV2
         // This allows process_programs() to skip V2 programs that have reached Ready state
@@ -267,11 +276,20 @@ impl ProgramV2 {
                     );
                     
                     if is_complete {
-                        info!("ProgramV2: SetupEngine completed all steps, building protocol");
-                        self.build_protocol(&program_context)?;
-                        self.state = ProgramState::Monitoring;
-                        state_changed = true;
-                        info!("ProgramV2: Protocol built, transitioning to Monitoring state");
+                        // Check if protocol was already built (crash recovery scenario)
+                        if self.protocol_built {
+                            info!("ProgramV2: SetupEngine complete but protocol already built, transitioning to Monitoring");
+                            self.state = ProgramState::Monitoring;
+                            state_changed = true;
+                        } else {
+                            info!("ProgramV2: SetupEngine completed all steps, building protocol");
+                            self.build_protocol(&program_context)?;
+                            self.protocol.setup_complete(&program_context)?;
+                            self.protocol_built = true;
+                            self.state = ProgramState::Monitoring;
+                            state_changed = true;
+                            info!("ProgramV2: Protocol built, transitioning to Monitoring state");
+                        }
                     }
                 } else {
                     error!("ProgramV2: Protocol doesn't use SetupEngine - this shouldn't happen");
@@ -282,35 +300,41 @@ impl ProgramV2 {
             }
             ProgramState::Monitoring => {
                 // After the protocol is ready, we need to monitor the transactions on blockchain
-                info!("ProgramV2: Setting up blockchain monitoring");
+                // Only register monitoring if not already done (idempotent)
+                if !self.monitoring_registered {
+                    info!("ProgramV2: Setting up blockchain monitoring");
 
-                // Get transactions and UTXOs to monitor from the protocol
-                let (txns_to_monitor, vouts_to_monitor) =
-                    self.protocol.get_transactions_to_monitor(program_context)?;
+                    // Get transactions and UTXOs to monitor from the protocol
+                    let (txns_to_monitor, vouts_to_monitor) =
+                        self.protocol.get_transactions_to_monitor(program_context)?;
 
-                // Create context for monitoring
-                let context = Context::ProgramId(self.program_id);
-                let context_str = context.to_string()?;
+                    // Create context for monitoring
+                    let context = Context::ProgramId(self.program_id);
+                    let context_str = context.to_string()?;
 
-                // Register transactions to monitor
-                if !txns_to_monitor.is_empty() {
-                    info!(
-                        "ProgramV2: Monitoring {} transactions for program {}",
-                        txns_to_monitor.len(),
-                        self.program_id
-                    );
-                    let txs_to_monitor = TypesToMonitor::Transactions(txns_to_monitor, context_str.clone(), None);
-                    program_context.bitcoin_coordinator.monitor(txs_to_monitor)?;
-                }
+                    // Register transactions to monitor
+                    if !txns_to_monitor.is_empty() {
+                        info!(
+                            "ProgramV2: Monitoring {} transactions for program {}",
+                            txns_to_monitor.len(),
+                            self.program_id
+                        );
+                        let txs_to_monitor = TypesToMonitor::Transactions(txns_to_monitor, context_str.clone(), None);
+                        program_context.bitcoin_coordinator.monitor(txs_to_monitor)?;
+                    }
 
-                // Register specific UTXOs (vouts) to monitor for spending
-                for (txid, vout) in vouts_to_monitor {
-                    info!(
-                        "ProgramV2: Monitoring vout {} of txid {} for program {}",
-                        vout, txid, self.program_id
-                    );
-                    let vout_to_monitor = TypesToMonitor::SpendingUTXOTransaction(txid, vout, context_str.clone(), None);
-                    program_context.bitcoin_coordinator.monitor(vout_to_monitor)?;
+                    // Register specific UTXOs (vouts) to monitor for spending
+                    for (txid, vout) in vouts_to_monitor {
+                        info!(
+                            "ProgramV2: Monitoring vout {} of txid {} for program {}",
+                            vout, txid, self.program_id
+                        );
+                        let vout_to_monitor = TypesToMonitor::SpendingUTXOTransaction(txid, vout, context_str.clone(), None);
+                        program_context.bitcoin_coordinator.monitor(vout_to_monitor)?;
+                    }
+
+                    // Mark monitoring as registered - won't re-register on retry
+                    self.monitoring_registered = true;
                 }
 
                 // Transition to Ready state - monitoring is now active
@@ -346,7 +370,28 @@ impl ProgramV2 {
                 // Protocol is ready and monitoring is active
                 // Just waiting for blockchain events via notify_news()
                 debug!("ProgramV2: In Ready state - monitoring active, waiting for events");
-                // No changes in Ready state - don't save
+
+                // Retry sending SetupCompleted if previous attempts failed
+                if !self.setup_completed_sent && self.protocol.send_setup_completed() {
+                    match OutgoingBitVMXApiMessages::SetupCompleted(self.program_id).to_string() {
+                        Ok(msg) => {
+                            let result = program_context.broker_channel.send(
+                                &program_context.components_config.l2,
+                                msg,
+                            );
+                            if let Err(e) = result {
+                                warn!("ProgramV2: Retry sending SetupCompleted failed: {:?}", e);
+                            } else {
+                                info!("ProgramV2: SetupCompleted message sent on retry for program {}", self.program_id);
+                                self.setup_completed_sent = true;
+                                state_changed = true;
+                            }
+                        }
+                        Err(e) => {
+                            warn!("ProgramV2: Error serializing SetupCompleted message: {:?}", e);
+                        }
+                    }
+                }
             }
             ProgramState::SettingUp(_) => {
                 // This should never happen for ProgramV2 - we use SettingUpV2
@@ -382,7 +427,8 @@ impl ProgramV2 {
             return Ok(());
         }
 
-        if let Some(engine) = &mut self.setup_engine {
+        // Track state changes and completion status for save/log after borrow ends
+        let (state_changed, is_complete) = if let Some(engine) = &mut self.setup_engine {
             let state_changed = engine.receive_setup_data(
                 data,
                 from,
@@ -393,17 +439,20 @@ impl ProgramV2 {
                 &self.protocol,
                 program_context,
             )?;
+            let is_complete = engine.is_complete();
+            (state_changed, is_complete)
+        } else {
+            (false, false)
+        };
 
-            // Only save if we haven't completed all steps yet
-            // If all steps are complete, let tick() handle the transition to Monitoring/Ready
-            // to avoid race conditions where we save in SettingUpV2 while tick() is transitioning to Ready
-            if state_changed {
-                if !engine.is_complete() {
-                    self.save()?;
-                    info!("ProgramV2::receive_setup_data() - Saved program state (setup not yet complete)");
-                } else {
-                    info!("ProgramV2::receive_setup_data() - Setup complete, skipping save to avoid race with tick()");
-                }
+        // Always save when state changes to avoid data loss on crash
+        // The protocol_built flag prevents duplicate builds in tick() during crash recovery
+        if state_changed {
+            self.save()?;
+            if is_complete {
+                info!("ProgramV2::receive_setup_data() - Saved program state (setup complete, waiting for tick to build)");
+            } else {
+                info!("ProgramV2::receive_setup_data() - Saved program state (setup not yet complete)");
             }
         }
 
@@ -445,6 +494,9 @@ impl ProgramV2 {
             all_keys.len(),
             my_keys.computed_aggregated.len()
         );
+
+        // Store keys for later use in notify_news()
+        self.all_participant_keys = Some(all_keys.clone());
 
         self.protocol.build(all_keys, my_keys.computed_aggregated, program_context)?;
 
@@ -575,11 +627,13 @@ impl ProgramV2 {
         context: String,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
+        // Use keys from all_participant_keys (populated during build_protocol)
+        // Falls back to empty vec if keys not yet available
         let participant_keys: Vec<&ParticipantKeys> = self
-            .participants
-            .iter()
-            .filter_map(|p| p.keys.as_ref())
-            .collect();
+            .all_participant_keys
+            .as_ref()
+            .map(|keys| keys.iter().collect())
+            .unwrap_or_default();
 
         self.protocol.notify_news(
             tx_id,

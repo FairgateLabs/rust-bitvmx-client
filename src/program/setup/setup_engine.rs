@@ -126,7 +126,23 @@ impl SetupEngine {
         &self.state
     }
 
-    /// Returns a mutable reference to the state.
+    /// Restores engine state from a saved state (used during load).
+    /// Validates that step index is within bounds.
+    pub fn restore_state(&mut self, saved_state: SetupEngineState) -> Result<(), BitVMXError> {
+        // Validate step index is within bounds (or equal to len for completed state)
+        if saved_state.current_step_index > self.steps.len() {
+            return Err(BitVMXError::InvalidMessage(format!(
+                "Invalid step index {} for engine with {} steps",
+                saved_state.current_step_index,
+                self.steps.len()
+            )));
+        }
+        self.state = saved_state;
+        Ok(())
+    }
+
+    /// Returns a mutable reference to the state (for tests only).
+    #[cfg(test)]
     pub fn state_mut(&mut self) -> &mut SetupEngineState {
         &mut self.state
     }
@@ -517,7 +533,6 @@ impl SetupEngine {
             participants,
             context,
         )?;
-        let mut state_changed = true; // Receiving data changes the engine state
 
         let participants_completed_after = self.state.participants_completed.len();
         info!(
@@ -591,7 +606,6 @@ impl SetupEngine {
                 "SetupEngine::receive_setup_data() - Step '{}' advanced after receiving data",
                 step_name
             );
-            state_changed = true;
         } else {
             info!(
                 "SetupEngine::receive_setup_data() - Step '{}' could not advance (state: {:?}, completed: {}/{})",
@@ -602,7 +616,8 @@ impl SetupEngine {
             );
         }
 
-        Ok(state_changed)
+        // Receiving data always changes the engine state
+        Ok(true)
     }
 
     /// Processes the setup tick.
@@ -705,7 +720,7 @@ impl SetupEngine {
                 let data = self.generate_current_step_data(protocol, context)?;
                 if let Some(ref d) = data {
                     info!("SetupEngine::tick() - Generated {} bytes for step '{}'", d.len(), step_name);
-                    
+
                     // IMPORTANT: Store our own data in globals BEFORE sending to others
                     // The step's can_advance() method checks that ALL participants' data exists in globals
                     if let Some(step) = self.current_step() {
@@ -717,17 +732,33 @@ impl SetupEngine {
                             step_name
                         );
                     }
-                    
+
                     data_to_send = Some(d.clone());
                 } else {
                     info!("SetupEngine::tick() - Step '{}' generated no data", step_name);
                 }
                 state_changed = true;
             }
+            StepState::Generating => {
+                // Recovery: If we crashed while generating, reset to Pending and re-generate
+                info!(
+                    "SetupEngine::tick() - Step '{}' stuck in Generating state, resetting to Pending for recovery",
+                    step_name
+                );
+                self.state.current_step_state = StepState::Pending;
+                state_changed = true;
+                // Next tick will generate the data
+            }
             StepState::ReadyToSend => {
-                debug!("SetupEngine::tick() - Step '{}' is ReadyToSend, waiting for send", step_name);
-                // Data is ready but hasn't been sent yet
-                // This shouldn't happen in normal flow, but handle it gracefully
+                // Recovery: Data was generated but not sent. Since we may have lost the generated
+                // data after a crash, reset to Pending to re-generate and re-send.
+                info!(
+                    "SetupEngine::tick() - Step '{}' stuck in ReadyToSend state, resetting to Pending for recovery",
+                    step_name
+                );
+                self.state.current_step_state = StepState::Pending;
+                state_changed = true;
+                // Next tick will re-generate the data
             }
             StepState::WaitingForParticipants => {
                 debug!(
@@ -743,8 +774,27 @@ impl SetupEngine {
                     state_changed = true;
                 }
             }
-            _ => {
-                debug!("SetupEngine::tick() - Step '{}' in state {:?}, no action", step_name, current_state);
+            StepState::Completed => {
+                // Recovery: Step completed but didn't advance (crash between completing and advancing)
+                // Advance to the next step now
+                info!(
+                    "SetupEngine::tick() - Step '{}' stuck in Completed state, advancing to next step for recovery",
+                    step_name
+                );
+                self.state.advance_to_next_step();
+                state_changed = true;
+
+                if self.is_complete() {
+                    info!("SetupEngine::tick() - All steps completed after recovery!");
+                } else {
+                    let next_step_name = self.current_step_name().unwrap_or("unknown");
+                    info!(
+                        "SetupEngine::tick() - Advanced to step '{}' ({}/{}) after recovery",
+                        next_step_name,
+                        self.state.current_step_index + 1,
+                        self.total_steps()
+                    );
+                }
             }
         }
 

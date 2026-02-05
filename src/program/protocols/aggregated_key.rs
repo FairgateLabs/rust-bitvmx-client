@@ -80,6 +80,7 @@ impl ProtocolHandler for AggregatedKeyProtocol {
         let key_name = self.ctx.id.to_string();
 
         // Use the pre-computed aggregated key from KeysStep
+        // Note: With a single participant, the "aggregated" key is just that participant's key
         let aggregated_key = computed_aggregated.get(&key_name).ok_or_else(|| {
             BitVMXError::InvalidMessage(format!(
                 "Pre-computed aggregated key '{}' not found",
@@ -88,16 +89,15 @@ impl ProtocolHandler for AggregatedKeyProtocol {
         })?;
 
         // Store the aggregated key in globals for easy retrieval
-        let key_str = aggregated_key.to_string();
         context.globals.set_var(
             &self.ctx.id,
             "final_aggregated_key",
-            VariableTypes::String(key_str.clone()),
+            VariableTypes::PubKey(*aggregated_key),
         )?;
 
         tracing::info!(
             "AggregatedKeyProtocol: Stored final aggregated key: {} (program_id: {})",
-            key_str,
+            aggregated_key,
             self.ctx.id
         );
 
@@ -117,8 +117,8 @@ impl ProtocolHandler for AggregatedKeyProtocol {
                         .to_string()?,
                 )?;
             } else {
-                tracing::debug!(
-                    "AggregatedKeyProtocol: No 'from' identifier found in storage, skipping AggregatedPubkey message"
+                tracing::warn!(
+                    "AggregatedKeyProtocol: No 'from' identifier found in storage, skipping AggregatedPubkey message - this may indicate a bug"
                 );
             }
         }

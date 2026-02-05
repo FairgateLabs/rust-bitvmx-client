@@ -4,8 +4,6 @@ use crate::{
     types::ProgramContext,
 };
 
-use super::ExchangeConfig;
-
 /// Trait that defines a generic step of a protocol setup.
 ///
 /// Each step manages its own lifecycle in 4 phases:
@@ -55,7 +53,7 @@ pub trait SetupStep {
         &self,
         protocol: &ProtocolType,
         participants: &[ParticipantData],
-        context: &mut ProgramContext,
+        context: &ProgramContext,
     ) -> Result<bool, BitVMXError>;
 
     /// **Optional hook**: Called when the step completes successfully.
@@ -73,12 +71,5 @@ pub trait SetupStep {
         _context: &mut ProgramContext,
     ) -> Result<(), BitVMXError> {
         Ok(())
-    }
-
-    /// Exchange configuration (broadcasting, timeouts, etc.)
-    ///
-    /// Default: broadcasting enabled, signature verification enabled, 3 retries.
-    fn exchange_config(&self) -> ExchangeConfig {
-        ExchangeConfig::default()
     }
 }

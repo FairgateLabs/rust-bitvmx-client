@@ -239,7 +239,7 @@ pub trait ProtocolHandler {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         // Default implementation: protocol has no transactions
         Err(BitVMXError::InvalidTransactionName(format!(
-            "Protocol '{}' has no transactions",
+            "Transaction '{}' not found - protocol has no transactions",
             name
         )))
     }
@@ -284,7 +284,7 @@ pub trait ProtocolHandler {
                 let message = var.input()?;
 
                 info!(
-                    "Signigng message: {}",
+                    "Signing message: {}",
                     style(hex::encode(message.clone())).yellow()
                 );
                 info!("With key: {:?}", k);
@@ -573,6 +573,7 @@ pub trait ProtocolHandler {
     /// Protocols can override this method to customize their setup flow.
     ///
     /// Returns None if the protocol doesn't use the SetupEngine system.
+    /// Protocols using ProgramV2 MUST override this to return their required steps.
     ///
     /// The steps will be created by the factory when needed.
     fn setup_steps(&self) -> Option<Vec<SetupStepName>> {

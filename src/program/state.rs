@@ -77,9 +77,10 @@ impl ProgramState {
                 ProgramState::SettingUp(SettingUpState::WaitingSignatures) => {
                     ProgramState::Monitoring
                 }
-                // ProgramV2 doesn't use next_state() - SetupEngine manages transitions
-                // This should never be called, but handle it for completeness
-                ProgramState::SettingUpV2 => ProgramState::SettingUpV2,
+                // ProgramV2 doesn't use next_state() - SetupEngine manages transitions directly
+                ProgramState::SettingUpV2 => {
+                    unreachable!("ProgramV2 should not call next_state() - SetupEngine manages state transitions")
+                }
 
                 ProgramState::Monitoring => ProgramState::Ready,
                 ProgramState::Ready => ProgramState::Ready,
@@ -110,9 +111,10 @@ impl ProgramState {
                 ProgramState::SettingUp(SettingUpState::SendingSignatures) => {
                     ProgramState::Monitoring
                 }
-                // ProgramV2 doesn't use next_state() - SetupEngine manages transitions
-                // This should never be called, but handle it for completeness
-                ProgramState::SettingUpV2 => ProgramState::SettingUpV2,
+                // ProgramV2 doesn't use next_state() - SetupEngine manages transitions directly
+                ProgramState::SettingUpV2 => {
+                    unreachable!("ProgramV2 should not call next_state() - SetupEngine manages state transitions")
+                }
 
                 ProgramState::Monitoring => ProgramState::Ready,
                 ProgramState::Ready => ProgramState::Ready,

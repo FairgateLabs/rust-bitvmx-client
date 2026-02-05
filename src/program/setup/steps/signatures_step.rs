@@ -4,12 +4,12 @@ use crate::{
     program::{
         participant::{ParticipantData, ParticipantKeys},
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
-        setup::{ExchangeConfig, SetupStep},
+        setup::SetupStep,
         variables::VariableTypes,
     },
     types::ProgramContext,
 };
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// Template step for exchanging MuSig2 partial signatures.
 ///
@@ -81,13 +81,12 @@ impl SetupStep for SignaturesStep {
                 .key_chain
                 .get_signatures(aggregated, &protocol.context().protocol_name);
 
-            if let Err(e) = signatures {
-                warn!(
-                    "SignaturesStep: Error getting partial signatures for aggregated key {}: {}",
+            let signatures = signatures.map_err(|e| {
+                BitVMXError::InvalidMessage(format!(
+                    "SignaturesStep: Failed to get partial signatures for aggregated key {}: {}",
                     aggregated, e
-                );
-                continue;
-            }
+                ))
+            })?;
 
             let my_pub = context
                 .key_chain
@@ -99,7 +98,7 @@ impl SetupStep for SignaturesStep {
                 aggregated
             );
 
-            partial_sig_msg.push((aggregated.clone(), my_pub, signatures.unwrap()));
+            partial_sig_msg.push((aggregated.clone(), my_pub, signatures));
         }
 
         if partial_sig_msg.is_empty() {
@@ -187,7 +186,7 @@ impl SetupStep for SignaturesStep {
         &self,
         protocol: &ProtocolType,
         participants: &[ParticipantData],
-        context: &mut ProgramContext,
+        context: &ProgramContext,
     ) -> Result<bool, BitVMXError> {
         let protocol_id = protocol.context().id;
 
@@ -215,45 +214,16 @@ impl SetupStep for SignaturesStep {
 
     fn on_step_complete(
         &self,
-        protocol: &ProtocolType,
+        _protocol: &ProtocolType,
         participants: &[ParticipantData],
-        context: &mut ProgramContext,
+        _context: &mut ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let protocol_id = protocol.context().id;
-
-        debug!("SignaturesStep: Step complete");
-
-        // Optionally, collect all signatures for later use
-        let mut all_signatures = Vec::new();
-
-        for (idx, _) in participants.iter().enumerate() {
-            let signatures_json = context
-                .globals
-                .get_var(&protocol_id, &format!("participant_{}_signatures", idx))?
-                .ok_or_else(|| {
-                    BitVMXError::InvalidMessage(format!(
-                        "Missing signatures for participant {}",
-                        idx
-                    ))
-                })?
-                .string()?;
-
-            let signatures: PartialSignatureMessage = serde_json::from_str(&signatures_json)?;
-            all_signatures.push(signatures);
-        }
-
+        // Signatures are already stored in globals as "participant_{idx}_signatures"
+        // Protocol's setup_complete() will read them directly for aggregation
         debug!(
-            "SignaturesStep: Completed with {} participants",
-            all_signatures.len()
+            "SignaturesStep: Step complete with {} participants",
+            participants.len()
         );
         Ok(())
-    }
-
-    fn exchange_config(&self) -> ExchangeConfig {
-        ExchangeConfig {
-            verify_signatures: true,
-            timeout_ms: None,
-            max_retries: 3,
-        }
     }
 }

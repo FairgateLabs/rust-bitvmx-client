@@ -3,7 +3,7 @@ use crate::{
     program::{
         participant::{ParticipantData, ParticipantKeys},
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
-        setup::{ExchangeConfig, SetupStep},
+        setup::SetupStep,
         variables::VariableTypes,
     },
     types::ProgramContext,
@@ -138,7 +138,7 @@ impl SetupStep for KeysStep {
         &self,
         protocol: &ProtocolType,
         participants: &[ParticipantData],
-        context: &mut ProgramContext,
+        context: &ProgramContext,
     ) -> Result<bool, BitVMXError> {
         let protocol_id = protocol.context().id;
 
@@ -275,13 +275,5 @@ impl SetupStep for KeysStep {
             my_keys.computed_aggregated.len()
         );
         Ok(())
-    }
-
-    fn exchange_config(&self) -> ExchangeConfig {
-        ExchangeConfig {
-            verify_signatures: true,
-            timeout_ms: None,
-            max_retries: 3,
-        }
     }
 }

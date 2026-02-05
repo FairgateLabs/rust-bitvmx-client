@@ -398,7 +398,13 @@ impl BitVMX {
         }
 
         // Process the message
-        let data_bytes: Vec<u8> = serde_json::from_value(data)?;
+        let data_bytes: Vec<u8> = serde_json::from_value(data.clone()).map_err(|e| {
+            BitVMXError::InvalidMessage(format!(
+                "Failed to parse message data as byte array: {}. Expected JSON array of integers [0-255], got: {}",
+                e,
+                serde_json::to_string(&data).unwrap_or_else(|_| "<unparseable>".to_string())
+            ))
+        })?;
         program_v2.process_comms_message(
             &peer_address.pubkey_hash,
             &msg_type,
@@ -455,16 +461,22 @@ impl BitVMX {
             self.timestamp_verifier
                 .ensure_fresh(&msg.identifier.pubkey_hash, timestamp)?;
         }
-        let (program, program_v2, peer_address) = if let Some(program) =
-            self.load_program(&program_id).ok()
-        {
-            let peer_address = program.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
-            (Some(program), None, Some(peer_address))
-        } else if let Some(program_v2) = self.load_program_v2(&program_id).ok() {
-            let peer_address = program_v2.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
-            (None, Some(program_v2), Some(peer_address))
-        } else {
-            (None, None, None)
+        // Use authoritative version from programs list for routing
+        let (program, program_v2, peer_address) = match self.get_program_version(&program_id)? {
+            Some(ProgramVersion::Legacy) => {
+                let program = self.load_program(&program_id)?;
+                let peer_address = program.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
+                (Some(program), None, Some(peer_address))
+            }
+            Some(ProgramVersion::V2) => {
+                let program_v2 = self.load_program_v2(&program_id)?;
+                let peer_address = program_v2.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
+                (None, Some(program_v2), Some(peer_address))
+            }
+            None => {
+                debug!("Program {} not found in programs list", program_id);
+                (None, None, None)
+            }
         };
 
         let message_consumed = match peer_address {
@@ -608,9 +620,17 @@ impl BitVMX {
 
         match &context {
             Context::ProgramId(program_id) => {
-                let program = self.load_program(program_id)?;
-
-                program.notify_news(tx_id, vout, tx_status, context_data, &self.program_context)?;
+                // Try legacy Program first, fall back to ProgramV2
+                if let Ok(program) = self.load_program(program_id) {
+                    program.notify_news(tx_id, vout, tx_status, context_data, &self.program_context)?;
+                } else if let Ok(program_v2) = self.load_program_v2(program_id) {
+                    program_v2.notify_news(tx_id, vout, tx_status, context_data, &self.program_context)?;
+                } else {
+                    warn!(
+                        "handle_news: Program {} not found in legacy or V2 storage",
+                        program_id
+                    );
+                }
             }
             Context::RequestId(request_id, from) => {
                 info!("Sending News: {:?} for context: {:?}", tx_id, context);
@@ -965,6 +985,15 @@ impl BitVMX {
         Ok(programs.iter().any(|p| p.program_id == *program_id))
     }
 
+    /// Returns the version of a program by its ID, or None if the program doesn't exist
+    fn get_program_version(&self, program_id: &Uuid) -> Result<Option<ProgramVersion>, BitVMXError> {
+        let programs = self.get_programs()?;
+        Ok(programs
+            .iter()
+            .find(|p| p.program_id == *program_id)
+            .map(|p| p.version))
+    }
+
     /// send replies via the broker channel
     fn reply(&self, to: Identifier, message: OutgoingBitVMXApiMessages) -> Result<(), BitVMXError> {
         debug!("> {:?}", message);
@@ -1026,6 +1055,12 @@ impl BitVMXApi for BitVMX {
     ) -> Result<(), BitVMXError> {
         info!("Setting up key for program: {:?}", id);
 
+        // Check if program already exists BEFORE storing any data
+        if self.program_exists(&id)? {
+            warn!("Program {} already exists", id);
+            return Err(BitVMXError::ProgramAlreadyExists(id));
+        }
+
         // Check if participants vector is empty or leader_idx is out of bounds
         if participants.is_empty() {
             return Err(BitVMXError::InvalidMessageFormat);
@@ -1069,20 +1104,15 @@ impl BitVMXApi for BitVMX {
             .globals
             .get_var(&id, "final_aggregated_key")?
         {
-            if let Ok(key_str) = key_var.string() {
-                // Convert String to PublicKey
-                match key_str.parse::<PublicKey>() {
-                    Ok(aggregated_pubkey) => {
-                        info!("Found aggregated pubkey in globals for program: {:?}", id);
-                        OutgoingBitVMXApiMessages::AggregatedPubkey(id, aggregated_pubkey)
-                    }
-                    Err(e) => {
-                        warn!("Failed to parse aggregated key from globals: {}", e);
-                        OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(id)
-                    }
+            match key_var.pubkey() {
+                Ok(aggregated_pubkey) => {
+                    info!("Found aggregated pubkey in globals for program: {:?}", id);
+                    OutgoingBitVMXApiMessages::AggregatedPubkey(id, aggregated_pubkey)
                 }
-            } else {
-                OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(id)
+                Err(e) => {
+                    warn!("Failed to read aggregated key from globals: {}", e);
+                    OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(id)
+                }
             }
         } else {
             OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(id)
@@ -1574,9 +1604,13 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::SubscribeToTransaction(uuid, txid, confirmation_threshold) => {
                 BitVMXApi::subscribe_to_tx(self, from, uuid, txid, confirmation_threshold)?
             }
-            IncomingBitVMXApiMessages::SubscribeUTXO(_uuid) => {
+            IncomingBitVMXApiMessages::SubscribeUTXO(uuid) => {
                 // TODO: Implement SubscribeUTXO functionality
                 warn!("SubscribeUTXO is not yet implemented");
+                self.reply(
+                    from,
+                    OutgoingBitVMXApiMessages::NotFound(uuid, "SubscribeUTXO not implemented".to_string()),
+                )?;
             }
             IncomingBitVMXApiMessages::SubscribeToRskPegin(confirmation_threshold) => {
                 BitVMXApi::subscribe_to_rsk_pegin(self, confirmation_threshold)?
@@ -1603,8 +1637,7 @@ impl BitVMXApi for BitVMX {
                     .program_context
                     .globals
                     .get_var(&id, "final_aggregated_key")?
-                    .and_then(|v| v.string().ok())
-                    .and_then(|s| s.parse::<PublicKey>().ok())
+                    .and_then(|v| v.pubkey().ok())
                     .ok_or(BitVMXError::ProgramNotFound(id))?;
                 let pair = self
                     .program_context
@@ -1628,8 +1661,7 @@ impl BitVMXApi for BitVMX {
                         .program_context
                         .globals
                         .get_var(&id, "final_aggregated_key")?
-                        .and_then(|v| v.string().ok())
-                        .and_then(|s| s.parse::<PublicKey>().ok())
+                        .and_then(|v| v.pubkey().ok())
                         .ok_or(BitVMXError::ProgramNotFound(id))?;
                     let pubkey = self
                         .program_context

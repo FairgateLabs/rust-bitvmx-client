@@ -38,6 +38,36 @@ use crate::common::dispute::process_dispatcher_non_blocking;
 /// Number of blocks to mine initially in tests to ensure sufficient coin maturity
 pub const INITIAL_BLOCK_COUNT: u64 = 101;
 
+/// RAII guard for bitcoind that ensures cleanup on Drop.
+/// This prevents Docker containers from being left running if a test panics.
+pub struct BitcoindGuard {
+    bitcoind: Option<Bitcoind>,
+}
+
+impl BitcoindGuard {
+    pub fn new(bitcoind: Option<Bitcoind>) -> Self {
+        Self { bitcoind }
+    }
+
+    /// Explicitly stop bitcoind (useful for checking errors).
+    pub fn stop(mut self) -> Result<()> {
+        if let Some(bitcoind) = self.bitcoind.take() {
+            bitcoind.stop()?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for BitcoindGuard {
+    fn drop(&mut self) {
+        if let Some(bitcoind) = self.bitcoind.take() {
+            if let Err(e) = bitcoind.stop() {
+                warn!("BitcoindGuard: failed to stop bitcoind on drop: {}", e);
+            }
+        }
+    }
+}
+
 pub const LOCAL_SLEEP_MS: u64 = 40;
 
 pub const CI_SLEEP_MS: u64 = 1000;
@@ -146,11 +176,12 @@ pub fn init_bitvmx(
     Ok((bitvmx, address, bridge_client, dispatcher_channel))
 }
 
-pub fn tick(instance: &mut BitVMX) {
-    instance.process_api_messages().unwrap();
-    instance.process_comms_messages().unwrap();
-    instance.process_programs().unwrap();
-    instance.process_pending_messages().unwrap();
+pub fn tick(instance: &mut BitVMX) -> Result<()> {
+    instance.process_api_messages()?;
+    instance.process_comms_messages()?;
+    instance.process_programs()?;
+    instance.process_pending_messages()?;
+    Ok(())
 }
 
 pub fn wait_message_from_channel(
@@ -176,7 +207,7 @@ pub fn wait_message_from_channel(
         }
         for instance in instances.iter_mut() {
             if fake_tick {
-                tick(instance);
+                tick(instance)?;
             } else {
                 instance.tick()?;
             }
@@ -294,6 +325,13 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
     wallet.sync_wallet()?;
 
     Ok((bitcoin_client, bitcoind, wallet))
+}
+
+/// Same as prepare_bitcoin but wraps bitcoind in a guard for automatic cleanup.
+/// Use this for new tests to ensure bitcoind stops even if the test panics.
+pub fn prepare_bitcoin_guarded() -> Result<(BitcoinClient, BitcoindGuard, Wallet)> {
+    let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
+    Ok((bitcoin_client, BitcoindGuard::new(bitcoind), wallet))
 }
 
 static INIT: Once = Once::new();

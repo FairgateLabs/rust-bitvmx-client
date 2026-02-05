@@ -4,7 +4,7 @@ use anyhow::Result;
 use bitvmx_client::program::variables::VariableTypes;
 use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel};
 use common::{
-    config_trace, get_all, init_bitvmx, prepare_bitcoin, send_all,
+    config_trace, get_all, init_bitvmx, prepare_bitcoin_guarded, send_all,
 };
 use tracing::info;
 use uuid::Uuid;
@@ -17,7 +17,7 @@ mod common;
 pub fn test_aggregated_key() -> Result<()> {
     config_trace();
 
-    let (_bitcoin_client, bitcoind, _wallet) = prepare_bitcoin()?;
+    let (_bitcoin_client, _bitcoind_guard, _wallet) = prepare_bitcoin_guarded()?;
 
     // Initialize 3 BitVMX instances (1 leader + 2 non-leaders)
     let (bitvmx_op1, _address_op1, bridge_op1, _) = init_bitvmx("op_1", false)?;
@@ -137,6 +137,10 @@ pub fn test_aggregated_key() -> Result<()> {
     assert_eq!(aggregated_keys[0], aggregated_keys[2],
         "All participants should compute the same aggregated MuSig2 key");
 
+    // Verify the key from the response matches the stored key from GetVar
+    assert_eq!(aggregated_pub_key.to_string(), aggregated_keys[0],
+        "AggregatedPubkey response should match the stored final_aggregated_key");
+
     info!("Aggregated key protocol successful! All three participants computed the same aggregated key");
     info!("   Aggregated MuSig2 Key: {}", aggregated_keys[0]);
 
@@ -144,22 +148,18 @@ pub fn test_aggregated_key() -> Result<()> {
     info!("Test completed successfully!");
     info!("================================================");
 
-    info!("Stopping bitcoind");
-    if let Some(bitcoind) = bitcoind {
-        bitcoind.stop()?;
-    }
-
+    // BitcoindGuard handles cleanup automatically on drop
     Ok(())
 }
 
-/// Test that single-participant aggregated key protocol returns an error
-/// MuSig2 requires at least 2 participants, so a single participant should fail
+/// Test that single-participant aggregated key protocol works correctly.
+/// With a single participant, the "aggregated" key is just that participant's own key.
 #[ignore]
 #[test]
 pub fn test_aggregated_key_single_participant() -> Result<()> {
     config_trace();
 
-    let (_bitcoin_client, bitcoind, _wallet) = prepare_bitcoin()?;
+    let (_bitcoin_client, _bitcoind_guard, _wallet) = prepare_bitcoin_guarded()?;
 
     // Initialize just 1 BitVMX instance
     let (bitvmx_op1, _address_op1, bridge_op1, _) = init_bitvmx("op_1", false)?;
@@ -219,42 +219,46 @@ pub fn test_aggregated_key_single_participant() -> Result<()> {
     .to_string()?;
     send_all(&id_channel_pairs, &command)?;
 
+    let msgs = get_all(&channels, &mut instances, false)?;
+    let aggregated_pub_key = msgs[0].aggregated_pub_key().unwrap();
+
+    info!("Single-participant aggregated key: {}", aggregated_pub_key);
+
     info!("================================================");
-    info!("Expecting error: Aggregated key requires at least 2 participants");
+    info!("Verifying stored key matches response");
     info!("================================================");
 
-    // The protocol should fail because MuSig2 requires at least 2 participants
-    // The error occurs during build_protocol(), so we won't receive AggregatedPubkey
-    // Instead, the error will propagate and the test should fail with the expected error
-    let result = get_all(&channels, &mut instances, false);
-    
-    // The error should occur during protocol build, so get_all might timeout
-    // or we might not receive AggregatedPubkey. Either way, we verify the error
-    // by checking that we don't get a successful AggregatedPubkey response
-    match result {
-        Ok(msgs) => {
-            // If we get messages, verify none of them are AggregatedPubkey
-            let has_aggregated_pubkey = msgs.iter().any(|msg| msg.aggregated_pub_key().is_some());
-            assert!(!has_aggregated_pubkey, 
-                "Should not receive AggregatedPubkey with only 1 participant");
+    // Query the stored key from globals
+    let get_key_command = IncomingBitVMXApiMessages::GetVar(
+        aggregation_id,
+        "final_aggregated_key".to_string(),
+    )
+    .to_string()?;
+
+    send_all(&id_channel_pairs, &get_key_command)?;
+    let key_responses = get_all(&channels, &mut instances, false)?;
+
+    if let Some((_, key_name, key_value)) = key_responses[0].variable() {
+        assert_eq!(key_name, "final_aggregated_key");
+        if let VariableTypes::PubKey(key) = key_value {
+            assert_eq!(
+                aggregated_pub_key.to_string(),
+                key.to_string(),
+                "Response key should match stored key"
+            );
+            info!("Verified: stored key matches response");
+        } else {
+            panic!("Expected PubKey variable type, got {:?}", key_value);
         }
-        Err(e) => {
-            // If we get an error, verify it's the expected one
-            let error_msg = format!("{}", e);
-            assert!(error_msg.contains("requires at least 2 participants") || 
-                    error_msg.contains("not enough participants"),
-                "Expected error about requiring at least 2 participants, got: {}", error_msg);
-        }
+    } else {
+        panic!("Did not receive key variable");
     }
 
     info!("================================================");
-    info!("Single-participant test correctly returned error!");
+    info!("Single-participant test completed successfully!");
     info!("================================================");
 
-    if let Some(bitcoind) = bitcoind {
-        bitcoind.stop()?;
-    }
-
+    // BitcoindGuard handles cleanup automatically on drop
     Ok(())
 }
 
