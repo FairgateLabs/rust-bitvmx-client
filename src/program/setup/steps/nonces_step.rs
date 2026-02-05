@@ -9,7 +9,10 @@ use crate::{
     },
     types::ProgramContext,
 };
-use tracing::{debug, warn};
+use bitcoin::PublicKey;
+use key_manager::musig2::{types::MessageId, PubNonce};
+use std::collections::HashMap;
+use tracing::debug;
 
 /// Template step for exchanging MuSig2 public nonces.
 ///
@@ -60,8 +63,9 @@ impl SetupStep for NoncesStep {
         let my_keys: ParticipantKeys = serde_json::from_str(&my_keys_json)?;
 
         if my_keys.computed_aggregated.is_empty() {
-            debug!("NoncesStep: No aggregated keys found, skipping nonce generation");
-            return Ok(Some(Vec::new()));
+            return Err(BitVMXError::InvalidMessage(
+                "No aggregated keys found in my_keys. KeysStep must complete and compute aggregated keys before NoncesStep can proceed.".to_string(),
+            ));
         }
 
         debug!(
@@ -72,18 +76,56 @@ impl SetupStep for NoncesStep {
         // Generate nonces for each aggregated key using the KeyChain
         let mut public_nonce_msg: PubNonceMessage = Vec::new();
 
+        // Try to get message from protocol if it's CooperativeSignatureProtocol
+        // For other protocols, we'll use a placeholder message
+        let message = if let crate::program::protocols::protocol_handler::ProtocolType::CooperativeSignatureProtocol(ref coop_protocol) = protocol {
+            coop_protocol.message().to_vec()
+        } else {
+            // Use protocol ID as placeholder message for other protocols
+            protocol.context().id.to_string().into_bytes()
+        };
+
+        // Use protocol ID as message_id for nonce generation
+        let message_id = protocol.context().id.to_string();
+
         for aggregated in my_keys.computed_aggregated.values() {
+            // Try to generate nonces if they don't exist yet
+            // The key_manager should generate nonces when we try to get them for the first time
+            // But we need to trigger generation by attempting to sign or generate nonces
+            // For now, try to get nonces - if they fail, we'll need to generate them
             let nonces = context
                 .key_chain
                 .get_nonces(aggregated, &protocol.context().protocol_name);
 
-            if let Err(e) = nonces {
-                warn!(
-                    "NoncesStep: Error getting nonces for aggregated key {}: {}",
-                    aggregated, e
+            let nonces = if let Err(_) = nonces {
+                // Nonces don't exist yet, try to generate them
+                // We'll use the key_manager to generate nonces with the message
+                // Note: This might require exposing a generate_nonces method
+                // For now, try to generate by attempting to get a nonce for a specific message_id
+                debug!(
+                    "NoncesStep: Nonces not found for aggregated key {}, attempting to generate",
+                    aggregated
                 );
-                continue;
-            }
+                
+                // Try to generate nonces using the key_manager's generate_nonce method
+                context
+                    .key_chain
+                    .key_manager
+                    .generate_nonce(&message_id, message.clone(), aggregated, &protocol.context().protocol_name, None)
+                    .map_err(|e| {
+                        BitVMXError::InvalidMessage(format!(
+                            "Failed to generate nonces for aggregated key {}: {}",
+                            aggregated, e
+                        ))
+                    })?;
+                
+                // Now try to get the nonces we just generated
+                context
+                    .key_chain
+                    .get_nonces(aggregated, &protocol.context().protocol_name)?
+            } else {
+                nonces?
+            };
 
             let my_pub = context
                 .key_chain
@@ -95,7 +137,7 @@ impl SetupStep for NoncesStep {
                 aggregated
             );
 
-            public_nonce_msg.push((aggregated.clone(), my_pub, nonces.unwrap()));
+            public_nonce_msg.push((aggregated.clone(), my_pub, nonces));
         }
 
         if public_nonce_msg.is_empty() {
@@ -210,28 +252,71 @@ impl SetupStep for NoncesStep {
         context: &mut ProgramContext,
     ) -> Result<(), BitVMXError> {
         let protocol_id = protocol.context().id;
+        let my_idx = protocol.context().my_idx;
 
-        debug!("NoncesStep: Step complete");
+        debug!("NoncesStep: Step complete, adding all participant nonces to key_manager");
 
-        // Optionally, collect all nonces for later use
-        let mut all_nonces = Vec::new();
+        // Get my_keys to find all aggregated keys
+        let my_keys_json = context
+            .globals
+            .get_var(&protocol_id, "my_keys")?
+            .ok_or_else(|| {
+                BitVMXError::InvalidMessage("my_keys not found in globals".to_string())
+            })?
+            .string()?;
 
-        for (idx, _) in participants.iter().enumerate() {
-            let nonces_json = context
-                .globals
-                .get_var(&protocol_id, &format!("participant_{}_nonces", idx))?
-                .ok_or_else(|| {
-                    BitVMXError::InvalidMessage(format!("Missing nonces for participant {}", idx))
-                })?
-                .string()?;
+        let my_keys: ParticipantKeys = serde_json::from_str(&my_keys_json)?;
 
-            let nonces: PubNonceMessage = serde_json::from_str(&nonces_json)?;
-            all_nonces.push(nonces);
+        // For each aggregated key, collect nonces from all participants and add to key_manager
+        for aggregated_key in my_keys.computed_aggregated.values() {
+            let mut pubkey_nonce_map: HashMap<PublicKey, Vec<(MessageId, PubNonce)>> = HashMap::new();
+
+            // Collect nonces from all participants (except ourselves)
+            for (idx, _) in participants.iter().enumerate() {
+                if idx == my_idx {
+                    continue; // Skip our own nonces
+                }
+
+                let nonces_json = context
+                    .globals
+                    .get_var(&protocol_id, &format!("participant_{}_nonces", idx))?
+                    .ok_or_else(|| {
+                        BitVMXError::InvalidMessage(format!("Missing nonces for participant {}", idx))
+                    })?
+                    .string()?;
+
+                let participant_nonces: PubNonceMessage = serde_json::from_str(&nonces_json)?;
+
+                // Find the nonces for this aggregated key
+                // PubNonceMessage is Vec<(PublicKey, PublicKey, Vec<(MessageId, PubNonce)>)>
+                // where first PublicKey is aggregated key, second is participant's public key
+                for (agg_key, participant_pub_key, nonces) in participant_nonces {
+                    if &agg_key == aggregated_key {
+                        // Add to map: HashMap<PublicKey, Vec<(MessageId, PubNonce)>>
+                        pubkey_nonce_map.insert(participant_pub_key, nonces);
+                        break;
+                    }
+                }
+            }
+
+            // Add all nonces to key_manager for this aggregated key
+            if !pubkey_nonce_map.is_empty() {
+                context.key_chain.add_nonces(
+                    aggregated_key,
+                    pubkey_nonce_map,
+                    &protocol.context().protocol_name,
+                )?;
+                debug!(
+                    "NoncesStep: Added nonces from {} participants to key_manager for aggregated key {}",
+                    participants.len() - 1,
+                    aggregated_key
+                );
+            }
         }
 
         debug!(
-            "NoncesStep: Completed with {} participants",
-            all_nonces.len()
+            "NoncesStep: Completed with {} participants, all nonces added to key_manager",
+            participants.len()
         );
         Ok(())
     }

@@ -63,8 +63,9 @@ impl SetupStep for SignaturesStep {
         let my_keys: ParticipantKeys = serde_json::from_str(&my_keys_json)?;
 
         if my_keys.computed_aggregated.is_empty() {
-            debug!("SignaturesStep: No aggregated keys found, skipping signature generation");
-            return Ok(Some(Vec::new()));
+            return Err(BitVMXError::InvalidMessage(
+                "No aggregated keys found in my_keys. KeysStep must complete and compute aggregated keys before SignaturesStep can proceed.".to_string(),
+            ));
         }
 
         debug!(

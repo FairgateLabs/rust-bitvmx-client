@@ -414,21 +414,18 @@ impl ProgramV2 {
     ///
     /// This method:
     /// 1. Collects all participant keys from globals
-    /// 2. Passes them to protocol.build()
-    /// 3. The protocol is responsible for its own MuSig2 aggregation
-    ///
-    /// NOTE: Unlike Program::build_protocol(), this does NOT compute aggregated keys.
-    /// Each protocol must handle its own aggregation in its build() method.
+    /// 2. Retrieves the pre-computed aggregated keys from KeysStep
+    /// 3. Passes both to protocol.build()
     fn build_protocol(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
-        use std::collections::HashMap;
-
         info!("ProgramV2: Building protocol {}", self.program_id);
+
+        let protocol_id = self.protocol.context().id;
 
         // Collect all participant keys from globals
         // These were stored by KeysStep during setup
         let all_keys_var = program_context
             .globals
-            .get_var(&self.protocol.context().id, "all_participant_keys")?
+            .get_var(&protocol_id, "all_participant_keys")?
             .ok_or_else(|| BitVMXError::InvalidMessage("all_participant_keys not found in globals".to_string()))?;
 
         let all_keys_json = all_keys_var.string()?;
@@ -436,15 +433,20 @@ impl ProgramV2 {
         let all_keys: Vec<ParticipantKeys> = serde_json::from_str(&all_keys_json)
             .map_err(|e| BitVMXError::InvalidMessage(format!("Failed to parse keys: {}", e)))?;
 
+        // Retrieve my_keys to get pre-computed aggregated keys from KeysStep
+        let my_keys_var = program_context
+            .globals
+            .get_var(&protocol_id, "my_keys")?
+            .ok_or_else(|| BitVMXError::InvalidMessage("my_keys not found in globals".into()))?;
+        let my_keys: ParticipantKeys = serde_json::from_str(&my_keys_var.string()?)?;
+
         info!(
-            "ProgramV2: Collected {} participant keys for protocol build",
-            all_keys.len()
+            "ProgramV2: Collected {} participant keys and {} pre-computed aggregated keys for protocol build",
+            all_keys.len(),
+            my_keys.computed_aggregated.len()
         );
 
-        // Call protocol.build() with empty computed_aggregated
-        // Protocols using ProgramV2 should ignore this parameter and do their own aggregation
-        let empty_aggregated = HashMap::new();
-        self.protocol.build(all_keys, empty_aggregated, program_context)?;
+        self.protocol.build(all_keys, my_keys.computed_aggregated, program_context)?;
 
         info!("ProgramV2: Protocol build complete");
         Ok(())
