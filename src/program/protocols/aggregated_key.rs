@@ -102,8 +102,8 @@ impl ProtocolHandler for AggregatedKeyProtocol {
             }
         }
 
-        // Get the local private key for this aggregation
-        let my_key_type = keys[self.ctx.my_idx]
+        // Get my public key for this aggregation session
+        let my_key = keys[self.ctx.my_idx]
             .mapping
             .get(&key_name)
             .ok_or_else(|| {
@@ -111,14 +111,14 @@ impl ProtocolHandler for AggregatedKeyProtocol {
                     "My key '{}' not found in participant keys",
                     key_name
                 ))
+            })?
+            .public()
+            .ok_or_else(|| {
+                BitVMXError::InvalidMessage(format!(
+                    "My key '{}' is not a PublicKey type",
+                    key_name
+                ))
             })?;
-
-        let my_key = my_key_type.public().ok_or_else(|| {
-            BitVMXError::InvalidMessage(format!(
-                "My key '{}' is not a PublicKey type",
-                key_name
-            ))
-        })?;
 
         // Compute the aggregated key
         // MuSig2 requires at least 2 participants; with a single participant,
