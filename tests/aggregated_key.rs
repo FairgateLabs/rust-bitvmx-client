@@ -118,11 +118,12 @@ pub fn test_aggregated_key() -> Result<()> {
             assert_eq!(key_name, "final_aggregated_key",
                 "Variable name should be 'final_aggregated_key'");
 
-            if let VariableTypes::String(key_str) = key_value {
+            if let VariableTypes::PubKey(key) = key_value {
+                let key_str = key.to_string();
                 info!("Participant {} final aggregated MuSig2 key: {}", i, key_str);
-                aggregated_keys.push(key_str.clone());
+                aggregated_keys.push(key_str);
             } else {
-                panic!("Expected String variable type for aggregated key");
+                panic!("Expected PubKey variable type for aggregated key, got {:?}", key_value);
             }
         } else {
             panic!("Participant {} did not return the aggregated key variable", i);
@@ -151,9 +152,8 @@ pub fn test_aggregated_key() -> Result<()> {
     Ok(())
 }
 
-/// Test single-participant aggregated key protocol
-/// Verifies that SetupEngine handles a single participant naturally
-/// without any special-case bypass in ProgramV2::setup()
+/// Test that single-participant aggregated key protocol returns an error
+/// MuSig2 requires at least 2 participants, so a single participant should fail
 #[ignore]
 #[test]
 pub fn test_aggregated_key_single_participant() -> Result<()> {
@@ -220,54 +220,35 @@ pub fn test_aggregated_key_single_participant() -> Result<()> {
     send_all(&id_channel_pairs, &command)?;
 
     info!("================================================");
-    info!("Waiting for AggregatedPubkey response (single participant)");
+    info!("Expecting error: Aggregated key requires at least 2 participants");
     info!("================================================");
 
-    // SetupEngine should handle single participant naturally:
-    // - Generate keys, store own data, broadcast to 0 others, mark self complete
-    // - can_advance() -> true, on_step_complete(), build_protocol()
-    // - AggregatedKeyProtocol::build() uses own key directly (no MuSig2 aggregation needed)
-    // - Sends AggregatedPubkey message
-    let msgs = get_all(&channels, &mut instances, false)?;
-    let aggregated_pub_key = msgs[0].aggregated_pub_key().unwrap();
-
-    info!("Single participant aggregated public key: {}", aggregated_pub_key);
-
-    info!("================================================");
-    info!("Verifying Aggregated Key in Globals");
-    info!("================================================");
-
-    // Verify the key is stored in globals
-    let get_key_command = IncomingBitVMXApiMessages::GetVar(
-        aggregation_id,
-        "final_aggregated_key".to_string(),
-    )
-    .to_string()?;
-
-    send_all(&id_channel_pairs, &get_key_command)?;
-    let key_responses = get_all(&channels, &mut instances, false)?;
-
-    for (i, response) in key_responses.iter().enumerate() {
-        if let Some((_, key_name, key_value)) = response.variable() {
-            assert_eq!(key_name, "final_aggregated_key",
-                "Variable name should be 'final_aggregated_key'");
-
-            if let VariableTypes::String(key_str) = key_value {
-                info!("Participant {} final aggregated key from globals: {}", i, key_str);
-                assert!(!key_str.is_empty(), "Key should not be empty");
-                // Verify it matches the AggregatedPubkey message
-                assert_eq!(key_str, aggregated_pub_key.to_string(),
-                    "Key in globals should match AggregatedPubkey message");
-            } else {
-                panic!("Expected String variable type for aggregated key");
-            }
-        } else {
-            panic!("Participant {} did not return the aggregated key variable", i);
+    // The protocol should fail because MuSig2 requires at least 2 participants
+    // The error occurs during build_protocol(), so we won't receive AggregatedPubkey
+    // Instead, the error will propagate and the test should fail with the expected error
+    let result = get_all(&channels, &mut instances, false);
+    
+    // The error should occur during protocol build, so get_all might timeout
+    // or we might not receive AggregatedPubkey. Either way, we verify the error
+    // by checking that we don't get a successful AggregatedPubkey response
+    match result {
+        Ok(msgs) => {
+            // If we get messages, verify none of them are AggregatedPubkey
+            let has_aggregated_pubkey = msgs.iter().any(|msg| msg.aggregated_pub_key().is_some());
+            assert!(!has_aggregated_pubkey, 
+                "Should not receive AggregatedPubkey with only 1 participant");
+        }
+        Err(e) => {
+            // If we get an error, verify it's the expected one
+            let error_msg = format!("{}", e);
+            assert!(error_msg.contains("requires at least 2 participants") || 
+                    error_msg.contains("not enough participants"),
+                "Expected error about requiring at least 2 participants, got: {}", error_msg);
         }
     }
 
     info!("================================================");
-    info!("Single-participant test completed successfully!");
+    info!("Single-participant test correctly returned error!");
     info!("================================================");
 
     if let Some(bitcoind) = bitcoind {
