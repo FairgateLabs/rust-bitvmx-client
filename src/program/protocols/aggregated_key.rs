@@ -134,16 +134,15 @@ impl ProtocolHandler for AggregatedKeyProtocol {
             .new_musig2_session(aggregated_pub_keys, *my_key)?;
 
         // Store the aggregated key in globals for easy retrieval
-        let key_str = aggregated_key.to_string();
         context.globals.set_var(
             &self.ctx.id,
             "final_aggregated_key",
-            VariableTypes::String(key_str.clone()),
+            VariableTypes::PubKey(aggregated_key.clone()),
         )?;
 
         tracing::info!(
             "AggregatedKeyProtocol: Computed and stored final aggregated key: {} (program_id: {})",
-            key_str,
+            aggregated_key,
             self.ctx.id
         );
         
