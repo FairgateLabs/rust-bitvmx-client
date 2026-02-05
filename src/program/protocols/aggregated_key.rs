@@ -121,16 +121,17 @@ impl ProtocolHandler for AggregatedKeyProtocol {
             })?;
 
         // Compute the aggregated key
-        // MuSig2 requires at least 2 participants; with a single participant,
-        // the aggregated key is simply that participant's own public key.
-        let aggregated_key = if aggregated_pub_keys.len() == 1 {
-            tracing::info!("AggregatedKeyProtocol: Single participant, using own key directly");
-            *my_key
-        } else {
-            context
-                .key_chain
-                .new_musig2_session(aggregated_pub_keys, *my_key)?
-        };
+        // MuSig2 requires at least 2 participants
+        if aggregated_pub_keys.len() < 2 {
+            return Err(BitVMXError::InvalidMessage(format!(
+                "Aggregated key requires at least 2 participants, found {}",
+                aggregated_pub_keys.len()
+            )));
+        }
+
+        let aggregated_key = context
+            .key_chain
+            .new_musig2_session(aggregated_pub_keys, *my_key)?;
 
         // Store the aggregated key in globals for easy retrieval
         let key_str = aggregated_key.to_string();
