@@ -10,7 +10,10 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 use uuid::Uuid;
 
-use super::{SetupStep, steps::{SetupStepName, create_setup_step}};
+use super::{
+    SetupStep,
+    steps::{SetupStepName, SetupStepEnum, create_setup_step},
+};
 
 /// Current state of a setup step in the engine.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -100,7 +103,7 @@ pub struct SetupTickResult {
 /// Once a step is Completed, the engine advances to the next step.
 pub struct SetupEngine {
     /// The steps to execute in order
-    steps: Vec<Box<dyn SetupStep>>,
+    steps: Vec<SetupStepEnum>,
     /// Current state of the engine
     state: SetupEngineState,
 }
@@ -110,7 +113,7 @@ impl SetupEngine {
     ///
     /// Steps will be created from the names using the factory and executed in the order provided.
     pub fn new(step_names: Vec<SetupStepName>) -> Self {
-        let steps: Vec<Box<dyn SetupStep>> = step_names
+        let steps: Vec<SetupStepEnum> = step_names
             .iter()
             .map(|name| create_setup_step(name))
             .collect();
@@ -148,8 +151,10 @@ impl SetupEngine {
     }
 
     /// Returns the current step, if any.
-    pub fn current_step(&self) -> Option<&Box<dyn SetupStep>> {
-        self.steps.get(self.state.current_step_index)
+    pub fn current_step(&self) -> Option<&dyn SetupStep> {
+        self.steps
+            .get(self.state.current_step_index)
+            .map(|step| step as &dyn SetupStep)
     }
 
     /// Returns the name of the current step.

@@ -25,7 +25,7 @@ use tracing::debug;
 /// The nonces are stored in globals with the following conventions:
 /// - Own nonces: "my_nonces"
 /// - Participant i nonces: "participant_{i}_nonces"
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct NoncesStep;
 
 impl NoncesStep {

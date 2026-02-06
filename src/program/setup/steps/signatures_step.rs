@@ -22,7 +22,7 @@ use tracing::debug;
 /// The signatures are stored in globals with the following conventions:
 /// - Own signatures: "my_signatures"
 /// - Participant i signatures: "participant_{i}_signatures"
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct SignaturesStep;
 
 impl SignaturesStep {

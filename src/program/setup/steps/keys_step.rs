@@ -22,7 +22,7 @@ use tracing::debug;
 /// - Own keys: "my_keys"
 /// - Participant i keys: "participant_{i}_keys"
 /// - All keys aggregated: "all_participant_keys"
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct KeysStep;
 
 impl KeysStep {
