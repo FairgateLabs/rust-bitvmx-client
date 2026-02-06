@@ -59,33 +59,6 @@ fn dispatch_timeout_tx(
     Ok(())
 }
 
-#[derive(Debug, Clone)]
-pub enum TimeoutType {
-    Timeout(String),
-    TimeoutInput(String),
-}
-
-impl TimeoutType {
-    pub fn timeout<S: Into<String>>(s: S) -> Self {
-        TimeoutType::Timeout(s.into())
-    }
-
-    pub fn timeout_input<S: Into<String>>(s: S) -> Self {
-        TimeoutType::TimeoutInput(s.into())
-    }
-
-    pub fn is_input(&self) -> bool {
-        matches!(self, TimeoutType::TimeoutInput(_))
-    }
-
-    pub fn name(&self) -> String {
-        match self {
-            TimeoutType::Timeout(name) => name.to_string(),
-            TimeoutType::TimeoutInput(name) => name.to_string(),
-        }
-    }
-}
-
 // When I see [tx_name]
 // if I'm [role], then I dispatch
 // timeout_type[timeout_name].
@@ -93,15 +66,15 @@ impl TimeoutType {
 pub struct TimeoutDispatchRule {
     pub tx_name: String,
     pub my_role: ParticipantRole,
-    pub timeout: TimeoutType,
+    pub timeout: String,
 }
 
 impl TimeoutDispatchRule {
-    pub fn new_without_vout(tx_name: &str, my_role: ParticipantRole, timeout: TimeoutType) -> Self {
+    pub fn new(tx_name: &str, my_role: ParticipantRole, timeout: String) -> Self {
         Self {
             tx_name: tx_name.to_string(),
             my_role,
-            timeout,
+            timeout: timeout,
         }
     }
 }
@@ -198,44 +171,30 @@ impl TimeoutDispatchTable {
         }
     }
 
-    pub fn add_rule(&mut self, tx_name: &str, my_role: ParticipantRole, timeout: TimeoutType) {
-        self.rules.push(TimeoutDispatchRule::new_without_vout(
-            tx_name, my_role, timeout,
-        ));
+    pub fn add_rule(&mut self, tx_name: &str, my_role: ParticipantRole, timeout: String) {
+        self.rules
+            .push(TimeoutDispatchRule::new(tx_name, my_role, timeout));
     }
+
     pub fn add_rule_pair(&mut self, prev_tx: &str, next_tx: &str, role: ParticipantRole) {
-        self.add_rule(
-            prev_tx,
-            role.clone(),
-            TimeoutType::Timeout(next_tx.to_string()),
-        );
-        self.add_rule(
-            next_tx,
-            role,
-            TimeoutType::TimeoutInput(next_tx.to_string()),
-        );
+        self.add_rule(prev_tx, role.clone(), timeout_tx(next_tx));
+        self.add_rule(next_tx, role, timeout_input_tx(next_tx));
     }
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &ParticipantRole, &TimeoutType)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &ParticipantRole, &String)> {
         self.rules
             .iter()
             .map(|r| (&r.tx_name, &r.my_role, &r.timeout))
     }
     pub fn visualize(&self) {
-        let headers = ["Tx name", "Timeout string", "Timeout type", "Role"];
+        let headers = ["Tx name", "Timeout string", "Role"];
         let sep = " | ";
 
         // Collect column strings in desired order
         let mut cols: Vec<Vec<String>> = vec![Vec::new(); headers.len()];
         for r in &self.rules {
-            let (timeout_type, timeout_str) = match &r.timeout {
-                TimeoutType::Timeout(s) => ("Timeout", s.clone()),
-                TimeoutType::TimeoutInput(s) => ("TimeoutInput", s.clone()),
-            };
-
             cols[0].push(r.tx_name.clone());
-            cols[1].push(timeout_str);
-            cols[2].push(timeout_type.to_string());
-            cols[3].push(format!("{:?}", r.my_role));
+            cols[1].push(r.timeout.clone());
+            cols[2].push(format!("{:?}", r.my_role));
         }
 
         // Compute column widths (based on header and content)
@@ -262,17 +221,7 @@ impl TimeoutDispatchTable {
 
         // Rows
         for r in &self.rules {
-            let (timeout_type, timeout_str) = match &r.timeout {
-                TimeoutType::Timeout(s) => ("Timeout", s.clone()),
-                TimeoutType::TimeoutInput(s) => ("TimeoutInput", s.clone()),
-            };
-
-            let cells = [
-                &r.tx_name,
-                &timeout_str,
-                timeout_type,
-                &format!("{:?}", r.my_role),
-            ];
+            let cells = [&r.tx_name, &r.timeout, &format!("{:?}", r.my_role)];
 
             let row = cells
                 .iter()
@@ -291,14 +240,6 @@ impl TimeoutDispatchTable {
     }
 }
 
-fn get_timeout_name(timeout: &TimeoutType) -> String {
-    if timeout.is_input() {
-        timeout_input_tx(&timeout.name())
-    } else {
-        timeout_tx(&timeout.name())
-    }
-}
-
 fn auto_dispatch_timeout(
     drp: &DisputeResolutionProtocol,
     name: &str,
@@ -309,12 +250,7 @@ fn auto_dispatch_timeout(
 ) -> Result<(), BitVMXError> {
     for (tx_name, tx_role, timeout) in timeout_table.iter() {
         if *tx_name == name && *tx_role == drp.role() && vout.is_none() {
-            dispatch_timeout_tx(
-                drp,
-                program_context,
-                &get_timeout_name(&timeout),
-                current_height,
-            )?;
+            dispatch_timeout_tx(drp, program_context, &timeout, current_height)?;
         }
     }
     Ok(())
@@ -328,7 +264,7 @@ fn cancel_timeout(
     timeout_table: &TimeoutDispatchTable,
 ) -> Result<(), BitVMXError> {
     let cancel = timeout_table.iter().any(|(_tx_name, tx_role, timeout)| {
-        timeout.name().trim_end_matches("_TO") == name && *tx_role == drp.role()
+        timeout.trim_end_matches("_TO") == name && *tx_role == drp.role()
     });
 
     if cancel {
@@ -378,8 +314,7 @@ fn auto_claim_start(
         return Ok(());
     }
     for (_, tx_role, timeout) in timeout_table.iter() {
-        let timeout_name = get_timeout_name(timeout);
-        if &timeout_name == name && *tx_role == drp.role() {
+        if timeout.as_str() == name && *tx_role == drp.role() {
             let claim_name = ClaimGate::tx_start(get_claim_name(drp, false));
             let tx = drp.get_signed(program_context, &claim_name, vec![0.into()])?;
             let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
@@ -596,17 +531,7 @@ pub fn handle_tx_news(
             let timeout_leaf = params[1];
 
             if leaf == timeout_leaf {
-                let role = timeout_table
-                    .iter()
-                    .find_map(|(_, role, timeout_type)| match timeout_type {
-                        TimeoutType::TimeoutInput(timeout_name) if timeout_name == &name => {
-                            Some(role.to_string())
-                        }
-                        _ => None,
-                    })
-                    .unwrap_or("Unknown role".to_string());
-
-                warn!("{role} consumed timeout input for {name}");
+                warn!("The timeout input for {name} was consumed");
                 return Ok(());
             }
 
