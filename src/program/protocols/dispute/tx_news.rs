@@ -23,13 +23,14 @@ use crate::{
     },
     types::{ProgramContext, PROGRAM_TYPE_DRP},
 };
-use bitcoin::{script::read_scriptint, Txid};
+use bitcoin::{script::read_scriptint, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use bitvmx_cpu_definitions::{memory::MemoryWitness, trace::*};
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use console::style;
 use emulator::decision::nary_search::NArySearchType;
+use protocol_builder::types::output::SpeedupData;
 use tracing::{info, warn};
 
 fn dispatch_timeout_tx(
@@ -53,13 +54,8 @@ fn dispatch_timeout_tx(
 
     let tx = drp.get_signed(program_context, name, vec![(leaf, true).into()])?;
     let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
-    program_context.bitcoin_coordinator.dispatch(
-        tx,
-        Some(speedup_data),
-        Context::ProgramId(drp.ctx.id).to_string()?,
-        Some(current_height + timelock_blocks),
-        drp.requested_confirmations(program_context),
-    )?;
+    let height = Some(current_height + timelock_blocks);
+    dispatch(program_context, drp, tx, Some(speedup_data), height)?;
     Ok(())
 }
 
@@ -488,13 +484,7 @@ fn auto_claim_start(
             let tx = drp.get_signed(program_context, &claim_name, vec![0.into()])?;
             let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
             info!("{claim_name}: {:?}", tx);
-            program_context.bitcoin_coordinator.dispatch(
-                tx,
-                Some(speedup_data),
-                Context::ProgramId(drp.ctx.id).to_string()?,
-                None,
-                drp.requested_confirmations(program_context),
-            )?;
+            dispatch(program_context, drp, tx, Some(speedup_data), None)?;
         }
     }
 
@@ -522,38 +512,25 @@ fn claim_state_handle(
         if name == ClaimGate::tx_start(my_claim) {
             info!("{my_claim} SUCCESS dispatch");
 
-            let prover_wins_tx = drp.get_signed(
+            let tx = drp.get_signed(
                 program_context,
                 &ClaimGate::tx_success(&my_claim),
                 vec![1.into()],
             )?;
-            let speedup_data =
-                drp.get_speedup_data_from_tx(&prover_wins_tx, program_context, None)?;
-            program_context.bitcoin_coordinator.dispatch(
-                prover_wins_tx,
-                Some(speedup_data),
-                Context::ProgramId(drp.ctx.id).to_string()?,
-                Some(current_height + timelock_blocks),
-                drp.requested_confirmations(program_context),
-            )?;
+            let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
+            let height = Some(current_height + timelock_blocks);
+            dispatch(program_context, drp, tx, Some(speedup_data), height)?;
         }
         //other start
         else {
             info!("{other_claim} STOP dispatch attempt");
-            let prover_win_stop = drp.get_signed(
+            let tx = drp.get_signed(
                 program_context,
                 &ClaimGate::tx_stop(&other_claim, 0),
                 vec![0.into()],
             )?;
-            let speedup_data =
-                drp.get_speedup_data_from_tx(&prover_win_stop, program_context, None)?;
-            program_context.bitcoin_coordinator.dispatch(
-                prover_win_stop,
-                Some(speedup_data),
-                Context::ProgramId(drp.ctx.id).to_string()?,
-                None,
-                drp.requested_confirmations(program_context),
-            )?;
+            let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
+            dispatch(program_context, drp, tx, Some(speedup_data), None)?;
         }
     }
 
@@ -568,21 +545,14 @@ fn claim_state_handle(
 
         for (i, action) in actions.iter().enumerate() {
             info!("{}. Execute Action {}", drp.role(), i);
-            let win_action_tx = drp.get_signed(
+            let tx = drp.get_signed(
                 program_context,
                 &action_wins(&drp.role(), 1),
                 vec![0.into(), (action.1[0] as u32).into()],
             )?;
-            let speedup_data =
-                drp.get_speedup_data_from_tx(&win_action_tx, program_context, None)?;
+            let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
 
-            program_context.bitcoin_coordinator.dispatch(
-                win_action_tx,
-                Some(speedup_data),
-                Context::ProgramId(drp.ctx.id).to_string()?,
-                None,
-                drp.requested_confirmations(program_context),
-            )?;
+            dispatch(program_context, drp, tx, Some(speedup_data), None)?;
         }
     }
 
@@ -611,6 +581,22 @@ fn claim_state_handle(
     }
 
     Ok(())
+}
+
+pub fn dispatch(
+    program_context: &ProgramContext,
+    drp: &DisputeResolutionProtocol,
+    tx: Transaction,
+    sp: Option<SpeedupData>,
+    block_height: Option<u32>,
+) -> Result<(), BitVMXError> {
+    Ok(program_context.bitcoin_coordinator.dispatch(
+        tx,
+        sp,
+        Context::ProgramId(drp.ctx.id).to_string()?,
+        block_height,
+        drp.requested_confirmations(program_context),
+    )?)
 }
 
 pub fn handle_tx_news(
@@ -690,27 +676,6 @@ pub fn handle_tx_news(
 
     let fail_force_config = config.fail_force_config.unwrap_or_default();
 
-    if let Some(auto_dispatch_input) = config.auto_dispatch_input {
-        if name == START_CH && drp.role() == ParticipantRole::Prover {
-            let (tx, speedup) = drp.get_transaction_by_name(
-                &input_tx_name(auto_dispatch_input as u32),
-                program_context,
-            )?;
-
-            info!(
-                "Auto Dispatching input tx {}",
-                &input_tx_name(auto_dispatch_input as u32)
-            );
-            program_context.bitcoin_coordinator.dispatch(
-                tx,
-                speedup,
-                Context::ProgramId(drp.context().id).to_string()?,
-                None,
-                drp.requested_confirmations(program_context),
-            )?;
-        }
-    }
-
     match vout {
         Some(vout) => {
             let transaction = &tx_status.tx;
@@ -788,13 +753,7 @@ pub fn handle_tx_news(
                         0,
                         true,
                     )?;
-                    program_context.bitcoin_coordinator.dispatch(
-                        tx,
-                        Some(sp),
-                        Context::ProgramId(drp.ctx.id).to_string()?,
-                        None,
-                        drp.requested_confirmations(program_context),
-                    )?;
+                    dispatch(program_context, drp, tx, Some(sp), None)?;
                 }
                 if idx == last_tx_id as u32 {
                     //if it's the last input
@@ -806,13 +765,7 @@ pub fn handle_tx_news(
                             0,
                             true,
                         )?;
-                        program_context.bitcoin_coordinator.dispatch(
-                            tx,
-                            Some(sp),
-                            Context::ProgramId(drp.ctx.id).to_string()?,
-                            None,
-                            drp.requested_confirmations(program_context),
-                        )?;
+                        dispatch(program_context, drp, tx, Some(sp), None)?;
                     } else {
                         //Prover
                         let (def, _program_definition) =
@@ -909,13 +862,7 @@ pub fn handle_tx_news(
 
                 let (tx, sp) =
                     drp.get_tx_with_speedup_data(program_context, POST_COMMITMENT, 0, 0, true)?;
-                program_context.bitcoin_coordinator.dispatch(
-                    tx,
-                    Some(sp),
-                    Context::ProgramId(drp.ctx.id).to_string()?,
-                    None,
-                    drp.requested_confirmations(program_context),
-                )?;
+                dispatch(program_context, drp, tx, Some(sp), None)?;
             }
 
             if name == POST_COMMITMENT || name.starts_with("NARY_VERIFIER") {
@@ -1293,18 +1240,26 @@ pub fn handle_tx_news(
             }
         }
         None => {
+            if name == START_CH && drp.role() == ParticipantRole::Prover {
+                if let Some(auto_dispatch_input) = config.auto_dispatch_input {
+                    let (tx, speedup) = drp.get_transaction_by_name(
+                        &input_tx_name(auto_dispatch_input as u32),
+                        program_context,
+                    )?;
+
+                    info!(
+                        "Auto Dispatching input tx {}",
+                        &input_tx_name(auto_dispatch_input as u32)
+                    );
+                    dispatch(program_context, drp, tx, speedup, None)?;
+                }
+            }
+
             if CHALLENGE_READ == name && ParticipantRole::Verifier == drp.role() {
-                let verifier_final_tx =
-                    drp.get_signed(program_context, &VERIFIER_FINAL, vec![1.into()])?;
-                let speedup_data =
-                    drp.get_speedup_data_from_tx(&verifier_final_tx, program_context, None)?;
-                program_context.bitcoin_coordinator.dispatch(
-                    verifier_final_tx,
-                    Some(speedup_data),
-                    Context::ProgramId(drp.ctx.id).to_string()?,
-                    Some(current_height + 2 * timelock_blocks as u32),
-                    drp.requested_confirmations(program_context),
-                )?;
+                let tx = drp.get_signed(program_context, &VERIFIER_FINAL, vec![1.into()])?;
+                let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
+                let height = Some(current_height + 2 * timelock_blocks as u32);
+                dispatch(program_context, drp, tx, Some(speedup_data), height)?;
             }
 
             if VERIFIER_FINAL == name && ParticipantRole::Verifier == drp.role() {
