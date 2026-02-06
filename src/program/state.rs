@@ -9,7 +9,13 @@ pub enum ProgramState {
 
     /// Program is in setup phase, exchanging keys, nonces and signatures with counterparty.
     /// Contains a SettingUpState enum specifying the exact setup step.
+    /// Used by Program (legacy) with hardcoded keys/nonces/signatures flow.
     SettingUp(SettingUpState),
+
+    /// Program is in setup phase using SetupEngine.
+    /// Used by ProgramV2 - the actual setup flow is managed by SetupEngine.
+    /// No SettingUpState needed since SetupEngine tracks its own internal state.
+    SettingUpV2,
 
     /// Program setup is complete and is ready to send transactions monitor
     Monitoring,
@@ -71,6 +77,10 @@ impl ProgramState {
                 ProgramState::SettingUp(SettingUpState::WaitingSignatures) => {
                     ProgramState::Monitoring
                 }
+                // ProgramV2 doesn't use next_state() - SetupEngine manages transitions directly
+                ProgramState::SettingUpV2 => {
+                    unreachable!("ProgramV2 should not call next_state() - SetupEngine manages state transitions")
+                }
 
                 ProgramState::Monitoring => ProgramState::Ready,
                 ProgramState::Ready => ProgramState::Ready,
@@ -100,6 +110,10 @@ impl ProgramState {
                 }
                 ProgramState::SettingUp(SettingUpState::SendingSignatures) => {
                     ProgramState::Monitoring
+                }
+                // ProgramV2 doesn't use next_state() - SetupEngine manages transitions directly
+                ProgramState::SettingUpV2 => {
+                    unreachable!("ProgramV2 should not call next_state() - SetupEngine manages state transitions")
                 }
 
                 ProgramState::Monitoring => ProgramState::Ready,
@@ -192,7 +206,10 @@ impl ProgramState {
     }
 
     pub fn is_setting_up(&self) -> bool {
-        matches!(self, &ProgramState::New | &ProgramState::SettingUp(_))
+        matches!(
+            self,
+            &ProgramState::New | &ProgramState::SettingUp(_) | &ProgramState::SettingUpV2
+        )
     }
 
     pub fn is_monitoring(&self) -> bool {
