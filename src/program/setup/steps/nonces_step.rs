@@ -256,62 +256,50 @@ impl SetupStep for NoncesStep {
 
         debug!("NoncesStep: Step complete, adding all participant nonces to key_manager");
 
-        // Get my_keys to find all aggregated keys
-        let my_keys_json = context
-            .globals
-            .get_var(&protocol_id, "my_keys")?
-            .ok_or_else(|| {
-                BitVMXError::InvalidMessage("my_keys not found in globals".to_string())
-            })?
-            .string()?;
+        // Build map_of_maps: HashMap<PublicKey, HashMap<PublicKey, Vec<(MessageId, PubNonce)>>>
+        // First PublicKey is aggregated key, second is participant's public key
+        let mut map_of_maps: HashMap<
+            PublicKey,
+            HashMap<PublicKey, Vec<(MessageId, PubNonce)>>,
+        > = HashMap::new();
 
-        let my_keys: ParticipantKeys = serde_json::from_str(&my_keys_json)?;
-
-        // For each aggregated key, collect nonces from all participants and add to key_manager
-        for aggregated_key in my_keys.computed_aggregated.values() {
-            let mut pubkey_nonce_map: HashMap<PublicKey, Vec<(MessageId, PubNonce)>> = HashMap::new();
-
-            // Collect nonces from all participants (except ourselves)
-            for (idx, _) in participants.iter().enumerate() {
-                if idx == my_idx {
-                    continue; // Skip our own nonces
-                }
-
-                let nonces_json = context
-                    .globals
-                    .get_var(&protocol_id, &format!("participant_{}_nonces", idx))?
-                    .ok_or_else(|| {
-                        BitVMXError::InvalidMessage(format!("Missing nonces for participant {}", idx))
-                    })?
-                    .string()?;
-
-                let participant_nonces: PubNonceMessage = serde_json::from_str(&nonces_json)?;
-
-                // Find the nonces for this aggregated key
-                // PubNonceMessage is Vec<(PublicKey, PublicKey, Vec<(MessageId, PubNonce)>)>
-                // where first PublicKey is aggregated key, second is participant's public key
-                for (agg_key, participant_pub_key, nonces) in participant_nonces {
-                    if &agg_key == aggregated_key {
-                        // Add to map: HashMap<PublicKey, Vec<(MessageId, PubNonce)>>
-                        pubkey_nonce_map.insert(participant_pub_key, nonces);
-                        break;
-                    }
-                }
+        // Collect nonces from all participants (except ourselves)
+        for (idx, _) in participants.iter().enumerate() {
+            if idx == my_idx {
+                continue; // Skip our own nonces
             }
 
-            // Add all nonces to key_manager for this aggregated key
-            if !pubkey_nonce_map.is_empty() {
-                context.key_chain.add_nonces(
-                    aggregated_key,
-                    pubkey_nonce_map,
-                    &protocol.context().protocol_name,
-                )?;
-                debug!(
-                    "NoncesStep: Added nonces from {} participants to key_manager for aggregated key {}",
-                    participants.len() - 1,
-                    aggregated_key
-                );
+            let nonces_json = context
+                .globals
+                .get_var(&protocol_id, &format!("participant_{}_nonces", idx))?
+                .ok_or_else(|| {
+                    BitVMXError::InvalidMessage(format!("Missing nonces for participant {}", idx))
+                })?
+                .string()?;
+
+            let participant_nonces: PubNonceMessage = serde_json::from_str(&nonces_json)?;
+
+            // PubNonceMessage is Vec<(PublicKey, PublicKey, Vec<(MessageId, PubNonce)>)>
+            // where first PublicKey is aggregated key, second is participant's public key
+            for (aggregated, participant_pub_key, nonces) in participant_nonces {
+                map_of_maps
+                    .entry(aggregated)
+                    .or_insert_with(HashMap::new)
+                    .insert(participant_pub_key, nonces);
             }
+        }
+
+        // Add all nonces to key_manager for each aggregated key
+        for (aggregated, pubkey_nonce_map) in map_of_maps {
+            context.key_chain.add_nonces(
+                &aggregated,
+                pubkey_nonce_map,
+                &protocol.context().protocol_name,
+            )?;
+            debug!(
+                "NoncesStep: Added nonces to key_manager for aggregated key {}",
+                aggregated
+            );
         }
 
         debug!(
