@@ -1074,9 +1074,6 @@ impl BitVMXApi for BitVMX {
         self.store
             .set(StoreKey::AggregatedKeyFrom(id).get_key(), from, None)?;
 
-        // TODO: participants_keys is ignored for now - will be implemented later
-        // For now, each participant will generate their own key
-
         // Use ProgramV2 with AggregatedKeyProtocol for key aggregation
         ProgramV2::setup(
             id,
@@ -1603,14 +1600,6 @@ impl BitVMXApi for BitVMX {
             }
             IncomingBitVMXApiMessages::SubscribeToTransaction(uuid, txid, confirmation_threshold) => {
                 BitVMXApi::subscribe_to_tx(self, from, uuid, txid, confirmation_threshold)?
-            }
-            IncomingBitVMXApiMessages::SubscribeUTXO(uuid) => {
-                // TODO: Implement SubscribeUTXO functionality
-                warn!("SubscribeUTXO is not yet implemented");
-                self.reply(
-                    from,
-                    OutgoingBitVMXApiMessages::NotFound(uuid, "SubscribeUTXO not implemented".to_string()),
-                )?;
             }
             IncomingBitVMXApiMessages::SubscribeToRskPegin(confirmation_threshold) => {
                 BitVMXApi::subscribe_to_rsk_pegin(self, confirmation_threshold)?

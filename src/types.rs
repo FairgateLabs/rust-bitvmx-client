@@ -139,7 +139,6 @@ pub enum IncomingBitVMXApiMessages {
     Setup(ProgramId, String, Vec<CommsAddress>, u16),
     SetupV2(ProgramId, String, Vec<CommsAddress>, u16),
     SubscribeToTransaction(Uuid, Txid, Option<u32>),
-    SubscribeUTXO(Uuid),
     SubscribeToRskPegin(Option<u32>),
     GetSPVProof(Txid),
     DispatchTransaction(Uuid, Transaction, Option<u32>),
