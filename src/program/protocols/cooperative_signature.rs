@@ -23,7 +23,6 @@ use std::collections::HashMap;
 
 use crate::{
     errors::BitVMXError,
-    helper::PartialSignatureMessage,
     program::{
         participant::ParticipantKeys,
         protocols::protocol_handler::{ProtocolContext, ProtocolHandler},
@@ -145,54 +144,8 @@ impl ProtocolHandler for CooperativeSignatureProtocol {
             })?
             .pubkey()?;
 
-        // 2. Get participant count from all_participant_keys
-        let all_keys_var = program_context
-            .globals
-            .get_var(&self.ctx.id, "all_participant_keys")?
-            .ok_or_else(|| {
-                BitVMXError::InvalidMessage("all_participant_keys not found".to_string())
-            })?;
-        let all_keys: Vec<ParticipantKeys> = serde_json::from_str(&all_keys_var.string()?)?;
-        let num_participants = all_keys.len();
-
-        // 3. Collect all partial signatures from all participants
-        // Structure: aggregated_pubkey -> HashMap<other_pubkey, Vec<(MessageId, PartialSignature)>>
-        let mut map_of_maps: HashMap<PublicKey, HashMap<PublicKey, Vec<(String, key_manager::musig2::PartialSignature)>>> =
-            HashMap::new();
-
-        for idx in 0..num_participants {
-            let sig_json = program_context
-                .globals
-                .get_var(&self.ctx.id, &format!("participant_{}_signatures", idx))?
-                .ok_or_else(|| {
-                    BitVMXError::InvalidMessage(format!(
-                        "Missing signatures for participant {}",
-                        idx
-                    ))
-                })?
-                .string()?;
-
-            let signatures: PartialSignatureMessage = serde_json::from_str(&sig_json)?;
-
-            // PartialSignatureMessage is Vec<(aggregated_key, other_pubkey, Vec<(MessageId, PartialSignature)>)>
-            for (agg_key, other_pubkey, partial_sigs) in signatures {
-                map_of_maps
-                    .entry(agg_key)
-                    .or_default()
-                    .insert(other_pubkey, partial_sigs);
-            }
-        }
-
-        // 4. Add signatures to key_chain for aggregation
-        for (agg_key, partial_map) in map_of_maps {
-            program_context.key_chain.add_signatures(
-                &agg_key,
-                partial_map,
-                &self.ctx.protocol_name,
-            )?;
-        }
-
-        // 5. Get the aggregated signature using the message_id (protocol_id as message identifier)
+        // 2. Signatures have already been added to key_manager by SignaturesStep::on_step_complete()
+        // We can now directly get the aggregated signature using the message_id (protocol_id as message identifier)
         let message_id = self.ctx.id.to_string();
         let final_signature = program_context.key_chain.get_aggregated_signature(
             &aggregated_key,
@@ -200,7 +153,7 @@ impl ProtocolHandler for CooperativeSignatureProtocol {
             &self.ctx.protocol_name,
         )?;
 
-        // 6. Store the final signature in globals
+        // 3. Store the final signature in globals
         program_context.globals.set_var(
             &self.ctx.id,
             "final_signature",

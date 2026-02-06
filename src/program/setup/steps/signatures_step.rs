@@ -9,6 +9,9 @@ use crate::{
     },
     types::ProgramContext,
 };
+use bitcoin::PublicKey;
+use key_manager::musig2::{types::MessageId, PartialSignature};
+use std::collections::HashMap;
 use tracing::debug;
 
 /// Template step for exchanging MuSig2 partial signatures.
@@ -214,14 +217,67 @@ impl SetupStep for SignaturesStep {
 
     fn on_step_complete(
         &self,
-        _protocol: &ProtocolType,
+        protocol: &ProtocolType,
         participants: &[ParticipantData],
-        _context: &mut ProgramContext,
+        context: &mut ProgramContext,
     ) -> Result<(), BitVMXError> {
-        // Signatures are already stored in globals as "participant_{idx}_signatures"
-        // Protocol's setup_complete() will read them directly for aggregation
+        let protocol_id = protocol.context().id;
+        let my_idx = protocol.context().my_idx;
+
+        debug!("SignaturesStep: Step complete, adding all participant signatures to key_manager");
+
+        // Build map_of_maps: HashMap<PublicKey, HashMap<PublicKey, Vec<(MessageId, PartialSignature)>>>
+        // First PublicKey is aggregated key, second is participant's public key
+        let mut map_of_maps: HashMap<
+            PublicKey,
+            HashMap<PublicKey, Vec<(MessageId, PartialSignature)>>,
+        > = HashMap::new();
+
+        // Collect signatures from all participants (except ourselves)
+        for (idx, _) in participants.iter().enumerate() {
+            if idx == my_idx {
+                continue; // Skip our own signatures
+            }
+
+            let signatures_json = context
+                .globals
+                .get_var(&protocol_id, &format!("participant_{}_signatures", idx))?
+                .ok_or_else(|| {
+                    BitVMXError::InvalidMessage(format!(
+                        "Missing signatures for participant {}",
+                        idx
+                    ))
+                })?
+                .string()?;
+
+            let participant_signatures: PartialSignatureMessage =
+                serde_json::from_str(&signatures_json)?;
+
+            // PartialSignatureMessage is Vec<(PublicKey, PublicKey, Vec<(MessageId, PartialSignature)>)>
+            // where first PublicKey is aggregated key, second is participant's public key
+            for (aggregated, participant_pub_key, signatures) in participant_signatures {
+                map_of_maps
+                    .entry(aggregated)
+                    .or_insert_with(HashMap::new)
+                    .insert(participant_pub_key, signatures);
+            }
+        }
+
+        // Add all signatures to key_manager for each aggregated key
+        for (aggregated, partial_map) in map_of_maps {
+            context.key_chain.add_signatures(
+                &aggregated,
+                partial_map,
+                &protocol.context().protocol_name,
+            )?;
+            debug!(
+                "SignaturesStep: Added signatures to key_manager for aggregated key {}",
+                aggregated
+            );
+        }
+
         debug!(
-            "SignaturesStep: Step complete with {} participants",
+            "SignaturesStep: Completed with {} participants, all signatures added to key_manager",
             participants.len()
         );
         Ok(())
