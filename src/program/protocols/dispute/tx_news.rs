@@ -86,72 +86,22 @@ impl TimeoutType {
     }
 }
 
-// When I see [tx_name], and vout is [has_vout],
+// When I see [tx_name]
 // if I'm [role], then I dispatch
 // timeout_type[timeout_name].
 #[derive(Debug, Clone)]
 pub struct TimeoutDispatchRule {
     pub tx_name: String,
-    pub has_vout: bool,
     pub my_role: ParticipantRole,
     pub timeout: TimeoutType,
-    pub apply_timeout: bool,
 }
 
 impl TimeoutDispatchRule {
-    pub fn new(
-        tx_name: &str,
-        has_vout: bool,
-        my_role: ParticipantRole,
-        timeout: TimeoutType,
-        apply_timeout: bool,
-    ) -> Self {
-        Self {
-            tx_name: tx_name.to_string(),
-            has_vout,
-            my_role,
-            timeout,
-            apply_timeout,
-        }
-    }
     pub fn new_without_vout(tx_name: &str, my_role: ParticipantRole, timeout: TimeoutType) -> Self {
         Self {
             tx_name: tx_name.to_string(),
-            has_vout: false,
             my_role,
             timeout,
-            apply_timeout: true,
-        }
-    }
-    pub fn new_not_apply_not_vout(
-        tx_name: &str,
-        my_role: ParticipantRole,
-        timeout: TimeoutType,
-    ) -> Self {
-        Self {
-            tx_name: tx_name.to_string(),
-            has_vout: false,
-            my_role,
-            timeout,
-            apply_timeout: false,
-        }
-    }
-    pub fn new_prover_without_vout(tx_name: &str, timeout: TimeoutType) -> Self {
-        Self {
-            tx_name: tx_name.to_string(),
-            has_vout: false,
-            my_role: ParticipantRole::Prover,
-            timeout,
-            apply_timeout: true,
-        }
-    }
-    pub fn new_verifier_without_vout(tx_name: &str, timeout: TimeoutType) -> Self {
-        Self {
-            tx_name: tx_name.to_string(),
-            has_vout: false,
-            my_role: ParticipantRole::Verifier,
-            timeout,
-            apply_timeout: true,
         }
     }
 }
@@ -171,7 +121,6 @@ impl TimeoutDispatchTable {
 
         let last_tx_first_nary = &format!("NARY_VERIFIER_{}", rounds);
         let last_tx_second_nary = &format!("NARY2_VERIFIER_{}", rounds);
-        let to_second_nary = TimeoutType::timeout("NARY2_PROVER_2_TO");
 
         let mut table = TimeoutDispatchTable::new(vec![]);
 
@@ -180,14 +129,18 @@ impl TimeoutDispatchTable {
             .ok_or_else(|| Self::invalid_inputs(&inputs))?;
 
         if first_owner == "verifier" {
-            table.add_prover_without_vout(
+            table.add_rule_pair(
+                START_CH,
                 &input_tx_name(first_index as u32),
-                TimeoutType::timeout_input(&input_tx_name(first_index as u32)),
+                ParticipantRole::Prover,
+                //TimeoutType::timeout_input(&input_tx_name(first_index as u32)),
             );
         } else {
-            table.add_verifier_without_vout(
+            table.add_rule_pair(
+                START_CH,
                 &input_tx_name(first_index as u32),
-                TimeoutType::timeout_input(&input_tx_name(first_index as u32)),
+                ParticipantRole::Verifier,
+                //TimeoutType::timeout_input(&input_tx_name(first_index as u32)),
             );
         }
 
@@ -205,7 +158,7 @@ impl TimeoutDispatchTable {
                 Prover
             };
 
-            table.add_classic_to(
+            table.add_rule_pair(
                 &input_tx_name(prev_index as u32),
                 &input_tx_name(next_index as u32),
                 role,
@@ -217,17 +170,17 @@ impl TimeoutDispatchTable {
             return Err(Self::invalid_inputs(&inputs));
         }
 
-        table.add_classic_to(&input_tx_name(last_index as u32), PRE_COMMITMENT, Prover);
-        table.add_classic_to(PRE_COMMITMENT, COMMITMENT, Verifier);
-        table.add_classic_to(COMMITMENT, POST_COMMITMENT, Prover);
-        table.add_classic_to(POST_COMMITMENT, "NARY_PROVER_1", Verifier);
+        table.add_rule_pair(&input_tx_name(last_index as u32), PRE_COMMITMENT, Prover);
+        table.add_rule_pair(PRE_COMMITMENT, COMMITMENT, Verifier);
+        table.add_rule_pair(COMMITMENT, POST_COMMITMENT, Prover);
+        table.add_rule_pair(POST_COMMITMENT, "NARY_PROVER_1", Verifier);
         table.add_nary_search_table("NARY", 1, rounds);
-        table.add_classic_to(last_tx_first_nary, EXECUTE, Verifier);
-        table.add_classic_to(EXECUTE, CHALLENGE, Prover);
-        table.add_not_apply_not_vout(CHALLENGE, Verifier, to_second_nary);
+        table.add_rule_pair(last_tx_first_nary, EXECUTE, Verifier);
+        table.add_rule_pair(EXECUTE, CHALLENGE, Prover);
+        table.add_rule_pair(CHALLENGE, "NARY2_PROVER_2", Verifier);
         table.add_nary_search_table("NARY2", 2, rounds);
-        table.add_classic_to(&last_tx_second_nary, GET_HASHES_AND_STEP, Verifier);
-        table.add_classic_to(GET_HASHES_AND_STEP, CHALLENGE_READ, Prover);
+        table.add_rule_pair(&last_tx_second_nary, GET_HASHES_AND_STEP, Verifier);
+        table.add_rule_pair(GET_HASHES_AND_STEP, CHALLENGE_READ, Prover);
         Ok(table)
     }
 
@@ -237,83 +190,38 @@ impl TimeoutDispatchTable {
             let verifier = format!("{}_VERIFIER_{}", nary_type, round);
             let next_prover = format!("{}_PROVER_{}", nary_type, round + 1);
 
-            self.add_classic_to(&prover, &verifier, Prover);
+            self.add_rule_pair(&prover, &verifier, Prover);
             if round < total_rounds {
                 // If not the last round
-                self.add_classic_to(&verifier, &next_prover, Verifier);
+                self.add_rule_pair(&verifier, &next_prover, Verifier);
             }
         }
     }
 
-    pub fn add_rule(&mut self, rule: TimeoutDispatchRule) {
-        self.rules.push(rule);
-    }
-    pub fn add_without_vout(
-        &mut self,
-        tx_name: &str,
-        my_role: ParticipantRole,
-        timeout: TimeoutType,
-    ) {
+    pub fn add_rule(&mut self, tx_name: &str, my_role: ParticipantRole, timeout: TimeoutType) {
         self.rules.push(TimeoutDispatchRule::new_without_vout(
             tx_name, my_role, timeout,
         ));
     }
-    pub fn add_not_apply_not_vout(
-        &mut self,
-        tx_name: &str,
-        my_role: ParticipantRole,
-        timeout: TimeoutType,
-    ) {
-        self.rules.push(TimeoutDispatchRule::new_not_apply_not_vout(
-            tx_name, my_role, timeout,
-        ));
-    }
-    pub fn add_prover_without_vout(&mut self, tx_name: &str, timeout: TimeoutType) {
-        self.rules
-            .push(TimeoutDispatchRule::new_prover_without_vout(
-                tx_name, timeout,
-            ));
-    }
-    pub fn add_verifier_without_vout(&mut self, tx_name: &str, timeout: TimeoutType) {
-        self.rules
-            .push(TimeoutDispatchRule::new_verifier_without_vout(
-                tx_name, timeout,
-            ));
-    }
-    fn add_classic_to(&mut self, prev_tx: &str, next_tx: &str, role: ParticipantRole) {
-        self.add_without_vout(
+    pub fn add_rule_pair(&mut self, prev_tx: &str, next_tx: &str, role: ParticipantRole) {
+        self.add_rule(
             prev_tx,
             role.clone(),
             TimeoutType::Timeout(next_tx.to_string()),
         );
-        self.add_without_vout(
+        self.add_rule(
             next_tx,
             role,
             TimeoutType::TimeoutInput(next_tx.to_string()),
         );
     }
-    pub fn iter(
-        &self,
-    ) -> impl Iterator<Item = (&String, &bool, &ParticipantRole, &TimeoutType, &bool)> {
-        self.rules.iter().map(|r| {
-            (
-                &r.tx_name,
-                &r.has_vout,
-                &r.my_role,
-                &r.timeout,
-                &r.apply_timeout,
-            )
-        })
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &ParticipantRole, &TimeoutType)> {
+        self.rules
+            .iter()
+            .map(|r| (&r.tx_name, &r.my_role, &r.timeout))
     }
     pub fn visualize(&self) {
-        let headers = [
-            "Tx name",
-            "Timeout string",
-            "Timeout type",
-            "Role",
-            "Has vout",
-            "Apply timeout",
-        ];
+        let headers = ["Tx name", "Timeout string", "Timeout type", "Role"];
         let sep = " | ";
 
         // Collect column strings in desired order
@@ -328,8 +236,6 @@ impl TimeoutDispatchTable {
             cols[1].push(timeout_str);
             cols[2].push(timeout_type.to_string());
             cols[3].push(format!("{:?}", r.my_role));
-            cols[4].push(format!("{}", r.has_vout));
-            cols[5].push(format!("{}", r.apply_timeout));
         }
 
         // Compute column widths (based on header and content)
@@ -366,8 +272,6 @@ impl TimeoutDispatchTable {
                 &timeout_str,
                 timeout_type,
                 &format!("{:?}", r.my_role),
-                &format!("{}", r.has_vout),
-                &format!("{}", r.apply_timeout),
             ];
 
             let row = cells
@@ -387,10 +291,8 @@ impl TimeoutDispatchTable {
     }
 }
 
-fn get_timeout_name(timeout: &TimeoutType, apply_timeout: bool) -> String {
-    if !apply_timeout {
-        timeout.name()
-    } else if timeout.is_input() {
+fn get_timeout_name(timeout: &TimeoutType) -> String {
+    if timeout.is_input() {
         timeout_input_tx(&timeout.name())
     } else {
         timeout_tx(&timeout.name())
@@ -405,12 +307,12 @@ fn auto_dispatch_timeout(
     current_height: u32,
     timeout_table: &TimeoutDispatchTable,
 ) -> Result<(), BitVMXError> {
-    for (tx_name, tx_vout, tx_role, timeout, not_ignore) in timeout_table.iter() {
-        if *tx_name == name && *tx_role == drp.role() && *tx_vout == (vout.is_some()) {
+    for (tx_name, tx_role, timeout) in timeout_table.iter() {
+        if *tx_name == name && *tx_role == drp.role() && vout.is_none() {
             dispatch_timeout_tx(
                 drp,
                 program_context,
-                &get_timeout_name(&timeout, *not_ignore),
+                &get_timeout_name(&timeout),
                 current_height,
             )?;
         }
@@ -425,11 +327,9 @@ fn cancel_timeout(
     program_context: &ProgramContext,
     timeout_table: &TimeoutDispatchTable,
 ) -> Result<(), BitVMXError> {
-    let cancel = timeout_table
-        .iter()
-        .any(|(_tx_name, _tx_vout, tx_role, timeout, _not_ignore)| {
-            timeout.name().trim_end_matches("_TO") == name && *tx_role == drp.role()
-        });
+    let cancel = timeout_table.iter().any(|(_tx_name, tx_role, timeout)| {
+        timeout.name().trim_end_matches("_TO") == name && *tx_role == drp.role()
+    });
 
     if cancel {
         let tx_to_cancel = if vout.is_none() {
@@ -477,8 +377,8 @@ fn auto_claim_start(
     if vout.is_some() {
         return Ok(());
     }
-    for (_, _, tx_role, timeout, not_ignore) in timeout_table.iter() {
-        let timeout_name = get_timeout_name(timeout, *not_ignore);
+    for (_, tx_role, timeout) in timeout_table.iter() {
+        let timeout_name = get_timeout_name(timeout);
         if &timeout_name == name && *tx_role == drp.role() {
             let claim_name = ClaimGate::tx_start(get_claim_name(drp, false));
             let tx = drp.get_signed(program_context, &claim_name, vec![0.into()])?;
@@ -646,7 +546,7 @@ pub fn handle_tx_news(
         .collect();
 
     let timeout_table = TimeoutDispatchTable::new_predefined(rounds, inputs)?;
-    // timeout_table.visualize();
+    //timeout_table.visualize();
 
     cancel_timeout(drp, &name, vout, program_context, &timeout_table)?;
 
@@ -698,7 +598,7 @@ pub fn handle_tx_news(
             if leaf == timeout_leaf {
                 let role = timeout_table
                     .iter()
-                    .find_map(|(_, _, role, timeout_type, _)| match timeout_type {
+                    .find_map(|(_, role, timeout_type)| match timeout_type {
                         TimeoutType::TimeoutInput(timeout_name) if timeout_name == &name => {
                             Some(role.to_string())
                         }
