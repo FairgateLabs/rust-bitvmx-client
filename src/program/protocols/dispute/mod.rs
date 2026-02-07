@@ -288,6 +288,16 @@ pub fn timeout_input_tx(name: &str) -> String {
     format!("{}_INPUT_TO", name)
 }
 
+pub fn get_tx_name_from_timeout(name: &str) -> Option<String> {
+    if name.ends_with("_INPUT_TO") {
+        Some(name.strip_suffix("_INPUT_TO")?.to_string())
+    } else if name.ends_with("_TO") {
+        Some(name.strip_suffix("_TO")?.to_string())
+    } else {
+        None
+    }
+}
+
 impl ProtocolHandler for DisputeResolutionProtocol {
     fn context(&self) -> &ProtocolContext {
         &self.ctx

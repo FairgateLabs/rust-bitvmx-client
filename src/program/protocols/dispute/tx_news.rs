@@ -9,6 +9,7 @@ use crate::{
                 action_wins, action_wins_prefix,
                 challenge::READ_VALUE_NARY_SEARCH_CHALLENGE,
                 config::{DisputeConfiguration, ForceFailConfiguration},
+                get_tx_name_from_timeout,
                 input_handler::{
                     get_txs_configuration, set_input, set_input_u64, unify_inputs, unify_witnesses,
                 },
@@ -63,31 +64,26 @@ fn dispatch_timeout_tx(
 // if I'm [role], then I dispatch
 // timeout_type[timeout_name].
 #[derive(Debug, Clone)]
-pub struct TimeoutDispatchRule {
+pub struct TxOwnership {
     pub tx_name: String,
-    pub my_role: ParticipantRole,
-    pub timeout: String,
+    pub owner: ParticipantRole,
 }
 
-impl TimeoutDispatchRule {
-    pub fn new(tx_name: &str, my_role: ParticipantRole, timeout: String) -> Self {
+impl TxOwnership {
+    pub fn new(tx_name: &str, owner: ParticipantRole) -> Self {
         Self {
             tx_name: tx_name.to_string(),
-            my_role,
-            timeout: timeout,
+            owner,
         }
     }
 }
 
-pub struct TimeoutDispatchTable {
-    pub rules: Vec<TimeoutDispatchRule>,
+pub struct TxOwnershipTable {
+    pub txs: Vec<TxOwnership>,
 }
 
-impl TimeoutDispatchTable {
-    pub fn new(rules: Vec<TimeoutDispatchRule>) -> Self {
-        Self { rules }
-    }
-    pub fn new_predefined(rounds: u8, inputs: Vec<(usize, &String)>) -> Result<Self, BitVMXError> {
+impl TxOwnershipTable {
+    pub fn new(rounds: u8, inputs: Vec<(usize, String)>) -> Result<Self, BitVMXError> {
         if rounds == 0 || inputs.is_empty() {
             return Err(Self::invalid_inputs(&inputs));
         }
@@ -95,147 +91,93 @@ impl TimeoutDispatchTable {
         let last_tx_first_nary = &format!("NARY_VERIFIER_{}", rounds);
         let last_tx_second_nary = &format!("NARY2_VERIFIER_{}", rounds);
 
-        let mut table = TimeoutDispatchTable::new(vec![]);
+        let mut table = TxOwnershipTable { txs: vec![] };
+        table.add(START_CH, Verifier);
 
-        let &(first_index, first_owner) = inputs
-            .first()
-            .ok_or_else(|| Self::invalid_inputs(&inputs))?;
-
-        if first_owner == "verifier" {
-            table.add_rule_pair(
-                START_CH,
-                &input_tx_name(first_index as u32),
-                ParticipantRole::Prover,
-                //TimeoutType::timeout_input(&input_tx_name(first_index as u32)),
-            );
-        } else {
-            table.add_rule_pair(
-                START_CH,
-                &input_tx_name(first_index as u32),
-                ParticipantRole::Verifier,
-                //TimeoutType::timeout_input(&input_tx_name(first_index as u32)),
-            );
-        }
-
-        for window in inputs.windows(2) {
-            let (prev_index, prev_owner) = window[0];
-            let (next_index, next_owner) = window[1];
-
-            if prev_owner == next_owner {
-                return Err(Self::invalid_inputs(&inputs));
-            }
-
-            let role = if prev_owner == "verifier" {
+        for (index, owner) in &inputs {
+            let owner = if owner.as_str() == "verifier" {
                 Verifier
             } else {
                 Prover
             };
-
-            table.add_rule_pair(
-                &input_tx_name(prev_index as u32),
-                &input_tx_name(next_index as u32),
-                role,
-            );
+            table.add(&input_tx_name(*index as u32), owner);
         }
-        let &(last_index, last_owner) =
-            inputs.last().ok_or_else(|| Self::invalid_inputs(&inputs))?;
+
+        //requires that the last input is owned by the prover, otherwise the sequence of timeout txs cannot be properly chained
+        let &(_last_index, last_owner) =
+            &inputs.last().ok_or_else(|| Self::invalid_inputs(&inputs))?;
         if !last_owner.starts_with("prover") {
             return Err(Self::invalid_inputs(&inputs));
         }
 
-        table.add_rule_pair(&input_tx_name(last_index as u32), PRE_COMMITMENT, Prover);
-        table.add_rule_pair(PRE_COMMITMENT, COMMITMENT, Verifier);
-        table.add_rule_pair(COMMITMENT, POST_COMMITMENT, Prover);
-        table.add_rule_pair(POST_COMMITMENT, "NARY_PROVER_1", Verifier);
-        table.add_nary_search_table("NARY", 1, rounds);
-        table.add_rule_pair(last_tx_first_nary, EXECUTE, Verifier);
-        table.add_rule_pair(EXECUTE, CHALLENGE, Prover);
-        table.add_rule_pair(CHALLENGE, "NARY2_PROVER_2", Verifier);
-        table.add_nary_search_table("NARY2", 2, rounds);
-        table.add_rule_pair(&last_tx_second_nary, GET_HASHES_AND_STEP, Verifier);
-        table.add_rule_pair(GET_HASHES_AND_STEP, CHALLENGE_READ, Prover);
+        table.add(PRE_COMMITMENT, Verifier);
+        table.add(COMMITMENT, Prover);
+        table.add(POST_COMMITMENT, Verifier);
+        table.add_nary_search("NARY", 1, rounds);
+        table.add(last_tx_first_nary, Verifier);
+        table.add(EXECUTE, Prover);
+        table.add(CHALLENGE, Verifier);
+        table.add_nary_search("NARY2", 2, rounds);
+        table.add(&last_tx_second_nary, Verifier);
+        table.add(GET_HASHES_AND_STEP, Prover);
+        table.add(CHALLENGE_READ, Verifier);
         Ok(table)
     }
 
-    fn add_nary_search_table(&mut self, nary_type: &str, start_round: u8, total_rounds: u8) {
+    fn add_nary_search(&mut self, nary_type: &str, start_round: u8, total_rounds: u8) {
         for round in start_round..=total_rounds {
             let prover = format!("{}_PROVER_{}", nary_type, round);
             let verifier = format!("{}_VERIFIER_{}", nary_type, round);
-            let next_prover = format!("{}_PROVER_{}", nary_type, round + 1);
-
-            self.add_rule_pair(&prover, &verifier, Prover);
-            if round < total_rounds {
-                // If not the last round
-                self.add_rule_pair(&verifier, &next_prover, Verifier);
-            }
+            self.add(&prover, Prover);
+            self.add(&verifier, Verifier);
         }
     }
 
-    pub fn add_rule(&mut self, tx_name: &str, my_role: ParticipantRole, timeout: String) {
-        self.rules
-            .push(TimeoutDispatchRule::new(tx_name, my_role, timeout));
-    }
-
-    pub fn add_rule_pair(&mut self, prev_tx: &str, next_tx: &str, role: ParticipantRole) {
-        self.add_rule(prev_tx, role.clone(), timeout_tx(next_tx));
-        self.add_rule(next_tx, role, timeout_input_tx(next_tx));
-    }
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &ParticipantRole, &String)> {
-        self.rules
+    fn is_other_tx(&self, tx_name: &str, drp_role: ParticipantRole) -> bool {
+        self.txs
             .iter()
-            .map(|r| (&r.tx_name, &r.my_role, &r.timeout))
+            .find(|tx| tx.tx_name == tx_name && tx.owner != drp_role)
+            .is_some()
     }
-    pub fn visualize(&self) {
-        let headers = ["Tx name", "Timeout string", "Role"];
-        let sep = " | ";
 
-        // Collect column strings in desired order
-        let mut cols: Vec<Vec<String>> = vec![Vec::new(); headers.len()];
-        for r in &self.rules {
-            cols[0].push(r.tx_name.clone());
-            cols[1].push(r.timeout.clone());
-            cols[2].push(format!("{:?}", r.my_role));
-        }
+    fn get_tx_and_next(&self, tx_name: &str) -> Option<(&TxOwnership, Option<&TxOwnership>)> {
+        let current_index = self.txs.iter().position(|tx| tx.tx_name == tx_name)?;
+        let current_tx = &self.txs[current_index];
+        let next_tx = self.txs.get(current_index + 1);
+        Some((current_tx, next_tx))
+    }
 
-        // Compute column widths (based on header and content)
-        let mut widths: Vec<usize> = headers.iter().map(|h| h.len()).collect();
-        for (i, col) in cols.iter().enumerate() {
-            for cell in col {
-                widths[i] = widths[i].max(cell.len());
+    fn get_timeout_tx(&self, name: &str, drp_role: ParticipantRole) -> Option<String> {
+        if let Some((tx, next_tx)) = self.get_tx_and_next(name) {
+            if tx.owner == drp_role {
+                // as I observed my tx on-chain I need to send the next tx timeout to force the other part to act
+                if let Some(next_tx) = next_tx {
+                    Some(timeout_tx(&next_tx.tx_name))
+                } else {
+                    None
+                }
+            } else {
+                // if the observed tx is owned by the other party, I need to force to include the input (except for START_CHALLENGE)
+                if name != START_CH {
+                    Some(timeout_input_tx(name))
+                } else {
+                    None
+                }
             }
+        } else {
+            None
         }
-
-        // Build header
-        let header_line = headers
-            .iter()
-            .enumerate()
-            .map(|(i, h)| format!("{:width$}", h, width = widths[i]))
-            .collect::<Vec<_>>()
-            .join(sep);
-
-        let total_width = header_line.len();
-        let mut output = String::new();
-
-        output.push_str(&format!("{}\n", header_line));
-        output.push_str(&format!("{}\n", "-".repeat(total_width)));
-
-        // Rows
-        for r in &self.rules {
-            let cells = [&r.tx_name, &r.timeout, &format!("{:?}", r.my_role)];
-
-            let row = cells
-                .iter()
-                .enumerate()
-                .map(|(i, c)| format!("{:width$}", c, width = widths[i]))
-                .collect::<Vec<_>>()
-                .join(sep);
-            output.push_str(&format!("{}\n", row));
-        }
-
-        info!("\n{}", output);
     }
 
-    fn invalid_inputs(inputs: &[(usize, &String)]) -> BitVMXError {
+    pub fn add(&mut self, tx_name: &str, owner: ParticipantRole) {
+        self.txs.push(TxOwnership::new(tx_name, owner));
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &ParticipantRole)> {
+        self.txs.iter().map(|r| (&r.tx_name, &r.owner))
+    }
+
+    fn invalid_inputs(inputs: &[(usize, String)]) -> BitVMXError {
         BitVMXError::InvalidInputs(inputs.iter().map(|(i, s)| (*i, (*s).clone())).collect())
     }
 }
@@ -246,13 +188,17 @@ fn auto_dispatch_timeout(
     vout: Option<u32>,
     program_context: &ProgramContext,
     current_height: u32,
-    timeout_table: &TimeoutDispatchTable,
+    timeout_table: &TxOwnershipTable,
 ) -> Result<(), BitVMXError> {
-    for (tx_name, tx_role, timeout) in timeout_table.iter() {
-        if *tx_name == name && *tx_role == drp.role() && vout.is_none() {
-            dispatch_timeout_tx(drp, program_context, &timeout, current_height)?;
-        }
+    // only dispatch when a tx is observed (not vouts of txs)
+    if vout.is_some() {
+        return Ok(());
     }
+
+    if let Some(timeout_name) = timeout_table.get_timeout_tx(name, drp.role()) {
+        dispatch_timeout_tx(drp, program_context, &timeout_name, current_height)?;
+    }
+
     Ok(())
 }
 
@@ -261,33 +207,25 @@ fn cancel_timeout(
     name: &str,
     vout: Option<u32>,
     program_context: &ProgramContext,
-    timeout_table: &TimeoutDispatchTable,
+    timeout_table: &TxOwnershipTable,
 ) -> Result<(), BitVMXError> {
-    let cancel = timeout_table.iter().any(|(_tx_name, tx_role, timeout)| {
-        timeout.trim_end_matches("_TO") == name && *tx_role == drp.role()
-    });
-
-    if cancel {
+    if name == START_CH {
+        return Ok(());
+    }
+    let is_other_tx = timeout_table.is_other_tx(name, drp.role());
+    if is_other_tx {
         let tx_to_cancel = if vout.is_none() {
             &timeout_tx(name)
         } else {
             &timeout_input_tx(name)
         };
-        cancel_to_tx(drp, program_context, tx_to_cancel)?;
+        info!("Cancel timeout tx: {}", tx_to_cancel);
+        let tx_id = drp.get_transaction_id_by_name(&tx_to_cancel)?;
+        program_context.bitcoin_coordinator.cancel(
+            bitcoin_coordinator::TypesToMonitor::Transactions(vec![tx_id], String::default(), None),
+        )?;
     }
-    Ok(())
-}
 
-fn cancel_to_tx(
-    drp: &DisputeResolutionProtocol,
-    program_context: &ProgramContext,
-    tx_to_cancel: &str,
-) -> Result<(), BitVMXError> {
-    info!("Cancel timeout tx: {}", tx_to_cancel);
-    let tx_id = drp.get_transaction_id_by_name(&tx_to_cancel)?;
-    program_context.bitcoin_coordinator.cancel(
-        bitcoin_coordinator::TypesToMonitor::Transactions(vec![tx_id], String::default(), None),
-    )?;
     Ok(())
 }
 
@@ -308,13 +246,14 @@ fn auto_claim_start(
     name: &str,
     vout: Option<u32>,
     program_context: &ProgramContext,
-    timeout_table: &TimeoutDispatchTable,
+    timeout_table: &TxOwnershipTable,
 ) -> Result<(), BitVMXError> {
     if vout.is_some() {
         return Ok(());
     }
-    for (_, tx_role, timeout) in timeout_table.iter() {
-        if timeout.as_str() == name && *tx_role == drp.role() {
+
+    if let Some(orig_tx) = get_tx_name_from_timeout(name) {
+        if timeout_table.is_other_tx(&orig_tx, drp.role()) {
             let claim_name = ClaimGate::tx_start(get_claim_name(drp, false));
             let tx = drp.get_signed(program_context, &claim_name, vec![0.into()])?;
             let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
@@ -322,7 +261,6 @@ fn auto_claim_start(
             dispatch(program_context, drp, tx, Some(speedup_data), None)?;
         }
     }
-
     Ok(())
 }
 
@@ -478,9 +416,10 @@ pub fn handle_tx_news(
         .iter()
         .enumerate()
         .filter(|(_, owner)| owner.as_str() != "skip" && owner.as_str() != "prover_prev")
+        .map(|(i, owner)| (i, owner.to_string()))
         .collect();
 
-    let timeout_table = TimeoutDispatchTable::new_predefined(rounds, inputs)?;
+    let timeout_table = TxOwnershipTable::new(rounds, inputs)?;
     //timeout_table.visualize();
 
     cancel_timeout(drp, &name, vout, program_context, &timeout_table)?;
@@ -1326,4 +1265,31 @@ fn handle_nary_prover(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tx_ownership_table() {
+        let table = TxOwnershipTable::new(4, vec![(0, "prover".to_string())]).unwrap();
+
+        assert_eq!(
+            table.get_timeout_tx("START_CHALLENGE", Verifier).unwrap(),
+            "INPUT_0_TO".to_string()
+        );
+
+        assert_eq!(table.get_timeout_tx("START_CHALLENGE", Prover), None);
+
+        assert_eq!(
+            table.get_timeout_tx("INPUT_0", Verifier).unwrap(),
+            "INPUT_0_INPUT_TO".to_string()
+        );
+
+        assert_eq!(
+            table.get_timeout_tx("INPUT_0", Prover).unwrap(),
+            "PRE_COMMITMENT_TO".to_string()
+        );
+    }
 }
