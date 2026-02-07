@@ -121,6 +121,7 @@ impl TxOwnershipTable {
         table.add(&last_tx_second_nary, Verifier);
         table.add(GET_HASHES_AND_STEP, Prover);
         table.add(CHALLENGE_READ, Verifier);
+        table.add(VERIFIER_FINAL, Verifier);
         Ok(table)
     }
 
@@ -152,6 +153,11 @@ impl TxOwnershipTable {
             if tx.owner == drp_role {
                 // as I observed my tx on-chain I need to send the next tx timeout to force the other part to act
                 if let Some(next_tx) = next_tx {
+                    //This cover the case of two consecutive tx owned by the same party (in particular START_CHALLENGE followed by the verifier first input)
+                    //and CHALLENGE_READ followed by VERIFIER_FINAL
+                    if next_tx.owner == drp_role {
+                        return None;
+                    }
                     Some(timeout_tx(&next_tx.tx_name))
                 } else {
                     None
@@ -188,14 +194,14 @@ fn auto_dispatch_timeout(
     vout: Option<u32>,
     program_context: &ProgramContext,
     current_height: u32,
-    timeout_table: &TxOwnershipTable,
+    ownership_table: &TxOwnershipTable,
 ) -> Result<(), BitVMXError> {
     // only dispatch when a tx is observed (not vouts of txs)
     if vout.is_some() {
         return Ok(());
     }
 
-    if let Some(timeout_name) = timeout_table.get_timeout_tx(name, drp.role()) {
+    if let Some(timeout_name) = ownership_table.get_timeout_tx(name, drp.role()) {
         dispatch_timeout_tx(drp, program_context, &timeout_name, current_height)?;
     }
 
@@ -207,12 +213,12 @@ fn cancel_timeout(
     name: &str,
     vout: Option<u32>,
     program_context: &ProgramContext,
-    timeout_table: &TxOwnershipTable,
+    ownership_table: &TxOwnershipTable,
 ) -> Result<(), BitVMXError> {
     if name == START_CH {
         return Ok(());
     }
-    let is_other_tx = timeout_table.is_other_tx(name, drp.role());
+    let is_other_tx = ownership_table.is_other_tx(name, drp.role());
     if is_other_tx {
         let tx_to_cancel = if vout.is_none() {
             &timeout_tx(name)
@@ -246,14 +252,14 @@ fn auto_claim_start(
     name: &str,
     vout: Option<u32>,
     program_context: &ProgramContext,
-    timeout_table: &TxOwnershipTable,
+    ownership_table: &TxOwnershipTable,
 ) -> Result<(), BitVMXError> {
     if vout.is_some() {
         return Ok(());
     }
 
     if let Some(orig_tx) = get_tx_name_from_timeout(name) {
-        if timeout_table.is_other_tx(&orig_tx, drp.role()) {
+        if ownership_table.is_other_tx(&orig_tx, drp.role()) {
             let claim_name = ClaimGate::tx_start(get_claim_name(drp, false));
             let tx = drp.get_signed(program_context, &claim_name, vec![0.into()])?;
             let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
@@ -419,10 +425,9 @@ pub fn handle_tx_news(
         .map(|(i, owner)| (i, owner.to_string()))
         .collect();
 
-    let timeout_table = TxOwnershipTable::new(rounds, inputs)?;
-    //timeout_table.visualize();
+    let ownership_table = TxOwnershipTable::new(rounds, inputs)?;
 
-    cancel_timeout(drp, &name, vout, program_context, &timeout_table)?;
+    cancel_timeout(drp, &name, vout, program_context, &ownership_table)?;
 
     let timelock_blocks = config.timelock_blocks;
 
@@ -432,10 +437,10 @@ pub fn handle_tx_news(
         vout,
         program_context,
         current_height,
-        &timeout_table,
+        &ownership_table,
     )?;
 
-    auto_claim_start(drp, &name, vout, program_context, &timeout_table)?;
+    auto_claim_start(drp, &name, vout, program_context, &ownership_table)?;
 
     claim_state_handle(
         drp,
