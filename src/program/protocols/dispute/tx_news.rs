@@ -67,9 +67,6 @@ fn dispatch_timeout_tx(
     Ok(())
 }
 
-// When I see [tx_name]
-// if I'm [role], then I dispatch
-// timeout_type[timeout_name].
 #[derive(Debug, Clone)]
 pub struct TxOwnership {
     pub tx_name: String,
