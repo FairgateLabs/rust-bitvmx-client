@@ -39,6 +39,7 @@ fn dispatch_timeout_tx(
     program_context: &ProgramContext,
     name: &str,
     current_height: u32,
+    require_leaf_id: bool,
 ) -> Result<(), BitVMXError> {
     info!("Dispatching timeout tx: {}", name);
     let params = program_context
@@ -53,7 +54,13 @@ fn dispatch_timeout_tx(
         current_height, name, timelock_blocks
     );
 
-    let tx = drp.get_signed(program_context, name, vec![(leaf, true).into()])?;
+    let inputs = if require_leaf_id {
+        vec![(leaf, true).into(), (0, false).into(), (0, true).into()]
+    } else {
+        vec![(leaf, true).into()]
+    };
+
+    let tx = drp.get_signed(program_context, name, inputs)?;
     let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
     let height = Some(current_height + timelock_blocks);
     dispatch(program_context, drp, tx, Some(speedup_data), height)?;
@@ -148,7 +155,7 @@ impl TxOwnershipTable {
         Some((current_tx, next_tx))
     }
 
-    fn get_timeout_tx(&self, name: &str, drp_role: ParticipantRole) -> Option<String> {
+    fn get_timeout_tx(&self, name: &str, drp_role: ParticipantRole) -> Option<(String, bool)> {
         if let Some((tx, next_tx)) = self.get_tx_and_next(name) {
             if tx.owner == drp_role {
                 // as I observed my tx on-chain I need to send the next tx timeout to force the other part to act
@@ -158,14 +165,14 @@ impl TxOwnershipTable {
                     if next_tx.owner == drp_role {
                         return None;
                     }
-                    Some(timeout_tx(&next_tx.tx_name))
+                    Some((timeout_tx(&next_tx.tx_name), false))
                 } else {
                     None
                 }
             } else {
                 // if the observed tx is owned by the other party, I need to force to include the input (except for START_CHALLENGE)
-                if name != START_CH {
-                    Some(timeout_input_tx(name))
+                if name != START_CH && name != VERIFIER_FINAL {
+                    Some((timeout_input_tx(name), true))
                 } else {
                     None
                 }
@@ -201,8 +208,15 @@ fn auto_dispatch_timeout(
         return Ok(());
     }
 
-    if let Some(timeout_name) = ownership_table.get_timeout_tx(name, drp.role()) {
-        dispatch_timeout_tx(drp, program_context, &timeout_name, current_height)?;
+    if let Some((timeout_name, require_leaf_id)) = ownership_table.get_timeout_tx(name, drp.role())
+    {
+        dispatch_timeout_tx(
+            drp,
+            program_context,
+            &timeout_name,
+            current_height,
+            require_leaf_id,
+        )?;
     }
 
     Ok(())
@@ -215,9 +229,10 @@ fn cancel_timeout(
     program_context: &ProgramContext,
     ownership_table: &TxOwnershipTable,
 ) -> Result<(), BitVMXError> {
-    if name == START_CH {
+    if name == START_CH || name == VERIFIER_FINAL {
         return Ok(());
     }
+
     let is_other_tx = ownership_table.is_other_tx(name, drp.role());
     if is_other_tx {
         let tx_to_cancel = if vout.is_none() {
@@ -472,7 +487,7 @@ pub fn handle_tx_news(
                 .get_var_or_err(&drp.ctx.id, &timeout_input_tx(&name))?
                 .vec_number()?;
 
-            let timeout_leaf = params[1];
+            let timeout_leaf = params[0];
 
             if leaf == timeout_leaf {
                 warn!("The timeout input for {name} was consumed");
@@ -1025,7 +1040,8 @@ pub fn handle_tx_news(
             }
 
             if CHALLENGE_READ == name && ParticipantRole::Verifier == drp.role() {
-                let tx = drp.get_signed(program_context, &VERIFIER_FINAL, vec![1.into()])?;
+                let tx =
+                    drp.get_signed(program_context, &VERIFIER_FINAL, vec![(1, true).into()])?;
                 let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
                 let height = Some(current_height + 2 * timelock_blocks as u32);
                 dispatch(program_context, drp, tx, Some(speedup_data), height)?;
@@ -1159,7 +1175,13 @@ fn handle_nary_verifier(
         }
     } else {
         if round == nary.total_rounds() as u32 && nary_search_type == NArySearchType::ConflictStep {
-            dispatch_timeout_tx(drp, program_context, &timeout_tx(post_name), current_height)?;
+            dispatch_timeout_tx(
+                drp,
+                program_context,
+                &timeout_tx(post_name),
+                current_height,
+                false,
+            )?;
         }
     }
     Ok(())
@@ -1184,7 +1206,7 @@ fn handle_nary_prover(
         .globals
         .get_var_or_err(&drp.ctx.id, &timeout_input_tx(name))?
         .vec_number()?;
-    let timeout_leaf = params[1];
+    let timeout_leaf = params[0];
     if leaf == timeout_leaf {
         info!("Verifier consumed the timeout input for {name}");
         return Ok(());
@@ -1281,19 +1303,19 @@ mod tests {
         let table = TxOwnershipTable::new(4, vec![(0, "prover".to_string())]).unwrap();
 
         assert_eq!(
-            table.get_timeout_tx("START_CHALLENGE", Verifier).unwrap(),
+            table.get_timeout_tx("START_CHALLENGE", Verifier).unwrap().0,
             "INPUT_0_TO".to_string()
         );
 
         assert_eq!(table.get_timeout_tx("START_CHALLENGE", Prover), None);
 
         assert_eq!(
-            table.get_timeout_tx("INPUT_0", Verifier).unwrap(),
+            table.get_timeout_tx("INPUT_0", Verifier).unwrap().0,
             "INPUT_0_INPUT_TO".to_string()
         );
 
         assert_eq!(
-            table.get_timeout_tx("INPUT_0", Prover).unwrap(),
+            table.get_timeout_tx("INPUT_0", Prover).unwrap().0,
             "PRE_COMMITMENT_TO".to_string()
         );
     }

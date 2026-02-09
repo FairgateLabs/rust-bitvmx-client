@@ -998,9 +998,12 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         amount = self.checked_sub(amount, fee)?;
         amount = self.checked_sub(amount, speedup_dust)?;
 
-        let verifier_final =
+        let mut speedup_timeout =
+            scripts::check_aggregated_signature(&aggregated, SignMode::Aggregate);
+        speedup_timeout.set_assert_leaf_id(0);
+        let mut verifier_final =
             scripts::timelock(2 * timelock_blocks, &aggregated, SignMode::Aggregate);
-        let speedup_timeout = scripts::check_aggregated_signature(&aggregated, SignMode::Aggregate);
+        verifier_final.set_assert_leaf_id(1);
 
         let output_type =
             OutputType::taproot(amount, aggregated, &vec![speedup_timeout, verifier_final])?;
