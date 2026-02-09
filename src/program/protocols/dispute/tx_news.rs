@@ -99,11 +99,7 @@ impl TxOwnershipTable {
         table.add(START_CH, Verifier);
 
         for (index, owner) in &inputs {
-            let owner = if owner.as_str() == "verifier" {
-                Verifier
-            } else {
-                Prover
-            };
+            let owner: ParticipantRole = owner.as_str().try_into()?;
             table.add(&input_tx_name(*index as u32), owner);
         }
 
@@ -136,6 +132,13 @@ impl TxOwnershipTable {
             self.add(&prover, Prover);
             self.add(&verifier, Verifier);
         }
+    }
+
+    fn is_my_tx(&self, tx_name: &str, drp_role: ParticipantRole) -> bool {
+        self.txs
+            .iter()
+            .find(|tx| tx.tx_name == tx_name && tx.owner == drp_role)
+            .is_some()
     }
 
     fn is_other_tx(&self, tx_name: &str, drp_role: ParticipantRole) -> bool {
@@ -491,32 +494,33 @@ pub fn handle_tx_news(
                 return Ok(());
             }
 
+            let my_tx = ownership_table.is_my_tx(&name, drp.role());
+            if !my_tx {
+                drp.decode_witness_from_speedup(
+                    tx_id,
+                    vout,
+                    &name,
+                    program_context,
+                    &tx_status.tx,
+                    None,
+                )?;
+            }
+            let (def, program_definition) = drp.get_program_definition(program_context)?;
+
             if name.starts_with(INPUT_TX) {
                 let idx = name
                     .strip_prefix(INPUT_TX)
                     .ok_or_else(|| BitVMXError::InvalidStringOperation(name.clone()))?
                     .parse::<u32>()?;
 
-                let (input_txs, _input_txs_sizes, _input_txs_offsets, last_tx_id) =
-                    get_txs_configuration(&drp.ctx.id, program_context)?;
-
-                let owner = input_txs[idx as usize].as_str();
+                let (_, _, _, last_tx_id) = get_txs_configuration(&drp.ctx.id, program_context)?;
 
                 // decode the witness
-                if owner != drp.role().to_string() {
-                    drp.decode_witness_from_speedup(
-                        tx_id,
-                        vout,
-                        &name,
-                        program_context,
-                        &tx_status.tx,
-                        None,
-                    )?;
+                if !my_tx {
                     unify_witnesses(&drp.ctx.id, program_context, idx as usize)?;
                 }
 
                 if drp.role() == ParticipantRole::Prover && idx != last_tx_id as u32 {
-                    let (def, _program_definition) = drp.get_program_definition(program_context)?;
                     let full_input = unify_inputs(&drp.ctx.id, program_context, &def)?;
                     for (i, input_chunk) in full_input.chunks(4).enumerate() {
                         // It is assumed that each input chunk is 4 bytes
@@ -548,9 +552,6 @@ pub fn handle_tx_news(
                         )?;
                         dispatch(program_context, drp, tx, Some(sp), None)?;
                     } else {
-                        //Prover
-                        let (def, _program_definition) =
-                            drp.get_program_definition(program_context)?;
                         let full_input = unify_inputs(&drp.ctx.id, program_context, &def)?;
                         program_context.globals.set_var(
                             &drp.ctx.id,
@@ -562,7 +563,6 @@ pub fn handle_tx_news(
             }
 
             if name == PRE_COMMITMENT && drp.role() == ParticipantRole::Prover {
-                let (_def, program_definition) = drp.get_program_definition(program_context)?;
                 let execution_path = drp.get_execution_path()?;
                 let full_input = program_context
                     .globals
@@ -571,7 +571,7 @@ pub fn handle_tx_news(
                 let msg = serde_json::to_string(&DispatcherJob {
                     job_id: drp.ctx.id.to_string(),
                     job_type: EmulatorJobType::ProverExecute(
-                        program_definition,
+                        program_definition.clone(),
                         full_input,
                         execution_path.clone(),
                         format!("{}/{}", execution_path, "execution.json").to_string(),
@@ -595,7 +595,6 @@ pub fn handle_tx_news(
 
                 let execution_path = drp.get_execution_path()?;
 
-                let (def, program_definition) = drp.get_program_definition(program_context)?;
                 let input_program = unify_inputs(&drp.ctx.id, program_context, &def)?;
 
                 let last_hash = program_context
@@ -626,7 +625,7 @@ pub fn handle_tx_news(
                 let msg = serde_json::to_string(&DispatcherJob {
                     job_id: drp.ctx.id.to_string(),
                     job_type: EmulatorJobType::VerifierCheckExecution(
-                        program_definition,
+                        program_definition.clone(),
                         input_program,
                         execution_path.clone(),
                         last_step,
@@ -711,7 +710,6 @@ pub fn handle_tx_news(
                     return Ok(());
                 }
 
-                let (_program_definition, pdf) = drp.get_program_definition(program_context)?;
                 let execution_path = drp.get_execution_path()?;
 
                 let mut values = std::collections::HashMap::new();
@@ -799,7 +797,7 @@ pub fn handle_tx_news(
                 let msg = serde_json::to_string(&DispatcherJob {
                     job_id: drp.ctx.id.to_string(),
                     job_type: EmulatorJobType::VerifierChooseChallenge(
-                        pdf,
+                        program_definition.clone(),
                         execution_path.clone(),
                         final_trace,
                         prover_step_hash,
@@ -961,7 +959,6 @@ pub fn handle_tx_news(
                     return Ok(());
                 }
 
-                let (_program_definition, pdf) = drp.get_program_definition(program_context)?;
                 let execution_path = drp.get_execution_path()?;
 
                 let mut values = std::collections::HashMap::new();
@@ -994,7 +991,7 @@ pub fn handle_tx_news(
                 let msg = serde_json::to_string(&DispatcherJob {
                     job_id: drp.ctx.id.to_string(),
                     job_type: EmulatorJobType::VerifierChooseChallengeForReadChallenge(
-                        pdf,
+                        program_definition.clone(),
                         execution_path.clone(),
                         format!("{}/{}", execution_path, "execution.json").to_string(),
                         prover_step_hash,
@@ -1297,7 +1294,8 @@ mod tests {
 
     #[test]
     fn test_tx_ownership_table() {
-        let table = TxOwnershipTable::new(4, vec![(0, "prover".to_string())]).unwrap();
+        let table =
+            TxOwnershipTable::new(4, vec![(0, ParticipantRole::Prover.to_string())]).unwrap();
 
         assert_eq!(
             table.get_timeout_tx("START_CHALLENGE", Verifier).unwrap().0,
