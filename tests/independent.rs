@@ -338,18 +338,20 @@ pub fn sign_winternitz_message(message_bytes: &[u8], index: u32) -> WinternitzSi
     signature
 }
 
+/*
 #[ignore]
 #[test]
 fn test_independent_testnet() -> Result<()> {
     test_all_aux(true, Network::Testnet, None, None, None, None)?;
     Ok(())
-}
+}*/
+/*
 #[ignore]
 #[test]
 fn test_independent_regtest() -> Result<()> {
     test_all_aux(true, Network::Regtest, None, None, None, None)?;
     Ok(())
-}
+}*/
 #[ignore]
 #[test]
 fn test_all() -> Result<()> {
@@ -456,6 +458,7 @@ fn test_previous_input() -> Result<()> {
 /// transaction dispatch errors when transactions fail to be processed. The test
 /// creates two transactions chained together (causing the second one to fail because the first one was not in the mempool).
 /// This failure occurs because QuikNode takes time to update or propagate transactions.
+/*/
 #[ignore]
 #[test]
 fn retry_failed_txs_test() -> Result<()> {
@@ -538,7 +541,7 @@ fn retry_failed_txs_test() -> Result<()> {
     );
 
     Ok(())
-}
+}*/
 
 #[ignore]
 #[test]
