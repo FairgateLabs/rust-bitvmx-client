@@ -802,77 +802,61 @@ pub fn handle_tx_news(
                             .number()?
                             as u32;
 
-                        match leaf {
-                            l if l == read_value_nary_search_leaf => {
-                                let mut expected_names: Vec<&str> =
-                                    READ_VALUE_NARY_SEARCH_CHALLENGE
-                                        .iter()
-                                        .map(|(name, _)| *name)
-                                        .collect();
+                        let selection_bits: Option<u32> = if leaf == read_value_nary_search_leaf {
+                            let mut expected_names: Vec<&str> = READ_VALUE_NARY_SEARCH_CHALLENGE
+                                .iter()
+                                .map(|(name, _)| *name)
+                                .collect();
 
-                                expected_names.insert(0, "prover_continue");
+                            expected_names.insert(0, "prover_continue");
 
-                                if names == expected_names {
-                                    let bits_name = &names[1];
-                                    let witness = program_context
-                                        .witness
-                                        .get_witness_or_err(&drp.ctx.id, bits_name)?;
-                                    let bytes = witness.winternitz()?.message_bytes();
-                                    info!(
+                            if names == expected_names {
+                                let bits_name = &names[1];
+                                let witness = program_context
+                                    .witness
+                                    .get_witness_or_err(&drp.ctx.id, bits_name)?;
+                                let bytes = witness.winternitz()?.message_bytes();
+                                info!(
                                         "Challenge will be extended with a 2nd nary search. {bits_name} are {:?}",
                                         bytes
                                     );
-                                    if bytes.len() != 1 {
-                                        return Err(BitVMXError::InvalidState(
-                                            "Expected exactly one byte for selection bits"
-                                                .to_string(),
-                                        ));
-                                    }
-                                    let selection_bits = bytes[0] as u32;
-                                    handle_nary_verifier(
-                                        &name,
-                                        drp,
-                                        program_context,
-                                        tx_id,
-                                        vout,
-                                        &tx_status,
-                                        &fail_force_config,
-                                        "verifier_selection_bits2",
-                                        CHALLENGE,
-                                        selection_bits,
-                                        1, // round 2
-                                        NArySearchType::ReadValueChallenge,
-                                    )?;
-                                } else {
-                                    return Err(BitVMXError::InvalidLeaf(format!(
+                                if bytes.len() != 1 {
+                                    return Err(BitVMXError::InvalidState(
+                                        "Expected exactly one byte for selection bits".to_string(),
+                                    ));
+                                }
+                                let selection_bits = bytes[0] as u32;
+                                Some(selection_bits)
+                            } else {
+                                return Err(BitVMXError::InvalidLeaf(format!(
                                         "The challenge leaf does not match the expected witness names.\n\
                                         Expected: {:?}, got: {:?}",
                                         expected_names, names
                                     )));
-                                }
                             }
-                            _ => {
-                                if fail_force_config.prover_force_second_nary {
-                                    // for testing purposes we will try to start the second nary search but it should fail
-                                    let selection_bits = 0;
-                                    handle_nary_verifier(
-                                        &name,
-                                        drp,
-                                        program_context,
-                                        tx_id,
-                                        vout,
-                                        &tx_status,
-                                        &fail_force_config,
-                                        "verifier_selection_bits2",
-                                        CHALLENGE,
-                                        selection_bits,
-                                        1, // round 2
-                                        NArySearchType::ReadValueChallenge,
-                                    )?;
-                                } else {
-                                    info!("Challenge ended successfully");
-                                }
-                            }
+                        } else if fail_force_config.prover_force_second_nary {
+                            // for testing purposes we will try to start the second nary search but it should fail
+                            Some(0)
+                        } else {
+                            info!("Challenge ended successfully");
+                            None
+                        };
+
+                        if let Some(selection_bits) = selection_bits {
+                            handle_nary_verifier(
+                                &name,
+                                drp,
+                                program_context,
+                                tx_id,
+                                vout,
+                                &tx_status,
+                                &fail_force_config,
+                                "verifier_selection_bits2",
+                                CHALLENGE,
+                                selection_bits,
+                                1, // round 2
+                                NArySearchType::ReadValueChallenge,
+                            )?;
                         }
                     }
 
