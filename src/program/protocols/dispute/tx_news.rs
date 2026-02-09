@@ -96,7 +96,12 @@ impl TxOwnershipTable {
         table.add(START_CH, Verifier);
 
         for (index, owner) in &inputs {
-            let owner: ParticipantRole = owner.as_str().try_into()?;
+            let owner = if owner.as_str() == "verifier" {
+                Verifier
+            } else {
+                Prover
+            };
+
             table.add(&input_tx_name(*index as u32), owner);
         }
 
@@ -520,71 +525,59 @@ pub fn handle_tx_news(
                 )?;
             }
 
-            if name.starts_with(INPUT_TX) {
-                let idx = name
-                    .strip_prefix(INPUT_TX)
-                    .ok_or_else(|| BitVMXError::InvalidStringOperation(name.clone()))?
-                    .parse::<u32>()?;
-
-                let (_, _, _, last_tx_id) = get_txs_configuration(&drp.ctx.id, program_context)?;
-
-                // decode the witness
-                if !my_tx {
-                    unify_witnesses(&drp.ctx.id, program_context, idx as usize)?;
-                }
-
-                if drp.role() == ParticipantRole::Prover && idx != last_tx_id as u32 {
-                    let full_input = unify_inputs(&drp.ctx.id, program_context, &def)?;
-                    for (i, input_chunk) in full_input.chunks(4).enumerate() {
-                        // It is assumed that each input chunk is 4 bytes
-                        set_input(
-                            &drp.ctx.id,
-                            program_context,
-                            &program_input(i as u32, Some(&ParticipantRole::Prover)),
-                            input_chunk.to_vec(),
-                        )?;
-                    }
-                    let (tx, sp) = drp.get_tx_with_speedup_data(
-                        program_context,
-                        &input_tx_name(idx + 1),
-                        0,
-                        0,
-                        true,
-                    )?;
-                    dispatch(program_context, drp, tx, Some(sp), None)?;
-                }
-                if idx == last_tx_id as u32 {
-                    //if it's the last input
-                    if drp.role() == ParticipantRole::Verifier {
-                        let (tx, sp) = drp.get_tx_with_speedup_data(
-                            program_context,
-                            PRE_COMMITMENT,
-                            0,
-                            0,
-                            true,
-                        )?;
-                        dispatch(program_context, drp, tx, Some(sp), None)?;
-                    } else {
-                        let full_input = unify_inputs(&drp.ctx.id, program_context, &def)?;
-                        program_context.globals.set_var(
-                            &drp.ctx.id,
-                            "full_input",
-                            VariableTypes::Input(full_input.clone()),
-                        )?;
-                    }
-                }
-            }
-
             if !my_tx {
                 let execution_path = drp.get_execution_path()?;
                 let execution_file = format!("{}/{}", execution_path, "execution.json").to_string();
 
                 match name.as_str() {
+                    name if name.starts_with(INPUT_TX) => {
+                        let idx = name
+                            .strip_prefix(INPUT_TX)
+                            .ok_or_else(|| BitVMXError::InvalidStringOperation(name.to_string()))?
+                            .parse::<u32>()?;
+
+                        let (_, _, _, last_tx_id) =
+                            get_txs_configuration(&drp.ctx.id, program_context)?;
+
+                        unify_witnesses(&drp.ctx.id, program_context, idx as usize)?;
+
+                        if drp.role() == ParticipantRole::Prover {
+                            if idx != last_tx_id as u32 {
+                                let full_input = unify_inputs(&drp.ctx.id, program_context, &def)?;
+                                for (i, input_chunk) in full_input.chunks(4).enumerate() {
+                                    // It is assumed that each input chunk is 4 bytes
+                                    set_input(
+                                        &drp.ctx.id,
+                                        program_context,
+                                        &program_input(i as u32, Some(&ParticipantRole::Prover)),
+                                        input_chunk.to_vec(),
+                                    )?;
+                                }
+                                let (tx, sp) = drp.get_tx_with_speedup_data(
+                                    program_context,
+                                    &input_tx_name(idx + 1),
+                                    0,
+                                    0,
+                                    true,
+                                )?;
+                                dispatch(program_context, drp, tx, Some(sp), None)?;
+                            }
+                        } else {
+                            if idx == last_tx_id {
+                                let (tx, sp) = drp.get_tx_with_speedup_data(
+                                    program_context,
+                                    PRE_COMMITMENT,
+                                    0,
+                                    0,
+                                    true,
+                                )?;
+                                dispatch(program_context, drp, tx, Some(sp), None)?;
+                            }
+                        }
+                    }
+
                     PRE_COMMITMENT => {
-                        let full_input = program_context
-                            .globals
-                            .get_var_or_err(&drp.ctx.id, "full_input")?
-                            .input()?;
+                        let full_input = unify_inputs(&drp.ctx.id, program_context, &def)?;
                         execute(
                             drp,
                             program_context,
@@ -826,9 +819,9 @@ pub fn handle_tx_news(
                                         .get_witness_or_err(&drp.ctx.id, bits_name)?;
                                     let bytes = witness.winternitz()?.message_bytes();
                                     info!(
-                                "Challenge will be extended with a 2nd nary search. {bits_name} are {:?}",
-                                bytes
-                            );
+                                        "Challenge will be extended with a 2nd nary search. {bits_name} are {:?}",
+                                        bytes
+                                    );
                                     if bytes.len() != 1 {
                                         return Err(BitVMXError::InvalidState(
                                             "Expected exactly one byte for selection bits"
@@ -852,10 +845,10 @@ pub fn handle_tx_news(
                                     )?;
                                 } else {
                                     return Err(BitVMXError::InvalidLeaf(format!(
-                                "The challenge leaf does not match the expected witness names.\n\
-                                Expected: {:?}, got: {:?}",
-                                expected_names, names
-                            )));
+                                        "The challenge leaf does not match the expected witness names.\n\
+                                        Expected: {:?}, got: {:?}",
+                                        expected_names, names
+                                    )));
                                 }
                             }
                             _ => {

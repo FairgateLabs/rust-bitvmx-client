@@ -186,7 +186,10 @@ pub fn split_input(
     let owner = input_txs[idx as usize].as_str();
     let offset = input_txs_offsets[idx as usize];
 
-    let role: ParticipantRole = owner.try_into()?;
+    let role = match owner {
+        "verifier" => ParticipantRole::Verifier,
+        _ => ParticipantRole::Prover,
+    };
 
     for i in 0..words {
         let partial_input = full_input
@@ -233,7 +236,10 @@ pub fn unify_witnesses(
     let offset = input_txs_offsets[idx];
     let size = input_txs_sizes[idx];
 
-    let owner: ParticipantRole = owner.as_str().try_into()?;
+    let owner = match owner.as_str() {
+        "verifier" => ParticipantRole::Verifier,
+        _ => ParticipantRole::Prover,
+    };
 
     let mut input_for_tx = vec![];
     for i in 0..size {
