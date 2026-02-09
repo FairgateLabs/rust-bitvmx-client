@@ -98,7 +98,11 @@ pub trait ProtocolHandler {
     ) -> Result<(), BitVMXError>;
 
     fn sign(&mut self, key_chain: &KeyChain) -> Result<(), ProtocolBuilderError> {
-        let mut protocol = self.load_protocol()?;
+        let mut protocol = match self.load_protocol() {
+            Ok(p) => p,
+            Err(ProtocolBuilderError::MissingProtocol(_)) => return Ok(()),
+            Err(e) => return Err(e),
+        };
         protocol.sign(&key_chain.key_manager, &self.context().protocol_name)?;
         self.save_protocol(protocol)?;
         Ok(())

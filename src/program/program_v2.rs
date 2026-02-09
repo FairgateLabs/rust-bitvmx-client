@@ -250,9 +250,42 @@ impl ProgramV2 {
                 state_changed = true;
             }
             ProgramState::SettingUpV2 => {
-                // SetupEngine drives the entire setup flow
-                if let Some(engine) = &mut self.setup_engine {
-                    // Delegate all setup logic to SetupEngine
+                // SetupEngine drives the entire setup flow.
+                //
+                // build_protocol() must run AFTER keys step but BEFORE nonces
+                // step generates data (matching the legacy Program flow).
+                // We check twice:
+                //   (a) BEFORE the engine tick — covers programs loaded from
+                //       disk where the keys step already completed previously.
+                //   (b) AFTER the engine tick  — covers the tick where the keys
+                //       step completes (engine advances to nonces/Pending but
+                //       does not generate data in the same tick).
+
+                // (a) Pre-tick: build protocol if keys already done (loaded state)
+                {
+                    let engine = self.setup_engine.as_ref().ok_or_else(|| {
+                        BitVMXError::InvalidMessage(
+                            "Protocol must return setup steps for ProgramV2".to_string(),
+                        )
+                    })?;
+                    let keys_done = engine.state().current_step_index > 0
+                        || engine.is_complete();
+                    if keys_done && !self.protocol_built {
+                        info!("ProgramV2: Keys step complete (pre-tick), building protocol graph");
+                        self.build_protocol(&program_context)?;
+                        self.protocol_built = true;
+                        info!("ProgramV2: Protocol graph built successfully");
+                    }
+                }
+
+                // Run the engine tick
+                let (tick_state_changed, is_complete) = {
+                    let engine = self.setup_engine.as_mut().ok_or_else(|| {
+                        BitVMXError::InvalidMessage(
+                            "Protocol must return setup steps for ProgramV2".to_string(),
+                        )
+                    })?;
+
                     let tick_result = engine.tick(
                         &mut self.protocol,
                         &self.participants,
@@ -262,40 +295,46 @@ impl ProgramV2 {
                         program_context,
                     )?;
 
-                    if tick_result.state_changed {
-                        state_changed = true;
-                    }
-
-                    // Check if setup is complete
                     let is_complete = engine.is_complete();
+
                     info!(
-                        "ProgramV2: SetupEngine check - is_complete: {}, current_step_index: {}, total_steps: {}",
+                        "ProgramV2: SetupEngine check - is_complete: {}, current_step: {}/{}",
                         is_complete,
                         engine.state().current_step_index,
                         engine.total_steps()
                     );
-                    
-                    if is_complete {
-                        // Check if protocol was already built (crash recovery scenario)
-                        if self.protocol_built {
-                            info!("ProgramV2: SetupEngine complete but protocol already built, transitioning to Monitoring");
-                            self.state = ProgramState::Monitoring;
-                            state_changed = true;
-                        } else {
-                            info!("ProgramV2: SetupEngine completed all steps, building protocol");
-                            self.build_protocol(&program_context)?;
-                            self.protocol.setup_complete(&program_context)?;
-                            self.protocol_built = true;
-                            self.state = ProgramState::Monitoring;
-                            state_changed = true;
-                            info!("ProgramV2: Protocol built, transitioning to Monitoring state");
-                        }
+
+                    (tick_result.state_changed, is_complete)
+                };
+
+                if tick_state_changed {
+                    state_changed = true;
+                }
+
+                // (b) Post-tick: build protocol if keys just completed in this tick
+                {
+                    let engine = self.setup_engine.as_ref().ok_or_else(|| {
+                        BitVMXError::InvalidMessage(
+                            "Protocol must return setup steps for ProgramV2".to_string(),
+                        )
+                    })?;
+                    let keys_done = engine.state().current_step_index > 0
+                        || engine.is_complete();
+                    if keys_done && !self.protocol_built {
+                        info!("ProgramV2: Keys step complete (post-tick), building protocol graph");
+                        self.build_protocol(&program_context)?;
+                        self.protocol_built = true;
+                        info!("ProgramV2: Protocol graph built successfully");
                     }
-                } else {
-                    error!("ProgramV2: Protocol doesn't use SetupEngine - this shouldn't happen");
-                    return Err(BitVMXError::InvalidMessage(
-                        "Protocol must return setup steps for ProgramV2".to_string(),
-                    ));
+                }
+
+                // After all setup steps complete, sign and finalize
+                if is_complete {
+                    self.protocol.sign(&program_context.key_chain)?;
+                    self.protocol.setup_complete(&program_context)?;
+                    self.state = ProgramState::Monitoring;
+                    state_changed = true;
+                    info!("ProgramV2: Setup finalized, transitioning to Monitoring state");
                 }
             }
             ProgramState::Monitoring => {
@@ -638,11 +677,22 @@ impl ProgramV2 {
         self.protocol.notify_news(
             tx_id,
             vout,
-            tx_status,
+            tx_status.clone(),
             context,
             program_context,
             participant_keys,
         )?;
+
+        // Send transaction notification to L2 channel (matching legacy Program behavior)
+        if vout.is_none() {
+            let name = self.protocol.get_transaction_name_by_id(tx_id)?;
+            program_context.broker_channel.send(
+                &program_context.components_config.l2,
+                OutgoingBitVMXApiMessages::Transaction(self.program_id, tx_status, Some(name))
+                    .to_string()?,
+            )?;
+        }
+
         Ok(())
     }
 }

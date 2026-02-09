@@ -259,6 +259,10 @@ impl SetupStep for KeysStep {
             );
         }
 
+        for (name, key) in protocol.get_pregenerated_aggregated_keys(context)? {
+            computed_aggregated.insert(name, key);
+        }
+
         // Update my_keys with computed_aggregated
         my_keys.computed_aggregated = computed_aggregated;
 

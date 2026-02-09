@@ -98,7 +98,7 @@ impl SlotProtocolConfiguration {
             VariableTypes::Utxo(self.fund_utxo.clone()).set_msg(self.id, FUND_UTXO)?,
             VariableTypes::Number(self.timelock_blocks as u32)
                 .set_msg(self.id, TIMELOCK_BLOCKS_KEY)?,
-            IncomingBitVMXApiMessages::Setup(
+            IncomingBitVMXApiMessages::SetupV2(
                 self.id,
                 PROGRAM_TYPE_SLOT.to_string(),
                 addresses,

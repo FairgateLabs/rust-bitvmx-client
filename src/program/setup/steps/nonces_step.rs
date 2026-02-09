@@ -76,55 +76,19 @@ impl SetupStep for NoncesStep {
         // Generate nonces for each aggregated key using the KeyChain
         let mut public_nonce_msg: PubNonceMessage = Vec::new();
 
-        // Try to get message from protocol if it's CooperativeSignatureProtocol
-        // For other protocols, we'll use a placeholder message
-        let message = if let crate::program::protocols::protocol_handler::ProtocolType::CooperativeSignatureProtocol(ref coop_protocol) = protocol {
-            coop_protocol.message().to_vec()
-        } else {
-            // Use protocol ID as placeholder message for other protocols
-            protocol.context().id.to_string().into_bytes()
-        };
-
-        // Use protocol ID as message_id for nonce generation
-        let message_id = protocol.context().id.to_string();
-
         for aggregated in my_keys.computed_aggregated.values() {
-            // Try to generate nonces if they don't exist yet
-            // The key_manager should generate nonces when we try to get them for the first time
-            // But we need to trigger generation by attempting to sign or generate nonces
-            // For now, try to get nonces - if they fail, we'll need to generate them
-            let nonces = context
+            let nonces = match context
                 .key_chain
-                .get_nonces(aggregated, &protocol.context().protocol_name);
-
-            let nonces = if let Err(_) = nonces {
-                // Nonces don't exist yet, try to generate them
-                // We'll use the key_manager to generate nonces with the message
-                // Note: This might require exposing a generate_nonces method
-                // For now, try to generate by attempting to get a nonce for a specific message_id
-                debug!(
-                    "NoncesStep: Nonces not found for aggregated key {}, attempting to generate",
-                    aggregated
-                );
-                
-                // Try to generate nonces using the key_manager's generate_nonce method
-                context
-                    .key_chain
-                    .key_manager
-                    .generate_nonce(&message_id, message.clone(), aggregated, &protocol.context().protocol_name, None)
-                    .map_err(|e| {
-                        BitVMXError::InvalidMessage(format!(
-                            "Failed to generate nonces for aggregated key {}: {}",
-                            aggregated, e
-                        ))
-                    })?;
-                
-                // Now try to get the nonces we just generated
-                context
-                    .key_chain
-                    .get_nonces(aggregated, &protocol.context().protocol_name)?
-            } else {
-                nonces?
+                .get_nonces(aggregated, &protocol.context().protocol_name)
+            {
+                Ok(n) => n,
+                Err(_) => {
+                    debug!(
+                        "NoncesStep: No nonces for aggregated key {}, skipping",
+                        aggregated
+                    );
+                    continue;
+                }
             };
 
             let my_pub = context
@@ -133,7 +97,7 @@ impl SetupStep for NoncesStep {
                 .get_my_public_key(aggregated)?;
 
             debug!(
-                "NoncesStep: Generated nonces for aggregated key: {}",
+                "NoncesStep: Got nonces for aggregated key: {}",
                 aggregated
             );
 

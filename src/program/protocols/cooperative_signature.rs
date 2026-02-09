@@ -113,6 +113,14 @@ impl ProtocolHandler for CooperativeSignatureProtocol {
             aggregated_key
         );
 
+        context.key_chain.key_manager.generate_nonce(
+            &key_name,
+            self.message.clone(),
+            aggregated_key,
+            &self.ctx.protocol_name,
+            None,
+        )?;
+
         // Store the message being signed (as hex string)
         context.globals.set_var(
             &self.ctx.id,

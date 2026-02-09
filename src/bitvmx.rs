@@ -1300,8 +1300,17 @@ impl BitVMXApi for BitVMX {
     }
 
     fn dispatch_transaction_name(&mut self, id: Uuid, name: &str) -> Result<(), BitVMXError> {
-        self.load_program(&id)?
-            .dispatch_transaction_name(&self.program_context, name)?;
+        match self.get_program_version(&id)? {
+            Some(ProgramVersion::Legacy) => {
+                self.load_program(&id)?
+                    .dispatch_transaction_name(&self.program_context, name)?;
+            }
+            Some(ProgramVersion::V2) => {
+                self.load_program_v2(&id)?
+                    .dispatch_transaction_name(name, &mut self.program_context)?;
+            }
+            None => return Err(BitVMXError::ProgramNotFound(id)),
+        }
         Ok(())
     }
 
@@ -1566,23 +1575,56 @@ impl BitVMXApi for BitVMX {
                 BitVMXApi::get_transaction(self, from, id, txid)?
             }
             IncomingBitVMXApiMessages::GetTransactionInfoByName(id, name) => {
-                let program = self.load_program(&id);
-                let response = match program {
-                    Ok(prog) => match prog.get_transaction_by_name(&self.program_context, &name) {
-                        Ok(tx) => OutgoingBitVMXApiMessages::TransactionInfo(id, name, tx),
-                        Err(err) => {
-                            error!(
-                                "Transaction not found: {} in program {:?}. Error: {}",
-                                name, id, err
-                            );
-                            OutgoingBitVMXApiMessages::NotFound(
-                                id,
-                                format!("Transaction not found: {}", name),
-                            )
+                let response = match self.get_program_version(&id)? {
+                    Some(ProgramVersion::Legacy) => {
+                        match self.load_program(&id) {
+                            Ok(prog) => match prog.get_transaction_by_name(&self.program_context, &name) {
+                                Ok(tx) => OutgoingBitVMXApiMessages::TransactionInfo(id, name, tx),
+                                Err(err) => {
+                                    error!(
+                                        "Transaction not found: {} in program {:?}. Error: {}",
+                                        name, id, err
+                                    );
+                                    OutgoingBitVMXApiMessages::NotFound(
+                                        id,
+                                        format!("Transaction not found: {}", name),
+                                    )
+                                }
+                            },
+                            Err(err) => {
+                                error!("Program not found: {:?}. Error: {}", id, err);
+                                OutgoingBitVMXApiMessages::NotFound(
+                                    id,
+                                    format!("Program not found: {}", name),
+                                )
+                            }
                         }
-                    },
-                    Err(err) => {
-                        error!("Program not found: {:?}. Error: {}", id, err);
+                    }
+                    Some(ProgramVersion::V2) => {
+                        match self.load_program_v2(&id) {
+                            Ok(prog) => match prog.get_transaction_by_name(&name, &self.program_context) {
+                                Ok(tx) => OutgoingBitVMXApiMessages::TransactionInfo(id, name, tx),
+                                Err(err) => {
+                                    error!(
+                                        "Transaction not found: {} in program {:?}. Error: {}",
+                                        name, id, err
+                                    );
+                                    OutgoingBitVMXApiMessages::NotFound(
+                                        id,
+                                        format!("Transaction not found: {}", name),
+                                    )
+                                }
+                            },
+                            Err(err) => {
+                                error!("Program not found: {:?}. Error: {}", id, err);
+                                OutgoingBitVMXApiMessages::NotFound(
+                                    id,
+                                    format!("Program not found: {}", name),
+                                )
+                            }
+                        }
+                    }
+                    None => {
                         OutgoingBitVMXApiMessages::NotFound(
                             id,
                             format!("Program not found: {}", name),
