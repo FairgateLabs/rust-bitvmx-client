@@ -994,15 +994,20 @@ fn handle_nary_common(
     nary_search_type: NArySearchType,
     round: u32,
 ) -> Result<Option<FailConfiguration>, BitVMXError> {
+    let (main, read) = match drp.role() {
+        ParticipantRole::Prover => (
+            &fail_force_config.main.fail_config_prover,
+            &fail_force_config.read.fail_config_prover,
+        ),
+        ParticipantRole::Verifier => (
+            &fail_force_config.read.fail_config_verifier,
+            &fail_force_config.main.fail_config_verifier,
+        ),
+    };
+
     let (fail_config, current_round) = match nary_search_type {
-        NArySearchType::ConflictStep => (
-            fail_force_config.main.fail_config_prover.clone(),
-            "current_round",
-        ),
-        NArySearchType::ReadValueChallenge => (
-            fail_force_config.read.fail_config_prover.clone(),
-            "current_round2",
-        ),
+        NArySearchType::ConflictStep => (main.clone(), "current_round"),
+        NArySearchType::ReadValueChallenge => (read.clone(), "current_round2"),
     };
 
     //TODO: make this value return from execution
