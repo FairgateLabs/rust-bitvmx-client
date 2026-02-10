@@ -408,6 +408,19 @@ fn execute(
     Ok(())
 }
 
+fn to_u8(bytes: &[u8]) -> Result<u8, BitVMXError> {
+    Ok(u8::from_be_bytes(bytes.try_into()?))
+}
+fn to_u32(bytes: &[u8]) -> Result<u32, BitVMXError> {
+    Ok(u32::from_be_bytes(bytes.try_into()?))
+}
+fn to_u64(bytes: &[u8]) -> Result<u64, BitVMXError> {
+    Ok(u64::from_be_bytes(bytes.try_into()?))
+}
+fn to_hex(bytes: &[u8]) -> String {
+    hex::encode(bytes)
+}
+
 pub fn handle_tx_news(
     drp: &DisputeResolutionProtocol,
     tx_id: Txid,
@@ -704,18 +717,6 @@ pub fn handle_tx_news(
                                 .message_bytes();
                             values.insert(name.clone(), value);
                         }
-                        fn to_u8(bytes: &[u8]) -> Result<u8, BitVMXError> {
-                            Ok(u8::from_be_bytes(bytes.try_into()?))
-                        }
-                        fn to_u32(bytes: &[u8]) -> Result<u32, BitVMXError> {
-                            Ok(u32::from_be_bytes(bytes.try_into()?))
-                        }
-                        fn to_u64(bytes: &[u8]) -> Result<u64, BitVMXError> {
-                            Ok(u64::from_be_bytes(bytes.try_into()?))
-                        }
-                        fn to_hex(bytes: &[u8]) -> String {
-                            hex::encode(bytes)
-                        }
 
                         let step_number = to_u64(&values["prover_step_number"])?;
                         let trace_read1 = TraceRead::new(
@@ -908,12 +909,6 @@ pub fn handle_tx_news(
                                 .winternitz()?
                                 .message_bytes();
                             values.insert(name.clone(), value);
-                        }
-                        fn to_u64(bytes: &[u8]) -> Result<u64, BitVMXError> {
-                            Ok(u64::from_be_bytes(bytes.try_into()?))
-                        }
-                        fn to_hex(bytes: &[u8]) -> String {
-                            hex::encode(bytes)
                         }
 
                         let prover_step_hash = to_hex(&values["prover_step_hash_tk2"]);
