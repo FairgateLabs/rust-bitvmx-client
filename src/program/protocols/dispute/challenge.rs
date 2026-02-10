@@ -801,29 +801,29 @@ pub fn get_challenge_leaf(
             name = "program_counter";
             info!("Verifier chose {name} challenge");
 
-            set_input_hex(id, context, &format!("verifier_prev_hash"), &pre_hash)?;
+            set_input_hex(id, context, "verifier_prev_hash", &pre_hash)?;
             set_input_u32(
                 id,
                 context,
-                &format!("verifier_prev_write_add"),
+                "verifier_prev_write_add",
                 trace.get_write().address,
             )?;
             set_input_u32(
                 id,
                 context,
-                &format!("verifier_prev_write_data"),
+                "verifier_prev_write_data",
                 trace.get_write().value,
             )?;
             set_input_u32(
                 id,
                 context,
-                &format!("verifier_prev_write_pc"),
+                "verifier_prev_write_pc",
                 trace.get_pc().get_address(),
             )?;
             set_input_u8(
                 id,
                 context,
-                &format!("verifier_prev_write_micro"),
+                "verifier_prev_write_micro",
                 trace.get_pc().get_micro(),
             )?;
         }
@@ -909,12 +909,7 @@ pub fn get_challenge_leaf(
             name = "initialized";
             info!("Verifier chose {name} challenge");
 
-            set_input_u8(
-                id,
-                context,
-                &format!("verifier_read_selector"),
-                *read_selector as u8,
-            )?;
+            set_input_u8(id, context, "verifier_read_selector", *read_selector as u8)?;
             dynamic_offset = *chunk_index;
         }
         ChallengeType::UninitializedData {
@@ -926,12 +921,7 @@ pub fn get_challenge_leaf(
             name = "uninitialized";
             info!("Verifier chose {name} challenge");
 
-            set_input_u8(
-                id,
-                context,
-                &format!("verifier_read_selector"),
-                *read_selector as u8,
-            )?;
+            set_input_u8(id, context, "verifier_read_selector", *read_selector as u8)?;
         }
         ChallengeType::FutureRead {
             prover_read_step_1: _,
@@ -942,12 +932,7 @@ pub fn get_challenge_leaf(
             name = "future_read";
             info!("Verifier chose {name} challenge");
 
-            set_input_u8(
-                id,
-                context,
-                &format!("verifier_read_selector"),
-                *read_selector as u8,
-            )?;
+            set_input_u8(id, context, "verifier_read_selector", *read_selector as u8)?;
         }
         ChallengeType::EquivocationResign {
             prover_true_hash: _,
@@ -1003,7 +988,7 @@ pub fn get_challenge_leaf(
             set_input_u8(
                 id,
                 context,
-                &format!("verifier_selection_bits2_1"),
+                "verifier_selection_bits2_1",
                 *bits as u8, // Already checked in CPU
             )?;
         }
@@ -1022,34 +1007,24 @@ pub fn get_challenge_leaf(
             name = "read_value";
             info!("Verifier chose {name} challenge");
 
-            set_input_u8(
-                id,
-                context,
-                &format!("verifier_read_selector"),
-                *read_selector as u8,
-            )?;
+            set_input_u8(id, context, "verifier_read_selector", *read_selector as u8)?;
             set_input_u32(
                 id,
                 context,
-                &format!("verifier_write_addr"),
+                "verifier_write_addr",
                 trace.get_write().address,
             )?;
+            set_input_u32(id, context, "verifier_write_value", trace.get_write().value)?;
             set_input_u32(
                 id,
                 context,
-                &format!("verifier_write_value"),
-                trace.get_write().value,
-            )?;
-            set_input_u32(
-                id,
-                context,
-                &format!("verifier_write_pc"),
+                "verifier_write_pc",
                 trace.get_pc().get_address(),
             )?;
             set_input_u8(
                 id,
                 context,
-                &format!("verifier_write_micro"),
+                "verifier_write_micro",
                 trace.get_pc().get_micro(),
             )?;
         }
@@ -1061,29 +1036,24 @@ pub fn get_challenge_leaf(
         } => {
             name = "correct_hash";
             info!("Verifier chose {name} challenge");
-            set_input_hex(id, context, &format!("verifier_hash"), &verifier_hash)?;
+            set_input_hex(id, context, "verifier_hash", &verifier_hash)?;
             set_input_u32(
                 id,
                 context,
-                &format!("verifier_write_addr"),
+                "verifier_write_addr",
                 trace.get_write().address,
             )?;
+            set_input_u32(id, context, "verifier_write_value", trace.get_write().value)?;
             set_input_u32(
                 id,
                 context,
-                &format!("verifier_write_value"),
-                trace.get_write().value,
-            )?;
-            set_input_u32(
-                id,
-                context,
-                &format!("verifier_write_pc"),
+                "verifier_write_pc",
                 trace.get_pc().get_address(),
             )?;
             set_input_u8(
                 id,
                 context,
-                &format!("verifier_write_micro"),
+                "verifier_write_micro",
                 trace.get_pc().get_micro(),
             )?;
         }
