@@ -138,7 +138,7 @@ impl TransferConfig {
         }
 
         config_vec.push(
-            IncomingBitVMXApiMessages::Setup(
+            IncomingBitVMXApiMessages::SetupV2(
                 self.id,
                 PROGRAM_TYPE_TRANSFER.to_string(),
                 addresses,
