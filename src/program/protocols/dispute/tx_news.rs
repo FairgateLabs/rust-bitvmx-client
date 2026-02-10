@@ -915,21 +915,16 @@ pub fn handle_tx_news(
                         let prover_next_hash = to_hex(&values["prover_next_hash_tk2"]);
                         let _prover_write_step = to_u64(&values["prover_write_step_tk2"])?;
 
-                        let msg = serde_json::to_string(&DispatcherJob {
-                            job_id: drp.ctx.id.to_string(),
-                            job_type: EmulatorJobType::VerifierChooseChallengeForReadChallenge(
-                                program_definition.clone(),
-                                execution_path.clone(),
-                                format!("{}/{}", execution_path, "execution.json").to_string(),
-                                prover_step_hash,
-                                prover_next_hash,
-                                fail_force_config.read.fail_config_verifier.clone(),
-                                fail_force_config.read.force_challenge.clone(),
-                            ),
-                        })?;
-                        program_context
-                            .broker_channel
-                            .send(&program_context.components_config.emulator, msg)?;
+                        let msg = EmulatorJobType::VerifierChooseChallengeForReadChallenge(
+                            program_definition.clone(),
+                            execution_path.clone(),
+                            execution_file.clone(),
+                            prover_step_hash,
+                            prover_next_hash,
+                            fail_force_config.read.fail_config_verifier.clone(),
+                            fail_force_config.read.force_challenge.clone(),
+                        );
+                        execute(drp, program_context, msg)?;
                     }
 
                     CHALLENGE_READ => {
