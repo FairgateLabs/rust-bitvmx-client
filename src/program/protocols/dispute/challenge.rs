@@ -20,8 +20,7 @@ use crate::{
         participant::{ParticipantKeys, ParticipantRole},
         protocols::dispute::{
             input_handler::{
-                generate_input_owner_list, set_input_hex, set_input_u32, set_input_u8,
-                ProgramInputType,
+                generate_input_owner_list, set_input_u8, set_inputs, ProgramInputType,
             },
             program_input_prev_prefix, program_input_prev_protocol, program_input_word,
             DisputeResolutionProtocol,
@@ -801,30 +800,16 @@ pub fn get_challenge_leaf(
             name = "program_counter";
             info!("Verifier chose {name} challenge");
 
-            set_input_hex(id, context, "verifier_prev_hash", &pre_hash)?;
-            set_input_u32(
+            set_inputs(
                 id,
                 context,
-                "verifier_prev_write_add",
-                trace.get_write().address,
-            )?;
-            set_input_u32(
-                id,
-                context,
-                "verifier_prev_write_data",
-                trace.get_write().value,
-            )?;
-            set_input_u32(
-                id,
-                context,
-                "verifier_prev_write_pc",
-                trace.get_pc().get_address(),
-            )?;
-            set_input_u8(
-                id,
-                context,
-                "verifier_prev_write_micro",
-                trace.get_pc().get_micro(),
+                vec![
+                    ("verifier_prev_hash", pre_hash.clone()).into(),
+                    ("verifier_prev_write_add", trace.get_write().address).into(),
+                    ("verifier_prev_write_data", trace.get_write().value).into(),
+                    ("verifier_prev_write_pc", trace.get_pc().get_address()).into(),
+                    ("verifier_prev_write_micro", trace.get_pc().get_micro()).into(),
+                ],
             )?;
         }
         ChallengeType::TraceHash {
@@ -1007,25 +992,16 @@ pub fn get_challenge_leaf(
             name = "read_value";
             info!("Verifier chose {name} challenge");
 
-            set_input_u8(id, context, "verifier_read_selector", *read_selector as u8)?;
-            set_input_u32(
+            set_inputs(
                 id,
                 context,
-                "verifier_write_addr",
-                trace.get_write().address,
-            )?;
-            set_input_u32(id, context, "verifier_write_value", trace.get_write().value)?;
-            set_input_u32(
-                id,
-                context,
-                "verifier_write_pc",
-                trace.get_pc().get_address(),
-            )?;
-            set_input_u8(
-                id,
-                context,
-                "verifier_write_micro",
-                trace.get_pc().get_micro(),
+                vec![
+                    ("verifier_read_selector", *read_selector as u8).into(),
+                    ("verifier_write_addr", trace.get_write().address).into(),
+                    ("verifier_write_value", trace.get_write().value).into(),
+                    ("verifier_write_pc", trace.get_pc().get_address()).into(),
+                    ("verifier_write_micro", trace.get_pc().get_micro()).into(),
+                ],
             )?;
         }
         ChallengeType::CorrectHash {
@@ -1036,25 +1012,16 @@ pub fn get_challenge_leaf(
         } => {
             name = "correct_hash";
             info!("Verifier chose {name} challenge");
-            set_input_hex(id, context, "verifier_hash", &verifier_hash)?;
-            set_input_u32(
+            set_inputs(
                 id,
                 context,
-                "verifier_write_addr",
-                trace.get_write().address,
-            )?;
-            set_input_u32(id, context, "verifier_write_value", trace.get_write().value)?;
-            set_input_u32(
-                id,
-                context,
-                "verifier_write_pc",
-                trace.get_pc().get_address(),
-            )?;
-            set_input_u8(
-                id,
-                context,
-                "verifier_write_micro",
-                trace.get_pc().get_micro(),
+                vec![
+                    ("verifier_hash", verifier_hash.clone()).into(),
+                    ("verifier_write_addr", trace.get_write().address).into(),
+                    ("verifier_write_value", trace.get_write().value).into(),
+                    ("verifier_write_pc", trace.get_pc().get_address()).into(),
+                    ("verifier_write_micro", trace.get_pc().get_micro()).into(),
+                ],
             )?;
         }
         ChallengeType::EquivocationHash {

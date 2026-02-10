@@ -42,9 +42,14 @@ pub fn execution_result(
             info!("Last hash: {:?}", last_hash);
             info!("halt: {:?}", halt);
             //TODO: chef if it's halt 0 before commiting the transaction
-            set_input_u64(id, context, "prover_last_step", *last_step)?;
-
-            set_input_hex(id, context, "prover_last_hash", last_hash)?;
+            set_inputs(
+                id,
+                context,
+                vec![
+                    ("prover_last_step", *last_step).into(),
+                    ("prover_last_hash", last_hash.clone()).into(),
+                ],
+            )?;
 
             let (tx, sp) = drp.get_tx_with_speedup_data(context, COMMITMENT, 0, 0, true)?;
             dispatch(context, drp, tx, Some(sp), None)?;
@@ -161,103 +166,43 @@ pub fn execution_result(
 
                 dispatch(context, drp, tx, Some(sp), None)?;
             } else {
-                let (final_trace, resigned_step_hash, resigned_next_hash, conflict_step) =
+                let (trace, resigned_step_hash, resigned_next_hash, conflict_step) =
                     prover_final_trace.as_final_trace_with_hashes_and_step()?;
-                set_input_u32(
-                    id,
-                    context,
-                    "prover_write_address",
-                    final_trace.trace_step.get_write().address,
-                )?;
-                set_input_u32(
-                    id,
-                    context,
-                    "prover_write_value",
-                    final_trace.trace_step.get_write().value,
-                )?;
-                set_input_u32(
-                    id,
-                    context,
-                    "prover_write_pc",
-                    final_trace.trace_step.get_pc().get_address(),
-                )?;
-                set_input_u8(
-                    id,
-                    context,
-                    "prover_write_micro",
-                    final_trace.trace_step.get_pc().get_micro(),
-                )?;
-
-                set_input_u8(
-                    id,
-                    context,
-                    "prover_mem_witness",
-                    final_trace.mem_witness.byte(),
-                )?;
-
-                set_input_u32(
-                    id,
-                    context,
-                    "prover_read_1_address",
-                    final_trace.read_1.address,
-                )?;
-                set_input_u32(id, context, "prover_read_1_value", final_trace.read_1.value)?;
-                set_input_u64(
-                    id,
-                    context,
-                    "prover_read_1_last_step",
-                    final_trace.read_1.last_step,
-                )?;
-                set_input_u32(
-                    id,
-                    context,
-                    "prover_read_2_address",
-                    final_trace.read_2.address,
-                )?;
-                set_input_u32(id, context, "prover_read_2_value", final_trace.read_2.value)?;
-                set_input_u64(
-                    id,
-                    context,
-                    "prover_read_2_last_step",
-                    final_trace.read_2.last_step,
-                )?;
-
-                set_input_u32(
-                    id,
-                    context,
-                    "prover_read_pc_address",
-                    final_trace.read_pc.pc.get_address(),
-                )?;
-                set_input_u8(
-                    id,
-                    context,
-                    "prover_read_pc_micro",
-                    final_trace.read_pc.pc.get_micro(),
-                )?;
-                set_input_u32(
-                    id,
-                    context,
-                    "prover_read_pc_opcode",
-                    final_trace.read_pc.opcode,
-                )?;
-                set_input_u64(id, context, "prover_step_number", final_trace.step_number)?;
-                if let Some(witness) = final_trace.witness {
-                    set_input_u32(id, context, "prover_witness", witness)?;
+                let mut inputs: Vec<InputPair> = vec![
+                    ("prover_write_address", trace.trace_step.get_write().address).into(),
+                    ("prover_write_value", trace.trace_step.get_write().value).into(),
+                    ("prover_write_pc", trace.trace_step.get_pc().get_address()).into(),
+                    ("prover_write_micro", trace.trace_step.get_pc().get_micro()).into(),
+                    ("prover_mem_witness", trace.mem_witness.byte()).into(),
+                    ("prover_read_1_address", trace.read_1.address).into(),
+                    ("prover_read_1_value", trace.read_1.value).into(),
+                    ("prover_read_1_last_step", trace.read_1.last_step).into(),
+                    ("prover_read_2_address", trace.read_2.address).into(),
+                    ("prover_read_2_value", trace.read_2.value).into(),
+                    ("prover_read_2_last_step", trace.read_2.last_step).into(),
+                    ("prover_read_pc_address", trace.read_pc.pc.get_address()).into(),
+                    ("prover_read_pc_micro", trace.read_pc.pc.get_micro()).into(),
+                    ("prover_read_pc_opcode", trace.read_pc.opcode).into(),
+                    ("prover_step_number", trace.step_number).into(),
+                ];
+                if let Some(witness) = trace.witness {
+                    inputs.push(("prover_witness", witness).into());
                 }
-                set_input_hex(id, context, "prover_step_hash_tk", &resigned_step_hash)?;
-                set_input_hex(id, context, "prover_next_hash_tk", &resigned_next_hash)?;
-                set_input_u64(id, context, "prover_conflict_step_tk", conflict_step)?;
-                let instruction = get_key_from_opcode(
-                    final_trace.read_pc.opcode,
-                    final_trace.read_pc.pc.get_micro(),
-                )
-                .ok_or_else(|| {
-                    BitVMXError::InstructionNotFound(format!(
-                        "{}_{}",
-                        final_trace.read_pc.opcode,
-                        final_trace.read_pc.pc.get_micro()
-                    ))
-                })?;
+                inputs.extend([
+                    ("prover_step_hash_tk", resigned_step_hash.clone()).into(),
+                    ("prover_next_hash_tk", resigned_next_hash.clone()).into(),
+                    ("prover_conflict_step_tk", conflict_step).into(),
+                ]);
+                set_inputs(id, context, inputs)?;
+                let instruction =
+                    get_key_from_opcode(trace.read_pc.opcode, trace.read_pc.pc.get_micro())
+                        .ok_or_else(|| {
+                            BitVMXError::InstructionNotFound(format!(
+                                "{}_{}",
+                                trace.read_pc.opcode,
+                                trace.read_pc.pc.get_micro()
+                            ))
+                        })?;
                 let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
                 let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
                 instruction_names.sort();
@@ -327,9 +272,15 @@ pub fn execution_result(
                     resigned_step_hash, resigned_next_hash, write_step
                 );
 
-                set_input_hex(id, context, "prover_step_hash_tk2", &resigned_step_hash)?;
-                set_input_hex(id, context, "prover_next_hash_tk2", &resigned_next_hash)?;
-                set_input_u64(id, context, "prover_write_step_tk2", write_step)?;
+                set_inputs(
+                    id,
+                    context,
+                    vec![
+                        ("prover_step_hash_tk2", resigned_step_hash.clone()).into(),
+                        ("prover_next_hash_tk2", resigned_next_hash.clone()).into(),
+                        ("prover_write_step_tk2", write_step).into(),
+                    ],
+                )?;
                 let (tx, sp) =
                     drp.get_tx_with_speedup_data(context, GET_HASHES_AND_STEP, 0, 1, true)?;
 
