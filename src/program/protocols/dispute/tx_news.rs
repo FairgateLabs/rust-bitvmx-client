@@ -30,7 +30,7 @@ use bitvmx_cpu_definitions::{memory::MemoryWitness, trace::*};
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use console::style;
-use emulator::decision::nary_search::NArySearchType;
+use emulator::{decision::nary_search::NArySearchType, executor::utils::FailConfiguration};
 use protocol_builder::types::output::SpeedupData;
 use tracing::{info, warn};
 
@@ -653,9 +653,6 @@ pub fn handle_tx_news(
                             &name,
                             drp,
                             program_context,
-                            tx_id,
-                            vout,
-                            &tx_status,
                             &fail_force_config,
                             "verifier_selection_bits",
                             POST_COMMITMENT,
@@ -670,9 +667,7 @@ pub fn handle_tx_news(
                             &name,
                             drp,
                             program_context,
-                            tx_id,
-                            vout,
-                            &tx_status,
+                            leaf,
                             &fail_force_config,
                             "NARY_PROVER_",
                             "prover_hash",
@@ -847,9 +842,6 @@ pub fn handle_tx_news(
                                 &name,
                                 drp,
                                 program_context,
-                                tx_id,
-                                vout,
-                                &tx_status,
                                 &fail_force_config,
                                 "verifier_selection_bits2",
                                 CHALLENGE,
@@ -869,9 +861,6 @@ pub fn handle_tx_news(
                             &name,
                             drp,
                             program_context,
-                            tx_id,
-                            vout,
-                            &tx_status,
                             &fail_force_config,
                             "verifier_selection_bits2",
                             CHALLENGE,
@@ -886,9 +875,7 @@ pub fn handle_tx_news(
                             &name,
                             drp,
                             program_context,
-                            tx_id,
-                            vout,
-                            &tx_status,
+                            leaf,
                             &fail_force_config,
                             "NARY2_PROVER_",
                             "prover_hash2",
@@ -1000,13 +987,38 @@ pub fn handle_tx_news(
     Ok(())
 }
 
+fn handle_nary_common(
+    drp: &DisputeResolutionProtocol,
+    program_context: &ProgramContext,
+    fail_force_config: &ForceFailConfiguration,
+    nary_search_type: NArySearchType,
+    round: u32,
+) -> Result<Option<FailConfiguration>, BitVMXError> {
+    let (fail_config, current_round) = match nary_search_type {
+        NArySearchType::ConflictStep => (
+            fail_force_config.main.fail_config_prover.clone(),
+            "current_round",
+        ),
+        NArySearchType::ReadValueChallenge => (
+            fail_force_config.read.fail_config_prover.clone(),
+            "current_round2",
+        ),
+    };
+
+    //TODO: make this value return from execution
+    program_context.globals.set_var(
+        &drp.ctx.id,
+        current_round,
+        VariableTypes::Number(round as u32),
+    )?;
+
+    Ok(fail_config)
+}
+
 fn handle_nary_verifier(
     name: &str,
     drp: &DisputeResolutionProtocol,
     program_context: &ProgramContext,
-    tx_id: Txid,
-    vout: u32,
-    tx_status: &TransactionStatus,
     fail_force_config: &ForceFailConfiguration,
     selection_bits: &str,             // "selection_bits"
     prev_name: &str,                  // COMMITMENT
@@ -1017,21 +1029,9 @@ fn handle_nary_verifier(
     let (program_definition, pdf) = drp.get_program_definition(program_context)?;
     let nary = program_definition.nary_def();
 
-    let (prover_config, current_round) = match nary_search_type {
-        NArySearchType::ConflictStep => (
-            fail_force_config.main.fail_config_prover.clone(),
-            "current_round",
-        ),
-        NArySearchType::ReadValueChallenge => (
-            fail_force_config.read.fail_config_prover.clone(),
-            "current_round2",
-        ),
-    };
     let decision = if name == prev_name {
         decision_start_value
     } else {
-        drp.decode_witness_from_speedup(tx_id, vout, &name, program_context, &tx_status.tx, None)?;
-
         let bits = program_context
             .witness
             .get_witness_or_err(&drp.ctx.id, &format!("{}_{}", selection_bits, round))?
@@ -1047,57 +1047,47 @@ fn handle_nary_verifier(
 
     round += 1;
 
-    //TODO: make this value return from execution
-    program_context.globals.set_var(
-        &drp.ctx.id,
-        current_round,
-        VariableTypes::Number(round as u32),
+    let fail_config = handle_nary_common(
+        drp,
+        program_context,
+        fail_force_config,
+        nary_search_type,
+        round,
     )?;
 
     let execution_path = drp.get_execution_path()?;
-    if round <= nary.total_rounds() as u32 {
-        let msg = serde_json::to_string(&DispatcherJob {
-            job_id: drp.ctx.id.to_string(),
-            job_type: EmulatorJobType::ProverGetHashesForRound(
+    let execution_file = format!("{}/{}", execution_path, "execution.json").to_string();
+    let job_type = if round <= nary.total_rounds() as u32 {
+        EmulatorJobType::ProverGetHashesForRound(
+            pdf,
+            execution_path.clone(),
+            round as u8,
+            decision,
+            execution_file.clone(),
+            fail_config,
+            nary_search_type,
+        )
+    } else {
+        match nary_search_type {
+            NArySearchType::ConflictStep => EmulatorJobType::ProverFinalTrace(
                 pdf,
                 execution_path.clone(),
-                round as u8,
-                decision,
-                format!("{}/{}", execution_path, "execution.json").to_string(),
-                prover_config,
-                nary_search_type,
+                (decision + 1) as u32,
+                execution_file.clone(),
+                fail_force_config.main.fail_config_prover.clone(),
             ),
-        })?;
-        program_context
-            .broker_channel
-            .send(&program_context.components_config.emulator, msg)?;
-    } else {
-        let msg = match nary_search_type {
-            NArySearchType::ConflictStep => serde_json::to_string(&DispatcherJob {
-                job_id: drp.ctx.id.to_string(),
-                job_type: EmulatorJobType::ProverFinalTrace(
-                    pdf,
-                    execution_path.clone(),
-                    (decision + 1) as u32,
-                    format!("{}/{}", execution_path, "execution.json").to_string(),
-                    fail_force_config.main.fail_config_prover.clone(),
-                ),
-            })?,
-            NArySearchType::ReadValueChallenge => serde_json::to_string(&DispatcherJob {
-                job_id: drp.ctx.id.to_string(),
-                job_type: EmulatorJobType::ProverGetHashesAndStep(
-                    pdf,
-                    execution_path.clone(),
-                    (decision) as u32,
-                    format!("{}/{}", execution_path, "execution.json").to_string(),
-                    fail_force_config.read.fail_config_prover.clone(),
-                ),
-            })?,
-        };
-        program_context
-            .broker_channel
-            .send(&program_context.components_config.emulator, msg)?;
-    }
+
+            NArySearchType::ReadValueChallenge => EmulatorJobType::ProverGetHashesAndStep(
+                pdf,
+                execution_path.clone(),
+                (decision) as u32,
+                execution_file.clone(),
+                fail_force_config.read.fail_config_prover.clone(),
+            ),
+        }
+    };
+    execute(drp, program_context, job_type)?;
+
     Ok(())
 }
 
@@ -1105,17 +1095,12 @@ fn handle_nary_prover(
     name: &str,
     drp: &DisputeResolutionProtocol,
     program_context: &ProgramContext,
-    tx_id: Txid,
-    vout: u32,
-    tx_status: &TransactionStatus,
+    leaf: u32,
     fail_force_config: &ForceFailConfiguration,
     strip_prefix: &str,               // "NARY_PROVER_"
     prover_hash: &str,                // "prover_hash"
     nary_search_type: NArySearchType, // ConflictStep
 ) -> Result<(), BitVMXError> {
-    let (_, leaf) =
-        drp.decode_witness_from_speedup(tx_id, vout, &name, program_context, &tx_status.tx, None)?;
-
     let params = program_context
         .globals
         .get_var_or_err(&drp.ctx.id, &timeout_input_tx(name))?
@@ -1132,22 +1117,12 @@ fn handle_nary_prover(
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(1);
 
-    let (fail_config, current_round) = match nary_search_type {
-        NArySearchType::ConflictStep => (
-            fail_force_config.main.fail_config_verifier.clone(),
-            "current_round",
-        ),
-        NArySearchType::ReadValueChallenge => (
-            fail_force_config.read.fail_config_verifier.clone(),
-            "current_round2",
-        ),
-    };
-
-    //TODO: make this value return from execution
-    program_context.globals.set_var(
-        &drp.ctx.id,
-        current_round,
-        VariableTypes::Number(round as u32),
+    let fail_config = handle_nary_common(
+        drp,
+        program_context,
+        fail_force_config,
+        nary_search_type,
+        round,
     )?;
 
     let (program_definition, pdf) = drp.get_program_definition(program_context)?;
