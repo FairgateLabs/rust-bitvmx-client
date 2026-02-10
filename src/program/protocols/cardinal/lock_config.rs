@@ -97,7 +97,7 @@ impl LockProtocolConfiguration {
                 .set_msg(self.id, "timelock_blocks")?,
             VariableTypes::Number(self.eol_timelock_duration as u32)
                 .set_msg(self.id, EOL_TIMELOCK_DURATION)?,
-            IncomingBitVMXApiMessages::Setup(
+            IncomingBitVMXApiMessages::SetupV2(
                 self.id,
                 PROGRAM_TYPE_LOCK.to_string(),
                 addresses,
