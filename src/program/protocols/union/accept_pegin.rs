@@ -371,7 +371,13 @@ impl ProtocolHandler for AcceptPegInProtocol {
             if operator_index == self.ctx.my_idx {
                 // Both, OPERATOR_TAKE_TX and OPERATOR_WON_TX, have the same output index to reimburse funds to the operator
                 let output_index: u32 = 0;
-                let amount = tx_status.tx.output[output_index as usize].value.to_sat();
+                let tx = tx_status
+                    .tx
+                    .as_ref()
+                    .ok_or(BitVMXError::InvalidTransactionStatus(
+                        "Missing transaction data in tx_status".to_string(),
+                    ))?;
+                let amount = tx.output[output_index as usize].value.to_sat();
                 let utxo = (
                     tx_id,
                     output_index,

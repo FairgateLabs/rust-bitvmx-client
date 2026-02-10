@@ -469,7 +469,13 @@ pub fn handle_tx_news(
 
     match vout {
         Some(vout) => {
-            let transaction = &tx_status.tx;
+            let transaction =
+                tx_status
+                    .tx
+                    .as_ref()
+                    .ok_or(BitVMXError::InvalidTransactionStatus(
+                        "Missing transaction data in tx_status".to_string(),
+                    ))?;
             let input_index = drp.find_prevout(tx_id, vout, transaction)?;
             let witness = transaction.input[input_index as usize].witness.clone();
 
@@ -504,12 +510,19 @@ pub fn handle_tx_news(
 
                 // decode the witness
                 if owner != drp.role().to_string() {
+                    let transaction =
+                        tx_status
+                            .tx
+                            .as_ref()
+                            .ok_or(BitVMXError::InvalidTransactionStatus(
+                                "Missing transaction data in tx_status".to_string(),
+                            ))?;
                     drp.decode_witness_from_speedup(
                         tx_id,
                         vout,
                         &name,
                         program_context,
-                        &tx_status.tx,
+                        transaction,
                         None,
                     )?;
                     unify_witnesses(&drp.ctx.id, program_context, idx as usize)?;
@@ -584,12 +597,19 @@ pub fn handle_tx_news(
             }
 
             if name == COMMITMENT && drp.role() == ParticipantRole::Verifier {
+                let transaction =
+                    tx_status
+                        .tx
+                        .as_ref()
+                        .ok_or(BitVMXError::InvalidTransactionStatus(
+                            "Missing transaction data in tx_status".to_string(),
+                        ))?;
                 drp.decode_witness_from_speedup(
                     tx_id,
                     vout,
                     &name,
                     program_context,
-                    &tx_status.tx,
+                    transaction,
                     None,
                 )?;
 
@@ -653,12 +673,19 @@ pub fn handle_tx_news(
                     .parse::<u32>()?;
 
                 if round == 0 {
+                    let transaction =
+                        tx_status
+                            .tx
+                            .as_ref()
+                            .ok_or(BitVMXError::InvalidTransactionStatus(
+                                "Missing transaction data in tx_status".to_string(),
+                            ))?;
                     drp.decode_witness_from_speedup(
                         tx_id,
                         vout,
                         &name,
                         program_context,
-                        &tx_status.tx,
+                        transaction,
                         None,
                     )?;
                 }
@@ -697,12 +724,19 @@ pub fn handle_tx_news(
             }
 
             if name == EXECUTE && drp.role() == ParticipantRole::Verifier {
+                let transaction =
+                    tx_status
+                        .tx
+                        .as_ref()
+                        .ok_or(BitVMXError::InvalidTransactionStatus(
+                            "Missing transaction data in tx_status".to_string(),
+                        ))?;
                 let (_, leaf) = drp.decode_witness_from_speedup(
                     tx_id,
                     vout,
                     &name,
                     program_context,
-                    &tx_status.tx,
+                    transaction,
                     None,
                 )?;
 
@@ -815,12 +849,19 @@ pub fn handle_tx_news(
             }
 
             if name == CHALLENGE && drp.role() == ParticipantRole::Prover {
+                let transaction =
+                    tx_status
+                        .tx
+                        .as_ref()
+                        .ok_or(BitVMXError::InvalidTransactionStatus(
+                            "Missing transaction data in tx_status".to_string(),
+                        ))?;
                 let (names, leaf) = drp.decode_witness_from_speedup(
                     tx_id,
                     vout,
                     &name,
                     program_context,
-                    &tx_status.tx,
+                    transaction,
                     None,
                 )?;
 
@@ -947,12 +988,19 @@ pub fn handle_tx_news(
             }
 
             if GET_HASHES_AND_STEP == name && drp.role() == ParticipantRole::Verifier {
+                let transaction =
+                    tx_status
+                        .tx
+                        .as_ref()
+                        .ok_or(BitVMXError::InvalidTransactionStatus(
+                            "Missing transaction data in tx_status".to_string(),
+                        ))?;
                 let (_, leaf) = drp.decode_witness_from_speedup(
                     tx_id,
                     vout,
                     &name,
                     program_context,
-                    &tx_status.tx,
+                    transaction,
                     None,
                 )?;
 
@@ -1010,12 +1058,19 @@ pub fn handle_tx_news(
 
             if name == CHALLENGE_READ && drp.role() == ParticipantRole::Prover {
                 info!("The challenge has ended after the 2nd n-ary search.");
+                let transaction =
+                    tx_status
+                        .tx
+                        .as_ref()
+                        .ok_or(BitVMXError::InvalidTransactionStatus(
+                            "Missing transaction data in tx_status".to_string(),
+                        ))?;
                 drp.decode_witness_from_speedup(
                     tx_id,
                     vout,
                     &name,
                     program_context,
-                    &tx_status.tx,
+                    transaction,
                     None,
                 )?;
             }
@@ -1095,12 +1150,19 @@ fn handle_nary_verifier(
         let decision = if name == prev_name {
             decision_start_value
         } else {
+            let transaction =
+                tx_status
+                    .tx
+                    .as_ref()
+                    .ok_or(BitVMXError::InvalidTransactionStatus(
+                        "Missing transaction data in tx_status".to_string(),
+                    ))?;
             drp.decode_witness_from_speedup(
                 tx_id,
                 vout,
                 &name,
                 program_context,
-                &tx_status.tx,
+                transaction,
                 None,
             )?;
 
@@ -1196,8 +1258,14 @@ fn handle_nary_prover(
     prover_hash: &str,                // "prover_hash"
     nary_search_type: NArySearchType, // ConflictStep
 ) -> Result<(), BitVMXError> {
+    let transaction = tx_status
+        .tx
+        .as_ref()
+        .ok_or(BitVMXError::InvalidTransactionStatus(
+            "Missing transaction data in tx_status".to_string(),
+        ))?;
     let (_, leaf) =
-        drp.decode_witness_from_speedup(tx_id, vout, &name, program_context, &tx_status.tx, None)?;
+        drp.decode_witness_from_speedup(tx_id, vout, &name, program_context, transaction, None)?;
 
     let params = program_context
         .globals
