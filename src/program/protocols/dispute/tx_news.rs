@@ -897,15 +897,6 @@ pub fn handle_tx_news(
                     }
 
                     GET_HASHES_AND_STEP => {
-                        let (_, leaf) = drp.decode_witness_from_speedup(
-                            tx_id,
-                            vout,
-                            &name,
-                            program_context,
-                            &tx_status.tx,
-                            None,
-                        )?;
-
                         // leaf 0 is prover_challenge_step2, we lost
                         if leaf == 0 {
                             return Ok(());
@@ -961,14 +952,6 @@ pub fn handle_tx_news(
 
                     CHALLENGE_READ => {
                         info!("The challenge has ended after the 2nd n-ary search.");
-                        drp.decode_witness_from_speedup(
-                            tx_id,
-                            vout,
-                            &name,
-                            program_context,
-                            &tx_status.tx,
-                            None,
-                        )?;
                     }
 
                     _ => {}
