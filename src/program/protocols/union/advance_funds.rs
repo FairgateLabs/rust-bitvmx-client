@@ -256,8 +256,13 @@ impl ProtocolHandler for AdvanceFundsProtocol {
                 block_height,
             )?;
 
-            let tx = tx_status.tx;
-            self.update_advance_funds_input(context, &tx)?;
+            let tx = tx_status
+                .tx
+                .as_ref()
+                .ok_or(BitVMXError::InvalidTransactionStatus(
+                    "Missing transaction data in tx_status".to_string(),
+                ))?;
+            self.update_advance_funds_input(context, tx)?;
         }
 
         Ok(())
