@@ -1000,8 +1000,8 @@ fn handle_nary_common(
             &fail_force_config.read.fail_config_prover,
         ),
         ParticipantRole::Verifier => (
-            &fail_force_config.read.fail_config_verifier,
             &fail_force_config.main.fail_config_verifier,
+            &fail_force_config.read.fail_config_verifier,
         ),
     };
 
