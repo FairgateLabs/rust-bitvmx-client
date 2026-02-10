@@ -1448,10 +1448,19 @@ impl BitVMXApi for BitVMX {
 
         match decoded {
             IncomingBitVMXApiMessages::GetHashedMessage(id, name, vout, leaf) => {
-                let hashed = self
-                    .load_program(&id)?
-                    .protocol
-                    .get_hashed_message(&name, vout, leaf)?;
+                let hashed = match self.get_program_version(&id)? {
+                    Some(ProgramVersion::Legacy) => {
+                        self.load_program(&id)?
+                            .protocol
+                            .get_hashed_message(&name, vout, leaf)?
+                    }
+                    Some(ProgramVersion::V2) => {
+                        self.load_program_v2(&id)?
+                            .protocol
+                            .get_hashed_message(&name, vout, leaf)?
+                    }
+                    None => return Err(BitVMXError::ProgramNotFound(id)),
+                };
                 self.reply(
                     from,
                     OutgoingBitVMXApiMessages::HashedMessage(id, name, vout, leaf, hashed),
@@ -1775,16 +1784,39 @@ impl BitVMXApi for BitVMX {
                 self.reply(from, message)?;
             }
             IncomingBitVMXApiMessages::GetProtocolVisualization(id) => {
-                let message = match self.load_program(&id) {
-                    Ok(program) => {
-                        let protocol_str = program
-                            .protocol
-                            .load_protocol()?
-                            .visualize(GraphOptions::EdgeArrows)?;
-                        OutgoingBitVMXApiMessages::ProtocolVisualization(id, protocol_str)
+                let message = match self.get_program_version(&id)? {
+                    Some(ProgramVersion::Legacy) => {
+                        match self.load_program(&id) {
+                            Ok(program) => {
+                                let protocol_str = program
+                                    .protocol
+                                    .load_protocol()?
+                                    .visualize(GraphOptions::EdgeArrows)?;
+                                OutgoingBitVMXApiMessages::ProtocolVisualization(id, protocol_str)
+                            }
+                            Err(e) => {
+                                warn!("Failed to load protocol: {:?}", e);
+                                OutgoingBitVMXApiMessages::ProtocolVisualization(id, String::default())
+                            }
+                        }
                     }
-                    Err(e) => {
-                        warn!("Failed to load protocol: {:?}", e);
+                    Some(ProgramVersion::V2) => {
+                        match self.load_program_v2(&id) {
+                            Ok(program) => {
+                                let protocol_str = program
+                                    .protocol
+                                    .load_protocol()?
+                                    .visualize(GraphOptions::EdgeArrows)?;
+                                OutgoingBitVMXApiMessages::ProtocolVisualization(id, protocol_str)
+                            }
+                            Err(e) => {
+                                warn!("Failed to load protocol V2: {:?}", e);
+                                OutgoingBitVMXApiMessages::ProtocolVisualization(id, String::default())
+                            }
+                        }
+                    }
+                    None => {
+                        warn!("Program not found for visualization: {:?}", id);
                         OutgoingBitVMXApiMessages::ProtocolVisualization(id, String::default())
                     }
                 };
