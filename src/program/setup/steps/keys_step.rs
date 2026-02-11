@@ -239,6 +239,8 @@ impl SetupStep for KeysStep {
                 }
             }
 
+            aggregated_pub_keys.sort();
+
             // Compute the aggregated key using MuSig2
             // MuSig2 requires at least 2 participants; with a single participant,
             // the aggregated key is simply that participant's own public key.
