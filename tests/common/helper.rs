@@ -20,7 +20,8 @@ use bitvmx_client::{
 };
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::{
-    emulator_messages::EmulatorJobType, prover_messages::ProverJobType,
+    emulator_messages::EmulatorJobType, garbled_messages::GarbledJobType,
+    prover_messages::ProverJobType,
 };
 use bitvmx_settings::settings;
 use std::{
@@ -54,6 +55,9 @@ pub struct TestHelper {
     pub zkp_handle: Option<thread::JoinHandle<Result<()>>>,
     pub zkp_stop_tx: Sender<()>,
     pub zkp_ready_rx: Receiver<usize>,
+    pub garbled_handle: Option<thread::JoinHandle<Result<()>>>,
+    pub garbled_stop_tx: Sender<()>,
+    pub garbled_ready_rx: Receiver<usize>,
     pub id_channel_pairs: Vec<ParticipantChannel>,
 }
 
@@ -141,6 +145,11 @@ impl TestHelper {
         let (zkp_ready_tx, zkp_ready_rx) = channel::<usize>();
         let zkp_handle = thread::spawn(move || run_zkp(network, zkp_stop_rx, zkp_ready_tx));
 
+        let (garbled_stop_tx, garbled_stop_rx) = channel::<()>();
+        let (garbled_ready_tx, garbled_ready_rx) = channel::<usize>();
+        let garbled_handle =
+            thread::spawn(move || run_garbled(network, garbled_stop_rx, garbled_ready_tx));
+
         let automine_interval = if network == Network::Regtest {
             if let Some(interval) = auto_mine {
                 interval
@@ -198,8 +207,11 @@ impl TestHelper {
             mine_stop_tx,
             mine_block_rx,
             zkp_handle: Some(zkp_handle),
-            zkp_stop_tx: zkp_stop_tx,
+            zkp_stop_tx,
             zkp_ready_rx,
+            garbled_handle: Some(garbled_handle),
+            garbled_stop_tx,
+            garbled_ready_rx,
             id_channel_pairs,
         })
     }
@@ -211,6 +223,10 @@ impl TestHelper {
 
         self.zkp_stop_tx.send(()).unwrap();
         let handle = self.zkp_handle.take().unwrap();
+        handle.join().unwrap()?;
+
+        self.garbled_stop_tx.send(()).unwrap();
+        let handle = self.garbled_handle.take().unwrap();
         handle.join().unwrap()?;
 
         self.bitvmx_stop_tx.send(()).unwrap();
@@ -473,6 +489,52 @@ fn run_zkp(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<()> 
     loop {
         if rx.try_recv().is_ok() {
             info!("Signal received, shutting down...");
+            break;
+        }
+        for (idx, dispatcher) in instances.iter_mut().enumerate() {
+            if dispatcher.tick()? {
+                let _ = tx.send(idx);
+            }
+            thread::sleep(Duration::from_millis(500));
+        }
+    }
+    Ok(())
+}
+
+fn run_garbled(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<()> {
+    // Set GNOVA_BIN path for the correct relative path from rust-bitvmx-client
+    std::env::set_var("GNOVA_BIN", "../rust-bitvmx-gc/target/release/gnova");
+
+    let configs = get_configs(network)?;
+
+    let mut instances = vec![];
+    for (i, config) in configs.iter().enumerate() {
+        info!(
+            "Starting garbled dispatcher connection with port: {}",
+            config.broker.port
+        );
+        let allow_list = AllowList::from_file(&config.broker.allow_list)?;
+        let broker_config =
+            BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
+        let channel = DualChannel::new(
+            &broker_config,
+            Cert::from_key_file(&config.testing.prover.priv_key)?,
+            Some(config.testing.prover.id + 10), // Use different ID to avoid conflicts
+            allow_list.clone(),
+        )?;
+
+        //TODO: this is temporal until there are separated storages
+        let storage_path = format!("/tmp/garbled_storage_{i}.db");
+        clear_db(&storage_path);
+        let garbled_dispatcher =
+            DispatcherHandler::<GarbledJobType>::new_with_path(channel, &storage_path)?;
+        instances.push(garbled_dispatcher);
+    }
+
+    // Main processing loop
+    loop {
+        if rx.try_recv().is_ok() {
+            info!("Signal received, shutting down garbled dispatcher...");
             break;
         }
         for (idx, dispatcher) in instances.iter_mut().enumerate() {
