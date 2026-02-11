@@ -153,6 +153,9 @@ pub enum BitVMXError {
     #[error("A program error has occurred: {0}")]
     ProgramError(#[from] ProgramError),
 
+    #[error("Invalid Conversion {0}")]
+    InvalidConversion(String),
+
     /* =========================
      * Execution / Emulator / ZKP
      * ========================= */

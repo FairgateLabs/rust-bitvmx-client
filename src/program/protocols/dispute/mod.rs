@@ -50,7 +50,7 @@ use crate::{
                 config::DisputeConfiguration,
                 execution::execution_result,
                 input_handler::{
-                    get_required_keys, get_txs_configuration, set_input_u8, split_input,
+                    get_required_keys, get_txs_configuration, set_inputs, split_input,
                 },
             },
             protocol_handler::{ProtocolContext, ProtocolHandler},
@@ -352,8 +352,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         }
 
         if self.role() == ParticipantRole::Prover {
-            set_input_u8(&self.ctx.id, &program_context, "prover_continue", 0)?;
-            set_input_u8(&self.ctx.id, &program_context, "prover_continue2", 0)?;
+            set_inputs(&self.ctx.id, &program_context, vec![
+                ("prover_continue", 0u8).into(),
+                ("prover_continue2", 0u8).into(),
+            ])?;
         }
 
         let key_chain = &mut program_context.key_chain;
