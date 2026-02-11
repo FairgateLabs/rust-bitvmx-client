@@ -1395,10 +1395,21 @@ impl BitVMXApi for BitVMX {
             let decoded = EmulatorResultType::from_value(parsed)?;
             let job_id = Uuid::parse_str(&result_message.job_id)
                 .map_err(|_| BitVMXError::InvalidMessageFormat)?;
-            self.load_program(&job_id)?
-                .protocol
-                .dispute()?
-                .execution_result(&decoded, &self.program_context)?;
+            match self.get_program_version(&job_id)? {
+                Some(ProgramVersion::Legacy) => {
+                    self.load_program(&job_id)?
+                        .protocol
+                        .dispute()?
+                        .execution_result(&decoded, &self.program_context)?;
+                }
+                Some(ProgramVersion::V2) => {
+                    self.load_program_v2(&job_id)?
+                        .protocol
+                        .dispute()?
+                        .execution_result(&decoded, &self.program_context)?;
+                }
+                None => return Err(BitVMXError::ProgramNotFound(job_id)),
+            }
         }
         Ok(())
     }
