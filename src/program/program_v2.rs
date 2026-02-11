@@ -347,6 +347,8 @@ impl ProgramV2 {
                     let (txns_to_monitor, vouts_to_monitor) =
                         self.protocol.get_transactions_to_monitor(program_context)?;
 
+                    let confirmations = self.protocol.requested_confirmations(program_context);
+
                     // Create context for monitoring
                     let context = Context::ProgramId(self.program_id);
                     let context_str = context.to_string()?;
@@ -358,7 +360,7 @@ impl ProgramV2 {
                             txns_to_monitor.len(),
                             self.program_id
                         );
-                        let txs_to_monitor = TypesToMonitor::Transactions(txns_to_monitor, context_str.clone(), None);
+                        let txs_to_monitor = TypesToMonitor::Transactions(txns_to_monitor, context_str.clone(), confirmations);
                         program_context.bitcoin_coordinator.monitor(txs_to_monitor)?;
                     }
 
@@ -368,7 +370,7 @@ impl ProgramV2 {
                             "ProgramV2: Monitoring vout {} of txid {} for program {}",
                             vout, txid, self.program_id
                         );
-                        let vout_to_monitor = TypesToMonitor::SpendingUTXOTransaction(txid, vout, context_str.clone(), None);
+                        let vout_to_monitor = TypesToMonitor::SpendingUTXOTransaction(txid, vout, context_str.clone(), confirmations);
                         program_context.bitcoin_coordinator.monitor(vout_to_monitor)?;
                     }
 
@@ -651,7 +653,7 @@ impl ProgramV2 {
             speedup,
             context.to_string()?,
             None,
-            None,
+            self.protocol.requested_confirmations(program_context),
         )?;
 
         Ok(())
