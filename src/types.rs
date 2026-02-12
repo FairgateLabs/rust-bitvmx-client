@@ -63,14 +63,39 @@ impl ProgramContext {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+pub enum ProgramVersion {
+    Legacy,
+    V2,
+}
+
+impl Default for ProgramVersion {
+    fn default() -> Self {
+        // Default to Legacy for backward compatibility with existing programs
+        ProgramVersion::Legacy
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ProgramStatus {
     pub program_id: Uuid,
+    #[serde(default)]
+    pub version: ProgramVersion,
 }
 
 impl ProgramStatus {
     pub fn new(program_id: Uuid) -> Self {
-        Self { program_id }
+        Self {
+            program_id,
+            version: ProgramVersion::Legacy,
+        }
+    }
+
+    pub fn new_v2(program_id: Uuid) -> Self {
+        Self {
+            program_id,
+            version: ProgramVersion::V2,
+        }
     }
 }
 
@@ -112,6 +137,7 @@ pub enum IncomingBitVMXApiMessages {
     GetTransactionInfoByName(Uuid, String),
     GetHashedMessage(Uuid, String, u32, u32),
     Setup(ProgramId, String, Vec<CommsAddress>, u16),
+    SetupV2(ProgramId, String, Vec<CommsAddress>, u16),
     SubscribeToTransaction(Uuid, Txid, Option<u32>),
     SubscribeToRskPegin(Option<u32>),
     GetSPVProof(Txid),
@@ -374,6 +400,8 @@ pub struct ParticipantChannel {
     pub channel: DualChannel,
 }
 
+pub const PROGRAM_TYPE_AGGREGATED_KEY: &str = "aggregated_key";
+pub const PROGRAM_TYPE_COOPERATIVE_SIGNATURE: &str = "cooperative_signature";
 pub const PROGRAM_TYPE_LOCK: &str = "lock";
 pub const PROGRAM_TYPE_DRP: &str = "drp";
 pub const PROGRAM_TYPE_SLOT: &str = "slot";

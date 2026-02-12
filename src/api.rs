@@ -23,6 +23,14 @@ pub trait BitVMXApi {
         leader: u16,
     ) -> Result<(), BitVMXError>;
 
+    fn setup_v2(
+        &mut self,
+        id: Uuid,
+        program_type: String,
+        peer_address: Vec<CommsAddress>,
+        leader: u16,
+    ) -> Result<(), BitVMXError>;
+
     fn dispatch_transaction_name(&mut self, id: Uuid, name: &str) -> Result<(), BitVMXError>;
 
     fn dispatch_transaction(
