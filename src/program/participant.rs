@@ -28,6 +28,21 @@ impl ParticipantData {
     }
 }
 
+impl TryFrom<&str> for ParticipantRole {
+    type Error = BitVMXError;
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        match s {
+            "verifier" => Ok(ParticipantRole::Verifier),
+            "prover" => Ok(ParticipantRole::Prover),
+            _ => Err(BitVMXError::InvalidConversion(format!(
+                "Invalid role: {}",
+                s
+            ))),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ParticipantRole {
     Prover,

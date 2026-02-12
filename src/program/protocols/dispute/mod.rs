@@ -50,7 +50,7 @@ use crate::{
                 config::DisputeConfiguration,
                 execution::execution_result,
                 input_handler::{
-                    get_required_keys, get_txs_configuration, set_input_u8, split_input,
+                    get_required_keys, get_txs_configuration, set_inputs, split_input,
                 },
             },
             protocol_handler::{ProtocolContext, ProtocolHandler},
@@ -288,6 +288,16 @@ pub fn timeout_input_tx(name: &str) -> String {
     format!("{}_INPUT_TO", name)
 }
 
+pub fn get_tx_name_from_timeout(name: &str) -> Option<String> {
+    if name.ends_with("_INPUT_TO") {
+        Some(name.strip_suffix("_INPUT_TO")?.to_string())
+    } else if name.ends_with("_TO") {
+        Some(name.strip_suffix("_TO")?.to_string())
+    } else {
+        None
+    }
+}
+
 impl ProtocolHandler for DisputeResolutionProtocol {
     fn context(&self) -> &ProtocolContext {
         &self.ctx
@@ -342,8 +352,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         }
 
         if self.role() == ParticipantRole::Prover {
-            set_input_u8(&self.ctx.id, &program_context, "prover_continue", 0)?;
-            set_input_u8(&self.ctx.id, &program_context, "prover_continue2", 0)?;
+            set_inputs(&self.ctx.id, &program_context, vec![
+                ("prover_continue", 0u8).into(),
+                ("prover_continue2", 0u8).into(),
+            ])?;
         }
 
         let key_chain = &mut program_context.key_chain;
@@ -438,7 +450,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 self.get_tx_with_speedup_data(context, &input_tx_name(idx), 0, 0, true)?;
             Ok((tx, Some(speedup)))
         } else if name == START_CH {
-            let tx = self.get_signed_tx(context, START_CH, 0, 1, false, 0)?;
+            let config = DisputeConfiguration::load(&self.ctx.id, &context.globals)?;
+            let leaf = config.protocol_connection.1 as u32;
+            let tx = self.get_signed(context, START_CH, vec![leaf.into()])?;
             let speedup = self.get_speedup_data_from_tx(&tx, context, Some(0))?;
             Ok((tx, Some(speedup)))
         } else {
@@ -986,8 +1000,15 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         amount = self.checked_sub(amount, fee)?;
         amount = self.checked_sub(amount, speedup_dust)?;
 
-        let timeout_leaf = scripts::timelock(2 * timelock_blocks, &aggregated, SignMode::Aggregate);
-        let output_type = OutputType::taproot(amount, aggregated, &vec![timeout_leaf])?;
+        let mut speedup_timeout =
+            scripts::check_aggregated_signature(&aggregated, SignMode::Aggregate);
+        speedup_timeout.set_assert_leaf_id(0);
+        let mut verifier_final =
+            scripts::timelock(2 * timelock_blocks, &aggregated, SignMode::Aggregate);
+        verifier_final.set_assert_leaf_id(1);
+
+        let output_type =
+            OutputType::taproot(amount, aggregated, &vec![speedup_timeout, verifier_final])?;
 
         protocol.add_connection(
             &format!(
@@ -999,8 +1020,18 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             CHALLENGE_READ,
             output_type.into(),
             VERIFIER_FINAL,
-            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
             Some(2 * timelock_blocks),
+            None,
+        )?;
+
+        protocol.add_connection(
+            &format!("{}__CONNECTOR__INPUT_TO", CHALLENGE_READ),
+            CHALLENGE_READ,
+            OutputSpec::Last,
+            &timeout_input_tx(CHALLENGE_READ),
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
+            None,
             None,
         )?;
 
@@ -1110,7 +1141,7 @@ impl DisputeResolutionProtocol {
         mut leaf_index: u32,
         leaf_identification: bool,
     ) -> Result<(Transaction, SpeedupData), BitVMXError> {
-        let tx = self.get_signed_tx(context, name, 0, 0, leaf_identification, 0)?;
+        let tx = self.get_signed(context, name, vec![(0, leaf_identification).into()])?;
         let protocol = self.load_protocol()?;
         let (output_type, scripts) = protocol.get_script_from_output(name, 0)?;
         info!("Scripts length: {}", scripts.len());
@@ -1617,7 +1648,7 @@ impl DisputeResolutionProtocol {
         context.globals.set_var(
             &self.ctx.id,
             &timeout_tx(to),
-            VariableTypes::VecNumber(vec![0, 1, timelock_blocks as u32 * 2]),
+            VariableTypes::VecNumber(vec![1, timelock_blocks as u32 * 2]),
         )?;
 
         // add the timeout tx to penalize the non-acting party
@@ -1631,6 +1662,20 @@ impl DisputeResolutionProtocol {
             None,
         )?;
 
+        // if the previous party does not present the input in time, the other party can also consume the connector output of the connection
+        // so is not forced to reply (as the reply will have a timelock that would allow the dihonest party to start a claim)
+        if from != START_CH {
+            protocol.add_connection(
+                &format!("{}__CONNECTOR__INPUT_TO", from),
+                from,
+                OutputSpec::Last,
+                &timeout_input_tx(from),
+                InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
+                None, //There is no timelock here as the timelock is already enforced by the other input of the timeout_input_tx
+                None,
+            )?;
+        }
+
         //connect the opositte party claim gate to the timeout tx
         claim_gate.add_claimer_win_connection(protocol, &timeout_tx(to))?;
         let pb = ProtocolBuilder {};
@@ -1640,12 +1685,12 @@ impl DisputeResolutionProtocol {
         context.globals.set_var(
             &self.ctx.id,
             &timeout_input_tx(to),
-            VariableTypes::VecNumber(vec![0, leaves.len() as u32 - 1, timelock_blocks as u32]),
+            VariableTypes::VecNumber(vec![leaves.len() as u32 - 1, timelock_blocks as u32]),
         )?;
 
         // add the timeout tx to penalize the party for not commiting the input
         protocol.add_connection(
-            &format!("{}_TL_{}_{}_INPUT_TO", from, timelock_blocks, to),
+            &format!("{}_TL_{}_INPUT_TO", to, timelock_blocks),
             to,
             OutputSpec::Last,
             &timeout_input_tx(to),

@@ -9,7 +9,7 @@ use crate::{
     wait_until_msg,
 };
 use anyhow::{Error, Result};
-use bitcoin::{address::NetworkUnchecked, Amount, PublicKey, ScriptBuf, Transaction, Txid};
+use bitcoin::{address::NetworkUnchecked, PublicKey, ScriptBuf, Transaction, Txid};
 use bitvmx_broker::identification::allow_list::AllowList;
 use bitvmx_client::program::protocols::union::common::get_dispute_pair_key_name;
 use bitvmx_client::{
@@ -31,7 +31,6 @@ use bitvmx_client::{
 };
 use bitvmx_wallet::wallet::Destination;
 use core::clone::Clone;
-use protocol_builder::types::output::AmountMode;
 use protocol_builder::types::{OutputType, Utxo};
 use std::collections::HashMap;
 use std::thread;
@@ -596,22 +595,19 @@ impl Member {
         let wpkh = public_key.wpubkey_hash().expect("key is compressed");
         let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
         let speedup_ot = OutputType::SegwitPublicKey {
-            value: Amount::from_sat(amounts.speedup),
+            value: amounts.speedup.into(),
             script_pubkey: script_pubkey.clone(),
             public_key: public_key,
-            amount_mode: AmountMode::from(amounts.speedup),
         };
         let operator_funding_ot = OutputType::SegwitPublicKey {
-            value: Amount::from_sat(amounts.protocol_funding),
+            value: amounts.protocol_funding.into(),
             script_pubkey: script_pubkey.clone(),
             public_key: public_key,
-            amount_mode: AmountMode::from(amounts.protocol_funding),
         };
         let advance_funds_ot = OutputType::SegwitPublicKey {
-            value: Amount::from_sat(amounts.advance_funds),
+            value: amounts.advance_funds.into(),
             script_pubkey: script_pubkey.clone(),
             public_key: public_key,
-            amount_mode: AmountMode::from(amounts.advance_funds),
         };
 
         // Output indexes should match the order in the Destination::Batch above
