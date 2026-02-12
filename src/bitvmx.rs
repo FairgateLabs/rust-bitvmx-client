@@ -157,7 +157,9 @@ impl BitVMX {
         let broker_backend = Arc::new(Mutex::new(broker_backend));
         let broker_storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
         let cert = Cert::new_with_privk(
-            settings::decrypt_or_read_file(&config.broker.priv_key)?.as_str(),
+            settings::decrypt_or_read_file(&config.broker.priv_key)
+                .map_err(|e| BitVMXError::ConfigurationError(e.into()))?
+                .as_str(),
         )?;
         let broker_config = BrokerConfig::new(
             config.broker.port,

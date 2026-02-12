@@ -33,9 +33,6 @@ pub enum BitVMXError {
     #[error("This feature is not implemented yet {0}")]
     NotImplemented(String),
 
-    #[error("Invalid settings from file")]
-    SettingsError(#[from] bitvmx_settings::errors::SettingsError),
-
     /* =========================
      * IO / System / Time
      * ========================= */
@@ -412,7 +409,7 @@ pub enum ConfigError {
     InvalidConfigPath(String),
 
     #[error("Invalid configuration from file")]
-    SettingsError(#[from] bitvmx_settings::errors::SettingsError),
+    SettingsError(#[from] bitvmx_settings::errors::ConfigError),
 
     #[error("Invalid private key {0}")]
     InvalidPrivateKey(String),

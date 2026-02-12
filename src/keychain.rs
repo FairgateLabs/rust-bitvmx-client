@@ -60,8 +60,11 @@ impl KeyChain {
                 )
             )));
         }
-        let rsa_pubkey_pem =
-            key_manager.import_rsa_private_key(&settings::decrypt_or_read_file(path)?.as_str())?;
+        let rsa_pubkey_pem = key_manager.import_rsa_private_key(
+            &settings::decrypt_or_read_file(path)
+                .map_err(|e| BitVMXError::ConfigurationError(e.into()))?
+                .as_str(),
+        )?;
 
         Ok(Self {
             key_manager,
