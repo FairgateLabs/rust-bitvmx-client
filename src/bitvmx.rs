@@ -36,6 +36,7 @@ use bitvmx_broker::identification::allow_list::AllowList;
 use bitvmx_broker::identification::routing::RoutingTable;
 use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
 use bitvmx_job_dispatcher::helper::PingMessage;
+use bitvmx_settings::settings;
 use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::graph::graph::GraphOptions;
 
@@ -155,7 +156,9 @@ impl BitVMX {
         let broker_backend = Storage::new(&config.broker.storage)?;
         let broker_backend = Arc::new(Mutex::new(broker_backend));
         let broker_storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
-        let cert = Cert::from_key_file(&config.broker.priv_key)?;
+        let cert = Cert::new_with_privk(
+            settings::decrypt_or_read_file(&config.broker.priv_key)?.as_str(),
+        )?;
         let broker_config = BrokerConfig::new(
             config.broker.port,
             Some(config.broker.ip),

@@ -9,6 +9,7 @@ use bitvmx_broker::{
 };
 
 use bitcoin::Txid;
+use bitvmx_settings::settings;
 use tracing::info;
 
 use crate::common::get_bitcoin_client;
@@ -17,7 +18,8 @@ pub fn main() -> Result<()> {
     init_tls();
     let _bitcoin_client = get_bitcoin_client()?;
     let (broker_config, _identifier, _) = BrokerConfig::new_only_address(54321, None)?;
-    let cert = Cert::from_key_file("config/keys/l2.key")?;
+    let cert =
+        Cert::new_with_privk(settings::decrypt_or_read_file("config/keys/l2.key")?.as_str())?;
     let allow_list = AllowList::new();
     allow_list.lock().unwrap().allow_all();
     let channel = DualChannel::new(&broker_config, cert, Some(2), allow_list)?;

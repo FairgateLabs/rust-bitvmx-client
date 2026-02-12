@@ -26,6 +26,7 @@ use bitvmx_client::{
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
 
+use bitvmx_settings::settings;
 use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
 use protocol_builder::types::Utxo;
 use storage_backend::{storage::Storage, storage_config::StorageConfig};
@@ -98,7 +99,9 @@ pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
     let broker_config = BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
     let bridge_client = DualChannel::new(
         &broker_config,
-        Cert::from_key_file(&config.testing.l2.priv_key)?,
+        Cert::new_with_privk(
+            settings::decrypt_or_read_file(&config.testing.l2.priv_key)?.as_str(),
+        )?,
         Some(config.testing.l2.id),
         allow_list.clone(),
     )?;
@@ -124,7 +127,8 @@ pub fn main() -> Result<()> {
         broker_storage.clone(),
     );
 
-    let cert = Cert::from_key_file("config/keys/l2.key")?;
+    let cert =
+        Cert::new_with_privk(settings::decrypt_or_read_file("config/keys/l2.key")?.as_str())?;
     let pubk_hash = cert.get_pubk_hash()?;
     let identifier = Identifier::new(pubk_hash, 2);
     lockservice(broker_channel, identifier)?;

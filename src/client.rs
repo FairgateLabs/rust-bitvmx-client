@@ -14,6 +14,7 @@ use bitvmx_broker::{
     identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{self, tls_helper::Cert},
 };
+use bitvmx_settings::settings;
 use bitvmx_wallet::wallet::Destination;
 use std::time::{Duration, Instant};
 use std::{
@@ -39,7 +40,7 @@ impl BitVMXClient {
             rpc::BrokerConfig::new(broker_config.port, None, broker_config.get_pubk_hash()?);
         let channel = DualChannel::new(
             &config,
-            Cert::from_key_file(&l2_config.priv_key)?,
+            Cert::new_with_privk(settings::decrypt_or_read_file(&l2_config.priv_key)?.as_str())?,
             Some(l2_config.id),
             allow_list,
         )?;
