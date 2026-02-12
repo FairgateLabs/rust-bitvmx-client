@@ -1,6 +1,7 @@
 use std::{collections::HashMap, path::Path, rc::Rc};
 
 use bitcoin::{secp256k1::rand::thread_rng, PublicKey, XOnlyPublicKey};
+use bitvmx_settings::settings;
 use key_manager::{
     create_key_manager_from_config,
     key_manager::KeyManager,
@@ -59,8 +60,11 @@ impl KeyChain {
                 )
             )));
         }
-        let pem_file = std::fs::read_to_string(path)?;
-        let rsa_pubkey_pem = key_manager.import_rsa_private_key(&pem_file)?;
+        let rsa_pubkey_pem = key_manager.import_rsa_private_key(
+            &settings::decrypt_or_read_file(path)
+                .map_err(|e| BitVMXError::ConfigurationError(e.into()))?
+                .as_str(),
+        )?;
 
         Ok(Self {
             key_manager,

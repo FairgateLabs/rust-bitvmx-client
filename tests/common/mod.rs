@@ -24,6 +24,7 @@ use bitvmx_client::{
 };
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
+use bitvmx_settings::settings;
 use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
 use protocol_builder::{
     scripts::{self, ProtocolScript, SignMode},
@@ -55,14 +56,18 @@ pub fn init_bitvmx(
     let broker_config = BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
     let bridge_client = DualChannel::new(
         &broker_config,
-        Cert::from_key_file(&config.testing.l2.priv_key)?,
+        Cert::new_with_privk(
+            settings::decrypt_or_read_file(&config.testing.l2.priv_key)?.as_str(),
+        )?,
         Some(config.testing.l2.id),
         allow_list.clone(),
     )?;
     let dispatcher_channel = if emulator_dispatcher {
         Some(DualChannel::new(
             &broker_config,
-            Cert::from_key_file(&config.testing.emulator.priv_key)?,
+            Cert::new_with_privk(
+                settings::decrypt_or_read_file(&config.testing.emulator.priv_key)?.as_str(),
+            )?,
             Some(config.testing.emulator.id),
             allow_list,
         )?)
@@ -367,7 +372,9 @@ pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
     let broker_config = BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
     let bridge_client = DualChannel::new(
         &broker_config,
-        Cert::from_key_file(&config.testing.l2.priv_key)?,
+        Cert::new_with_privk(
+            settings::decrypt_or_read_file(&config.testing.l2.priv_key)?.as_str(),
+        )?,
         Some(config.testing.l2.id),
         allow_list.clone(),
     )?;
