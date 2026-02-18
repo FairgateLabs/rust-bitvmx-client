@@ -10,6 +10,7 @@ use bitvmx_broker::{
     },
 };
 use bitvmx_client::program::protocols::cardinal::lock::lock_protocol_dust_cost;
+use bitvmx_settings::settings;
 use protocol_builder::scripts::{
     build_taproot_spend_info, reveal_secret, timelock, ProtocolScript, SignMode,
 };
@@ -32,7 +33,8 @@ pub fn main() -> Result<()> {
     let hash = sha256(preimage.as_bytes().to_vec());
 
     let (broker_config, _identifier, _) = BrokerConfig::new_only_address(54321, None)?;
-    let cert = Cert::from_key_file("config/keys/l2.key")?;
+    let cert =
+        Cert::new_with_privk(settings::decrypt_or_read_file("config/keys/l2.key")?.as_str())?;
     let allow_list = AllowList::new();
     allow_list.lock().unwrap().allow_all();
     let channel = DualChannel::new(&broker_config, cert, Some(2), allow_list)?;

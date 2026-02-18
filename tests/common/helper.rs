@@ -23,6 +23,7 @@ use bitvmx_job_dispatcher_types::{
     emulator_messages::EmulatorJobType, garbled_messages::GarbledJobType,
     prover_messages::ProverJobType,
 };
+use bitvmx_settings::settings;
 use std::{
     sync::mpsc::{channel, Receiver, Sender},
     thread,
@@ -184,7 +185,9 @@ impl TestHelper {
                 BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
             let channel = DualChannel::new(
                 &broker_config,
-                Cert::from_key_file(&config.testing.l2.priv_key)?,
+                Cert::new_with_privk(
+                    settings::decrypt_or_read_file(&config.testing.l2.priv_key)?.as_str(),
+                )?,
                 Some(config.testing.l2.id),
                 allow_list.clone(),
             )?;
@@ -425,7 +428,9 @@ fn run_emulator(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result
             BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
         let channel = DualChannel::new(
             &broker_config,
-            Cert::from_key_file(&config.testing.emulator.priv_key)?,
+            Cert::new_with_privk(
+                settings::decrypt_or_read_file(&config.testing.emulator.priv_key)?.as_str(),
+            )?,
             Some(config.testing.emulator.id),
             allow_list.clone(),
         )?;
@@ -465,7 +470,9 @@ fn run_zkp(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<()> 
             BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
         let channel = DualChannel::new(
             &broker_config,
-            Cert::from_key_file(&config.testing.prover.priv_key)?,
+            Cert::new_with_privk(
+                settings::decrypt_or_read_file(&config.testing.prover.priv_key)?.as_str(),
+            )?,
             Some(config.testing.prover.id),
             allow_list.clone(),
         )?;

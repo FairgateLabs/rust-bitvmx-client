@@ -203,12 +203,12 @@ impl ClaimGate {
             .collect::<Vec<OutputType>>();
 
         for action in action_outputs.iter().chain(outputs.iter()) {
-            if action.get_value().to_sat() != amount_dust {
+            if action.get_value_or_err()?.to_sat() != amount_dust {
                 return Err(BitVMXError::InvalidParameter(format!(
                     "Error building claimage {}, All claim gates outputs must have DUST={} as amount in output={}",
                     claim_name,
                     amount_dust,
-                    action.get_value().to_sat()
+                    action.get_value_or_err()?.to_sat()
                 )));
             }
 

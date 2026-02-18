@@ -47,7 +47,7 @@ use protocol_builder::{
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
-        output::{AmountMode, SpeedupData},
+        output::{AmountType, SpeedupData},
         InputArgs, OutputType, Utxo,
     },
 };
@@ -406,7 +406,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
         );
 
         let mut reveal_output: OutputType = OutputType::taproot(
-            AmountMode::Auto.into(),
+            AmountType::Auto,
             &committee.dispute_aggregated_key,
             &[operator_won_script],
         )?;
@@ -648,7 +648,7 @@ impl DisputeCoreProtocol {
             "initial_deposit",
             &PROTOCOL_FUNDING_TX,
             OutputSpec::Auto(OutputType::taproot(
-                AmountMode::Auto.into(),
+                AmountType::Auto,
                 dispute_aggregated_key,
                 &[],
             )?),
@@ -681,7 +681,7 @@ impl DisputeCoreProtocol {
 
         protocol.add_transaction_output(
             &WT_SELF_DISABLER_TX,
-            &OutputType::segwit_key(AmountMode::Recover.into(), watchtower_dispute_key)?,
+            &OutputType::segwit_key(AmountType::Recover, watchtower_dispute_key)?,
         )?;
 
         return Ok(());
@@ -744,7 +744,7 @@ impl DisputeCoreProtocol {
                 protocol.add_connection(
                     "init_challenge",
                     WT_START_ENABLER_TX,
-                    OutputType::taproot(AmountMode::Auto.into(), &wt_dispute_key, &scripts)?.into(),
+                    OutputType::taproot(AmountType::Auto, &wt_dispute_key, &scripts)?.into(),
                     &init_challenge_name,
                     InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
                     None,
@@ -765,7 +765,7 @@ impl DisputeCoreProtocol {
                 );
 
                 let init_challenge_output = OutputType::taproot(
-                    AmountMode::Auto.into(),
+                    AmountType::Auto,
                     op_dispute_key,
                     &vec![
                         // FIXME: Leaf 0 should be cosign script here
@@ -941,7 +941,7 @@ impl DisputeCoreProtocol {
             } else {
                 protocol.add_transaction_output(
                     WT_START_ENABLER_TX,
-                    &OutputType::taproot(AmountMode::Auto.into(), wt_dispute_key, &vec![])?,
+                    &OutputType::taproot(AmountType::Auto, wt_dispute_key, &vec![])?,
                 )?;
 
                 wt_init_challenge_outputs.push(None);
@@ -988,7 +988,7 @@ impl DisputeCoreProtocol {
             "initial_deposit",
             &PROTOCOL_FUNDING_TX,
             OutputSpec::Auto(OutputType::taproot(
-                AmountMode::Auto.into(),
+                AmountType::Auto,
                 dispute_aggregated_key,
                 &[],
             )?),
@@ -1021,7 +1021,7 @@ impl DisputeCoreProtocol {
 
         protocol.add_transaction_output(
             &OP_SELF_DISABLER_TX,
-            &OutputType::segwit_key(AmountMode::Recover.into(), operator_dispute_key)?,
+            &OutputType::segwit_key(AmountType::Recover, operator_dispute_key)?,
         )?;
 
         Ok(())
@@ -1070,7 +1070,7 @@ impl DisputeCoreProtocol {
             }
 
             outputs.push(OutputType::taproot(
-                AmountMode::Auto.into(),
+                AmountType::Auto,
                 &committee.take_aggregated_key,
                 scripts.as_slice(),
             )?)
@@ -1135,7 +1135,7 @@ impl DisputeCoreProtocol {
             "start_dispute_core",
             &OP_INITIAL_DEPOSIT_TX,
             get_initial_deposit_output_type(
-                AmountMode::Auto.into(),
+                AmountType::Auto,
                 operator_dispute_key,
                 &[start_reimbursement, validate_dispute_key],
             )?
@@ -1172,7 +1172,7 @@ impl DisputeCoreProtocol {
             "reveal_input",
             &challenge,
             OutputType::taproot(
-                AmountMode::Auto.into(),
+                AmountType::Auto,
                 dispute_aggregated_key,
                 &[reveal_script, not_reveal_script],
             )?
@@ -1264,7 +1264,7 @@ impl DisputeCoreProtocol {
 
             protocol.add_transaction_output(
                 &two_dispute_penalization,
-                &OutputType::taproot(AmountMode::Auto.into(), &take_aggregated_key, &[])?,
+                &OutputType::taproot(AmountType::Auto, &take_aggregated_key, &[])?,
             )?;
         }
 
@@ -1304,20 +1304,20 @@ impl DisputeCoreProtocol {
 
             protocol.add_transaction_output(
                 &OP_INITIAL_DEPOSIT_TX,
-                &OutputType::segwit_key(AmountMode::Auto.into(), operator_speedup_key)?,
+                &OutputType::segwit_key(AmountType::Auto, operator_speedup_key)?,
             )?;
         }
 
         // Add a speedup output to the reimbursement_kickoff transaction.
         protocol.add_transaction_output(
             &reimbursement_kickoff,
-            &OutputType::segwit_key(AmountMode::Auto.into(), operator_speedup_key)?,
+            &OutputType::segwit_key(AmountType::Auto, operator_speedup_key)?,
         )?;
 
         // Add one speedup ouput per committee member to the challenge and input_not_revealed transactions.
         for i in 0..keys.len() {
             let speedup_output =
-                OutputType::segwit_key(AmountMode::Auto.into(), keys[i].get_public(SPEEDUP_KEY)?)?;
+                OutputType::segwit_key(AmountType::Auto, keys[i].get_public(SPEEDUP_KEY)?)?;
             protocol.add_transaction_output(&challenge, &speedup_output)?;
             protocol.add_transaction_output(&input_not_revealed, &speedup_output)?;
         }
@@ -1325,7 +1325,7 @@ impl DisputeCoreProtocol {
         // Add a speedup output to the reveal_input transaction.
         protocol.add_transaction_output(
             &reveal_input,
-            &OutputType::segwit_key(AmountMode::Auto.into(), operator_speedup_key)?,
+            &OutputType::segwit_key(AmountType::Auto, operator_speedup_key)?,
         )?;
 
         Ok(())
@@ -2944,14 +2944,14 @@ impl DisputeCoreProtocol {
                 let wt_stopper: PartialUtxo = (
                     wt_init_challenge_txid,
                     WT_INIT_CHALLENGE_WT_STOPPER_VOUT,
-                    Some(outputs.wt_stopper.get_value().to_sat()),
+                    Some(outputs.wt_stopper.get_value_or_err()?.to_sat()),
                     Some(outputs.wt_stopper),
                 );
 
                 let op_stopper: PartialUtxo = (
                     wt_init_challenge_txid,
                     WT_INIT_CHALLENGE_OP_STOPPER_VOUT,
-                    Some(outputs.op_stopper.get_value().to_sat()),
+                    Some(outputs.op_stopper.get_value_or_err()?.to_sat()),
                     Some(outputs.op_stopper),
                 );
 
@@ -2981,7 +2981,7 @@ impl DisputeCoreProtocol {
                 op_cosign_utxos.push(Some((
                     op_cosign_txid,
                     op_cosign_vout,
-                    Some(op_cosign_output.get_value().to_sat()),
+                    Some(op_cosign_output.get_value_or_err()?.to_sat()),
                     Some(op_cosign_output),
                 )));
             } else {
