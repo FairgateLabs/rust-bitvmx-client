@@ -89,6 +89,17 @@ impl KeyChain {
         Ok(self.key_manager.derive_keypair(key_type, index)?)
     }
 
+    pub fn derive_keypair_adjust_parity(
+        &mut self,
+        key_type: BitcoinKeyType,
+    ) -> Result<PublicKey, BitVMXError> {
+        let index = self.get_new_ecdsa_index()?;
+
+        Ok(self
+            .key_manager
+            .derive_keypair_adjust_parity(key_type, index)?)
+    }
+
     pub fn derive_winternitz_hash160(
         &mut self,
         message_bytes: usize,
