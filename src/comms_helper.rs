@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 const MIN_EXPECTED_MSG_LEN: usize = 4; // 2 bytes for version + 2 bytes for message type
-const MAX_EXPECTED_MSG_LEN: usize = 1000000; // Maximum length for a message //TODO: Change this value
+const MAX_EXPECTED_MSG_LEN: usize = 2000000; // Maximum length for a message
 const CURRENT_PROTOCOL_VERSION: &str = "1.0";
 
 // Public function for signature verification
