@@ -455,7 +455,8 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>, identifier: Identifier)
         info!("happy path secret: {}", fake_secret);
         info!("happy path public: {}", aggregated_happy_path);
 
-        let msg = serde_json::to_string(&(status.tx.unwrap().compute_txid(), fake_secret))?;
+        let tx = status.tx_or_err()?;
+        let msg = serde_json::to_string(&(tx.compute_txid(), fake_secret))?;
         channel.send(&identifier, msg)?;
     }
 

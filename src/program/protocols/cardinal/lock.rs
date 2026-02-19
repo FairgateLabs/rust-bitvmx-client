@@ -114,7 +114,8 @@ impl ProtocolHandler for LockProtocol {
             );
         }
         if name == LOCK_TX && tx_status.confirmations == 1 {
-            let witness = tx_status.tx.unwrap().input[0].witness.clone();
+            let tx = tx_status.tx_or_err()?;
+            let witness = tx.input[0].witness.clone();
             info!(
                 "secret witness {:?}",
                 String::from_utf8(witness[1].to_vec())
