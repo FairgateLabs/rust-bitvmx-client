@@ -256,12 +256,7 @@ impl ProtocolHandler for AdvanceFundsProtocol {
                 block_height,
             )?;
 
-            let tx = tx_status
-                .tx
-                .as_ref()
-                .ok_or(BitVMXError::InvalidTransactionStatus(
-                    "Missing transaction data in tx_status".to_string(),
-                ))?;
+            let tx = tx_status.tx_or_err()?;
             self.update_advance_funds_input(context, tx)?;
         }
 
@@ -411,7 +406,7 @@ impl AdvanceFundsProtocol {
             tx.clone(),
             speedup,
             Context::ProgramId(self.ctx.id).to_string()?,
-            block_height,    // Dispatch immediately
+            block_height, // Dispatch immediately
             self.requested_confirmations(context),
         )?;
 

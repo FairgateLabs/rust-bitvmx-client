@@ -2224,12 +2224,7 @@ impl DisputeCoreProtocol {
             REVEAL_INPUT_TX_REVEAL_LEAF as u32,
         )?;
 
-        let tx = tx_status
-            .tx
-            .as_ref()
-            .ok_or(BitVMXError::InvalidTransactionStatus(
-                "Missing transaction data in tx_status".to_string(),
-            ))?;
+        let tx = tx_status.tx_or_err()?;
         self.decode_witness_for_tx(
             tx_name,
             REVEAL_INPUT_TX_REVEAL_INDEX as u32,

@@ -231,12 +231,7 @@ impl ProtocolHandler for SlotProtocol {
                 .parse::<u32>()?;
 
             info!("Operator {} has sent a certificate hash", operator);
-            let tx = tx_status
-                .tx
-                .as_ref()
-                .ok_or(BitVMXError::InvalidTransactionStatus(
-                    "Missing transaction data in tx_status".to_string(),
-                ))?;
+            let tx = tx_status.tx_or_err()?;
             self.decode_witness_for_tx(&name, 0, program_context, tx, Some(0), None, None)?;
 
             // after sending the certificate hash, the operator should send the group id
@@ -283,7 +278,7 @@ impl ProtocolHandler for SlotProtocol {
                     .unwrap()
                     .number()?;
 
-                let txid = tx_status.tx_id();
+                let txid = tx.compute_txid();
 
                 //notify when the stops are consumed
                 for i in 0..total_operators - 1 {
@@ -443,11 +438,12 @@ impl ProtocolHandler for SlotProtocol {
                 0,
             )?;
             let speedup_data = self.get_speedup_data_from_tx(&tx, program_context, None)?;
+            let block_height = tx_status.block_info_or_err()?.height;
             program_context.bitcoin_coordinator.dispatch(
                 tx,
                 Some(speedup_data),
                 Context::ProgramId(self.ctx.id).to_string()?,
-                Some(tx_status.block_info.unwrap().height + timelock_blocks),
+                Some(block_height + timelock_blocks),
                 self.requested_confirmations(program_context),
             )?;
         }
@@ -461,12 +457,7 @@ impl ProtocolHandler for SlotProtocol {
                 .collect();
 
             info!("Operator {} has sent a group id", op_and_id[0]);
-            let tx = tx_status
-                .tx
-                .as_ref()
-                .ok_or(BitVMXError::InvalidTransactionStatus(
-                    "Missing transaction data in tx_status".to_string(),
-                ))?;
+            let tx = tx_status.tx_or_err()?;
             self.decode_witness_for_tx(
                 &name,
                 0,

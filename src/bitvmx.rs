@@ -762,6 +762,11 @@ impl BitVMX {
                     // TODO: Complete what to do here
                     ack_news = AckNews::Coordinator(AckCoordinatorNews::NetworkError(tx_id));
                 }
+                CoordinatorNews::TransactionStuckInMempool(tx_id, _context_data) => {
+                    // TODO: Complete what to do here
+                    ack_news =
+                        AckNews::Coordinator(AckCoordinatorNews::TransactionStuckInMempool(tx_id));
+                }
             }
 
             self.program_context
