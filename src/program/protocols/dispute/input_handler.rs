@@ -363,3 +363,77 @@ pub fn set_input(
         .set_var(id, name, VariableTypes::Input(value))?;
     Ok(())
 }
+
+pub enum InputTypes {
+    U8(u8),
+    U32(u32),
+    U64(u64),
+    Hex(String),
+    Input(Vec<u8>),
+}
+
+impl InputTypes {
+    pub fn set_input(
+        &self,
+        id: &Uuid,
+        context: &ProgramContext,
+        name: &str,
+    ) -> Result<(), BitVMXError> {
+        match self {
+            InputTypes::U8(value) => set_input_u8(id, context, name, *value),
+            InputTypes::U32(value) => set_input_u32(id, context, name, *value),
+            InputTypes::U64(value) => set_input_u64(id, context, name, *value),
+            InputTypes::Hex(value) => set_input_hex(id, context, name, value),
+            InputTypes::Input(value) => set_input(id, context, name, value.clone()),
+        }
+    }
+}
+
+pub struct InputPair<'a>(pub &'a str, pub InputTypes);
+
+impl<'a> From<(&'a str, u8)> for InputPair<'a> {
+    fn from((name, value): (&'a str, u8)) -> Self {
+        InputPair(name, InputTypes::U8(value))
+    }
+}
+
+impl<'a> From<(&'a str, u32)> for InputPair<'a> {
+    fn from((name, value): (&'a str, u32)) -> Self {
+        InputPair(name, InputTypes::U32(value))
+    }
+}
+
+impl<'a> From<(&'a str, u64)> for InputPair<'a> {
+    fn from((name, value): (&'a str, u64)) -> Self {
+        InputPair(name, InputTypes::U64(value))
+    }
+}
+
+impl<'a> From<(&'a str, String)> for InputPair<'a> {
+    fn from((name, value): (&'a str, String)) -> Self {
+        InputPair(name, InputTypes::Hex(value))
+    }
+}
+
+impl<'a> From<(&'a str, Vec<u8>)> for InputPair<'a> {
+    fn from((name, value): (&'a str, Vec<u8>)) -> Self {
+        InputPair(name, InputTypes::Input(value))
+    }
+}
+
+impl<'a> From<(&'a str, InputTypes)> for InputPair<'a> {
+    fn from((name, value): (&'a str, InputTypes)) -> Self {
+        InputPair(name, value)
+    }
+}
+
+pub fn set_inputs(
+    id: &Uuid,
+    context: &ProgramContext,
+    inputs: Vec<InputPair>,
+) -> Result<(), BitVMXError> {
+    for InputPair(name, input) in inputs {
+        input.set_input(id, context, name)?;
+    }
+    Ok(())
+}

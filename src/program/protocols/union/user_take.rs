@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use bitcoin::{Amount, PublicKey, ScriptBuf, Transaction, Txid};
+use bitcoin::{PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     graph::graph::GraphOptions,
@@ -133,7 +133,7 @@ impl ProtocolHandler for UserTakeProtocol {
         protocol.add_transaction_output(
             USER_TAKE_TX,
             &OutputType::SegwitPublicKey {
-                value: Amount::from_sat(user_amount),
+                value: user_amount.into(),
                 script_pubkey: script_pubkey.clone(),
                 public_key: user_pubkey,
             },
@@ -142,7 +142,7 @@ impl ProtocolHandler for UserTakeProtocol {
         protocol.add_transaction_output(
             USER_TAKE_TX,
             &OutputType::SegwitPublicKey {
-                value: Amount::from_sat(SPEEDUP_VALUE),
+                value: SPEEDUP_VALUE.into(),
                 script_pubkey: script_pubkey.clone(),
                 public_key: user_pubkey,
             },

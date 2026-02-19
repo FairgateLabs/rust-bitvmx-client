@@ -1,7 +1,7 @@
 use core::convert::Into;
 use std::{collections::HashMap, vec};
 
-use bitcoin::{Amount, PublicKey, ScriptBuf, Transaction, Txid};
+use bitcoin::{PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use key_manager::winternitz::WinternitzType;
 use protocol_builder::{
@@ -10,7 +10,7 @@ use protocol_builder::{
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
-        output::SpeedupData,
+        output::{AmountType, SpeedupData},
         OutputType,
     },
 };
@@ -380,7 +380,7 @@ impl FullPenalizationProtocol {
             protocol.add_transaction_output(
                 &op_disabler_name,
                 &OutputType::SegwitUnspendable {
-                    value: Amount::from_sat(0),
+                    value: AmountType::Return,
                     script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
                 },
             )?;
@@ -434,7 +434,7 @@ impl FullPenalizationProtocol {
             protocol.add_transaction_output(
                 &op_lazy_disabler_name,
                 &OutputType::SegwitUnspendable {
-                    value: Amount::from_sat(0),
+                    value: AmountType::Return,
                     script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
                 },
             )?;
@@ -479,7 +479,7 @@ impl FullPenalizationProtocol {
             protocol.add_transaction_output(
                 &stop_op_won_name,
                 &OutputType::SegwitUnspendable {
-                    value: Amount::from_sat(0),
+                    value: AmountType::Return,
                     script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
                 },
             )?;
@@ -849,7 +849,7 @@ impl FullPenalizationProtocol {
                 self.op_initial_deposit_out_scripts(context, dispute_core_pid, slot_index)?;
 
             let output_type = get_initial_deposit_output_type(
-                amount,
+                amount.into(),
                 &committee.members[operator_index].dispute_key,
                 scripts.as_slice(),
             )?;
@@ -1058,7 +1058,7 @@ impl FullPenalizationProtocol {
             protocol.add_transaction_output(
                 &wt_disabler_name,
                 &OutputType::SegwitUnspendable {
-                    value: Amount::from_sat(0),
+                    value: AmountType::Return,
                     script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
                 },
             )?;
@@ -1107,7 +1107,7 @@ impl FullPenalizationProtocol {
             protocol.add_transaction_output(
                 &wt_cosign_disabler_name,
                 &OutputType::SegwitUnspendable {
-                    value: Amount::from_sat(0),
+                    value: AmountType::Return,
                     script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
                 },
             )?;

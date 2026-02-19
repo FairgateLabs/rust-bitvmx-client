@@ -4,7 +4,6 @@ use bitcoincore_rpc::bitcoin::{key::ParsePublicKeyError, sighash::SighashTypePar
 use bitvmx_broker::{identification::errors::IdentificationError, rpc::errors::BrokerError};
 use bitvmx_cpu_definitions::challenge::EmulatorResultError;
 use bitvmx_job_dispatcher::dispatcher_error::DispatcherError;
-use config as settings;
 use emulator::{loader::program_definition::ProgramDefinitionError, EmulatorError};
 use key_manager::{
     errors::{KeyManagerError, WinternitzError},
@@ -152,6 +151,9 @@ pub enum BitVMXError {
 
     #[error("A program error has occurred: {0}")]
     ProgramError(#[from] ProgramError),
+
+    #[error("Invalid Conversion {0}")]
+    InvalidConversion(String),
 
     /* =========================
      * Execution / Emulator / ZKP
@@ -385,9 +387,6 @@ impl BitVMXError {
 
 #[derive(Error, Debug)]
 pub enum ConfigError {
-    #[error("Error while trying to build configuration")]
-    ConfigFileError(#[from] settings::ConfigError),
-
     #[error("Public key in config is invalid")]
     InvalidPublicKey(#[from] ParsePublicKeyError),
 
@@ -413,7 +412,7 @@ pub enum ConfigError {
     InvalidConfigPath(String),
 
     #[error("Invalid configuration from file")]
-    ConfigurationError(#[from] bitvmx_settings::errors::ConfigError),
+    SettingsError(#[from] bitvmx_settings::errors::ConfigError),
 
     #[error("Invalid private key {0}")]
     InvalidPrivateKey(String),

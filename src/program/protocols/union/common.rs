@@ -1,11 +1,11 @@
 use anyhow::Error;
-use bitcoin::{Amount, PublicKey, ScriptBuf};
+use bitcoin::{PublicKey, ScriptBuf};
 use key_manager::{key_manager::KeyManager, winternitz};
 use protocol_builder::{
     builder::Protocol,
     errors::ProtocolBuilderError,
     scripts::{ProtocolScript, SignMode},
-    types::{input::SpendMode, InputArgs, OutputType},
+    types::{input::SpendMode, output::AmountType, InputArgs, OutputType},
 };
 use sha2::{Digest, Sha256};
 use tracing::info;
@@ -265,14 +265,14 @@ pub fn get_operator_output_type(
     let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
 
     Ok(OutputType::SegwitPublicKey {
-        value: Amount::from_sat(amount),
+        value: amount.into(),
         script_pubkey,
         public_key: *dispute_key,
     })
 }
 
 pub fn get_initial_deposit_output_type(
-    amount: u64,
+    amount: AmountType,
     operator_key: &PublicKey,
     script: &[ProtocolScript],
 ) -> Result<OutputType, BitVMXError> {

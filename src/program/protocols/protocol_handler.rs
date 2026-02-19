@@ -49,6 +49,39 @@ use crate::types::{ProgramContext, PROGRAM_TYPE_DRP};
 use crate::program::variables::WitnessTypes;
 use crate::program::{variables::VariableTypes, witness};
 
+#[derive(Clone, Debug)]
+pub struct LeafToSign {
+    pub leaf_index: u32,
+    pub leaf_identification: bool,
+}
+
+impl LeafToSign {
+    pub fn new(leaf_index: u32, leaf_identification: bool) -> Self {
+        Self {
+            leaf_index,
+            leaf_identification,
+        }
+    }
+}
+
+impl From<u32> for LeafToSign {
+    fn from(leaf_index: u32) -> Self {
+        Self {
+            leaf_index,
+            leaf_identification: false,
+        }
+    }
+}
+
+impl From<(u32, bool)> for LeafToSign {
+    fn from(tuple: (u32, bool)) -> Self {
+        Self {
+            leaf_index: tuple.0,
+            leaf_identification: tuple.1,
+        }
+    }
+}
+
 #[enum_dispatch]
 pub trait ProtocolHandler {
     fn context(&self) -> &ProtocolContext;
@@ -297,61 +330,64 @@ pub trait ProtocolHandler {
         Ok(wots_sigs)
     }
 
-    fn get_signed_tx(
+    fn get_signed(
         &self,
         context: &ProgramContext,
         name: &str,
-        input_index: u32,
-        leaf_index: u32,
-        leaf_identification: bool,
-        second_leaf_index: usize,
+        inputs: Vec<LeafToSign>,
     ) -> Result<Transaction, BitVMXError> {
+        let mut all_input_args = vec![];
+
         let protocol = self.load_protocol()?;
-        info!("Getting signed tx for {}", style(name).green());
+        info!("Getting signed tx: {}", style(name).green());
 
-        //TODO: Control that the variables sizes correspond with the keys
-        //avoid invalid sig checks
+        for (input_index, input) in inputs.iter().enumerate() {
+            let mut spending_args = InputArgs::new_taproot_script_args(input.leaf_index as usize);
 
-        let mut spending_args = InputArgs::new_taproot_script_args(leaf_index as usize);
+            let spend = protocol.get_script_to_spend(name, input_index as u32, input.leaf_index)?;
+            for sig in self.get_winternitz_signature_for_script(&spend, context)? {
+                spending_args.push_winternitz_signature(sig);
+            }
 
-        let spend = protocol.get_script_to_spend(name, input_index, leaf_index)?;
-        for sig in self.get_winternitz_signature_for_script(&spend, context)? {
-            spending_args.push_winternitz_signature(sig);
-        }
-
-        let signature = protocol
-            .input_taproot_script_spend_signature(name, input_index as usize, leaf_index as usize)?
-            .ok_or_else(|| BitVMXError::MissingInputSignature {
-                tx_name: name.to_string(),
-                input_index: input_index as usize,
-                script_index: None,
-            })?;
-        spending_args.push_taproot_signature(signature)?;
-
-        if leaf_identification {
-            spending_args.push_slice(scriptint_vec(leaf_index as i64).as_slice());
-        }
-
-        let mut args = vec![];
-        args.push(spending_args);
-
-        //TODO: try to generelaize to all inputs. This is a workaround to sign the claim-gate
-        let tx = protocol.transaction_by_name(name)?;
-        let total_inputs = tx.input.len();
-        if total_inputs > 1 {
             let signature = protocol
-                .input_taproot_script_spend_signature(name, 1, second_leaf_index)?
+                .input_taproot_script_spend_signature(
+                    name,
+                    input_index as usize,
+                    input.leaf_index as usize,
+                )?
                 .ok_or_else(|| BitVMXError::MissingInputSignature {
                     tx_name: name.to_string(),
-                    input_index: 1,
-                    script_index: None,
+                    input_index: input_index as usize,
+                    script_index: Some(input.leaf_index as usize),
                 })?;
-            let mut spending_args = InputArgs::new_taproot_script_args(second_leaf_index);
             spending_args.push_taproot_signature(signature)?;
-            args.push(spending_args);
+
+            if input.leaf_identification {
+                spending_args.push_slice(scriptint_vec(input.leaf_index as i64).as_slice());
+            }
+
+            all_input_args.push(spending_args);
         }
 
-        Ok(protocol.transaction_to_send(name, &args.as_slice())?)
+        // Add signatures for extra inputs, defaulting to leaf 0
+        let tx = protocol.transaction_by_name(name)?;
+        let total_inputs = tx.input.len();
+        if total_inputs > inputs.len() {
+            for input_index in inputs.len()..total_inputs {
+                let signature = protocol
+                    .input_taproot_script_spend_signature(name, input_index, 0)?
+                    .ok_or_else(|| BitVMXError::MissingInputSignature {
+                        tx_name: name.to_string(),
+                        input_index: input_index,
+                        script_index: None,
+                    })?;
+                let mut spending_args = InputArgs::new_taproot_script_args(0);
+                spending_args.push_taproot_signature(signature)?;
+                all_input_args.push(spending_args);
+            }
+        }
+
+        Ok(protocol.transaction_to_send(name, &all_input_args.as_slice())?)
     }
 
     fn decode_witness_for_tx(

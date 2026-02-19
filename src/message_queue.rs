@@ -119,7 +119,7 @@ impl MessageQueue {
             // If ready, return message
             self.save_queue_ids(ids)?;
             self.storage
-                .delete(&key)
+                .remove(&key, None)
                 .map_err(BitVMXError::StorageError)?;
 
             return Ok(Some(msg));

@@ -9,7 +9,7 @@ use crate::{
     wait_until_msg,
 };
 use anyhow::{Error, Result};
-use bitcoin::{address::NetworkUnchecked, Amount, PublicKey, ScriptBuf, Transaction, Txid};
+use bitcoin::{address::NetworkUnchecked, PublicKey, ScriptBuf, Transaction, Txid};
 use bitvmx_broker::identification::allow_list::AllowList;
 use bitvmx_client::program::protocols::union::common::get_dispute_pair_key_name;
 use bitvmx_client::{
@@ -137,7 +137,6 @@ impl Member {
 
         Ok((take_pubkey, dispute_pubkey, communication_pubkey))
     }
-
 
     // pub fn setup_member_keys(&mut self) -> Result<(PublicKey, PublicKey, PublicKey)> {
     //     // For regtest/testing, use deterministic UUIDs based on member id so keys are reproducible
@@ -596,17 +595,17 @@ impl Member {
         let wpkh = public_key.wpubkey_hash().expect("key is compressed");
         let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
         let speedup_ot = OutputType::SegwitPublicKey {
-            value: Amount::from_sat(amounts.speedup),
+            value: amounts.speedup.into(),
             script_pubkey: script_pubkey.clone(),
             public_key: public_key,
         };
         let operator_funding_ot = OutputType::SegwitPublicKey {
-            value: Amount::from_sat(amounts.protocol_funding),
+            value: amounts.protocol_funding.into(),
             script_pubkey: script_pubkey.clone(),
             public_key: public_key,
         };
         let advance_funds_ot = OutputType::SegwitPublicKey {
-            value: Amount::from_sat(amounts.advance_funds),
+            value: amounts.advance_funds.into(),
             script_pubkey: script_pubkey.clone(),
             public_key: public_key,
         };
