@@ -1613,6 +1613,13 @@ impl BitVMXApi for BitVMX {
                     self.reply(from, OutgoingBitVMXApiMessages::PubKey(id, pubkey))?;
                 }
             }
+            IncomingBitVMXApiMessages::GetEvenPubKey(id) => {
+                let public = self
+                    .program_context
+                    .key_chain
+                    .derive_keypair_adjust_parity(BitcoinKeyType::P2tr)?;
+                self.reply(from, OutgoingBitVMXApiMessages::PubKey(id, public))?;
+            }
             IncomingBitVMXApiMessages::SignMessage(id, payload, public_key) => {
                 // Create message from the payload
                 let message = Message::from_digest_slice(&payload)
