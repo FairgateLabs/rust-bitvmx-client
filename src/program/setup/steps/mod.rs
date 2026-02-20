@@ -6,8 +6,13 @@ pub use keys_step::KeysStep;
 pub use nonces_step::NoncesStep;
 pub use signatures_step::SignaturesStep;
 
-use crate::errors::BitVMXError;
+use enum_dispatch::enum_dispatch;
+
 use super::SetupStep;
+use crate::errors::BitVMXError;
+use crate::program::participant::ParticipantData;
+use crate::program::protocols::protocol_handler::ProtocolType;
+use crate::types::ProgramContext;
 use std::fmt;
 use std::str::FromStr;
 
@@ -73,82 +78,12 @@ impl From<SetupStepName> for String {
 ///
 /// This allows us to avoid heap allocations (`Box<dyn SetupStep>`) while
 /// still using a unified type that implements the `SetupStep` trait.
+#[enum_dispatch(SetupStep)]
 #[derive(Debug, Clone)]
 pub enum SetupStepEnum {
     Keys(KeysStep),
     Nonces(NoncesStep),
     Signatures(SignaturesStep),
-}
-
-impl SetupStep for SetupStepEnum {
-    fn step_name(&self) -> &str {
-        match self {
-            SetupStepEnum::Keys(step) => step.step_name(),
-            SetupStepEnum::Nonces(step) => step.step_name(),
-            SetupStepEnum::Signatures(step) => step.step_name(),
-        }
-    }
-
-    fn generate_data(
-        &self,
-        protocol: &mut crate::program::protocols::protocol_handler::ProtocolType,
-        context: &mut crate::types::ProgramContext,
-    ) -> Result<Option<Vec<u8>>, BitVMXError> {
-        match self {
-            SetupStepEnum::Keys(step) => step.generate_data(protocol, context),
-            SetupStepEnum::Nonces(step) => step.generate_data(protocol, context),
-            SetupStepEnum::Signatures(step) => step.generate_data(protocol, context),
-        }
-    }
-
-    fn verify_received(
-        &self,
-        data: &[u8],
-        from_participant: &crate::program::participant::ParticipantData,
-        protocol: &crate::program::protocols::protocol_handler::ProtocolType,
-        participants: &[crate::program::participant::ParticipantData],
-        context: &mut crate::types::ProgramContext,
-    ) -> Result<(), BitVMXError> {
-        match self {
-            SetupStepEnum::Keys(step) => {
-                step.verify_received(data, from_participant, protocol, participants, context)
-            }
-            SetupStepEnum::Nonces(step) => {
-                step.verify_received(data, from_participant, protocol, participants, context)
-            }
-            SetupStepEnum::Signatures(step) => {
-                step.verify_received(data, from_participant, protocol, participants, context)
-            }
-        }
-    }
-
-    fn can_advance(
-        &self,
-        protocol: &crate::program::protocols::protocol_handler::ProtocolType,
-        participants: &[crate::program::participant::ParticipantData],
-        context: &crate::types::ProgramContext,
-    ) -> Result<bool, BitVMXError> {
-        match self {
-            SetupStepEnum::Keys(step) => step.can_advance(protocol, participants, context),
-            SetupStepEnum::Nonces(step) => step.can_advance(protocol, participants, context),
-            SetupStepEnum::Signatures(step) => step.can_advance(protocol, participants, context),
-        }
-    }
-
-    fn on_step_complete(
-        &self,
-        protocol: &crate::program::protocols::protocol_handler::ProtocolType,
-        participants: &[crate::program::participant::ParticipantData],
-        context: &mut crate::types::ProgramContext,
-    ) -> Result<(), BitVMXError> {
-        match self {
-            SetupStepEnum::Keys(step) => step.on_step_complete(protocol, participants, context),
-            SetupStepEnum::Nonces(step) => step.on_step_complete(protocol, participants, context),
-            SetupStepEnum::Signatures(step) => {
-                step.on_step_complete(protocol, participants, context)
-            }
-        }
-    }
 }
 
 /// Factory function to create a concrete `SetupStepEnum` from its name.

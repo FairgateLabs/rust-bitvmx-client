@@ -1,3 +1,5 @@
+use enum_dispatch::enum_dispatch;
+
 use crate::{
     errors::BitVMXError,
     program::{participant::ParticipantData, protocols::protocol_handler::ProtocolType},
@@ -17,6 +19,7 @@ use crate::{
 /// - My data: `"my_{step_name}"`
 /// - Participant i data: `"participant_{i}_{step_name}"`
 /// - Aggregates: `"all_{step_name}"`
+#[enum_dispatch]
 pub trait SetupStep {
     /// Identifying name of the step (e.g.: "keys", "nonces", "signatures", "proof")
     fn step_name(&self) -> &str;
