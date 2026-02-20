@@ -75,7 +75,7 @@ impl DisputeConfiguration {
     ) -> Result<Vec<String>, BitVMXError> {
         Ok(vec![
             VariableTypes::String(serde_json::to_string(&self)?).set_msg(self.id, Self::NAME)?,
-            IncomingBitVMXApiMessages::SetupV2(
+            IncomingBitVMXApiMessages::Setup(
                 self.id,
                 PROGRAM_TYPE_DRP.to_string(),
                 addresses,

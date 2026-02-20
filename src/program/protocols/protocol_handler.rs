@@ -598,7 +598,7 @@ pub trait ProtocolHandler {
         Ok(())
     }
 
-    /// Whether ProgramV2 should send a SetupCompleted message when this protocol finishes setup.
+    /// Whether Program should send a SetupCompleted message when this protocol finishes setup.
     ///
     /// Defaults to `true`. Protocols that are used internally (e.g., AggregatedKeyProtocol
     /// created by SetupKey) should return `false` to maintain backward compatibility,
@@ -613,7 +613,7 @@ pub trait ProtocolHandler {
     /// Protocols can override this method to customize their setup flow.
     ///
     /// Returns None if the protocol doesn't use the SetupEngine system.
-    /// Protocols using ProgramV2 MUST override this to return their required steps.
+    /// Protocols using Program MUST override this to return their required steps.
     ///
     /// The steps will be created by the factory when needed.
     fn setup_steps(&self) -> Option<Vec<SetupStepName>> {

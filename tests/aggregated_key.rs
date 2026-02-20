@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 mod common;
 
-/// Test aggregated key protocol (implemented with ProgramV2 and SetupEngine)
+/// Test aggregated key protocol (implemented with Program and SetupEngine)
 #[ignore]
 #[test]
 pub fn test_aggregated_key() -> Result<()> {

@@ -73,7 +73,7 @@ pub fn test_cooperative_signature() -> Result<()> {
     info!("Op3 (Non-leader) address: {:?}", addresses[2]);
 
     info!("================================================");
-    info!("Setting up Cooperative Signature Protocol with ProgramV2");
+    info!("Setting up Cooperative Signature Protocol with Program");
     info!("This will test all 3 setup steps:");
     info!("  1. KeysStep - Exchange keys and compute aggregated key");
     info!("  2. NoncesStep - Exchange nonces for MuSig2 signing");
@@ -84,8 +84,8 @@ pub fn test_cooperative_signature() -> Result<()> {
     let program_id = Uuid::new_v4();
     info!("Program ID: {}", program_id);
 
-    // Setup cooperative signature protocol (uses ProgramV2 with SetupEngine)
-    let setup_msg = IncomingBitVMXApiMessages::SetupV2(
+    // Setup cooperative signature protocol (uses Program with SetupEngine)
+    let setup_msg = IncomingBitVMXApiMessages::Setup(
         program_id,
         PROGRAM_TYPE_COOPERATIVE_SIGNATURE.to_string(),
         addresses.clone(),

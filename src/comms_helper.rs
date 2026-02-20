@@ -142,7 +142,7 @@ pub enum CommsMessageType {
     VerificationKeyRequest,
     Broadcasted,
     /// Generic message type for SetupEngine step data
-    /// Used by ProgramV2 - the actual step type is determined by SetupEngine
+    /// Used by Program - the actual step type is determined by SetupEngine
     SetupStepData,
 }
 

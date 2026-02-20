@@ -12,7 +12,6 @@ use bitvmx_broker::{
     identification::identifier::Identifier,
 };
 use bitvmx_wallet::wallet::Destination;
-use chrono::{DateTime, Utc};
 use protocol_builder::types::Utxo;
 use redact::Secret;
 use serde::{Deserialize, Serialize};
@@ -63,63 +62,14 @@ impl ProgramContext {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
-pub enum ProgramVersion {
-    Legacy,
-    V2,
-}
-
-impl Default for ProgramVersion {
-    fn default() -> Self {
-        // Default to Legacy for backward compatibility with existing programs
-        ProgramVersion::Legacy
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ProgramStatus {
     pub program_id: Uuid,
-    #[serde(default)]
-    pub version: ProgramVersion,
 }
 
 impl ProgramStatus {
     pub fn new(program_id: Uuid) -> Self {
-        Self {
-            program_id,
-            version: ProgramVersion::Legacy,
-        }
-    }
-
-    pub fn new_v2(program_id: Uuid) -> Self {
-        Self {
-            program_id,
-            version: ProgramVersion::V2,
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ProgramRequestInfo {
-    pub retries: u32,
-    pub last_request_time: DateTime<Utc>,
-}
-
-impl ProgramRequestInfo {
-    pub fn new() -> Self {
-        Self {
-            retries: 0,
-            last_request_time: Utc::now(),
-        }
-    }
-}
-
-impl Default for ProgramRequestInfo {
-    fn default() -> Self {
-        Self {
-            retries: 0,
-            last_request_time: Utc::now(),
-        }
+        Self { program_id }
     }
 }
 
@@ -137,7 +87,6 @@ pub enum IncomingBitVMXApiMessages {
     GetTransactionInfoByName(Uuid, String),
     GetHashedMessage(Uuid, String, u32, u32),
     Setup(ProgramId, String, Vec<CommsAddress>, u16),
-    SetupV2(ProgramId, String, Vec<CommsAddress>, u16),
     SubscribeToTransaction(Uuid, Txid, Option<u32>),
     SubscribeToRskPegin(Option<u32>),
     GetSPVProof(Txid),
