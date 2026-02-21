@@ -2,7 +2,6 @@ pub mod aggregated_key;
 #[cfg(feature = "cardinal")]
 pub mod cardinal;
 pub mod claim;
-pub mod cooperative_signature;
 pub mod dispute;
 pub mod protocol_handler;
 pub mod protocol_type;
