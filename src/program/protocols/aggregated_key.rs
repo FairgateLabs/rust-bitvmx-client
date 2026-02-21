@@ -11,10 +11,8 @@
 /// - Just key exchange and aggregation
 /// - Result is stored in globals for later use
 use bitcoin::PublicKey;
-use bitvmx_broker::identification::identifier::Identifier;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use storage_backend::storage::KeyValueStore;
 
 use crate::{
     errors::BitVMXError,
@@ -101,27 +99,11 @@ impl ProtocolHandler for AggregatedKeyProtocol {
             self.ctx.id
         );
 
-        // Send AggregatedPubkey message to the requester (similar to Collaboration)
-        // Read the 'from' identifier from storage
-        if let Some(storage) = &self.ctx.storage {
-            let from_key = format!("bitvmx/aggregated_key/{}/from", self.ctx.id);
-            let from: Option<Identifier> = storage.get(&from_key)?;
-            if let Some(from) = from {
-                tracing::info!(
-                    "AggregatedKeyProtocol: Sending AggregatedPubkey to requester: {}",
-                    *aggregated_key
-                );
-                context.broker_channel.send(
-                    &from,
-                    OutgoingBitVMXApiMessages::AggregatedPubkey(self.ctx.id, *aggregated_key)
-                        .to_string()?,
-                )?;
-            } else {
-                tracing::warn!(
-                    "AggregatedKeyProtocol: No 'from' identifier found in storage, skipping AggregatedPubkey message - this may indicate a bug"
-                );
-            }
-        }
+        context.broker_channel.send(
+            &context.components_config.l2,
+            OutgoingBitVMXApiMessages::AggregatedPubkey(self.ctx.id, *aggregated_key)
+                .to_string()?,
+        )?;
 
         Ok(())
     }
@@ -135,9 +117,6 @@ impl ProtocolHandler for AggregatedKeyProtocol {
     // Override setup_steps to only use KeysStep
     // No Nonces or Signatures needed - we're only generating a key, not signing
     fn setup_steps(&self) -> Option<Vec<SetupStepName>> {
-        Some(vec![
-            SetupStepName::Keys,
-        ])
+        Some(vec![SetupStepName::Keys])
     }
 }
-

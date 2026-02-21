@@ -261,8 +261,7 @@ pub trait ProtocolHandler {
                 .storage
                 .clone()
                 .ok_or_else(|| StorageError::NotFound(self.context().protocol_name.clone()))?,
-        )?;
-        Ok(())
+        )
     }
 
     fn get_transaction_by_name(

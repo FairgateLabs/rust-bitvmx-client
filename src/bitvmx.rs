@@ -100,7 +100,6 @@ enum StoreKey {
     ZKPStatus(Uuid),
     ZKPFrom(Uuid),
     ZKPJournal(Uuid),
-    AggregatedKeyFrom(Uuid),
 }
 
 impl StoreKey {
@@ -111,7 +110,6 @@ impl StoreKey {
             StoreKey::ZKPStatus(id) => format!("bitvmx/zkp/{}/status", id),
             StoreKey::ZKPFrom(id) => format!("bitvmx/zkp/{}/from", id),
             StoreKey::ZKPJournal(id) => format!("bitvmx/zkp/{}/journal", id),
-            StoreKey::AggregatedKeyFrom(id) => format!("bitvmx/aggregated_key/{}/from", id),
         }
     }
 }
@@ -309,7 +307,10 @@ impl BitVMX {
             .map(|p| p.comms_address.pubkey_hash.clone())
             .collect();
         if !SignatureVerifier::has_all_keys(&self.program_context.globals, &participants)? {
-            info!("BitVMX::process_program_message() - Missing verification keys for program: {:?}", program_id);
+            info!(
+                "BitVMX::process_program_message() - Missing verification keys for program: {:?}",
+                program_id
+            );
             return Ok(false);
         }
 
@@ -517,7 +518,13 @@ impl BitVMX {
         match &context {
             Context::ProgramId(program_id) => {
                 if let Ok(program) = self.load_program(program_id) {
-                    program.notify_news(tx_id, vout, tx_status, context_data, &self.program_context)?;
+                    program.notify_news(
+                        tx_id,
+                        vout,
+                        tx_status,
+                        context_data,
+                        &self.program_context,
+                    )?;
                 } else {
                     warn!("handle_news: Program {} not found", program_id);
                 }
@@ -887,7 +894,6 @@ impl BitVMXApi for BitVMX {
 
     fn setup_key(
         &mut self,
-        from: Identifier,
         id: Uuid,
         participants: Vec<CommsAddress>,
         _participants_keys: Option<Vec<PublicKey>>,
@@ -909,10 +915,6 @@ impl BitVMXApi for BitVMX {
         if leader_idx as usize >= participants.len() {
             return Err(BitVMXError::InvalidMessageFormat);
         }
-
-        // Store the 'from' parameter for later use when sending AggregatedPubkey
-        self.store
-            .set(StoreKey::AggregatedKeyFrom(id).get_key(), from, None)?;
 
         // Use Program with AggregatedKeyProtocol for key aggregation
         Program::setup(
@@ -1269,7 +1271,8 @@ impl BitVMXApi for BitVMX {
 
         match decoded {
             IncomingBitVMXApiMessages::GetHashedMessage(id, name, vout, leaf) => {
-                let hashed = self.load_program(&id)?
+                let hashed = self
+                    .load_program(&id)?
                     .protocol
                     .get_hashed_message(&name, vout, leaf)?;
                 self.reply(
@@ -1423,9 +1426,11 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::Setup(id, program_type, participants, leader) => {
                 BitVMXApi::setup(self, id, program_type, participants, leader)?
             }
-            IncomingBitVMXApiMessages::SubscribeToTransaction(uuid, txid, confirmation_threshold) => {
-                BitVMXApi::subscribe_to_tx(self, from, uuid, txid, confirmation_threshold)?
-            }
+            IncomingBitVMXApiMessages::SubscribeToTransaction(
+                uuid,
+                txid,
+                confirmation_threshold,
+            ) => BitVMXApi::subscribe_to_tx(self, from, uuid, txid, confirmation_threshold)?,
             IncomingBitVMXApiMessages::SubscribeToRskPegin(confirmation_threshold) => {
                 BitVMXApi::subscribe_to_rsk_pegin(self, confirmation_threshold)?
             }
@@ -1444,7 +1449,7 @@ impl BitVMXApi for BitVMX {
                 participants,
                 participants_keys,
                 leader_idx,
-            ) => BitVMXApi::setup_key(self, from, id, participants, participants_keys, leader_idx)?,
+            ) => BitVMXApi::setup_key(self, id, participants, participants_keys, leader_idx)?,
             IncomingBitVMXApiMessages::GetKeyPair(id) => {
                 // Get aggregated key from globals (set by AggregatedKeyProtocol)
                 let aggregated = self
