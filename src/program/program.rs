@@ -113,7 +113,7 @@ impl Program {
     }
 
     /// Creates and initializes a new Program instance
-    pub fn setup(
+    pub fn new(
         program_id: Uuid,
         program_type: &str,
         peers: Vec<CommsAddress>,

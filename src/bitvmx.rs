@@ -817,7 +817,7 @@ impl BitVMX {
 
         info!("Setting up program: {:?} type {}", id, program_type);
 
-        Program::setup(
+        Program::new(
             id,
             &program_type,
             peer_address,
@@ -917,7 +917,7 @@ impl BitVMXApi for BitVMX {
         }
 
         // Use Program with AggregatedKeyProtocol for key aggregation
-        Program::setup(
+        Program::new(
             id,
             PROGRAM_TYPE_AGGREGATED_KEY,
             participants,
