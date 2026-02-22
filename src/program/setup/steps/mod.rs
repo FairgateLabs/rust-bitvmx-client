@@ -35,15 +35,6 @@ impl SetupStepName {
             SetupStepName::Signatures => "signatures",
         }
     }
-
-    /// Returns all available step names.
-    pub fn all() -> Vec<SetupStepName> {
-        vec![
-            SetupStepName::Keys,
-            SetupStepName::Nonces,
-            SetupStepName::Signatures,
-        ]
-    }
 }
 
 impl fmt::Display for SetupStepName {
@@ -94,4 +85,3 @@ pub fn create_setup_step(name: &SetupStepName) -> SetupStepEnum {
         SetupStepName::Signatures => SetupStepEnum::Signatures(SignaturesStep::new()),
     }
 }
-
