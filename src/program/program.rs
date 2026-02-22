@@ -35,17 +35,14 @@ pub struct Program {
     pub participants: Vec<ParticipantData>,
     pub leader: usize,
     pub protocol: ProtocolType,
-    pub state: ProgramState,
+    #[serde(skip)]
+    state: ProgramState,
     /// Serializable state of the SetupEngine (saved separately since SetupEngine contains trait objects)
     setup_engine_state: Option<SetupEngineState>,
-    /// Flag to track if SetupCompleted message has been sent to avoid sending it multiple times
-    setup_completed_sent: bool,
     /// Flag to track if build_protocol() was already called (prevents duplicate builds on crash recovery)
     protocol_built: bool,
     /// All participant keys collected during setup (populated by build_protocol)
     all_participant_keys: Option<Vec<ParticipantKeys>>,
-    /// Flag to track if monitoring has been registered with bitcoin coordinator
-    monitoring_registered: bool,
     #[serde(skip)]
     pub setup_engine: Option<SetupEngine>,
     #[serde(skip)]
@@ -69,8 +66,8 @@ impl Program {
     /// Attempts to send SetupCompleted message to the L2 channel.
     /// Returns true if the message was sent (meaning state changed and should be saved).
     /// Some protocols (e.g., AggregatedKeyProtocol) suppress this message.
-    fn try_send_setup_completed(&mut self, program_context: &mut ProgramContext) -> bool {
-        if self.setup_completed_sent || !self.protocol.send_setup_completed() {
+    fn send_setup_completed(&mut self, program_context: &mut ProgramContext) -> bool {
+        if !self.protocol.send_setup_completed() {
             return false;
         }
 
@@ -87,7 +84,6 @@ impl Program {
                         "Program: Sent SetupCompleted for program {}",
                         self.program_id
                     );
-                    self.setup_completed_sent = true;
                     true
                 }
             }
@@ -175,12 +171,10 @@ impl Program {
             participants,
             leader,
             protocol,
-            state: ProgramState::New,
+            state: ProgramState::SettingUp,
             setup_engine_state: None, // Will be set when saving
-            setup_completed_sent: false,
             protocol_built: false,
             all_participant_keys: None,
-            monitoring_registered: false,
             setup_engine,
             storage: Some(storage.clone()),
             config: config.clone(),
@@ -210,6 +204,10 @@ impl Program {
 
         // Recreate SetupEngine if protocol supports it
         program.setup_engine = Self::try_create_setup_engine(&program.protocol);
+
+        program.state = storage
+            .get(&format!("program/{}/state", program_id))?
+            .unwrap_or_default();
 
         // Restore SetupEngine state if it was saved
         if let (Some(engine), Some(saved_state)) =
@@ -266,13 +264,6 @@ impl Program {
         let mut state_changed = false;
 
         match &self.state {
-            ProgramState::New => {
-                info!("Program: State is New, transitioning to SettingUp");
-                // Use SettingUp - SetupEngine manages the actual setup flow
-                // No SettingUpState needed - SetupEngine tracks its own state
-                self.state = ProgramState::SettingUp;
-                state_changed = true;
-            }
             ProgramState::SettingUp => {
                 // Pre-tick: build protocol if keys step already completed (e.g., crash recovery)
                 let keys_done =
@@ -330,83 +321,16 @@ impl Program {
                 if is_complete {
                     self.protocol.sign(&program_context.key_chain)?;
                     self.protocol.setup_complete(&program_context)?;
-                    self.state = ProgramState::Monitoring;
+                    self.start_monitoring(program_context)?;
+                    self.state = ProgramState::Ready;
                     state_changed = true;
-                    info!("Program: Setup finalized, transitioning to Monitoring state");
-                }
-            }
-            ProgramState::Monitoring => {
-                // After the protocol is ready, we need to monitor the transactions on blockchain
-                // Only register monitoring if not already done (idempotent)
-                if !self.monitoring_registered {
-                    info!("Program: Setting up blockchain monitoring");
-
-                    // Get transactions and UTXOs to monitor from the protocol
-                    let (txns_to_monitor, vouts_to_monitor) =
-                        self.protocol.get_transactions_to_monitor(program_context)?;
-
-                    let confirmations = self.protocol.requested_confirmations(program_context);
-
-                    // Create context for monitoring
-                    let context = Context::ProgramId(self.program_id);
-                    let context_str = context.to_string()?;
-
-                    // Register transactions to monitor
-                    if !txns_to_monitor.is_empty() {
-                        info!(
-                            "Program: Monitoring {} transactions for program {}",
-                            txns_to_monitor.len(),
-                            self.program_id
-                        );
-                        let txs_to_monitor = TypesToMonitor::Transactions(
-                            txns_to_monitor,
-                            context_str.clone(),
-                            confirmations,
-                        );
-                        program_context
-                            .bitcoin_coordinator
-                            .monitor(txs_to_monitor)?;
-                    }
-
-                    // Register specific UTXOs (vouts) to monitor for spending
-                    for (txid, vout) in vouts_to_monitor {
-                        info!(
-                            "Program: Monitoring vout {} of txid {} for program {}",
-                            vout, txid, self.program_id
-                        );
-                        let vout_to_monitor = TypesToMonitor::SpendingUTXOTransaction(
-                            txid,
-                            vout,
-                            context_str.clone(),
-                            confirmations,
-                        );
-                        program_context
-                            .bitcoin_coordinator
-                            .monitor(vout_to_monitor)?;
-                    }
-
-                    // Mark monitoring as registered - won't re-register on retry
-                    self.monitoring_registered = true;
-                }
-
-                // Transition to Ready state - monitoring is now active
-                self.state = ProgramState::Ready;
-                state_changed = true;
-                info!("Program: Monitoring setup complete, transitioning to Ready state");
-
-                if self.try_send_setup_completed(program_context) {
-                    state_changed = true;
+                    info!("Program: Setup finalized, transitioning to Ready state");
                 }
             }
             ProgramState::Ready => {
                 // Protocol is ready and monitoring is active
                 // Just waiting for blockchain events via notify_news()
                 debug!("Program: In Ready state - monitoring active, waiting for events");
-
-                // Retry sending SetupCompleted if previous attempts failed
-                if self.try_send_setup_completed(program_context) {
-                    state_changed = true;
-                }
             }
         }
 
@@ -414,6 +338,59 @@ impl Program {
         if state_changed {
             self.save()?;
         }
+        Ok(())
+    }
+
+    fn start_monitoring(
+        &mut self,
+        program_context: &mut ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        // After the protocol is ready, we need to monitor the transactions on blockchain
+        // Only register monitoring if not already done (idempotent)
+        info!("Program: Setting up blockchain monitoring");
+
+        // Get transactions and UTXOs to monitor from the protocol
+        let (txns_to_monitor, vouts_to_monitor) =
+            self.protocol.get_transactions_to_monitor(program_context)?;
+
+        let confirmations = self.protocol.requested_confirmations(program_context);
+
+        // Create context for monitoring
+        let context = Context::ProgramId(self.program_id);
+        let context_str = context.to_string()?;
+
+        // Register transactions to monitor
+        if !txns_to_monitor.is_empty() {
+            info!(
+                "Program: Monitoring {} transactions for program {}",
+                txns_to_monitor.len(),
+                self.program_id
+            );
+            let txs_to_monitor =
+                TypesToMonitor::Transactions(txns_to_monitor, context_str.clone(), confirmations);
+            program_context
+                .bitcoin_coordinator
+                .monitor(txs_to_monitor)?;
+        }
+
+        // Register specific UTXOs (vouts) to monitor for spending
+        for (txid, vout) in vouts_to_monitor {
+            info!(
+                "Program: Monitoring vout {} of txid {} for program {}",
+                vout, txid, self.program_id
+            );
+            let vout_to_monitor = TypesToMonitor::SpendingUTXOTransaction(
+                txid,
+                vout,
+                context_str.clone(),
+                confirmations,
+            );
+            program_context
+                .bitcoin_coordinator
+                .monitor(vout_to_monitor)?;
+        }
+
+        self.send_setup_completed(program_context);
         Ok(())
     }
 
@@ -518,16 +495,6 @@ impl Program {
     /// Returns the protocol ID
     pub fn protocol_id(&self) -> Uuid {
         self.protocol.context().id
-    }
-
-    /// Returns the program state
-    pub fn state(&self) -> &ProgramState {
-        &self.state
-    }
-
-    /// Returns whether the program is complete
-    pub fn is_complete(&self) -> bool {
-        matches!(self.state, ProgramState::Monitoring | ProgramState::Ready)
     }
 
     /// Finds a participant's address by their pubkey hash
