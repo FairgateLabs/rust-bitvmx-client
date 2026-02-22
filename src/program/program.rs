@@ -3,7 +3,6 @@
 /// - Uses SetupEngine for multi-step setup (keys, nonces, signatures)
 /// - Delegates aggregation responsibility to protocols
 /// - Protocols define their setup steps via ProtocolHandler::setup_steps()
-
 use crate::{
     bitvmx::Context,
     comms_helper::CommsMessageType,
@@ -77,14 +76,17 @@ impl Program {
 
         match OutgoingBitVMXApiMessages::SetupCompleted(self.program_id).to_string() {
             Ok(msg) => {
-                if let Err(e) = program_context.broker_channel.send(
-                    &program_context.components_config.l2,
-                    msg,
-                ) {
+                if let Err(e) = program_context
+                    .broker_channel
+                    .send(&program_context.components_config.l2, msg)
+                {
                     warn!("Program: Error sending SetupCompleted message: {:?}", e);
                     false
                 } else {
-                    info!("Program: Sent SetupCompleted for program {}", self.program_id);
+                    info!(
+                        "Program: Sent SetupCompleted for program {}",
+                        self.program_id
+                    );
                     self.setup_completed_sent = true;
                     true
                 }
@@ -99,7 +101,10 @@ impl Program {
     /// Creates a SetupEngine for the protocol using its setup_steps() method
     fn try_create_setup_engine(protocol: &ProtocolType) -> Option<SetupEngine> {
         if let Some(step_names) = protocol.setup_steps() {
-            debug!("Protocol supports SetupEngine with {} steps", step_names.len());
+            debug!(
+                "Protocol supports SetupEngine with {} steps",
+                step_names.len()
+            );
             Some(SetupEngine::new(step_names))
         } else {
             debug!("Protocol does not use SetupEngine");
@@ -171,7 +176,7 @@ impl Program {
             leader,
             protocol,
             state: ProgramState::New,
-            setup_engine_state: None,  // Will be set when saving
+            setup_engine_state: None, // Will be set when saving
             setup_completed_sent: false,
             protocol_built: false,
             all_participant_keys: None,
@@ -195,7 +200,10 @@ impl Program {
             .get(&key)?
             .ok_or(ProgramError::ProgramNotFound(*program_id))?;
 
-        debug!("Program::load() - Loaded program {} with state: {:?}", program_id, program.state);
+        debug!(
+            "Program::load() - Loaded program {} with state: {:?}",
+            program_id, program.state
+        );
 
         program.storage = Some(storage.clone());
         program.protocol.set_storage(storage.clone());
@@ -204,10 +212,18 @@ impl Program {
         program.setup_engine = Self::try_create_setup_engine(&program.protocol);
 
         // Restore SetupEngine state if it was saved
-        if let (Some(engine), Some(saved_state)) = (&mut program.setup_engine, &program.setup_engine_state) {
-            debug!("Program::load() - Restoring SetupEngine state for program {}", program_id);
+        if let (Some(engine), Some(saved_state)) =
+            (&mut program.setup_engine, &program.setup_engine_state)
+        {
+            debug!(
+                "Program::load() - Restoring SetupEngine state for program {}",
+                program_id
+            );
             engine.restore_state(saved_state.clone()).map_err(|e| {
-                ProgramError::InvalidProgramStoragePath(format!("Failed to restore engine state: {}", e))
+                ProgramError::InvalidProgramStoragePath(format!(
+                    "Failed to restore engine state: {}",
+                    e
+                ))
             })?;
         }
 
@@ -232,7 +248,10 @@ impl Program {
             self.setup_engine_state = Some(engine.state().clone());
         }
 
-        info!("Program::save() - Saving program {} with state: {:?}", self.program_id, self.state);
+        info!(
+            "Program::save() - Saving program {} with state: {:?}",
+            self.program_id, self.state
+        );
 
         let state_key = format!("program/{}/state", self.program_id);
         storage.set(&state_key, &self.state, None)?;
@@ -256,8 +275,8 @@ impl Program {
             }
             ProgramState::SettingUp => {
                 // Pre-tick: build protocol if keys step already completed (e.g., crash recovery)
-                let keys_done = self.engine()?.state().current_step_index > 0
-                    || self.engine()?.is_complete();
+                let keys_done =
+                    self.engine()?.state().current_step_index > 0 || self.engine()?.is_complete();
                 if keys_done && !self.protocol_built {
                     info!("Program: Keys step complete (pre-tick), building protocol graph");
                     self.build_protocol(&program_context)?;
@@ -299,8 +318,8 @@ impl Program {
                 }
 
                 // Post-tick: build protocol if keys just completed in this tick
-                let keys_done = self.engine()?.state().current_step_index > 0
-                    || self.engine()?.is_complete();
+                let keys_done =
+                    self.engine()?.state().current_step_index > 0 || self.engine()?.is_complete();
                 if keys_done && !self.protocol_built {
                     info!("Program: Keys step complete (post-tick), building protocol graph");
                     self.build_protocol(&program_context)?;
@@ -339,8 +358,14 @@ impl Program {
                             txns_to_monitor.len(),
                             self.program_id
                         );
-                        let txs_to_monitor = TypesToMonitor::Transactions(txns_to_monitor, context_str.clone(), confirmations);
-                        program_context.bitcoin_coordinator.monitor(txs_to_monitor)?;
+                        let txs_to_monitor = TypesToMonitor::Transactions(
+                            txns_to_monitor,
+                            context_str.clone(),
+                            confirmations,
+                        );
+                        program_context
+                            .bitcoin_coordinator
+                            .monitor(txs_to_monitor)?;
                     }
 
                     // Register specific UTXOs (vouts) to monitor for spending
@@ -349,8 +374,15 @@ impl Program {
                             "Program: Monitoring vout {} of txid {} for program {}",
                             vout, txid, self.program_id
                         );
-                        let vout_to_monitor = TypesToMonitor::SpendingUTXOTransaction(txid, vout, context_str.clone(), confirmations);
-                        program_context.bitcoin_coordinator.monitor(vout_to_monitor)?;
+                        let vout_to_monitor = TypesToMonitor::SpendingUTXOTransaction(
+                            txid,
+                            vout,
+                            context_str.clone(),
+                            confirmations,
+                        );
+                        program_context
+                            .bitcoin_coordinator
+                            .monitor(vout_to_monitor)?;
                     }
 
                     // Mark monitoring as registered - won't re-register on retry
@@ -426,7 +458,9 @@ impl Program {
             if is_complete {
                 info!("Program::receive_setup_data() - Saved program state (setup complete, waiting for tick to build)");
             } else {
-                info!("Program::receive_setup_data() - Saved program state (setup not yet complete)");
+                info!(
+                    "Program::receive_setup_data() - Saved program state (setup not yet complete)"
+                );
             }
         }
 
@@ -449,7 +483,9 @@ impl Program {
         let all_keys_var = program_context
             .globals
             .get_var(&protocol_id, "all_participant_keys")?
-            .ok_or_else(|| BitVMXError::InvalidMessage("all_participant_keys not found in globals".to_string()))?;
+            .ok_or_else(|| {
+                BitVMXError::InvalidMessage("all_participant_keys not found in globals".to_string())
+            })?;
 
         let all_keys_json = all_keys_var.string()?;
 
@@ -472,7 +508,8 @@ impl Program {
         // Store keys for later use in notify_news()
         self.all_participant_keys = Some(all_keys.clone());
 
-        self.protocol.build(all_keys, my_keys.computed_aggregated, program_context)?;
+        self.protocol
+            .build(all_keys, my_keys.computed_aggregated, program_context)?;
 
         info!("Program: Protocol build complete");
         Ok(())
@@ -490,10 +527,7 @@ impl Program {
 
     /// Returns whether the program is complete
     pub fn is_complete(&self) -> bool {
-        matches!(
-            self.state,
-            ProgramState::Monitoring | ProgramState::Ready
-        )
+        matches!(self.state, ProgramState::Monitoring | ProgramState::Ready)
     }
 
     /// Finds a participant's address by their pubkey hash
@@ -572,7 +606,9 @@ impl Program {
         name: &str,
         program_context: &mut ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let (tx, speedup) = self.protocol.get_transaction_by_name(name, program_context)?;
+        let (tx, speedup) = self
+            .protocol
+            .get_transaction_by_name(name, program_context)?;
         let context = Context::ProgramId(self.program_id);
 
         info!(
@@ -639,8 +675,6 @@ impl Program {
 
 pub fn is_active_program(storage: &Rc<Storage>, uuid: &Uuid) -> Result<bool, BitVMXError> {
     let key = format!("program/{}/state", uuid);
-    let state: ProgramState = storage
-        .get(&key)?
-        .unwrap_or_default();
+    let state: ProgramState = storage.get(&key)?.unwrap_or_default();
     Ok(state.is_active())
 }

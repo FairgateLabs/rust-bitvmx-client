@@ -11,8 +11,8 @@ use tracing::{debug, info};
 use uuid::Uuid;
 
 use super::{
+    steps::{create_setup_step, SetupStepEnum, SetupStepName},
     SetupStep,
-    steps::{SetupStepName, SetupStepEnum, create_setup_step},
 };
 
 /// Current state of a setup step in the engine.
@@ -117,7 +117,7 @@ impl SetupEngine {
             .iter()
             .map(|name| create_setup_step(name))
             .collect();
-        
+
         Self {
             steps,
             state: SetupEngineState::new(),
@@ -263,14 +263,15 @@ impl SetupEngine {
         // Allow receiving data if we're in ReadyToSend (we've generated our data but haven't sent yet)
         // or WaitingForParticipants (we've sent our data and are waiting for others)
         // This handles the case where messages arrive in any order
-        if self.state.current_step_state != StepState::WaitingForParticipants 
-            && self.state.current_step_state != StepState::ReadyToSend {
+        if self.state.current_step_state != StepState::WaitingForParticipants
+            && self.state.current_step_state != StepState::ReadyToSend
+        {
             return Err(BitVMXError::InvalidMessage(format!(
                 "Cannot receive data: step is not ready to receive (current: {:?}). Must be ReadyToSend or WaitingForParticipants",
                 self.state.current_step_state
             )));
         }
-        
+
         // If we're in ReadyToSend, transition to WaitingForParticipants when we receive the first message
         // This handles the case where we receive a message before sending our own
         if self.state.current_step_state == StepState::ReadyToSend {
@@ -366,7 +367,7 @@ impl SetupEngine {
             );
             return Ok(false);
         }
-        
+
         info!(
             "SetupEngine::try_advance_current_step() - Step '{}' can advance! ({}/{} participants completed)",
             step_name,
@@ -450,9 +451,11 @@ impl SetupEngine {
             };
 
             // Store leader's own message
-            context
-                .leader_broadcast_helper
-                .store_original_message(program_id, CommsMessageType::SetupStepData, original_msg)?;
+            context.leader_broadcast_helper.store_original_message(
+                program_id,
+                CommsMessageType::SetupStepData,
+                original_msg,
+            )?;
         } else {
             // Non-leader: Send only to leader
             let leader_address = &participants[leader].comms_address;
@@ -515,29 +518,21 @@ impl SetupEngine {
         let from_participant = participants
             .iter()
             .find(|p| &p.comms_address.pubkey_hash == from)
-            .ok_or_else(|| {
-                BitVMXError::InvalidMessage(format!("Unknown participant: {}", from))
-            })?
+            .ok_or_else(|| BitVMXError::InvalidMessage(format!("Unknown participant: {}", from)))?
             .clone();
 
         let step_name = self.current_step_name().unwrap_or("unknown").to_string();
         let participants_completed_before = self.state.participants_completed.len();
-        
+
         info!(
             "SetupEngine::receive_setup_data() - Processing data for step '{}' (completed before: {}/{})",
             step_name,
             participants_completed_before,
             participants.len()
         );
-        
+
         // Receive and verify the data
-        self.receive_current_step_data(
-            data,
-            &from_participant,
-            protocol,
-            participants,
-            context,
-        )?;
+        self.receive_current_step_data(data, &from_participant, protocol, participants, context)?;
 
         let participants_completed_after = self.state.participants_completed.len();
         info!(
@@ -555,13 +550,11 @@ impl SetupEngine {
                 .collect();
 
             // Check if we have all messages
-            let has_all = context
-                .leader_broadcast_helper
-                .has_all_expected_messages(
-                    program_id,
-                    CommsMessageType::SetupStepData,
-                    &all_participant_hashes,
-                )?;
+            let has_all = context.leader_broadcast_helper.has_all_expected_messages(
+                program_id,
+                CommsMessageType::SetupStepData,
+                &all_participant_hashes,
+            )?;
 
             if has_all {
                 info!(
@@ -571,19 +564,20 @@ impl SetupEngine {
                 // Get non-leader participants
                 let my_pubkey_hash = context.comms.get_pubk_hash()?;
                 let non_leaders = get_non_leader_participants(
-                    &participants.iter().map(|p| p.comms_address.clone()).collect::<Vec<_>>(),
+                    &participants
+                        .iter()
+                        .map(|p| p.comms_address.clone())
+                        .collect::<Vec<_>>(),
                     &my_pubkey_hash,
                 );
 
                 // Broadcast to all non-leaders
-                context
-                    .leader_broadcast_helper
-                    .broadcast_to_non_leaders(
-                        context,
-                        program_id,
-                        CommsMessageType::SetupStepData,
-                        &non_leaders,
-                    )?;
+                context.leader_broadcast_helper.broadcast_to_non_leaders(
+                    context,
+                    program_id,
+                    CommsMessageType::SetupStepData,
+                    &non_leaders,
+                )?;
 
                 info!(
                     "SetupEngine::receive_setup_data() - Leader successfully broadcasted messages to {} non-leaders",
@@ -596,7 +590,7 @@ impl SetupEngine {
         let engine_state_before_advance = self.state.current_step_state.clone();
         let participants_completed_count = self.state.participants_completed.len();
         let total_participants = participants.len();
-        
+
         info!(
             "SetupEngine::receive_setup_data() - Attempting to advance step '{}' (state: {:?}, completed: {}/{})",
             step_name,
@@ -604,7 +598,7 @@ impl SetupEngine {
             participants_completed_count,
             total_participants
         );
-        
+
         let advanced = self.try_advance_current_step(protocol, participants, context)?;
         if advanced {
             info!(
@@ -661,18 +655,19 @@ impl SetupEngine {
         let current_state = self.state.current_step_state.clone();
         let participants_completed = self.state.participants_completed.len();
         let total_participants = participants.len();
-        
+
         // If we're waiting for participants and haven't received all data yet,
         // there's nothing to do - early return to avoid unnecessary processing
         if self.state.current_step_state == StepState::WaitingForParticipants {
             // Check if we can advance (this will return false if not all participants have sent data)
-            let can_advance = self.current_step()
+            let can_advance = self
+                .current_step()
                 .map(|step| {
                     step.can_advance(protocol, participants, context)
                         .unwrap_or(false)
                 })
                 .unwrap_or(false);
-            
+
             if !can_advance {
                 // Still waiting for data from other participants - no changes, no need to save
                 debug!(
@@ -710,21 +705,28 @@ impl SetupEngine {
                 total_participants
             );
         }
-        
+
         // Save engine state before tick to detect changes
         let engine_state_before = self.state.clone();
-        
+
         // Process the tick based on current state
         let mut data_to_send = None;
         let mut state_changed = false;
 
         match self.state.current_step_state {
             StepState::Pending => {
-                info!("SetupEngine::tick() - Step '{}' is Pending, generating data", step_name);
+                info!(
+                    "SetupEngine::tick() - Step '{}' is Pending, generating data",
+                    step_name
+                );
                 // Generate data for this step
                 let data = self.generate_current_step_data(protocol, context)?;
                 if let Some(ref d) = data {
-                    info!("SetupEngine::tick() - Generated {} bytes for step '{}'", d.len(), step_name);
+                    info!(
+                        "SetupEngine::tick() - Generated {} bytes for step '{}'",
+                        d.len(),
+                        step_name
+                    );
 
                     // IMPORTANT: Store our own data in globals BEFORE sending to others
                     // The step's can_advance() method checks that ALL participants' data exists in globals
@@ -740,7 +742,10 @@ impl SetupEngine {
 
                     data_to_send = Some(d.clone());
                 } else {
-                    info!("SetupEngine::tick() - Step '{}' generated no data", step_name);
+                    info!(
+                        "SetupEngine::tick() - Step '{}' generated no data",
+                        step_name
+                    );
                 }
                 state_changed = true;
             }
@@ -775,7 +780,10 @@ impl SetupEngine {
                 // Try to advance if possible
                 let advanced = self.try_advance_current_step(protocol, participants, context)?;
                 if advanced {
-                    info!("SetupEngine::tick() - Step '{}' advanced successfully", step_name);
+                    info!(
+                        "SetupEngine::tick() - Step '{}' advanced successfully",
+                        step_name
+                    );
                     state_changed = true;
                 }
             }
@@ -808,8 +816,7 @@ impl SetupEngine {
         if engine_state_before != engine_state_after {
             info!(
                 "SetupEngine::tick() - State changed - before: {:?}, after: {:?}",
-                engine_state_before.current_step_state,
-                engine_state_after.current_step_state
+                engine_state_before.current_step_state, engine_state_after.current_step_state
             );
             state_changed = true;
         }
