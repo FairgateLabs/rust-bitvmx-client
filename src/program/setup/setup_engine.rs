@@ -154,10 +154,8 @@ impl SetupEngine {
     }
 
     /// Returns the current step, if any.
-    pub fn current_step(&self) -> Option<&dyn SetupStep> {
-        self.steps
-            .get(self.state.current_step_index)
-            .map(|step| step as &dyn SetupStep)
+    pub fn current_step(&self) -> Option<&SetupStepEnum> {
+        self.steps.get(self.state.current_step_index)
     }
 
     /// Returns the name of the current step.
