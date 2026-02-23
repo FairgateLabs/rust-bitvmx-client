@@ -21,8 +21,6 @@ use super::{
 /// Current state of a setup step in the engine.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum StepState {
-    /// Step has not started yet
-    Pending,
     /// Step is generating data
     Generating,
     /// Step has sent data and is waiting for other participants
@@ -50,7 +48,7 @@ impl SetupEngineState {
     pub fn new(total_steps: usize) -> Self {
         Self {
             current_step_index: 0,
-            current_step_state: StepState::Pending,
+            current_step_state: StepState::Generating,
             participants_completed: Vec::new(),
             all_steps_completed: false,
             total_steps,
@@ -73,7 +71,7 @@ impl SetupEngineState {
     pub fn advance_to_next_step(&mut self) {
         if self.current_step_index < self.total_steps - 1 {
             self.current_step_index += 1;
-            self.current_step_state = StepState::Pending;
+            self.current_step_state = StepState::Generating;
             self.participants_completed.clear();
         } else {
             self.all_steps_completed = true;
@@ -102,7 +100,7 @@ pub struct SetupTickResult {
 ///
 /// For each step:
 /// ```text
-/// Pending → Generating → ReadyToSend → WaitingForParticipants → Completed
+/// Generating → ReadyToSend → WaitingForParticipants → Completed
 /// ```
 ///
 /// Once a step is Completed, the engine advances to the next step.
@@ -203,9 +201,9 @@ impl SetupEngine {
         // Get step name first before any mutable borrows (copy to owned String)
         let step_name = self.current_step_name().to_string();
 
-        if self.state.current_step_state != StepState::Pending {
+        if self.state.current_step_state != StepState::Generating {
             return Err(BitVMXError::InvalidState(format!(
-                "Step '{}' is not in Pending state (current: {:?})",
+                "Step '{}' is not in Generating state (current: {:?})",
                 step_name, self.state.current_step_state
             )));
         }
@@ -217,11 +215,11 @@ impl SetupEngine {
             self.state.total_steps
         );
 
-        self.state.current_step_state = StepState::Generating;
-
         // Now get the step and generate data
         let step = &self.steps[self.state.current_step_index];
         let data = step.generate_data(protocol, context)?;
+        //TODO: for steps that generate data asyn, instead of moving to waiting, move to a new state "WaitingGeneration"
+        //that will be handled with another external call and would allow the transition
 
         self.state.current_step_state = StepState::WaitingForParticipants;
 
@@ -661,9 +659,9 @@ impl SetupEngine {
         let mut state_changed = false;
 
         match self.state.current_step_state {
-            StepState::Pending => {
+            StepState::Generating => {
                 info!(
-                    "SetupEngine::tick() - Step '{}' is Pending, generating data",
+                    "SetupEngine::tick() - Step '{}' is Generating, generating data",
                     step_name
                 );
                 // Generate data for this step
@@ -700,16 +698,6 @@ impl SetupEngine {
                 }
                 state_changed = true;
             }
-            StepState::Generating => {
-                // Recovery: If we crashed while generating, reset to Pending and re-generate
-                info!(
-                    "SetupEngine::tick() - Step '{}' stuck in Generating state, resetting to Pending for recovery",
-                    step_name
-                );
-                self.state.current_step_state = StepState::Pending;
-                state_changed = true;
-                // Next tick will generate the data
-            }
             StepState::WaitingForParticipants => {
                 debug!(
                     "SetupEngine::tick() - Step '{}' is WaitingForParticipants (completed: {}/{}), trying to advance",
@@ -729,25 +717,6 @@ impl SetupEngine {
             }
             StepState::Completed => {
                 error!("We should never be in Completed state during tick - the engine should have already advanced to the next step. Step '{}'", step_name);
-
-                /*info!(
-                    "SetupEngine::tick() - Step '{}' stuck in Completed state, advancing to next step for recovery",
-                    step_name
-                );
-                self.state.advance_to_next_step();
-                state_changed = true;
-
-                if self.is_complete() {
-                    info!("SetupEngine::tick() - All steps completed after recovery!");
-                } else {
-                    let next_step_name = self.current_step_name();
-                    info!(
-                        "SetupEngine::tick() - Advanced to step '{}' ({}/{}) after recovery",
-                        next_step_name,
-                        self.state.current_step_index + 1,
-                        self.total_steps()
-                    );
-                }*/
             }
         }
 
@@ -812,7 +781,7 @@ mod tests {
 
         assert_eq!(engine.total_steps(), 3);
         assert_eq!(engine.state().current_step_index, 0);
-        assert_eq!(engine.state().current_step_state, StepState::Pending);
+        assert_eq!(engine.state().current_step_state, StepState::Generating);
         assert!(!engine.is_complete());
         assert_eq!(engine.current_step_name(), "keys");
     }
@@ -821,7 +790,7 @@ mod tests {
     fn test_step_state_transitions() {
         let mut state = SetupEngineState::new(2);
 
-        assert_eq!(state.current_step_state, StepState::Pending);
+        assert_eq!(state.current_step_state, StepState::Generating);
         assert_eq!(state.current_step_index, 0);
         assert!(state.participants_completed.is_empty());
 
@@ -835,7 +804,7 @@ mod tests {
 
         state.advance_to_next_step();
         assert_eq!(state.current_step_index, 1);
-        assert_eq!(state.current_step_state, StepState::Pending);
+        assert_eq!(state.current_step_state, StepState::Generating);
         assert!(state.participants_completed.is_empty());
     }
 
