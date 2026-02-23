@@ -100,7 +100,7 @@ pub struct SetupTickResult {
 ///
 /// For each step:
 /// ```text
-/// Generating → ReadyToSend → WaitingForParticipants → Completed
+/// Generating → WaitingForParticipants → Completed
 /// ```
 ///
 /// Once a step is Completed, the engine advances to the next step.
@@ -187,7 +187,7 @@ impl SetupEngine {
 
     /// Generates data for the current step.
     ///
-    /// This transitions the step from Pending → Generating → ReadyToSend.
+    /// This transitions the step from Generating → WaitingForParticipants.
     ///
     /// Returns the serialized data to send to other participants, or None if
     /// the step doesn't generate data.
@@ -245,13 +245,9 @@ impl SetupEngine {
     ) -> Result<(), BitVMXError> {
         self.if_not_completed()?;
 
-        //TODO: we should receive always?
-        // Allow receiving data if we're in ReadyToSend (we've generated our data but haven't sent yet)
-        // or WaitingForParticipants (we've sent our data and are waiting for others)
-        // This handles the case where messages arrive in any order
-        if self.state.current_step_state != StepState::WaitingForParticipants {
+        if self.state.current_step_state == StepState::Completed {
             return Err(BitVMXError::InvalidMessage(format!(
-                "Cannot receive data: step is not ready to receive (current: {:?}). Must be WaitingForParticipants",
+                "Cannot receive data: step is not ready to receive (current: {:?}). Must not be Completed",
                 self.state.current_step_state
             )));
         }
@@ -534,35 +530,6 @@ impl SetupEngine {
             }
         }
 
-        // Try to advance after receiving data
-        let engine_state_before_advance = self.state.current_step_state.clone();
-        let participants_completed_count = self.state.participants_completed.len();
-        let total_participants = participants.len();
-
-        info!(
-            "SetupEngine::receive_setup_data() - Attempting to advance step '{}' (state: {:?}, completed: {}/{})",
-            step_name,
-            engine_state_before_advance,
-            participants_completed_count,
-            total_participants
-        );
-
-        let advanced = self.try_advance_current_step(protocol, participants, context)?;
-        if advanced {
-            info!(
-                "SetupEngine::receive_setup_data() - Step '{}' advanced after receiving data",
-                step_name
-            );
-        } else {
-            info!(
-                "SetupEngine::receive_setup_data() - Step '{}' could not advance (state: {:?}, completed: {}/{})",
-                step_name,
-                engine_state_before_advance,
-                self.state.participants_completed.len(),
-                participants.len()
-            );
-        }
-
         // Receiving data always changes the engine state
         Ok(true)
     }
@@ -600,56 +567,6 @@ impl SetupEngine {
 
         // Clone step name to owned String before any mutable borrows
         let step_name = self.current_step_name().to_string();
-        let current_state = self.state.current_step_state.clone();
-        let participants_completed = self.state.participants_completed.len();
-        let total_participants = participants.len();
-
-        // If we're waiting for participants and haven't received all data yet,
-        // there's nothing to do - early return to avoid unnecessary processing
-        if self.state.current_step_state == StepState::WaitingForParticipants {
-            // Check if we can advance (this will return false if not all participants have sent data)
-            let can_advance = self
-                .current_step()
-                .can_advance(protocol, participants, context)
-                .unwrap_or(false);
-
-            if !can_advance {
-                // Still waiting for data from other participants - no changes, no need to save
-                debug!(
-                    "SetupEngine::tick() - Step '{}' ({}/{}), state: {:?}, completed: {}/{} - Waiting for participants, early return",
-                    step_name,
-                    self.state.current_step_index + 1,
-                    self.total_steps(),
-                    current_state,
-                    participants_completed,
-                    total_participants
-                );
-                return Ok(SetupTickResult {
-                    data_to_send: None,
-                    state_changed: false,
-                });
-            } else {
-                info!(
-                    "SetupEngine::tick() - Step '{}' ({}/{}), state: {:?}, completed: {}/{} - Can advance!",
-                    step_name,
-                    self.state.current_step_index + 1,
-                    self.total_steps(),
-                    current_state,
-                    participants_completed,
-                    total_participants
-                );
-            }
-        } else {
-            info!(
-                "SetupEngine::tick() - Step '{}' ({}/{}), state: {:?}, completed: {}/{}",
-                step_name,
-                self.state.current_step_index + 1,
-                self.total_steps(),
-                current_state,
-                participants_completed,
-                total_participants
-            );
-        }
 
         // Save engine state before tick to detect changes
         let engine_state_before = self.state.clone();
