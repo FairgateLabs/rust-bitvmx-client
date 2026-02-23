@@ -513,7 +513,6 @@ impl ProtocolHandler for DisputeCoreProtocol {
         tx_status: TransactionStatus,
         context: String,
         program_context: &ProgramContext,
-        _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         info!("Notified of transaction: {}. Context: {}", tx_id, context);
 

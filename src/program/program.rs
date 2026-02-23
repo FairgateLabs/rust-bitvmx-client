@@ -26,7 +26,7 @@ use storage_backend::storage::{KeyValueStore, Storage};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use super::participant::{CommsAddress, ParticipantKeys};
+use super::participant::CommsAddress;
 
 #[derive(Serialize, Deserialize)]
 pub struct Program {
@@ -39,10 +39,7 @@ pub struct Program {
     state: ProgramState,
     /// Serializable state of the SetupEngine (saved separately since SetupEngine contains trait objects)
     setup_engine_state: Option<SetupEngineState>,
-    /// Flag to track if build_protocol() was already called (prevents duplicate builds on crash recovery)
-    protocol_built: bool,
     /// All participant keys collected during setup (populated by build_protocol)
-    all_participant_keys: Option<Vec<ParticipantKeys>>,
     #[serde(skip)]
     pub setup_engine: Option<SetupEngine>,
     #[serde(skip)]
@@ -54,13 +51,6 @@ impl Program {
     /// Returns the storage key for this program
     fn storage_key(&self) -> String {
         format!("program/{}", self.program_id)
-    }
-
-    /// Returns a reference to the SetupEngine, or an error if it doesn't exist
-    fn engine(&self) -> Result<&SetupEngine, BitVMXError> {
-        self.setup_engine.as_ref().ok_or_else(|| {
-            BitVMXError::InvalidMessage("Protocol must return setup steps for Program".to_string())
-        })
     }
 
     /// Attempts to send SetupCompleted message to the L2 channel.
@@ -152,9 +142,6 @@ impl Program {
             .into_iter()
             .map(|addr| ParticipantData {
                 comms_address: addr,
-                keys: None,
-                nonces: None,
-                partial: None,
             })
             .collect();
 
@@ -173,8 +160,6 @@ impl Program {
             protocol,
             state: ProgramState::SettingUp,
             setup_engine_state: None, // Will be set when saving
-            protocol_built: false,
-            all_participant_keys: None,
             setup_engine,
             storage: Some(storage.clone()),
             config: config.clone(),
@@ -265,15 +250,6 @@ impl Program {
 
         match &self.state {
             ProgramState::SettingUp => {
-                // Pre-tick: build protocol if keys step already completed (e.g., crash recovery)
-                let keys_done =
-                    self.engine()?.state().current_step_index > 0 || self.engine()?.is_complete();
-                if keys_done && !self.protocol_built {
-                    info!("Program: Keys step complete (pre-tick), building protocol graph");
-                    self.build_protocol(&program_context)?;
-                    self.protocol_built = true;
-                }
-
                 // Run the engine tick (uses block scope to avoid borrow conflict
                 // between setup_engine and other self fields)
                 let (tick_state_changed, is_complete) = {
@@ -306,15 +282,6 @@ impl Program {
 
                 if tick_state_changed {
                     state_changed = true;
-                }
-
-                // Post-tick: build protocol if keys just completed in this tick
-                let keys_done =
-                    self.engine()?.state().current_step_index > 0 || self.engine()?.is_complete();
-                if keys_done && !self.protocol_built {
-                    info!("Program: Keys step complete (post-tick), building protocol graph");
-                    self.build_protocol(&program_context)?;
-                    self.protocol_built = true;
                 }
 
                 // After all setup steps complete, sign and finalize
@@ -429,7 +396,6 @@ impl Program {
         };
 
         // Always save when state changes to avoid data loss on crash
-        // The protocol_built flag prevents duplicate builds in tick() during crash recovery
         if state_changed {
             self.save()?;
             if is_complete {
@@ -441,54 +407,6 @@ impl Program {
             }
         }
 
-        Ok(())
-    }
-
-    /// Builds the protocol after all setup steps are complete
-    ///
-    /// This method:
-    /// 1. Collects all participant keys from globals
-    /// 2. Retrieves the pre-computed aggregated keys from KeysStep
-    /// 3. Passes both to protocol.build()
-    fn build_protocol(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
-        info!("Program: Building protocol {}", self.program_id);
-
-        let protocol_id = self.protocol.context().id;
-
-        // Collect all participant keys from globals
-        // These were stored by KeysStep during setup
-        let all_keys_var = program_context
-            .globals
-            .get_var(&protocol_id, "all_participant_keys")?
-            .ok_or_else(|| {
-                BitVMXError::InvalidMessage("all_participant_keys not found in globals".to_string())
-            })?;
-
-        let all_keys_json = all_keys_var.string()?;
-
-        let all_keys: Vec<ParticipantKeys> = serde_json::from_str(&all_keys_json)
-            .map_err(|e| BitVMXError::InvalidMessage(format!("Failed to parse keys: {}", e)))?;
-
-        // Retrieve my_keys to get pre-computed aggregated keys from KeysStep
-        let my_keys_var = program_context
-            .globals
-            .get_var(&protocol_id, "my_keys")?
-            .ok_or_else(|| BitVMXError::InvalidMessage("my_keys not found in globals".into()))?;
-        let my_keys: ParticipantKeys = serde_json::from_str(&my_keys_var.string()?)?;
-
-        info!(
-            "Program: Collected {} participant keys and {} pre-computed aggregated keys for protocol build",
-            all_keys.len(),
-            my_keys.computed_aggregated.len()
-        );
-
-        // Store keys for later use in notify_news()
-        self.all_participant_keys = Some(all_keys.clone());
-
-        self.protocol
-            .build(all_keys, my_keys.computed_aggregated, program_context)?;
-
-        info!("Program: Protocol build complete");
         Ok(())
     }
 
@@ -604,27 +522,8 @@ impl Program {
         context: String,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        // Use keys from all_participant_keys (populated during build_protocol)
-        if self.all_participant_keys.is_none() {
-            warn!(
-                "Program: notify_news() called with no participant keys for program {}",
-                self.program_id
-            );
-        }
-        let participant_keys: Vec<&ParticipantKeys> = self
-            .all_participant_keys
-            .as_ref()
-            .map(|keys| keys.iter().collect())
-            .unwrap_or_default();
-
-        self.protocol.notify_news(
-            tx_id,
-            vout,
-            tx_status.clone(),
-            context,
-            program_context,
-            participant_keys,
-        )?;
+        self.protocol
+            .notify_news(tx_id, vout, tx_status.clone(), context, program_context)?;
 
         // Send transaction notification to L2 channel
         if vout.is_none() {

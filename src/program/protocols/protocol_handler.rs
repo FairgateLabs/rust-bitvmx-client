@@ -283,7 +283,6 @@ pub trait ProtocolHandler {
         _tx_status: TransactionStatus,
         _context: String,
         _program_context: &ProgramContext,
-        _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         // Default implementation: no-op for protocols that don't need to handle news
         Ok(())

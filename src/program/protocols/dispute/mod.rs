@@ -352,10 +352,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         }
 
         if self.role() == ParticipantRole::Prover {
-            set_inputs(&self.ctx.id, &program_context, vec![
-                ("prover_continue", 0u8).into(),
-                ("prover_continue2", 0u8).into(),
-            ])?;
+            set_inputs(
+                &self.ctx.id,
+                &program_context,
+                vec![
+                    ("prover_continue", 0u8).into(),
+                    ("prover_continue2", 0u8).into(),
+                ],
+            )?;
         }
 
         let key_chain = &mut program_context.key_chain;
@@ -467,7 +471,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         tx_status: TransactionStatus,
         _context: String,
         program_context: &ProgramContext,
-        _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         tx_news::handle_tx_news(&self, tx_id, vout, tx_status, program_context)
     }

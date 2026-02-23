@@ -216,7 +216,6 @@ impl ProtocolHandler for SlotProtocol {
         tx_status: TransactionStatus,
         _context: String,
         program_context: &ProgramContext,
-        _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         let name = self.get_transaction_name_by_id(tx_id)?;
         info!(

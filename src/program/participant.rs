@@ -4,26 +4,17 @@ use key_manager::winternitz::WinternitzPublicKey;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr};
 
-use crate::{
-    errors::BitVMXError,
-    helper::{PartialSignatureMessage, PubNonceMessage},
-};
+use crate::errors::BitVMXError;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ParticipantData {
     pub comms_address: CommsAddress,
-    pub keys: Option<ParticipantKeys>,
-    pub nonces: Option<PubNonceMessage>,
-    pub partial: Option<PartialSignatureMessage>,
 }
 
 impl ParticipantData {
-    pub fn new(address: &CommsAddress, keys: Option<ParticipantKeys>) -> Self {
+    pub fn new(address: &CommsAddress) -> Self {
         ParticipantData {
             comms_address: address.clone(),
-            keys,
-            nonces: None,
-            partial: None,
         }
     }
 }
