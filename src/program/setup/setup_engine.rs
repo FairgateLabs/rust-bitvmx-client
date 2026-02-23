@@ -10,7 +10,7 @@ use crate::{
 };
 use bitvmx_broker::identification::identifier::PubkHash as PubKeyHash;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use super::{
@@ -25,8 +25,6 @@ pub enum StepState {
     Pending,
     /// Step is generating data
     Generating,
-    /// Step has generated data and is waiting to send
-    ReadyToSend,
     /// Step has sent data and is waiting for other participants
     WaitingForParticipants,
     /// Step has received all data and can advance
@@ -158,14 +156,14 @@ impl SetupEngine {
     }
 
     /// Returns the current step, if any.
-    pub fn current_step(&self) -> &SetupStepEnum {
+    fn current_step(&self) -> &SetupStepEnum {
         self.steps
             .get(self.state.current_step_index)
             .expect("index should be always in range")
     }
 
     /// Returns the name of the current step.
-    pub fn current_step_name(&self) -> &str {
+    fn current_step_name(&self) -> &str {
         self.current_step().step_name()
     }
 
@@ -179,7 +177,7 @@ impl SetupEngine {
         self.steps.len()
     }
 
-    pub fn if_not_completed(&self) -> Result<(), BitVMXError> {
+    fn if_not_completed(&self) -> Result<(), BitVMXError> {
         if self.is_complete() {
             Err(BitVMXError::InvalidMessage(
                 "Setup is already complete".to_string(),
@@ -195,7 +193,7 @@ impl SetupEngine {
     ///
     /// Returns the serialized data to send to other participants, or None if
     /// the step doesn't generate data.
-    pub fn generate_current_step_data(
+    fn generate_current_step_data(
         &mut self,
         protocol: &mut ProtocolType,
         context: &mut ProgramContext,
@@ -225,7 +223,7 @@ impl SetupEngine {
         let step = &self.steps[self.state.current_step_index];
         let data = step.generate_data(protocol, context)?;
 
-        self.state.current_step_state = StepState::ReadyToSend;
+        self.state.current_step_state = StepState::WaitingForParticipants;
 
         debug!(
             "SetupEngine: Step '{}' generated {} bytes",
@@ -236,27 +234,10 @@ impl SetupEngine {
         Ok(data)
     }
 
-    /// Marks the current step as sent and transitions to WaitingForParticipants.
-    pub fn mark_current_step_sent(&mut self) -> Result<(), BitVMXError> {
-        if self.state.current_step_state != StepState::ReadyToSend {
-            return Err(BitVMXError::InvalidMessage(format!(
-                "Cannot mark as sent: step is not in ReadyToSend state (current: {:?})",
-                self.state.current_step_state
-            )));
-        }
-
-        let step_name = self.current_step_name();
-        debug!("SetupEngine: Step '{}' data sent", step_name);
-
-        self.state.current_step_state = StepState::WaitingForParticipants;
-
-        Ok(())
-    }
-
     /// Receives and verifies data from a participant for the current step.
     ///
     /// This marks the participant as completed for this step.
-    pub fn receive_current_step_data(
+    fn receive_current_step_data(
         &mut self,
         data: &[u8],
         from_participant: &CommsAddress,
@@ -270,23 +251,11 @@ impl SetupEngine {
         // Allow receiving data if we're in ReadyToSend (we've generated our data but haven't sent yet)
         // or WaitingForParticipants (we've sent our data and are waiting for others)
         // This handles the case where messages arrive in any order
-        if self.state.current_step_state != StepState::WaitingForParticipants
-            && self.state.current_step_state != StepState::ReadyToSend
-        {
+        if self.state.current_step_state != StepState::WaitingForParticipants {
             return Err(BitVMXError::InvalidMessage(format!(
-                "Cannot receive data: step is not ready to receive (current: {:?}). Must be ReadyToSend or WaitingForParticipants",
+                "Cannot receive data: step is not ready to receive (current: {:?}). Must be WaitingForParticipants",
                 self.state.current_step_state
             )));
-        }
-
-        // If we're in ReadyToSend, transition to WaitingForParticipants when we receive the first message
-        // This handles the case where we receive a message before sending our own
-        //TODO: ready to send is handled ?
-        if self.state.current_step_state == StepState::ReadyToSend {
-            info!(
-                "SetupEngine::receive_current_step_data() - Received message while in ReadyToSend, transitioning to WaitingForParticipants"
-            );
-            self.state.current_step_state = StepState::WaitingForParticipants;
         }
 
         let step_name = self.current_step_name().to_string(); // Copy to owned String to avoid borrow issues
@@ -333,7 +302,7 @@ impl SetupEngine {
     /// the next step.
     ///
     /// Returns true if the step advanced, false if still waiting.
-    pub fn try_advance_current_step(
+    fn try_advance_current_step(
         &mut self,
         protocol: &ProtocolType,
         participants: &[CommsAddress],
@@ -407,7 +376,7 @@ impl SetupEngine {
     /// - Non-leaders send their data only to the leader
     /// - Leader stores its own data + collects data from non-leaders
     /// - When all data is received, leader broadcasts to all non-leaders
-    pub fn broadcast_setup_data(
+    fn broadcast_setup_data(
         &self,
         data: Vec<u8>,
         program_id: &Uuid,
@@ -741,17 +710,6 @@ impl SetupEngine {
                 state_changed = true;
                 // Next tick will generate the data
             }
-            StepState::ReadyToSend => {
-                // Recovery: Data was generated but not sent. Since we may have lost the generated
-                // data after a crash, reset to Pending to re-generate and re-send.
-                info!(
-                    "SetupEngine::tick() - Step '{}' stuck in ReadyToSend state, resetting to Pending for recovery",
-                    step_name
-                );
-                self.state.current_step_state = StepState::Pending;
-                state_changed = true;
-                // Next tick will re-generate the data
-            }
             StepState::WaitingForParticipants => {
                 debug!(
                     "SetupEngine::tick() - Step '{}' is WaitingForParticipants (completed: {}/{}), trying to advance",
@@ -770,9 +728,9 @@ impl SetupEngine {
                 }
             }
             StepState::Completed => {
-                // Recovery: Step completed but didn't advance (crash between completing and advancing)
-                // Advance to the next step now
-                info!(
+                error!("We should never be in Completed state during tick - the engine should have already advanced to the next step. Step '{}'", step_name);
+
+                /*info!(
                     "SetupEngine::tick() - Step '{}' stuck in Completed state, advancing to next step for recovery",
                     step_name
                 );
@@ -789,7 +747,7 @@ impl SetupEngine {
                         self.state.current_step_index + 1,
                         self.total_steps()
                     );
-                }
+                }*/
             }
         }
 
@@ -822,8 +780,6 @@ impl SetupEngine {
                 context,
             )?;
 
-            // Mark as sent and mark ourselves as completed
-            self.mark_current_step_sent()?;
             self.state.mark_participant_completed(my_idx);
             info!(
                 "SetupEngine::tick() - Marked ourselves (participant {}) as completed for step '{}'",
@@ -893,24 +849,5 @@ mod tests {
         // Simulate advancing past all steps
         engine.state_mut().advance_to_next_step();
         assert!(engine.is_complete());
-    }
-
-    #[test]
-    fn test_mark_current_step_sent() {
-        let step_names = vec![SetupStepName::Keys];
-        let mut engine = SetupEngine::new(step_names);
-
-        // Cannot mark as sent when in Pending state
-        let result = engine.mark_current_step_sent();
-        assert!(result.is_err());
-
-        // Change to ReadyToSend
-        engine.state_mut().current_step_state = StepState::ReadyToSend;
-        let result = engine.mark_current_step_sent();
-        assert!(result.is_ok());
-        assert_eq!(
-            engine.state().current_step_state,
-            StepState::WaitingForParticipants
-        );
     }
 }
