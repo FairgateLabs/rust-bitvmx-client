@@ -51,10 +51,22 @@ impl ProtocolHandler for AggregatedKeyProtocol {
         &self,
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
-        // Generate a single key for aggregation
-        let key = program_context
-            .key_chain
-            .derive_keypair(key_manager::key_type::BitcoinKeyType::P2tr)?;
+        let optional_keys = program_context
+            .globals
+            .get_var_or_err(&self.ctx.id, "optional_keys")?
+            .string()?;
+        let optional_keys: Option<Vec<PublicKey>> =
+            serde_json::from_str(&optional_keys).map_err(|_| BitVMXError::InvalidMessageFormat)?;
+
+        let key = if let Some(keys) = optional_keys {
+            keys[self.ctx.my_idx]
+        } else {
+            // Generate a single key for aggregation
+            let key = program_context
+                .key_chain
+                .derive_keypair(key_manager::key_type::BitcoinKeyType::P2tr)?;
+            key
+        };
 
         // Return participant keys with a single aggregated key named after the protocol ID
         let aggregated_name = self.ctx.id.to_string();

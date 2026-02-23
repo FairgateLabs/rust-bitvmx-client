@@ -2,6 +2,7 @@ use crate::config::ComponentsConfig;
 use crate::ping_helper::{JobDispatcherType, PingHelper};
 use crate::program::program::{is_active_program, Program};
 use crate::program::protocols::protocol_handler::ProtocolHandler;
+use crate::program::variables::VariableTypes;
 use crate::spv_proof::get_spv_proof;
 use crate::timestamp_verifier::TimestampVerifier;
 use crate::{
@@ -896,7 +897,7 @@ impl BitVMXApi for BitVMX {
         &mut self,
         id: Uuid,
         participants: Vec<CommsAddress>,
-        _participants_keys: Option<Vec<PublicKey>>,
+        participants_keys: Option<Vec<PublicKey>>,
         leader_idx: u16,
     ) -> Result<(), BitVMXError> {
         info!("Setting up key for program: {:?}", id);
@@ -915,6 +916,16 @@ impl BitVMXApi for BitVMX {
         if leader_idx as usize >= participants.len() {
             return Err(BitVMXError::InvalidMessageFormat);
         }
+
+        //TODO: in reality I should avoid exchanging public keys and just generate the aggregated directly
+        // Save optional keys
+        let optional_keys = serde_json::to_string(&participants_keys)?;
+
+        self.program_context.globals.set_var(
+            &id,
+            "optional_keys",
+            VariableTypes::String(optional_keys),
+        )?;
 
         // Use Program with AggregatedKeyProtocol for key aggregation
         Program::new(
