@@ -10,7 +10,7 @@ use crate::{
 };
 use bitvmx_broker::identification::identifier::PubkHash as PubKeyHash;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::{
@@ -42,14 +42,20 @@ pub struct SetupEngineState {
     pub current_step_state: StepState,
     /// Set of participant indices that have sent data for the current step
     pub participants_completed: Vec<usize>,
+    /// Whether all steps have been completed
+    pub all_steps_completed: bool,
+    /// Total number of steps (for validation during restore)
+    pub total_steps: usize,
 }
 
 impl SetupEngineState {
-    pub fn new() -> Self {
+    pub fn new(total_steps: usize) -> Self {
         Self {
             current_step_index: 0,
             current_step_state: StepState::Pending,
             participants_completed: Vec::new(),
+            all_steps_completed: false,
+            total_steps,
         }
     }
 
@@ -67,15 +73,13 @@ impl SetupEngineState {
 
     /// Reset state for next step
     pub fn advance_to_next_step(&mut self) {
-        self.current_step_index += 1;
-        self.current_step_state = StepState::Pending;
-        self.participants_completed.clear();
-    }
-}
-
-impl Default for SetupEngineState {
-    fn default() -> Self {
-        Self::new()
+        if self.current_step_index < self.total_steps - 1 {
+            self.current_step_index += 1;
+            self.current_step_state = StepState::Pending;
+            self.participants_completed.clear();
+        } else {
+            self.all_steps_completed = true;
+        }
     }
 }
 
@@ -123,7 +127,7 @@ impl SetupEngine {
 
         Self {
             steps,
-            state: SetupEngineState::new(),
+            state: SetupEngineState::new(step_names.len()),
         }
     }
 
@@ -154,23 +158,35 @@ impl SetupEngine {
     }
 
     /// Returns the current step, if any.
-    pub fn current_step(&self) -> Option<&SetupStepEnum> {
-        self.steps.get(self.state.current_step_index)
+    pub fn current_step(&self) -> &SetupStepEnum {
+        self.steps
+            .get(self.state.current_step_index)
+            .expect("index should be always in range")
     }
 
     /// Returns the name of the current step.
-    pub fn current_step_name(&self) -> Option<&str> {
-        self.current_step().map(|step| step.step_name())
+    pub fn current_step_name(&self) -> &str {
+        self.current_step().step_name()
     }
 
     /// Returns true if all steps have been completed.
     pub fn is_complete(&self) -> bool {
-        self.state.current_step_index >= self.steps.len()
+        self.state.all_steps_completed
     }
 
     /// Returns the total number of steps.
     pub fn total_steps(&self) -> usize {
         self.steps.len()
+    }
+
+    pub fn if_not_completed(&self) -> Result<(), BitVMXError> {
+        if self.is_complete() {
+            Err(BitVMXError::InvalidMessage(
+                "Setup is already complete".to_string(),
+            ))
+        } else {
+            Ok(())
+        }
     }
 
     /// Generates data for the current step.
@@ -184,20 +200,13 @@ impl SetupEngine {
         protocol: &mut ProtocolType,
         context: &mut ProgramContext,
     ) -> Result<Option<Vec<u8>>, BitVMXError> {
-        if self.is_complete() {
-            return Err(BitVMXError::InvalidMessage(
-                "Setup is already complete".to_string(),
-            ));
-        }
+        self.if_not_completed()?;
 
         // Get step name first before any mutable borrows (copy to owned String)
-        let step_name = self
-            .current_step_name()
-            .ok_or_else(|| BitVMXError::InvalidMessage("No current step available".to_string()))?
-            .to_string();
+        let step_name = self.current_step_name().to_string();
 
         if self.state.current_step_state != StepState::Pending {
-            return Err(BitVMXError::InvalidMessage(format!(
+            return Err(BitVMXError::InvalidState(format!(
                 "Step '{}' is not in Pending state (current: {:?})",
                 step_name, self.state.current_step_state
             )));
@@ -207,7 +216,7 @@ impl SetupEngine {
             "SetupEngine: Generating data for step '{}' ({}/{})",
             step_name,
             self.state.current_step_index + 1,
-            self.total_steps()
+            self.state.total_steps
         );
 
         self.state.current_step_state = StepState::Generating;
@@ -236,7 +245,7 @@ impl SetupEngine {
             )));
         }
 
-        let step_name = self.current_step_name().unwrap_or("unknown");
+        let step_name = self.current_step_name();
         debug!("SetupEngine: Step '{}' data sent", step_name);
 
         self.state.current_step_state = StepState::WaitingForParticipants;
@@ -255,12 +264,9 @@ impl SetupEngine {
         participants: &[CommsAddress],
         context: &mut ProgramContext,
     ) -> Result<(), BitVMXError> {
-        if self.is_complete() {
-            return Err(BitVMXError::InvalidMessage(
-                "Setup is already complete".to_string(),
-            ));
-        }
+        self.if_not_completed()?;
 
+        //TODO: we should receive always?
         // Allow receiving data if we're in ReadyToSend (we've generated our data but haven't sent yet)
         // or WaitingForParticipants (we've sent our data and are waiting for others)
         // This handles the case where messages arrive in any order
@@ -275,6 +281,7 @@ impl SetupEngine {
 
         // If we're in ReadyToSend, transition to WaitingForParticipants when we receive the first message
         // This handles the case where we receive a message before sending our own
+        //TODO: ready to send is handled ?
         if self.state.current_step_state == StepState::ReadyToSend {
             info!(
                 "SetupEngine::receive_current_step_data() - Received message while in ReadyToSend, transitioning to WaitingForParticipants"
@@ -282,10 +289,7 @@ impl SetupEngine {
             self.state.current_step_state = StepState::WaitingForParticipants;
         }
 
-        let step_name = self
-            .current_step_name()
-            .ok_or_else(|| BitVMXError::InvalidMessage("No current step available".to_string()))?
-            .to_string(); // Copy to owned String to avoid borrow issues
+        let step_name = self.current_step_name().to_string(); // Copy to owned String to avoid borrow issues
 
         // Find participant index
         let participant_idx =
@@ -335,18 +339,13 @@ impl SetupEngine {
         participants: &[CommsAddress],
         context: &mut ProgramContext,
     ) -> Result<bool, BitVMXError> {
-        if self.is_complete() {
-            return Ok(false);
-        }
+        self.if_not_completed()?;
 
         if self.state.current_step_state != StepState::WaitingForParticipants {
             return Ok(false);
         }
 
-        let step_name = self
-            .current_step_name()
-            .ok_or_else(|| BitVMXError::InvalidMessage("No current step available".to_string()))?
-            .to_string(); // Copy to owned String
+        let step_name = self.current_step_name().to_string(); // Copy to owned String
 
         // Check if we can advance
         let step = &self.steps[self.state.current_step_index];
@@ -386,12 +385,12 @@ impl SetupEngine {
         if self.is_complete() {
             info!("SetupEngine: All steps completed!");
         } else {
-            let next_step_name = self.current_step_name().unwrap_or("unknown");
+            let next_step_name = self.current_step_name();
             info!(
                 "SetupEngine: Advanced to step '{}' ({}/{})",
                 next_step_name,
                 self.state.current_step_index + 1,
-                self.total_steps()
+                self.state.total_steps
             );
         }
 
@@ -501,7 +500,7 @@ impl SetupEngine {
         // Check if setup is already complete - if so, ignore the message
         // This can happen when a non-leader receives the broadcast containing their own message
         if self.is_complete() {
-            info!(
+            warn!(
                 "SetupEngine::receive_setup_data() - Setup already complete, ignoring message from {}",
                 from
             );
@@ -511,7 +510,7 @@ impl SetupEngine {
         // Find the participant
         let from_participant = get_comms_address_by_pubkey_hash(participants, from)?;
 
-        let step_name = self.current_step_name().unwrap_or("unknown").to_string();
+        let step_name = self.current_step_name().to_string();
         let participants_completed_before = self.state.participants_completed.len();
 
         info!(
@@ -633,7 +632,7 @@ impl SetupEngine {
         }
 
         // Clone step name to owned String before any mutable borrows
-        let step_name = self.current_step_name().unwrap_or("unknown").to_string();
+        let step_name = self.current_step_name().to_string();
         let current_state = self.state.current_step_state.clone();
         let participants_completed = self.state.participants_completed.len();
         let total_participants = participants.len();
@@ -644,10 +643,7 @@ impl SetupEngine {
             // Check if we can advance (this will return false if not all participants have sent data)
             let can_advance = self
                 .current_step()
-                .map(|step| {
-                    step.can_advance(protocol, participants, context)
-                        .unwrap_or(false)
-                })
+                .can_advance(protocol, participants, context)
                 .unwrap_or(false);
 
             if !can_advance {
@@ -712,15 +708,19 @@ impl SetupEngine {
 
                     // IMPORTANT: Store our own data in globals BEFORE sending to others
                     // The step's can_advance() method checks that ALL participants' data exists in globals
-                    if let Some(step) = self.current_step() {
-                        let my_participant = &participants[my_idx];
-                        step.verify_received(d, my_participant, protocol, participants, context)?;
-                        info!(
+                    let my_participant = &participants[my_idx];
+                    self.current_step().verify_received(
+                        d,
+                        my_participant,
+                        protocol,
+                        participants,
+                        context,
+                    )?;
+                    info!(
                             "SetupEngine::tick() - Stored our own data (participant {}) in globals for step '{}'",
                             my_idx,
                             step_name
                         );
-                    }
 
                     data_to_send = Some(d.clone());
                 } else {
@@ -782,7 +782,7 @@ impl SetupEngine {
                 if self.is_complete() {
                     info!("SetupEngine::tick() - All steps completed after recovery!");
                 } else {
-                    let next_step_name = self.current_step_name().unwrap_or("unknown");
+                    let next_step_name = self.current_step_name();
                     info!(
                         "SetupEngine::tick() - Advanced to step '{}' ({}/{}) after recovery",
                         next_step_name,
@@ -858,12 +858,12 @@ mod tests {
         assert_eq!(engine.state().current_step_index, 0);
         assert_eq!(engine.state().current_step_state, StepState::Pending);
         assert!(!engine.is_complete());
-        assert_eq!(engine.current_step_name(), Some("keys"));
+        assert_eq!(engine.current_step_name(), "keys");
     }
 
     #[test]
     fn test_step_state_transitions() {
-        let mut state = SetupEngineState::new();
+        let mut state = SetupEngineState::new(2);
 
         assert_eq!(state.current_step_state, StepState::Pending);
         assert_eq!(state.current_step_index, 0);
@@ -893,7 +893,6 @@ mod tests {
         // Simulate advancing past all steps
         engine.state_mut().advance_to_next_step();
         assert!(engine.is_complete());
-        assert_eq!(engine.current_step_name(), None);
     }
 
     #[test]
