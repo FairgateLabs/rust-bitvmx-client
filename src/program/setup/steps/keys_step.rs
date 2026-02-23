@@ -8,7 +8,7 @@ use crate::{
     },
     types::ProgramContext,
 };
-use tracing::{debug, info};
+use tracing::debug;
 
 /// Template step for exchanging public keys in MuSig2 protocols.
 ///
@@ -267,62 +267,14 @@ impl SetupStep for KeysStep {
             VariableTypes::String(serde_json::to_string(&my_keys)?),
         )?;
 
-        self.build_protocol(context, protocol)?;
-
         debug!(
             "KeysStep: Completed with {} participants, computed {} aggregated keys",
             all_keys.len(),
             my_keys.computed_aggregated.len()
         );
-        Ok(())
-    }
-}
 
-impl KeysStep {
-    /// Builds the protocol after all setup steps are complete
-    ///
-    /// This method:
-    /// 1. Collects all participant keys from globals
-    /// 2. Retrieves the pre-computed aggregated keys from KeysStep
-    /// 3. Passes both to protocol.build()
-    fn build_protocol(
-        &self,
-        program_context: &ProgramContext,
-        protocol: &ProtocolType,
-    ) -> Result<(), BitVMXError> {
-        let protocol_id = protocol.context().id;
-        info!("Program: Building protocol {}", protocol_id);
+        protocol.build(all_keys, my_keys.computed_aggregated, context)?;
 
-        // Collect all participant keys from globals
-        // These were stored by KeysStep during setup
-        let all_keys_var = program_context
-            .globals
-            .get_var(&protocol_id, "all_participant_keys")?
-            .ok_or_else(|| {
-                BitVMXError::InvalidMessage("all_participant_keys not found in globals".to_string())
-            })?;
-
-        let all_keys_json = all_keys_var.string()?;
-
-        let all_keys: Vec<ParticipantKeys> = serde_json::from_str(&all_keys_json)
-            .map_err(|e| BitVMXError::InvalidMessage(format!("Failed to parse keys: {}", e)))?;
-
-        // Retrieve my_keys to get pre-computed aggregated keys from KeysStep
-        let my_keys_var = program_context
-            .globals
-            .get_var(&protocol_id, "my_keys")?
-            .ok_or_else(|| BitVMXError::InvalidMessage("my_keys not found in globals".into()))?;
-        let my_keys: ParticipantKeys = serde_json::from_str(&my_keys_var.string()?)?;
-
-        info!(
-            "Program: Collected {} participant keys and {} pre-computed aggregated keys for protocol build",
-            all_keys.len(),
-            my_keys.computed_aggregated.len()
-        );
-
-        protocol.build(all_keys, my_keys.computed_aggregated, program_context)?;
-
-        info!("Program: Protocol build complete");
         Ok(())
     }
 }
