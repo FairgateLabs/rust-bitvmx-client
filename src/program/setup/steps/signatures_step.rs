@@ -12,7 +12,7 @@ use crate::{
 use bitcoin::PublicKey;
 use key_manager::musig2::{types::MessageId, PartialSignature};
 use std::collections::HashMap;
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Template step for exchanging MuSig2 partial signatures.
 ///
@@ -84,12 +84,14 @@ impl SetupStep for SignaturesStep {
                 .key_chain
                 .get_signatures(aggregated, &protocol.context().protocol_name);
 
-            let signatures = signatures.map_err(|e| {
-                BitVMXError::InvalidMessage(format!(
-                    "SignaturesStep: Failed to get partial signatures for aggregated key {}: {}",
-                    aggregated, e
-                ))
-            })?;
+            if signatures.is_err() {
+                warn!(
+                    "SignaturesStep: Failed to generate signatures for aggregated key {}: {}",
+                    aggregated,
+                    signatures.as_ref().err().unwrap()
+                );
+                continue; // Skip this aggregated key and continue with others
+            }
 
             let my_pub = context
                 .key_chain
@@ -101,7 +103,7 @@ impl SetupStep for SignaturesStep {
                 aggregated
             );
 
-            partial_sig_msg.push((aggregated.clone(), my_pub, signatures));
+            partial_sig_msg.push((aggregated.clone(), my_pub, signatures.unwrap()));
         }
 
         if partial_sig_msg.is_empty() {
@@ -160,8 +162,7 @@ impl SetupStep for SignaturesStep {
         );
 
         // Find participant index
-        let idx =
-            get_index_by_pubkey_hash(participants, &from_participant.pubkey_hash)?;
+        let idx = get_index_by_pubkey_hash(participants, &from_participant.pubkey_hash)?;
 
         // Save to globals with the convention "participant_{idx}_signatures"
         context.globals.set_var(
