@@ -2,7 +2,7 @@ use crate::{
     errors::BitVMXError,
     helper::PubNonceMessage,
     program::{
-        participant::{ParticipantData, ParticipantKeys},
+        participant::{get_index_by_pubkey_hash, CommsAddress, ParticipantKeys},
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
         setup::SetupStep,
         variables::VariableTypes,
@@ -96,10 +96,7 @@ impl SetupStep for NoncesStep {
                 .key_manager
                 .get_my_public_key(aggregated)?;
 
-            debug!(
-                "NoncesStep: Got nonces for aggregated key: {}",
-                aggregated
-            );
+            debug!("NoncesStep: Got nonces for aggregated key: {}", aggregated);
 
             public_nonce_msg.push((aggregated.clone(), my_pub, nonces));
         }
@@ -127,16 +124,16 @@ impl SetupStep for NoncesStep {
     fn verify_received(
         &self,
         data: &[u8],
-        from_participant: &ParticipantData,
+        from_participant: &CommsAddress,
         protocol: &ProtocolType,
-        participants: &[ParticipantData],
+        participants: &[CommsAddress],
         context: &mut ProgramContext,
     ) -> Result<(), BitVMXError> {
         let protocol_id = protocol.context().id;
 
         debug!(
             "NoncesStep: Verifying nonces from participant {}",
-            from_participant.comms_address.pubkey_hash
+            from_participant.pubkey_hash
         );
 
         // Deserialize the received nonces
@@ -154,15 +151,7 @@ impl SetupStep for NoncesStep {
         debug!("NoncesStep: Received {} nonces", nonces.len());
 
         // Find participant index
-        let idx = participants
-            .iter()
-            .position(|p| p.comms_address.pubkey_hash == from_participant.comms_address.pubkey_hash)
-            .ok_or_else(|| {
-                BitVMXError::InvalidMessage(format!(
-                    "Unknown participant: {}",
-                    from_participant.comms_address.pubkey_hash
-                ))
-            })?;
+        let idx = get_index_by_pubkey_hash(participants, &from_participant.pubkey_hash)?;
 
         // Save to globals with the convention "participant_{idx}_nonces"
         context.globals.set_var(
@@ -173,7 +162,7 @@ impl SetupStep for NoncesStep {
 
         debug!(
             "NoncesStep: Stored nonces from participant {} at index {}",
-            from_participant.comms_address.pubkey_hash, idx
+            from_participant.pubkey_hash, idx
         );
 
         Ok(())
@@ -182,7 +171,7 @@ impl SetupStep for NoncesStep {
     fn can_advance(
         &self,
         protocol: &ProtocolType,
-        participants: &[ParticipantData],
+        participants: &[CommsAddress],
         context: &ProgramContext,
     ) -> Result<bool, BitVMXError> {
         let protocol_id = protocol.context().id;
@@ -196,7 +185,7 @@ impl SetupStep for NoncesStep {
             {
                 debug!(
                     "NoncesStep: Still waiting for nonces from participant {} (index {})",
-                    participant.comms_address.pubkey_hash, idx
+                    participant.pubkey_hash, idx
                 );
                 return Ok(false);
             }
@@ -212,7 +201,7 @@ impl SetupStep for NoncesStep {
     fn on_step_complete(
         &self,
         protocol: &ProtocolType,
-        participants: &[ParticipantData],
+        participants: &[CommsAddress],
         context: &mut ProgramContext,
     ) -> Result<(), BitVMXError> {
         let protocol_id = protocol.context().id;
@@ -222,10 +211,8 @@ impl SetupStep for NoncesStep {
 
         // Build map_of_maps: HashMap<PublicKey, HashMap<PublicKey, Vec<(MessageId, PubNonce)>>>
         // First PublicKey is aggregated key, second is participant's public key
-        let mut map_of_maps: HashMap<
-            PublicKey,
-            HashMap<PublicKey, Vec<(MessageId, PubNonce)>>,
-        > = HashMap::new();
+        let mut map_of_maps: HashMap<PublicKey, HashMap<PublicKey, Vec<(MessageId, PubNonce)>>> =
+            HashMap::new();
 
         // Collect nonces from all participants (except ourselves)
         for (idx, _) in participants.iter().enumerate() {

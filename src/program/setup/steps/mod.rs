@@ -10,7 +10,7 @@ use enum_dispatch::enum_dispatch;
 
 use super::SetupStep;
 use crate::errors::BitVMXError;
-use crate::program::participant::ParticipantData;
+use crate::program::participant::CommsAddress;
 use crate::program::protocols::protocol_handler::ProtocolType;
 use crate::types::ProgramContext;
 use std::fmt;

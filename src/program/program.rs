@@ -9,7 +9,7 @@ use crate::{
     config::ClientConfig,
     errors::{BitVMXError, ProgramError},
     program::{
-        participant::ParticipantData,
+        participant::get_comms_address_by_pubkey_hash,
         protocols::protocol_handler::{new_protocol_type, ProtocolHandler, ProtocolType},
         setup::{SetupEngine, SetupEngineState},
         state::ProgramState,
@@ -32,7 +32,7 @@ use super::participant::CommsAddress;
 pub struct Program {
     pub program_id: Uuid,
     pub my_idx: usize,
-    pub participants: Vec<ParticipantData>,
+    pub participants: Vec<CommsAddress>,
     pub leader: usize,
     pub protocol: ProtocolType,
     #[serde(skip)]
@@ -138,13 +138,6 @@ impl Program {
             &peers,
         )?;
 
-        let participants: Vec<ParticipantData> = peers
-            .into_iter()
-            .map(|addr| ParticipantData {
-                comms_address: addr,
-            })
-            .collect();
-
         // Create protocol
         let mut protocol = new_protocol_type(program_id, program_type, my_idx, storage.clone())?;
         protocol.set_storage(storage.clone());
@@ -155,7 +148,7 @@ impl Program {
         let mut program = Program {
             program_id,
             my_idx,
-            participants,
+            participants: peers,
             leader,
             protocol,
             state: ProgramState::SettingUp,
@@ -420,12 +413,7 @@ impl Program {
         &self,
         pubkey_hash: &PubKeyHash,
     ) -> Result<CommsAddress, BitVMXError> {
-        for p in &self.participants {
-            if &p.comms_address.pubkey_hash == pubkey_hash {
-                return Ok(p.comms_address.clone());
-            }
-        }
-        Err(BitVMXError::CommsCommunicationError)
+        get_comms_address_by_pubkey_hash(&self.participants, pubkey_hash)
     }
 
     /// Main entry point for processing incoming communication messages

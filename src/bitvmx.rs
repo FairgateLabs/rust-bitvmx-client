@@ -303,8 +303,8 @@ impl BitVMX {
         let participants: Vec<_> = program
             .participants
             .iter()
-            .filter(|p| p.comms_address.pubkey_hash != my_pubkey_hash)
-            .map(|p| p.comms_address.pubkey_hash.clone())
+            .filter(|p| p.pubkey_hash != my_pubkey_hash)
+            .map(|p| p.pubkey_hash.clone())
             .collect();
         if !SignatureVerifier::has_all_keys(&self.program_context.globals, &participants)? {
             info!(

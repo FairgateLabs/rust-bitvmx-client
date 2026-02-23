@@ -6,19 +6,6 @@ use std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr};
 
 use crate::errors::BitVMXError;
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct ParticipantData {
-    pub comms_address: CommsAddress,
-}
-
-impl ParticipantData {
-    pub fn new(address: &CommsAddress) -> Self {
-        ParticipantData {
-            comms_address: address.clone(),
-        }
-    }
-}
-
 impl TryFrom<&str> for ParticipantRole {
     type Error = BitVMXError;
 
@@ -161,6 +148,30 @@ impl CommsAddress {
             pubkey_hash,
         }
     }
+}
+
+pub fn get_comms_address_by_pubkey_hash(
+    participants: &[CommsAddress],
+    pubkey_hash: &PubkHash,
+) -> Result<CommsAddress, BitVMXError> {
+    for p in participants {
+        if &p.pubkey_hash == pubkey_hash {
+            return Ok(p.clone());
+        }
+    }
+    Err(BitVMXError::InvalidCommsAddress(pubkey_hash.clone()))
+}
+
+pub fn get_index_by_pubkey_hash(
+    participants: &[CommsAddress],
+    pubkey_hash: &PubkHash,
+) -> Result<usize, BitVMXError> {
+    for (i, p) in participants.iter().enumerate() {
+        if &p.pubkey_hash == pubkey_hash {
+            return Ok(i);
+        }
+    }
+    Err(BitVMXError::InvalidCommsAddress(pubkey_hash.clone()))
 }
 
 impl fmt::Display for CommsAddress {

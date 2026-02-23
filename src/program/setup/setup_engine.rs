@@ -2,7 +2,10 @@ use crate::{
     comms_helper::{prepare_message, request, CommsMessageType},
     errors::BitVMXError,
     leader_broadcast::{get_non_leader_participants, OriginalMessage},
-    program::{participant::ParticipantData, protocols::protocol_handler::ProtocolType},
+    program::{
+        participant::{get_comms_address_by_pubkey_hash, get_index_by_pubkey_hash, CommsAddress},
+        protocols::protocol_handler::ProtocolType,
+    },
     types::ProgramContext,
 };
 use bitvmx_broker::identification::identifier::PubkHash as PubKeyHash;
@@ -249,9 +252,9 @@ impl SetupEngine {
     pub fn receive_current_step_data(
         &mut self,
         data: &[u8],
-        from_participant: &ParticipantData,
+        from_participant: &CommsAddress,
         protocol: &ProtocolType,
-        participants: &[ParticipantData],
+        participants: &[CommsAddress],
         context: &mut ProgramContext,
     ) -> Result<(), BitVMXError> {
         if self.is_complete() {
@@ -287,15 +290,8 @@ impl SetupEngine {
             .to_string(); // Copy to owned String to avoid borrow issues
 
         // Find participant index
-        let participant_idx = participants
-            .iter()
-            .position(|p| p.comms_address.pubkey_hash == from_participant.comms_address.pubkey_hash)
-            .ok_or_else(|| {
-                BitVMXError::InvalidMessage(format!(
-                    "Unknown participant: {}",
-                    from_participant.comms_address.pubkey_hash
-                ))
-            })?;
+        let participant_idx =
+            get_index_by_pubkey_hash(participants, &from_participant.pubkey_hash)?;
 
         // Check if already received
         if self.state.has_participant_completed(participant_idx) {
@@ -338,7 +334,7 @@ impl SetupEngine {
     pub fn try_advance_current_step(
         &mut self,
         protocol: &ProtocolType,
-        participants: &[ParticipantData],
+        participants: &[CommsAddress],
         context: &mut ProgramContext,
     ) -> Result<bool, BitVMXError> {
         if self.is_complete() {
@@ -420,7 +416,7 @@ impl SetupEngine {
         program_id: &Uuid,
         my_idx: usize,
         leader: usize,
-        participants: &[ParticipantData],
+        participants: &[CommsAddress],
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         let is_leader = my_idx == leader;
@@ -458,7 +454,7 @@ impl SetupEngine {
             )?;
         } else {
             // Non-leader: Send only to leader
-            let leader_address = &participants[leader].comms_address;
+            let leader_address = &participants[leader];
 
             info!(
                 "SetupEngine::broadcast_setup_data() - Non-leader sending {} bytes to leader {}",
@@ -494,7 +490,7 @@ impl SetupEngine {
         program_id: &Uuid,
         my_idx: usize,
         leader: usize,
-        participants: &[ParticipantData],
+        participants: &[CommsAddress],
         protocol: &ProtocolType,
         context: &mut ProgramContext,
     ) -> Result<bool, BitVMXError> {
@@ -515,11 +511,7 @@ impl SetupEngine {
         }
 
         // Find the participant
-        let from_participant = participants
-            .iter()
-            .find(|p| &p.comms_address.pubkey_hash == from)
-            .ok_or_else(|| BitVMXError::InvalidMessage(format!("Unknown participant: {}", from)))?
-            .clone();
+        let from_participant = get_comms_address_by_pubkey_hash(participants, from)?;
 
         let step_name = self.current_step_name().unwrap_or("unknown").to_string();
         let participants_completed_before = self.state.participants_completed.len();
@@ -544,10 +536,8 @@ impl SetupEngine {
         // Leader broadcast: If I'm the leader and have all messages, broadcast to non-leaders
         if my_idx == leader {
             // Get list of all participant pubkey hashes (including leader)
-            let all_participant_hashes: Vec<_> = participants
-                .iter()
-                .map(|p| p.comms_address.pubkey_hash.clone())
-                .collect();
+            let all_participant_hashes: Vec<_> =
+                participants.iter().map(|p| p.pubkey_hash.clone()).collect();
 
             // Check if we have all messages
             let has_all = context.leader_broadcast_helper.has_all_expected_messages(
@@ -563,13 +553,7 @@ impl SetupEngine {
 
                 // Get non-leader participants
                 let my_pubkey_hash = context.comms.get_pubk_hash()?;
-                let non_leaders = get_non_leader_participants(
-                    &participants
-                        .iter()
-                        .map(|p| p.comms_address.clone())
-                        .collect::<Vec<_>>(),
-                    &my_pubkey_hash,
-                );
+                let non_leaders = get_non_leader_participants(participants, &my_pubkey_hash);
 
                 // Broadcast to all non-leaders
                 context.leader_broadcast_helper.broadcast_to_non_leaders(
@@ -636,7 +620,7 @@ impl SetupEngine {
     pub fn tick(
         &mut self,
         protocol: &mut ProtocolType,
-        participants: &[ParticipantData],
+        participants: &[CommsAddress],
         my_idx: usize,
         program_id: &Uuid,
         leader: usize,

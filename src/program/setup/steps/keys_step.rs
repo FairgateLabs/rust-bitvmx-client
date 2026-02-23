@@ -1,7 +1,7 @@
 use crate::{
     errors::BitVMXError,
     program::{
-        participant::{ParticipantData, ParticipantKeys},
+        participant::{get_index_by_pubkey_hash, CommsAddress, ParticipantKeys},
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
         setup::SetupStep,
         variables::VariableTypes,
@@ -78,16 +78,16 @@ impl SetupStep for KeysStep {
     fn verify_received(
         &self,
         data: &[u8],
-        from_participant: &ParticipantData,
+        from_participant: &CommsAddress,
         protocol: &ProtocolType,
-        participants: &[ParticipantData],
+        participants: &[CommsAddress],
         context: &mut ProgramContext,
     ) -> Result<(), BitVMXError> {
         let protocol_id = protocol.context().id;
 
         debug!(
             "KeysStep: Verifying keys from participant {}",
-            from_participant.comms_address.pubkey_hash
+            from_participant.pubkey_hash
         );
 
         // Deserialize the received keys
@@ -109,15 +109,7 @@ impl SetupStep for KeysStep {
         );
 
         // Find participant index
-        let idx = participants
-            .iter()
-            .position(|p| p.comms_address.pubkey_hash == from_participant.comms_address.pubkey_hash)
-            .ok_or_else(|| {
-                BitVMXError::InvalidMessage(format!(
-                    "Unknown participant: {}",
-                    from_participant.comms_address.pubkey_hash
-                ))
-            })?;
+        let idx = get_index_by_pubkey_hash(participants, &from_participant.pubkey_hash)?;
 
         // Save to globals with the convention "participant_{idx}_keys"
         context.globals.set_var(
@@ -128,7 +120,7 @@ impl SetupStep for KeysStep {
 
         debug!(
             "KeysStep: Stored keys from participant {} at index {}",
-            from_participant.comms_address.pubkey_hash, idx
+            from_participant.pubkey_hash, idx
         );
 
         Ok(())
@@ -137,7 +129,7 @@ impl SetupStep for KeysStep {
     fn can_advance(
         &self,
         protocol: &ProtocolType,
-        participants: &[ParticipantData],
+        participants: &[CommsAddress],
         context: &ProgramContext,
     ) -> Result<bool, BitVMXError> {
         let protocol_id = protocol.context().id;
@@ -151,7 +143,7 @@ impl SetupStep for KeysStep {
             {
                 debug!(
                     "KeysStep: Still waiting for keys from participant {} (index {})",
-                    participant.comms_address.pubkey_hash, idx
+                    participant.pubkey_hash, idx
                 );
                 return Ok(false);
             }
@@ -167,7 +159,7 @@ impl SetupStep for KeysStep {
     fn on_step_complete(
         &self,
         protocol: &ProtocolType,
-        participants: &[ParticipantData],
+        participants: &[CommsAddress],
         context: &mut ProgramContext,
     ) -> Result<(), BitVMXError> {
         let protocol_id = protocol.context().id;

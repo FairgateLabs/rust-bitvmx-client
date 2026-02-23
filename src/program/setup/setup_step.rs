@@ -2,7 +2,7 @@ use enum_dispatch::enum_dispatch;
 
 use crate::{
     errors::BitVMXError,
-    program::{participant::ParticipantData, protocols::protocol_handler::ProtocolType},
+    program::{participant::CommsAddress, protocols::protocol_handler::ProtocolType},
     types::ProgramContext,
 };
 
@@ -43,9 +43,9 @@ pub trait SetupStep {
     fn verify_received(
         &self,
         data: &[u8],
-        from_participant: &ParticipantData,
+        from_participant: &CommsAddress,
         protocol: &ProtocolType,
-        participants: &[ParticipantData],
+        participants: &[CommsAddress],
         context: &mut ProgramContext,
     ) -> Result<(), BitVMXError>;
 
@@ -55,7 +55,7 @@ pub trait SetupStep {
     fn can_advance(
         &self,
         protocol: &ProtocolType,
-        participants: &[ParticipantData],
+        participants: &[CommsAddress],
         context: &ProgramContext,
     ) -> Result<bool, BitVMXError>;
 
@@ -70,7 +70,7 @@ pub trait SetupStep {
     fn on_step_complete(
         &self,
         _protocol: &ProtocolType,
-        _participants: &[ParticipantData],
+        _participants: &[CommsAddress],
         _context: &mut ProgramContext,
     ) -> Result<(), BitVMXError> {
         Ok(())
