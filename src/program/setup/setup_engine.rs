@@ -25,8 +25,19 @@ pub enum StepState {
     Generating,
     /// Step has sent data and is waiting for other participants
     WaitingForParticipants,
+    /// All participants have sent data and step is ready to advance to the next step
+    AllParticipantsCompleted,
     /// Step has received all data and can advance
     Completed,
+}
+
+impl StepState {
+    fn can_receive_data(&self) -> bool {
+        matches!(
+            self,
+            StepState::WaitingForParticipants | StepState::Generating
+        )
+    }
 }
 
 /// Tracks the state of the setup engine.
@@ -195,6 +206,7 @@ impl SetupEngine {
         &mut self,
         protocol: &mut ProtocolType,
         context: &mut ProgramContext,
+        total_participants: usize,
     ) -> Result<Option<Vec<u8>>, BitVMXError> {
         self.if_not_completed()?;
 
@@ -221,7 +233,11 @@ impl SetupEngine {
         //TODO: for steps that generate data asyn, instead of moving to waiting, move to a new state "WaitingGeneration"
         //that will be handled with another external call and would allow the transition
 
-        self.state.current_step_state = StepState::WaitingForParticipants;
+        if total_participants == 1 {
+            self.state.current_step_state = StepState::AllParticipantsCompleted;
+        } else {
+            self.state.current_step_state = StepState::WaitingForParticipants;
+        }
 
         debug!(
             "SetupEngine: Step '{}' generated {} bytes",
@@ -245,9 +261,9 @@ impl SetupEngine {
     ) -> Result<(), BitVMXError> {
         self.if_not_completed()?;
 
-        if self.state.current_step_state == StepState::Completed {
+        if !self.state.current_step_state.can_receive_data() {
             return Err(BitVMXError::InvalidMessage(format!(
-                "Cannot receive data: step is not ready to receive (current: {:?}). Must not be Completed",
+                "Cannot receive data: step is not ready to receive (current: {:?}).",
                 self.state.current_step_state
             )));
         }
@@ -279,6 +295,10 @@ impl SetupEngine {
         // Mark participant as completed
         self.state.mark_participant_completed(participant_idx);
 
+        if self.state.participants_completed.len() == participants.len() {
+            self.state.current_step_state = StepState::AllParticipantsCompleted;
+        }
+
         info!(
             "SetupEngine::receive_current_step_data() - Step '{}': {}/{} participants completed (participant {} just completed)",
             step_name,
@@ -304,7 +324,7 @@ impl SetupEngine {
     ) -> Result<bool, BitVMXError> {
         self.if_not_completed()?;
 
-        if self.state.current_step_state != StepState::WaitingForParticipants {
+        if self.state.current_step_state != StepState::AllParticipantsCompleted {
             return Ok(false);
         }
 
@@ -582,7 +602,8 @@ impl SetupEngine {
                     step_name
                 );
                 // Generate data for this step
-                let data = self.generate_current_step_data(protocol, context)?;
+                let data =
+                    self.generate_current_step_data(protocol, context, participants.len())?;
                 if let Some(ref d) = data {
                     info!(
                         "SetupEngine::tick() - Generated {} bytes for step '{}'",
@@ -616,8 +637,11 @@ impl SetupEngine {
                 state_changed = true;
             }
             StepState::WaitingForParticipants => {
+                //info!("Wasted");
+            }
+            StepState::AllParticipantsCompleted => {
                 debug!(
-                    "SetupEngine::tick() - Step '{}' is WaitingForParticipants (completed: {}/{}), trying to advance",
+                    "SetupEngine::tick() - Step '{}' is AllParticipantsCompleted (completed: {}/{}), trying to advance",
                     step_name,
                     self.state.participants_completed.len(),
                     participants.len()
