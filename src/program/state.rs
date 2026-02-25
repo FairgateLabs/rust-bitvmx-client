@@ -6,6 +6,9 @@ pub enum ProgramState {
     /// The actual setup flow is managed by SetupEngine.
     SettingUp,
 
+    /// Waiting data
+    WaitingData,
+
     /// Ready state after setup is completed and the transactions are being monitored
     Ready,
 }

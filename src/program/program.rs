@@ -245,7 +245,7 @@ impl Program {
             ProgramState::SettingUp => {
                 // Run the engine tick (uses block scope to avoid borrow conflict
                 // between setup_engine and other self fields)
-                let (tick_state_changed, is_complete) = {
+                let (tick_result, is_complete) = {
                     let engine = self.setup_engine.as_mut().ok_or_else(|| {
                         BitVMXError::InvalidMessage(
                             "Protocol must return setup steps for Program".to_string(),
@@ -270,11 +270,15 @@ impl Program {
                         engine.total_steps()
                     );
 
-                    (tick_result.state_changed, is_complete)
+                    (tick_result, is_complete)
                 };
 
-                if tick_state_changed {
+                if tick_result.state_changed {
                     state_changed = true;
+                    if !tick_result.need_tick {
+                        //this means we are in a waiting state
+                        self.state = ProgramState::WaitingData;
+                    }
                 }
 
                 // After all setup steps complete, sign and finalize
@@ -287,10 +291,10 @@ impl Program {
                     info!("Program: Setup finalized, transitioning to Ready state");
                 }
             }
-            ProgramState::Ready => {
+            ProgramState::WaitingData | ProgramState::Ready => {
                 // Protocol is ready and monitoring is active
                 // Just waiting for blockchain events via notify_news()
-                debug!("Program: In Ready state - monitoring active, waiting for events");
+                debug!("Program: waiting for events");
             }
         }
 
@@ -365,14 +369,14 @@ impl Program {
         program_context: &mut ProgramContext,
     ) -> Result<(), BitVMXError> {
         // Only handle setup data if we're in setup state
-        if !matches!(self.state, ProgramState::SettingUp) {
+        if matches!(self.state, ProgramState::Ready) {
             debug!("Program::receive_setup_data() - Not in SettingUp state, ignoring");
             return Ok(());
         }
 
         // Track state changes and completion status for save/log after borrow ends
-        let (state_changed, is_complete) = if let Some(engine) = &mut self.setup_engine {
-            let state_changed = engine.receive_setup_data(
+        let (state_changed, need_tick) = if let Some(engine) = &mut self.setup_engine {
+            let (state_changed, need_tick) = engine.receive_setup_data(
                 data,
                 from,
                 &self.program_id,
@@ -382,22 +386,20 @@ impl Program {
                 &self.protocol,
                 program_context,
             )?;
-            let is_complete = engine.is_complete();
-            (state_changed, is_complete)
+            (state_changed, need_tick)
         } else {
             (false, false)
         };
 
         // Always save when state changes to avoid data loss on crash
         if state_changed {
-            self.save()?;
-            if is_complete {
-                info!("Program::receive_setup_data() - Saved program state (setup complete, waiting for tick to build)");
+            if need_tick {
+                self.state = ProgramState::SettingUp;
             } else {
-                info!(
-                    "Program::receive_setup_data() - Saved program state (setup not yet complete)"
-                );
+                self.state = ProgramState::WaitingData;
             }
+            self.save()?;
+            info!("Program::receive_setup_data() - Saved program state (setup complete, waiting for tick to build)");
         }
 
         Ok(())
