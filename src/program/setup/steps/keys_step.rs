@@ -8,7 +8,7 @@ use crate::{
     },
     types::ProgramContext,
 };
-use tracing::debug;
+use tracing::{debug, info};
 
 /// Template step for exchanging public keys in MuSig2 protocols.
 ///
@@ -46,13 +46,12 @@ impl SetupStep for KeysStep {
         debug!("KeysStep: Generating keys for protocol {}", protocol_id);
 
         // Call the protocol to generate its specific keys
-        let keys = protocol.generate_keys(context)?;
+        let mut keys = protocol.generate_keys(context)?;
 
         // Validate that keys were generated
         if keys.mapping.is_empty() && keys.aggregated.is_empty() {
-            return Err(BitVMXError::InvalidMessage(
-                "Protocol generated empty keys".to_string(),
-            ));
+            info!("KeysStep: Protocol did not generate any keys, using empty defaults");
+            keys = ParticipantKeys::new(vec![], vec![]);
         }
 
         debug!(
@@ -96,7 +95,10 @@ impl SetupStep for KeysStep {
         })?;
 
         // Basic validation
-        if keys.mapping.is_empty() && keys.aggregated.is_empty() {
+        if keys.mapping.is_empty()
+            && keys.aggregated.is_empty()
+            && keys.computed_aggregated.is_empty()
+        {
             return Err(BitVMXError::InvalidMessage(
                 "Received empty keys from participant".to_string(),
             ));
