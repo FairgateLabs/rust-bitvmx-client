@@ -11,7 +11,7 @@ use crate::{
     program::{
         participant::get_comms_address_by_pubkey_hash,
         protocols::protocol_handler::{new_protocol_type, ProtocolHandler, ProtocolType},
-        setup::{SetupEngine, SetupEngineState},
+        setup::{SetupEngine, SetupEngineState, StepState},
         state::ProgramState,
     },
     signature_verifier::OperatorVerificationStore,
@@ -245,7 +245,7 @@ impl Program {
             ProgramState::SettingUp => {
                 // Run the engine tick (uses block scope to avoid borrow conflict
                 // between setup_engine and other self fields)
-                let (tick_result, is_complete) = {
+                let (tick_result, is_complete, engine_state) = {
                     let engine = self.setup_engine.as_mut().ok_or_else(|| {
                         BitVMXError::InvalidMessage(
                             "Protocol must return setup steps for Program".to_string(),
@@ -270,14 +270,15 @@ impl Program {
                         engine.total_steps()
                     );
 
-                    (tick_result, is_complete)
+                    (tick_result, is_complete, engine.state().clone())
                 };
 
                 if tick_result.state_changed {
                     state_changed = true;
-                    if !tick_result.need_tick {
-                        //this means we are in a waiting state
+                    if engine_state.current_step_state == StepState::WaitingForParticipants {
                         self.state = ProgramState::WaitingData;
+                    } else {
+                        self.state = ProgramState::SettingUp;
                     }
                 }
 
@@ -367,16 +368,16 @@ impl Program {
         data: &[u8],
         from: &PubKeyHash,
         program_context: &mut ProgramContext,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<bool, BitVMXError> {
         // Only handle setup data if we're in setup state
         if matches!(self.state, ProgramState::Ready) {
             debug!("Program::receive_setup_data() - Not in SettingUp state, ignoring");
-            return Ok(());
+            return Ok(false);
         }
 
         // Track state changes and completion status for save/log after borrow ends
-        let (state_changed, need_tick) = if let Some(engine) = &mut self.setup_engine {
-            let (state_changed, need_tick) = engine.receive_setup_data(
+        let (message_processed, engine_state) = if let Some(engine) = &mut self.setup_engine {
+            let message_processed = engine.receive_setup_data(
                 data,
                 from,
                 &self.program_id,
@@ -386,17 +387,17 @@ impl Program {
                 &self.protocol,
                 program_context,
             )?;
-            (state_changed, need_tick)
+            (message_processed, engine.state().current_step_state.clone())
         } else {
-            (false, false)
+            (false, StepState::Completed) // Default to complete if no engine (should not happen since receive_setup_data should only be called in setup)
         };
 
         // Always save when state changes to avoid data loss on crash
-        if state_changed {
-            if need_tick {
-                self.state = ProgramState::SettingUp;
-            } else {
+        if message_processed {
+            if engine_state == StepState::WaitingForParticipants {
                 self.state = ProgramState::WaitingData;
+            } else {
+                self.state = ProgramState::SettingUp;
             }
             self.save()?;
             info!(
@@ -405,7 +406,7 @@ impl Program {
             );
         }
 
-        Ok(())
+        Ok(message_processed)
     }
 
     /// Returns the protocol ID
@@ -430,7 +431,7 @@ impl Program {
         msg_type: &CommsMessageType,
         data: Vec<u8>,
         program_context: &mut ProgramContext,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<bool, BitVMXError> {
         debug!(
             "Program::process_comms_message() - Received {:?} ({} bytes) from {}",
             msg_type,
@@ -441,7 +442,7 @@ impl Program {
         match msg_type {
             CommsMessageType::SetupStepData => {
                 debug!("Program::process_comms_message() - Routing SetupStepData to receive_setup_data()");
-                self.receive_setup_data(&data, comms_address, program_context)?;
+                return self.receive_setup_data(&data, comms_address, program_context);
             }
             CommsMessageType::VerificationKey | CommsMessageType::VerificationKeyRequest => {
                 debug!("Program: Verification key message handled upstream, ignoring");
@@ -458,7 +459,7 @@ impl Program {
             }
         }
 
-        Ok(())
+        Ok(true)
     }
 
     /// Gets a transaction by name from the protocol

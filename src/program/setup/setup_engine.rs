@@ -31,15 +31,6 @@ pub enum StepState {
     Completed,
 }
 
-impl StepState {
-    fn can_receive_data(&self) -> bool {
-        matches!(
-            self,
-            StepState::WaitingForParticipants | StepState::Generating
-        )
-    }
-}
-
 /// Tracks the state of the setup engine.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SetupEngineState {
@@ -97,8 +88,6 @@ pub struct SetupTickResult {
     pub data_to_send: Option<Vec<u8>>,
     /// Whether the engine state changed during this tick
     pub state_changed: bool,
-    /// Whether we need to call tick again immediately
-    pub need_tick: bool,
 }
 
 /// Engine that orchestrates the setup process using SetupSteps.
@@ -223,10 +212,12 @@ impl SetupEngine {
         }
 
         info!(
-            "SetupEngine: Generating data for step '{}' ({}/{})",
+            "SetupEngine: Generating data for step '{}' ({}/{}). Participants completed: {}/{}",
             step_name,
             self.state.current_step_index + 1,
-            self.state.total_steps
+            self.state.total_steps,
+            self.state.participants_completed.len(),
+            total_participants
         );
 
         // Now get the step and generate data
@@ -235,7 +226,9 @@ impl SetupEngine {
         //TODO: for steps that generate data asyn, instead of moving to waiting, move to a new state "WaitingGeneration"
         //that will be handled with another external call and would allow the transition
 
-        if total_participants == 1 {
+        if total_participants == 1
+            || self.state.participants_completed.len() == total_participants - 1
+        {
             self.state.current_step_state = StepState::AllParticipantsCompleted;
         } else {
             self.state.current_step_state = StepState::WaitingForParticipants;
@@ -256,21 +249,13 @@ impl SetupEngine {
     fn receive_current_step_data(
         &mut self,
         data: &[u8],
+        my_idx: usize,
         from_participant: &CommsAddress,
         protocol: &ProtocolType,
         participants: &[CommsAddress],
         context: &mut ProgramContext,
     ) -> Result<bool, BitVMXError> {
         self.if_not_completed()?;
-
-        let mut requires_tick = false;
-
-        if !self.state.current_step_state.can_receive_data() {
-            return Err(BitVMXError::InvalidMessage(format!(
-                "Cannot receive data: step is not ready to receive (current: {:?}).",
-                self.state.current_step_state
-            )));
-        }
 
         let step_name = self.current_step_name().to_string(); // Copy to owned String to avoid borrow issues
 
@@ -280,11 +265,15 @@ impl SetupEngine {
 
         // Check if already received
         if self.state.has_participant_completed(participant_idx) {
-            debug!(
+            if participant_idx == my_idx {
+                return Ok(true);
+            }
+
+            info!(
                 "SetupEngine: Already received data from participant {} for step '{}'",
                 participant_idx, step_name
             );
-            return Ok(true);
+            return Ok(false);
         }
 
         debug!(
@@ -301,23 +290,18 @@ impl SetupEngine {
 
         if self.state.participants_completed.len() == participants.len() {
             self.state.current_step_state = StepState::AllParticipantsCompleted;
-            requires_tick = true;
-        }
-
-        if self.state.current_step_state == StepState::Generating {
-            //in case we receive data during generating (can happen in async steps), we need to tick to generate the data ourselfs
-            requires_tick = true;
         }
 
         info!(
-            "SetupEngine::receive_current_step_data() - Step '{}': {}/{} participants completed (participant {} just completed)",
+            "SetupEngine::receive_current_step_data() - Step '{}': {}/{} participants completed (participant {} just completed) {:?}",
             step_name,
             self.state.participants_completed.len(),
             participants.len(),
-            participant_idx
+            participant_idx,
+            self.state.current_step_state
         );
 
-        Ok(requires_tick)
+        Ok(true)
     }
 
     /// Checks if the current step can advance to the next step.
@@ -483,7 +467,7 @@ impl SetupEngine {
         participants: &[CommsAddress],
         protocol: &ProtocolType,
         context: &mut ProgramContext,
-    ) -> Result<(bool, bool), BitVMXError> {
+    ) -> Result<bool, BitVMXError> {
         info!(
             "SetupEngine::receive_setup_data() - Received {} bytes from participant {}",
             data.len(),
@@ -497,7 +481,7 @@ impl SetupEngine {
                 "SetupEngine::receive_setup_data() - Setup already complete, ignoring message from {}",
                 from
             );
-            return Ok((false, false));
+            return Ok(false);
         }
 
         // Find the participant
@@ -514,13 +498,20 @@ impl SetupEngine {
         );
 
         // Receive and verify the data
-        let need_tick = self.receive_current_step_data(
+        if !self.receive_current_step_data(
             data,
+            my_idx,
             &from_participant,
             protocol,
             participants,
             context,
-        )?;
+        )? {
+            debug!(
+                "SetupEngine::receive_setup_data() - Data from participant {} did not change state for step '{}'",
+                from, step_name
+            );
+            return Ok(false);
+        }
 
         let participants_completed_after = self.state.participants_completed.len();
         info!(
@@ -567,7 +558,7 @@ impl SetupEngine {
         }
 
         // Receiving data always changes the engine state
-        Ok((true, need_tick))
+        Ok(true)
     }
 
     /// Processes the setup tick.
@@ -598,7 +589,6 @@ impl SetupEngine {
             return Ok(SetupTickResult {
                 data_to_send: None,
                 state_changed: false,
-                need_tick: false,
             });
         }
 
@@ -611,7 +601,6 @@ impl SetupEngine {
         // Process the tick based on current state
         let mut data_to_send = None;
         let mut state_changed = false;
-        let mut need_tick = false;
 
         match self.state.current_step_state {
             StepState::Generating => {
@@ -653,10 +642,6 @@ impl SetupEngine {
                     );
                 }
                 state_changed = true;
-                if self.state.current_step_state == StepState::AllParticipantsCompleted {
-                    // If we're a single participant, we can immediately try to advance
-                    need_tick = true;
-                }
             }
             StepState::WaitingForParticipants => {
                 info!("Wasted");
@@ -676,7 +661,6 @@ impl SetupEngine {
                         step_name
                     );
                     state_changed = true;
-                    need_tick = !self.is_complete();
                 }
             }
             StepState::Completed => {
@@ -725,7 +709,6 @@ impl SetupEngine {
         Ok(SetupTickResult {
             data_to_send,
             state_changed,
-            need_tick,
         })
     }
 }

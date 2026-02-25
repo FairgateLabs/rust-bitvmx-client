@@ -198,7 +198,10 @@ impl BitVMX {
         let timestamp_verifier =
             TimestampVerifier::new(timestamp_config.enabled, timestamp_config.max_drift_ms);
 
-        let message_queue = MessageQueue::new(store.clone(), RetryPolicy::default());
+        let message_queue = MessageQueue::new(
+            store.clone(),
+            RetryPolicy::new(500, 30_000, 30).expect("valid retry config"),
+        );
 
         Ok(Self {
             config,
@@ -346,8 +349,7 @@ impl BitVMX {
             &msg_type,
             data_bytes,
             &mut self.program_context,
-        )?;
-        Ok(true)
+        )
     }
 
     pub fn process_msg(&mut self, msg: QueuedMessage) -> Result<(), BitVMXError> {
@@ -436,7 +438,10 @@ impl BitVMX {
                 .record(&msg.identifier.pubkey_hash, timestamp);
         } else {
             // Message needs to be buffered (not processed or program not found)
-            info!("Pending message to back: {:?}", msg_type);
+            info!(
+                "Pending message to back: {:?} for program {:?} from: {:?}",
+                msg_type, program_id, msg.identifier.pubkey_hash,
+            );
             self.message_queue.push_back(msg)?;
         }
         Ok(())
