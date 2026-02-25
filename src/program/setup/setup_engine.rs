@@ -266,6 +266,7 @@ impl SetupEngine {
         // Check if already received
         if self.state.has_participant_completed(participant_idx) {
             if participant_idx == my_idx {
+                warn!("Getting data from ourselves again for step '{}', ignoring since we already processed it.", step_name);
                 return Ok(true);
             }
 

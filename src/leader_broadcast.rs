@@ -317,15 +317,22 @@ impl LeaderBroadcastHelper {
         broadcasted_msg.validate()?;
 
         // Send to all non-leader participants
-        //TODO: Avoid broadcasting the messesage back to the sender
         for participant in non_leader_participants {
+            let mut copy_broadcasted_msg = broadcasted_msg.clone(); // Clone for each participant to avoid ownership issues
+            copy_broadcasted_msg.original_messages = copy_broadcasted_msg
+                .original_messages
+                .iter()
+                .filter(|m| &m.sender_pubkey_hash != &participant.pubkey_hash)
+                .cloned()
+                .collect();
+
             request(
                 &program_context.comms,
                 &program_context.key_chain,
                 context_id,
                 participant.clone(),
                 CommsMessageType::Broadcasted,
-                &broadcasted_msg,
+                &copy_broadcasted_msg,
             )?;
         }
 
