@@ -304,6 +304,11 @@ impl SetupEngine {
             requires_tick = true;
         }
 
+        if self.state.current_step_state == StepState::Generating {
+            //in case we receive data during generating (can happen in async steps), we need to tick to generate the data ourselfs
+            requires_tick = true;
+        }
+
         info!(
             "SetupEngine::receive_current_step_data() - Step '{}': {}/{} participants completed (participant {} just completed)",
             step_name,

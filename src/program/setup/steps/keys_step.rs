@@ -94,16 +94,6 @@ impl SetupStep for KeysStep {
             BitVMXError::InvalidMessage(format!("Failed to deserialize keys: {}", e))
         })?;
 
-        // Basic validation
-        if keys.mapping.is_empty()
-            && keys.aggregated.is_empty()
-            && keys.computed_aggregated.is_empty()
-        {
-            return Err(BitVMXError::InvalidMessage(
-                "Received empty keys from participant".to_string(),
-            ));
-        }
-
         debug!(
             "KeysStep: Received {} individual keys and {} aggregated keys",
             keys.mapping.len(),
