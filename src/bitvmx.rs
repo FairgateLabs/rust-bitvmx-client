@@ -198,10 +198,7 @@ impl BitVMX {
         let timestamp_verifier =
             TimestampVerifier::new(timestamp_config.enabled, timestamp_config.max_drift_ms);
 
-        let message_queue = MessageQueue::new(
-            store.clone(),
-            RetryPolicy::new(500, 30_000, 30).expect("valid retry config"),
-        );
+        let message_queue = MessageQueue::new(store.clone(), RetryPolicy::default());
 
         Ok(Self {
             config,
