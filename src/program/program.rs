@@ -399,7 +399,10 @@ impl Program {
                 self.state = ProgramState::WaitingData;
             }
             self.save()?;
-            info!("Program::receive_setup_data() - Saved program state (setup complete, waiting for tick to build)");
+            info!(
+                "Program::receive_setup_data() - Saved program state {:?}",
+                self.state
+            );
         }
 
         Ok(())
