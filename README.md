@@ -21,6 +21,11 @@ git clone git@github.com:FairgateLabs/rust-bitvmx-client.git
 cargo build
 ```
 
+
+## Security
+To use encrypted configuration files read the setting [README.md](https://github.com/FairgateLabs/rust-bitvmx-settings/blob/bb216227310a714293aa60dc84107304b336b83f/README.md#security)
+
+
 ## Testing
 
 ### Client test

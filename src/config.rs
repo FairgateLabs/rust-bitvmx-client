@@ -6,6 +6,7 @@ use bitvmx_broker::{
     identification::identifier::{Identifier, PubkHash},
     rpc::tls_helper::Cert,
 };
+use bitvmx_settings::settings;
 use bitvmx_wallet::wallet::config::WalletConfig;
 use key_manager::config::KeyManagerConfig;
 use serde::{Deserialize, Serialize};
@@ -59,7 +60,7 @@ impl BrokerConfig {
         SocketAddr::new(self.ip, self.port)
     }
     pub fn get_pubk_hash(&self) -> Result<PubkHash, ConfigError> {
-        let cert = Cert::from_key_file(&self.priv_key.clone())?;
+        let cert = Cert::new_with_privk(settings::decrypt_or_read_file(&self.priv_key)?.as_str())?;
         Ok(cert.get_pubk_hash()?)
     }
 }
