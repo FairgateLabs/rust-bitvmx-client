@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 const MIN_EXPECTED_MSG_LEN: usize = 4; // 2 bytes for version + 2 bytes for message type
-const MAX_EXPECTED_MSG_LEN: usize = 1000000; // Maximum length for a message //TODO: Change this value
+const MAX_EXPECTED_MSG_LEN: usize = 2000000; // Maximum length for a message
 const CURRENT_PROTOCOL_VERSION: &str = "1.0";
 
 // Public function for signature verification
@@ -141,6 +141,9 @@ pub enum CommsMessageType {
     VerificationKey,
     VerificationKeyRequest,
     Broadcasted,
+    /// Generic message type for SetupEngine step data
+    /// Used by Program - the actual step type is determined by SetupEngine
+    SetupStepData,
 }
 
 impl CommsMessageType {
@@ -155,6 +158,7 @@ impl CommsMessageType {
         (&CommsMessageType::VerificationKey, [0x00, 0x07]),
         (&CommsMessageType::VerificationKeyRequest, [0x00, 0x08]),
         (&CommsMessageType::Broadcasted, [0x00, 0x09]),
+        (&CommsMessageType::SetupStepData, [0x00, 0x0A]),
     ];
 
     // Convert message type to 2-byte representation

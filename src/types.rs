@@ -12,7 +12,6 @@ use bitvmx_broker::{
     identification::identifier::Identifier,
 };
 use bitvmx_wallet::wallet::Destination;
-use chrono::{DateTime, Utc};
 use protocol_builder::types::Utxo;
 use redact::Secret;
 use serde::{Deserialize, Serialize};
@@ -71,30 +70,6 @@ pub struct ProgramStatus {
 impl ProgramStatus {
     pub fn new(program_id: Uuid) -> Self {
         Self { program_id }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ProgramRequestInfo {
-    pub retries: u32,
-    pub last_request_time: DateTime<Utc>,
-}
-
-impl ProgramRequestInfo {
-    pub fn new() -> Self {
-        Self {
-            retries: 0,
-            last_request_time: Utc::now(),
-        }
-    }
-}
-
-impl Default for ProgramRequestInfo {
-    fn default() -> Self {
-        Self {
-            retries: 0,
-            last_request_time: Utc::now(),
-        }
     }
 }
 
@@ -375,6 +350,7 @@ pub struct ParticipantChannel {
     pub channel: DualChannel,
 }
 
+pub const PROGRAM_TYPE_AGGREGATED_KEY: &str = "aggregated_key";
 pub const PROGRAM_TYPE_LOCK: &str = "lock";
 pub const PROGRAM_TYPE_DRP: &str = "drp";
 pub const PROGRAM_TYPE_SLOT: &str = "slot";
