@@ -37,6 +37,7 @@ use crate::{
                 },
             },
         },
+        setup::steps::SetupStepName,
         variables::{PartialUtxo, VariableTypes},
     },
     spv_proof::get_spv_proof,
@@ -273,6 +274,11 @@ impl ProtocolHandler for AdvanceFundsProtocol {
         self.send_funds_advanced(&context, txid)?;
 
         Ok(())
+    }
+
+    // Override setup_steps to only use KeysStep
+    fn setup_steps(&self) -> Option<Vec<SetupStepName>> {
+        Some(vec![SetupStepName::Keys])
     }
 }
 
