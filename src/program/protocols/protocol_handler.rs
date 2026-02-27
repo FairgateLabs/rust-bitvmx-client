@@ -4,6 +4,7 @@ use bitcoin_coordinator::TransactionStatus;
 use bitcoin_scriptexec::scriptint_vec;
 use console::style;
 use enum_dispatch::enum_dispatch;
+use key_manager::key_manager::KeyManager;
 use key_manager::winternitz::{message_bytes_length, WinternitzSignature, WinternitzType};
 use protocol_builder::scripts::ProtocolScript;
 use protocol_builder::types::output::SpeedupData;
@@ -19,7 +20,6 @@ use uuid::Uuid;
 
 use super::super::participant::ParticipantKeys;
 use crate::errors::BitVMXError;
-use crate::keychain::KeyChain;
 #[cfg(feature = "union")]
 use crate::program::protocols::union::full_penalization::FullPenalizationProtocol;
 
@@ -126,13 +126,13 @@ pub trait ProtocolHandler {
         _context: &ProgramContext,
     ) -> Result<(), BitVMXError>;
 
-    fn sign(&mut self, key_chain: &KeyChain) -> Result<(), ProtocolBuilderError> {
+    fn sign(&mut self, key_manager: &Rc<KeyManager>) -> Result<(), ProtocolBuilderError> {
         let mut protocol = match self.load_protocol() {
             Ok(p) => p,
             Err(ProtocolBuilderError::MissingProtocol(_)) => return Ok(()),
             Err(e) => return Err(e),
         };
-        protocol.sign(&key_chain.key_manager, &self.context().protocol_name)?;
+        protocol.sign(key_manager, &self.context().protocol_name)?;
         self.save_protocol(protocol)?;
         Ok(())
     }
@@ -321,7 +321,6 @@ pub trait ProtocolHandler {
                 info!("With key: {:?}", k);
 
                 let winternitz_signature = program_context
-                    .key_chain
                     .key_manager
                     .sign_winternitz_message_by_index(
                         &message,

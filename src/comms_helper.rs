@@ -1,10 +1,12 @@
 use crate::bitvmx::Context;
-use crate::keychain::KeyChain;
 use crate::{errors::BitVMXError, program::participant::CommsAddress};
 use bitvmx_broker::channel::queue_channel::QueueChannel;
 use chrono::Utc;
+use key_manager::key_manager::KeyManager;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use signature::SignatureEncoding;
+use std::rc::Rc;
 use uuid::Uuid;
 
 const MIN_EXPECTED_MSG_LEN: usize = 4; // 2 bytes for version + 2 bytes for message type
@@ -57,7 +59,8 @@ pub fn construct_message(
 }
 
 pub fn prepare_message<T: Serialize>(
-    key_chain: &KeyChain,
+    key_manager: &Rc<KeyManager>,
+    rsa_public_key: &str,
     program_id: &Uuid,
     msg_type: CommsMessageType,
     msg: T,
@@ -72,7 +75,10 @@ pub fn prepare_message<T: Serialize>(
         timestamp,
     )?;
 
-    let signature = &key_chain.sign_rsa_message(message.as_bytes(), None)?;
+    let signature = &key_manager
+        .sign_rsa_message(message.as_bytes(), rsa_public_key)?
+        .to_bytes()
+        .to_vec();
     Ok((
         CURRENT_PROTOCOL_VERSION.to_string(),
         msg_value,
@@ -83,7 +89,8 @@ pub fn prepare_message<T: Serialize>(
 
 pub fn request<T: Serialize>(
     comms: &QueueChannel,
-    key_chain: &KeyChain,
+    key_manager: &Rc<KeyManager>,
+    rsa_public_key: &str,
     program_id: &Uuid,
     comms_address: CommsAddress,
     msg_type: CommsMessageType,
@@ -100,7 +107,10 @@ pub fn request<T: Serialize>(
         timestamp,
     )?;
 
-    let signature = &key_chain.sign_rsa_message(message.as_bytes(), None)?;
+    let signature = &key_manager
+        .sign_rsa_message(message.as_bytes(), rsa_public_key)?
+        .to_bytes()
+        .to_vec();
 
     let serialize_msg = serialize_msg(
         CURRENT_PROTOCOL_VERSION,
@@ -121,13 +131,22 @@ pub fn request<T: Serialize>(
 
 pub fn response<T: Serialize>(
     comms: &QueueChannel,
-    key_chain: &KeyChain,
+    key_manager: &Rc<KeyManager>,
+    rsa_public_key: &str,
     program_id: &Uuid,
     comms_address: CommsAddress,
     msg_type: CommsMessageType,
     msg: T,
 ) -> Result<(), BitVMXError> {
-    request(comms, key_chain, program_id, comms_address, msg_type, msg) // In this version, response is identical to request. Keeping it separate for clarity.
+    request(
+        comms,
+        key_manager,
+        rsa_public_key,
+        program_id,
+        comms_address,
+        msg_type,
+        msg,
+    ) // In this version, response is identical to request. Keeping it separate for clarity.
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
@@ -219,17 +238,19 @@ pub struct VerificationKeyRequestPayload;
 
 pub fn send_verification_key_to_peer(
     comms: &QueueChannel,
-    key_chain: &KeyChain,
+    key_manager: &Rc<KeyManager>,
+    rsa_public_key: &str,
     program_id: &Uuid,
     destination: CommsAddress,
 ) -> Result<(), BitVMXError> {
     let announcement = VerificationKeyAnnouncement {
-        verification_key: key_chain.get_rsa_public_key()?,
+        verification_key: rsa_public_key.to_string(),
     };
 
     response(
         comms,
-        key_chain,
+        key_manager,
+        rsa_public_key,
         program_id,
         destination,
         CommsMessageType::VerificationKey,

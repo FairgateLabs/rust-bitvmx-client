@@ -24,6 +24,9 @@ pub enum BitVMXError {
     #[error("Invalid configuration")]
     ConfigurationError(#[from] ConfigError),
 
+    #[error("Configuration error: {0}")]
+    ConfigError(#[from] bitvmx_settings::errors::ConfigError),
+
     #[error("Invalid parameter in configuration. {0}")]
     InvalidParameter(String),
 
@@ -74,9 +77,6 @@ pub enum BitVMXError {
      * ========================= */
     #[error("Error when using KeyManager: {0}")]
     KeyManagerError(#[from] KeyManagerError),
-
-    #[error("KeyChain error: {0}")]
-    KeyChainError(String),
 
     #[error("Error when creating unspendable key: {0}")]
     UnspendableKeyError(#[from] UnspendableKeyError),

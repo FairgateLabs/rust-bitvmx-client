@@ -92,8 +92,7 @@ impl ProtocolHandler for TransferProtocol {
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
         let speedup = program_context
-            .key_chain
-            .derive_keypair(BitcoinKeyType::P2tr)?;
+            .key_manager.next_keypair(BitcoinKeyType::P2tr)?;
 
         program_context.globals.set_var(
             &self.ctx.id,
@@ -231,7 +230,7 @@ impl ProtocolHandler for TransferProtocol {
             }
         }
 
-        protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
+        protocol.build(&context.key_manager, &self.ctx.protocol_name)?;
         info!("{}", protocol.visualize(GraphOptions::Default)?);
         self.save_protocol(protocol)?;
         Ok(())

@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{rc::Rc, str::FromStr};
 
 use crate::{config::ComponentsConfig, spv_proof::BtcTxSPVProof};
 use bitcoin::{address::NetworkUnchecked, Address, PrivateKey, PublicKey, Transaction, Txid};
@@ -12,6 +12,7 @@ use bitvmx_broker::{
     identification::identifier::Identifier,
 };
 use bitvmx_wallet::wallet::Destination;
+use key_manager::key_manager::KeyManager;
 use protocol_builder::types::Utxo;
 use redact::Secret;
 use serde::{Deserialize, Serialize};
@@ -19,7 +20,6 @@ use uuid::Uuid;
 
 use crate::{
     errors::BitVMXError,
-    keychain::KeyChain,
     leader_broadcast::LeaderBroadcastHelper,
     program::{
         participant::CommsAddress,
@@ -28,7 +28,8 @@ use crate::{
 };
 
 pub struct ProgramContext {
-    pub key_chain: KeyChain,
+    pub key_manager: Rc<KeyManager>,
+    pub rsa_public_key: String, //TODO: this should not be here
     pub comms: QueueChannel,
     pub bitcoin_coordinator: BitcoinCoordinator,
     pub broker_channel: LocalChannel<BrokerStorage>,
@@ -41,7 +42,8 @@ pub struct ProgramContext {
 impl ProgramContext {
     pub fn new(
         comms: QueueChannel,
-        key_chain: KeyChain,
+        key_manager: Rc<KeyManager>,
+        rsa_public_key: String,
         bitcoin_coordinator: BitcoinCoordinator,
         broker_channel: LocalChannel<BrokerStorage>,
         globals: Globals,
@@ -51,7 +53,8 @@ impl ProgramContext {
     ) -> Self {
         Self {
             comms,
-            key_chain,
+            key_manager,
+            rsa_public_key,
             bitcoin_coordinator,
             broker_channel,
             globals,

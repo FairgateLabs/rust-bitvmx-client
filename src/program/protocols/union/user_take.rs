@@ -148,7 +148,7 @@ impl ProtocolHandler for UserTakeProtocol {
             },
         )?;
 
-        protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
+        protocol.build(&context.key_manager, &self.ctx.protocol_name)?;
 
         // Validate USER_TAKE_TX sighash
         let user_take_sighash = protocol
@@ -293,8 +293,8 @@ impl UserTakeProtocol {
             .to_vec();
 
         let nonces = program_context
-            .key_chain
-            .get_nonces(&take_aggregated_key, &self.ctx.protocol_name)?;
+            .key_manager
+            .get_my_pub_nonces(&take_aggregated_key, &self.ctx.protocol_name)?;
 
         if nonces.is_empty() {
             return Err(BitVMXError::MissingPublicNonces(
@@ -304,8 +304,8 @@ impl UserTakeProtocol {
         }
 
         let signatures = program_context
-            .key_chain
-            .get_signatures(&take_aggregated_key, &self.ctx.protocol_name)?;
+            .key_manager
+            .get_my_partial_signatures(&take_aggregated_key, &self.ctx.protocol_name)?;
 
         if signatures.is_empty() {
             return Err(BitVMXError::MissingPartialSignatures(

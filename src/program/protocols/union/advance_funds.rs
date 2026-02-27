@@ -190,7 +190,7 @@ impl ProtocolHandler for AdvanceFundsProtocol {
             )?;
         }
 
-        protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
+        protocol.build(&context.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
         self.save_protocol(protocol)?;
         Ok(())

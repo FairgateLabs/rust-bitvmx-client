@@ -60,7 +60,7 @@ impl ProtocolHandler for RejectPegInProtocol {
 
     fn generate_keys(&self, context: &mut ProgramContext) -> Result<ParticipantKeys, BitVMXError> {
         let keys = &mut vec![];
-        let speedup_key = context.key_chain.derive_keypair(BitcoinKeyType::P2tr)?;
+        let speedup_key = context.key_manager.next_keypair(BitcoinKeyType::P2tr)?;
 
         keys.push((
             SPEEDUP_KEY.to_string(),
@@ -120,7 +120,7 @@ impl ProtocolHandler for RejectPegInProtocol {
             &OutputType::segwit_key(SPEEDUP_VALUE, &speedup_key)?,
         )?;
 
-        protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
+        protocol.build(&context.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
         self.save_protocol(protocol)?;
 
