@@ -1,11 +1,9 @@
-use crate::comms_helper::{prepare_message, request, serialize_msg, CommsMessageType};
+use crate::comms_helper::{request, serialize_msg, CommsMessageType};
 use crate::errors::BitVMXError;
-use crate::keychain::KeyChain;
 use crate::message_queue::MessageQueue;
 use crate::program::participant::CommsAddress;
 use crate::signature_verifier::SignatureVerifier;
 use crate::types::ProgramContext;
-use bitvmx_broker::channel::queue_channel::QueueChannel;
 use bitvmx_broker::identification::identifier::{Identifier, PubkHash};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -181,36 +179,6 @@ impl LeaderBroadcastHelper {
         Self { store }
     }
 
-    // If I'm the leader, prepare and store the message
-    // If I'm not the leader, send the message to the leader
-    pub fn request_or_store<T: Serialize>(
-        &self,
-        comms: &QueueChannel,
-        key_chain: &KeyChain,
-        program_id: &Uuid,
-        comms_address: CommsAddress,
-        msg_type: CommsMessageType,
-        msg: T,
-        im_leader: bool,
-    ) -> Result<(), BitVMXError> {
-        if im_leader {
-            let (version, data, timestamp, signature) =
-                prepare_message(key_chain, program_id, msg_type, msg)?;
-            let original_msg = OriginalMessage {
-                sender_pubkey_hash: comms.get_pubk_hash()?,
-                msg_type,
-                data: data.clone(),
-                original_timestamp: timestamp,
-                original_signature: signature.clone(),
-                version: version.clone(),
-            };
-            self.store_original_message(program_id, msg_type, original_msg)?;
-        } else {
-            request(comms, key_chain, program_id, comms_address, msg_type, &msg)?;
-        }
-        Ok(())
-    }
-
     /// Store an original message received from a non-leader participant
     /// Messages are stored individually by context_id, message type, and pub_key_hash
     /// This avoids serializing/deserializing all messages when adding a new one
@@ -350,7 +318,13 @@ impl LeaderBroadcastHelper {
 
         // Send to all non-leader participants
         for participant in non_leader_participants {
-            info!("Sending leader aggregated key to peer: {:?}", participant);
+            let mut copy_broadcasted_msg = broadcasted_msg.clone(); // Clone for each participant to avoid ownership issues
+            copy_broadcasted_msg.original_messages = copy_broadcasted_msg
+                .original_messages
+                .iter()
+                .filter(|m| &m.sender_pubkey_hash != &participant.pubkey_hash)
+                .cloned()
+                .collect();
 
             request(
                 &program_context.comms,
@@ -358,7 +332,7 @@ impl LeaderBroadcastHelper {
                 context_id,
                 participant.clone(),
                 CommsMessageType::Broadcasted,
-                &broadcasted_msg,
+                &copy_broadcasted_msg,
             )?;
         }
 

@@ -216,7 +216,6 @@ impl ProtocolHandler for SlotProtocol {
         tx_status: TransactionStatus,
         _context: String,
         program_context: &ProgramContext,
-        _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         let name = self.get_transaction_name_by_id(tx_id)?;
         info!(
@@ -236,6 +235,16 @@ impl ProtocolHandler for SlotProtocol {
 
             // after sending the certificate hash, the operator should send the group id
             if self.ctx.my_idx == operator as usize {
+                let gid_dispatched_key = format!("gid_dispatched_{}", operator);
+                if program_context
+                    .globals
+                    .get_var(&self.ctx.id, &gid_dispatched_key)?
+                    .is_some()
+                {
+                    info!("GID for operator {} already dispatched, skipping", operator);
+                    return Ok(());
+                }
+
                 let gid = program_context
                     .globals
                     .get_var(&self.ctx.id, &group_id(operator as usize))?
@@ -289,6 +298,12 @@ impl ProtocolHandler for SlotProtocol {
                         ),
                     )?;
                 }
+
+                program_context.globals.set_var(
+                    &self.ctx.id,
+                    &gid_dispatched_key,
+                    VariableTypes::Number(1),
+                )?;
 
                 /*
                 For now we are sending the to after one challange is completed

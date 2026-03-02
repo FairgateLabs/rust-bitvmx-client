@@ -12,7 +12,6 @@ use bitvmx_broker::{
     identification::identifier::Identifier,
 };
 use bitvmx_wallet::wallet::Destination;
-use chrono::{DateTime, Utc};
 use protocol_builder::types::Utxo;
 use redact::Secret;
 use serde::{Deserialize, Serialize};
@@ -74,30 +73,6 @@ impl ProgramStatus {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ProgramRequestInfo {
-    pub retries: u32,
-    pub last_request_time: DateTime<Utc>,
-}
-
-impl ProgramRequestInfo {
-    pub fn new() -> Self {
-        Self {
-            retries: 0,
-            last_request_time: Utc::now(),
-        }
-    }
-}
-
-impl Default for ProgramRequestInfo {
-    fn default() -> Self {
-        Self {
-            retries: 0,
-            last_request_time: Utc::now(),
-        }
-    }
-}
-
 //TODO: This should be moved to a common place that could be used to share the messages api
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum IncomingBitVMXApiMessages {
@@ -121,6 +96,7 @@ pub enum IncomingBitVMXApiMessages {
     GetAggregatedPubkey(Uuid),
     GetKeyPair(Uuid),
     GetPubKey(Uuid, bool),
+    GetEvenPubKey(Uuid),
     SignMessage(Uuid, Vec<u8>, PublicKey), // id, payload_to_sign, public_key_to_use
     GenerateZKP(Uuid, Vec<u8>, String),
     ProofReady(Uuid),
@@ -374,6 +350,7 @@ pub struct ParticipantChannel {
     pub channel: DualChannel,
 }
 
+pub const PROGRAM_TYPE_AGGREGATED_KEY: &str = "aggregated_key";
 pub const PROGRAM_TYPE_LOCK: &str = "lock";
 pub const PROGRAM_TYPE_DRP: &str = "drp";
 pub const PROGRAM_TYPE_SLOT: &str = "slot";

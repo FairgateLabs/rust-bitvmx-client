@@ -1,893 +1,513 @@
+/// Program — orchestrates protocol setup and lifecycle.
+///
+/// - Uses SetupEngine for multi-step setup (keys, nonces, signatures)
+/// - Delegates aggregation responsibility to protocols
+/// - Protocols define their setup steps via ProtocolHandler::setup_steps()
 use crate::{
     bitvmx::Context,
-    comms_helper::{request, response, CommsMessageType},
+    comms_helper::CommsMessageType,
     config::ClientConfig,
     errors::{BitVMXError, ProgramError},
-    helper::{
-        parse_keys, parse_nonces, parse_signatures, PartialSignatureMessage, PubNonceMessage,
+    program::{
+        participant::get_comms_address_by_pubkey_hash,
+        protocols::protocol_handler::{new_protocol_type, ProtocolHandler, ProtocolType},
+        setup::{SetupEngine, SetupEngineState, StepState},
+        state::ProgramState,
     },
-    program::{participant::ParticipantKeys, protocols::protocol_handler::new_protocol_type},
     signature_verifier::OperatorVerificationStore,
-    types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramRequestInfo},
+    types::{OutgoingBitVMXApiMessages, ProgramContext},
 };
-use bitcoin::{PublicKey, Transaction, Txid};
+use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus, TypesToMonitor};
-use bitvmx_broker::identification::identifier::PubkHash;
-use chrono::Utc;
-use console::style;
-use key_manager::musig2::{types::MessageId, PartialSignature, PubNonce};
+use bitvmx_broker::identification::identifier::PubkHash as PubKeyHash;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::{collections::HashMap, rc::Rc};
+use std::rc::Rc;
 use storage_backend::storage::{KeyValueStore, Storage};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use super::{
-    participant::{CommsAddress, ParticipantData, ParticipantRole},
-    protocols::protocol_handler::{ProtocolHandler, ProtocolType},
-    state::{ProgramState, SettingUpState},
-};
+use super::participant::CommsAddress;
 
-#[derive(Debug, Clone)]
-pub enum StoreKey {
-    LastRequestKeys(Uuid),
-    LastRequestNonces(Uuid),
-    LastRequestSignatures(Uuid),
-    Program(Uuid),
-    ProgramState(Uuid),
-}
-
-fn get_other_index_by_pubkey_hash(
-    pubkey_hash: &PubkHash,
-    others: &Vec<ParticipantData>,
-) -> Option<usize> {
-    others
-        .iter()
-        .position(|participant| &participant.comms_address.pubkey_hash == pubkey_hash)
-}
-
-fn all_keys_ready(others: &Vec<ParticipantData>) -> bool {
-    for other in others {
-        if other.keys.is_none() {
-            return false;
-        }
-    }
-    true
-}
-
-fn all_nonces_ready(others: &Vec<ParticipantData>) -> bool {
-    let mut c = 0;
-    for other in others {
-        if other.nonces.is_some() {
-            c += 1;
-        }
-    }
-    c >= others.len() - 1
-}
-
-fn all_signatures_ready(others: &Vec<ParticipantData>) -> bool {
-    let mut c = 0;
-    for other in others {
-        if other.partial.is_some() {
-            c += 1;
-        }
-    }
-    c >= others.len() - 1
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct DrpParameters {
-    pub role: ParticipantRole,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct LockParameters {
-    pub my_id: u32,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct Program {
     pub program_id: Uuid,
     pub my_idx: usize,
-    pub participants: Vec<ParticipantData>,
+    pub participants: Vec<CommsAddress>,
     pub leader: usize,
     pub protocol: ProtocolType,
     #[serde(skip)]
-    pub state: ProgramState,
+    state: ProgramState,
+    /// Serializable state of the SetupEngine (saved separately since SetupEngine contains trait objects)
+    setup_engine_state: Option<SetupEngineState>,
+    /// All participant keys collected during setup (populated by build_protocol)
+    #[serde(skip)]
+    pub setup_engine: Option<SetupEngine>,
     #[serde(skip)]
     storage: Option<Rc<Storage>>,
     config: ClientConfig,
 }
 
 impl Program {
-    pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Self, ProgramError> {
-        let program = storage.get(Self::get_key(StoreKey::Program(*program_id)))?;
-        let program_state: ProgramState = storage
-            .get(Self::get_key(StoreKey::ProgramState(*program_id)))?
-            .unwrap_or_default();
-
-        let mut program: Program =
-            program.ok_or_else(|| ProgramError::ProgramNotFound(*program_id))?;
-
-        program.state = program_state;
-        program.storage = Some(storage.clone());
-        program.protocol.set_storage(storage);
-
-        Ok(program)
+    /// Returns the storage key for this program
+    fn storage_key(&self) -> String {
+        format!("program/{}", self.program_id)
     }
 
-    fn im_leader(&self) -> bool {
-        self.my_idx == self.leader
+    /// Attempts to send SetupCompleted message to the L2 channel.
+    /// Returns true if the message was sent (meaning state changed and should be saved).
+    /// Some protocols (e.g., AggregatedKeyProtocol) suppress this message.
+    fn send_setup_completed(&mut self, program_context: &mut ProgramContext) -> bool {
+        if !self.protocol.send_setup_completed() {
+            return false;
+        }
+
+        match OutgoingBitVMXApiMessages::SetupCompleted(self.program_id).to_string() {
+            Ok(msg) => {
+                if let Err(e) = program_context
+                    .broker_channel
+                    .send(&program_context.components_config.l2, msg)
+                {
+                    warn!("Program: Error sending SetupCompleted message: {:?}", e);
+                    false
+                } else {
+                    info!(
+                        "Program: Sent SetupCompleted for program {}",
+                        self.program_id
+                    );
+                    true
+                }
+            }
+            Err(e) => {
+                warn!("Program: Error serializing SetupCompleted message: {:?}", e);
+                false
+            }
+        }
     }
 
-    fn save(&self) -> Result<(), ProgramError> {
-        let key = Self::get_key(StoreKey::Program(self.program_id));
-        self.storage
-            .as_ref()
-            .ok_or(ProgramError::StorageUnavailable)?
-            .set(key, self, None)?;
-        let key = Self::get_key(StoreKey::ProgramState(self.program_id));
-        self.storage
-            .as_ref()
-            .ok_or(ProgramError::StorageUnavailable)?
-            .set(key, &self.state, None)?;
-        Ok(())
+    /// Creates a SetupEngine for the protocol using its setup_steps() method
+    fn try_create_setup_engine(protocol: &ProtocolType) -> Option<SetupEngine> {
+        if let Some(step_names) = protocol.setup_steps() {
+            debug!(
+                "Protocol supports SetupEngine with {} steps",
+                step_names.len()
+            );
+            Some(SetupEngine::new(step_names))
+        } else {
+            debug!("Protocol does not use SetupEngine");
+            None
+        }
     }
 
-    //TODO UNIFY SETUPS WITH NAMES
-    pub fn setup(
-        id: &Uuid,
-        protocol_type: &str,
+    /// Creates and initializes a new Program instance
+    pub fn new(
+        program_id: Uuid,
+        program_type: &str,
         peers: Vec<CommsAddress>,
         leader: usize,
-        program_context: &mut ProgramContext,
+        context: &mut ProgramContext,
         storage: Rc<Storage>,
         config: &ClientConfig,
-    ) -> Result<Self, BitVMXError> {
-        // Generate my keys.
+    ) -> Result<(), BitVMXError> {
+        info!(
+            "Program: Setting up program {} with type {}",
+            program_id, program_type
+        );
+
+        // Validate leader index
         if leader >= peers.len() {
             return Err(BitVMXError::InvalidMessageFormat);
         }
 
-        let my_pubkey_hash = program_context.comms.get_pubk_hash()?;
-
-        let comms_address =
-            CommsAddress::new(program_context.comms.get_address(), my_pubkey_hash.clone());
+        let my_pubkey_hash = context.comms.get_pubk_hash()?;
 
         let my_idx = peers
             .iter()
-            .position(|peer| peer.pubkey_hash == comms_address.pubkey_hash)
-            .ok_or_else(|| {
-                BitVMXError::InvalidMessage(format!(
-                    "Peer with pubkey hash {} not found in the list",
-                    comms_address.pubkey_hash
-                ))
-            })?;
+            .position(|peer| peer.pubkey_hash == my_pubkey_hash)
+            .ok_or_else(|| BitVMXError::InvalidMessage("Peer not found in the list".to_string()))?;
 
-        info!("my_pos: {}", my_idx);
-        info!("Leader pos: {}", leader);
+        info!("Program: my_pos: {}", my_idx);
+        info!("Program: Leader pos: {}", leader);
 
-        let protocol = new_protocol_type(*id, protocol_type, my_idx, storage.clone())?;
-        let my_keys = protocol.generate_keys(program_context)?;
-
-        //Creates space for the participants
-        let mut others = peers
-            .iter()
-            .map(|peer| ParticipantData::new(peer, None))
-            .collect::<Vec<_>>();
-
-        // save my pos in the others list to have the complete message ready
-        others[my_idx] = ParticipantData::new(&comms_address, Some(my_keys));
-
+        // Request verification keys from other participants for message authentication
+        // This is critical for security - allows us to verify message authenticity
         OperatorVerificationStore::request_missing_verification_keys(
-            &program_context.globals,
-            &program_context.comms,
-            &program_context.key_chain,
-            id,
+            &context.globals,
+            &context.comms,
+            &context.key_chain,
+            &program_id,
             &peers,
         )?;
 
-        let mut program = Self {
-            program_id: *id,
+        // Create protocol
+        let mut protocol = new_protocol_type(program_id, program_type, my_idx, storage.clone())?;
+        protocol.set_storage(storage.clone());
+
+        // Try to create SetupEngine if protocol supports it
+        let setup_engine = Self::try_create_setup_engine(&protocol);
+
+        let mut program = Program {
+            program_id,
             my_idx,
-            participants: others,
+            participants: peers,
             leader,
             protocol,
-            state: ProgramState::New,
-            storage: Some(storage),
+            state: ProgramState::SettingUp,
+            setup_engine_state: None, // Will be set when saving
+            setup_engine,
+            storage: Some(storage.clone()),
             config: config.clone(),
         };
 
-        // This is for those protocols that only has one participant
-        if peers.len() == 1 {
-            program.build_protocol(program_context)?;
-            program.protocol.sign(&program_context.key_chain)?;
-            program.state = ProgramState::Monitoring
-        }
+        // Save initial program (includes state)
         program.save()?;
+
+        info!("Program: Setup complete for program {}", program_id);
+        Ok(())
+    }
+
+    /// Loads a Program from storage
+    pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Self, ProgramError> {
+        let key = format!("program/{}", program_id);
+        let mut program: Program = storage
+            .get(&key)?
+            .ok_or(ProgramError::ProgramNotFound(*program_id))?;
+
+        debug!(
+            "Program::load() - Loaded program {} with state: {:?}",
+            program_id, program.state
+        );
+
+        program.storage = Some(storage.clone());
+        program.protocol.set_storage(storage.clone());
+
+        // Recreate SetupEngine if protocol supports it
+        program.setup_engine = Self::try_create_setup_engine(&program.protocol);
+
+        program.state = storage
+            .get(&format!("program/{}/state", program_id))?
+            .unwrap_or_default();
+
+        // Restore SetupEngine state if it was saved
+        if let (Some(engine), Some(saved_state)) =
+            (&mut program.setup_engine, &program.setup_engine_state)
+        {
+            debug!(
+                "Program::load() - Restoring SetupEngine state for program {}",
+                program_id
+            );
+            engine.restore_state(saved_state.clone()).map_err(|e| {
+                ProgramError::InvalidProgramStoragePath(format!(
+                    "Failed to restore engine state: {}",
+                    e
+                ))
+            })?;
+        }
 
         Ok(program)
     }
 
-    fn prepare_aggregated_keys(
-        &mut self,
-        context: &ProgramContext,
-    ) -> Result<HashMap<String, PublicKey>, BitVMXError> {
-        let mut aggregated_keys = self.protocol.get_pregenerated_aggregated_keys(context)?;
+    /// Saves the program to storage
+    ///
+    /// This method:
+    /// 1. Extracts the SetupEngine state (which cannot be serialized) into `setup_engine_state`
+    /// 2. Saves the entire program struct (including state as a field) in a single storage key
+    ///
+    /// Note: Fields marked with `#[serde(skip)]` (setup_engine, storage) are excluded from serialization
+    pub fn save(&mut self) -> Result<(), ProgramError> {
+        let storage = self
+            .storage
+            .clone()
+            .ok_or(ProgramError::StorageUnavailable)?;
 
-        let mut result = HashMap::new();
-
-        for agg_name in &self.participants[self.my_idx]
-            .keys
-            .as_ref()
-            .ok_or_else(|| BitVMXError::KeysNotFound(self.program_id))?
-            .aggregated
-        {
-            let agg_key = self.participants[self.my_idx]
-                .keys
-                .as_ref()
-                .ok_or_else(|| BitVMXError::KeysNotFound(self.program_id))?
-                .get_public(agg_name)
-                .map_err(|_| BitVMXError::InvalidMessageFormat)?;
-
-            let mut aggregated_pub_keys = vec![];
-
-            debug!(
-                "Computing aggregated key '{}' with {} participants",
-                agg_name,
-                self.participants.len()
-            );
-            for other in &self.participants {
-                let other_key = other
-                    .keys
-                    .as_ref()
-                    .ok_or_else(|| BitVMXError::KeysNotFound(self.program_id))?
-                    .get_public(agg_name)
-                    .map_err(|_| BitVMXError::InvalidMessageFormat)?;
-                aggregated_pub_keys.push(*other_key);
-            }
-
-            aggregated_pub_keys.sort();
-
-            let aggregated_key = context
-                .key_chain
-                .new_musig2_session(aggregated_pub_keys, *agg_key)?;
-
-            debug!(
-                "Aggregated var name {}: Aggregated key: {}",
-                agg_name,
-                aggregated_key.to_string()
-            );
-            aggregated_keys.push((agg_name.clone(), aggregated_key));
+        // Save SetupEngine state before serializing (since SetupEngine itself can't be serialized)
+        if let Some(engine) = &self.setup_engine {
+            self.setup_engine_state = Some(engine.state().clone());
         }
 
-        for (agg_name, aggregated_key) in aggregated_keys {
-            result.insert(agg_name.to_string(), aggregated_key);
-        }
-        self.participants[self.my_idx]
-            .keys
-            .as_mut()
-            .ok_or_else(|| BitVMXError::KeysNotFound(self.program_id))?
-            .computed_aggregated = result.clone();
-        Ok(result)
-    }
-
-    fn build_protocol(&mut self, context: &ProgramContext) -> Result<(), BitVMXError> {
-        let aggregated = self.prepare_aggregated_keys(context)?;
         info!(
-            "{}. Building with aggregated: {:?}",
-            self.my_idx, aggregated
+            "Program::save() - Saving program {} with state: {:?}",
+            self.program_id, self.state
         );
 
-        let keys: Vec<ParticipantKeys> = self
-            .participants
-            .iter()
-            .map(|p| {
-                p.keys
-                    .as_ref()
-                    .ok_or_else(|| BitVMXError::KeysNotFound(self.program_id))
-                    .map(|k| k.clone())
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let state_key = format!("program/{}/state", self.program_id);
+        storage.set(&state_key, &self.state, None)?;
 
-        info!("Building protocol for: {} {}", self.program_id, self.my_idx);
-        self.protocol.build(keys, aggregated, &context)?;
+        storage.set(&self.storage_key(), self, None)?;
 
-        // 6. Move the program to the next state
-        self.move_program_to_next_state()?;
         Ok(())
     }
 
-    pub fn get_address_from_pubkey_hash(
-        &self,
-        pubkey_hash: &PubkHash,
-    ) -> Result<CommsAddress, BitVMXError> {
-        for p in &self.participants {
-            if &p.comms_address.pubkey_hash == pubkey_hash {
-                return Ok(p.comms_address.clone());
-            }
-        }
-        return Err(BitVMXError::CommsCommunicationError);
-    }
+    /// Main tick function - drives the program forward
+    pub fn tick(&mut self, program_context: &mut ProgramContext) -> Result<(), BitVMXError> {
+        let mut state_changed = false;
 
-    fn request_helper<T>(
-        &mut self,
-        program_context: &ProgramContext,
-        to_send: Vec<(PubkHash, T)>,
-        msg_type: CommsMessageType,
-    ) -> Result<(), BitVMXError>
-    where
-        T: Serialize + Clone,
-    {
-        let my_pubkey_hash = &program_context.comms.get_pubk_hash()?;
-        for (other, _) in to_send.iter() {
-            if self.leader != self.my_idx || other != my_pubkey_hash {
-                let dest = if self.leader != self.my_idx {
-                    self.participants[self.leader].comms_address.clone()
-                } else {
-                    self.get_address_from_pubkey_hash(other)?
+        match &self.state {
+            ProgramState::SettingUp => {
+                // Run the engine tick (uses block scope to avoid borrow conflict
+                // between setup_engine and other self fields)
+                let (tick_result, is_complete, engine_state) = {
+                    let engine = self.setup_engine.as_mut().ok_or_else(|| {
+                        BitVMXError::InvalidMessage(
+                            "Protocol must return setup steps for Program".to_string(),
+                        )
+                    })?;
+
+                    let tick_result = engine.tick(
+                        &mut self.protocol,
+                        &self.participants,
+                        self.my_idx,
+                        &self.program_id,
+                        self.leader,
+                        program_context,
+                    )?;
+
+                    let is_complete = engine.is_complete();
+
+                    debug!(
+                        "Program: SetupEngine tick - is_complete: {}, step: {}/{}",
+                        is_complete,
+                        engine.state().current_step_index,
+                        engine.total_steps()
+                    );
+
+                    (tick_result, is_complete, engine.state().clone())
                 };
 
-                debug!(
-                    "Sending message {:?} from {} to {}",
-                    &msg_type, self.my_idx, dest.pubkey_hash
-                );
+                if tick_result.state_changed {
+                    state_changed = true;
+                    if engine_state.current_step_state == StepState::WaitingForParticipants {
+                        self.state = ProgramState::WaitingData;
+                    } else {
+                        self.state = ProgramState::SettingUp;
+                    }
+                }
 
-                request(
-                    &program_context.comms,
-                    &program_context.key_chain,
-                    &self.program_id,
-                    dest,
-                    msg_type.clone(),
-                    to_send.clone(),
-                )?;
+                // After all setup steps complete, sign and finalize
+                if is_complete {
+                    self.protocol.sign(&program_context.key_chain)?;
+                    self.protocol.setup_complete(&program_context)?;
+                    self.start_monitoring(program_context)?;
+                    self.state = ProgramState::Ready;
+                    state_changed = true;
+                    info!("Program: Setup finalized, transitioning to Ready state");
+                }
             }
+            ProgramState::WaitingData | ProgramState::Ready => {
+                // Protocol is ready and monitoring is active
+                // Just waiting for blockchain events via notify_news()
+                debug!("Program: waiting for events");
+            }
+        }
+
+        // Only save if there were actual changes to avoid infinite load-save loops
+        if state_changed {
+            self.save()?;
         }
         Ok(())
     }
 
-    fn send_keys(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
-        let should_send_request =
-            self.should_send_request(StoreKey::LastRequestKeys(self.program_id))?;
+    fn start_monitoring(
+        &mut self,
+        program_context: &mut ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        // After the protocol is ready, we need to monitor the transactions on blockchain
+        // Only register monitoring if not already done (idempotent)
+        info!("Program: Setting up blockchain monitoring");
 
-        if !should_send_request {
-            return Ok(());
+        // Get transactions and UTXOs to monitor from the protocol
+        let (txns_to_monitor, vouts_to_monitor) =
+            self.protocol.get_transactions_to_monitor(program_context)?;
+
+        let confirmations = self.protocol.requested_confirmations(program_context);
+
+        // Create context for monitoring
+        let context = Context::ProgramId(self.program_id);
+        let context_str = context.to_string()?;
+
+        // Register transactions to monitor
+        if !txns_to_monitor.is_empty() {
+            info!(
+                "Program: Monitoring {} transactions for program {}",
+                txns_to_monitor.len(),
+                self.program_id
+            );
+            let txs_to_monitor =
+                TypesToMonitor::Transactions(txns_to_monitor, context_str.clone(), confirmations);
+            program_context
+                .bitcoin_coordinator
+                .monitor(txs_to_monitor)?;
         }
 
-        debug!("{:?}: Sending keys", self.my_idx);
-        let keys = if self.my_idx == self.leader {
-            let mut keys = vec![];
-            for other in &self.participants {
-                keys.push((
-                    other.comms_address.pubkey_hash.clone(),
-                    other
-                        .keys
-                        .clone()
-                        .ok_or_else(|| BitVMXError::KeysNotFound(self.program_id))?,
-                ));
-            }
-            keys
+        // Register specific UTXOs (vouts) to monitor for spending
+        for (txid, vout) in vouts_to_monitor {
+            info!(
+                "Program: Monitoring vout {} of txid {} for program {}",
+                vout, txid, self.program_id
+            );
+            let vout_to_monitor = TypesToMonitor::SpendingUTXOTransaction(
+                txid,
+                vout,
+                context_str.clone(),
+                confirmations,
+            );
+            program_context
+                .bitcoin_coordinator
+                .monitor(vout_to_monitor)?;
+        }
+
+        self.send_setup_completed(program_context);
+        Ok(())
+    }
+
+    /// Receives setup data from another participant
+    ///
+    /// This is a public wrapper that delegates to SetupEngine when the program
+    /// is in SettingUp state. The SetupEngine handles all the logic internally.
+    pub fn receive_setup_data(
+        &mut self,
+        data: &[u8],
+        from: &PubKeyHash,
+        program_context: &mut ProgramContext,
+    ) -> Result<bool, BitVMXError> {
+        // Only handle setup data if we're in setup state
+        if matches!(self.state, ProgramState::Ready) {
+            debug!("Program::receive_setup_data() - Not in SettingUp state, ignoring");
+            return Ok(false);
+        }
+
+        // Track state changes and completion status for save/log after borrow ends
+        let (message_processed, engine_state) = if let Some(engine) = &mut self.setup_engine {
+            let message_processed = engine.receive_setup_data(
+                data,
+                from,
+                &self.program_id,
+                self.my_idx,
+                self.leader,
+                &self.participants,
+                &self.protocol,
+                program_context,
+            )?;
+            (message_processed, engine.state().current_step_state.clone())
         } else {
-            vec![(
-                self.participants[self.my_idx]
-                    .comms_address
-                    .pubkey_hash
-                    .clone(),
-                self.participants[self.my_idx]
-                    .keys
-                    .clone()
-                    .ok_or_else(|| BitVMXError::KeysNotFound(self.program_id))?,
-            )]
+            (false, StepState::Completed) // Default to complete if no engine (should not happen since receive_setup_data should only be called in setup)
         };
-        self.request_helper(program_context, keys, CommsMessageType::Keys)?;
 
-        self.save_retry(StoreKey::LastRequestKeys(self.program_id))?;
-        Ok(())
-    }
-
-    fn receive_keys(
-        &mut self,
-        comms_address: CommsAddress,
-        msg_type: CommsMessageType,
-        data: Value,
-        program_context: &ProgramContext,
-    ) -> Result<(), BitVMXError> {
-        // TODO: review state logic. quickfix. before this if I get a message before moving from new to receivingkeys it got stuck
-        if self.state == ProgramState::New {
-            self.move_program_to_next_state()?;
-        }
-        if !self.state.should_handle_msg(&msg_type) {
-            error!(
-                "{}. Ignoring message {:?} {:?}",
-                self.my_idx, msg_type, self.state
+        // Always save when state changes to avoid data loss on crash
+        if message_processed {
+            if engine_state == StepState::WaitingForParticipants {
+                self.state = ProgramState::WaitingData;
+            } else {
+                self.state = ProgramState::SettingUp;
+            }
+            self.save()?;
+            info!(
+                "Program::receive_setup_data() - Saved program state {:?}",
+                self.state
             );
-            if self.state.should_answer_ack(self.im_leader(), &msg_type) {
-                self.send_ack(program_context, comms_address, CommsMessageType::KeysAck)?;
-            }
-            return Ok(());
         }
 
-        // Parse the keys received
-        for (pubkey_hash, keys) in
-            parse_keys(data).map_err(|_| BitVMXError::InvalidMessageFormat)?
-        {
-            let other_pos = get_other_index_by_pubkey_hash(&pubkey_hash, &self.participants)
-                .ok_or_else(|| BitVMXError::InvalidParticipant(pubkey_hash))?;
-            self.participants[other_pos].keys = Some(keys);
-        }
-
-        self.save()?;
-
-        // Send ack to the other party
-        self.send_ack(program_context, comms_address, CommsMessageType::KeysAck)?;
-
-        if all_keys_ready(&self.participants) {
-            // Build the protocol
-            self.build_protocol(program_context)?;
-        }
-        Ok(())
+        Ok(message_processed)
     }
 
-    fn send_nonces(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
-        let should_send_request =
-            self.should_send_request(StoreKey::LastRequestNonces(self.program_id))?;
-
-        if !should_send_request {
-            return Ok(());
-        }
-
-        debug!("{}. Sending nonces", self.my_idx);
-
-        let mut public_nonce_msg: PubNonceMessage = Vec::new();
-        for aggregated in self.participants[self.my_idx]
-            .keys
-            .as_ref()
-            .ok_or_else(|| BitVMXError::KeysNotFound(self.program_id))?
-            .computed_aggregated
-            .values()
-        {
-            let nonces = program_context
-                .key_chain
-                .get_nonces(aggregated, &self.protocol.context().protocol_name);
-            if nonces.is_err() {
-                warn!(
-                    "{}. Error getting nonces for aggregated key: {}",
-                    self.my_idx,
-                    aggregated.to_string()
-                );
-                continue;
-            }
-            let my_pub = program_context
-                .key_chain
-                .key_manager
-                .get_my_public_key(aggregated)?;
-            debug!(
-                "{}. Sending nonces for aggregated key: {} {:?} {:?}",
-                self.my_idx, aggregated, my_pub, nonces
-            );
-            public_nonce_msg.push((aggregated.clone(), my_pub, nonces?));
-        }
-
-        self.participants[self.my_idx].nonces = Some(public_nonce_msg);
-        info!("I'm {} and I'm setting my nonces", self.my_idx);
-
-        let mut nonces = vec![];
-        for other in &self.participants {
-            if let Some(nonce) = &other.nonces {
-                nonces.push((other.comms_address.pubkey_hash.clone(), nonce.clone()));
-            }
-        }
-
-        self.request_helper(program_context, nonces, CommsMessageType::PublicNonces)?;
-
-        self.save_retry(StoreKey::LastRequestNonces(self.program_id))?;
-        self.save()?;
-        Ok(())
+    /// Returns the protocol ID
+    pub fn protocol_id(&self) -> Uuid {
+        self.protocol.context().id
     }
 
-    fn receive_nonces(
-        &mut self,
-        comms_address: CommsAddress,
-        msg_type: CommsMessageType,
-        data: Value,
-        program_context: &ProgramContext,
-    ) -> Result<(), BitVMXError> {
-        if !self.state.should_handle_msg(&msg_type) {
-            if self.state.should_answer_ack(self.im_leader(), &msg_type) {
-                self.send_ack(
-                    program_context,
-                    comms_address,
-                    CommsMessageType::PublicNoncesAck,
-                )?;
-            }
-            return Ok(());
-        }
-
-        //TODO: Santitize pariticipant_pub_key with message origin
-        let nonces_msg = parse_nonces(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
-
-        for (pubkey_hash, particpant_nonces) in nonces_msg {
-            let other_pos = get_other_index_by_pubkey_hash(&pubkey_hash, &self.participants)
-                .ok_or_else(|| BitVMXError::InvalidParticipant(pubkey_hash))?;
-            debug!("{}. Got nonces for pos: {}", self.my_idx, other_pos);
-            self.participants[other_pos].nonces = Some(particpant_nonces);
-        }
-        self.save()?;
-
-        if all_nonces_ready(&self.participants) {
-            let mut map_of_maps: HashMap<
-                PublicKey,
-                HashMap<PublicKey, Vec<(MessageId, PubNonce)>>,
-            > = HashMap::new();
-
-            for (idx, participant) in self.participants.iter().enumerate() {
-                if idx != self.my_idx {
-                    for (aggregated, participant_pub_key, nonces) in participant
-                        .nonces
-                        .as_ref()
-                        .ok_or_else(|| BitVMXError::NoncesNotFound(self.program_id))?
-                    {
-                        debug!(
-                            "will get nonces for: {} {:?} {:?} {:?} ",
-                            idx, aggregated, participant_pub_key, nonces
-                        );
-                        map_of_maps
-                            .entry(aggregated.clone())
-                            .or_insert_with(HashMap::new)
-                            .insert(*participant_pub_key, nonces.clone());
-                    }
-                }
-            }
-            for (aggregated, pubkey_nonce_map) in map_of_maps {
-                program_context.key_chain.add_nonces(
-                    &aggregated,
-                    pubkey_nonce_map,
-                    &self.protocol.context().protocol_name,
-                )?;
-            }
-
-            self.move_program_to_next_state()?;
-            info!("{}. All nonces ready", self.my_idx);
-        } else {
-            info!("{}. Not all nonces ready", self.my_idx);
-        }
-
-        self.send_ack(
-            &program_context,
-            comms_address,
-            CommsMessageType::PublicNoncesAck,
-        )?;
-        Ok(())
+    /// Finds a participant's address by their pubkey hash
+    pub fn get_address_from_pubkey_hash(
+        &self,
+        pubkey_hash: &PubKeyHash,
+    ) -> Result<CommsAddress, BitVMXError> {
+        get_comms_address_by_pubkey_hash(&self.participants, pubkey_hash)
     }
 
-    fn send_signatures(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
-        let should_send_request =
-            self.should_send_request(StoreKey::LastRequestSignatures(self.program_id))?;
-
-        if !should_send_request {
-            return Ok(());
-        }
-
-        debug!("{}. Sending PartialSignatures", self.my_idx);
-        let mut partial_sig_msg: PartialSignatureMessage = Vec::new();
-        for aggregated in self.participants[self.my_idx]
-            .keys
-            .as_ref()
-            .ok_or_else(|| BitVMXError::KeysNotFound(self.program_id))?
-            .computed_aggregated
-            .values()
-        {
-            let signatures = program_context
-                .key_chain
-                .get_signatures(aggregated, &self.protocol.context().protocol_name);
-            if signatures.is_err() {
-                warn!(
-                    "{}. Error getting partial signature for aggregated key: {}",
-                    self.my_idx,
-                    aggregated.to_string()
-                );
-                continue;
-            }
-
-            let my_pub = program_context
-                .key_chain
-                .key_manager
-                .get_my_public_key(aggregated)?;
-            debug!(
-                "{}. Sending partial signatures for aggregated key: {} {:?} {:?}",
-                self.my_idx, aggregated, my_pub, signatures
-            );
-            partial_sig_msg.push((aggregated.clone(), my_pub, signatures?));
-        }
-
-        self.participants[self.my_idx].partial = Some(partial_sig_msg);
-        debug!("I'm {} and I'm setting my partial", self.my_idx);
-
-        let mut partials = vec![];
-        for other in &self.participants {
-            if other.partial.is_some() {
-                partials.push((
-                    other.comms_address.pubkey_hash.clone(),
-                    other
-                        .partial
-                        .clone()
-                        .ok_or_else(|| BitVMXError::PartialSignaturesNotFound(self.program_id))?,
-                ));
-            }
-        }
-        self.request_helper(
-            program_context,
-            partials,
-            CommsMessageType::PartialSignatures,
-        )?;
-
-        self.save_retry(StoreKey::LastRequestSignatures(self.program_id))?;
-        self.save()?;
-        Ok(())
-    }
-
-    fn receive_signatures(
-        &mut self,
-        comms_address: CommsAddress,
-        msg_type: CommsMessageType,
-        data: Value,
-        program_context: &ProgramContext,
-    ) -> Result<(), BitVMXError> {
-        if !self.state.should_handle_msg(&msg_type) {
-            if self.state.should_answer_ack(self.im_leader(), &msg_type) {
-                self.send_ack(
-                    program_context,
-                    comms_address,
-                    CommsMessageType::PartialSignaturesAck,
-                )?;
-            }
-            return Ok(());
-        }
-
-        let partial_msg = parse_signatures(data).map_err(|_| BitVMXError::InvalidMessageFormat)?;
-        for (pubkey_hash, particpant_partials) in partial_msg {
-            let other_pos = get_other_index_by_pubkey_hash(&pubkey_hash, &self.participants)
-                .ok_or_else(|| BitVMXError::InvalidParticipant(pubkey_hash))?;
-            debug!("{}. Got partials for pos: {}", self.my_idx, other_pos);
-            self.participants[other_pos].partial = Some(particpant_partials);
-        }
-        self.save()?;
-
-        if all_signatures_ready(&self.participants) {
-            let mut map_of_maps: HashMap<
-                PublicKey,
-                HashMap<PublicKey, Vec<(MessageId, PartialSignature)>>,
-            > = HashMap::new();
-
-            for (idx, participant) in self.participants.iter().enumerate() {
-                if idx != self.my_idx {
-                    for (aggregated, other_pub_key, signatures) in participant
-                        .partial
-                        .as_ref()
-                        .ok_or_else(|| BitVMXError::PartialSignaturesNotFound(self.program_id))?
-                    {
-                        debug!(
-                            "Program {}: agg: {}, other: {} Received signatures: {:?}",
-                            self.program_id, aggregated, other_pub_key, signatures
-                        );
-
-                        map_of_maps
-                            .entry(aggregated.clone())
-                            .or_insert_with(HashMap::new)
-                            .insert(*other_pub_key, signatures.clone());
-                    }
-                }
-            }
-
-            for (aggregated, partial_map) in map_of_maps {
-                program_context.key_chain.add_signatures(
-                    &aggregated,
-                    partial_map,
-                    &self.protocol.context().protocol_name,
-                )?;
-            }
-
-            self.protocol.sign(&program_context.key_chain)?;
-            self.move_program_to_next_state()?;
-            info!("{}. All signatures received", self.my_idx);
-        }
-
-        self.send_ack(
-            program_context,
-            comms_address,
-            CommsMessageType::PartialSignaturesAck,
-        )?;
-        Ok(())
-    }
-
-    pub fn tick(&mut self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
-        match &self.state {
-            ProgramState::New => {
-                self.move_program_to_next_state()?;
-            }
-
-            ProgramState::SettingUp(SettingUpState::SendingKeys) => {
-                self.send_keys(program_context)?;
-            }
-            ProgramState::SettingUp(SettingUpState::SendingNonces) => {
-                self.send_nonces(program_context)?;
-            }
-            ProgramState::SettingUp(SettingUpState::SendingSignatures) => {
-                self.send_signatures(program_context)?;
-            }
-            ProgramState::Monitoring => {
-                // After the program is ready, we need to monitor the transactions
-                let (txns_to_monitor, vouts_to_monitor) =
-                    self.protocol.get_transactions_to_monitor(program_context)?;
-
-                let confirmations = self.protocol.requested_confirmations(program_context);
-
-                let context = Context::ProgramId(self.program_id);
-                let txs_to_monitor = TypesToMonitor::Transactions(
-                    txns_to_monitor.clone(),
-                    context.to_string()?,
-                    confirmations,
-                );
-
-                program_context
-                    .bitcoin_coordinator
-                    .monitor(txs_to_monitor)?;
-
-                for (txid, vout) in vouts_to_monitor {
-                    info!(
-                        "Monitoring vout {} of txid {} for program {}",
-                        vout, txid, self.program_id
-                    );
-                    let vout_to_monitor = TypesToMonitor::SpendingUTXOTransaction(
-                        txid,
-                        vout,
-                        context.to_string()?,
-                        confirmations,
-                    );
-
-                    program_context
-                        .bitcoin_coordinator
-                        .monitor(vout_to_monitor)?;
-                }
-
-                self.move_program_to_next_state()?;
-
-                self.protocol.setup_complete(&program_context)?;
-
-                let result = program_context.broker_channel.send(
-                    &program_context.components_config.l2,
-                    OutgoingBitVMXApiMessages::SetupCompleted(self.program_id).to_string()?,
-                );
-                if let Err(e) = result {
-                    warn!("Error sending setup completed message: {:?}", e);
-                    //TODO: Handle error and rollback
-                }
-            }
-            _ => {}
-        }
-
-        Ok(())
-    }
-
+    /// Main entry point for processing incoming communication messages
+    ///
+    /// Routes SetupStepData messages to receive_setup_data()
     pub fn process_comms_message(
         &mut self,
-        comms_address: CommsAddress,
-        msg_type: CommsMessageType,
-        data: Value,
-        program_context: &ProgramContext,
-        _timestamp: i64,
-        _signature: Vec<u8>,
-        _version: String,
-    ) -> Result<(), BitVMXError> {
-        // The message signature verification was already done in BitVMX::process_msg
-        // If we reach here, the message signature was verified and is valid
-        // This method only focuses on the program's business logic
-
-        debug!("{}: Message received: {:?} ", self.my_idx, msg_type);
+        comms_address: &PubKeyHash,
+        msg_type: &CommsMessageType,
+        data: Vec<u8>,
+        program_context: &mut ProgramContext,
+    ) -> Result<bool, BitVMXError> {
+        debug!(
+            "Program::process_comms_message() - Received {:?} ({} bytes) from {}",
+            msg_type,
+            data.len(),
+            comms_address
+        );
 
         match msg_type {
-            CommsMessageType::Keys => {
-                self.receive_keys(comms_address, msg_type, data, program_context)?;
-            }
-            CommsMessageType::PublicNonces => {
-                self.receive_nonces(comms_address, msg_type, data, program_context)?;
-            }
-            CommsMessageType::PartialSignatures => {
-                self.receive_signatures(comms_address, msg_type, data, program_context)?;
+            CommsMessageType::SetupStepData => {
+                debug!("Program::process_comms_message() - Routing SetupStepData to receive_setup_data()");
+                return self.receive_setup_data(&data, comms_address, program_context);
             }
             CommsMessageType::VerificationKey | CommsMessageType::VerificationKeyRequest => {
-                debug!(
-                    "{}. Verification key message handled upstream, ignoring {:?}",
-                    self.my_idx, msg_type
-                );
-            }
-            CommsMessageType::KeysAck
-            | CommsMessageType::PublicNoncesAck
-            | CommsMessageType::PartialSignaturesAck => {
-                if !self.state.should_handle_msg(&msg_type) {
-                    info!(
-                        "{}. Ignoring message {:?} {:?}",
-                        self.my_idx, msg_type, self.state
-                    );
-                    return Ok(());
-                }
-
-                self.move_program_to_next_state()?;
+                debug!("Program: Verification key message handled upstream, ignoring");
             }
             CommsMessageType::Broadcasted => {
-                // Broadcasted messages are handled in BitVMX::process_msg, not here
-                // This should not be reached, but we handle it gracefully
+                debug!("Program: Broadcasted message should be handled upstream");
+            }
+            _ => {
+                // Other message types
                 debug!(
-                    "{}. Broadcasted message should be handled upstream in BitVMX::process_msg",
-                    self.my_idx
+                    "Program: Ignoring message type {:?} - not supported by Program",
+                    msg_type
                 );
             }
         }
 
-        Ok(())
+        Ok(true)
     }
 
-    fn send_ack(
-        &self,
-        program_context: &ProgramContext,
-        comms_address: CommsAddress,
-        msg_type: CommsMessageType,
-    ) -> Result<(), BitVMXError> {
-        debug!("{}. Sending {:?}", self.my_idx, msg_type);
-
-        response(
-            &program_context.comms,
-            &program_context.key_chain,
-            &self.program_id,
-            comms_address,
-            msg_type,
-            (),
-        )?;
-
-        Ok(())
-    }
-
+    /// Gets a transaction by name from the protocol
     pub fn get_transaction_by_name(
         &self,
-        program_context: &ProgramContext,
         name: &str,
+        context: &ProgramContext,
     ) -> Result<Transaction, BitVMXError> {
-        Ok(self
-            .protocol
-            .get_transaction_by_name(name, program_context)?
-            .0)
+        let (tx, _speedup) = self.protocol.get_transaction_by_name(name, context)?;
+        Ok(tx)
     }
 
+    /// Gets a transaction by ID
+    pub fn get_tx_by_id(&self, txid: Txid) -> Result<Transaction, BitVMXError> {
+        self.protocol
+            .get_transaction_by_id(&txid)
+            .map_err(|e| BitVMXError::InvalidMessage(format!("Transaction not found: {}", e)))
+    }
+
+    /// Dispatches (broadcasts) a transaction by name
     pub fn dispatch_transaction_name(
-        &self,
-        program_context: &ProgramContext,
+        &mut self,
         name: &str,
+        program_context: &mut ProgramContext,
     ) -> Result<(), BitVMXError> {
-        //TODO: Get transactions by identification
-        let (tx_to_dispatch, speedup) = self
+        let (tx, speedup) = self
             .protocol
             .get_transaction_by_name(name, program_context)?;
-
         let context = Context::ProgramId(self.program_id);
 
         info!(
-            "Dispatching transaction: {} and speedup: {:?}",
-            style(tx_to_dispatch.compute_txid()).green(),
-            style(speedup.is_some()).yellow(),
+            "Program: Dispatching transaction: {} with speedup: {:?}",
+            tx.compute_txid(),
+            speedup.is_some()
         );
 
         program_context.bitcoin_coordinator.dispatch(
-            tx_to_dispatch,
+            tx,
             speedup,
             context.to_string()?,
-            None, // Dispatch immediately
+            None,
             self.protocol.requested_confirmations(program_context),
         )?;
 
         Ok(())
     }
 
+    /// Notifies the protocol about blockchain events (transaction confirmations, etc.)
     pub fn notify_news(
         &self,
         tx_id: Txid,
@@ -896,40 +516,12 @@ impl Program {
         context: String,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        let participant_keys = self
-            .participants
-            .iter()
-            .map(|p| {
-                p.keys
-                    .as_ref()
-                    .ok_or_else(|| BitVMXError::KeysNotFound(self.program_id))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        self.protocol
+            .notify_news(tx_id, vout, tx_status.clone(), context, program_context)?;
 
-        self.protocol.notify_news(
-            tx_id,
-            vout,
-            tx_status.clone(),
-            context,
-            program_context,
-            participant_keys,
-        )?;
-
-        let name = self.protocol.get_transaction_name_by_id(tx_id)?;
-
-        if vout.is_some() {
-            /* DON'T SEND AUTOMATICALLY FOR NOW
-            program_context.broker_channel.send(
-                L2_ID,
-                OutgoingBitVMXApiMessages::SpendingUTXOTransactionFound(
-                    self.program_id,
-                    tx_id,
-                    vout.unwrap(),
-                    tx_status.clone(),
-                )
-                .to_string()?,
-            )?;*/
-        } else {
+        // Send transaction notification to L2 channel
+        if vout.is_none() {
+            let name = self.protocol.get_transaction_name_by_id(tx_id)?;
             program_context.broker_channel.send(
                 &program_context.components_config.l2,
                 OutgoingBitVMXApiMessages::Transaction(self.program_id, tx_status, Some(name))
@@ -939,99 +531,10 @@ impl Program {
 
         Ok(())
     }
-
-    fn get_key(key: StoreKey) -> String {
-        let prefix = "program";
-        match key {
-            StoreKey::LastRequestKeys(id) => format!("{prefix}/{id}/last_request_keys"),
-            StoreKey::LastRequestNonces(id) => {
-                format!("{prefix}/{id}/last_request_nonces")
-            }
-            StoreKey::LastRequestSignatures(id) => {
-                format!("{prefix}/{id}/last_request_signatures")
-            }
-            StoreKey::Program(id) => format!("{prefix}/{id}"),
-            StoreKey::ProgramState(id) => format!("{prefix}/{id}/state"),
-        }
-    }
-
-    fn save_retry(&mut self, key: StoreKey) -> Result<(), BitVMXError> {
-        let retries = self
-            .storage
-            .as_ref()
-            .ok_or_else(|| BitVMXError::StorageUnavailable(self.program_id.to_string()))?
-            .get(Self::get_key(key.clone()))?
-            .unwrap_or(ProgramRequestInfo::default())
-            .retries
-            + 1;
-
-        let last_request = ProgramRequestInfo {
-            retries,
-            last_request_time: Utc::now(),
-        };
-
-        self.storage
-            .as_ref()
-            .ok_or_else(|| BitVMXError::StorageUnavailable(self.program_id.to_string()))?
-            .set(Self::get_key(key), last_request, None)?;
-
-        Ok(())
-    }
-
-    fn should_send_request(&self, key: StoreKey) -> Result<bool, BitVMXError> {
-        let retry_delay = self.config.retry_delay;
-        let last_request: ProgramRequestInfo = self
-            .storage
-            .as_ref()
-            .ok_or_else(|| BitVMXError::StorageUnavailable(self.program_id.to_string()))?
-            .get(Self::get_key(key.clone()))?
-            .unwrap_or(ProgramRequestInfo::default());
-
-        if last_request.retries >= self.config.retry {
-            return Ok(false);
-        }
-
-        if last_request.retries >= self.config.retry {
-            return Ok(false);
-        }
-
-        if last_request.retries == 0 {
-            return Ok(true);
-        }
-
-        let now = Utc::now();
-        let diff = now.signed_duration_since(last_request.last_request_time);
-        if diff.num_milliseconds() < retry_delay as i64 {
-            return Ok(false);
-        }
-
-        Ok(true)
-    }
-
-    /// This function should only be called when the program is in the correct state,
-    /// otherwise it will transition to the next state at the wrong time and break
-    /// the program's flow
-    fn move_program_to_next_state(&mut self) -> Result<(), BitVMXError> {
-        self.state = self.state.next_state(self.im_leader());
-        self.save()?;
-        Ok(())
-    }
-
-    pub fn get_tx_by_id(&self, txid: Txid) -> Result<Transaction, BitVMXError> {
-        if self.state.is_setting_up() {
-            return Err(BitVMXError::ProgramNotReady(self.program_id));
-        }
-
-        self.protocol
-            .get_transaction_by_id(&txid)
-            .map_err(BitVMXError::from)
-            .map_err(BitVMXError::from)
-    }
 }
 
 pub fn is_active_program(storage: &Rc<Storage>, uuid: &Uuid) -> Result<bool, BitVMXError> {
-    let state: ProgramState = storage
-        .get(Program::get_key(StoreKey::ProgramState(*uuid)))?
-        .unwrap_or_default();
+    let key = format!("program/{}/state", uuid);
+    let state: ProgramState = storage.get(&key)?.unwrap_or_default();
     Ok(state.is_active())
 }
