@@ -2014,7 +2014,7 @@ impl DisputeCoreProtocol {
             context.bitcoin_coordinator.dispatch(
                 tx,
                 speedup,
-                Context::ProgramId(self.ctx.id).to_string()?,
+                Context::ProgramId(drp_pid).to_string()?,
                 None,
                 self.requested_confirmations(context),
             )?;
@@ -2328,7 +2328,7 @@ impl DisputeCoreProtocol {
         context.bitcoin_coordinator.dispatch(
             tx,
             speedup,
-            Context::ProgramId(self.ctx.id).to_string()?,
+            Context::ProgramId(wt_dispute_core_id).to_string()?,
             None,
             self.requested_confirmations(context),
         )?;
