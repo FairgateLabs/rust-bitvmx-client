@@ -771,9 +771,7 @@ impl DisputeCoreProtocol {
                         &wt_cosign_key,
                     )?);
                 }
-            }
 
-            if member.role == ParticipantRole::Prover && data.member_index != member_index {
                 let init_challenge_name =
                     double_indexed_name(WT_INIT_CHALLENGE_TX, data.member_index, member_index);
                 let op_cosign_name =
@@ -797,9 +795,15 @@ impl DisputeCoreProtocol {
                     None,
                 )?;
 
-                // TODO: Review this script, it should validate the slot id.
-                let verify_slot_id =
-                    verify_signature(&committee.dispute_aggregated_key, SignMode::Aggregate)?;
+                let op_cosign_key = keys[member_index].get_winternitz(OP_COSIGN_KEY)?;
+                let cosign_script = scripts::cosign_script(
+                    op_dispute_key,
+                    self.get_sign_mode(data.member_index),
+                    WT_COSIGN_KEY,
+                    wt_cosign_key,
+                    OP_COSIGN_KEY,
+                    op_cosign_key,
+                )?;
 
                 let verify_dispute_aggregated =
                     verify_signature(&committee.dispute_aggregated_key, SignMode::Aggregate)?;
@@ -816,7 +820,7 @@ impl DisputeCoreProtocol {
                     &vec![
                         // FIXME: Leaf 0 should be cosign script here
                         // This should cosign the challenge input to be able to open the challenge.
-                        verify_slot_id,
+                        cosign_script,
                         op_no_cosign_timelock_script,
                         verify_dispute_aggregated.clone(),
                     ],
