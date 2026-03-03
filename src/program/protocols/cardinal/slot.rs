@@ -4,7 +4,7 @@ use bitcoin::{hashes::Hash, PublicKey, Sequence, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use bitcoin_script_stack::stack::StackTracker;
 use console::style;
-use key_manager::key_type::BitcoinKeyType;
+use key_manager::{key_type::BitcoinKeyType, winternitz::WinternitzType};
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
     graph::graph::GraphOptions,
@@ -142,9 +142,9 @@ impl ProtocolHandler for SlotProtocol {
         &self,
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
-        let key_chain = &mut program_context.key_chain;
-
-        let speedup = key_chain.derive_keypair(BitcoinKeyType::P2tr)?;
+        let speedup = program_context
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)?;
 
         program_context.globals.set_var(
             &self.ctx.id,
@@ -156,11 +156,15 @@ impl ProtocolHandler for SlotProtocol {
 
         // we need 8*4 = 32 bytes, so we can challenge the word size input
         for i in 0..8 {
-            let cert_hash = key_chain.derive_winternitz_hash160(4)?;
+            let cert_hash = program_context
+                .key_manager
+                .next_winternitz(4, WinternitzType::HASH160)?;
             keys.push((certificate_hash_sub(self.ctx.my_idx, i), cert_hash.into()));
         }
 
-        let gid = key_chain.derive_winternitz_hash160(4)?;
+        let gid = program_context
+            .key_manager
+            .next_winternitz(4, WinternitzType::HASH160)?;
         keys.push((group_id(self.ctx.my_idx), gid.into()));
 
         Ok(ParticipantKeys::new(keys, vec![]))
@@ -718,7 +722,7 @@ impl ProtocolHandler for SlotProtocol {
         }
         info!("Going to build");
 
-        protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
+        protocol.build(&context.key_manager, &self.ctx.protocol_name)?;
         info!("{}", protocol.visualize(GraphOptions::EdgeArrows)?);
         self.save_protocol(protocol)?;
         Ok(())

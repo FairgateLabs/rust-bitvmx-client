@@ -82,8 +82,8 @@ impl ProtocolHandler for AcceptPegInProtocol {
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
         let speedup_key = program_context
-            .key_chain
-            .derive_keypair(BitcoinKeyType::P2tr)?;
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)?;
         let mut keys = vec![];
 
         keys.push((
@@ -283,7 +283,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
             )?;
         }
 
-        protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
+        protocol.build(&context.key_manager, &self.ctx.protocol_name)?;
 
         let tx = protocol.transaction_by_name(ACCEPT_PEGIN_TX)?;
         let txid = tx.compute_txid();
@@ -461,13 +461,13 @@ impl AcceptPegInProtocol {
         let pegin_request: PegInRequest = self.pegin_request(context)?;
 
         let message_id = MessageId::new_string_id(ACCEPT_PEGIN_TX, 0, 2); // 2 corresponds to key spend (it's equal to scripts_len())
-        let nonce = context.key_chain.get_nonce(
+        let nonce = context.key_manager.get_my_pub_nonce(
             &take_aggregated_key,
             &self.ctx.protocol_name,
             &message_id,
         )?;
 
-        let signature = context.key_chain.get_signature(
+        let signature = context.key_manager.get_my_partial_signature(
             &take_aggregated_key,
             &self.ctx.protocol_name,
             &message_id,

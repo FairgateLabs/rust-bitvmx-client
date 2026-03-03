@@ -233,7 +233,7 @@ impl SetupStep for KeysStep {
                 *my_key
             } else {
                 context
-                    .key_chain
+                    .key_manager
                     .new_musig2_session(aggregated_pub_keys, *my_key)?
             };
 

@@ -10,7 +10,6 @@ use crate::{
     comms_helper::{deserialize_msg, CommsMessageType},
     config::Config,
     errors::BitVMXError,
-    keychain::KeyChain,
     leader_broadcast::{LeaderBroadcastHelper, OriginalMessage},
     message_queue::{MessageQueue, QueuedMessage},
     program::{
@@ -38,6 +37,7 @@ use bitvmx_broker::identification::routing::RoutingTable;
 use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
 use bitvmx_job_dispatcher::helper::PingMessage;
 use bitvmx_settings::settings;
+use key_manager::create_key_manager_from_config;
 use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::graph::graph::GraphOptions;
 
@@ -118,7 +118,11 @@ impl StoreKey {
 impl BitVMX {
     pub fn new(config: Config) -> Result<Self, BitVMXError> {
         let store = Rc::new(Storage::new(&config.storage)?);
-        let key_chain = KeyChain::new(&config, store.clone())?;
+        let key_manager =
+            create_key_manager_from_config(&config.key_manager, &config.key_storage.clone())?;
+        let key_manager = Rc::new(key_manager);
+        let rsa_public_key = key_manager
+            .import_rsa_private_key(&settings::decrypt_or_read_file(config.comms_key())?)?;
 
         let comms = QueueChannel::new_with_paths(
             "comms",
@@ -133,7 +137,7 @@ impl BitVMX {
         let wallet = Wallet::from_derive_keypair(
             config.bitcoin.clone(),
             config.wallet.clone(),
-            key_chain.key_manager.clone(),
+            key_manager.clone(),
             BitcoinKeyType::P2tr,
             WALLET_INDEX,
             Some(WALLET_CHANGE_INDEX),
@@ -142,7 +146,7 @@ impl BitVMX {
         let bitcoin_coordinator = BitcoinCoordinator::new_with_paths(
             &config.bitcoin,
             store.clone(),
-            key_chain.key_manager.clone(),
+            key_manager.clone(),
             config.coordinator_settings.clone(),
         )?;
 
@@ -180,7 +184,8 @@ impl BitVMX {
 
         let program_context = ProgramContext::new(
             comms,
-            key_chain,
+            key_manager,
+            rsa_public_key,
             bitcoin_coordinator,
             broker_channel,
             Globals::new(store.clone()),
@@ -266,7 +271,7 @@ impl BitVMX {
         match SignatureVerifier::verify_and_get_key(
             &self.program_context.comms,
             &self.program_context.globals,
-            &self.program_context.key_chain,
+            &self.program_context.rsa_public_key,
             &identifier.pubkey_hash,
             program_id,
             msg_type,
@@ -1473,7 +1478,6 @@ impl BitVMXApi for BitVMX {
                     .ok_or(BitVMXError::ProgramNotFound(id))?;
                 let pair = self
                     .program_context
-                    .key_chain
                     .key_manager
                     .get_key_pair_for_too_insecure(&aggregated)?;
                 self.reply(from, OutgoingBitVMXApiMessages::KeyPair(id, pair.0, pair.1))?;
@@ -1484,8 +1488,8 @@ impl BitVMXApi for BitVMX {
                 if new {
                     let public = self
                         .program_context
-                        .key_chain
-                        .derive_keypair(BitcoinKeyType::P2tr)?;
+                        .key_manager
+                        .next_keypair(BitcoinKeyType::P2tr)?;
                     self.reply(from, OutgoingBitVMXApiMessages::PubKey(id, public))?;
                 } else {
                     // Get aggregated key from globals (set by AggregatedKeyProtocol)
@@ -1497,7 +1501,6 @@ impl BitVMXApi for BitVMX {
                         .ok_or(BitVMXError::ProgramNotFound(id))?;
                     let pubkey = self
                         .program_context
-                        .key_chain
                         .key_manager
                         .get_my_public_key(&aggregated)?;
                     self.reply(from, OutgoingBitVMXApiMessages::PubKey(id, pubkey))?;
@@ -1506,8 +1509,8 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::GetEvenPubKey(id) => {
                 let public = self
                     .program_context
-                    .key_chain
-                    .derive_keypair_adjust_parity(BitcoinKeyType::P2tr)?;
+                    .key_manager
+                    .next_keypair_adjusted(BitcoinKeyType::P2tr)?;
                 self.reply(from, OutgoingBitVMXApiMessages::PubKey(id, public))?;
             }
             IncomingBitVMXApiMessages::SignMessage(id, payload, public_key) => {
@@ -1518,7 +1521,6 @@ impl BitVMXApi for BitVMX {
                 // Sign the message with the provided public key
                 let recoverable_signature = self
                     .program_context
-                    .key_chain
                     .key_manager
                     .sign_ecdsa_recoverable_message(&message, &public_key)?;
 
@@ -1557,7 +1559,6 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::Encrypt(id, message, pub_key) => {
                 let encrypted = self
                     .program_context
-                    .key_chain
                     .key_manager
                     .encrypt_rsa_message(&message, &pub_key)?;
                 self.reply(from, OutgoingBitVMXApiMessages::Encrypted(id, encrypted))?;
@@ -1565,7 +1566,6 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::Decrypt(id, message, pub_key) => {
                 let decrypted = self
                     .program_context
-                    .key_chain
                     .key_manager
                     .decrypt_rsa_message(&message, &pub_key)?;
                 self.reply(from, OutgoingBitVMXApiMessages::Decrypted(id, decrypted))?;

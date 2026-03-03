@@ -63,8 +63,8 @@ impl ProtocolHandler for AggregatedKeyProtocol {
         } else {
             // Generate a single key for aggregation
             let key = program_context
-                .key_chain
-                .derive_keypair(key_manager::key_type::BitcoinKeyType::P2tr)?;
+                .key_manager
+                .next_keypair(key_manager::key_type::BitcoinKeyType::P2tr)?;
             key
         };
 

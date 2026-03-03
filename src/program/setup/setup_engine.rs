@@ -405,7 +405,8 @@ impl SetupEngine {
 
             // Prepare the message (serialize + sign)
             let (version, data_value, timestamp, signature) = prepare_message(
-                &context.key_chain,
+                &context.key_manager,
+                &context.rsa_public_key,
                 program_id,
                 CommsMessageType::SetupStepData,
                 data,
@@ -439,7 +440,8 @@ impl SetupEngine {
 
             request(
                 &context.comms,
-                &context.key_chain,
+                &context.key_manager,
+                &context.rsa_public_key,
                 program_id,
                 leader_address.clone(),
                 CommsMessageType::SetupStepData,
