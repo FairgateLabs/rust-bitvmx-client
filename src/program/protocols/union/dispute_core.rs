@@ -385,8 +385,8 @@ impl ProtocolHandler for DisputeCoreProtocol {
                 OP_COSIGN_KEY.to_string(),
                 PublicKeyType::Winternitz(
                     program_context
-                        .key_chain
-                        .derive_winternitz_hash160(COSIGN_SLOT_SIZE)?,
+                        .key_manager
+                        .next_winternitz(COSIGN_SLOT_SIZE, WinternitzType::HASH160)?,
                 ),
             ));
         }
@@ -398,8 +398,8 @@ impl ProtocolHandler for DisputeCoreProtocol {
                         indexed_name(WT_COSIGN_KEY, i),
                         PublicKeyType::Winternitz(
                             program_context
-                                .key_chain
-                                .derive_winternitz_hash160(COSIGN_SLOT_SIZE)?,
+                                .key_manager
+                                .next_winternitz(COSIGN_SLOT_SIZE, WinternitzType::HASH160)?,
                         ),
                     ));
                 }
@@ -1558,14 +1558,11 @@ impl DisputeCoreProtocol {
                 ))
             })?;
 
-        let wt_slot_id_signature = context
-            .key_chain
-            .key_manager
-            .sign_winternitz_message_by_index(
-                (slot_index as u32).to_be_bytes().as_slice(),
-                WinternitzType::HASH160,
-                key.derivation_index(),
-            )?;
+        let wt_slot_id_signature = context.key_manager.sign_winternitz_message_by_index(
+            (slot_index as u32).to_be_bytes().as_slice(),
+            WinternitzType::HASH160,
+            key.derivation_index(),
+        )?;
 
         // Create input arguments
         let mut input_args = InputArgs::new_taproot_script_args(slot_index);
@@ -2265,14 +2262,11 @@ impl DisputeCoreProtocol {
                 ))
             })?;
 
-        let op_slot_index_signature = context
-            .key_chain
-            .key_manager
-            .sign_winternitz_message_by_index(
-                (slot_index as u32).to_be_bytes().as_slice(),
-                WinternitzType::HASH160,
-                key.derivation_index(),
-            )?;
+        let op_slot_index_signature = context.key_manager.sign_winternitz_message_by_index(
+            (slot_index as u32).to_be_bytes().as_slice(),
+            WinternitzType::HASH160,
+            key.derivation_index(),
+        )?;
 
         // Create input arguments
         let mut input_args =
