@@ -15,7 +15,7 @@ use protocol_builder::{
     },
 };
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::{
@@ -1212,7 +1212,18 @@ impl FullPenalizationProtocol {
 
             let lazy_disabler_name =
                 triple_indexed_name(OP_LAZY_DISABLER_TX, wt_index, op_index, slot_index);
-            let (tx, speedup) = self.op_lazy_disabler_tx(&lazy_disabler_name, program_context)?;
+
+            // This signature could fail if WT already used winternitz to sign reimbursement kickoff transaction to init the challenge.
+            // In this case, we want to skip creation of lazy disabler but we don't want to fail the whole batch just because of that.
+            let result = self.op_lazy_disabler_tx(&lazy_disabler_name, program_context);
+            if let Err(e) = &result {
+                warn!(
+                    id = self.ctx.my_idx,
+                    "Failed to create lazy disabler {}: {}. Skipping it.", lazy_disabler_name, e
+                );
+                continue;
+            }
+            let (tx, speedup) = result?;
             txs.push((lazy_disabler_name, tx, speedup));
         }
 
