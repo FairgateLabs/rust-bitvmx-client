@@ -63,7 +63,7 @@ pub fn init_challenge_script(
     stack.equals(number, true, wt_value, true); // Compare expected slot id with WT signed value
     let validate_slot_id = stack.get_script();
 
-    let mut protocol_script = verify_winternitz_signatures_aux::<&str>(
+    let protocol_script = verify_winternitz_signatures_aux::<&str>(
         wt_dispute_key,
         &vec![
             (wt_key_name, wt_winternitz_pubkey),
@@ -72,13 +72,6 @@ pub fn init_challenge_script(
         sign_mode,
         true,
         Some(vec![validate_slot_id]),
-    )?;
-
-    protocol_script.add_key(
-        slot_id_key_name,
-        slot_id_pubkey.derivation_index()?,
-        KeyType::winternitz(slot_id_pubkey)?,
-        0,
     )?;
 
     Ok(protocol_script)

@@ -76,7 +76,8 @@ const REVEAL_INPUT_TX_REVEAL_INDEX: usize = 0;
 const REVEAL_INPUT_TX_REVEAL_LEAF: usize = 0;
 const REVEAL_INPUT_TX_COMMITTEE_LEAF: usize = 1;
 
-// const WT_INIT_CHALLENGE_TX_COSIGN_LEAF: usize = 0;
+const WT_INIT_CHALLENGE_COSIGN_INDEX: usize = 0;
+const WT_INIT_CHALLENGE_TX_COSIGN_LEAF: usize = 0;
 const WT_INIT_CHALLENGE_TX_TIMELOCK_LEAF: usize = 1;
 pub const WT_INIT_CHALLENGE_TX_COSIGN_DISABLER_LEAF: usize = 2;
 
@@ -84,6 +85,7 @@ const WT_INIT_CHALLENGE_COSIGN_VOUT: u32 = 0;
 const WT_INIT_CHALLENGE_WT_STOPPER_VOUT: u32 = 3;
 const WT_INIT_CHALLENGE_OP_STOPPER_VOUT: u32 = 5;
 
+const OP_COSIGN_INIT_CHALLENGE_INDEX: usize = 0;
 const OP_COSIGN_TX_TIMELOCK_LEAF: usize = 0;
 
 const COSIGN_SLOT_SIZE: usize = 4;
@@ -798,7 +800,7 @@ impl DisputeCoreProtocol {
                 let op_cosign_key = keys[member_index].get_winternitz(OP_COSIGN_KEY)?;
                 let cosign_script = scripts::cosign_script(
                     op_dispute_key,
-                    self.get_sign_mode(data.member_index),
+                    self.get_sign_mode(member_index),
                     WT_COSIGN_KEY,
                     wt_cosign_key,
                     OP_COSIGN_KEY,
@@ -2139,6 +2141,33 @@ impl DisputeCoreProtocol {
             }
 
             if op_index == self.ctx.my_idx {
+                let protocol = self.load_protocol()?;
+
+                let leaf = self.decode_witness_for_tx(
+                    tx_name,
+                    WT_INIT_CHALLENGE_COSIGN_INDEX as u32,
+                    context,
+                    &tx_status.tx,
+                    Some(slot_index),
+                    Some(protocol),
+                    None,
+                )?;
+                info!(
+                    id = self.ctx.my_idx,
+                    "Decoded witness for {}: {:?}", tx_name, leaf
+                );
+
+                let key_name = WT_COSIGN_KEY;
+                let witness = context
+                    .witness
+                    .get_witness(&self.ctx.id, key_name)?
+                    .unwrap();
+
+                // Save witness
+                context
+                    .witness
+                    .set_witness(&self.ctx.id, key_name, witness)?;
+
                 self.dispatch(
                     context,
                     DisputeCoreTxType::OperatorCosign {
@@ -2197,20 +2226,55 @@ impl DisputeCoreProtocol {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", name);
 
+        let protocol = self.load_protocol()?;
         let mut protocol = self.load_protocol()?;
+        let input_index = OP_COSIGN_INIT_CHALLENGE_INDEX;
 
-        let args = collect_input_signatures(
-            &mut protocol,
-            name,
-            &vec![InputSigningInfo::SignTaproot {
-                input_index: 0,
-                script_index: None,
-                key_manager: context.key_manager.as_ref(),
-                id: "".to_string(),
-            }],
-        )?;
+        // Prepare signatures
+        let op_dispute_key_signature = protocol
+            .input_taproot_script_spend_signature(
+                name,
+                input_index,
+                WT_INIT_CHALLENGE_TX_COSIGN_LEAF,
+            )?
+            .unwrap();
 
-        let tx = protocol.transaction_to_send(&name, &args)?;
+        let script = protocol.get_script_to_spend(name, input_index as u32, slot_index as u32)?;
+        let op_key_name = OP_COSIGN_KEY.to_string();
+
+        let key = script.get_key(&op_key_name).ok_or_else(|| {
+                BitVMXError::InvalidParameter(format!(
+                    "Winternitz key '{}' not found in script. Tx name: {}. Input index: {}. Script index: {}",
+                    op_key_name, name, input_index, slot_index
+                ))
+            })?;
+
+        let op_slot_index_signature = context
+            .key_chain
+            .key_manager
+            .sign_winternitz_message_by_index(
+                (slot_index as u32).to_be_bytes().as_slice(),
+                WinternitzType::HASH160,
+                key.derivation_index(),
+            )?;
+
+        // Create input arguments
+        let mut input_args =
+            InputArgs::new_taproot_script_args(WT_INIT_CHALLENGE_TX_COSIGN_LEAF as usize);
+
+        // Get WT slot index signature
+        let key_name = WT_COSIGN_KEY.to_string();
+        let witness = context
+            .witness
+            .get_witness(&self.ctx.id, &key_name)?
+            .unwrap();
+        let wt_slot_index_signature = witness.winternitz()?;
+
+        input_args.push_winternitz_signature(wt_slot_index_signature);
+        input_args.push_winternitz_signature(op_slot_index_signature);
+        input_args.push_taproot_signature(op_dispute_key_signature)?;
+
+        let tx = protocol.transaction_to_send(&name, &[input_args])?;
         info!(id = self.ctx.my_idx, "Signed {}", name);
 
         Ok((tx, None))
