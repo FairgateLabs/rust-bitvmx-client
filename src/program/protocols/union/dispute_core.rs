@@ -34,6 +34,7 @@ use crate::{
 };
 use bitcoin::{Amount, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
+use bitcoin_scriptexec::scriptint_vec;
 use core::result::Result::Ok;
 use key_manager::key_type::BitcoinKeyType;
 use key_manager::winternitz::{WinternitzPublicKey, WinternitzType};
@@ -763,7 +764,7 @@ impl DisputeCoreProtocol {
                     let slot_id_key = keys[member_index].get_winternitz(&key_name)?;
 
                     // Validate OP signature and WT slot_id Winternitz signature
-                    scripts.push(scripts::init_challenge_script(
+                    let mut s = scripts::init_challenge_script(
                         wt_dispute_key,
                         self.get_sign_mode(data.member_index),
                         SLOT_ID_KEY,
@@ -771,7 +772,10 @@ impl DisputeCoreProtocol {
                         slot as u32,
                         WT_COSIGN_KEY,
                         &wt_cosign_key,
-                    )?);
+                    )?;
+                    // Validate slot id in the script. It's used to extract the leaf index when detected a transaction spending the WT_START_ENABLER_TX output, to know which slot is being challenged.
+                    s.set_assert_leaf_id(slot as u32);
+                    scripts.push(s);
                 }
 
                 let init_challenge_name =
@@ -1529,8 +1533,14 @@ impl DisputeCoreProtocol {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", name);
 
+        let (_, op_index) = extract_double_index(name)?;
+
         let protocol = self.load_protocol()?;
-        let slot_index = self.get_number(context, &self.ctx.id, INIT_CHALLENGE_SLOT)? as usize;
+        let slot_index = self.get_number(
+            context,
+            &self.ctx.id,
+            &indexed_name(INIT_CHALLENGE_SLOT, op_index),
+        )? as usize;
         let input_index = 0;
 
         // Prepare signatures
@@ -1561,7 +1571,7 @@ impl DisputeCoreProtocol {
         let mut input_args = InputArgs::new_taproot_script_args(slot_index);
 
         // Get OP slot key signature
-        let key_name = SLOT_ID_KEY.to_string();
+        let key_name = indexed_name(SLOT_ID_KEY, op_index);
         let witness = context
             .witness
             .get_witness(&self.ctx.id, &key_name)?
@@ -1571,6 +1581,7 @@ impl DisputeCoreProtocol {
         input_args.push_winternitz_signature(op_slot_key_signature);
         input_args.push_winternitz_signature(wt_slot_id_signature);
         input_args.push_taproot_signature(wt_dispute_key_signature)?;
+        input_args.push_slice(scriptint_vec(slot_index as i64).as_slice());
 
         let tx = protocol.transaction_to_send(&name, &[input_args])?;
         info!(id = self.ctx.my_idx, "Signed {} tx", name);
@@ -2141,14 +2152,15 @@ impl DisputeCoreProtocol {
             }
 
             if op_index == self.ctx.my_idx {
+                // OP should save WT cosign data from the witness, and then dispatch OP_COSIGN tx
                 let protocol = self.load_protocol()?;
 
-                let leaf = self.decode_witness_for_tx(
+                let leaf: (Vec<String>, u32) = self.decode_witness_for_tx(
                     tx_name,
                     WT_INIT_CHALLENGE_COSIGN_INDEX as u32,
                     context,
                     &tx_status.tx,
-                    Some(slot_index),
+                    None,
                     Some(protocol),
                     None,
                 )?;
@@ -2156,6 +2168,9 @@ impl DisputeCoreProtocol {
                     id = self.ctx.my_idx,
                     "Decoded witness for {}: {:?}", tx_name, leaf
                 );
+                // It's OK to save the leaf data directly (without indexing it) because this OP could be challenged by this WT just once.
+                // This protocol should not handle WT_INIT_CHALLENGE TXs from others OPs.
+                self.set_number(context, &self.ctx.id, INIT_CHALLENGE_SLOT, leaf.1)?;
 
                 let key_name = WT_COSIGN_KEY;
                 let witness = context
@@ -2225,10 +2240,11 @@ impl DisputeCoreProtocol {
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", name);
-
         let protocol = self.load_protocol()?;
-        let mut protocol = self.load_protocol()?;
         let input_index = OP_COSIGN_INIT_CHALLENGE_INDEX;
+
+        // This value is saved in handle_wt_init_challenge when OP receives WT_INIT_CHALLENGE tx
+        let slot_index = self.get_number(context, &self.ctx.id, INIT_CHALLENGE_SLOT)? as usize;
 
         // Prepare signatures
         let op_dispute_key_signature = protocol
@@ -2293,6 +2309,7 @@ impl DisputeCoreProtocol {
         );
 
         if self.is_my_dispute_core(context)? {
+            // Operator won scenario, schedule OPERATOR_WON_TX
             info!(
                 id = self.ctx.my_idx,
                 "This is my dispute_core, scheduling OPERATOR_WON_TX for slot {}", slot_index
@@ -2315,6 +2332,7 @@ impl DisputeCoreProtocol {
 
         let data = self.dispute_core_data(context)?;
 
+        // WT: Dispatch disabler if operator is already penalized.
         match load_penalized_member(
             context,
             data.committee_id,
@@ -2342,6 +2360,7 @@ impl DisputeCoreProtocol {
             None => {}
         }
 
+        // WT: save data and dispatch WT_INIT_CHALLENGE_TX
         let committee = self.committee(context)?;
         let wt_dispute_core_id = get_dispute_core_pid(
             data.committee_id,
@@ -2349,21 +2368,15 @@ impl DisputeCoreProtocol {
         );
 
         // Save data to sign init challenge in wt own dispute core
+        // Save SLOT index indexed by OPERATOR_INDEX, so we can have multiple challenges in parallel if needed.
         self.set_number(
             context,
             &wt_dispute_core_id,
-            INIT_CHALLENGE_SLOT,
+            &indexed_name(INIT_CHALLENGE_SLOT, data.member_index),
             slot_index as u32,
         )?;
 
         let protocol = self.load_protocol()?;
-
-        let script = protocol.get_script_to_spend(
-            tx_name,
-            REVEAL_INPUT_TX_REVEAL_INDEX as u32,
-            REVEAL_INPUT_TX_REVEAL_LEAF as u32,
-        )?;
-
         self.decode_witness_for_tx(
             tx_name,
             REVEAL_INPUT_TX_REVEAL_INDEX as u32,
@@ -2371,7 +2384,7 @@ impl DisputeCoreProtocol {
             &tx_status.tx,
             Some(REVEAL_INPUT_TX_REVEAL_LEAF as u32),
             Some(protocol),
-            Some(vec![script]),
+            None,
         )?;
 
         let key_name = SLOT_ID_KEY;
@@ -2380,10 +2393,12 @@ impl DisputeCoreProtocol {
             .get_witness(&self.ctx.id, key_name)?
             .unwrap();
 
-        // Save witness in WT dispute core
-        context
-            .witness
-            .set_witness(&wt_dispute_core_id, key_name, witness)?;
+        // Save witness in WT dispute core, indexed by operator index, so we can have multiple challenges in parallel if needed.
+        context.witness.set_witness(
+            &wt_dispute_core_id,
+            &indexed_name(key_name, data.member_index),
+            witness,
+        )?;
 
         // Load wt dispute core and dispatch init challenge tx
         let protocol = self.load_protocol_by_name(PROGRAM_TYPE_DISPUTE_CORE, wt_dispute_core_id)?;
