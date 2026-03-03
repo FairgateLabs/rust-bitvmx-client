@@ -2695,36 +2695,11 @@ impl DisputeCoreProtocol {
             id = self.ctx.my_idx,
             "Dispatch {} from protocol {}", tx_name, self.ctx.id
         );
+        let mut program_id = self.ctx.id;
 
         let (tx, speedup) = match tx_type {
             DisputeCoreTxType::WtStartEnabler => self.wt_start_enabler_tx(context)?,
             DisputeCoreTxType::ProtocolFunding => self.protocol_funding_tx(context)?,
-            DisputeCoreTxType::OperatorDisablerDirectory { .. } => {
-                let dispute_core_data: DisputeCoreData = self.dispute_core_data(context)?;
-                let protocol = self.load_protocol_by_name(
-                    PROGRAM_TYPE_FULL_PENALIZATION,
-                    get_full_penalization_pid(dispute_core_data.committee_id),
-                )?;
-                protocol.get_transaction_by_name(&tx_name, context)?
-            }
-            DisputeCoreTxType::WatchtowerDisablerDirectory { .. } => {
-                let dispute_core_data: DisputeCoreData = self.dispute_core_data(context)?;
-                let protocol = self.load_protocol_by_name(
-                    PROGRAM_TYPE_FULL_PENALIZATION,
-                    get_full_penalization_pid(dispute_core_data.committee_id),
-                )?;
-                protocol.get_transaction_by_name(&tx_name, context)?
-            }
-            DisputeCoreTxType::OperatorTake { slot_index, .. }
-            | DisputeCoreTxType::OperatorWon { slot_index, .. } => {
-                let dispute_core_data: DisputeCoreData = self.dispute_core_data(context)?;
-                let accept_pegin_pid =
-                    get_accept_pegin_pid(dispute_core_data.committee_id, slot_index);
-                let protocol =
-                    self.load_protocol_by_name(PROGRAM_TYPE_ACCEPT_PEGIN, accept_pegin_pid)?;
-
-                protocol.get_transaction_by_name(&tx_name, context)?
-            }
             DisputeCoreTxType::Challenge { .. } => self.challenge_tx(&tx_name.clone(), context)?,
             DisputeCoreTxType::WatchtowerNoChallenge { .. } => self.wt_no_challenge_tx(&tx_name)?,
             DisputeCoreTxType::OperatorNoCosign { .. } => self.op_no_cosign_tx(&tx_name)?,
@@ -2747,12 +2722,21 @@ impl DisputeCoreProtocol {
             DisputeCoreTxType::PenalizationStopOperatorWon { .. }
             | DisputeCoreTxType::PenalizationOperatorLazyDisabler { .. }
             | DisputeCoreTxType::PenalizationWatchtowerDisabler { .. }
+            | DisputeCoreTxType::OperatorDisablerDirectory { .. }
+            | DisputeCoreTxType::WatchtowerDisablerDirectory { .. }
             | DisputeCoreTxType::PenalizationWatchtowerCosignDisabler { .. } => {
                 let dispute_core_data: DisputeCoreData = self.dispute_core_data(context)?;
-                let protocol = self.load_protocol_by_name(
-                    PROGRAM_TYPE_FULL_PENALIZATION,
-                    get_full_penalization_pid(dispute_core_data.committee_id),
-                )?;
+                let pid = get_full_penalization_pid(dispute_core_data.committee_id);
+                let protocol = self.load_protocol_by_name(PROGRAM_TYPE_FULL_PENALIZATION, pid)?;
+                program_id = pid; // Update program_id so it notify the correct program when TX is mined
+                protocol.get_transaction_by_name(&tx_name, context)?
+            }
+            DisputeCoreTxType::OperatorTake { slot_index, .. }
+            | DisputeCoreTxType::OperatorWon { slot_index, .. } => {
+                let dispute_core_data: DisputeCoreData = self.dispute_core_data(context)?;
+                let pid = get_accept_pegin_pid(dispute_core_data.committee_id, slot_index);
+                let protocol = self.load_protocol_by_name(PROGRAM_TYPE_ACCEPT_PEGIN, pid)?;
+                program_id = pid; // Update program_id so it notify the correct program when TX is mined
                 protocol.get_transaction_by_name(&tx_name, context)?
             }
         };
@@ -2763,7 +2747,7 @@ impl DisputeCoreProtocol {
         context.bitcoin_coordinator.dispatch(
             tx,
             speedup,
-            Context::ProgramId(self.ctx.id).to_string()?,
+            Context::ProgramId(program_id).to_string()?,
             tx_type.block_height(),
             self.requested_confirmations(context),
         )?;
