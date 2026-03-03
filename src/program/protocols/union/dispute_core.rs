@@ -64,6 +64,8 @@ const SLOT_ID_KEY: &str = "SLOT_ID_KEY";
 const SLOT_ID_KEYS: &str = "SLOT_ID_KEYS";
 const MEMBERS_SLOT_ID_KEYS: &str = "MEMBERS_SLOT_ID_KEYS";
 const INIT_CHALLENGE_SLOT: &str = "INIT_CHALLENGE_SLOT";
+const OP_COSIGN_KEY: &str = "OP_COSIGN_KEY";
+const WT_COSIGN_KEY: &str = "WT_COSIGN_KEY";
 
 const CLAIM_GATE_FEE: u64 = 335; // TODO: Validate this value
 
@@ -83,6 +85,8 @@ const WT_INIT_CHALLENGE_WT_STOPPER_VOUT: u32 = 3;
 const WT_INIT_CHALLENGE_OP_STOPPER_VOUT: u32 = 5;
 
 const OP_COSIGN_TX_TIMELOCK_LEAF: usize = 0;
+
+const COSIGN_SLOT_SIZE: usize = 4;
 
 enum DisputeCoreTxType {
     WtStartEnabler,
@@ -371,6 +375,32 @@ impl ProtocolHandler for DisputeCoreProtocol {
                         .next_winternitz(1, WinternitzType::HASH160)?,
                 ),
             ));
+        }
+
+        if prover {
+            keys.push((
+                OP_COSIGN_KEY.to_string(),
+                PublicKeyType::Winternitz(
+                    program_context
+                        .key_chain
+                        .derive_winternitz_hash160(COSIGN_SLOT_SIZE)?,
+                ),
+            ));
+        }
+
+        if data.member_index == self.ctx.my_idx {
+            for (i, member) in committee.members.iter().enumerate() {
+                if member.role == ParticipantRole::Prover {
+                    keys.push((
+                        indexed_name(WT_COSIGN_KEY, i),
+                        PublicKeyType::Winternitz(
+                            program_context
+                                .key_chain
+                                .derive_winternitz_hash160(COSIGN_SLOT_SIZE)?,
+                        ),
+                    ));
+                }
+            }
         }
 
         Ok(ParticipantKeys::new(keys, vec![]))
@@ -723,15 +753,22 @@ impl DisputeCoreProtocol {
             let op_dispute_key = &committee.members[member_index].dispute_key;
 
             if member.role == ParticipantRole::Prover && data.member_index != member_index {
+                let wt_cosign_key = keys[data.member_index]
+                    .get_winternitz(&indexed_name(WT_COSIGN_KEY, member_index))?;
+
                 for slot in 0..committee.packet_size as usize {
                     let key_name = indexed_name(SLOT_ID_KEY, slot);
                     let slot_id_key = keys[member_index].get_winternitz(&key_name)?;
 
-                    scripts.push(scripts::verify_winternitz(
-                        &wt_dispute_key,
+                    // Validate OP signature and WT slot_id Winternitz signature
+                    scripts.push(scripts::init_challenge_script(
+                        wt_dispute_key,
                         self.get_sign_mode(data.member_index),
-                        &key_name,
-                        slot_id_key,
+                        SLOT_ID_KEY,
+                        &slot_id_key,
+                        slot as u32,
+                        WT_COSIGN_KEY,
+                        &wt_cosign_key,
                     )?);
                 }
             }
@@ -1484,24 +1521,46 @@ impl DisputeCoreProtocol {
 
         let protocol = self.load_protocol()?;
         let slot_index = self.get_number(context, &self.ctx.id, INIT_CHALLENGE_SLOT)? as usize;
+        let input_index = 0;
 
         // Prepare signatures
-        let slot_signature = protocol
-            .input_taproot_script_spend_signature(name, 0, slot_index)?
+        let wt_dispute_key_signature = protocol
+            .input_taproot_script_spend_signature(name, input_index, slot_index)?
             .unwrap();
+
+        let script = protocol.get_script_to_spend(name, input_index as u32, slot_index as u32)?;
+        let wt_key_name = WT_COSIGN_KEY.to_string();
+
+        let key = script.get_key(&wt_key_name).ok_or_else(|| {
+                BitVMXError::InvalidParameter(format!(
+                    "Winternitz key '{}' not found in script. Tx name: {}. Input index: {}. Script index: {}",
+                    wt_key_name, name, input_index, slot_index
+                ))
+            })?;
+
+        let wt_slot_id_signature = context
+            .key_chain
+            .key_manager
+            .sign_winternitz_message_by_index(
+                (slot_index as u32).to_be_bytes().as_slice(),
+                WinternitzType::HASH160,
+                key.derivation_index(),
+            )?;
 
         // Create input arguments
         let mut input_args = InputArgs::new_taproot_script_args(slot_index);
-        let key_name = "value";
 
-        // TODO: should we support this in collect_input_signatures?
+        // Get OP slot key signature
+        let key_name = SLOT_ID_KEY.to_string();
         let witness = context
             .witness
             .get_witness(&self.ctx.id, &key_name)?
             .unwrap();
-        let winternitz_signature = witness.winternitz()?;
-        input_args.push_winternitz_signature(winternitz_signature);
-        input_args.push_taproot_signature(slot_signature)?;
+        let op_slot_key_signature = witness.winternitz()?;
+
+        input_args.push_winternitz_signature(op_slot_key_signature);
+        input_args.push_winternitz_signature(wt_slot_id_signature);
+        input_args.push_taproot_signature(wt_dispute_key_signature)?;
 
         let tx = protocol.transaction_to_send(&name, &[input_args])?;
         info!(id = self.ctx.my_idx, "Signed {} tx", name);
@@ -2243,7 +2302,7 @@ impl DisputeCoreProtocol {
             Some(vec![script]),
         )?;
 
-        let key_name = "value";
+        let key_name = SLOT_ID_KEY;
         let witness = context
             .witness
             .get_witness(&self.ctx.id, key_name)?
@@ -2327,7 +2386,7 @@ impl DisputeCoreProtocol {
                 script_index: REVEAL_INPUT_TX_REVEAL_LEAF,
                 winternitz_data: Some(WinternitzData {
                     data: (slot_index as u16).to_le_bytes().to_vec(),
-                    key_name: "value".to_string(),
+                    key_name: SLOT_ID_KEY.to_string(),
                     key_type: WinternitzType::HASH160,
                     key_manager: context.key_manager.as_ref(),
                 }),

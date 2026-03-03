@@ -267,7 +267,7 @@ impl Member {
             addresses,
         )?;
 
-        let sleep_time = 30 * total_setups as u64;
+        let sleep_time = 60 * total_setups as u64;
         info!(
             id = self.id,
             "Waiting {} seconds for dispute channel setups to complete...", sleep_time
