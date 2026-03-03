@@ -1202,10 +1202,14 @@ impl DisputeCoreProtocol {
             None,
         )?;
 
-        let reveal_script = protocol_builder::scripts::verify_winternitz_signature(
+        let slot_id_key =
+            operator_keys.get_winternitz(&indexed_name(SLOT_ID_KEY, dispute_core_index))?;
+        let reveal_script = protocol_builder::scripts::verify_winternitz_signatures_aux(
             &operator_dispute_key,
-            operator_keys.get_winternitz(&indexed_name(SLOT_ID_KEY, dispute_core_index))?,
+            &vec![(SLOT_ID_KEY, slot_id_key)],
             self.get_sign_mode(dispute_core_data.member_index),
+            false,
+            None,
         )?;
 
         let not_reveal_script = protocol_builder::scripts::timelock(
