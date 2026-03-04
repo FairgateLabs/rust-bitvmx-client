@@ -24,7 +24,7 @@ use emulator::{
     constants::REGISTERS_BASE_ADDRESS, decision::nary_search::NArySearchType,
     loader::program_definition::ProgramDefinition,
 };
-use key_manager::key_type::BitcoinKeyType;
+use key_manager::{key_type::BitcoinKeyType, winternitz::WinternitzType};
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
     graph::graph::GraphOptions,
@@ -328,12 +328,12 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         init_trace_vars(nary_def.total_rounds())?;
 
         let aggregated_1 = program_context
-            .key_chain
-            .derive_keypair(BitcoinKeyType::P2tr)?;
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)?;
 
         let speedup = program_context
-            .key_chain
-            .derive_keypair(BitcoinKeyType::P2tr)?;
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)?;
 
         program_context
             .globals
@@ -347,24 +347,32 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         for required_input in
             get_required_keys(&self.ctx.id, &program_def, program_context, &self.role())?
         {
-            let key = program_context.key_chain.derive_winternitz_hash160(4)?;
+            let key = program_context
+                .key_manager
+                .next_winternitz(4, WinternitzType::HASH160)?;
             keys.push((required_input, key.into()));
         }
 
         if self.role() == ParticipantRole::Prover {
-            set_inputs(&self.ctx.id, &program_context, vec![
-                ("prover_continue", 0u8).into(),
-                ("prover_continue2", 0u8).into(),
-            ])?;
+            set_inputs(
+                &self.ctx.id,
+                &program_context,
+                vec![
+                    ("prover_continue", 0u8).into(),
+                    ("prover_continue2", 0u8).into(),
+                ],
+            )?;
         }
 
-        let key_chain = &mut program_context.key_chain;
-
         if self.role() == ParticipantRole::Prover {
-            let last_step = key_chain.derive_winternitz_hash160(8)?;
+            let last_step = program_context
+                .key_manager
+                .next_winternitz(8, WinternitzType::HASH160)?;
             keys.push(("prover_last_step".to_string(), last_step.into()));
 
-            let last_hash = key_chain.derive_winternitz_hash160(20)?;
+            let last_hash = program_context
+                .key_manager
+                .next_winternitz(20, WinternitzType::HASH160)?;
             keys.push(("prover_last_hash".to_string(), last_hash.into()));
 
             let trace = TRACE_VARS
@@ -381,13 +389,17 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 .read()?;
             for (name, size) in trace.iter() {
                 if name.starts_with("prover") {
-                    let key = key_chain.derive_winternitz_hash160(*size)?;
+                    let key = program_context
+                        .key_manager
+                        .next_winternitz(*size, WinternitzType::HASH160)?;
                     keys.push((name.to_string(), key.into()));
                 }
             }
             for (name, size) in tk.iter() {
                 if name.starts_with("prover") {
-                    let key = key_chain.derive_winternitz_hash160(*size)?;
+                    let key = program_context
+                        .key_manager
+                        .next_winternitz(*size, WinternitzType::HASH160)?;
                     keys.push((name.to_string(), key.into()));
                 }
             }
@@ -396,13 +408,18 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         if self.role() == ParticipantRole::Verifier {
             keys.push((
                 "verifier_last_step_tk".to_string(),
-                key_chain.derive_winternitz_hash160(8)?.into(),
+                program_context
+                    .key_manager
+                    .next_winternitz(8, WinternitzType::HASH160)?
+                    .into(),
             ));
 
             let ver_keys = get_verifier_keys()
                 .iter()
                 .map(|(name, size)| {
-                    let key = key_chain.derive_winternitz_hash160(*size)?;
+                    let key = program_context
+                        .key_manager
+                        .next_winternitz(*size, WinternitzType::HASH160)?;
                     Ok::<_, BitVMXError>((name.to_string(), PublicKeyType::Winternitz(key)))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -416,16 +433,24 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             if self.role() == ParticipantRole::Prover {
                 let hashes = nary_def.hashes_for_round(i);
                 for h in 1..hashes + 1 {
-                    let key = key_chain.derive_winternitz_hash160(20)?;
-                    let key2 = key_chain.derive_winternitz_hash160(20)?;
+                    let key = program_context
+                        .key_manager
+                        .next_winternitz(20, WinternitzType::HASH160)?;
+                    let key2 = program_context
+                        .key_manager
+                        .next_winternitz(20, WinternitzType::HASH160)?;
                     keys.push((format!("prover_hash_{}_{}", i, h), key.into()));
                     keys.push((format!("prover_hash2_{}_{}", i, h), key2.into()));
                     // for the second n-ary search
                 }
             } else {
                 let _bits = nary_def.bits_for_round(i);
-                let key = key_chain.derive_winternitz_hash160(1)?;
-                let key2 = key_chain.derive_winternitz_hash160(1)?;
+                let key = program_context
+                    .key_manager
+                    .next_winternitz(1, WinternitzType::HASH160)?;
+                let key2 = program_context
+                    .key_manager
+                    .next_winternitz(1, WinternitzType::HASH160)?;
                 keys.push((format!("verifier_selection_bits_{}", i), key.into()));
                 keys.push((format!("verifier_selection_bits2_{}", i), key2.into()));
                 // for the second n-ary search
@@ -467,7 +492,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         tx_status: TransactionStatus,
         _context: String,
         program_context: &ProgramContext,
-        _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         tx_news::handle_tx_news(&self, tx_id, vout, tx_status, program_context)
     }
@@ -1043,7 +1067,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         )?;
 
         claim_verifier.add_claimer_win_connection(&mut protocol, VERIFIER_FINAL)?;
-        protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
+        protocol.build(&context.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
         self.save_protocol(protocol)?;
         Ok(())

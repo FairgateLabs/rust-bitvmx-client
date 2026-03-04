@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{rc::Rc, str::FromStr};
 
 use crate::{config::ComponentsConfig, spv_proof::BtcTxSPVProof};
 use bitcoin::{address::NetworkUnchecked, Address, PrivateKey, PublicKey, Transaction, Txid};
@@ -12,7 +12,7 @@ use bitvmx_broker::{
     identification::identifier::Identifier,
 };
 use bitvmx_wallet::wallet::Destination;
-use chrono::{DateTime, Utc};
+use key_manager::key_manager::KeyManager;
 use protocol_builder::types::Utxo;
 use redact::Secret;
 use serde::{Deserialize, Serialize};
@@ -20,7 +20,6 @@ use uuid::Uuid;
 
 use crate::{
     errors::BitVMXError,
-    keychain::KeyChain,
     leader_broadcast::LeaderBroadcastHelper,
     program::{
         participant::CommsAddress,
@@ -29,7 +28,8 @@ use crate::{
 };
 
 pub struct ProgramContext {
-    pub key_chain: KeyChain,
+    pub key_manager: Rc<KeyManager>,
+    pub rsa_public_key: String, //TODO: this should not be here
     pub comms: QueueChannel,
     pub bitcoin_coordinator: BitcoinCoordinator,
     pub broker_channel: LocalChannel<BrokerStorage>,
@@ -42,7 +42,8 @@ pub struct ProgramContext {
 impl ProgramContext {
     pub fn new(
         comms: QueueChannel,
-        key_chain: KeyChain,
+        key_manager: Rc<KeyManager>,
+        rsa_public_key: String,
         bitcoin_coordinator: BitcoinCoordinator,
         broker_channel: LocalChannel<BrokerStorage>,
         globals: Globals,
@@ -52,7 +53,8 @@ impl ProgramContext {
     ) -> Self {
         Self {
             comms,
-            key_chain,
+            key_manager,
+            rsa_public_key,
             bitcoin_coordinator,
             broker_channel,
             globals,
@@ -71,30 +73,6 @@ pub struct ProgramStatus {
 impl ProgramStatus {
     pub fn new(program_id: Uuid) -> Self {
         Self { program_id }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ProgramRequestInfo {
-    pub retries: u32,
-    pub last_request_time: DateTime<Utc>,
-}
-
-impl ProgramRequestInfo {
-    pub fn new() -> Self {
-        Self {
-            retries: 0,
-            last_request_time: Utc::now(),
-        }
-    }
-}
-
-impl Default for ProgramRequestInfo {
-    fn default() -> Self {
-        Self {
-            retries: 0,
-            last_request_time: Utc::now(),
-        }
     }
 }
 
@@ -121,6 +99,7 @@ pub enum IncomingBitVMXApiMessages {
     GetAggregatedPubkey(Uuid),
     GetKeyPair(Uuid),
     GetPubKey(Uuid, bool),
+    GetEvenPubKey(Uuid),
     SignMessage(Uuid, Vec<u8>, PublicKey), // id, payload_to_sign, public_key_to_use
     GenerateZKP(Uuid, Vec<u8>, String),
     ProofReady(Uuid),
@@ -374,6 +353,7 @@ pub struct ParticipantChannel {
     pub channel: DualChannel,
 }
 
+pub const PROGRAM_TYPE_AGGREGATED_KEY: &str = "aggregated_key";
 pub const PROGRAM_TYPE_LOCK: &str = "lock";
 pub const PROGRAM_TYPE_DRP: &str = "drp";
 pub const PROGRAM_TYPE_SLOT: &str = "slot";

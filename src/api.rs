@@ -8,7 +8,6 @@ pub trait BitVMXApi {
 
     fn setup_key(
         &mut self,
-        from: Identifier,
         id: Uuid,
         participants: Vec<CommsAddress>,
         participants_keys: Option<Vec<PublicKey>>,

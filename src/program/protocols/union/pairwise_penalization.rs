@@ -67,7 +67,6 @@ impl ProtocolHandler for PairwisePenalizationProtocol {
         _tx_status: TransactionStatus,
         _context: String,
         _program_context: &ProgramContext,
-        _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         todo!()
     }

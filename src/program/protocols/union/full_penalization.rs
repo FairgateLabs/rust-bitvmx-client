@@ -116,7 +116,7 @@ impl ProtocolHandler for FullPenalizationProtocol {
 
         self.create_watchtower_disablers(&mut protocol, &committee, &data, context)?;
 
-        protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
+        protocol.build(&context.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
         self.save_protocol(protocol)?;
         Ok(())
@@ -151,7 +151,6 @@ impl ProtocolHandler for FullPenalizationProtocol {
         tx_status: TransactionStatus,
         _context: String,
         program_context: &ProgramContext,
-        _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
         info!(
@@ -605,7 +604,7 @@ impl FullPenalizationProtocol {
                         data: vec![1u8],
                         key_type: WinternitzType::HASH160,
                         key_name: CHALLENGE_KEY.to_string(),
-                        key_manager: &context.key_chain.key_manager,
+                        key_manager: &context.key_manager,
                     }),
                 },
                 InputSigningInfo::KeySpend { input_index: 1 },

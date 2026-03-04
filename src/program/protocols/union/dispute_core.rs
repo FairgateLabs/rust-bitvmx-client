@@ -289,8 +289,8 @@ impl ProtocolHandler for DisputeCoreProtocol {
         let mut keys = vec![];
 
         let speedup_key = program_context
-            .key_chain
-            .derive_keypair(BitcoinKeyType::P2tr)?;
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)?;
 
         keys.push((
             SPEEDUP_KEY.to_string(),
@@ -317,7 +317,9 @@ impl ProtocolHandler for DisputeCoreProtocol {
             if slot_id_keys.is_empty() {
                 for _ in 0..packet_size as usize {
                     slot_id_keys.push(PublicKeyType::Winternitz(
-                        program_context.key_chain.derive_winternitz_hash160(2)?, // Sign 2 bytes of u16 slot id.
+                        program_context
+                            .key_manager
+                            .next_winternitz(2, WinternitzType::HASH160)?, // Sign 2 bytes of u16 slot id.
                     ));
                 }
 
@@ -340,14 +342,18 @@ impl ProtocolHandler for DisputeCoreProtocol {
                 keys.push((
                     indexed_name(PEGOUT_ID_KEY, i).to_string(),
                     PublicKeyType::Winternitz(
-                        program_context.key_chain.derive_winternitz_hash160(32)?,
+                        program_context
+                            .key_manager
+                            .next_winternitz(32, WinternitzType::HASH160)?,
                     ),
                 ));
 
                 keys.push((
                     indexed_name(SECRET_KEY, i).to_string(),
                     PublicKeyType::Winternitz(
-                        program_context.key_chain.derive_winternitz_hash160(1)?,
+                        program_context
+                            .key_manager
+                            .next_winternitz(1, WinternitzType::HASH160)?,
                     ),
                 ));
 
@@ -359,7 +365,11 @@ impl ProtocolHandler for DisputeCoreProtocol {
 
             keys.push((
                 indexed_name(CHALLENGE_KEY, i),
-                PublicKeyType::Winternitz(program_context.key_chain.derive_winternitz_hash160(1)?),
+                PublicKeyType::Winternitz(
+                    program_context
+                        .key_manager
+                        .next_winternitz(1, WinternitzType::HASH160)?,
+                ),
             ));
         }
 
@@ -455,7 +465,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
         protocol.compute_minimum_output_values()?;
         self.add_funding_change(&mut protocol, &member.dispute_key, &dispute_core_data)?;
 
-        protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
+        protocol.build(&context.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
 
         self.save_protocol(protocol)?;
@@ -513,7 +523,6 @@ impl ProtocolHandler for DisputeCoreProtocol {
         tx_status: TransactionStatus,
         context: String,
         program_context: &ProgramContext,
-        _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         info!("Notified of transaction: {}. Context: {}", tx_id, context);
 
@@ -1377,7 +1386,7 @@ impl DisputeCoreProtocol {
             tx_name,
             &vec![InputSigningInfo::SignEdcsa {
                 input_index: 0,
-                key_manager: context.key_chain.key_manager.as_ref(),
+                key_manager: context.key_manager.as_ref(),
             }],
         )?;
 
@@ -1412,7 +1421,7 @@ impl DisputeCoreProtocol {
                     data: self.pegout_id(context, slot_index)?,
                     key_name: PEGOUT_ID_KEY.to_string(),
                     key_type: WinternitzType::HASH160,
-                    key_manager: context.key_chain.key_manager.as_ref(),
+                    key_manager: context.key_manager.as_ref(),
                 }),
             }],
         )?;
@@ -1447,7 +1456,7 @@ impl DisputeCoreProtocol {
                     data: vec![1u8],
                     key_name: CHALLENGE_KEY.to_string(),
                     key_type: WinternitzType::HASH160,
-                    key_manager: context.key_chain.key_manager.as_ref(),
+                    key_manager: context.key_manager.as_ref(),
                 }),
             }],
         )?;
@@ -2129,7 +2138,7 @@ impl DisputeCoreProtocol {
             &vec![InputSigningInfo::SignTaproot {
                 input_index: 0,
                 script_index: None,
-                key_manager: context.key_chain.key_manager.as_ref(),
+                key_manager: context.key_manager.as_ref(),
                 id: "".to_string(),
             }],
         )?;
@@ -2320,7 +2329,7 @@ impl DisputeCoreProtocol {
                     data: (slot_index as u16).to_le_bytes().to_vec(),
                     key_name: "value".to_string(),
                     key_type: WinternitzType::HASH160,
-                    key_manager: context.key_chain.key_manager.as_ref(),
+                    key_manager: context.key_manager.as_ref(),
                 }),
             }],
         )?;

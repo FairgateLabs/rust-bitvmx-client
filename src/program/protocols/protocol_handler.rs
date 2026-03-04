@@ -4,6 +4,7 @@ use bitcoin_coordinator::TransactionStatus;
 use bitcoin_scriptexec::scriptint_vec;
 use console::style;
 use enum_dispatch::enum_dispatch;
+use key_manager::key_manager::KeyManager;
 use key_manager::winternitz::{message_bytes_length, WinternitzSignature, WinternitzType};
 use protocol_builder::scripts::ProtocolScript;
 use protocol_builder::types::output::SpeedupData;
@@ -19,10 +20,10 @@ use uuid::Uuid;
 
 use super::super::participant::ParticipantKeys;
 use crate::errors::BitVMXError;
-use crate::keychain::KeyChain;
 #[cfg(feature = "union")]
 use crate::program::protocols::union::full_penalization::FullPenalizationProtocol;
 
+use super::aggregated_key::AggregatedKeyProtocol;
 #[cfg(feature = "cardinal")]
 use super::cardinal::{lock::LockProtocol, slot::SlotProtocol, transfer::TransferProtocol};
 use super::dispute::DisputeResolutionProtocol;
@@ -44,8 +45,9 @@ use crate::types::{
 #[cfg(feature = "cardinal")]
 use crate::types::{PROGRAM_TYPE_LOCK, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TRANSFER};
 
-use crate::types::{ProgramContext, PROGRAM_TYPE_DRP};
+use crate::types::{ProgramContext, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_DRP};
 
+use crate::program::setup::steps::SetupStepName;
 use crate::program::variables::WitnessTypes;
 use crate::program::{variables::VariableTypes, witness};
 
@@ -88,8 +90,11 @@ pub trait ProtocolHandler {
     fn context_mut(&mut self) -> &mut ProtocolContext;
     fn get_pregenerated_aggregated_keys(
         &self,
-        context: &ProgramContext,
-    ) -> Result<Vec<(String, PublicKey)>, BitVMXError>;
+        _context: &ProgramContext,
+    ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
+        // Default implementation: no pregenerated keys
+        Ok(vec![])
+    }
 
     fn generate_keys(
         &self,
@@ -121,9 +126,13 @@ pub trait ProtocolHandler {
         _context: &ProgramContext,
     ) -> Result<(), BitVMXError>;
 
-    fn sign(&mut self, key_chain: &KeyChain) -> Result<(), ProtocolBuilderError> {
-        let mut protocol = self.load_protocol()?;
-        protocol.sign(&key_chain.key_manager, &self.context().protocol_name)?;
+    fn sign(&mut self, key_manager: &Rc<KeyManager>) -> Result<(), ProtocolBuilderError> {
+        let mut protocol = match self.load_protocol() {
+            Ok(p) => p,
+            Err(ProtocolBuilderError::MissingProtocol(_)) => return Ok(()),
+            Err(e) => return Err(e),
+        };
+        protocol.sign(key_manager, &self.context().protocol_name)?;
         self.save_protocol(protocol)?;
         Ok(())
     }
@@ -178,7 +187,15 @@ pub trait ProtocolHandler {
         &self,
         program_context: &ProgramContext,
     ) -> Result<(Vec<Txid>, Vec<(Txid, u32)>), BitVMXError> {
-        let protocol = self.load_protocol()?;
+        // Try to load protocol, but if it doesn't exist (e.g., protocols without transactions),
+        // return empty vectors
+        let protocol = match self.load_protocol() {
+            Ok(p) => p,
+            Err(_) => {
+                // Protocol doesn't exist or has no transactions - return empty
+                return Ok((vec![], vec![]));
+            }
+        };
         let txs = protocol.get_transaction_ids();
         let tx_names_and_vout = program_context
             .globals
@@ -244,25 +261,32 @@ pub trait ProtocolHandler {
                 .storage
                 .clone()
                 .ok_or_else(|| StorageError::NotFound(self.context().protocol_name.clone()))?,
-        )?;
-        Ok(())
+        )
     }
 
     fn get_transaction_by_name(
         &self,
         name: &str,
-        context: &ProgramContext,
-    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError>;
+        _context: &ProgramContext,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        // Default implementation: protocol has no transactions
+        Err(BitVMXError::InvalidTransactionName(format!(
+            "Transaction '{}' not found - protocol has no transactions",
+            name
+        )))
+    }
 
     fn notify_news(
         &self,
-        tx_id: Txid,
-        vout: Option<u32>,
-        tx_status: TransactionStatus,
-        context: String,
-        program_context: &ProgramContext,
-        participant_keys: Vec<&ParticipantKeys>,
-    ) -> Result<(), BitVMXError>;
+        _tx_id: Txid,
+        _vout: Option<u32>,
+        _tx_status: TransactionStatus,
+        _context: String,
+        _program_context: &ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        // Default implementation: no-op for protocols that don't need to handle news
+        Ok(())
+    }
 
     fn notify_external_news(
         &self,
@@ -291,13 +315,12 @@ pub trait ProtocolHandler {
                 let message = var.input()?;
 
                 info!(
-                    "Signigng message: {}",
+                    "Signing message: {}",
                     style(hex::encode(message.clone())).yellow()
                 );
                 info!("With key: {:?}", k);
 
                 let winternitz_signature = program_context
-                    .key_chain
                     .key_manager
                     .sign_winternitz_message_by_index(
                         &message,
@@ -563,7 +586,36 @@ pub trait ProtocolHandler {
         )
     }
 
-    fn setup_complete(&self, program_context: &ProgramContext) -> Result<(), BitVMXError>;
+    fn setup_complete(&self, _program_context: &ProgramContext) -> Result<(), BitVMXError> {
+        // Default implementation: no additional setup needed
+        Ok(())
+    }
+
+    /// Whether Program should send a SetupCompleted message when this protocol finishes setup.
+    ///
+    /// Defaults to `true`. Protocols that are used internally (e.g., AggregatedKeyProtocol
+    /// created by SetupKey) should return `false` to maintain backward compatibility,
+    /// since the caller only expects the protocol-specific response (e.g., AggregatedPubkey).
+    fn send_setup_completed(&self) -> bool {
+        true
+    }
+
+    /// Returns the list of setup step names for this protocol.
+    ///
+    /// By default, returns the standard steps: keys, nonces, signatures.
+    /// Protocols can override this method to customize their setup flow.
+    ///
+    /// Returns None if the protocol doesn't use the SetupEngine system.
+    /// Protocols using Program MUST override this to return their required steps.
+    ///
+    /// The steps will be created by the factory when needed.
+    fn setup_steps(&self) -> Option<Vec<SetupStepName>> {
+        Some(vec![
+            SetupStepName::Keys,
+            SetupStepName::Nonces,
+            SetupStepName::Signatures,
+        ])
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -589,6 +641,7 @@ impl ProtocolContext {
 #[enum_dispatch(ProtocolHandler)]
 #[derive(Clone, Serialize, Deserialize)]
 pub enum ProtocolType {
+    AggregatedKeyProtocol,
     DisputeResolutionProtocol,
     #[cfg(feature = "cardinal")]
     LockProtocol,
@@ -622,6 +675,9 @@ pub fn new_protocol_type(
     let ctx = ProtocolContext::new(id, &protocol_name, my_idx, storage);
 
     match name {
+        PROGRAM_TYPE_AGGREGATED_KEY => Ok(ProtocolType::AggregatedKeyProtocol(
+            AggregatedKeyProtocol::new(ctx),
+        )),
         PROGRAM_TYPE_DRP => Ok(ProtocolType::DisputeResolutionProtocol(
             DisputeResolutionProtocol::new(ctx),
         )),

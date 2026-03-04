@@ -37,6 +37,7 @@ use crate::{
                 },
             },
         },
+        setup::steps::SetupStepName,
         variables::{PartialUtxo, VariableTypes},
     },
     spv_proof::get_spv_proof,
@@ -190,7 +191,7 @@ impl ProtocolHandler for AdvanceFundsProtocol {
             )?;
         }
 
-        protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
+        protocol.build(&context.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
         self.save_protocol(protocol)?;
         Ok(())
@@ -214,7 +215,6 @@ impl ProtocolHandler for AdvanceFundsProtocol {
         tx_status: TransactionStatus,
         _context: String,
         context: &ProgramContext,
-        _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
         info!(
@@ -274,6 +274,11 @@ impl ProtocolHandler for AdvanceFundsProtocol {
         self.send_funds_advanced(&context, txid)?;
 
         Ok(())
+    }
+
+    // Override setup_steps to only use KeysStep
+    fn setup_steps(&self) -> Option<Vec<SetupStepName>> {
+        Some(vec![SetupStepName::Keys])
     }
 }
 

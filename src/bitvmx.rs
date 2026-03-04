@@ -1,26 +1,26 @@
 use crate::config::ComponentsConfig;
-use crate::message_queue::QueuedMessage;
 use crate::ping_helper::{JobDispatcherType, PingHelper};
-use crate::program::program::is_active_program;
+use crate::program::program::{is_active_program, Program};
 use crate::program::protocols::protocol_handler::ProtocolHandler;
+use crate::program::variables::VariableTypes;
 use crate::spv_proof::get_spv_proof;
 use crate::timestamp_verifier::TimestampVerifier;
 use crate::{
     api::BitVMXApi,
-    collaborate::Collaboration,
     comms_helper::{deserialize_msg, CommsMessageType},
     config::Config,
     errors::BitVMXError,
-    keychain::KeyChain,
     leader_broadcast::{LeaderBroadcastHelper, OriginalMessage},
-    message_queue::MessageQueue,
+    message_queue::{MessageQueue, QueuedMessage},
     program::{
         participant::CommsAddress,
-        program::Program,
         variables::{Globals, WitnessVars},
     },
     signature_verifier::SignatureVerifier,
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus},
+    types::{
+        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus,
+        PROGRAM_TYPE_AGGREGATED_KEY,
+    },
 };
 use bitcoin::secp256k1::Message;
 use bitcoin::{PublicKey, Transaction, Txid};
@@ -37,6 +37,7 @@ use bitvmx_broker::identification::routing::RoutingTable;
 use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
 use dispatcher_utils::PingMessage;
 use bitvmx_settings::settings;
+use key_manager::create_key_manager_from_config;
 use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::graph::graph::GraphOptions;
 
@@ -96,8 +97,6 @@ impl Drop for BitVMX {
 }
 enum StoreKey {
     Programs,
-    Collaboration(Uuid),
-    CompleteCollaboration(Uuid),
     ZKPProof(Uuid),
     ZKPStatus(Uuid),
     ZKPFrom(Uuid),
@@ -108,8 +107,6 @@ impl StoreKey {
     fn get_key(&self) -> String {
         match self {
             StoreKey::Programs => "bitvmx/programs/all".to_string(),
-            StoreKey::Collaboration(id) => format!("bitvmx/collaboration/{}", id),
-            StoreKey::CompleteCollaboration(id) => format!("bitvmx/collaboration_complete/{}", id),
             StoreKey::ZKPProof(id) => format!("bitvmx/zkp/{}/proof", id),
             StoreKey::ZKPStatus(id) => format!("bitvmx/zkp/{}/status", id),
             StoreKey::ZKPFrom(id) => format!("bitvmx/zkp/{}/from", id),
@@ -121,7 +118,11 @@ impl StoreKey {
 impl BitVMX {
     pub fn new(config: Config) -> Result<Self, BitVMXError> {
         let store = Rc::new(Storage::new(&config.storage)?);
-        let key_chain = KeyChain::new(&config, store.clone())?;
+        let key_manager =
+            create_key_manager_from_config(&config.key_manager, &config.key_storage.clone())?;
+        let key_manager = Rc::new(key_manager);
+        let rsa_public_key = key_manager
+            .import_rsa_private_key(&settings::decrypt_or_read_file(config.comms_key())?)?;
 
         let comms = QueueChannel::new_with_paths(
             "comms",
@@ -136,7 +137,7 @@ impl BitVMX {
         let wallet = Wallet::from_derive_keypair(
             config.bitcoin.clone(),
             config.wallet.clone(),
-            key_chain.key_manager.clone(),
+            key_manager.clone(),
             BitcoinKeyType::P2tr,
             WALLET_INDEX,
             Some(WALLET_CHANGE_INDEX),
@@ -145,7 +146,7 @@ impl BitVMX {
         let bitcoin_coordinator = BitcoinCoordinator::new_with_paths(
             &config.bitcoin,
             store.clone(),
-            key_chain.key_manager.clone(),
+            key_manager.clone(),
             config.coordinator_settings.clone(),
         )?;
 
@@ -183,7 +184,8 @@ impl BitVMX {
 
         let program_context = ProgramContext::new(
             comms,
-            key_chain,
+            key_manager,
+            rsa_public_key,
             bitcoin_coordinator,
             broker_channel,
             Globals::new(store.clone()),
@@ -228,7 +230,6 @@ impl BitVMX {
         // Begin shutdown on subcomponents
         self.broker.close();
         self.program_context.comms.close();
-
         info!("Shutdown completed");
         Ok(())
     }
@@ -270,7 +271,7 @@ impl BitVMX {
         match SignatureVerifier::verify_and_get_key(
             &self.program_context.comms,
             &self.program_context.globals,
-            &self.program_context.key_chain,
+            &self.program_context.rsa_public_key,
             &identifier.pubkey_hash,
             program_id,
             msg_type,
@@ -289,7 +290,7 @@ impl BitVMX {
     /// Returns Ok(true) if message was processed, Ok(false) if it needs to be buffered,
     /// or Err if there was an error.
     fn process_program_message(
-        &self,
+        &mut self,
         program_id: &Uuid,
         msg_type: CommsMessageType,
         data: Value,
@@ -299,70 +300,13 @@ impl BitVMX {
         signature: Vec<u8>,
         version: String,
     ) -> Result<bool, BitVMXError> {
+        debug!(
+            "BitVMX::process_program_message() - Processing {:?} for program {} from {}",
+            msg_type, program_id, peer_address.pubkey_hash
+        );
+
         let my_pubkey_hash = self.program_context.comms.get_pubk_hash()?;
         let participants: Vec<_> = program
-            .participants
-            .iter()
-            .filter(|p| p.comms_address.pubkey_hash != my_pubkey_hash)
-            .map(|p| p.comms_address.pubkey_hash.clone())
-            .collect();
-        if !SignatureVerifier::has_all_keys(&self.program_context.globals, &participants)? {
-            info!("Missing verification keys for program: {:?}", program_id);
-            return Ok(false);
-        }
-
-        // If this operator is the leader and the message type should be broadcast, store the original message
-        if program.my_idx == program.leader {
-            let should_store = matches!(
-                msg_type,
-                CommsMessageType::Keys
-                    | CommsMessageType::PublicNonces
-                    | CommsMessageType::PartialSignatures
-            );
-            if should_store {
-                let original_msg = OriginalMessage {
-                    sender_pubkey_hash: peer_address.pubkey_hash.clone(),
-                    msg_type,
-                    data: data.clone(),
-                    original_timestamp: timestamp,
-                    original_signature: signature.clone(),
-                    version: version.clone(),
-                };
-                self.program_context
-                    .leader_broadcast_helper
-                    .store_original_message(program_id, msg_type, original_msg)?;
-            }
-        }
-
-        // Step 3: Process normal messages (non-verification)
-        program.process_comms_message(
-            peer_address,
-            msg_type,
-            data,
-            &self.program_context,
-            timestamp,
-            signature,
-            version,
-        )?;
-        Ok(true)
-    }
-
-    /// Processes a message for a Collaboration.
-    /// Returns Ok(true) if message was processed, Ok(false) if it needs to be buffered,
-    /// or Err if there was an error.
-    fn process_collaboration_message(
-        &self,
-        program_id: &Uuid,
-        msg_type: CommsMessageType,
-        data: Value,
-        peer_address: CommsAddress,
-        collaboration: &mut Collaboration,
-        timestamp: i64,
-        signature: Vec<u8>,
-        version: String,
-    ) -> Result<bool, BitVMXError> {
-        let my_pubkey_hash = self.program_context.comms.get_pubk_hash()?;
-        let participants: Vec<_> = collaboration
             .participants
             .iter()
             .filter(|p| p.pubkey_hash != my_pubkey_hash)
@@ -370,19 +314,15 @@ impl BitVMX {
             .collect();
         if !SignatureVerifier::has_all_keys(&self.program_context.globals, &participants)? {
             info!(
-                "Missing verification keys for collaboration: {:?}",
+                "BitVMX::process_program_message() - Missing verification keys for program: {:?}",
                 program_id
             );
             return Ok(false);
         }
+
         // If this operator is the leader and the message type should be broadcast, store the original message
-        if collaboration.im_leader {
-            let should_store = matches!(
-                msg_type,
-                CommsMessageType::Keys
-                    | CommsMessageType::PublicNonces
-                    | CommsMessageType::PartialSignatures
-            );
+        if program.my_idx == program.leader {
+            let should_store = matches!(msg_type, CommsMessageType::SetupStepData);
             if should_store {
                 let original_msg = OriginalMessage {
                     sender_pubkey_hash: peer_address.pubkey_hash.clone(),
@@ -392,27 +332,26 @@ impl BitVMX {
                     original_signature: signature.clone(),
                     version: version.clone(),
                 };
-                info!(
-                    "Storing original message from peer: {:?}, msg_type: {:?}",
-                    peer_address, msg_type
-                );
                 self.program_context
                     .leader_broadcast_helper
                     .store_original_message(program_id, msg_type, original_msg)?;
             }
         }
 
-        // Step 3: Process normal messages (non-verification)
-        collaboration.process_comms_message(
-            peer_address,
-            msg_type,
-            data,
-            &self.program_context,
-            timestamp,
-            signature,
-            version,
-        )?;
-        Ok(true)
+        // Process the message
+        let data_bytes: Vec<u8> = serde_json::from_value(data.clone()).map_err(|e| {
+            BitVMXError::InvalidMessage(format!(
+                "Failed to parse message data as byte array: {}. Expected JSON array of integers [0-255], got: {}",
+                e,
+                serde_json::to_string(&data).unwrap_or_else(|_| "<unparseable>".to_string())
+            ))
+        })?;
+        program.process_comms_message(
+            &peer_address.pubkey_hash,
+            &msg_type,
+            data_bytes,
+            &mut self.program_context,
+        )
     }
 
     pub fn process_msg(&mut self, msg: QueuedMessage) -> Result<(), BitVMXError> {
@@ -462,79 +401,49 @@ impl BitVMX {
             self.timestamp_verifier
                 .ensure_fresh(&msg.identifier.pubkey_hash, timestamp)?;
         }
-        let (program, collaboration, peer_address) = if let Some(program) =
-            self.load_program(&program_id).ok()
-        {
+        let message_consumed = if let Ok(mut program) = self.load_program(&program_id) {
             let peer_address = program.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
 
-            (Some(program), None, Some(peer_address))
-        } else if let Some(collaboration) = self.get_collaboration(&program_id)? {
-            let peer_address =
-                collaboration.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
-            (None, Some(collaboration), Some(peer_address))
-        } else {
-            (None, None, None)
-        };
-
-        let message_consumed = match peer_address {
-            Some(peer_address) => {
-                if is_verification_msg {
-                    match SignatureVerifier::handle_verification_messages(
-                        &self.program_context,
-                        &program_id,
-                        &msg_type,
-                        &data,
-                        &peer_address,
-                    ) {
-                        Ok(_) => true,
-                        Err(e) => {
-                            error!("Error handling verification message: {:?}", e);
-                            false
-                        }
-                    }
-                } else {
-                    if let Some(mut program) = program {
-                        let message_consumed = self.process_program_message(
-                            &program_id,
-                            msg_type,
-                            data,
-                            peer_address,
-                            &mut program,
-                            timestamp,
-                            signature,
-                            version,
-                        )?;
-                        message_consumed
-                    } else if let Some(mut collaboration) = collaboration {
-                        let message_consumed = self.process_collaboration_message(
-                            &program_id,
-                            msg_type,
-                            data,
-                            peer_address,
-                            &mut collaboration,
-                            timestamp,
-                            signature,
-                            version,
-                        )?;
-                        if message_consumed {
-                            self.save_collaboration(&collaboration)?;
-                        }
-                        message_consumed
-                    } else {
-                        error!("Invalid state");
+            if is_verification_msg {
+                match SignatureVerifier::handle_verification_messages(
+                    &self.program_context,
+                    &program_id,
+                    &msg_type,
+                    &data,
+                    &peer_address,
+                ) {
+                    Ok(_) => true,
+                    Err(e) => {
+                        error!("Error handling verification message: {:?}", e);
                         false
                     }
                 }
+            } else {
+                self.process_program_message(
+                    &program_id,
+                    msg_type,
+                    data,
+                    peer_address,
+                    &mut program,
+                    timestamp,
+                    signature,
+                    version,
+                )?
             }
-            None => false,
+        } else {
+            debug!("Program {} not found", program_id);
+            false
         };
 
         if message_consumed {
             self.timestamp_verifier
                 .record(&msg.identifier.pubkey_hash, timestamp);
         } else {
-            // Message needs to be buffered (not processed or program/collaboration not found)
-            info!("Pending message to back: {:?}", msg_type);
+            // Message needs to be buffered (not processed or program not found)
+            info!(
+                "Pending message to back: {:?} for program {:?} from: {:?}",
+                msg_type, program_id, msg.identifier.pubkey_hash,
+            );
             self.message_queue.push_back(msg)?;
         }
         Ok(())
@@ -616,9 +525,17 @@ impl BitVMX {
 
         match &context {
             Context::ProgramId(program_id) => {
-                let program = self.load_program(program_id)?;
-
-                program.notify_news(tx_id, vout, tx_status, context_data, &self.program_context)?;
+                if let Ok(program) = self.load_program(program_id) {
+                    program.notify_news(
+                        tx_id,
+                        vout,
+                        tx_status,
+                        context_data,
+                        &self.program_context,
+                    )?;
+                } else {
+                    warn!("handle_news: Program {} not found", program_id);
+                }
             }
             Context::RequestId(request_id, from) => {
                 info!("Sending News: {:?} for context: {:?}", tx_id, context);
@@ -785,19 +702,6 @@ impl BitVMX {
         Ok(())
     }
 
-    pub fn process_collaboration(&mut self) -> Result<(), BitVMXError> {
-        //TOOD: manage state of the collaborations once persisted
-        let collaborations = self.store.partial_compare(&"bitvmx/collaboration/")?;
-        for (_, collaboration) in collaborations.iter() {
-            let mut collaboration: Collaboration = serde_json::from_str(collaboration)?;
-            if collaboration.tick(&self.program_context)? {
-                self.mark_collaboration_as_complete(&collaboration)?;
-            };
-        }
-        Ok(())
-    }
-
-    /// Main tick function to be called periodically. Returns false if BitVMX is shutdown.
     pub fn tick(&mut self) -> Result<bool, BitVMXError> {
         //info!("Ticking BitVMX: {}", self.count);
         if self.shutdown {
@@ -815,7 +719,6 @@ impl BitVMX {
         }
 
         self.process_bitcoin_updates_with_throttle()?;
-        self.process_collaboration()?;
 
         self.ping_helper
             .check_job_dispatchers_liveness(&self.program_context, &self.config.components)?;
@@ -868,11 +771,18 @@ impl BitVMX {
         }
         Ok(())
     }
-    pub fn process_programs(&self) -> Result<(), BitVMXError> {
-        let programs = self.get_active_programs()?;
+    pub fn process_programs(&mut self) -> Result<(), BitVMXError> {
+        let all_programs = self.get_programs()?;
 
-        for mut program in programs {
-            program.tick(&self.program_context)?
+        for status in all_programs {
+            let program_id = status.program_id;
+
+            if !is_active_program(&self.store, &program_id)? {
+                continue;
+            }
+
+            let mut program = self.load_program(&program_id)?;
+            program.tick(&mut self.program_context)?;
         }
         Ok(())
     }
@@ -884,23 +794,6 @@ impl BitVMX {
             .map_err(BitVMXError::StorageError)?;
 
         Ok(programs_ids.unwrap_or_default())
-    }
-
-    fn get_active_programs(&self) -> Result<Vec<Program>, BitVMXError> {
-        let all_programs = self
-            .get_programs()?
-            .iter()
-            .map(|p| p.program_id)
-            .collect::<Vec<Uuid>>();
-        let mut active_programs = vec![];
-        for program_id in all_programs {
-            if is_active_program(&self.store, &program_id)? {
-                let program = self.load_program(&program_id)?;
-                active_programs.push(program);
-            }
-        }
-
-        Ok(active_programs)
     }
 
     fn add_new_program(&self, program_id: &Uuid) -> Result<(), BitVMXError> {
@@ -918,47 +811,42 @@ impl BitVMX {
         Ok(())
     }
 
+    fn setup_internal(
+        &mut self,
+        id: Uuid,
+        program_type: String,
+        peer_address: Vec<CommsAddress>,
+        leader: u16,
+    ) -> Result<(), BitVMXError> {
+        if self.program_exists(&id)? {
+            warn!("Program already exists");
+            return Err(BitVMXError::ProgramAlreadyExists(id));
+        }
+
+        info!("Setting up program: {:?} type {}", id, program_type);
+
+        Program::new(
+            id,
+            &program_type,
+            peer_address,
+            leader as usize,
+            &mut self.program_context,
+            self.store.clone(),
+            &self.config.client,
+        )?;
+
+        self.add_new_program(&id)?;
+        info!(
+            "Program Setup Finished {}",
+            self.program_context.comms.get_pubk_hash()?,
+        );
+
+        Ok(())
+    }
+
     fn program_exists(&self, program_id: &Uuid) -> Result<bool, BitVMXError> {
         let programs = self.get_programs()?;
         Ok(programs.iter().any(|p| p.program_id == *program_id))
-    }
-
-    fn get_collaboration(&self, id: &Uuid) -> Result<Option<Collaboration>, BitVMXError> {
-        let key = StoreKey::Collaboration(*id).get_key();
-        let mut result = self.store.get(&key)?;
-
-        if result.is_none() {
-            let key = StoreKey::CompleteCollaboration(*id).get_key();
-            result = self.store.get(&key)?;
-        }
-
-        Ok(result)
-    }
-
-    fn mark_collaboration_as_complete(
-        &self,
-        collaboration: &Collaboration,
-    ) -> Result<(), BitVMXError> {
-        let transaction_id = self.store.begin_transaction();
-
-        self.store.set(
-            StoreKey::CompleteCollaboration(collaboration.collaboration_id).get_key(),
-            collaboration,
-            Some(transaction_id),
-        )?;
-        self.store.transactional_delete(
-            &StoreKey::Collaboration(collaboration.collaboration_id).get_key(),
-            transaction_id,
-        )?;
-
-        self.store.commit_transaction(transaction_id)?;
-        Ok(())
-    }
-
-    fn save_collaboration(&self, collaboration: &Collaboration) -> Result<(), BitVMXError> {
-        let key = StoreKey::Collaboration(collaboration.collaboration_id).get_key();
-        self.store.set(key, collaboration, None)?;
-        Ok(())
     }
 
     /// send replies via the broker channel
@@ -1014,13 +902,18 @@ impl BitVMXApi for BitVMX {
 
     fn setup_key(
         &mut self,
-        from: Identifier,
         id: Uuid,
         participants: Vec<CommsAddress>,
         participants_keys: Option<Vec<PublicKey>>,
         leader_idx: u16,
     ) -> Result<(), BitVMXError> {
         info!("Setting up key for program: {:?}", id);
+
+        // Check if program already exists BEFORE storing any data
+        if self.program_exists(&id)? {
+            warn!("Program {} already exists", id);
+            return Err(BitVMXError::ProgramAlreadyExists(id));
+        }
 
         // Check if participants vector is empty or leader_idx is out of bounds
         if participants.is_empty() {
@@ -1031,28 +924,52 @@ impl BitVMXApi for BitVMX {
             return Err(BitVMXError::InvalidMessageFormat);
         }
 
-        let leader = participants[leader_idx as usize].clone();
-        let collab = Collaboration::setup_aggregated_key(
+        //TODO: in reality I should avoid exchanging public keys and just generate the aggregated directly
+        // Save optional keys
+        let optional_keys = serde_json::to_string(&participants_keys)?;
+
+        self.program_context.globals.set_var(
             &id,
-            participants,
-            participants_keys,
-            leader,
-            &mut self.program_context,
-            from,
+            "optional_keys",
+            VariableTypes::String(optional_keys),
         )?;
-        self.save_collaboration(&collab)?;
+
+        // Use Program with AggregatedKeyProtocol for key aggregation
+        Program::new(
+            id,
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            participants,
+            leader_idx as usize,
+            &mut self.program_context,
+            self.store.clone(),
+            &self.config.client,
+        )?;
+
+        // Add the program to the programs list
+        self.add_new_program(&id)?;
+
         info!("Key setup finished for program: {:?}", id);
         Ok(())
     }
 
     fn get_aggregated_pubkey(&mut self, from: Identifier, id: Uuid) -> Result<(), BitVMXError> {
-        info!("Getting aggregated pubkey for collaboration: {:?}", id);
+        info!("Getting aggregated pubkey for program: {:?}", id);
 
-        let response = if let Some(collaboration) = self.get_collaboration(&id)? {
-            if let Some(aggregated_pubkey) = &collaboration.aggregated_key {
-                OutgoingBitVMXApiMessages::AggregatedPubkey(id, aggregated_pubkey.clone())
-            } else {
-                OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(id)
+        // Read from globals (protocol-based approach via AggregatedKeyProtocol)
+        let response = if let Some(key_var) = self
+            .program_context
+            .globals
+            .get_var(&id, "final_aggregated_key")?
+        {
+            match key_var.pubkey() {
+                Ok(aggregated_pubkey) => {
+                    info!("Found aggregated pubkey in globals for program: {:?}", id);
+                    OutgoingBitVMXApiMessages::AggregatedPubkey(id, aggregated_pubkey)
+                }
+                Err(e) => {
+                    warn!("Failed to read aggregated key from globals: {}", e);
+                    OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(id)
+                }
             }
         } else {
             OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(id)
@@ -1187,28 +1104,7 @@ impl BitVMXApi for BitVMX {
         peer_address: Vec<CommsAddress>,
         leader: u16,
     ) -> Result<(), BitVMXError> {
-        if self.program_exists(&id)? {
-            warn!("Program already exists");
-            return Err(BitVMXError::ProgramAlreadyExists(id));
-        }
-
-        info!("Setting up program: {:?} type {}", id, program_type);
-        Program::setup(
-            &id,
-            &program_type,
-            peer_address,
-            leader as usize,
-            &mut self.program_context,
-            self.store.clone(),
-            &self.config.client,
-        )?;
-        self.add_new_program(&id)?;
-        info!(
-            "Program Setup Finished {}",
-            self.program_context.comms.get_pubk_hash()?
-        );
-
-        Ok(())
+        self.setup_internal(id, program_type, peer_address, leader)
     }
 
     fn get_transaction(
@@ -1255,7 +1151,7 @@ impl BitVMXApi for BitVMX {
 
     fn dispatch_transaction_name(&mut self, id: Uuid, name: &str) -> Result<(), BitVMXError> {
         self.load_program(&id)?
-            .dispatch_transaction_name(&self.program_context, name)?;
+            .dispatch_transaction_name(name, &mut self.program_context)?;
         Ok(())
     }
 
@@ -1520,9 +1416,8 @@ impl BitVMXApi for BitVMX {
                 BitVMXApi::get_transaction(self, from, id, txid)?
             }
             IncomingBitVMXApiMessages::GetTransactionInfoByName(id, name) => {
-                let program = self.load_program(&id);
-                let response = match program {
-                    Ok(prog) => match prog.get_transaction_by_name(&self.program_context, &name) {
+                let response = match self.load_program(&id) {
+                    Ok(prog) => match prog.get_transaction_by_name(&name, &self.program_context) {
                         Ok(tx) => OutgoingBitVMXApiMessages::TransactionInfo(id, name, tx),
                         Err(err) => {
                             error!(
@@ -1554,11 +1449,9 @@ impl BitVMXApi for BitVMX {
                 txid,
                 confirmation_threshold,
             ) => BitVMXApi::subscribe_to_tx(self, from, uuid, txid, confirmation_threshold)?,
-
             IncomingBitVMXApiMessages::SubscribeToRskPegin(confirmation_threshold) => {
                 BitVMXApi::subscribe_to_rsk_pegin(self, confirmation_threshold)?
             }
-
             IncomingBitVMXApiMessages::GetSPVProof(txid) => {
                 BitVMXApi::get_spv_proof(self, from, txid)?
             }
@@ -1574,17 +1467,17 @@ impl BitVMXApi for BitVMX {
                 participants,
                 participants_keys,
                 leader_idx,
-            ) => BitVMXApi::setup_key(self, from, id, participants, participants_keys, leader_idx)?,
+            ) => BitVMXApi::setup_key(self, id, participants, participants_keys, leader_idx)?,
             IncomingBitVMXApiMessages::GetKeyPair(id) => {
-                let collaboration = self
-                    .get_collaboration(&id)?
-                    .ok_or_else(|| BitVMXError::ProgramNotFound(id))?;
-                let aggregated = collaboration
-                    .aggregated_key
-                    .ok_or_else(|| BitVMXError::ProgramNotFound(id))?;
+                // Get aggregated key from globals (set by AggregatedKeyProtocol)
+                let aggregated = self
+                    .program_context
+                    .globals
+                    .get_var(&id, "final_aggregated_key")?
+                    .and_then(|v| v.pubkey().ok())
+                    .ok_or(BitVMXError::ProgramNotFound(id))?;
                 let pair = self
                     .program_context
-                    .key_chain
                     .key_manager
                     .get_key_pair_for_too_insecure(&aggregated)?;
                 self.reply(from, OutgoingBitVMXApiMessages::KeyPair(id, pair.0, pair.1))?;
@@ -1595,23 +1488,30 @@ impl BitVMXApi for BitVMX {
                 if new {
                     let public = self
                         .program_context
-                        .key_chain
-                        .derive_keypair(BitcoinKeyType::P2tr)?;
+                        .key_manager
+                        .next_keypair(BitcoinKeyType::P2tr)?;
                     self.reply(from, OutgoingBitVMXApiMessages::PubKey(id, public))?;
                 } else {
-                    let collaboration = self
-                        .get_collaboration(&id)?
-                        .ok_or_else(|| BitVMXError::ProgramNotFound(id))?;
-                    let aggregated = collaboration
-                        .aggregated_key
-                        .ok_or_else(|| BitVMXError::ProgramNotFound(id))?;
+                    // Get aggregated key from globals (set by AggregatedKeyProtocol)
+                    let aggregated = self
+                        .program_context
+                        .globals
+                        .get_var(&id, "final_aggregated_key")?
+                        .and_then(|v| v.pubkey().ok())
+                        .ok_or(BitVMXError::ProgramNotFound(id))?;
                     let pubkey = self
                         .program_context
-                        .key_chain
                         .key_manager
                         .get_my_public_key(&aggregated)?;
                     self.reply(from, OutgoingBitVMXApiMessages::PubKey(id, pubkey))?;
                 }
+            }
+            IncomingBitVMXApiMessages::GetEvenPubKey(id) => {
+                let public = self
+                    .program_context
+                    .key_manager
+                    .next_keypair_adjusted(BitcoinKeyType::P2tr)?;
+                self.reply(from, OutgoingBitVMXApiMessages::PubKey(id, public))?;
             }
             IncomingBitVMXApiMessages::SignMessage(id, payload, public_key) => {
                 // Create message from the payload
@@ -1621,7 +1521,6 @@ impl BitVMXApi for BitVMX {
                 // Sign the message with the provided public key
                 let recoverable_signature = self
                     .program_context
-                    .key_chain
                     .key_manager
                     .sign_ecdsa_recoverable_message(&message, &public_key)?;
 
@@ -1660,7 +1559,6 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::Encrypt(id, message, pub_key) => {
                 let encrypted = self
                     .program_context
-                    .key_chain
                     .key_manager
                     .encrypt_rsa_message(&message, &pub_key)?;
                 self.reply(from, OutgoingBitVMXApiMessages::Encrypted(id, encrypted))?;
@@ -1668,7 +1566,6 @@ impl BitVMXApi for BitVMX {
             IncomingBitVMXApiMessages::Decrypt(id, message, pub_key) => {
                 let decrypted = self
                     .program_context
-                    .key_chain
                     .key_manager
                     .decrypt_rsa_message(&message, &pub_key)?;
                 self.reply(from, OutgoingBitVMXApiMessages::Decrypted(id, decrypted))?;
