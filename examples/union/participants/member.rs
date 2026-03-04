@@ -138,7 +138,6 @@ impl Member {
         Ok((take_pubkey, dispute_pubkey, communication_pubkey))
     }
 
-
     // pub fn setup_member_keys(&mut self) -> Result<(PublicKey, PublicKey, PublicKey)> {
     //     // For regtest/testing, use deterministic UUIDs based on member id so keys are reproducible
     //     // This allows cross-system testing with smart contracts
@@ -268,7 +267,7 @@ impl Member {
             addresses,
         )?;
 
-        let sleep_time = 30 * total_setups as u64;
+        let sleep_time = 60 * total_setups as u64;
         info!(
             id = self.id,
             "Waiting {} seconds for dispute channel setups to complete...", sleep_time
