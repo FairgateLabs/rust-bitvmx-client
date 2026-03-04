@@ -44,8 +44,14 @@ where
         info!("Input {}:", i);
         info!("  - Previous TxId: 0x{}", input.previous_output.txid);
         info!("  - Previous Vout: {}", input.previous_output.vout);
-        info!("  - ScriptSig: {}", input.script_sig.as_bytes().to_lower_hex_string());
-        info!("  - Sequence: 0x{:08X} ({})", input.sequence.0, input.sequence.0);
+        info!(
+            "  - ScriptSig: {}",
+            input.script_sig.as_bytes().to_lower_hex_string()
+        );
+        info!(
+            "  - Sequence: 0x{:08X} ({})",
+            input.sequence.0, input.sequence.0
+        );
         info!("  - Witness items: {}", input.witness.len());
         for (j, witness_item) in input.witness.iter().enumerate() {
             info!("    Witness {}: {}", j, witness_item.to_lower_hex_string());
@@ -57,7 +63,10 @@ where
     for (i, output) in tx.output.iter().enumerate() {
         info!("Output {}:", i);
         info!("  - Value: {} satoshis", output.value.to_sat());
-        info!("  - ScriptPubKey: {}", output.script_pubkey.as_bytes().to_lower_hex_string());
+        info!(
+            "  - ScriptPubKey: {}",
+            output.script_pubkey.as_bytes().to_lower_hex_string()
+        );
     }
     info!("");
 
@@ -72,14 +81,26 @@ pub fn format_transaction_solidity(tx: &Transaction) -> String {
     let mut output = String::new();
 
     // Declare inputs array
-    output.push_str(&format!("        BtcTxIn[] memory inputs = new BtcTxIn[]({});\n", tx.input.len()));
+    output.push_str(&format!(
+        "        BtcTxIn[] memory inputs = new BtcTxIn[]({});\n",
+        tx.input.len()
+    ));
 
     // Assign each input
     for (i, input) in tx.input.iter().enumerate() {
         output.push_str(&format!("        inputs[{}] = BtcTxIn({{\n", i));
-        output.push_str(&format!("            txId: 0x{},\n", input.previous_output.txid));
-        output.push_str(&format!("            vout: {},\n", input.previous_output.vout));
-        output.push_str(&format!("            scriptSig: hex\"{}\",\n", input.script_sig.as_bytes().to_lower_hex_string()));
+        output.push_str(&format!(
+            "            txId: 0x{},\n",
+            input.previous_output.txid
+        ));
+        output.push_str(&format!(
+            "            vout: {},\n",
+            input.previous_output.vout
+        ));
+        output.push_str(&format!(
+            "            scriptSig: hex\"{}\",\n",
+            input.script_sig.as_bytes().to_lower_hex_string()
+        ));
         output.push_str(&format!("            sequence: {}\n", input.sequence.0));
         output.push_str("        });\n");
         if i < tx.input.len() - 1 {
@@ -90,13 +111,19 @@ pub fn format_transaction_solidity(tx: &Transaction) -> String {
     output.push_str("\n");
 
     // Declare outputs array
-    output.push_str(&format!("        BtcTxOut[] memory outputs = new BtcTxOut[]({});\n", tx.output.len()));
+    output.push_str(&format!(
+        "        BtcTxOut[] memory outputs = new BtcTxOut[]({});\n",
+        tx.output.len()
+    ));
 
     // Assign each output
     for (i, out) in tx.output.iter().enumerate() {
         output.push_str(&format!("        outputs[{}] = BtcTxOut({{\n", i));
         output.push_str(&format!("            amount: {},\n", out.value.to_sat()));
-        output.push_str(&format!("            scriptPubKey: hex\"{}\"\n", out.script_pubkey.as_bytes().to_lower_hex_string()));
+        output.push_str(&format!(
+            "            scriptPubKey: hex\"{}\"\n",
+            out.script_pubkey.as_bytes().to_lower_hex_string()
+        ));
         output.push_str("        });\n");
         if i < tx.output.len() - 1 {
             output.push_str("\n");
