@@ -63,16 +63,24 @@ pub fn init_challenge_script(
     stack.equals(number, true, wt_value, true); // Compare expected slot id with WT signed value
     let validate_slot_id = stack.get_script();
 
-    let protocol_script = verify_winternitz_signatures_aux::<&str>(
+    let winternitz = vec![
+        (wt_key_name, wt_winternitz_pubkey),
+        (slot_id_key_name, slot_id_pubkey),
+    ];
+
+    let mut protocol_script = verify_winternitz_signatures_aux::<&str>(
         wt_dispute_key,
-        &vec![
-            (wt_key_name, wt_winternitz_pubkey),
-            (slot_id_key_name, slot_id_pubkey),
-        ],
+        &winternitz,
         sign_mode,
         true,
         Some(vec![validate_slot_id]),
     )?;
+
+    // This block could be inside verify_winternitz_signatures_aux
+    protocol_script.add_stack_item(StackItem::new_schnorr_sig(true));
+    for (_, key) in winternitz {
+        protocol_script.add_stack_item(StackItem::new_winternitz_sig(&key));
+    }
 
     Ok(protocol_script)
 }
@@ -91,17 +99,24 @@ pub fn cosign_script(
     op_winternitz_pubkey: &WinternitzPublicKey,
 ) -> Result<ProtocolScript, ScriptError> {
     let validate_cosign = get_stack_equality_script(1);
+    let winternitz = vec![
+        (op_key_name, op_winternitz_pubkey),
+        (wt_key_name, wt_winternitz_pubkey),
+    ];
 
-    let protocol_script = verify_winternitz_signatures_aux::<&str>(
+    let mut protocol_script = verify_winternitz_signatures_aux::<&str>(
         op_dispute_key,
-        &vec![
-            (op_key_name, op_winternitz_pubkey),
-            (wt_key_name, wt_winternitz_pubkey),
-        ],
+        &winternitz,
         sign_mode,
         true,
         Some(vec![validate_cosign]),
     )?;
+
+    // This block could be inside verify_winternitz_signatures_aux
+    protocol_script.add_stack_item(StackItem::new_schnorr_sig(true));
+    for (_, key) in winternitz {
+        protocol_script.add_stack_item(StackItem::new_winternitz_sig(&key));
+    }
 
     Ok(protocol_script)
 }
