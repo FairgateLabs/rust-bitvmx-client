@@ -53,12 +53,12 @@ use crate::{
                 },
             },
             protocol_handler::{
-                ProtocolContext, ProtocolHandler, timeout_input_tx
+                ProtocolContext, ProtocolHandler, WithClaimGateConfig, timeout_input_tx
             },
         },
         variables::VariableTypes,
     },
-    types::ProgramContext,
+    types::{PROGRAM_TYPE_DRP, ProgramContext},
 };
 
 pub const EXTERNAL_START: &str = "EXTERNAL_START";
@@ -1028,13 +1028,18 @@ impl ProtocolHandler for DisputeResolutionProtocol {
     }
 }
 
+impl WithClaimGateConfig for DisputeResolutionProtocol {
+    type Config = DisputeConfiguration;
+    const PROGRAM_TYPE: &str = PROGRAM_TYPE_DRP;
+
+    fn role(&self) -> ParticipantRole {
+        get_role(self.ctx.my_idx)
+    }
+}
+
 impl DisputeResolutionProtocol {
     pub fn new(context: ProtocolContext) -> Self {
         Self { ctx: context }
-    }
-
-    pub fn role(&self) -> ParticipantRole {
-        get_role(self.ctx.my_idx)
     }
 
     fn partial_utxo_from(&self, tx: &Transaction, vout: u32) -> (Txid, u32, u64) {
