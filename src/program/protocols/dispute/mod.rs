@@ -19,14 +19,13 @@ use bitcoin_script_riscv::riscv::{
 };
 use bitcoin_script_stack::stack::StackTracker;
 use bitvmx_cpu_definitions::challenge::EmulatorResultType;
-use console::style;
 use emulator::{
     constants::REGISTERS_BASE_ADDRESS, decision::nary_search::NArySearchType,
     loader::program_definition::ProgramDefinition,
 };
 use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::{
-    builder::{Protocol, ProtocolBuilder},
+    builder::ProtocolBuilder,
     graph::graph::GraphOptions,
     scripts::{self, ProtocolScript, SignMode},
     types::{
@@ -53,9 +52,11 @@ use crate::{
                     get_required_keys, get_txs_configuration, set_inputs, split_input,
                 },
             },
-            protocol_handler::{ProtocolContext, ProtocolHandler, timeout_input_tx},
+            protocol_handler::{
+                ProtocolContext, ProtocolHandler, timeout_input_tx
+            },
         },
-        variables::{PartialUtxo, VariableTypes},
+        variables::VariableTypes,
     },
     types::ProgramContext,
 };
@@ -239,24 +240,6 @@ fn get_role(my_idx: usize) -> ParticipantRole {
     }
 }
 
-pub fn action_wins_prefix(role: &ParticipantRole) -> String {
-    match role {
-        ParticipantRole::Prover => "ACTION_PROVER_WINS_".to_string(),
-        ParticipantRole::Verifier => "ACTION_VERIFIER_WINS_".to_string(),
-    }
-}
-
-pub fn action_wins(role: &ParticipantRole, n: u32) -> String {
-    format!("{}{}", action_wins_prefix(role), n)
-}
-
-pub fn external_action(role: &ParticipantRole, n: u32) -> String {
-    match role {
-        ParticipantRole::Prover => format!("EXTERNAL_ACTION_PROVER_{n}"),
-        ParticipantRole::Verifier => format!("EXTERNAL_ACTION_VERIFIER_{n}"),
-    }
-}
-
 pub fn input_tx_name(index: u32) -> String {
     format!("INPUT_{}", index)
 }
@@ -334,10 +317,14 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         }
 
         if self.role() == ParticipantRole::Prover {
-            set_inputs(&self.ctx.id, &program_context, vec![
-                ("prover_continue", 0u8).into(),
-                ("prover_continue2", 0u8).into(),
-            ])?;
+            set_inputs(
+                &self.ctx.id,
+                &program_context,
+                vec![
+                    ("prover_continue", 0u8).into(),
+                    ("prover_continue2", 0u8).into(),
+                ],
+            )?;
         }
 
         let key_chain = &mut program_context.key_chain;
@@ -1054,65 +1041,6 @@ impl DisputeResolutionProtocol {
         let txid = tx.compute_txid();
         let amount = tx.output[vout as usize].value.to_sat();
         (txid, vout, amount)
-    }
-
-    fn add_action(
-        &self,
-        protocol: &mut Protocol,
-        utxo_action: &PartialUtxo,
-        leaves: &Vec<usize>,
-        speedup_pub: &PublicKey,
-        role: &ParticipantRole,
-        claim: &str,
-        action_number: u32,
-    ) -> Result<(), BitVMXError> {
-        let speedup_dust = OutputType::generic_dust_limit(None).to_sat();
-        protocol.add_transaction(&action_wins(role, action_number))?;
-        protocol.add_connection(
-            &format!("{:?}_ACTION_{action_number}", role),
-            &ClaimGate::tx_success(claim),
-            0.into(),
-            &action_wins(role, action_number),
-            InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::All {
-                    key_path_sign: SignMode::Aggregate,
-                },
-            ),
-            None,
-            None,
-        )?;
-
-        let output_type = utxo_action.3.as_ref().ok_or_else(|| {
-            BitVMXError::MissingParameter("UTXO output type is required".to_string())
-        })?;
-        protocol.add_external_transaction(&external_action(role, action_number))?;
-        protocol.add_unknown_outputs(&external_action(role, action_number), utxo_action.1)?;
-        protocol.add_transaction_output(&external_action(role, action_number), &output_type)?;
-        protocol.add_connection(
-            &format!("EXTERNAL_ACTION__{:?}_WINS", role),
-            &external_action(role, action_number),
-            (utxo_action.1 as usize).into(),
-            &action_wins(role, action_number),
-            InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::Scripts {
-                    leaves: leaves.clone(),
-                },
-            ),
-            None,
-            Some(utxo_action.0),
-        )?;
-
-        let pb = ProtocolBuilder {};
-        pb.add_speedup_output(
-            protocol,
-            &action_wins(role, action_number),
-            speedup_dust,
-            &speedup_pub,
-        )?;
-
-        Ok(())
     }
 
     pub fn get_tx_with_speedup_data(
