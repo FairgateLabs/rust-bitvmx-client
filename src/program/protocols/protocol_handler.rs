@@ -10,7 +10,7 @@ use protocol_builder::builder::ProtocolBuilder;
 use protocol_builder::scripts::{self, ProtocolScript, SignMode};
 use protocol_builder::types::connection::{InputSpec, OutputSpec};
 use protocol_builder::types::input::{SighashType, SpendMode};
-use protocol_builder::types::output::SpeedupData;
+use protocol_builder::types::output::{AmountType, SpeedupData};
 use protocol_builder::types::{InputArgs, OutputType, Utxo};
 use protocol_builder::{builder::Protocol, errors::ProtocolBuilderError};
 use serde::{Deserialize, Serialize};
@@ -24,8 +24,9 @@ use uuid::Uuid;
 use super::super::participant::ParticipantKeys;
 use crate::errors::BitVMXError;
 use crate::keychain::KeyChain;
+use crate::program::participant::ParticipantRole;
 use crate::program::protocols::claim::ClaimGate;
-use crate::program::protocols::dispute;
+use crate::program::protocols::{dispute, light_drp};
 #[cfg(feature = "union")]
 use crate::program::protocols::union::full_penalization::FullPenalizationProtocol;
 
@@ -55,7 +56,7 @@ use crate::types::{PROGRAM_TYPE_LOCK, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TRANSFER};
 use crate::types::{ProgramContext, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_DRP};
 
 use crate::program::setup::steps::SetupStepName;
-use crate::program::variables::WitnessTypes;
+use crate::program::variables::{Globals, PartialUtxo, WitnessTypes};
 use crate::program::{variables::VariableTypes, witness};
 
 const REQUESTED_CONFIRMATIONS_VAR: &str = "requested_confirmations";
@@ -639,13 +640,13 @@ pub trait ProtocolHandler {
         ])
     }
 
-    fn add_connection_with_scripts(
+    fn add_connection_with_scripts<V: Into<AmountType> + std::fmt::Debug + std::clone::Clone>(
         &self,
         context: &ProgramContext,
         aggregated: &PublicKey,
         protocol: &mut Protocol,
         timelock_blocks: u16,
-        amount: u64,
+        amount: V,
         amount_speedup: u64,
         from: &str,
         to: &str,
@@ -659,10 +660,10 @@ pub trait ProtocolHandler {
         // - the prover needs to re-sign any verifier provided input (so the equivocation is possible on reads)
 
         info!(
-            "Adding winternitz check for {} to {}. Amount: {}. Leaves {}",
+            "Adding winternitz check for {} to {}. Amount: {:?}. Leaves {}",
             style(from).green(),
             style(to).green(),
-            style(amount).green(),
+            style(amount.clone()).green(),
             style(leaves.len()).yellow()
         );
 
@@ -723,7 +724,7 @@ pub trait ProtocolHandler {
 
         // if the previous party does not present the input in time, the other party can also consume the connector output of the connection
         // so is not forced to reply (as the reply will have a timelock that would allow the dihonest party to start a claim)
-        if from != dispute::START_CH {
+        if from != dispute::START_CH && from != light_drp::START_CH {
             protocol.add_connection(
                 &format!("{}__CONNECTOR__INPUT_TO", from),
                 from,
@@ -775,6 +776,65 @@ pub trait ProtocolHandler {
 
         Ok(())
     }
+
+    fn add_action(
+        &self,
+        protocol: &mut Protocol,
+        utxo_action: &PartialUtxo,
+        leaves: &Vec<usize>,
+        speedup_pub: &PublicKey,
+        role: &ParticipantRole,
+        claim: &str,
+        action_number: u32,
+    ) -> Result<(), BitVMXError> {
+        let speedup_dust = OutputType::generic_dust_limit(None).to_sat();
+        protocol.add_transaction(&action_wins(role, action_number))?;
+        protocol.add_connection(
+            &format!("{:?}_ACTION_{action_number}", role),
+            &ClaimGate::tx_success(claim),
+            0.into(),
+            &action_wins(role, action_number),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            None,
+        )?;
+
+        let output_type = utxo_action.3.as_ref().ok_or_else(|| {
+            BitVMXError::MissingParameter("UTXO output type is required".to_string())
+        })?;
+        protocol.add_external_transaction(&external_action(role, action_number))?;
+        protocol.add_unknown_outputs(&external_action(role, action_number), utxo_action.1)?;
+        protocol.add_transaction_output(&external_action(role, action_number), &output_type)?;
+        protocol.add_connection(
+            &format!("EXTERNAL_ACTION__{:?}_WINS", role),
+            &external_action(role, action_number),
+            (utxo_action.1 as usize).into(),
+            &action_wins(role, action_number),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::Scripts {
+                    leaves: leaves.clone(),
+                },
+            ),
+            None,
+            Some(utxo_action.0),
+        )?;
+
+        let pb = ProtocolBuilder {};
+        pb.add_speedup_output(
+            protocol,
+            &action_wins(role, action_number),
+            speedup_dust,
+            &speedup_pub,
+        )?;
+
+        Ok(())
+    }
 }
 
 pub fn timeout_tx(name: &str) -> String {
@@ -792,6 +852,24 @@ pub fn get_tx_name_from_timeout(name: &str) -> Option<String> {
         Some(name.strip_suffix("_TO")?.to_string())
     } else {
         None
+    }
+}
+
+pub fn action_wins_prefix(role: &ParticipantRole) -> String {
+    match role {
+        ParticipantRole::Prover => "ACTION_PROVER_WINS_".to_string(),
+        ParticipantRole::Verifier => "ACTION_VERIFIER_WINS_".to_string(),
+    }
+}
+
+pub fn action_wins(role: &ParticipantRole, n: u32) -> String {
+    format!("{}{}", action_wins_prefix(role), n)
+}
+
+pub fn external_action(role: &ParticipantRole, n: u32) -> String {
+    match role {
+        ParticipantRole::Prover => format!("EXTERNAL_ACTION_PROVER_{n}"),
+        ParticipantRole::Verifier => format!("EXTERNAL_ACTION_VERIFIER_{n}"),
     }
 }
 

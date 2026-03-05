@@ -5,8 +5,8 @@ use crate::{
         participant::{ParticipantKeys, ParticipantRole, PublicKeyType},
         protocols::{
             claim::{ClaimGate, CLAIM_GATE_START, CLAIM_GATE_STOP, CLAIM_GATE_SUCCESS},
-            dispute::{self, action_wins_prefix},
-            protocol_handler::{ProtocolContext, ProtocolHandler},
+            dispute::{self},
+            protocol_handler::{action_wins_prefix, ProtocolContext, ProtocolHandler},
             union::{
                 common::{
                     collect_input_signatures, create_transaction_reference, double_indexed_name,
