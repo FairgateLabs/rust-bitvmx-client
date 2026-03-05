@@ -371,7 +371,7 @@ impl AdvanceFundsProtocol {
         context.bitcoin_coordinator.dispatch(
             tx.clone(),
             speedup,
-            Context::ProgramId(self.ctx.id).to_string()?,
+            Context::ProgramId(dispute_core.context().id).to_string()?,
             None,
             self.requested_confirmations(context),
         )?;
@@ -399,18 +399,18 @@ impl AdvanceFundsProtocol {
             slot_index, dispute_protocol_id
         );
 
-        let dispute_core_ph =
+        let dispute_core =
             self.load_protocol_by_name(PROGRAM_TYPE_DISPUTE_CORE, dispute_protocol_id)?;
 
         let tx_name = indexed_name(REIMBURSEMENT_KICKOFF_TX, slot_index);
-        let (tx, speedup) = dispute_core_ph.get_transaction_by_name(&tx_name, context)?;
+        let (tx, speedup) = dispute_core.get_transaction_by_name(&tx_name, context)?;
         let txid = tx.compute_txid();
 
         // Dispatch the transaction through the bitcoin coordinator
         context.bitcoin_coordinator.dispatch(
             tx.clone(),
             speedup,
-            Context::ProgramId(self.ctx.id).to_string()?,
+            Context::ProgramId(dispute_core.context().id).to_string()?,
             block_height, // Dispatch immediately
             self.requested_confirmations(context),
         )?;
