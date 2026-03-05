@@ -5,13 +5,14 @@ use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_broker::channel::channel::DualChannel;
 use bitvmx_client::program::protocols::dispute::config::{ConfigResult, ForceFailConfiguration};
 use bitvmx_client::program::protocols::dispute::{COMMITMENT, POST_COMMITMENT, PRE_COMMITMENT};
+use bitvmx_client::program::protocols::protocol_handler::timeout_tx;
 use bitvmx_client::{
     bitvmx::BitVMX,
     program::{
         self,
         participant::{CommsAddress, ParticipantRole},
         protocols::dispute::{
-            config::DisputeConfiguration, input_tx_name, program_input, timeout_tx, CHALLENGE_READ,
+            config::DisputeConfiguration, input_tx_name, program_input, CHALLENGE_READ,
             EXECUTE, TIMELOCK_BLOCKS,
         },
         variables::VariableTypes,
