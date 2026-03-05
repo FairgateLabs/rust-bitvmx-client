@@ -2152,11 +2152,12 @@ impl DisputeCoreProtocol {
                 // OP should save WT cosign data from the witness, and then dispatch OP_COSIGN tx
                 let protocol = self.load_protocol()?;
 
+                let tx = tx_status.tx_or_err()?;
                 let leaf: (Vec<String>, u32) = self.decode_witness_for_tx(
                     tx_name,
                     WT_INIT_CHALLENGE_COSIGN_INDEX as u32,
                     context,
-                    &tx_status.tx,
+                    tx,
                     None,
                     Some(protocol),
                     None,
