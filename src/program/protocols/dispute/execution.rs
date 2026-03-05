@@ -15,11 +15,9 @@ use crate::{
     program::{
         protocols::{
             dispute::{
-                challenge::get_challenge_leaf, input_handler::*, tx_news::dispatch,
-                DisputeResolutionProtocol, CHALLENGE, CHALLENGE_READ, COMMITMENT, EXECUTE,
-                GET_HASHES_AND_STEP,
+                CHALLENGE, CHALLENGE_READ, COMMITMENT, DisputeResolutionProtocol, EXECUTE, GET_HASHES_AND_STEP, challenge::get_challenge_leaf, input_handler::*
             },
-            protocol_handler::ProtocolHandler,
+            protocol_handler::ProtocolHandler, timeouts::dispatch,
         },
         variables::VariableTypes,
     },

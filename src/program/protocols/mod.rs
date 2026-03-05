@@ -6,5 +6,6 @@ pub mod dispute;
 pub mod light_drp;
 pub mod protocol_handler;
 pub mod protocol_type;
+pub mod timeouts;
 #[cfg(feature = "union")]
 pub mod union;
