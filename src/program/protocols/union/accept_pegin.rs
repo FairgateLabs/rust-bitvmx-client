@@ -479,29 +479,23 @@ impl AcceptPegInProtocol {
 
         let mut protocol = self.load_protocol()?;
 
-        let mut operator_take_sighash = None;
-        let mut operator_won_sighash = None;
+        let mut operator_take_txid = None;
+        let mut operator_won_txid = None;
 
         // Just send operator take and won sighash if we are a prover
         if self.committee(context, pegin_request.committee_id)?.members[self.ctx.my_idx].role
             == ParticipantRole::Prover
         {
-            let operator_take_tx_name = &indexed_name(OPERATOR_TAKE_TX, self.ctx.my_idx);
-            operator_take_sighash = Some(
+            operator_take_txid = Some(
                 protocol
-                    .get_hashed_message(operator_take_tx_name, OP_TAKE_PEGIN_INPUT_INDEX as u32, 0)?
-                    .unwrap()
-                    .as_ref()
-                    .to_vec(),
+                    .transaction_by_name(&indexed_name(OPERATOR_TAKE_TX, self.ctx.my_idx))?
+                    .compute_txid(),
             );
 
-            let operator_won_tx_name = &indexed_name(OPERATOR_WON_TX, self.ctx.my_idx);
-            operator_won_sighash = Some(
+            operator_won_txid = Some(
                 protocol
-                    .get_hashed_message(operator_won_tx_name, OP_TAKE_PEGIN_INPUT_INDEX as u32, 0)?
-                    .unwrap()
-                    .as_ref()
-                    .to_vec(),
+                    .transaction_by_name(&indexed_name(OPERATOR_WON_TX, self.ctx.my_idx))?
+                    .compute_txid(),
             );
         }
 
@@ -521,8 +515,8 @@ impl AcceptPegInProtocol {
             accept_pegin_sighash,
             accept_pegin_nonce: nonce,
             accept_pegin_signature: signature,
-            operator_take_sighash,
-            operator_won_sighash,
+            operator_take_txid,
+            operator_won_txid,
         };
 
         let data = serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(
