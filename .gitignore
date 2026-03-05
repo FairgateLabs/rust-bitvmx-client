@@ -23,6 +23,7 @@ Cargo.lock
 /zkp-jobs
 logs
 .DS_Store
+*.log
 
 # BitVMX files
 temp-runs
