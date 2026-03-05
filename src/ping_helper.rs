@@ -3,7 +3,7 @@ use crate::{
     errors::BitVMXError,
     types::ProgramContext,
 };
-use dispatcher_utils::PingMessage;
+use bitvmx_dispatcher_utils::PingMessage;
 use std::{
     collections::HashMap,
     time::{Duration, Instant},
