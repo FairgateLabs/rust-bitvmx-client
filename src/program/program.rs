@@ -133,7 +133,8 @@ impl Program {
         OperatorVerificationStore::request_missing_verification_keys(
             &context.globals,
             &context.comms,
-            &context.key_chain,
+            &context.key_manager,
+            &context.rsa_public_key,
             &program_id,
             &peers,
         )?;
@@ -284,7 +285,7 @@ impl Program {
 
                 // After all setup steps complete, sign and finalize
                 if is_complete {
-                    self.protocol.sign(&program_context.key_chain)?;
+                    self.protocol.sign(&program_context.key_manager)?;
                     self.protocol.setup_complete(&program_context)?;
                     self.start_monitoring(program_context)?;
                     self.state = ProgramState::Ready;

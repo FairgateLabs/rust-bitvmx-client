@@ -18,7 +18,7 @@ use tracing::{debug, warn};
 ///
 /// This step manages the signature generation and exchange process by:
 /// 1. Retrieving the participant's keys from the previous KeysStep
-/// 2. Generating MuSig2 partial signatures for each aggregated key via the KeyChain
+/// 2. Generating MuSig2 partial signatures for each aggregated key via the key manager
 /// 3. Serializing and exchanging signatures with other participants
 /// 4. Verifying and storing received signatures from all participants
 ///
@@ -76,13 +76,13 @@ impl SetupStep for SignaturesStep {
             my_keys.computed_aggregated.len()
         );
 
-        // Generate partial signatures for each aggregated key using the KeyChain
+        // Generate partial signatures for each aggregated key using the key_manager
         let mut partial_sig_msg: PartialSignatureMessage = Vec::new();
 
         for aggregated in my_keys.computed_aggregated.values() {
             let signatures = context
-                .key_chain
-                .get_signatures(aggregated, &protocol.context().protocol_name);
+                .key_manager
+                .get_my_partial_signatures(aggregated, &protocol.context().protocol_name);
 
             if signatures.is_err() {
                 warn!(
@@ -93,10 +93,7 @@ impl SetupStep for SignaturesStep {
                 continue; // Skip this aggregated key and continue with others
             }
 
-            let my_pub = context
-                .key_chain
-                .key_manager
-                .get_my_public_key(aggregated)?;
+            let my_pub = context.key_manager.get_my_public_key(aggregated)?;
 
             debug!(
                 "SignaturesStep: Generated partial signatures for aggregated key: {}",
@@ -259,10 +256,10 @@ impl SetupStep for SignaturesStep {
 
         // Add all signatures to key_manager for each aggregated key
         for (aggregated, partial_map) in map_of_maps {
-            context.key_chain.add_signatures(
+            context.key_manager.save_partial_signatures_multi(
                 &aggregated,
-                partial_map,
                 &protocol.context().protocol_name,
+                partial_map,
             )?;
             debug!(
                 "SignaturesStep: Added signatures to key_manager for aggregated key {}",

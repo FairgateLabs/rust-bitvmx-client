@@ -18,7 +18,7 @@ use tracing::debug;
 ///
 /// This step manages the nonce generation and exchange process by:
 /// 1. Retrieving the participant's keys from the previous KeysStep
-/// 2. Generating MuSig2 nonces for each aggregated key via the KeyChain
+/// 2. Generating MuSig2 nonces for each aggregated key via the key manager
 /// 3. Serializing and exchanging nonces with other participants
 /// 4. Verifying and storing received nonces from all participants
 ///
@@ -73,13 +73,13 @@ impl SetupStep for NoncesStep {
             my_keys.computed_aggregated.len()
         );
 
-        // Generate nonces for each aggregated key using the KeyChain
+        // Generate nonces for each aggregated key using the key_manager
         let mut public_nonce_msg: PubNonceMessage = Vec::new();
 
         for aggregated in my_keys.computed_aggregated.values() {
             let nonces = match context
-                .key_chain
-                .get_nonces(aggregated, &protocol.context().protocol_name)
+                .key_manager
+                .get_my_pub_nonces(aggregated, &protocol.context().protocol_name)
             {
                 Ok(n) => n,
                 Err(_) => {
@@ -91,10 +91,7 @@ impl SetupStep for NoncesStep {
                 }
             };
 
-            let my_pub = context
-                .key_chain
-                .key_manager
-                .get_my_public_key(aggregated)?;
+            let my_pub = context.key_manager.get_my_public_key(aggregated)?;
 
             debug!("NoncesStep: Got nonces for aggregated key: {}", aggregated);
 
@@ -242,10 +239,10 @@ impl SetupStep for NoncesStep {
 
         // Add all nonces to key_manager for each aggregated key
         for (aggregated, pubkey_nonce_map) in map_of_maps {
-            context.key_chain.add_nonces(
+            context.key_manager.aggregate_nonces(
                 &aggregated,
-                pubkey_nonce_map,
                 &protocol.context().protocol_name,
+                pubkey_nonce_map,
             )?;
             debug!(
                 "NoncesStep: Added nonces to key_manager for aggregated key {}",

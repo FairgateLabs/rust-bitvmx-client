@@ -328,7 +328,8 @@ impl LeaderBroadcastHelper {
 
             request(
                 &program_context.comms,
-                &program_context.key_chain,
+                &program_context.key_manager,
+                &program_context.rsa_public_key,
                 context_id,
                 participant.clone(),
                 CommsMessageType::Broadcasted,
@@ -452,7 +453,7 @@ impl LeaderBroadcastHelper {
         match SignatureVerifier::verify_and_get_key(
             &program_context.comms,
             &program_context.globals,
-            &program_context.key_chain,
+            &program_context.rsa_public_key,
             sender_pubkey_hash,
             program_id,
             msg_type,
