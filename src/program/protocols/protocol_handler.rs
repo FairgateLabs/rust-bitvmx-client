@@ -837,6 +837,20 @@ pub trait ProtocolHandler {
     }
 }
 
+pub trait WithClaimGateConfig {
+    type Config : ClaimGateConfig;
+    const PROGRAM_TYPE: &'static str;
+
+    fn role(&self) -> ParticipantRole;
+}
+
+pub trait ClaimGateConfig: Sized {
+    fn load(id: &Uuid, globals: &Globals) -> Result<Self, BitVMXError>;
+    fn get_notify_protocol(&self) -> &Vec<(String, Uuid)>;
+    fn get_prover_actions(&self) -> &Vec<(PartialUtxo, Vec<usize>)>;
+    fn get_verifier_actions(&self) -> &Vec<(PartialUtxo, Vec<usize>)>;
+}
+
 pub fn timeout_tx(name: &str) -> String {
     format!("{}_TO", name)
 }

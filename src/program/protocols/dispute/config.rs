@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::{
     errors::BitVMXError,
-    program::variables::{Globals, PartialUtxo, VariableTypes},
+    program::{protocols::protocol_handler::ClaimGateConfig, variables::{Globals, PartialUtxo, VariableTypes}},
     types::{IncomingBitVMXApiMessages, PROGRAM_TYPE_DRP},
 };
 
@@ -83,6 +83,24 @@ impl DisputeConfiguration {
             )
             .to_string()?,
         ])
+    }
+}
+
+impl ClaimGateConfig for DisputeConfiguration {
+    fn load(id: &Uuid, globals: &Globals) -> Result<Self, BitVMXError> {
+        DisputeConfiguration::load(id, globals)
+    }
+
+    fn get_notify_protocol(&self) -> &Vec<(String, Uuid)> {
+        &self.notify_protocol
+    }
+
+    fn get_prover_actions(&self) -> &Vec<(PartialUtxo, Vec<usize>)> {
+        &self.prover_actions
+    }
+
+    fn get_verifier_actions(&self) -> &Vec<(PartialUtxo, Vec<usize>)> {
+        &self.verifier_actions
     }
 }
 
