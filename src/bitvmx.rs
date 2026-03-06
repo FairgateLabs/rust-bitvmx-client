@@ -738,8 +738,8 @@ impl BitVMX {
                     }
                     ack_news = AckNews::Monitor(AckMonitorNews::RskPeginTransaction(tx_id));
                 }
-                MonitorNews::NewBlock(block_id, block_height) => {
-                    debug!("New block: {:?} {}", block_id, block_height);
+                MonitorNews::NewBlock(block_height, block_hash) => {
+                    debug!("New block: {} {}", block_height, block_hash);
                     ack_news = AckNews::Monitor(AckMonitorNews::NewBlock);
 
                     if self.send_new_block_news(&self.program_context) {
