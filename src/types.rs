@@ -1,7 +1,9 @@
 use std::{str::FromStr, time::Duration};
 
 use crate::{config::ComponentsConfig, spv_proof::BtcTxSPVProof};
-use bitcoin::{address::NetworkUnchecked, Address, PrivateKey, PublicKey, Transaction, Txid};
+use bitcoin::{
+    address::NetworkUnchecked, Address, BlockHash, PrivateKey, PublicKey, Transaction, Txid,
+};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TransactionStatus};
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
@@ -188,6 +190,7 @@ pub enum OutgoingBitVMXApiMessages {
     WalletError(Uuid, String),
     ProtocolVisualization(Uuid, String),
     SetInput(Vec<u8>),
+    NewBlock(BlockHash, u32),
 }
 
 impl OutgoingBitVMXApiMessages {
@@ -348,6 +351,7 @@ impl OutgoingBitVMXApiMessages {
                 "ProtocolVisualization".to_string()
             }
             OutgoingBitVMXApiMessages::SetInput(_) => "SetInput".to_string(),
+            OutgoingBitVMXApiMessages::NewBlock(_, _) => "NewBlock".to_string(),
         }
     }
 }

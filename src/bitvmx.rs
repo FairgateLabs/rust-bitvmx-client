@@ -66,6 +66,8 @@ use uuid::Uuid;
 pub const THROTTLE_TICKS: u32 = 2;
 pub const WALLET_INDEX: u32 = 100;
 pub const WALLET_CHANGE_INDEX: u32 = 101;
+pub const CLIENT_GLOBAL_SETTINGS_UUID: Uuid = Uuid::from_bytes(*b"GLOBAL_SETTINGS-");
+pub const SEND_NEW_BLOCK_NEWS: &str = "send_new_block_news";
 
 #[derive(Debug)]
 struct BitcoinUpdateState {
@@ -739,6 +741,16 @@ impl BitVMX {
                 MonitorNews::NewBlock(block_id, block_height) => {
                     debug!("New block: {:?} {}", block_id, block_height);
                     ack_news = AckNews::Monitor(AckMonitorNews::NewBlock);
+
+                    if self.send_new_block_news(&self.program_context) {
+                        let data = serde_json::to_string(&OutgoingBitVMXApiMessages::NewBlock(
+                            block_hash,
+                            block_height,
+                        ))?;
+                        self.program_context
+                            .broker_channel
+                            .send(&self.config.components.l2, data)?;
+                    }
                 }
             }
 
@@ -1029,6 +1041,16 @@ impl BitVMX {
         self.wallet.sync_wallet()?;
         info!("Wallet sync completed.");
         Ok(())
+    }
+
+    fn send_new_block_news(&self, context: &ProgramContext) -> bool {
+        context
+            .globals
+            .get_var(&CLIENT_GLOBAL_SETTINGS_UUID, SEND_NEW_BLOCK_NEWS)
+            .unwrap_or(None)
+            .unwrap_or(VariableTypes::Bool(false))
+            .bool()
+            .unwrap_or(false)
     }
 }
 
