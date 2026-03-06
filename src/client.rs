@@ -1,4 +1,5 @@
 use crate::{
+    bitvmx::CLIENT_GLOBAL_SETTINGS_UUID,
     config::{BrokerConfig, ComponentConfig, ComponentsConfig},
     errors::ClientError,
     program::{
@@ -274,5 +275,13 @@ impl BitVMXClient {
 
     fn serialize_key(s: &str) -> String {
         s.to_string()
+    }
+
+    pub fn set_global_var(&self, key: &str, value: VariableTypes) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SetVar(
+            CLIENT_GLOBAL_SETTINGS_UUID,
+            Self::serialize_key(key),
+            value,
+        ))
     }
 }
