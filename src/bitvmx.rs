@@ -2,6 +2,7 @@ use crate::config::ComponentsConfig;
 use crate::ping_helper::{JobDispatcherType, PingHelper};
 use crate::program::program::is_active_program;
 use crate::program::protocols::protocol_handler::ProtocolHandler;
+use crate::program::variables::VariableTypes;
 use crate::shutdown::GracefulShutdown;
 use crate::spv_proof::get_spv_proof;
 use crate::timestamp_verifier::TimestampVerifier;
