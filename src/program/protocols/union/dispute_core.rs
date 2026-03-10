@@ -2101,8 +2101,8 @@ impl DisputeCoreProtocol {
 
         let settings = self.load_stream_setting(context)?;
         let data = self.dispute_core_data(context)?;
-
         let (_, op_index) = extract_double_index(tx_name)?;
+
         if self.is_my_dispute_core(context)? {
             let block_height =
                 Some(self.get_dispatch_height(tx_status, settings.op_no_cosign_timelock)?);
@@ -2114,93 +2114,117 @@ impl DisputeCoreProtocol {
                     block_height,
                 },
             )?;
-        } else {
-            match load_penalized_member(
-                context,
-                data.committee_id,
-                data.member_index,
-                ParticipantRole::Verifier,
-            )? {
-                Some(penalized_member) => {
-                    info!(
+            return Ok(());
+        }
+
+        if self.handle_penalized_watchtower(context, &data, op_index)? {
+            info!(
+                id = self.ctx.my_idx,
+                "Watchtower already penalized for member index: {}, skipping OP_COSIGN dispatch",
+                data.member_index
+            );
+            return Ok(());
+        }
+
+        if op_index == self.ctx.my_idx {
+            // OP should save WT cosign data from the witness, and then dispatch OP_COSIGN tx
+            self.dispatch_op_cosign(context, tx_name, tx_status, data.member_index, op_index)?;
+        }
+
+        Ok(())
+    }
+
+    fn dispatch_op_cosign(
+        &self,
+        context: &ProgramContext,
+        tx_name: &str,
+        tx_status: &TransactionStatus,
+        wt_index: usize,
+        op_index: usize,
+    ) -> Result<(), BitVMXError> {
+        let protocol = self.load_protocol()?;
+        let leaf: (Vec<String>, u32) = self.decode_witness_for_tx(
+            tx_name,
+            WT_INIT_CHALLENGE_COSIGN_INDEX as u32,
+            context,
+            &tx_status.tx,
+            None,
+            Some(protocol),
+            None,
+        )?;
+
+        info!(
+            id = self.ctx.my_idx,
+            "Decoded witness for {}, leaf: {}", tx_name, leaf.1
+        );
+
+        // It's OK to save the leaf data directly (without indexing it) because this OP could be challenged by this WT just once.
+        // This protocol should not handle WT_INIT_CHALLENGE TXs from others OPs.
+        self.set_number(context, &self.ctx.id, INIT_CHALLENGE_SLOT, leaf.1)?;
+
+        let key_name = WT_COSIGN_KEY;
+        let witness = context
+            .witness
+            .get_witness(&self.ctx.id, key_name)?
+            .unwrap();
+
+        // Save witness
+        context
+            .witness
+            .set_witness(&self.ctx.id, key_name, witness)?;
+
+        self.dispatch(
+            context,
+            DisputeCoreTxType::OperatorCosign { wt_index, op_index },
+        )?;
+
+        Ok(())
+    }
+
+    fn handle_penalized_watchtower(
+        &self,
+        context: &ProgramContext,
+        data: &DisputeCoreData,
+        op_index: usize,
+    ) -> Result<bool, BitVMXError> {
+        // op_index is the OP that is being challenged by the WT that is probably penalized.
+        match load_penalized_member(
+            context,
+            data.committee_id,
+            data.member_index,
+            ParticipantRole::Verifier,
+        )? {
+            Some(penalized_member) => {
+                info!(
                     id = self.ctx.my_idx,
                     "Watchtower already penalized for member index: {}, skipping OP_COSIGN dispatch",
                     data.member_index
                 );
 
-                    self.dispatch(
-                        context,
-                        DisputeCoreTxType::PenalizationWatchtowerDisabler {
-                            wt_index: penalized_member.member_index,
-                            op_disabler_directory_index: penalized_member.challenger_index,
-                            op_index,
-                        },
-                    )?;
-
-                    self.dispatch(
-                        context,
-                        DisputeCoreTxType::PenalizationWatchtowerCosignDisabler {
-                            wt_index: penalized_member.member_index,
-                            op_disabler_directory_index: penalized_member.challenger_index,
-                            op_index,
-                        },
-                    )?;
-
-                    return Ok(());
-                }
-                None => {}
-            }
-
-            if op_index == self.ctx.my_idx {
-                // OP should save WT cosign data from the witness, and then dispatch OP_COSIGN tx
-                let protocol = self.load_protocol()?;
-
-                let leaf: (Vec<String>, u32) = self.decode_witness_for_tx(
-                    tx_name,
-                    WT_INIT_CHALLENGE_COSIGN_INDEX as u32,
-                    context,
-                    &tx_status.tx,
-                    None,
-                    Some(protocol),
-                    None,
-                )?;
-                info!(
-                    id = self.ctx.my_idx,
-                    "Decoded witness for {}: {:?}", tx_name, leaf
-                );
-                // It's OK to save the leaf data directly (without indexing it) because this OP could be challenged by this WT just once.
-                // This protocol should not handle WT_INIT_CHALLENGE TXs from others OPs.
-                self.set_number(context, &self.ctx.id, INIT_CHALLENGE_SLOT, leaf.1)?;
-
-                let key_name = WT_COSIGN_KEY;
-                let witness = context
-                    .witness
-                    .get_witness(&self.ctx.id, key_name)?
-                    .unwrap();
-
-                // Save witness
-                context
-                    .witness
-                    .set_witness(&self.ctx.id, key_name, witness)?;
-
                 self.dispatch(
                     context,
-                    DisputeCoreTxType::OperatorCosign {
-                        wt_index: data.member_index,
+                    DisputeCoreTxType::PenalizationWatchtowerDisabler {
+                        wt_index: penalized_member.member_index,
+                        op_disabler_directory_index: penalized_member.challenger_index,
                         op_index,
                     },
                 )?;
-            } else {
-                info!(
-                    id = self.ctx.my_idx,
-                    "{} not for me (my index: {}), skipping op_cosign dispatch",
-                    tx_name,
-                    self.ctx.my_idx
-                );
+
+                self.dispatch(
+                    context,
+                    DisputeCoreTxType::PenalizationWatchtowerCosignDisabler {
+                        wt_index: penalized_member.member_index,
+                        op_disabler_directory_index: penalized_member.challenger_index,
+                        op_index,
+                    },
+                )?;
+
+                return Ok(true);
+            }
+            None => {
+                return Ok(false);
             }
         }
-
-        Ok(())
     }
 
     fn op_no_cosign_tx(
@@ -2330,33 +2354,23 @@ impl DisputeCoreProtocol {
         let data = self.dispute_core_data(context)?;
 
         // WT: Dispatch disabler if operator is already penalized.
-        match load_penalized_member(
-            context,
-            data.committee_id,
-            data.member_index,
-            ParticipantRole::Prover,
-        )? {
-            Some(penalized_member) => {
-                info!(
-                    id = self.ctx.my_idx,
-                    "Operator already penalized for member index: {}, skipping WT_INIT_CHALLENGE_TX dispatch",
-                    data.member_index
-                );
-
-                self.dispatch(
-                    context,
-                    DisputeCoreTxType::PenalizationStopOperatorWon {
-                        wt_index: penalized_member.challenger_index,
-                        op_index: penalized_member.member_index,
-                        slot_index,
-                    },
-                )?;
-
-                return Ok(());
-            }
-            None => {}
+        if self.check_stop_op_won(context, &data)? {
+            return Ok(());
         }
 
+        self.dispatch_init_challenge(context, tx_name, tx_status, slot_index, &data)?;
+
+        Ok(())
+    }
+
+    fn dispatch_init_challenge(
+        &self,
+        context: &ProgramContext,
+        tx_name: &str,
+        tx_status: &TransactionStatus,
+        slot_index: usize,
+        data: &DisputeCoreData,
+    ) -> Result<(), BitVMXError> {
         // WT: save data and dispatch WT_INIT_CHALLENGE_TX
         let committee = self.committee(context)?;
         let wt_dispute_core_id = get_dispute_core_pid(
@@ -2417,8 +2431,42 @@ impl DisputeCoreProtocol {
             id = self.ctx.my_idx,
             "{} dispatched for slot: {} with txid: {}", init_challenge_name, slot_index, txid
         );
-
         Ok(())
+    }
+
+    fn check_stop_op_won(
+        &self,
+        context: &ProgramContext,
+        data: &DisputeCoreData,
+    ) -> Result<bool, BitVMXError> {
+        match load_penalized_member(
+            context,
+            data.committee_id,
+            data.member_index,
+            ParticipantRole::Prover,
+        )? {
+            Some(penalized_member) => {
+                info!(
+                    id = self.ctx.my_idx,
+                    "Operator already penalized for member index: {}, skipping WT_INIT_CHALLENGE_TX dispatch",
+                    data.member_index
+                );
+
+                self.dispatch(
+                    context,
+                    DisputeCoreTxType::PenalizationStopOperatorWon {
+                        wt_index: penalized_member.challenger_index,
+                        op_index: penalized_member.member_index,
+                        slot_index,
+                    },
+                )?;
+
+                return Ok(true);
+            }
+            None => {
+                return Ok(false);
+            }
+        }
     }
 
     fn handle_challenge_tx(
@@ -2601,10 +2649,7 @@ impl DisputeCoreProtocol {
         tx_id: Txid,
         tx_name: &str,
     ) -> Result<(), BitVMXError> {
-        info!(
-            "Handling reimbursement kickoff txid: {}. Name: {}",
-            tx_id, tx_name
-        );
+        info!("Handling kickoff txid: {}. Name: {}", tx_id, tx_name);
 
         // Extract slot_index from transaction name
         let slot_index = extract_index(tx_name, REIMBURSEMENT_KICKOFF_TX)?;
@@ -2613,11 +2658,8 @@ impl DisputeCoreProtocol {
         let settings = self.load_stream_setting(context)?;
 
         if self.is_my_dispute_core(context)? {
-            info!(
-                id = self.ctx.my_idx,
-                "This is my dispute_core, checking for operator take dispatch for slot {}",
-                slot_index
-            );
+            info!("My dispute_core. Dispatch OP Take for slot: {}", slot_index);
+
             // Handle operator take if needed
             let block_height = self.get_dispatch_height(tx_status, settings.long_timelock + 1)?;
             self.dispatch(
@@ -2629,38 +2671,10 @@ impl DisputeCoreProtocol {
                 },
             )?;
         } else {
-            info!(
-                id = self.ctx.my_idx,
-                "Not my dispute_core, skipping operator take dispatch for slot {}", slot_index
-            );
+            info!("Not my dispute_core, skipping OP Take");
 
-            let data = self.dispute_core_data(context)?;
-            // Check if operator already penalized
-            match load_penalized_member(
-                context,
-                data.committee_id,
-                data.member_index,
-                ParticipantRole::Prover,
-            )? {
-                Some(penalized_member) => {
-                    info!(
-                    id = self.ctx.my_idx,
-                    "Operator already penalized for member index: {}, skipping CHALLENGE_TX dispatch",
-                    data.member_index
-                );
-
-                    self.dispatch(
-                        context,
-                        DisputeCoreTxType::PenalizationOperatorLazyDisabler {
-                            wt_index: penalized_member.challenger_index,
-                            op_index: penalized_member.member_index,
-                            slot_index,
-                        },
-                    )?;
-
-                    return Ok(());
-                }
-                None => {}
+            if self.check_op_lazy_disabler(context, slot_index)? {
+                return Ok(());
             }
 
             // Handle challenge if needed
@@ -2712,6 +2726,44 @@ impl DisputeCoreProtocol {
         self.send_reimbursement_kickoff_spv(context, tx_id, slot_index)?;
 
         Ok(())
+    }
+
+    fn check_op_lazy_disabler(
+        &self,
+        context: &ProgramContext,
+        slot_index: usize,
+    ) -> Result<bool, BitVMXError> {
+        let data = self.dispute_core_data(context)?;
+
+        // Check if operator is already penalized
+        match load_penalized_member(
+            context,
+            data.committee_id,
+            data.member_index,
+            ParticipantRole::Prover,
+        )? {
+            Some(penalized_member) => {
+                info!(
+                    id = self.ctx.my_idx,
+                    "Operator already penalized for member index: {}, skipping CHALLENGE_TX dispatch",
+                    data.member_index
+                );
+
+                self.dispatch(
+                    context,
+                    DisputeCoreTxType::PenalizationOperatorLazyDisabler {
+                        wt_index: penalized_member.challenger_index,
+                        op_index: penalized_member.member_index,
+                        slot_index,
+                    },
+                )?;
+
+                return Ok(true);
+            }
+            None => {
+                return Ok(false);
+            }
+        }
     }
 
     fn send_reimbursement_kickoff_spv(
