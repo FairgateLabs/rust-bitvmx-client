@@ -2354,7 +2354,7 @@ impl DisputeCoreProtocol {
         let data = self.dispute_core_data(context)?;
 
         // WT: Dispatch disabler if operator is already penalized.
-        if self.check_stop_op_won(context, &data)? {
+        if self.check_stop_op_won(context, &data, slot_index)? {
             return Ok(());
         }
 
@@ -2438,6 +2438,7 @@ impl DisputeCoreProtocol {
         &self,
         context: &ProgramContext,
         data: &DisputeCoreData,
+        slot_index: usize,
     ) -> Result<bool, BitVMXError> {
         match load_penalized_member(
             context,
