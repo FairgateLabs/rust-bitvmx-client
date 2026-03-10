@@ -416,15 +416,18 @@ impl ProtocolHandler for DisputeCoreProtocol {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         info!("Building DisputeCoreProtocol for program {}", self.ctx.id);
+
         set_my_idx(context, self.ctx.id, self.ctx.my_idx)?;
+        let committee = self.committee(context)?;
+        self.set_requested_confirmations(context, committee.pegin_confirmations)?;
+
         let dispute_core_data = self.dispute_core_data(context)?;
         self.validate_keys(&keys, context, dispute_core_data.committee_id)?;
 
         let mut protocol = self.load_or_create_protocol();
-        let committee = self.committee(context)?;
+        let settings = self.load_stream_setting(context)?;
         let member = &committee.members[dispute_core_data.member_index];
         let mut reimbursement_outputs = vec![];
-        let settings = self.load_stream_setting(context)?;
 
         self.create_wt_start_enabler_output(
             &mut protocol,
@@ -2616,25 +2619,15 @@ impl DisputeCoreProtocol {
                 slot_index
             );
             // Handle operator take if needed
-            if tx_status.confirmations == 1 {
-                let block_height =
-                    self.get_dispatch_height(tx_status, settings.long_timelock + 1)?;
-                self.dispatch(
-                    context,
-                    DisputeCoreTxType::OperatorTake {
-                        op_index: self.ctx.my_idx,
-                        slot_index,
-                        block_height: Some(block_height),
-                    },
-                )?;
-            } else {
-                info!(
-                    id = self.ctx.my_idx,
-                    "Reimbursement kickoff transaction {} lacks enough confirmations: {}",
-                    tx_id,
-                    tx_status.confirmations
-                );
-            }
+            let block_height = self.get_dispatch_height(tx_status, settings.long_timelock + 1)?;
+            self.dispatch(
+                context,
+                DisputeCoreTxType::OperatorTake {
+                    op_index: self.ctx.my_idx,
+                    slot_index,
+                    block_height: Some(block_height),
+                },
+            )?;
         } else {
             info!(
                 id = self.ctx.my_idx,

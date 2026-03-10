@@ -82,10 +82,11 @@ impl ProtocolHandler for RejectPegInProtocol {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         let data: RejectPeginData = self.reject_pegin(context)?;
-        let pegin_request_txid = data.txid;
         let committee = self.committee(context, data.committee_id)?;
-        let take_aggregated_key = committee.take_aggregated_key;
+        self.set_requested_confirmations(context, committee.pegin_confirmations)?;
 
+        let pegin_request_txid = data.txid;
+        let take_aggregated_key = committee.take_aggregated_key;
         let mut protocol = self.load_or_create_protocol();
 
         let mut enabler_scripts = vec![];

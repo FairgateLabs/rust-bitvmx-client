@@ -109,6 +109,8 @@ impl ProtocolHandler for FullPenalizationProtocol {
 
         let data: FullPenalizationData = self.full_penalization_data(context)?;
         let committee = self.committee(context, data.committee_id)?;
+        self.set_requested_confirmations(context, committee.pegin_confirmations)?;
+
         let mut protocol = self.load_or_create_protocol();
 
         // Create Operator disabler directory and disablers

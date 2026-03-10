@@ -51,6 +51,8 @@ use crate::program::setup::steps::SetupStepName;
 use crate::program::variables::WitnessTypes;
 use crate::program::{variables::VariableTypes, witness};
 
+const REQUESTED_CONFIRMATIONS_VAR: &str = "requested_confirmations";
+
 #[derive(Clone, Debug)]
 pub struct LeafToSign {
     pub leaf_index: u32,
@@ -111,12 +113,25 @@ pub trait ProtocolHandler {
         Some(
             program_context
                 .globals
-                .get_var(&self.context().id, "requested_confirmations")
+                .get_var(&self.context().id, REQUESTED_CONFIRMATIONS_VAR)
                 .unwrap_or(None)
                 .unwrap_or(VariableTypes::Number(1))
                 .number()
                 .unwrap_or(1) as u32,
         )
+    }
+
+    fn set_requested_confirmations(
+        &self,
+        program_context: &ProgramContext,
+        confirmations: u32,
+    ) -> Result<(), BitVMXError> {
+        program_context.globals.set_var(
+            &self.context().id,
+            REQUESTED_CONFIRMATIONS_VAR,
+            VariableTypes::Number(confirmations),
+        )?;
+        Ok(())
     }
 
     fn build(
