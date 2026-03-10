@@ -2678,38 +2678,34 @@ impl DisputeCoreProtocol {
                 return Ok(());
             }
 
-            // Handle challenge if needed
-            match self.get_selected_operator_key(slot_index, context)? {
-                Some(selected_operator_key) => {
-                    // Get the operator's take key that this dispute core is monitoring
-                    let monitored_operator_key = self.monitored_operator_key(context)?;
+            self.check_challenge(context, tx_status, slot_index)?;
+        }
 
-                    // Compare if the monitored operator is the selected one
-                    let is_valid = selected_operator_key == monitored_operator_key;
+        self.send_reimbursement_kickoff_spv(context, tx_id, slot_index)?;
 
-                    if !is_valid {
-                        info!(
-                            "Unauthorized operator detected for slot {}, dispatching Challenge Tx",
-                            slot_index
-                        );
-                        self.dispatch(
-                            context,
-                            DisputeCoreTxType::Challenge {
-                                slot_index,
-                                block_height: Some(self.get_dispatch_height(
-                                    tx_status,
-                                    self.load_stream_setting(context)?.short_timelock,
-                                )?),
-                            },
-                        )?;
-                    } else {
-                        info!("Authorized operator confirmed for slot {}", slot_index);
-                        // TODO: here we need to validate that the advancement of funds has actually been made
-                    }
-                }
-                None => {
-                    info!("No selected operator key found for slot {}", slot_index);
-                    // If no selected operator key is set, it means that someone triggered a reimbursment kickoff transaction but there was no advances of funds
+        Ok(())
+    }
+
+    fn check_challenge(
+        &self,
+        context: &ProgramContext,
+        tx_status: &TransactionStatus,
+        slot_index: usize,
+    ) -> Result<(), BitVMXError> {
+        // Handle challenge if needed
+        match self.get_selected_operator_key(slot_index, context)? {
+            Some(selected_operator_key) => {
+                // Get the operator's take key that this dispute core is monitoring
+                let monitored_operator_key = self.monitored_operator_key(context)?;
+
+                // Compare if the monitored operator is the selected one
+                let is_valid = selected_operator_key == monitored_operator_key;
+
+                if !is_valid {
+                    info!(
+                        "Unauthorized operator detected for slot {}, dispatching Challenge Tx",
+                        slot_index
+                    );
                     self.dispatch(
                         context,
                         DisputeCoreTxType::Challenge {
@@ -2720,11 +2716,26 @@ impl DisputeCoreProtocol {
                             )?),
                         },
                     )?;
+                } else {
+                    info!("Authorized operator confirmed for slot {}", slot_index);
+                    // TODO: here we need to validate that the advancement of funds has actually been made
                 }
             }
+            None => {
+                info!("No selected operator key found for slot {}", slot_index);
+                // If no selected operator key is set, it means that someone triggered a reimbursment kickoff transaction but there was no advances of funds
+                self.dispatch(
+                    context,
+                    DisputeCoreTxType::Challenge {
+                        slot_index,
+                        block_height: Some(self.get_dispatch_height(
+                            tx_status,
+                            self.load_stream_setting(context)?.short_timelock,
+                        )?),
+                    },
+                )?;
+            }
         }
-
-        self.send_reimbursement_kickoff_spv(context, tx_id, slot_index)?;
 
         Ok(())
     }
