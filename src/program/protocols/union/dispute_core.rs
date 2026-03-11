@@ -2725,6 +2725,7 @@ impl DisputeCoreProtocol {
     ) -> Result<bool, BitVMXError> {
         // Handle challenge if needed
         // TODO: Should we remove get_selected_operator_key and use just funds_advanced?
+        // SELECTED_OPERATOR_PUBKEY is set with OperatorTakeTriggered event, but it would be enough just set this data once funds were advanced and validated by the contract
         let selected_op_var = self.get_selected_operator_key(slot_index, context)?;
         let funds_advanced_var = self.funds_advanced(context, slot_index)?;
 
