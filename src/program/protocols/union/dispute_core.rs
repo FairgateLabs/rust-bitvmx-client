@@ -2724,6 +2724,7 @@ impl DisputeCoreProtocol {
         tx_name: &str,
     ) -> Result<bool, BitVMXError> {
         // Handle challenge if needed
+        // TODO: Should we remove get_selected_operator_key and use just funds_advanced?
         let selected_op_var = self.get_selected_operator_key(slot_index, context)?;
         let funds_advanced_var = self.funds_advanced(context, slot_index)?;
 
