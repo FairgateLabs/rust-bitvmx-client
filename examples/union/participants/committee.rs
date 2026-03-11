@@ -268,7 +268,7 @@ impl Committee {
         &mut self,
         slot_id: usize,
         user_public_key: PublicKey,
-        pegout_id: Vec<u8>,
+        pegout_id: &Vec<u8>,
         selected_operator_pubkey: PublicKey,
         fee: u64,
     ) -> Result<()> {
@@ -284,6 +284,28 @@ impl Committee {
                 pegout_id.clone(),
                 selected_operator_pubkey,
                 fee,
+            )
+        })?;
+
+        Ok(())
+    }
+
+    pub fn advance_funds_registered(
+        &mut self,
+        slot_index: usize,
+        pegout_id: &Vec<u8>,
+        operator_pubkey: &PublicKey,
+        txid: &Txid,
+    ) -> Result<()> {
+        let committee_id = self.committee_id.clone();
+
+        self.all(|op: &mut Member| {
+            op.advance_funds_registered(
+                committee_id,
+                slot_index,
+                pegout_id.clone(),
+                operator_pubkey,
+                txid,
             )
         })?;
 

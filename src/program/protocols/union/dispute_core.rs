@@ -70,6 +70,7 @@ const WT_COSIGN_KEY: &str = "WT_COSIGN_KEY";
 
 const CLAIM_GATE_FEE: u64 = 335; // TODO: Validate this value
 
+pub const OP_INITIAL_DEPOSIT_TX_REIMBURSMENT_LEAF: usize = 0;
 pub const OP_INITIAL_DEPOSIT_TX_DISABLER_LEAF: usize = 1;
 pub const WT_START_ENABLER_TX_DISABLER_LEAF: usize = 0;
 
@@ -1666,7 +1667,10 @@ impl DisputeCoreProtocol {
         Ok(self.dispute_core_data(context)?.committee_id)
     }
 
-    fn monitored_operator_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+    fn monitored_member_take_key(
+        &self,
+        context: &ProgramContext,
+    ) -> Result<PublicKey, BitVMXError> {
         let committee = self.committee(context)?;
         let data = self.dispute_core_data(context)?;
         Ok(committee.members[data.member_index].take_key)
@@ -1675,12 +1679,12 @@ impl DisputeCoreProtocol {
     fn get_selected_operator_key(
         &self,
         slot_id: usize,
-        program_context: &ProgramContext,
+        context: &ProgramContext,
     ) -> Result<Option<PublicKey>, BitVMXError> {
-        let committee_id = self.committee_id(program_context)?;
-        let selected_operator_key_name = format!("{}_{}", SELECTED_OPERATOR_PUBKEY, slot_id);
+        let committee_id = self.committee_id(context)?;
+        let selected_operator_key_name = indexed_name(SELECTED_OPERATOR_PUBKEY, slot_id);
 
-        match program_context
+        match context
             .globals
             .get_var(&committee_id, &selected_operator_key_name)?
         {
@@ -1689,14 +1693,27 @@ impl DisputeCoreProtocol {
         }
     }
 
-    fn get_reveal_in_progress(
+    fn funds_advanced(
         &self,
-        program_context: &ProgramContext,
-    ) -> Result<Option<u32>, BitVMXError> {
-        match program_context
+        context: &ProgramContext,
+        slot_id: usize,
+    ) -> Result<Option<AdvanceFundsRegistered>, BitVMXError> {
+        let committee_id = self.committee_id(context)?;
+        let funds_advanced_key = AdvanceFundsRegistered::name(slot_id);
+
+        match context
             .globals
-            .get_var(&self.ctx.id, REVEAL_IN_PROGRESS)?
+            .get_var(&committee_id, &funds_advanced_key)?
         {
+            Some(funds_advanced_var) => {
+                Ok(Some(serde_json::from_str(&funds_advanced_var.string()?)?))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn get_reveal_in_progress(&self, context: &ProgramContext) -> Result<Option<u32>, BitVMXError> {
+        match context.globals.get_var(&self.ctx.id, REVEAL_IN_PROGRESS)? {
             Some(var) => Ok(Some(var.number()?)),
             None => Ok(None),
         }
@@ -2672,58 +2689,15 @@ impl DisputeCoreProtocol {
                 },
             )?;
         } else {
-            info!("Not my dispute_core, skipping OP Take");
+            info!("Not my dispute_core, checking lazy disabler and challenge");
 
             if self.check_op_lazy_disabler(context, slot_index)? {
+                info!("Dispatching lazy disabler for slot: {}", slot_index);
                 return Ok(());
             }
 
-            self.check_challenge(context, tx_status, slot_index)?;
-        }
-
-        self.send_reimbursement_kickoff_spv(context, tx_id, slot_index)?;
-
-        Ok(())
-    }
-
-    fn check_challenge(
-        &self,
-        context: &ProgramContext,
-        tx_status: &TransactionStatus,
-        slot_index: usize,
-    ) -> Result<(), BitVMXError> {
-        // Handle challenge if needed
-        match self.get_selected_operator_key(slot_index, context)? {
-            Some(selected_operator_key) => {
-                // Get the operator's take key that this dispute core is monitoring
-                let monitored_operator_key = self.monitored_operator_key(context)?;
-
-                // Compare if the monitored operator is the selected one
-                let is_valid = selected_operator_key == monitored_operator_key;
-
-                if !is_valid {
-                    info!(
-                        "Unauthorized operator detected for slot {}, dispatching Challenge Tx",
-                        slot_index
-                    );
-                    self.dispatch(
-                        context,
-                        DisputeCoreTxType::Challenge {
-                            slot_index,
-                            block_height: Some(self.get_dispatch_height(
-                                tx_status,
-                                self.load_stream_setting(context)?.short_timelock,
-                            )?),
-                        },
-                    )?;
-                } else {
-                    info!("Authorized operator confirmed for slot {}", slot_index);
-                    // TODO: here we need to validate that the advancement of funds has actually been made
-                }
-            }
-            None => {
-                info!("No selected operator key found for slot {}", slot_index);
-                // If no selected operator key is set, it means that someone triggered a reimbursment kickoff transaction but there was no advances of funds
+            if !self.validate_reimbursement(context, slot_index, tx_status, tx_name)? {
+                info!("Dispatching challenge for slot: {}", slot_index);
                 self.dispatch(
                     context,
                     DisputeCoreTxType::Challenge {
@@ -2737,7 +2711,70 @@ impl DisputeCoreProtocol {
             }
         }
 
+        self.send_reimbursement_kickoff_spv(context, tx_id, slot_index)?;
+
         Ok(())
+    }
+
+    fn validate_reimbursement(
+        &self,
+        context: &ProgramContext,
+        slot_index: usize,
+        tx_status: &TransactionStatus,
+        tx_name: &str,
+    ) -> Result<bool, BitVMXError> {
+        // Handle challenge if needed
+        let selected_op_var = self.get_selected_operator_key(slot_index, context)?;
+        let funds_advanced_var = self.funds_advanced(context, slot_index)?;
+
+        if selected_op_var.is_none() || funds_advanced_var.is_none() {
+            info!(
+                "Selected operator: {:?}. Funds advanced: {:?}",
+                selected_op_var, funds_advanced_var
+            );
+            // If selected operator key is not set, it means that someone triggered a reimbursment kickoff transaction but there was not an operator selection
+            // If funds were not advanced, we need to challenge the transaction
+            return Ok(false);
+        }
+
+        let selected_op_key = selected_op_var.unwrap();
+
+        // Compare if the monitored operator is the selected one
+        if selected_op_key != self.monitored_member_take_key(context)? {
+            info!("Unauthorized operator detected.");
+            return Ok(false);
+        }
+
+        // Validate pegout id signed on witness
+        let protocol = self.load_protocol()?;
+        self.decode_witness_for_tx(
+            tx_name,
+            0,
+            context,
+            &tx_status.tx,
+            Some(OP_INITIAL_DEPOSIT_TX_REIMBURSMENT_LEAF as u32),
+            Some(protocol),
+            None,
+        )?;
+
+        let witness = context
+            .witness
+            .get_witness(&self.ctx.id, PEGOUT_ID_KEY)?
+            .unwrap();
+
+        let pegout_id = witness.winternitz()?.message_bytes();
+
+        let funds_advanced = funds_advanced_var.unwrap();
+        if funds_advanced.pegout_id != pegout_id {
+            info!(
+                "Pegout ID mismatch. Expected: {:?}. Found on witness: {:?}",
+                funds_advanced.pegout_id, pegout_id
+            );
+            return Ok(false);
+        }
+
+        info!("Reimbursement kickoff transaction validated successfully.");
+        Ok(true)
     }
 
     fn check_op_lazy_disabler(

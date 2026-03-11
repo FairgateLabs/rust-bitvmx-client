@@ -263,6 +263,21 @@ impl FundsAdvanceSPV {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdvanceFundsRegistered {
+    pub committee_id: Uuid,
+    pub slot_index: usize,
+    pub txid: Txid,
+    pub pegout_id: Vec<u8>,
+    pub operator_pubkey: PublicKey,
+}
+
+impl AdvanceFundsRegistered {
+    pub fn name(slot_id: usize) -> String {
+        indexed_name("ADVANCED_FUNDS", slot_id)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UnionTxType {
     ReimbursementKickoff,
     OperatorTake,

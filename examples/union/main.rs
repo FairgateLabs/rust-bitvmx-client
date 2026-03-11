@@ -16,7 +16,7 @@ use crate::{
         master_wallet::MasterWallet,
     },
 };
-use ::bitcoin::{hex::DisplayHex, Network, OutPoint, PublicKey, Transaction, Txid};
+use ::bitcoin::{hashes::Hash, hex::DisplayHex, Network, OutPoint, PublicKey, Transaction, Txid};
 use anyhow::Result;
 use bitvmx_client::{
     program::{
@@ -898,10 +898,14 @@ pub fn advance_funds(
     committee.advance_funds(
         slot_index,
         user_pubkey,
-        pegout_id,
+        &pegout_id,
         selected_operator_pubkey,
         get_advance_funds_fee()?,
     )?;
+
+    // Register this information with the info in AdvanceFundsRegistered event from RSK contract.
+    let txid = Txid::all_zeros(); // Placeholder for the actual transaction ID of the advance funds transaction
+    committee.advance_funds_registered(slot_index, &pegout_id, &selected_operator_pubkey, &txid)?;
 
     if should_wait {
         wait_for_blocks(
