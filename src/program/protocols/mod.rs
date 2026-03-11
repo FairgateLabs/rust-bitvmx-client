@@ -3,6 +3,7 @@ pub mod aggregated_key;
 pub mod cardinal;
 pub mod claim;
 pub mod dispute;
+pub mod garbled;
 pub mod protocol_handler;
 pub mod protocol_type;
 #[cfg(feature = "union")]

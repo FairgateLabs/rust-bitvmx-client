@@ -18,11 +18,26 @@ use super::{
     SetupStep,
 };
 
+/// Wrapper that tags setup step data with the step name.
+///
+/// This allows the receiver to identify which step the data belongs to and
+/// ignore stale messages from already-completed steps.
+#[derive(Serialize, Deserialize)]
+struct SetupStepMessage {
+    step_name: String,
+    data: Vec<u8>,
+}
+
 /// Current state of a setup step in the engine.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum StepState {
     /// Step is generating data
     Generating,
+    /// Step has initiated an async operation and is waiting for the result.
+    /// Only used by async steps (where `SetupStep::is_async() == true`).
+    /// Transitions to `WaitingForParticipants` when the async result arrives
+    /// via `SetupEngine::receive_async_result()`.
+    WaitingGeneration,
     /// Step has sent data and is waiting for other participants
     WaitingForParticipants,
     /// All participants have sent data and step is ready to advance to the next step
@@ -223,10 +238,13 @@ impl SetupEngine {
         // Now get the step and generate data
         let step = &self.steps[self.state.current_step_index];
         let data = step.generate_data(protocol, context)?;
-        //TODO: for steps that generate data asyn, instead of moving to waiting, move to a new state "WaitingGeneration"
-        //that will be handled with another external call and would allow the transition
 
-        if total_participants == 1
+        if data.is_none() && step.is_async() {
+            // Async step: generate_data() initiated an async operation (e.g., sent a job
+            // to a dispatcher) but doesn't have the result yet. Transition to WaitingGeneration
+            // and wait for receive_async_result() to be called with the result.
+            self.state.current_step_state = StepState::WaitingGeneration;
+        } else if total_participants == 1
             || self.state.participants_completed.len() == total_participants - 1
         {
             self.state.current_step_state = StepState::AllParticipantsCompleted;
@@ -387,6 +405,7 @@ impl SetupEngine {
     /// - When all data is received, leader broadcasts to all non-leaders
     fn broadcast_setup_data(
         &self,
+        step_name: &str,
         data: Vec<u8>,
         program_id: &Uuid,
         my_idx: usize,
@@ -396,11 +415,19 @@ impl SetupEngine {
     ) -> Result<(), BitVMXError> {
         let is_leader = my_idx == leader;
 
+        // Wrap data with step name so the receiver can route it correctly
+        let wrapped = SetupStepMessage {
+            step_name: step_name.to_string(),
+            data,
+        };
+        let wrapped_data = serde_json::to_vec(&wrapped)?;
+
         if is_leader {
             // Leader: Store own message for later broadcast
             info!(
-                "SetupEngine::broadcast_setup_data() - Leader storing own {} bytes",
-                data.len()
+                "SetupEngine::broadcast_setup_data() - Leader storing own {} bytes for step '{}'",
+                wrapped_data.len(),
+                step_name
             );
 
             // Prepare the message (serialize + sign)
@@ -409,7 +436,7 @@ impl SetupEngine {
                 &context.rsa_public_key,
                 program_id,
                 CommsMessageType::SetupStepData,
-                data,
+                wrapped_data,
             )?;
 
             // Create OriginalMessage
@@ -433,9 +460,10 @@ impl SetupEngine {
             let leader_address = &participants[leader];
 
             info!(
-                "SetupEngine::broadcast_setup_data() - Non-leader sending {} bytes to leader {}",
-                data.len(),
-                leader_address.pubkey_hash
+                "SetupEngine::broadcast_setup_data() - Non-leader sending {} bytes to leader {} for step '{}'",
+                wrapped_data.len(),
+                leader_address.pubkey_hash,
+                step_name
             );
 
             request(
@@ -445,7 +473,7 @@ impl SetupEngine {
                 program_id,
                 leader_address.clone(),
                 CommsMessageType::SetupStepData,
-                data,
+                wrapped_data,
             )?;
         }
 
@@ -487,22 +515,34 @@ impl SetupEngine {
             return Ok(false);
         }
 
+        // Unwrap the step message
+        let step_msg: SetupStepMessage = serde_json::from_slice(data)?;
+
+        // Check if the message is for the current step
+        let current_step_name = self.current_step_name().to_string();
+        if step_msg.step_name != current_step_name {
+            warn!(
+                "SetupEngine::receive_setup_data() - Ignoring data for step '{}' (current step is '{}')",
+                step_msg.step_name, current_step_name
+            );
+            return Ok(false);
+        }
+
         // Find the participant
         let from_participant = get_comms_address_by_pubkey_hash(participants, from)?;
 
-        let step_name = self.current_step_name().to_string();
         let participants_completed_before = self.state.participants_completed.len();
 
         info!(
             "SetupEngine::receive_setup_data() - Processing data for step '{}' (completed before: {}/{})",
-            step_name,
+            current_step_name,
             participants_completed_before,
             participants.len()
         );
 
-        // Receive and verify the data
+        // Receive and verify the inner data
         if !self.receive_current_step_data(
-            data,
+            &step_msg.data,
             my_idx,
             &from_participant,
             protocol,
@@ -511,7 +551,7 @@ impl SetupEngine {
         )? {
             debug!(
                 "SetupEngine::receive_setup_data() - Data from participant {} did not change state for step '{}'",
-                from, step_name
+                from, current_step_name
             );
             return Ok(false);
         }
@@ -561,6 +601,95 @@ impl SetupEngine {
         }
 
         // Receiving data always changes the engine state
+        Ok(true)
+    }
+
+    /// Receives the result of an async generation operation.
+    ///
+    /// Called when an async step (one where `is_async() == true`) receives its result
+    /// from an external source (e.g., a job dispatcher). This method:
+    /// 1. Validates the engine is in `WaitingGeneration` state
+    /// 2. Delegates to the step's `receive_generation_result()` to process the result
+    /// 3. Stores own data in globals
+    /// 4. Broadcasts the data to other participants
+    /// 5. Transitions to `WaitingForParticipants`
+    ///
+    /// Returns whether the engine state changed.
+    pub fn receive_async_result(
+        &mut self,
+        result: &[u8],
+        protocol: &mut ProtocolType,
+        participants: &[CommsAddress],
+        my_idx: usize,
+        program_id: &Uuid,
+        leader: usize,
+        context: &mut ProgramContext,
+    ) -> Result<bool, BitVMXError> {
+        self.if_not_completed()?;
+
+        let step_name = self.current_step_name().to_string();
+
+        if self.state.current_step_state != StepState::WaitingGeneration {
+            return Err(BitVMXError::InvalidState(format!(
+                "Cannot receive async result: step '{}' is not in WaitingGeneration state (current: {:?})",
+                step_name, self.state.current_step_state
+            )));
+        }
+
+        info!(
+            "SetupEngine::receive_async_result() - Processing async result ({} bytes) for step '{}'",
+            result.len(),
+            step_name
+        );
+
+        // Delegate to the step to process the result
+        let step = &self.steps[self.state.current_step_index];
+        let data = step.receive_generation_result(result, protocol, context)?;
+
+        // Transition to WaitingForParticipants
+        self.state.current_step_state = StepState::WaitingForParticipants;
+
+        if let Some(ref d) = data {
+            info!(
+                "SetupEngine::receive_async_result() - Step '{}' produced {} bytes to broadcast",
+                step_name,
+                d.len()
+            );
+
+            // Store our own data in globals
+            let my_participant = &participants[my_idx];
+            self.current_step().verify_received(
+                d,
+                my_participant,
+                protocol,
+                participants,
+                context,
+            )?;
+
+            // Broadcast the data to other participants
+            self.broadcast_setup_data(
+                &step_name,
+                d.clone(),
+                program_id,
+                my_idx,
+                leader,
+                participants,
+                context,
+            )?;
+
+            self.state.mark_participant_completed(my_idx);
+
+            info!(
+                "SetupEngine::receive_async_result() - Broadcasted data and marked self as completed for step '{}'",
+                step_name
+            );
+        } else {
+            info!(
+                "SetupEngine::receive_async_result() - Step '{}' produced no data to broadcast",
+                step_name
+            );
+        }
+
         Ok(true)
     }
 
@@ -638,6 +767,13 @@ impl SetupEngine {
                         );
 
                     data_to_send = Some(d.clone());
+                } else if self.state.current_step_state == StepState::WaitingGeneration {
+                    // Async step: generate_data() initiated an async operation.
+                    // We'll wait for receive_async_result() to deliver the result.
+                    info!(
+                        "SetupEngine::tick() - Async step '{}' is now WaitingGeneration",
+                        step_name
+                    );
                 } else {
                     info!(
                         "SetupEngine::tick() - Step '{}' generated no data",
@@ -645,6 +781,13 @@ impl SetupEngine {
                     );
                 }
                 state_changed = true;
+            }
+            StepState::WaitingGeneration => {
+                // Async step: waiting for external result via receive_async_result()
+                debug!(
+                    "SetupEngine::tick() - Step '{}' is WaitingGeneration, waiting for async result",
+                    step_name
+                );
             }
             StepState::WaitingForParticipants => {
                 info!("Wasted");
@@ -692,6 +835,7 @@ impl SetupEngine {
 
             // Broadcast the data
             self.broadcast_setup_data(
+                &step_name,
                 data.clone(),
                 program_id,
                 my_idx,

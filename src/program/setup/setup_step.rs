@@ -75,4 +75,35 @@ pub trait SetupStep {
     ) -> Result<(), BitVMXError> {
         Ok(())
     }
+
+    /// Returns true if this step generates data asynchronously.
+    ///
+    /// Async steps work differently from sync steps:
+    /// - `generate_data()` initiates the async operation (e.g., sends a job to a dispatcher)
+    ///   and returns `None`
+    /// - The engine transitions to `WaitingGeneration` instead of `WaitingForParticipants`
+    /// - When the async result arrives, `receive_generation_result()` is called
+    /// - The engine then transitions to `WaitingForParticipants` and broadcasts the data
+    ///
+    /// Default: false (synchronous step).
+    fn is_async(&self) -> bool {
+        false
+    }
+
+    /// Called when an async generation result arrives from an external source.
+    ///
+    /// Only relevant for async steps (`is_async() == true`).
+    /// Should process the result and return the data to broadcast to other participants.
+    ///
+    /// Default: returns error (not an async step).
+    fn receive_generation_result(
+        &self,
+        _result: &[u8],
+        _protocol: &mut ProtocolType,
+        _context: &mut ProgramContext,
+    ) -> Result<Option<Vec<u8>>, BitVMXError> {
+        Err(BitVMXError::InvalidMessage(
+            "receive_generation_result called on a non-async step".to_string(),
+        ))
+    }
 }

@@ -24,6 +24,7 @@ use crate::errors::BitVMXError;
 use crate::program::protocols::union::full_penalization::FullPenalizationProtocol;
 
 use super::aggregated_key::AggregatedKeyProtocol;
+use super::garbled::GarbledProtocol;
 #[cfg(feature = "cardinal")]
 use super::cardinal::{lock::LockProtocol, slot::SlotProtocol, transfer::TransferProtocol};
 use super::dispute::DisputeResolutionProtocol;
@@ -45,7 +46,9 @@ use crate::types::{
 #[cfg(feature = "cardinal")]
 use crate::types::{PROGRAM_TYPE_LOCK, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TRANSFER};
 
-use crate::types::{ProgramContext, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_DRP};
+use crate::types::{
+    ProgramContext, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_DRP, PROGRAM_TYPE_GARBLED,
+};
 
 use crate::program::setup::steps::SetupStepName;
 use crate::program::variables::WitnessTypes;
@@ -642,6 +645,7 @@ impl ProtocolContext {
 #[derive(Clone, Serialize, Deserialize)]
 pub enum ProtocolType {
     AggregatedKeyProtocol,
+    GarbledProtocol,
     DisputeResolutionProtocol,
     #[cfg(feature = "cardinal")]
     LockProtocol,
@@ -677,6 +681,9 @@ pub fn new_protocol_type(
     match name {
         PROGRAM_TYPE_AGGREGATED_KEY => Ok(ProtocolType::AggregatedKeyProtocol(
             AggregatedKeyProtocol::new(ctx),
+        )),
+        PROGRAM_TYPE_GARBLED => Ok(ProtocolType::GarbledProtocol(
+            GarbledProtocol::new(ctx),
         )),
         PROGRAM_TYPE_DRP => Ok(ProtocolType::DisputeResolutionProtocol(
             DisputeResolutionProtocol::new(ctx),

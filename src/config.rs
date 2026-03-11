@@ -84,6 +84,8 @@ pub struct ComponentsConfig {
     pub bitvmx: Identifier,
     pub emulator: Identifier,
     pub prover: Identifier,
+    /// Garbled circuits dispatcher (optional, needed for protocols that use garbled circuits)
+    pub garbled: Option<Identifier>,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]

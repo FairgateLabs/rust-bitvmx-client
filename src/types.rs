@@ -20,11 +20,14 @@ use redact::Secret;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use std::collections::HashMap;
+
 use crate::{
     errors::BitVMXError,
     leader_broadcast::LeaderBroadcastHelper,
     program::{
         participant::CommsAddress,
+        setup::steps::AsyncStepHandlerEnum,
         variables::{Globals, VariableTypes, WitnessTypes, WitnessVars},
     },
 };
@@ -39,6 +42,7 @@ pub struct ProgramContext {
     pub witness: WitnessVars,
     pub components_config: ComponentsConfig,
     pub leader_broadcast_helper: LeaderBroadcastHelper,
+    pub async_step_handlers: HashMap<String, AsyncStepHandlerEnum>,
 }
 
 impl ProgramContext {
@@ -63,7 +67,21 @@ impl ProgramContext {
             witness,
             components_config,
             leader_broadcast_helper,
+            async_step_handlers: HashMap::new(),
         }
+    }
+
+    /// Register an async step handler for a given step name.
+    ///
+    /// The handler will be used by `AsyncDispatcherStep` when the step with
+    /// the matching name runs during protocol setup.
+    pub fn register_async_step_handler(
+        &mut self,
+        step_name: &str,
+        handler: AsyncStepHandlerEnum,
+    ) {
+        self.async_step_handlers
+            .insert(step_name.to_string(), handler);
     }
 }
 
@@ -358,6 +376,7 @@ pub struct ParticipantChannel {
 }
 
 pub const PROGRAM_TYPE_AGGREGATED_KEY: &str = "aggregated_key";
+pub const PROGRAM_TYPE_GARBLED: &str = "garbled";
 pub const PROGRAM_TYPE_LOCK: &str = "lock";
 pub const PROGRAM_TYPE_DRP: &str = "drp";
 pub const PROGRAM_TYPE_SLOT: &str = "slot";

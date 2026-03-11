@@ -14,6 +14,7 @@ use tracing::{debug, warn};
 pub(crate) enum JobDispatcherType {
     ZKP,
     Emulator,
+    Garbled,
 }
 
 pub(crate) struct PingHelper {
@@ -108,6 +109,20 @@ impl PingHelper {
 
         self.time_since_sent_check
             .insert(JobDispatcherType::Emulator, Instant::now());
+
+        // Ping garbled dispatcher if configured
+        if let Some(garbled_id) = &components.garbled {
+            let msg_to_garbled = serde_json::to_string(&PingMessage::Ping)?;
+            debug!(
+                "Sending Garbled dispatcher ping message: {}",
+                msg_to_garbled
+            );
+            program_context
+                .broker_channel
+                .send(garbled_id, msg_to_garbled)?;
+            self.time_since_sent_check
+                .insert(JobDispatcherType::Garbled, Instant::now());
+        }
 
         Ok(())
     }

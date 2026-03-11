@@ -410,6 +410,43 @@ impl Program {
         Ok(message_processed)
     }
 
+    /// Receives the result of an async generation operation for the current setup step.
+    ///
+    /// This is called when a job dispatcher returns the result for an async setup step
+    pub fn receive_async_generation_result(
+        &mut self,
+        result: &[u8],
+        program_context: &mut ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        if !matches!(self.state, ProgramState::SettingUp) {
+            debug!("Program::receive_async_generation_result() - Not in SettingUp state, ignoring");
+            return Ok(());
+        }
+
+        let state_changed = if let Some(engine) = &mut self.setup_engine {
+            engine.receive_async_result(
+                result,
+                &mut self.protocol,
+                &self.participants,
+                self.my_idx,
+                &self.program_id,
+                self.leader,
+                program_context,
+            )?
+        } else {
+            false
+        };
+
+        if state_changed {
+            self.save()?;
+            info!(
+                "Program::receive_async_generation_result() - Saved program state after async result"
+            );
+        }
+
+        Ok(())
+    }
+
     /// Returns the protocol ID
     pub fn protocol_id(&self) -> Uuid {
         self.protocol.context().id

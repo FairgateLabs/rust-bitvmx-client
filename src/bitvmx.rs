@@ -248,6 +248,25 @@ impl BitVMX {
         &self.config.components
     }
 
+    /// Sets the garbled dispatcher identifier for both config and program context.
+    pub fn set_garbled_identifier(&mut self, identifier: Identifier) {
+        self.config.components.garbled = Some(identifier.clone());
+        self.program_context.components_config.garbled = Some(identifier);
+    }
+
+    /// Register an async step handler for a given step name.
+    ///
+    /// The handler will be used by `AsyncDispatcherStep` when the matching
+    /// step runs during protocol setup.
+    pub fn register_async_step_handler(
+        &mut self,
+        step_name: &str,
+        handler: crate::program::setup::steps::AsyncStepHandlerEnum,
+    ) {
+        self.program_context
+            .register_async_step_handler(step_name, handler);
+    }
+
     pub fn get_store(&self) -> Rc<Storage> {
         self.store.clone()
     }
@@ -1248,6 +1267,30 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
+    fn handle_garbled_message(&mut self, msg: String) -> Result<(), BitVMXError> {
+        if let Some(message) = serde_json::from_str::<PingMessage>(&msg).ok() {
+            self.ping_helper
+                .received_message(JobDispatcherType::Garbled, &message);
+        } else {
+            let result_message = ResultMessage::from_str(&msg)?;
+            let result_data = result_message.result.as_bytes();
+
+            // The job_id is the program_id (set during generate_data in AsyncDispatcherStep)
+            let program_id = Uuid::parse_str(&result_message.job_id)
+                .map_err(|_| BitVMXError::InvalidMessageFormat)?;
+
+            info!(
+                "handle_garbled_message: Received result for program {}",
+                program_id
+            );
+
+            // Route the result to the program's setup engine
+            let mut program = self.load_program(&program_id)?;
+            program.receive_async_generation_result(result_data, &mut self.program_context)?;
+        }
+        Ok(())
+    }
+
     fn handle_emulator_message(&mut self, msg: &String) -> Result<(), BitVMXError> {
         if let Some(message) = serde_json::from_str::<PingMessage>(&msg).ok() {
             self.ping_helper
@@ -1304,6 +1347,13 @@ impl BitVMXApi for BitVMX {
         if from == self.config.components.prover {
             self.handle_prover_message(msg)?;
             return Ok(());
+        }
+
+        if let Some(garbled_id) = &self.config.components.garbled {
+            if from == *garbled_id {
+                self.handle_garbled_message(msg)?;
+                return Ok(());
+            }
         }
 
         let decoded: IncomingBitVMXApiMessages = serde_json::from_str(&msg)?;
