@@ -185,12 +185,12 @@ impl ProtocolHandler for LightDisputeResolutionProtocol {
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
         let aggregated_1 = program_context
-            .key_chain
-            .derive_keypair(BitcoinKeyType::P2tr)?;
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)?;
 
         let speedup = program_context
-            .key_chain
-            .derive_keypair(BitcoinKeyType::P2tr)?;
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)?;
 
         program_context.globals.set_var(
             &self.ctx.id,
@@ -217,7 +217,7 @@ impl ProtocolHandler for LightDisputeResolutionProtocol {
             )?;
         }
 
-        let key_manager = &mut program_context.key_chain.key_manager;
+        let key_manager = &mut program_context.key_manager;
 
         // TODO: import them via the job dispatcher(?)
         if self.role() == ParticipantRole::Prover {
@@ -468,7 +468,7 @@ impl ProtocolHandler for LightDisputeResolutionProtocol {
 
         claim_verifier.add_claimer_win_connection(&mut protocol, VERIFIER_FINAL)?;
         protocol.compute_minimum_output_values()?;
-        protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
+        protocol.build(&context.key_manager, &self.ctx.protocol_name)?;
 
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
         self.save_protocol(protocol)?;
@@ -497,7 +497,6 @@ impl ProtocolHandler for LightDisputeResolutionProtocol {
         tx_status: TransactionStatus,
         _context: String,
         program_context: &ProgramContext,
-        _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         let name = self.get_transaction_name_by_id(tx_id)?;
         let current_height = tx_status
