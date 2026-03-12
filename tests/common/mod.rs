@@ -83,10 +83,8 @@ pub fn clear_db(path: &str) {
 /// Check if Docker is available and running
 pub fn check_docker_available() -> Result<bool> {
     // Check if docker command exists and daemon is running
-    let output = Command::new("docker")
-        .arg("info")
-        .output();
-    
+    let output = Command::new("docker").arg("info").output();
+
     match output {
         Ok(result) => Ok(result.status.success()),
         Err(_) => Ok(false),
@@ -102,22 +100,24 @@ pub fn ensure_docker_available() -> Result<()> {
             .ok()
             .map(|home| std::path::Path::new(&format!("{}/.docker/run/docker.sock", home)).exists())
             .unwrap_or(false);
-        
+
         let mut error_msg = "\n❌ Docker daemon is not running or not accessible.\n\n".to_string();
         error_msg.push_str("To fix this issue:\n\n");
-        
+
         if cfg!(target_os = "macos") {
             error_msg.push_str("On macOS, Docker Desktop uses a non-standard socket location.\n");
             error_msg.push_str("Option 1: Set DOCKER_HOST environment variable:\n");
             error_msg.push_str("  export DOCKER_HOST=unix://$HOME/.docker/run/docker.sock\n");
-            
+
             if !docker_sock_macos {
                 error_msg.push_str("Option 2: Create a symlink (requires sudo):\n");
-                error_msg.push_str("  sudo ln -sf ~/.docker/run/docker.sock /var/run/docker.sock\n\n");
+                error_msg
+                    .push_str("  sudo ln -sf ~/.docker/run/docker.sock /var/run/docker.sock\n\n");
             }
-            
+
             if docker_sock_macos && !docker_sock_standard {
-                error_msg.push_str("Note: Docker Desktop socket found at ~/.docker/run/docker.sock\n");
+                error_msg
+                    .push_str("Note: Docker Desktop socket found at ~/.docker/run/docker.sock\n");
                 error_msg.push_str("      but not accessible at /var/run/docker.sock\n");
             }
         } else {
@@ -125,11 +125,11 @@ pub fn ensure_docker_available() -> Result<()> {
             error_msg.push_str("2. Start Docker daemon\n");
             error_msg.push_str("3. Verify with: docker info\n\n");
         }
-        
+
         if docker_host.is_some() {
             error_msg.push_str(&format!("Current DOCKER_HOST: {}\n", docker_host.unwrap()));
         }
-        
+
         anyhow::bail!(error_msg);
     }
     Ok(())
@@ -252,30 +252,38 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
                 .args(&["stop", "bitcoin-regtest"])
                 .output();
             std::thread::sleep(std::time::Duration::from_millis(100));
-            
+
             let _ = Command::new("docker")
                 .args(&["rm", "-f", "bitcoin-regtest"])
                 .output();
-            
+
             // Check if container still exists
             let check_output = Command::new("docker")
-                .args(&["ps", "-a", "--filter", "name=bitcoin-regtest", "--format", "{{.Names}}"])
+                .args(&[
+                    "ps",
+                    "-a",
+                    "--filter",
+                    "name=bitcoin-regtest",
+                    "--format",
+                    "{{.Names}}",
+                ])
                 .output();
-            
+
             if let Ok(output) = check_output {
-                let container_exists = String::from_utf8_lossy(&output.stdout).contains("bitcoin-regtest");
+                let container_exists =
+                    String::from_utf8_lossy(&output.stdout).contains("bitcoin-regtest");
                 if !container_exists {
                     break; // Container successfully removed
                 }
             }
-            
+
             if attempt < 2 {
                 std::thread::sleep(std::time::Duration::from_millis(200));
             }
         }
         // Final delay to ensure Docker has processed the removal
         std::thread::sleep(std::time::Duration::from_millis(500));
-        
+
         let bitcoind_instance = Bitcoind::new(
             BitcoindConfig::default(),
             wallet_config.bitcoin.clone(),
@@ -354,7 +362,6 @@ fn config_trace_aux() {
         "bitcoin_indexer=off",
         "bitcoin_coordinator=info",
         "bitvmx_wallet=info",
-        "bitvmx_operator_comms=off",
         "tarpc=off",
         "key_manager=off",
         "memory=off",
