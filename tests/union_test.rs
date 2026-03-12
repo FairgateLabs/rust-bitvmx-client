@@ -1,0 +1,31 @@
+#![cfg(test)]
+
+use anyhow::Result;
+use bitcoin::Network;
+
+use crate::common::{check_bitvmx_cpu_built, config_trace, helper::TestHelper};
+
+mod common;
+
+#[ignore]
+#[test]
+pub fn test_union_request_pegout() -> Result<()> {
+    let independent = false;
+    let network = Network::Regtest;
+
+    // Check if BitVMX-CPU is built before running the test
+    check_bitvmx_cpu_built()?;
+
+    config_trace();
+
+    let _helper = TestHelper::new(network, independent, None)?;
+
+    // execute cargo run --release --example union request_pegout in a separate process
+    let mut child = std::process::Command::new("cargo")
+        .args(["run", "--release", "--example", "union", "request_pegout"])
+        .spawn()?;
+
+    child.wait()?;
+
+    Ok(())
+}

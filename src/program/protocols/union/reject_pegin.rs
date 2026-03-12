@@ -60,7 +60,7 @@ impl ProtocolHandler for RejectPegInProtocol {
 
     fn generate_keys(&self, context: &mut ProgramContext) -> Result<ParticipantKeys, BitVMXError> {
         let keys = &mut vec![];
-        let speedup_key = context.key_chain.derive_keypair(BitcoinKeyType::P2tr)?;
+        let speedup_key = context.key_manager.next_keypair(BitcoinKeyType::P2tr)?;
 
         keys.push((
             SPEEDUP_KEY.to_string(),
@@ -82,10 +82,11 @@ impl ProtocolHandler for RejectPegInProtocol {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         let data: RejectPeginData = self.reject_pegin(context)?;
-        let pegin_request_txid = data.txid;
         let committee = self.committee(context, data.committee_id)?;
-        let take_aggregated_key = committee.take_aggregated_key;
+        self.set_requested_confirmations(context, committee.pegin_confirmations)?;
 
+        let pegin_request_txid = data.txid;
+        let take_aggregated_key = committee.take_aggregated_key;
         let mut protocol = self.load_or_create_protocol();
 
         let mut enabler_scripts = vec![];
@@ -120,7 +121,7 @@ impl ProtocolHandler for RejectPegInProtocol {
             &OutputType::segwit_key(SPEEDUP_VALUE, &speedup_key)?,
         )?;
 
-        protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
+        protocol.build(&context.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
         self.save_protocol(protocol)?;
 
@@ -146,7 +147,6 @@ impl ProtocolHandler for RejectPegInProtocol {
         tx_status: TransactionStatus,
         _context: String,
         _program_context: &ProgramContext,
-        _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
         info!(

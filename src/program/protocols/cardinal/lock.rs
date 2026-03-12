@@ -72,8 +72,7 @@ impl ProtocolHandler for LockProtocol {
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
         let speedup = program_context
-            .key_chain
-            .derive_keypair(BitcoinKeyType::P2tr)?;
+            .key_manager.next_keypair(BitcoinKeyType::P2tr)?;
 
         program_context.globals.set_var(
             &self.ctx.id,
@@ -104,7 +103,6 @@ impl ProtocolHandler for LockProtocol {
         tx_status: TransactionStatus,
         _context: String,
         _program_context: &ProgramContext,
-        _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         let name = self.get_transaction_name_by_id(tx_id)?;
         if tx_status.confirmations == 1 {
@@ -258,7 +256,7 @@ impl ProtocolHandler for LockProtocol {
             pb.add_speedup_output(&mut protocol, HAPPY_PATH_TX, dust, k.get_public("speedup")?)?;
         }
 
-        protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
+        protocol.build(&context.key_manager, &self.ctx.protocol_name)?;
         info!("{}", protocol.visualize(GraphOptions::Default)?);
         self.save_protocol(protocol)?;
 

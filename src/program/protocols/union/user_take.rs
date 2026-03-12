@@ -26,8 +26,8 @@ use crate::{
                 common::{collect_input_signatures, indexed_name, InputSigningInfo},
                 errors::{ProtocolError, ProtocolErrorType},
                 types::{
-                    PegOutAccepted, PegOutRequest, ACCEPT_PEGIN_TX, CANCEL_TAKE0_TX, SPEEDUP_VALUE,
-                    USER_TAKE_FEE, USER_TAKE_TX,
+                    Committee, PegOutAccepted, PegOutRequest, ACCEPT_PEGIN_TX, CANCEL_TAKE0_TX,
+                    SPEEDUP_VALUE, USER_TAKE_FEE, USER_TAKE_TX,
                 },
             },
         },
@@ -75,6 +75,12 @@ impl ProtocolHandler for UserTakeProtocol {
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         let pegout_request = self.pegout_request(context)?;
+        self.set_requested_confirmations(
+            context,
+            self.committee(context, &pegout_request.committee_id)?
+                .pegout_confirmations,
+        )?;
+
         let accept_pegin_utxo = self.accept_pegin_utxo(
             context,
             &pegout_request.committee_id,
@@ -148,7 +154,7 @@ impl ProtocolHandler for UserTakeProtocol {
             },
         )?;
 
-        protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
+        protocol.build(&context.key_manager, &self.ctx.protocol_name)?;
 
         // Validate USER_TAKE_TX sighash
         let user_take_sighash = protocol
@@ -194,7 +200,6 @@ impl ProtocolHandler for UserTakeProtocol {
         tx_status: TransactionStatus,
         _context: String,
         _program_context: &ProgramContext,
-        _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
         info!(
@@ -294,8 +299,8 @@ impl UserTakeProtocol {
             .to_vec();
 
         let nonces = program_context
-            .key_chain
-            .get_nonces(&take_aggregated_key, &self.ctx.protocol_name)?;
+            .key_manager
+            .get_my_pub_nonces(&take_aggregated_key, &self.ctx.protocol_name)?;
 
         if nonces.is_empty() {
             return Err(BitVMXError::MissingPublicNonces(
@@ -305,8 +310,8 @@ impl UserTakeProtocol {
         }
 
         let signatures = program_context
-            .key_chain
-            .get_signatures(&take_aggregated_key, &self.ctx.protocol_name)?;
+            .key_manager
+            .get_my_partial_signatures(&take_aggregated_key, &self.ctx.protocol_name)?;
 
         if signatures.is_empty() {
             return Err(BitVMXError::MissingPartialSignatures(
@@ -343,5 +348,20 @@ impl UserTakeProtocol {
             .send(&program_context.components_config.l2, data)?;
 
         Ok(())
+    }
+
+    fn committee(
+        &self,
+        context: &ProgramContext,
+        committee_id: &Uuid,
+    ) -> Result<Committee, BitVMXError> {
+        let committee = context
+            .globals
+            .get_var(committee_id, &Committee::name())?
+            .unwrap()
+            .string()?;
+
+        let committee: Committee = serde_json::from_str(&committee)?;
+        Ok(committee)
     }
 }
