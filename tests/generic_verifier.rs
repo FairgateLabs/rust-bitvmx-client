@@ -7,9 +7,9 @@ use bitvmx_client::program::participant::{
     ParticipantRole::{self, Verifier},
 };
 use bitvmx_client::program::protocols::dispute::{
-    action_wins, program_input, program_input_prev_prefix, program_input_prev_protocol,
-    protocol_cost,
+    program_input, program_input_prev_prefix, program_input_prev_protocol, protocol_cost,
 };
+use bitvmx_client::program::protocols::protocol_handler::action_wins;
 use bitvmx_client::program::variables::{VariableTypes, WitnessTypes};
 use bitvmx_client::types::IncomingBitVMXApiMessages;
 use bitvmx_wallet::wallet::{Destination, RegtestWallet};
