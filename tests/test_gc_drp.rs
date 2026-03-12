@@ -122,7 +122,7 @@ pub fn test_protocol() -> Result<()> {
         SignMode::Aggregate,
     )];
 
-    let protocol_cost = 50_000;
+    let protocol_cost = 15_000;
     let (utxo, initial_out_type) = init_utxo_new(
         &mut helper.wallet,
         &pair_0_1_agg_pub_key,
