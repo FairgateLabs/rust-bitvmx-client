@@ -1,0 +1,26 @@
+# This file should be copied and modified to match the specific verifier journal format.
+elf: generic-verifier.elf
+nary_search: 8
+max_steps: 500000000
+input_section_name: .input
+inputs:
+
+  # input_0
+  # 4 Bytes. first byte is the size of the journal in words. the next 3 bytes need to be 0
+  - size: 4
+    owner: const
+
+  # input_1
+  # 32 byte for the elf_id of the risc0 verifier function (obtained using host --dump-id)
+  - size: 32
+    owner: const
+
+  # input_2
+  # 128 bytes for the groth16 seal
+  - size: 128
+    owner: prover
+
+  # input_3
+  # 4 at least 4 bytes (1 word) for the journal
+  - size: 4
+    owner: prover_prev
