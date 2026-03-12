@@ -228,7 +228,8 @@ pub struct DisputeResolutionProtocol {
 }
 
 pub fn protocol_cost() -> u64 {
-    38_000 // This is a placeholder value, adjust as needed
+    //38_000 // This is a placeholder value, adjust as needed
+    80_000
 }
 
 fn get_role(my_idx: usize) -> ParticipantRole {
