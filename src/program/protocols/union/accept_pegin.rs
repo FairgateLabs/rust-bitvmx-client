@@ -108,6 +108,9 @@ impl ProtocolHandler for AcceptPegInProtocol {
     ) -> Result<(), BitVMXError> {
         let pegin_request: PegInRequest = self.pegin_request(context)?;
         let pegin_request_txid = pegin_request.txid;
+        let committee = self.committee(context, pegin_request.committee_id)?;
+
+        self.set_requested_confirmations(context, committee.pegin_confirmations)?;
 
         // Enabler outputs get compensated from input to output so they are removed from the user output calculation
         let user_output_amount =
@@ -125,7 +128,8 @@ impl ProtocolHandler for AcceptPegInProtocol {
         )?;
 
         let mut enabler_scripts = vec![];
-        let members = self.committee(context, pegin_request.committee_id)?.members;
+
+        let members = committee.members;
         for member in &members {
             enabler_scripts.push(verify_signature(&member.dispute_key, SignMode::Single)?)
         }
