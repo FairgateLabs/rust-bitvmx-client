@@ -24,7 +24,6 @@ use uuid::Uuid;
 
 use super::super::participant::ParticipantKeys;
 use crate::errors::BitVMXError;
-use crate::keychain::KeyChain;
 use crate::program::participant::ParticipantRole;
 use crate::program::protocols::claim::ClaimGate;
 #[cfg(feature = "union")]
@@ -344,10 +343,8 @@ pub trait ProtocolHandler {
                 );
                 info!("With lamport key: {:?}", key);
 
-                let lamport_signature = program_context
-                    .key_chain
-                    .key_manager
-                    .sign_lamport_message_by_pubkey(
+                let lamport_signature =
+                    program_context.key_manager.sign_lamport_message_by_pubkey(
                         &message,
                         key.key_type().lamport_public_key()?,
                     )?;
