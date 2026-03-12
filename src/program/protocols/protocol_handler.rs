@@ -4,6 +4,7 @@ use bitcoin_coordinator::TransactionStatus;
 use bitcoin_scriptexec::scriptint_vec;
 use console::style;
 use enum_dispatch::enum_dispatch;
+use key_manager::lamport::{HashFunction, LamportSignature};
 use key_manager::winternitz::{message_bytes_length, WinternitzSignature, WinternitzType};
 use protocol_builder::builder::ProtocolBuilder;
 use protocol_builder::scripts::{self, ProtocolScript, SignMode};
@@ -25,9 +26,9 @@ use crate::errors::BitVMXError;
 use crate::keychain::KeyChain;
 use crate::program::participant::ParticipantRole;
 use crate::program::protocols::claim::ClaimGate;
-use crate::program::protocols::{dispute, light_drp};
 #[cfg(feature = "union")]
 use crate::program::protocols::union::full_penalization::FullPenalizationProtocol;
+use crate::program::protocols::{dispute, light_drp};
 
 #[cfg(feature = "cardinal")]
 use super::cardinal::{lock::LockProtocol, slot::SlotProtocol, transfer::TransferProtocol};
@@ -282,6 +283,45 @@ pub trait ProtocolHandler {
         Ok(())
     }
 
+    fn get_lamport_signature_for_script(
+        &self,
+        protocol_script: &ProtocolScript,
+        program_context: &ProgramContext,
+    ) -> Result<Vec<LamportSignature>, BitVMXError> {
+        let keys = protocol_script.get_keys();
+        let mut lamp_sigs = Vec::with_capacity(keys.len());
+
+        for key in keys.iter().rev() {
+            if let Some(var) = program_context
+                .globals
+                .get_var(&self.context().id, key.name())?
+            {
+                let message = var.input()?;
+
+                info!(
+                    "Signing message: {}",
+                    style(hex::encode(message.clone())).yellow()
+                );
+                info!("With lamport key: {:?}", key);
+
+                let lamport_signature = program_context
+                    .key_chain
+                    .key_manager
+                    .sign_lamport_message_by_pubkey(
+                        &message,
+                        key.key_type().lamport_public_key()?,
+                    )?;
+
+                lamp_sigs.push(lamport_signature);
+            } else {
+                error!("No Lamport signature found for key: {}", key.name());
+                return Err(BitVMXError::KeysNotFound(self.context().id));
+            }
+        }
+
+        Ok(lamp_sigs)
+    }
+
     fn get_winternitz_signature_for_script(
         &self,
         protocol_script: &ProtocolScript,
@@ -298,7 +338,7 @@ pub trait ProtocolHandler {
                 let message = var.input()?;
 
                 info!(
-                    "Signigng message: {}",
+                    "Signing message: {}",
                     style(hex::encode(message.clone())).yellow()
                 );
                 info!("With key: {:?}", k);
@@ -476,6 +516,46 @@ pub trait ProtocolHandler {
             )?;
         }
         Ok((names, leaf))
+    }
+
+    fn decode_lamport_for_speedup(
+        &self,
+        prev_tx_id: Txid,
+        prev_vout: u32,
+        prev_name: &str,
+        transaction: &Transaction,
+    ) -> Result<Vec<(Vec<u8>, u8)>, BitVMXError> {
+        let idx = self.find_prevout(prev_tx_id, prev_vout, transaction)?;
+        let protocol = self.load_protocol()?;
+        let script = &protocol.get_script_from_output(prev_name, prev_vout)?.1[0];
+
+        let witness = transaction.input[idx as usize].witness.clone();
+        let mut iter = witness.iter();
+
+        let mut hashes = vec![];
+
+        for key in script.get_keys().iter() {
+            let key_type = key.key_type();
+            let public_key = key_type.lamport_public_key()?;
+            let (hashes_0, hashes_1) = public_key.to_hashes();
+
+            for (hash_0, hash_1) in hashes_0.iter().zip(hashes_1.iter()) {
+                let signature = iter
+                    .next()
+                    .ok_or(BitVMXError::ScriptSignatureMissing(key.name().to_string()))?;
+                let hash = public_key.hash_type().hash(signature).to_bytes();
+
+                if &hash == hash_0 {
+                    hashes.push((hash, 0));
+                } else if &hash == hash_1 {
+                    hashes.push((hash, 1));
+                } else {
+                    error!("Found invalid lamport signature");
+                }
+            }
+        }
+
+        Ok(hashes)
     }
 
     fn decode_witness_from_speedup(
@@ -767,10 +847,16 @@ pub trait ProtocolHandler {
 
         Ok(())
     }
+
+    fn partial_utxo_from(&self, tx: &Transaction, vout: u32) -> (Txid, u32, u64) {
+        let txid = tx.compute_txid();
+        let amount = tx.output[vout as usize].value.to_sat();
+        (txid, vout, amount)
+    }
 }
 
 pub trait WithClaimGateConfig {
-    type Config : ClaimGateConfig;
+    type Config: ClaimGateConfig;
     const PROGRAM_TYPE: &'static str;
 
     fn role(&self) -> ParticipantRole;

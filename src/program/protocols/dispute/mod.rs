@@ -1042,12 +1042,6 @@ impl DisputeResolutionProtocol {
         Self { ctx: context }
     }
 
-    fn partial_utxo_from(&self, tx: &Transaction, vout: u32) -> (Txid, u32, u64) {
-        let txid = tx.compute_txid();
-        let amount = tx.output[vout as usize].value.to_sat();
-        (txid, vout, amount)
-    }
-
     pub fn get_tx_with_speedup_data(
         &self,
         context: &ProgramContext,

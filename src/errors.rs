@@ -90,6 +90,9 @@ pub enum BitVMXError {
     #[error("Failed to process a Lamport signature: {0}")]
     LamportError(#[from] LamportError),
 
+    #[error("Expected script signature not found: {0}")]
+    ScriptSignatureMissing(String),
+
     #[error("Invalid RSA signature from peer {peer} for message type {msg_type:?} in program {program_id}")]
     InvalidSignature {
         peer: String,
