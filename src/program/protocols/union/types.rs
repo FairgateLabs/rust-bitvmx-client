@@ -108,6 +108,7 @@ pub struct Committee {
     pub stream_denomination: u64,
     pub pegin_confirmations: u32,
     pub pegout_confirmations: u32,
+    pub reject_pegin_confirmations: u32,
 }
 
 impl Committee {
