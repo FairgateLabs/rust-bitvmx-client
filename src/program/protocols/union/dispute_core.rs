@@ -538,7 +538,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
             Ok(self.protocol_funding_tx(context)?)
         } else if name == WT_START_ENABLER_TX {
             Ok(self.wt_start_enabler_tx(context)?)
-        } else if name == OP_INITIAL_DEPOSIT_TX || name == WT_START_ENABLER_TX {
+        } else if name == OP_INITIAL_DEPOSIT_TX {
             Ok(self.sign_aggregated_input(name, context, true)?)
         } else if name.starts_with(REIMBURSEMENT_KICKOFF_TX) {
             Ok(self.reimbursement_kickoff_tx(name, context)?)
