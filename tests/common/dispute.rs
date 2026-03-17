@@ -263,10 +263,12 @@ pub fn execute_dispute(
     let prover_dispatcher = bitvmx_job_dispatcher::DispatcherHandler::<EmulatorJobType>::new(
         emulator_channels[0].clone(),
         instances[0].get_store(),
+        None,
     )?;
     let verifier_dispatcher = bitvmx_job_dispatcher::DispatcherHandler::<EmulatorJobType>::new(
         emulator_channels[1].clone(),
         instances[1].get_store(),
+        None,
     )?;
 
     let mut dispatcher_p = vec![prover_dispatcher];
