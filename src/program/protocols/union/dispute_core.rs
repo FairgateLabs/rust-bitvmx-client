@@ -2518,7 +2518,7 @@ impl DisputeCoreProtocol {
                 input_index: REVEAL_INPUT_TX_REVEAL_INDEX,
                 script_index: REVEAL_INPUT_TX_REVEAL_LEAF,
                 winternitz_data: Some(WinternitzData {
-                    data: (slot_index as u16).to_le_bytes().to_vec(),
+                    data: (slot_index as u16).to_be_bytes().to_vec(),
                     key_name: SLOT_ID_KEY.to_string(),
                     key_type: WinternitzType::HASH160,
                     key_manager: context.key_manager.as_ref(),
