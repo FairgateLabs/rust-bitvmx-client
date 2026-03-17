@@ -903,7 +903,6 @@ impl DisputeCoreProtocol {
                     op_cosign: init_challenge_output.clone(),
                 }));
 
-                // FIXME: Review this output. This goes to DisputeChannel. Need 2 scripts by now.
                 // NOTE: DRP consumes leaf 1 hardcoded.
                 let verify_wt_signature =
                     verify_signature(wt_dispute_key, self.get_sign_mode(data.member_index))?;
