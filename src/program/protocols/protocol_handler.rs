@@ -56,8 +56,8 @@ use crate::types::{PROGRAM_TYPE_LOCK, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TRANSFER};
 use crate::types::{ProgramContext, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_DRP};
 
 use crate::program::setup::steps::SetupStepName;
-use crate::program::variables::{Globals, PartialUtxo, WitnessTypes};
-use crate::program::{variables::VariableTypes, witness};
+use crate::program::variables::{Globals, PartialUtxo, VariableTypes, WitnessTypes};
+use crate::program::witness;
 
 const REQUESTED_CONFIRMATIONS_VAR: &str = "requested_confirmations";
 

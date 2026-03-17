@@ -439,7 +439,7 @@ fn run_emulator(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result
         let storage_path = format!("/tmp/emulator_storage_{i}.db");
         clear_db(&storage_path);
         let prover_dispatcher =
-            DispatcherHandler::<EmulatorJobType>::new_with_path(channel, &storage_path, None)?;
+            DispatcherHandler::<EmulatorJobType>::new_with_path(channel, &storage_path)?;
         instances.push(prover_dispatcher);
     }
 
@@ -481,7 +481,7 @@ fn run_zkp(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<()> 
         let storage_path = format!("/tmp/zkp_storage_{i}.db");
         clear_db(&storage_path);
         let prover_dispatcher =
-            DispatcherHandler::<ProverJobType>::new_with_path(channel, &storage_path, None)?;
+            DispatcherHandler::<ProverJobType>::new_with_path(channel, &storage_path)?;
         instances.push(prover_dispatcher);
     }
 
