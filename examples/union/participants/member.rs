@@ -11,6 +11,7 @@ use crate::{
 use anyhow::{Error, Result};
 use bitcoin::{address::NetworkUnchecked, PublicKey, ScriptBuf, Transaction, Txid};
 use bitvmx_broker::identification::allow_list::AllowList;
+use bitvmx_client::bitvmx::SEND_NEW_BLOCK_NEWS;
 use bitvmx_client::program::protocols::union::common::get_dispute_pair_key_name;
 use bitvmx_client::{
     client::BitVMXClient,
@@ -80,6 +81,8 @@ impl Member {
             &config.testing.l2,
             allow_list,
         )?;
+
+        bitvmx.set_global_var(SEND_NEW_BLOCK_NEWS, VariableTypes::Bool(true))?;
 
         Ok(Self {
             id: id.to_string(),
@@ -267,7 +270,7 @@ impl Member {
             addresses,
         )?;
 
-        let sleep_time = 30 * total_setups as u64;
+        let sleep_time = 60 * total_setups as u64;
         info!(
             id = self.id,
             "Waiting {} seconds for dispute channel setups to complete...", sleep_time

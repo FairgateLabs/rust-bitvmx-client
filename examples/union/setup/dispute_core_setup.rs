@@ -17,7 +17,10 @@ use bitvmx_client::{
 use tracing::info;
 use uuid::Uuid;
 
-use crate::participants::committee::PACKET_SIZE;
+use crate::participants::{
+    committee::PACKET_SIZE,
+    common::{PEGIN_CONFIRMATIONS, PEGOUT_CONFIRMATIONS},
+};
 
 pub struct DisputeCoreSetup {}
 
@@ -40,6 +43,8 @@ impl DisputeCoreSetup {
             dispute_aggregated_key,
             packet_size: PACKET_SIZE,
             stream_denomination,
+            pegin_confirmations: PEGIN_CONFIRMATIONS as u32, // This value should be requested from contracts
+            pegout_confirmations: PEGOUT_CONFIRMATIONS as u32, // This value should be requested from contracts
         };
 
         bitvmx.set_var(

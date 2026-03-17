@@ -15,7 +15,7 @@ use protocol_builder::{
     },
 };
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::{
@@ -109,6 +109,8 @@ impl ProtocolHandler for FullPenalizationProtocol {
 
         let data: FullPenalizationData = self.full_penalization_data(context)?;
         let committee = self.committee(context, data.committee_id)?;
+        self.set_requested_confirmations(context, committee.pegin_confirmations)?;
+
         let mut protocol = self.load_or_create_protocol();
 
         // Create Operator disabler directory and disablers
@@ -116,7 +118,7 @@ impl ProtocolHandler for FullPenalizationProtocol {
 
         self.create_watchtower_disablers(&mut protocol, &committee, &data, context)?;
 
-        protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
+        protocol.build(&context.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
         self.save_protocol(protocol)?;
         Ok(())
@@ -151,7 +153,6 @@ impl ProtocolHandler for FullPenalizationProtocol {
         tx_status: TransactionStatus,
         _context: String,
         program_context: &ProgramContext,
-        _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
         info!(
@@ -605,7 +606,7 @@ impl FullPenalizationProtocol {
                         data: vec![1u8],
                         key_type: WinternitzType::HASH160,
                         key_name: CHALLENGE_KEY.to_string(),
-                        key_manager: &context.key_chain.key_manager,
+                        key_manager: &context.key_manager,
                     }),
                 },
                 InputSigningInfo::KeySpend { input_index: 1 },
@@ -1213,7 +1214,18 @@ impl FullPenalizationProtocol {
 
             let lazy_disabler_name =
                 triple_indexed_name(OP_LAZY_DISABLER_TX, wt_index, op_index, slot_index);
-            let (tx, speedup) = self.op_lazy_disabler_tx(&lazy_disabler_name, program_context)?;
+
+            // This signature could fail if WT already used winternitz to sign reimbursement kickoff transaction to init the challenge.
+            // In this case, we want to skip creation of lazy disabler but we don't want to fail the whole batch just because of that.
+            let result = self.op_lazy_disabler_tx(&lazy_disabler_name, program_context);
+            if let Err(e) = &result {
+                warn!(
+                    id = self.ctx.my_idx,
+                    "Failed to create lazy disabler {}: {}. Skipping it.", lazy_disabler_name, e
+                );
+                continue;
+            }
+            let (tx, speedup) = result?;
             txs.push((lazy_disabler_name, tx, speedup));
         }
 

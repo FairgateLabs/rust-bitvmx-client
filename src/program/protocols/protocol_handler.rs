@@ -4,6 +4,8 @@ use bitcoin_coordinator::TransactionStatus;
 use bitcoin_scriptexec::scriptint_vec;
 use console::style;
 use enum_dispatch::enum_dispatch;
+use key_manager::key_manager::KeyManager;
+use key_manager::lamport::{HashFunction, LamportSignature};
 use key_manager::winternitz::{message_bytes_length, WinternitzSignature, WinternitzType};
 use protocol_builder::builder::ProtocolBuilder;
 use protocol_builder::scripts::{self, ProtocolScript, SignMode};
@@ -22,13 +24,13 @@ use uuid::Uuid;
 
 use super::super::participant::ParticipantKeys;
 use crate::errors::BitVMXError;
-use crate::keychain::KeyChain;
 use crate::program::participant::ParticipantRole;
 use crate::program::protocols::claim::ClaimGate;
-use crate::program::protocols::{dispute, light_drp};
 #[cfg(feature = "union")]
 use crate::program::protocols::union::full_penalization::FullPenalizationProtocol;
+use crate::program::protocols::{dispute, light_drp};
 
+use super::aggregated_key::AggregatedKeyProtocol;
 #[cfg(feature = "cardinal")]
 use super::cardinal::{lock::LockProtocol, slot::SlotProtocol, transfer::TransferProtocol};
 use super::dispute::DisputeResolutionProtocol;
@@ -51,10 +53,13 @@ use crate::types::{
 #[cfg(feature = "cardinal")]
 use crate::types::{PROGRAM_TYPE_LOCK, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TRANSFER};
 
-use crate::types::{ProgramContext, PROGRAM_TYPE_DRP};
+use crate::types::{ProgramContext, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_DRP};
 
-use crate::program::variables::{Globals, PartialUtxo, WitnessTypes};
-use crate::program::{variables::VariableTypes, witness};
+use crate::program::setup::steps::SetupStepName;
+use crate::program::variables::{Globals, PartialUtxo, VariableTypes, WitnessTypes};
+use crate::program::witness;
+
+const REQUESTED_CONFIRMATIONS_VAR: &str = "requested_confirmations";
 
 #[derive(Clone, Debug)]
 pub struct LeafToSign {
@@ -95,8 +100,11 @@ pub trait ProtocolHandler {
     fn context_mut(&mut self) -> &mut ProtocolContext;
     fn get_pregenerated_aggregated_keys(
         &self,
-        context: &ProgramContext,
-    ) -> Result<Vec<(String, PublicKey)>, BitVMXError>;
+        _context: &ProgramContext,
+    ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
+        // Default implementation: no pregenerated keys
+        Ok(vec![])
+    }
 
     fn generate_keys(
         &self,
@@ -113,12 +121,25 @@ pub trait ProtocolHandler {
         Some(
             program_context
                 .globals
-                .get_var(&self.context().id, "requested_confirmations")
+                .get_var(&self.context().id, REQUESTED_CONFIRMATIONS_VAR)
                 .unwrap_or(None)
                 .unwrap_or(VariableTypes::Number(1))
                 .number()
                 .unwrap_or(1) as u32,
         )
+    }
+
+    fn set_requested_confirmations(
+        &self,
+        program_context: &ProgramContext,
+        confirmations: u32,
+    ) -> Result<(), BitVMXError> {
+        program_context.globals.set_var(
+            &self.context().id,
+            REQUESTED_CONFIRMATIONS_VAR,
+            VariableTypes::Number(confirmations),
+        )?;
+        Ok(())
     }
 
     fn build(
@@ -128,9 +149,13 @@ pub trait ProtocolHandler {
         _context: &ProgramContext,
     ) -> Result<(), BitVMXError>;
 
-    fn sign(&mut self, key_chain: &KeyChain) -> Result<(), ProtocolBuilderError> {
-        let mut protocol = self.load_protocol()?;
-        protocol.sign(&key_chain.key_manager, &self.context().protocol_name)?;
+    fn sign(&mut self, key_manager: &Rc<KeyManager>) -> Result<(), ProtocolBuilderError> {
+        let mut protocol = match self.load_protocol() {
+            Ok(p) => p,
+            Err(ProtocolBuilderError::MissingProtocol(_)) => return Ok(()),
+            Err(e) => return Err(e),
+        };
+        protocol.sign(key_manager, &self.context().protocol_name)?;
         self.save_protocol(protocol)?;
         Ok(())
     }
@@ -185,7 +210,15 @@ pub trait ProtocolHandler {
         &self,
         program_context: &ProgramContext,
     ) -> Result<(Vec<Txid>, Vec<(Txid, u32)>), BitVMXError> {
-        let protocol = self.load_protocol()?;
+        // Try to load protocol, but if it doesn't exist (e.g., protocols without transactions),
+        // return empty vectors
+        let protocol = match self.load_protocol() {
+            Ok(p) => p,
+            Err(_) => {
+                // Protocol doesn't exist or has no transactions - return empty
+                return Ok((vec![], vec![]));
+            }
+        };
         let txs = protocol.get_transaction_ids();
         let tx_names_and_vout = program_context
             .globals
@@ -251,25 +284,32 @@ pub trait ProtocolHandler {
                 .storage
                 .clone()
                 .ok_or_else(|| StorageError::NotFound(self.context().protocol_name.clone()))?,
-        )?;
-        Ok(())
+        )
     }
 
     fn get_transaction_by_name(
         &self,
         name: &str,
-        context: &ProgramContext,
-    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError>;
+        _context: &ProgramContext,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        // Default implementation: protocol has no transactions
+        Err(BitVMXError::InvalidTransactionName(format!(
+            "Transaction '{}' not found - protocol has no transactions",
+            name
+        )))
+    }
 
     fn notify_news(
         &self,
-        tx_id: Txid,
-        vout: Option<u32>,
-        tx_status: TransactionStatus,
-        context: String,
-        program_context: &ProgramContext,
-        participant_keys: Vec<&ParticipantKeys>,
-    ) -> Result<(), BitVMXError>;
+        _tx_id: Txid,
+        _vout: Option<u32>,
+        _tx_status: TransactionStatus,
+        _context: String,
+        _program_context: &ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        // Default implementation: no-op for protocols that don't need to handle news
+        Ok(())
+    }
 
     fn notify_external_news(
         &self,
@@ -280,6 +320,43 @@ pub trait ProtocolHandler {
         _program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         Ok(())
+    }
+
+    fn get_lamport_signature_for_script(
+        &self,
+        protocol_script: &ProtocolScript,
+        program_context: &ProgramContext,
+    ) -> Result<Vec<LamportSignature>, BitVMXError> {
+        let keys = protocol_script.get_keys();
+        let mut lamp_sigs = Vec::with_capacity(keys.len());
+
+        for key in keys.iter().rev() {
+            if let Some(var) = program_context
+                .globals
+                .get_var(&self.context().id, key.name())?
+            {
+                let message = var.input()?;
+
+                info!(
+                    "Signing message: {}",
+                    style(hex::encode(message.clone())).yellow()
+                );
+                info!("With lamport key: {:?}", key);
+
+                let lamport_signature =
+                    program_context.key_manager.sign_lamport_message_by_pubkey(
+                        &message,
+                        key.key_type().lamport_public_key()?,
+                    )?;
+
+                lamp_sigs.push(lamport_signature);
+            } else {
+                error!("No Lamport signature found for key: {}", key.name());
+                return Err(BitVMXError::KeysNotFound(self.context().id));
+            }
+        }
+
+        Ok(lamp_sigs)
     }
 
     fn get_winternitz_signature_for_script(
@@ -298,13 +375,12 @@ pub trait ProtocolHandler {
                 let message = var.input()?;
 
                 info!(
-                    "Signigng message: {}",
+                    "Signing message: {}",
                     style(hex::encode(message.clone())).yellow()
                 );
                 info!("With key: {:?}", k);
 
                 let winternitz_signature = program_context
-                    .key_chain
                     .key_manager
                     .sign_winternitz_message_by_index(
                         &message,
@@ -478,6 +554,46 @@ pub trait ProtocolHandler {
         Ok((names, leaf))
     }
 
+    fn decode_lamport_for_speedup(
+        &self,
+        prev_tx_id: Txid,
+        prev_vout: u32,
+        prev_name: &str,
+        transaction: &Transaction,
+    ) -> Result<Vec<(Vec<u8>, u8)>, BitVMXError> {
+        let idx = self.find_prevout(prev_tx_id, prev_vout, transaction)?;
+        let protocol = self.load_protocol()?;
+        let script = &protocol.get_script_from_output(prev_name, prev_vout)?.1[0];
+
+        let witness = transaction.input[idx as usize].witness.clone();
+        let mut iter = witness.iter();
+
+        let mut hashes = vec![];
+
+        for key in script.get_keys().iter() {
+            let key_type = key.key_type();
+            let public_key = key_type.lamport_public_key()?;
+            let (hashes_0, hashes_1) = public_key.to_hashes();
+
+            for (hash_0, hash_1) in hashes_0.iter().zip(hashes_1.iter()) {
+                let signature = iter
+                    .next()
+                    .ok_or(BitVMXError::ScriptSignatureMissing(key.name().to_string()))?;
+                let hash = public_key.hash_type().hash(signature).to_bytes();
+
+                if &hash == hash_0 {
+                    hashes.push((hash, 0));
+                } else if &hash == hash_1 {
+                    hashes.push((hash, 1));
+                } else {
+                    error!("Found invalid lamport signature");
+                }
+            }
+        }
+
+        Ok(hashes)
+    }
+
     fn decode_witness_from_speedup(
         &self,
         prev_tx_id: Txid,
@@ -570,7 +686,36 @@ pub trait ProtocolHandler {
         )
     }
 
-    fn setup_complete(&self, program_context: &ProgramContext) -> Result<(), BitVMXError>;
+    fn setup_complete(&self, _program_context: &ProgramContext) -> Result<(), BitVMXError> {
+        // Default implementation: no additional setup needed
+        Ok(())
+    }
+
+    /// Whether Program should send a SetupCompleted message when this protocol finishes setup.
+    ///
+    /// Defaults to `true`. Protocols that are used internally (e.g., AggregatedKeyProtocol
+    /// created by SetupKey) should return `false` to maintain backward compatibility,
+    /// since the caller only expects the protocol-specific response (e.g., AggregatedPubkey).
+    fn send_setup_completed(&self) -> bool {
+        true
+    }
+
+    /// Returns the list of setup step names for this protocol.
+    ///
+    /// By default, returns the standard steps: keys, nonces, signatures.
+    /// Protocols can override this method to customize their setup flow.
+    ///
+    /// Returns None if the protocol doesn't use the SetupEngine system.
+    /// Protocols using Program MUST override this to return their required steps.
+    ///
+    /// The steps will be created by the factory when needed.
+    fn setup_steps(&self) -> Option<Vec<SetupStepName>> {
+        Some(vec![
+            SetupStepName::Keys,
+            SetupStepName::Nonces,
+            SetupStepName::Signatures,
+        ])
+    }
 
     fn add_connection_with_scripts<V: Into<AmountType> + std::fmt::Debug + std::clone::Clone>(
         &self,
@@ -767,10 +912,16 @@ pub trait ProtocolHandler {
 
         Ok(())
     }
+
+    fn partial_utxo_from(&self, tx: &Transaction, vout: u32) -> (Txid, u32, u64) {
+        let txid = tx.compute_txid();
+        let amount = tx.output[vout as usize].value.to_sat();
+        (txid, vout, amount)
+    }
 }
 
 pub trait WithClaimGateConfig {
-    type Config : ClaimGateConfig;
+    type Config: ClaimGateConfig;
     const PROGRAM_TYPE: &'static str;
 
     fn role(&self) -> ParticipantRole;
@@ -842,6 +993,7 @@ impl ProtocolContext {
 #[enum_dispatch(ProtocolHandler)]
 #[derive(Clone, Serialize, Deserialize)]
 pub enum ProtocolType {
+    AggregatedKeyProtocol,
     DisputeResolutionProtocol,
     LightDisputeResolutionProtocol,
     #[cfg(feature = "cardinal")]
@@ -876,6 +1028,9 @@ pub fn new_protocol_type(
     let ctx = ProtocolContext::new(id, &protocol_name, my_idx, storage);
 
     match name {
+        PROGRAM_TYPE_AGGREGATED_KEY => Ok(ProtocolType::AggregatedKeyProtocol(
+            AggregatedKeyProtocol::new(ctx),
+        )),
         PROGRAM_TYPE_DRP => Ok(ProtocolType::DisputeResolutionProtocol(
             DisputeResolutionProtocol::new(ctx),
         )),

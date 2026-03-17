@@ -5,7 +5,6 @@ use crate::{
     },
     errors::BitVMXError,
     helper::compute_pubkey_hash,
-    keychain::KeyChain,
     program::{
         participant::CommsAddress,
         variables::{Globals, VariableTypes},
@@ -16,8 +15,12 @@ use bitvmx_broker::{
     channel::queue_channel::QueueChannel,
     identification::identifier::{Identifier, PubkHash},
 };
+use key_manager::key_manager::KeyManager;
 use serde_json::Value;
-use std::collections::{HashSet, VecDeque};
+use std::{
+    collections::{HashSet, VecDeque},
+    rc::Rc,
+};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -86,7 +89,8 @@ impl OperatorVerificationStore {
     pub fn request_missing_verification_keys(
         globals: &Globals,
         comms: &QueueChannel,
-        key_chain: &KeyChain,
+        key_manager: &Rc<KeyManager>,
+        rsa_public_key: &str,
         program_id: &Uuid,
         peers: &[CommsAddress],
     ) -> Result<(), BitVMXError> {
@@ -118,7 +122,8 @@ impl OperatorVerificationStore {
                 );
                 request(
                     comms,
-                    key_chain,
+                    key_manager,
+                    rsa_public_key,
                     program_id,
                     peer.clone(),
                     CommsMessageType::VerificationKeyRequest,
@@ -131,11 +136,12 @@ impl OperatorVerificationStore {
 
     pub fn respond_with_verification_key(
         comms: &QueueChannel,
-        key_chain: &KeyChain,
+        key_manager: &Rc<KeyManager>,
+        rsa_public_key: &str,
         program_id: &Uuid,
         peer_address: CommsAddress,
     ) -> Result<(), BitVMXError> {
-        send_verification_key_to_peer(comms, key_chain, program_id, peer_address)
+        send_verification_key_to_peer(comms, key_manager, rsa_public_key, program_id, peer_address)
     }
 }
 
@@ -151,7 +157,7 @@ impl SignatureVerifier {
     /// - `signature`: RSA signature of the message (Vec<u8>)
     /// - `sender_pubkey_hash`: Hash of the sender's public key
     /// - `verification_key`: RSA public key of the sender for verification (PEM string)
-    /// - `key_chain`: KeyChain for verification operations
+    /// - `rsa_public_key`: for verification operations
     ///
     /// # Returns
     /// - `Ok(true)` if the signature is valid
@@ -170,7 +176,7 @@ impl SignatureVerifier {
         timestamp: i64,
         signature: &[u8],
         sender_pubkey_hash: &PubkHash,
-        key_chain: &KeyChain,
+        rsa_public_key: &str,
         my_pubkey_hash: &PubkHash,
     ) -> Result<bool, BitVMXError> {
         // Reconstruct the message that was signed
@@ -190,15 +196,20 @@ impl SignatureVerifier {
             data,
             sender_pubkey_hash,
             globals,
-            key_chain,
+            rsa_public_key,
             my_pubkey_hash,
         )?;
 
         // Verify the RSA signature
-        let verified = key_chain.verify_rsa_signature(
-            verification_key.as_str(),
+        let rsa_signature = key_manager::rsa::Signature::try_from(signature).map_err(|_e| {
+            BitVMXError::InvalidMessage(
+                format!("Invalid RSA signature: {:?}", hex::encode(signature)).to_string(),
+            )
+        })?;
+        let verified = key_manager::verifier::SignatureVerifier::new().verify_rsa_signature(
+            &rsa_signature,
             message.as_bytes(),
-            signature,
+            verification_key.as_str(),
         )?;
 
         if !verified {
@@ -228,7 +239,7 @@ impl SignatureVerifier {
     /// - `msg_type`: Type of message received
     /// - `data`: Message data (to extract VerificationKey if applicable)
     /// - `sender_pubkey_hash`: Hash of the sender's public key
-    /// - `key_chain`: KeyChain to get our own key
+    /// - `rsa_public_key`: rsa_public_key to get our own key
     /// - `my_pubkey_hash`: pubkey hash of the local operator (to detect self-messages)
     ///
     /// # Returns
@@ -245,7 +256,7 @@ impl SignatureVerifier {
         data: &Value,
         sender_pubkey_hash: &PubkHash,
         globals: &Globals,
-        key_chain: &KeyChain,
+        rsa_public_key: &str,
         my_pubkey_hash: &PubkHash,
     ) -> Result<String, BitVMXError> {
         match msg_type {
@@ -264,7 +275,7 @@ impl SignatureVerifier {
             _ => {
                 // Check if it's our own message first
                 if sender_pubkey_hash == my_pubkey_hash {
-                    return key_chain.get_rsa_public_key();
+                    return Ok(rsa_public_key.to_string());
                 }
 
                 match OperatorVerificationStore::get(globals, sender_pubkey_hash)? {
@@ -287,7 +298,7 @@ impl SignatureVerifier {
     pub fn verify_and_get_key(
         comms: &QueueChannel,
         globals: &Globals,
-        key_chain: &KeyChain,
+        rsa_public_key: &str,
         sender_pubkey_hash: &PubkHash,
         program_id: &Uuid,
         msg_type: &CommsMessageType,
@@ -308,7 +319,7 @@ impl SignatureVerifier {
             data,
             sender_pubkey_hash,
             globals,
-            key_chain,
+            rsa_public_key,
             &my_pubkey_hash,
         )?;
 
@@ -323,7 +334,7 @@ impl SignatureVerifier {
                 timestamp,
                 signature,
                 sender_pubkey_hash,
-                key_chain,
+                rsa_public_key,
                 &my_pubkey_hash,
             )?;
 
@@ -406,7 +417,8 @@ impl SignatureVerifier {
     ) -> Result<(), BitVMXError> {
         OperatorVerificationStore::respond_with_verification_key(
             &program_context.comms,
-            &program_context.key_chain,
+            &program_context.key_manager,
+            &program_context.rsa_public_key,
             context_id,
             peer_address,
         )
@@ -432,7 +444,8 @@ impl SignatureVerifier {
         OperatorVerificationStore::request_missing_verification_keys(
             &program_context.globals,
             &program_context.comms,
-            &program_context.key_chain,
+            &program_context.key_manager,
+            &program_context.rsa_public_key,
             program_id,
             std::slice::from_ref(address),
         )?;
@@ -445,13 +458,16 @@ impl SignatureVerifier {
 mod tests {
     use super::*;
     use crate::config::Config;
+    use bitvmx_settings::settings;
+    use key_manager::create_key_manager_from_config;
     use serde_json::json;
+    use signature::SignatureEncoding;
     use std::rc::Rc;
     use std::time::{SystemTime, UNIX_EPOCH};
     use storage_backend::storage::Storage;
     use uuid::Uuid;
 
-    fn build_test_env() -> Result<(KeyChain, Globals), BitVMXError> {
+    fn build_test_env() -> Result<(Rc<KeyManager>, String, Globals), BitVMXError> {
         let mut config = Config::new(Some("config/development.yaml".to_string()))?;
         let unique_dir = std::env::temp_dir()
             .join("bitvmx-signature-tests")
@@ -461,13 +477,17 @@ mod tests {
         config.key_storage.path = unique_dir.join("keys.db").to_string_lossy().to_string();
         let store = Rc::new(Storage::new(&config.storage)?);
         let globals = Globals::new(store.clone());
-        let key_chain = KeyChain::new(&config, store)?;
-        Ok((key_chain, globals))
+        let key_manager =
+            create_key_manager_from_config(&config.key_manager, &config.key_storage.clone())?;
+        let key_manager = Rc::new(key_manager);
+        let rsa_pubkey_pem = key_manager
+            .import_rsa_private_key(&settings::decrypt_or_read_file(config.comms_key())?)?;
+        Ok((key_manager, rsa_pubkey_pem, globals))
     }
 
     #[test]
     fn verify_message_signature_accepts_valid_payload() -> Result<(), BitVMXError> {
-        let (key_chain, globals) = build_test_env()?;
+        let (key_manager, rsa_public_key, globals) = build_test_env()?;
         let program_id = Uuid::new_v4();
         let msg_type = CommsMessageType::Keys;
         let data = json!({ "payload": "value" });
@@ -485,7 +505,10 @@ mod tests {
                 &data,
                 timestamp,
             )?;
-            key_chain.sign_rsa_message(message.as_bytes(), None)?
+            key_manager
+                .sign_rsa_message(message.as_bytes(), &rsa_public_key)?
+                .to_bytes()
+                .to_vec()
         };
 
         let verified = SignatureVerifier::verify_message_signature(
@@ -497,7 +520,7 @@ mod tests {
             timestamp,
             &signature,
             &sender_pubkey_hash,
-            &key_chain,
+            &rsa_public_key,
             &my_pubkey_hash,
         )?;
         assert!(verified);
@@ -506,7 +529,7 @@ mod tests {
 
     #[test]
     fn verify_message_signature_detects_tampering() -> Result<(), BitVMXError> {
-        let (key_chain, globals) = build_test_env()?;
+        let (key_manager, rsa_public_key, globals) = build_test_env()?;
         let program_id = Uuid::new_v4();
         let msg_type = CommsMessageType::Keys;
         let original_data = json!({ "payload": "value" });
@@ -524,7 +547,10 @@ mod tests {
                 &original_data,
                 timestamp,
             )?;
-            key_chain.sign_rsa_message(message.as_bytes(), None)?
+            key_manager
+                .sign_rsa_message(message.as_bytes(), &rsa_public_key)?
+                .to_bytes()
+                .to_vec()
         };
 
         let tampered_data = json!({ "payload": "tampered" });
@@ -537,7 +563,7 @@ mod tests {
             timestamp,
             &signature,
             &sender_pubkey_hash,
-            &key_chain,
+            &rsa_public_key,
             &my_pubkey_hash,
         )?;
         assert!(!verified);
@@ -546,10 +572,10 @@ mod tests {
 
     #[test]
     fn get_verification_key_from_announcement() -> Result<(), BitVMXError> {
-        let (key_chain, globals) = build_test_env()?;
+        let (_key_manager, rsa_public_key, globals) = build_test_env()?;
         let sender = "peer-1".to_string();
         let my_pubkey_hash = "self".to_string();
-        let verification_key = key_chain.get_rsa_public_key()?;
+        let verification_key = rsa_public_key.clone();
 
         let data = json!({
             "pubkey_hash": sender.clone(),
@@ -561,7 +587,7 @@ mod tests {
             &data,
             &sender,
             &globals,
-            &key_chain,
+            &rsa_public_key,
             &my_pubkey_hash,
         )?;
         assert_eq!(key, verification_key);
@@ -570,7 +596,7 @@ mod tests {
 
     #[test]
     fn get_verification_key_for_self_message() -> Result<(), BitVMXError> {
-        let (key_chain, globals) = build_test_env()?;
+        let (_key_manager, rsa_public_key, globals) = build_test_env()?;
         let my_pubkey_hash = "self".to_string();
         let data = json!({});
 
@@ -579,16 +605,16 @@ mod tests {
             &data,
             &my_pubkey_hash,
             &globals,
-            &key_chain,
+            &rsa_public_key,
             &my_pubkey_hash,
         )?;
-        assert_eq!(key, key_chain.get_rsa_public_key()?);
+        assert_eq!(key, rsa_public_key);
         Ok(())
     }
 
     #[test]
     fn get_verification_key_from_shared_map() -> Result<(), BitVMXError> {
-        let (key_chain, globals) = build_test_env()?;
+        let (_key_manager, rsa_public_key, globals) = build_test_env()?;
         let sender = "peer-2".to_string();
         let my_pubkey_hash = "self".to_string();
         let verification_key = "peer-2-key".to_string();
@@ -599,7 +625,7 @@ mod tests {
             &json!({}),
             &sender,
             &globals,
-            &key_chain,
+            &rsa_public_key,
             &my_pubkey_hash,
         )?;
         assert_eq!(key, verification_key);
@@ -608,7 +634,7 @@ mod tests {
 
     #[test]
     fn get_verification_key_missing_entry_errors() -> Result<(), BitVMXError> {
-        let (key_chain, globals) = build_test_env()?;
+        let (_key_manager, rsa_public_key, globals) = build_test_env()?;
         let sender = "peer-3".to_string();
         let my_pubkey_hash = "self".to_string();
 
@@ -617,7 +643,7 @@ mod tests {
             &json!({}),
             &sender,
             &globals,
-            &key_chain,
+            &rsa_public_key,
             &my_pubkey_hash,
         );
         assert!(matches!(
@@ -629,7 +655,7 @@ mod tests {
 
     #[test]
     fn operator_verification_store_has_and_missing() -> Result<(), BitVMXError> {
-        let (_key_chain, globals) = build_test_env()?;
+        let (_key_manager, _rsa_public_key, globals) = build_test_env()?;
         let stored_peer = "peer-stored".to_string();
         let missing_peer = "peer-missing".to_string();
 

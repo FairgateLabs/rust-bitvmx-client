@@ -338,7 +338,7 @@ impl TestHelper {
 
 pub fn get_configs(network: Network) -> Result<Vec<Config>> {
     let config_names = match network {
-        Network::Regtest => vec!["op_1", "op_2", "op_3"],
+        Network::Regtest => vec!["op_1", "op_2", "op_3", "op_4"],
         Network::Testnet => vec!["testnet_op_1", "testnet_op_2", "testnet_op_3"],
         _ => panic!("Network not supported: {}", network),
     };

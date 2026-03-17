@@ -138,7 +138,7 @@ pub fn test_transfer() -> Result<()> {
         &mut wallet,
         &aggregated_pub_key,
         spending_condition.clone(),
-        500,
+        540,
     )?;
 
     // SETUP TRANSFER BEGIN

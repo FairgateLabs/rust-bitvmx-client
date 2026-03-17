@@ -2,7 +2,7 @@ use crate::{
     bitcoin::{BitcoinWrapper, HIGH_FEE_NODE_ENABLED},
     participants::{
         committee::Committee,
-        common::{calculate_taproot_key_path_sighash, get_user_take_tx},
+        common::{calculate_taproot_key_path_sighash, get_user_take_tx, PEGIN_CONFIRMATIONS},
         member::Member,
         user::User,
     },
@@ -375,7 +375,7 @@ pub fn cli_op_no_cosign() -> Result<()> {
     let op_index = 1;
     challenge(&mut committee, op_index, slot_index, false, true)?;
 
-    let blocks_to_wait = 12; // Amount of blocks enough to allow WT to open a challenge but not enough to dispatch the OP_COSIGN_TX. Fine tunning may be required.
+    let blocks_to_wait = PEGIN_CONFIRMATIONS as u32 + 12; // Amount of blocks enough to allow WT to open a challenge but not enough to dispatch the OP_COSIGN_TX. Fine tunning may be required.
     info!("Mining {} blocks...", blocks_to_wait);
     wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
 
@@ -383,9 +383,9 @@ pub fn cli_op_no_cosign() -> Result<()> {
     committee.members[op_index].bitvmx.shutdown();
 
     // Amount of blocks enough to allow WT to dispatch OP_NO_COSIGN_TX and following TXs
-    let blocks_to_wait = committee.stream_settings.op_no_cosign_timelock as u32 + 30;
+    let blocks_to_wait = committee.stream_settings.op_no_cosign_timelock + PEGIN_CONFIRMATIONS + 30;
     info!("Mining {} blocks...", blocks_to_wait);
-    wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
+    wait_for_blocks(&committee.bitcoin_client, blocks_to_wait as u32)?;
 
     Ok(())
 }
@@ -403,7 +403,7 @@ pub fn cli_wt_no_challenge() -> Result<()> {
 
     challenge(&mut committee, op_index, slot_index, false, true)?;
 
-    let blocks_to_wait = 13; // Amount of blocks enough to allow WT to open a challenge but not enough to dispatch the START_CH. Fine tunning may be required.
+    let blocks_to_wait = PEGIN_CONFIRMATIONS as u32 + 13; // Amount of blocks enough to allow WT to open a challenge but not enough to dispatch the START_CH. Fine tunning may be required.
     info!("Mining {} blocks...", blocks_to_wait);
     wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
 
@@ -416,9 +416,10 @@ pub fn cli_wt_no_challenge() -> Result<()> {
         committee.members[wt_index].bitvmx.shutdown();
     }
     // Amount of blocks enough to allow OP to dispatch WT_NO_CHALLENGE_TX and following TXs
-    let blocks_to_wait = committee.stream_settings.wt_no_challenge_timelock as u32 + 30;
+    let blocks_to_wait =
+        committee.stream_settings.wt_no_challenge_timelock + PEGIN_CONFIRMATIONS + 30;
     info!("Mining {} blocks...", blocks_to_wait);
-    wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
+    wait_for_blocks(&committee.bitcoin_client, blocks_to_wait as u32)?;
 
     Ok(())
 }
@@ -437,7 +438,7 @@ pub fn cli_input_not_revealed() -> Result<()> {
     let op_index = 1;
     challenge(&mut committee, op_index, slot_index, false, false)?;
 
-    let blocks_to_wait = 4; // Wait some blocks to mine ADVANCE_FUNDS_TX and REIMBURSEMENT_KICKOFF_TX. Fine tunning may be required.
+    let blocks_to_wait = PEGIN_CONFIRMATIONS as u32 + 4; // Wait some blocks to mine ADVANCE_FUNDS_TX and REIMBURSEMENT_KICKOFF_TX. Fine tunning may be required.
     wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
 
     // Kill operator client after some blocks to simulate offline behavior
@@ -520,7 +521,7 @@ pub fn cli_double_challenge() -> Result<()> {
     )?;
 
     // Wait some blocks to get INITIAL_SETUP and REIMBURSEMENT_TX mined
-    wait_for_blocks(&committee.bitcoin_client, 3)?;
+    wait_for_blocks(&committee.bitcoin_client, PEGIN_CONFIRMATIONS as u32 + 3)?;
 
     // Dispatch second reimbusement without advancing funds.
     info!(
@@ -1093,9 +1094,9 @@ fn get_blocks_to_wait() -> u32 {
     match NETWORK {
         Network::Regtest => {
             if HIGH_FEE_NODE_ENABLED {
-                20
+                20 + PEGIN_CONFIRMATIONS as u32
             } else {
-                2
+                2 + PEGIN_CONFIRMATIONS as u32
             }
         }
         Network::Testnet => 1,

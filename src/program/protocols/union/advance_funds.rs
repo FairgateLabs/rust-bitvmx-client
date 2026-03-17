@@ -37,6 +37,7 @@ use crate::{
                 },
             },
         },
+        setup::steps::SetupStepName,
         variables::{PartialUtxo, VariableTypes},
     },
     spv_proof::get_spv_proof,
@@ -81,6 +82,8 @@ impl ProtocolHandler for AdvanceFundsProtocol {
             "Building Advance Funds Protocol for program {}",
             self.ctx.id
         );
+
+        self.set_requested_confirmations(context, self.committee(context)?.pegin_confirmations)?;
 
         let request: AdvanceFundsRequest = self.advance_funds_request(context)?;
 
@@ -190,7 +193,7 @@ impl ProtocolHandler for AdvanceFundsProtocol {
             )?;
         }
 
-        protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
+        protocol.build(&context.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
         self.save_protocol(protocol)?;
         Ok(())
@@ -214,7 +217,6 @@ impl ProtocolHandler for AdvanceFundsProtocol {
         tx_status: TransactionStatus,
         _context: String,
         context: &ProgramContext,
-        _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
         info!(
@@ -274,6 +276,11 @@ impl ProtocolHandler for AdvanceFundsProtocol {
         self.send_funds_advanced(&context, txid)?;
 
         Ok(())
+    }
+
+    // Override setup_steps to only use KeysStep
+    fn setup_steps(&self) -> Option<Vec<SetupStepName>> {
+        Some(vec![SetupStepName::Keys])
     }
 }
 
@@ -366,7 +373,7 @@ impl AdvanceFundsProtocol {
         context.bitcoin_coordinator.dispatch(
             tx.clone(),
             speedup,
-            Context::ProgramId(self.ctx.id).to_string()?,
+            Context::ProgramId(dispute_core.context().id).to_string()?,
             None,
             self.requested_confirmations(context),
         )?;
@@ -394,18 +401,18 @@ impl AdvanceFundsProtocol {
             slot_index, dispute_protocol_id
         );
 
-        let dispute_core_ph =
+        let dispute_core =
             self.load_protocol_by_name(PROGRAM_TYPE_DISPUTE_CORE, dispute_protocol_id)?;
 
         let tx_name = indexed_name(REIMBURSEMENT_KICKOFF_TX, slot_index);
-        let (tx, speedup) = dispute_core_ph.get_transaction_by_name(&tx_name, context)?;
+        let (tx, speedup) = dispute_core.get_transaction_by_name(&tx_name, context)?;
         let txid = tx.compute_txid();
 
         // Dispatch the transaction through the bitcoin coordinator
         context.bitcoin_coordinator.dispatch(
             tx.clone(),
             speedup,
-            Context::ProgramId(self.ctx.id).to_string()?,
+            Context::ProgramId(dispute_core.context().id).to_string()?,
             block_height, // Dispatch immediately
             self.requested_confirmations(context),
         )?;

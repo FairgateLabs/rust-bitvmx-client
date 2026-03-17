@@ -24,6 +24,9 @@ pub enum BitVMXError {
     #[error("Invalid configuration")]
     ConfigurationError(#[from] ConfigError),
 
+    #[error("Configuration error: {0}")]
+    ConfigError(#[from] bitvmx_settings::errors::ConfigError),
+
     #[error("Invalid parameter in configuration. {0}")]
     InvalidParameter(String),
 
@@ -75,9 +78,6 @@ pub enum BitVMXError {
     #[error("Error when using KeyManager: {0}")]
     KeyManagerError(#[from] KeyManagerError),
 
-    #[error("KeyChain error: {0}")]
-    KeyChainError(String),
-
     #[error("Error when creating unspendable key: {0}")]
     UnspendableKeyError(#[from] UnspendableKeyError),
 
@@ -89,6 +89,9 @@ pub enum BitVMXError {
 
     #[error("Failed to process a Lamport signature: {0}")]
     LamportError(#[from] LamportError),
+
+    #[error("Expected script signature not found: {0}")]
+    ScriptSignatureMissing(String),
 
     #[error("Invalid RSA signature from peer {peer} for message type {msg_type:?} in program {program_id}")]
     InvalidSignature {

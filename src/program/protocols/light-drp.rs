@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use bitcoin::{PublicKey, ScriptBuf, Transaction, Txid};
-use bitcoin_coordinator::TransactionStatus;
+use bitcoin::{script::read_scriptint, PublicKey, ScriptBuf, Transaction, Txid};
+use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use console::style;
 use key_manager::{key_type::BitcoinKeyType, lamport::LamportType};
 use protocol_builder::{
@@ -16,10 +16,11 @@ use protocol_builder::{
     },
 };
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{
+    bitvmx::Context,
     errors::BitVMXError,
     program::{
         participant::{CommsAddress, ParticipantKeys, ParticipantRole, PublicKeyType},
@@ -29,7 +30,7 @@ use crate::{
             protocol_handler::{timeout_input_tx, ClaimGateConfig, WithClaimGateConfig},
             timeouts::{
                 auto_claim_start, auto_dispatch_timeout, cancel_timeout, claim_state_handle,
-                TxOwnershipTable,
+                dispatch, TxOwnershipTable,
             },
         },
         variables::{Globals, PartialUtxo, VariableTypes},
@@ -184,12 +185,12 @@ impl ProtocolHandler for LightDisputeResolutionProtocol {
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
         let aggregated_1 = program_context
-            .key_chain
-            .derive_keypair(BitcoinKeyType::P2tr)?;
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)?;
 
         let speedup = program_context
-            .key_chain
-            .derive_keypair(BitcoinKeyType::P2tr)?;
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)?;
 
         program_context.globals.set_var(
             &self.ctx.id,
@@ -216,7 +217,7 @@ impl ProtocolHandler for LightDisputeResolutionProtocol {
             )?;
         }
 
-        let key_manager = &mut program_context.key_chain.key_manager;
+        let key_manager = &mut program_context.key_manager;
 
         // TODO: import them via the job dispatcher(?)
         if self.role() == ParticipantRole::Prover {
@@ -467,7 +468,7 @@ impl ProtocolHandler for LightDisputeResolutionProtocol {
 
         claim_verifier.add_claimer_win_connection(&mut protocol, VERIFIER_FINAL)?;
         protocol.compute_minimum_output_values()?;
-        protocol.build(&context.key_chain.key_manager, &self.ctx.protocol_name)?;
+        protocol.build(&context.key_manager, &self.ctx.protocol_name)?;
 
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
         self.save_protocol(protocol)?;
@@ -496,7 +497,6 @@ impl ProtocolHandler for LightDisputeResolutionProtocol {
         tx_status: TransactionStatus,
         _context: String,
         program_context: &ProgramContext,
-        _participant_keys: Vec<&ParticipantKeys>,
     ) -> Result<(), BitVMXError> {
         let name = self.get_transaction_name_by_id(tx_id)?;
         let current_height = tx_status
@@ -548,11 +548,87 @@ impl ProtocolHandler for LightDisputeResolutionProtocol {
             timelock_blocks as u32,
         )?;
 
-        // match (vout, &name.as_str(), self.role()) {
-        //     (None, START_CH, ParticipantRole::Prover) => {
+        match vout {
+            None => match (name.as_str(), self.role()) {
+                (START_CH, ParticipantRole::Prover) => {
+                    let (tx, speedup) =
+                        self.get_tx_with_speedup_data(program_context, COMMITMENT)?;
+                    dispatch(program_context, self, tx, Some(speedup), None)?;
+                }
+                (VERIFIER_FINAL, ParticipantRole::Verifier) => {
+                    let claim_name = ClaimGate::tx_start(VERIFIER_WINS);
+                    let tx = self.get_signed(program_context, &claim_name, vec![0.into()])?;
+                    let speedup_data = self.get_speedup_data_from_tx(&tx, program_context, None)?;
+                    info!("{claim_name}: {:?}", tx);
+                    program_context.bitcoin_coordinator.dispatch(
+                        tx,
+                        Some(speedup_data),
+                        Context::ProgramId(self.ctx.id).to_string()?,
+                        None,
+                        self.requested_confirmations(program_context),
+                    )?;
+                }
+                _ => {}
+            },
+            Some(vout) => {
+                let transaction = &tx_status.tx;
+                let input_index = self.find_prevout(tx_id, vout, transaction)?;
+                let witness = transaction.input[input_index as usize].witness.clone();
+                let leaf = read_scriptint(
+                    witness
+                        .third_to_last()
+                        .ok_or_else(|| BitVMXError::InvalidWitness(witness.clone()))?,
+                )? as u32;
 
-        //     }
-        // }
+                let params = program_context
+                    .globals
+                    .get_var_or_err(&self.ctx.id, &timeout_input_tx(&name))?
+                    .vec_number()?;
+
+                let timeout_leaf = params[0];
+
+                if leaf == timeout_leaf {
+                    warn!("The timeout input for {name} was consumed");
+                    return Ok(());
+                }
+
+                match (name.as_str(), self.role()) {
+                    (COMMITMENT, ParticipantRole::Verifier) => {
+                        let (tx, speedup) =
+                            self.get_tx_with_speedup_data(program_context, CHALLENGE)?;
+                        dispatch(program_context, self, tx, Some(speedup), None)?;
+                    }
+                    (CHALLENGE, ParticipantRole::Prover) => {
+                        let (tx, speedup) =
+                            self.get_tx_with_speedup_data(program_context, INPUT)?;
+                        dispatch(program_context, self, tx, Some(speedup), None)?;
+                    }
+                    (INPUT, ParticipantRole::Verifier) => {
+                        let (tx, speedup) =
+                            self.get_tx_with_speedup_data(program_context, EQUIVOCATION)?;
+
+                        let sigs =
+                            self.decode_lamport_for_speedup(tx_id, vout, &name, transaction)?;
+                        println!("{:?}", sigs);
+                        // TODO: evaluate garbled circuit and get output
+
+                        dispatch(program_context, self, tx, Some(speedup), None)?;
+                    }
+                    (EQUIVOCATION, ParticipantRole::Verifier) => {
+                        let tx = self.get_signed(
+                            program_context,
+                            &VERIFIER_FINAL,
+                            vec![(1, true).into()],
+                        )?;
+                        let speedup_data =
+                            self.get_speedup_data_from_tx(&tx, program_context, None)?;
+                        let height = Some(current_height + 2 * timelock_blocks as u32);
+                        dispatch(program_context, self, tx, Some(speedup_data), height)?;
+                    }
+                    _ => {}
+                }
+            }
+        }
 
         Ok(())
     }
@@ -602,5 +678,27 @@ impl LightDisputeResolutionProtocol {
         )?;
 
         Ok(vec![lamport_check])
+    }
+
+    fn get_tx_with_speedup_data(
+        &self,
+        context: &ProgramContext,
+        name: &str,
+    ) -> Result<(Transaction, SpeedupData), BitVMXError> {
+        let tx = self.get_signed(context, name, vec![(0, true).into()])?;
+        let protocol = self.load_protocol()?;
+        let (output_type, scripts) = protocol.get_script_from_output(name, 0)?;
+        info!("Scripts length: {}", scripts.len());
+
+        let lamp_sigs = self.get_lamport_signature_for_script(&scripts[0], context)?;
+        let speedup_data = SpeedupData::new_with_input(
+            self.partial_utxo_from(&tx, 0),
+            output_type,
+            lamp_sigs,
+            0,
+            true,
+        );
+
+        Ok((tx, speedup_data))
     }
 }

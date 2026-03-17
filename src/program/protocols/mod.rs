@@ -1,3 +1,4 @@
+pub mod aggregated_key;
 #[cfg(feature = "cardinal")]
 pub mod cardinal;
 pub mod claim;

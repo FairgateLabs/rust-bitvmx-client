@@ -106,6 +106,8 @@ pub struct Committee {
     pub dispute_aggregated_key: PublicKey,
     pub packet_size: u32,
     pub stream_denomination: u64,
+    pub pegin_confirmations: u32,
+    pub pegout_confirmations: u32,
 }
 
 impl Committee {
