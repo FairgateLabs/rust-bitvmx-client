@@ -10,7 +10,6 @@ use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 use bitvmx_job_dispatcher::dispatcher_message::DispatcherMessage;
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::garbled_messages::GarbledJobType;
-use garbled_nova::gadgets::bigint::alloc_bigint_input;
 use garbled_nova::gadgets::bn254::{fq_to_input_bits, Fp254Impl, Fq};
 use garbled_nova::garble::GarbledGate;
 use garbled_nova::garble::{
@@ -23,6 +22,10 @@ use garbled_nova::nova::{
     hex_to_scalar as nova_hex_to_scalar, scalar_to_hex, LamportIo,
 };
 use garbled_nova::poseidon_constants;
+use garbled_nova::{
+    digests::{recompute_all_digests, GCIo},
+    gadgets::bigint::alloc_bigint_input,
+};
 use pasta_curves::pallas::Scalar;
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr};
@@ -36,31 +39,32 @@ use tracing::info;
 mod common;
 use crate::common::{clear_db, config_trace};
 
-// circuit to test
-const TEST_CIRCUIT: TestCircuit = TestCircuit::Simple; // (fast, 2 gates)
-                                                       // const TEST_CIRCUIT: TestCircuit = TestCircuit::FqAdd;  // (~4.3k gates)
+// circuit to test - use a compiled .circuit file
+const TEST_CIRCUIT_PATH: &str = "../rust-bitvmx-circuit-compiler/examples/simple.circuit";
 
 #[derive(Clone, Copy)]
 #[allow(dead_code)]
 enum TestCircuit {
-    /// y = (a & b) ^ d — 3 inputs, 2 gates, 1 output
+    /// y = (a & b) ^ c — 3 inputs (bools), 4 gates, 162 outputs (MPC-encoded bool)
     Simple,
     /// BN254 Fq field addition — 508 inputs, ~4.3k gates
     FqAdd,
 }
 
 impl TestCircuit {
-    fn name(&self) -> &'static str {
+    fn circuit_path(&self) -> &'static str {
         match self {
-            TestCircuit::Simple => "simple",
-            TestCircuit::FqAdd => "fq_add",
+            TestCircuit::Simple => TEST_CIRCUIT_PATH,
+            TestCircuit::FqAdd => "../rust-bitvmx-circuit-compiler/examples/fq_add.circuit",
         }
     }
 
     fn input_bytes(&self) -> Vec<u8> {
         match self {
             TestCircuit::Simple => {
-                // a=1, b=1, d=0 => y = (1 & 1) ^ 0 = 1
+                // For the compiled simple.garble circuit:
+                // pub fn main(a: bool, b: bool, c: bool) -> bool { (a & b) ^ c }
+                // 3 bool inputs (each 1 byte): a=1, b=1, c=0 -> y = (1 & 1) ^ 0 = 1
                 vec![1, 1, 0]
             }
             TestCircuit::FqAdd => {
@@ -75,22 +79,24 @@ impl TestCircuit {
     }
 
     /// Build the actual circuit (for computing digests)
+    /// Note: This builds a hardcoded version for native digest computation.
+    /// For the actual circuit, we use the compiled .circuit file.
     fn build_circuit(&self) -> Circuit {
         match self {
             TestCircuit::Simple => {
-                // Simple circuit: y = (a & b) ^ d
-                // 3 input bits, 2 gates (1 AND + 1 XOR), 1 output bit
+                // Matches the structure from simple.garble: (a & b) ^ c
+                // But note that compiled garble circuits may differ in structure
                 let mut circ = Circuit::new();
 
                 let a = circ.add_input();
                 let b = circ.add_input();
-                let d = circ.add_input();
+                let c = circ.add_input();
 
                 let a_and_b = circ.add_wire();
                 let y = circ.add_wire();
 
                 circ.add_and(a, b, a_and_b);
-                circ.add_xor(a_and_b, d, y);
+                circ.add_xor(a_and_b, c, y);
 
                 circ.add_output(y);
 
@@ -124,11 +130,24 @@ fn check_gnova_built() -> Result<()> {
     Ok(())
 }
 
+/// Check that the test circuit file exists
+fn check_circuit_file() -> Result<()> {
+    if !Path::new(TEST_CIRCUIT_PATH).exists() {
+        return Err(anyhow::anyhow!(
+            "Test circuit file not found at {}. Compile with: cd ../rust-bitvmx-circuit-compiler && cargo run --bin garble-compile compile -i examples/simple.garble -o examples/simple.circuit",
+            TEST_CIRCUIT_PATH
+        ));
+    }
+    Ok(())
+}
+
+/// Test combined prove + verify commands (GC + Lamport in one)
 #[ignore]
 #[test]
 pub fn test_gnova_commands() -> Result<()> {
     config_trace();
     check_gnova_built()?;
+    check_circuit_file()?;
 
     // Set GNOVA_BIN for the correct relative path from rust-bitvmx-client
     std::env::set_var("GNOVA_BIN", "../rust-bitvmx-gc/target/release/gnova");
@@ -136,18 +155,18 @@ pub fn test_gnova_commands() -> Result<()> {
     let output_dir = "/tmp/gnova_commands_test";
     let _ = std::fs::remove_dir_all(output_dir);
 
-    // --- Step 1: Prove ---
-    let circuit = TEST_CIRCUIT;
+    // --- Step 1: Prove (generates both GC and Lamport proofs) ---
+    let circuit = TestCircuit::Simple;
     let input_bytes = circuit.input_bytes();
     info!(
         "Testing circuit: {} ({} input bytes)",
-        circuit.name(),
+        circuit.circuit_path(),
         input_bytes.len()
     );
 
     let prove_job = GarbledJobType::Prove(
         input_bytes,
-        circuit.name().to_string(),
+        circuit.circuit_path().to_string(),
         format!("{}/prove", output_dir),
     );
 
@@ -169,9 +188,15 @@ pub fn test_gnova_commands() -> Result<()> {
     assert_eq!(prove_json["status"], "success");
     assert_eq!(prove_json["type"], "ProveResult");
     let proof_path = prove_json["proof_path"].as_str().unwrap().to_string();
-    info!("Prove succeeded, proof at: {}", proof_path);
+    let lamport_proof_path = prove_json["lamport_proof_path"].as_str().unwrap().to_string();
+    info!("Prove succeeded:");
+    info!("  GC proof at: {}", proof_path);
+    info!("  Lamport proof at: {}", lamport_proof_path);
+    info!("  digest_io: {}", prove_json["digest_io"]);
+    info!("  digest_labels: {}", prove_json["digest_labels"]);
+    info!("  digest_lamport: {}", prove_json["digest_lamport"]);
 
-    // --- Step 2: Verify ---
+    // --- Step 2: Verify (verifies both GC and Lamport proofs) ---
     let verify_job = GarbledJobType::Verify(proof_path, format!("{}/verify", output_dir));
 
     let (cmd, args, json_path) = verify_job.command()?;
@@ -192,221 +217,28 @@ pub fn test_gnova_commands() -> Result<()> {
     assert_eq!(verify_json["status"], "success");
     assert_eq!(verify_json["type"], "VerifyResult");
     assert_eq!(verify_json["valid"], true);
-    info!("Verify succeeded, valid=true");
+    assert_eq!(verify_json["proofs_linked"], true);
+    info!("Verify succeeded, valid=true, proofs_linked=true");
 
     // --- Step 3: Digests must match ---
     assert_eq!(prove_json["digest_circ"], verify_json["digest_circ"]);
     assert_eq!(prove_json["digest_ct"], verify_json["digest_ct"]);
     assert_eq!(prove_json["digest_io"], verify_json["digest_io"]);
-    info!("Digests match between prove and verify");
+    assert_eq!(prove_json["digest_labels"], verify_json["digest_labels"]);
+    assert_eq!(prove_json["digest_lamport"], verify_json["digest_lamport"]);
+    info!("All digests match between prove and verify");
 
-    // Cleanup
-    // let _ = std::fs::remove_dir_all(output_dir);
-
-    Ok(())
-}
-
-/// Build the "simple" circuit: y = (a & b) ^ d
-fn build_simple_circuit() -> Circuit {
-    let mut circ = Circuit::new();
-
-    let a = circ.add_input();
-    let b = circ.add_input();
-    let d = circ.add_input();
-
-    let a_and_b = circ.add_wire();
-    let y = circ.add_wire();
-
-    circ.add_and(a, b, a_and_b);
-    circ.add_xor(a_and_b, d, y);
-
-    circ.add_output(y);
-
-    circ
-}
-
-/// Garble simple circuit and extract I/O labels as LamportIo
-fn garble_simple_circuit_for_lamport() -> LamportIo {
-    let circ = build_simple_circuit();
-    let constants = poseidon_constants::<Scalar>();
-
-    let (gc, wires) = garble::<Scalar>(&circ, &constants);
-
-    let private_gc = garbled_nova::garble::garbled_circuit::PrivateGC {
-        e: gc.e.clone(),
-        wires: wires.clone(),
-        delta: gc.delta.clone(),
-    };
-
-    LamportIo {
-        inputs: get_inputs(&circ, &private_gc),
-        outputs: get_outputs(&circ, &private_gc),
-    }
-}
-
-/// Convert LamportIo to JSON string for CLI
-fn lamport_io_to_json(io: &LamportIo) -> String {
-    serde_json::to_string_pretty(io).expect("Failed to serialize LamportIo")
-}
-
-/// Parse garbling_io from GC prove JSON output to LamportIo
-fn parse_garbling_io_from_json(json: &serde_json::Value) -> LamportIo {
-    let garbling_io = &json["garbling_io"];
-
-    let inputs: Vec<(Scalar, Scalar)> = garbling_io["inputs"]
-        .as_array()
-        .expect("garbling_io.inputs should be array")
-        .iter()
-        .map(|pair| {
-            let arr = pair.as_array().expect("each input should be [x0, x1]");
-            let x0 = nova_hex_to_scalar(arr[0].as_str().unwrap()).unwrap();
-            let x1 = nova_hex_to_scalar(arr[1].as_str().unwrap()).unwrap();
-            (x0, x1)
-        })
-        .collect();
-
-    let outputs: Vec<(Scalar, Scalar)> = garbling_io["outputs"]
-        .as_array()
-        .expect("garbling_io.outputs should be array")
-        .iter()
-        .map(|pair| {
-            let arr = pair.as_array().expect("each output should be [x0, x1]");
-            let x0 = nova_hex_to_scalar(arr[0].as_str().unwrap()).unwrap();
-            let x1 = nova_hex_to_scalar(arr[1].as_str().unwrap()).unwrap();
-            (x0, x1)
-        })
-        .collect();
-
-    LamportIo { inputs, outputs }
-}
-
-/// Parse garbling_public from GC prove JSON output to get the garbled gates
-fn parse_garbling_public_gates(json: &serde_json::Value) -> Vec<GarbledGate<Scalar>> {
-    let garbling_public = &json["garbling_public"];
-
-    garbling_public["gates"]
-        .as_array()
-        .expect("garbling_public.gates should be array")
-        .iter()
-        .map(|gate| {
-            let gate_type = gate["type"].as_str().expect("gate should have type");
-            match gate_type {
-                "And" => {
-                    let ct_hex = gate["ct"].as_str().expect("AND gate should have ct");
-                    let ct = nova_hex_to_scalar(ct_hex).expect("Failed to parse ct hex");
-                    GarbledGate::And { ct }
-                }
-                "Noop" => GarbledGate::Noop,
-                _ => panic!("Unknown gate type: {}", gate_type),
-            }
-        })
-        .collect()
-}
-
-#[ignore]
-#[test]
-pub fn test_gnova_lamport_commands() -> Result<()> {
-    config_trace();
-    check_gnova_built()?;
-
-    std::env::set_var("GNOVA_BIN", "../rust-bitvmx-gc/target/release/gnova");
-
-    let output_dir = "/tmp/gnova_lamport_commands_test";
-    let _ = std::fs::remove_dir_all(output_dir);
-    std::fs::create_dir_all(output_dir)?;
-
-    // --- Step 1: Garble circuit and extract I/O labels ---
-    info!("Garbling simple circuit to extract I/O labels...");
-    let lamport_io = garble_simple_circuit_for_lamport();
-    info!(
-        "Extracted {} input pairs and {} output pairs",
-        lamport_io.inputs.len(),
-        lamport_io.outputs.len()
-    );
-
-    // Write labels JSON
-    let labels_path = format!("{}/labels.json", output_dir);
-    let labels_json = lamport_io_to_json(&lamport_io);
-    std::fs::write(&labels_path, &labels_json)?;
-    info!("Labels written to {}", labels_path);
-
-    // --- Step 2: Prove Lamport ---
-    let prove_job = GarbledJobType::ProveLamport(
-        labels_json.into_bytes(),
-        format!("{}/prove_lamport", output_dir),
-    );
-
-    let (cmd, args, json_path) = prove_job.command()?;
-    info!("Running prove-lamport: {} {:?}", cmd, args);
-
-    let output = std::process::Command::new(&cmd)
-        .args(&args)
-        .env("RUST_MIN_STACK", "67108864")
-        .output()?;
-    assert!(
-        output.status.success(),
-        "gnova prove-lamport failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let prove_json: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&json_path)?)?;
-    assert_eq!(prove_json["status"], "success");
-    assert_eq!(prove_json["type"], "ProveLamportResult");
-    let proof_path = prove_json["proof_path"].as_str().unwrap().to_string();
-    info!("Prove-lamport succeeded, proof at: {}", proof_path);
-    info!(
-        "  digest_labels: {}",
-        prove_json["digest_labels"].as_str().unwrap()
-    );
-    info!(
-        "  digest_lamport: {}",
-        prove_json["digest_lamport"].as_str().unwrap()
-    );
-
-    // --- Step 3: Verify Lamport ---
-    let verify_job =
-        GarbledJobType::VerifyLamport(proof_path, format!("{}/verify_lamport", output_dir));
-
-    let (cmd, args, json_path) = verify_job.command()?;
-    info!("Running verify-lamport: {} {:?}", cmd, args);
-
-    let output = std::process::Command::new(&cmd)
-        .args(&args)
-        .env("RUST_MIN_STACK", "67108864")
-        .output()?;
-    assert!(
-        output.status.success(),
-        "gnova verify-lamport failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let verify_json: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&json_path)?)?;
-    assert_eq!(verify_json["status"], "success");
-    assert_eq!(verify_json["type"], "VerifyLamportResult");
-    assert_eq!(verify_json["valid"], true);
-    info!("Verify-lamport succeeded, valid=true");
-
-    // --- Step 4: Digests must match ---
+    // --- Step 4: Verify linkage ---
     assert_eq!(
-        prove_json["digest_labels"], verify_json["digest_labels"],
-        "digest_labels mismatch"
+        prove_json["digest_io"], prove_json["digest_labels"],
+        "digest_io should equal digest_labels for linked proofs"
     );
-    assert_eq!(
-        prove_json["digest_lamport"], verify_json["digest_lamport"],
-        "digest_lamport mismatch"
-    );
-    info!("Lamport digests match between prove and verify!");
-
-    // Cleanup
-    // let _ = std::fs::remove_dir_all(output_dir);
+    info!("GC and Lamport proofs are linked (digest_io == digest_labels)");
 
     Ok(())
 }
 
 const E2E_PORT: u16 = 10500;
-const E2E_LAMPORT_PORT: u16 = 10501;
 const PRIVK_PATH: &str = "../rust-bitvmx-broker/certs/services.key";
 
 #[ignore]
@@ -414,6 +246,7 @@ const PRIVK_PATH: &str = "../rust-bitvmx-broker/certs/services.key";
 pub fn test_gnova_e2e() -> Result<()> {
     config_trace();
     check_gnova_built()?;
+    check_circuit_file()?;
 
     // Set GNOVA_BIN path
     std::env::set_var("GNOVA_BIN", "../rust-bitvmx-gc/target/release/gnova");
@@ -511,16 +344,16 @@ fn run_garbled_client_test(port: u16) -> Result<()> {
     let _ = fs::remove_dir_all(output_dir);
     fs::create_dir_all(output_dir)?;
 
-    // --- Step 1: Send Prove job ---
-    let circuit = TEST_CIRCUIT;
+    // --- Step 1: Send Prove job (generates both GC + Lamport proofs) ---
+    let circuit = TestCircuit::Simple;
     let input_bytes = circuit.input_bytes();
-    info!("Sending Prove job for '{}' circuit...", circuit.name());
+    info!("Sending Prove job for circuit: {}...", circuit.circuit_path());
 
     let prove_job = DispatcherJob {
         job_id: "prove_e2e".to_string(),
         job_type: GarbledJobType::Prove(
             input_bytes,
-            circuit.name().to_string(),
+            circuit.circuit_path().to_string(),
             format!("{}/prove", output_dir),
         ),
     };
@@ -535,8 +368,11 @@ fn run_garbled_client_test(port: u16) -> Result<()> {
     assert_eq!(prove_result["status"], "success");
 
     let proof_path = prove_result["proof_path"].as_str().unwrap().to_string();
+    let lamport_proof_path = prove_result["lamport_proof_path"].as_str().unwrap().to_string();
+    info!("  GC proof at: {}", proof_path);
+    info!("  Lamport proof at: {}", lamport_proof_path);
 
-    // --- Step 2: Send Verify job ---
+    // --- Step 2: Send Verify job (verifies both GC + Lamport proofs) ---
     info!("Sending Verify job...");
 
     let verify_job = DispatcherJob {
@@ -551,17 +387,27 @@ fn run_garbled_client_test(port: u16) -> Result<()> {
     let (verify_result, _) = wait_for_dispatcher_result(&channel, "VerifyResult", 120)?;
 
     info!(
-        "Verify completed: status={}, valid={}",
-        verify_result["status"], verify_result["valid"]
+        "Verify completed: status={}, valid={}, proofs_linked={}",
+        verify_result["status"], verify_result["valid"], verify_result["proofs_linked"]
     );
     assert_eq!(verify_result["status"], "success");
     assert_eq!(verify_result["valid"], true);
+    assert_eq!(verify_result["proofs_linked"], true);
 
     // --- Step 3: Verify digests match ---
     assert_eq!(prove_result["digest_circ"], verify_result["digest_circ"]);
     assert_eq!(prove_result["digest_ct"], verify_result["digest_ct"]);
     assert_eq!(prove_result["digest_io"], verify_result["digest_io"]);
+    assert_eq!(prove_result["digest_labels"], verify_result["digest_labels"]);
+    assert_eq!(prove_result["digest_lamport"], verify_result["digest_lamport"]);
     info!("All digests match!");
+
+    // Verify linkage
+    assert_eq!(
+        prove_result["digest_io"], prove_result["digest_labels"],
+        "Proofs should be linked"
+    );
+    info!("Proofs are linked (digest_io == digest_labels)");
 
     let _ = fs::remove_dir_all(output_dir);
     info!("E2E test completed successfully!");
@@ -591,147 +437,58 @@ fn wait_for_dispatcher_result(
     }
 }
 
-#[ignore]
-#[test]
-pub fn test_gnova_lamport_e2e() -> Result<()> {
-    config_trace();
-    check_gnova_built()?;
+/// Parse garbling_io from prove JSON output to LamportIo
+fn parse_garbling_io_from_json(json: &serde_json::Value) -> LamportIo {
+    let garbling_io = &json["garbling_io"];
 
-    std::env::set_var("GNOVA_BIN", "../rust-bitvmx-gc/target/release/gnova");
+    let inputs: Vec<(Scalar, Scalar)> = garbling_io["inputs"]
+        .as_array()
+        .expect("garbling_io.inputs should be array")
+        .iter()
+        .map(|pair| {
+            let arr = pair.as_array().expect("each input should be [x0, x1]");
+            let x0 = nova_hex_to_scalar(arr[0].as_str().unwrap()).unwrap();
+            let x1 = nova_hex_to_scalar(arr[1].as_str().unwrap()).unwrap();
+            (x0, x1)
+        })
+        .collect();
 
-    let storage_path = format!("/tmp/lamport_e2e_storage_{}.db", std::process::id());
-    clear_db(&storage_path);
+    let outputs: Vec<(Scalar, Scalar)> = garbling_io["outputs"]
+        .as_array()
+        .expect("garbling_io.outputs should be array")
+        .iter()
+        .map(|pair| {
+            let arr = pair.as_array().expect("each output should be [x0, x1]");
+            let x0 = nova_hex_to_scalar(arr[0].as_str().unwrap()).unwrap();
+            let x1 = nova_hex_to_scalar(arr[1].as_str().unwrap()).unwrap();
+            (x0, x1)
+        })
+        .collect();
 
-    // Start broker server
-    info!("Starting broker server on port {}...", E2E_LAMPORT_PORT);
-    let mut server = init_broker_server(E2E_LAMPORT_PORT)?;
-
-    // Start garbled dispatcher
-    info!("Starting garbled dispatcher...");
-    let (disp_stop_tx, disp_stop_rx) = channel::<()>();
-    let storage_path_clone = storage_path.clone();
-    let disp_handle = thread::spawn(move || {
-        run_garbled_dispatcher(E2E_LAMPORT_PORT, disp_stop_rx, &storage_path_clone)
-    });
-
-    // Give dispatcher time to connect
-    thread::sleep(Duration::from_secs(1));
-
-    // Run client test
-    info!("Running Lamport client test...");
-    let client_result = run_lamport_client_test(E2E_LAMPORT_PORT);
-
-    // Cleanup
-    info!("Shutting down...");
-    let _ = disp_stop_tx.send(());
-    let _ = disp_handle.join();
-    server.close();
-    clear_db(&storage_path);
-
-    client_result
+    LamportIo { inputs, outputs }
 }
 
-fn run_lamport_client_test(port: u16) -> Result<()> {
-    let privk = fs::read_to_string(PRIVK_PATH)?;
-    let cert = Cert::new_with_privk(&privk)?;
-    let allow_list =
-        AllowList::from_certs(vec![cert.clone()], vec![IpAddr::V4(Ipv4Addr::LOCALHOST)])?;
+/// Parse garbling_public from prove JSON output to get the garbled gates
+fn parse_garbling_public_gates(json: &serde_json::Value) -> Vec<GarbledGate<Scalar>> {
+    let garbling_public = &json["garbling_public"];
 
-    let dispatcher_id = Identifier {
-        pubkey_hash: cert.get_pubk_hash()?,
-        id: 1,
-    };
-
-    let config = BrokerConfig::new(
-        port,
-        Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        cert.get_pubk_hash()?,
-    );
-    let channel = DualChannel::new(&config, cert, Some(2), allow_list)?;
-
-    let output_dir = "/tmp/gnova_lamport_e2e_test";
-    let _ = fs::remove_dir_all(output_dir);
-    fs::create_dir_all(output_dir)?;
-
-    // --- Step 1: Garble circuit locally and extract I/O labels ---
-    info!("Garbling simple circuit to extract I/O labels...");
-    let lamport_io = garble_simple_circuit_for_lamport();
-    let labels_json = lamport_io_to_json(&lamport_io);
-    info!(
-        "Extracted {} input pairs and {} output pairs",
-        lamport_io.inputs.len(),
-        lamport_io.outputs.len()
-    );
-
-    // --- Step 2: Send ProveLamport job ---
-    info!("Sending ProveLamport job...");
-
-    let prove_job = DispatcherJob {
-        job_id: "prove_lamport_e2e".to_string(),
-        job_type: GarbledJobType::ProveLamport(
-            labels_json.into_bytes(),
-            format!("{}/prove_lamport", output_dir),
-        ),
-    };
-
-    let msg = serde_json::to_string(&prove_job)?;
-    channel.send(&dispatcher_id, msg)?;
-
-    info!("Waiting for ProveLamport result...");
-    let (prove_result, _) = wait_for_dispatcher_result(&channel, "ProveLamportResult", 600)?;
-
-    info!("ProveLamport completed: status={}", prove_result["status"]);
-    assert_eq!(prove_result["status"], "success");
-
-    let proof_path = prove_result["proof_path"].as_str().unwrap().to_string();
-    info!("Lamport proof at: {}", proof_path);
-    info!(
-        "  digest_labels: {}",
-        prove_result["digest_labels"].as_str().unwrap()
-    );
-    info!(
-        "  digest_lamport: {}",
-        prove_result["digest_lamport"].as_str().unwrap()
-    );
-
-    // --- Step 3: Send VerifyLamport job ---
-    info!("Sending VerifyLamport job...");
-
-    let verify_job = DispatcherJob {
-        job_id: "verify_lamport_e2e".to_string(),
-        job_type: GarbledJobType::VerifyLamport(
-            proof_path,
-            format!("{}/verify_lamport", output_dir),
-        ),
-    };
-
-    let msg = serde_json::to_string(&verify_job)?;
-    channel.send(&dispatcher_id, msg)?;
-
-    info!("Waiting for VerifyLamport result...");
-    let (verify_result, _) = wait_for_dispatcher_result(&channel, "VerifyLamportResult", 120)?;
-
-    info!(
-        "VerifyLamport completed: status={}, valid={}",
-        verify_result["status"], verify_result["valid"]
-    );
-    assert_eq!(verify_result["status"], "success");
-    assert_eq!(verify_result["valid"], true);
-
-    // --- Step 4: Verify Lamport digests match ---
-    assert_eq!(
-        prove_result["digest_labels"], verify_result["digest_labels"],
-        "digest_labels mismatch"
-    );
-    assert_eq!(
-        prove_result["digest_lamport"], verify_result["digest_lamport"],
-        "digest_lamport mismatch"
-    );
-    info!("All Lamport digests match!");
-
-    let _ = fs::remove_dir_all(output_dir);
-    info!("Lamport E2E test completed successfully!");
-    Ok(())
+    garbling_public["gates"]
+        .as_array()
+        .expect("garbling_public.gates should be array")
+        .iter()
+        .map(|gate| {
+            let gate_type = gate["type"].as_str().expect("gate should have type");
+            match gate_type {
+                "And" => {
+                    let ct_hex = gate["ct"].as_str().expect("AND gate should have ct");
+                    let ct = nova_hex_to_scalar(ct_hex).expect("Failed to parse ct hex");
+                    GarbledGate::And { ct }
+                }
+                "Noop" => GarbledGate::Noop,
+                _ => panic!("Unknown gate type: {}", gate_type),
+            }
+        })
+        .collect()
 }
 
 /// Convert hex string (0x...) to Scalar for comparison
@@ -739,248 +496,13 @@ fn hex_to_scalar(hex_str: &str) -> Scalar {
     garbled_nova::nova::hex_to_scalar(hex_str).expect("Failed to parse hex scalar")
 }
 
-#[ignore]
-#[test]
-pub fn test_gc_and_lamport_commands() -> Result<()> {
-    config_trace();
-    check_gnova_built()?;
-
-    std::env::set_var("GNOVA_BIN", "../rust-bitvmx-gc/target/release/gnova");
-
-    let output_dir = "/tmp/gnova_full_protocol_test";
-    let _ = std::fs::remove_dir_all(output_dir);
-    std::fs::create_dir_all(output_dir)?;
-
-    // =========================================================================
-    // Run GC Proof (Prove + Verify)
-    // =========================================================================
-    info!("=== Running GC Proof ===");
-
-    let circuit = TestCircuit::Simple;
-    let input_bytes = circuit.input_bytes();
-
-    // GC Prove - this garbles the circuit and outputs the I/O labels
-    let gc_prove_job = GarbledJobType::Prove(
-        input_bytes,
-        circuit.name().to_string(),
-        format!("{}/gc_prove", output_dir),
-    );
-
-    let (cmd, args, json_path) = gc_prove_job.command()?;
-    info!("Running GC prove...");
-    let output = std::process::Command::new(&cmd)
-        .args(&args)
-        .env("RUST_MIN_STACK", "67108864")
-        .output()?;
-    assert!(
-        output.status.success(),
-        "GC prove failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let gc_prove_json: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&json_path)?)?;
-    assert_eq!(gc_prove_json["status"], "success");
-    let gc_proof_path = gc_prove_json["proof_path"].as_str().unwrap().to_string();
-    info!("GC prove succeeded");
-    info!("  digest_circ: {}", gc_prove_json["digest_circ"]);
-    info!("  digest_ct:   {}", gc_prove_json["digest_ct"]);
-    info!("  digest_io:   {}", gc_prove_json["digest_io"]);
-
-    // Extract I/O labels from GC prove output (same garbling used for Lamport proof)
-    let lamport_io = parse_garbling_io_from_json(&gc_prove_json);
-    info!(
-        "Extracted {} input pairs, {} output pairs from GC prove",
-        lamport_io.inputs.len(),
-        lamport_io.outputs.len()
-    );
-
-    // GC Verify
-    let gc_verify_job = GarbledJobType::Verify(gc_proof_path, format!("{}/gc_verify", output_dir));
-    let (cmd, args, json_path) = gc_verify_job.command()?;
-    info!("Running GC verify...");
-    let output = std::process::Command::new(&cmd)
-        .args(&args)
-        .env("RUST_MIN_STACK", "67108864")
-        .output()?;
-    assert!(
-        output.status.success(),
-        "GC verify failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let gc_verify_json: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&json_path)?)?;
-    assert_eq!(gc_verify_json["status"], "success");
-    assert_eq!(gc_verify_json["valid"], true);
-    info!("GC verify succeeded");
-
-    // GC proof roundtrip check
-    assert_eq!(gc_prove_json["digest_circ"], gc_verify_json["digest_circ"]);
-    assert_eq!(gc_prove_json["digest_ct"], gc_verify_json["digest_ct"]);
-    assert_eq!(gc_prove_json["digest_io"], gc_verify_json["digest_io"]);
-    info!("GC proof digests match between prove and verify ✓");
-
-    // =========================================================================
-    // Compute native digests
-    // =========================================================================
-    info!("=== Computing native digests ===");
-
-    let constants = poseidon_constants::<Scalar>();
-    let native_digest_labels = digest_labels(&lamport_io, &constants);
-    let native_digest_lamport = digest_lamport(&lamport_io, &constants);
-    info!(
-        "Native digest_labels:  {}",
-        scalar_to_hex(&native_digest_labels)
-    );
-    info!(
-        "Native digest_lamport: {}",
-        scalar_to_hex(&native_digest_lamport)
-    );
-
-    // Compute SHA256 commitments (these are the "public lamports")
-    let sha256_commitments = compute_sha256_commitments(&lamport_io);
-    info!(
-        "Computed {} SHA256 commitment pairs",
-        sha256_commitments.len()
-    );
-
-    // VERIFIER: Compute digest_lamport from public SHA256 commitments
-    let verifier_digest_lamport = digest_lamport_from_commitments(&sha256_commitments, &constants);
-    info!(
-        "Verifier computed digest_lamport from public SHA256 commitments: {}",
-        scalar_to_hex(&verifier_digest_lamport)
-    );
-
-    // Sanity check: digest_lamport computed from labels should equal digest from commitments
-    assert_eq!(
-        native_digest_lamport, verifier_digest_lamport,
-        "digest_lamport from labels should match digest from SHA256 commitments"
-    );
-    info!("✓ digest_lamport from labels matches digest from SHA256 commitments");
-
-    // =========================================================================
-    // Run Lamport Proof
-    // =========================================================================
-    info!("=== Running Lamport Proof ===");
-
-    let labels_json = lamport_io_to_json(&lamport_io);
-
-    // Lamport Prove
-    let lamport_prove_job = GarbledJobType::ProveLamport(
-        labels_json.into_bytes(),
-        format!("{}/lamport_prove", output_dir),
-    );
-
-    let (cmd, args, json_path) = lamport_prove_job.command()?;
-    info!("Running Lamport prove...");
-    let output = std::process::Command::new(&cmd)
-        .args(&args)
-        .env("RUST_MIN_STACK", "67108864")
-        .output()?;
-    assert!(
-        output.status.success(),
-        "Lamport prove failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let lamport_prove_json: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&json_path)?)?;
-    assert_eq!(lamport_prove_json["status"], "success");
-    let lamport_proof_path = lamport_prove_json["proof_path"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    info!("Lamport prove succeeded");
-    info!("  digest_labels:  {}", lamport_prove_json["digest_labels"]);
-    info!("  digest_lamport: {}", lamport_prove_json["digest_lamport"]);
-
-    // Lamport Verify
-    let lamport_verify_job =
-        GarbledJobType::VerifyLamport(lamport_proof_path, format!("{}/lamport_verify", output_dir));
-    let (cmd, args, json_path) = lamport_verify_job.command()?;
-    info!("Running Lamport verify...");
-    let output = std::process::Command::new(&cmd)
-        .args(&args)
-        .env("RUST_MIN_STACK", "67108864")
-        .output()?;
-    assert!(
-        output.status.success(),
-        "Lamport verify failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let lamport_verify_json: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&json_path)?)?;
-    assert_eq!(lamport_verify_json["status"], "success");
-    assert_eq!(lamport_verify_json["valid"], true);
-    info!("Lamport verify succeeded");
-
-    // Lamport proof roundtrip check
-    assert_eq!(
-        lamport_prove_json["digest_labels"],
-        lamport_verify_json["digest_labels"]
-    );
-    assert_eq!(
-        lamport_prove_json["digest_lamport"],
-        lamport_verify_json["digest_lamport"]
-    );
-    info!("Lamport proof digests match between prove and verify ✓");
-
-    // =========================================================================
-    // Compare digests
-    // =========================================================================
-    info!("=== Comparing digests ===");
-
-    // Verify Lamport digest_lamport matches verifier's computation from public SHA256 commitments
-    info!("Verifying public Lamport commitments");
-    let lamport_proof_digest_lamport =
-        hex_to_scalar(lamport_verify_json["digest_lamport"].as_str().unwrap());
-    assert_eq!(
-        lamport_proof_digest_lamport, verifier_digest_lamport,
-        "Lamport proof digest_lamport does not match verifier's computation from SHA256 commitments!"
-    );
-    info!("✓ Lamport proof digest_lamport matches verifier's computation from public SHA256 commitments");
-
-    // Verify digest_labels matches native computation
-    // this is a sanity check, verifier does not have this information on setup.
-    info!("Verifying I/O wire labels");
-    let lamport_proof_digest_labels =
-        hex_to_scalar(lamport_verify_json["digest_labels"].as_str().unwrap());
-    assert_eq!(
-        lamport_proof_digest_labels, native_digest_labels,
-        "Lamport proof digest_labels does not match native computation from I/O labels!"
-    );
-    info!("✓ Lamport proof digest_labels matches native computation");
-
-    // Cleanup
-    // let _ = std::fs::remove_dir_all(output_dir);
-
-    info!("Full protocol test completed successfully!");
-    Ok(())
-}
-
-/// Prover and verifier full protocol:
-///
-/// prover:
-/// 1. Garble circuit (GC prove) → get proof + I/O labels
-/// 2. Compute SHA256 commitments from I/O labels (public lamports)
-/// 3. Generate Lamport proof from I/O labels
-/// 4. Send to verifier: GC proof, Lamport proof, SHA256 commitments, public garbling data
-///
-/// verifier:
-/// 1. Verify GC proof → extract digest_circ, digest_io
-/// 2. Verify Lamport proof → extract digest_labels, digest_lamport
-/// 3. Compute expected digest_circ from known circuit
-/// 4. Compute digest_lamport from public SHA256 commitments
-/// 5. Check: gc_digest_circ == expected_digest_circ (correct circuit garbled)
-/// 6. Check: proof_digest_lamport == computed_digest_lamport (proof binds to commitments)
-/// 7. Check: gc_digest_io == lamport_digest_labels (GC and Lamport proofs are linked)
+/// Full protocol test: prover generates proofs, verifier verifies with public data
 #[ignore]
 #[test]
 pub fn test_full_protocol() -> Result<()> {
     config_trace();
     check_gnova_built()?;
+    check_circuit_file()?;
 
     std::env::set_var("GNOVA_BIN", "../rust-bitvmx-gc/target/release/gnova");
 
@@ -990,38 +512,35 @@ pub fn test_full_protocol() -> Result<()> {
 
     info!("========== PROVER ==========");
 
-    // 1. Garble circuit and generate GC proof
-    info!("[prover] Garbling circuit and generating GC proof...");
+    // 1. Generate GC + Lamport proofs (single command now)
+    info!("[prover] Generating GC and Lamport proofs...");
     let circuit = TestCircuit::Simple;
-    let gc_prove_job = GarbledJobType::Prove(
+    let prove_job = GarbledJobType::Prove(
         circuit.input_bytes(),
-        circuit.name().to_string(),
-        format!("{}/gc_prove", output_dir),
+        circuit.circuit_path().to_string(),
+        format!("{}/prove", output_dir),
     );
 
-    let (cmd, args, json_path) = gc_prove_job.command()?;
+    let (cmd, args, json_path) = prove_job.command()?;
     let output = std::process::Command::new(&cmd)
         .args(&args)
         .env("RUST_MIN_STACK", "67108864")
         .output()?;
-    assert!(output.status.success(), "GC prove failed");
+    assert!(output.status.success(), "Prove failed");
 
-    let gc_prove_json: serde_json::Value =
+    let prove_json: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&json_path)?)?;
-    let gc_proof_path = gc_prove_json["proof_path"].as_str().unwrap().to_string();
-    info!("[prover] GC proof generated");
+    let gc_proof_path = prove_json["proof_path"].as_str().unwrap().to_string();
+    info!("[prover] Proofs generated");
+    info!("  digest_io: {}", prove_json["digest_io"]);
+    info!("  digest_labels: {}", prove_json["digest_labels"]);
+    info!("  digest_lamport: {}", prove_json["digest_lamport"]);
 
-    // Extract I/O labels from GC prove output
-    let lamport_io = parse_garbling_io_from_json(&gc_prove_json);
+    // Extract I/O labels and garbled gates from prove output
+    let lamport_io = parse_garbling_io_from_json(&prove_json);
+    let garbled_gates = parse_garbling_public_gates(&prove_json);
 
-    // Extract garbling_public (garbled gates) from GC prove output
-    let garbled_gates = parse_garbling_public_gates(&gc_prove_json);
-    info!(
-        "[prover] Extracted {} garbled gates from garbling_public",
-        garbled_gates.len()
-    );
-
-    // 2. Compute SHA256 commitments
+    // Compute SHA256 commitments (public lamports)
     info!("[prover] Computing SHA256 commitments...");
     let sha256_commitments = compute_sha256_commitments(&lamport_io);
     info!(
@@ -1029,124 +548,54 @@ pub fn test_full_protocol() -> Result<()> {
         sha256_commitments.len()
     );
 
-    // 3. Generate Lamport proof
-    info!("[prover] Generating Lamport proof...");
-    let labels_json = lamport_io_to_json(&lamport_io);
-    let lamport_prove_job = GarbledJobType::ProveLamport(
-        labels_json.into_bytes(),
-        format!("{}/lamport_prove", output_dir),
-    );
-
-    let (cmd, args, json_path) = lamport_prove_job.command()?;
-    let output = std::process::Command::new(&cmd)
-        .args(&args)
-        .env("RUST_MIN_STACK", "67108864")
-        .output()?;
-    assert!(output.status.success(), "Lamport prove failed");
-
-    let lamport_prove_json: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&json_path)?)?;
-    let lamport_proof_path = lamport_prove_json["proof_path"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    info!("[prover] Lamport proof generated");
-
-    // Prover sends to verifier:
-    // - gc_proof_path (or proof bytes)
-    // - lamport_proof_path (or proof bytes)
-    // - sha256_commitments (public lamports)
-    // - garbling_public (garbled gates, const labels, decode hints)
-    info!("[prover] Sending to verifier: GC proof, Lamport proof, SHA256 commitments, garbling_public");
+    // Prover sends: proof.bin, lamport_proof.bin, sha256_commitments, garbling_public
+    info!("[prover] Sending to verifier: proofs, SHA256 commitments, garbling_public");
 
     info!("========== VERIFIER ==========");
-    info!("[verifier] Received: GC proof, Lamport proof, SHA256 commitments, garbling_public");
+    info!("[verifier] Received: proofs, SHA256 commitments, garbling_public");
 
-    // 1. Verify GC proof
-    info!("[verifier] Verifying GC proof...");
-    let gc_verify_job = GarbledJobType::Verify(gc_proof_path, format!("{}/gc_verify", output_dir));
+    // 1. Verify both proofs (single command now)
+    info!("[verifier] Verifying GC + Lamport proofs...");
+    let verify_job = GarbledJobType::Verify(gc_proof_path, format!("{}/verify", output_dir));
 
-    let (cmd, args, json_path) = gc_verify_job.command()?;
+    let (cmd, args, json_path) = verify_job.command()?;
     let output = std::process::Command::new(&cmd)
         .args(&args)
         .env("RUST_MIN_STACK", "67108864")
         .output()?;
-    assert!(output.status.success(), "GC verify failed");
+    assert!(output.status.success(), "Verify failed");
 
-    let gc_verify_json: serde_json::Value =
+    let verify_json: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&json_path)?)?;
-    assert_eq!(gc_verify_json["valid"], true, "GC proof invalid");
-    info!("[verifier] GC proof valid ✓");
+    assert_eq!(verify_json["valid"], true, "Proofs invalid");
+    assert_eq!(verify_json["proofs_linked"], true, "Proofs not linked");
+    info!("[verifier] Both proofs valid and linked");
 
-    // Extract digests from GC proof
-    let gc_digest_circ = hex_to_scalar(gc_verify_json["digest_circ"].as_str().unwrap());
-    let gc_digest_ct = hex_to_scalar(gc_verify_json["digest_ct"].as_str().unwrap());
-    let gc_digest_io = hex_to_scalar(gc_verify_json["digest_io"].as_str().unwrap());
-    info!(
-        "[verifier] GC proof digest_circ: {}",
-        scalar_to_hex(&gc_digest_circ)
-    );
-    info!(
-        "[verifier] GC proof digest_ct: {}",
-        scalar_to_hex(&gc_digest_ct)
-    );
-    info!(
-        "[verifier] GC proof digest_io: {}",
-        scalar_to_hex(&gc_digest_io)
-    );
+    // Extract digests from verification
+    let gc_digest_circ = hex_to_scalar(verify_json["digest_circ"].as_str().unwrap());
+    let gc_digest_ct = hex_to_scalar(verify_json["digest_ct"].as_str().unwrap());
+    let gc_digest_io = hex_to_scalar(verify_json["digest_io"].as_str().unwrap());
+    let lamport_digest_labels = hex_to_scalar(verify_json["digest_labels"].as_str().unwrap());
+    let lamport_digest_lamport = hex_to_scalar(verify_json["digest_lamport"].as_str().unwrap());
 
-    // 2. Verify Lamport proof
-    info!("[verifier] Verifying Lamport proof...");
-    let lamport_verify_job =
-        GarbledJobType::VerifyLamport(lamport_proof_path, format!("{}/lamport_verify", output_dir));
+    info!("[verifier] GC digest_circ: {}", scalar_to_hex(&gc_digest_circ));
+    info!("[verifier] GC digest_io: {}", scalar_to_hex(&gc_digest_io));
+    info!("[verifier] Lamport digest_labels: {}", scalar_to_hex(&lamport_digest_labels));
+    info!("[verifier] Lamport digest_lamport: {}", scalar_to_hex(&lamport_digest_lamport));
 
-    let (cmd, args, json_path) = lamport_verify_job.command()?;
-    let output = std::process::Command::new(&cmd)
-        .args(&args)
-        .env("RUST_MIN_STACK", "67108864")
-        .output()?;
-    assert!(output.status.success(), "Lamport verify failed");
-
-    let lamport_verify_json: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&json_path)?)?;
-    assert_eq!(lamport_verify_json["valid"], true, "Lamport proof invalid");
-    info!("[verifier] Lamport proof valid ✓");
-
-    // Extract digests from Lamport proof
-    let lamport_digest_labels =
-        hex_to_scalar(lamport_verify_json["digest_labels"].as_str().unwrap());
-    let lamport_digest_lamport =
-        hex_to_scalar(lamport_verify_json["digest_lamport"].as_str().unwrap());
-    info!(
-        "[verifier] Lamport proof digest_labels: {}",
-        scalar_to_hex(&lamport_digest_labels)
-    );
-    info!(
-        "[verifier] Lamport proof digest_lamport: {}",
-        scalar_to_hex(&lamport_digest_lamport)
-    );
-
+    // 2. Compute expected digests from public data
     info!("[verifier] Computing expected values from public data...");
     let constants = poseidon_constants::<Scalar>();
 
-    // 3. Compute expected digest_circ from known circuit
-    info!("[verifier] Computing expected circuit digest...");
-    let expected_circuit = circuit.build_circuit();
-    let expected_digest_circ = circuit_digest(&expected_circuit, &constants);
-    info!(
-        "[verifier] Expected digest_circ: {}",
-        scalar_to_hex(&expected_digest_circ)
-    );
+    let gc_io = GCIo {
+        inputs: lamport_io.inputs.clone(),
+        outputs: lamport_io.outputs.clone(),
+    };
 
-    // 4. Compute digest_ct from received garbled gates
-    info!("[verifier] Computing digest_ct from received garbled gates...");
-    let computed_digest_ct = compute_digest_ct(&garbled_gates, &constants);
-    info!(
-        "[verifier] Computed digest_ct: {}",
-        scalar_to_hex(&computed_digest_ct)
-    );
+    let (expected_digest_circ, expected_digest_ct, expected_digest_io) =
+        recompute_all_digests(&circuit.build_circuit(), &garbled_gates, &gc_io, &constants);
 
-    // 5. Compute digest_lamport from public SHA256 commitments
+    // 3. Compute digest_lamport from public SHA256 commitments
     info!("[verifier] Computing digest_lamport from public SHA256 commitments...");
     let computed_digest_lamport = digest_lamport_from_commitments(&sha256_commitments, &constants);
     info!(
@@ -1155,28 +604,45 @@ pub fn test_full_protocol() -> Result<()> {
     );
 
     // =========================================================================
-    // Checks
+    // Verification checks
     // =========================================================================
     info!("[verifier] Performing verification checks...");
 
     // 1. Lamport proof binds to public SHA256 commitments
-    info!("[verifier] Verifying Lamport commitments...");
     assert_eq!(
         lamport_digest_lamport, computed_digest_lamport,
         "Lamport proof digest_lamport does not match computation from SHA256 commitments!"
     );
-    info!("[verifier] ✓ Lamport proof binds to public SHA256 commitments");
+    info!("[verifier] Lamport proof binds to public SHA256 commitments");
 
-    // 2. GC and Lamport proofs are linked (same I/O labels)
-    info!("[verifier] Verifying GC-Lamport linkage...");
+    // 2. GC digest_circ matches expected
+    assert_eq!(
+        gc_digest_circ, expected_digest_circ,
+        "GC digest_circ does not match expected!"
+    );
+    info!("[verifier] GC digest_circ matches expected");
+
+    // 3. GC digest_ct matches expected
+    assert_eq!(
+        gc_digest_ct, expected_digest_ct,
+        "GC digest_ct does not match expected!"
+    );
+    info!("[verifier] GC digest_ct matches expected");
+
+    // 4. GC digest_io matches expected
+    assert_eq!(
+        gc_digest_io, expected_digest_io,
+        "GC digest_io does not match expected!"
+    );
+    info!("[verifier] GC digest_io matches expected");
+
+    // 5. GC and Lamport proofs are linked (already checked by verify command)
     assert_eq!(
         gc_digest_io, lamport_digest_labels,
         "GC digest_io does not match Lamport digest_labels - proofs are not linked!"
     );
-    info!("[verifier] ✓ GC and Lamport proofs are linked (same I/O labels)");
+    info!("[verifier] GC and Lamport proofs are linked (same I/O labels)");
 
-    // 3. Garbling public data was extracted (infrastructure test)
-    // TODO verify digest_ct
-
+    info!("Full protocol test completed successfully!");
     Ok(())
 }
