@@ -392,7 +392,7 @@ pub fn cli_wt_disabler() -> Result<()> {
     let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     // First challenge where WT are penalized. Operator 0 wins.
-    let op_index = 1;
+    let op_index = 0;
     challenge(
         &mut committee,
         op_index,
@@ -416,7 +416,7 @@ pub fn cli_wt_disabler() -> Result<()> {
 
     // Now Operator 1 is challenged
     // In this second challenge WTs are already penalized. WT_DISABLERs should be dispatched.
-    let op_index = 0;
+    let op_index = 1;
     challenge(
         &mut committee,
         op_index,

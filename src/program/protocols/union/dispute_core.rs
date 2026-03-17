@@ -1676,23 +1676,6 @@ impl DisputeCoreProtocol {
         Ok(committee.members[data.member_index].take_key)
     }
 
-    fn get_selected_operator_key(
-        &self,
-        slot_id: usize,
-        context: &ProgramContext,
-    ) -> Result<Option<PublicKey>, BitVMXError> {
-        let committee_id = self.committee_id(context)?;
-        let selected_operator_key_name = indexed_name(SELECTED_OPERATOR_PUBKEY, slot_id);
-
-        match context
-            .globals
-            .get_var(&committee_id, &selected_operator_key_name)?
-        {
-            Some(selected_operator_var) => Ok(Some(selected_operator_var.pubkey()?)),
-            None => Ok(None),
-        }
-    }
-
     fn funds_advanced(
         &self,
         context: &ProgramContext,
@@ -2724,25 +2707,18 @@ impl DisputeCoreProtocol {
         tx_name: &str,
     ) -> Result<bool, BitVMXError> {
         // Handle challenge if needed
-        // TODO: Should we remove get_selected_operator_key and use just funds_advanced?
-        // SELECTED_OPERATOR_PUBKEY is set with OperatorTakeTriggered event, but it would be enough just set this data once funds were advanced and validated by the contract
-        let selected_op_var = self.get_selected_operator_key(slot_index, context)?;
         let funds_advanced_var = self.funds_advanced(context, slot_index)?;
 
-        if selected_op_var.is_none() || funds_advanced_var.is_none() {
-            info!(
-                "Selected operator: {:?}. Funds advanced: {:?}",
-                selected_op_var, funds_advanced_var
-            );
-            // If selected operator key is not set, it means that someone triggered a reimbursment kickoff transaction but there was not an operator selection
+        if funds_advanced_var.is_none() {
+            info!("Funds advanced is none");
             // If funds were not advanced, we need to challenge the transaction
             return Ok(false);
         }
 
-        let selected_op_key = selected_op_var.unwrap();
+        let funds_advanced = funds_advanced_var.unwrap();
 
         // Compare if the monitored operator is the selected one
-        if selected_op_key != self.monitored_member_take_key(context)? {
+        if funds_advanced.operator_pubkey != self.monitored_member_take_key(context)? {
             info!("Unauthorized operator detected.");
             return Ok(false);
         }
@@ -2766,7 +2742,6 @@ impl DisputeCoreProtocol {
 
         let pegout_id = witness.winternitz()?.message_bytes();
 
-        let funds_advanced = funds_advanced_var.unwrap();
         if funds_advanced.pegout_id != pegout_id {
             info!(
                 "Pegout ID mismatch. Expected: {:?}. Found on witness: {:?}",
