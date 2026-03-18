@@ -116,6 +116,7 @@ pub struct Config {
     pub testing: TestConfig, //This is here for testing purposes only
     pub coordinator_settings: Option<CoordinatorSettingsConfig>,
     pub coordinator_throtthle: ThrotthleConfig,
+    pub bitvmx_throttle: ThrotthleConfig,
     pub wallet: WalletConfig,
     pub job_dispatcher_ping: Option<PingConfig>,
     pub timestamp_verifier: Option<TimestampVerifierConfig>,

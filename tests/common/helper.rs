@@ -382,7 +382,7 @@ fn run_bitvmx(network: Network, independent: bool, rx: Receiver<()>, tx: Sender<
                     return Ok(());
                 }
             } else {
-                ready = bitvmx.process_bitcoin_updates()?;
+                ready = bitvmx.process_bitcoin_updates_with_throttle()?;
                 if !ready {
                     //info!("Waiting to get to the top of the Bitcoin chain...");
                 } else {

@@ -60,7 +60,11 @@ testing:
 coordinator_throtthle:
   init_interval: 10
   busy_interval: 50
-  idle_interval: 500
+  idle_interval: 200
+
+bitvmx_throttle:
+  busy_interval: 20
+  idle_interval: 200
 
 
 client: 

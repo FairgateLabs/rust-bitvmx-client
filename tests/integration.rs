@@ -65,7 +65,7 @@ fn test_drp_aux(last_tx_to_dispatch: Option<&str>) -> Result<()> {
     //get to the top of the blockchain
     for _ in 0..101 {
         for instance in instances.iter_mut() {
-            instance.process_bitcoin_updates()?;
+            instance.process_bitcoin_updates_with_throttle()?;
         }
     }
 

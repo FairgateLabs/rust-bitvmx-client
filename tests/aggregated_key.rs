@@ -50,7 +50,7 @@ pub fn test_aggregated_key() -> Result<()> {
     // Sync Bitcoin blockchain
     for _ in 0..101 {
         for instance in instances.iter_mut() {
-            instance.process_bitcoin_updates()?;
+            instance.process_bitcoin_updates_with_throttle()?;
         }
     }
 
@@ -204,7 +204,7 @@ pub fn test_aggregated_key_single_participant() -> Result<()> {
 
     for _ in 0..101 {
         for instance in instances.iter_mut() {
-            instance.process_bitcoin_updates()?;
+            instance.process_bitcoin_updates_with_throttle()?;
         }
     }
 

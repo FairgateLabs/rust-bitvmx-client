@@ -133,9 +133,7 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
 
                 if instance.ready {
                     match instance.bitvmx.tick() {
-                        Ok(true) => {
-                            thread::sleep(Duration::from_millis(10));
-                        }
+                        Ok(true) => {}
                         Ok(false) => {
                             info!("BitVMX requested shutdown");
                             break 'main;
@@ -155,12 +153,10 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
                 } else {
                     // Still syncing with Bitcoin blockchain. Process bitcoin updates to catch up to the
                     // current chain tip
-                    match instance.bitvmx.process_bitcoin_updates() {
+                    match instance.bitvmx.process_bitcoin_updates_with_throttle() {
                         Ok(ready) => {
                             instance.ready = ready;
-                            if !instance.ready {
-                                thread::sleep(Duration::from_millis(25));
-                            } else {
+                            if instance.ready {
                                 // Sync complete - ready to start normal operation
                                 info!("Sync complete, starting normal operation");
                                 // Signal to any waiting threads that initialization is complete
@@ -177,6 +173,7 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
                     }
                 }
             }
+            thread::sleep(Duration::from_millis(10));
         }
     }));
 
