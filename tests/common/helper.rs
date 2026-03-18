@@ -28,7 +28,7 @@ use std::{
     thread,
     time::Duration,
 };
-use tracing::{error, info};
+use tracing::{error, info, info_span};
 use uuid::Uuid;
 
 use bitcoind::{
@@ -373,7 +373,8 @@ fn run_bitvmx(network: Network, independent: bool, rx: Receiver<()>, tx: Sender<
             info!("Signal received, shutting down...");
             break;
         }
-        for bitvmx in instances.iter_mut() {
+        for (i, bitvmx) in instances.iter_mut().enumerate() {
+            let _span = info_span!("", id = i).entered();
             if ready {
                 let ret = bitvmx.tick();
                 if ret.is_err() {
