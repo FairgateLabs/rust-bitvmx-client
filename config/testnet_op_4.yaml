@@ -22,7 +22,7 @@ coordinator_settings:
     indexer_settings:
       checkpoint_height: 4631677
 
-coordinator_throtthle:
+coordinator_throttle:
   init_interval: 1000
   busy_interval: 1000
   idle_interval: 1000

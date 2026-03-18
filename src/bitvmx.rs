@@ -4,7 +4,7 @@ use crate::program::program::{is_active_program, Program};
 use crate::program::protocols::protocol_handler::ProtocolHandler;
 use crate::program::variables::VariableTypes;
 use crate::spv_proof::get_spv_proof;
-use crate::throttle::Throtthle;
+use crate::throttle::Throttle;
 use crate::timestamp_verifier::TimestampVerifier;
 use crate::{
     api::BitVMXApi,
@@ -78,8 +78,8 @@ pub struct BitVMX {
     count: u32,
     message_queue: MessageQueue,
     timestamp_verifier: TimestampVerifier,
-    coordinator_throtthle: Throtthle,
-    bitvmx_throtthle: Throtthle,
+    coordinator_throttle: Throttle,
+    bitvmx_throttle: Throttle,
     wallet: Wallet,
     ping_helper: PingHelper,
     shutdown: bool,
@@ -201,8 +201,8 @@ impl BitVMX {
 
         let message_queue = MessageQueue::new(store.clone(), RetryPolicy::default());
 
-        let coordinator_throtthle = Throtthle::new(config.coordinator_throtthle.clone());
-        let bitvmx_throtthle = Throtthle::new(config.bitvmx_throttle.clone());
+        let coordinator_throttle = Throttle::new(config.coordinator_throttle.clone());
+        let bitvmx_throttle = Throttle::new(config.bitvmx_throttle.clone());
 
         Ok(Self {
             config,
@@ -212,8 +212,8 @@ impl BitVMX {
             count: 0,
             message_queue,
             timestamp_verifier,
-            coordinator_throtthle,
-            bitvmx_throtthle,
+            coordinator_throttle,
+            bitvmx_throttle,
             wallet,
             ping_helper,
             shutdown: false,
@@ -726,7 +726,7 @@ impl BitVMX {
 
         self.count += 1;
 
-        if self.bitvmx_throtthle.should_call() {
+        if self.bitvmx_throttle.should_call() {
             let mut had_work = false;
             had_work |= self.process_programs()?;
 
@@ -734,7 +734,7 @@ impl BitVMX {
             had_work |= self.process_comms_messages()?;
             had_work |= self.process_api_messages()?;
 
-            self.bitvmx_throtthle.record(had_work);
+            self.bitvmx_throttle.record(had_work);
         }
 
         self.process_bitcoin_updates_with_throttle()?;
@@ -753,14 +753,14 @@ impl BitVMX {
     }
 
     pub fn process_bitcoin_updates_with_throttle(&mut self) -> Result<bool, BitVMXError> {
-        if self.coordinator_throtthle.should_call() {
+        if self.coordinator_throttle.should_call() {
             let result = self.process_bitcoin_updates();
             if let Err(e) = result {
                 error!("Critical error processing bitcoin updates: {:?}", e);
                 return Ok(false);
             }
             let had_work = result.unwrap_or(false);
-            self.coordinator_throtthle.record(had_work);
+            self.coordinator_throttle.record(had_work);
             return Ok(had_work);
         }
         Ok(false)

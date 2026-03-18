@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Default, Deserialize)]
-pub struct ThrotthleConfig {
+pub struct ThrottleConfig {
     /// Optional interval (ms) used until the component is initialized.
     pub init_interval: Option<u64>,
     /// Interval (ms) used when the previous call had work to do.
@@ -12,7 +12,7 @@ pub struct ThrotthleConfig {
     pub idle_interval: u64,
 }
 
-impl ThrotthleConfig {
+impl ThrottleConfig {
     pub fn new(init_interval: Option<u64>, busy_interval: u64, idle_interval: u64) -> Self {
         Self {
             init_interval,
@@ -28,7 +28,7 @@ impl ThrotthleConfig {
 /// - `init_interval` (optional): used until the first call reports work done.
 /// - `busy_interval`: used when the previous call had work to do.
 /// - `idle_interval`: used when the previous call found no work.
-pub struct Throtthle {
+pub struct Throttle {
     init_interval: Option<Duration>,
     busy_interval: Duration,
     idle_interval: Duration,
@@ -37,8 +37,8 @@ pub struct Throtthle {
     last_was_busy: bool,
 }
 
-impl Throtthle {
-    pub fn new(config: ThrotthleConfig) -> Self {
+impl Throttle {
+    pub fn new(config: ThrottleConfig) -> Self {
         Self {
             init_interval: config.init_interval.map(Duration::from_millis),
             busy_interval: Duration::from_millis(config.busy_interval),
@@ -84,21 +84,21 @@ mod tests {
 
     #[test]
     fn starts_with_init_interval() {
-        let t = Throtthle::new(ThrotthleConfig::new(Some(1000), 2000, 5000));
+        let t = Throttle::new(ThrottleConfig::new(Some(1000), 2000, 5000));
         assert!(!t.initialized);
         assert_eq!(t.current_interval(), Duration::from_millis(1000));
     }
 
     #[test]
     fn skips_init_when_none() {
-        let t = Throtthle::new(ThrotthleConfig::new(None, 2000, 5000));
+        let t = Throttle::new(ThrottleConfig::new(None, 2000, 5000));
         assert!(t.initialized);
         assert_eq!(t.current_interval(), Duration::from_millis(2000));
     }
 
     #[test]
     fn transitions_to_busy_after_work() {
-        let mut t = Throtthle::new(ThrotthleConfig::new(Some(0), 2000, 5000));
+        let mut t = Throttle::new(ThrottleConfig::new(Some(0), 2000, 5000));
         t.record(true);
         assert!(t.initialized);
         assert_eq!(t.current_interval(), Duration::from_millis(2000));
@@ -106,7 +106,7 @@ mod tests {
 
     #[test]
     fn uses_idle_interval_after_idle_outcome() {
-        let mut t = Throtthle::new(ThrotthleConfig::new(None, 2000, 5000));
+        let mut t = Throttle::new(ThrottleConfig::new(None, 2000, 5000));
         t.record(true);
         assert_eq!(t.current_interval(), Duration::from_millis(2000));
         t.record(false);
@@ -115,7 +115,7 @@ mod tests {
 
     #[test]
     fn should_call_respects_interval() {
-        let mut t = Throtthle::new(ThrotthleConfig::new(Some(0), 10000, 20000));
+        let mut t = Throttle::new(ThrottleConfig::new(Some(0), 10000, 20000));
         // init_interval is 0 → should_call immediately true
         assert!(t.should_call());
         t.record(true);

@@ -23,7 +23,7 @@ comms:
   priv_key: config/keys/op_1.key
   storage_path: /tmp/development/comms.db
   
-coordinator_throtthle:
+coordinator_throttle:
   init_interval: 10
   busy_interval: 50
   idle_interval: 200

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use storage_backend::storage_config::StorageConfig;
 use tracing::info;
 
-use crate::{errors::ConfigError, throttle::ThrotthleConfig};
+use crate::{errors::ConfigError, throttle::ThrottleConfig};
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ProtocolBuilderConfig {
@@ -115,8 +115,8 @@ pub struct Config {
     pub components: ComponentsConfig,
     pub testing: TestConfig, //This is here for testing purposes only
     pub coordinator_settings: Option<CoordinatorSettingsConfig>,
-    pub coordinator_throtthle: ThrotthleConfig,
-    pub bitvmx_throttle: ThrotthleConfig,
+    pub coordinator_throttle: ThrottleConfig,
+    pub bitvmx_throttle: ThrottleConfig,
     pub wallet: WalletConfig,
     pub job_dispatcher_ping: Option<PingConfig>,
     pub timestamp_verifier: Option<TimestampVerifierConfig>,
