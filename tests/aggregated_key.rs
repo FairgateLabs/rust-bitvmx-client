@@ -2,10 +2,10 @@
 
 use anyhow::Result;
 use bitvmx_client::program::variables::VariableTypes;
-use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel};
-use common::{
-    config_trace, get_all, init_bitvmx, prepare_bitcoin_guarded, send_all,
+use bitvmx_client::types::{
+    IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel,
 };
+use common::{config_trace, get_all, init_bitvmx, prepare_bitcoin_guarded, send_all};
 use tracing::info;
 use uuid::Uuid;
 
@@ -37,7 +37,10 @@ pub fn test_aggregated_key() -> Result<()> {
         .clone()
         .into_iter()
         .zip(channels.clone().into_iter())
-        .map(|(identifier, channel)| ParticipantChannel { id: identifier, channel })
+        .map(|(identifier, channel)| ParticipantChannel {
+            id: identifier,
+            channel,
+        })
         .collect();
 
     info!("================================================");
@@ -99,11 +102,9 @@ pub fn test_aggregated_key() -> Result<()> {
     // The AggregatedKeyProtocol stores the final aggregated key in globals
     // under the variable name "final_aggregated_key"
     // IMPORTANT: Use aggregation_id so GetVar knows which program's globals to query
-    let get_key_command = IncomingBitVMXApiMessages::GetVar(
-        aggregation_id,
-        "final_aggregated_key".to_string(),
-    )
-    .to_string()?;
+    let get_key_command =
+        IncomingBitVMXApiMessages::GetVar(aggregation_id, "final_aggregated_key".to_string())
+            .to_string()?;
 
     // Query the aggregated key from all participants
     send_all(&id_channel_pairs, &get_key_command)?;
@@ -113,33 +114,51 @@ pub fn test_aggregated_key() -> Result<()> {
     let mut aggregated_keys = Vec::new();
     for (i, response) in key_responses.iter().enumerate() {
         if let Some((_, key_name, key_value)) = response.variable() {
-            info!("Participant {} aggregated key variable: {} = {:?}", i, key_name, key_value);
+            info!(
+                "Participant {} aggregated key variable: {} = {:?}",
+                i, key_name, key_value
+            );
 
-            assert_eq!(key_name, "final_aggregated_key",
-                "Variable name should be 'final_aggregated_key'");
+            assert_eq!(
+                key_name, "final_aggregated_key",
+                "Variable name should be 'final_aggregated_key'"
+            );
 
             if let VariableTypes::PubKey(key) = key_value {
                 let key_str = key.to_string();
                 info!("Participant {} final aggregated MuSig2 key: {}", i, key_str);
                 aggregated_keys.push(key_str);
             } else {
-                panic!("Expected PubKey variable type for aggregated key, got {:?}", key_value);
+                panic!(
+                    "Expected PubKey variable type for aggregated key, got {:?}",
+                    key_value
+                );
             }
         } else {
-            panic!("Participant {} did not return the aggregated key variable", i);
+            panic!(
+                "Participant {} did not return the aggregated key variable",
+                i
+            );
         }
     }
 
     // Verify all three participants have the same aggregated key
     assert_eq!(aggregated_keys.len(), 3, "Should have 3 aggregated keys");
-    assert_eq!(aggregated_keys[0], aggregated_keys[1],
-        "All participants should compute the same aggregated MuSig2 key");
-    assert_eq!(aggregated_keys[0], aggregated_keys[2],
-        "All participants should compute the same aggregated MuSig2 key");
+    assert_eq!(
+        aggregated_keys[0], aggregated_keys[1],
+        "All participants should compute the same aggregated MuSig2 key"
+    );
+    assert_eq!(
+        aggregated_keys[0], aggregated_keys[2],
+        "All participants should compute the same aggregated MuSig2 key"
+    );
 
     // Verify the key from the response matches the stored key from GetVar
-    assert_eq!(aggregated_pub_key.to_string(), aggregated_keys[0],
-        "AggregatedPubkey response should match the stored final_aggregated_key");
+    assert_eq!(
+        aggregated_pub_key.to_string(),
+        aggregated_keys[0],
+        "AggregatedPubkey response should match the stored final_aggregated_key"
+    );
 
     info!("Aggregated key protocol successful! All three participants computed the same aggregated key");
     info!("   Aggregated MuSig2 Key: {}", aggregated_keys[0]);
@@ -167,15 +186,16 @@ pub fn test_aggregated_key_single_participant() -> Result<()> {
     let mut instances = vec![bitvmx_op1];
     let channels = vec![bridge_op1.clone()];
 
-    let identifiers = [
-        instances[0].get_components_config().bitvmx.clone(),
-    ];
+    let identifiers = [instances[0].get_components_config().bitvmx.clone()];
 
     let id_channel_pairs: Vec<ParticipantChannel> = identifiers
         .clone()
         .into_iter()
         .zip(channels.clone().into_iter())
-        .map(|(identifier, channel)| ParticipantChannel { id: identifier, channel })
+        .map(|(identifier, channel)| ParticipantChannel {
+            id: identifier,
+            channel,
+        })
         .collect();
 
     info!("================================================");
@@ -229,11 +249,9 @@ pub fn test_aggregated_key_single_participant() -> Result<()> {
     info!("================================================");
 
     // Query the stored key from globals
-    let get_key_command = IncomingBitVMXApiMessages::GetVar(
-        aggregation_id,
-        "final_aggregated_key".to_string(),
-    )
-    .to_string()?;
+    let get_key_command =
+        IncomingBitVMXApiMessages::GetVar(aggregation_id, "final_aggregated_key".to_string())
+            .to_string()?;
 
     send_all(&id_channel_pairs, &get_key_command)?;
     let key_responses = get_all(&channels, &mut instances, false)?;
@@ -261,4 +279,3 @@ pub fn test_aggregated_key_single_participant() -> Result<()> {
     // BitcoindGuard handles cleanup automatically on drop
     Ok(())
 }
-
