@@ -12,18 +12,20 @@ use anyhow::{Error, Result};
 use bitcoin::{address::NetworkUnchecked, PublicKey, ScriptBuf, Transaction, Txid};
 use bitvmx_broker::identification::allow_list::AllowList;
 use bitvmx_client::bitvmx::SEND_NEW_BLOCK_NEWS;
-use bitvmx_client::program::protocols::union::common::get_dispute_pair_key_name;
 use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
     program::{
         participant::{CommsAddress, ParticipantRole},
         protocols::union::{
-            common::{get_dispute_core_pid, get_dispute_pair_aggregated_key_pid, indexed_name},
+            common::{
+                get_dispute_core_pid, get_dispute_pair_aggregated_key_pid,
+                get_dispute_pair_key_name, indexed_name,
+            },
             dispute_core::PEGOUT_ID,
             types::{
-                MemberData, UnionSettings, ADVANCE_FUNDS_INPUT, GLOBAL_SETTINGS_UUID,
-                REIMBURSEMENT_KICKOFF_TX,
+                AdvanceFundsRegistered, MemberData, UnionSettings, ADVANCE_FUNDS_INPUT,
+                GLOBAL_SETTINGS_UUID, REIMBURSEMENT_KICKOFF_TX,
             },
         },
         variables::{PartialUtxo, VariableTypes},
@@ -418,6 +420,30 @@ impl Member {
         )?;
 
         Ok(())
+    }
+
+    pub fn advance_funds_registered(
+        &self,
+        committee_id: Uuid,
+        slot_index: usize,
+        pegout_id: Vec<u8>,
+        operator_pubkey: &PublicKey,
+        txid: &Txid,
+    ) -> Result<()> {
+        let key = AdvanceFundsRegistered::name(slot_index);
+        let data = AdvanceFundsRegistered {
+            committee_id: committee_id,
+            slot_index,
+            pegout_id: pegout_id.clone(),
+            operator_pubkey: operator_pubkey.clone(),
+            txid: txid.clone(),
+        };
+
+        self.bitvmx.set_var(
+            committee_id,
+            &key,
+            VariableTypes::String(serde_json::to_string(&data)?),
+        )
     }
 
     fn make_aggregated_keys(

@@ -70,6 +70,7 @@ const WT_COSIGN_KEY: &str = "WT_COSIGN_KEY";
 
 const CLAIM_GATE_FEE: u64 = 335; // TODO: Validate this value
 
+pub const OP_INITIAL_DEPOSIT_TX_REIMBURSMENT_LEAF: usize = 0;
 pub const OP_INITIAL_DEPOSIT_TX_DISABLER_LEAF: usize = 1;
 pub const WT_START_ENABLER_TX_DISABLER_LEAF: usize = 0;
 
@@ -537,7 +538,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
             Ok(self.protocol_funding_tx(context)?)
         } else if name == WT_START_ENABLER_TX {
             Ok(self.wt_start_enabler_tx(context)?)
-        } else if name == OP_INITIAL_DEPOSIT_TX || name == WT_START_ENABLER_TX {
+        } else if name == OP_INITIAL_DEPOSIT_TX {
             Ok(self.sign_aggregated_input(name, context, true)?)
         } else if name.starts_with(REIMBURSEMENT_KICKOFF_TX) {
             Ok(self.reimbursement_kickoff_tx(name, context)?)
@@ -902,7 +903,6 @@ impl DisputeCoreProtocol {
                     op_cosign: init_challenge_output.clone(),
                 }));
 
-                // FIXME: Review this output. This goes to DisputeChannel. Need 2 scripts by now.
                 // NOTE: DRP consumes leaf 1 hardcoded.
                 let verify_wt_signature =
                     verify_signature(wt_dispute_key, self.get_sign_mode(data.member_index))?;
@@ -1666,37 +1666,36 @@ impl DisputeCoreProtocol {
         Ok(self.dispute_core_data(context)?.committee_id)
     }
 
-    fn monitored_operator_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+    fn monitored_member_take_key(
+        &self,
+        context: &ProgramContext,
+    ) -> Result<PublicKey, BitVMXError> {
         let committee = self.committee(context)?;
         let data = self.dispute_core_data(context)?;
         Ok(committee.members[data.member_index].take_key)
     }
 
-    fn get_selected_operator_key(
+    fn funds_advanced(
         &self,
+        context: &ProgramContext,
         slot_id: usize,
-        program_context: &ProgramContext,
-    ) -> Result<Option<PublicKey>, BitVMXError> {
-        let committee_id = self.committee_id(program_context)?;
-        let selected_operator_key_name = format!("{}_{}", SELECTED_OPERATOR_PUBKEY, slot_id);
+    ) -> Result<Option<AdvanceFundsRegistered>, BitVMXError> {
+        let committee_id = self.committee_id(context)?;
+        let funds_advanced_key = AdvanceFundsRegistered::name(slot_id);
 
-        match program_context
+        match context
             .globals
-            .get_var(&committee_id, &selected_operator_key_name)?
+            .get_var(&committee_id, &funds_advanced_key)?
         {
-            Some(selected_operator_var) => Ok(Some(selected_operator_var.pubkey()?)),
+            Some(funds_advanced_var) => {
+                Ok(Some(serde_json::from_str(&funds_advanced_var.string()?)?))
+            }
             None => Ok(None),
         }
     }
 
-    fn get_reveal_in_progress(
-        &self,
-        program_context: &ProgramContext,
-    ) -> Result<Option<u32>, BitVMXError> {
-        match program_context
-            .globals
-            .get_var(&self.ctx.id, REVEAL_IN_PROGRESS)?
-        {
+    fn get_reveal_in_progress(&self, context: &ProgramContext) -> Result<Option<u32>, BitVMXError> {
+        match context.globals.get_var(&self.ctx.id, REVEAL_IN_PROGRESS)? {
             Some(var) => Ok(Some(var.number()?)),
             None => Ok(None),
         }
@@ -2518,7 +2517,7 @@ impl DisputeCoreProtocol {
                 input_index: REVEAL_INPUT_TX_REVEAL_INDEX,
                 script_index: REVEAL_INPUT_TX_REVEAL_LEAF,
                 winternitz_data: Some(WinternitzData {
-                    data: (slot_index as u16).to_le_bytes().to_vec(),
+                    data: (slot_index as u16).to_be_bytes().to_vec(),
                     key_name: SLOT_ID_KEY.to_string(),
                     key_type: WinternitzType::HASH160,
                     key_manager: context.key_manager.as_ref(),
@@ -2672,58 +2671,15 @@ impl DisputeCoreProtocol {
                 },
             )?;
         } else {
-            info!("Not my dispute_core, skipping OP Take");
+            info!("Not my dispute_core, checking lazy disabler and challenge");
 
             if self.check_op_lazy_disabler(context, slot_index)? {
+                info!("Dispatching lazy disabler for slot: {}", slot_index);
                 return Ok(());
             }
 
-            self.check_challenge(context, tx_status, slot_index)?;
-        }
-
-        self.send_reimbursement_kickoff_spv(context, tx_id, slot_index)?;
-
-        Ok(())
-    }
-
-    fn check_challenge(
-        &self,
-        context: &ProgramContext,
-        tx_status: &TransactionStatus,
-        slot_index: usize,
-    ) -> Result<(), BitVMXError> {
-        // Handle challenge if needed
-        match self.get_selected_operator_key(slot_index, context)? {
-            Some(selected_operator_key) => {
-                // Get the operator's take key that this dispute core is monitoring
-                let monitored_operator_key = self.monitored_operator_key(context)?;
-
-                // Compare if the monitored operator is the selected one
-                let is_valid = selected_operator_key == monitored_operator_key;
-
-                if !is_valid {
-                    info!(
-                        "Unauthorized operator detected for slot {}, dispatching Challenge Tx",
-                        slot_index
-                    );
-                    self.dispatch(
-                        context,
-                        DisputeCoreTxType::Challenge {
-                            slot_index,
-                            block_height: Some(self.get_dispatch_height(
-                                tx_status,
-                                self.load_stream_setting(context)?.short_timelock,
-                            )?),
-                        },
-                    )?;
-                } else {
-                    info!("Authorized operator confirmed for slot {}", slot_index);
-                    // TODO: here we need to validate that the advancement of funds has actually been made
-                }
-            }
-            None => {
-                info!("No selected operator key found for slot {}", slot_index);
-                // If no selected operator key is set, it means that someone triggered a reimbursment kickoff transaction but there was no advances of funds
+            if !self.validate_reimbursement(context, slot_index, tx_status, tx_name)? {
+                info!("Dispatching challenge for slot: {}", slot_index);
                 self.dispatch(
                     context,
                     DisputeCoreTxType::Challenge {
@@ -2737,7 +2693,64 @@ impl DisputeCoreProtocol {
             }
         }
 
+        self.send_reimbursement_kickoff_spv(context, tx_id, slot_index)?;
+
         Ok(())
+    }
+
+    fn validate_reimbursement(
+        &self,
+        context: &ProgramContext,
+        slot_index: usize,
+        tx_status: &TransactionStatus,
+        tx_name: &str,
+    ) -> Result<bool, BitVMXError> {
+        // Handle challenge if needed
+        let funds_advanced_var = self.funds_advanced(context, slot_index)?;
+
+        if funds_advanced_var.is_none() {
+            info!("Funds advanced is none");
+            // If funds were not advanced, we need to challenge the transaction
+            return Ok(false);
+        }
+
+        let funds_advanced = funds_advanced_var.unwrap();
+
+        // Compare if the monitored operator is the selected one
+        if funds_advanced.operator_pubkey != self.monitored_member_take_key(context)? {
+            info!("Unauthorized operator detected.");
+            return Ok(false);
+        }
+
+        // Validate pegout id signed on witness
+        let protocol = self.load_protocol()?;
+        self.decode_witness_for_tx(
+            tx_name,
+            0,
+            context,
+            &tx_status.tx,
+            Some(OP_INITIAL_DEPOSIT_TX_REIMBURSMENT_LEAF as u32),
+            Some(protocol),
+            None,
+        )?;
+
+        let witness = context
+            .witness
+            .get_witness(&self.ctx.id, PEGOUT_ID_KEY)?
+            .unwrap();
+
+        let pegout_id = witness.winternitz()?.message_bytes();
+
+        if funds_advanced.pegout_id != pegout_id {
+            info!(
+                "Pegout ID mismatch. Expected: {:?}. Found on witness: {:?}",
+                funds_advanced.pegout_id, pegout_id
+            );
+            return Ok(false);
+        }
+
+        info!("Reimbursement kickoff transaction validated successfully.");
+        Ok(true)
     }
 
     fn check_op_lazy_disabler(

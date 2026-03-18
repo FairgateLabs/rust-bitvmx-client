@@ -45,6 +45,7 @@ impl DisputeCoreSetup {
             stream_denomination,
             pegin_confirmations: PEGIN_CONFIRMATIONS as u32, // This value should be requested from contracts
             pegout_confirmations: PEGOUT_CONFIRMATIONS as u32, // This value should be requested from contracts
+            reject_pegin_confirmations: 1, // This value should be requested from contracts
         };
 
         bitvmx.set_var(

@@ -16,7 +16,7 @@ use crate::{
         master_wallet::MasterWallet,
     },
 };
-use ::bitcoin::{hex::DisplayHex, Network, OutPoint, PublicKey, Transaction, Txid};
+use ::bitcoin::{hashes::Hash, hex::DisplayHex, Network, OutPoint, PublicKey, Transaction, Txid};
 use anyhow::Result;
 use bitvmx_client::{
     program::{
@@ -73,6 +73,7 @@ pub fn main() -> Result<()> {
         Some("advance_funds") => cli_advance_funds()?,
         Some("advance_funds_twice") => cli_advance_funds_twice()?,
         Some("challenge") => cli_challenge(args.get(2))?,
+        Some("challenge_reason") => cli_challenge_reason(args.get(2))?,
         Some("wt_disabler") => cli_wt_disabler()?,
         Some("op_no_cosign") => cli_op_no_cosign()?,
         Some("wt_no_challenge") => cli_wt_no_challenge()?,
@@ -130,6 +131,10 @@ fn print_usage() {
     print_cmd_help(
         "challenge",
         "Forces challenge. It receives `op` or `wt` as argument to decide the winner",
+    );
+    print_cmd_help(
+        "challenge_reason",
+        "Forces challenge with a particular reason with a WT winning it. It receives a list of reasons separated by commas. `slot,pegout_id,operator_pubkey,funds_advanced`",
     );
     print_cmd_help(
         "wt_disabler",
@@ -324,7 +329,55 @@ pub fn cli_challenge(winner: Option<&String>) -> Result<()> {
     let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     let op_index = 1;
-    challenge(&mut committee, op_index, slot_index, true, op_wins)?;
+    challenge(
+        &mut committee,
+        op_index,
+        slot_index,
+        true,
+        op_wins,
+        ChallengeReason::funds_advanced(),
+    )?;
+    Ok(())
+}
+
+pub fn cli_challenge_reason(input: Option<&String>) -> Result<()> {
+    if HIGH_FEE_NODE_ENABLED {
+        info!("This example works better with a client node with low fees. Please disable HIGH_FEE_NODE_ENABLED and try again.");
+        return Ok(());
+    }
+
+    if input.is_none() {
+        error!("Please provide a list of reasons separated by commas. `slot,pegout_id,operator_pubkey,funds_advanced`");
+        return Ok(());
+    }
+
+    let reasons = input.unwrap();
+    let slot = reasons.contains("slot");
+    let pegout_id = reasons.contains("pegout_id");
+    let operator_pubkey = reasons.contains("operator_pubkey");
+    let funds_advanced = reasons.contains("funds_advanced");
+
+    let challenge_reason = ChallengeReason {
+        slot_index: slot,
+        pegout_id,
+        operator_pubkey,
+        funds_advanced,
+    };
+
+    info!("Starting challenge with reason: {:?}", challenge_reason);
+
+    let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+
+    let op_index = 1;
+    challenge(
+        &mut committee,
+        op_index,
+        slot_index,
+        true,
+        false,
+        challenge_reason,
+    )?;
     Ok(())
 }
 
@@ -339,8 +392,15 @@ pub fn cli_wt_disabler() -> Result<()> {
     let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     // First challenge where WT are penalized. Operator 0 wins.
-    let op_index = 1;
-    challenge(&mut committee, op_index, slot_index, false, true)?;
+    let op_index = 0;
+    challenge(
+        &mut committee,
+        op_index,
+        slot_index,
+        false,
+        true,
+        ChallengeReason::funds_advanced(),
+    )?;
     let additional_blocks = 200;
 
     info!(
@@ -356,8 +416,15 @@ pub fn cli_wt_disabler() -> Result<()> {
 
     // Now Operator 1 is challenged
     // In this second challenge WTs are already penalized. WT_DISABLERs should be dispatched.
-    let op_index = 0;
-    challenge(&mut committee, op_index, slot_index, true, true)?;
+    let op_index = 1;
+    challenge(
+        &mut committee,
+        op_index,
+        slot_index,
+        true,
+        true,
+        ChallengeReason::funds_advanced(),
+    )?;
 
     Ok(())
 }
@@ -373,7 +440,14 @@ pub fn cli_op_no_cosign() -> Result<()> {
     let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     let op_index = 1;
-    challenge(&mut committee, op_index, slot_index, false, true)?;
+    challenge(
+        &mut committee,
+        op_index,
+        slot_index,
+        false,
+        true,
+        ChallengeReason::funds_advanced(),
+    )?;
 
     let blocks_to_wait = PEGIN_CONFIRMATIONS as u32 + 12; // Amount of blocks enough to allow WT to open a challenge but not enough to dispatch the OP_COSIGN_TX. Fine tunning may be required.
     info!("Mining {} blocks...", blocks_to_wait);
@@ -401,7 +475,14 @@ pub fn cli_wt_no_challenge() -> Result<()> {
     let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
     let op_index = 1;
 
-    challenge(&mut committee, op_index, slot_index, false, true)?;
+    challenge(
+        &mut committee,
+        op_index,
+        slot_index,
+        false,
+        true,
+        ChallengeReason::funds_advanced(),
+    )?;
 
     let blocks_to_wait = PEGIN_CONFIRMATIONS as u32 + 13; // Amount of blocks enough to allow WT to open a challenge but not enough to dispatch the START_CH. Fine tunning may be required.
     info!("Mining {} blocks...", blocks_to_wait);
@@ -436,7 +517,14 @@ pub fn cli_input_not_revealed() -> Result<()> {
     wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
 
     let op_index = 1;
-    challenge(&mut committee, op_index, slot_index, false, false)?;
+    challenge(
+        &mut committee,
+        op_index,
+        slot_index,
+        false,
+        false,
+        ChallengeReason::funds_advanced(),
+    )?;
 
     let blocks_to_wait = PEGIN_CONFIRMATIONS as u32 + 4; // Wait some blocks to mine ADVANCE_FUNDS_TX and REIMBURSEMENT_KICKOFF_TX. Fine tunning may be required.
     wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
@@ -898,10 +986,14 @@ pub fn advance_funds(
     committee.advance_funds(
         slot_index,
         user_pubkey,
-        pegout_id,
+        &pegout_id,
         selected_operator_pubkey,
         get_advance_funds_fee()?,
     )?;
+
+    // Register this information with the info in AdvanceFundsRegistered event from RSK contract.
+    let txid = Txid::all_zeros(); // Placeholder for the actual transaction ID of the advance funds transaction
+    committee.advance_funds_registered(slot_index, &pegout_id, &selected_operator_pubkey, &txid)?;
 
     if should_wait {
         wait_for_blocks(
@@ -938,53 +1030,101 @@ pub fn advance_funds(
     Ok(operator_id)
 }
 
-pub fn challenge(
+fn challenge(
     committee: &mut Committee,
     operator_index: usize,
     slot_index: usize,
     should_wait: bool,
     op_wins: bool,
+    chr: ChallengeReason,
 ) -> Result<usize> {
     info!("Forcing member 0 to dispatch invalid reimbursement transaction...");
     // Force member 0 to dispatch reimbursement without proper advancement setup
     let committee_id = committee.committee_id();
     let members_len = committee.members.len();
+    // let operator: &mut Member = &mut committee.members[operator_index];
+    let uuid = Uuid::new_v4();
 
-    let member: &mut Member = &mut committee.members[operator_index];
-    let operator_pubkey = member.keyring.take_pubkey.unwrap();
+    let operator_pubkey = committee.members[operator_index]
+        .keyring
+        .take_pubkey
+        .unwrap();
+    let pegout_id = vec![0; 32]; // Pegout ID should be get from contracts event.
 
-    // If just one member execute advance_funds the other one will not know it should advance funds and will try to challenge it.
-    member.advance_funds(
+    let user_pubkey = committee.members[operator_index]
+        .keyring
+        .take_aggregated_key
+        .unwrap(); // fake user pub key
+    let wrong_operator_pubkey = committee.members[operator_index]
+        .keyring
+        .take_aggregated_key
+        .unwrap(); // fake operator pubkey
+    let wrong_pegout_id = vec![1; 32]; // fake pegout id
+    let wrong_slot_index = slot_index + 1; // fake slot index
+
+    // This operator is the one that will be challenged. So make advance funds with "correct" data.
+    committee.members[operator_index].advance_funds(
         Uuid::new_v4(),
         committee_id,
         slot_index,
-        operator_pubkey,
+        user_pubkey,
         vec![0; 32],
         operator_pubkey,
         get_advance_funds_fee()?,
     )?;
 
-    // Set DRP Operator input for each Watchtower
-    for wt_index in 0..members_len {
-        if wt_index == operator_index {
+    // Force different challenge reasons for each WT to ensure all paths are tested
+    let id = if chr.pegout_id {
+        wrong_pegout_id.clone()
+    } else {
+        pegout_id.clone()
+    };
+
+    let slot = if chr.slot_index {
+        wrong_slot_index
+    } else {
+        slot_index
+    };
+
+    let pubkey = if chr.operator_pubkey {
+        wrong_operator_pubkey
+    } else {
+        operator_pubkey
+    };
+
+    for index in 0..members_len {
+        if index == operator_index {
             continue;
         }
 
-        let drp_pid = get_dispute_channel_pid(committee_id, operator_index, wt_index);
-
-        // Force someone to win
-        let data = if op_wins {
-            "11111111".to_string()
-        } else {
-            "00000000".to_string()
-        };
-        let input_pos = 0;
-
-        let set_input_1 = VariableTypes::Input(hex::decode(data).unwrap());
-        member
-            .bitvmx
-            .set_var(drp_pid, &program_input(input_pos, None), set_input_1)?;
+        // A wrong slot here, would be equivalent to a false trigger operator take
+        committee.members[index].advance_funds(
+            uuid,
+            committee_id,
+            slot,
+            user_pubkey.clone(),
+            pegout_id.clone(),
+            pubkey,
+            0,
+        )?;
     }
+
+    // If funds_advanced is true, watchtowers wont even know about funds_advance
+    if !chr.funds_advanced {
+        // Placeholder for the actual transaction ID of the advance funds transaction
+        let txid = Txid::all_zeros();
+
+        // Register this information with the info in AdvanceFundsRegistered event from RSK contract.
+        committee.advance_funds_registered(slot, &id, &pubkey, &txid)?;
+    }
+
+    set_drp_input(
+        &mut committee.members[operator_index],
+        committee_id,
+        members_len,
+        operator_index,
+        op_wins,
+    )?;
 
     if should_wait {
         let additional_blocks = committee.stream_settings.long_timelock + 250;
@@ -1001,6 +1141,37 @@ pub fn challenge(
 
     info!("Challenge test complete.");
     Ok(operator_index)
+}
+
+fn set_drp_input(
+    member: &mut Member,
+    committee_id: Uuid,
+    members_len: usize,
+    op_index: usize,
+    op_wins: bool,
+) -> Result<()> {
+    // Set DRP Operator input for each Watchtower
+    for wt_index in 0..members_len {
+        if wt_index == op_index {
+            continue;
+        }
+
+        let drp_pid = get_dispute_channel_pid(committee_id, op_index, wt_index);
+
+        // Force someone to win
+        let data = if op_wins {
+            "11111111".to_string()
+        } else {
+            "00000000".to_string()
+        };
+        let input_pos = 0;
+
+        let set_input_1 = VariableTypes::Input(hex::decode(data).unwrap());
+        member
+            .bitvmx
+            .set_var(drp_pid, &program_input(input_pos, None), set_input_1)?;
+    }
+    Ok(())
 }
 
 fn get_and_increment_slot_index() -> usize {
@@ -1116,4 +1287,56 @@ fn wait_for_blocks(bitcoin_client: &BitcoinWrapper, mut blocks: u32) -> Result<(
         }
     }
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct ChallengeReason {
+    pub pegout_id: bool,
+    pub operator_pubkey: bool,
+    pub slot_index: bool,
+    pub funds_advanced: bool,
+}
+
+impl ChallengeReason {
+    fn none() -> Self {
+        Self {
+            pegout_id: false,
+            operator_pubkey: false,
+            slot_index: false,
+            funds_advanced: false,
+        }
+    }
+
+    // fn pegout_id() -> Self {
+    //     let mut r = Self::none();
+    //     r.pegout_id = true;
+    //     r
+    // }
+
+    // fn operator_pubkey() -> Self {
+    //     let mut r = Self::none();
+    //     r.operator_pubkey = true;
+    //     r
+    // }
+
+    // fn slot_index() -> Self {
+    //     let mut r = Self::none();
+    //     r.slot_index = true;
+    //     r
+    // }
+
+    fn funds_advanced() -> Self {
+        let mut r = Self::none();
+        r.funds_advanced = true;
+        r
+    }
+
+    // fn all() -> Self {
+    //     ChallengeReason {
+    //         pegout_id: true,
+    //         operator_pubkey: true,
+    //         slot_index: true,
+    //         funds_advanced: true,
+    //     }
+    // }
 }

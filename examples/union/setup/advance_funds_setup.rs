@@ -2,13 +2,7 @@ use anyhow::Result;
 use bitcoin::PublicKey;
 use bitvmx_client::{
     client::BitVMXClient,
-    program::{
-        protocols::union::{
-            common::indexed_name,
-            types::{AdvanceFundsRequest, SELECTED_OPERATOR_PUBKEY},
-        },
-        variables::VariableTypes,
-    },
+    program::{protocols::union::types::AdvanceFundsRequest, variables::VariableTypes},
 };
 use bitvmx_client::{program::participant::CommsAddress, types::PROGRAM_TYPE_ADVANCE_FUNDS};
 use tracing::info;
@@ -30,13 +24,6 @@ impl AdvanceFunds {
         my_address: CommsAddress,
         fee: u64,
     ) -> Result<()> {
-        // All members should set up the operator pubkey that should advance the funds
-        bitvmx.set_var(
-            committee_id,
-            &indexed_name(SELECTED_OPERATOR_PUBKEY, slot_index),
-            VariableTypes::PubKey(operator_pubkey),
-        )?;
-
         if operator_pubkey != my_take_pubkey {
             info!(
                 "Skipping advance funds setup. Operator pubkey: {}, my take pubkey: {}",
