@@ -449,7 +449,7 @@ pub fn cli_op_no_cosign() -> Result<()> {
         ChallengeReason::funds_advanced(),
     )?;
 
-    let blocks_to_wait = PEGIN_CONFIRMATIONS as u32 + 12; // Amount of blocks enough to allow WT to open a challenge but not enough to dispatch the OP_COSIGN_TX. Fine tunning may be required.
+    let blocks_to_wait = PEGIN_CONFIRMATIONS as u32 + 15; // Amount of blocks enough to allow WT to open a challenge but not enough to dispatch the OP_COSIGN_TX. Fine tunning may be required.
     info!("Mining {} blocks...", blocks_to_wait);
     wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
 
