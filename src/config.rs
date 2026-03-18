@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use storage_backend::storage_config::StorageConfig;
 use tracing::info;
 
-use crate::{errors::ConfigError, throtthle::ThrotthleConfig};
+use crate::{errors::ConfigError, throttle::ThrotthleConfig};
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ProtocolBuilderConfig {
