@@ -16,7 +16,6 @@ use crate::{
 // Key names
 pub const TAKE_AGGREGATED_KEY: &str = "TAKE_AGGREGATED_KEY";
 pub const DISPUTE_AGGREGATED_KEY: &str = "DISPUTE_AGGREGATED_KEY";
-pub const SELECTED_OPERATOR_PUBKEY: &str = "SELECTED_OPERATOR_PUBKEY";
 pub const REVEAL_IN_PROGRESS: &str = "REVEAL_IN_PROGRESS";
 pub const OP_INITIAL_DEPOSIT_FLAG: &str = "OP_INITIAL_DEPOSIT_FLAG";
 pub const SPEEDUP_KEY: &str = "SPEEDUP_KEY";
@@ -108,6 +107,7 @@ pub struct Committee {
     pub stream_denomination: u64,
     pub pegin_confirmations: u32,
     pub pegout_confirmations: u32,
+    pub reject_pegin_confirmations: u32,
 }
 
 impl Committee {
@@ -259,6 +259,21 @@ pub struct FundsAdvanceSPV {
 impl FundsAdvanceSPV {
     pub fn name() -> String {
         "funds_advance_spv".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdvanceFundsRegistered {
+    pub committee_id: Uuid,
+    pub slot_index: usize,
+    pub txid: Txid,
+    pub pegout_id: Vec<u8>,
+    pub operator_pubkey: PublicKey,
+}
+
+impl AdvanceFundsRegistered {
+    pub fn name(slot_id: usize) -> String {
+        indexed_name("ADVANCED_FUNDS", slot_id)
     }
 }
 
