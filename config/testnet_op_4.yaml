@@ -21,9 +21,16 @@ coordinator_settings:
   monitor_settings:
     indexer_settings:
       checkpoint_height: 4631677
-coordinator:
-  throtthle_bitcoin_updates_until_sync: 1
-  throtthle_bitcoin_updates: 1
+
+coordinator_throtthle:
+  init_interval: 1000
+  busy_interval: 1000
+  idle_interval: 1000
+
+bitvmx_throttle:
+  busy_interval: 20
+  idle_interval: 200
+
 broker:
   allow_list: config/allow_list.yaml
   routing_table: config/routing_table.yaml
