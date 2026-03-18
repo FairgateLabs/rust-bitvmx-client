@@ -2276,7 +2276,11 @@ impl DisputeCoreProtocol {
             )?
             .unwrap();
 
-        let script = protocol.get_script_to_spend(name, input_index as u32, slot_index as u32)?;
+        let script = protocol.get_script_to_spend(
+            name,
+            input_index as u32,
+            WT_INIT_CHALLENGE_TX_COSIGN_LEAF as u32,
+        )?;
         let op_key_name = OP_COSIGN_KEY.to_string();
 
         let key = script.get_key(&op_key_name).ok_or_else(|| {
