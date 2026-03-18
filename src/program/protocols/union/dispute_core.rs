@@ -828,8 +828,6 @@ impl DisputeCoreProtocol {
                     AmountType::Auto,
                     op_dispute_key,
                     &vec![
-                        // FIXME: Leaf 0 should be cosign script here
-                        // This should cosign the challenge input to be able to open the challenge.
                         cosign_script,
                         op_no_cosign_timelock_script,
                         verify_dispute_aggregated.clone(),
