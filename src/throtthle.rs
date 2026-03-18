@@ -45,7 +45,7 @@ impl Throtthle {
             idle_interval: Duration::from_millis(config.idle_interval),
             last_call: Instant::now(),
             initialized: config.init_interval.is_none(),
-            last_was_busy: false,
+            last_was_busy: true,
         }
     }
 

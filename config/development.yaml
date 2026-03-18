@@ -23,10 +23,14 @@ comms:
   priv_key: config/keys/op_1.key
   storage_path: /tmp/development/comms.db
   
-coordinator:
-  throtthle_bitcoin_updates_until_sync: 0
-  throtthle_bitcoin_updates: 0
+coordinator_throtthle:
+  init_interval: 10
+  busy_interval: 50
+  idle_interval: 200
 
+bitvmx_throttle:
+  busy_interval: 20
+  idle_interval: 200
   
 broker:
   allow_list: config/allow_list.yaml
