@@ -4,6 +4,7 @@ use crate::program::program::{is_active_program, Program};
 use crate::program::protocols::protocol_handler::ProtocolHandler;
 use crate::program::variables::VariableTypes;
 use crate::spv_proof::get_spv_proof;
+use crate::throtthle::Throtthle;
 use crate::timestamp_verifier::TimestampVerifier;
 use crate::{
     api::BitVMXApi,
@@ -59,7 +60,6 @@ use std::{
     sync::{Arc, Mutex},
     thread::sleep,
     time::Duration,
-    time::Instant,
 };
 use storage_backend::storage::{KeyValueStore, Storage};
 use tracing::{debug, error, info, warn};
@@ -71,12 +71,6 @@ pub const WALLET_CHANGE_INDEX: u32 = 101;
 pub const CLIENT_GLOBAL_SETTINGS_UUID: Uuid = Uuid::from_bytes(*b"GLOBAL_SETTINGS-");
 pub const SEND_NEW_BLOCK_NEWS: &str = "send_new_block_news";
 
-#[derive(Debug)]
-struct BitcoinUpdateState {
-    last_update: Instant,
-    was_synced: bool,
-}
-
 pub struct BitVMX {
     config: Config,
     program_context: ProgramContext,
@@ -85,7 +79,7 @@ pub struct BitVMX {
     count: u32,
     message_queue: MessageQueue,
     timestamp_verifier: TimestampVerifier,
-    bitcoin_update: BitcoinUpdateState,
+    coordinator_throtthle: Throtthle,
     wallet: Wallet,
     ping_helper: PingHelper,
     shutdown: bool,
@@ -207,6 +201,8 @@ impl BitVMX {
 
         let message_queue = MessageQueue::new(store.clone(), RetryPolicy::default());
 
+        let coordinator_throtthle = Throtthle::new(config.coordinator_throtthle.clone());
+
         Ok(Self {
             config,
             program_context,
@@ -215,10 +211,7 @@ impl BitVMX {
             count: 0,
             message_queue,
             timestamp_verifier,
-            bitcoin_update: BitcoinUpdateState {
-                last_update: Instant::now(),
-                was_synced: false,
-            },
+            coordinator_throtthle,
             wallet,
             ping_helper,
             shutdown: false,
@@ -746,40 +739,14 @@ impl BitVMX {
     }
 
     pub fn process_bitcoin_updates_with_throttle(&mut self) -> Result<(), BitVMXError> {
-        let now = Instant::now();
-        let throttle_secs = if !self.bitcoin_update.was_synced {
-            self.config.coordinator.throtthle_bitcoin_updates_until_sync
-        } else {
-            self.config.coordinator.throtthle_bitcoin_updates
-        };
-
-        let should_update = if throttle_secs == 0 {
-            self.count % THROTTLE_TICKS == 0
-        } else {
-            now.duration_since(self.bitcoin_update.last_update)
-                >= Duration::from_secs(throttle_secs)
-        };
-
-        if should_update {
-            let updated = self.process_bitcoin_updates();
-            self.bitcoin_update.last_update = now;
-            if let Err(e) = updated {
+        if self.coordinator_throtthle.should_call() {
+            let result = self.process_bitcoin_updates();
+            if let Err(e) = result {
                 error!("Critical error processing bitcoin updates: {:?}", e);
                 return Ok(());
             }
-            if updated? {
-                self.bitcoin_update.was_synced = true;
-
-                // info!(
-                //     "Throttling Bitcoin updates ({}): {}s",
-                //     if self.bitcoin_update.was_synced {
-                //         "post-sync"
-                //     } else {
-                //         "pre-sync"
-                //     },
-                //     throttle_secs
-                // );
-            }
+            let had_work = result.unwrap_or(false);
+            self.coordinator_throtthle.record(had_work);
         }
         Ok(())
     }
