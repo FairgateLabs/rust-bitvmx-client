@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use storage_backend::storage_config::StorageConfig;
 use tracing::info;
 
-use crate::errors::ConfigError;
+use crate::{errors::ConfigError, throttle::ThrottleConfig};
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ProtocolBuilderConfig {
@@ -36,12 +36,6 @@ pub struct CommsConfig {
 pub struct ClientConfig {
     pub retry: u32,
     pub retry_delay: u64,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct ThrotthleUpdate {
-    pub throtthle_bitcoin_updates_until_sync: u64,
-    pub throtthle_bitcoin_updates: u64,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -121,7 +115,8 @@ pub struct Config {
     pub components: ComponentsConfig,
     pub testing: TestConfig, //This is here for testing purposes only
     pub coordinator_settings: Option<CoordinatorSettingsConfig>,
-    pub coordinator: ThrotthleUpdate,
+    pub coordinator_throttle: ThrottleConfig,
+    pub bitvmx_throttle: ThrottleConfig,
     pub wallet: WalletConfig,
     pub job_dispatcher_ping: Option<PingConfig>,
     pub timestamp_verifier: Option<TimestampVerifierConfig>,

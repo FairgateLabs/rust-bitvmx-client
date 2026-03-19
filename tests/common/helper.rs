@@ -29,7 +29,7 @@ use std::{
     thread,
     time::Duration,
 };
-use tracing::{error, info};
+use tracing::{error, info, info_span};
 use uuid::Uuid;
 
 use bitcoind::{
@@ -389,7 +389,8 @@ fn run_bitvmx(network: Network, independent: bool, rx: Receiver<()>, tx: Sender<
             info!("Signal received, shutting down...");
             break;
         }
-        for bitvmx in instances.iter_mut() {
+        for (i, bitvmx) in instances.iter_mut().enumerate() {
+            let _span = info_span!("", id = i).entered();
             if ready {
                 let ret = bitvmx.tick();
                 if ret.is_err() {
@@ -397,7 +398,7 @@ fn run_bitvmx(network: Network, independent: bool, rx: Receiver<()>, tx: Sender<
                     return Ok(());
                 }
             } else {
-                ready = bitvmx.process_bitcoin_updates()?;
+                ready = bitvmx.process_bitcoin_updates_with_throttle()?;
                 if !ready {
                     //info!("Waiting to get to the top of the Bitcoin chain...");
                 } else {
@@ -438,8 +439,12 @@ fn run_emulator(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result
         //TODO: this is temporal until there are separated storages
         let storage_path = format!("/tmp/emulator_storage_{i}.db");
         clear_db(&storage_path);
-        let prover_dispatcher =
-            DispatcherHandler::<EmulatorJobType>::new_with_path(channel, &storage_path)?;
+        let prover_dispatcher = DispatcherHandler::<EmulatorJobType>::new_with_path(
+            channel,
+            &storage_path,
+            None,
+            true,
+        )?;
         instances.push(prover_dispatcher);
     }
 
@@ -481,7 +486,7 @@ fn run_zkp(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<()> 
         let storage_path = format!("/tmp/zkp_storage_{i}.db");
         clear_db(&storage_path);
         let prover_dispatcher =
-            DispatcherHandler::<ProverJobType>::new_with_path(channel, &storage_path)?;
+            DispatcherHandler::<ProverJobType>::new_with_path(channel, &storage_path, None, true)?;
         instances.push(prover_dispatcher);
     }
 

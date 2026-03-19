@@ -9,7 +9,7 @@ use anyhow::Result;
 use bitcoin::Network;
 use bitvmx_wallet::wallet::{RegtestWallet, Wallet};
 use clap::{Arg, Command};
-use tracing::{debug, info, info_span};
+use tracing::{info, info_span};
 use tracing_subscriber::EnvFilter;
 
 use bitvmx_client::{bitvmx::BitVMX, config::Config};
@@ -133,9 +133,7 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
 
                 if instance.ready {
                     match instance.bitvmx.tick() {
-                        Ok(true) => {
-                            thread::sleep(Duration::from_millis(10));
-                        }
+                        Ok(true) => {}
                         Ok(false) => {
                             info!("BitVMX requested shutdown");
                             break 'main;
@@ -148,24 +146,17 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
                                 source = std::error::Error::source(err);
                             }
                             // escalate fatal errors to shutdown signal
-                            if e.is_fatal() {
-                                info!("Fatal error detected, initiating shutdown");
-                                return; // break out to shutdown
-                            }
-                            thread::sleep(Duration::from_millis(100));
+                            info!("Fatal error detected, initiating shutdown");
+                            return; // break out to shutdown
                         }
                     }
                 } else {
                     // Still syncing with Bitcoin blockchain. Process bitcoin updates to catch up to the
                     // current chain tip
-                    match instance.bitvmx.process_bitcoin_updates() {
+                    match instance.bitvmx.process_bitcoin_updates_with_throttle() {
                         Ok(ready) => {
                             instance.ready = ready;
-                            if !instance.ready {
-                                // TODO move this log to indexer/coordinator if we need to see sync progress
-                                debug!("Waiting for sync to complete");
-                                thread::sleep(Duration::from_millis(25));
-                            } else {
+                            if instance.ready {
                                 // Sync complete - ready to start normal operation
                                 info!("Sync complete, starting normal operation");
                                 // Signal to any waiting threads that initialization is complete
@@ -176,15 +167,13 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
                         }
                         Err(e) => {
                             tracing::error!("Error syncing bitcoin updates: {e:?}");
-                            if e.is_fatal() {
-                                info!("Fatal error during sync, initiating shutdown");
-                                return; // break out to shutdown
-                            }
-                            thread::sleep(Duration::from_millis(100));
+                            info!("Fatal error during sync, initiating shutdown");
+                            return; // break out to shutdown
                         }
                     }
                 }
             }
+            thread::sleep(Duration::from_millis(10));
         }
     }));
 

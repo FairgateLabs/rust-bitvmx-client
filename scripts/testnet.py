@@ -26,8 +26,8 @@ def patch_yaml_height(filepath, height):
     data["coordinator_settings"]["monitor_settings"]["indexer_settings"]["checkpoint_height"] = height
 
     if "coordinator" in data:
-        data["coordinator"]["throtthle_bitcoin_updates_until_sync"] = SECS_SYNC
-        data["coordinator"]["throtthle_bitcoin_updates"] = SECS_UPDATE
+        data["coordinator"]["throttle_bitcoin_updates_until_sync"] = SECS_SYNC
+        data["coordinator"]["throttle_bitcoin_updates"] = SECS_UPDATE
     with open(filepath, "w") as f:
         yaml.dump(data, f, sort_keys=False)
 

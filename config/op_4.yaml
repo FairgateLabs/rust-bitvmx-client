@@ -57,9 +57,14 @@ testing:
     priv_key: config/keys/prover.key
     id: 0
 
-coordinator:
-  throtthle_bitcoin_updates_until_sync: 0
-  throtthle_bitcoin_updates: 0
+coordinator_throttle:
+  init_interval: 10
+  busy_interval: 50
+  idle_interval: 200
+
+bitvmx_throttle:
+  busy_interval: 20
+  idle_interval: 200
 
 client: 
   # Number of retries for requests

@@ -4,6 +4,7 @@ use crate::program::program::{is_active_program, Program};
 use crate::program::protocols::protocol_handler::ProtocolHandler;
 use crate::program::variables::VariableTypes;
 use crate::spv_proof::get_spv_proof;
+use crate::throttle::Throttle;
 use crate::timestamp_verifier::TimestampVerifier;
 use crate::{
     api::BitVMXApi,
@@ -59,23 +60,15 @@ use std::{
     sync::{Arc, Mutex},
     thread::sleep,
     time::Duration,
-    time::Instant,
 };
 use storage_backend::storage::{KeyValueStore, Storage};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-pub const THROTTLE_TICKS: u32 = 2;
 pub const WALLET_INDEX: u32 = 100;
 pub const WALLET_CHANGE_INDEX: u32 = 101;
 pub const CLIENT_GLOBAL_SETTINGS_UUID: Uuid = Uuid::from_bytes(*b"GLOBAL_SETTINGS-");
 pub const SEND_NEW_BLOCK_NEWS: &str = "send_new_block_news";
-
-#[derive(Debug)]
-struct BitcoinUpdateState {
-    last_update: Instant,
-    was_synced: bool,
-}
 
 pub struct BitVMX {
     config: Config,
@@ -85,7 +78,8 @@ pub struct BitVMX {
     count: u32,
     message_queue: MessageQueue,
     timestamp_verifier: TimestampVerifier,
-    bitcoin_update: BitcoinUpdateState,
+    coordinator_throttle: Throttle,
+    bitvmx_throttle: Throttle,
     wallet: Wallet,
     ping_helper: PingHelper,
     shutdown: bool,
@@ -207,6 +201,9 @@ impl BitVMX {
 
         let message_queue = MessageQueue::new(store.clone(), RetryPolicy::default());
 
+        let coordinator_throttle = Throttle::new(config.coordinator_throttle.clone());
+        let bitvmx_throttle = Throttle::new(config.bitvmx_throttle.clone());
+
         Ok(Self {
             config,
             program_context,
@@ -215,10 +212,8 @@ impl BitVMX {
             count: 0,
             message_queue,
             timestamp_verifier,
-            bitcoin_update: BitcoinUpdateState {
-                last_update: Instant::now(),
-                was_synced: false,
-            },
+            coordinator_throttle,
+            bitvmx_throttle,
             wallet,
             ping_helper,
             shutdown: false,
@@ -451,18 +446,18 @@ impl BitVMX {
         Ok(())
     }
 
-    pub fn process_pending_messages(&mut self) -> Result<(), BitVMXError> {
+    pub fn process_pending_messages(&mut self) -> Result<bool, BitVMXError> {
         if self.message_queue.is_empty()? {
-            return Ok(());
+            return Ok(false);
         }
 
         if let Some(msg) = self.message_queue.pop_front()? {
             self.process_msg(msg)?;
         }
-        Ok(())
+        Ok(true)
     }
 
-    pub fn process_comms_messages(&mut self) -> Result<(), BitVMXError> {
+    pub fn process_comms_messages(&mut self) -> Result<bool, BitVMXError> {
         //Send enqueued messages
         self.program_context.comms.tick()?;
 
@@ -470,10 +465,14 @@ impl BitVMX {
             Ok(messages) => messages,
             Err(e) => {
                 error!("Error receiving messages: {:?}", e);
-                return Ok(());
+                return Ok(true);
             }
         };
 
+        let mut had_work = false;
+        if messages.len() > 0 {
+            had_work = true;
+        }
         for message in messages {
             match message {
                 ReceiveHandlerChannel::Msg(identifier, msg) => {
@@ -490,9 +489,12 @@ impl BitVMX {
             Ok(messages) => messages,
             Err(e) => {
                 error!("Error receiving deadletter messages: {:?}", e);
-                return Ok(());
+                return Ok(true);
             }
         };
+        if deadletter_messages.len() > 0 {
+            had_work = true;
+        }
         for deadletter in deadletter_messages {
             match deadletter {
                 (ReceiveHandlerChannel::Msg(identifier, _msg), ctx) => {
@@ -509,7 +511,7 @@ impl BitVMX {
             }
         }
 
-        Ok(())
+        Ok(had_work)
     }
 
     pub fn handle_news(
@@ -552,7 +554,7 @@ impl BitVMX {
         Ok(true)
     }
 
-    pub fn process_bitcoin_updates(&mut self) -> Result<bool, BitVMXError> {
+    fn process_bitcoin_updates(&mut self) -> Result<bool, BitVMXError> {
         self.program_context.bitcoin_coordinator.tick()?;
         self.process_wallet_updates()?;
 
@@ -706,12 +708,13 @@ impl BitVMX {
         Ok(true)
     }
 
-    pub fn process_api_messages(&mut self) -> Result<(), BitVMXError> {
+    pub fn process_api_messages(&mut self) -> Result<bool, BitVMXError> {
         if let Some((msg, from)) = self.program_context.broker_channel.recv()? {
             BitVMXApi::handle_message(self, msg, from)?;
+            return Ok(true);
         }
 
-        Ok(())
+        Ok(false)
     }
 
     pub fn tick(&mut self) -> Result<bool, BitVMXError> {
@@ -722,12 +725,16 @@ impl BitVMX {
         }
 
         self.count += 1;
-        self.process_programs()?;
 
-        if self.count % THROTTLE_TICKS == 0 {
-            self.process_pending_messages()?;
-            self.process_comms_messages()?;
-            self.process_api_messages()?;
+        if self.bitvmx_throttle.should_call() {
+            let mut had_work = false;
+            had_work |= self.process_programs()?;
+
+            had_work |= self.process_pending_messages()?;
+            had_work |= self.process_comms_messages()?;
+            had_work |= self.process_api_messages()?;
+
+            self.bitvmx_throttle.record(had_work);
         }
 
         self.process_bitcoin_updates_with_throttle()?;
@@ -745,46 +752,23 @@ impl BitVMX {
         Ok(())
     }
 
-    pub fn process_bitcoin_updates_with_throttle(&mut self) -> Result<(), BitVMXError> {
-        let now = Instant::now();
-        let throttle_secs = if !self.bitcoin_update.was_synced {
-            self.config.coordinator.throtthle_bitcoin_updates_until_sync
-        } else {
-            self.config.coordinator.throtthle_bitcoin_updates
-        };
-
-        let should_update = if throttle_secs == 0 {
-            self.count % THROTTLE_TICKS == 0
-        } else {
-            now.duration_since(self.bitcoin_update.last_update)
-                >= Duration::from_secs(throttle_secs)
-        };
-
-        if should_update {
-            let updated = self.process_bitcoin_updates();
-            self.bitcoin_update.last_update = now;
-            if let Err(e) = updated {
+    pub fn process_bitcoin_updates_with_throttle(&mut self) -> Result<bool, BitVMXError> {
+        if self.coordinator_throttle.should_call() {
+            let result = self.process_bitcoin_updates();
+            if let Err(e) = result {
                 error!("Critical error processing bitcoin updates: {:?}", e);
-                return Ok(());
+                return Ok(false);
             }
-            if updated? {
-                self.bitcoin_update.was_synced = true;
-
-                // info!(
-                //     "Throttling Bitcoin updates ({}): {}s",
-                //     if self.bitcoin_update.was_synced {
-                //         "post-sync"
-                //     } else {
-                //         "pre-sync"
-                //     },
-                //     throttle_secs
-                // );
-            }
+            let had_work = result.unwrap_or(false);
+            self.coordinator_throttle.record(had_work);
+            return Ok(had_work);
         }
-        Ok(())
+        Ok(false)
     }
-    pub fn process_programs(&mut self) -> Result<(), BitVMXError> {
+    pub fn process_programs(&mut self) -> Result<bool, BitVMXError> {
         let all_programs = self.get_programs()?;
+
+        let mut had_work = false;
 
         for status in all_programs {
             let program_id = status.program_id;
@@ -792,11 +776,11 @@ impl BitVMX {
             if !is_active_program(&self.store, &program_id)? {
                 continue;
             }
-
+            had_work = true;
             let mut program = self.load_program(&program_id)?;
             program.tick(&mut self.program_context)?;
         }
-        Ok(())
+        Ok(had_work)
     }
 
     fn get_programs(&self) -> Result<Vec<ProgramStatus>, BitVMXError> {

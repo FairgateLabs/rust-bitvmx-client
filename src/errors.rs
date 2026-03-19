@@ -376,18 +376,6 @@ impl<T> From<PoisonError<T>> for BitVMXError {
     }
 }
 
-impl BitVMXError {
-    /// Returns whether the error should be considered fatal.
-    ///
-    /// NOTE: For now, we mark all errors as fatal to avoid masking issues and ensure coordinated
-    /// shutdown paths are exercised.
-    /// Once the system is stable, we should revisit this and separate truly fatal errors
-    /// (e.g., storage corruption) from recoverable ones.
-    pub fn is_fatal(&self) -> bool {
-        true
-    }
-}
-
 #[derive(Error, Debug)]
 pub enum ConfigError {
     #[error("Public key in config is invalid")]

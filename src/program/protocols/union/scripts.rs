@@ -23,7 +23,8 @@ pub fn verify_winternitz(
 
         { ots_checksig(winternitz_pubkey, false)? }
         OP_PUSHNUM_1
-    );
+    )
+    .compile();
 
     let mut protocol_script = ProtocolScript::new(script, &pubkey, sign_mode);
 
@@ -56,11 +57,12 @@ pub fn init_challenge_script(
 ) -> Result<ProtocolScript, ScriptError> {
     // Create validation script
     let mut stack = StackTracker::new();
-    let wt_value = stack.define(4 * 2, "wt_signed_value"); // each number is 4 bytes, each byte is 2 nibbles
     let op_value = stack.define(2 * 2, "op_signed_value"); // each number is 2 bytes, each byte is 2 nibbles
-    stack.drop(op_value); // Drop OP signed value as we don't need it after validation
+    let wt_value = stack.define(4 * 2, "wt_signed_value"); // each number is 4 bytes, each byte is 2 nibbles
     let number = stack.number_u32(slot_id); // Push expected slot id value to stack
-    stack.equals(number, true, wt_value, true); // Compare expected slot id with WT signed value
+    stack.reverse_u32(number);
+    stack.equals(wt_value, true, number, true); // Compare expected slot id with WT signed value
+    stack.drop(op_value); // Drop OP signed value as we don't need it after validation
     let validate_slot_id = stack.get_script();
 
     let winternitz = vec![
@@ -142,7 +144,8 @@ pub fn operator_pegout_id(
         { ots_checksig(pegout_id_key, false)? }
         { ots_checksig(secret_key, false)? }
         OP_PUSHNUM_1
-    );
+    )
+    .compile();
 
     let mut protocol_script = ProtocolScript::new(script, &public_key, SignMode::Aggregate);
     protocol_script.add_key(
