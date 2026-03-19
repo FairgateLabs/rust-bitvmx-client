@@ -19,7 +19,7 @@ use bitvmx_client::{
         participant::{CommsAddress, ParticipantRole},
         protocols::union::{
             common::{
-                get_dispute_core_pid, get_dispute_pair_aggregated_key_pid,
+                get_advance_funds_pid, get_dispute_core_pid, get_dispute_pair_aggregated_key_pid,
                 get_dispute_pair_key_name, indexed_name,
             },
             dispute_core::PEGOUT_ID,
@@ -385,7 +385,6 @@ impl Member {
 
     pub fn advance_funds(
         &mut self,
-        protocol_id: Uuid,
         committee_id: Uuid,
         slot_index: usize,
         user_pubkey: PublicKey,
@@ -398,6 +397,8 @@ impl Member {
             "Advancing funds to user public key {}",
             user_pubkey.to_string()
         );
+
+        let protocol_id = get_advance_funds_pid(committee_id, slot_index);
 
         AdvanceFunds::setup(
             &self.bitvmx,

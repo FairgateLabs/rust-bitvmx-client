@@ -2,7 +2,10 @@ use crate::{
     bitcoin::{BitcoinWrapper, HIGH_FEE_NODE_ENABLED},
     participants::{
         committee::Committee,
-        common::{calculate_taproot_key_path_sighash, get_user_take_tx, PEGIN_CONFIRMATIONS},
+        common::{
+            calculate_taproot_key_path_sighash, format_transaction_solidity, get_user_take_tx,
+            PEGIN_CONFIRMATIONS,
+        },
         member::Member,
         user::User,
     },
@@ -25,12 +28,14 @@ use bitvmx_client::{
             dispute::program_input,
             union::{
                 common::{
-                    get_accept_pegin_pid, get_dispute_channel_pid, get_dispute_core_pid,
-                    indexed_name,
+                    get_accept_pegin_pid, get_advance_funds_pid, get_dispute_channel_pid,
+                    get_dispute_core_pid, indexed_name,
                 },
                 types::{
-                    FundsAdvanced, ACCEPT_PEGIN_TX, CANCEL_TAKE0_TX, OP_SELF_DISABLER_TX,
-                    WT_SELF_DISABLER_TX, WT_START_ENABLER_TX,
+                    FundsAdvanced, ACCEPT_PEGIN_TX, ADVANCE_FUNDS_TX, CANCEL_TAKE0_TX,
+                    CHALLENGE_TX, OPERATOR_TAKE_TX, OPERATOR_WON_TX, OP_SELF_DISABLER_TX,
+                    REIMBURSEMENT_KICKOFF_TX, REVEAL_INPUT_TX, WT_SELF_DISABLER_TX,
+                    WT_START_ENABLER_TX,
                 },
             },
         },
@@ -91,6 +96,7 @@ pub fn main() -> Result<()> {
         Some("members_recover_funds") => cli_members_recover_funds()?,
         Some("user_recover_funds") => cli_user_recover_funds()?,
         Some("wallet_recover_funds") => cli_wallet_recover_funds()?,
+        Some("solidity_txs") => cli_solidity_txs()?,
         Some(cmd) => {
             eprintln!("Unknown command: {}", cmd);
             print_usage();
@@ -194,6 +200,7 @@ fn print_usage() {
         "wallet_recover_funds",
         "Send master wallet funds to address",
     );
+    print_cmd_help("print_txs", "Print protocol TXs to create contracts tests");
 }
 
 fn cli_create_wallet(network: Option<&String>) -> Result<()> {
@@ -307,6 +314,79 @@ pub fn cli_advance_funds_twice() -> Result<()> {
     advance_funds(&mut committee, user.public_key()?, slot_index, true)?;
 
     Ok(())
+}
+
+pub fn cli_solidity_txs() -> Result<()> {
+    if HIGH_FEE_NODE_ENABLED {
+        info!("This example run faster with a client node with low fees. You can disable it setting HIGH_FEE_NODE_ENABLED to false.");
+    }
+
+    let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    let op_index = advance_funds(&mut committee, user.public_key()?, slot_index, false)?;
+    let operator = &committee.members[op_index];
+
+    let committee_id = committee.committee_id();
+    let accept_pegin_pid = get_accept_pegin_pid(committee_id, slot_index);
+    let dispute_core_pid =
+        get_dispute_core_pid(committee_id, &operator.keyring.take_pubkey.unwrap());
+    let advance_funds_pid = get_advance_funds_pid(committee_id, slot_index);
+
+    // Advance funds transaction
+    get_and_print_transaction(operator, advance_funds_pid, ADVANCE_FUNDS_TX)?;
+
+    // Accept pegin protocol transactions
+    get_and_print_transaction(operator, accept_pegin_pid, ACCEPT_PEGIN_TX)?;
+    get_and_print_transaction(
+        operator,
+        accept_pegin_pid,
+        &indexed_name(OPERATOR_TAKE_TX, op_index),
+    )?;
+    get_and_print_transaction(
+        operator,
+        accept_pegin_pid,
+        &indexed_name(OPERATOR_WON_TX, op_index),
+    )?;
+
+    // Dispute core protocol transactions
+    get_and_print_transaction(
+        operator,
+        dispute_core_pid,
+        &indexed_name(REIMBURSEMENT_KICKOFF_TX, slot_index),
+    )?;
+    get_and_print_transaction(
+        &committee.members[op_index + 1],
+        dispute_core_pid,
+        &indexed_name(CHALLENGE_TX, slot_index),
+    )?;
+    get_and_print_transaction(
+        operator,
+        dispute_core_pid,
+        &indexed_name(REVEAL_INPUT_TX, slot_index),
+    )?;
+
+    Ok(())
+}
+
+fn get_and_print_transaction(
+    member: &Member,
+    protocol_id: Uuid,
+    tx_name: &str,
+) -> Result<Transaction> {
+    info!("Requesting TX: {}. Protocol ID: {}", tx_name, protocol_id);
+    member
+        .bitvmx
+        .get_transaction_by_name(protocol_id, tx_name.to_string())?;
+    thread::sleep(std::time::Duration::from_millis(200));
+    let tx = wait_until_msg!(&member.bitvmx, OutgoingBitVMXApiMessages::TransactionInfo(_, _, _tx) => _tx);
+
+    info!("==========================================");
+    info!("Transaction name: {}", tx_name);
+    info!("Solidity Format:");
+    info!("\n\n{}\n\n", format_transaction_solidity(&tx));
+    info!("==========================================");
+
+    Ok(tx)
 }
 
 pub fn cli_challenge(winner: Option<&String>) -> Result<()> {
@@ -1042,8 +1122,6 @@ fn challenge(
     // Force member 0 to dispatch reimbursement without proper advancement setup
     let committee_id = committee.committee_id();
     let members_len = committee.members.len();
-    // let operator: &mut Member = &mut committee.members[operator_index];
-    let uuid = Uuid::new_v4();
 
     let operator_pubkey = committee.members[operator_index]
         .keyring
@@ -1064,7 +1142,6 @@ fn challenge(
 
     // This operator is the one that will be challenged. So make advance funds with "correct" data.
     committee.members[operator_index].advance_funds(
-        Uuid::new_v4(),
         committee_id,
         slot_index,
         user_pubkey,
@@ -1099,7 +1176,6 @@ fn challenge(
 
         // A wrong slot here, would be equivalent to a false trigger operator take
         committee.members[index].advance_funds(
-            uuid,
             committee_id,
             slot,
             user_pubkey.clone(),
