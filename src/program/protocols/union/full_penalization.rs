@@ -961,8 +961,8 @@ impl FullPenalizationProtocol {
         context: &ProgramContext,
         committee_id: Uuid,
         committee: &Committee,
-        wt_index: usize,
-        op_index: usize,
+        wt_index: usize, // WT who is going to be disabled
+        op_index: usize, // OP who won the challenge and caused the WT to be disabled
         wt_disablers: &Vec<Option<WtInitChallengeUtxos>>,
         disabler_directory_utxo: &PartialUtxo,
     ) -> Result<(), BitVMXError> {
