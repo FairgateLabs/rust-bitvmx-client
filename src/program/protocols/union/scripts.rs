@@ -23,7 +23,8 @@ pub fn verify_winternitz(
 
         { ots_checksig(winternitz_pubkey, false)? }
         OP_PUSHNUM_1
-    );
+    )
+    .compile();
 
     let mut protocol_script = ProtocolScript::new(script, &pubkey, sign_mode);
 
@@ -143,7 +144,8 @@ pub fn operator_pegout_id(
         { ots_checksig(pegout_id_key, false)? }
         { ots_checksig(secret_key, false)? }
         OP_PUSHNUM_1
-    );
+    )
+    .compile();
 
     let mut protocol_script = ProtocolScript::new(script, &public_key, SignMode::Aggregate);
     protocol_script.add_key(
