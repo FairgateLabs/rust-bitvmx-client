@@ -49,6 +49,7 @@ bitvmx-cpu-definitions = { git = "https://github.com/FairgateLabs/BitVMX-CPU", t
 bitcoin-script-stack = { git = "https://github.com/FairgateLabs/rust-bitcoin-script-stack", features = [
     "interactive",
 ], tag = "v0.6.0" }
+bitcoin-script-functions = { git = "https://github.com/FairgateLabs/rust-bitcoin-script-functions", tag = "v0.6.0" }
 
 bitvmx-wallet = { git = "https://github.com/FairgateLabs/rust-bitvmx-wallet.git", tag = "v0.6.0" }
 bitvmx-job-dispatcher-types = { git = "https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher", features = [
