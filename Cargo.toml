@@ -30,7 +30,7 @@ ctrlc = "3.2.5"
 
 bitcoincore-rpc = { version = "0.19.0" }
 bitcoin-script = { git = "https://github.com/FairgateLabs/rust-bitcoin-script/", tag = "v0.6.0" }
-bitcoin-scriptexec = { git = "https://github.com/FairgateLabs/rust-bitcoin-scriptexec/", branch = "bitvmx" }
+bitcoin-scriptexec = { git = "https://github.com/FairgateLabs/rust-bitcoin-scriptexec/", tag = "v0.6.0" }
 
 bitvmx-key-manager = { git = "https://github.com/FairgateLabs/rust-bitvmx-key-manager.git", tag = "v0.6.0", default-features = false, features = [
     "wots_idx_check",
