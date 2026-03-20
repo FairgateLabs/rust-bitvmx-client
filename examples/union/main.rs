@@ -382,6 +382,7 @@ pub fn cli_solidity_txs() -> Result<()> {
     let solidity_file = format_solidity_data_file(
         &committee_agg_key,
         &dispute_keys,
+        &user.public_key()?,
         &request_pegin_tx,
         accept_pegin_txid,
         &named_txs,
