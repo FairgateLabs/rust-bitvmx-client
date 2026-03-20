@@ -3,7 +3,7 @@ use crate::{
     participants::{
         committee::Committee,
         common::{
-            calculate_taproot_key_path_sighash, format_transaction_solidity, get_user_take_tx,
+            calculate_taproot_key_path_sighash, format_solidity_data_file, get_user_take_tx,
             PEGIN_CONFIRMATIONS,
         },
         member::Member,
@@ -246,7 +246,7 @@ pub fn cli_request_pegin() -> Result<()> {
 pub fn cli_reject_pegin() -> Result<()> {
     let (committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
 
-    let (txid, _) = request_pegin(&committee, &mut user)?;
+    let (txid, _, _) = request_pegin(&committee, &mut user)?;
 
     let member_index = 1;
     committee.members[member_index].reject_pegin(committee.committee_id(), txid, member_index)?;
@@ -267,7 +267,7 @@ pub fn cli_accept_pegin() -> Result<()> {
 pub fn cli_cancel_take0() -> Result<()> {
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
 
-    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    let (slot_index, _, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
     thread::sleep(Duration::from_secs(1));
 
     wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
@@ -296,7 +296,7 @@ pub fn cli_request_pegout() -> Result<()> {
 
 pub fn cli_advance_funds() -> Result<()> {
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
-    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    let (slot_index, _, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     advance_funds(&mut committee, user.public_key()?, slot_index, true)?;
     Ok(())
@@ -306,11 +306,11 @@ pub fn cli_advance_funds_twice() -> Result<()> {
     let (mut committee, mut user, _) = pegin_setup(2, NETWORK == Network::Regtest)?;
 
     // First advance should use funding UTXO
-    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    let (slot_index, _, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
     advance_funds(&mut committee, user.public_key()?, slot_index, true)?;
 
     // Second advance should use change UTXO and Operator Take UTXO
-    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    let (slot_index, _, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
     advance_funds(&mut committee, user.public_key()?, slot_index, true)?;
 
     Ok(())
@@ -322,70 +322,87 @@ pub fn cli_solidity_txs() -> Result<()> {
     }
 
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
-    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    let (slot_index, _, accept_pegin_tx, request_pegin_tx) =
+        request_and_accept_pegin(&mut committee, &mut user)?;
     let op_index = advance_funds(&mut committee, user.public_key()?, slot_index, false)?;
-    let operator = &committee.members[op_index];
+
+    let committee_agg_key = committee.public_key()?;
+    let dispute_keys = committee.get_dispute_keys();
+    let accept_pegin_txid = accept_pegin_tx.compute_txid();
 
     let committee_id = committee.committee_id();
     let accept_pegin_pid = get_accept_pegin_pid(committee_id, slot_index);
-    let dispute_core_pid =
-        get_dispute_core_pid(committee_id, &operator.keyring.take_pubkey.unwrap());
+    let dispute_core_pid = get_dispute_core_pid(
+        committee_id,
+        &committee.members[op_index].keyring.take_pubkey.unwrap(),
+    );
     let advance_funds_pid = get_advance_funds_pid(committee_id, slot_index);
 
-    // Advance funds transaction
-    get_and_print_transaction(operator, advance_funds_pid, ADVANCE_FUNDS_TX)?;
+    let op_take_name = indexed_name(OPERATOR_TAKE_TX, op_index);
+    let op_won_name = indexed_name(OPERATOR_WON_TX, op_index);
+    let reimb_name = indexed_name(REIMBURSEMENT_KICKOFF_TX, slot_index);
+    let challenge_name = indexed_name(CHALLENGE_TX, slot_index);
+    let reveal_name = indexed_name(REVEAL_INPUT_TX, slot_index);
 
-    // Accept pegin protocol transactions
-    get_and_print_transaction(operator, accept_pegin_pid, ACCEPT_PEGIN_TX)?;
-    get_and_print_transaction(
-        operator,
-        accept_pegin_pid,
-        &indexed_name(OPERATOR_TAKE_TX, op_index),
-    )?;
-    get_and_print_transaction(
-        operator,
-        accept_pegin_pid,
-        &indexed_name(OPERATOR_WON_TX, op_index),
-    )?;
+    let named_txs: Vec<(&str, Transaction)> = vec![
+        (
+            ADVANCE_FUNDS_TX,
+            get_transaction(&committee.members[op_index], advance_funds_pid, ADVANCE_FUNDS_TX)?,
+        ),
+        (
+            ACCEPT_PEGIN_TX,
+            get_transaction(&committee.members[op_index], accept_pegin_pid, ACCEPT_PEGIN_TX)?,
+        ),
+        (
+            &op_take_name,
+            get_transaction(&committee.members[op_index], accept_pegin_pid, &op_take_name)?,
+        ),
+        (
+            &op_won_name,
+            get_transaction(&committee.members[op_index], accept_pegin_pid, &op_won_name)?,
+        ),
+        (
+            &reimb_name,
+            get_transaction(&committee.members[op_index], dispute_core_pid, &reimb_name)?,
+        ),
+        (
+            &challenge_name,
+            get_transaction(
+                &committee.members[op_index + 1],
+                dispute_core_pid,
+                &challenge_name,
+            )?,
+        ),
+        (
+            &reveal_name,
+            get_transaction(&committee.members[op_index], dispute_core_pid, &reveal_name)?,
+        ),
+    ];
 
-    // Dispute core protocol transactions
-    get_and_print_transaction(
-        operator,
-        dispute_core_pid,
-        &indexed_name(REIMBURSEMENT_KICKOFF_TX, slot_index),
-    )?;
-    get_and_print_transaction(
-        &committee.members[op_index + 1],
-        dispute_core_pid,
-        &indexed_name(CHALLENGE_TX, slot_index),
-    )?;
-    get_and_print_transaction(
-        operator,
-        dispute_core_pid,
-        &indexed_name(REVEAL_INPUT_TX, slot_index),
-    )?;
+    let solidity_file = format_solidity_data_file(
+        &committee_agg_key,
+        &dispute_keys,
+        &request_pegin_tx,
+        accept_pegin_txid,
+        &named_txs,
+    );
 
+    let output_path = match std::env::var("EXAMPLE_LOG_DIR") {
+        Ok(log_dir) => std::path::PathBuf::from(log_dir).join("BitVMXCompatibilityData.sol"),
+        Err(_) => std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../BitVMXCompatibilityData.sol"),
+    };
+    std::fs::write(&output_path, &solidity_file)?;
+    info!("Written to: {}", output_path.display());
     Ok(())
 }
 
-fn get_and_print_transaction(
-    member: &Member,
-    protocol_id: Uuid,
-    tx_name: &str,
-) -> Result<Transaction> {
-    info!("Requesting TX: {}. Protocol ID: {}", tx_name, protocol_id);
+fn get_transaction(member: &Member, protocol_id: Uuid, tx_name: &str) -> Result<Transaction> {
     member
         .bitvmx
         .get_transaction_by_name(protocol_id, tx_name.to_string())?;
     thread::sleep(std::time::Duration::from_millis(200));
     let tx = wait_until_msg!(&member.bitvmx, OutgoingBitVMXApiMessages::TransactionInfo(_, _, _tx) => _tx);
-
-    info!("==========================================");
-    info!("Transaction name: {}", tx_name);
-    info!("Solidity Format:");
-    info!("\n\n{}\n\n", format_transaction_solidity(&tx));
-    info!("==========================================");
-
     Ok(tx)
 }
 
@@ -406,7 +423,7 @@ pub fn cli_challenge(winner: Option<&String>) -> Result<()> {
     };
 
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
-    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    let (slot_index, _, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     let op_index = 1;
     challenge(
@@ -447,7 +464,7 @@ pub fn cli_challenge_reason(input: Option<&String>) -> Result<()> {
     info!("Starting challenge with reason: {:?}", challenge_reason);
 
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
-    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    let (slot_index, _, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     let op_index = 1;
     challenge(
@@ -469,7 +486,7 @@ pub fn cli_wt_disabler() -> Result<()> {
     }
 
     let (mut committee, mut user, _) = pegin_setup(2, NETWORK == Network::Regtest)?;
-    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    let (slot_index, _, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     // First challenge where WT are penalized. Operator 0 wins.
     let op_index = 0;
@@ -492,7 +509,7 @@ pub fn cli_wt_disabler() -> Result<()> {
         get_blocks_to_wait() + additional_blocks as u32,
     )?;
 
-    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    let (slot_index, _, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     // Now Operator 1 is challenged
     // In this second challenge WTs are already penalized. WT_DISABLERs should be dispatched.
@@ -517,7 +534,7 @@ pub fn cli_op_no_cosign() -> Result<()> {
     }
 
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
-    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    let (slot_index, _, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     let op_index = 1;
     challenge(
@@ -552,7 +569,7 @@ pub fn cli_wt_no_challenge() -> Result<()> {
     }
 
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
-    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    let (slot_index, _, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
     let op_index = 1;
 
     challenge(
@@ -593,7 +610,7 @@ pub fn cli_input_not_revealed() -> Result<()> {
     }
 
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
-    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    let (slot_index, _, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
     wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
 
     let op_index = 1;
@@ -673,8 +690,8 @@ pub fn cli_double_challenge() -> Result<()> {
     let (mut committee, mut user, _) = pegin_setup(2, NETWORK == Network::Regtest)?;
 
     // Accept 2 pegins to have 2 operator take TXs to dispatch
-    let (slot_index, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
-    (_, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    let (slot_index, _, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
+    (_, _, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     let operator_id = 1;
     // Dispatch first reimbusement without advancing funds.
@@ -915,7 +932,7 @@ pub fn db_print_accept_pegin_tx(
     Ok(())
 }
 
-pub fn request_pegin(committee: &Committee, user: &mut User) -> Result<(Txid, u64)> {
+pub fn request_pegin(committee: &Committee, user: &mut User) -> Result<(Txid, u64, Transaction)> {
     let amount: u64 = STREAM_DENOMINATION;
     let committee_public_key = committee.public_key()?;
     let dispute_keys = committee.get_dispute_keys();
@@ -923,7 +940,7 @@ pub fn request_pegin(committee: &Committee, user: &mut User) -> Result<(Txid, u6
 
     db_print_dispute_keys(committee)?;
 
-    let request_pegin_txid = user.request_pegin(
+    let (request_pegin_txid, request_pegin_tx) = user.request_pegin(
         &committee_public_key,
         amount,
         dispute_keys.as_slice(),
@@ -941,14 +958,14 @@ pub fn request_pegin(committee: &Committee, user: &mut User) -> Result<(Txid, u6
 
     info!("Request pegin completed.");
     confirm_to_continue();
-    Ok((request_pegin_txid, amount))
+    Ok((request_pegin_txid, amount, request_pegin_tx))
 }
 
 pub fn request_and_accept_pegin(
     committee: &mut Committee,
     user: &mut User,
-) -> Result<(usize, u64, Transaction)> {
-    let (request_pegin_txid, amount) = request_pegin(committee, user)?;
+) -> Result<(usize, u64, Transaction, Transaction)> {
+    let (request_pegin_txid, amount, request_pegin_tx) = request_pegin(committee, user)?;
 
     // This came from the contracts
     let rootstock_address = user.get_rsk_address();
@@ -1002,12 +1019,12 @@ pub fn request_and_accept_pegin(
 
     info!("Pegin accepted and confirmed.");
     confirm_to_continue();
-    Ok((slot_index, amount, accept_pegin_tx))
+    Ok((slot_index, amount, accept_pegin_tx, request_pegin_tx))
 }
 
 pub fn request_pegout() -> Result<()> {
     let (mut committee, mut user, _) = pegin_setup(1, true)?;
-    let (slot_index, stream_value, accept_pegin_tx) =
+    let (slot_index, stream_value, accept_pegin_tx, _) =
         request_and_accept_pegin(&mut committee, &mut user)?;
 
     let user_pubkey = user.public_key()?;

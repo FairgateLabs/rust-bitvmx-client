@@ -103,7 +103,7 @@ impl User {
         stream_value: u64,
         dispute_keys: &[PublicKey],
         request_pegin_timelock: u16,
-    ) -> Result<Txid> {
+    ) -> Result<(Txid, Transaction)> {
         info!(id = self.id, "Requesting pegin");
 
         // Enable RSK pegin monitoring using the public API
@@ -136,7 +136,7 @@ impl User {
         info!("Sent request pegin Tx: {}", txid);
         print_link(self.network, txid);
 
-        Ok(txid)
+        Ok((txid, signed_transaction))
     }
 
     pub fn get_request_pegin_spv(&self, request_pegin_txid: Txid) -> Result<BtcTxSPVProof> {

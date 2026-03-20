@@ -144,6 +144,108 @@ pub fn format_transaction_solidity(tx: &Transaction) -> String {
     output
 }
 
+fn tx_name_to_fn_name(tx_name: &str) -> String {
+    let base = if let Some(pos) = tx_name.find("_TX") {
+        &tx_name[..pos]
+    } else {
+        tx_name
+    };
+
+    let pascal: String = base
+        .split('_')
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => {
+                    first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+                }
+            }
+        })
+        .collect();
+
+    format!("_getBitVMX{}Tx", pascal)
+}
+
+pub fn format_solidity_data_file(
+    committee_agg_key: &PublicKey,
+    dispute_keys: &[PublicKey],
+    request_pegin_tx: &Transaction,
+    accept_pegin_txid: Txid,
+    named_transactions: &[(&str, Transaction)],
+) -> String {
+    let mut s = String::new();
+
+    s.push_str("// SPDX-License-Identifier: Unlicense\n");
+    s.push_str("pragma solidity ^0.8.20;\n");
+    s.push_str("\n");
+    s.push_str("// GENERATED FILE - do not edit manually.\n");
+    s.push_str("// Run: ./examples/union/scripts/run-example.sh solidity_txs\n");
+    s.push_str("// from the rust-bitvmx-client directory.\n");
+    s.push_str("\n");
+    s.push_str(
+        "import {BtcTransaction, BtcTxIn, BtcTxOut} from \"src/interfaces/IBitcoinManager.sol\";\n",
+    );
+    s.push_str("import {CompactPubKey} from \"src/interfaces/IMemberRegistry.sol\";\n");
+    s.push_str("\n");
+    s.push_str("contract BitVMXCompatibilityData {\n");
+    s.push_str("    // All transactions below correspond to slot index 0 and operator index 1.\n");
+    s.push_str("    // These are fixed for testing purposes.\n");
+    s.push_str("\n");
+
+    let key_hex = committee_agg_key
+        .to_bytes()
+        .as_slice()
+        .to_lower_hex_string();
+    s.push_str("    bytes constant COMMITTEE_AGGREGATED_KEY =\n");
+    s.push_str(&format!("        hex\"{}\";\n", key_hex));
+    s.push_str("\n");
+
+    s.push_str("    bytes32 constant EXPECTED_ACCEPT_PEGIN_TXID =\n");
+    s.push_str(&format!("        0x{};\n", accept_pegin_txid));
+    s.push_str("\n");
+
+    s.push_str(
+        "    function _getBitVMXDisputeKeys() internal pure returns (CompactPubKey[] memory keys) {\n",
+    );
+    s.push_str(&format!(
+        "        keys = new CompactPubKey[]({});\n",
+        dispute_keys.len()
+    ));
+    for (i, key) in dispute_keys.iter().enumerate() {
+        let bytes = key.to_bytes();
+        let parity = bytes[0];
+        let x_only = &bytes[1..];
+        s.push_str(&format!(
+            "        keys[{}] = CompactPubKey({{parity: 0x{:02x}, xOnly: 0x{}}});\n",
+            i,
+            parity,
+            x_only.to_lower_hex_string()
+        ));
+    }
+    s.push_str("    }\n");
+    s.push_str("\n");
+
+    s.push_str("    function _getBitVMXRequestPeginTransaction() internal pure returns (BtcTransaction memory) {\n");
+    s.push_str(&format_transaction_solidity(request_pegin_tx));
+    s.push_str("\n    }\n");
+    s.push_str("\n");
+
+    for (name, tx) in named_transactions {
+        let fn_name = tx_name_to_fn_name(name);
+        s.push_str(&format!(
+            "    function {}() internal pure returns (BtcTransaction memory) {{\n",
+            fn_name
+        ));
+        s.push_str(&format_transaction_solidity(tx));
+        s.push_str("\n    }\n");
+        s.push_str("\n");
+    }
+
+    s.push_str("}\n");
+    s
+}
+
 pub fn prefixed_name(prefix: &str, name: &str) -> String {
     if prefix.is_empty() {
         return name.to_string();
