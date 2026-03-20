@@ -111,8 +111,18 @@ impl StoreKey {
     }
 }
 
+fn print_version_info() {
+    info!("BitVMX Client build information:");
+    info!("Version: {}", env!("CARGO_PKG_VERSION"));
+    info!("Commit date: {}", env!("GIT_DATE"));
+    info!("Git hash: {}", env!("GIT_HASH"));
+    info!("Git message: {}", env!("GIT_MESSAGE"));
+    info!("Git tag: {}", env!("GIT_TAG"));
+}
+
 impl BitVMX {
     pub fn new(config: Config) -> Result<Self, BitVMXError> {
+        print_version_info();
         let store = Rc::new(Storage::new(&config.storage)?);
         let key_manager =
             create_key_manager_from_config(&config.key_manager, &config.key_storage.clone())?;
