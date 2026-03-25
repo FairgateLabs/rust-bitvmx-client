@@ -34,8 +34,8 @@ use bitvmx_client::{
                 types::{
                     FundsAdvanced, ACCEPT_PEGIN_TX, ADVANCE_FUNDS_TX, CANCEL_TAKE0_TX,
                     CHALLENGE_TX, INPUT_NOT_REVEALED_TX, OPERATOR_TAKE_TX, OPERATOR_WON_TX,
-                    OP_SELF_DISABLER_TX, REIMBURSEMENT_KICKOFF_TX, REVEAL_INPUT_TX,
-                    WT_SELF_DISABLER_TX,
+                    OP_SELF_DISABLER_TX, REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX,
+                    REVEAL_INPUT_TX, WT_SELF_DISABLER_TX,
                     WT_START_ENABLER_TX,
                 },
             },
@@ -330,13 +330,12 @@ pub fn cli_solidity_txs() -> Result<()> {
     }
 
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
-    let (slot_index, _, accept_pegin_tx, request_pegin_tx) =
+    let (slot_index, _, _, request_pegin_tx) =
         request_and_accept_pegin(&mut committee, &mut user)?;
     let op_index = advance_funds(&mut committee, user.public_key()?, slot_index, false)?;
 
     let committee_agg_key = committee.public_key()?;
     let dispute_keys = committee.get_dispute_keys();
-    let accept_pegin_txid = accept_pegin_tx.compute_txid();
 
     let committee_id = committee.committee_id();
     let accept_pegin_pid = get_accept_pegin_pid(committee_id, slot_index);
@@ -354,6 +353,7 @@ pub fn cli_solidity_txs() -> Result<()> {
     let input_not_revealed_name = indexed_name(INPUT_NOT_REVEALED_TX, slot_index);
 
     let named_txs: Vec<(&str, Transaction)> = vec![
+        (REQUEST_PEGIN_TX, request_pegin_tx),
         (
             ADVANCE_FUNDS_TX,
             get_transaction(&committee.members[op_index], advance_funds_pid, ADVANCE_FUNDS_TX)?,
@@ -401,8 +401,6 @@ pub fn cli_solidity_txs() -> Result<()> {
         &dispute_keys,
         &user.public_key()?,
         &TESTING_PEGOUT_ID,
-        &request_pegin_tx,
-        accept_pegin_txid,
         &named_txs,
     );
 
