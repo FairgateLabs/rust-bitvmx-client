@@ -2,11 +2,14 @@ use crate::{
     bitvmx::Context,
     errors::BitVMXError,
     program::{
-        participant::ParticipantRole::{self, Prover, Verifier},
+        participant::ParticipantRole,
         protocols::{
-            claim::ClaimGate, dispute::{self}, gc_drp, protocol_handler::{
-                ProtocolHandler, WithClaimGateConfig, ClaimGateConfig, action_wins, action_wins_prefix, get_tx_name_from_timeout, timeout_input_tx, timeout_tx
-            }
+            claim::ClaimGate,
+            dispute,
+            protocol_handler::{
+                action_wins, action_wins_prefix, get_tx_name_from_timeout, timeout_input_tx,
+                timeout_tx, ClaimGateConfig, ProtocolHandler, WithClaimGateConfig,
+            },
         },
     },
     types::ProgramContext,
@@ -77,18 +80,6 @@ pub struct TxOwnershipTable {
 }
 
 impl TxOwnershipTable {
-    pub fn new_for_gc_drp() -> Self {
-        let mut table = TxOwnershipTable { txs: vec![] };
-        table.add(gc_drp::START_CH, Verifier);
-        table.add(gc_drp::COMMITMENT, Prover);
-        table.add(gc_drp::CHALLENGE, Verifier);
-        table.add(gc_drp::INPUT, Prover);
-        table.add(gc_drp::EQUIVOCATION, Verifier);
-        table.add(gc_drp::VERIFIER_FINAL, Verifier);
-
-        table
-    }
-
     pub fn is_my_tx(&self, tx_name: &str, drp_role: ParticipantRole) -> bool {
         self.txs
             .iter()
@@ -207,7 +198,10 @@ pub fn cancel_timeout<T: ProtocolHandler + WithClaimGateConfig>(
     Ok(())
 }
 
-fn get_claim_name<T: ProtocolHandler + WithClaimGateConfig>(protocol_handler: &T, other: bool) -> String {
+fn get_claim_name<T: ProtocolHandler + WithClaimGateConfig>(
+    protocol_handler: &T,
+    other: bool,
+) -> String {
     let (role, other_role) = match protocol_handler.role() {
         ParticipantRole::Prover => (dispute::PROVER_WINS, dispute::VERIFIER_WINS),
         ParticipantRole::Verifier => (dispute::VERIFIER_WINS, dispute::PROVER_WINS),
@@ -265,7 +259,9 @@ pub fn claim_state_handle<T: ProtocolHandler + WithClaimGateConfig>(
     let my_claim = get_claim_name(protocol_handler, false);
     let other_claim = get_claim_name(protocol_handler, true);
     // start claim
-    if name == ClaimGate::tx_start(dispute::PROVER_WINS) || name == ClaimGate::tx_start(dispute::VERIFIER_WINS) {
+    if name == ClaimGate::tx_start(dispute::PROVER_WINS)
+        || name == ClaimGate::tx_start(dispute::VERIFIER_WINS)
+    {
         // my start
         if name == ClaimGate::tx_start(&my_claim) {
             info!("{my_claim} SUCCESS dispatch");
@@ -311,8 +307,7 @@ pub fn claim_state_handle<T: ProtocolHandler + WithClaimGateConfig>(
         || (name == ClaimGate::tx_success(dispute::VERIFIER_WINS)
             && protocol_handler.role() == ParticipantRole::Verifier)
     {
-        let config =
-            T::Config::load(&protocol_handler.context().id, &program_context.globals)?;
+        let config = T::Config::load(&protocol_handler.context().id, &program_context.globals)?;
         let actions = match protocol_handler.role() {
             ParticipantRole::Prover => &config.get_prover_actions(),
             ParticipantRole::Verifier => &config.get_verifier_actions(),
@@ -341,9 +336,8 @@ pub fn claim_state_handle<T: ProtocolHandler + WithClaimGateConfig>(
     if name.starts_with(&action_wins_prefix(&ParticipantRole::Prover))
         || name.starts_with(&action_wins_prefix(&ParticipantRole::Verifier))
     {
-        let config =
-            T::Config::load(&protocol_handler.context().id, &program_context.globals)?;
-            
+        let config = T::Config::load(&protocol_handler.context().id, &program_context.globals)?;
+
         for (protocol_name, protocol_id) in config.get_notify_protocol() {
             let protocol = protocol_handler.load_protocol_by_name(&protocol_name, *protocol_id)?;
             info!(

@@ -23,7 +23,11 @@ use crate::{
     bitvmx::Context,
     errors::BitVMXError,
     program::{
-        participant::{CommsAddress, ParticipantKeys, ParticipantRole, PublicKeyType},
+        participant::{
+            CommsAddress, ParticipantKeys,
+            ParticipantRole::{self, Prover, Verifier},
+            PublicKeyType,
+        },
         protocols::{
             claim::ClaimGate,
             dispute::{self, input_handler::set_inputs},
@@ -35,9 +39,7 @@ use crate::{
         },
         variables::{Globals, PartialUtxo, VariableTypes},
     },
-    types::{
-        IncomingBitVMXApiMessages, ParticipantChannel, ProgramContext, PROGRAM_TYPE_GC_DRP,
-    },
+    types::{IncomingBitVMXApiMessages, ParticipantChannel, ProgramContext, PROGRAM_TYPE_GC_DRP},
 };
 
 use super::protocol_handler::{ProtocolContext, ProtocolHandler};
@@ -520,7 +522,7 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
 
         let config = GCDisputeConfiguration::load(&self.context().id, &program_context.globals)?;
 
-        let ownership_table = TxOwnershipTable::new_for_gc_drp();
+        let ownership_table = Self::create_ownership_table();
 
         cancel_timeout(self, &name, vout, program_context, &ownership_table)?;
 
@@ -700,5 +702,17 @@ impl GCDisputeResolutionProtocol {
         );
 
         Ok((tx, speedup_data))
+    }
+
+    fn create_ownership_table() -> TxOwnershipTable {
+        let mut table = TxOwnershipTable { txs: vec![] };
+        table.add(START_CH, Verifier);
+        table.add(COMMITMENT, Prover);
+        table.add(CHALLENGE, Verifier);
+        table.add(INPUT, Prover);
+        table.add(EQUIVOCATION, Verifier);
+        table.add(VERIFIER_FINAL, Verifier);
+
+        table
     }
 }
