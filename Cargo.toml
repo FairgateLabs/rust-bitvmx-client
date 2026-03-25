@@ -55,6 +55,7 @@ bitvmx-wallet = { git = "https://github.com/FairgateLabs/rust-bitvmx-wallet.git"
 bitvmx-job-dispatcher-types = { git = "https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher", features = [
     "emulator",
     "prover",
+    "garbled",
 ], tag = "v0.6.1" }
 bitvmx-job-dispatcher = { git = "https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher", tag = "v0.6.1" }
 bitvmx-dispatcher-utils = { git = "https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher", tag = "v0.6.1" }
