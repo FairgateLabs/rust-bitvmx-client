@@ -36,7 +36,7 @@ use crate::{
         variables::{Globals, PartialUtxo, VariableTypes},
     },
     types::{
-        IncomingBitVMXApiMessages, ParticipantChannel, ProgramContext, PROGRAM_TYPE_LIGHT_DRP,
+        IncomingBitVMXApiMessages, ParticipantChannel, ProgramContext, PROGRAM_TYPE_GC_DRP,
     },
 };
 
@@ -60,7 +60,7 @@ pub const PROVER_WINS: &str = dispute::PROVER_WINS;
 pub const VERIFIER_WINS: &str = dispute::VERIFIER_WINS;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct LightDisputeConfiguration {
+pub struct GCDisputeConfiguration {
     pub id: Uuid,
     pub funding_utxo: PartialUtxo,
     pub pair_0_1_aggregated: PublicKey,
@@ -72,8 +72,8 @@ pub struct LightDisputeConfiguration {
     pub notify_protocol: Vec<(String, Uuid)>,
 }
 
-impl LightDisputeConfiguration {
-    pub const NAME: &'static str = "light_dispute_configuration";
+impl GCDisputeConfiguration {
+    pub const NAME: &'static str = "gc_dispute_configuration";
 
     pub fn new(
         program_id: Uuid,
@@ -100,8 +100,8 @@ impl LightDisputeConfiguration {
     }
 
     pub fn load(id: &Uuid, globals: &Globals) -> Result<Self, BitVMXError> {
-        let light_dispute_configuration = globals.get_var_or_err(id, Self::NAME)?.string()?;
-        Ok(serde_json::from_str(&light_dispute_configuration)?)
+        let gc_dispute_configuration = globals.get_var_or_err(id, Self::NAME)?.string()?;
+        Ok(serde_json::from_str(&gc_dispute_configuration)?)
     }
 
     fn get_setup_messages(
@@ -113,7 +113,7 @@ impl LightDisputeConfiguration {
             VariableTypes::String(serde_json::to_string(&self)?).set_msg(self.id, Self::NAME)?,
             IncomingBitVMXApiMessages::Setup(
                 self.id,
-                PROGRAM_TYPE_LIGHT_DRP.to_string(),
+                PROGRAM_TYPE_GC_DRP.to_string(),
                 addresses,
                 leader,
             )
@@ -136,9 +136,9 @@ impl LightDisputeConfiguration {
     }
 }
 
-impl ClaimGateConfig for LightDisputeConfiguration {
+impl ClaimGateConfig for GCDisputeConfiguration {
     fn load(id: &Uuid, globals: &Globals) -> Result<Self, BitVMXError> {
-        LightDisputeConfiguration::load(id, globals)
+        GCDisputeConfiguration::load(id, globals)
     }
 
     fn get_notify_protocol(&self) -> &Vec<(String, Uuid)> {
@@ -155,11 +155,11 @@ impl ClaimGateConfig for LightDisputeConfiguration {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct LightDisputeResolutionProtocol {
+pub struct GCDisputeResolutionProtocol {
     ctx: ProtocolContext,
 }
 
-impl ProtocolHandler for LightDisputeResolutionProtocol {
+impl ProtocolHandler for GCDisputeResolutionProtocol {
     fn context(&self) -> &ProtocolContext {
         &self.ctx
     }
@@ -172,7 +172,7 @@ impl ProtocolHandler for LightDisputeResolutionProtocol {
         &self,
         context: &ProgramContext,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
-        let config = LightDisputeConfiguration::load(&self.ctx.id, &context.globals)?;
+        let config = GCDisputeConfiguration::load(&self.ctx.id, &context.globals)?;
 
         Ok(vec![(
             "pregenerated".to_string(),
@@ -248,7 +248,7 @@ impl ProtocolHandler for LightDisputeResolutionProtocol {
             (SignMode::Skip, SignMode::Single)
         };
 
-        let config = LightDisputeConfiguration::load(&self.ctx.id, &context.globals)?;
+        let config = GCDisputeConfiguration::load(&self.ctx.id, &context.globals)?;
 
         let timelock_blocks = config.timelock_blocks;
 
@@ -518,9 +518,9 @@ impl ProtocolHandler for LightDisputeResolutionProtocol {
             current_height,
         );
 
-        let config = LightDisputeConfiguration::load(&self.context().id, &program_context.globals)?;
+        let config = GCDisputeConfiguration::load(&self.context().id, &program_context.globals)?;
 
-        let ownership_table = TxOwnershipTable::new_for_light_drp();
+        let ownership_table = TxOwnershipTable::new_for_gc_drp();
 
         cancel_timeout(self, &name, vout, program_context, &ownership_table)?;
 
@@ -638,9 +638,9 @@ impl ProtocolHandler for LightDisputeResolutionProtocol {
     }
 }
 
-impl WithClaimGateConfig for LightDisputeResolutionProtocol {
-    type Config = LightDisputeConfiguration;
-    const PROGRAM_TYPE: &'static str = PROGRAM_TYPE_LIGHT_DRP;
+impl WithClaimGateConfig for GCDisputeResolutionProtocol {
+    type Config = GCDisputeConfiguration;
+    const PROGRAM_TYPE: &'static str = PROGRAM_TYPE_GC_DRP;
 
     fn role(&self) -> ParticipantRole {
         if self.context().my_idx == 0 {
@@ -651,7 +651,7 @@ impl WithClaimGateConfig for LightDisputeResolutionProtocol {
     }
 }
 
-impl LightDisputeResolutionProtocol {
+impl GCDisputeResolutionProtocol {
     pub fn new(ctx: ProtocolContext) -> Self {
         Self { ctx }
     }

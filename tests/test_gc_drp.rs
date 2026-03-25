@@ -5,7 +5,7 @@ use bitvmx_client::{
     program::{
         participant::{CommsAddress, ParticipantRole},
         protocols::{
-            light_drp::{LightDisputeConfiguration, START_CH},
+            gc_drp::{GCDisputeConfiguration, START_CH},
             protocol_handler::action_wins,
         },
     },
@@ -141,7 +141,7 @@ pub fn test_protocol() -> Result<()> {
 
     let test_enabler = OutputType::segwit_key(540, &pair_0_1_agg_pub_key).unwrap();
 
-    let light_drp_config = LightDisputeConfiguration::new(
+    let gc_drp_config = GCDisputeConfiguration::new(
         prog_id,
         (
             utxo.txid,
@@ -175,7 +175,7 @@ pub fn test_protocol() -> Result<()> {
     );
 
     info!("Setup start");
-    light_drp_config.setup(&pair_0_1_channels, pair_0_1, 1)?;
+    gc_drp_config.setup(&pair_0_1_channels, pair_0_1, 1)?;
 
     let msg = helper.wait_msg(0)?;
     info!("Setup dispute done: {:?}", msg);

@@ -28,13 +28,13 @@ use crate::program::participant::ParticipantRole;
 use crate::program::protocols::claim::ClaimGate;
 #[cfg(feature = "union")]
 use crate::program::protocols::union::full_penalization::FullPenalizationProtocol;
-use crate::program::protocols::{dispute, light_drp};
+use crate::program::protocols::{dispute, gc_drp};
 
 use super::aggregated_key::AggregatedKeyProtocol;
 #[cfg(feature = "cardinal")]
 use super::cardinal::{lock::LockProtocol, slot::SlotProtocol, transfer::TransferProtocol};
 use super::dispute::DisputeResolutionProtocol;
-use super::light_drp::LightDisputeResolutionProtocol;
+use super::gc_drp::GCDisputeResolutionProtocol;
 
 #[cfg(feature = "union")]
 use crate::program::protocols::union::{
@@ -46,7 +46,7 @@ use crate::program::protocols::union::{
 #[cfg(feature = "union")]
 use crate::types::{
     PROGRAM_TYPE_ACCEPT_PEGIN, PROGRAM_TYPE_ADVANCE_FUNDS, PROGRAM_TYPE_DISPUTE_CORE,
-    PROGRAM_TYPE_FULL_PENALIZATION, PROGRAM_TYPE_LIGHT_DRP, PROGRAM_TYPE_PAIRWISE_PENALIZATION,
+    PROGRAM_TYPE_FULL_PENALIZATION, PROGRAM_TYPE_GC_DRP, PROGRAM_TYPE_PAIRWISE_PENALIZATION,
     PROGRAM_TYPE_REJECT_PEGIN, PROGRAM_TYPE_USER_TAKE,
 };
 
@@ -801,7 +801,7 @@ pub trait ProtocolHandler {
 
         // if the previous party does not present the input in time, the other party can also consume the connector output of the connection
         // so is not forced to reply (as the reply will have a timelock that would allow the dihonest party to start a claim)
-        if from != dispute::START_CH && from != light_drp::START_CH {
+        if from != dispute::START_CH && from != gc_drp::START_CH {
             protocol.add_connection(
                 &format!("{}__CONNECTOR__INPUT_TO", from),
                 from,
@@ -995,7 +995,7 @@ impl ProtocolContext {
 pub enum ProtocolType {
     AggregatedKeyProtocol,
     DisputeResolutionProtocol,
-    LightDisputeResolutionProtocol,
+    GCDisputeResolutionProtocol,
     #[cfg(feature = "cardinal")]
     LockProtocol,
     #[cfg(feature = "cardinal")]
@@ -1034,8 +1034,8 @@ pub fn new_protocol_type(
         PROGRAM_TYPE_DRP => Ok(ProtocolType::DisputeResolutionProtocol(
             DisputeResolutionProtocol::new(ctx),
         )),
-        PROGRAM_TYPE_LIGHT_DRP => Ok(ProtocolType::LightDisputeResolutionProtocol(
-            LightDisputeResolutionProtocol::new(ctx),
+        PROGRAM_TYPE_GC_DRP => Ok(ProtocolType::GCDisputeResolutionProtocol(
+            GCDisputeResolutionProtocol::new(ctx),
         )),
         #[cfg(feature = "cardinal")]
         PROGRAM_TYPE_LOCK => Ok(ProtocolType::LockProtocol(LockProtocol::new(ctx))),

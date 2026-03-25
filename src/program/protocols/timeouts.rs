@@ -4,7 +4,7 @@ use crate::{
     program::{
         participant::ParticipantRole::{self, Prover, Verifier},
         protocols::{
-            claim::ClaimGate, dispute::{self, input_tx_name}, light_drp, protocol_handler::{
+            claim::ClaimGate, dispute::{self, input_tx_name}, gc_drp, protocol_handler::{
                 ProtocolHandler, WithClaimGateConfig, ClaimGateConfig, action_wins, action_wins_prefix, get_tx_name_from_timeout, timeout_input_tx, timeout_tx
             }
         },
@@ -77,14 +77,14 @@ pub struct TxOwnershipTable {
 }
 
 impl TxOwnershipTable {
-    pub fn new_for_light_drp() -> Self {
+    pub fn new_for_gc_drp() -> Self {
         let mut table = TxOwnershipTable { txs: vec![] };
-        table.add(light_drp::START_CH, Verifier);
-        table.add(light_drp::COMMITMENT, Prover);
-        table.add(light_drp::CHALLENGE, Verifier);
-        table.add(light_drp::INPUT, Prover);
-        table.add(light_drp::EQUIVOCATION, Verifier);
-        table.add(light_drp::VERIFIER_FINAL, Verifier);
+        table.add(gc_drp::START_CH, Verifier);
+        table.add(gc_drp::COMMITMENT, Prover);
+        table.add(gc_drp::CHALLENGE, Verifier);
+        table.add(gc_drp::INPUT, Prover);
+        table.add(gc_drp::EQUIVOCATION, Verifier);
+        table.add(gc_drp::VERIFIER_FINAL, Verifier);
 
         table
     }
