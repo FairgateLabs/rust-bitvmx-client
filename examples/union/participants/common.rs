@@ -171,6 +171,7 @@ pub fn format_solidity_data_file(
     committee_agg_key: &PublicKey,
     dispute_keys: &[PublicKey],
     user_pubkey: &PublicKey,
+    pegout_id: &[u8; 32],
     request_pegin_tx: &Transaction,
     accept_pegin_txid: Txid,
     named_transactions: &[(&str, Transaction)],
@@ -209,6 +210,13 @@ pub fn format_solidity_data_file(
     let user_key_hex = user_pubkey.to_bytes().as_slice().to_lower_hex_string();
     s.push_str("    bytes constant USER_COMPRESSED_PUBKEY =\n");
     s.push_str(&format!("        hex\"{}\";\n", user_key_hex));
+    s.push_str("\n");
+
+    s.push_str("    bytes32 constant PEGOUT_ID =\n");
+    s.push_str(&format!(
+        "        0x{};\n",
+        pegout_id.as_slice().to_lower_hex_string()
+    ));
     s.push_str("\n");
 
     s.push_str(

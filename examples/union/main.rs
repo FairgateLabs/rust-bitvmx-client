@@ -60,6 +60,13 @@ mod wallet;
 pub const NETWORK: Network = Network::Regtest;
 pub const STREAM_DENOMINATION: u64 = 100_000;
 
+// Fixed pegout ID used for testing (equivalent to bytes32(uint256(1)) in Solidity)
+pub const TESTING_PEGOUT_ID: [u8; 32] = {
+    let mut id = [0u8; 32];
+    id[31] = 1;
+    id
+};
+
 static mut SLOT_INDEX_COUNTER: usize = 0;
 
 pub fn main() -> Result<()> {
@@ -383,6 +390,7 @@ pub fn cli_solidity_txs() -> Result<()> {
         &committee_agg_key,
         &dispute_keys,
         &user.public_key()?,
+        &TESTING_PEGOUT_ID,
         &request_pegin_tx,
         accept_pegin_txid,
         &named_txs,
@@ -1075,7 +1083,7 @@ pub fn advance_funds(
     should_wait: bool,
 ) -> Result<usize> {
     // This came from the contracts
-    let pegout_id = vec![0; 32]; // Placeholder for the actual peg-out ID
+    let pegout_id = TESTING_PEGOUT_ID.to_vec();
 
     // Get the selected operator's take public key (simulating what Union Client would provide)
     let operator_id = 1; // Placeholder for the actual operator ID
