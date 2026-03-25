@@ -33,8 +33,9 @@ use bitvmx_client::{
                 },
                 types::{
                     FundsAdvanced, ACCEPT_PEGIN_TX, ADVANCE_FUNDS_TX, CANCEL_TAKE0_TX,
-                    CHALLENGE_TX, OPERATOR_TAKE_TX, OPERATOR_WON_TX, OP_SELF_DISABLER_TX,
-                    REIMBURSEMENT_KICKOFF_TX, REVEAL_INPUT_TX, WT_SELF_DISABLER_TX,
+                    CHALLENGE_TX, INPUT_NOT_REVEALED_TX, OPERATOR_TAKE_TX, OPERATOR_WON_TX,
+                    OP_SELF_DISABLER_TX, REIMBURSEMENT_KICKOFF_TX, REVEAL_INPUT_TX,
+                    WT_SELF_DISABLER_TX,
                     WT_START_ENABLER_TX,
                 },
             },
@@ -350,6 +351,7 @@ pub fn cli_solidity_txs() -> Result<()> {
     let reimb_name = indexed_name(REIMBURSEMENT_KICKOFF_TX, slot_index);
     let challenge_name = indexed_name(CHALLENGE_TX, slot_index);
     let reveal_name = indexed_name(REVEAL_INPUT_TX, slot_index);
+    let input_not_revealed_name = indexed_name(INPUT_NOT_REVEALED_TX, slot_index);
 
     let named_txs: Vec<(&str, Transaction)> = vec![
         (
@@ -383,6 +385,14 @@ pub fn cli_solidity_txs() -> Result<()> {
         (
             &reveal_name,
             get_transaction(&committee.members[op_index], dispute_core_pid, &reveal_name)?,
+        ),
+        (
+            &input_not_revealed_name,
+            get_transaction(
+                &committee.members[op_index + 1],
+                dispute_core_pid,
+                &input_not_revealed_name,
+            )?,
         ),
     ];
 

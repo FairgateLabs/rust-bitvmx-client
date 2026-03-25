@@ -546,6 +546,8 @@ impl ProtocolHandler for DisputeCoreProtocol {
             Ok(self.challenge_tx(name, context)?)
         } else if name.starts_with(REVEAL_INPUT_TX) {
             Ok(self.reveal_input_tx(name, context)?)
+        } else if name.starts_with(INPUT_NOT_REVEALED_TX) {
+            Ok(self.input_not_revealed_tx(name, context)?)
         } else if name == WT_SELF_DISABLER_TX || name == OP_SELF_DISABLER_TX {
             Ok(self.sign_aggregated_input(name, context, false)?)
         } else if name.starts_with(WT_INIT_CHALLENGE_TX) {
