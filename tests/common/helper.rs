@@ -532,7 +532,7 @@ fn run_garbled(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<
         let storage_path = format!("/tmp/garbled_storage_{i}.db");
         clear_db(&storage_path);
         let garbled_dispatcher =
-            DispatcherHandler::<GarbledJobType>::new_with_path(channel, &storage_path)?;
+            DispatcherHandler::<GarbledJobType>::new_with_path(channel, &storage_path, None, true)?;
         instances.push(garbled_dispatcher);
     }
 

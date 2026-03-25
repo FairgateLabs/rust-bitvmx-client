@@ -306,7 +306,8 @@ fn run_garbled_dispatcher(port: u16, stop_rx: Receiver<()>, storage_path: &str) 
     );
     let channel = DualChannel::new(&config, cert, Some(1), allow_list)?;
 
-    let mut dispatcher = DispatcherHandler::<GarbledJobType>::new_with_path(channel, storage_path)?;
+    let mut dispatcher =
+        DispatcherHandler::<GarbledJobType>::new_with_path(channel, storage_path, None, true)?;
 
     loop {
         if stop_rx.try_recv().is_ok() {
