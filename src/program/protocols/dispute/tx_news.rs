@@ -54,7 +54,10 @@ fn create_ownership_table(
         return Err(TxOwnershipTable::invalid_inputs(&inputs));
     }
 
-    let mut table = TxOwnershipTable { txs: vec![] };
+    let mut table = TxOwnershipTable::new();
+    table.add_ignored(START_CH.to_string());
+    table.add_ignored(VERIFIER_FINAL.to_string());
+
     table.add(START_CH, Verifier);
 
     for (index, owner) in &inputs {

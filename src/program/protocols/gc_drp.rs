@@ -29,14 +29,14 @@ use crate::{
             PublicKeyType,
         },
         protocols::{
-            claim::{ClaimGate, auto_claim_start, claim_state_handle},
+            claim::{auto_claim_start, claim_state_handle, ClaimGate},
             dispute::{self, input_handler::set_inputs},
-            protocol_handler::{ClaimGateConfig, WithClaimGateConfig, timeout_input_tx},
-            timeouts::{TxOwnershipTable, auto_dispatch_timeout, cancel_timeout, dispatch},
+            protocol_handler::{timeout_input_tx, ClaimGateConfig, WithClaimGateConfig},
+            timeouts::{auto_dispatch_timeout, cancel_timeout, dispatch, TxOwnershipTable},
         },
         variables::{Globals, PartialUtxo, VariableTypes},
     },
-    types::{IncomingBitVMXApiMessages, PROGRAM_TYPE_GC_DRP, ParticipantChannel, ProgramContext},
+    types::{IncomingBitVMXApiMessages, ParticipantChannel, ProgramContext, PROGRAM_TYPE_GC_DRP},
 };
 
 use super::protocol_handler::{ProtocolContext, ProtocolHandler};
@@ -702,7 +702,10 @@ impl GCDisputeResolutionProtocol {
     }
 
     fn create_ownership_table() -> TxOwnershipTable {
-        let mut table = TxOwnershipTable { txs: vec![] };
+        let mut table = TxOwnershipTable::new();
+        table.add_ignored(START_CH.to_string());
+        table.add_ignored(VERIFIER_FINAL.to_string());
+
         table.add(START_CH, Verifier);
         table.add(COMMITMENT, Prover);
         table.add(CHALLENGE, Verifier);

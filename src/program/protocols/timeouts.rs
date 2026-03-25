@@ -3,11 +3,8 @@ use crate::{
     errors::BitVMXError,
     program::{
         participant::ParticipantRole,
-        protocols::{
-            dispute,
-            protocol_handler::{
-                timeout_input_tx, timeout_tx, ProtocolHandler, WithClaimGateConfig,
-            },
+        protocols::protocol_handler::{
+            timeout_input_tx, timeout_tx, ProtocolHandler, WithClaimGateConfig,
         },
     },
     types::ProgramContext,
@@ -75,9 +72,17 @@ impl TxOwnership {
 
 pub struct TxOwnershipTable {
     pub txs: Vec<TxOwnership>,
+    pub ignored_input_txs: Vec<String>,
 }
 
 impl TxOwnershipTable {
+    pub fn new() -> Self {
+        Self {
+            txs: vec![],
+            ignored_input_txs: vec![],
+        }
+    }
+
     pub fn is_my_tx(&self, tx_name: &str, drp_role: ParticipantRole) -> bool {
         self.txs
             .iter()
@@ -115,11 +120,11 @@ impl TxOwnershipTable {
                     None
                 }
             } else {
-                // if the observed tx is owned by the other party, I need to force to include the input (except for START_CHALLENGE)
-                if name != dispute::START_CH && name != dispute::VERIFIER_FINAL {
-                    Some((timeout_input_tx(name), true))
-                } else {
+                if self.ignored_input_txs.contains(&name.to_string()) {
                     None
+                } else {
+                    // if the observed tx is owned by the other party, I need to force to include the input
+                    Some((timeout_input_tx(name), true))
                 }
             }
         } else {
@@ -129,6 +134,10 @@ impl TxOwnershipTable {
 
     pub fn add(&mut self, tx_name: &str, owner: ParticipantRole) {
         self.txs.push(TxOwnership::new(tx_name, owner));
+    }
+
+    pub fn add_ignored(&mut self, tx_name: String) {
+        self.ignored_input_txs.push(tx_name);
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&String, &ParticipantRole)> {
@@ -175,7 +184,10 @@ pub fn cancel_timeout<T: ProtocolHandler + WithClaimGateConfig>(
     program_context: &ProgramContext,
     ownership_table: &TxOwnershipTable,
 ) -> Result<(), BitVMXError> {
-    if name == dispute::START_CH || name == dispute::VERIFIER_FINAL {
+    if ownership_table
+        .ignored_input_txs
+        .contains(&name.to_string())
+    {
         return Ok(());
     }
 
