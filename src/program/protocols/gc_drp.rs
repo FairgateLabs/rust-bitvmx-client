@@ -29,17 +29,14 @@ use crate::{
             PublicKeyType,
         },
         protocols::{
-            claim::ClaimGate,
+            claim::{ClaimGate, auto_claim_start, claim_state_handle},
             dispute::{self, input_handler::set_inputs},
-            protocol_handler::{timeout_input_tx, ClaimGateConfig, WithClaimGateConfig},
-            timeouts::{
-                auto_claim_start, auto_dispatch_timeout, cancel_timeout, claim_state_handle,
-                dispatch, TxOwnershipTable,
-            },
+            protocol_handler::{ClaimGateConfig, WithClaimGateConfig, timeout_input_tx},
+            timeouts::{TxOwnershipTable, auto_dispatch_timeout, cancel_timeout, dispatch},
         },
         variables::{Globals, PartialUtxo, VariableTypes},
     },
-    types::{IncomingBitVMXApiMessages, ParticipantChannel, ProgramContext, PROGRAM_TYPE_GC_DRP},
+    types::{IncomingBitVMXApiMessages, PROGRAM_TYPE_GC_DRP, ParticipantChannel, ProgramContext},
 };
 
 use super::protocol_handler::{ProtocolContext, ProtocolHandler};

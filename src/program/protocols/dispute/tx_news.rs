@@ -4,7 +4,7 @@ use crate::{
     program::{
         participant::ParticipantRole::{self, Prover, Verifier},
         protocols::{
-            claim::ClaimGate,
+            claim::{auto_claim_start, claim_state_handle, ClaimGate},
             dispute::{
                 challenge::READ_VALUE_NARY_SEARCH_CHALLENGE,
                 config::{DisputeConfiguration, ForceFailConfiguration},
@@ -17,8 +17,7 @@ use crate::{
             },
             protocol_handler::{timeout_input_tx, ProtocolHandler, WithClaimGateConfig},
             timeouts::{
-                auto_claim_start, auto_dispatch_timeout, cancel_timeout, claim_state_handle,
-                dispatch, execute_job, TxOwnershipTable,
+                auto_dispatch_timeout, cancel_timeout, dispatch, execute_job, TxOwnershipTable,
             },
         },
         variables::VariableTypes,
