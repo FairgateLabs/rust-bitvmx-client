@@ -52,6 +52,12 @@ components:
   prover:
     pubkey_hash: 054dba5c41ee2926a7d909cc3443fa78f2f2e257cb1d008fd75e0d3534e3ba0d
     id: 0
+  garbler:
+    pubkey_hash: cca0b69255be0d66bc92fdc219425c51fffc15d90f4cc75574e77a284646bcf2
+    id: 0
+  garbler:
+    priv_key: config/keys/garbler.key
+    id: 0
 testing:
   l2:
     priv_key: config/keys/l2.key

@@ -70,6 +70,7 @@ pub struct TestConfig {
     pub l2: ComponentConfig,
     pub emulator: ComponentConfig,
     pub prover: ComponentConfig,
+    pub garbler: ComponentConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -78,6 +79,7 @@ pub struct ComponentsConfig {
     pub bitvmx: Identifier,
     pub emulator: Identifier,
     pub prover: Identifier,
+    pub garbler: Identifier,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
