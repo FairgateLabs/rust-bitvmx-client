@@ -4,7 +4,7 @@ use crate::{
     program::{
         participant::ParticipantRole::{self, Prover, Verifier},
         protocols::{
-            claim::ClaimGate, dispute::{self, input_tx_name}, gc_drp, protocol_handler::{
+            claim::ClaimGate, dispute::{self}, gc_drp, protocol_handler::{
                 ProtocolHandler, WithClaimGateConfig, ClaimGateConfig, action_wins, action_wins_prefix, get_tx_name_from_timeout, timeout_input_tx, timeout_tx
             }
         },
@@ -88,52 +88,6 @@ impl TxOwnershipTable {
 
         table
     }
-    pub fn new_for_drp(rounds: u8, inputs: Vec<(usize, String)>) -> Result<Self, BitVMXError> {
-        if rounds == 0 || inputs.is_empty() {
-            return Err(Self::invalid_inputs(&inputs));
-        }
-
-        let mut table = TxOwnershipTable { txs: vec![] };
-        table.add(dispute::START_CH, Verifier);
-
-        for (index, owner) in &inputs {
-            let owner = if owner.as_str() == "verifier" {
-                Verifier
-            } else {
-                Prover
-            };
-
-            table.add(&input_tx_name(*index as u32), owner);
-        }
-
-        //requires that the last input is owned by the prover, otherwise the sequence of timeout txs cannot be properly chained
-        let &(_last_index, last_owner) =
-            &inputs.last().ok_or_else(|| Self::invalid_inputs(&inputs))?;
-        if !last_owner.starts_with("prover") {
-            return Err(Self::invalid_inputs(&inputs));
-        }
-
-        table.add(dispute::PRE_COMMITMENT, Verifier);
-        table.add(dispute::COMMITMENT, Prover);
-        table.add(dispute::POST_COMMITMENT, Verifier);
-        table.add_nary_search("NARY", 1, rounds);
-        table.add(dispute::EXECUTE, Prover);
-        table.add(dispute::CHALLENGE, Verifier);
-        table.add_nary_search("NARY2", 2, rounds);
-        table.add(dispute::GET_HASHES_AND_STEP, Prover);
-        table.add(dispute::CHALLENGE_READ, Verifier);
-        table.add(dispute::VERIFIER_FINAL, Verifier);
-        Ok(table)
-    }
-
-    fn add_nary_search(&mut self, nary_type: &str, start_round: u8, total_rounds: u8) {
-        for round in start_round..=total_rounds {
-            let prover = format!("{}_PROVER_{}", nary_type, round);
-            let verifier = format!("{}_VERIFIER_{}", nary_type, round);
-            self.add(&prover, Prover);
-            self.add(&verifier, Verifier);
-        }
-    }
 
     pub fn is_my_tx(&self, tx_name: &str, drp_role: ParticipantRole) -> bool {
         self.txs
@@ -156,7 +110,7 @@ impl TxOwnershipTable {
         Some((current_tx, next_tx))
     }
 
-    fn get_timeout_tx(&self, name: &str, drp_role: ParticipantRole) -> Option<(String, bool)> {
+    pub fn get_timeout_tx(&self, name: &str, drp_role: ParticipantRole) -> Option<(String, bool)> {
         if let Some((tx, next_tx)) = self.get_tx_and_next(name) {
             if tx.owner == drp_role {
                 // as I observed my tx on-chain I need to send the next tx timeout to force the other part to act
@@ -192,7 +146,7 @@ impl TxOwnershipTable {
         self.txs.iter().map(|r| (&r.tx_name, &r.owner))
     }
 
-    fn invalid_inputs(inputs: &[(usize, String)]) -> BitVMXError {
+    pub fn invalid_inputs(inputs: &[(usize, String)]) -> BitVMXError {
         BitVMXError::InvalidInputs(inputs.iter().map(|(i, s)| (*i, (*s).clone())).collect())
     }
 }
@@ -443,33 +397,4 @@ pub fn execute_job<T: ProtocolHandler>(
         .broker_channel
         .send(&program_context.components_config.emulator, msg)?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_tx_ownership_table() {
-        let table =
-            TxOwnershipTable::new_for_drp(4, vec![(0, ParticipantRole::Prover.to_string())])
-                .unwrap();
-
-        assert_eq!(
-            table.get_timeout_tx("START_CHALLENGE", Verifier).unwrap().0,
-            "INPUT_0_TO".to_string()
-        );
-
-        assert_eq!(table.get_timeout_tx("START_CHALLENGE", Prover), None);
-
-        assert_eq!(
-            table.get_timeout_tx("INPUT_0", Verifier).unwrap().0,
-            "INPUT_0_INPUT_TO".to_string()
-        );
-
-        assert_eq!(
-            table.get_timeout_tx("INPUT_0", Prover).unwrap().0,
-            "PRE_COMMITMENT_TO".to_string()
-        );
-    }
 }

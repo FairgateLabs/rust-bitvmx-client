@@ -2,7 +2,7 @@ use crate::{
     bitvmx::Context,
     errors::BitVMXError,
     program::{
-        participant::ParticipantRole::{self},
+        participant::ParticipantRole::{self, Prover, Verifier},
         protocols::{
             claim::ClaimGate,
             dispute::{
@@ -45,6 +45,62 @@ fn to_u64(bytes: &[u8]) -> Result<u64, BitVMXError> {
 }
 fn to_hex(bytes: &[u8]) -> String {
     hex::encode(bytes)
+}
+
+fn create_ownership_table(
+    rounds: u8,
+    inputs: Vec<(usize, String)>,
+) -> Result<TxOwnershipTable, BitVMXError> {
+    if rounds == 0 || inputs.is_empty() {
+        return Err(TxOwnershipTable::invalid_inputs(&inputs));
+    }
+
+    let mut table = TxOwnershipTable { txs: vec![] };
+    table.add(START_CH, Verifier);
+
+    for (index, owner) in &inputs {
+        let owner = if owner.as_str() == "verifier" {
+            Verifier
+        } else {
+            Prover
+        };
+
+        table.add(&input_tx_name(*index as u32), owner);
+    }
+
+    //requires that the last input is owned by the prover, otherwise the sequence of timeout txs cannot be properly chained
+    let &(_last_index, last_owner) = &inputs
+        .last()
+        .ok_or_else(|| TxOwnershipTable::invalid_inputs(&inputs))?;
+    if !last_owner.starts_with("prover") {
+        return Err(TxOwnershipTable::invalid_inputs(&inputs));
+    }
+
+    table.add(PRE_COMMITMENT, Verifier);
+    table.add(COMMITMENT, Prover);
+    table.add(POST_COMMITMENT, Verifier);
+    add_nary_search(&mut table, "NARY", 1, rounds);
+    table.add(EXECUTE, Prover);
+    table.add(CHALLENGE, Verifier);
+    add_nary_search(&mut table, "NARY2", 2, rounds);
+    table.add(GET_HASHES_AND_STEP, Prover);
+    table.add(CHALLENGE_READ, Verifier);
+    table.add(VERIFIER_FINAL, Verifier);
+    Ok(table)
+}
+
+fn add_nary_search(
+    table: &mut TxOwnershipTable,
+    nary_type: &str,
+    start_round: u8,
+    total_rounds: u8,
+) {
+    for round in start_round..=total_rounds {
+        let prover = format!("{}_PROVER_{}", nary_type, round);
+        let verifier = format!("{}_VERIFIER_{}", nary_type, round);
+        table.add(&prover, Prover);
+        table.add(&verifier, Verifier);
+    }
 }
 
 pub fn handle_tx_news(
@@ -94,7 +150,7 @@ pub fn handle_tx_news(
         .map(|(i, owner)| (i, owner.to_string()))
         .collect();
 
-    let ownership_table = TxOwnershipTable::new_for_drp(rounds, inputs)?;
+    let ownership_table = create_ownership_table(rounds, inputs)?;
 
     cancel_timeout(drp, &name, vout, program_context, &ownership_table)?;
 
@@ -802,4 +858,32 @@ fn handle_nary_prover(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tx_ownership_table() {
+        let table =
+            create_ownership_table(4, vec![(0, ParticipantRole::Prover.to_string())]).unwrap();
+
+        assert_eq!(
+            table.get_timeout_tx("START_CHALLENGE", Verifier).unwrap().0,
+            "INPUT_0_TO".to_string()
+        );
+
+        assert_eq!(table.get_timeout_tx("START_CHALLENGE", Prover), None);
+
+        assert_eq!(
+            table.get_timeout_tx("INPUT_0", Verifier).unwrap().0,
+            "INPUT_0_INPUT_TO".to_string()
+        );
+
+        assert_eq!(
+            table.get_timeout_tx("INPUT_0", Prover).unwrap().0,
+            "PRE_COMMITMENT_TO".to_string()
+        );
+    }
 }
