@@ -1,5 +1,4 @@
 use crate::{
-    bitvmx::Context,
     errors::BitVMXError,
     program::{
         participant::ParticipantRole,
@@ -9,11 +8,7 @@ use crate::{
     },
     types::ProgramContext,
 };
-use bitcoin::Transaction;
 use bitcoin_coordinator::coordinator::BitcoinCoordinatorApi;
-use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
-use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
-use protocol_builder::types::output::SpeedupData;
 use tracing::info;
 
 pub fn dispatch_timeout_tx<T: ProtocolHandler>(
@@ -45,13 +40,7 @@ pub fn dispatch_timeout_tx<T: ProtocolHandler>(
     let tx = protocol_handler.get_signed(program_context, name, inputs)?;
     let speedup_data = protocol_handler.get_speedup_data_from_tx(&tx, program_context, None)?;
     let height = Some(current_height + timelock_blocks);
-    dispatch(
-        program_context,
-        protocol_handler,
-        tx,
-        Some(speedup_data),
-        height,
-    )?;
+    protocol_handler.dispatch(program_context, tx, Some(speedup_data), height)?;
     Ok(())
 }
 
@@ -205,36 +194,5 @@ pub fn cancel_timeout<T: ProtocolHandler + WithClaimGateConfig>(
         )?;
     }
 
-    Ok(())
-}
-
-pub fn dispatch<T: ProtocolHandler>(
-    program_context: &ProgramContext,
-    protocol: &T,
-    tx: Transaction,
-    sp: Option<SpeedupData>,
-    block_height: Option<u32>,
-) -> Result<(), BitVMXError> {
-    Ok(program_context.bitcoin_coordinator.dispatch(
-        tx,
-        sp,
-        Context::ProgramId(protocol.context().id).to_string()?,
-        block_height,
-        protocol.requested_confirmations(program_context),
-    )?)
-}
-
-pub fn execute_job<T: ProtocolHandler>(
-    protocol_handler: &T,
-    program_context: &ProgramContext,
-    job_type: EmulatorJobType,
-) -> Result<(), BitVMXError> {
-    let msg = serde_json::to_string(&DispatcherJob {
-        job_id: protocol_handler.context().id.to_string(),
-        job_type: job_type,
-    })?;
-    program_context
-        .broker_channel
-        .send(&program_context.components_config.emulator, msg)?;
     Ok(())
 }

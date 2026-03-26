@@ -21,7 +21,7 @@ use crate::{
             protocol_handler::{
                 ClaimGateConfig, ProtocolHandler, WithClaimGateConfig, action_wins, action_wins_prefix, get_tx_name_from_timeout
             },
-            timeouts::{TxOwnershipTable, dispatch},
+            timeouts::TxOwnershipTable,
         },
     }, types::ProgramContext,
 };
@@ -322,9 +322,8 @@ pub fn auto_claim_start<T: ProtocolHandler + WithClaimGateConfig>(
             let speedup_data =
                 protocol_handler.get_speedup_data_from_tx(&tx, program_context, None)?;
             info!("{claim_name}: {:?}", tx);
-            dispatch(
+            protocol_handler.dispatch(
                 program_context,
-                protocol_handler,
                 tx,
                 Some(speedup_data),
                 None,
@@ -365,9 +364,8 @@ pub fn claim_state_handle<T: ProtocolHandler + WithClaimGateConfig>(
             let speedup_data =
                 protocol_handler.get_speedup_data_from_tx(&tx, program_context, None)?;
             let height = Some(current_height + timelock_blocks);
-            dispatch(
+            protocol_handler.dispatch(
                 program_context,
-                protocol_handler,
                 tx,
                 Some(speedup_data),
                 height,
@@ -383,9 +381,8 @@ pub fn claim_state_handle<T: ProtocolHandler + WithClaimGateConfig>(
             )?;
             let speedup_data =
                 protocol_handler.get_speedup_data_from_tx(&tx, program_context, None)?;
-            dispatch(
+            protocol_handler.dispatch(
                 program_context,
-                protocol_handler,
                 tx,
                 Some(speedup_data),
                 None,
@@ -414,9 +411,8 @@ pub fn claim_state_handle<T: ProtocolHandler + WithClaimGateConfig>(
             let speedup_data =
                 protocol_handler.get_speedup_data_from_tx(&tx, program_context, None)?;
 
-            dispatch(
+            protocol_handler.dispatch(
                 program_context,
-                protocol_handler,
                 tx,
                 Some(speedup_data),
                 None,

@@ -1,7 +1,10 @@
 use bitcoin::script::read_scriptint;
 use bitcoin::{PublicKey, Transaction, Txid};
+use bitcoin_coordinator::coordinator::BitcoinCoordinatorApi;
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_scriptexec::scriptint_vec;
+use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
+use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use console::style;
 use enum_dispatch::enum_dispatch;
 use key_manager::key_manager::KeyManager;
@@ -23,6 +26,7 @@ use tracing::{error, info};
 use uuid::Uuid;
 
 use super::super::participant::ParticipantKeys;
+use crate::bitvmx::Context;
 use crate::errors::BitVMXError;
 use crate::program::participant::ParticipantRole;
 use crate::program::protocols::claim::ClaimGate;
@@ -351,8 +355,21 @@ pub trait ProtocolHandler {
 
                 lamp_sigs.push(lamport_signature);
             } else {
-                error!("No Lamport signature found for key: {}", key.name());
-                return Err(BitVMXError::KeysNotFound(self.context().id));
+                if let Some(witness) = program_context
+                    .witness
+                    .get_witness(&self.context().id, key.name())?
+                {
+                    let sigs = witness.lamport()?;
+                    info!(
+                        "Lamport signature found in witness for key: {}, with msg: {}",
+                        key.name(),
+                        hex::encode(sigs.to_bytes())
+                    );
+                    lamp_sigs.push(sigs);
+                } else {
+                    error!("No Lamport signature found for key: {}", key.name());
+                    return Err(BitVMXError::KeysNotFound(self.context().id));
+                }
             }
         }
 
@@ -917,6 +934,37 @@ pub trait ProtocolHandler {
         let txid = tx.compute_txid();
         let amount = tx.output[vout as usize].value.to_sat();
         (txid, vout, amount)
+    }
+
+    fn dispatch(
+        &self,
+        program_context: &ProgramContext,
+        tx: Transaction,
+        sp: Option<SpeedupData>,
+        block_height: Option<u32>,
+    ) -> Result<(), BitVMXError> {
+        Ok(program_context.bitcoin_coordinator.dispatch(
+            tx,
+            sp,
+            Context::ProgramId(self.context().id).to_string()?,
+            block_height,
+            self.requested_confirmations(program_context),
+        )?)
+    }
+
+    fn execute_job(
+        &self,
+        program_context: &ProgramContext,
+        job_type: EmulatorJobType,
+    ) -> Result<(), BitVMXError> {
+        let msg = serde_json::to_string(&DispatcherJob {
+            job_id: self.context().id.to_string(),
+            job_type: job_type,
+        })?;
+        program_context
+            .broker_channel
+            .send(&program_context.components_config.emulator, msg)?;
+        Ok(())
     }
 }
 

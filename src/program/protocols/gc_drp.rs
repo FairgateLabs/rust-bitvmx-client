@@ -32,7 +32,7 @@ use crate::{
             claim::{auto_claim_start, claim_state_handle, ClaimGate},
             dispute::{self, input_handler::set_inputs},
             protocol_handler::{timeout_input_tx, ClaimGateConfig, WithClaimGateConfig},
-            timeouts::{auto_dispatch_timeout, cancel_timeout, dispatch, TxOwnershipTable},
+            timeouts::{auto_dispatch_timeout, cancel_timeout, TxOwnershipTable},
         },
         variables::{Globals, PartialUtxo, VariableTypes},
     },
@@ -552,7 +552,7 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
                 (START_CH, ParticipantRole::Prover) => {
                     let (tx, speedup) =
                         self.get_tx_with_speedup_data(program_context, COMMITMENT)?;
-                    dispatch(program_context, self, tx, Some(speedup), None)?;
+                    self.dispatch(program_context, tx, Some(speedup), None)?;
                 }
                 (VERIFIER_FINAL, ParticipantRole::Verifier) => {
                     let claim_name = ClaimGate::tx_start(VERIFIER_WINS);
@@ -595,12 +595,12 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
                     (COMMITMENT, ParticipantRole::Verifier) => {
                         let (tx, speedup) =
                             self.get_tx_with_speedup_data(program_context, CHALLENGE)?;
-                        dispatch(program_context, self, tx, Some(speedup), None)?;
+                        self.dispatch(program_context, tx, Some(speedup), None)?;
                     }
                     (CHALLENGE, ParticipantRole::Prover) => {
                         let (tx, speedup) =
                             self.get_tx_with_speedup_data(program_context, INPUT)?;
-                        dispatch(program_context, self, tx, Some(speedup), None)?;
+                        self.dispatch(program_context, tx, Some(speedup), None)?;
                     }
                     (INPUT, ParticipantRole::Verifier) => {
                         let (tx, speedup) =
@@ -611,7 +611,7 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
                         println!("{:?}", sigs);
                         // TODO: evaluate garbled circuit and get output
 
-                        dispatch(program_context, self, tx, Some(speedup), None)?;
+                        self.dispatch(program_context, tx, Some(speedup), None)?;
                     }
                     (EQUIVOCATION, ParticipantRole::Verifier) => {
                         let tx = self.get_signed(
@@ -622,7 +622,7 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
                         let speedup_data =
                             self.get_speedup_data_from_tx(&tx, program_context, None)?;
                         let height = Some(current_height + 2 * timelock_blocks as u32);
-                        dispatch(program_context, self, tx, Some(speedup_data), height)?;
+                        self.dispatch(program_context, tx, Some(speedup_data), height)?;
                     }
                     _ => {}
                 }

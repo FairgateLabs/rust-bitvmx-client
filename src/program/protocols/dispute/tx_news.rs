@@ -16,9 +16,7 @@ use crate::{
                 PRE_COMMITMENT, START_CH, TK_2NARY, TRACE_VARS, VERIFIER_FINAL, VERIFIER_WINS,
             },
             protocol_handler::{timeout_input_tx, ProtocolHandler, WithClaimGateConfig},
-            timeouts::{
-                auto_dispatch_timeout, cancel_timeout, dispatch, execute_job, TxOwnershipTable,
-            },
+            timeouts::{auto_dispatch_timeout, cancel_timeout, TxOwnershipTable},
         },
         variables::VariableTypes,
     },
@@ -257,7 +255,7 @@ pub fn handle_tx_news(
                                     0,
                                     true,
                                 )?;
-                                dispatch(program_context, drp, tx, Some(sp), None)?;
+                                drp.dispatch(program_context, tx, Some(sp), None)?;
                             }
                         } else {
                             if idx == last_tx_id {
@@ -268,15 +266,14 @@ pub fn handle_tx_news(
                                     0,
                                     true,
                                 )?;
-                                dispatch(program_context, drp, tx, Some(sp), None)?;
+                                drp.dispatch(program_context, tx, Some(sp), None)?;
                             }
                         }
                     }
 
                     PRE_COMMITMENT => {
                         let full_input = unify_inputs(&drp.ctx.id, program_context, &def)?;
-                        execute_job(
-                            drp,
+                        drp.execute_job(
                             program_context,
                             EmulatorJobType::ProverExecute(
                                 program_definition.clone(),
@@ -316,8 +313,7 @@ pub fn handle_tx_news(
                             last_step,
                         )?;
 
-                        execute_job(
-                            drp,
+                        drp.execute_job(
                             program_context,
                             EmulatorJobType::VerifierCheckExecution(
                                 program_definition.clone(),
@@ -338,7 +334,7 @@ pub fn handle_tx_news(
                             0,
                             true,
                         )?;
-                        dispatch(program_context, drp, tx, Some(sp), None)?;
+                        drp.dispatch(program_context, tx, Some(sp), None)?;
                     }
                     name if name == POST_COMMITMENT || name.starts_with("NARY_VERIFIER") => {
                         let round = name
@@ -456,8 +452,7 @@ pub fn handle_tx_news(
                             mem_witness,
                         );
 
-                        execute_job(
-                            drp,
+                        drp.execute_job(
                             program_context,
                             EmulatorJobType::VerifierChooseChallenge(
                                 program_definition.clone(),
@@ -608,7 +603,7 @@ pub fn handle_tx_news(
                             fail_force_config.read.fail_config_verifier.clone(),
                             fail_force_config.read.force_challenge.clone(),
                         );
-                        execute_job(drp, program_context, msg)?;
+                        drp.execute_job(program_context, msg)?;
                     }
 
                     CHALLENGE_READ => {
@@ -631,7 +626,7 @@ pub fn handle_tx_news(
                         "Auto Dispatching input tx {}",
                         &input_tx_name(auto_dispatch_input as u32)
                     );
-                    dispatch(program_context, drp, tx, speedup, None)?;
+                    drp.dispatch(program_context, tx, speedup, None)?;
                 }
             }
 
@@ -640,7 +635,7 @@ pub fn handle_tx_news(
                     drp.get_signed(program_context, &VERIFIER_FINAL, vec![(1, true).into()])?;
                 let speedup_data = drp.get_speedup_data_from_tx(&tx, program_context, None)?;
                 let height = Some(current_height + 2 * timelock_blocks as u32);
-                dispatch(program_context, drp, tx, Some(speedup_data), height)?;
+                drp.dispatch(program_context, tx, Some(speedup_data), height)?;
             }
 
             if VERIFIER_FINAL == name && ParticipantRole::Verifier == drp.role() {
@@ -765,7 +760,7 @@ fn handle_nary_verifier(
             ),
         }
     };
-    execute_job(drp, program_context, job_type)?;
+    drp.execute_job(program_context, job_type)?;
 
     Ok(())
 }
