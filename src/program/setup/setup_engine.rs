@@ -525,43 +525,54 @@ impl SetupEngine {
 
         // Leader broadcast: If I'm the leader and have all messages, broadcast to non-leaders
         if my_idx == leader {
-            // Get list of all participant pubkey hashes (including leader)
-            let all_participant_hashes: Vec<_> =
-                participants.iter().map(|p| p.pubkey_hash.clone()).collect();
-
-            // Check if we have all messages
-            let has_all = context.leader_broadcast_helper.has_all_expected_messages(
-                program_id,
-                CommsMessageType::SetupStepData,
-                &all_participant_hashes,
-            )?;
-
-            if has_all {
-                info!(
-                    "SetupEngine::receive_setup_data() - Leader has all messages, broadcasting to non-leaders"
-                );
-
-                // Get non-leader participants
-                let my_pubkey_hash = context.comms.get_pubk_hash()?;
-                let non_leaders = get_non_leader_participants(participants, &my_pubkey_hash);
-
-                // Broadcast to all non-leaders
-                context.leader_broadcast_helper.broadcast_to_non_leaders(
-                    context,
-                    program_id,
-                    CommsMessageType::SetupStepData,
-                    &non_leaders,
-                )?;
-
-                info!(
-                    "SetupEngine::receive_setup_data() - Leader successfully broadcasted messages to {} non-leaders",
-                    non_leaders.len()
-                );
-            }
+            self.send_broadcast_data_to_non_leaders(context, program_id, participants)?;
         }
 
         // Receiving data always changes the engine state
         Ok(true)
+    }
+
+    fn send_broadcast_data_to_non_leaders(
+        &self,
+        context: &ProgramContext,
+        program_id: &Uuid,
+        participants: &[CommsAddress],
+    ) -> Result<(), BitVMXError> {
+        // Get list of all participant pubkey hashes (including leader)
+        let all_participant_hashes: Vec<_> =
+            participants.iter().map(|p| p.pubkey_hash.clone()).collect();
+
+        // Check if we have all messages
+        let has_all = context.leader_broadcast_helper.has_all_expected_messages(
+            program_id,
+            CommsMessageType::SetupStepData,
+            &all_participant_hashes,
+        )?;
+
+        if has_all {
+            info!(
+                    "SetupEngine::receive_setup_data() - Leader has all messages, broadcasting to non-leaders"
+                );
+
+            // Get non-leader participants
+            let my_pubkey_hash = context.comms.get_pubk_hash()?;
+            let non_leaders = get_non_leader_participants(participants, &my_pubkey_hash);
+
+            // Broadcast to all non-leaders
+            context.leader_broadcast_helper.broadcast_to_non_leaders(
+                context,
+                program_id,
+                CommsMessageType::SetupStepData,
+                &non_leaders,
+            )?;
+
+            info!(
+                    "SetupEngine::receive_setup_data() - Leader successfully broadcasted messages to {} non-leaders",
+                    non_leaders.len()
+                );
+        }
+
+        Ok(())
     }
 
     /// Processes the setup tick.
@@ -690,7 +701,8 @@ impl SetupEngine {
                 participants.len() - 1
             );
 
-            // Broadcast the data
+            // Broadcast the data if it's not leader
+            // if leader stores its own message
             self.broadcast_setup_data(
                 data.clone(),
                 program_id,
@@ -706,6 +718,12 @@ impl SetupEngine {
                 my_idx,
                 step_name
             );
+
+            if my_idx == leader {
+                // If we're the leader and have all messages, broadcast to non-leaders
+                self.send_broadcast_data_to_non_leaders(context, program_id, participants)?;
+            }
+
             state_changed = true;
         }
 
