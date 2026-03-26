@@ -55,7 +55,7 @@ pub fn test_all_aux(
 
     config_trace();
 
-    let mut helper = TestHelper::new(network, independent, Some(3000))?;
+    let mut helper = TestHelper::new(network, independent, Some(3500))?;
 
     let command = IncomingBitVMXApiMessages::GetCommInfo(Uuid::new_v4());
     helper.send_all(command)?;
