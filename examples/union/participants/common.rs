@@ -120,13 +120,20 @@ pub fn format_transaction_solidity(tx: &Transaction) -> String {
 
     // Assign each output
     for (i, out) in tx.output.iter().enumerate() {
-        output.push_str(&format!("        outputs[{}] = BtcTxOut({{\n", i));
-        output.push_str(&format!("            amount: {},\n", out.value.to_sat()));
-        output.push_str(&format!(
-            "            scriptPubKey: hex\"{}\"\n",
-            out.script_pubkey.as_bytes().to_lower_hex_string()
-        ));
-        output.push_str("        });\n");
+        let amount = out.value.to_sat();
+        let script_hex = out.script_pubkey.as_bytes().to_lower_hex_string();
+        let single = format!(
+            "        outputs[{}] = BtcTxOut({{amount: {}, scriptPubKey: hex\"{}\"}});\n",
+            i, amount, script_hex
+        );
+        if single.len() - 1 <= 120 {
+            output.push_str(&single);
+        } else {
+            output.push_str(&format!("        outputs[{}] = BtcTxOut({{\n", i));
+            output.push_str(&format!("            amount: {},\n", amount));
+            output.push_str(&format!("            scriptPubKey: hex\"{}\"\n", script_hex));
+            output.push_str("        });\n");
+        }
         if i < tx.output.len() - 1 {
             output.push_str("\n");
         }
@@ -176,6 +183,24 @@ fn tx_name_to_fn_name(tx_name: &str) -> String {
     format!("_getBitVMX{}Tx", pascal)
 }
 
+fn format_bytes_constant(name: &str, value: &str) -> String {
+    let single = format!("    bytes constant {} = {};", name, value);
+    if single.len() <= 120 {
+        format!("{}\n", single)
+    } else {
+        format!("    bytes constant {} =\n        {};\n", name, value)
+    }
+}
+
+fn format_bytes32_constant(name: &str, value: &str) -> String {
+    let single = format!("    bytes32 constant {} = {};", name, value);
+    if single.len() <= 120 {
+        format!("{}\n", single)
+    } else {
+        format!("    bytes32 constant {} =\n        {};\n", name, value)
+    }
+}
+
 pub fn format_solidity_data_file(
     committee_agg_key: &PublicKey,
     dispute_keys: &[PublicKey],
@@ -210,20 +235,14 @@ pub fn format_solidity_data_file(
         .to_bytes()
         .as_slice()
         .to_lower_hex_string();
-    s.push_str("    bytes constant COMMITTEE_AGGREGATED_KEY =\n");
-    s.push_str(&format!("        hex\"{}\";\n", key_hex));
+    s.push_str(&format_bytes_constant("COMMITTEE_AGGREGATED_KEY", &format!("hex\"{}\"", key_hex)));
     s.push_str("\n");
 
     let user_key_hex = user_pubkey.to_bytes().as_slice().to_lower_hex_string();
-    s.push_str("    bytes constant USER_COMPRESSED_PUBKEY =\n");
-    s.push_str(&format!("        hex\"{}\";\n", user_key_hex));
+    s.push_str(&format_bytes_constant("USER_COMPRESSED_PUBKEY", &format!("hex\"{}\"", user_key_hex)));
     s.push_str("\n");
 
-    s.push_str("    bytes32 constant PEGOUT_ID =\n");
-    s.push_str(&format!(
-        "        0x{};\n",
-        pegout_id.as_slice().to_lower_hex_string()
-    ));
+    s.push_str(&format_bytes32_constant("PEGOUT_ID", &format!("0x{}", pegout_id.as_slice().to_lower_hex_string())));
     s.push_str("\n");
 
     s.push_str(&format!("    uint256 constant OPERATOR_INDEX = {};\n", op_index));
@@ -234,8 +253,7 @@ pub fn format_solidity_data_file(
     for (name, tx) in named_transactions {
         if export_txids.contains(name) {
             let const_name = tx_name_to_const_name(name);
-            s.push_str(&format!("    bytes32 constant {} =\n", const_name));
-            s.push_str(&format!("        0x{};\n", tx.compute_txid()));
+            s.push_str(&format_bytes32_constant(&const_name, &format!("0x{}", tx.compute_txid())));
             s.push_str("\n");
         }
     }
@@ -252,7 +270,7 @@ pub fn format_solidity_data_file(
         let parity = bytes[0];
         let x_only = &bytes[1..];
         s.push_str(&format!(
-            "        keys[{}] = CompactPubKey({{parity: 0x{:02x}, xOnly: 0x{}}});\n",
+            "        keys[{}] =\n            CompactPubKey({{parity: 0x{:02x}, xOnly: 0x{}}});\n",
             i,
             parity,
             x_only.to_lower_hex_string()
@@ -261,7 +279,7 @@ pub fn format_solidity_data_file(
     s.push_str("    }\n");
     s.push_str("\n");
 
-    for (name, tx) in named_transactions {
+    for (i, (name, tx)) in named_transactions.iter().enumerate() {
         let fn_name = tx_name_to_fn_name(name);
         s.push_str(&format!(
             "    function {}() internal pure returns (BtcTransaction memory) {{\n",
@@ -269,7 +287,9 @@ pub fn format_solidity_data_file(
         ));
         s.push_str(&format_transaction_solidity(tx));
         s.push_str("\n    }\n");
-        s.push_str("\n");
+        if i < named_transactions.len() - 1 {
+            s.push_str("\n");
+        }
     }
 
     s.push_str("}\n");
