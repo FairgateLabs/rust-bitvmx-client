@@ -42,7 +42,7 @@ use protocol_builder::{
     builder::Protocol,
     graph::graph::GraphOptions,
     scripts::{
-        op_return, op_return_script, timelock, verify_signature,
+        op_return_script, timelock, verify_signature,
         verify_winternitz_signature_timelock, SignMode,
     },
     types::{
@@ -1258,12 +1258,6 @@ impl DisputeCoreProtocol {
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
             Some(settings.input_not_revealed_timelock),
             None,
-        )?;
-
-        // TODO: Should we remove this output? If so, need to update input_not_revealed_tx with correct speedup output index
-        protocol.add_transaction_output(
-            &input_not_revealed,
-            &OutputType::segwit_unspendable(op_return(vec![]))?,
         )?;
 
         self.add_dispute_core_speedup_outputs(
@@ -2570,7 +2564,7 @@ impl DisputeCoreProtocol {
         // Speedup data
         let speedup_utxo = Utxo::new(
             tx.compute_txid(),
-            1 + self.ctx.my_idx as u32, //Speedup vout is member index + 1 (1 is because op return output)
+            self.ctx.my_idx as u32, //Speedup vout is member index
             SPEEDUP_VALUE,
             &self.my_speedup_key(context)?,
         );

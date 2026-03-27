@@ -181,7 +181,11 @@ pub fn format_solidity_data_file(
     dispute_keys: &[PublicKey],
     user_pubkey: &PublicKey,
     pegout_id: &[u8; 32],
+    op_index: usize,
+    operator_count: usize,
+    watchtower_count: usize,
     named_transactions: &[(&str, Transaction)],
+    export_txids: &[&str],
 ) -> String {
     let mut s = String::new();
 
@@ -222,11 +226,18 @@ pub fn format_solidity_data_file(
     ));
     s.push_str("\n");
 
+    s.push_str(&format!("    uint256 constant OPERATOR_INDEX = {};\n", op_index));
+    s.push_str(&format!("    uint8 constant OPERATOR_COUNT = {};\n", operator_count));
+    s.push_str(&format!("    uint8 constant WATCHTOWER_COUNT = {};\n", watchtower_count));
+    s.push_str("\n");
+
     for (name, tx) in named_transactions {
-        let const_name = tx_name_to_const_name(name);
-        s.push_str(&format!("    bytes32 constant {} =\n", const_name));
-        s.push_str(&format!("        0x{};\n", tx.compute_txid()));
-        s.push_str("\n");
+        if export_txids.contains(name) {
+            let const_name = tx_name_to_const_name(name);
+            s.push_str(&format!("    bytes32 constant {} =\n", const_name));
+            s.push_str(&format!("        0x{};\n", tx.compute_txid()));
+            s.push_str("\n");
+        }
     }
 
     s.push_str(

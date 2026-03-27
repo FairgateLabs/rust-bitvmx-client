@@ -336,6 +336,8 @@ pub fn cli_solidity_txs() -> Result<()> {
 
     let committee_agg_key = committee.public_key()?;
     let dispute_keys = committee.get_dispute_keys();
+    let operator_count = committee.members.iter().filter(|m| m.role == ParticipantRole::Prover).count();
+    let watchtower_count = committee.members.iter().filter(|m| m.role == ParticipantRole::Verifier).count();
 
     let committee_id = committee.committee_id();
     let accept_pegin_pid = get_accept_pegin_pid(committee_id, slot_index);
@@ -396,12 +398,28 @@ pub fn cli_solidity_txs() -> Result<()> {
         ),
     ];
 
+    let export_txids = [
+        REQUEST_PEGIN_TX,
+        // ADVANCE_FUNDS_TX,
+        ACCEPT_PEGIN_TX,
+        // &op_take_name,
+        // &op_won_name,
+        &reimb_name,
+        &challenge_name,
+        &reveal_name,
+        // &input_not_revealed_name,
+    ];
+
     let solidity_file = format_solidity_data_file(
         &committee_agg_key,
         &dispute_keys,
         &user.public_key()?,
         &TESTING_PEGOUT_ID,
+        op_index,
+        operator_count,
+        watchtower_count,
         &named_txs,
+        &export_txids,
     );
 
     let output_path = match std::env::var("EXAMPLE_LOG_DIR") {
