@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 #![cfg(test)]
 
-use anyhow::{Ok, Result};
+use anyhow::Result;
 use bitcoin::{Amount, Network};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{
