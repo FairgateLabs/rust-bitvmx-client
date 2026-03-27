@@ -7,9 +7,7 @@ use crate::common::{check_bitvmx_cpu_built, config_trace, helper::TestHelper};
 
 mod common;
 
-#[ignore]
-#[test]
-pub fn test_union_request_pegout() -> Result<()> {
+fn test_union_aux(name: &str) -> Result<()> {
     let independent = false;
     let network = Network::Regtest;
 
@@ -22,10 +20,22 @@ pub fn test_union_request_pegout() -> Result<()> {
 
     // execute cargo run --release --example union request_pegout in a separate process
     let mut child = std::process::Command::new("cargo")
-        .args(["run", "--release", "--example", "union", "request_pegout"])
+        .args(["run", "--release", "--example", "union", name])
         .spawn()?;
 
     child.wait()?;
 
     Ok(())
+}
+
+#[ignore]
+#[test]
+pub fn test_union_request_pegout() -> Result<()> {
+    test_union_aux("request_pegout")
+}
+
+#[ignore]
+#[test]
+pub fn test_union_committee() -> Result<()> {
+    test_union_aux("committee")
 }
