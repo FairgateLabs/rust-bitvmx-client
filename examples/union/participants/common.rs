@@ -11,72 +11,8 @@ use bitcoin::{
 use bitvmx_client::program::protocols::union::types::{
     StreamSettings, UnionSettings, P2TR_FEE, SPEEDUP_VALUE, USER_TAKE_FEE,
 };
-use tracing::info;
-
-pub const DEBUG_TX: bool = false;
 pub const PEGIN_CONFIRMATIONS: u16 = 6; // This value should be get from the contract
 pub const PEGOUT_CONFIRMATIONS: u16 = 6; // This value should be get from the contract
-
-/// Generic transaction debug printer that can be used for any transaction type
-pub fn db_print_transaction<F>(title: &str, tx: &Transaction, print_params: F)
-where
-    F: FnOnce(),
-{
-    if !DEBUG_TX {
-        return;
-    }
-
-    info!("=== {} ===", title);
-
-    // Print transaction-specific parameters using the closure
-    print_params();
-
-    info!("Transaction Structure:");
-    info!("  - Version: {}", tx.version.0);
-    info!("  - Number of Inputs: {}", tx.input.len());
-    info!("  - Number of Outputs: {}", tx.output.len());
-    info!("  - Locktime: {}", tx.lock_time);
-    info!("");
-    info!("Transaction Details:");
-    info!("  - TxId: 0x{}", tx.compute_txid());
-    info!("");
-
-    // Log each input
-    for (i, input) in tx.input.iter().enumerate() {
-        info!("Input {}:", i);
-        info!("  - Previous TxId: 0x{}", input.previous_output.txid);
-        info!("  - Previous Vout: {}", input.previous_output.vout);
-        info!(
-            "  - ScriptSig: {}",
-            input.script_sig.as_bytes().to_lower_hex_string()
-        );
-        info!(
-            "  - Sequence: 0x{:08X} ({})",
-            input.sequence.0, input.sequence.0
-        );
-        info!("  - Witness items: {}", input.witness.len());
-        for (j, witness_item) in input.witness.iter().enumerate() {
-            info!("    Witness {}: {}", j, witness_item.to_lower_hex_string());
-        }
-    }
-    info!("");
-
-    // Log each output
-    for (i, output) in tx.output.iter().enumerate() {
-        info!("Output {}:", i);
-        info!("  - Value: {} satoshis", output.value.to_sat());
-        info!(
-            "  - ScriptPubKey: {}",
-            output.script_pubkey.as_bytes().to_lower_hex_string()
-        );
-    }
-    info!("");
-
-    info!("Solidity Transaction Format:");
-    info!("{}", format_transaction_solidity(tx));
-    info!("==========================================");
-    info!("");
-}
 
 /// Format a Bitcoin transaction in Solidity syntax for cross-system verification
 pub fn format_transaction_solidity(tx: &Transaction) -> String {
@@ -358,9 +294,6 @@ pub fn calculate_taproot_key_path_sighash(
     input_index: usize,
     prevouts: &[TxOut],
 ) -> Result<[u8; 32], TaprootError> {
-    info!("TX: {:?}", tx);
-    info!("Prevouts: {:?}", prevouts);
-
     let mut sighash_cache = SighashCache::new(tx);
     let prevouts = Prevouts::All(prevouts);
 

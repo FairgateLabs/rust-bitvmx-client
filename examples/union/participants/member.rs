@@ -185,14 +185,6 @@ impl Member {
     //         communication_pubkey.to_string()
     //     );
 
-    //     if is_deterministic {
-    //         if crate::participants::common::DEBUG_TX {
-    //             info!("Deterministic key UUIDs used (for reproducibility):");
-    //             info!("  - Take key UUID: {}", take_key_id);
-    //             info!("  - Dispute key UUID: {}", dispute_key_id);
-    //             info!("  - Communication key UUID: {}", comm_key_id);
-    //         }
-    //     }
 
     //     Ok((take_pubkey, dispute_pubkey, communication_pubkey))
     // }
