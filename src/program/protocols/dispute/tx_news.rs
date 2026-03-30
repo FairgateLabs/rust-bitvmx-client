@@ -275,6 +275,7 @@ pub fn handle_tx_news(
                         let full_input = unify_inputs(&drp.ctx.id, program_context, &def)?;
                         drp.execute_job(
                             program_context,
+                            &program_context.components_config.emulator,
                             EmulatorJobType::ProverExecute(
                                 program_definition.clone(),
                                 full_input,
@@ -315,6 +316,7 @@ pub fn handle_tx_news(
 
                         drp.execute_job(
                             program_context,
+                            &program_context.components_config.emulator,
                             EmulatorJobType::VerifierCheckExecution(
                                 program_definition.clone(),
                                 input_program,
@@ -454,6 +456,7 @@ pub fn handle_tx_news(
 
                         drp.execute_job(
                             program_context,
+                            &program_context.components_config.emulator,
                             EmulatorJobType::VerifierChooseChallenge(
                                 program_definition.clone(),
                                 execution_path.clone(),
@@ -603,7 +606,11 @@ pub fn handle_tx_news(
                             fail_force_config.read.fail_config_verifier.clone(),
                             fail_force_config.read.force_challenge.clone(),
                         );
-                        drp.execute_job(program_context, msg)?;
+                        drp.execute_job(
+                            program_context,
+                            &program_context.components_config.emulator,
+                            msg,
+                        )?;
                     }
 
                     CHALLENGE_READ => {
@@ -760,7 +767,11 @@ fn handle_nary_verifier(
             ),
         }
     };
-    drp.execute_job(program_context, job_type)?;
+    drp.execute_job(
+        program_context,
+        &program_context.components_config.emulator,
+        job_type,
+    )?;
 
     Ok(())
 }

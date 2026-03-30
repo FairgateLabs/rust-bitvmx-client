@@ -3,8 +3,9 @@ use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::coordinator::BitcoinCoordinatorApi;
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_scriptexec::scriptint_vec;
+use bitvmx_broker::identification::identifier::Identifier;
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
-use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
+use bitvmx_job_dispatcher::dispatcher_message::DispatcherMessage;
 use console::style;
 use enum_dispatch::enum_dispatch;
 use key_manager::key_manager::KeyManager;
@@ -952,10 +953,11 @@ pub trait ProtocolHandler {
         )?)
     }
 
-    fn execute_job(
+    fn execute_job<J: Serialize + DispatcherMessage>(
         &self,
         program_context: &ProgramContext,
-        job_type: EmulatorJobType,
+        dest: &Identifier,
+        job_type: J,
     ) -> Result<(), BitVMXError> {
         let msg = serde_json::to_string(&DispatcherJob {
             job_id: self.context().id.to_string(),
@@ -963,7 +965,7 @@ pub trait ProtocolHandler {
         })?;
         program_context
             .broker_channel
-            .send(&program_context.components_config.emulator, msg)?;
+            .send(dest, msg)?;
         Ok(())
     }
 }
