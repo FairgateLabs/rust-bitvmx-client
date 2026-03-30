@@ -17,21 +17,25 @@ mod common;
 pub fn test_aggregated_key() -> Result<()> {
     config_trace();
 
+    let number_of_operators = 3;
+
     let (_bitcoin_client, _bitcoind_guard, _wallet) = prepare_bitcoin_guarded()?;
 
-    // Initialize 3 BitVMX instances (1 leader + 2 non-leaders)
-    let (bitvmx_op1, _address_op1, bridge_op1, _) = init_bitvmx("op_1", false)?;
-    let (bitvmx_op2, _address_op2, bridge_op2, _) = init_bitvmx("op_2", false)?;
-    let (bitvmx_op3, _address_op3, bridge_op3, _) = init_bitvmx("op_3", false)?;
+    // Initialize BitVMX instances dynamically (1 leader + remaining as non-leaders)
+    let mut instances = Vec::new();
+    let mut channels = Vec::new();
 
-    let mut instances = vec![bitvmx_op1, bitvmx_op2, bitvmx_op3];
-    let channels = vec![bridge_op1.clone(), bridge_op2.clone(), bridge_op3.clone()];
+    for i in 1..=number_of_operators {
+        let operator_name = format!("op_{}", i);
+        let (bitvmx, _address, bridge, _) = init_bitvmx(&operator_name, false)?;
+        instances.push(bitvmx);
+        channels.push(bridge.clone());
+    }
 
-    let identifiers = [
-        instances[0].get_components_config().bitvmx.clone(),
-        instances[1].get_components_config().bitvmx.clone(),
-        instances[2].get_components_config().bitvmx.clone(),
-    ];
+    let identifiers: Vec<_> = instances
+        .iter()
+        .map(|instance| instance.get_components_config().bitvmx.clone())
+        .collect();
 
     let id_channel_pairs: Vec<ParticipantChannel> = identifiers
         .clone()
@@ -67,9 +71,10 @@ pub fn test_aggregated_key() -> Result<()> {
         .map(|msg| msg.comm_info().unwrap().1)
         .collect::<Vec<_>>();
 
-    info!("Op1 (Leader) address: {:?}", addresses[0]);
-    info!("Op2 (Non-leader) address: {:?}", addresses[1]);
-    info!("Op3 (Non-leader) address: {:?}", addresses[2]);
+    for (i, address) in addresses.iter().enumerate() {
+        let role = if i == 0 { "Leader" } else { "Non-leader" };
+        info!("Op{} ({}) address: {:?}", i + 1, role, address);
+    }
 
     info!("================================================");
     info!("Setting up aggregated public key");
@@ -81,7 +86,7 @@ pub fn test_aggregated_key() -> Result<()> {
         aggregation_id,
         addresses.clone(),
         None,
-        0, // Op1 is leader (index 0)
+        0, // First operator is leader (index 0)
     )
     .to_string()?;
     send_all(&id_channel_pairs, &command)?;
@@ -142,16 +147,19 @@ pub fn test_aggregated_key() -> Result<()> {
         }
     }
 
-    // Verify all three participants have the same aggregated key
-    assert_eq!(aggregated_keys.len(), 3, "Should have 3 aggregated keys");
+    // Verify all participants have the same aggregated key
     assert_eq!(
-        aggregated_keys[0], aggregated_keys[1],
-        "All participants should compute the same aggregated MuSig2 key"
+        aggregated_keys.len(),
+        number_of_operators,
+        "Should have {} aggregated keys",
+        number_of_operators
     );
-    assert_eq!(
-        aggregated_keys[0], aggregated_keys[2],
-        "All participants should compute the same aggregated MuSig2 key"
-    );
+    for i in 1..number_of_operators {
+        assert_eq!(
+            aggregated_keys[0], aggregated_keys[i],
+            "All participants should compute the same aggregated MuSig2 key"
+        );
+    }
 
     // Verify the key from the response matches the stored key from GetVar
     assert_eq!(
@@ -160,7 +168,10 @@ pub fn test_aggregated_key() -> Result<()> {
         "AggregatedPubkey response should match the stored final_aggregated_key"
     );
 
-    info!("Aggregated key protocol successful! All three participants computed the same aggregated key");
+    info!(
+        "Aggregated key protocol successful! All {} participants computed the same aggregated key",
+        number_of_operators
+    );
     info!("   Aggregated MuSig2 Key: {}", aggregated_keys[0]);
 
     info!("================================================");
@@ -175,7 +186,7 @@ pub fn test_aggregated_key() -> Result<()> {
 /// With a single participant, the "aggregated" key is just that participant's own key.
 #[ignore]
 #[test]
-pub fn test_aggregated_key_single_participant() -> Result<()> {
+pub fn test_aggregated_single_participant() -> Result<()> {
     config_trace();
 
     let (_bitcoin_client, _bitcoind_guard, _wallet) = prepare_bitcoin_guarded()?;
