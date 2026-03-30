@@ -191,7 +191,7 @@ impl LeaderBroadcastHelper {
         let key = get_original_message_key(context_id, msg_type, &original_msg.sender_pubkey_hash);
 
         // Check if message from this sender already exists
-        let existing: Option<OriginalMessage> = self.store.get(&key)?;
+        let existing: Option<OriginalMessage> = self.store.get(&key, None)?;
         if existing.is_some() {
             warn!(
                 "Original message from {} already stored for context {} and type {:?}",
@@ -214,7 +214,7 @@ impl LeaderBroadcastHelper {
         msg_type: CommsMessageType,
     ) -> Result<Vec<OriginalMessage>, BitVMXError> {
         let prefix = get_original_messages_prefix(context_id, msg_type);
-        let stored_messages = self.store.partial_compare(&prefix)?;
+        let stored_messages = self.store.partial_compare(&prefix, None)?;
 
         let mut messages = Vec::new();
         for (_, msg_json) in stored_messages.iter() {
@@ -271,7 +271,7 @@ impl LeaderBroadcastHelper {
         msg_type: CommsMessageType,
     ) -> Result<(), BitVMXError> {
         let prefix = get_original_messages_prefix(context_id, msg_type);
-        let stored_messages = self.store.partial_compare(&prefix)?;
+        let stored_messages = self.store.partial_compare(&prefix, None)?;
 
         // Delete each individual message key
         for (key, _) in stored_messages.iter() {

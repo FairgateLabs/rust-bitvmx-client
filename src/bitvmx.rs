@@ -796,7 +796,7 @@ impl BitVMX {
     fn get_programs(&self) -> Result<Vec<ProgramStatus>, BitVMXError> {
         let programs_ids: Option<Vec<ProgramStatus>> = self
             .store
-            .get(StoreKey::Programs.get_key())
+            .get(StoreKey::Programs.get_key(), None)
             .map_err(BitVMXError::StorageError)?;
 
         Ok(programs_ids.unwrap_or_default())
@@ -1027,7 +1027,7 @@ impl BitVMXApi for BitVMX {
 
         // Get the status from storage
         let status_key = StoreKey::ZKPStatus(id).get_key();
-        let status: Option<String> = self.store.get(&status_key)?;
+        let status: Option<String> = self.store.get(&status_key, None)?;
 
         let response = match status {
             Some(status_str) => {
@@ -1049,19 +1049,19 @@ impl BitVMXApi for BitVMX {
         // Check if the proof is ready
         info!("Checking if {} ZKP job is ready", id);
         let status_key = StoreKey::ZKPStatus(id).get_key();
-        let status: Option<String> = self.store.get(&status_key)?;
+        let status: Option<String> = self.store.get(&status_key, None)?;
 
         let response = match status {
             Some(status_str) => {
                 if status_str == "OK" {
                     info!("Getting ZKP execution result for job: {}", id);
-                    let seal: Vec<u8> = match self.store.get(&StoreKey::ZKPProof(id).get_key())? {
+                    let seal: Vec<u8> = match self.store.get(&StoreKey::ZKPProof(id).get_key(), None)? {
                         Some(seal) => seal,
                         None => return Err(BitVMXError::InconsistentZKPData(id)),
                     };
 
                     let journal: Vec<u8> =
-                        match self.store.get(&StoreKey::ZKPJournal(id).get_key())? {
+                        match self.store.get(&StoreKey::ZKPJournal(id).get_key(), None)? {
                             Some(journal) => journal,
                             None => {
                                 return Err(BitVMXError::InconsistentZKPData(id));
@@ -1231,7 +1231,7 @@ impl BitVMXApi for BitVMX {
             // Get the stored 'from' parameter
             let from: Identifier = self
                 .store
-                .get(StoreKey::ZKPFrom(id).get_key())?
+                .get(StoreKey::ZKPFrom(id).get_key(), None)?
                 .ok_or_else(|| {
                     warn!("Missing 'from' parameter for ZKP request: {}", id);
                     BitVMXError::InvalidMessageFormat

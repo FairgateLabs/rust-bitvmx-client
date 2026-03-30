@@ -133,7 +133,7 @@ impl Globals {
 
     pub fn get_var(&self, uuid: &Uuid, key: &str) -> Result<Option<VariableTypes>, BitVMXError> {
         let key = format!("{}:var:{}", uuid, key);
-        let value: Option<VariableTypes> = self.storage.get(&key)?;
+        let value: Option<VariableTypes> = self.storage.get(&key, None)?;
         Ok(value)
     }
 
@@ -201,7 +201,7 @@ impl WitnessVars {
 
     pub fn get_witness(&self, uuid: &Uuid, key: &str) -> Result<Option<WitnessTypes>, BitVMXError> {
         let key = format!("{}:witness:{}", uuid, key);
-        let value = self.storage.get(&key)?;
+        let value = self.storage.get(&key, None)?;
         Ok(value)
     }
 
