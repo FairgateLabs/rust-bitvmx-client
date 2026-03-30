@@ -12,14 +12,9 @@ use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::garbled_messages::GarbledJobType;
 use garbled_nova::gadgets::bigint::alloc_bigint_input;
 use garbled_nova::gadgets::bn254::{fq_to_input_bits, Fp254Impl, Fq};
-use garbled_nova::digests::recompute_public_digests;
 use garbled_nova::garble::GarbledGate;
 use garbled_nova::garble::{circuit_loader::load_circuit_from_file, Circuit, CircuitTrait};
-use garbled_nova::nova::{
-    digest_lamport_from_commitments, hex_to_scalar as nova_hex_to_scalar, scalar_to_hex,
-    Sha256Commitment,
-};
-use garbled_nova::poseidon_constants;
+use garbled_nova::nova::{hex_to_scalar as nova_hex_to_scalar, Sha256Commitment};
 use pasta_curves::pallas::Scalar;
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr};
@@ -75,6 +70,7 @@ impl TestCircuit {
     /// Build the actual circuit (for computing digests)
     /// Note: This builds a hardcoded version for native digest computation.
     /// For the actual circuit, we use the compiled .circuit file.
+    #[allow(dead_code)]
     fn build_circuit(&self) -> Circuit {
         match self {
             TestCircuit::Simple => {
@@ -194,7 +190,13 @@ pub fn test_gnova_commands() -> Result<()> {
     info!("  digest_lamport: {}", prove_json["digest_lamport"]);
 
     // --- Step 2: Verify (verifies both GC and Lamport proofs) ---
-    let verify_job = GarbledJobType::Verify(proof_path, format!("{}/verify", output_dir));
+    let prove_json_path = format!("{}/prove/output.json", output_dir);
+    let verify_job = GarbledJobType::Verify(
+        proof_path,
+        circuit.circuit_path().to_string(),
+        prove_json_path,
+        format!("{}/verify", output_dir),
+    );
 
     let (cmd, args, json_path) = verify_job.command()?;
     info!("Running verify: {} {:?}", cmd, args);
@@ -379,9 +381,15 @@ fn run_garbled_client_test(port: u16) -> Result<()> {
     // --- Step 2: Send Verify job (verifies both GC + Lamport proofs) ---
     info!("Sending Verify job...");
 
+    let prove_json_path = format!("{}/prove/output.json", output_dir);
     let verify_job = DispatcherJob {
         job_id: "verify_e2e".to_string(),
-        job_type: GarbledJobType::Verify(proof_path, format!("{}/verify", output_dir)),
+        job_type: GarbledJobType::Verify(
+            proof_path,
+            circuit.circuit_path().to_string(),
+            prove_json_path,
+            format!("{}/verify", output_dir),
+        ),
     };
 
     let msg = serde_json::to_string(&verify_job)?;
@@ -493,11 +501,6 @@ fn parse_garbling_public_gates(json: &serde_json::Value) -> Vec<GarbledGate<Scal
         .collect()
 }
 
-/// Convert hex string (0x...) to Scalar for comparison
-fn hex_to_scalar(hex_str: &str) -> Scalar {
-    garbled_nova::nova::hex_to_scalar(hex_str).expect("Failed to parse hex scalar")
-}
-
 /// Full protocol test: prover generates proofs, verifier verifies with public data
 ///
 /// Verifier has access to:
@@ -581,99 +584,54 @@ pub fn test_full_protocol() -> Result<()> {
         loaded_circuit.num_outputs()
     );
 
-    // 1. Verify both proofs
+    // 1. Verify both proofs (gnova verify now does full digest verification)
     info!("[verifier] Verifying GC + Lamport proofs...");
-    let verify_job = GarbledJobType::Verify(gc_proof_path, format!("{}/verify", output_dir));
+    let prove_json_path = format!("{}/prove/output.json", output_dir);
+    let verify_job = GarbledJobType::Verify(
+        gc_proof_path,
+        circuit.circuit_path().to_string(),
+        prove_json_path,
+        format!("{}/verify", output_dir),
+    );
 
     let (cmd, args, json_path) = verify_job.command()?;
     let output = std::process::Command::new(&cmd)
         .args(&args)
         .env("RUST_MIN_STACK", "67108864")
         .output()?;
-    assert!(output.status.success(), "Verify failed");
+    assert!(
+        output.status.success(),
+        "Verify failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let verify_json: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&json_path)?)?;
-    assert_eq!(verify_json["valid"], true, "Proofs invalid");
+
+    // gnova verify now does ALL verification including digest matching
+    // Check individual verification results
+    assert_eq!(verify_json["gc_proof_valid"], true, "GC proof invalid");
+    info!("[verifier] ✓ GC proof valid");
+
+    assert_eq!(verify_json["lamport_proof_valid"], true, "Lamport proof invalid");
+    info!("[verifier] ✓ Lamport proof valid");
+
     assert_eq!(verify_json["proofs_linked"], true, "Proofs not linked");
-    info!("[verifier] Both proofs valid and linked");
+    info!("[verifier] ✓ Proofs linked (digest_io == digest_labels)");
 
-    // Extract digests from proof verification
-    let gc_digest_circ = hex_to_scalar(verify_json["digest_circ"].as_str().unwrap());
-    let gc_digest_ct = hex_to_scalar(verify_json["digest_ct"].as_str().unwrap());
-    let gc_digest_io = hex_to_scalar(verify_json["digest_io"].as_str().unwrap());
-    let lamport_digest_labels = hex_to_scalar(verify_json["digest_labels"].as_str().unwrap());
-    let lamport_digest_lamport = hex_to_scalar(verify_json["digest_lamport"].as_str().unwrap());
-
-    info!("[verifier] Digests from proofs:");
-    info!("  GC digest_circ: {}", scalar_to_hex(&gc_digest_circ));
-    info!("  GC digest_ct: {}", scalar_to_hex(&gc_digest_ct));
-    info!("  GC digest_io: {}", scalar_to_hex(&gc_digest_io));
-    info!(
-        "  Lamport digest_labels: {}",
-        scalar_to_hex(&lamport_digest_labels)
-    );
-    info!(
-        "  Lamport digest_lamport: {}",
-        scalar_to_hex(&lamport_digest_lamport)
-    );
-
-    // 2. Recompute all public digests
-    info!("[verifier] Recomputing public digests from circuit and garbled gates...");
-    let constants = poseidon_constants::<Scalar>();
-
-    // Recompute digest_circ and digest_ct from public data
-    let (expected_digest_circ, expected_digest_ct) =
-        recompute_public_digests(&loaded_circuit, &garbled_gates, &constants);
-    info!(
-        "[verifier] Recomputed digest_circ: {}",
-        scalar_to_hex(&expected_digest_circ)
-    );
-    info!(
-        "[verifier] Recomputed digest_ct: {}",
-        scalar_to_hex(&expected_digest_ct)
-    );
-
-    // Recompute digest_lamport from SHA256 commitments
-    let expected_digest_lamport = digest_lamport_from_commitments(&sha256_commitments, &constants);
-    info!(
-        "[verifier] Recomputed digest_lamport: {}",
-        scalar_to_hex(&expected_digest_lamport)
-    );
-
-    // =========================================================================
-    // Verification checks
-    // =========================================================================
-    info!("[verifier] Performing verification checks...");
-
-    // Check 1: digest_circ matches (proves circuit structure is what we expect)
-    assert_eq!(
-        gc_digest_circ, expected_digest_circ,
-        "GC digest_circ does not match recomputed value!"
-    );
+    assert_eq!(verify_json["digest_circ_matches"], true, "digest_circ mismatch");
     info!("[verifier] ✓ digest_circ matches - GC proof uses expected circuit structure");
 
-    // Check 2: digest_ct matches (proves garbled gates are what we received)
-    assert_eq!(
-        gc_digest_ct, expected_digest_ct,
-        "GC digest_ct does not match recomputed value!"
-    );
+    assert_eq!(verify_json["digest_ct_matches"], true, "digest_ct mismatch");
     info!("[verifier] ✓ digest_ct matches - GC proof uses received garbled gates");
 
-    // Check 3: digest_lamport matches (Lamport proof binds to public SHA256 commitments)
-    assert_eq!(
-        lamport_digest_lamport, expected_digest_lamport,
-        "Lamport digest_lamport does not match recomputed value!"
-    );
+    assert_eq!(verify_json["digest_lamport_matches"], true, "digest_lamport mismatch");
     info!("[verifier] ✓ digest_lamport matches - Lamport proof binds to SHA256 commitments");
 
-    // Check 4: Proofs are linked (digest_io == digest_labels)
-    // This is already checked by gnova verify, but we verify it here too
-    assert_eq!(
-        gc_digest_io, lamport_digest_labels,
-        "Proofs not linked: digest_io != digest_labels"
-    );
-    info!("[verifier] ✓ Proofs linked - GC and Lamport use same I/O labels");
+    // Overall validity (all checks passed)
+    assert_eq!(verify_json["valid"], true, "Full verification failed");
+    info!("[verifier] ✓ ALL CHECKS PASSED");
 
     info!("Full protocol test completed successfully!");
     Ok(())
