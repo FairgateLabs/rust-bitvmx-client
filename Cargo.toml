@@ -66,9 +66,6 @@ redact = { version = "0.1", features = ["serde", "zeroize"] }
 futures-util = "0.3"
 bitcoind = { git = "https://github.com/FairgateLabs/rust-bitcoind.git", tag = "v0.6.1" }
 reqwest = "0.12.23"
-garbled_nova = { path = "../rust-bitvmx-gc", features = ["memory"] }
-ark-bn254 = "0.5.0"
-pasta_curves = "0.5.1"
 
 zk-result = { git = "https://github.com/FairgateLabs/rust-bitvmx-zk-proof.git", tag = "v0.6.1" }
 [features]

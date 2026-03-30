@@ -10,12 +10,6 @@ use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 use bitvmx_job_dispatcher::dispatcher_message::DispatcherMessage;
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::garbled_messages::GarbledJobType;
-use garbled_nova::gadgets::bigint::alloc_bigint_input;
-use garbled_nova::gadgets::bn254::{fq_to_input_bits, Fp254Impl, Fq};
-use garbled_nova::garble::GarbledGate;
-use garbled_nova::garble::{circuit_loader::load_circuit_from_file, Circuit, CircuitTrait};
-use garbled_nova::nova::{hex_to_scalar as nova_hex_to_scalar, Sha256Commitment};
-use pasta_curves::pallas::Scalar;
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::Path;
@@ -30,83 +24,7 @@ use crate::common::{clear_db, config_trace};
 
 // circuit to test - use a compiled .circuit file
 const TEST_CIRCUIT_PATH: &str = "../rust-bitvmx-circuit-compiler/examples/simple.circuit";
-
-#[derive(Clone, Copy)]
-#[allow(dead_code)]
-enum TestCircuit {
-    /// y = (a & b) ^ c — 3 inputs (bools), 4 gates, 162 outputs (MPC-encoded bool)
-    Simple,
-    /// BN254 Fq field addition — 508 inputs, ~4.3k gates
-    FqAdd,
-}
-
-impl TestCircuit {
-    fn circuit_path(&self) -> &'static str {
-        match self {
-            TestCircuit::Simple => TEST_CIRCUIT_PATH,
-            TestCircuit::FqAdd => "../rust-bitvmx-circuit-compiler/examples/fq_add.circuit",
-        }
-    }
-
-    fn input_bytes(&self) -> Vec<u8> {
-        match self {
-            TestCircuit::Simple => {
-                // For the compiled simple.garble circuit:
-                // pub fn main(a: bool, b: bool, c: bool) -> bool { (a & b) ^ c }
-                // 3 bool inputs (each 1 byte): a=1, b=1, c=0 -> y = (1 & 1) ^ 0 = 1
-                vec![1, 1, 0]
-            }
-            TestCircuit::FqAdd => {
-                let a = ark_bn254::Fq::from(123u64);
-                let b = ark_bn254::Fq::from(456u64);
-                let mut bits = Vec::with_capacity(2 * Fq::N_BITS);
-                bits.extend(fq_to_input_bits(&a));
-                bits.extend(fq_to_input_bits(&b));
-                bits
-            }
-        }
-    }
-
-    /// Build the actual circuit (for computing digests)
-    /// Note: This builds a hardcoded version for native digest computation.
-    /// For the actual circuit, we use the compiled .circuit file.
-    #[allow(dead_code)]
-    fn build_circuit(&self) -> Circuit {
-        match self {
-            TestCircuit::Simple => {
-                // Matches the structure from simple.garble: (a & b) ^ c
-                // But note that compiled garble circuits may differ in structure
-                let mut circ = Circuit::new();
-
-                let a = circ.add_input();
-                let b = circ.add_input();
-                let c = circ.add_input();
-
-                let a_and_b = circ.add_wire();
-                let y = circ.add_wire();
-
-                circ.add_and(a, b, a_and_b);
-                circ.add_xor(a_and_b, c, y);
-
-                circ.add_output(y);
-
-                circ
-            }
-            TestCircuit::FqAdd => {
-                let mut circ = Circuit::new();
-                let a_wires = Fq(alloc_bigint_input(&mut circ, Fq::N_BITS));
-                let b_wires = Fq(alloc_bigint_input(&mut circ, Fq::N_BITS));
-                let res = Fq::add(&mut circ, &a_wires, &b_wires);
-
-                for &w in res.0.iter() {
-                    circ.add_output(w);
-                }
-
-                circ
-            }
-        }
-    }
-}
+const INPUT_BYTES: &[u8] = &[0, 0, 1];
 
 /// Check gnova binary exists
 fn check_gnova_built() -> Result<()> {
@@ -146,17 +64,9 @@ pub fn test_gnova_commands() -> Result<()> {
     let _ = std::fs::remove_dir_all(output_dir);
 
     // --- Step 1: Prove (generates both GC and Lamport proofs) ---
-    let circuit = TestCircuit::Simple;
-    let input_bytes = circuit.input_bytes();
-    info!(
-        "Testing circuit: {} ({} input bytes)",
-        circuit.circuit_path(),
-        input_bytes.len()
-    );
-
     let prove_job = GarbledJobType::Prove(
-        input_bytes,
-        circuit.circuit_path().to_string(),
+        INPUT_BYTES.to_vec(),
+        TEST_CIRCUIT_PATH.to_string(),
         format!("{}/prove", output_dir),
     );
 
@@ -193,7 +103,7 @@ pub fn test_gnova_commands() -> Result<()> {
     let prove_json_path = format!("{}/prove/output.json", output_dir);
     let verify_job = GarbledJobType::Verify(
         proof_path,
-        circuit.circuit_path().to_string(),
+        TEST_CIRCUIT_PATH.to_string(),
         prove_json_path,
         format!("{}/verify", output_dir),
     );
@@ -345,18 +255,11 @@ fn run_garbled_client_test(port: u16) -> Result<()> {
     fs::create_dir_all(output_dir)?;
 
     // --- Step 1: Send Prove job (generates both GC + Lamport proofs) ---
-    let circuit = TestCircuit::Simple;
-    let input_bytes = circuit.input_bytes();
-    info!(
-        "Sending Prove job for circuit: {}...",
-        circuit.circuit_path()
-    );
-
     let prove_job = DispatcherJob {
         job_id: "prove_e2e".to_string(),
         job_type: GarbledJobType::Prove(
-            input_bytes,
-            circuit.circuit_path().to_string(),
+            INPUT_BYTES.to_vec(),
+            TEST_CIRCUIT_PATH.to_string(),
             format!("{}/prove", output_dir),
         ),
     };
@@ -386,7 +289,7 @@ fn run_garbled_client_test(port: u16) -> Result<()> {
         job_id: "verify_e2e".to_string(),
         job_type: GarbledJobType::Verify(
             proof_path,
-            circuit.circuit_path().to_string(),
+            TEST_CIRCUIT_PATH.to_string(),
             prove_json_path,
             format!("{}/verify", output_dir),
         ),
@@ -455,52 +358,6 @@ fn wait_for_dispatcher_result(
     }
 }
 
-/// Parse sha256_commitments from prove JSON output
-fn parse_sha256_commitments_from_json(json: &serde_json::Value) -> Vec<Sha256Commitment> {
-    json["sha256_commitments"]
-        .as_array()
-        .expect("sha256_commitments should be array")
-        .iter()
-        .map(|commit| {
-            let h0_hex = commit["h0"].as_str().expect("h0 should be string");
-            let h1_hex = commit["h1"].as_str().expect("h1 should be string");
-
-            let h0_bytes = hex::decode(h0_hex).expect("Failed to decode h0 hex");
-            let h1_bytes = hex::decode(h1_hex).expect("Failed to decode h1 hex");
-
-            let mut h0 = [0u8; 32];
-            let mut h1 = [0u8; 32];
-            h0.copy_from_slice(&h0_bytes);
-            h1.copy_from_slice(&h1_bytes);
-
-            Sha256Commitment { h0, h1 }
-        })
-        .collect()
-}
-
-/// Parse garbling_public from prove JSON output to get the garbled gates
-fn parse_garbling_public_gates(json: &serde_json::Value) -> Vec<GarbledGate<Scalar>> {
-    let garbling_public = &json["garbling_public"];
-
-    garbling_public["gates"]
-        .as_array()
-        .expect("garbling_public.gates should be array")
-        .iter()
-        .map(|gate| {
-            let gate_type = gate["type"].as_str().expect("gate should have type");
-            match gate_type {
-                "And" => {
-                    let ct_hex = gate["ct"].as_str().expect("AND gate should have ct");
-                    let ct = nova_hex_to_scalar(ct_hex).expect("Failed to parse ct hex");
-                    GarbledGate::And { ct }
-                }
-                "Noop" => GarbledGate::Noop,
-                _ => panic!("Unknown gate type: {}", gate_type),
-            }
-        })
-        .collect()
-}
-
 /// Full protocol test: prover generates proofs, verifier verifies with public data
 ///
 /// Verifier has access to:
@@ -541,10 +398,9 @@ pub fn test_full_protocol() -> Result<()> {
 
     // 1. Generate GC + Lamport proofs
     info!("[prover] Generating GC and Lamport proofs...");
-    let circuit = TestCircuit::Simple;
     let prove_job = GarbledJobType::Prove(
-        circuit.input_bytes(),
-        circuit.circuit_path().to_string(),
+        INPUT_BYTES.to_vec(),
+        TEST_CIRCUIT_PATH.to_string(),
         format!("{}/prove", output_dir),
     );
 
@@ -563,33 +419,15 @@ pub fn test_full_protocol() -> Result<()> {
     info!("  digest_labels: {}", prove_json["digest_labels"]);
     info!("  digest_lamport: {}", prove_json["digest_lamport"]);
 
-    let garbled_gates = parse_garbling_public_gates(&prove_json);
-    let sha256_commitments = parse_sha256_commitments_from_json(&prove_json);
-    info!(
-        "[prover] Sending to verifier: proofs, {} garbled gates, {} SHA256 commitments",
-        garbled_gates.len(),
-        sha256_commitments.len()
-    );
-
     info!("========== VERIFIER ==========");
     info!("[verifier] Received: proofs, garbled gates, SHA256 commitments");
-
-    // Load the circuit (verifier knows the circuit structure)
-    let loaded_circuit = load_circuit_from_file(Path::new(circuit.circuit_path()))
-        .expect("Failed to load circuit from file");
-    info!(
-        "[verifier] Loaded circuit: {} gates, {} inputs, {} outputs",
-        loaded_circuit.num_gates(),
-        loaded_circuit.num_inputs(),
-        loaded_circuit.num_outputs()
-    );
 
     // 1. Verify both proofs (gnova verify now does full digest verification)
     info!("[verifier] Verifying GC + Lamport proofs...");
     let prove_json_path = format!("{}/prove/output.json", output_dir);
     let verify_job = GarbledJobType::Verify(
         gc_proof_path,
-        circuit.circuit_path().to_string(),
+        TEST_CIRCUIT_PATH.to_string(),
         prove_json_path,
         format!("{}/verify", output_dir),
     );
@@ -614,19 +452,28 @@ pub fn test_full_protocol() -> Result<()> {
     assert_eq!(verify_json["gc_proof_valid"], true, "GC proof invalid");
     info!("[verifier] ✓ GC proof valid");
 
-    assert_eq!(verify_json["lamport_proof_valid"], true, "Lamport proof invalid");
+    assert_eq!(
+        verify_json["lamport_proof_valid"], true,
+        "Lamport proof invalid"
+    );
     info!("[verifier] ✓ Lamport proof valid");
 
     assert_eq!(verify_json["proofs_linked"], true, "Proofs not linked");
     info!("[verifier] ✓ Proofs linked (digest_io == digest_labels)");
 
-    assert_eq!(verify_json["digest_circ_matches"], true, "digest_circ mismatch");
+    assert_eq!(
+        verify_json["digest_circ_matches"], true,
+        "digest_circ mismatch"
+    );
     info!("[verifier] ✓ digest_circ matches - GC proof uses expected circuit structure");
 
     assert_eq!(verify_json["digest_ct_matches"], true, "digest_ct mismatch");
     info!("[verifier] ✓ digest_ct matches - GC proof uses received garbled gates");
 
-    assert_eq!(verify_json["digest_lamport_matches"], true, "digest_lamport mismatch");
+    assert_eq!(
+        verify_json["digest_lamport_matches"], true,
+        "digest_lamport mismatch"
+    );
     info!("[verifier] ✓ digest_lamport matches - Lamport proof binds to SHA256 commitments");
 
     // Overall validity (all checks passed)
