@@ -6,7 +6,7 @@ use crate::{
 use anyhow::Result;
 use bitcoin::{
     absolute,
-    hex::{DisplayHex, FromHex},
+    hex::FromHex,
     key::Secp256k1,
     secp256k1::{self, All, Message, SecretKey},
     sighash::SighashCache,
@@ -103,7 +103,7 @@ impl User {
         stream_value: u64,
         dispute_keys: &[PublicKey],
         request_pegin_timelock: u16,
-    ) -> Result<Txid> {
+    ) -> Result<(Txid, Transaction)> {
         info!(id = self.id, "Requesting pegin");
 
         // Enable RSK pegin monitoring using the public API
@@ -136,7 +136,7 @@ impl User {
         info!("Sent request pegin Tx: {}", txid);
         print_link(self.network, txid);
 
-        Ok(txid)
+        Ok((txid, signed_transaction))
     }
 
     pub fn get_request_pegin_spv(&self, request_pegin_txid: Txid) -> Result<BtcTxSPVProof> {
@@ -308,14 +308,6 @@ impl User {
             signed_transaction.vsize()
         );
 
-        self.db_print_request_pegin_tx(
-            &signed_transaction,
-            stream_value,
-            packet_number,
-            request_pegin_timelock,
-            reimbursement_xpk,
-        );
-
         self.pop_request_pegin_utxo();
         Ok(signed_transaction)
     }
@@ -458,58 +450,6 @@ impl User {
         let mut address_bytes = [0u8; 20];
         address_bytes.copy_from_slice(Vec::from_hex(address).unwrap().as_slice());
         Ok(address_bytes)
-    }
-
-    /// Print reimbursement keys (x-only and compressed+parity) when debug is enabled
-    fn db_print_reimbursement_keys(&self, reimbursement_xpk: XOnlyPublicKey) {
-        if !crate::participants::common::DEBUG_TX {
-            return;
-        }
-
-        info!(
-            "  - Reimbursement Key (x-only): 0x{}",
-            reimbursement_xpk
-                .serialize()
-                .as_slice()
-                .to_lower_hex_string()
-        );
-
-        let reimbursement_compressed = self.public_key.to_bytes();
-        let parity = reimbursement_compressed[0];
-        info!(
-            "  - Reimbursement Key (compressed): 0x{} (parity: 0x{:02x})",
-            reimbursement_compressed.as_slice().to_lower_hex_string(),
-            parity
-        );
-    }
-
-    fn db_print_request_pegin_tx(
-        &self,
-        signed_transaction: &Transaction,
-        stream_value: u64,
-        packet_number: u64,
-        request_pegin_timelock: u16,
-        reimbursement_xpk: XOnlyPublicKey,
-    ) {
-        use crate::participants::common::db_print_transaction;
-
-        db_print_transaction(
-            "REQUEST PEGIN TRANSACTION DETAILS",
-            signed_transaction,
-            || {
-                info!("");
-                info!("Parameters Used:");
-                info!("  - Denomination: {} satoshis", stream_value);
-                info!("  - Packet Number: {}", packet_number);
-                info!("  - RSK Address: 0x{}", self.rsk_address);
-                self.db_print_reimbursement_keys(reimbursement_xpk);
-                info!(
-                    "  - Request Pegin Timelock: {} blocks",
-                    request_pegin_timelock
-                );
-                info!("");
-            },
-        );
     }
 
     fn sign_p2wpkh_transaction(

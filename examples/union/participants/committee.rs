@@ -272,12 +272,10 @@ impl Committee {
         selected_operator_pubkey: PublicKey,
         fee: u64,
     ) -> Result<()> {
-        let protocol_id = Uuid::new_v4();
         let committee_id = self.committee_id.clone();
 
         self.all(|op: &mut Member| {
             op.advance_funds(
-                protocol_id,
                 committee_id,
                 slot_id,
                 user_public_key,
