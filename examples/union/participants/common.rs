@@ -18,6 +18,7 @@ use bitvmx_client::{
         variables::VariableTypes,
     },
 };
+use uuid::Uuid;
 pub const PEGIN_CONFIRMATIONS: u16 = 6; // This value should be get from the contract
 pub const PEGOUT_CONFIRMATIONS: u16 = 6; // This value should be get from the contract
 

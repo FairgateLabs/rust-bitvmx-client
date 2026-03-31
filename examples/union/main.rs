@@ -4,7 +4,7 @@ use crate::{
         committee::Committee,
         common::{
             calculate_taproot_key_path_sighash, format_solidity_data_file, get_user_take_tx,
-            PEGIN_CONFIRMATIONS,
+            set_program_input, PEGIN_CONFIRMATIONS,
         },
         member::Member,
         user::User,
