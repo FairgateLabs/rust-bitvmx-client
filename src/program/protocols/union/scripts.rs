@@ -65,7 +65,6 @@ pub fn init_challenge_script(
     wt_cosign_pegout_id_keys: &Vec<&WinternitzPublicKey>,
 ) -> Result<ProtocolScript, ScriptError> {
     // Create validation script
-    // FIXME: Update script with pegout id values
     let mut stack = StackTracker::new();
     let op_value = stack.define(2 * 2, "op_signed_value"); // each number is 2 bytes, each byte is 2 nibbles
     let wt_value = stack.define(4 * 2, "wt_signed_value"); // each number is 4 bytes, each byte is 2 nibbles

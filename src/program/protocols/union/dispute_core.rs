@@ -3493,7 +3493,7 @@ impl DisputeCoreProtocol {
         context: &ProgramContext,
         committee_id: Uuid,
     ) -> Result<(), BitVMXError> {
-        // FIXME: Add pegout id key validation
+        // TODO: Add pegout id key validation
         let committee = self.committee(context)?;
 
         if keys.len() != committee.members.len() {
