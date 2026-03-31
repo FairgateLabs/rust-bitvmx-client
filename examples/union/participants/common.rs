@@ -8,9 +8,17 @@ use bitcoin::{
     transaction, Amount, PublicKey, ScriptBuf, Sequence, TapSighash, TapSighashType, Transaction,
     TxOut, Txid, Witness,
 };
-use bitvmx_client::program::protocols::union::types::{
-    StreamSettings, UnionSettings, P2TR_FEE, SPEEDUP_VALUE, USER_TAKE_FEE,
+use bitvmx_client::{
+    client::BitVMXClient,
+    program::{
+        protocols::{
+            dispute::program_input,
+            union::types::{StreamSettings, UnionSettings, P2TR_FEE, SPEEDUP_VALUE, USER_TAKE_FEE},
+        },
+        variables::VariableTypes,
+    },
 };
+use uuid::Uuid;
 pub const PEGIN_CONFIRMATIONS: u16 = 6; // This value should be get from the contract
 pub const PEGOUT_CONFIRMATIONS: u16 = 6; // This value should be get from the contract
 
@@ -67,7 +75,10 @@ pub fn format_transaction_solidity(tx: &Transaction) -> String {
         } else {
             output.push_str(&format!("        outputs[{}] = BtcTxOut({{\n", i));
             output.push_str(&format!("            amount: {},\n", amount));
-            output.push_str(&format!("            scriptPubKey: hex\"{}\"\n", script_hex));
+            output.push_str(&format!(
+                "            scriptPubKey: hex\"{}\"\n",
+                script_hex
+            ));
             output.push_str("        });\n");
         }
         if i < tx.output.len() - 1 {
@@ -171,25 +182,46 @@ pub fn format_solidity_data_file(
         .to_bytes()
         .as_slice()
         .to_lower_hex_string();
-    s.push_str(&format_bytes_constant("COMMITTEE_AGGREGATED_KEY", &format!("hex\"{}\"", key_hex)));
+    s.push_str(&format_bytes_constant(
+        "COMMITTEE_AGGREGATED_KEY",
+        &format!("hex\"{}\"", key_hex),
+    ));
     s.push_str("\n");
 
     let user_key_hex = user_pubkey.to_bytes().as_slice().to_lower_hex_string();
-    s.push_str(&format_bytes_constant("USER_COMPRESSED_PUBKEY", &format!("hex\"{}\"", user_key_hex)));
+    s.push_str(&format_bytes_constant(
+        "USER_COMPRESSED_PUBKEY",
+        &format!("hex\"{}\"", user_key_hex),
+    ));
     s.push_str("\n");
 
-    s.push_str(&format_bytes32_constant("PEGOUT_ID", &format!("0x{}", pegout_id.as_slice().to_lower_hex_string())));
+    s.push_str(&format_bytes32_constant(
+        "PEGOUT_ID",
+        &format!("0x{}", pegout_id.as_slice().to_lower_hex_string()),
+    ));
     s.push_str("\n");
 
-    s.push_str(&format!("    uint256 constant OPERATOR_INDEX = {};\n", op_index));
-    s.push_str(&format!("    uint8 constant OPERATOR_COUNT = {};\n", operator_count));
-    s.push_str(&format!("    uint8 constant WATCHTOWER_COUNT = {};\n", watchtower_count));
+    s.push_str(&format!(
+        "    uint256 constant OPERATOR_INDEX = {};\n",
+        op_index
+    ));
+    s.push_str(&format!(
+        "    uint8 constant OPERATOR_COUNT = {};\n",
+        operator_count
+    ));
+    s.push_str(&format!(
+        "    uint8 constant WATCHTOWER_COUNT = {};\n",
+        watchtower_count
+    ));
     s.push_str("\n");
 
     for (name, tx) in named_transactions {
         if export_txids.contains(name) {
             let const_name = tx_name_to_const_name(name);
-            s.push_str(&format_bytes32_constant(&const_name, &format!("0x{}", tx.compute_txid())));
+            s.push_str(&format_bytes32_constant(
+                &const_name,
+                &format!("0x{}", tx.compute_txid()),
+            ));
             s.push_str("\n");
         }
     }
@@ -354,4 +386,17 @@ pub fn get_default_union_settings() -> UnionSettings {
     );
 
     settings
+}
+
+pub fn set_program_input(
+    bitvmx: &BitVMXClient,
+    pid: Uuid,
+    input_idx: usize,
+    input_data: Vec<u8>,
+) -> Result<(), anyhow::Error> {
+    bitvmx.set_var(
+        pid,
+        &program_input(input_idx as u32, None),
+        VariableTypes::Input(input_data),
+    )
 }

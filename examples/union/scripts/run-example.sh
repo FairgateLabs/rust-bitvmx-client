@@ -39,6 +39,9 @@ EXAMPLE_LOG_FILE="$LOGS_DIR/example.log"
 # Clean up previous logs and data
 rm -rf /tmp/regtest/
 
+# Ensure cleanup of bitvmx-emulator-dispatcher processes on script exit
+pkill -f bitvmx-emulator-dispatcher || true
+
 # Kill all bitvmx-client process
 pkill -f bitvmx-client || true
 
@@ -53,6 +56,7 @@ echo "" > "$EXAMPLE_LOG_FILE"
 # Ensure cleanup of bitvmx-client processes on script exit
 function cleanup() {
   pkill -f bitvmx-client || true
+  pkill -f bitvmx-emulator-dispatcher || true
 }
 trap cleanup EXIT
 
