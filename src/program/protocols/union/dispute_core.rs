@@ -74,9 +74,6 @@ pub const OP_COSIGN_PEGOUT_ID_KEY: &str = "OP_COSIGN_PEGOUT_ID_KEY";
 pub const WT_COSIGN_SLOT_KEY: &str = "WT_COSIGN_SLOT_KEY";
 pub const WT_COSIGN_PEGOUT_ID_KEY: &str = "WT_COSIGN_PEGOUT_ID_KEY";
 
-// This is defined in `union-verifier.yaml`
-// const PEGOUT_ID_DRP_INPUT_INDEX: u32 = 4;
-
 const CLAIM_GATE_FEE: u64 = 335; // TODO: Validate this value
 
 pub const OP_INITIAL_DEPOSIT_TX_REIMBURSMENT_LEAF: usize = 0;
